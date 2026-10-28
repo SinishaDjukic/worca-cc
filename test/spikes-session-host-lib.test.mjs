@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { summarize, strip, runTurn, requestFacts, bigPrompt, toolResult, hostAgentCalls, assistantMessages, sumUsage,
   dryLine, runJsonl, recordingProxy, defaultUpstream, spikeContext, verdict } from '../tools/spikes/session-host/lib.mjs';
+import { main as s1 } from '../tools/spikes/session-host/s1-agents-per-resume.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -168,3 +169,14 @@ async function dryRun(main, env = {}) {
     verdicts: lines.filter((l) => l.startsWith('{')).map((l) => JSON.parse(l)),
   };
 }
+
+test('S1 --dry: five turns; turns 2–5 resume; turns 2, 3 and 5 carry agents-2.json; turn 4 a never-existing id', async () => {
+  const { argv } = await dryRun(s1);
+  assert.equal(argv.length, 5, argv.join('\n'));
+  for (const l of argv) assert.match(l, /claude -p .* --output-format stream-json --verbose /);
+  assert.match(argv[0], /--agents \S*agents-1\.json/);
+  assert.doesNotMatch(argv[0], /--resume/);
+  for (const i of [1, 2, 4]) assert.match(argv[i], /--resume <session-1> --agents \S*agents-2\.json/);
+  assert.match(argv[3], /--resume 00000000-0000-4000-8000-000000000000/);
+  assert.doesNotMatch(argv[3], /--agents/);
+});
