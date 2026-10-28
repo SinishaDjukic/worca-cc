@@ -169,7 +169,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), folded until the person opens it (a failure shows only as the red `N failed`; a running group puts Stop beside the head), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
@@ -253,7 +253,9 @@ a chat card leaves the text column (checked): a graph well (`.gv-well`: the work
 run card's graph) is exactly as wide as its card and lines up with the card's other content; it is 1px `--line`, a 6px
 corner and the canvas fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
 with the first node in view, never centred with both ends cut). The well is as tall as the graph at that zoom (220–480px),
-set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The transcript reserves its
+set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The run card's Expand opens the
+same live graph in the shared `.wf-pop` overlay (a run-hosts `monitor` host fitted to the box) and never navigates; the
+overlay's Open run is the way to the run's Workflow tab. The transcript reserves its
 scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest
 share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); Jump to latest
 sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
@@ -275,7 +277,8 @@ under 300ms. Error: a plain sentence plus a "Details" quiet button, never the ra
 `notify({ tone, title, detail, action, key })` (`ui/public/feedback.mjs`): ok and info close after 5s, warn and err
 stay, never move focus.
 The title is at most 6 static words ("Could not open the workflow"). Names, ids and paths go in `detail`; a raw error
-goes in `detail` too, never in the title, and behind a Details action when it is long.
+goes in `detail` too, never in the title, and behind a Details action when it is long. The one named exception is Add
+to group's "Added to Auth rework": the group's name is the title, the item (or "3 runs") the detail (Group picker).
 ### Modals
 `confirmModal({ title, message, confirmLabel, danger })` (`ui/public/app.js`): a destructive confirm names what goes;
 only inside a confirm is `.btn-danger` solid red. Footer actions and the head Close are 32px `.btn`; inline field
@@ -333,7 +336,9 @@ and hand the focus back to the opener.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
   page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
   is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
-  Rows inside a group draw no dividers; the group keeps its own divider before the next row.
+  Rows inside a group draw no dividers; the group keeps its own divider before the next row. After Add to group the
+  moved row takes the focus and the same `--row-open` fill for 1.5 s (`.is-landed`, static, so nothing to reduce): the
+  one moment two rows are lit.
 - Two row levels in the Runs list and the Chats column. A top-level row (a single run, Needs you, a group row) has a
   13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
   touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
@@ -354,6 +359,14 @@ and hand the focus back to the opener.
   project or `N projects`; Group by Project files a group spanning projects under Several projects, never No project;
   Group by Topic shows one section per group, then Ungrouped; the group dialog's name field
   uses Smart run naming's Suggested chip only while that flag is on.
+- Group picker (Add to group…, the Runs list and the Chats column, `ui/public/group-picker.mjs`): a combobox over one
+  listbox. The focus stays in "Find or create a group"; ↑/↓ move the `.is-active` option and wrap, Enter takes it, Esc
+  closes and hands the focus back. The order is New group… (the `plus` icon), then Recent (up to 3, this person's last
+  used groups) and All groups (the rest, once), under sentence-case `.menu-h` heads. Typing drops the heads and New
+  group… and lists the matches, then Create “release notes” unless the text is an existing name. Nothing is highlighted
+  on open. The footer names the keys with `.kbd` chips. New group… opens the shared group dialog
+  (`ui/public/group-dialog.mjs`, Smart naming in both lists). An add answers "Added to …" with Undo; a run already in a
+  group moves, a Shaper slice is skipped and the toast says so.
 - Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill

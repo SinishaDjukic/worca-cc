@@ -56,7 +56,8 @@ own format. Jira is the first; GitHub Issues and Azure Boards add the same steps
 
 ## 3. Data
 
-Migration **v79**, after A3's v78 (`req_helper_messages`). The rung is reconcile-safe (`IF NOT EXISTS` and
+Migration **v80**, after A3's v78 (`req_helper_messages`) and `dev`'s v79 (`run_groups.name_source`); A6 was first written
+as v79 and renumbered when it met dev's. The rung is reconcile-safe (`IF NOT EXISTS` and
 `INCREMENTAL_TABLES`), so a database stamped past it without the tables is repaired.
 
 ```sql
@@ -88,9 +89,10 @@ CREATE TABLE IF NOT EXISTS req_export_links (
 );
 ```
 
-The rung is `if (current < 79) db.exec(REQUIREMENTS_EXPORT_DDL);` with both tables in `INCREMENTAL_TABLES`; no column
-is added to an existing table. `test/db-migrate-v79.test.mjs`: fresh, 77, 78 (A3), A8's earlier 75, upstream's 74–76, below 72,
-and stamped past 79 without the tables all reach the current version with both tables.
+The rung is `if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);` with both tables in `INCREMENTAL_TABLES`; no column
+is added to an existing table. `test/db-migrate-v80.test.mjs`: fresh, 77, 78 (A3), 79 (A6's early numbering, without dev's
+`run_groups.name_source`), A8's earlier 75, upstream's 74–76, below 72, and stamped past 80 without the tables all reach
+the current version with both tables.
 
 **Turns.** `TURN_KINDS` (`spec.mjs`) gains `export`: `{ action: 'created' | 'updated' | 'commented' | 'new' | 'linked' |
 'forgot', tracker, key, url, at, reason? }` (`reason` only for Export anyway), written by the product owner (`created_by`).
@@ -269,7 +271,7 @@ Board 30 is board 27 in the dark theme and needs nothing but the tokens.
 - `spec.mjs`: turn kind `export`. `routes.mjs`: §6, `featureView`'s `export`, the `last` filter (§3).
   `interview.mjs`: `retry`'s filter (§3). `start.mjs`: `reportBack`, `reportTo` in the `startRun` options, the export
   lock (D13).
-- `src/core/db.mjs`: `REQUIREMENTS_EXPORT_DDL`, `INCREMENTAL_TABLES`, v79.
+- `src/core/db.mjs`: `REQUIREMENTS_EXPORT_DDL`, `INCREMENTAL_TABLES`, v80.
 - `ui/server.mjs`: `invokeStartRun` takes `reportTo` and sets `req._reportTo`; `startRunHandler` passes it to the project and
   workspace `createOrchestratorFor` calls that start the run (not the workspace probe). `src/core/run-harness.mjs`: `sourceType` / `sourceMeta` from `this.opts.reportTo` (D15).
 - `src/core/plugin-shim.mjs`: `MOCK_DEFAULTS` (D19). `src/core/plugin-api.mjs`: the comment line (D3).
@@ -291,7 +293,7 @@ Board 30 is board 27 in the dark theme and needs nothing but the tokens.
   kind; one export at a time; export vs start; archived; the pending marker kept on a timeout and `findTicket`'s three
   checks (another install's marker, a wrong footer, a match); Forget the link; links pinned to their connection;
   nothing written on any failure.
-- **Store / migration:** `test/db-migrate-v79.test.mjs` (§3); setup per project and per workspace.
+- **Store / migration:** `test/db-migrate-v80.test.mjs` (§3); setup per project and per workspace.
 - **Start** (`test/requirements-start.test.mjs`, `test/requirements-run-link.test.mjs`): `reportBack` on by default with a
   link, off on request, absent without one; the pipeline row gets `source_type 'plugin'` and the `source_ref`;
   `reportResultForPipeline` reports to the ticket (`lastReport` in the mock state); a body's `_reportTo` from HTTP is
@@ -322,7 +324,7 @@ Board 30 is board 27 in the dark theme and needs nothing but the tokens.
   goes to the tracker. Attachments in the tracker are out of scope.
 - **A3.** Feature chat neither exports nor sees exports (`export` turns write no thread line). A change it proposes and
   the product owner accepts is an ordinary edit, so it shows in "What changed since the last export". A3 took schema 78,
-  A6 is 79 (§3). Both make the page behind them inert at 900 px and narrower: an export dialog closed over an open
+  A6 is 80 (§3; dev took 79). Both make the page behind them inert at 900 px and narrower: an export dialog closed over an open
   Feature chat sheet leaves that sheet modal, and leaving the Requirements view releases both.
 
 ## 11. Out of scope

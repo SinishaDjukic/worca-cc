@@ -249,7 +249,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
     commandsOpen: new Set(),  // blockIds whose output the user unfolded (the card's toggle; outlives a rebuild of the card)
     commandsRowOpen: new Map(),  // blockId → the person's open choice on a summary row (#911); absent = none
-    commandsGroupOpen: new Map(),  // a group's first blockId → its recorded fold: a click or a failure's auto-open (#911)
+    commandsGroupOpen: new Map(),  // a group's first blockId → the person's recorded fold (#911)
     commandGroupOf: new Map(),   // blockId → its group { ids, box, live } (#911), for the head's live total
     pinned: true,
     leftAt: null,          // #958: { threadId, top, pinned } recorded when the page hides; read on the next show
@@ -6030,14 +6030,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- command cards (ui/public/ask-command-card.mjs; Ask agent mode, #574) ------------------------------------------
   /** The gate (#911): the Labs flag and the person's Settings › Chat switch. */
   function summariesOn() { return flagOn('commandSummaries', doc) && summariseCommands() !== false; }
+  function stopCommand(sid) {
+    fetch(`/api/terminal/sessions/${encodeURIComponent(sid)}/stop`, { method: 'POST' }).catch(() => { /* the next frame says what happened */ });
+  }
   /** One command Ask ran: hydrated once over REST (a reload, a finished block), then live from ask-command frames. */
   function buildCommandCard(block) {
     const card = block.card || {};
     const blockId = String(card.blockId || '');
     const sum = summariesOn();
-    const handle = createCommandCard({ doc, card, summarise: sum, onStop: (sid) => {
-      fetch(`/api/terminal/sessions/${encodeURIComponent(sid)}/stop`, { method: 'POST' }).catch(() => { /* the next frame says what happened */ });
-    }, onShow: (sid) => showTerminal(sid), expanded: st.commandsOpen.has(blockId), keepInPlace, onToggle: (open) => {
+    const handle = createCommandCard({ doc, card, summarise: sum, onStop: stopCommand, onShow: (sid) => showTerminal(sid), expanded: st.commandsOpen.has(blockId), keepInPlace, onToggle: (open) => {
       if (open) st.commandsOpen.add(blockId); else st.commandsOpen.delete(blockId);
     },
     rowOpen: st.commandsRowOpen.has(blockId) ? st.commandsRowOpen.get(blockId) : undefined,
@@ -6080,7 +6081,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   /** #911: the group head's words, live total and fold. */
   function paintGroupHead(g) {
-    g.box.update(g.ids.map((id) => (st.commands.get(id) || {}).view || null), { live: g.live() });
+    const handles = g.ids.map((id) => st.commands.get(id) || {});
+    const run = handles.find((x) => x.view && x.view.status === 'running');
+    g.box.update(handles.map((x) => x.view || null), { live: g.live(), current: run ? run.text || '' : '' });
   }
   /** #911: the flag or the person's switch changed: rebuild the command cards in the other mode. */
   function refreshCommandCards() { if (st.model) { renderTranscript(); scheduleFlush(); } }
@@ -6604,11 +6607,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const grouped = new Set();
         const kept = new Set();
         for (const [a, z] of runs) {
-          const ids = cards.slice(a, z + 1).map((b) => String(b.card.blockId));
+          const members = cards.slice(a, z + 1).map((b) => b.card);
+          const ids = members.map((c) => String(c.blockId));
           let box = groups.get(ids[0]);
           if (!box) {
             box = createCommandGroup({ doc, keepInPlace, choice: st.commandsGroupOpen.get(ids[0]),
-              onToggle: (open) => { st.commandsGroupOpen.set(ids[0], open); } });
+              onToggle: (open) => { st.commandsGroupOpen.set(ids[0], open); },
+              onStop: () => { for (const c of members) if (((st.commands.get(String(c.blockId)) || {}).view || {}).status === 'running') stopCommand(c.sessionId); } });
             groups.set(ids[0], box);
           }
           kept.add(ids[0]);

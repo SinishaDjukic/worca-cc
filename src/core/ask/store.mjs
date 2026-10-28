@@ -366,6 +366,34 @@ export function addToChatGroup(groupId, threadIds) {
   return getChatGroup(groupId);
 }
 
+/** What Undo puts back for these chats: each one's group (null = ungrouped) and those groups' rows. */
+export function snapshotChatGroups(threadIds) {
+  getDb();
+  const rows = uniqueIds(threadIds).map((id) => ({ id, groupId: prepare('SELECT group_id FROM ask_threads WHERE id = ?').get(id)?.group_id || null }));
+  const gids = [...new Set(rows.map((r) => r.groupId).filter(Boolean))];
+  return { rows, groups: gids.map((g) => prepare('SELECT * FROM ask_chat_groups WHERE id = ?').get(g)).filter(Boolean).map((g) => ({ ...g })), created: null };
+}
+
+/** Undo of an add or a create: each chat back in its old group (a group the move dropped comes back with its id,
+ *  name and source); the created group, or one the undo empties, is dropped. A chat deleted since is skipped. */
+export function restoreChatGroups(snap) {
+  getDb();
+  tx(() => {
+    for (const g of snap.groups) {
+      prepare('INSERT OR IGNORE INTO ask_chat_groups (id, name, name_source, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(g.id, g.name, g.name_source, g.created_by, g.created_at, g.updated_at);
+    }
+    const touched = new Set(snap.created ? [snap.created] : []);
+    for (const r of snap.rows) {
+      const cur = prepare('SELECT group_id FROM ask_threads WHERE id = ?').get(r.id);
+      if (!cur) continue;
+      if (cur.group_id) touched.add(cur.group_id);
+      prepare('UPDATE ask_threads SET group_id = ? WHERE id = ?').run(r.groupId, r.id);
+    }
+    for (const g of touched) dropIfEmpty(g);
+  });
+}
+
 /** Remove from group: { groupId, deleted } (deleted = that was its last chat), or null when the chat had no group. */
 export function removeFromChatGroup(threadId) {
   getDb();

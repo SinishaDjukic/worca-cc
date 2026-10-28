@@ -138,6 +138,7 @@ function parseArgs(argv) {
     pastTeamCap: false,     // team policy (design §12): start with the total-cap acknowledgement recorded
     reason: undefined,      // …and the reason the team sees for it
     install: null,
+    force: false,           // --force: with --install, overwrite files that already exist
     sourceBranch: undefined,
     featureBranch: undefined,
     onSourceBranch: false,
@@ -226,6 +227,7 @@ function parseArgs(argv) {
     if (arg === '--after-any') { out.afterAny = true; continue; }
     if (arg === '--source-from-previous') { out.sourceFromPrevious = true; continue; }
     if (arg === '--on-source-branch') { out.onSourceBranch = true; continue; }
+    if (arg === '--force') { out.force = true; continue; }
 
     let inlineValue;
     const eq = arg.indexOf('=');
@@ -320,7 +322,7 @@ Subcommands:
                               --json). -f follows; Ctrl-C detaches, the run continues. See: worca logs help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
-  doctor                      Reconcile crashed runs and sweep leftover run roots.
+  doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
@@ -392,6 +394,7 @@ Options:
                            waited 30 min. Configure in Settings > Away mode.
   --ui                     Same as "worca ui start" (accepts --port, --open, --mock)
   --install <targetDir>    Copy agents + /worca skill into <targetDir>/.claude
+  --force                  With --install: overwrite files that already exist
   -h, --help               Show this help
   -v, -V, --version        Print the version (worca <semver>) and exit
 `;
@@ -1302,6 +1305,22 @@ async function cmdDoctor() {
     out(`ask worktrees: removed ${res.removedDirs} orphan dir(s), dropped ${res.prunedRows} stale row(s), skipped ${res.failed}`);
   } catch (err) {
     process.stderr.write(`worca doctor: ask-worktree sweep failed: ${err?.message || err}\n`);
+  }
+  // node-pty powers only the web UI's terminal pane (and Ask Worca's commands in it).
+  // Report-only: the server fixes the exec bit itself on the first terminal open
+  // (pty.mjs#ensureSpawnHelper); doctor never chmods, it prints the exact fix.
+  // BEFORE the legacy block for the same reason as the ask-worktree sweep above.
+  try {
+    const { spawnHelperStatus, spawnHelperDoctorLine } = await import('../core/terminal/pty.mjs');
+    let ptyDir = null;
+    try { ptyDir = dirname(createRequire(import.meta.url).resolve('node-pty/package.json')); } catch { /* optional dependency not installed */ }
+    if (!ptyDir) out('node-pty: not installed (the web UI terminal uses plain pipes; docs/terminal.md)');
+    else {
+      const line = spawnHelperDoctorLine(spawnHelperStatus(ptyDir));
+      out(/NOT executable/.test(line) ? c('yellow', line) : line);
+    }
+  } catch (err) {
+    process.stderr.write(`worca doctor: spawn-helper check failed: ${err?.message || err}\n`);
   }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live
@@ -3504,6 +3523,44 @@ function nearestSubcommand(token) {
   return best;
 }
 
+/**
+ * Words people type in front of a top-level verb that has no group of its own. The
+ * README once listed add/list/remove as "projects (…)", so `worca projects list` is a
+ * real thing users type — and `projects` near-misses no subcommand, so it ran as a
+ * PROMPT. Exact keys only: these are ordinary English words, never fuzzy-matched.
+ */
+const SUBCOMMAND_GROUPS = new Map([
+  ['project', ['add', 'list', 'remove']],
+  ['projects', ['add', 'list', 'remove']],
+]);
+
+/**
+ * The fail() message when the bare positionals are a mistyped command, else null.
+ * (a) the first token near-misses a subcommand (MIN-51), or (b) the first is a group
+ * word and the rest is either at most one more token (`worca projects list` means
+ * `worca list`) or a real verb plus ONE argument (`projects add myproj`: `add` and
+ * `remove` each take a single positional). Anything longer, or a second token that is
+ * not one of the verbs (`projects need a cleanup`, `project add caching to the API`),
+ * stays a prompt.
+ * @param {string[]} tokens the bare positionals (flags._)
+ * @returns {string|null}
+ */
+function mistypedCommand(tokens) {
+  const [first, second] = tokens;
+  const meant = nearestSubcommand(first);
+  if (meant) {
+    if (meant === first) return `"${meant}" is a subcommand and must come first: worca ${meant} [args] (to run a prompt with that word, use --prompt "\u2026")`;
+    return `unknown subcommand "${first}" — did you mean "${meant}"? (to run a prompt, use --prompt "\u2026")`;
+  }
+  const verbs = SUBCOMMAND_GROUPS.get(first);
+  if (!verbs) return null;
+  // verb + its single argument is 3 tokens; with no verb, only the bare/2-token forms.
+  if (tokens.length > 3 || (tokens.length === 3 && !verbs.includes(second))) return null;
+  const pick = verbs.includes(second) ? second : 'list';
+  return `unknown subcommand "${tokens.join(' ')}" — did you mean "${pick}"? `
+    + `The ${first.replace(/s$/, '')} commands are top-level: worca ${verbs.join(' | ')} (to run a prompt, use --prompt "\u2026")`;
+}
+
 async function main() {
   // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
   await migrateCorporateProxyFlag();
@@ -3588,11 +3645,9 @@ async function main() {
   }
 
   if (flags.install) {
-    // Forward --force (and any other extra tokens) to the installer.
-    const passthrough = [];
-    if (process.argv.includes('--force')) passthrough.push('--force');
-    return runInstall(flags.install, passthrough);
+    return runInstall(flags.install, flags.force ? ['--force'] : []);
   }
+  if (flags.force) fail('--force only applies to --install <targetDir>.');
 
   if (flags.mock) {
     process.env.WORCA_MOCK = '1';
@@ -3610,14 +3665,12 @@ async function main() {
   }
   if (!flags.prompt && !flags.file) {
     // Allow a bare positional prompt: `worca "do the thing"`. A lone token that
-    // near-misses a subcommand is a typo, not a task — refuse it here, before a
-    // pipeline row, a worktree or a feature branch exists.
+    // near-misses a subcommand, or a group word before a verb (`projects list`), is a
+    // typo, not a task — refuse it here, before a pipeline row, a worktree or a
+    // feature branch exists.
     if (flags._.length) {
-      const meant = nearestSubcommand(flags._[0]);
-      if (meant) {
-        if (meant === flags._[0]) fail(`"${meant}" is a subcommand and must come first: worca ${meant} [args] (to run a prompt with that word, use --prompt "\u2026")`);
-        fail(`unknown subcommand "${flags._[0]}" — did you mean "${meant}"? (to run a prompt, use --prompt "\u2026")`);
-      }
+      const mistyped = mistypedCommand(flags._);
+      if (mistyped) fail(mistyped);
       flags.prompt = flags._.join(' ');
     } else {
       fail('Provide a task with --prompt "<text>" or --file <markdown>. See --help.');

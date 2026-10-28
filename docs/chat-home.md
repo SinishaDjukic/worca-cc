@@ -43,7 +43,7 @@ it once; a load that failed is tried again on the next show. Below 1100px the co
 menu, picker or dialog opened from it keeps it open, and picking a chat closes it and focuses the composer.
 
 Topic groups: Select › Group N or a chat's ⋯ › Add to group… puts chats in a group (one group per chat; adding a
-grouped chat moves it). A group row shows its count and expands with ⌄; View › Group by › Topic lists one section per
+grouped chat moves it; ⋯ on a selected chat adds the whole selection). A group row shows its count and expands with ⌄; View › Group by › Topic lists one section per
 group, then Ungrouped. Archive group is blocked while a chat in it is busy. With Smart run naming on, the group dialog
 suggests a name from the chat titles and first messages on the Run naming model; off, it is a plain name field and
 `POST /api/ask/groups/suggest-name` answers 404.

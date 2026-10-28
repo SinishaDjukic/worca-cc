@@ -838,6 +838,7 @@ ${STEP_QUESTIONS_DDL}
 const INCREMENTAL_COLUMNS = {
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
+  run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v80: where the link came from, 'export' | 'import' (A6.1 D11, D13)
   req_attachments:        { fetch_json: 'TEXT' },   // v80: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
@@ -1391,7 +1392,7 @@ CREATE TABLE IF NOT EXISTS req_helper_messages (
 CREATE INDEX IF NOT EXISTS req_helper_messages_feature ON req_helper_messages(feature_seq, id);
 `;
 
-// v79 Requirements A6 (plans/requirements-a6-design.md §3): export to a tracker. The setup per project or workspace names
+// v80 Requirements A6 (plans/requirements-a6-design.md §3): export to a tracker. The setup per project or workspace names
 // a connection (plugin, source id, profile; never a config value) and the tracker project, issue type, labels, priority and
 // where the criteria go; the link per feature is its current ticket, the spec and fields as last sent, the plugin's
 // fingerprint of the stored description, and a pending create's marker (D10). Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
@@ -1472,8 +1473,8 @@ const INCREMENTAL_TABLES = {
   req_briefs:        REQUIREMENTS_BRIEFS_DDL,
   req_attachments:   REQUIREMENTS_ATTACHMENTS_DDL,
   req_helper_messages: REQUIREMENTS_HELPER_DDL,
-  req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v79 (A6)
-  req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v79 (A6)
+  req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
+  req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
 };
 
 /**
@@ -2619,11 +2620,12 @@ export function migrate(db) {
     // v78 requirements A3: req_helper_messages + ledger.helper_message_id. The repair runs again here, as at v74 and v77: a DB
     // coming from below 72 creates the ledger after the hoisted repair.
     if (current < 78) { db.exec(REQUIREMENTS_HELPER_DDL); repairSchemaGaps(db, schemaGaps(db)); }
-    // v79 requirements A6: req_export_setups + req_export_links. New tables only, so no repair call:
+    // v79: run_groups.name_source — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v80 requirements A6: req_export_setups + req_export_links (first written as v79; dev took 79). New tables only, so no repair call:
     // INCREMENTAL_TABLES creates them for a DB stamped past this rung without them.
-    if (current < 79) db.exec(REQUIREMENTS_EXPORT_DDL);
+    if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
     // v80 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS). The repair runs here, after
-    // the v77 and v79 rungs created those tables on a DB coming from below them.
+    // the v77 and v80 rungs created those tables on a DB coming from below them.
     if (current < 80) repairSchemaGaps(db, schemaGaps(db));
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');

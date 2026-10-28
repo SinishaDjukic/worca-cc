@@ -209,7 +209,7 @@ const HIST5 = Array.from({ length: 5 }, (_, i) => histIt(`d${i}`, { run: { statu
 
 test('Show / Group by: counts, Running excludes ended runs, project grouping keeps Needs you on top', () => {
   const m = buildRunsModel({ live: LIVE3, history: HIST5, show: 'running', now: NOW });   // LIVE3: ask + 2 working; HIST5: 5 done
-  assert.deepEqual(m.counts, { all: 8, needs: 1, running: 3, waiting: 0, finished: 5, archived: null });
+  assert.deepEqual(m.counts, { all: 8, needs: 1, running: 3, waiting: 0, finished: 5, ready: 5, archived: null });
   assert.deepEqual(m.sections.map((s) => s.id), ['running']);
   const p = buildRunsModel({ live: LIVE3, history: HIST5, groupBy: 'project', now: NOW });
   assert.equal(p.sections[0].id, 'needs');
@@ -248,6 +248,25 @@ test('the label filter keeps runs with ANY chosen label; a group stays when one 
   assert.equal(row4.querySelector('.label-more').textContent, '+2');
   assert.equal(row4.querySelector('.label-more').title, 'spike, release');
   assert.equal(host.querySelector('.runs-item[data-row-key="hist:worca-00000002/h0"] .runs-row-labels'), null);
+});
+
+test('Show = Ready to ship: finished git runs with no open PR, not Folder, no-project, in-review, merged or archived', () => {
+  const pr = (state) => ({ url: 'https://github.com/o/r/pull/7', number: 7, state });
+  const history = [
+    histIt('h-ready', { run: { status: 'done' } }),
+    histIt('h-closed', { run: { status: 'done', pr: pr('CLOSED') } }),
+    histIt('h-open', { run: { status: 'done', pr: pr('OPEN') } }),
+    histIt('h-merged', { run: { status: 'done', pr: pr('MERGED') } }),
+    histIt('h-folder', { run: { status: 'done', workMode: 'folder', changes: null } }),
+    histIt('h-none', { run: { status: 'done', workMode: 'none' } }),
+    histIt('h-arch', { archived: true, run: { status: 'done' } }),
+  ];
+  const m = buildRunsModel({ live: [liveIt('r')], history, show: 'ready', now: NOW });
+  assert.deepEqual(keysOf(m).sort(), ['hist:worca-00000002/h-closed', 'hist:worca-00000002/h-ready']);
+  assert.equal(m.counts.ready, 2);
+  assert.deepEqual(m.sections.map((s) => s.title), ['Ready to ship']);
+  assert.equal(buildRunsModel({ live: [liveIt('r')], history, now: NOW }).counts.ready, 2, 'counted under Show = All too');
+  assert.equal(renderRunsList(doc, buildRunsModel({ live: [liveIt('r')], show: 'ready', now: NOW })).at(-1).textContent, 'Nothing is ready to ship.');
 });
 
 test('an archived run reads "Archived" with its time under Show = Archived', () => {
