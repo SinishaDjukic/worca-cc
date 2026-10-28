@@ -121,12 +121,10 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
   input.id = id;
   wrap.append(row);
   if (extra) {
-    // M5 (boards 2, 24): the box and "times" stay together, and show only while the limit is on.
+    // M5 (boards 2, 24): the box and "times" stay together beside the switch; the box stays shown while it is off.
     const val = el(doc, 'span', 'wft-basic-val');
     val.append(extra);
     if (after) val.append(el(doc, 'span', 'wft-basic-after', after));
-    val.hidden = !input.checked;
-    input.addEventListener('change', () => { val.hidden = !input.checked; });
     wrap.append(val);
   }
   return { wrap, input };

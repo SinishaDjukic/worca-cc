@@ -264,21 +264,20 @@ test('a script check whose script left the Library says so, on its line and in i
   assert.equal(unknown.root.querySelector('.wft-sect .wft-gone'), null, 'the Library did not load: no claim either way');
 });
 
-// Browser check M5: at 390px the Basics rows wrapped badly; a box showed while its switch was off.
-test('a limit Basic: the box and "times" go together, beside the switch, and show only while it is on (M5)', () => {
+// Browser check M5: at 390px the Basics rows wrapped badly. Boards 2 and 24 keep the box beside an unticked switch.
+test('a limit Basic: the box and "times" go together, beside the switch, and stay shown while it is off (M5, boards 2, 24)', () => {
   const { root, ed } = boot();
   const val = (id) => root.querySelector(id).closest('.wft-basic-val');
   assert.ok(val('#wft-b-cost-usd') && val('#wft-b-fix-n'), 'one group per limit');
   assert.equal(val('#wft-b-fix-n').querySelector('.wft-basic-after').textContent, 'times');
-  assert.deepEqual([val('#wft-b-cost-usd').hidden, val('#wft-b-fix-n').hidden], [false, true], 'the cost limit is on, the fix limit off');
+  assert.deepEqual([val('#wft-b-cost-usd').hidden, val('#wft-b-fix-n').hidden], [false, false], 'shown whether its switch is on or off');
   const fix = root.querySelector('#wft-b-fix');
   fix.checked = true; fix.dispatchEvent(new fix.ownerDocument.defaultView.Event('change', { bubbles: true }));
-  assert.equal(val('#wft-b-fix-n').hidden, false);
   assert.equal(ed.value().basics.maxSentBack, 2, 'switched on: the box it shows counts');
   const cost = root.querySelector('#wft-b-cost');
   cost.checked = false; cost.dispatchEvent(new cost.ownerDocument.defaultView.Event('change', { bubbles: true }));
-  assert.equal(val('#wft-b-cost-usd').hidden, true);
-  assert.equal(ed.value().basics.maxCostUsd, null);
+  assert.equal(val('#wft-b-cost-usd').hidden, false);
+  assert.equal(ed.value().basics.maxCostUsd, null, 'switched off: the box it still shows does not count');
 });
 
 test('style.css: the Basics boxes keep their width and the switch keeps its label beside it at phone width (M5)', async () => {
