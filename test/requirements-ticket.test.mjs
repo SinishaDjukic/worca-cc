@@ -161,3 +161,20 @@ test('ticketHash: canonical (key order never matters), 64 hex, and any value cha
   assert.equal(a, ticketHash({ ticket: { a: 'x', b: [1, { c: 2, d: 3 }] }, mode: 'create' }));
   assert.notEqual(a, ticketHash({ mode: 'create', ticket: { a: 'y', b: [1, { c: 2, d: 3 }] } }));
 });
+
+test('A6.1 D7, D11: the ticket built for the ticket a criterion came from leaves that source out; another source stays', () => {
+  const f = { id: 'FEAT-8', title: 'Partial cancel', spec: { ...emptySpec(), criteria: [{ id: 'R-po-1', text: 'Cancel unpicked items.', source: 'SHOP-124' },
+    { id: 'R-po-2', text: 'Refund the share.', source: 'refund-matrix.pdf' }] } };
+  assert.equal(criterionLine(f.spec.criteria[0], 'SHOP-124'), 'R-po-1 Cancel unpicked items.');
+  assert.equal(criterionLine(f.spec.criteria[0]), 'R-po-1 Cancel unpicked items. (from SHOP-124)');
+  const t = buildTicket(f, { project: 'SHOP', issueType: '10001', exportedOn: '28 Oct 2026', ownKey: 'SHOP-124' });
+  assert.match(t.description, /- R-po-1 Cancel unpicked items\.\n- R-po-2 Refund the share\. \(from refund-matrix\.pdf\)\n/);
+  const field = buildTicket(f, { project: 'SHOP', issueType: '10001', exportedOn: '28 Oct 2026', ownKey: 'SHOP-124',
+    criteria: { target: 'field', field: 'customfield_10070' } });
+  assert.deepEqual(field.criteria.items, ['R-po-1 Cancel unpicked items.', 'R-po-2 Refund the share. (from refund-matrix.pdf)']);
+});
+
+test('A6.1 D11: the comment after an import says "since the import"', () => {
+  assert.equal(renderExportComment({ id: 'FEAT-8' }, [{ kind: 'goal', field: 'text', before: '', after: 'Cancel part' }], { since: '27 Oct', after: 'import' }),
+    'Updated in Worca since the import (27 Oct)\n\nGoal: added “Cancel part”\n\nFrom Worca FEAT-8\n');
+});

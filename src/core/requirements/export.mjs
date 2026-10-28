@@ -296,7 +296,8 @@ function planExport(f, body = {}, { target = { ok: false }, now = new Date() } =
     if (!link.spec) throw new RequirementsError('CONFLICT', `Update ${link.key} once to give Worca a starting point for comments.`);
     const changes = exportChanges(link.spec, f.spec);
     if (!changes.length) throw new RequirementsError('CONFLICT', 'Nothing changed since the last export.');
-    const comment = renderExportComment(f, changes, { since: exportDate(link.exportedAt, { year: false }), reason });
+    const comment = renderExportComment(f, changes, { since: exportDate(link.exportedAt, { year: false }), reason,
+      after: sinceImport(link) ? 'import' : 'export' });
     // the hash covers the connection too: a setup moved to another site between preview and send is a stale preview
     return { mode, link, setup, conn, name, reason, changes, comment, ticket: null, sent: null, fields: null,
       previewHash: ticketHash({ mode, conn: connKey(conn), key: link.key, comment }) };
@@ -306,7 +307,8 @@ function planExport(f, body = {}, { target = { ok: false }, now = new Date() } =
   // preview may change issue type, labels, priority (D6).
   const fromSetup = setup ? { projectName: setup.trackerProjectName, issueType: setup.issueType, issueTypeName: setup.issueTypeName, labels: setup.labels,
     priority: setup.priority, priorityName: setup.priorityName, criteria: setup.criteria } : {};
-  const setupRules = mode === 'update' && setup && sameConn(setup, link) && setup.trackerProject === link.trackerProject;
+  // A6.1 D11: an imported ticket keeps its own issue type and priority, so a Bug stays a Bug
+  const setupRules = mode === 'update' && link.origin !== 'import' && setup && sameConn(setup, link) && setup.trackerProject === link.trackerProject;
   const base = mode === 'update'
     ? { ...fromSetup, ...(link.fields || {}), project: link.trackerProject,
       ...(setupRules ? { issueType: setup.issueType, issueTypeName: setup.issueTypeName, priority: setup.priority, priorityName: setup.priorityName,
@@ -321,7 +323,7 @@ function planExport(f, body = {}, { target = { ok: false }, now = new Date() } =
   const foreign = mode === 'update' && !link.fields && !sameConn(setup, link);
   const criteria = !foreign && base.criteria && base.criteria.target === 'field' && base.criteria.field ? base.criteria : { target: 'description' };
   const ticket = buildTicket(f, { project: base.project, issueType, labels: Array.isArray(body.labels) ? body.labels : (base.labels || []), priority, criteria,
-    reason, exportedOn: exportDate(now.toISOString()), mentionedFiles: mentionedFiles(f).map(oneLine) });
+    reason, exportedOn: exportDate(now.toISOString()), mentionedFiles: mentionedFiles(f).map(oneLine), ownKey: mode === 'update' ? link.key : null });
   const fixed = exportLabel(f);
   const sent = { projectName: base.projectName || base.project, issueType, issueTypeName, labels: ticket.labels.filter((l) => l !== fixed), priority,
     priorityName, criteria };
@@ -350,7 +352,10 @@ function sentPlan(f, body, { target, now }) {
   throw new RequirementsError('CONFLICT', STALE, { stale: true });
 }
 
-const linkDates = (l) => ({ key: l.key, madeOn: exportDate(l.createdAt, { year: false }), lastOn: exportDate(l.exportedAt, { year: false }) });
+/** A6.1 D11: an imported link that no export has touched since. */
+const sinceImport = (l) => !!l && l.origin === 'import' && !!l.createdAt && l.exportedAt === l.createdAt;
+const linkDates = (l) => ({ key: l.key, madeOn: exportDate(l.createdAt, { year: false }), lastOn: exportDate(l.exportedAt, { year: false }),
+  origin: l.origin || 'export', importedOn: l.origin === 'import' ? exportDate(l.createdAt, { year: false }) : null, sinceImport: sinceImport(l) });
 
 /** POST …/export/preview (D6, D7, D9): the ticket or the comment exactly as it would be sent, its hash, what changed, and
  *  for a ticket the tracker's answer on it (edited, gone). No lock. */
@@ -528,7 +533,9 @@ export async function exportView(f, turns = [], d = {}) {
       // Report back moves the ticket only to the status its own connection names (D15)
       doneStatus: link && setup && sameConn(setup, link) ? setup.doneStatus || null : null,
       history: (turns || []).filter((t) => t && t.kind === 'export' && t.payload).map((t) => ({ action: t.payload.action, tracker: t.payload.tracker || null,
-        key: t.payload.key || null, url: webUrl(t.payload.url), reason: t.payload.reason || null, when: exportTime(t.payload.at || t.at),
+        key: t.payload.key || null, url: webUrl(t.payload.url), reason: t.payload.reason || null,
+        linked: t.payload.action === 'imported' ? t.payload.linked !== false : null, linkedTo: t.payload.linkedTo || null,   // A6.1: the import's entry
+        when: exportTime(t.payload.at || t.at),
         by: actorLabel(t.by) || null }))   // 'local' (a single-user install) names nobody, as board 28
         .reverse(),
     };
