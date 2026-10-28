@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { summarize, strip, runTurn, requestFacts, bigPrompt, toolResult, hostAgentCalls, assistantMessages, sumUsage,
   dryLine, runJsonl, recordingProxy, defaultUpstream, spikeContext, verdict } from '../tools/spikes/session-host/lib.mjs';
 import { main as s1 } from '../tools/spikes/session-host/s1-agents-per-resume.mjs';
+import { main as s2, definitionFacts as s2Facts } from '../tools/spikes/session-host/s2-definition-fields.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -179,4 +180,37 @@ test('S1 --dry: five turns; turns 2–5 resume; turns 2, 3 and 5 carry agents-2.
   for (const i of [1, 2, 4]) assert.match(argv[i], /--resume <session-1> --agents \S*agents-2\.json/);
   assert.match(argv[3], /--resume 00000000-0000-4000-8000-000000000000/);
   assert.doesNotMatch(argv[3], /--agents/);
+});
+
+test('S2 --dry: per CLI one control and four definition turns (10 lines), each definition with --agents', async () => {
+  const { argv } = await dryRun(s2, { WORCA_EFFORT_FLAG: '' });
+  assert.equal(argv.length, 10, argv.join('\n'));
+  assert.equal(argv.filter((l) => / --agents /.test(l)).length, 8);
+  assert.equal(argv.filter((l) => l.includes(' npx -y @anthropic-ai/claude-code@2.1.294 ')).length, 5);
+  const control = argv.filter((l) => / control: /.test(l));
+  assert.equal(control.length, 2);
+  for (const l of control) { assert.doesNotMatch(l, /--agents|--model/); assert.match(l, /--allowedTools Read /); }
+  for (const l of argv.filter((x) => / s2bare: /.test(x))) assert.match(l, /ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:<port> .*--model claude-haiku-4-5 --effort low/);
+  for (const l of argv.filter((x) => / s2: /.test(x))) assert.match(l, /--model claude-sonnet-4-5 --allowedTools Agent,Read,Bash/);
+  for (const l of argv.filter((x) => / s2m: /.test(x))) assert.match(l, /--mcp-config \S*mcp\.json/);
+});
+
+test('S2 definitionFacts: null without child evidence; a child holding Bash or running past maxTurns reads false', () => {
+  const host = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'A1', name: 'Agent', input: { subagent_type: 's2' } }] } };
+  const msg = (id, block) => ({ type: 'assistant', parent_tool_use_id: 'A1', message: { id, content: [block] } });
+  const read = (id) => ({ type: 'tool_use', id, name: 'Read', input: {} });
+  const none = { toolsRestrict: null, maxTurnsHonoured: null, childToolsWithList: null };
+  assert.deepEqual(s2Facts([]), none, 'no Agent call');
+  assert.deepEqual(s2Facts([host]), none, 'the child left no frame');
+  assert.deepEqual(s2Facts([host, msg('m1', read('R1')), msg('m2', read('R2'))]),
+    { toolsRestrict: true, maxTurnsHonoured: true, childToolsWithList: null }, 'cut after 2 messages with work left');
+  assert.equal(s2Facts([host, msg('m1', read('R1')), msg('m2', { type: 'text', text: 'x' })]).maxTurnsHonoured, null,
+    'a child that stopped by itself after 2 messages tested nothing');
+  assert.equal(s2Facts([host, msg('m1', read('R1'))]).maxTurnsHonoured, null, 'one message tested nothing');
+  assert.deepEqual(s2Facts([host, { type: 'system', subtype: 'init', parent_tool_use_id: 'A1', tools: ['Read', 'Bash'] },
+    ...['m1', 'm2', 'm3', 'm4'].map((id, i) => msg(id, read(`R${i}`)))]),
+  { toolsRestrict: false, maxTurnsHonoured: false, childToolsWithList: ['Read', 'Bash'] });
+  const bash = [host, msg('m1', { type: 'tool_use', id: 'B1', name: 'Bash', input: {} }),
+    { type: 'user', parent_tool_use_id: 'A1', message: { content: [{ type: 'tool_result', tool_use_id: 'B1', content: 's2' }] } }];
+  assert.equal(s2Facts(bash).toolsRestrict, false, 'a Bash call that ran');
 });
