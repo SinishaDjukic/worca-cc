@@ -50,6 +50,7 @@ test('the Workflows chat keeps its exact composer tool definitions (Ask\'s varia
   const defs = Object.fromEntries(tools({ id: 'x', mode: 'composer', composer: CANVAS }).list().map((d) => [d.name, d]));
   assert.match(defs.build_workflow.description, /^Propose a WHOLE workflow\. The user gets an "Apply to canvas" card;/);
   assert.equal('thenRun' in defs.build_workflow.inputSchema.properties, false);
+  assert.match(defs.edit_canvas.description, /subagentModel, session \('s_' \+ 8 lowercase letters or digits: give 2–4 consecutive agents the same id to run them in one session\) \(agents\) \| params/);
   assert.match(defs.draft_agent.description, /output contract\)\. then: \{near\?: node, ops\?: \[\.\.\.\]\} places and wires it on the canvas when the user saves it — \$new is the drafted node\. Returns the draft with its key: build_workflow may use that key in this conversation \(Apply saves the draft first\); edit_canvas refuses it until the user saves it — place and wire it through then\.$/);
   assert.match(defs.draft_script.description, /\(saved with it\)\. then: as for draft_agent\. test_script with draft: \{meta, source, sourceWin32\?\} runs it before it exists\.$/);
   assert.deepEqual(Object.keys(defs.draft_agent.inputSchema.properties).slice(-2), ['prompt', 'then']);
