@@ -11370,6 +11370,32 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 #network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
 
 
+/* The away screensaver (away-screensaver.mjs), an easter egg: the wordmark drifts over a faint network while Away
+   mode and Keep awake are on and the window sits idle. Under the session-expired notice (10000). */
+.ss{position:fixed;inset:0;z-index:9999;overflow:hidden;background:var(--bg);color:var(--ink);cursor:none;}
+.ss-net{position:absolute;inset:0;}
+.ss-block{position:absolute;top:0;left:0;width:max-content;max-width:calc(100vw - 32px);will-change:transform;}
+.ss.is-still .ss-block{top:50%;left:50%;transform:translate(-50%,-50%);}
+.ss-bubble{display:flex;align-items:center;gap:8px;width:max-content;margin:0 0 12px;padding:4px 12px;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);font-size:var(--fs-meta);visibility:hidden;}
+.ss-bubble.is-on{visibility:visible;}
+.ss-logo{width:200px;aspect-ratio:512/190;background:var(--ink);
+  -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+.ss-logo.is-squash-x{animation:ss-squash-x .35s ease-out;}
+.ss-logo.is-squash-y{animation:ss-squash-y .35s ease-out;}
+.ss-head{margin:16px 0 8px;font-size:var(--fs-section);font-weight:500;line-height:var(--lh-title);}
+.ss-caret{display:inline-block;width:6px;height:1em;margin-left:4px;vertical-align:-2px;background:var(--ink-2);animation:ss-blink 1s steps(1) infinite;}
+.ss-items{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0;list-style:none;color:var(--ink-2);font-size:var(--fs-body);}
+.ss-items li{display:flex;align-items:center;gap:8px;}
+.ss-hint{position:absolute;right:24px;bottom:16px;margin:0;color:var(--ink-2);font-size:var(--fs-caption);}
+.ss-spark{position:absolute;top:0;left:0;width:10px;height:10px;background:var(--ink-2);pointer-events:none;
+  clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);animation:ss-spark .9s ease-out forwards;}
+@keyframes ss-squash-x{30%{scale:.88 1.06;}}
+@keyframes ss-squash-y{30%{scale:1.06 .88;}}
+@keyframes ss-blink{50%{opacity:0;}}
+@keyframes ss-spark{from{opacity:.8;scale:1;}to{opacity:0;scale:.3;}}
+@media (prefers-reduced-motion: reduce){.ss-caret{animation:none;}}
+
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */
 :is(.ask-card,.chat-rc,.shape-feature) :is(.qpanel,.qblock,.af-choice,.af-form,.issue-detail,.opt-row,.shape-plan-notes,
