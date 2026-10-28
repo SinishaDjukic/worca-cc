@@ -4918,6 +4918,16 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .gp-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:6px 4px;border:0;background:none;text-align:left;color:inherit;cursor:pointer;}
 .gp-row:hover{background:var(--hover);}
 .gp-row[hidden]{display:none;}
+.gp-list{margin-top:4px;}
+.gp-row{border-radius:var(--r-sm);cursor:pointer;}   /* rows are now div[role=option], not buttons */
+.gp-row.is-active{background:var(--hover);}
+.gp-new,.gp-create{grid-template-columns:16px minmax(0,1fr);font-weight:500;}
+.group-picker .menu-h{padding:8px 4px 4px;}
+.gp-head[hidden],.group-picker .menu-sep[hidden]{display:none;}
+.gp-foot{display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 0;padding:6px 4px 0;border-top:1px solid var(--line);color:var(--ink-2);font-size:var(--fs-meta);}
+.gp-hint .kbd + .kbd{margin-left:2px;}
+/* Add to group (decision 5): the moved row's brief fill, the lighter row highlight; static, so no motion to reduce. */
+.runs-list a.runs-row.is-landed{background:var(--row-open);}
 @media (pointer: coarse){.runs-pick,.runs-row-tail{height:40px;}}
 @media (max-width: 480px){.runs-bulk-n{flex-basis:100%;}.group-picker{width:calc(100vw - 16px);}}
 .runs-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding-inline:8px;}
@@ -6656,10 +6666,12 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-out[hidden]{display:none;}
 /* Command summaries (#911): one row per command with the runs status dot; a group holds its rows in one card. */
 .ask-card.ask-cmd.is-sum{gap:0;padding:0;}
-.ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;cursor:pointer;}
+.ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:28px;padding:0 14px;cursor:pointer;}
 .ask-cmd-row:hover{background:var(--hover);}
 .ask-cmd-row-btn{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
 .ask-cmd-row-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* An 8px dot sits in the 12px slot of a symbol dot (failed "!"), so every row's text starts at one line. */
+.ask-cmd-row-btn > .status-dot:not(.has-sym){margin:0 2px;}
 .ask-cmd-sum{flex:1 1 auto;min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-cmd-sum.is-raw{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);}
 .ask-cmd-meta{flex:none;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
@@ -6694,6 +6706,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd.is-sum > .ask-cmd-warning{margin:0 14px 12px;}
 /* A group (#911): one quiet disclosure head over ONE card; the panel moves the rows in; --line between them. */
 .ask-cmd-group{display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:2px;}
+.ask-cmd-gtop{display:flex;align-items:center;gap:8px;min-width:0;}
 .ask-cmd-ghead{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;max-width:100%;min-height:28px;padding:0 8px;margin-left:-8px;
   border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:inherit;font-size:13px;cursor:pointer;}
 .ask-cmd-ghead:hover{background:var(--hover);}
@@ -9192,6 +9205,10 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-expand:hover{color:var(--ink);background:var(--hover);}
 .chat-rc-expand:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-expand[hidden]{display:none;}
+/* Expand's overlay (chat/run-graph-overlay.mjs): the large workflow pop-up (.wf-pop) around a run monitor host that
+   fills its canvas (mountRunGraph `fill`): no --run-host-h height, and none of the page wrap's margin, border or corner. */
+.chat-rc-zoom .run-flow-wrap.wf-pop-canvas{flex:1 1 0;height:auto;margin:0;border:0;border-radius:0;}
+.chat-rc-zoom-acts{display:flex;align-items:center;gap:8px;flex:none;}
 .chat-rc-q{margin-top:14px;}
 .chat-rc-q[hidden]{display:none;}
 /* The question is the Runs page's ask card: the `:is(.rd-questions,.chat-rc-q)` rules of the questions panel block draw

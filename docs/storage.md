@@ -178,6 +178,11 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
   `src/core/run-groups.mjs` checks it. A feature's own slices are not rows here: they come from `shape_feature_slices`.
   Removing the last member of a user group deletes the group. Shipping a user group as one PR writes a branch named
   after the group (`worca-cc/` + slug + group id) and records the PR on every member's `pr_url`; no new column.
+- `run_groups.name_source` (v79) is `'suggested'` or `'user'`, as `ask_chat_groups.name_source`: whether Smart naming
+  named the group. Add to group takes several runs; a run already in another user group moves (the group it leaves is
+  deleted once empty), and a Shaper slice is skipped. Its Undo is an in-memory one-shot token
+  (`src/core/undo-tokens.mjs`, 10 minutes, per actor): it puts each run back, recreating a group the move deleted with
+  its id, title and source. Nothing about Undo is stored; a restart drops the tokens.
 - `pipelines.deleted_at` marks a run deleted from the Runs list. Delete keeps an anonymised row (title "deleted run",
   no prompt, no starter, no tags, no group) so its cost stays in Statistics; every feed skips it.
 - `pipelines.pr_verdict` is the last CI, mergeability, draft and review verdict the PR refresh read for an open GitHub

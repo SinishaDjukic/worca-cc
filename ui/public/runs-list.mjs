@@ -307,13 +307,16 @@ export const dispatchOf = (r) => (Number.isFinite(r.dispatchMs) ? r.dispatchMs :
 const byDispatch = (a, b) => dispatchOf(b) - dispatchOf(a);
 export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.needsIcon || a.icon] ?? 3) - (NEEDS_RANK[b.needsIcon || b.icon] ?? 3)) || byDispatch(a, b);
 
-export const RUNS_SHOW = Object.freeze(['all', 'needs', 'running', 'waiting', 'finished', 'archived']);
+export const RUNS_SHOW = Object.freeze(['all', 'needs', 'running', 'waiting', 'finished', 'ready', 'archived']);
 /** D10: a run that has not started (clarify: one-off only): an after-ticket, a one-off timed ticket, or a group whose
  *  next member is one. A series occurrence and a missed ticket stay in Recent. */
 const isWaiting = (r) => r.model.state === 'waiting' && !(r.kind === 'sched' && (r.scheduleId || r.status === 'missed'));
 export const RUNS_GROUP_BY = Object.freeze(['none', 'project', 'date']);
 export const RECENT_PAGE = 20;
 const ENDED_STATES = new Set(['failed', 'stopped', 'ready', 'in-review', 'merged']);
+// Ready to ship: a finished git run (or group) with no open PR. A Folder or no-project run is 'ready' too, but its word
+// is Finished / Applied / Discarded (run-model.mjs finishedWords): nothing to ship, so it stays out.
+const isReadyToShip = (r) => r.model.state === 'ready' && r.model.word === 'Ready';
 const RUNNING_STATES = new Set(['starting', 'working', 'paused', 'needs-you']);
 const LIVE_MEMBER = new Set(['starting', 'working', 'needs-you', 'paused', 'failed']);
 const STAGED = (m) => (m && m.progress && m.progress.mode === 'stages' ? m.progress.label : '');
@@ -337,6 +340,7 @@ export function rowShow(row, show) {
   // A run raised to Needs you by its PR (D31, model.prNeeds) is finished: it lists under Finished, not Running.
   if (show === 'running') return !ENDED_STATES.has(row.model.state) && !row.model.prNeeds && !isWaiting(row);
   if (show === 'finished') return ENDED_STATES.has(row.model.state) || !!row.model.prNeeds;
+  if (show === 'ready') return isReadyToShip(row);
   return true;
 }
 
@@ -503,6 +507,7 @@ export function buildRunsModel({
   const counts = {
     all: top.filter((r) => !r.archived).length, needs: top.filter((r) => rowShow(r, 'needs')).length,
     running: top.filter((r) => rowShow(r, 'running')).length, waiting: top.filter((r) => rowShow(r, 'waiting')).length, finished: top.filter((r) => rowShow(r, 'finished')).length,
+    ready: top.filter((r) => rowShow(r, 'ready')).length,
     archived: archivedCount,
   };
   const shown = top.filter((r) => rowShow(r, view.show));
@@ -510,7 +515,7 @@ export function buildRunsModel({
   const sections = [];
   const push = (id, title, rows, extra = {}) => { if (rows.length) sections.push({ id, title, rows, count: rows.length, ...extra }); };
   if (view.show !== 'all') {
-    const titles = { needs: 'Needs you', running: 'Running', waiting: 'Waiting', finished: 'Finished', archived: 'Archived' };
+    const titles = { needs: 'Needs you', running: 'Running', waiting: 'Waiting', finished: 'Finished', ready: 'Ready to ship', archived: 'Archived' };
     const id = ['needs', 'running', 'waiting'].includes(view.show) ? view.show : 'recent';
     push(id, titles[view.show], view.show === 'needs' ? shown.sort(cmpNeeds) : shown.sort(byDispatch));
   } else {
@@ -694,7 +699,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   return item;
 }
 
-const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No running runs.', waiting: 'Nothing is waiting.', finished: 'No finished runs yet.', archived: 'No archived runs.' });
+const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No running runs.', waiting: 'Nothing is waiting.', finished: 'No finished runs yet.', ready: 'Nothing is ready to ship.', archived: 'No archived runs.' });
 
 /** The list's children: one section element each, then the empty note and the error note. */
 /** §5a.2: the empty list's note before History has answered, and while the server is unreachable. */

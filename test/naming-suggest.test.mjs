@@ -70,3 +70,10 @@ test('suggestGroupName: one call on the picked model; a usable name, else a fall
   assert.equal((await suggestGroupName({ chats: [] }, { run })).source, 'fallback');
   assert.equal(parseGroupName('{"name":"Release prep."}'), 'Release prep');
 });
+
+test('groupNamePrompt for runs: "Runs:" and each run\'s prompt as "Prompt"', () => {
+  const p = groupNamePrompt([{ title: 'Fix', firstMessage: 'Do x' }], { of: 'runs' });
+  assert.ok(p.startsWith('Runs:'));
+  assert.match(p, /Prompt: Do x/);
+  assert.doesNotMatch(p, /First message/);
+});

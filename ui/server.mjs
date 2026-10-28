@@ -148,6 +148,7 @@ import {
   createChatGroup as askCreateChatGroup, getChatGroup as askGetChatGroup, listChatGroups as askListChatGroups,
   renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
   deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
+  snapshotChatGroups as askSnapshotChatGroups, restoreChatGroups as askRestoreChatGroups,
   ChatGroupError,
 } from '../src/core/ask/store.mjs';
 import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
@@ -379,7 +380,8 @@ import { REFS_MAX } from '../src/shared/chip-refs.mjs';
 import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
 import { runBulk } from '../src/core/run-bulk.mjs';
 import { BULK_ACTIONS } from '../src/shared/run-bulk.mjs';
-import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, groupMembers, RunGroupError } from '../src/core/run-groups.mjs';
+import { listRunGroups, createRunGroup, addRunsToGroup, removeFromGroup, groupMembers, RunGroupError, restoreRunGroups, runNameInputs, skipError } from '../src/core/run-groups.mjs';
+import { rememberUndo, takeUndo } from '../src/core/undo-tokens.mjs';
 import { runModel } from '../src/shared/run-model.mjs';
 import { runModelFor } from '../src/core/run-status.mjs';
 import {
@@ -7618,18 +7620,45 @@ app.get('/api/run-links/:runId', (req, res) => {
   res.json(t);
 });
 app.get('/api/run-groups', (req, res) => { try { res.json({ groups: listRunGroups() }); } catch (err) { groupError(res, err); } });
+/** The run ids of a group write: `pipelineIds` (1-200), or the one-run `pipelineId`; null after answering 400. */
+function runGroupIds(res, body) {
+  const raw = Array.isArray(body?.pipelineIds) ? body.pipelineIds : (body?.pipelineId ? [body.pipelineId] : null);
+  if (!raw || !raw.length || raw.length > 200 || raw.some((x) => typeof x !== 'string' || !x)) {
+    badRequest(res, 'pipelineIds must list 1 to 200 run ids');
+    return null;
+  }
+  return [...new Set(raw)];
+}
 app.post('/api/run-groups', (req, res) => {
   try {
-    const g = createRunGroup({ title: req.body?.title, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    const ids = runGroupIds(res, req.body);
+    if (!ids) return;
+    const by = actorOf(req);
+    const g = createRunGroup({ title: req.body?.title ?? req.body?.name, nameSource: req.body?.nameSource ?? 'user', pipelineIds: ids, by });
+    const undo = rememberUndo(() => restoreRunGroups(g.snap), { scope: 'run-groups', by });
     emitChanged('run-groups-changed', 'created');
-    res.status(201).json({ group: g });
+    res.status(201).json({ group: { id: g.id, title: g.title, nameSource: g.nameSource }, added: g.added, skipped: g.skipped, undo });
   } catch (err) { groupError(res, err); }
 });
 app.post('/api/run-groups/:id/members', (req, res) => {
   try {
-    const r = addToGroup({ groupId: req.params.id, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    const ids = runGroupIds(res, req.body);
+    if (!ids) return;
+    const by = actorOf(req);
+    const r = addRunsToGroup({ groupId: req.params.id, pipelineIds: ids, by });
+    if (!r.added.length) throw skipError(r.skipped[0]);   // nothing joined: the one-run refusal (409 / 404), as before
+    const undo = rememberUndo(() => restoreRunGroups(r.snap), { scope: 'run-groups', by });
     emitChanged('run-groups-changed', 'added');
-    res.json({ ok: true, ...r });
+    res.json({ ok: true, groupId: r.groupId, group: r.group, added: r.added, skipped: r.skipped, undo });
+  } catch (err) { groupError(res, err); }
+});
+app.post('/api/run-groups/undo', (req, res) => {
+  try {
+    const run = takeUndo(req.body?.token, { scope: 'run-groups', by: actorOf(req) });
+    if (!run) return res.status(410).json({ error: 'That can no longer be undone.', code: 'UNDO_GONE' });
+    run();
+    emitChanged('run-groups-changed', 'undone');
+    res.json({ ok: true });
   } catch (err) { groupError(res, err); }
 });
 app.delete('/api/run-groups/members/:pipelineId', (req, res) => {
@@ -15423,9 +15452,11 @@ app.post('/api/ask/groups', (req, res) => {
     const b = req.body || {};
     const ids = askGroupThreads(req, res, b.threadIds);
     if (!ids) return;
+    const snap = askSnapshotChatGroups(ids);
     const group = askCreateChatGroup({ name: b.name, nameSource: b.nameSource, threadIds: ids, createdBy: actorOf(req) });
+    const undo = rememberUndo(() => askRestoreChatGroups({ ...snap, created: group.id }), { scope: 'ask-groups', by: actorOf(req) });
     emitChanged('ask-groups-changed', 'created');
-    res.status(201).json({ group });
+    res.status(201).json({ group, undo });
   } catch (err) { chatGroupError(res, err); }
 });
 
@@ -15445,9 +15476,11 @@ app.post('/api/ask/groups/:id/threads', (req, res) => {
     if (!g) return;
     const ids = askGroupThreads(req, res, req.body?.threadIds);
     if (!ids) return;
+    const snap = askSnapshotChatGroups(ids);
     const group = askAddToChatGroup(g.id, ids);
+    const undo = rememberUndo(() => askRestoreChatGroups(snap), { scope: 'ask-groups', by: actorOf(req) });
     emitChanged('ask-groups-changed', 'moved');
-    res.json({ group });
+    res.json({ group, undo });
   } catch (err) { chatGroupError(res, err); }
 });
 
@@ -15502,6 +15535,16 @@ app.delete('/api/ask/groups/:id', async (req, res) => {
   } catch (err) { if (!res.headersSent) chatGroupError(res, err); }
 });
 
+app.post('/api/ask/groups/undo', (req, res) => {
+  try {
+    const run = takeUndo(req.body?.token, { scope: 'ask-groups', by: actorOf(req) });
+    if (!run) return res.status(410).json({ error: 'That can no longer be undone.', code: 'UNDO_GONE' });
+    run();
+    emitChanged('ask-groups-changed', 'undone');
+    res.json({ ok: true });
+  } catch (err) { chatGroupError(res, err); }
+});
+
 // POST /api/ask/groups/suggest-name {threadIds} -> { source: 'model', name } | { source: 'fallback', error }.
 // The Run naming helper model (namingPick); the prompt carries each chat's title and first message only.
 app.post('/api/ask/groups/suggest-name', namingOn, async (req, res) => {
@@ -15516,6 +15559,27 @@ app.post('/api/ask/groups/suggest-name', namingOn, async (req, res) => {
     res.on('close', () => { if (!res.writableEnded) ac.abort(); });
     const pick = await namingPick();
     const r = await suggestGroupName({ chats, signal: ac.signal },
+      { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
+    res.json(r.source === 'model' ? { source: 'model', name: r.name } : { source: 'fallback', error: r.error });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }
+});
+
+// POST /api/run-groups/suggest-name {pipelineIds} -> { source: 'model', name } | { source: 'fallback', error }. Registered
+// here, not beside the other run-group routes: `namingOn` is declared above and would be in its TDZ there.
+// The prompt carries each run's title and prompt only.
+app.post('/api/run-groups/suggest-name', namingOn, async (req, res) => {
+  try {
+    const ids = runGroupIds(res, req.body);
+    if (!ids) return;
+    const runs = runNameInputs(ids);
+    if (!runs) return res.status(404).json({ error: 'run not found' });
+    if (!namingBucket.tryConsume()) return res.status(429).json({ error: 'too many suggestions, try again in a moment' });
+    if (budgetStatus().blocked) return res.json({ source: 'fallback', error: 'total cost limit reached' });
+    if (mockEnabled({})) return res.json({ source: 'model', name: 'Mock group' });
+    const ac = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const pick = await namingPick();
+    const r = await suggestGroupName({ chats: runs, of: 'runs', signal: ac.signal },
       { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
     res.json(r.source === 'model' ? { source: 'model', name: r.name } : { source: 'fallback', error: r.error });
   } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }

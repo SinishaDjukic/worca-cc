@@ -226,7 +226,7 @@ test('setSummary: a raw row takes the generated line in place; a chat-given summ
   assert.equal(given.el.querySelector('.ask-cmd-sum').textContent, SUM.summary);
 });
 
-test('summary mode: a failure opens itself with its output, red ! dot, "exit 1 · 38s"', () => {
+test('summary mode: a failure stays folded, red ! dot, "exit 1 · 38s"; a click shows its output', () => {
   const doc = dom(); const rows = []; const folds = [];
   const c = createCommandCard({ doc, card: SUM, onStop: () => {}, summarise: true, onRowToggle: (o) => rows.push(o), onToggle: (o) => folds.push(o) });
   c.update({ status: 'done', exitCode: 1, durationMs: 38_000, tail: '✖ badge\nℹ fail 1' });
@@ -234,22 +234,23 @@ test('summary mode: a failure opens itself with its output, red ! dot, "exit 1 �
   assert.ok(dot.classList.contains('is-red') && dot.classList.contains('has-sym'));
   assert.ok(c.el.querySelector('.ask-cmd-row-btn').getAttribute('aria-label').startsWith('Failed: '));
   assert.equal(c.el.querySelector('.ask-cmd-meta').textContent, 'exit 1 · 38s');
+  assert.ok(c.el.classList.contains('is-failed'));
+  assert.equal(c.el.querySelector('.ask-cmd-detail').hidden, true, 'a failure does not open the row');
+  assert.deepEqual(rows, []);
+  c.el.querySelector('.ask-cmd-row-btn').click();
   assert.equal(c.el.querySelector('.ask-cmd-detail').hidden, false);
   assert.equal(c.el.querySelector('.ask-cmd-outbox').hidden, false);
-  assert.ok(c.el.classList.contains('is-failed'));
-  assert.deepEqual(rows, [true], 'the auto-open is reported once, so the panel keeps it');
+  assert.deepEqual(rows, [true]);
   assert.deepEqual(folds, [], 'the row has one fold: the full card\'s onToggle is never called');
 });
 
-test('summary mode: a failure opens once; a row the person closed stays closed on later frames', () => {
+test('summary mode: a failed row the person opened stays open on later frames', () => {
   const doc = dom();
-  const c = createCommandCard({ doc, card: SUM, onStop: () => {}, summarise: true });
+  const c = createCommandCard({ doc, card: SUM, onStop: () => {}, summarise: true, rowOpen: true });
   c.update({ status: 'done', exitCode: 1, durationMs: 1000, tail: 'x' });
   assert.equal(c.el.querySelector('.ask-cmd-detail').hidden, false);
-  c.el.querySelector('.ask-cmd-row-btn').click();
-  assert.equal(c.el.querySelector('.ask-cmd-detail').hidden, true);
   c.update({ status: 'done', exitCode: 1, durationMs: 1000, tail: 'x\ny' });
-  assert.equal(c.el.querySelector('.ask-cmd-detail').hidden, true);
+  assert.equal(c.el.querySelector('.ask-cmd-detail').hidden, false);
 });
 
 test('summary mode: a person who closed a failed row keeps it closed (rowOpen false)', () => {
@@ -352,50 +353,54 @@ test('summary mode: opening the row shows the output directly (no inner Output t
   c.destroy();
 });
 
-test('createCommandGroup: a quiet head over one body; folds once all passed; a click is the person\'s choice', () => {
+test('createCommandGroup: a quiet head over one body, folded while running and once passed; a click is the person\'s choice', () => {
   const doc = dom(); const choices = [];
   const g = createCommandGroup({ doc, onToggle: (o) => choices.push(o) });
   const head = g.el.querySelector('.ask-cmd-ghead');
   assert.equal(head.getAttribute('aria-controls'), g.body.id);
-  g.update([{ status: 'done', exitCode: 0, durationMs: 1000 }, { status: 'running', startedAt: 0 }], { now: 2000 });
-  assert.equal(head.querySelector('.ask-cmd-gwords').textContent, 'Running 2 commands · 3.0s');
-  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  g.update([{ status: 'done', exitCode: 0, durationMs: 1000 }, { status: 'running', startedAt: 0 }], { now: 2000, current: 'Run the ui tests' });
+  assert.equal(head.querySelector('.ask-cmd-gwords').textContent, 'Run the ui tests · 2 commands · 3.0s');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.equal(g.body.hidden, true, 'running: folded to the head line');
   const passed = [{ status: 'done', exitCode: 0, durationMs: 1000 }, { status: 'done', exitCode: 0, durationMs: 2000 }];
   g.update(passed);
-  assert.equal(g.body.hidden, true, 'all passed: folded to the head line');
+  assert.equal(g.body.hidden, true);
   assert.equal(head.querySelector('.ask-cmd-gwords').textContent, 'Ran 2 commands · 3.0s');
-  assert.deepEqual(choices, [], 'an automatic fold is not a choice');
+  assert.deepEqual(choices, []);
   head.click();
   g.update(passed);
-  assert.equal(g.body.hidden, false, 'the person\'s open wins over the auto-fold');
+  assert.equal(g.body.hidden, false, 'the person\'s open stays');
   assert.deepEqual(choices, [true]);
 });
 
-test('createCommandGroup: a failure opens it ONCE with a red "1 failed"; a later close stays closed; a recorded false wins', () => {
+test('createCommandGroup: a failure stays folded with a red "1 failed"; a recorded open wins', () => {
   const doc = dom(); const choices = [];
   const views = [{ status: 'done', exitCode: 0, durationMs: 1000 }, { status: 'done', exitCode: 1, durationMs: 500 }];
   const g = createCommandGroup({ doc, onToggle: (o) => choices.push(o) });
   g.update(views);
-  assert.equal(g.body.hidden, false);
-  assert.equal(g.el.querySelector('.ask-cmd-gfail').textContent, '1 failed');
-  g.el.querySelector('.ask-cmd-ghead').click();
-  g.update(views);
   assert.equal(g.body.hidden, true);
-  assert.deepEqual(choices, [true, false]);
-  const again = createCommandGroup({ doc, choice: false });
+  assert.equal(g.el.querySelector('.ask-cmd-gfail').textContent, '1 failed');
+  assert.deepEqual(choices, [], 'no auto-open is recorded');
+  const again = createCommandGroup({ doc, choice: true });
   again.update(views);
-  assert.equal(again.body.hidden, true, 'rebuilt with the recorded close: no second auto-open');
+  assert.equal(again.body.hidden, false, 'rebuilt with the recorded open');
 });
 
-test('createCommandGroup: an auto-fold moves the focus from a hidden row control to the head', () => {
-  const doc = dom(); doc.body.innerHTML = '';
-  const g = createCommandGroup({ doc });
-  doc.body.appendChild(g.el);
-  const inner = doc.createElement('button');
-  g.body.appendChild(inner);
-  g.update([{ status: 'done', exitCode: 0, durationMs: 100 }, { status: 'running', startedAt: 0 }], { now: 1000 });
-  inner.focus();
-  g.update([{ status: 'done', exitCode: 0, durationMs: 100 }, { status: 'done', exitCode: 0, durationMs: 900 }]);
-  assert.equal(g.body.hidden, true);
-  assert.equal(doc.activeElement, g.el.querySelector('.ask-cmd-ghead'));
+test('createCommandGroup: Stop on the head while a member runs and the group is folded; opened, the row\'s Stop takes over', () => {
+  const doc = dom(); let stops = 0;
+  const g = createCommandGroup({ doc, onStop: () => { stops += 1; } });
+  const stop = g.el.querySelector('.ask-cmd-gtop > .ask-cmd-stop');
+  const running = [{ status: 'done', exitCode: 0, durationMs: 100 }, { status: 'running', startedAt: 0 }];
+  g.update(running, { now: 1000 });
+  assert.equal(stop.hidden, false);
+  stop.click();
+  assert.equal(stops, 1);
+  assert.equal(stop.disabled, true, 'one click');
+  assert.equal(g.body.hidden, true, 'Stop never opens the group');
+  g.el.querySelector('.ask-cmd-ghead').click();
+  assert.equal(stop.hidden, true, 'open: the running row shows its own Stop');
+  g.el.querySelector('.ask-cmd-ghead').click();
+  g.update([{ status: 'done', exitCode: 0, durationMs: 100 }, { status: 'stopped', durationMs: 900 }]);
+  assert.equal(stop.hidden, true);
+  assert.equal(stop.disabled, false);
 });
