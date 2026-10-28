@@ -296,10 +296,10 @@ Built with upstream's classes as A6 and A8 are (`.card`, `.btn` / `.btn-mini` / 
   title and description with SHOP-131's?" **Replace** / **Keep mine** (the criteria and files are replaced either way).
 - Leaving New feature drops the import (nothing was stored).
 - Build's "Files for the run" line for a tracker file whose download failed or was refused (the user, copy Q3; A8's "<name>
-  cannot go with the run: …"): "<name> cannot go with the run: <the download's own sentence>", without the Files card's "The
-  interview lists it by name only.", e.g. "partial-cancel-flow.pdf cannot go with the run: Worca could not get this file from
-  Jira: it did not answer within 2 minutes." and "scan-notes.pdf cannot go with the run: Worca could not use this file: it is
-  already attached as call-notes.pdf."
+  cannot go with the run: …"): "<name> cannot go with the run: <the download's reason>.", e.g. "partial-cancel-flow.pdf cannot
+  go with the run: it did not answer within 2 minutes." and "scan-notes.pdf cannot go with the run: it is already attached as
+  call-notes.pdf."; a file a restart cut off has no reason of its own and keeps the server's sentence: "restart-cut.png cannot
+  go with the run: Worca restarted before it got this file from Jira."
 
 ## 8. Code changes
 

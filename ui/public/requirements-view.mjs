@@ -1660,8 +1660,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // the Files card's failed line for a tracker file whose download failed or was refused: the server's words (A6.1 D10)
   const downloadSaid = (a) => (a.error.code === 'DOWNLOAD' ? `${String(a.error.message || '')} The interview lists it by name only.` : String(a.error.message || ''));
   // the Build chip's line for such a file (copy Q3, the user's call): A8's "<name> cannot go with the run: …" with the download's own
-  // reason, without the Files card's interview tail
-  const cannotGoDownload = (a) => `${a.name} cannot go with the run: ${String(a.error.message || '')}`;
+  // reason alone ("…: it did not answer within 2 minutes."), without the Files card's interview tail; a file a restart cut off
+  // (INTERRUPTED) has no reason of its own and keeps the server's sentence
+  const cannotGoDownload = (a) => `${a.name} cannot go with the run: ${a.error.reason ? `${String(a.error.reason)}.` : String(a.error.message || '')}`;
   function filesForRun(f) {
     const files = Array.isArray(f.attachments) ? f.attachments : [];
     const docs = Array.isArray(f.briefDocuments) ? f.briefDocuments : [];

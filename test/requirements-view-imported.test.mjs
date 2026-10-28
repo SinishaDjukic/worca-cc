@@ -142,7 +142,8 @@ test('board 36 (9–11): a download that failed (Try again, one post per press),
   m.view.destroy();
 });
 
-const dlFailed = (id, name, code, message) => file(id, name, 'binary', 1258291, 'failed', { error: { code, message, job: 'download', at: 't' } });
+const dlFailed = (id, name, code, message, reason) => file(id, name, 'binary', 1258291, 'failed',
+  { error: { code, message, ...(reason ? { reason } : {}), job: 'download', at: 't' } });
 const DL_MSG = 'Worca could not get this file from Jira: it did not answer within 2 minutes.';
 
 test('board 36: while the feature is busy (locked) Try again is disabled; once it is free it works', async () => {
@@ -173,19 +174,23 @@ test("board 18/36: the Build chip for a download that failed says it cannot go w
   const id = 'ratt_000000000003';
   const ready = (attachments) => feature({ busy: false, status: 'done', state: 'ready', rounds: 1, attachments,
     readiness: { ok: true, passed: 6, total: 6, checks: [], overridable: false } });
-  const m = await openFeature(ready([dlFailed(id, 'partial-cancel-flow.pdf', 'DOWNLOAD', DL_MSG),
-    dlFailed('ratt_000000000005', 'scan-notes.pdf', 'REFUSED', 'Worca could not use this file: it is already attached as call-notes.pdf.'),
+  const m = await openFeature(ready([dlFailed(id, 'partial-cancel-flow.pdf', 'DOWNLOAD', DL_MSG, 'it did not answer within 2 minutes'),
+    dlFailed('ratt_000000000005', 'scan-notes.pdf', 'REFUSED', 'Worca could not use this file: it is already attached as call-notes.pdf.',
+      'it is already attached as call-notes.pdf'),
+    dlFailed('ratt_000000000006', 'restart-cut.png', 'INTERRUPTED', 'Worca restarted before it got this file from Jira.'),
     file('ratt_000000000004', 'support-macro.txt', 'text', 4096, 'downloading')]));
   const bad = [...m.host.querySelectorAll('.req-build-files-bad')].map((l) => text(l));
-  assert.deepEqual(bad, [`partial-cancel-flow.pdf cannot go with the run: ${DL_MSG}`,
-    'scan-notes.pdf cannot go with the run: Worca could not use this file: it is already attached as call-notes.pdf.']);
+  // the reason alone, one colon (copy Q3); a file a restart cut off has no reason and keeps the server's sentence
+  assert.deepEqual(bad, ['partial-cancel-flow.pdf cannot go with the run: it did not answer within 2 minutes.',
+    'scan-notes.pdf cannot go with the run: it is already attached as call-notes.pdf.',
+    'restart-cut.png cannot go with the run: Worca restarted before it got this file from Jira.']);
   assert.ok(bad.every((t) => !t.includes('by name only')), "the interview tail is the Files card's, not the run's");
   assert.ok(bad.every((t) => !t.includes('stored file')));
   assert.equal(text(row(m.host, id).querySelector('.req-file-failed-text')),
-    `${DL_MSG} The interview lists it by name only.`, 'the same sentence as the Files card');
+    `${DL_MSG} The interview lists it by name only.`, "the Files card keeps the server's whole sentence");
   const chips = [...m.host.querySelectorAll('.req-fpick')];
-  assert.deepEqual(chips.map((c) => c.disabled), [true, true, true], 'off and disabled');
-  assert.equal(text(chips[2]), 'support-macro.txt Downloading…');
+  assert.deepEqual(chips.map((c) => c.disabled), [true, true, true, true], 'off and disabled');
+  assert.equal(text(chips[3]), 'support-macro.txt Downloading…');
   m.view.destroy();
 });
 
