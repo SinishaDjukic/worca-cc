@@ -144,6 +144,10 @@ test('summary rows: one line, a group is one card under a quiet head, the raw co
   assert.match(ruleBody('.ask-cmd-gfail'), /color:var\(--red-ink\)/);
   assert.match(ruleBody('.ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum'), /border-top:1px solid var\(--line\)/);
   assert.doesNotMatch(bare, /\.ask-cmd\.in-group/, 'no more stacked cards');
+  // A lone command is a line like the group head: no card, no dot, muted words.
+  assert.match(ruleBody('.ask-card.ask-cmd.is-sum:not(.ask-cmd-gbody > *)'), /border:0;border-radius:0;background:none;/);
+  assert.match(ruleBody('.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn > .status-dot'), /display:none;/);
+  assert.match(ruleBody('.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-row'), /color:var\(--ink-2\);font-size:13px;/);
   assert.match(ruleBody('.ask-cmd-outbox .ask-cmd-out'), /max-height:min\(400px,50vh\);/);
   assert.match(ruleBody('.ask-cmd-code'), /font-size:12px;line-height:1\.6;/);
   assert.equal(ruleBody('.chat-convo .ask-msg > .ask-cmd-group'), null, 'a group fills the text column like every card (#959)');
