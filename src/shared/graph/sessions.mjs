@@ -4,7 +4,9 @@
 // canvas host and the runtime read THIS; nothing keeps a second copy. Pure (browser + Node) and crash-free: a bad
 // template is the validator's to report, so this filters and never throws.
 import { classifyLoops } from './loops.mjs';
-import { SESSION_ID_RE, SESSION_MODES } from './constants.mjs';
+import { SESSION_ID_RE, SESSION_MODES, MAX_SESSION_MEMBERS, SESSION_MIN_MEMBERS } from './constants.mjs';
+import { mintId, normalizeSessions } from './template.mjs';
+import { ENGINES, engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../engine-switch.mjs';
 
 export const SESSION_DEFAULT_LABEL = 'One session';
 const FLOW_IN_CLOSURE = new Set(['and', 'or', 'combine']);   // task and end never ride inside a session
@@ -144,3 +146,170 @@ export function sessionsOf(tpl, portsFn, { loops = null } = {}) {
 
 /** The runtime's name for it (Task 44 resolves sessions once, in _sessionGate). */
 export const resolveSessions = sessionsOf;
+
+// ── Legality (04 §2.1, 05 §3.2): the toolbar menu, ⌘G, the inspector and chat ops all ask THESE ──
+
+/** "Consecutive", connectivity FIRST (a gap a deleted middle member leaves reads "not wired together", never "runs
+ *  between"), then convexity: no path leaves the closure and comes back through an outside card. */
+export function consecutiveIssue(tpl, portsFn, members, { loops = null } = {}) {
+  const g = sessionGraph(tpl, portsFn, loops);
+  const spec = specFor(g, null, Array.isArray(members) ? members : [], null);
+  if (spec.members.length < SESSION_MIN_MEMBERS) return null;
+  const inC = new Set(spec.closure);
+  const reached = new Set([spec.members[0]]);
+  const todo = [spec.members[0]];
+  while (todo.length) {
+    const id = todo.pop();
+    for (const o of [...g.next.get(id), ...g.prev.get(id)]) if (inC.has(o) && !reached.has(o)) { reached.add(o); todo.push(o); }
+  }
+  const apart = spec.members.find((m) => !reached.has(m));
+  if (apart) return { kind: 'disconnected', a: spec.members[0], b: apart };
+  // Outside cards reached from `starts`, walking only outside cards; `hits` collects the closure cards run into.
+  const walk = (starts, step, hits = null) => {
+    const seen = new Set();
+    const stack = [...starts];
+    while (stack.length) {
+      for (const o of step.get(stack.pop()) || []) {
+        if (inC.has(o)) { if (hits) hits.add(o); continue; }
+        if (!seen.has(o)) { seen.add(o); stack.push(o); }
+      }
+    }
+    return seen;
+  };
+  const out = walk(spec.closure, g.next);
+  const back = walk(spec.closure, g.prev);
+  const via = [...out].filter((id) => back.has(id)).sort(g.byRank)[0];
+  if (via === undefined) return null;
+  const entered = new Set();
+  walk([via], g.next, entered);
+  return { kind: 'between', via, a: spec.closure.find((c) => walk([c], g.next).has(via)), b: spec.closure.find((c) => entered.has(c)) };
+}
+
+/** May `ids` form a session? `ids` is the whole prospective set; it may extend one existing session, never two. */
+export function sessionLegal(tpl, portsFn, ids, { labelOf = (id) => id, loops = null } = {}) {
+  const byId = new Map((Array.isArray(tpl?.nodes) ? tpl.nodes : []).filter((n) => isObj(n) && typeof n.id === 'string').map((n) => [n.id, n]));
+  const want = [...new Set(Array.isArray(ids) ? ids : [])];
+  for (const id of want) {
+    const n = byId.get(id);
+    if (!n) return { ok: false, code: 'V25', reason: 'not on the canvas' };
+    if (n.kind === 'script') return { ok: false, code: 'V25', reason: 'a script runs on its own' };
+    if (n.kind !== 'agent') return { ok: false, code: 'V25', reason: 'flow cards ride along, they are never steps' };
+  }
+  // Membership (05 §3.2 rule 2): the ids may extend ONE existing session; a card in a different one never moves.
+  const sids = new Set(want.map((id) => sessionIdOf(byId.get(id))).filter((sid) => sid !== null && SESSION_ID_RE.test(sid)));
+  if (sids.size > 1) return { ok: false, code: 'V25', reason: 'in another session' };
+  if (want.length > MAX_SESSION_MEMBERS) return { ok: false, code: 'V26', reason: `${MAX_SESSION_MEMBERS} steps max` };
+  if (want.length < SESSION_MIN_MEMBERS) return { ok: false, code: 'V26', reason: `a session needs ${SESSION_MIN_MEMBERS} steps` };
+  const issue = consecutiveIssue(tpl, portsFn, want, { loops });
+  if (!issue) return { ok: true };
+  return { ok: false, code: 'V27', reason: issue.kind === 'disconnected'
+    ? `${labelOf(issue.a)} and ${labelOf(issue.b)} aren't wired together`
+    : `${labelOf(issue.via)} runs between ${labelOf(issue.a)} and ${labelOf(issue.b)}` };
+}
+
+/** The agents that may join session `sid` (or pair with card `nodeId`; a member asks for its own session). */
+export function sessionCandidates(tpl, portsFn, { sid = null, nodeId = null, labelOf = (id) => id } = {}) {
+  const loops = classifyLoops(tpl, portsFn);
+  const g = sessionGraph(tpl, portsFn, loops);
+  const sidOf = (id) => { const s = sessionIdOf(g.byId.get(id)); return s !== null && SESSION_ID_RE.test(s) ? s : null; };
+  const isAgent = (id) => g.byId.get(id)?.kind === 'agent';
+  const own = sid || (isAgent(nodeId) ? sidOf(nodeId) : null);
+  const base = own ? [...g.byId.keys()].filter((id) => isAgent(id) && sidOf(id) === own) : (isAgent(nodeId) ? [nodeId] : []);
+  if (!base.length) return [];
+  const reach = (step) => {                      // agents joined over non-loop wires, through and/or/combine cards only
+    const found = new Set();
+    const seen = new Set(base);
+    const todo = [...base];
+    while (todo.length) {
+      for (const o of step.get(todo.pop()) || []) {
+        if (seen.has(o)) continue;
+        seen.add(o);
+        if (isAgent(o)) found.add(o);
+        else if (FLOW_IN_CLOSURE.has(g.byId.get(o)?.kind)) todo.push(o);
+      }
+    }
+    return found;
+  };
+  const skip = (id) => base.includes(id) || (own !== null && sidOf(id) === own);
+  const nexts = [...reach(g.next)].filter((id) => !skip(id)).sort(g.byRank);
+  const prevs = [...reach(g.prev)].filter((id) => !skip(id) && !nexts.includes(id)).sort(g.byRank);
+  const entry = (id, side) => {
+    const other = sidOf(id);
+    if (other !== null && other !== own) return { nodeId: id, side, ok: false, reason: 'in another session' };
+    if (base.length + 1 > MAX_SESSION_MEMBERS) return { nodeId: id, side, ok: false, reason: `${MAX_SESSION_MEMBERS} steps max` };
+    const legal = sessionLegal(tpl, portsFn, [...base, id], { labelOf, loops });
+    return legal.ok ? { nodeId: id, side, ok: true } : { nodeId: id, side, ok: false, reason: legal.reason };
+  };
+  return [...nexts.map((id) => entry(id, 'next')), ...prevs.map((id) => entry(id, 'previous'))];
+}
+
+/** Drop lone memberships and orphan settings (05 §1.7). Pure: a new template; contiguity is never repaired (V27). */
+export function pruneSessions(tpl) {
+  const t = isObj(tpl) ? { ...tpl } : {};
+  const nodes = Array.isArray(t.nodes) ? t.nodes : [];
+  const agentSid = (n) => (isObj(n) && n.kind === 'agent' ? sessionIdOf(n) : null);
+  const count = new Map();
+  for (const n of nodes) { const s = agentSid(n); if (s !== null) count.set(s, (count.get(s) || 0) + 1); }
+  t.nodes = nodes.map((n) => {
+    const s = agentSid(n);
+    if (s === null || count.get(s) > 1) return n;
+    const config = { ...n.config };
+    delete config.session;
+    return { ...n, config };
+  });
+  if (Object.hasOwn(t, 'sessions')) {
+    const kept = normalizeSessions(t.sessions, t.nodes);
+    if (kept) t.sessions = kept; else delete t.sessions;
+  }
+  return t;
+}
+
+/** Paste, duplicate and build_workflow: every distinct session id gets ONE fresh minted id, kept by all its cards, so
+ *  a copy never silently joins the session it came from. */
+export function remintSessions(nodes, taken) {
+  const used = new Set(taken instanceof Set ? taken : Array.isArray(taken) ? taken : []);
+  const fresh = new Map();
+  return (Array.isArray(nodes) ? nodes : []).map((n) => {
+    const s = sessionIdOf(n);
+    if (s === null) return n;
+    if (!fresh.has(s)) { const id = mintId('s_', used); used.add(id); fresh.set(s, id); }
+    return { ...n, config: { ...n.config, session: fresh.get(s) } };
+  });
+}
+
+/** The inspector's notes (05 §2.2): what the pure validator cannot know — the engine, the gate, the catalog. Honest
+ *  by construction: nothing about the main agent unless the steps really run as its sub-agents. */
+export function sessionNotes(spec, { engine = 'claude', verified = SESSION_SUBAGENTS_VERIFIED, members = [], labelOf = (id) => id } = {}) {
+  const notes = [];
+  const e = engine || 'claude';
+  const name = engineLabel(e);
+  const s = isObj(spec?.settings) ? spec.settings : {};
+  const mode = s.mode === 'shared' ? 'shared' : 'subagents';
+  const live = mode === 'subagents' && sessionSupport(e, { verified }).subagents;
+  const info = new Map((Array.isArray(members) ? members : []).filter(isObj).map((m) => [m.nodeId, m]));
+  const steps = (Array.isArray(spec?.members) ? spec.members : []).map((id) => {
+    const m = info.get(id) || {};
+    return { ...m, label: m.label || labelOf(id) };
+  });
+  const add = (level, code, text) => notes.push({ level, code, text });
+  if (mode === 'subagents' && Object.hasOwn(ENGINES, e) && ENGINES[e].subagents === false) {
+    add('info', 'engine-none', `${name} has no sub-agents: these steps run as separate sessions there.`);
+  } else if (mode === 'subagents' && !live) {
+    add('info', 'gate-off', `Sub-agents are not available on ${name} yet: these steps run as separate sessions.`);
+  }
+  if (live && steps.some((m) => m.fanOut)) add('info', 'fanout-nested', `Research fan-out runs as nested sub-agents. ${name} may refuse past its nesting limit.`);
+  for (const m of steps) {
+    if (live && m.routed) add('warn', 'routed-model', `${m.label}'s model runs on a custom endpoint. When the steps use different endpoints, they run as separate sessions.`);
+    if ((live || mode === 'shared') && m.asks) add('info', 'asks', `${m.label} asks you questions: the session waits for your answers.`);
+    if (live && s.hostModel && !m.model) add('info', 'inherits-host-model', `${m.label} has no model of its own, so it runs on the main agent's model (${s.hostModel}).`);
+    if (live && s.hostEffort && !m.effort) add('info', 'inherits-host-model', `${m.label} has no effort of its own, so it runs at the main agent's effort (${s.hostEffort}).`);
+  }
+  if (mode === 'shared' && (s.hostModel || s.hostEffort)) add('warn', 'shared-ignores', 'One conversation has no main agent: the main-agent model and effort are not used.');
+  return notes;
+}
+
+/** A sub-agent record that is a session MEMBER's own dispatch, not a research investigator: its type carries the
+ *  `worca-x-` prefix agentTypeFor mints (Task 31), or it says memberOf. Sub-agent cost totals skip these (C8). */
+export function isMemberDispatch(rec) {
+  return rec?.memberOf != null || /^worca-x-/.test(String(rec?.subagentType || ''));
+}
