@@ -1804,6 +1804,40 @@ test('Add to group: a Shaper slice in the selection is skipped and named in the 
   assert.equal(doc.querySelector('#toasts .toast .td').textContent, 'r1 · Skipped 1: part of a Shaper feature');
 });
 
+test('⋯ › Add to group… on a selected row adds the whole selection', async () => {
+  const { window, doc, recv, groupPosts } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    await settle(window);
+  }
+  click(window, itemOf(doc, '[data-run-id="r2"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Add to group')));
+  await settle(window);
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  assert.deepEqual([...groupPosts.at(-1).body.pipelineIds].sort(), ['pw000001', 'pw000002']);
+});
+
+test('⋯ › Add to group… on a row outside the selection adds only that row', async () => {
+  const { window, doc, recv, groupPosts } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    await settle(window);
+  }
+  click(window, itemOf(doc, '[data-run-id="r3"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Add to group')));
+  await settle(window);
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  assert.deepEqual(groupPosts.at(-1).body.pipelineIds, ['pw000003']);
+});
+
 test('G with a selection opens the picker for the whole selection, not only the focused row', async () => {
   const { window, doc, recv, groupPosts } = await boot();
   recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' })] });

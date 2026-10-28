@@ -329,7 +329,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     pin,
     archive,
     del: (r) => onDelete(r),
-    addToGroup: (rows) => addToGroup(rows, moreOf(rows[0])),
+    // ⋯ on a selected chat adds the whole selection, as the bar's Group N and G do.
+    addToGroup: (rows) => addToGroup(rows.length === 1 && st.sel.has(rows[0].key) ? selectedRows() : rows, moreOf(rows[0])),
     leaveGroup: (r) => { void groupWrite(() => call('DELETE', `/api/ask/groups/${gid(r.groupId)}/threads/${gid(r.id)}`),
       { ok: 'Removed from group', detail: groupOf(r)?.name || '', fail: 'Could not remove the chat' }); },
     renameGroup: (g) => openDialog({ mode: 'rename', chats: g.members, group: { id: g.groupId, name: g.title, nameSource: g.nameSource }, opener: moreOf(g) }),

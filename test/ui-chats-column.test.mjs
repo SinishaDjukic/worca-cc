@@ -576,6 +576,18 @@ test('Add to group: ⌘-click two chats, G, Create; Undo on the toast calls the 
   assert.equal(col.querySelectorAll('.runs-item.is-checked').length, 2, 'the selection is back');
 });
 
+test('⋯ › Add to group… on a selected chat adds the whole selection', async () => {
+  const { col, doc, rec, ctx } = await bootOn();
+  doc.documentElement.dataset.level = 'advanced';
+  for (const id of ['ask_00000002', 'ask_10000000']) { mclick(doc, rowLink(col, id), { metaKey: true }); await ticks(ctx); }
+  col.querySelector('.runs-item[data-row-key="chat:ask_10000000"] .runs-more').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Add to group…').click();
+  pickerType(doc, 'Pair');
+  pickerKey(doc, 'Enter');
+  await ticks(ctx, 8);
+  assert.deepEqual(rec.groupCalls.at(-1)[2].threadIds, ['ask_00000002', 'ask_10000000']);
+});
+
 test('G with a selection opens the picker for the selection, anchored at the bar\'s Group button', async () => {
   const { col, doc, rec, ctx } = await bootOn();
   doc.documentElement.dataset.level = 'advanced';
