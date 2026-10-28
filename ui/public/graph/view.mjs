@@ -29,7 +29,7 @@ import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
 import { sanitizeIcon } from '../../../src/shared/graph/manifest.mjs';
 import { KEYED_KINDS, DEFAULT_MAX_CYCLES } from '../../../src/shared/graph/constants.mjs';
-import { sessionsOf, sessionHeads, sessionRects } from '../../../src/shared/graph/sessions.mjs';
+import { sessionsOf, sessionHeads, sessionRects, sessionRowSegments } from '../../../src/shared/graph/sessions.mjs';
 import { engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../../../src/shared/engine-switch.mjs';
 import { AWAY_GLYPH } from '../away-glyph.mjs';
 import { createSessionLayer, sessionWords } from './session-layer.mjs';
@@ -257,7 +257,18 @@ export function createGraphView(host, {
     // Separate sessions (C14): the Labs flag off, a lone step (V26: it runs on its own), or sub-agents the engine lacks.
     const fallsBack = (spec) => !live || spec.members.length < 2 || (spec.settings.mode !== 'shared' && !sub);
     const labelsOf = (spec) => spec.members.map((id) => labelOf(ctx.byId.get(id)).title);
-    if (isFlow) { sessLayer.paint([]); if (chips) sessLayer.chips(nodeEls, []); return; }   // flow hosts: Task 26
+    if (isFlow) {
+      // Flow hosts (05 §4.8): one headerless segment per (session, row), no chip; `open` marks where it continues.
+      const bySid = new Map(sessSpecs.map((sp) => [sp.sid, sp]));
+      sessLayer.paint((flowLay ? sessionRowSegments(sessSpecs, flowLay) : []).map((g) => {
+        const sp = bySid.get(g.sid);
+        const fallback = fallsBack(sp);                   // the same rule as the lanes hosts: flag, lone step, gate
+        return { sid: g.sid, key: `${g.sid}:${g.row}`, rect: { x: g.x, y: g.y, w: g.w, h: g.h, head: null },
+          ...sessionWords(sp, { engineText, fallback, labels: labelsOf(sp) }), fallback, lone: sp.members.length < 2, open: g.open };
+      }));
+      if (chips) sessLayer.chips(nodeEls, []);
+      return;
+    }
     const rects = sessionRects(sessSpecs, ctx.byId, sizeOf, curves, { scale: S });
     const items = [];
     const chipList = [];
@@ -856,7 +867,8 @@ export function createGraphView(host, {
       for (const [id, el] of badgeEls) el.classList.toggle('sel', Boolean(sel && sel.kind === 'wire' && sel.id === id));
       if (sessLayer) sessLayer.select(sel && sel.kind === 'session' ? sel.id : null);
     },
-    /** The painted tray rects by sid (the composer hit-tests these, so paint and hit cannot diverge). */
+    /** The painted tray rects by sid (the composer hit-tests these, so paint and hit cannot diverge); a flow host has
+     *  one headerless rect per row segment, keyed `<sid>:<row>`. */
     sessionRects: () => new Map(sessLayer ? sessLayer.rects() : []),
     /** The sessions the last render drew (sessionsOf over the rendered template). */
     sessionSpecs: () => sessSpecs,

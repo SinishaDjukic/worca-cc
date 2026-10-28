@@ -392,3 +392,29 @@ export function sessionRects(specs, nodesById, sizeOf, routes, { scale = 1, head
   }
   return out;
 }
+
+/** Flow hosts (chat proposals and builds): one headerless tray segment per (session, flow row), from flowLayout's
+ *  `{ pos, rows, cardW, scale }`. `open` names the side where the session continues on another row. */
+export function sessionRowSegments(specs, lay) {
+  const s = sc(lay?.scale);
+  const pos = isObj(lay?.pos) ? lay.pos : {};
+  const rows = Array.isArray(lay?.rows) ? lay.rows : [];
+  const cardW = Number(lay?.cardW) || 0;
+  const out = [];
+  for (const spec of Array.isArray(specs) ? specs : []) {
+    const ids = [...(Array.isArray(spec?.members) ? spec.members : []), ...(Array.isArray(spec?.flows) ? spec.flows : [])]
+      .filter((id) => Object.hasOwn(pos, id));
+    const byRow = new Map();
+    for (const id of ids) { const r = pos[id].r; if (!byRow.has(r)) byRow.set(r, []); byRow.get(r).push(pos[id]); }
+    const order = [...byRow.keys()].filter((r) => rows[r]).sort((a, b) => a - b);
+    order.forEach((r, i) => {
+      const ps = byRow.get(r);
+      const x = Math.min(...ps.map((p) => p.x)) - SESS_PAD_X * s;
+      const w = Math.max(...ps.map((p) => p.x)) + cardW + SESS_PAD_X * s - x;
+      const more = i < order.length - 1; const was = i > 0;
+      out.push({ sid: spec.sid, row: r, x, y: rows[r].top - LABEL_H * s - 8 * s, w,
+        h: rows[r].h + LABEL_H * s + 8 * s + SESS_PAD_B * s, open: more && was ? 'both' : more ? 'right' : was ? 'left' : null });
+    });
+  }
+  return out;
+}

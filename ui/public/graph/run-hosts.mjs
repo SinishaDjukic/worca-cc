@@ -59,6 +59,22 @@ export function focusNodeIds(decor, prev = []) {
   return Array.isArray(prev) ? prev : [];
 }
 
+/** The Live view's framing (05 §4.8): `view.bounds(FOCUS_PAD, ids)` ∪ the header segment ABOVE it, for every session
+ *  with a member in `ids`. The frame grows upward to the strip and never sideways: the strip spans every member, and
+ *  its full width would zoom the running step out of focus. No session in focus: exactly `view.bounds`. */
+export function focusBoundsFor(view, ids, specs = []) {
+  const b = view.bounds(FOCUS_PAD, ids);
+  if (!b) return b;
+  const want = new Set(ids);
+  const rects = view.sessionRects ? view.sessionRects() : new Map();
+  let y0 = b.y;
+  for (const s of specs || []) {
+    const hd = s && s.members.some((id) => want.has(id)) ? (rects.get(s.sid) || {}).head : null;
+    if (hd && hd.x < b.x + b.w && hd.x + hd.w > b.x) y0 = Math.min(y0, hd.y);
+  }
+  return y0 < b.y ? { x: b.x, y: y0, w: b.w, h: b.y + b.h - y0 } : b;
+}
+
 /** Centre `b` (already padded) in a vw×vh viewport through the SHARED `fitBounds`;
  *  fit NEVER magnifies past 1× (spec §7.6). Returns the view's `{x, y, z}`. */
 export function fitInto(b, vw, vh, { zoomMin = 0.3 } = {}) {
@@ -204,7 +220,7 @@ export function mountRunGraph(hostEl, opts = {}) {
   function fitFocus() {
     const r = view.readRect();
     if (!(r.width > 0) || !(r.height > 0)) return;
-    const b = (focus.length && view.bounds(FOCUS_PAD, focus)) || view.bounds(FOCUS_PAD);
+    const b = (focus.length && focusBoundsFor(view, focus, view.sessionSpecs())) || view.bounds(FOCUS_PAD);
     if (!b) return;
     const cw = r.width * FOCUS_CLEAR, ch = r.height * FOCUS_CLEAR;
     const f = fitInto(b, cw, ch, { zoomMin });
@@ -225,7 +241,7 @@ export function mountRunGraph(hostEl, opts = {}) {
     const z = clamp(r.width / b.w, Math.min(CARD_ZOOM_MIN, top), top);
     const hostH = clamp(Math.round(b.h * z), CARD_MIN_H, CARD_MAX_H);
     wrap.style.setProperty('--run-host-h', `${hostH}px`);
-    const f = focus.length ? view.bounds(FOCUS_PAD, focus) : null;
+    const f = focus.length ? focusBoundsFor(view, focus, view.sessionSpecs()) : null;
     const place = (span, lo, size, fLo, fSize) => {
       const s = size * z;
       if (s <= span) return (span - s) / 2 - lo * z;              // fits: centred
