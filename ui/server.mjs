@@ -6174,7 +6174,7 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
   // Defense in depth for scriptable markup: even opened in a top-level tab the
   // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
   if (kind === 'html') res.set('Content-Security-Policy', 'sandbox allow-scripts');
-  else if (mime === 'image/svg+xml') res.set('Content-Security-Policy', 'sandbox');
+  else if (mime === 'image/svg+xml' || mime === 'application/xml') res.set('Content-Security-Policy', 'sandbox');
   // NO Access-Control-Allow-Origin, deliberately.
   //
   // The viewer frames a deck with sandbox="allow-scripts" and no

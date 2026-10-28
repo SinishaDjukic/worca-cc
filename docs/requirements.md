@@ -97,7 +97,7 @@ see [Documents on the brief](#files) below. Deleting the brief deletes its docum
 
 A feature can come with material: emails, support tickets, a spec, screenshots, a mockup. Add up to 10 files to a
 feature, on **New feature** or later on the feature page's **Files** card: text (`.md`, `.markdown`, `.txt`, `.csv`,
-`.json`, `.log`, `.html`, `.htm`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) and PDF, up to 25 MB each (on
+`.json`, `.log`, `.html`, `.htm`, `.xml`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) and PDF, up to 25 MB each (on
 New feature, up to 100 MB in all; add more on the feature page). Word, Excel and PowerPoint files are not read yet:
 save them as PDF. A file with the same content as one already attached is refused and names that one.
 
