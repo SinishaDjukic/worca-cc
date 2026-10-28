@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFlag } from './model-env.mjs';
+import { PROXY_URL_NAMES, proxyUrlHasLogin } from './env-proxy.mjs';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
@@ -128,7 +129,7 @@ export function scrubbedEnv(platform = process.platform, env = process.env) {
   // secret, though, so then NO proxy URL passes (one alone would half-route the
   // child): it goes direct, and worca says why (withheldProxyNotice). NO_PROXY
   // and the CA paths never carry one.
-  const names = proxyHasCredentials(env) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
+  const names = proxyUrlHasLogin(env) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
   for (const k of [...names, ...CA_NAMES]) if (env[k]) child[k] = env[k];
   // Windows has no HOME and a child cannot even start without SYSTEMROOT (Node
   // docs); the rest are the non-secret system vars node/npm need to resolve
@@ -140,18 +141,10 @@ export function scrubbedEnv(platform = process.platform, env = process.env) {
   return child;
 }
 
-const PROXY_URL_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'];
 const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
 /** The CA names engines/spawn.mjs SPAWN_ENV_BASE passes too: node reads the first,
  *  the tools a connector may run (gh, curl, git) the other two. */
 const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'];
-
-/** URL credentials always need an '@' (user:password@, token@, the scheme-less
- *  user:password@host form) and a host never has one, so any '@' counts, even
- *  in a value that is not a valid URL. */
-function proxyHasCredentials(env = process.env) {
-  return PROXY_URL_NAMES.some((k) => String(env[k] || '').includes('@'));
-}
 
 let withheldProxyNoticed = false;
 
@@ -160,9 +153,9 @@ let withheldProxyNoticed = false;
  *  the variables only, never a value. The UI server prints it at boot, before
  *  any plugin spawn; every other process at its first one (warnWithheldProxy). */
 export function withheldProxyNotice() {
-  if (withheldProxyNoticed || !proxyHasCredentials()) return null;
+  if (withheldProxyNoticed || !proxyUrlHasLogin()) return null;
   withheldProxyNoticed = true;
-  return 'proxy: HTTP(S)_PROXY carries credentials, which plugin code never receives; plugin connectors and chat channels go direct';
+  return 'proxy: HTTP(S)_PROXY carries credentials, which plugin code never receives, and the corporate proxy is not running; plugin connectors and chat channels go direct';
 }
 
 /** Every plugin spawn calls this: withheldProxyNotice() on stderr, the process's

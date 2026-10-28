@@ -485,8 +485,8 @@ test('corporate proxy: the default gate is settings networkProxy.enabled (no inj
   } finally { await fake.close(); o.server.close(); }
 });
 
-test('corporate proxy, flag off: env untouched whatever HTTP(S)_PROXY or settings say', async () => {
-  const env = { HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@corp.example:8080', NO_PROXY: 'intranet.example', PATH: '/bin' };
+test('corporate proxy, flag off, no login in HTTP(S)_PROXY: env untouched whatever settings say', async () => {
+  const env = { HTTPS_PROXY: 'http://corp.example:8080', NO_PROXY: 'intranet.example', PATH: '/bin' };
   const before = { ...env };
   let settingsRead = 0;
   const r = await startEgressPolicy({ env, proxyOn: FLAG_OFF, settings: () => { settingsRead += 1; return { networkProxy: { upstream: 'http://x:1' } }; } });
@@ -1058,4 +1058,128 @@ test('R-sec-6: after a swap to a credentialed upstream, only the local URL is in
     assert.equal(env.MY_TOOL_PROXY, env.HTTPS_PROXY, 'the scrubbed variable now names the local URL');
     for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /secret/, `${k} carries no userinfo`);
   } finally { await live.close(); await a.close(); await b.close(); o.server.close(); }
+});
+
+// --- a login in HTTP(S)_PROXY with networkProxy.enabled unset: the proxy starts anyway ----------------
+
+for (const scheme of ['ntlm', 'basic', 'digest']) {
+  test(`credentialed HTTPS_PROXY, enabled unset (${scheme} upstream): the proxy starts, children get no password, requests go through`, async () => {
+    const o = await origin();
+    const fake = await startFakeUpstream({ scheme, originPort: o.port });
+    const corpUrl = fake.url('Domain%5CUser:Password@');
+    const env = { HTTPS_PROXY: corpUrl, HTTP_PROXY: corpUrl, PATH: '/bin' };
+    const logs = [];
+    const r = await startEgressPolicy({ env, settings: () => ({}), login: () => null, watchLogin: () => () => {}, log: (l) => logs.push(l) });
+    try {
+      assert.equal(r.status, 'on');
+      assert.equal(r.autoStarted, true);
+      for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /Password/, `${k} carries no password`);
+      assert.equal(env.HTTPS_PROXY, r.url);
+      assert.match(egressNotice(r).text, /started because HTTP\(S\)_PROXY carries a login/);
+      const port = Number(new URL(r.url).port);
+      assert.match(await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /t HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /origin saw \/t/);
+      assert.match(await rawRequest(port, `GET http://127.0.0.2:${o.port}/plain HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`), /^HTTP\/1\.1 200[^]*upstream relayed GET .*\/plain/);
+      if (scheme === 'ntlm') {
+        assert.ok(fake.stats.type3 >= 1);
+        assert.equal(fake.stats.basic + fake.stats.digest, 0, 'NTLM offered: no password scheme');
+      } else {
+        assert.ok(fake.stats[scheme] >= 1, `the URL login went as ${scheme}`);
+        assert.ok(logs.some((l) => /offers no NTLM, so the login from HTTPS_PROXY is sent as/.test(l)), logs.join('\n'));
+      }
+      for (const l of logs) assert.doesNotMatch(l, /Password/);
+    } finally { await r.close(); await fake.close(); o.server.close(); }
+  });
+}
+
+test('credentialed HTTPS_PROXY, enabled true: auth auto still never falls back to Basic', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@'), PATH: '/bin' };
+  const r = await startEgressPolicy({ env, settings: () => ({ networkProxy: { enabled: true } }), login: () => null, watchLogin: () => () => {} });
+  try {
+    assert.equal(r.autoStarted, false);
+    const out = await rawRequest(Number(new URL(r.url).port), 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\n');
+    assert.match(out, /^HTTP\/1\.1 502/);
+    assert.match(out, /offers only Basic/);
+    assert.equal(fake.stats.basic, 0);
+  } finally { await r.close(); await fake.close(); o.server.close(); }
+});
+
+test('credentialed HTTPS_PROXY, enabled false: nothing starts, env untouched, and the notice says children go direct', async () => {
+  const env = { HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@corp.example:8080', PATH: '/bin' };
+  const before = { ...env };
+  const r = await startEgressPolicy({ env, settings: () => ({ networkProxy: { enabled: false } }) });
+  assert.equal(r.status, 'off');
+  assert.equal(r.loginWithheld, true);
+  assert.deepEqual(env, before);
+  const n = egressNotice(r);
+  assert.equal(n.level, 'warn');
+  assert.match(n.text, /turned off \(networkProxy\.enabled is false\).*get no proxy and go direct; turn on Use a corporate proxy/);
+  assert.doesNotMatch(n.text, /pw|jdoe/);
+});
+
+test('auto-started proxy: a save that leaves enabled unset keeps the upstream; enabled false drops it', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@'), PATH: '/bin' };
+  const live = await startLiveEgress({ env, settings: () => ({}), login: () => null, watchLogin: () => () => {}, watch: () => () => {} });
+  try {
+    assert.equal(live.current().autoStarted, true);
+    const port = Number(new URL(env.HTTPS_PROXY).port);
+    const out = await live.apply({ noProxy: 'intranet.example' });
+    assert.equal(out.changed, true);
+    assert.ok(live.current().connector, 'still chained to the upstream from HTTPS_PROXY');
+    assert.match(await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /kept HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /origin saw \/kept/);
+    await live.apply({ enabled: false });
+    assert.equal(live.current().connector, null);
+    for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /Password/, `${k} carries no password`);
+  } finally { await live.close(); await fake.close(); o.server.close(); }
+});
+
+for (const scheme of ['basic', 'digest']) {
+  test(`auto-started proxy, ${scheme} upstream: plain HTTP as the very first request falls back too`, async () => {
+    const o = await origin();
+    const fake = await startFakeUpstream({ scheme, originPort: o.port });
+    const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@'), PATH: '/bin' };
+    const r = await startEgressPolicy({ env, settings: () => ({}), login: () => null, watchLogin: () => () => {} });
+    try {
+      const port = Number(new URL(r.url).port);
+      assert.match(await rawRequest(port, `GET http://127.0.0.2:${o.port}/first HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`), /^HTTP\/1\.1 200[^]*upstream relayed GET .*\/first/);
+      assert.match(await rawRequest(port, `GET http://127.0.0.2:${o.port}/second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`), /^HTTP\/1\.1 200[^]*\/second/);
+      assert.ok(fake.stats[scheme] >= 2);
+    } finally { await r.close(); await fake.close(); o.server.close(); }
+  });
+}
+
+test('auto-start chains to the HTTPS_PROXY that carries the login, never to an upstream left in settings', async () => {
+  const o = await origin();
+  const envProxy = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const stale = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const env = { HTTPS_PROXY: envProxy.url('Domain%5CUser:Password@'), PATH: '/bin' };
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { upstream: stale.url() } }), login: () => null,
+    watchLogin: () => () => {}, watch: () => () => {} });
+  try {
+    assert.equal(live.current().upstream.upstream, `127.0.0.1:${envProxy.port}`);
+    await live.apply({ upstream: stale.url(), noProxy: 'intranet.example' });
+    assert.equal(live.current().upstream.upstream, `127.0.0.1:${envProxy.port}`, 'a live save keeps it too');
+    const port = Number(new URL(env.HTTPS_PROXY).port);
+    assert.match(await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /env HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /origin saw \/env/);
+    assert.equal(stale.stats.sockets, 0, 'the settings upstream is never contacted');
+  } finally { await live.close(); await envProxy.close(); await stale.close(); o.server.close(); }
+});
+
+test('opted out at boot: clearing networkProxy.enabled auto-starts without a restart', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@'), PATH: '/bin' };
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { enabled: false } }), login: () => null,
+    watchLogin: () => () => {}, watch: () => () => {} });
+  try {
+    assert.equal(live.current().status, 'off');
+    const out = await live.apply({});
+    assert.equal(out.changed, true);
+    assert.equal(live.current().status, 'on');
+    assert.equal(live.current().autoStarted, true);
+    for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /Password/, `${k} carries no password`);
+  } finally { await live.close(); await fake.close(); o.server.close(); }
 });

@@ -5,6 +5,7 @@
 import { networkProxySettings, setNetworkProxy, previewNetworkProxy, networkProxyEnabled, readSettings } from './settings.mjs';
 import { proxyState, readProxyLogin, markLoginRejected, upstreamEnv, assertProxyLoginInput, savedLoginRefusal, ProxyLoginError } from './proxy-credentials.mjs';
 import { ntHash } from './ntlm.mjs';
+import { viaEnvUrl } from './egress-policy.mjs';
 import { checkUpstream, resolveUpstream, upstreamKey, upstreamLabel, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
 
 export const PROXY_AGENT_TEXT = 'The corporate proxy login cannot be changed or tested from inside the container while agent isolation is on. Open Worca through its published address.';
@@ -73,7 +74,10 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
     // A running proxy states its real URL; a proxy that failed to listen states no URL, only the error (D13).
     const localUrl = eg ? (eg.status === 'on' ? eg.url : null) : (fixed ? localProxyUrl(fixed) : null);
     const localError = eg && eg.status === 'off' && eg.upstreamError ? eg.upstreamError : null;
-    return { ...proxyState({ env: sourceEnv(), networkProxy: settings(), login: readLogin(), live: live(), enabled: enabledNow(), expectRunning: false, localUrl }),
+    // A proxy started for the login in HTTPS_PROXY runs with networkProxy.enabled unset: its state, not "off".
+    const auto = !enabledNow() && !!(eg && eg.autoStarted && eg.connector);
+    return { ...proxyState({ env: sourceEnv(), networkProxy: auto ? viaEnvUrl(settings()) : settings(), login: readLogin(), live: live(),
+      enabled: auto || enabledNow(), expectRunning: false, localUrl }),
       localError, settings: settings() };
   }
 
