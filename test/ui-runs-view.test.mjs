@@ -97,7 +97,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
       return ok({ runs: body.pipelineIds.map((id) => ({ id, labels: body.add || [], changed: true })), missing: [] });
     }
     if (s.endsWith('/api/history/pr') && method === 'POST') { prToken = body && body.token; return ok({}); }
-    if (s.includes('/api/run-groups') && method !== 'GET') { groupPosts.push({ method, url: s, body }); onGroupCall({ method, url: s, body }); return ok({ ok: true }); }
+    if (s.includes('/api/run-groups') && method !== 'GET') { groupPosts.push({ method, url: s, body }); return ok(onGroupCall({ method, url: s, body }) || { ok: true }); }
     if (s.endsWith('/api/run-groups')) return ok({ groups: runGroups });
     if (s.includes('/api/projects')) return ok({ projects });
     // `history` may be a function: a test that reloads History can answer differently each time.
@@ -690,6 +690,12 @@ test('A11: no checkbox on hover; ⌘-click selects without navigating, Shift-cli
   modClick(keys[3], { shiftKey: true });
   await settle(window);
   assert.deepEqual(checked(), [keys[3]], 'Esc dropped the anchor: a Shift-click toggles one row');
+  doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle(window);
+  modClick(keys[1], {});
+  await settle(window);
+  assert.notEqual(window.location.hash, '#runs', 'a plain click still opens the run');
+  assert.deepEqual(checked(), []);
 });
 
 test('A11: a touch long-press starts selecting that run and swallows the click that follows', async () => {
@@ -900,7 +906,7 @@ test('Add to group / Remove from group repaint the group with its new count and 
     members: [mb(1, 'aaaa0001', 'done'), mb(2, 'pw000001', 'running')] }];
   const { window, doc, recv, groupPosts } = await boot({ runGroups,
     onGroupCall: ({ method, url, body }) => {
-      if (method === 'POST') runGroups[0].members.push(mb(3, body.pipelineId, 'running'));
+      if (method === 'POST') runGroups[0].members.push(mb(3, body.pipelineIds[0], 'running'));
       else runGroups[0].members = runGroups[0].members.filter((m) => !url.endsWith(`/${m.pipelineId}`));
     } });
   recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }),
@@ -918,7 +924,7 @@ test('Add to group / Remove from group repaint the group with its new count and 
   assert.ok(picker.querySelector('.gp-row[data-group-id="grp_000000000001"] .status-dot'));
   click(window, picker.querySelector('.gp-row[data-group-id="grp_000000000001"]'));
   await settle(window, 8);
-  assert.deepEqual(groupPosts.at(-1), { method: 'POST', url: '/api/run-groups/grp_000000000001/members', body: { pipelineId: 'pw000002' } });
+  assert.deepEqual(groupPosts.at(-1), { method: 'POST', url: '/api/run-groups/grp_000000000001/members', body: { pipelineIds: ['pw000002'] } });
   assert.equal(groupRowEl().querySelector('.runs-count').textContent, '1/3');
   assert.notEqual(width(), before, 'the group bar fraction changed');
   // ⋯ on the expanded ad-hoc member → Remove from group (an unfinished group is open by default, D29).
@@ -1696,4 +1702,154 @@ test('list keys: ⇧↓ from the first row selects two rows and shows the bar', 
   assert.equal(doc.activeElement, rows(doc)[2]);
   press(window, doc.activeElement, 'ArrowUp', { shiftKey: true }); await settle(window);
   assert.equal(doc.activeElement, rows(doc)[1], '⇧↑ steps the focus back one row');
+});
+
+// ── Add to group (the shared picker, group-add.mjs): focus on the moved run, Group N, Undo, skipped slices ──
+const pickerKey = (window, doc, k) => doc.querySelector('.group-picker input.gp-search')
+  .dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+const pickerType = (window, doc, v) => { const q = doc.querySelector('.group-picker input.gp-search'); q.value = v; q.dispatchEvent(new window.Event('input', { bubbles: true })); };
+
+test('Add to group: the focus lands on the moved run inside its opened group, never on the row that slid up', async () => {
+  const mb = (position, pipelineId, status) => ({ position, title: pipelineId, pipelineId, ticketId: null, status, pr: null, ticket: null, adhoc: true });
+  const runGroups = [{ id: 'grp_000000000001', kind: 'user', title: 'Billing', projectKey: null, members: [mb(1, 'aaaa0001', 'done'), mb(2, 'pw000001', 'running')] }];
+  const { window, doc, recv, groupPosts } = await boot({ runGroups,
+    onGroupCall: ({ method, body }) => {
+      if (method !== 'POST') return undefined;
+      runGroups[0].members.push(mb(3, body.pipelineIds[0], 'running'));
+      return { ok: true, groupId: 'grp_000000000001', group: { id: 'grp_000000000001', title: 'Billing' }, added: body.pipelineIds, skipped: [], undo: 'undo_r' };
+    } });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  // Fold the group first: its members leave the list.
+  const exp = groupItem(doc, 'chain:grp_000000000001').querySelector(':scope > .runs-row-tail .runs-expand');
+  if (exp.getAttribute('aria-expanded') === 'true') { click(window, exp); await settle(window); }
+  assert.equal(groupItem(doc, 'chain:grp_000000000001').querySelector('.runs-members'), null, 'folded');
+  click(window, itemOf(doc, '[data-run-id="r2"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Add to group')));
+  await settle(window);
+  const timers = [];
+  const realTimeout = window.setTimeout;
+  window.setTimeout = (fn, ms, ...a) => { if (ms === 1500) timers.push(fn); return realTimeout.call(window, fn, ms, ...a); };
+  pickerKey(window, doc, 'ArrowDown');   // New group…
+  pickerKey(window, doc, 'ArrowDown');   // Billing
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  window.setTimeout = realTimeout;
+  assert.deepEqual(groupPosts.at(-1).body, { pipelineIds: ['pw000002'] });
+  const moved = doc.querySelector('#runs-list .runs-item[data-level="member"] > a.runs-row[data-pipeline-id="pw000002"]');
+  assert.ok(moved, 'the target group is open again');
+  assert.equal(doc.activeElement, moved);
+  assert.ok(moved.classList.contains('is-landed'));
+  assert.notEqual(doc.activeElement, rowEl(doc, '[data-run-id="r3"]'), 'the row that slid into the old place keeps no focus');
+  assert.equal(doc.querySelector('#toasts .toast .tt').textContent, 'Added to Billing');
+  assert.equal(doc.querySelector('#toasts .toast .td').textContent, 'r2');
+  // Once the time is up the fill goes.
+  const realNow = Date.now;
+  Date.now = () => realNow() + 2000;
+  try { for (const fn of timers) fn(); } finally { Date.now = realNow; }
+  assert.equal(doc.querySelectorAll('#runs-list .is-landed').length, 0);
+});
+
+/** Two ⌘-clicked live runs (no Select mode), the bar's Group N, then Create "Hotfixes" in the picker. */
+async function groupTwoFromBar({ answer }) {
+  const created = [];
+  const runGroups = [];
+  const ctx = await boot({ runGroups,
+    onGroupCall: ({ url, body }) => {
+      if (url.endsWith('/api/run-groups/undo')) return { ok: true };
+      created.push(body);
+      return answer(body);
+    } });
+  const { window, doc, recv } = ctx;
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    await settle(window);
+  }
+  const btn = doc.querySelector('#runs-bulk [data-bulk="group"]');
+  assert.equal(btn.textContent.replace(/\s+/g, ' ').trim(), 'Group 2');
+  assert.equal(btn.disabled, false);
+  click(window, btn);
+  await settle(window);
+  assert.ok(doc.querySelector('.group-picker'), 'Group N opens the picker');
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  return { ...ctx, created };
+}
+
+test('Group N in the Runs bar: Create "Hotfixes" posts the selected runs with nameSource user', async () => {
+  const { created, doc } = await groupTwoFromBar({ answer: (b) => ({ group: { id: 'grp_h', title: b.title, nameSource: 'user' }, added: b.pipelineIds, skipped: [], undo: 'undo_h' }) });
+  assert.equal(created.length, 1);
+  assert.deepEqual({ ...created[0], pipelineIds: [...created[0].pipelineIds].sort() }, { title: 'Hotfixes', nameSource: 'user', pipelineIds: ['pw000001', 'pw000002'] });
+  assert.equal(doc.querySelector('#toasts .toast .tt').textContent, 'Added to Hotfixes');
+  assert.equal(doc.querySelector('#toasts .toast .td').textContent, '2 runs');
+  assert.equal(doc.getElementById('runs-bulk').hidden, true, 'the selection ends with the add');
+});
+
+test('Add to group: Undo on the toast posts the token and puts the selection back', async () => {
+  const { window, doc, groupPosts } = await groupTwoFromBar({ answer: (b) => ({ group: { id: 'grp_h', title: b.title }, added: b.pipelineIds, skipped: [], undo: 'undo_h' }) });
+  assert.equal(doc.querySelectorAll('#runs-list .runs-item.is-checked').length, 0);
+  click(window, doc.querySelector('#toasts .toast .toast-act'));
+  await settle(window, 10);
+  assert.deepEqual(groupPosts.at(-1), { method: 'POST', url: '/api/run-groups/undo', body: { token: 'undo_h' } });
+  assert.equal(doc.querySelectorAll('#runs-list .runs-item[data-level="top"].is-checked').length, 2);
+  assert.equal(doc.getElementById('runs-bulk').hidden, false);
+});
+
+test('Add to group: a Shaper slice in the selection is skipped and named in the toast', async () => {
+  const { doc } = await groupTwoFromBar({ answer: (b) => ({ group: { id: 'grp_h', title: b.title }, added: ['pw000001'],
+    skipped: [{ pipelineId: 'pw000002', reason: 'feature' }], undo: 'undo_h' }) });
+  assert.equal(doc.querySelector('#toasts .toast .td').textContent, 'r1 · Skipped 1: part of a Shaper feature');
+});
+
+test('⋯ › Add to group… on a selected row adds the whole selection', async () => {
+  const { window, doc, recv, groupPosts } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    await settle(window);
+  }
+  click(window, itemOf(doc, '[data-run-id="r2"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Add to group')));
+  await settle(window);
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  assert.deepEqual([...groupPosts.at(-1).body.pipelineIds].sort(), ['pw000001', 'pw000002']);
+});
+
+test('⋯ › Add to group… on a row outside the selection adds only that row', async () => {
+  const { window, doc, recv, groupPosts } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    await settle(window);
+  }
+  click(window, itemOf(doc, '[data-run-id="r3"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Add to group')));
+  await settle(window);
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  assert.deepEqual(groupPosts.at(-1).body.pipelineIds, ['pw000003']);
+});
+
+test('G with a selection opens the picker for the whole selection, not only the focused row', async () => {
+  const { window, doc, recv, groupPosts } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).focus();
+    press(window, rowEl(doc, `[data-run-id="${id}"]`), ' '); await settle(window);
+  }
+  press(window, doc.activeElement, 'g'); await settle(window);
+  assert.ok(doc.querySelector('.group-picker'), 'G opens the picker');
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  assert.deepEqual([...groupPosts.at(-1).body.pipelineIds].sort(), ['pw000001', 'pw000002']);
 });
