@@ -12,7 +12,8 @@
 // criteria field, the visible comments by display name only, the attachments' metadata — and download one attachment into the
 // path the host names.
 import { createHash } from 'node:crypto';
-import { jiraFetch } from './jira-api.mjs';
+import { isAbsolute } from 'node:path';
+import { jiraDownload, jiraFetch } from './jira-api.mjs';
 import { htmlToMarkdown, markdownToWiki, plainWiki, wikiLink } from './markup.mjs';
 
 const PAGE = 50;
@@ -486,6 +487,20 @@ export default function createTaskSource(ctx, deps = {}) {
           priority: f.priority ? { id: String(f.priority.id), name: f.priority.name } : null },
         fingerprint: fingerprintOf(f.description),   // as ticketState computes it, so A6's edited check holds (D11)
       };
+    }),
+    downloadAttachment: exportOp(async ({ key, id, maxBytes, dest } = {}) => {
+      const k = requireKey(key);
+      if (typeof dest !== 'string' || !isAbsolute(dest)) throw Object.assign(new Error('dest must be an absolute path the host made'), { kind: 'plugin' });
+      const max = Number(maxBytes) > 0 ? Number(maxBytes) : 25 * 1024 * 1024;
+      let meta;
+      try { meta = await issue(k, ['attachment']); }
+      catch (e) { if (e.status === 404) return { gone: true }; if (e.status === 403) return { gone: true, forbidden: true }; throw e; }
+      const a = (meta?.fields?.attachment || []).find((x) => String(x.id) === String(id));
+      if (!a) return { gone: true };   // the attachment must belong to this ticket
+      if (Number(a.size) > max) return { tooLarge: true, bytes: Number(a.size) };   // checked before any download
+      const r = await jiraDownload(jira, a.content, { dest, maxBytes: max, allowHttpRedirect: deps.allowHttpRedirect === true });
+      if (r.gone || r.tooLarge) return r;
+      return { name: String(a.filename || ''), mime: a.mimeType || '', bytes: r.bytes };   // never the body in the frame
     }),
   };
 }

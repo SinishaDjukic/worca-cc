@@ -149,3 +149,23 @@ same connection (profile) as above; the token never leaves the plugin. The plugi
 A field Jira refuses comes back as Jira's message naming it ("Jira needs a value for “Team” in SHOP."), and a deleted
 issue as gone; nothing is created then. Run results of a run started with **Report back** are written back as described
 above.
+
+## Import
+
+Worca's Requirements page can start a feature from a Jira issue (**New feature › From a ticket…**), through the same
+connection (profile); the token never leaves the plugin and nothing is written to Jira. The plugin answers `capabilities()`
+with `import: true` and implements the optional import ops:
+
+- **importOptions** — the projects, for the picker's project select.
+- **searchTickets** — the project's most recently updated issues, or a text search (`text ~ "…"`), 20 a page; a pasted key
+  or issue link finds that issue in any project. Never your saved JQL filter.
+- **importTicket** — the summary, the rendered description as Markdown (an image becomes "(image: <name>)", a table row
+  "| a | b |", a person's link their name), the criteria from a multi-line text field (the export setup's criteria field, else
+  one named "Acceptance Criteria"), the newest 50 comments with the author's display name only (comments restricted to a
+  group or role are left out and counted; app and automation authors are marked), the attachments' names and sizes, and the
+  description's fingerprint (so a later export can tell when it was edited in Jira).
+- **downloadAttachment** — one attachment the product owner picked, into a file the host names. Only from the site's own
+  address with the connection's auth; Jira Cloud's one redirect to its signed media address is followed over https without
+  the token. The size is checked before and during the download (25 MB), and a partial file is deleted.
+
+A 404 (and a Data Center 403) is "not found, or this connection cannot see it".

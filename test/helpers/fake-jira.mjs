@@ -57,7 +57,9 @@ export async function startFakeJira(o = {}) {
   const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, refusePropertyPut: false,
     failReadBack: false, refuseIssuetypeEdit: false, fail: null, oldCreatemeta: false, requiredField: null, refuseOnUpdate: null, storeCrlf: false,
     version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false,
-    brokenReadBack: false, noVersionNumbers: false, seed: [], forbid: [], extraFields: [], ...o };
+    brokenReadBack: false, noVersionNumbers: false, seed: [], forbid: [], extraFields: [],
+    // A6.1 downloads: redirectTwice — the signed address redirects again; contentElsewhere — an attachment's content URL on another origin; contentStatus — the content route answers that status.
+    redirectTwice: false, contentElsewhere: false, contentStatus: null, ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
@@ -72,6 +74,27 @@ export async function startFakeJira(o = {}) {
   const send = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(body === undefined ? '' : JSON.stringify(body)); };
   const gone = (res) => send(res, 404, { errorMessages: ['Issue does not exist or you do not have permission to see it.'], errors: {} });
   let base = '';
+  // A6.1: Cloud answers an attachment's content with a 303 to a signed address on another origin, which wants no Authorization header.
+  const mediaRequests = [];
+  let mediaBase = '';
+  const findAttachment = (id) => [...seeded.values()].flatMap((s) => s.attachments || []).find((x) => x.id === id);
+  const stream = (res, a) => {   // no content-length: the stream cap is what stops a body larger than its metadata said
+    res.writeHead(200, { 'content-type': a.mimeType });
+    res.write(a.body.subarray(0, Math.ceil(a.body.length / 2)));
+    return res.end(a.body.subarray(Math.ceil(a.body.length / 2)));
+  };
+  const media = createServer((req, res) => {
+    mediaRequests.push({ path: req.url, auth: req.headers.authorization || null });
+    if (req.headers.authorization) return send(res, 400, { error: 'An Authorization header is not allowed here.' });
+    const id = (/^\/file\/(\d+)/.exec(req.url) || [])[1];
+    if (opt.redirectTwice) { res.writeHead(302, { location: `${mediaBase}/file/${id}?again=1` }); return res.end(); }
+    const a = findAttachment(id);
+    return a ? stream(res, a) : send(res, 404, {});
+  });
+  await new Promise((r) => media.listen(0, '127.0.0.1', r));
+  mediaBase = `http://127.0.0.1:${media.address().port}`;
+  const contentOf = (a) => (opt.contentElsewhere ? `${mediaBase}/file/${a.id}`
+    : cloud ? `${base}/rest/api/2/attachment/content/${a.id}` : `${base}/secure/attachment/${a.id}/${encodeURIComponent(a.filename)}`);
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://fake');
     let raw = '';
@@ -84,13 +107,22 @@ export async function startFakeJira(o = {}) {
         ...(opt.noVersionNumbers ? {} : { versionNumbers: String(opt.version).split('-')[0].split('.').map(Number) }) });
     }
     if (opt.refuseToken || req.headers.authorization !== auth) return send(res, 401, { errorMessages: ['You are not authenticated.'] });
+    let m;
+    m = /^\/rest\/api\/2\/attachment\/content\/(\d+)$/.exec(p) || /^\/secure\/attachment\/(\d+)\/.+$/.exec(p);
+    if (m) {
+      if (opt.contentStatus) return send(res, opt.contentStatus, { errorMessages: ['Not allowed.'], errors: {} });
+      const a = findAttachment(m[1]);
+      if (!a) return send(res, 404, {});
+      if (cloud) { res.writeHead(303, { location: `${mediaBase}/file/${a.id}?token=signed` }); return res.end(); }
+      return stream(res, a);
+    }
     if (opt.fail && req.method === opt.fail.method && p === opt.fail.path) return send(res, opt.fail.status, opt.fail.body);
     if (cloud && p === '/rest/api/2/project/search') return send(res, 200, { values: PROJECTS, isLast: true });
     if (!cloud && p === '/rest/api/2/project') return send(res, 200, PROJECTS);
     if (p === '/rest/api/2/field') {
       return send(res, 200, [...BASE_FIELDS, ...(opt.extraFields || [])].map((f) => ({ id: f.fieldId, name: f.name, custom: /^customfield_/.test(f.fieldId), schema: f.schema })));
     }
-    let m = /^\/rest\/api\/2\/issue\/createmeta\/([^/]+)\/issuetypes(?:\/([^/]+))?$/.exec(p);
+    m = /^\/rest\/api\/2\/issue\/createmeta\/([^/]+)\/issuetypes(?:\/([^/]+))?$/.exec(p);
     if (m) {
       if (opt.oldCreatemeta) return send(res, 404, { errorMessages: ['null for uri'], errors: {} });
       const list = m[2] ? fields : TYPES;
@@ -138,7 +170,7 @@ export async function startFakeJira(o = {}) {
     m = /^\/rest\/api\/2\/issue\/([^/]+)$/.exec(p);
     if (m) {
       if ((opt.forbid || []).includes(m[1])) return send(res, 403, { errorMessages: ['You do not have the permission to see the specified issue.'], errors: {} });
-      if (seeded.has(m[1]) && req.method === 'GET') return send(res, 200, seededAnswer(seeded.get(m[1]), url));
+      if (seeded.has(m[1]) && req.method === 'GET') return send(res, 200, seededAnswer(seeded.get(m[1]), url, contentOf));
       const i = issues.get(m[1]);
       if (!i) return gone(res);
       if (req.method === 'PUT') {
@@ -190,5 +222,6 @@ export async function startFakeJira(o = {}) {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
-  return { base, issues, requests, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(r); }) };
+  return { base, issues, requests, media: { get base() { return mediaBase; }, requests: mediaRequests },
+    close: () => new Promise((r) => { server.closeAllConnections?.(); media.closeAllConnections?.(); media.close(() => server.close(r)); }) };
 }
