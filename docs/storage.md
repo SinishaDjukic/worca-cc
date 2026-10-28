@@ -21,7 +21,7 @@ project's working tree, so nothing is ever committed to your repo.
                                         status) and req_export_links (one row per feature: its current ticket, the
                                         spec and fields as last sent, the tracker's fingerprint of the description,
                                         a pending create's marker). Every export is also an `export` turn.
-                                        Requirements import (v80): req_export_links.origin ('export' | 'import'; a link
+                                        Requirements import (v81): req_export_links.origin ('export' | 'import'; a link
                                         an import made keeps the ticket's issue type and priority) and
                                         req_attachments.fetch_json (the tracker file a row comes from: the
                                         connection, the ticket key and the attachment id; NULL for an upload).

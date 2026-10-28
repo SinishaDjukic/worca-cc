@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 80;
+export const SCHEMA_VERSION = 81;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -839,8 +839,8 @@ const INCREMENTAL_COLUMNS = {
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
-  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v80: where the link came from, 'export' | 'import' (A6.1 D11, D13)
-  req_attachments:        { fetch_json: 'TEXT' },   // v80: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
+  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v81: where the link came from, 'export' | 'import' (A6.1 D11, D13)
+  req_attachments:        { fetch_json: 'TEXT' },   // v81: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -2624,9 +2624,9 @@ export function migrate(db) {
     // v80 requirements A6: req_export_setups + req_export_links (first written as v79; dev took 79). New tables only, so no repair call:
     // INCREMENTAL_TABLES creates them for a DB stamped past this rung without them.
     if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
-    // v80 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS). The repair runs here, after
-    // the v77 and v80 rungs created those tables on a DB coming from below them.
-    if (current < 80) repairSchemaGaps(db, schemaGaps(db));
+    // v81 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS; first written as v80, A6 took
+    // 80). The repair runs here, after the v77 and v80 rungs created those tables on a DB coming from below them.
+    if (current < 81) repairSchemaGaps(db, schemaGaps(db));
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
