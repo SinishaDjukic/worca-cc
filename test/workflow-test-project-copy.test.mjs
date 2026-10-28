@@ -214,13 +214,23 @@ test('an enclosing repository is never written: a copy whose .git is an empty fo
   assert.equal(repoSnapshot(home), outer, 'the enclosing repository got nothing');
 });
 
-test('a copy that kept a remote is replaced by a clean one; a failed clone leaves nothing behind', async () => {
-  const a = await copy.ensureTestCopy(key, { projectDir: real });
-  git(a.dir, 'remote', 'add', 'origin', real);
+test('a copy that got a remote is repaired in place (pins, branches and live worktrees kept); a failed clone leaves nothing behind', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'd00d0001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-d00d0001', '--', wt, p.startCommit);   // a live try
+  git(wt, 'remote', 'add', 'origin', real);   // an agent in its checkout: worktrees share the copy's config
+  git(dir, 'remote', 'add', 'upstream', real);
+  git(dir, 'config', 'gc.auto', '1');
   const b = await copy.ensureTestCopy(key, { projectDir: real });
-  assert.equal(b.created, true, 'a remote makes it unhealthy');
-  assert.equal(git(b.dir, 'remote'), '');
-  assert.equal(git(b.dir, 'config', 'core.longpaths'), 'true');
+  assert.deepEqual(b, { dir, created: false }, 'repaired, not made again');
+  assert.equal(git(dir, 'remote'), '');
+  assert.equal(git(dir, 'config', 'gc.auto'), '0', 'the settings are set again');
+  assert.equal(git(dir, 'config', 'core.longpaths'), 'true');
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${p.startCommit}`), p.startCommit, 'the pin is kept');
+  assert.equal(git(dir, 'rev-parse', 'refs/heads/worca-cc/try-d00d0001'), p.startCommit, 'the try branch is kept');
+  assert.ok(existsSync(join(wt, 'README.md')), 'the live checkout is kept');
   const bad = mkdtempSync(join(tmpdir(), 'worca-cc-wftnotrepo-'));
   dirs.push(bad);
   await assert.rejects(copy.ensureTestCopy('not-a-repo-0badc0de', { projectDir: bad }), { code: 'NOT_READY' });
@@ -255,15 +265,30 @@ test('removal waits for the job that holds the copy, and a branch that cannot be
   const wt = join(wh, 'runs', 'beef0001', 'repos', key);
   mkdirSync(dirname(wt), { recursive: true });
   git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/held-beef0001', '--', wt, p.startCommit);   // a branch git refuses to delete
+  const wt2 = join(wh, 'runs', 'beef0002', 'repos', key);
+  mkdirSync(dirname(wt2), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-beef0002', '--', wt2, p.startCommit);
   let release;
   const held = copy.withKeyLock(key, () => new Promise((r) => { release = r; }));
   let done = false;
-  const removing = copy.removeTryCheckout({ copyDir: dir, branch: 'worca-cc/held-beef0001' }).then((r) => { done = true; return r; });
+  const removing = copy.removeTryCheckout({ copyDir: dir, worktreeDir: wt2, branch: 'worca-cc/held-beef0001' }).then((r) => { done = true; return r; });
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(done, false, 'it waits for the lock');
+  assert.equal(existsSync(wt2), false, 'the checkout folder goes before the lock: only the copy writes wait');
   release(); await held;
   const r = await removing;
   assert.equal(r.removed, false);
   assert.match(r.error, /worca-cc\/held-beef0001/);
   assert.equal(git(dir, 'rev-parse', '--verify', '-q', 'refs/heads/worca-cc/held-beef0001'), p.startCommit);
+});
+
+test('the boot sweep removes a clone folder left half made by a crash', async () => {
+  await copy.pinStart({ key, name: 'real', projectDir: real });
+  const left = join(wh, 'workflow-tests', 'repos', `.clone-${key}-AbC123`);
+  mkdirSync(join(left, '.git', 'objects'), { recursive: true });
+  writeFileSync(join(left, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  const logged = [];
+  assert.deepEqual(await copy.sweepTestCopies({ log: (...a) => logged.push(a) }), { copies: 1, branches: 0 });
+  assert.equal(existsSync(left), false);
+  assert.ok(existsSync(join(wh, 'workflow-tests', 'repos', key, '.git')), 'the copy itself stays');
 });

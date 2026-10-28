@@ -59,17 +59,17 @@ async function ownRepo(dir) {
   return r.ok && !!r.stdout.trim() && samePath(r.stdout.trim(), join(dir, '.git'));
 }
 
-/** A healthy copy: a repository of its own with no remote (a remote would point back at the person's repository). */
-async function healthyCopy(dir) {
-  if (!(await ownRepo(dir))) return false;
-  const r = await copyGit(dir, ['remote']);
-  return r.ok && !r.stdout.trim();
-}
+/** What every copy has set (D54): long paths on Windows, and no automatic gc or maintenance under a running try. */
+const COPY_SETTINGS = Object.freeze([['config', 'core.longpaths', 'true'], ['config', 'gc.auto', '0'], ['config', 'maintenance.auto', 'false']]);
 
 const notACopy = (dir) => `${dir} is not a usable copy of the project (no git repository of its own): skipped`;
 
 const LOCKS = new Map();
-/** One job at a time writes a copy (a clone, a fetch, a start commit): three tries start at once (D36). */
+/**
+ * One job at a time writes a copy (a clone, a fetch, a start commit): three tries start at once (D36).
+ * Not re-entrant: never call withKeyLock, ensureTestCopy or removeTryCheckout for the same key from inside `fn`, or both wait
+ * for each other forever.
+ */
 export function withKeyLock(key, fn) {
   const prev = LOCKS.get(key) || Promise.resolve();
   const next = prev.then(fn, fn);
@@ -91,25 +91,38 @@ async function renameRetry(from, to, attempts = 10) {
 }
 
 /**
- * The copy of `key`; call it inside the key's lock. Anything but a healthy copy (missing; a .git that is empty, a gitfile,
- * or resolves to an enclosing repository; or a copy that has a remote) is removed and made again from `projectDir` (D54).
- * The clone is made and set up in a temporary sibling folder and renamed into place only when every step worked, so a
- * copy is never left half set up (with `origin` still pointing at the person's repository).
+ * The copy of `key`; call it inside the key's lock. A copy that is a repository of its own is kept: if it has a remote
+ * (an agent in a try's checkout can add one, since worktrees share the copy's config), it is repaired in place: every
+ * remote removed and COPY_SETTINGS set again. Deleting it would take the live tries' worktrees, branches and pins with it.
+ * Only a folder that is not a repository of its own (missing; a .git that is empty, a gitfile, or resolves to an
+ * enclosing repository) is removed and made again from `projectDir` (D54). The clone is made and set up in a temporary
+ * sibling folder and renamed into place only when every step worked, so a copy is never left half set up (with `origin`
+ * still pointing at the person's repository).
  */
 async function ensureTestCopyLocked(key, { projectDir }) {
   const dir = testCopyDirFor(key);
-  if (await healthyCopy(dir)) return { dir, created: false };
-  await rm(dir, RM);
+  const setUp = async (at, steps) => {
+    for (const args of steps) {
+      const r = await copyGit(at, args);
+      if (!r.ok) throw testError(`Worca could not set up its copy of the project: ${firstLine(r.stderr)}`, 'NOT_READY');
+    }
+  };
+  if (await ownRepo(dir)) {
+    const rem = await copyGit(dir, ['remote']);
+    if (!rem.ok) throw testError(`Worca could not read its copy of the project: ${firstLine(rem.stderr)}`, 'NOT_READY');
+    const remotes = rem.stdout.split(/\r?\n/).map((n) => n.trim()).filter(Boolean);
+    if (remotes.length) await setUp(dir, [...remotes.map((n) => ['remote', 'remove', '--', n]), ...COPY_SETTINGS]);
+    return { dir, created: false };
+  }
+  try { await rm(dir, RM); }
+  catch (e) { throw testError(`Worca could not remove its broken copy of the project: ${e.message}`, 'NOT_READY'); }
   await mkdir(testCopiesRoot(), { recursive: true });
-  const tmp = await mkdtemp(join(testCopiesRoot(), `.clone-${key}-`));   // never matches PROJECT_KEY_RE: the sweep skips it
+  const tmp = await mkdtemp(join(testCopiesRoot(), `.clone-${key}-`));   // never matches PROJECT_KEY_RE; the boot sweep removes a leftover
   try {
     // --local hardlinks the project's object files on purpose: cheap, and git never rewrites an object file in place.
     const c = await copyGit(testCopiesRoot(), ['clone', '--quiet', '--local', '--no-checkout', '--no-tags', '--', resolve(projectDir), tmp]);
     if (!c.ok) throw testError(`Worca could not copy the project: ${firstLine(c.stderr)}`, 'NOT_READY');
-    for (const args of [['remote', 'remove', 'origin'], ['config', 'core.longpaths', 'true'], ['config', 'gc.auto', '0'], ['config', 'maintenance.auto', 'false']]) {
-      const r = await copyGit(tmp, args);
-      if (!r.ok) throw testError(`Worca could not set up its copy of the project: ${firstLine(r.stderr)}`, 'NOT_READY');
-    }
+    await setUp(tmp, [['remote', 'remove', 'origin'], ...COPY_SETTINGS]);
     await renameRetry(tmp, dir);
   } catch (e) {
     await rm(tmp, RM).catch(() => {});
@@ -118,7 +131,10 @@ async function ensureTestCopyLocked(key, { projectDir }) {
   return { dir, created: true };
 }
 
-/** The copy of `key`, made from `projectDir` when it is missing or not healthy (D54). Takes the key's lock. */
+/**
+ * The copy of `key`, made from `projectDir` when it is not a repository of its own, repaired when it has a remote (D54).
+ * Takes the key's lock, and is not re-entrant: never call it from inside withKeyLock for the same key.
+ */
 export function ensureTestCopy(key, { projectDir }) {
   return withKeyLock(key, () => ensureTestCopyLocked(key, { projectDir }));
 }
@@ -317,16 +333,17 @@ export async function removeTree(dir, { rmImpl = rm, attempts = 5, waitMs = 500 
  * D61: after a try's checks, or on any other end: its checkout, its branch in the copy and its run root. Node's rm removes
  * the checkout first (it never follows a junction, as the test proves); `git worktree prune` then drops the registration.
  * This rm-then-prune intentionally replaces `git worktree remove --force`, whose own walk is not proved junction-safe.
- * The copy is written under its key's lock; a copy that is not a repository of its own is skipped and reported.
+ * The checkout folder goes first, outside the lock (a long removal never holds up another try's start); only the copy
+ * writes (prune, branch -D) take its key's lock. A copy that is not a repository of its own is skipped and reported.
+ * Takes the key's lock, and is not re-entrant: never call it from inside withKeyLock for the same key.
  */
 export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = null, runRoot = null, pipelineId = null, rmImpl } = {}) {
   const errors = [];
+  if (worktreeDir && existsSync(worktreeDir)) {
+    const e = await removeTree(worktreeDir, rmImpl ? { rmImpl } : {});
+    if (e) errors.push(e);
+  }
   const inCopy = async () => {
-    if (worktreeDir && existsSync(worktreeDir)) {
-      const e = await removeTree(worktreeDir, rmImpl ? { rmImpl } : {});
-      if (e) errors.push(e);
-    }
-    if (!copyDir || !existsSync(copyDir)) return;
     if (!(await ownRepo(copyDir))) { errors.push(notACopy(copyDir)); return; }
     await copyGit(copyDir, ['worktree', 'prune']);
     if (branch && /^[^-]/.test(branch) && (await copyGit(copyDir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).ok) {
@@ -334,10 +351,11 @@ export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = 
       if (!d.ok) errors.push(`Worca could not delete the branch ${branch} in its copy of the project: ${firstLine(d.stderr)}`);
     }
   };
-  const key = copyDir ? testCopyKeyOf(copyDir) : null;
-  if (key) await withKeyLock(key, inCopy);
-  else if (copyDir && existsSync(copyDir)) errors.push(notACopy(copyDir));   // not under testCopiesRoot(): never touched
-  else await inCopy();
+  if (copyDir && existsSync(copyDir)) {
+    const key = testCopyKeyOf(copyDir);
+    if (key) await withKeyLock(key, inCopy);
+    else errors.push(notACopy(copyDir));   // not under testCopiesRoot(): never touched
+  }
   if (runRoot && pipelineId && existsSync(runRoot)) {
     const r = await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId });
     if (!r.removed && existsSync(runRoot)) errors.push(r.reason || 'the run folder stayed');
@@ -345,12 +363,21 @@ export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = 
   return { removed: !errors.length, error: errors[0] || null };
 }
 
-/** D61, at boot (no try runs): every copy prunes its worktrees and loses the try branches no worktree holds. */
+/**
+ * D61, at boot (no try runs, no clone is being made): clone folders a crash left half made are removed, and every copy
+ * prunes its worktrees and loses the try branches no worktree holds.
+ */
 export async function sweepTestCopies({ log = () => {} } = {}) {
   const out = { copies: 0, branches: 0 };
-  let names = [];
-  try { names = (await readdir(testCopiesRoot(), { withFileTypes: true })).filter((e) => e.isDirectory() && PROJECT_KEY_RE.test(e.name)).map((e) => e.name); }
+  let entries = [];
+  try { entries = (await readdir(testCopiesRoot(), { withFileTypes: true })).filter((e) => e.isDirectory()); }
   catch { return out; }
+  for (const e of entries.filter((x) => x.name.startsWith('.clone-'))) {
+    const why = await removeTree(join(testCopiesRoot(), e.name));
+    if (why) log('warn', `workflow tests: could not remove the half made copy ${e.name}: ${why}`);
+    else log('info', `workflow tests: removed the half made copy ${e.name}`);
+  }
+  const names = entries.filter((e) => PROJECT_KEY_RE.test(e.name)).map((e) => e.name);
   for (const name of names) {
     const dir = join(testCopiesRoot(), name);
     await withKeyLock(name, async () => {
