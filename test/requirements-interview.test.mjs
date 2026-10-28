@@ -13,7 +13,7 @@ import {
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
   startOrientation, submitAnswers, finishInterview, followUp, maybeFollowUpFiles, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS, interviewCallOptions, callModel,
-  userClaudeSignIn, interviewModel, DEFAULT_INTERVIEW_EFFORT, assertCapacity,
+  userClaudeSignIn, interviewModel, DEFAULT_INTERVIEW_EFFORT, assertCapacity, holdSlot,
 } from '../src/core/requirements/interview.mjs';
 import { addAttachments, removeAttachment, readsSettled } from '../src/core/requirements/attachment-job.mjs';
 import { ATTACHMENT_SYSTEM_PROMPT } from '../src/core/requirements/attachments.mjs';
@@ -1653,4 +1653,30 @@ test('A8 D8: a read that ends while a look runs gets its follow-up once the look
   assert.deepEqual(listTurns(f.seq).filter((t) => t.kind === 'round').at(-1).payload.files, [a.id]);
   assert.equal(r.calls.filter((c) => c.systemPrompt === ROUND_SYSTEM_PROMPT).length, 1, 'one round');
   assert.deepEqual([getFeature(f.seq).status, unaskedFiles(listAttachments('feature', f.seq), listTurns(f.seq))], ['done', []]);
+});
+
+test('A3 D11: a held helper slot counts toward MAX_JOBS; its release wakes a create waiting for a slot', async () => {
+  setContext('project', 'shop-1234abcd', { lookAtCode: false });
+  let open;
+  const gate = new Promise((res) => { open = res; });
+  const r = fileRunner();
+  const held = { ...r, runClaudeImpl: async (o) => { if (o.systemPrompt === ATTACHMENT_SYSTEM_PROMPT) await gate; return r.runClaudeImpl(o); } };
+  const f = newFeature();
+  addAttachments({ type: 'feature', id: f.seq }, [upload('held.md', 'held')], {}, deps(held));
+  const job = startOrientation(f.seq, {}, deps(held, { round1WaitMs: 60_000 }));
+  await new Promise((res) => setTimeout(res, 30));   // the create waits for its read, outside MAX_JOBS
+  const releases = Array.from({ length: MAX_JOBS }, () => holdSlot());
+  assert.throws(() => holdSlot(), (e) => e.code === 'BUSY');
+  assert.throws(() => assertCapacity(), (e) => e.code === 'BUSY');
+  open();
+  await readsSettled({ type: 'feature', id: f.seq });
+  await new Promise((res) => setTimeout(res, 30));
+  const rounds = () => r.calls.filter((c) => c.systemPrompt !== ATTACHMENT_SYSTEM_PROMPT).length;
+  assert.equal(rounds(), 0, 'round 1 waits: every slot is held');
+  releases[0]();
+  releases[0]();   // a second call frees nothing more
+  await job;
+  assert.equal(rounds(), 1, 'the release woke it');
+  for (const free of releases.slice(1)) free();
+  assert.doesNotThrow(() => assertCapacity());
 });

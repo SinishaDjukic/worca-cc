@@ -14,7 +14,6 @@ import { buildChangesChatCard } from '../shape/changes-card.mjs';
 import { buildRouteChatCard } from '../shape/route-card.mjs';
 import { prWatchTooltip } from './pr-watch-words.mjs';
 import { renderAskChanges } from './ask-changes.mjs';
-import { shapeFirstOn } from './shape-gate.mjs';
 
 export const RECEIPT_CHIPS = Object.freeze({
   setting: 'Setting', pause: 'Paused', resume: 'Resumed', 'away-now': 'Away mode', 'run-away': 'Away mode',
@@ -262,7 +261,7 @@ export function buildPullRequestCard(block, ctx) {
       }
     }
     // Shaper s5: Ask for changes on the opened PR's run (the server mints the changes card).
-    if (card.pipelineId && !card.workspaceId && shapeFirstOn(doc) && typeof ctx.postChanges === 'function') {   // a workspace run has no single branch to change
+    if (card.pipelineId && !card.workspaceId && typeof ctx.postChanges === 'function') {   // a workspace run has no single branch to change
       body.appendChild(renderAskChanges(doc, { onSend: (t) => ctx.postChanges({ pipelineId: card.pipelineId }, t) }).el);
     }
   }

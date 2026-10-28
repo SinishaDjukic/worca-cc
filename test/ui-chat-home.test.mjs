@@ -621,8 +621,8 @@ test('a visit loads the pins with the workflows; a pinned workflow tile arms New
     ['setIntent', 'run', { workflow: { id: 'wf_pay', name: 'Payroll close' } }]);
 });
 
-test('pins that fail to load fall back to the default (Shaper while the flag is on)', async () => {
-  const s = setup({ pins: null, flags: { scripts: true, tasks: false, shapeFirst: true } });
+test('pins that fail to load fall back to the default (Shaper)', async () => {
+  const s = setup({ pins: null });
   await settle(s.window);
   assert.ok(s.host.querySelector('.chat-home-act[data-pin="wf_shape"][data-intent="shape"]'));
 });

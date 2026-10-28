@@ -131,7 +131,7 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
     await checkRows([
       { name: 'hello carries flags', run: async () => {
         await waitFor(() => msgs.some((m) => m.type === 'hello'));
-        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, keepAwake: true, shapeFirst: true, runTags: false, runPresets: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, workflowTests: false, runTelemetry: false });
+        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, workflowTests: false, runTelemetry: false });
       } },
       { name: 'GET /api/flags: the documented shape, plus docsUrl', run: async () => {
         const j = await (await fetch(`${base}/api/flags`)).json();
@@ -145,27 +145,19 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
         assert.equal((await r.json()).flags.find((f) => f.key === 'flagsDemo').on, true);
         assert.deepEqual(await stored(), { flagsDemo: true });
         await waitFor(() => msgs.some((m) => m.type === 'flags'));
-        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, keepAwake: true, shapeFirst: true, runTags: false, runPresets: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, workflowTests: false, runTelemetry: false } });
-        assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo keepAwake shapeFirst runPresets commandSummaries"/);
+        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, workflowTests: false, runTelemetry: false } });
+        assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo commandSummaries"/);
         assert.equal((await (await fetch(`${base}/api/settings`)).json()).flags.flagsDemo, true);
       } },
-      { name: 'PATCH {keepAwake:false} (the Settings › Runs switch) turns it off and broadcasts; null restores the default', run: async () => {
-        const r = await patch({ keepAwake: false });
-        assert.equal(r.status, 200);
-        assert.equal((await r.json()).flags.find((f) => f.key === 'keepAwake').on, false);
-        await waitFor(() => msgs.some((m) => m.type === 'flags' && m.flags.keepAwake === false));
-        assert.equal((await patch({ keepAwake: null })).status, 200);
-        assert.equal((await (await fetch(`${base}/api/flags`)).json()).flags.find((f) => f.key === 'keepAwake').on, true);
-      } },
-      { name: 'shapeFirst is beta and on by default; a stored false (the Settings › Labs switch) is respected; null restores it', run: async () => {
-        const row = () => fetch(`${base}/api/flags`).then((r) => r.json()).then((j) => j.flags.find((f) => f.key === 'shapeFirst'));
+      { name: 'a beta flag on by default (commandSummaries): a stored false is respected; null restores it', run: async () => {
+        const row = () => fetch(`${base}/api/flags`).then((r) => r.json()).then((j) => j.flags.find((f) => f.key === 'commandSummaries'));
         assert.deepEqual(await row().then((f) => [f.stage, f.on, f.source]), ['beta', true, 'default']);
-        assert.equal((await patch({ shapeFirst: false })).status, 200);
-        assert.equal((await stored()).shapeFirst, false, 'an explicit off is the one value kept');
+        assert.equal((await patch({ commandSummaries: false })).status, 200);
+        assert.equal((await stored()).commandSummaries, false, 'an explicit off is the one value kept');
         assert.deepEqual(await row().then((f) => [f.on, f.source]), [false, 'settings']);
-        await waitFor(() => msgs.some((m) => m.type === 'flags' && m.flags.shapeFirst === false));
-        assert.equal((await patch({ shapeFirst: null })).status, 200);
-        assert.equal((await stored())?.shapeFirst, undefined);
+        await waitFor(() => msgs.some((m) => m.type === 'flags' && m.flags.commandSummaries === false));
+        assert.equal((await patch({ commandSummaries: null })).status, 200);
+        assert.equal((await stored())?.commandSummaries, undefined);
         assert.deepEqual(await row().then((f) => [f.on, f.source]), [true, 'default']);
       } },
       { name: 'PATCH false and null both leave nothing stored (default false)', run: async () => {

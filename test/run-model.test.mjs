@@ -380,6 +380,11 @@ test('prState: a closed Azure DevOps PR reads Abandoned, colour and id stay clos
   assert.equal(prState({ ...PR, state: 'CLOSED' }).word, 'Closed', 'GitHub keeps Closed');
 });
 
+test('prState: a closed Bitbucket PR reads Declined, colour and id stay closed', () => {
+  const s = prState({ url: 'https://bitbucket.org/acme/api/pull-requests/5', number: 5, state: 'CLOSED' });
+  assert.deepEqual([s.id, s.word], ['closed', 'Declined']);
+});
+
 test('memberPrState: a workspace run’s most urgent member PR and their count (#784’s workspace glyph, as words)', () => {
   const pr = (n, more = {}) => ghPr({ number: n, url: `https://github.com/o/r/pull/${n}`, ...more });
   assert.equal(memberPrState([]), null);

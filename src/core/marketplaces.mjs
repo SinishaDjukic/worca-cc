@@ -226,7 +226,7 @@ export function checkMarketplaceAdd(url) {
   const id = marketplaceId(norm);
   const cur = readMarketplaces().marketplaces[id];
   if (cur) throw existsError(norm, id, cur); // cheap pre-check: fail before any git work
-  if (marketplaceNeedsGit(norm)) throw gitMissingError();
+  if (marketplaceNeedsGit(norm)) throw gitMissingError(norm);
   return { url: norm, id };
 }
 
@@ -273,7 +273,7 @@ function mutateEntry(id, apply) {
 export async function syncMarketplace(id, { exec } = {}) {
   const cur = readMarketplaces().marketplaces[id];
   if (!cur) throw Object.assign(new Error(`marketplace "${id}" not found`), { code: 'NOT_FOUND' });
-  if (marketplaceNeedsGit(cur.url)) throw gitMissingError();   // a source off GitHub without git: Needs git
+  if (marketplaceNeedsGit(cur.url)) throw gitMissingError(cur.url);   // a source off GitHub without git: Needs git
   const clone = { ...cur, plugins: [...(cur.plugins || [])], warnings: [...(cur.warnings || [])] };
   await syncEntry(clone, { exec });
   const saved = mutateEntry(id, (e) => {

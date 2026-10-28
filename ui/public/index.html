@@ -168,8 +168,8 @@
           </div>
           <!-- The switches (Away, Keep awake): each whole row is the control, a menuitemcheckbox whose
                aria-checked says on or off; the .switch at its right edge only shows it (aria-hidden).
-               Away: app.js#paintAwayMenuRow (on = away). Keep awake: the keepAwake flag, bound by
-               flags-view.mjs#bindFlagSwitch, one source with Settings › Labs. A toggle leaves the menu open. -->
+               Away: app.js#paintAwayMenuRow (on = away). Keep awake: the keepAwake setting, app.js#paintKeepAwakeRow.
+               A toggle leaves the menu open. -->
           <div class="msect sw-sect" role="group" aria-label="Switches">
             <button type="button" class="mi menu-item away-item sw-item" id="acct-away" role="menuitemcheckbox" aria-checked="false" data-state="here" data-min-level="simple"
                     title="worca answers waiting run questions for you while you're away." aria-description="worca answers waiting run questions for you while you're away.">
@@ -178,7 +178,7 @@
               <span class="mi-hint"></span>
               <span class="switch" aria-hidden="true"></span>
             </button>
-            <button type="button" class="mi menu-item sw-item" id="acct-keepawake" role="menuitemcheckbox" aria-checked="false" data-min-level="simple"
+            <button type="button" class="mi menu-item sw-item on" id="acct-keepawake" role="menuitemcheckbox" aria-checked="true" data-min-level="simple"
                     title="Keeps the computer awake while runs are working. The display may still turn off." aria-description="Keeps the computer awake while runs are working. The display may still turn off.">
               <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"></path><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16"></path><path d="M9 3.5v2.5M12.5 3.5v2.5"></path></svg>
               <span class="mi-lbl">Keep awake</span>
@@ -257,6 +257,13 @@
             </div>
           </div>
           <div class="topnav-r">
+            <!-- Ask worca beside the page (ask-side.mjs, app.js syncAskSide): docks the Chat beside the page, on every
+                 page with this bar but Chat; hidden until a route shows it. The dot mirrors the Chat row's new-reply dot. -->
+            <button type="button" class="btn btn-quiet topnav-ask" id="topnav-ask" data-min-level="simple" aria-expanded="false" aria-controls="ask-side" aria-label="Ask worca" title="Ask worca" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4H6.5A2.5 2.5 0 0 0 4 6.5V20l3.6-2.7h9.9a2.5 2.5 0 0 0 2.5-2.5V12"></path><path d="M18 3v6M15 6h6"></path></svg>
+              <span class="topnav-ask-label">Ask worca</span>
+              <span class="topnav-ask-dot" id="topnav-ask-dot" hidden></span>
+            </button>
             <!-- Activity (activity-menu.mjs): what needs you, what is running and what is scheduled,
                  a list with no actions. One badge: the amber Needs-you count (the Runs badge's own
                  number), else the running count. The dialog hangs under the button (side-flyout.mjs). -->
@@ -275,6 +282,9 @@
             </button>
           </div>
         </header>
+      <!-- Ask worca beside the page: the row lays main.main and the side column side by side under the bar; the column
+           pushes the page above 1080px and covers the main column below (style.css "Ask worca beside the page"). -->
+      <div class="main-row" id="main-row">
       <main class="main">
         <!-- Runs redesign §5a.2: the one "server unreachable" banner (connection-state.mjs) for every view. -->
         <div id="conn-banner" class="conn-banner" hidden></div>
@@ -304,7 +314,7 @@
                 <!-- Run presets (#712, docs/run-presets.md): a named setup, applied for THIS run only. -->
                 <!-- One compact "Preset ▾" button (plans/mocks/new-run-preset-button.png): its menu lists the presets and
                      holds Save as preset, Rename, Delete and Manage. The select stays as the hidden value holder. -->
-                <div id="preset-row" class="preset-row" data-flag="runPresets">
+                <div id="preset-row" class="preset-row">
                   <span id="preset-summary" class="preset-summary" hidden></span>
                   <span id="preset-chip" class="chip" hidden></span>
                   <button type="button" id="preset-update" class="btn btn-sm" hidden>Update preset</button>
@@ -396,7 +406,7 @@
                   <small class="hint" id="titleHint">Leave empty and Worca will propose one.</small>
                 </div>
                 <!-- Run tags (#718): who the work is for, so its cost can be allocated. Chips from tag-input.mjs. -->
-                <div class="field field-compact run-tags-field" data-flag="runTags" data-flag-chip>
+                <div class="field field-compact run-tags-field">
                   <label>Cost tags <span class="opt">(optional)</span></label>
                   <div id="runTagDimsField" hidden></div>
                   <small class="hint tag-dims-warn" id="runTagDimsWarn" aria-live="polite" hidden></small>
@@ -482,7 +492,7 @@
                       <span id="mdFileName" class="state hint"></span>
                       <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
                     </div>
-                    <p class="shape-chat-link" id="shapeChatLink" data-min-level="advanced" hidden>Not sure what to build yet? <button type="button" class="link-btn" id="shapeChatLinkBtn">Try Shaper</button></p>
+                    <p class="shape-chat-link" id="shapeChatLink" data-min-level="advanced">Not sure what to build yet? <button type="button" class="link-btn" id="shapeChatLinkBtn">Try Shaper</button></p>
                   </div>
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
                   <!-- #687: a started run takes its task with it; this puts it back (app.js#clearTask). -->
@@ -846,7 +856,7 @@
                   </button>
                   <!-- Slice 2: the live ⋯'s run-scope actions, hidden carriers as on the saved bar (paintRdMenuCarriers offers them). -->
                   <span class="run-menu-carriers" hidden>
-                    <button type="button" class="btn rd-save-preset" data-flag="runPresets" title="Save this run's setup as a run preset" hidden><span class="hd-btn-label">Save as preset</span></button>
+                    <button type="button" class="btn rd-save-preset" title="Save this run's setup as a run preset" hidden><span class="hd-btn-label">Save as preset</span></button>
                     <button type="button" class="btn rd-report" hidden><span class="hd-btn-label">Report this run</span></button>
                     <button type="button" class="btn rd-archive" hidden><span class="hd-btn-label">Archive</span></button>
                   </span>
@@ -974,7 +984,7 @@
                      rules): Run after, the Resume split, Pause, Stop. History's own class names, so
                      setupHdActions, paintHdAfter, paintHdLive and resumePipeline's busy label reach them. -->
                 <span class="rd-bar-end">
-                  <button type="button" class="btn hd-save-preset" data-flag="runPresets" title="Save this run's setup as a run preset" aria-label="Save as preset" hidden>
+                  <button type="button" class="btn hd-save-preset" title="Save this run's setup as a run preset" aria-label="Save as preset" hidden>
                     <span class="hd-btn-label">Save as preset</span>
                   </button>
                   <button type="button" class="btn hd-after" data-min-level="advanced" title="Schedule a run after this" aria-label="Schedule a run after this" hidden>
@@ -1189,14 +1199,13 @@
             </span>
           </div>
           <div class="stats-filter stats-scope">
-            <span class="stats-tags" id="stats-tags" data-flag="runTags"></span>
+            <span class="stats-tags" id="stats-tags"></span>
             <div class="select-wrap"><select id="stats-person" class="select" aria-label="Filter by person"><option value="">Everyone</option></select></div>
-            <div class="seg seg-sm" id="stats-view" role="group" aria-label="View" data-flag="runTags">
+            <div class="seg seg-sm" id="stats-view" role="group" aria-label="View">
               <button type="button" data-stats-view="overview" class="on" aria-pressed="true">Overview</button>
               <button type="button" data-stats-view="person" aria-pressed="false">By person</button>
               <button type="button" data-stats-view="cost" aria-pressed="false">Cost</button>
             </div>
-            <div class="select-wrap" id="stats-group-wrap"><select id="stats-group" class="select" aria-label="Group by"><option value="">No grouping</option><option value="person">Group by person</option></select></div>
             <small class="hint" id="stats-filter-note" hidden>Filtered: Chat spend is not included.</small>
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
@@ -1675,8 +1684,8 @@
             <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
                  strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="tab on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
-            <button type="button" class="tab" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Labels &amp; cost tags</button>
-            <button type="button" class="tab" data-tab="presets" data-min-level="advanced" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
+            <button type="button" class="tab" data-tab="tags" data-min-level="simple" aria-pressed="false">Labels &amp; cost tags</button>
+            <button type="button" class="tab" data-tab="presets" data-min-level="advanced" aria-pressed="false">Presets</button>
             <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <!-- Labs (docs/feature-flags.md) shows at every level: flags are not levels. -->
             <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Labs</button>
@@ -1966,10 +1975,9 @@
           <!-- /pane general -->
 
           <!-- ===== TAB: TAGS — run tag rules (Settings › Tags): tag rows and "Require mandatory tags".
-               Every level while runTags is on. The pane has no data-flag (a deep link would show a blank
-               page); the chip and the card carry it, and parseSettingsParam sends #settings/tags to General. ===== -->
+               Every level. ===== -->
           <section class="settings-pane hidden" data-tab="tags">
-            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="simple" data-flag="runTags">
+            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="simple">
               <div class="card-head"><div class="label-row"><h2>Cost tags</h2></div></div>
               <p class="hint" id="tagsTeamNote" hidden></p>
               <div class="drows">
@@ -1996,7 +2004,7 @@
           </section><!-- /pane tags -->
 
           <section class="settings-pane hidden" data-tab="presets">
-            <section class="card settings-card" id="presets-settings-card" data-min-level="advanced" data-flag="runPresets">
+            <section class="card settings-card" id="presets-settings-card" data-min-level="advanced">
               <div class="card-head"><div class="label-row"><h2>Presets</h2></div></div>
               <p class="hint">Named New run setups. Pick one in New run, type a prompt and start: its choices apply to that run only.</p>
               <div id="presets-list"></div>
@@ -2616,6 +2624,8 @@
         </section>
         <!-- /view providers -->
       </main>
+      <aside class="ask-side" id="ask-side" aria-label="Ask worca" hidden><div class="ask-side-in" data-ask-side-host></div></aside>
+      </div><!-- /.main-row -->
       </div><!-- /.main-col -->
     </div>
 

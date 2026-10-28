@@ -10,7 +10,7 @@ import { worcaHome, listProjects } from '../projects.mjs';
 import { projectKey, canonicalProjectRoot } from '../store.mjs';
 import { listRemotes, parseRemoteUrl } from '../git-info.mjs';
 import { gitEnvFor, githubOnlyEnv, hostLookupNeeded, stripHostCredentials } from '../host-credentials.mjs';
-import { gitAvailable, gitMissingResult, GIT_MISSING, onGitChange } from '../git-available.mjs';
+import { gitAvailable, gitMissingResult, gitMissingMessage, onGitChange } from '../git-available.mjs';
 import { teamOverHttps, projectSlugHttps } from '../git-free/team-repo.mjs';
 import { repoOfSlug, lsRemoteHttps, readBranchFile, createOrphanBranch, commitFiles, syncSnapshot, TEAM_FLUSH_BATCH } from '../git-free/team-branch.mjs';
 
@@ -413,7 +413,7 @@ export async function discoverProject(projectDir, { force = false, now = Date.no
   }
   const https = teamOverHttps(projectDir);
   // P6: a repository the slug misnames (projectSlugHttps's needsGit: `acme/.github`) is asked nothing — a host slug's answer.
-  const ls = https ? (needsGit ? { ok: false, stdout: '', stderr: GIT_MISSING.message } : await lsRemoteHttps(slug, METRICS_BRANCH, { timeoutMs: lsTimeoutMs })) : await _git(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${METRICS_BRANCH}`], { timeoutMs: lsTimeoutMs });
+  const ls = https ? (needsGit ? { ok: false, stdout: '', stderr: gitMissingMessage(slug) } : await lsRemoteHttps(slug, METRICS_BRANCH, { timeoutMs: lsTimeoutMs })) : await _git(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${METRICS_BRANCH}`], { timeoutMs: lsTimeoutMs });
   if (!ls.ok) {
     // Offline ≠ disabled: keep the previous verdict. checkedAt is NOT advanced, so the next
     // trigger (flush, page open, hourly tick) retries instead of waiting an hour.
@@ -694,7 +694,7 @@ async function validateDelegateTarget(delegateTo, ownSlug) {
 export async function enableTeamMetrics(projectDir, { mode = 'here', attribution = 'git-user', delegateTo = null, change = false, now = new Date(), by = null } = {}) {
   if (mode !== 'here' && mode !== 'delegate') throw metricsError('BAD_REQUEST', `mode must be "here" or "delegate"`);
   const { slug, hasOrigin, needsGit, repoInput } = await projectSlug(projectDir);
-  if (needsGit) throw metricsError('GIT_MISSING', GIT_MISSING.message);
+  if (needsGit) throw metricsError('GIT_MISSING', gitMissingMessage(slug));
   if (repoInput) throw metricsError('REPO_REQUIRED', 'type the GitHub repository (owner/name)');
   if (!hasOrigin) throw metricsError('NO_ORIGIN', 'this project has no origin remote — team metrics push to origin, so there is nowhere to record');
   const delegate = mode === 'delegate' ? await validateDelegateTarget(delegateTo, slug) : null;
@@ -980,7 +980,7 @@ async function flushHttps(slug, files, owner, ownerKey, { sleep, random, now }) 
   // Batches that landed before a failure are pushed: the result says how many.
   const failure = (code, stderr, pending) => ({ ...recordFailure(ownerKey, slug, code, stderr, pending), pushed });
   // A host slug, or a repository the slug misnames (projectSlugHttps's needsGit: `acme/.github`), needs git.
-  if (!repoOfSlug(slug) || (await projectSlug(owner.path)).needsGit) return failure('GIT_MISSING', GIT_MISSING.message, files.length);
+  if (!repoOfSlug(slug) || (await projectSlug(owner.path)).needsGit) return failure('GIT_MISSING', gitMissingMessage(slug), files.length);
   for (let i = 0; i < files.length; i += TEAM_FLUSH_BATCH) {
     const batch = files.slice(i, i + TEAM_FLUSH_BATCH);
     const remaining = files.length - i;
@@ -1035,7 +1035,7 @@ async function copyIntoSnapshot(slug, contents, { parent, sha, unchanged }) {
 /** P6: refresh the slug's snapshot (incremental when it can be). `projectDir` (the sink's project): a repository its slug
  *  misnames (projectSlugHttps's needsGit: `acme/.github`) is asked nothing — a host slug's answer. */
 export async function refreshSnapshot(slug, projectDir = null) {
-  if (projectDir && teamOverHttps(projectDir) && (await projectSlug(projectDir)).needsGit) return { ok: false, sha: null, changed: false, stderr: GIT_MISSING.message };
+  if (projectDir && teamOverHttps(projectDir) && (await projectSlug(projectDir)).needsGit) return { ok: false, sha: null, changed: false, stderr: gitMissingMessage(slug) };
   return syncSnapshot(slug, METRICS_BRANCH, snapshotPath(slug), { keep: (p) => p === 'README.md' || p.startsWith(`${METRICS_DIR}/`) });
 }
 

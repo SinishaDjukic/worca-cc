@@ -248,10 +248,10 @@ keep their divider, and an empty list draws no card. Each Settings section is on
 a preset, a guardrail) with the same divider and padding.
 ### Chat cards
 In the Chat conversation every card (run, files, applied change, command, run proposal, workflow, stubs) sits on the
-text column: `.ask-transcript-col` caps it at `--chat-text-max` (760px) and no card kind sets its own width. Only a graph
-well (`.gv-well`: the workflow card's and the run card's graph) widens, through one rule (`.chat-convo .ask-msg
-.gv-well`), up to `--chat-card-max` (1040px) and centred on the column; it is 1px `--line`, a 6px corner and the canvas
-fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
+text column: `.ask-transcript-col` caps it at `--chat-text-max` (760px) and no card kind sets its own width. No part of
+a chat card leaves the text column (checked): a graph well (`.gv-well`: the workflow card's, the Auto card's and the
+run card's graph) is exactly as wide as its card and lines up with the card's other content; it is 1px `--line`, a 6px
+corner and the canvas fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
 with the first node in view, never centred with both ends cut). The well is as tall as the graph at that zoom (220–480px),
 set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The transcript reserves its
 scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest

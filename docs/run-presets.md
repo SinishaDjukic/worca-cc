@@ -4,10 +4,6 @@ A run preset is a named New run setup. Save the choices you make for a kind of r
 pick the preset, type only the prompt and press **Start run**. The run gets the preset's choices
 for that run only: the project's saved settings never change.
 
-Run presets are in beta and on by default. Turn them off in **Settings › Labs ›
-Run presets** (flag `runPresets`, see [Feature flags](feature-flags.md)), or with
-`worca flags off runPresets`.
-
 ## What a preset keeps
 
 A preset keeps the run's **choices**, never its task:

@@ -68,6 +68,9 @@ test('hostCredentialLabel names the Azure DevOps credential; githubLabel still e
   assert.equal(hostCredentialLabel('none', { host: 'dev.azure.com', adoMode: 'single' }), 'the Azure DevOps token (WORCA_ADO_TOKEN)');
   assert.equal(hostCredentialLabel('app', { host: 'dev.azure.com', adoMode: 'split' }), 'the Azure DevOps read token (WORCA_ADO_READ_TOKEN)');
   assert.match(hostCredentialLabel('none', { host: 'dev.azure.com', adoMode: 'none' }), /none \(Azure DevOps: set WORCA_ADO_TOKEN\): public repositories only/);
+  assert.equal(hostCredentialLabel('single', { host: 'bitbucket.org', bbMode: 'single' }), 'the Bitbucket token (WORCA_BB_TOKEN)');
+  assert.equal(hostCredentialLabel('single', { host: 'bitbucket.org' }), 'none (Bitbucket: set WORCA_BB_TOKEN): public repositories only');
+  assert.equal(hostCredentialLabel('none', { host: 'bitbucket.org', bbMode: 'split' }), 'the Bitbucket read token (WORCA_BB_READ_TOKEN)');
   assert.equal(githubLabel, hostCredentialLabel);
 });
 
@@ -224,5 +227,22 @@ test('the parent validator (clone-deps) uses the real projects folder and names 
     assert.ok(!JSON.stringify(r).includes('ghp_must_not_appear'));
   } finally {
     if (prev === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prev;
+  }
+});
+
+test('the parent validator (clone-deps) names the Bitbucket token for a Bitbucket URL', async () => {
+  const { validateCloneProposal } = await import('../src/core/ask/clone-deps.mjs');
+  const keys = ['WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  process.env.WORCA_BB_TOKEN = 'bb_must_not_appear';
+  delete process.env.WORCA_BB_READ_TOKEN; delete process.env.WORCA_BB_WRITE_TOKEN;
+  try {
+    const r = await validateCloneProposal({ url: 'https://jdoe@bitbucket.org/acme/bb-parent' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.card.url, 'https://bitbucket.org/acme/bb-parent.git');
+    assert.equal(r.card.github, 'the Bitbucket token (WORCA_BB_TOKEN)');
+    assert.ok(!JSON.stringify(r).includes('bb_must_not_appear'));
+  } finally {
+    for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
   }
 });

@@ -344,11 +344,8 @@ test('startAskTurn wiring (askChatTurnDeps): chat actions run as "<person> via w
 
 test('askChatTurnDeps: changes/route go to askShapeAction with the turn\'s thread; other kinds stay on the host', async () => {
   const d = mod._testing.askChatTurnDeps('ada@example.com');
-  const prev = process.env.WORCA_FLAGS; process.env.WORCA_FLAGS = '-shapeFirst';
-  try {
-    assert.deepEqual(await d.chatAction({ kind: 'changes', pipelineId: 'aaaa0001', request: 'x' }, { threadId: 'ask_x' }),
-      { ok: false, notice: 'Not applied: Shaper is off' });
-  } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+  assert.deepEqual(await d.chatAction({ kind: 'changes', pipelineId: 'aaaa0001', request: 'x' }, { threadId: 'ask_x' }),
+    { ok: false, notice: 'Not applied: this chat does not follow run aaaa0001' });
 });
 
 test('one turn\'s set_away_now and change_setting both land: the Away switch shares the settings write queue (refine cycle 2)', async () => {

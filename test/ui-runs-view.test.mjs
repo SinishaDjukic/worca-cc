@@ -348,14 +348,18 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       assert.equal(second.doc.querySelector(`#runs-list .runs-sec[data-section="project:${KEY}"] .runs-item`), null);
       await pickView(second.window, second.doc, 'Date');
       assert.ok(second.doc.querySelector('#runs-list .runs-sec[data-section^="date:"]'), 'date sections');
-      assert.equal(second.doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'By date');
+      assert.equal(second.doc.getElementById('runs-view-chip').hidden, true, 'grouping alone draws no chip');
     } },
     { name: 'the old filter / group-by keys migrate once into the one view record', run: async () => {
       const { window, doc } = await boot({ storage: { 'worca-cc.runs.filter': 'live', 'worca-cc.runs.groupBy': 'project' } });
       go(window, 'runs'); await settle(window);
       assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'running', groupBy: 'project', person: '', labels: [] });
       assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), null);
-      assert.equal(doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'Running · By project · 0 of 2 runs');
+      assert.equal(doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'Running · 0 of 2 runs', 'the chip names the filter, not the grouping');
+      click(window, doc.querySelector('#runs-view-chip .runs-view-reset'));
+      await settle(window);
+      assert.equal(doc.getElementById('runs-view-chip').hidden, true);
+      assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'all', groupBy: 'project', person: '', labels: [] }, 'the × keeps the grouping');
     } },
   ]);
 });
@@ -523,26 +527,24 @@ test('a "Run after" chain is one group row with its bar; ⌄ closes and opens it
   assert.equal(g().querySelectorAll('.runs-members .runs-item').length, 2);
 });
 
-test('a plain Run-after chain lists all 3 members, open, with shapeFirst off and on (D29)', async () => {
-  for (const shapeFirst of [false, true]) {
-    // runChains shape: root running, two after-tickets, each after the one before (member.after = 1-based position).
-    const chains = [{ id: 'p:pc000001', title: 'Billing chain', members: [
-      { pipelineId: 'pc000001', ticketId: null, title: 'Step one', state: 'current', prUrl: null, historyKey: KEY, projectKey: KEY, after: null },
-      { pipelineId: null, ticketId: 'tc2', title: 'Step two', state: 'waiting', after: 1 },
-      { pipelineId: null, ticketId: 'tc3', title: 'Step three', state: 'waiting', after: 2 }] }];
-    const { window, doc, recv } = await boot({ chains });
-    recv({ type: 'hello', flags: { shapeFirst }, runs: [live('rc1', { pipelineId: 'pc000001', title: 'Step one' })] });
-    go(window, 'runs'); await settle(window);
-    const g = doc.querySelector('#runs-list .runs-item[data-row-key="chain:p:pc000001"]');
-    assert.ok(g, `one group row (shapeFirst ${shapeFirst})`);
-    assert.equal(g.closest('.runs-sec').dataset.section, 'running');
-    assert.equal(g.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded'), 'true');
-    const members = g.querySelectorAll(':scope > .runs-members > .runs-item');
-    assert.equal(members.length, 3, `3 member rows (shapeFirst ${shapeFirst})`);
-    assert.equal(members[1].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 1');
-    assert.equal(members[2].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 2');
-    window.close();
-  }
+test('a plain Run-after chain lists all 3 members, open (D29)', async () => {
+  // runChains shape: root running, two after-tickets, each after the one before (member.after = 1-based position).
+  const chains = [{ id: 'p:pc000001', title: 'Billing chain', members: [
+    { pipelineId: 'pc000001', ticketId: null, title: 'Step one', state: 'current', prUrl: null, historyKey: KEY, projectKey: KEY, after: null },
+    { pipelineId: null, ticketId: 'tc2', title: 'Step two', state: 'waiting', after: 1 },
+    { pipelineId: null, ticketId: 'tc3', title: 'Step three', state: 'waiting', after: 2 }] }];
+  const { window, doc, recv } = await boot({ chains });
+  recv({ type: 'hello', runs: [live('rc1', { pipelineId: 'pc000001', title: 'Step one' })] });
+  go(window, 'runs'); await settle(window);
+  const g = doc.querySelector('#runs-list .runs-item[data-row-key="chain:p:pc000001"]');
+  assert.ok(g, 'one group row');
+  assert.equal(g.closest('.runs-sec').dataset.section, 'running');
+  assert.equal(g.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded'), 'true');
+  const members = g.querySelectorAll(':scope > .runs-members > .runs-item');
+  assert.equal(members.length, 3, '3 member rows');
+  assert.equal(members[1].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 1');
+  assert.equal(members[2].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 2');
+  window.close();
 });
 
 test('a deep-linked feature page repaints when History answers late: its member reads its project and PR (QA)', async () => {

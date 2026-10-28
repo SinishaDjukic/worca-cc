@@ -18,6 +18,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { devNull, tmpdir } from 'node:os';
 import { githubEnv } from './github-credentials.mjs';
 import { azureEnv } from './azure-credentials.mjs';
+import { bitbucketEnv, stripBitbucketCredentials } from './bitbucket-credentials.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
 import { worcaHome } from './projects.mjs';
 import { parseRemoteUrl, prBaseBranch } from './git-info.mjs';
@@ -267,7 +268,7 @@ async function operationOn(dir, base) {
 }
 
 // ── remote + fetch ───────────────────────────────────────────────────────────
-/** The remote's display label (host/owner/repo, credential-free), its github "owner/name", and whether it is Azure DevOps. */
+/** The remote's display label (host/owner/repo, credential-free), its github "owner/name", and whether it is Azure DevOps or Bitbucket. */
 export async function remoteInfo(dir, remote = 'origin') {
   if (!isSafeRemoteName(remote)) return { ok: false, kind: 'bad-remote', error: 'invalid remote name' };
   const r = await _run(['remote', 'get-url', remote], { cwd: dir });
@@ -276,13 +277,17 @@ export async function remoteInfo(dir, remote = 'origin') {
   const p = parseRemoteUrl(url);
   return { ok: true, name: remote, label: p ? `${p.host}/${p.owner}/${p.repo}` : scrubGitText(url, 200),
     githubRepo: p && p.host === 'github.com' ? `${p.owner}/${p.repo}` : null,
-    azure: forgeOf(p) === 'azure', fetchUrls: fetchHeadUrls(url) };
+    azure: forgeOf(p) === 'azure', bitbucket: forgeOf(p) === 'bitbucket', fetchUrls: fetchHeadUrls(url) };
 }
 
 /** worca's server-side READ credential for the remote's host (App mode mints per call); other hosts: this machine's git. */
 async function readCred(info) {
-  if (info.githubRepo) return githubEnv('read', { repo: info.githubRepo });
-  if (info.azure) return { env: azureEnv('read'), error: null };
+  if (info.githubRepo) {
+    const r = await githubEnv('read', { repo: info.githubRepo });
+    return { ...r, env: stripBitbucketCredentials(r.env) };
+  }
+  if (info.azure) return { env: stripBitbucketCredentials(azureEnv('read')), error: null };
+  if (info.bitbucket) return { env: bitbucketEnv('read'), error: null };
   return { env: stripHostCredentials(process.env), error: null };
 }
 
@@ -459,7 +464,7 @@ export async function fastForward(dir, { base, remote = 'origin' } = {}) {
     // read credential the fetch had (v8), or a private hosted repo fails every fast-forward.
     // Minting can take a network round trip, so HEAD is re-checked after it, right before the merge.
     const info = await remoteInfo(dir, remote);
-    const cred = info.ok && (info.githubRepo || info.azure) ? await readCred(info) : null;
+    const cred = info.ok && (info.githubRepo || info.azure || info.bitbucket) ? await readCred(info) : null;
     const headNow = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: dir });
     if (!(headNow.ok && headNow.stdout.trim() === `refs/heads/${base}`)) return { ok: false, kind: 'in-use', paths: [], status: s };
     r = await _run(['merge', '--ff-only', '--no-stat', '-q', s.remoteSha], { cwd: dir, timeoutMs: FF_TIMEOUT_MS, env: cred ? cred.env : null });
@@ -629,10 +634,10 @@ const MERGE_TREE_TIMEOUT_MS = 120_000;
 const CONFLICT_FILES_CAP = 200;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
-/** The read credential env for `remote` (GitHub/Azure); null = this machine's git (fastForward's rule). */
+/** The read credential env for `remote` (GitHub/Azure/Bitbucket); null = this machine's git (fastForward's rule). */
 async function readEnvFor(dir, remote) {
   const info = isSafeRemoteName(remote) ? await remoteInfo(dir, remote) : { ok: false };
-  return info.ok && (info.githubRepo || info.azure) ? (await readCred(info)).env : null;
+  return info.ok && (info.githubRepo || info.azure || info.bitbucket) ? (await readCred(info)).env : null;
 }
 
 /** Where the base lives: the fetched <remote>/<base> when present, else the local <base> (Q&A base-ref). */

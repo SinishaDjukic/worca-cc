@@ -77,13 +77,14 @@ function go(window, hash) {
 
 const optionIds = (sel) => [...sel.options].map((o) => o.value);
 
-test('workflows and guardrail sets created while away show in the pickers on returning to New Pipeline, and boot fetches the workflow list once', async () => {
+test('workflows and guardrail sets created while away show in the pickers on returning to New Pipeline, and boot fetches the workflow list once per owner', async () => {
   const { window, server } = await boot();
   await checkRows([
     // First: the count is of the boot's own fetches, before any re-entry re-fetches the list.
-    { name: 'boot itself does not double-fetch the workflow list (loadConfig owns the first fill)', run: async () => {
+    // Run presets are always on: loadPresets reads the list for the presets' workflow names, besides loadConfig's fill.
+    { name: 'boot itself does not double-fetch the workflow list (loadConfig owns the picker\'s first fill, loadPresets the preset names)', run: async () => {
       const listCalls = server.calls.filter((u) => u.endsWith('/api/workflows')).length;
-      assert.equal(listCalls, 1);
+      assert.equal(listCalls, 2);
     } },
     { name: 'a workflow saved while away shows in the picker on returning to New Pipeline (no reload)', run: async () => {
       const sel = window.document.getElementById('workflowSelect');

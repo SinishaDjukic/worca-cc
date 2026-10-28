@@ -1869,7 +1869,7 @@ test('a run in a chain of three: its breadcrumb links the chain\'s group page; n
 
 test('a live slice\'s breadcrumb links the feature page; no chip; a repaint keeps one breadcrumb', async () => {
   const ctx = await bootRunning();
-  frame(ctx, { type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  frame(ctx, { type: 'hello', runs: [] });
   ctx.box.groups = FEATURE_OF_THREE();
   frame(ctx, { type: 'run-groups-changed' });
   await settle(ctx.window, 4);

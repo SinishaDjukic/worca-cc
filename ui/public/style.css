@@ -332,6 +332,7 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
    took their presses; now the centre and the page name give way. Every tier keeps it 48px tall.
    HOUSE RULE: no comment inside a rule body and no closing brace in a comment. */
 .main-col{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;}
+.main-row{flex:1;min-width:0;min-height:0;display:flex;position:relative;}
 .topnav{flex:none;height:48px;display:grid;grid-template-columns:minmax(32px,1fr) minmax(240px,440px) minmax(max-content,1fr);
   align-items:center;gap:12px;padding:0 16px 0 12px;background:var(--panel);border-bottom:1px solid var(--line);}
 .topnav-l{display:flex;align-items:center;gap:6px;min-width:0;}
@@ -1587,8 +1588,8 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 :is(.rd-questions,.chat-rc-q) .af-label{font-size:var(--fs-body);}
 :is(.rd-questions,.chat-rc-q) .af-choice{min-height:52px;gap:14px;padding:12px 16px 12px 12px;border-radius:var(--r-sm);font-size:var(--fs-body);}
 :is(.rd-questions,.chat-rc-q) .af-inp{padding:13px 16px;border-radius:var(--r-sm);font-size:var(--fs-body);}
-/* the form is the run page's one ask card (the panel around it draws nothing); inside a chat card it is not boxed
-   (review B2: the in-card override tints it) */
+/* the form is the run page's one ask card (the panel around it draws nothing); inside a chat card it is neither boxed
+   (review B2) nor tinted (Run 4 D21): it sits on the card's white, as on the Runs page */
 .rd-questions .qpanel[data-kind="form"] .af-form{padding:28px 32px;background:var(--panel);
   border:1px solid var(--line);border-radius:var(--r-card);}
 :is(.rd-questions,.chat-rc-q) .af-gal-card img{height:148px;}
@@ -4833,8 +4834,10 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* Runs list (runs redesign §3.1, §3.3a alignment): every row is the same 3-column grid, so the right column and the bars
    end at one x (Known bug 5); members indent inside their cells, never by changing the grid. */
 .runs-item{display:grid;grid-template-columns:28px minmax(0,1fr) 56px;align-items:start;border-bottom:1px solid var(--line);}
-/* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent. */
-.runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;}
+/* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent.
+   Each Needs-you run is its own card: an inset amber ring (a box-shadow, so the grid keeps its widths) and a gap above,
+   so two of them never read as one block. The ring stays when the row is selected (only the fill changes). */
+.runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;box-shadow:inset 0 0 0 1px var(--amber-ring);margin-top:6px;}
 .runs-item:has(> a.runs-row.selected){background:var(--row-selected);border-radius:var(--r-sm);border-bottom-color:transparent;}
 /* One highlight at a time: a group whose run is open takes the lighter fill as one block over its whole row only while
    collapsed (no .runs-members); expanded, the open member row is the highlight (it is .selected) and the group keeps
@@ -4897,7 +4900,13 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-l{grid-column:2;min-width:0;}
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > :is(.wfv-menu-hint,.kind-chip){grid-column:3;justify-self:end;margin-left:0;}
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-hint{min-width:3ch;text-align:right;font-variant-numeric:tabular-nums;}
-.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+/* Section heads (Needs you, Running, a project, a day) are large, light ink type that stands above the rows; the light
+   weight keeps them under the page title. Their count sits at the line's right end at body size (the row-level count
+   stays a caption), and a gap above each later section keeps one section's last row from running into the next head.
+   The text sits 12px in from both ends; the line under it still spans the list. */
+.runs-sec + .runs-sec{margin-top:8px;}
+.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font-size:var(--fs-section);font-weight:300;color:var(--ink);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+.runs-sec-head .runs-count{margin-left:auto;font-size:var(--fs-body);font-weight:400;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .runs-older{margin:8px 0;}
@@ -5872,6 +5881,54 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 @media (max-width:760px){ body.term-open .app{margin-right:0;} .term-pane{width:100vw;} body.term-open .toasts{right:12px;}
  }
 
+/* ── Ask worca beside the page: the header toggle (#topnav-ask) and the side column (aside#ask-side, ask-side.mjs)
+   that docks the ONE Chat page beside main.main. Above 1080px it pushes the page (the toasts move with it); 761-1080px
+   it covers the main column; up to 760px it is full width under the 48px bar. The button drops its label up to 1200px
+   and beside the terminal pane, where the label would squeeze the page's title in the bar. Tokens only; the tier
+   blocks stay below the base rules. HOUSE RULE: no comment inside a rule body and no closing brace in a comment. ── */
+.topnav-ask{flex:none;white-space:nowrap;position:relative;}
+.topnav-ask[hidden]{display:none;}
+.topnav-ask[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
+.topnav-ask svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
+.topnav-ask-dot{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--slate);}
+.topnav-ask-dot[hidden]{display:none;}
+.ask-side{flex:none;position:relative;display:flex;flex-direction:column;width:var(--ask-side-w,440px);min-width:0;max-width:100%;height:100%;
+  overflow:hidden;background:var(--panel);border-left:1px solid var(--line);}
+.ask-side[hidden]{display:none;}
+.ask-side-in{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
+.ask-side-grip{position:absolute;z-index:7;top:0;bottom:0;left:0;width:6px;cursor:col-resize;touch-action:none;}
+.ask-side-grip:is(:hover,:focus-visible)::after{content:"";position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--ink);}
+.ask-side-grip:focus-visible{outline:none;}
+.ask-side.is-resizing{user-select:none;}
+body.ask-side-rail .side-toggle{display:none;}
+@keyframes askSideIn{from{width:0;}}
+@keyframes askSideInner{from{opacity:0;transform:translateX(24px);}}
+.ask-side.is-entering{animation:askSideIn .32s cubic-bezier(.2,.8,.2,1);}
+.ask-side.is-entering .ask-side-in{animation:askSideInner .24s cubic-bezier(.2,.8,.2,1) .08s both;}
+.ask-side.is-leaving{animation:askSideIn .32s cubic-bezier(.2,.8,.2,1) reverse both;}
+.ask-side.is-leaving .ask-side-in{animation:askSideInner .24s cubic-bezier(.2,.8,.2,1) reverse both;}
+@media (prefers-reduced-motion:reduce){.ask-side,.ask-side-in{animation:none !important;}}
+@media (min-width:1081px){
+  body.ask-side-open .toasts{right:calc(var(--ask-side-w,440px) + 20px);}
+  body.ask-side-open.term-open .toasts{right:calc(var(--ask-side-w,440px) + var(--term-w,460px) + 20px);}
+}
+@media (max-width:1200px){
+  .topnav-ask{min-width:32px;padding:0 8px;justify-content:center;}
+  .topnav-ask-label{display:none;}
+  .topnav-ask-dot{top:4px;right:4px;}
+}
+body.term-open .topnav-ask{min-width:32px;padding:0 8px;justify-content:center;}
+body.term-open .topnav-ask-label{display:none;}
+body.term-open .topnav-ask-dot{top:4px;right:4px;}
+@media (max-width:1080px){
+  .ask-side{position:absolute;inset:0 0 0 auto;z-index:38;width:100%;border-left:0;}
+  .ask-side-grip{display:none;}
+  body.ask-side-open .toasts{bottom:calc(var(--ask-side-dock-h,240px) + 12px + env(safe-area-inset-bottom,0px));}
+}
+@media (max-width:760px){
+  .ask-side{position:fixed;top:48px;right:0;bottom:0;left:auto;height:auto;}
+}
+
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-composer-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
 .ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;flex:none;}
@@ -5906,6 +5963,7 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* Shaper (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
 .ask-user-intent{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font:500 11px/1 var(--sans);}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
+.ask-user-where{align-self:flex-end;display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-caption);color:var(--ink-3);}
 .ask-attachment-pill{padding-right:12px;}
 .ask-attachment-thumb-link{display:inline-block;line-height:0;}
 .ask-attachment-thumb{max-width:180px;max-height:130px;border-radius:var(--r-sm);border:1px solid var(--line);display:block;}
@@ -6262,11 +6320,9 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
 .gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
 .gv-well > .gv-nav{right:12px;bottom:12px;}
-/* #959: a chat card sits on the text column; only its graph well (.gv-well: the build card's, the Auto card's, the
-   run card's) widens, up to --chat-card-max and centred on the column (100cqi = the transcript's content box; 100% =
-   the card's content box, itself centred on the column). Its host fits the graph into it (run-hosts `card`,
-   proposal-host). */
-.chat-convo .ask-msg .gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
+/* A chat card sits on the text column and so does every part of it: a graph well (.gv-well: the build card's, the
+   Auto card's, the run card's) is as wide as its card, and its host fits the graph into it (run-hosts `card`,
+   proposal-host). No rule widens it. */
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
@@ -6320,6 +6376,19 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-composer-box{width:100%;max-width:var(--ask-col-max);margin-inline:auto;padding:8px 10px;
   border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--panel);
   display:flex;flex-direction:column;gap:4px;}
+/* Ask worca beside the page: the page on screen as chips above the attachments (ask-panel.mjs paintPageChips): an icon,
+   a caption, the name, and the × that leaves it out of the next messages. */
+.ask-page-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px;}
+.ask-page-chips[hidden]{display:none;}
+.ask-page-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;height:28px;padding:0 4px 0 8px;box-sizing:border-box;
+  border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:var(--fs-meta);}
+.ask-page-chip .ic{flex:none;color:var(--ink-3);}
+.ask-page-chip-cap{flex:none;}
+.ask-page-chip-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--ink);}
+.ask-page-chip-x{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--ink-3);cursor:pointer;}
+.ask-page-chip-x:hover{background:var(--hover-on-field);color:var(--ink);}
+.ask-page-chip-x:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
 .ask-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
 .ask-chips[hidden]{display:none;}
 .ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
@@ -8871,7 +8940,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
    takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
 body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 .view[data-view="chat"]{flex:1 1 auto;min-height:0;position:relative;}
-.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;--chat-card-max:1040px;}
+.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;}
 .chat-page[data-history="closed"] .chat-history{display:none;}
 /* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
 .chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;--chat-dock-fade:32px;}
@@ -8904,7 +8973,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-dock > .ask-jump{bottom:100%;}
 /* #959: ONE width rule for every chat card: the text column. .ask-transcript-col caps the column at --ask-col-max
    (= --chat-text-max) and every card, stub and build card fills it, so text and cards share one left edge; no card
-   kind sets a width. Only a graph well widens (.chat-convo .ask-msg .gv-well). The transcript is its own stacking
+   kind sets a width. No part of a card leaves the column, a graph well included. The transcript is its own stacking
    context, so a card's raised parts scroll under the dock, not over it. It reserves its scrollbar gutter on both
    edges, so the column, the composer and Jump to latest share one centre with classic and overlay scrollbars alike;
    its bottom clearance is the dock's height plus the dock's fade band. */
@@ -8922,6 +8991,46 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));}
 .chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
 .chat-panel[hidden]{display:none;}
+/* Ask worca beside the page: the same chat page in the side column (app.js moves it, ask-panel.mjs setHost). The Chat
+   page keeps its head, home, History column and run panel; the column shows its own head, an empty state and the
+   History column as a dropdown under its head. */
+.chat-page:not([data-host="dock"]) :is(.ask-side-thread,.ask-side-btn,.chat-history-foot,.ask-side-empty){display:none;}
+.chat-page[data-host="dock"] :is(.chat-history-toggle,.chat-head > .ask-title,.chat-head-spacer,.chat-new-plus,.chat-head-meter,.chat-home,.chat-panel){display:none;}
+.chat-page[data-host="dock"] .chat-head{height:46px;gap:2px;padding:0 8px 0 6px;}
+.chat-page[data-host="dock"] .chat-convo{container:chat-convo / inline-size;}
+.ask-side-thread{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;height:32px;margin-right:auto;padding:0 8px;border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--ink);font:inherit;font-size:var(--fs-body);font-weight:600;cursor:pointer;}
+.ask-side-thread:hover,.ask-side-thread[aria-expanded="true"]{background:var(--hover);}
+.ask-side-thread:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.ask-side-thread-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-side-thread svg{flex:none;color:var(--ink-3);}
+.chat-page[data-host="dock"][data-view="home"] .chat-dock{display:block;}
+.chat-page[data-host="dock"][data-view="thread"] .ask-side-empty{display:none;}
+.chat-page[data-host="dock"][data-view="home"] .ask-composer > .ask-pop{top:auto;bottom:calc(var(--ask-box-top) + 6px);max-height:min(420px,calc(100vh - 240px));}
+.ask-side-empty{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
+  padding:28px 18px calc(var(--chat-dock-h,120px) + 10px);box-sizing:border-box;}
+.ask-side-empty-h{margin:0;font-size:15px;font-weight:600;color:var(--ink);}
+.ask-side-suggest{display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+.ask-side-opt{display:inline-flex;align-items:center;max-width:100%;min-height:32px;box-sizing:border-box;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);
+  font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+.ask-side-opt:hover{background:var(--hover);}
+.ask-side-opt:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-side-recent{display:flex;flex-direction:column;align-items:flex-start;gap:4px;}
+.ask-side-recent[hidden]{display:none;}
+.ask-side-recent-cap{font-size:var(--fs-caption);color:var(--ink-3);}
+.ask-side-recent-list{display:flex;flex-direction:column;align-self:stretch;}
+.ask-side-recent-row{display:flex;flex-direction:column;gap:2px;width:100%;padding:6px 8px;border:0;border-radius:var(--r-sm);background:transparent;
+  color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.ask-side-recent-row:hover{background:var(--hover);}
+.ask-side-recent-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-body);}
+.ask-side-recent-meter{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-side-recent-when{font-weight:700;color:var(--ink);white-space:nowrap;}
+.ask-side-recent-topics{color:var(--ink-2);}
+.ask-side-recent-fill.is-ctx-warn{color:var(--amber-ink);}
+.ask-side-recent-fill.is-ctx-high{color:var(--red-ink);font-weight:600;}
+.chat-page[data-host="dock"] .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:transparent;}
+.chat-history-foot{flex:none;display:flex;padding:6px;border-top:1px solid var(--line);}
+.chat-history-in-chat{flex:1;justify-content:flex-start;}
 /* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */
 .nav-count.nav-dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--slate);}
 .sidebar.collapsed .nav-count.nav-dot{top:6px;right:8px;}
@@ -8959,6 +9068,12 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-page[data-chats="on"] .chat-new-plus{flex:none;}
 .chat-page[data-chats="on"] [data-ask-meter]{display:none;}
 @media (max-width:1099px){.chat-page[data-chats="on"] .chat-history{position:absolute;width:min(340px,86vw);}.chat-page[data-chats="on"] .runs-resize{display:none;}}
+/* Ask worca beside the page: in the side column the Chats column is a dropdown under its head (after the rules above,
+   which it ties), with no resize handle; the composer's meter stands in for the head meter the column hides. */
+.chat-page[data-host="dock"] .chat-history{position:absolute;top:46px;right:8px;bottom:auto;left:8px;z-index:6;width:auto;
+  max-height:min(520px,calc(100% - 140px));border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-pop);}
+.chat-page[data-host="dock"] .runs-resize{display:none;}
+.chat-page[data-host="dock"] [data-ask-meter]{display:flex;}
 
 /* ===== Chat P2: Action cards ===== */
 /* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
@@ -10654,6 +10769,99 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-docs .req-docs-foot{margin:0;padding-top:10px;border-top:1px solid var(--line)}
 .req-brief-src{display:inline;margin:0;font-size:var(--fs-meta)}
 
+/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Feature chat beside the feature spec. Wider than 900 px the panel takes
+   the right column (420 px) and the Ready, Files and Spec cards move under the current card; at 900 px and narrower it is a
+   full-screen sheet with Back and 44 px targets. The pressed toggle has an ink border, never a green fill; board 23 (dark) is
+   these tokens and nothing else. */
+.req-help-toggle[aria-pressed="true"]{border-color:var(--ink)}
+.req-cols.with-helper{grid-template-columns:minmax(0,1fr) 420px}
+.req-moved{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-help{position:sticky;top:12px;align-self:start;display:flex;flex-direction:column;min-height:420px;max-height:calc(100vh - 96px);border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);overflow:hidden}
+.req-help-head{display:flex;align-items:center;gap:4px;padding:12px 12px 12px 18px;border-bottom:1px solid var(--line)}
+.req-help-title{flex:1;min-width:0}
+.req-help-title h3{margin:0;font-size:15px;font-weight:700}
+.req-help-title .hint{margin:2px 0 0}
+.req-help-back{display:none}
+.req-help-log{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.req-help-msg-po{align-self:flex-end;max-width:85%;padding:10px 12px;border-radius:var(--r-md);background:var(--field);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-cap{display:block;margin:0 0 2px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-msg-w{align-self:stretch;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.req-help-msg-w .hint,.req-help-text{margin:0}
+.req-help-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-fail{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--red-ink-strong)}
+.req-help-stopped{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-help-budget{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:12px}
+.req-help-waiting{display:flex;flex-direction:column;gap:6px}
+.req-help-waiting p{margin:0}
+.req-help-waiting-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.req-help-empty{display:flex;flex-direction:column;gap:10px;font-size:13px}
+.req-help-empty p{margin:0}
+.req-help-starters{display:flex;flex-direction:column;gap:6px}
+.req-help-starters .btn{justify-content:flex-start;text-align:left}
+.req-help-composer{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+.req-help-label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-in{width:100%;box-sizing:border-box;resize:vertical;font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink)}
+.req-help-in:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-help-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.req-help-foot .hint,.req-help-count,.req-help-refusal{margin:0}
+.req-help-refusal{font-size:12px;color:var(--red-ink-strong)}
+.req-help-archived{margin:0;padding:12px 14px;border-top:1px solid var(--line)}
+@media (max-width:900px){
+  .req-cols.with-helper{grid-template-columns:1fr}
+  .req-help{position:fixed;inset:0;align-self:stretch;z-index:45;min-height:0;max-height:none;border:0;border-radius:0}
+  .req-help-head{padding:4px 4px 4px 8px}
+  .req-help-back{display:inline-grid}
+  .req-help-close,.req-help-wide{display:none}
+  /* 44px targets: the icon buttons grow; a 28px .btn-sm grows its hit area past its 1px border (26 + 2 × 9), board 20's
+     pattern (a 44px .btn is off the control scale); the starters' gap keeps neighbouring areas apart */
+  .req-help .req-ico{min-width:44px;min-height:44px}
+  .req-help .btn-sm{position:relative}
+  .req-help .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-help-starters{gap:18px}
+  .req-help-toggle,.req-help .menu-item{min-height:44px}
+}
+/* A3 D1/D6 (boards 22, 25): Help me answer beside each pending question (its own 44 px line on a phone), and Worca's draft: a
+   dashed blue chip after the options (blue means active), its × and its why. On the type scale and the radius tokens (the
+   board's 11.5px and pill corners are off them); on a phone the × keeps its size and its hit area grows to 44 × 44 (the
+   ::after pattern above), the row's margins keeping that area off the options and the answer field. */
+.req-qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.req-qhead > .qtext{flex:1;min-width:0}
+.req-help-ask{flex:none;white-space:nowrap;font-size:var(--fs-meta)}
+.req-help-drafted-row{display:flex;flex-direction:column;gap:4px;margin:6px 0 0 24px}
+.req-help-drafted-row[hidden]{display:none}
+.req-help-drafted{display:inline-flex;align-self:flex-start;align-items:center;gap:4px;padding:1px 7px;border:1px dashed var(--blue-ink-strong);border-radius:var(--r-md);color:var(--blue-ink-strong);font-size:var(--fs-meta);white-space:nowrap}
+.req-help-drafted-x{display:inline-flex;align-items:center;padding:0 0 0 2px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.req-help-drafted-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px;border-radius:var(--r-sm)}
+.req-help-draft-why,.req-help-dropped{margin:0}
+@media (max-width:900px){
+  .req-qhead{flex-wrap:wrap}
+  .req-help-ask{flex-basis:100%;display:inline-flex;align-items:center;min-height:44px;text-align:left}
+  .req-help-drafted-row{margin:12px 0 12px 24px}
+  .req-help-drafted-x{position:relative}
+  .req-help-drafted-x::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
+}
+/* A3 (board 24): a proposed change as a card: Before / After / New / Remove / Confirm / Reject rows, the old side muted. Accepted is
+   green ink with a check, never a fill; the stale line is the amber alert. On the type scale (the board's 11.5 / 12.5px are off
+   it); on a phone Reject and Accept share the row and reach 44 px through the panel's .btn-sm ::after hit area above (a 44px
+   .btn is off the control scale). */
+.req-help-card{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel)}
+.req-help-card-head{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-ba{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 10px;font-size:var(--fs-body)}
+.req-help-ba > span{overflow-wrap:anywhere}
+.req-help-k{padding-top:1px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-old,.req-help-id{color:var(--ink-2)}
+.req-help-card .req-help-reason{margin:0}
+.req-help-btns{display:flex;justify-content:flex-end;gap:8px}
+.req-help-state{margin:0;display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-help-state.ok{color:var(--green-ink-strong)}
+.req-help-state:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm)}
+.req-help-measure{display:block}
+.req-help-stale{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+@media (max-width:900px){
+  .req-help-ba{grid-template-columns:52px minmax(0,1fr);gap:4px 8px}
+  .req-help-btns .btn{flex:1}
+}
+
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
 .mk-mt{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:var(--r-md);}
@@ -11129,7 +11337,7 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot){margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
 .ask-card.chat-rc .ask-rc-stats > .ask-rc-stat{padding:0;border-radius:0;background:none;}
 .ask-card.chat-rc > .chat-rc-result{padding:12px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
-.ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock){padding-left:0;padding-right:0;border-radius:0;background:none;}
+.ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock,.af-form){padding-left:0;padding-right:0;border-radius:0;background:none;}
 .ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}
 
 /* Smart run naming (Labs, flag smartRunNaming): the Suggested chip, the ↻ / × buttons inside the title and branch

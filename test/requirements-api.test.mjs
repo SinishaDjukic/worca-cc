@@ -105,7 +105,7 @@ test('the whole flow in mock mode, with frames', async () => {
 // added without the flag-off check covering it.
 const fill = (path) => path.replace(':scopeType/:scopeKey', `project/${projKey}`).replace(':seq', '1')
   .replace('/criteria/:id', '/criteria/R-po-1').replace('/assumptions/:id', '/assumptions/A-1').replace(':section', 'actors')
-  .replace(':attId', 'ratt_000000000000');
+  .replace(':attId', 'ratt_000000000000').replace(':msgId', '1').replace('/proposals/:n', '/proposals/1');
 
 test('the route table is exactly what gets registered', async () => {
   const { REQUIREMENTS_ROUTES, registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');

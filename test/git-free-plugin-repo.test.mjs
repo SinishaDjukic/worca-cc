@@ -13,6 +13,7 @@ import { _testing as ghTesting } from '../src/core/git-free/github.mjs';
 import { fakeGithub } from './helpers/fake-github.mjs';
 import { withNoGit } from './helpers/git-off.mjs';
 import { tarGz } from './helpers/tar-writer.mjs';
+import { BITBUCKET_NEEDS_GIT } from '../src/core/git-available.mjs';
 
 useTempHome(after);
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege on Windows' : false };
@@ -76,6 +77,11 @@ test('a source that is not on github.com needs git', async (t) => {
   for (const url of ['https://gitlab.com/acme/market', local]) {
     await assert.rejects(addPluginRepo(url), { code: 'GIT_MISSING', message: 'git is not installed on this machine' });
   }
+});
+
+test('a Bitbucket source without git names Bitbucket', async (t) => {
+  withNoGit(t);
+  await assert.rejects(addPluginRepo('https://bitbucket.org/acme/market'), { code: 'GIT_MISSING', message: BITBUCKET_NEEDS_GIT });
 });
 
 test('a manifest committed as a symlink is read the way git reads it: not JSON, skipped', WIN_SYMLINK, async (t) => {
