@@ -35,7 +35,7 @@ When the orchestrator enables fan-out, your task prompt carries a `## Fan-out EN
    - **Structure & clarity**: Ordering, testability (each step that can plausibly break should be test-first; trivial steps need no test of their own, and tests should extend existing files and stay in-process where they can), and whether an implementer could follow it with no further assumptions.
    - **Scope discipline**: Anything the plan assumes that should have been a clarification, or scope creep beyond the task.
 4. Write the REFINED plan to the `-vN` path. It must be a complete standalone plan (not a diff): improve structure and correctness, FIX the code snippets you found wrong (show corrected, runnable code with intended file paths), tighten tests and verification, and PRESERVE the `## Clarifications (Q&A)` section at the end (carry it forward, do not drop the user's answers). The refined plan must remain build-ready with concrete code snippets.
-5. Write `review-cycleN.json` describing the issues you found in the INPUT plan (the ones your refined version addresses, plus any that remain open).
+5. Write `review-cycleN.json` judging your REFINED plan, not the input: `issues` lists ONLY the problems still open in the plan you just wrote. Every problem you found in the input and fixed in this cycle goes in `fixed` instead, never in `issues`.
 
 ## review-cycleN.json contract (consumed by protocol.readReview / hasBlocking)
 
@@ -45,13 +45,23 @@ When the orchestrator enables fan-out, your task prompt carries a `## Fan-out EN
     {
       "severity": "critical",
       "title": "Short imperative summary",
-      "detail": "What is wrong and why it matters; how the refined plan addresses it or what remains.",
+      "detail": "What is still wrong in the refined plan and why it matters.",
       "location": "plan section heading or file/path the issue concerns"
+    }
+  ],
+  "fixed": [
+    {
+      "severity": "major",
+      "title": "Short imperative summary",
+      "detail": "What was wrong in the input plan and how the refined plan fixes it.",
+      "location": "plan section heading or file/path the fix concerns"
     }
   ],
   "summary": "1-3 sentence overall assessment of the input plan and the state after refinement."
 }
 ```
+
+`issues` = open in the refined plan; `fixed` (optional, same item shape) = found in the input and fixed by this cycle. `fixed` is information only and never blocks.
 
 Severity definitions (use them honestly):
 - **critical** — the plan would not work / produces wrong results / blocks implementation; MUST be fixed before building.
@@ -59,7 +69,7 @@ Severity definitions (use them honestly):
 - **minor** — small correctness/quality issue; non-blocking.
 - **suggestion** — optional improvement / nice-to-have.
 
-The orchestrator treats `critical` and `major` as blocking. Only when none remain does the refine loop stop. Report `[]` issues with a positive summary only when the plan is genuinely solid. As successive cycles fix problems, your reported blocking count should genuinely decrease — because the plan really is getting better, not because you softened your judgment.
+The orchestrator treats `critical` and `major` as blocking. The refine loop runs another cycle while an `issues` entry is critical or major, and once more after a first cycle whose `fixed` holds a critical or major item, so a fresh refiner re-reads those fixes. An issue you fixed must not stay in `issues`, and an issue you could not fix must not be left out of it. Report `[]` issues only when the refined plan is genuinely solid. As successive cycles fix problems, your reported blocking count should genuinely decrease — because the plan really is getting better, not because you softened your judgment.
 
 ## Role reviews
 
