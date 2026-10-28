@@ -695,6 +695,41 @@ test('#955 a one-line member: PR chip kept with no repeated word, no labels, no 
   assert.equal(live.querySelector(':scope > a.runs-row').dataset.line, liveModel.line, 'data-line keeps the canonical line (D11)');
 });
 
+test('#1012 a staged live member draws the four-section block; a working one names no step, a needing one keeps why', () => {
+  const run = { status: 'running', steps: [{ nodeId: 'n' }], active: ['n'], stepper: { auto: { status: 'deciding' } } };   // Plan · choosing the workflow
+  const chain = { id: 'p:c1012', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run })], groups: [chain], now: NOW });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const row = host.querySelector('.runs-members .runs-item[data-level="member"] > a.runs-row');
+  assert.ok(row.querySelector(':scope > .runs-stage .run-prog-track'), 'the four-section bar');
+  assert.equal(row.querySelector(':scope > .runs-stage .run-prog-mark[data-state="current"]').textContent, 'Plan');
+  assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line beside it');
+  assert.equal(row.querySelector('.runs-row-sub').textContent, '', 'the marks say Plan, the dot says Working: no step');
+  assert.equal(row.dataset.line, 'Plan · choosing the workflow', 'data-line keeps the canonical line (D11)');
+  const asking = { ...run, pendingQuestion: { questions: [{ id: 'q1', question: 'Which?' }] } };
+  const m2 = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run: asking })],
+    groups: [{ ...chain, members: [{ ...chain.members[0], run: asking }] }], now: NOW });
+  const host2 = doc.createElement('div');
+  host2.append(...renderRunsList(doc, m2));
+  const sub2 = host2.querySelector('.runs-members .runs-item[data-level="member"] .runs-row-sub').textContent;
+  assert.match(sub2, /^needs you/, 'a state the dot does not say stays, without the stage word');
+});
+
+test('#1012 a member dispatched but not started yet draws no progress at all', () => {
+  const run = { status: 'running', stepper: { auto: { status: 'deciding' } } };   // no step yet: Starting, with stages
+  const chain = { id: 'p:c1012s', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run })], groups: [chain], now: NOW });
+  assert.equal(m.sections.flatMap((s) => s.rows)[0].members[0].model.state, 'starting');
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const row = host.querySelector('.runs-members .runs-item[data-level="member"] > a.runs-row');
+  assert.equal(row.querySelector(':scope > .runs-stage'), null, 'no four-section block');
+  assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line');
+});
+
 test('#955 a chat inside a one-project topic group does not repeat the project; a "2 projects" group keeps it', () => {
   const chat = (id, line) => ({ key: `chat:${id}`, id, kind: 'chat', title: id, href: `#chat/${id}`, labels: [],
     model: { state: 'idle', word: 'Idle', line, dot: 'grey', pulse: false, symbol: null, icon: 'chat' } });
