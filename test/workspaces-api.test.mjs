@@ -18,7 +18,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdtemp, rm, mkdir, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -42,18 +42,18 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 // recursive rm of created[], and the final `rmdir .git` loses the race ->
 // ENOTEMPTY. It only surfaces under full-suite event-loop load (the teardown git
 // finishes promptly when this file runs alone). Two layers, defense-in-depth:
-//   (1) drainWorktrees(): after stopping, wait (bounded) for each member's
-//       .git/worktrees to drain + git lock files to clear, so the teardown
-//       `worktree remove` is done before we touch the dir;
+//   (1) drainWorktrees(): after stopping, wait (bounded) for each run's launch
+//       promise (orch.run() settles only after its teardown git) and for git lock
+//       files to clear, so the teardown `worktree remove` is done before we touch
+//       the dir. Not for .git/worktrees to empty: a run that finished keeps its
+//       worktree, so that wait always ran to its bound and held the file 4 s;
 //   (2) rmWithRetry(): a bounded ENOTEMPTY/EBUSY retry on the recursive rm, so a
 //       teardown git that lands in the residual window can't fail cleanup.
 
-/** True while a member repo still has a live worktree entry or a git lock. */
-async function gitBusy(dir) {
+/** True while a member repo still holds a git lock. */
+function gitBusy(dir) {
   try {
     if (!existsSync(join(dir, '.git'))) return false;
-    const wt = join(dir, '.git', 'worktrees');
-    if (existsSync(wt) && (await readdir(wt)).length > 0) return true;
     for (const lock of ['index.lock', 'HEAD.lock', 'config.lock']) {
       if (existsSync(join(dir, '.git', lock))) return true;
     }
@@ -63,13 +63,12 @@ async function gitBusy(dir) {
   }
 }
 
-/** Wait (bounded) for in-flight teardown git to release every member repo. */
-async function drainWorktrees(dirs, { timeoutMs = 4000, stepMs = 25 } = {}) {
+/** Wait (bounded) for the runs to settle and in-flight teardown git to release every member repo. */
+async function drainWorktrees(launches, dirs, { timeoutMs = 4000, stepMs = 25 } = {}) {
   const deadline = Date.now() + timeoutMs;
+  await Promise.race([Promise.allSettled(launches), delay(timeoutMs, undefined, { ref: false })]);
   for (;;) {
-    const busy = [];
-    for (const d of dirs) if (await gitBusy(d)) busy.push(d);
-    if (busy.length === 0 || Date.now() >= deadline) return;
+    if (!dirs.some(gitBusy) || Date.now() >= deadline) return;
     await delay(stepMs);
   }
 }
@@ -148,6 +147,7 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   // Defensive: abort every still-registered orch so no background worktree
   // creation outlives this file (belt to the chdir-sandbox suspenders).
+  const launches = [...runs.values()].map((r) => r.launch).filter(Boolean);
   for (const r of runs.values()) {
     try { r.orch && typeof r.orch.stop === 'function' && r.orch.stop(); } catch { /* best-effort */ }
   }
@@ -156,7 +156,7 @@ after(async () => {
   // ignoreAbort git that outlives the abort. Wait for that teardown to release the
   // member repos BEFORE removing them, so `git worktree remove` can't race the rm
   // and leave .git non-empty (the full-suite-only ENOTEMPTY flake). See header.
-  await drainWorktrees([...created, cwdSandbox].filter(Boolean));
+  await drainWorktrees(launches, [...created, cwdSandbox].filter(Boolean));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   delete process.env.WORCA_MOCK;
   _resetForTests(); // next file reopens the DB singleton clean

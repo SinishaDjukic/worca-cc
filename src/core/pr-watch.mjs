@@ -314,7 +314,7 @@ export function createPrWatchRunner({ tick, intervalMs = 60_000, env = process.e
   return { start, kick, stop };
 }
 
-// One process-global pause: a rate limit on any watched PR (GitHub or Azure DevOps) stops every host call.
+// One process-global pause: a rate limit on any watched PR (GitHub, Azure DevOps or Bitbucket) stops every host call.
 let hostPauseUntil = 0;
 const START_TIMEOUT_MS = 10 * 60_000;
 /** How long a failure waits for the base head's result on the same check before it counts as the PR's. */
@@ -326,7 +326,7 @@ const LIVE = new Set(['starting', 'running', 'paused']);
 /**
  * The Watch PR state machine. Every side effect is injected so the server owns the IO:
  *   originOf(w)                       → { pipelineId, projectKey, projectDir, branch, sourceBranch, baseRemote, guardrailsId, engine, mock, tags?: string[], labels?: string[] } | null
- *   host.{snapshot, jobLog, reply, comment, rerun}  (by the PR URL's forge: GitHub or Azure DevOps)
+ *   host.{snapshot, jobLog, reply, comment, rerun}  (by the PR URL's forge: GitHub, Azure DevOps or Bitbucket)
  *   git.{fetch, status, fastForward, push}   ({ projectDir, branch, remote }); git.subjects({ projectDir, from, to }) → { ok, subjects }
  *                                     git.checkMerge({ projectDir, baseSha, from, to }) → { ok, merged, markers }
  *                                     git.mergeBase({ projectDir, branch, base, remote, headSha }) → { ok, merged, to?, baseSha? }:

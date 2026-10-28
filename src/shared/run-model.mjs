@@ -15,6 +15,7 @@
 import { runProgress, groupProgress, askWhat } from './run-progress.mjs';
 import { liveRoleRows } from './shape/role-review.mjs';
 import { parseAzurePrUrl } from './azure-remote.mjs';
+import { parseBitbucketPrUrl } from './bitbucket-remote.mjs';
 
 export const RUN_STATES = Object.freeze({
   starting: Object.freeze({ word: 'Starting', dot: 'peach', pulse: true, symbol: null }),
@@ -105,8 +106,9 @@ export function prState(pr) {
     : id === 'running' ? `${checks.pending} of ${checks.total} checks running · ${ref}`
     : id === 'conflicts' ? `Conflicts with the base branch · ${ref}`
     : number == null ? 'Pull request' : /github\.com\//.test(url || '') ? `PR #${number} · open on GitHub` : `PR #${number}`;
-  // #784: Azure DevOps calls a closed-without-merging PR abandoned; the id, icon and colour stay `closed`.
-  const word = id === 'closed' && parseAzurePrUrl(url) ? 'Abandoned' : PR_STATES[id].word;
+  // #784: Azure DevOps calls a closed-without-merging PR abandoned, Bitbucket declined; the id, icon and colour stay `closed`.
+  const word = id === 'closed' && parseAzurePrUrl(url) ? 'Abandoned'
+    : id === 'closed' && parseBitbucketPrUrl(url) ? 'Declined' : PR_STATES[id].word;
   return { id, ...PR_STATES[id], icon: gitIcon(s, pr), word, number, url, title, needsYou: id === 'conflicts' || id === 'failing',
     ...(pr.pending ? { pending: true } : {}) };
 }
@@ -177,6 +179,7 @@ function singleLine(state, run, prog, pr, opts) {
     case 'paused': {
       const s = String(run.status);
       if (s === 'pausing') return join(where, 'pausing');
+      if (run.resumePending) return join(where, 'resuming');   // a Resume request in flight (the browser's flag)
       return join(where, 'paused', s === 'interrupted' ? 'interrupted' : PAUSE_WORD[run.pauseReason] || '');
     }
     case 'waiting': {

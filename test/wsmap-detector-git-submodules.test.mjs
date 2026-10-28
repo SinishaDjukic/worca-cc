@@ -9,6 +9,8 @@ test('remoteSlug (P1, the origin alias extract adds) folds every .gitmodules URL
   const same = ['https://github.com/Acme/Billing.git', 'git@github.com:acme/billing.git', 'ssh://git@github.com:22/acme/billing', 'git+ssh://git@GitHub.com/acme/billing/', 'https://user:tok@github.com/acme/billing', 'http://github.com//acme/billing.git'];
   for (const u of same) assert.equal(remoteSlug(u), 'github.com/acme/billing', u);
   assert.equal(remoteSlug('git@gitlab.acme.io:platform/libs/money.git'), 'gitlab.acme.io/platform/libs/money');
+  for (const u of ['https://bitbucket.org/acme/api.git', 'https://jdoe@bitbucket.org/acme/api', 'git@bitbucket.org:acme/api.git',
+    'ssh://git@altssh.bitbucket.org:443/acme/api.git']) assert.equal(remoteSlug(u), 'bitbucket.org/acme/api', u);
   for (const u of ['file:///srv/repos/billing.git', '/srv/repos/billing', '../billing', 'C:\\repos\\billing', 'C:/repos/billing', '', null, 'https://github.com']) assert.equal(remoteSlug(u), null, String(u));
 });
 

@@ -56,7 +56,6 @@ export function createHomeTabs({ doc, onSelect }) {
     b.setAttribute('aria-selected', 'false');
     b.setAttribute('aria-controls', PANEL_ID);
     b.tabIndex = t === HOME_TABS[0] ? 0 : -1;
-    if (t === 'plans') b.hidden = true;           // Shape it first: home.mjs shows it while the gate is on
     b.appendChild(make(doc, 'span', 'chat-home-tab-l', HOME_TAB_LABELS[t]));
     if (t === 'needs') {
       const n = make(doc, 'span', 'chat-home-tab-n');
@@ -82,7 +81,7 @@ export function createHomeTabs({ doc, onSelect }) {
   });
   el.append(list, panel);
 
-  /** The tabs whose button shows (Plans is hidden while the Shape it first gate is off). */
+  /** The tabs whose button shows. */
   function visibleTabs() { return HOME_TABS.filter((t) => !btns.get(t).hidden); }
   let sel = null;
   /** A phone-width strip scrolls sideways: bring the selected tab into it when the SELECTION changes — never from
@@ -108,18 +107,13 @@ export function createHomeTabs({ doc, onSelect }) {
     else { panel.removeAttribute('aria-labelledby'); delete panel.dataset.tab; }
     revealSelected();
   }
-  function setVisible(t, on) {
-    const b = btns.get(t);
-    if (!b) return;
-    b.hidden = !on;
-  }
   function setNeeds(n) {
     const c = btns.get('needs').querySelector('.chat-home-tab-n');
     const v = Number(n) > 0 ? String(n) : '';
     if (c.textContent !== v) c.textContent = v;
     c.hidden = !v;
   }
-  return { el, panel, select, selected: () => sel, setNeeds, setVisible, visibleTabs, destroy() {} };
+  return { el, panel, select, selected: () => sel, setNeeds, visibleTabs, destroy() {} };
 }
 
 /** A chat row's dot: green while its reply streams, amber while a run it follows waits on you, violet while a run it

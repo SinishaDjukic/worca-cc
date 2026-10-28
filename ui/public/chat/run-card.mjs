@@ -10,11 +10,11 @@ import { progressRoute, projectLabel, snapshotFromState, PROGRESS_CARD_TYPE } fr
 import { registerChatCard } from './extensions.mjs';
 import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
+import { openRunGraphOverlay } from './run-graph-overlay.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
 import { CREATE_PR_LABEL, VIEW_PR_LABEL } from '../ship-words.mjs';
 import { icon as uiIcon } from '../icons.mjs';
-import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
 import { changesCounts, folderDoneWords } from '../folder-changes.mjs';
@@ -197,11 +197,14 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   const el = h('div', 'ask-card ask-rc chat-rc');
   el.dataset.cardId = id.cardId || '';
-  // ---- head: dot · title · kind chip · Open › (runs redesign slice 4, D10); the status block sits under it
+  // ---- head: dot · title · kind chip · Open › (runs redesign slice 4, D10); the meta line and the status block sit under it.
+  // #959: the run page head's rule (#967): a single run has no kind chip; a group keeps it, as the group page title
+  // does (kindOf). The meta line (the project) comes right under the head.
   const head = h('div', 'ask-rc-head');
   const headDot = h('span', 'status-dot');
   const title = h('div', 'ask-rc-title', id.title || 'Run');
-  const kind = h('span', 'kind-chip', id.fix ? 'PR fix run' : 'Run');
+  const kind = h('span', 'kind-chip');
+  kind.hidden = true;
   const open = h('a', 'ask-rc-open', 'Open');
   const chev = h('span', 'chat-rc-chev', ' ›');
   chev.setAttribute('aria-hidden', 'true');
@@ -236,8 +239,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   agentsBox.hidden = true;
   agentsBox.setAttribute('role', 'group');
   agentsBox.setAttribute('aria-label', 'Active agents');
-  // ---- the graph well (U9): a run-hosts `card` host inside a .run-flow-wrap, so the run monitor's status CSS applies
-  const well = h('div', 'run-flow-wrap chat-rc-well');
+  // ---- the graph well (U9): a run-hosts `card` host inside a .run-flow-wrap, so the run monitor's status CSS applies.
+  // #959: a .gv-well, like the workflow card's: as wide as the card, inside the text column (style.css).
+  const well = h('div', 'run-flow-wrap chat-rc-well gv-well');
   well.hidden = true;
   well.setAttribute('role', 'group');
   const graphHost = h('div', 'run-flow chat-rc-graph');
@@ -245,6 +249,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   deciding.hidden = true;
   const expand = button('chat-rc-expand');
   expand.setAttribute('aria-label', 'Expand');
+  expand.setAttribute('aria-haspopup', 'dialog');
   expand.title = 'Expand';
   expand.appendChild(icon(doc, 'expand'));
   well.append(graphHost, deciding, expand);
@@ -302,9 +307,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const changesSlot = h('div', 'chat-rc-changes');
   changesSlot.hidden = true;
   // Card order: the model's head / status / members, then Shaper's slots; the log sits before the open step.
-  el.append(head, statusEl, labelsEl, sub, fixEl, shapedEl, membersEl, stats, agentsBox, well, logEl, notesEl, watchEl, qSec, resultSec, reason, foot);
+  el.append(head, sub, statusEl, labelsEl, fixEl, shapedEl, membersEl, stats, agentsBox, well, logEl, notesEl, watchEl, qSec, resultSec, reason, foot);
 
-  let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
+  let last = null, graph = null, zoom = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
   let curRow = null;          // the group row while this card shows a group (D11)
   let createPrBtn = null;     // the result's "Create pull request" button while paintResult shows it (D4: it is `ship`)
@@ -355,9 +360,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     openPlan,
   };
 
-  /** D7: a Watch PR fix-run card (#773) and an open shaping plan name themselves; everything else is kindLabel. */
-  const kindOf = (row, s) => (id.fix ? 'PR fix run'
-    : !row && shapeFirstOn() && s && s.shaping && !s.shaping.approved ? 'Shaping' : kindLabel(row));
+  // #959: the chip names a group only (kindLabel's `Feature/Chain/Group · N runs`), and Shaping for the feature a
+  // shaped run becomes. A single run has none (kindLabel's 'Run'; a PR fix run's fix line leads with its kind), like
+  // the run page title (#967).
+  const kindOf = (row, s) => {
+    if (id.fix) return '';
+    if (!row) return s && s.shaping && !s.shaping.approved ? 'Shaping' : '';
+    const word = kindLabel(row);
+    return word === 'Run' ? '' : word;
+  };
 
   /** D6: runModel's input. The snapshot's own status and question win over the raw run's: they are what paintFoot /
    *  paintQuestion draw from, so the model and the own-button map never disagree. The PR too: resolve() merges the REST
@@ -384,7 +395,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   // A group card's Open follows its #feature/… or #group/… href; a single run's card keeps opening the run panel.
   open.addEventListener('click', (e) => { if (curRow) return; e.preventDefault(); call(ctx.openRunPanel, ref(), {}); });
-  expand.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: 'workflow' }));
+  // Expand: the same live graph, large, in an overlay over the chat (run-graph-overlay.mjs); paintGraph keeps it live.
+  // Nothing navigates; the overlay's Open run is the way to the run's Workflow tab.
+  expand.addEventListener('click', () => {
+    if (zoom || !graph || !last) return;
+    zoom = openRunGraphOverlay({ doc, title: title.textContent, opener: expand,
+      onOpenRun: () => call(ctx.openRunPanel, ref(), { tab: 'workflow' }),
+      onGateClick: () => focusQuestion(), onClose: () => { zoom = null; } });
+    zoom.update(graphRunId(last), last.stepper, last.decor);
+  });
   pauseBtn.addEventListener('click', (e) => {
     // One press per action: the same button flips in place (Resume → Pause once the resumed lineage runs, Pause →
     // Resume once the pause settles), so a double-click's second press (detail 2) would undo the first.
@@ -467,6 +486,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (typeof qSec.scrollIntoView === 'function') qSec.scrollIntoView({ block: 'nearest' });
   }
 
+  const graphRunId = (s) => s.pipelineId || s.runId || id.pipelineId || id.runId || 'run';
+
   function paintGraph(s, chip) {
     const isDeciding = !!(chip && chip.deciding);
     const stepper = s && s.stepper;
@@ -476,6 +497,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     well.classList.toggle('is-deciding', isDeciding);
     deciding.hidden = !isDeciding;
     expand.hidden = !drawable;
+    if (!drawable && zoom) zoom.close();   // after Expand hides, so the close does not refocus it
     if (!drawable) {
       if (isDeciding) {
         // The run page's A24 words (app.js paintAutoDeciding): a run that waits on its proposal, is parked, or can never
@@ -491,7 +513,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       return;
     }
     if (!graph) graph = mountRunGraph(graphHost, { mode: 'card', doc, onGateClick: () => focusQuestion() });
-    graph.update(s.pipelineId || s.runId || id.pipelineId || id.runId || 'run', stepper, s.decor);
+    graph.update(graphRunId(s), stepper, s.decor);
+    if (zoom) zoom.update(graphRunId(s), stepper, s.decor);
     well.setAttribute('aria-label', `Workflow graph: ${manifestNodes(stepper).filter((n) => KEYED.has(n.kind)).map((n) => n.label || n.id).join(' → ')}`);
   }
 
@@ -505,7 +528,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     }
     receiptList.hidden = !answers.length;
     receiptSum.tabIndex = answers.length ? 0 : -1;
-    receipt.hidden = false;
+    receipt.hidden = logged();
+    qSec.hidden = receipt.hidden;
+  }
+
+  /** Each fact once per card: a receipt whose line the step log already shows (a feature card's "Clarify · 2 answers")
+   *  gives way to that row. */
+  function logged() {
+    const line = receiptSum.textContent;
+    return [...logEl.querySelectorAll('.chat-rc-log-text')].some((t) => t.textContent === line);
   }
 
   function paintQuestion(s) {
@@ -562,6 +593,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (mine || ANSWERING_STATUS.has(status)) { showReceipt(mine, was); shownFor = mine ? null : was; }
       else receipt.hidden = true;
     }
+    if (!receipt.hidden && logged()) receipt.hidden = true;   // the log row arrives after the answer (question-resolved)
     qSec.hidden = receipt.hidden;
   }
 
@@ -590,7 +622,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const total = (changesCounts(s.changes) || {}).total || 0; const canApply = word.key === 'folder' && !ws && !s.archived && !!s.changes && s.changes.state === 'pending' && total > 0 && typeof controls.openApply === 'function';
     const np = isNoProjectRun(s);
     const lines = resultLines(word, statusText(m || lastM || {}));
-    const sig = JSON.stringify([word, lines, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply, shapeFirstOn()]);
+    const sig = JSON.stringify([word, lines, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply]);
     if (sig === resultSig) return;
     resultSig = sig;
     createPrBtn = null;
@@ -610,7 +642,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       resultSec.appendChild(rhead);
     }
     // Spec D7 / s3: the shaped run's checklist score; pressing it unfolds the run page's Perspective checklists in place.
-    const tally = r && r.checklist && r.checklist.total && shapeFirstOn() ? r.checklist : null;
+    const tally = r && r.checklist && r.checklist.total ? r.checklist : null;
     if (tally) {
       const row = h('div', `chat-rc-checklist${tally.unmet || tally.missing ? ' is-open' : ''}`);
       const b = button('chat-rc-checklist-btn');
@@ -745,7 +777,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // ready), so the field waits for curRow.
     const finished = feature ? !!curRow && ['ready', 'in-review', 'merged'].includes(m.state)
       : RESULT_STATUS.has(String((s && s.status) || ''));
-    const show = !!s && !roundLive && finished && s.kind !== 'workspace-run' && shapeFirstOn() && typeof ctx.postChanges === 'function'
+    const show = !!s && !roundLive && finished && s.kind !== 'workspace-run' && typeof ctx.postChanges === 'function'
       && (feature ? !(feature.controls && feature.controls.halted) : !!s.pipelineId);
     changesSlot.hidden = !show;
     if (!show) { changesSlot.replaceChildren(); changesView = null; return; }
@@ -830,8 +862,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // The same for View PR while the model offers it (an open PR): one View PR on the card, not a second in the footer.
     if (!curRow && viewPrLink && resultSec.contains(viewPrLink) && levelAtLeast('advanced', doc) && ((m && m.actions) || []).includes('open-pr')) own['open-pr'] = viewPrLink;
     else if (viewPrLink) delete viewPrLink.dataset.modelAction;
-    const changesWhy = changesView && !changesSlot.hidden ? ''
-      : !shapeFirstOn() ? 'Turn on Shaper to ask for changes' : 'Ask for changes from the chat that started this run';
+    const changesWhy = changesView && !changesSlot.hidden ? '' : 'Ask for changes from the chat that started this run';
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
     syncActions(footActions, m, {
       own,
@@ -856,13 +887,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     el.classList.toggle('is-question', !!(s && s.pendingQuestion));
     el.dataset.runStatus = status;
     const pid = (s && s.pipelineId) || id.pipelineId || '';
-    // Shaper's slots (feature model, rounds) only with Shape it first on (Ordinary stays ordinary).
-    const on = shapeFirstOn();
-    fm = s && s.shaper && on ? featureCardModel({ own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null }) : null;
+    // Shaper's slots (feature model, rounds).
+    fm = s && s.shaper ? featureCardModel({ own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null }) : null;
     const roundSnap = (p) => (s && s.roundSnaps && s.roundSnaps[p]) || null;
     // s5 (D16): a plain run's rounds (the controller fills s.roundSnaps) fill the log; the live one feeds the model (D6).
-    const rm = on ? roundsModel(s) : { log: [], watch: null };
-    const lr = !fm && on && s ? liveRound(s, roundSnap) : null;
+    const rm = roundsModel(s);
+    const lr = !fm && s ? liveRound(s, roundSnap) : null;
     roundRef = lr ? { runId: (lr.m && lr.m.runId) || null, pipelineId: lr.r.pipelineId || null, ticketId: null,
       title: (s && s.title) || '', status: String((lr.m && lr.m.status) || lr.r.status || '') } : null;
     curRow = typeof controls.groupOf === 'function' ? controls.groupOf(ref(), s) || null : null;
@@ -878,7 +908,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const sig = labels.join('\n');
     if (sig !== labelsSig) { labelsSig = sig; labelsEl.replaceChildren(...labels.map((l) => labelChip(doc, l))); }
     title.textContent = curRow ? curRow.title : (s && s.title) || id.title || 'Run';
-    kind.textContent = kindOf(curRow, s);
+    const kindWord = kindOf(curRow, s);
+    kind.textContent = kindWord;
+    kind.hidden = !kindWord;
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
     if (curRow) { membersEl.replaceChildren(renderMemberRows(doc, curRow)); membersEl.hidden = false; } else { membersEl.replaceChildren(); membersEl.hidden = true; }
     // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
@@ -891,7 +923,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     timeEl.textContent = fmtDur(s ? s.elapsedMs : 0);
     costEl.textContent = s && s.costUsd == null ? 'cost unknown' : fmtUsd(s ? s.costUsd : 0);
     const sh = s && s.shaping;
-    if (!fm && sh && sh.approved && on) {           // D15: a feature card's step log says it
+    if (!fm && sh && sh.approved) {           // D15: a feature card's step log says it
       const name = String(sh.approved.file || '').split(/[\\/]/).pop();
       shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
         h('span', 'chat-rc-shaped-plan', `Plan: ${name}`));
@@ -916,12 +948,13 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     paintActions(lastM, s); // last: the model decides what shows
   }
 
-  function relayout() { if (graph) graph.repaint(); }
+  function relayout() { if (graph) graph.repaint(); if (zoom) zoom.repaint(); }
 
   function paintFix() {
     const f = id.fix && typeof id.fix === 'object' ? id.fix : null;
     if (!f) { fixEl.hidden = true; fixEl.replaceChildren(); return; }
-    const parts = [h('span', 'chat-rc-fix-why', f.triggerLabel || 'Pull request feedback')];
+    const parts = [h('span', 'chat-rc-fix-kind', 'PR fix run'), h('span', 'chat-rc-fix-sep', '·'),
+      h('span', 'chat-rc-fix-why', f.triggerLabel || 'Pull request feedback')];
     if (isWebUrl(f.prUrl)) {
       const a = h('a', 'chat-rc-fix-pr', `PR #${String(f.prUrl).replace(/\/+$/, '').split('/').pop()}`);
       a.href = f.prUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
@@ -935,6 +968,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   function destroy() {
     dead = true;
+    expand.hidden = true;   // a card going away does not take the focus back to its Expand
+    if (zoom) zoom.close();
     if (graph) { graph.destroy(); graph = null; }
     call(controls.releaseQuestion, qBody);
   }
@@ -1030,7 +1065,7 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
   function withShaper(entry, snap) {
     const fn = entry.ctx && entry.ctx.shaperCard;
     const pid = (snap && snap.pipelineId) || entry.ident.pipelineId;
-    if (!snap || !pid || typeof fn !== 'function' || !shapeFirstOn()) return snap;
+    if (!snap || !pid || typeof fn !== 'function') return snap;
     if (!snap.shaping && snap.source === 'live' && !snap.terminal) return snap;   // live and running: shaping would be on it
     const card = fn(pid, entry.onShaper);
     if (!card) return snap;

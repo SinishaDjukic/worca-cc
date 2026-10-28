@@ -1204,9 +1204,9 @@ test('a run card labels the run-resolved model (manifest cell), mapped through t
 });
 
 // ── Chat P3: the `card` host (the chat run card's graph well) ───────────────
-import { CARD_ZOOM, CARD_ZOOM_NARROW, CARD_MIN_H, CARD_MAX_H, CARD_PAD, CARD_FOLLOW_IDLE_MS, FOCUS_PAD } from '../ui/public/graph/run-hosts.mjs';
+import { CARD_ZOOM, CARD_ZOOM_NARROW, CARD_ZOOM_MIN, CARD_MIN_H, CARD_MAX_H, CARD_PAD, CARD_FOLLOW_IDLE_MS, FOCUS_PAD } from '../ui/public/graph/run-hosts.mjs';
 
-test('card host: the Workflows rendering in a chat-card well — width-led zoom 0.5–0.74, well height 200–480 on the wrap, centred when it fits, framed on the running node when it does not', async () => {
+test('card host: the Workflows rendering in a chat-card well — width-led zoom 0.3–0.74, well height 200–480 on the wrap, centred when it fits, framed on the running node when it does not', async () => {
   await checkRows([
     { name: 'a graph that fits is drawn at CARD_ZOOM and centred; the wrap carries gv-wrap-card and --run-host-h; no cluster, no hint', run: async () => {
       calls = [];
@@ -1236,17 +1236,39 @@ test('card host: the Workflows rendering in a chat-card well — width-led zoom 
       const t = xform(host.querySelector('.gv-world'));
       near(t.y, -b.y * t.z, 'nothing to follow: the top edge');
     } },
-    { name: 'a wide graph pans at the 0.5 floor and frames the running node, clamped to the graph ends', run: async () => {
+    { name: '#959: a graph that fits above the 0.3 floor is drawn whole — fitted, centred, no node past the well', run: async () => {
       calls = [];
-      const { m, host } = mountHost('card', 400);
+      const { m, host } = mountHost('card', 400);          // LINE: 400 / b.w ≈ 0.34, above the floor
       m.update('run1', LINE, decorFromState(lineRun(running('n_c'))));
       const t = xform(host.querySelector('.gv-world'));
-      near(t.z, 0.5, 'the floor');
+      const b = m.view.bounds(CARD_PAD);
+      assert.ok(400 / b.w > CARD_ZOOM_MIN, 'the fixture really fits above the floor');
+      near(t.z, 400 / b.w, 'the width picks the zoom, above the floor');
+      assert.ok(b.w * t.z <= 400 + 1e-6, 'the whole graph is inside the well');
+      near(t.x, (400 - b.w * t.z) / 2 - b.x * t.z, 'centred: nothing to follow');
+    } },
+    { name: 'a wide graph pans at the CARD_ZOOM_MIN floor and frames the running node, clamped to the graph ends', run: async () => {
+      calls = [];
+      const { m, host } = mountHost('card', 150);
+      m.update('run1', LINE, decorFromState(lineRun(running('n_c'))));
+      const t = xform(host.querySelector('.gv-world'));
+      near(t.z, CARD_ZOOM_MIN, 'the floor');
+      assert.ok(150 / m.view.bounds(CARD_PAD).w < CARD_ZOOM_MIN, 'LINE overflows a 150px well at the floor');
       const f = m.view.bounds(FOCUS_PAD, ['n_c']);
-      near(t.x, 200 - (f.x + f.w / 2) * 0.5, 'n_c at the centre');
+      near(t.x, 75 - (f.x + f.w / 2) * CARD_ZOOM_MIN, 'n_c at the centre');
       m.update('run2', LINE, decorFromState(lineRun(running('n_a'))));
       const b = m.view.bounds(CARD_PAD);
-      near(xform(host.querySelector('.gv-world')).x, -b.x * 0.5, 'the first node is clamped to the start edge, never past it');
+      near(xform(host.querySelector('.gv-world')).x, -b.x * CARD_ZOOM_MIN, 'the first node is clamped to the start edge, never past it');
+    } },
+    { name: '#959: a wide graph before any step runs opens at the floor at its START edge, not centred (the first node in view)', run: async () => {
+      calls = [];
+      const { m, host } = mountHost('card', 150);
+      m.update('run1', LINE, decorFromState(lineRun()));
+      const t = xform(host.querySelector('.gv-world'));
+      const b = m.view.bounds(CARD_PAD);
+      near(t.z, CARD_ZOOM_MIN, 'the floor');
+      assert.ok(b.w * CARD_ZOOM_MIN > 150, 'LINE overflows a 150px well at the floor');
+      near(t.x, -b.x * CARD_ZOOM_MIN, 'nothing to follow: the start edge');
     } },
   ]);
 });
@@ -1254,7 +1276,7 @@ test('card host: the Workflows rendering in a chat-card well — width-led zoom 
 test('card host: a plain wheel stays the chat\'s scroll, shift/horizontal wheel pans, and the camera follows the running node unless the user panned in the last 5 s', () => {
   calls = [];
   const clock = { t: 1000 };
-  const { m, host, window } = mountHost('card', 400, { now: () => clock.t });
+  const { m, host, window } = mountHost('card', 150, { now: () => clock.t });
   const world = () => host.querySelector('.gv-world');
   m.update('run1', LINE, decorFromState(lineRun(running('n_b'))));
   const stage = m.view.stage;
@@ -1278,7 +1300,7 @@ test('card host: a plain wheel stays the chat\'s scroll, shift/horizontal wheel 
   m.update('run1', LINE, decorFromState(lineRun(running('n_d'))));
   const f = m.view.bounds(FOCUS_PAD, ['n_d']);
   const b = m.view.bounds(CARD_PAD);
-  near(xform(world()).x, Math.max(400 - (b.x * 0.5 + b.w * 0.5), 200 - (f.x + f.w / 2) * 0.5), 'follows n_d again, clamped at the end');
+  near(xform(world()).x, Math.max(150 - (b.x * CARD_ZOOM_MIN + b.w * CARD_ZOOM_MIN), 75 - (f.x + f.w / 2) * CARD_ZOOM_MIN), 'follows n_d again, clamped at the end');
   // a drag pan pauses the follow too (the nav's onTransform stamps it)
   stage.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 100, clientY: 40, bubbles: true }));
   window.document.dispatchEvent(new window.PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 160, clientY: 40, bubbles: true }));
@@ -1292,7 +1314,7 @@ test('card host: a plain wheel stays the chat\'s scroll, shift/horizontal wheel 
 test('card host: a move seen while the user was looking around is followed once they stop — even when the running node has not moved again', () => {
   calls = [];
   const clock = { t: 1000 };
-  const { m, host, window } = mountHost('card', 400, { now: () => clock.t });
+  const { m, host, window } = mountHost('card', 150, { now: () => clock.t });
   const world = () => host.querySelector('.gv-world');
   m.update('run1', LINE, decorFromState(lineRun(running('n_a'))));
   const pan = new window.WheelEvent('wheel', { deltaY: 300, shiftKey: true, bubbles: true, cancelable: true });
@@ -1305,10 +1327,10 @@ test('card host: a move seen while the user was looking around is followed once 
   clock.t += CARD_FOLLOW_IDLE_MS;
   m.update('run1', LINE, bagC);                           // the SAME bag: nothing moved since
   const f = m.view.bounds(FOCUS_PAD, ['n_c']);
-  near(xform(world()).x, 200 - (f.x + f.w / 2) * 0.5, 'the camera catches up with n_c');
+  near(xform(world()).x, 75 - (f.x + f.w / 2) * CARD_ZOOM_MIN, 'the camera catches up with n_c');
   clock.t += 1000;
   m.update('run1', LINE, bagC);
-  near(xform(world()).x, 200 - (f.x + f.w / 2) * 0.5, 'and then holds (the pending follow was spent)');
+  near(xform(world()).x, 75 - (f.x + f.w / 2) * CARD_ZOOM_MIN, 'and then holds (the pending follow was spent)');
   m.view.stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -200, shiftKey: true, bubbles: true, cancelable: true }));   // the user looks around again
   const again = xform(world()).x;
   clock.t += CARD_FOLLOW_IDLE_MS + 1000;
@@ -1332,14 +1354,14 @@ test('card host: the gate pip reports out, and destroy() gives the wrap back (cl
 
 test('card host: a user pan never takes the graph out of the well, and a graph that fits stays centred', () => {
   calls = [];
-  const { m, host, window } = mountHost('card', 400);
+  const { m, host, window } = mountHost('card', 150);      // #959: LINE overflows a 150px well at the floor
   m.update('run1', LINE, decorFromState(lineRun(running('n_a'))));
   const stage = m.view.stage;
   const b = m.view.bounds(CARD_PAD);
   stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 5000, shiftKey: true, bubbles: true, cancelable: true }));
-  near(xform(host.querySelector('.gv-world')).x, 400 - (b.x * 0.5 + b.w * 0.5), 'stops at the graph\'s far end');
+  near(xform(host.querySelector('.gv-world')).x, 150 - (b.x * CARD_ZOOM_MIN + b.w * CARD_ZOOM_MIN), 'stops at the graph\'s far end');
   stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -9000, shiftKey: true, bubbles: true, cancelable: true }));
-  near(xform(host.querySelector('.gv-world')).x, -b.x * 0.5, 'and at its start');
+  near(xform(host.querySelector('.gv-world')).x, -b.x * CARD_ZOOM_MIN, 'and at its start');
   const fits = mountHost('card', 700);
   fits.m.update('run1', MANIFEST, decorFromState(RUN()));
   const x0 = xform(fits.host.querySelector('.gv-world')).x;
@@ -1450,5 +1472,26 @@ test('card host: a finished run\'s End result link is no tab stop either; a moni
   assert.notEqual(mon.host.querySelector('.xtoggle').getAttribute('tabindex'), '-1', 'the run page footer accordion stays reachable');
   assert.notEqual(mon.host.querySelector('.xresult a').getAttribute('tabindex'), '-1', 'the run page result link stays reachable');
   card.m.destroy();
+  mon.m.destroy();
+});
+
+test('a `fill` monitor host (the chat run card\'s Expand overlay) fits into its own box, past DETAIL_MAX_H, and never writes --run-host-h', async () => {
+  const { NAV_INSET, DETAIL_MAX_H, fitInto } = await import('../ui/public/graph/run-hosts.mjs');
+  const TALLER = { ...MANIFEST, graph: { nodes: [MANIFEST.graph.nodes[0], { ...MANIFEST.graph.nodes[1], x: 0, y: 900 }], wires: MANIFEST.graph.wires } };
+  const H = DETAIL_MAX_H + 300;
+  const { m, host, wrap } = mountHost('monitor', 1000, { fill: true, viewport: () => ({ left: 0, top: 0, width: 1000, height: H }) });
+  m.update('run1', TALLER, decorFromState(RUN({ stepper: TALLER })));
+  const want = fitInto(m.view.bounds(24), 1000 - NAV_INSET, H, { zoomMin: 0.3 });
+  const t = xform(host.querySelector('.gv-world'));
+  near(t.z, want.z, 'z: fitted to the whole box height');
+  near(t.y, want.y, 'y: centred in the whole box');
+  assert.equal(wrap.style.getPropertyValue('--run-host-h'), '', 'the overlay owns its height');
+  assert.ok(wrap.querySelector(':scope > .gv-nav'), 'the zoom cluster is the run monitor\'s');
+  // The plain monitor host clamps the same box at DETAIL_MAX_H: a different, smaller fit.
+  const mon = mountHost('monitor', 1000, { viewport: () => ({ left: 0, top: 0, width: 1000, height: H }) });
+  mon.m.update('run1', TALLER, decorFromState(RUN({ stepper: TALLER })));
+  assert.equal(mon.wrap.style.getPropertyValue('--run-host-h'), `${DETAIL_MAX_H}px`);
+  assert.ok(zoomOf(mon.host.querySelector('.gv-world')) < t.z, 'precondition: the clamp would shrink it');
+  m.destroy();
   mon.m.destroy();
 });

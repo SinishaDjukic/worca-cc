@@ -105,6 +105,7 @@ import {
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
   networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
+  keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   modelRolesSetting, assertModelRolesInput, setModelRoles,
@@ -147,6 +148,7 @@ import {
   createChatGroup as askCreateChatGroup, getChatGroup as askGetChatGroup, listChatGroups as askListChatGroups,
   renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
   deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
+  snapshotChatGroups as askSnapshotChatGroups, restoreChatGroups as askRestoreChatGroups,
   ChatGroupError,
 } from '../src/core/ask/store.mjs';
 import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
@@ -166,9 +168,7 @@ import {
 import { askScriptPromptInput, scriptToolsEnabled } from '../src/core/ask/script-deps.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
-import {
-  classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
-} from '../src/core/ask/attachment-kind.mjs';
+import { validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
 import {
   listAskWorktrees as askListWorktrees,
   removeAskWorktree as askRemoveWorktree,
@@ -331,10 +331,13 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
-import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
+import {
+  registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
+} from '../src/core/requirements/routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
+import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRunFiles } from '../src/core/requirements/attachment-job.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -367,6 +370,9 @@ import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, lis
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
+import { forkRefusal as bitbucketForkRefusal } from '../src/core/pr/bitbucket.mjs';
+// Forges whose PRs worca opens over REST (pr/azure.mjs, pr/bitbucket.mjs): gh body edits and GitHub "Closes" lines skip them.
+const REST_PR_FORGES = new Set(['azure', 'bitbucket']);
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { createRefResolver } from '../src/core/ask/refs.mjs';
@@ -374,7 +380,8 @@ import { REFS_MAX } from '../src/shared/chip-refs.mjs';
 import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
 import { runBulk } from '../src/core/run-bulk.mjs';
 import { BULK_ACTIONS } from '../src/shared/run-bulk.mjs';
-import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, groupMembers, RunGroupError } from '../src/core/run-groups.mjs';
+import { listRunGroups, createRunGroup, addRunsToGroup, removeFromGroup, groupMembers, RunGroupError, restoreRunGroups, runNameInputs, skipError } from '../src/core/run-groups.mjs';
+import { rememberUndo, takeUndo } from '../src/core/undo-tokens.mjs';
 import { runModel } from '../src/shared/run-model.mjs';
 import { runModelFor } from '../src/core/run-status.mjs';
 import {
@@ -386,7 +393,6 @@ import {
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
-import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
@@ -416,6 +422,7 @@ import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
 import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
 import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
 import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs';
+import { whereOf } from '../src/shared/ask-where.mjs';
 import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
@@ -688,13 +695,13 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
-// Beta keepAwake flag, default on locally (docs/feature-flags.md): one OS child holds off idle system sleep while
-// any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it wherever a
-// run's status or pendingQuestion changes, and when the flag flips.
+// Keep awake, the account menu's switch (keepAwake setting, default on locally): one OS child holds off idle
+// system sleep while any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it
+// wherever a run's status or pendingQuestion changes, and when the setting changes.
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
 const KEEP_AWAKE_EVENTS = new Set(['question', 'night-decision', 'done', 'error', 'exec', 'state']);
 function syncKeepAwake() {
-  try { keepAwake.update(flagEnabled('keepAwake') ? countWorking(runs.values()) : 0); }
+  try { keepAwake.update(keepAwakeEnabled() ? countWorking(runs.values()) : 0); }
   catch (err) { console.error(`[worca-ui] keep-awake update failed: ${err && err.message ? err.message : err}`); }
 }
 const SEEN_SIGN_INS = new Set();
@@ -1171,7 +1178,7 @@ metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.ac
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
-flagEvents.on('changed', (flags) => { broadcast({ type: 'flags', flags }); syncKeepAwake(); });
+flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -1810,6 +1817,14 @@ app.post('/api/run', express.json({ limit: ASK_UPLOAD_JSON_LIMIT }));
 // A script's saved cases are inline text: 32 cases x 256 KiB PER PORT is legal (workbench
 // spec §3.2) and does not fit the global 8 MB, so the one route that saves them all gets room.
 app.put('/api/scripts/:key/cases', express.json({ limit: '64mb' }));
+// Requirements files (plans/requirements-a8-design.md D10) ride base64 in these bodies, up to 100 MB per request: Ask's
+// window, registered BEFORE the global parser and BEHIND the flag's gate (with the flag off the gate answers 404 first,
+// so nothing is parsed). One set of slots spans the five routes: at most two such requests at once, a third answers 409
+// before its body is read.
+const requirementsUploadSlot = requirementsUploadSlots();
+for (const p of REQUIREMENTS_UPLOAD_ROUTES) {
+  app.post(p, requireFlag('requirements'), requirementsUploadSlot, express.json({ limit: REQUIREMENTS_UPLOAD_JSON_LIMIT }));
+}
 app.use(express.json({ limit: '8mb' }));
 
 // Credential broker billing (src/core/billing.mjs): every claude spawn a request causes —
@@ -2271,7 +2286,7 @@ function attachAskFollower(orch, { threadId, runId, cardId, quiet = false }) {
     threadId,
     runId,
     cardId,
-    // Quiet (a PR fix-run card, askPostPrFixCards): the link and the ask-run-status frames, never a notice — the card
+    // Quiet (a PR fix-run card): the link and the ask-run-status frames, never a notice — the card
     // shows the run, and the watcher's outcome lands on it.
     post: quiet ? () => {} : ({ text, href }) => {
       try {
@@ -2394,7 +2409,7 @@ function askTrackRun(threadId, input, pin) {
   return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
 }
 
-/** A run link that belongs to a PR fix-run card (askPostPrFixCards) follows its run quietly: no Run resumed / finished
+/** A run link that belongs to a PR fix-run card follows its run quietly: no Run resumed / finished
  *  rows — the card shows the run, and its outcome. */
 function askLinkIsPrFix(link) {
   if (!link || !link.cardId) return false;
@@ -2412,11 +2427,9 @@ function askPrFixRun(event) {
     try { if (event.pipelineId) setRoundOutcome(event.pipelineId, event.outcome); }
     catch (err) { console.error(`[worca-ui] fix round outcome for ${event.runId} failed: ${err && err.message ? err.message : err}`); }
   }
-  // Shaper s5 (D22): with the gate on, a fix run is a round of the PR's run: it reports into that run's card.
-  if (shapeFirstEnabled()) { askPrFixRound(event); return event.phase === 'ended' ? askSettlePrFixCards(event) : []; }
-  if (event.phase === 'started') return askPostPrFixCards(event);
-  if (event.phase === 'ended') return askSettlePrFixCards(event);
-  return [];
+  // Shaper s5 (D22): a fix run is a round of the PR's run: it reports into that run's card.
+  askPrFixRound(event);
+  return event.phase === 'ended' ? askSettlePrFixCards(event) : [];
 }
 
 /** Shaper s5 (D22): a fix run reports into the run card already in each chat holding the PR — no card, row or link. */
@@ -2428,44 +2441,6 @@ function askPrFixRound({ watch }) {
     const at = featureOfPipeline(origin);                  // { featureId, … } | null
     if (at && at.featureId) broadcastFeature(currentFeatureId(at.featureId));
   } catch (err) { console.error(`[worca-ui] fix round for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`); }
-}
-
-function askPostPrFixCards({ watch, runId, trigger, once }) {
-  const posted = [];
-  const seen = new Set(askFindFixRunCards(runId).map((c) => c.threadId));   // one card per fix run per chat
-  const entry = runs.get(runId) || null;                                    // startRunHandler set it before answering 200
-  let origin = null;
-  if (!entry || !entry.projectDir) { try { origin = prWatchOrigin(watch); } catch { origin = null; } }
-  const dir = (entry && entry.projectDir) || (origin && origin.projectDir) || '';
-  const why = trigger && typeof trigger === 'object' && typeof trigger.label === 'string' ? trigger : { kinds: [], label: 'Pull request feedback' };
-  for (const link of askFindPullRequestCards(watch.prUrl)) {
-    if (seen.has(link.threadId)) continue;
-    seen.add(link.threadId);
-    try {
-      const cardId = askNewId('card');
-      const status = (entry && entry.status) || 'starting';
-      const card = {
-        type: 'progress', pipelineId: null, runId,
-        projectKey: dir ? projectKey(dir) : ((origin && origin.projectKey) || null), workspaceId: null,
-        title: (entry && entry.title) || 'PR fix run',
-        label: String(dir).split(/[\\/]/).filter(Boolean).pop() || '',
-        status,
-        fix: { prUrl: watch.prUrl, memberKey: link.memberKey, originPipelineId: link.pipelineId,
-          trigger: Array.isArray(why.kinds) ? why.kinds : [], triggerLabel: why.label, once: once === true },
-      };
-      const text = `PR watch started a fix run on ${watch.prUrl}: ${why.label}`;
-      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'card', id: cardId, state: 'tracked', card }] });
-      try { askLinkRun(link.threadId, { runId, cardId, status }); } catch { /* a link for this run exists already: the card finds it by run id */ }
-      if (entry && entry.orch && !SETTLED_RUN.has(String(entry.status || '')) && !askFollowerAttached(link.threadId, runId)) {
-        attachAskFollower(entry.orch, { threadId: link.threadId, runId, cardId, quiet: true });
-      }
-      broadcast({ type: 'ask-message', threadId: link.threadId, message: m, unread: true });
-      posted.push({ threadId: link.threadId, cardId });
-    } catch (err) {
-      console.error(`[worca-ui] PR fix-run card for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`);
-    }
-  }
-  return posted;
 }
 
 function askSettlePrFixCards({ runId, pipelineId, outcome }) {
@@ -2571,7 +2546,6 @@ const startRunHandler = async (req, res) => {
     const presetOwner = internal ? (typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null) : askViewer(req);
     let presetRow = null;
     if (body.presetId !== undefined) {
-      if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Labs features)');
       presetRow = readPreset(body.presetId, { owner: presetOwner });
       // 404 like the preset routes: a missing and another person's preset answer the same (R-sec-3).
       if (!presetRow) return res.status(404).json({ error: `preset ${JSON.stringify(String(body.presetId).slice(0, 40))} not found` });
@@ -2696,8 +2670,8 @@ const startRunHandler = async (req, res) => {
     // orchestrator resolves topology + per-project run-config into an executable
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
-    // Shape it first (spec D9/D12): `shape` and the shape workflows only while the gate is on.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { enabled: shapeFirstEnabled(), internal: !!internal });
+    // Shape it first (spec D9/D12): `shape` and the shape workflows.
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
@@ -2849,9 +2823,13 @@ const startRunHandler = async (req, res) => {
     // createPipeline copies them into <pipeline>/extras/.
     // A ticket's extras were staged durably when it was scheduled (the OS temp dir
     // does not survive a reboot); a schedule stages them below, once it is validated.
+    // A8 D14: a requirements start hands its files' staged copies in-process (req._extrasPaths, set by invokeStartRun
+    // only, never from HTTP, like _roundOf); they replace body.extras.
+    // `sched` would drop them, but never meets them: a requirements start's body carries no schedule fields.
+    const handed = Array.isArray(req._extrasPaths) ? req._extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : null;
     const extras = internal
       ? (Array.isArray(stored.extrasPaths) ? stored.extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : [])
-      : (sched ? [] : await writeExtras(runId, body.extras));
+      : (sched ? [] : handed || await writeExtras(runId, body.extras));
 
     // #620 Resolve in a pipeline: the run it resolves. Set in-process by /resolve-pipeline only, never from HTTP.
     const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
@@ -3710,17 +3688,46 @@ function requirementsRunSummary({ runId, pipelineId }) {
   };
 }
 
-/** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null } = {}) {
-  let out = { status: 200, body: null };
-  const res = {
-    statusCode: 200,
-    status(code) { this.statusCode = code; return this; },
-    json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+/** A8 D14: a requirements start's staged copies go once createPipeline has copied them into <pipeline>/extras: the run
+ *  and its agents read only that copy (run-harness _collectExtras; createPipeline is the one reader of opts.extras, and
+ *  `orch.pipeline` is set only when it returned), or when the run ends before it got that far. Best effort: `drop`
+ *  logs a failure. */
+function dropStagedOnceCopied(runId, drop) {
+  const entry = runs.get(runId);
+  const orch = entry && entry.orch;
+  if (!orch) { void drop(); return; }
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    if (typeof orch.off === 'function') orch.off('state', check); else if (typeof orch.removeListener === 'function') orch.removeListener('state', check);
+    void drop();
   };
-  await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
-    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}) }, res);
-  return out;
+  const check = () => { if (orch.pipeline && orch.pipeline.dir) finish(); };
+  subscribe(orch, 'state', check);
+  if (entry.launch && typeof entry.launch.finally === 'function') entry.launch.finally(finish);
+  check();
+}
+
+/** Call startRunHandler without HTTP. Resolves { status, body }. A8 D14: `extrasFiles` ([{ id?, name, path, sha256? }],
+ *  a requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
+ *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy. */
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null } = {}) {
+  const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
+  const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
+  const run = async (extrasPaths, staged = null) => {
+    let out = { status: 200, body: null };
+    const res = {
+      statusCode: 200,
+      status(code) { this.statusCode = code; return this; },
+      json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+    };
+    await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
+      _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}) }, res);
+    if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
+    return out;
+  };
+  return files ? withStagedRunFiles(id, files, run) : run(null);
 }
 
 /** Shaper s5 (D20): a Watch PR fix run is round n+1 of the run that opened the PR. Null on bad input or a read error,
@@ -3825,11 +3832,10 @@ async function fireTicket(ticket) {
   if (resumePipelineId) return fireResumeTicket(ticket, resumePipelineId);
   let body = { ...(ticket.request || {}) };
   // A ticket that follows a preset gets the preset's CURRENT setup before anything else reads the body (D4).
-  // A missing preset or a disabled flag is a permanent failure that names the preset; a broken one is the handler's 409.
+  // A missing preset is a permanent failure that names the preset; a broken one is the handler's 409.
   if (ticket.presetId) {
     const stored = body.internal && typeof body.internal === 'object' ? body.internal : {};
     const name = typeof stored.presetName === 'string' && stored.presetName ? stored.presetName : ticket.presetId;
-    if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Labs)`, transient: false };
     const preset = readPreset(ticket.presetId, { owner: typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null });
     if (!preset) return { ok: false, error: `Preset "${name}" no longer exists`, transient: false };
     const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];
@@ -3924,7 +3930,6 @@ function liveProbe({ id, pipelineId }) {
 
 /** D17: a chain whose first run is a slice carries its feature (gated; a lookup error keeps the plain chain). */
 function withChainFeatures(chains) {
-  if (!shapeFirstEnabled()) return chains;
   return chains.map((c) => {
     try { const feature = chainFeature(c.members); return feature ? { ...c, feature } : c; } catch { return c; }
   });
@@ -3940,7 +3945,7 @@ function afterRunSettled(orch) {
   let card;
   try {
     const st = orch.getState?.();
-    // The Ship card is offered once the last slice is done (offerShipCard checks, and is gated on shapeFirst).
+    // The Ship card is offered once the last slice is done (offerShipCard checks).
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
       card = Promise.resolve().then(() => offerShipCard(st.id))
         .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
@@ -4882,10 +4887,8 @@ app.post('/api/answer', (req, res) => {
 });
 
 // POST /api/runs/:id/answer  -> answer the run's plan approval stop (shape-it-first D2/D10)
-// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }. 404 while the shapeFirst gate is off — a run
-// already held then is still answered through POST /api/answer (never stranded, D12).
+// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }.
 app.post('/api/runs/:id/answer', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
@@ -4918,11 +4921,10 @@ function liveSliceOf(id) {
   if (SETTLED_RUN.has(status) && status !== 'paused') return null;
   return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved });
 }
-function broadcastFeature(id) { if (id && shapeFirstEnabled()) broadcast({ type: 'shape-feature', id }); }
+function broadcastFeature(id) { if (id) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
  *  it would drop the run's own done/state frame (record() comes after the hook), in schedulerTick the rest of the tick. */
 function broadcastFeaturesOf(lookup) {
-  if (!shapeFirstEnabled()) return;
   try { for (const id of lookup()) broadcastFeature(id); }
   catch (err) { console.error(`[worca-ui] shape-feature broadcast failed: ${err?.message || err}`); }
 }
@@ -4942,7 +4944,6 @@ function shapeRefused(res, out) {
 }
 
 app.get('/api/shape/features/:id', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     // F47: a re-planned feature answers with the feature that carries on; `replanOf` names the one asked for.
     const cur = currentFeatureId(req.params.id);
@@ -4961,7 +4962,6 @@ app.get('/api/shape/features/:id', async (req, res) => {
 
 // D16, D22: where a run sits in its feature, for the run page line, the Chat home card and Ship it (P11).
 app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
     if (!out) return res.status(404).json({ error: 'not a slice' });
@@ -4972,7 +4972,6 @@ app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
 // Shaper s2 (D10): the Chat feature card — the planning run's decision log, and once split the feature view with its
 // open ask. Synchronous: Express 4 catches a sync throw, and shapeRouteError answers it.
 app.get('/api/shape/pipelines/:pid/card', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     // shaped: the entry's in-memory shaping (state.shaping is never persisted). A settled entry still carries it.
     const out = shaperCard(req.params.pid, { live: liveSliceOf, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
@@ -4982,7 +4981,6 @@ app.get('/api/shape/pipelines/:pid/card', (req, res) => {
 });
 
 app.post('/api/shape/features/:id/cancel', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const out = cancelRest(req.params.id, { by: actorOf(req) });
     if (shapeRefused(res, out)) return;
@@ -4993,7 +4991,6 @@ app.post('/api/shape/features/:id/cancel', (req, res) => {
 });
 
 app.post('/api/shape/features/:id/resume', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const by = actorOf(req);
     const out = resumeFeature(req.params.id, { live: liveSliceOf, by });
@@ -5015,7 +5012,6 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
 });
 
 app.post('/api/shape/features/:id/replan', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const out = replanRest(req.params.id, { live: liveSliceOf, by: actorOf(req) });
     if (shapeRefused(res, out)) return;
@@ -5029,7 +5025,6 @@ app.post('/api/shape/features/:id/replan', async (req, res) => {
 });
 
 app.post('/api/shape/features/:id/approve-each', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const on = req.body && req.body.on;
     if (typeof on !== 'boolean') return badRequest(res, 'on must be true or false');
@@ -5052,10 +5047,10 @@ function shipCtxOf(view) {
   if (!base) return { error: 'the feature has no base branch' };
   return { state, target, base };
 }
-/** Stacked: a gh slice PR's "Part of …" preamble gets the other slices' current PR links (best effort; Azure keeps its
- *  body). Any other body is left alone. */
+/** Stacked: a gh slice PR's "Part of …" preamble gets the other slices' current PR links (best effort; Azure and Bitbucket keep
+ *  their body). Any other body is left alone. */
 async function refreshSliceBody(prUrl, pid, repoDir) {
-  if (forgeOfPrUrl(prUrl) === 'azure') return null;
+  if (REST_PR_FORGES.has(forgeOfPrUrl(prUrl))) return null;
   const cur = await readPrBody({ projectDir: repoDir, prUrl });
   if (!cur.ok || !cur.body.startsWith('Part of ')) return null;
   // The preamble: the "Part of" line, a blank line, the "- Slice" list; it ends at the first blank line after the list.
@@ -5131,7 +5126,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
       adoptOnePr: async ({ url, body }) => {
         const r = await markPrReady({ prUrl: url });
         if (!r.ok) return r;
-        if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
+        if (!REST_PR_FORGES.has(forgeOfPrUrl(url))) await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
         return { ok: true };
       },
       markReady: async (prUrl) => {
@@ -5175,7 +5170,6 @@ async function watchShipped(pairs, repoDir, actor) {
   }
 }
 app.post('/api/shape/features/:id/ship', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const b = req.body || {};
     if (!(b.watch === undefined || typeof b.watch === 'boolean')) return badRequest(res, 'watch must be a boolean');
@@ -5188,7 +5182,7 @@ app.post('/api/shape/features/:id/ship', async (req, res) => {
 
 // ── One ship flow (slice 2): a Run-after chain ships through Create PR ───────────────────────────────────────────
 const CHAIN_SHIPPING = new Set();   // chain ids with a ship in flight
-const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps';
+const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), set WORCA_ADO_TOKEN for Azure DevOps, or WORCA_BB_TOKEN for Bitbucket';
 const livePr = (pid) => { const pr = readPrState(pid); return !!(pr && pr.url && pr.state !== 'CLOSED'); };
 /** After a chain or group ship, done or stopped part-way: Watch PR on each PR it made (when asked), then repaint. */
 function settleShipped(opened, watch, actor) {
@@ -5397,7 +5391,6 @@ function findShipCardIn(threadId, featureId) {
 }
 /** Shaper s4: when the last run settles done, the feature's thread gets its Ship card (once). Best effort. */
 async function offerShipCard(pipelineId) {
-  if (!shapeFirstEnabled()) return null;
   const at = featureOfPipeline(pipelineId);
   if (!at) return null;
   const fid = currentFeatureId(at.featureId);
@@ -5441,7 +5434,6 @@ function syncShipCard(featureId) {
 const PLAN_STATE = { done: 'done', stopped: 'stopped', error: 'stopped', interrupted: 'stopped', paused: 'paused', starting: 'running', running: 'running' };
 
 app.get('/api/shape/plans', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const rows = listShapePlans({ limit: 30 }).map((p) => {
       // Before the run's first `state` event the link has no pipeline id yet: fall back to its run id.
@@ -5459,7 +5451,6 @@ const PLAN_TEXT_MAX = 512 * 1024;   // characters (UTF-16 units), not bytes
 
 // The plan card's text (S4/S6): the open plan ask's file, the approved one, or ?round=N's. The path is the server's own.
 app.get('/api/runs/:id/plan', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   const entry = runs.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
   const file = planFileOf({ pendingQuestion: entry.pendingQuestion, shaping: entry.orch?.state?.shaping }, req.query.round);
@@ -5475,7 +5466,6 @@ app.get('/api/runs/:id/plan', async (req, res) => {
 
 // Save to plans/ (D10, S7): into the registered checkout, never over a file without {overwrite:true}, never a commit.
 app.post('/api/runs/:id/plan/save', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   const entry = runs.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
   if (entry.workspaceId || !entry.projectDir) return res.status(409).json({ error: 'Save to plans/ needs a single-project run' });
@@ -5615,7 +5605,8 @@ app.post('/api/pause', (req, res) => {
     pauseRun(runId, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
-    if (err?.code === 'CANNOT_PAUSE') return badRequest(res, err.message);
+    // `status`: what the run is instead, so a tab whose click lost to another pause keeps its Pausing… quietly.
+    if (err?.code === 'CANNOT_PAUSE') return res.status(400).json({ error: err.message, code: 'CANNOT_PAUSE', status: runs.get(runId)?.status || null });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -5911,7 +5902,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   for (const link of askFindRunLinksByPipeline(pipelineId)) {
     try {
       if (!askUpdateRunLink(link.threadId, link.runId, { runId, status: 'running' })) continue;
-      // A PR fix-run card follows quietly (askPostPrFixCards): it shows the resumed run itself — no "Run resumed" row.
+      // A PR fix-run card follows quietly: it shows the resumed run itself — no "Run resumed" row.
       const quiet = askLinkIsPrFix(link);
       if (!quiet) {
         const text = `Run resumed: "${saved.row.title || 'run'}"`;
@@ -6522,8 +6513,8 @@ app.get('/api/stats', async (req, res) => {
   // Credential broker: model spend per person in the same window, as the broker metered it
   // (the authoritative figure: it saw every request). Absent with the broker off.
   if (brokerEnabled() && !stats.filtered) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
-  // Shaper (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
-  if (shapeFirstEnabled()) stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
+  // Shaper (D28): shaped vs unshaped runs of the same size.
+  stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
   res.json(stats);
 });
 
@@ -7111,7 +7102,7 @@ app.get('/api/tag-dimensions', async (req, res) => {
       // s2 (D7, D8): the New run / Ask card fill, sent ONLY for a project target (a workspace has no single project).
       // #923: the project's defaults plus the slots; the last run's tags only fill mandatory dimensions.
       const autofill = projectDir ? autoFillTags({ dims: info.dims, lastUsed: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
-      return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
+      return res.json({ ...info, enforce: info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
     }
     res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
@@ -7633,18 +7624,45 @@ app.get('/api/run-links/:runId', (req, res) => {
   res.json(t);
 });
 app.get('/api/run-groups', (req, res) => { try { res.json({ groups: listRunGroups() }); } catch (err) { groupError(res, err); } });
+/** The run ids of a group write: `pipelineIds` (1-200), or the one-run `pipelineId`; null after answering 400. */
+function runGroupIds(res, body) {
+  const raw = Array.isArray(body?.pipelineIds) ? body.pipelineIds : (body?.pipelineId ? [body.pipelineId] : null);
+  if (!raw || !raw.length || raw.length > 200 || raw.some((x) => typeof x !== 'string' || !x)) {
+    badRequest(res, 'pipelineIds must list 1 to 200 run ids');
+    return null;
+  }
+  return [...new Set(raw)];
+}
 app.post('/api/run-groups', (req, res) => {
   try {
-    const g = createRunGroup({ title: req.body?.title, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    const ids = runGroupIds(res, req.body);
+    if (!ids) return;
+    const by = actorOf(req);
+    const g = createRunGroup({ title: req.body?.title ?? req.body?.name, nameSource: req.body?.nameSource ?? 'user', pipelineIds: ids, by });
+    const undo = rememberUndo(() => restoreRunGroups(g.snap), { scope: 'run-groups', by });
     emitChanged('run-groups-changed', 'created');
-    res.status(201).json({ group: g });
+    res.status(201).json({ group: { id: g.id, title: g.title, nameSource: g.nameSource }, added: g.added, skipped: g.skipped, undo });
   } catch (err) { groupError(res, err); }
 });
 app.post('/api/run-groups/:id/members', (req, res) => {
   try {
-    const r = addToGroup({ groupId: req.params.id, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    const ids = runGroupIds(res, req.body);
+    if (!ids) return;
+    const by = actorOf(req);
+    const r = addRunsToGroup({ groupId: req.params.id, pipelineIds: ids, by });
+    if (!r.added.length) throw skipError(r.skipped[0]);   // nothing joined: the one-run refusal (409 / 404), as before
+    const undo = rememberUndo(() => restoreRunGroups(r.snap), { scope: 'run-groups', by });
     emitChanged('run-groups-changed', 'added');
-    res.json({ ok: true, ...r });
+    res.json({ ok: true, groupId: r.groupId, group: r.group, added: r.added, skipped: r.skipped, undo });
+  } catch (err) { groupError(res, err); }
+});
+app.post('/api/run-groups/undo', (req, res) => {
+  try {
+    const run = takeUndo(req.body?.token, { scope: 'run-groups', by: actorOf(req) });
+    if (!run) return res.status(410).json({ error: 'That can no longer be undone.', code: 'UNDO_GONE' });
+    run();
+    emitChanged('run-groups-changed', 'undone');
+    res.json({ ok: true });
   } catch (err) { groupError(res, err); }
 });
 app.delete('/api/run-groups/members/:pipelineId', (req, res) => {
@@ -8949,10 +8967,12 @@ async function pickPrRemotes(body, repoDir) {
   return { remotes, pushRemote, baseRemote, pushR: byName.get(pushRemote) || null, baseR: byName.get(baseRemote) || null };
 }
 
-// Azure DevOps cannot open a PR between forks: the refusal text when the branch would be
-// pushed to another repo than an Azure base remote, else null. Checked BEFORE anything is pushed.
-function azureForkRefusal(pushR, baseR) {
-  return prProviderFor(baseR).forge === 'azure' && pushR && !sameRepo(pushR, baseR) ? forkRefusal(baseR) : null;
+// Azure DevOps and Bitbucket (for now) cannot open a PR between forks: the refusal text when the branch would be
+// pushed to another repo than such a base remote, else null. Checked BEFORE anything is pushed.
+const FORK_REFUSALS = { azure: forkRefusal, bitbucket: bitbucketForkRefusal };
+function forkPrRefusal(pushR, baseR) {
+  const refuse = FORK_REFUSALS[prProviderFor(baseR).forge];
+  return refuse && pushR && !sameRepo(pushR, baseR) ? refuse(baseR) : null;
 }
 
 // A PR route's store key: a project key (PROJECT_KEY_RE, already imported from
@@ -9022,14 +9042,14 @@ function runSourceUrl(pipelineId) {
 
 /**
  * The GitHub issue a run's PR closes on merge ({ slug, number }), else null: the run came from a
- * GitHub issue and the base remote is not Azure DevOps (a Closes line means nothing there). In a
+ * GitHub issue and the base remote is not Azure DevOps or Bitbucket (a Closes line means nothing there). In a
  * workspace run only the member whose base repo IS the issue's repo closes it — every member's PR
  * carrying the line would close the issue at the first merge. Also the dialog's "Will close" line.
  */
 function runSourceIssue(pipelineId, { baseRemote = null, memberKey = null } = {}) {
   const i = parseGithubIssueUrl(runSourceUrl(pipelineId));
   if (!i) return null;
-  if (baseRemote && prProviderFor(baseRemote).forge === 'azure') return null;
+  if (baseRemote && REST_PR_FORGES.has(prProviderFor(baseRemote).forge)) return null;
   const slug = `${i.owner}/${i.repo}`;
   if (memberKey && String(baseRemote?.slug || '').toLowerCase() !== slug.toLowerCase()) return null;
   return { slug, number: i.number };
@@ -9046,7 +9066,7 @@ function runSourceIssue(pipelineId, { baseRemote = null, memberKey = null } = {}
 // the run's own feature branch. The base remote is fetched first (45 s TTL, 8 s bound,
 // negative-cached) so `baseStatus` can warn when the base moved since the run started
 // (warn only, #527). A git remote failure still carries the chain so the dialog can offer it.
-// Each remote carries its PR host (`prHost`: GitHub | Azure DevOps | null for other hosts,
+// Each remote carries its PR host (`prHost`: GitHub | Azure DevOps | Bitbucket | null for other hosts,
 // which still use gh) and whether PRs can be opened there now (`prSupported`, else `prReason`).
 // -> { ok, remotes:[{name,fetchUrl,pushUrl,host,owner,repo,slug,forge,org,project,prHost,prSupported,prReason?}],
 // `issue` is the run's GitHub issue the PR would close (the dialog's "Will close" line), on failure too.
@@ -9105,8 +9125,7 @@ app.get('/api/pr/remotes', async (req, res) => {
   const remotes = await Promise.all(rl.remotes.map(async (r) => {
     const p = prProviderFor(r);
     const a = await p.available();
-    // Name the host only where it is that host: gitlab/bitbucket/local remotes still go through
-    // gh (D4), but the modal must not label them "GitHub".
+    // Name the host only where it is that host: gitlab/local remotes still go through gh (D4), but the modal must not label them "GitHub".
     return { ...r, prHost: r.forge ? p.label : null, prSupported: a.ok, ...(a.ok ? {} : { prReason: a.reason }) };
   }));
   res.json({ ok: true, remotes, defaults, remembered,
@@ -9170,7 +9189,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const provider = prProviderFor(baseR);
   const avail = await provider.available();
   if (!avail.ok) return { ok: false, status: 409, error: avail.reason, forge: provider.forge };
-  const refusal = azureForkRefusal(pushR, baseR);
+  const refusal = forkPrRefusal(pushR, baseR);
   if (refusal) return { ok: false, status: 422, error: refusal, kind: 'unsupported' };
   // A base the base remote does not have (a run started from a branch that was never pushed) would
   // push the head, then fail on GitHub's "Base sha can't be blank". Refuse first, naming the fix.
@@ -9201,13 +9220,13 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   // attribution footer; skipped when the description already carries it. Guarded like runSourceUrl: the branch is
   // already pushed, so a DB error must not become a failed PR.
   let cl = null;
-  if (shapeFirstEnabled() && !description.includes(CHECKLIST_PR_MARKER)) {
+  if (!description.includes(CHECKLIST_PR_MARKER)) {
     try { cl = latestChecklist(readPipelineExtras(pipelineIdForPr).reviews); } catch { cl = null; }
   }
   const checklistMd = cl ? checklistMarkdown(cl.checklist).trimEnd() : '';
   // D22: a slice's PR starts with its place in the feature and links the other slices' PRs.
   let lead0 = '';
-  if (preamble && shapeFirstEnabled() && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
+  if (preamble && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
   const lead = description || title || state.title || feature;
   const prBody = lead0 || description || closing || checklistMd || footer
     ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
@@ -9239,7 +9258,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
 // ---------------------------------------------------------------------------
 // POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
 // against its source branch (or the dialog's `baseBranch`) on the base remote's
-// forge: Azure DevOps over REST (no forks: 422 before the push), every other host
+// forge: Azure DevOps and Bitbucket over REST (no forks: 422 before the push), every other host
 // via the GitHub CLI. 409 { error, forge } when that forge is not usable here.
 // Mergeability is read back only here (never during list rendering).
 // body: { id, projectDir?, projectKey?, memberKey?, pushRemote?, baseRemote?, baseBranch?, title?, body?, draft? } —
@@ -9389,7 +9408,7 @@ async function prWatchTarget(src, res) {
   const pr = target.memberKey
     ? readMemberPrStates(state.id || id)[target.memberKey]
     : readPrState(state.id || id);
-  if (!pr?.url || pr.state !== 'OPEN' || !watchablePrUrl(pr.url)) { badRequest(res, 'an open GitHub or Azure DevOps pull request is required'); return null; }
+  if (!pr?.url || pr.state !== 'OPEN' || !watchablePrUrl(pr.url)) { badRequest(res, 'an open GitHub, Azure DevOps or Bitbucket pull request is required'); return null; }
   return { state, id: state.id || id, target, pr };
 }
 app.get('/api/pr/watch', async (req, res) => {
@@ -9397,7 +9416,7 @@ app.get('/api/pr/watch', async (req, res) => {
   catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 // GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending, skipped, inherited }, mergeable,
-// base, status, watch } for a run's open github.com PR: the run page's PR card in one request (checks null when gh cannot
+// base, status, watch } for a run's open GitHub, Azure DevOps or Bitbucket PR: the run page's PR card in one request (checks null when gh cannot
 // answer). `inherited` counts failures that also fail on the base branch head; they are not in `failed`.
 app.get('/api/pr/checks', async (req, res) => {
   try {
@@ -9422,7 +9441,7 @@ app.post('/api/pr/watch', async (req, res) => {
 });
 // POST /api/pr/resolve { id, projectKey, memberKey? } -> watchView: Resolve on a PR card with merge
 // conflicts. One fix run merges the base into the PR branch and pushes, Watch on or off.
-/** Resolve's refusals, naming the PR's host (GitHub or Azure DevOps). */
+/** Resolve's refusals, naming the PR's host (GitHub, Azure DevOps or Bitbucket). */
 const resolveRefusals = (host) => ({
   BUSY: [409, 'A fix run is already working on this pull request.'],
   RATE_LIMITED: [429, `${host} is rate limiting Worca; try again in a minute.`],
@@ -9454,7 +9473,7 @@ app.post('/api/pr/resolve', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Publish branch (#618): put a finished run's feature branch on a remote WITHOUT opening a
 // PR, so a teammate, CI or another machine can test it first. Same pipeline resolution
-// and remote checks as POST /api/pr (pickPrRemotes, azureForkRefusal); no PR host needed.
+// and remote checks as POST /api/pr (pickPrRemotes, forkPrRefusal); no PR host needed.
 // The push is recorded on the run's branch record (`published: { remote, sha, at, by }`,
 // beside `checkout`) plus an audit line; Ship it afterwards opens a PR for that branch.
 // ---------------------------------------------------------------------------
@@ -9528,7 +9547,7 @@ app.post('/api/runs/:id/publish', async (req, res) => {
   const picked = await pickPrRemotes(body, repoDir);
   if (picked.error) return res.status(picked.status).json({ error: picked.error });
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
-  const refusal = azureForkRefusal(pushR, baseR);
+  const refusal = forkPrRefusal(pushR, baseR);
   if (refusal) return res.status(422).json({ error: refusal, kind: 'unsupported' });
 
   const tips = await branchTips(repoDir, feature, pushRemote);
@@ -9790,7 +9809,7 @@ app.post('/api/runs/:id/resolve-terminal', async (req, res) => {
 // drafts a PR description from the run's persisted artifacts (pr-description.mjs).
 // Never cached and never submitted — the text only fills the modal's textarea.
 // No gh needed. A request the client abandons (Cancel, the modal closing) aborts
-// the call. `forge` ('azure', else GitHub) picks the host's system prompt.
+// the call. `forge` ('azure' | 'bitbucket', else GitHub) picks the host's system prompt.
 // body: { id, projectKey | projectDir, baseBranch?, forge? } -> 200 { ok, body }
 // | 400 | 404 | 500, or 409 code 'claude-signed-out' (mapped like the overview route).
 // ---------------------------------------------------------------------------
@@ -9809,7 +9828,7 @@ app.post('/api/pr/describe', async (req, res) => {
   const life = new AbortController();
   res.on('close', () => { if (!res.writableEnded) life.abort(); });
   try {
-    const forge = body.forge === 'azure' ? 'azure' : 'github';
+    const forge = body.forge === 'azure' || body.forge === 'bitbucket' ? body.forge : 'github';
     const text = await generatePrDescription(key, state.id || id, { baseBranch, signal: life.signal, forge });
     res.json({ ok: true, body: text });
   } catch (err) {
@@ -11454,6 +11473,7 @@ const settingsState = () => ({
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
   nightModeToggle: nightModeToggle(),                     // auto | on | off (live switch)
+  keepAwake: keepAwakeEnabled(),                          // the account menu's Keep awake switch
   actions: actionsSettings(),                             // Settings › Runs › Actions (issue #529)
   actionsDetected: autoDetectedBuiltins(),                // what Editor / Terminal fall back to when left blank (null = none found)
   actionsGate: { remote: REMOTE_MODE, enabled: actionsEnabledHere() },
@@ -12065,6 +12085,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasAskWeb = has('askWeb');                // null clears back to unset (a team default applies)
   const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
+  const hasKeepAwakeKey = has('keepAwake');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
   const hasAutoPrDescKey = has('autoGeneratePrDescription');
   const hasUpdateCheckKey = has('updateCheck');
@@ -12197,6 +12218,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     });
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
+    if (hasKeepAwakeKey) asSettingsField('keepAwake', () => assertKeepAwakeInput(body.keepAwake));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
     if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
@@ -12228,6 +12250,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasAskWeb) await setAskWeb(body.askWeb);
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
+    if (hasKeepAwakeKey) { await setKeepAwake(body.keepAwake); syncKeepAwake(); }
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
     if (hasAutoPrDescKey) await setAutoGeneratePrDescription(body.autoGeneratePrDescription);
     if (hasUpdateCheckKey) {
@@ -12267,7 +12290,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -13036,13 +13059,13 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in while
-    // the shapeFirst gate is on, then the saved rows ]. The built-ins are never persisted rows (listWorkflows
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in,
+    // then the saved rows ]. The built-ins are never persisted rows (listWorkflows
     // filters their ids), so none appears twice.
     // P3 (U13): each row says whether one of its agents expects a code repository (the No-project note).
     const registry = loadAgentRegistry(AGENTS_DIR);
     res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW,
-      ...(shapeFirstEnabled() ? [GRAPH_SHAPE_WORKFLOW] : []), ...(await listWorkflows())]
+      GRAPH_SHAPE_WORKFLOW, ...(await listWorkflows())]
       .map((wf) => ({ ...wf, needsRepo: graphNeedsRepo(wf, registry) })) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -13281,9 +13304,8 @@ app.post('/api/workflows/:id/export', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Run presets (docs/run-presets.md, #712): named New run setups in SQLite (run_presets), behind the
-// experimental `runPresets` flag (404 when off). Per person on a shared deployment (askViewer): another
-// owner's preset answers 404, as Ask threads do. A saved setup is full picks — snapshotFor resolves the
+// Run presets (docs/run-presets.md, #712): named New run setups in SQLite (run_presets). Per person on a
+// shared deployment (askViewer): another owner's preset answers 404, as Ask threads do. A saved setup is full picks — snapshotFor resolves the
 // graph for the basis target and fills every agent node and loop — so a later project change never
 // changes what a preset runs. presetRefusals is the ONE check (pick time here, start time in startRunHandler).
 // ---------------------------------------------------------------------------
@@ -13628,7 +13650,6 @@ app.put('/api/proxy/settings', async (req, res) => {
   }
 });
 
-app.use('/api/presets', requireFlag('runPresets'));
 
 app.get('/api/presets', (req, res) => {
   res.json({ presets: listPresets({ owner: askViewer(req) }) });
@@ -13689,13 +13710,13 @@ async function runPresetScope(kind, target) {
 }
 
 // Save setup as preset (slice 2): the setup a run kept at start (pipelines.run_setup, v62), saved into the viewer's own presets.
-app.get('/api/pipelines/:id/setup', requireFlag('runPresets'), (req, res) => {
+app.get('/api/pipelines/:id/setup', (req, res) => {
   const run = readRunSetup(req.params.id);
   if (run === undefined) return res.status(404).json({ error: 'run not found' });
   res.json({ setup: run.setup, target: run.target });
 });
 
-app.post('/api/pipelines/:id/preset', requireFlag('runPresets'), async (req, res) => {
+app.post('/api/pipelines/:id/preset', async (req, res) => {
   try {
     const body = req.body || {};
     const run = readRunSetup(req.params.id);
@@ -14207,8 +14228,8 @@ app.get('/api/ask/runs/:id', async (req, res) => {
     if (!row || row.deleted_at) return res.status(404).json({ error: 'run not found' });
     const state = readPipelineStateById(row.id);
     // Shape it first, plan in slices: state.shaping is in memory only (F46), so a finished or unloaded slice 1 would
-    // lose its feature strip. The feature row is durable. Best effort, and only while the gate is on.
-    if (!state.shaping && shapeFirstEnabled()) {
+    // lose its feature strip. The feature row is durable. Best effort.
+    if (!state.shaping) {
       try {
         const at = featureOfPipeline(state.id);
         if (at && at.idx === 1) state.shaping = { feature: { id: at.featureId, index: 1 } };
@@ -14574,7 +14595,7 @@ function askWebAccessFor(threadId, ctx) {
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
-    ...(engine !== 'claude' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
+    ...(engine !== 'claude' ? { engine } : {}), shape: true });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
@@ -14689,6 +14710,20 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       }
     }
   } catch { /* absent line */ }
+  // Ask worca beside the page: the project / workspace PAGE on screen ("on screen: …" + a topic chip) when it is not
+  // the scope. Names only, by key; never the scope, never a tool target.
+  try {
+    if (ctx.pageProjectKey && ctx.pageProjectKey !== scope?.projectKey) {
+      const p = (await listProjects()).find((x) => x.key === ctx.pageProjectKey);
+      if (p) out.pageProject = { name: p.name, key: p.key };
+    }
+  } catch { /* absent line */ }
+  try {
+    if (ctx.pageWorkspaceId && ctx.pageWorkspaceId !== scope?.workspaceId) {
+      const ws = await readWorkspace(ctx.pageWorkspaceId);
+      if (ws) out.pageWorkspace = { name: ws.name, id: ws.id };
+    }
+  } catch { /* absent line */ }
   // The Team metrics page's selection (validated slugs); only the scope NAME is resolved here.
   try {
     if (ctx.tmScope) {
@@ -14739,11 +14774,9 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       };
     });
     if (links.length) out.linkedRuns = links;
-    // Shaper (D9): what this thread follows, read-only, for propose_changes / route_message. Gate off: no line.
-    if (shapeFirstEnabled()) {
-      try { const s = shapeThreadFacts(threadWork(askListRunLinks(threadId), shapeToolFactDeps)); if (s) out.shape = s; }
-      catch { /* absent line */ }
-    }
+    // Shaper (D9): what this thread follows, read-only, for propose_changes / route_message.
+    try { const s = shapeThreadFacts(threadWork(askListRunLinks(threadId), shapeToolFactDeps)); if (s) out.shape = s; }
+    catch { /* absent line */ }
     const cards = [];
     for (const m of askListMessages(threadId)) {
       if (!Array.isArray(m.blocks)) continue;
@@ -14905,9 +14938,13 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
+    // Ask worca beside the page: the page a message was sent from ("on Run · Diff") leads its blocks; none for a Chat-page
+    // message or an event turn. whereOf is pure, so the row is still written before the first await.
+    const where = synthetic ? null : whereOf(ctx);
+    const whereBlocks = where ? [{ kind: 'where', label: where.label, icon: where.icon }] : [];
     const userMsg = askAppendMessage(id, synthetic
       ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] }
-      : { role: 'user', text });
+      : { role: 'user', text, ...(whereBlocks.length ? { blocks: whereBlocks } : {}) });
     job.userMessageId = userMsg.id;
     const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
     // The decoded binary bodies are on disk now. `files` is captured by this
@@ -14923,6 +14960,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       // an unconditional overwrite would silently drop the notice for a future caller).
       askSetMessageBlocks(userMsg.id, [
         ...(synthetic ? [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] : []),
+        ...whereBlocks,
         ...attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })),
       ]);
     }
@@ -15128,51 +15166,28 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const scope = cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
     const ctx = withChatScope(cv.context, scope);
 
-    // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
+    // §7.3 — validate EVERY attachment before ANY write (all-or-nothing), through the validation the Requirements page
+    // shares (src/core/attachment-upload.mjs): Ask's caps, its engine refusals and its messages. The engine is read per
+    // file, as before; the objects handed on are Ask's own shapes (no hash is made, no raw bytes for a text kind).
     const files = [];
     if (body.attachments !== undefined) {
-      if (!Array.isArray(body.attachments)) return badRequest(res, 'attachments must be an array');
-      if (body.attachments.length > ASK_LIMITS.attachment.maxFiles) {
-        return badRequest(res, `at most ${ASK_LIMITS.attachment.maxFiles} attachments per message`);
-      }
-      const dec = new TextDecoder('utf-8', { fatal: true });
-      for (const a of body.attachments) {
-        const name = a && typeof a.name === 'string' ? a.name : '';
-        const dot = name.lastIndexOf('.');
-        const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
-        // #398: the extension CLAIMS a type; text kinds are then proven by UTF-8
-        // decoding (as before), binary kinds by their magic number — a body that
-        // does not match its claim is refused here, before any write.
-        const cls = askClassifyExtension(ext);
-        if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
-        // D16: what the chat's engine cannot take (a Codex chat no PDF; Copilot, Gemini CLI and Qwen Code no image or
-        // PDF) is refused at attach time, before any write. (askClassifyExtension gives kind text|image|binary; a PDF is
-        // kind 'binary', mime 'application/pdf'.)
-        const attachRefused = chatAttachRefusal({ engine: askTurnEngine(id, thread, mv.model), kind: cls.kind, pdf: cls.mime === 'application/pdf' });
-        if (attachRefused) return badRequest(res, `${attachRefused}: ${name}`);
-        const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
-        const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
-        if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
-        const cap = cls.kind === 'text' ? ASK_LIMITS.attachment.maxBytesPerFile : ASK_LIMITS.attachment.maxBytesPerBinaryFile;
-        if (buf.length > cap) {
-          return res.status(413).json({ error: `attachment over ${cap} bytes: ${name}` });
-        }
-        if (cls.kind !== 'text') {
-          const sniffed = askSniffMime(buf);
-          if (sniffed !== cls.mime) {
-            return badRequest(res, `attachment content does not match its extension: ${name}`);
-          }
-          files.push({ name, kind: cls.kind, mime: cls.mime, data: buf, bytes: buf.length });
-          continue;
-        }
-        let bodyText;
-        try { bodyText = dec.decode(buf); } catch { return badRequest(res, `attachment is not valid UTF-8: ${name}`); }
-        if (bodyText.includes('\u0000')) return badRequest(res, `attachment contains NUL bytes: ${name}`);
-        files.push({ name, kind: 'text', mime: cls.mime, text: bodyText, bytes: buf.length });
-      }
-      const cap = ASK_LIMITS.attachment.maxBytesPerMessage;
-      if (files.reduce((s, f) => s + f.bytes, 0) > cap) {
-        return res.status(413).json({ error: `attachments over ${cap} bytes per message` });
+      const v = validateAttachmentUploads(body.attachments, {
+        maxFiles: ASK_LIMITS.attachment.maxFiles, maxBytesPerFile: ASK_LIMITS.attachment.maxBytesPerFile,
+        maxBytesPerBinaryFile: ASK_LIMITS.attachment.maxBytesPerBinaryFile, maxBytesTotal: ASK_LIMITS.attachment.maxBytesPerMessage,
+        hash: false,
+        refuse: (cls, name) => {
+          // D16: what the chat's engine cannot take (a Codex chat no PDF; Copilot, Gemini CLI and Qwen Code no image or
+          // PDF) is refused at attach time, before any write. (classifyExtension gives kind text|image|binary; a PDF is
+          // kind 'binary', mime 'application/pdf'.)
+          const attachRefused = chatAttachRefusal({ engine: askTurnEngine(id, thread, mv.model), kind: cls.kind, pdf: cls.mime === 'application/pdf' });
+          return attachRefused ? `${attachRefused}: ${name}` : null;
+        },
+      });
+      if (!v.ok) return res.status(v.status).json({ error: v.error });
+      for (const f of v.files) {
+        files.push(f.kind === 'text'
+          ? { name: f.name, kind: 'text', mime: f.mime, text: f.text, bytes: f.bytes }
+          : { name: f.name, kind: f.kind, mime: f.mime, data: f.data, bytes: f.bytes });
       }
     }
 
@@ -15441,9 +15456,11 @@ app.post('/api/ask/groups', (req, res) => {
     const b = req.body || {};
     const ids = askGroupThreads(req, res, b.threadIds);
     if (!ids) return;
+    const snap = askSnapshotChatGroups(ids);
     const group = askCreateChatGroup({ name: b.name, nameSource: b.nameSource, threadIds: ids, createdBy: actorOf(req) });
+    const undo = rememberUndo(() => askRestoreChatGroups({ ...snap, created: group.id }), { scope: 'ask-groups', by: actorOf(req) });
     emitChanged('ask-groups-changed', 'created');
-    res.status(201).json({ group });
+    res.status(201).json({ group, undo });
   } catch (err) { chatGroupError(res, err); }
 });
 
@@ -15463,9 +15480,11 @@ app.post('/api/ask/groups/:id/threads', (req, res) => {
     if (!g) return;
     const ids = askGroupThreads(req, res, req.body?.threadIds);
     if (!ids) return;
+    const snap = askSnapshotChatGroups(ids);
     const group = askAddToChatGroup(g.id, ids);
+    const undo = rememberUndo(() => askRestoreChatGroups(snap), { scope: 'ask-groups', by: actorOf(req) });
     emitChanged('ask-groups-changed', 'moved');
-    res.json({ group });
+    res.json({ group, undo });
   } catch (err) { chatGroupError(res, err); }
 });
 
@@ -15520,6 +15539,16 @@ app.delete('/api/ask/groups/:id', async (req, res) => {
   } catch (err) { if (!res.headersSent) chatGroupError(res, err); }
 });
 
+app.post('/api/ask/groups/undo', (req, res) => {
+  try {
+    const run = takeUndo(req.body?.token, { scope: 'ask-groups', by: actorOf(req) });
+    if (!run) return res.status(410).json({ error: 'That can no longer be undone.', code: 'UNDO_GONE' });
+    run();
+    emitChanged('ask-groups-changed', 'undone');
+    res.json({ ok: true });
+  } catch (err) { chatGroupError(res, err); }
+});
+
 // POST /api/ask/groups/suggest-name {threadIds} -> { source: 'model', name } | { source: 'fallback', error }.
 // The Run naming helper model (namingPick); the prompt carries each chat's title and first message only.
 app.post('/api/ask/groups/suggest-name', namingOn, async (req, res) => {
@@ -15534,6 +15563,27 @@ app.post('/api/ask/groups/suggest-name', namingOn, async (req, res) => {
     res.on('close', () => { if (!res.writableEnded) ac.abort(); });
     const pick = await namingPick();
     const r = await suggestGroupName({ chats, signal: ac.signal },
+      { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
+    res.json(r.source === 'model' ? { source: 'model', name: r.name } : { source: 'fallback', error: r.error });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }
+});
+
+// POST /api/run-groups/suggest-name {pipelineIds} -> { source: 'model', name } | { source: 'fallback', error }. Registered
+// here, not beside the other run-group routes: `namingOn` is declared above and would be in its TDZ there.
+// The prompt carries each run's title and prompt only.
+app.post('/api/run-groups/suggest-name', namingOn, async (req, res) => {
+  try {
+    const ids = runGroupIds(res, req.body);
+    if (!ids) return;
+    const runs = runNameInputs(ids);
+    if (!runs) return res.status(404).json({ error: 'run not found' });
+    if (!namingBucket.tryConsume()) return res.status(429).json({ error: 'too many suggestions, try again in a moment' });
+    if (budgetStatus().blocked) return res.json({ source: 'fallback', error: 'total cost limit reached' });
+    if (mockEnabled({})) return res.json({ source: 'model', name: 'Mock group' });
+    const ac = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const pick = await namingPick();
+    const r = await suggestGroupName({ chats: runs, of: 'runs', signal: ac.signal },
       { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
     res.json(r.source === 'model' ? { source: 'model', name: r.name } : { source: 'fallback', error: r.error });
   } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }
@@ -15659,7 +15709,6 @@ function postThreadExchange(threadId, text, card) {
  *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
 const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels };
 function askShapeAction(req, threadId) {
-  if (!shapeFirstEnabled()) return { ok: false, notice: 'Not applied: Shaper is off' };
   if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
   let r;
   try { r = shapeToolCheck(req.kind, req, askListRunLinks(threadId), shapeToolFactDeps); }
@@ -15669,7 +15718,6 @@ function askShapeAction(req, threadId) {
 
 // Shaper s5 (D5): Ask for changes from a finished card. body { pipelineId? | featureId?, text } → 201 { message }
 app.post('/api/ask/threads/:id/changes', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const id = askIdParam(res, req.params.id, 'thread');
     if (!id) return;
@@ -16133,7 +16181,6 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
       if (v.verb === 'not-now') { const block = flipCard(id, cardId, { state: 'declined' }); return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' }); }
-      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });
       askCardBusy.add(cardId);
       let r;
       try {
@@ -16161,7 +16208,6 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         const block = flipCard(id, cardId, { state: 'declined' });
         return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
       }
-      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });   // requireShapeFirst's answer
       askCardBusy.add(cardId);
       try {
         const r = await shipFeatureNow(currentFeatureId(found.block.card.featureId), v.mode, { actor: actorOf(req), release: v.release });
@@ -18598,7 +18644,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -18636,6 +18682,13 @@ export async function bootMaintenance({ log } = {}) {
     if (summary.recoveredBriefs) console.log(`[worca-ui] requirements: ${summary.recoveredBriefs} interrupted product brief(s) marked`);
   } catch (err) {
     console.error(`[worca-ui] product brief sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A8 (D5): a file left `reading` by this restart fails with INTERRUPTED; Try again reads it again.
+  try {
+    summary.recoveredAttachmentReads = recoverAttachmentReads();
+    if (summary.recoveredAttachmentReads) console.log(`[worca-ui] requirements: ${summary.recoveredAttachmentReads} interrupted file read(s) marked`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements file-read sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {
@@ -18767,6 +18820,24 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] requirements repo-look sweep failed: ${err && err.message ? err.message : err}`);
   }
+  // Requirements A8 (D5, D9): read folders (att-read-*) a restart left under <worcaHome>/tmp/requirements, and temp bodies
+  // a crash left between a replace's write and its rename, each older than an hour.
+  try {
+    const r = sweepReadFolders(path.join(worcaHome(), 'tmp', 'requirements'));
+    summary.attachmentReadFolders = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements read-folder sweep: removed ${r.removed.length} folder(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements read-folder sweep: ${r.failed.length} folder(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements read-folder sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  try {
+    const r = sweepTempBodies();
+    summary.attachmentTempBodies = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements temp-body sweep: removed ${r.removed.length} file(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements temp-body sweep: ${r.failed.length} file(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements temp-body sweep failed: ${err && err.message ? err.message : err}`);
+  }
 
   // Script bench folders (workbench W11): the newest folder per script key
   // outlives its run so the output tabs can still read it; 24 h later it is
@@ -18858,6 +18929,7 @@ if (isMain) {
   // closed: without the proxy, agents would have no restriction at all.
   // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
   await migrateCorporateProxyFlag();
+  await migrateKeepAwakeFlag();   // the graduated flag becomes the keepAwake setting
   let fetchProxy = null;
   try {
     EGRESS_LIVE = await startLiveEgress({
@@ -19086,7 +19158,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

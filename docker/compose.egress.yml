@@ -12,6 +12,7 @@
 #                        Default: api.anthropic.com, github.com, .github.com,
 #                        .githubusercontent.com, registry.npmjs.org
 #                        Azure DevOps: add dev.azure.com,.visualstudio.com,vssps.dev.azure.com
+#                        Bitbucket: add bitbucket.org,api.bitbucket.org (step logs: also the storage host they redirect to)
 #   WORCA_EGRESS_MODE    leave unset here: it is a hosting platform's policy
 #                        (docs/remote-access.md), with its own matching rules.
 

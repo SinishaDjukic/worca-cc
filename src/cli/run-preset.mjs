@@ -108,7 +108,6 @@ export async function cmdRun(argv, { out = console.log, err = (s) => process.std
   const lost = (e) => { say(`lost the Worca server (${e && e.message})`); return null; };
   const listed = await httpJson('GET', `${base}/api/presets`).catch(lost);
   if (!listed) return 1;
-  if (listed.status === 404) { say('run presets are turned off — turn them on with: worca flags on runPresets (or Settings › Labs)'); return 1; }
   if (listed.status !== 200 || !Array.isArray(listed.json?.presets)) { say(listed.json?.error || `could not list presets (HTTP ${listed.status})`); return 1; }
 
   const target = flags.workspace ? { kind: 'workspace', ref: flags.workspace } : { kind: 'project', ref: projectKey(resolve(cwd, flags.project || '.')) };

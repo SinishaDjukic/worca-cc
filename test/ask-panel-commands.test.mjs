@@ -201,7 +201,7 @@ test('command cards sit in the answer where they ran (textAt), not all below it;
 const cmdBlock = (n, textAt, summary, over = {}) => ({ ...CMD, id: `card_0000000${n}`, textAt,
   card: { ...CMD.card, blockId: `t-0000000001:${n}`, seq: n, command: `cmd ${n}`, summary }, ...over });
 
-test('summaries on: three commands with no text between them share one card "3 commands · 6.1s" (#911)', async () => {
+test('summaries on: three commands with no text between them sit in one group box "Ran 3 commands · 6.1s", folded once all passed (#911)', async () => {
   const text = 'I will sync dev first.\n\nDone.';
   const at = text.indexOf('\n\nDone');
   const blocks = [cmdBlock(1, at, 'Syncing the latest code from dev'), cmdBlock(2, at, 'Installing dependencies'), cmdBlock(3, at, 'Building the web bundle')];
@@ -216,8 +216,11 @@ test('summaries on: three commands with no text between them share one card "3 c
   ctx.flush();
   const rows = [...ctx.doc.querySelectorAll('.ask-cmd.is-sum')];
   assert.equal(rows.length, 3);
-  assert.ok(rows.every((r) => r.classList.contains('in-group')));
-  assert.equal(rows[0].querySelector('.ask-cmd-ghead').textContent, '3 commands · 6.1s');
+  assert.equal(ctx.doc.querySelectorAll('.ask-cmd-group').length, 1);
+  const body = ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gbody');
+  assert.deepEqual([...body.querySelectorAll(':scope > .ask-cmd.is-sum')], rows, 'the rows are the one card\'s children');
+  assert.equal(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords').textContent, 'Ran 3 commands · 6.1s');
+  assert.equal(body.hidden, true, 'all passed: folded to the head line');
   assert.equal(rows[0].querySelector('.ask-cmd-sum').textContent, 'Syncing the latest code from dev');
   assert.ok(rows[0].querySelector('.status-dot').classList.contains('is-green'));
   ctx.panel.destroy();
@@ -238,14 +241,14 @@ test('summaries on: the group head total ticks with its running row, with no fra
   const t0 = Date.now() - 9000;
   ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { blockId: 't-0000000001:2', status: 'running', exitCode: null, durationMs: null, startedAt: t0, tail: '' } });
   ctx.flush();
-  const head = ctx.doc.querySelector('.ask-cmd.is-sum .ask-cmd-ghead');
-  assert.equal(head.textContent, '2 commands · 10s');
+  const head = ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords');
+  assert.equal(head.textContent, 'Running the slow script · 2 commands · 10s', 'the running row\'s line leads');
   assert.equal(ticks.length, 1, 'one ticker for the running row');
   const realNow = Date.now;
   try {
     Date.now = () => t0 + 19_000;
     ticks[0]();
-    assert.equal(head.textContent, '2 commands · 20s');
+    assert.equal(head.textContent, 'Running the slow script · 2 commands · 20s');
   } finally { Date.now = realNow; }
   ctx.panel.destroy();
 });
@@ -259,7 +262,7 @@ test('summaries on: chat text between two commands splits them into two cards', 
   await settle(ctx);
   ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text, status: 'done', createdAt: 't', blocks } });
   ctx.flush();
-  assert.equal(ctx.doc.querySelectorAll('.ask-cmd.in-group').length, 0);
+  assert.equal(ctx.doc.querySelectorAll('.ask-cmd-group').length, 0);
   ctx.panel.destroy();
 });
 
@@ -273,7 +276,7 @@ test('summaries switch off (dep) or flag off: today\'s full card, no grouping', 
   ctx.flush();
   assert.equal(ctx.doc.querySelectorAll('.ask-cmd.is-sum').length, 0);
   assert.equal(ctx.doc.querySelectorAll('.ask-cmd .ask-cmd-kicker').length, 2);
-  assert.equal(ctx.doc.querySelectorAll('.ask-cmd.in-group').length, 0);
+  assert.equal(ctx.doc.querySelectorAll('.ask-cmd-group').length, 0);
   ctx.panel.destroy();
 });
 
@@ -287,7 +290,101 @@ test('flag off, switch on (default dep): the first render is today\'s full card,
   ctx.flush();
   assert.equal(ctx.doc.querySelectorAll('.ask-cmd.is-sum').length, 0);
   assert.equal(ctx.doc.querySelectorAll('.ask-cmd .ask-cmd-kicker').length, 2);
-  assert.equal(ctx.doc.querySelectorAll('.ask-cmd.in-group').length, 0);
+  assert.equal(ctx.doc.querySelectorAll('.ask-cmd-group').length, 0);
+  ctx.panel.destroy();
+});
+
+test('summaries on: a reloaded group whose commands all passed shows folded; the person\'s open survives a rebuild (#911)', async () => {
+  const blocks = [cmdBlock(1, 0, 'Checking the git status'), cmdBlock(2, 0, 'Reading the helper')];
+  const { ctx } = setup({ blocks });
+  applyFlags({ commandSummaries: true }, ctx.doc);
+  ctx.panel.open();
+  await settle(ctx);
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text: '', status: 'done', createdAt: 't', blocks } });
+  ctx.flush();
+  await settle(ctx);
+  const head = () => ctx.doc.querySelector('.ask-cmd-group .ask-cmd-ghead');
+  const body = () => ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gbody');
+  assert.equal(ctx.doc.querySelectorAll('.ask-cmd-group').length, 1);
+  assert.equal(body().querySelectorAll(':scope > .ask-cmd.is-sum').length, 2);
+  assert.equal(head().getAttribute('aria-expanded'), 'false');
+  assert.equal(body().hidden, true);
+  head().click();
+  applyFlags({ commandSummaries: false }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-cmd-group'), null, 'flag off: full cards, no group');
+  applyFlags({ commandSummaries: true }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
+  await settle(ctx);
+  assert.equal(body().hidden, false, 'the open choice survived the rebuild');
+  ctx.panel.destroy();
+});
+
+test('summaries on: a running group stays folded with Stop on its head; it stays folded when the last command passes (#911)', async () => {
+  const blocks = [cmdBlock(1, 0, 'Checking the git status'), cmdBlock(2, 0, 'Running the slow script')];
+  const { ctx } = setup({ blocks });
+  applyFlags({ commandSummaries: true }, ctx.doc);
+  ctx.panel.open();
+  await settle(ctx);
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text: '', status: 'done', createdAt: 't', blocks } });
+  ctx.flush();
+  await settle(ctx);
+  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { blockId: 't-0000000001:1', status: 'done', exitCode: 0, durationMs: 1000, tail: '' } });
+  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { blockId: 't-0000000001:2', status: 'running', exitCode: null, durationMs: null, startedAt: Date.now(), tail: '' } });
+  ctx.flush();
+  const body = () => ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gbody');
+  assert.equal(body().hidden, true, 'folded while a command runs');
+  assert.match(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords').textContent, /^Running the slow script · 2 commands · /);
+  assert.equal(ctx.doc.querySelector('.ask-cmd-gtop > .ask-cmd-stop').hidden, false, 'the head offers Stop');
+  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { blockId: 't-0000000001:2', status: 'done', exitCode: 0, durationMs: 2000, tail: '' } });
+  ctx.flush();
+  assert.equal(body().hidden, true, 'everything passed: still folded');
+  assert.equal(ctx.doc.querySelector('.ask-cmd-gtop > .ask-cmd-stop').hidden, true);
+  assert.equal(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords').textContent, 'Ran 2 commands · 3.0s');
+  ctx.panel.destroy();
+});
+
+test('summaries on: a reloaded failed group stays folded with "1 failed"; an open survives a rebuild (#911)', async () => {
+  const blocks = [cmdBlock(1, 0, 'Checking the git status'), cmdBlock(2, 0, 'Running the tests')];
+  const { ctx } = setup({ blocks, view: { blockId: 't-0000000001:2', status: 'done', exitCode: 1, durationMs: 500, tail: 'FAIL' } });
+  applyFlags({ commandSummaries: true }, ctx.doc);
+  ctx.panel.open();
+  await settle(ctx);
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text: '', status: 'done', createdAt: 't', blocks } });
+  ctx.flush();
+  await settle(ctx);
+  const body = () => ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gbody');
+  const rows = () => [...ctx.doc.querySelectorAll('.ask-cmd.is-sum')];
+  assert.equal(body().hidden, true, 'a failure does not open the group');
+  assert.equal(rows()[1].querySelector('.ask-cmd-detail').hidden, true, 'nor its row');
+  assert.equal(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gfail').textContent, '1 failed');
+  assert.ok(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords').textContent.startsWith('Ran 2 commands · 1 failed · '));
+  ctx.doc.querySelector('.ask-cmd-group .ask-cmd-ghead').click();
+  assert.equal(body().hidden, false);
+  applyFlags({ commandSummaries: false }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
+  applyFlags({ commandSummaries: true }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
+  await settle(ctx);
+  assert.equal(body().hidden, false, 'the open survived the rebuild');
+  ctx.panel.destroy();
+});
+
+test('summaries on: a lone row gets a neighbour: it joins the group without being rebuilt (#911)', async () => {
+  const one = [cmdBlock(1, 0, 'Checking the git status')];
+  const { ctx } = setup({ blocks: one });
+  applyFlags({ commandSummaries: true }, ctx.doc);
+  ctx.panel.open();
+  await settle(ctx);
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text: '', status: 'done', createdAt: 't', blocks: one } });
+  ctx.flush();
+  await settle(ctx);
+  const row = ctx.doc.querySelector('.ask-cmd.is-sum');
+  assert.equal(ctx.doc.querySelector('.ask-cmd-group'), null, 'a lone command: no head');
+  const two = [...one, cmdBlock(2, 0, 'Reading the helper')];
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text: '', status: 'done', createdAt: 't', blocks: two } });
+  ctx.flush();
+  await settle(ctx);
+  const rows = [...ctx.doc.querySelectorAll('.ask-cmd.is-sum')];
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0], row, 'the same row element');
+  assert.equal(row.parentNode, ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gbody'));
   ctx.panel.destroy();
 });
 
@@ -340,8 +437,9 @@ test('a closed failed row stays closed after a rebuild (the choice is kept per b
   ctx.flush();
   await settle(ctx);
   const row = () => ctx.doc.querySelector('.ask-cmd.is-sum');
-  assert.equal(row().querySelector('.ask-cmd-detail').hidden, false, 'a failure opens itself');
+  assert.equal(row().querySelector('.ask-cmd-detail').hidden, true, 'a failure stays folded');
   const before = row();
+  row().querySelector('.ask-cmd-row-btn').click();
   row().querySelector('.ask-cmd-row-btn').click();
   // Force a REAL rebuild: flag off (full card), then on again (a new summary row built from st.commandsRowOpen).
   applyFlags({ commandSummaries: false }, ctx.doc);
@@ -357,7 +455,7 @@ test('a closed failed row stays closed after a rebuild (the choice is kept per b
   ctx.panel.destroy();
 });
 
-test('a failed row that opened itself does not reopen its folded output after a rebuild', async () => {
+test('a failed row the person opened stays open after a rebuild, with its output and no Output toggle', async () => {
   const blocks = [cmdBlock(1, 0, 'Running the tests')];
   const { ctx } = setup({ blocks, view: { blockId: 't-0000000001:1', status: 'done', exitCode: 1, durationMs: 1000, tail: 'FAIL' } });
   applyFlags({ commandSummaries: true }, ctx.doc);
@@ -367,12 +465,15 @@ test('a failed row that opened itself does not reopen its folded output after a 
   ctx.flush();
   await settle(ctx);
   const row = () => ctx.doc.querySelector('.ask-cmd.is-sum');
-  row().querySelector('.ask-cmd-toggle').click();          // fold the output the failure unfolded
+  row().querySelector('.ask-cmd-row-btn').click();
+  const before = row();
   applyFlags({ commandSummaries: false }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
   applyFlags({ commandSummaries: true }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
   await settle(ctx);
-  assert.equal(row().querySelector('.ask-cmd-detail').hidden, false, 'the row stays open (auto-open was recorded)');
-  assert.equal(row().querySelector('.ask-cmd-out').hidden, true, 'the folded output stays folded');
+  assert.notEqual(row(), before, 'a rebuilt row');
+  assert.equal(row().querySelector('.ask-cmd-detail').hidden, false, 'the row stays open (the open was recorded)');
+  assert.equal(row().querySelector('.ask-cmd-outbox').hidden, false, 'its output shows with it');
+  assert.equal(row().querySelector('.ask-cmd-toggle'), null, 'no Output toggle');
   ctx.panel.destroy();
 });
 

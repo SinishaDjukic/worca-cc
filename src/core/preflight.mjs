@@ -17,6 +17,10 @@ import { constants as FS, existsSync, statSync, openSync, readSync, closeSync, m
 import { gitAvailable } from './git-available.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 
+const _probeChildren = new Set();
+/** Test seam: kill the probes still running (each resolves null), so a stopped run's preflight cannot hold a test process open. */
+export function _stopToolProbes() { for (const child of _probeChildren) { try { child.kill('SIGKILL'); } catch { /* gone */ } } }
+
 /**
  * Run a command and resolve to its trimmed stdout, or null on any failure.
  * Times out defensively so a hung probe can't block preflight.
@@ -30,12 +34,14 @@ function execSafe(cmd, args, { timeout = 4000 } = {}) {
       resolveP(null);
       return;
     }
+    _probeChildren.add(child);
     let out = '';
     let settled = false;
     const done = (val) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      _probeChildren.delete(child);
       resolveP(val);
     };
     const timer = setTimeout(() => {

@@ -22,7 +22,8 @@ test('the view is remembered per browser; old keys migrate once; junk falls back
 test('chip: none for the default; "Running · 2 of 41 runs"; group by alone', () => {
   assert.equal(viewChip(DEFAULT_VIEW, { shown: 41, total: 41 }), '');
   assert.equal(viewChip({ show: 'running', groupBy: 'none', person: '' }, { shown: 2, total: 41 }), 'Running · 2 of 41 runs');
-  assert.equal(viewChip({ show: 'all', groupBy: 'project', person: '' }, { shown: 41, total: 41 }), 'By project');
+  assert.equal(viewChip({ show: 'all', groupBy: 'project', person: '' }, { shown: 41, total: 41 }), '', 'grouping alone draws no chip');
+  assert.equal(viewChip({ show: 'all', groupBy: 'date', person: '' }, { shown: 41, total: 41 }), '');
 });
 
 test('labels: the record round-trips them and drops non-strings; a labels-only filter shows "N of M runs"', () => {
@@ -33,13 +34,15 @@ test('labels: the record round-trips them and drops non-strings; a labels-only f
 });
 
 test('menu items: Show with counts, Group by, Select; Started by only on shared deployments', () => {
-  const items = viewMenuItems({ show: 'all', groupBy: 'none', person: '' }, { all: 41, needs: 2, running: 3, waiting: 2, finished: 36, archived: null },
+  const items = viewMenuItems({ show: 'all', groupBy: 'none', person: '' }, { all: 41, needs: 2, running: 3, waiting: 2, finished: 36, ready: 9, archived: null },
     { people: [], onPick: () => {} });
   assert.deepEqual(items.filter((i) => i.header).map((i) => i.header), ['Show']);
   assert.deepEqual(items.filter((i) => i.segmented).map((i) => i.label), ['Group by']);
-  assert.deepEqual(items.filter((i) => i.checked != null).slice(0, 6).map((i) => [i.label, i.hint, i.checked]),
-    [['All', '41', true], ['Needs you', '2', false], ['Running', '3', false], ['Waiting', '2', false], ['Finished', '36', false], ['Archived', '', false]]);
+  assert.deepEqual(items.filter((i) => i.checked != null).slice(0, 7).map((i) => [i.label, i.hint, i.checked]),
+    [['All', '41', true], ['Needs you', '2', false], ['Running', '3', false], ['Waiting', '2', false], ['Finished', '36', false],
+      ['Ready to ship', '9', false], ['Archived', '', false]]);
   assert.equal(viewChip({ show: 'waiting', groupBy: 'none', person: '' }, { shown: 2, total: 41 }), 'Waiting · 2 of 41 runs');
+  assert.equal(viewChip({ show: 'ready', groupBy: 'none', person: '' }, { shown: 9, total: 41 }), 'Ready to ship · 9 of 41 runs');
   assert.ok(items.some((i) => i.label === 'Select'));
   const shared = viewMenuItems(DEFAULT_VIEW, {}, { people: [{ key: 'ana', name: 'Ana' }], onPick: () => {} });
   assert.ok(shared.some((i) => i.header === 'Started by'));
@@ -57,7 +60,7 @@ test('menu items: Keyboard shortcuts is the last item, hint ?', () => {
 test('#948 s2: with no options the items are the Runs list', () => {
   const v = { show: 'all', groupBy: 'none', person: '' };
   const runs = viewMenuItems(v, {}, { onPick: () => {} }).map((i) => i.label || i.header || 'sep');
-  assert.deepEqual(runs, ['Show', 'All', 'Needs you', 'Running', 'Waiting', 'Finished', 'Archived', 'Group by', 'sep', 'Select', 'Keyboard shortcuts']);
+  assert.deepEqual(runs, ['Show', 'All', 'Needs you', 'Running', 'Waiting', 'Finished', 'Ready to ship', 'Archived', 'Group by', 'sep', 'Select', 'Keyboard shortcuts']);
 });
 
 test('#948 s2 + compact menu: Group by and Sort by are segmented items; titles carry the full names; Select hints ⌘ / Ctrl click', () => {

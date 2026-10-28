@@ -579,6 +579,50 @@ test('a fast-forward on an Azure DevOps remote merges with the ADO read helper',
   assert.equal(mergeOpts.env.GH_TOKEN, undefined);
 });
 
+const NO_BB = { WORCA_BB_TOKEN: undefined, WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined, WORCA_BB_EMAIL: undefined };
+const BB_URL = 'https://bitbucket.org/acme/api.git';
+const answerBitbucketUrl = (args) => args[0] === 'remote' && args[1] === 'get-url'
+  ? Promise.resolve({ ok: true, stdout: `${BB_URL}\n`, stderr: '', code: 0, timedOut: false }) : null;
+
+test('fetch of a Bitbucket remote carries the Bitbucket read helper, never a GitHub or Azure token', async () => {
+  const { a } = await world();
+  let fetchEnv;
+  _testing.setRunner((args, opts) => {
+    const bb = answerBitbucketUrl(args);
+    if (bb) return bb;
+    if (args[0] === 'fetch') { fetchEnv = opts.env; return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0, timedOut: false }); }
+    return _testing.defaultRun(args, opts);
+  });
+  try {
+    await withEnv({ ...NO_ADO, ...NO_BB, WORCA_BB_READ_TOKEN: 'bbread', WORCA_BB_WRITE_TOKEN: 'bbwrite', WORCA_ADO_TOKEN: 'pat', GH_TOKEN: 'ghp_x' },
+      () => fetchRemote(a));
+  } finally { _testing.setRunner(null); }
+  assert.equal(fetchEnv.WORCA_BB_GIT_TOKEN, 'bbread', 'the read token, never the write one');
+  assert.equal(fetchEnv.WORCA_BB_READ_TOKEN, undefined);
+  assert.equal(fetchEnv.WORCA_BB_WRITE_TOKEN, undefined);
+  assert.equal(fetchEnv.WORCA_ADO_TOKEN, undefined);
+  assert.equal(fetchEnv.GH_TOKEN, undefined);
+});
+
+test('a fast-forward on a Bitbucket remote merges with the Bitbucket read helper', { skip: process.platform === 'win32' }, async () => {
+  const { a, push } = await world();
+  await push('m.txt', 'two'); await fetchRemote(a);
+  let mergeOpts = null;
+  _testing.setRunner((args, opts) => {
+    const bb = answerBitbucketUrl(args);
+    if (bb) return bb;
+    if (args[0] === 'merge') mergeOpts = opts;
+    return _testing.defaultRun(args, opts);
+  });
+  let r;
+  try {
+    r = await withEnv({ ...NO_ADO, ...NO_BB, WORCA_BB_TOKEN: 'bbtok' }, () => fastForward(a, { base: 'dev' }));
+  } finally { _testing.setRunner(null); }
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(mergeOpts.env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(mergeOpts.env.GH_TOKEN, undefined);
+});
+
 test('scrubGitText redacts Azure DevOps PAT shapes', () => {
   const pat84 = `${'A1'.repeat(38)}AZDOab12`;
   const pat52 = 'abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst';

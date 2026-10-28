@@ -705,6 +705,10 @@ test('#955 Runs list: rows inside a group are one 26px line (40px on touch); a g
   assert.match(bodyOf('.runs-members .runs-row-title'), /font-weight:400/);
   assert.match(bodyOf('.runs-members .runs-row-sub'), /text-overflow:ellipsis/);
   assert.match(bodyOf('.runs-members .runs-row-sub'), /flex:0 1000 auto/, 'the status gives way before the title');
+  // #1012: a staged live member's four-section block wraps under its line, indented with its title.
+  assert.match(bodyOf('.runs-members .runs-row:has(> .runs-stage)'), /flex-wrap:wrap/);
+  assert.match(bodyOf('.runs-members .runs-row > .runs-stage'), /margin:4px 0 2px 16px/);
+  assert.match(bodyOf('.runs-members .runs-stage > .run-prog-track'), /height:2px/, 'one step below the group row\'s 3px line');
   assert.match(bodyOf('.runs-members .runs-pick'), /height:26px/);
   assert.match(bodyOf('.runs-members .runs-row-tail'), /height:26px/);
   assert.match(css, /@media \(pointer: coarse\)\{\.runs-members \.runs-pick,\.runs-members \.runs-row-tail\{height:40px;\}/);
@@ -921,4 +925,63 @@ test('card head: the state word is a 15px/600 headline that never truncates; the
   assert.ok(!ALL.some((r) => /\.run-status-(?:head|word|text)\b/.test(r.sel) && /white-space:nowrap/.test(r.body) && /text-overflow:ellipsis/.test(r.body)),
     'no status head is a nowrap ellipsis line');
   assert.match(body('.chat-rc-status .run-status-word'), /font-size:var\(--fs-body\)/, 'beside a card title the state is 13px');
+});
+
+// #959: chat cards follow one width rule. The column caps every card; no card kind sets a width in the conversation,
+// and no part of a card leaves the column: a graph well is as wide as its card, like the card's other content.
+const CHAT_SCOPE = /\.chat-(?:convo|page)\b/;
+const CHAT_PART = /\.(?:ask-(?:card|card-stub|ccard|rp|cmd|rc|mcard|wfcard)|chat-rc)(?![\w])/;      // a card root or its family's parts
+const CARD_ROOT = /\.(?:ask-card|ask-card-stub|ask-ccard)(?![\w-])/;                                // in the last compound: the card itself (also inside :is(…))
+const cardLast = (s) => s.trim().split(/\s*[\s>+~]\s*/).at(-1);
+const isCardRoot = (s) => CARD_ROOT.test(cardLast(s));
+test('chat cards: one width rule — no card kind sets a width in the conversation; no part of a card leaves the column (#959)', () => {
+  const sized = ALL.filter((r) => splitTop(r.sel).some((s) => CHAT_SCOPE.test(s) && isCardRoot(s)))
+    .flatMap((r) => decls(r.body, '(?:min-|max-)?width|margin-(?:left|right|inline)').map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(sized, []);
+  // A card part sized off the transcript (cqi, vw) or pulled out by a negative or computed margin would break out.
+  const out = ALL.filter((r) => splitTop(r.sel).some((s) => /\.chat-convo\b|\.ask-msg\b/.test(s)))
+    .flatMap((r) => decls(r.body, '(?:min-)?width|margin(?:-(?:left|right|inline(?:-start|-end)?))?')
+      .filter(([, v]) => /cqi|cqw|vw|--chat-card-max|calc\(|(?:^|\s)-/.test(v)).map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(out, [], 'no breakout rule: a graph well is as wide as its card');
+  assert.ok(!/--chat-card-max/.test(css), 'one chat width: --chat-text-max');
+});
+
+// #959: a chat graph well that clips its graph (overflow:hidden) is fitted by its host, so no node is cut at an edge.
+const WELL_HOSTS = {
+  'chat-rc-well': ['ui/public/chat/run-card.mjs', /mountRunGraph\(graphHost, \{ mode: 'card'/],
+  'ask-wfcard-graph': ['ui/public/auto-proposal.mjs', /mountProposalGraph\(graphHost,/],
+  'chat-run-tile-well': ['ui/public/chat/home-run-tile.mjs', /mountRunGraph\(host, \{ mode: TILE_GRAPH_MODE/],
+};
+test('chat graph wells: every well that clips its graph is fitted by its host (#959)', () => {
+  const clipped = new Set(ALL.filter((r) => decls(r.body, 'overflow(?:-x)?').some(([, v]) => v === 'hidden'))
+    .flatMap((r) => [...r.sel.matchAll(/\.((?:chat|ask)-[\w-]*-well|ask-wfcard-graph)(?![\w-])/g)].map((m) => m[1])));
+  assert.deepEqual([...clipped].filter((c) => !WELL_HOSTS[c]), [], 'a new clipped well names its host here');
+  for (const [cls, [file, re]] of Object.entries(WELL_HOSTS)) assert.match(readFileSync(join(ROOT, file), 'utf8'), re, `${cls}: ${file}`);
+  assert.match(readFileSync(join(ROOT, 'ui/public/chat/run-card.mjs'), 'utf8'), /'run-flow-wrap chat-rc-well gv-well'/, 'the run card well is the shared .gv-well');
+});
+
+// #959: tight radii in chat cards (design-system › Corners): no pill, no corner past the card's own 8px anywhere in a
+// card, and the run proposal's parts at 4–6px. Round dots and knobs (ROUND) keep 50%; the shared .switch track is the
+// one pill and is not a chat-card selector.
+test('chat cards: tight radii — no pill, nothing past the card corner, the run proposal at 4–6px (#959)', () => {
+  const TIGHT = /^(?:var\(--r-(?:xs|sm|ctrl)\)|0|inherit)(?:\s+(?:var\(--r-(?:xs|sm|ctrl)\)|0))*$/;
+  const CARD_R = /^var\(--r-(?:card|md)\)$/;
+  const bad = ALL.flatMap((r) => splitTop(r.sel).filter((s) => CHAT_PART.test(s)).flatMap((s) => decls(r.body, 'border(?:-(?:top|bottom)-(?:left|right))?-radius')
+    .filter(([, v]) => !(TIGHT.test(v)
+      || (v === '50%' && ROUND.test(s))
+      || (CARD_R.test(v) && (isCardRoot(s) || !/\.ask-rp/.test(s)))))
+    .map(([, v]) => where(r, v))));
+  assert.deepEqual(bad, []);
+});
+
+test('run proposal: the shared field and one form grid (#959)', () => {
+  const body = (sel) => (ALL.find((r) => r.sel === sel && !r.media) || {}).body || '';
+  assert.equal(ALL.some((r) => r.sel === '.ask-rp :is(select,input[type="text"])'), false, 'no card-own control skin');
+  assert.match(body('.ask-rp-grid'), /grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,200px\),1fr\)\)/);
+  assert.equal(ALL.some((r) => /\.ask-rp-grid\.(?:two|wf-row)/.test(r.sel) && /grid-template-columns/.test(r.body)), false, 'no per-row grid');
+  assert.equal(ALL.some((r) => r.media && /\.ask-rp-grid/.test(r.sel) && /grid-template-columns/.test(r.body)), false, 'no media override: auto-fit stacks');
+  assert.match(body('.ask-rp-field:has(> .switch-row)'), /grid-column:1 \/ -1;/);
+  assert.match(body('.ask-rp-label'), /white-space:nowrap;/);
+  assert.match(body('.ask-rp-ctl > span:first-child'), /white-space:nowrap;/);
+  assert.equal(ALL.some((r) => r.sel === '.ask-rp-tags' && /nowrap|overflow-x/.test(r.body)), false, 'the tags wrap');
 });

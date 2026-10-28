@@ -128,35 +128,27 @@ test('a save cannot claim either id, a delete is refused, and the name "Shape" i
 });
 
 test('resolveShapeRequest: no shape and no shape workflow leaves the request alone', () => {
-  assert.deepEqual(resolveShapeRequest({}, { enabled: false }), { ok: true, shape: null, workflowId: null });
-  assert.deepEqual(resolveShapeRequest({ workflowId: ' wf_default ' }, { enabled: true }), { ok: true, shape: null, workflowId: 'wf_default' });
+  assert.deepEqual(resolveShapeRequest({}), { ok: true, shape: null, workflowId: null });
+  assert.deepEqual(resolveShapeRequest({ workflowId: ' wf_default ' }), { ok: true, shape: null, workflowId: 'wf_default' });
   assert.equal(isShapeWorkflowId('wf_shape'), true);
   assert.equal(isShapeWorkflowId('wf_shape_ux'), true);
   assert.equal(isShapeWorkflowId('wf_default'), false);
 });
 
-test('resolveShapeRequest: the gate off refuses the shape field and the shape workflows', () => {
-  assert.equal(resolveShapeRequest({ shape: {} }, { enabled: false }).ok, false);
-  const r = resolveShapeRequest({ workflowId: 'wf_shape' }, { enabled: false });
-  assert.equal(r.ok, false);
-  assert.match(r.error, /wf_shape/);
-  assert.equal(resolveShapeRequest({ workflowId: 'wf_shape_ux' }, { enabled: false }).ok, false);
-});
-
-test('resolveShapeRequest: gate on normalizes perspectives and picks the workflow', () => {
-  assert.deepEqual(resolveShapeRequest({ shape: { perspectives: ['qa'] } }, { enabled: true }),
+test('resolveShapeRequest: normalizes perspectives and picks the workflow', () => {
+  assert.deepEqual(resolveShapeRequest({ shape: { perspectives: ['qa'] } }),
     { ok: true, shape: { perspectives: ['product', 'qa'] }, workflowId: 'wf_shape' });
-  assert.deepEqual(resolveShapeRequest({ shape: { perspectives: ['ux'] } }, { enabled: true }),
+  assert.deepEqual(resolveShapeRequest({ shape: { perspectives: ['ux'] } }),
     { ok: true, shape: { perspectives: ['product', 'ux'] }, workflowId: 'wf_shape_ux' });
-  assert.deepEqual(resolveShapeRequest({ shape: {} }, { enabled: true }),
+  assert.deepEqual(resolveShapeRequest({ shape: {} }),
     { ok: true, shape: { perspectives: [...DEFAULT_PERSPECTIVES] }, workflowId: 'wf_shape' });
-  assert.deepEqual(resolveShapeRequest({ shape: { perspectives: ['qa'] }, workflowId: 'wf_shape' }, { enabled: true }).workflowId, 'wf_shape');
+  assert.deepEqual(resolveShapeRequest({ shape: { perspectives: ['qa'] }, workflowId: 'wf_shape' }).workflowId, 'wf_shape');
   // A shape workflow named without `shape` is accepted as-is (resume / explicit), with no shape field.
-  assert.deepEqual(resolveShapeRequest({ workflowId: 'wf_shape' }, { enabled: true }).ok, true);
+  assert.deepEqual(resolveShapeRequest({ workflowId: 'wf_shape' }).ok, true);
 });
 
 test('resolveShapeRequest: bad input is an error, not a throw', () => {
-  const bad = (req) => { const r = resolveShapeRequest(req, { enabled: true }); assert.equal(r.ok, false, JSON.stringify(req)); return r.error; };
+  const bad = (req) => { const r = resolveShapeRequest(req); assert.equal(r.ok, false, JSON.stringify(req)); return r.error; };
   assert.match(bad({ shape: { perspectives: ['nope'] } }), /nope/);
   assert.match(bad({ shape: { perspectives: ['qa'], slices: 3 } }), /slices/);
   assert.match(bad({ shape: { perspectives: ['qa'] }, workflowId: 'wf_default' }), /wf_default/);

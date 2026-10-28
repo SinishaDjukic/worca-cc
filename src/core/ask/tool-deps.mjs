@@ -22,10 +22,8 @@ import { getDb } from '../db.mjs';
 import { listProjects, displayPath } from '../projects.mjs';
 import { runStatusLine } from '../run-status.mjs';
 import { readNightDecisions } from '../night/store.mjs';
-import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { PERSPECTIVE_KEYS } from '../../shared/shape/perspectives.mjs';
 import { listPresets } from '../run-presets-store.mjs';
-import { flagEnabled } from '../flags.mjs';
 
 /** Who started runs (pipelines.started_by), one row per person, most active first. Scope: a
  *  projectKey or a workspaceKey, else everything. Archived and pre-attribution (NULL) runs are
@@ -95,8 +93,8 @@ export function defaultToolDeps({ threadId, viewer = null }) {
   return {
     // The person signed in to this chat on a shared sign-in (WORCA_ASK_READER), else null: list_runs "me".
     viewer: typeof viewer === 'string' && viewer ? viewer : null,
-    // Run presets (#712 slice 3): null when the feature is off, so list_presets says so.
-    listPresets: () => (flagEnabled('runPresets') ? listPresets({ owner: typeof viewer === 'string' && viewer ? viewer : null }) : null),
+    // Run presets (#712 slice 3): the viewer's presets for list_presets.
+    listPresets: () => listPresets({ owner: typeof viewer === 'string' && viewer ? viewer : null }),
     listPeople,
     readRunActions,
     buildCatalog,
@@ -138,8 +136,7 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     // converter). Injected, never imported — tools.mjs stays import-free by house rule.
     htmlToText,
     validateProposal,
-    // Shape it first (spec D9, D12): the propose_run schema's gate and keys. Injected: tools.mjs stays import-free.
-    shapeFirstOn: () => shapeFirstEnabled(),
+    // Shape it first (spec D9, D12): the propose_run schema's perspective keys. Injected: tools.mjs stays import-free.
     perspectiveKeys: PERSPECTIVE_KEYS,
     // The run card's attachment pills (propose_run attachmentIds): the ledger of
     // the owning thread only — never another thread's files. An unreadable DB means

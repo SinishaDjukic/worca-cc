@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 76;
+export const SCHEMA_VERSION = 79;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -836,7 +836,9 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  req_cost_ledger:        { brief_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then)
+  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
+  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
+  run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -1338,6 +1340,56 @@ CREATE TABLE IF NOT EXISTS ask_chat_groups (
   updated_at  TEXT NOT NULL
 );`;
 
+// v77 Requirements A8 (plans/requirements-a8-design.md §3): a feature's files and a made brief's documents. Bodies live
+// on disk (<worcaHome>/requirements/att/<id><ext>); the row holds what Worca took from each. Reconcile-safe: IF NOT
+// EXISTS + INCREMENTAL_TABLES; req_cost_ledger.attachment_id and req_starts.files_json live in INCREMENTAL_COLUMNS.
+const REQUIREMENTS_ATTACHMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_attachments (
+  id             TEXT PRIMARY KEY,
+  owner_type     TEXT NOT NULL,
+  owner_id       INTEGER NOT NULL,
+  name           TEXT NOT NULL,
+  kind           TEXT NOT NULL,
+  mime           TEXT NOT NULL,
+  bytes          INTEGER NOT NULL,
+  sha256         TEXT NOT NULL,
+  status         TEXT NOT NULL,
+  error_json     TEXT,
+  summary        TEXT NOT NULL DEFAULT '',
+  summary_edited INTEGER NOT NULL DEFAULT 0,
+  asks_json      TEXT NOT NULL DEFAULT '[]',
+  history_json   TEXT NOT NULL DEFAULT '[]',
+  send_with_run  INTEGER NOT NULL DEFAULT 0,
+  cost_usd       REAL NOT NULL DEFAULT 0,
+  read_cost_usd  REAL,
+  read_model     TEXT, read_at TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, owner_id);
+CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
+`;
+
+// v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Feature chat of a feature. A product owner's message
+// row is written before its call, Worca's row (text, drafts, proposals, cost, model, or an error) after it. Reconcile-safe:
+// IF NOT EXISTS + INCREMENTAL_TABLES; req_cost_ledger.helper_message_id lives in INCREMENTAL_COLUMNS.
+const REQUIREMENTS_HELPER_DDL = `
+CREATE TABLE IF NOT EXISTS req_helper_messages (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq    INTEGER NOT NULL,
+  role           TEXT NOT NULL,
+  text           TEXT NOT NULL DEFAULT '',
+  focus_json     TEXT,
+  round_turn_id  INTEGER,
+  drafts_json    TEXT NOT NULL DEFAULT '[]',
+  proposals_json TEXT NOT NULL DEFAULT '[]',
+  error_json     TEXT,
+  cost_usd       REAL,
+  model          TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_helper_messages_feature ON req_helper_messages(feature_seq, id);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1384,6 +1436,8 @@ const INCREMENTAL_TABLES = {
   req_cost_ledger:   REQUIREMENTS_DDL,
   req_starts:        REQUIREMENTS_STARTS_DDL,
   req_briefs:        REQUIREMENTS_BRIEFS_DDL,
+  req_attachments:   REQUIREMENTS_ATTACHMENTS_DDL,
+  req_helper_messages: REQUIREMENTS_HELPER_DDL,
 };
 
 /**
@@ -2523,6 +2577,13 @@ export function migrate(db) {
     if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     // v75 (#948 s2): ask_threads.archived_at / pinned_at — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 76) db.exec(ASK_CHAT_GROUPS_DDL);   // v76 (#948 s3) topic groups; ask_threads.group_id comes from INCREMENTAL_COLUMNS
+    // v77 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
+    // v74: a DB coming from below 72 / 73 creates the ledger and the starts table after the hoisted repair.
+    if (current < 77) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v78 requirements A3: req_helper_messages + ledger.helper_message_id. The repair runs again here, as at v74 and v77: a DB
+    // coming from below 72 creates the ledger after the hoisted repair.
+    if (current < 78) { db.exec(REQUIREMENTS_HELPER_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v79: run_groups.name_source — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

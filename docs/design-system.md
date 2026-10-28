@@ -131,6 +131,9 @@ chips (`.runs-pr`) are chips, not PR controls.
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
 `.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
 password and date inputs follow the same field; each joins the base rule when its screen moves.
+A chat card's form (the run proposal) uses the same `.input` / `.select`; its fields sit on one auto-fit grid
+(`.ask-rp-grid`), a switch field takes a whole row, labels stay on one line, and a long value ellipsizes with its whole
+text as the tooltip.
 ### Switch (checked)
 One switch, `.switch`: a 32×18 `--r-pill` track and a 14px round knob that is always visible. Off is `--switch-off` with
 the `--knob` knob; on is `--ink` with the `--on-ink` knob, never green. Disabled or locked: no opacity fade; the track
@@ -145,6 +148,9 @@ extension sidebar's own settings checkbox (`.wx-settings-check`) keeps its nativ
 A checked checkbox and a checked radio fill `--ink`, never green; the tick is the page colour (`--tick`, `--tick-dash`).
 A disabled checked box fills `--seq`. A selected option row (`.opt-row`, `.chip-select label`) takes the `--field` fill and
 an ink border.
+Requirements' pressed toggles are the one green on/off: a pressed Confirm on an assumption (`.req-confirm`) takes a green
+outline and green text, and a Files for the run chip that goes with the run (`.req-fpick.on`) a green outline and a check
+on `--panel`; neither is ever green-filled.
 ### Segmented control
 `.seg`: one `--field` container, 28px / 13px buttons, the selected one `--surface`. `.seg-sm` is the same size.
 The run log's Summaries / Raw switch (`.log-view-seg`, flag `commandSummaries`) is a `.seg-sm` in the Logs bar and the step
@@ -163,7 +169,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), folded until the person opens it (a failure shows only as the red `N failed`; a running group puts Stop beside the head), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
@@ -177,7 +183,10 @@ status dot centred on it and the head buttons and the Live switch centred on its
 `--rd-word-line`). Under it, `.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip),
 and only what no row below says ("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation",
 "14 files changed in a copy", "conflicts with dev", GitHub's verdict); absent otherwise. A card with its own title
-(the chat run card) keeps the state at 13px / 600 under it. Titles are static or short ("Change Away mode?"); dynamic
+(the chat run card) keeps the state at 13px / 600 under it. Its head is one row centred on the title's line box (no
+margin on the title, no nudge on the dot), the project is the meta line right under it, and a single run has no kind
+chip, as the run page title (a PR fix run's fix line leads with "PR fix run"); a group keeps its chip
+(`Feature · 3 runs`, `Shaping`), as the group page title. Titles are static or short ("Change Away mode?"); dynamic
 names go in the target or meta line (`.ask-mcard-target`); a title that can still grow (a run or feature name) gets
 an ellipsis and its text as a tooltip. Chips say the kind or state once; the line after a chip never repeats its word.
 ### Route
@@ -222,6 +231,9 @@ and Group by. The run page's View PR ▾ is built with it. The sidebar flyouts (
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
 dropdowns. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
+The Requirements pages build their header and file menus as `.menu.hd-menu` and place them through their own
+`.req-menu` wrapper (the open list floats under its trigger, right-aligned); their danger row (Remove) takes
+`--red-ink-strong`, which keeps AA on `--panel` and on the `--red-bg` hover.
 ### Row button
 `.row-btn`: a whole divided-list row that a person opens (a Library folder, a Memory row, a keyed project row): full
 width, `--hover` fill and `--r-sm` corner on hover, an inset ring on keyboard focus. Each list keeps its own grid and
@@ -234,6 +246,21 @@ keep their divider, and an empty list draws no card. Each Settings section is on
 760px, centred), and so are the Guardrails and Memory lists. `.drow-wide` puts a wide control
 (a textarea, a table, a path row) under its label at full width; `.drow-stack` holds rich block content (a schedule,
 a preset, a guardrail) with the same divider and padding.
+### Chat cards
+In the Chat conversation every card (run, files, applied change, command, run proposal, workflow, stubs) sits on the
+text column: `.ask-transcript-col` caps it at `--chat-text-max` (760px) and no card kind sets its own width. No part of
+a chat card leaves the text column (checked): a graph well (`.gv-well`: the workflow card's, the Auto card's and the
+run card's graph) is exactly as wide as its card and lines up with the card's other content; it is 1px `--line`, a 6px
+corner and the canvas fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
+with the first node in view, never centred with both ends cut). The well is as tall as the graph at that zoom (220–480px),
+set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The run card's Expand opens the
+same live graph in the shared `.wf-pop` overlay (a run-hosts `monitor` host fitted to the box) and never navigates; the
+overlay's Open run is the way to the run's Workflow tab. The transcript reserves its
+scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest
+share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); Jump to latest
+sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
+the composer. A row rises in (`data-ask-enter`) only the first time the page shows it, in any chat; the card inside it
+never rises on its own. No part of a chat card is a pill; inner corners stay at or under the card's 8px.
 ### Table
 `.table-wrap` > `.table`: 12px / 600 `--ink-2` headers, 13px cells, 8px 12px 8px 0 cell padding, one `--line` under
 each row, no outer box. Under 560px it stacks one block per row using each cell's `data-label`; it never scrolls sideways.
@@ -250,7 +277,8 @@ under 300ms. Error: a plain sentence plus a "Details" quiet button, never the ra
 `notify({ tone, title, detail, action, key })` (`ui/public/feedback.mjs`): ok and info close after 5s, warn and err
 stay, never move focus.
 The title is at most 6 static words ("Could not open the workflow"). Names, ids and paths go in `detail`; a raw error
-goes in `detail` too, never in the title, and behind a Details action when it is long.
+goes in `detail` too, never in the title, and behind a Details action when it is long. The one named exception is Add
+to group's "Added to Auth rework": the group's name is the title, the item (or "3 runs") the detail (Group picker).
 ### Modals
 `confirmModal({ title, message, confirmLabel, danger })` (`ui/public/app.js`): a destructive confirm names what goes;
 only inside a confirm is `.btn-danger` solid red. Footer actions and the head Close are 32px `.btn`; inline field
@@ -308,12 +336,16 @@ and hand the focus back to the opener.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
   page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
   is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
-  Rows inside a group draw no dividers; the group keeps its own divider before the next row.
+  Rows inside a group draw no dividers; the group keeps its own divider before the next row. After Add to group the
+  moved row takes the focus and the same `--row-open` fill for 1.5 s (`.is-landed`, static, so nothing to reduce): the
+  one moment two rows are lit.
 - Two row levels in the Runs list and the Chats column. A top-level row (a single run, Needs you, a group row) has a
   13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
   touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
   and ellipsises first), then its PR chip; no label chips and no Independent tag. A live member's 3px line sits under
-  its title. Its ⋯ stays 28px, centred.
+  its title; a live member with stages draws the four-section block instead (a 2px bar, one step below the group
+  row's 3px line, then the 11px Plan / Build / Review / Ready with its stage bold); its status names no step, only a
+  state its dot does not say (needs you, paused). A member dispatched but not started yet (Starting) draws no progress. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).
@@ -329,6 +361,14 @@ and hand the focus back to the opener.
   project or `N projects`; Group by Project files a group spanning projects under Several projects, never No project;
   Group by Topic shows one section per group, then Ungrouped; the group dialog's name field
   uses Smart run naming's Suggested chip only while that flag is on.
+- Group picker (Add to group…, the Runs list and the Chats column, `ui/public/group-picker.mjs`): a combobox over one
+  listbox. The focus stays in "Find or create a group"; ↑/↓ move the `.is-active` option and wrap, Enter takes it, Esc
+  closes and hands the focus back. The order is New group… (the `plus` icon), then Recent (up to 3, this person's last
+  used groups) and All groups (the rest, once), under sentence-case `.menu-h` heads. Typing drops the heads and New
+  group… and lists the matches, then Create “release notes” unless the text is an existing name. Nothing is highlighted
+  on open. The footer names the keys with `.kbd` chips. New group… opens the shared group dialog
+  (`ui/public/group-dialog.mjs`, Smart naming in both lists). An add answers "Added to …" with Undo; a run already in a
+  group moves, a Shaper slice is skipped and the toast says so.
 - Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill

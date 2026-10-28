@@ -32,13 +32,14 @@ test('the page fills the content column: .main gives up its gutter and scroll, t
   assert.equal(ruleBody('body.view-chat .main'), 'display:flex;flex-direction:column;overflow:hidden;padding:0;');
   assert.equal(ruleBody('.view[data-view="chat"]'), 'flex:1 1 auto;min-height:0;position:relative;');
   assert.match(ruleBody('.chat-page'), /^position:absolute;inset:0;display:flex;/);
-  assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;--chat-card-max:1040px;/);
+  assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;$/, 'one chat width: the text column');
+  assert.doesNotMatch(ruleBody('.chat-page'), /--chat-card-max/);
 });
 
 test('the conversation column carries the cap tokens (a 760px text column) for the transcript, the composer box and the jump pill', () => {
   const body = ruleBody('.chat-convo');
   assert.match(body, /position:relative;/);
-  assert.match(body, /--ask-col-max:var\(--chat-text-max\);--ask-col-inset:max\(16px,calc\(50% - var\(--ask-col-max\) \/ 2\)\);--ask-box-top:103px;/);
+  assert.match(body, /--ask-col-max:var\(--chat-text-max\);--ask-col-inset:max\(16px,calc\(50% - var\(--ask-col-max\) \/ 2\)\);--ask-box-top:103px;--chat-dock-fade:32px;/);
 });
 
 test('home vs thread: home hides the transcript and the dock (and New chat), a thread hides home', () => {
@@ -60,7 +61,7 @@ test('composer popovers ride the composer: upward in the dock, downward on home,
 
 test('the docked composer keeps its room: the jump pill rides the dock, toasts clear it, the head buttons never shrink, phones keep Send in the box', () => {
   assert.match(css, /\n\.chat-dock\{position:absolute;left:0;right:0;bottom:0;pointer-events:none;\}/, 'the base rule (ruleBody would find the home rule\'s " .chat-dock{" first): it floats over the transcript, no z-index');
-  assert.equal(ruleBody('.chat-dock > .ask-jump'), 'bottom:calc(100% - 1px);');
+  assert.equal(ruleBody('.chat-dock > .ask-jump'), 'bottom:100%;');
   assert.equal(ruleBody('body.view-chat .toasts'), 'bottom:calc(136px + env(safe-area-inset-bottom,0px));');
   assert.equal(ruleBody('.chat-head-btn'), 'flex:none;');
   assert.match(css, /@media \(max-width:480px\)\{\n {2}\.chat-page \.ask-meter-cost,\.chat-page \.ask-voice-caret,\.chat-page \.ask-model-btn-effort\{display:none;\}\n\}/);
@@ -90,20 +91,21 @@ test('the Chat row dot rides the rail corner; the logo links show a focus ring',
 test('the composer buttons keep their size, the run panel slot hides, cards measure the transcript, the empty lead row takes no room, the rail dot', () => {
   assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice):not(.ask-scope-btn)'), 'flex:none;', 'Send never shrinks out of the box (v2); the scope button is a .btn too and must stay shrinkable');
   assert.equal(ruleBody('.chat-panel[hidden]'), 'display:none;', '.chat-panel{display:flex} would beat [hidden]: an empty bordered slot');
-  assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;padding-bottom:calc(var(--chat-dock-h,120px) + 8px);', '100cqi = the transcript width; the floating dock\'s height is its bottom clearance');
-  assert.match(ruleBody('.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub)'), /^width:min\(var\(--chat-card-max\),100cqi\);/);
+  assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;padding-bottom:calc(var(--chat-dock-h,120px) + var(--chat-dock-fade));', '100cqi = the transcript width; the floating dock\'s height plus its fade band is its bottom clearance');
+  assert.equal(ruleBody('.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub)'), null, 'no card width rule (#959)');
   assert.equal(ruleBody('.chat-composer-lead:empty'), 'display:none;');
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.nav-dot'), 'top:6px;right:8px;');
 });
 
-test('the mockup look (2026-10-10, corners and shadows per the runs redesign): the composer is frosted glass the transcript scrolls under, the run card a white bordered card with no resting shadow, History toggles like the menu', () => {
+test('the mockup look (2026-10-10, corners and shadows per the runs redesign): the composer is frosted glass over the dock\'s panel (#959), the run card a white bordered card with no resting shadow, History toggles like the menu', () => {
   // Review C (decided 2026-10-19): the composer shell is the one 12px (--r-lg) corner; the run card a card (--r-card, 8px).
   assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:var(--r-lg);background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);');
   assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:var(--r-lg);');
   assert.equal(ruleBody('.chat-page .ask-composer-box:has(.guide-target)'), '-webkit-backdrop-filter:none;backdrop-filter:none;', 'a Getting started ring escapes the blur\'s stacking context');
   assert.equal(ruleBody('.chat-dock > .ask-composer'), 'pointer-events:none;');
   assert.equal(ruleBody('.chat-dock > .ask-jump,.chat-dock > .ask-composer > *'), 'pointer-events:auto;', 'only the composer\'s own parts take the pointer');
-  assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;height:56px;/);
+  assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;top:calc\(-1 \* var\(--chat-dock-fade\)\);/);
+  assert.equal(ruleBody('.chat-convo .ask-msg .ask-card'), 'animation:none;', 'the row rises, never the card in it (#959)');
   assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:var(--r-card);');
   assert.doesNotMatch(css, /--shadow-card\b/, 'the resting card shadow token is gone');
   assert.doesNotMatch(css, /--shadow-glass\b/, 'and so is the composer\'s');
@@ -123,23 +125,26 @@ test('History: the Chats column\'s host, a push column that turns into an overla
   assert.match(ruleBody('.ask-wt-row .ask-thread-trash'), /^flex:none;$/, 'the worktree rows keep their trash');
 });
 
-test('the run proposal card fits the 760px text column and its kicker is not monospace (F-27)', () => {
+test('the run proposal card takes the text column like every chat card (no width of its own, #959) and its kicker is not monospace (F-27)', () => {
   assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;/);
-  const width = ruleBody('.chat-convo .ask-msg > .ask-card.ask-rp');
-  assert.match(width, /^width:min\(var\(--chat-text-max\),100cqi\);margin-left:calc\(\(100% - min\(var\(--chat-text-max\),100cqi\)\) \/ 2\);/);
-  assert.doesNotMatch(width, /chat-card-max/);
+  assert.equal(ruleBody('.chat-convo .ask-msg > .ask-card.ask-rp'), null);
   for (const sel of ['.ask-rp-kicker', '.ask-rp-from', '.ask-rp-summary']) assert.doesNotMatch(ruleBody(sel), /var\(--mono\)/, sel);
 });
 
-test('command cards take the 760px text column, like the run proposal (#911)', () => {
-  const width = ruleBody('.chat-convo .ask-msg > .ask-card.ask-cmd');
-  assert.match(width, /^width:min\(var\(--chat-text-max\),100cqi\);margin-left:calc\(\(100% - min\(var\(--chat-text-max\),100cqi\)\) \/ 2\);/);
-  assert.doesNotMatch(width, /chat-card-max/);
+test('command cards take the text column like every chat card (#911, #959)', () => {
+  assert.equal(ruleBody('.chat-convo .ask-msg > .ask-card.ask-cmd'), null);
 });
 
-test('summary rows: one line, joined in a group, the raw command in mono (#911)', () => {
+test('summary rows: one line, a group is one card under a quiet head, the raw command in mono (#911)', () => {
   assert.match(ruleBody('.ask-cmd-sum'), /white-space:nowrap;/);
   assert.match(ruleBody('.ask-cmd-sum.is-raw'), /font-family:var\(--mono\)/);
-  assert.match(ruleBody('.ask-cmd.in-group:not(.is-g-first)'), /margin-top:-7px;/);
   assert.match(ruleBody('.ask-cmd-row:hover'), /background:var\(--hover\)/);
+  assert.match(ruleBody('.ask-cmd-ghead'), /color:var\(--ink-2\)/);
+  assert.match(ruleBody('.ask-cmd-ghead:hover'), /background:var\(--hover\)/);
+  assert.match(ruleBody('.ask-cmd-gfail'), /color:var\(--red-ink\)/);
+  assert.match(ruleBody('.ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum'), /border-top:1px solid var\(--line\)/);
+  assert.doesNotMatch(bare, /\.ask-cmd\.in-group/, 'no more stacked cards');
+  assert.match(ruleBody('.ask-cmd-outbox .ask-cmd-out'), /max-height:min\(400px,50vh\);/);
+  assert.match(ruleBody('.ask-cmd-code'), /font-size:12px;line-height:1\.6;/);
+  assert.equal(ruleBody('.chat-convo .ask-msg > .ask-cmd-group'), null, 'a group fills the text column like every card (#959)');
 });

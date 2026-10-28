@@ -143,7 +143,8 @@ export function runProgress(st, memo = null) {
     return slices.length > 0 && !active.has(n.id) && slices.every((r) => r.status === 'done');
   };
   const pq = state.pendingQuestion != null ? state.pendingQuestion : null;
-  const parkedWord = status === 'pausing' ? 'pausing' : PARKED.has(status) ? 'paused' : '';
+  // `resumePending`: the browser's own flag while a Resume request is in flight (the server has not answered yet).
+  const parkedWord = status === 'pausing' ? 'pausing' : !PARKED.has(status) ? '' : state.resumePending ? 'resuming' : 'paused';
   const remember = (fraction, stageIdx) => {
     if (!memo) return { fraction, stageIdx };
     memo.fraction = Math.max(Number(memo.fraction) || 0, fraction);
@@ -182,7 +183,7 @@ export function runProgress(st, memo = null) {
     const now = keyed.filter((n) => active.has(n.id)).map(labelOf);
     let text;
     if (pq && !['done', 'stopped', 'error'].includes(status)) text = `Needs you · ${askWhat(pq)}`;
-    else if (parkedWord) text = parkedWord === 'pausing' ? 'Pausing' : 'Paused';
+    else if (parkedWord) text = parkedWord[0].toUpperCase() + parkedWord.slice(1);
     else if (status === 'stopped') text = 'Stopped';
     else if (status === 'error') text = 'Failed';
     else if (status === 'done') text = 'Finished';

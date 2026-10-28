@@ -38,7 +38,7 @@ const state = {
   engine: 'claude', // New pipeline: who runs the agent nodes, per run, never remembered
   runDefaults: null,
   engineTouched: false,
-  presets: [],    // GET /api/presets (run presets, #712), while the runPresets flag is on
+  presets: [],    // GET /api/presets (run presets, #712)
   preset: null,   // the applied preset: { id, name, scope, setup, modified, applying, broken[] } — preset mode
   presetWorkflowNames: null,   // { id: name } from GET /api/workflows for preset summaries (run-presets-names.mjs); null = unknown
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
@@ -56,7 +56,7 @@ const state = {
   runGroups: [],     // GET /api/run-groups: Shaper features and user groups for the Runs list (D10)
   runGroupsLoaded: false, // set by loadRunGroups on every outcome: runGroups starts as [], so it cannot say "loaded"
   ghAvailable: false,// gh CLI availability, from the last /api/history load
-  adoAvailable: false,// an Azure DevOps credential is configured (prHosts.azure), same source
+  adoAvailable: false,// a REST PR host has a credential: prHosts.azure or prHosts.bitbucket (D10), same source
 
   // --- Workspaces ---
   workspaces: [],            // GET /api/workspaces read-model
@@ -113,12 +113,14 @@ import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, pr
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
-import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
+import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets, pipelineTargets } from './runs-selection.mjs';
 import { bulkConfirm, planBulk, skipText } from '../../src/shared/run-bulk.mjs';
 import { listKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
-import { createListRove, paintBulkBar, LIST_NAV, navKey, bindPointerSelect } from './list-dom.mjs';
+import { createListRove, paintBulkBar, LIST_NAV, navKey, bindPointerSelect, landOn, paintLanded, collapsedSectionOf } from './list-dom.mjs';
 import { openGroupPicker } from './group-picker.mjs';
+import { openGroupDialog } from './group-dialog.mjs';
+import { readRecentGroups, noteRecentGroup, addedNotice } from './group-add.mjs';
 import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
@@ -137,6 +139,8 @@ import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, 
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
+import { pageChips, pageScopeOf } from './ask-page-chips.mjs';
+import { createAskSide, sideTier } from './ask-side.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
@@ -232,7 +236,7 @@ import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewerKindFor, renderArtifact, rawArtifactUrl,
   renderMarkdown as renderArtifactMarkdown } from './artifact-view-c4.mjs';
 // The popup viewer every artifact opener uses (Chat P5).
-import { openArtifactViewer, downloadArtifact } from './artifacts/viewer.mjs';
+import { openArtifactViewer, downloadArtifact, closeOpenViewer } from './artifacts/viewer.mjs';
 // Pinpoint (#669): act on selected text in the chat, run artifacts and the Diff tab.
 import { createPinpoint } from './pinpoint.mjs';
 import { decorateArtifact, decorateDiff } from './pinpoint-surfaces.mjs';
@@ -291,7 +295,7 @@ import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-pr
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, missingSlot } from './tag-input.mjs';
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
-import { prefillTags, splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { prefillTags, splitByDimensions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createSmartNaming } from './smart-naming.mjs';
 import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
@@ -309,7 +313,6 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
-import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, featureModelOf } from './shape/feature-view.mjs';
@@ -400,6 +403,9 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Chat panel — assigned by the boot mount; every seam uses askPanel?.
+let askSide = null;            // Ask worca beside the page: the side column's controller (ask-side.mjs), made after askPanel
+let askHistoryOnChat = false;  // the column's "Open History in Chat": the Chat page opens its History column once it hosts the chat
+let askEntryThread = null;     // openChat({ threadId }) on a hidden column: the chat it opens on (askSide onShow), never the stored one first
 let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
 function setChatSummariesPref(chat) {
   const on = !(chat && chat.summariseCommands === false);
@@ -418,7 +424,6 @@ let chatPanelRouter = null;    // (segments: ['<runId>', '<tab>'?]) => void — 
 let chatPanelContext = null;   // () => ({ runId?, pipelineId?, projectDir?, projectKey?, workspaceId?, runPage?, diffPath? })
 let chatEntryPending = false;  // openChat() is routing to a bare #chat: enterChatView reopens the LAST chat, not an unread one
 let pendingShapeEntry = null;   // the New run link (§3.6): {text}, armed once Chat home is open
-let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello re-pushes them with the gate, no fetch
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
@@ -440,7 +445,7 @@ const SHAPE_FEATURE_HOSTS = new Map();
 const SLICE_INFO = new Map();
 const SLICE_INFO_WAITERS = new Map();      // pipelineId → Set<onLoad>
 function sliceInfoFor(pipelineId, onLoad) {
-  if (!pipelineId || !shapeFirstOn()) return null;
+  if (!pipelineId) return null;
   const known = SLICE_INFO.get(pipelineId);
   if (known) return known;
   if (typeof onLoad === 'function') {
@@ -479,9 +484,7 @@ async function openRunPlan(ref, projectKey) {
 async function paintShapeFeature(host) {
   const id = SHAPE_FEATURE_HOSTS.get(host);
   if (!id) return;
-  // Bumped on every path, the gate-off one too, so a fetch in flight never lands after the host was cleared.
   const seq = (host.__shapeSeq = (host.__shapeSeq || 0) + 1);       // the last paint wins (act + WS frames race)
-  if (!shapeFirstOn()) { host.replaceChildren(); host.dataset.painted = ''; host.__shapeWant = null; return; }
   const opts = host.__shapeOpts || {};
   // The page's first paint of this feature: say so while it loads, not a blank page (a busy server takes seconds).
   if (opts.loading && host.dataset.painted !== id) {
@@ -573,7 +576,7 @@ let chatRunCards = null;
  *  answer (a disposed card's listener is a no-op: the controller checks its entry). */
 const SHAPER_CARDS = new Map();   // pipelineId -> { card, miss, loading, again, listeners: Set }
 function shaperCardFor(pid, onChange) {
-  if (!pid || !shapeFirstOn()) return null;
+  if (!pid) return null;
   let e = SHAPER_CARDS.get(pid);
   if (!e) { e = { card: null, miss: false, loading: false, again: false, listeners: new Set() }; SHAPER_CARDS.set(pid, e); loadShaperCard(pid, e); }
   if (typeof onChange === 'function') e.listeners.add(onChange);
@@ -584,7 +587,7 @@ function loadShaperCard(pid, e) {
   e.loading = true;
   fetch(`/api/shape/pipelines/${encodeURIComponent(pid)}/card`)
     .then((r) => {
-      if (r && r.status === 404) { e.miss = true; return null; }   // a plain run (or the gate off): never re-read
+      if (r && r.status === 404) { e.miss = true; return null; }   // a plain run: never re-read
       return r && r.ok ? r.json() : null;
     }).catch(() => null)
     .then((card) => {
@@ -608,7 +611,6 @@ function refreshShaperCardsOf(pid) {
     if (k === pid || member) loadShaperCard(k, e);
   }
 }
-onShapeFirstChange(() => SHAPER_CARDS.clear());
 chatDeps.shaperCard = (pid, onChange) => shaperCardFor(pid, onChange);
 chatDeps.openPlan = (ref) => openRunPlan(ref, ref && ref.projectKey);
 /** Shaper s3 (D18): the run's review rows for the Chat card's checklist line (the run page's rdLoadData); null when this
@@ -621,7 +623,7 @@ chatDeps.checklists = (ref) => {
 /** Shaper s2 (D14): a feature run's ask opens the thread that started the feature, where its card shows the ask. */
 async function featureThreadFor(ref) {
   const pid = ref && ref.pipelineId;
-  if (!pid || !shapeFirstOn()) return null;
+  if (!pid) return null;
   try {
     const r = await fetch(`/api/shape/pipelines/${encodeURIComponent(pid)}/slice`);
     const info = r && r.ok ? await r.json() : null;
@@ -1156,6 +1158,8 @@ const isPhoneNav = () => !!(phoneNavMq && phoneNavMq.matches);
 function railCollapsed() {
   if (isPhoneNav()) return false;
   if (railTierMq && railTierMq.matches) return true;
+  // Ask worca beside the page (L11): a pushing side column folds the menu while the page would be under 640px. Never stored.
+  if (askSide && askSide.forcesRail()) return true;
   return sidebarCollapsed;
 }
 
@@ -1189,6 +1193,8 @@ function applySidebarCollapsed() {
   const aside = $('.sidebar');
   if (aside) aside.classList.toggle('collapsed', collapsed);
   document.body.classList.toggle('rail-collapsed', collapsed);
+  // Ask worca beside the page: while the side column folds the menu, its toggle can neither unfold it nor store a choice.
+  document.body.classList.toggle('ask-side-rail', !isPhoneNav() && !(railTierMq && railTierMq.matches) && !!(askSide && askSide.forcesRail()));
   const btn = $('#side-toggle');
   if (btn) {
     btn.setAttribute('aria-expanded', String(!collapsed));
@@ -1239,7 +1245,7 @@ function setSidebarCollapsed(v) {
   repaintNavMode();
 }
 
-$('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
+$('#side-toggle')?.addEventListener('click', () => { if (!document.body.classList.contains('ask-side-rail')) setSidebarCollapsed(!sidebarCollapsed); });
 
 // The rail's Running actions: one tile (a green dot and the count) opening the same rows, Stop
 // included, in a side flyout — so a running service stays stoppable on the rail too.
@@ -1286,6 +1292,8 @@ if (topnavSearchRoot) createTopnavSearch({
   loadLazy: loadTopnavLazy,
   // The Ask Worca row: Chat opens with what was typed in the composer, unsent (worca Chat R3).
   onAsk: (query) => { openChat({ text: query }); },
+  // Ask worca beside the page (L7): on a page with the side column the row says where the text goes.
+  askRow: () => (askSide && askSide.available() ? { title: 'Ask worca', meta: 'with this page' } : { title: 'Ask in Chat', meta: 'opens a chat' }),
   navigate: (href) => { location.hash = href; },
   openWorkflow: (id) => { void openWorkflowFromAsk(id); },
   // D17: "Runs labelled hotfix" adds the word to the Runs list label filter and opens the Runs LIST: a bare #runs
@@ -1334,9 +1342,10 @@ function setMobileNavOpen(open) {
   document.body.classList.toggle('nav-open', next);
   mbarMenu?.setAttribute('aria-expanded', String(next));
   if (navScrim) navScrim.hidden = !next;
-  for (const n of [$('.main'), $('#topnav'), $('body > .term-pane')]) {
+  for (const n of [$('.main'), $('#topnav'), $('body > .term-pane'), $('#ask-side')]) {
     if (n) n.toggleAttribute('inert', next);
   }
+  paintAskSideCover();
   if (next) $('#side-close')?.focus();
   else if (hadFocus) mbarMenu?.focus();
 }
@@ -2076,17 +2085,6 @@ function handleServerMessage(msg) {
   if (crp.waiting && crp.want && msg.runId && (msg.runId === crp.want.id || (runs.get(msg.runId) || {}).pipelineId === crp.want.id)) crpRetryPending();
 }
 
-// Shape it first's UI that nothing else rebuilds: the New run link and the Chat home tile. Run on every hello and
-// whenever the flag flips (Settings › Labs, or a `flags` frame).
-function syncShapeFirstUi() {
-  refreshShapeFeatures();   // a view emptied while the gate was off comes back
-  const shapeLink = document.getElementById('shapeChatLink');
-  if (shapeLink) shapeLink.hidden = !shapeFirstOn();
-  // The spread keeps scripts/tasks: setFlags replaces the set.
-  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, shapeFirst: shapeFirstOn() } });
-}
-onShapeFirstChange(syncShapeFirstUi);
-
 // hello greeting carries the server's authoritative run list. We upsert each
 // into our map, backfill-subscribe to non-terminal runs whose buffer we don't
 // yet have, and refresh whatever view is showing.
@@ -2098,7 +2096,7 @@ function onHello(msg) {
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
   if (msg.flags) applyFlags(msg.flags);  // every hello: a frame missed while the socket was down, or a restart with a new WORCA_FLAGS
   if (msg.git) applyGit(msg.git);   // every hello: git may have been installed meanwhile
-  syncShapeFirstUi();
+  refreshShapeFeatures();           // every hello: a feature view may have missed frames while the socket was down
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
   // stale entry (hdPipelineRun), which would otherwise offer a Pause / Stop the server answers
@@ -2199,7 +2197,7 @@ function onHello(msg) {
   if (rebooted) {
     for (const r of runs.values()) {
       if (!r.staleBoot || !['starting', 'running', 'pausing'].includes(r.status)) continue;
-      r.status = 'interrupted';
+      applyServerStatus(r, 'interrupted');
       r.pendingQuestion = null;
     }
   }
@@ -2385,7 +2383,8 @@ function upsertRun(partial) {
     runs.set(partial.runId, r);
   } else {
     for (const k of Object.keys(partial)) {
-      if (partial[k] !== undefined) r[k] = partial[k];
+      if (k === 'status') applyServerStatus(r, partial.status);
+      else if (partial[k] !== undefined) r[k] = partial[k];
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
@@ -2883,8 +2882,17 @@ function addNightDecisions(r, list) {
   r.nightDecisions = cur;
 }
 
+// Every status the server reports lands here (state frames, the hello, upserts, the end of a run). While this tab's
+// Pause is in flight, a 'running' sent before the server took it keeps the 'pausing' shown at the click; any other
+// status ends the wait.
+function applyServerStatus(r, status) {
+  if (!status || (r.pausePending && status === 'running')) return;
+  r.status = status;
+  r.pausePending = false;
+}
+
 function onState(r, msg) {
-  if (msg.status) r.status = msg.status;
+  applyServerStatus(r, msg.status);
   if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
   if (msg.startedAt) { r.startedAt = msg.startedAt; runStartedAts.set(r.runId, msg.startedAt); }
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
@@ -4055,6 +4063,7 @@ if (typeof window !== 'undefined') {
     // Test seam: the live list-model row (the object the detail screen re-resolves to).
     historyRow: (projectKey, id) => (state.historyAll || []).find((r) => r && r.id === id && r.projectKey === projectKey) || null,
     pauseRun,
+    hdShownStatus,
     upsertRun,
     onHello,
     isPaused,
@@ -4890,7 +4899,7 @@ function paintEngineHints() {
     el.engineDefaultHint.hidden = !el.engineDefaultHint.textContent;
   }
 }
-// Run tags (#718): the New run form's chip field, shown while the runTags flag is on. It starts from the
+// Run tags (#718): the New run form's chip field. It starts from the
 // project's default tags; once the person edits it, later project changes leave it alone.
 // s2: suggestions follow the project and the target's policy dimensions.
 const runTagInput = createTagInput(document, {
@@ -4904,7 +4913,7 @@ let runTagDims = createDimensionSlots(document, []);
 document.getElementById('runTagDimsField')?.appendChild(runTagDims.el);
 state.tagDims = { source: null, home: null, dims: [], enforce: false };
 
-/** Enforced tags (D12, D19): the one-line reason Start is disabled, or null. The server sends enforce only with runTags on. */
+/** Enforced tags (D12, D19): the one-line reason Start is disabled, or null. */
 function runTagGate() {
   if (!state.tagDims?.enforce) return null;
   return tagsProblemText(state.tagDims.dims, normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags);
@@ -4921,7 +4930,7 @@ function paintRunTagDimsWarn(reason = null) {
   }
   applyBudgetToNewView();                 // Start follows the gate
 }
-/** Rebuild the slots for a new target. Painted whatever the flag: the .run-tags-field CSS gate hides it when runTags is off. */
+/** Rebuild the slots for a new target. */
 function paintRunTagDims(info, tags) {
   state.tagDims = info && Array.isArray(info.dims) ? info : { source: null, home: null, dims: [], enforce: false };
   const dims = state.tagDims.dims;
@@ -6612,7 +6621,7 @@ registerAskRenderer('clarify', {
   // title: unchanged. The visible "A few questions before the plan" heading is askHeading's.
   render: (panel, pq, ctx) => {
     renderClarifyBody(ctx.run, panel, pq);
-    if (isStepCard(pq, ctx.run, shapeFirstOn())) {
+    if (isStepCard(pq, ctx.run, true)) {
       decorateShapingQuestions(panel, pq, { ...ctx, ...stepDeps(ctx, pq),
         collect: () => askRendererFor('clarify').collect(panel), submit: (p) => stepPost(ctx.run, p) });
     }
@@ -6667,13 +6676,13 @@ function stepDeps(ctx, pq) {
 /** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
 function outlineBodyDeps(ctx) {
   const r = ctx.run;
-  return { ...stepDeps(ctx, r.pendingQuestion), extras: shapeFirstOn(), confirm: confirmModal,
-    submit: (payload) => stepPost(r, payload, { plan: shapeFirstOn() }) };
+  return { ...stepDeps(ctx, r.pendingQuestion), extras: true, confirm: confirmModal,
+    submit: (payload) => stepPost(r, payload, { plan: true }) };
 }
 
 function planBodyDeps(ctx) {
   const r = ctx.run;
-  const extras = shapeFirstOn();
+  const extras = true;
   const runUrl = (tail) => `/api/runs/${encodeURIComponent(r.runId)}${tail}`;
   return {
     ...stepDeps(ctx, r.pendingQuestion), extras,
@@ -6681,9 +6690,7 @@ function planBodyDeps(ctx) {
       ? fetch(runUrl(`/plan${round ? `?round=${encodeURIComponent(round)}` : ''}`)).then((res) => (res.ok ? res.json() : null)).catch(() => null)
       : Promise.resolve(null)),
     markdown: { ensure: bindMarkdownReady, render: (t) => hdMarkdown.render(t) },
-    // The route is chosen when the answer is POSTED: the panel is rebuilt only when the question id changes, and a hello
-    // can turn the gate off in between. The gated route would then answer 404 and strand the run (D12).
-    submit: (payload) => stepPost(r, payload, { plan: shapeFirstOn() }),
+    submit: (payload) => stepPost(r, payload, { plan: true }),
     openFull: () => {
       // openRunArtifactPopup rejects only a falsy artifact; {relPath:''} would open an empty viewer.
       const file = r.pendingQuestion && r.pendingQuestion.plan ? r.pendingQuestion.plan.file : '';
@@ -6730,14 +6737,14 @@ async function postAnswer(r, payload, { plan = false, onFail = null } = {}) {
   const id = r.pendingQuestion.id;
   const runId = r.runId;
   // The named receipt (shaper-cards D5), BEFORE the POST: the server broadcasts question-resolved before its 200.
-  noteAnswer(runId, r.pendingQuestion, payload, { shaping: shapeFirstOn() && isShapingRun(r) });
+  noteAnswer(runId, r.pendingQuestion, payload, { shaping: isShapingRun(r) });
 
   setPanelBusy(r, true);
   r._answering = true;
 
   try {
     const res = plan
-      // Shape it first (S4): the gated plan route while the gate is on; /api/answer otherwise, so a held run is never stranded.
+      // Shape it first (S4): a step card answers through the plan route; any other ask through /api/answer.
       ? await fetch(`/api/runs/${encodeURIComponent(runId)}/answer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...payload }) })
       : await fetch('/api/answer', {
@@ -6867,7 +6874,7 @@ function finishRun(r, status) {
   r._finishedAs = status;   // onDone re-arms a run that finished as paused (it is stopped later)
   scheduleOnboardingRefresh();
   r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads _finished/status/pendingQuestion
-  r.status = status;
+  applyServerStatus(r, status);
   r.pendingQuestion = null;
   r._answering = false;
   // No `done` frame carries a timestamp (the orchestrator emits {status,
@@ -7951,6 +7958,7 @@ async function loadProjects(selectName, { quiet = false } = {}) {
   }
   paintNoProjectWorkDir();
   renderProjectOptions(selectName, { quiet });
+  askPanel?.pageChanged?.();   // Ask worca beside the page: a project page's chip and scope name the project now
   if (state.presets.length) paintPresetMenu();   // pinned presets' group labels name the projects
   // P3-D7: the automatic No project default (no stored choice, no project at boot) gives way to the first project.
   if (state.runTargetAuto && state.runTarget === 'none' && state.projects.length) setRunTarget('project', { persist: false });
@@ -9131,6 +9139,7 @@ async function loadWorkspaces() {
   } catch {
     state.workspaces = [];
   }
+  askPanel?.pageChanged?.();   // Ask worca beside the page: a workspace page's chip and scope name the workspace now
   // A re-scan still running (a reload, another tab's change): follow it on the page.
   for (const w of state.workspaces) if (w && w.rescan && w.rescan.runId) trackWsRescan(w.id, w.rescan);
   // Stale selection guard: a remembered workspace id not in the fetched list is
@@ -11084,6 +11093,8 @@ document.addEventListener('keydown', (e) => {
   if (currentView() !== 'workspace-create') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker (in <body>: the side column's Chats list too) closes first
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape
   if (document.querySelector('.viewer-modal:not(.hidden), .guide-layer')) return; // a dialog or the guide owns Escape
   if (el.wizClose) el.wizClose.click();
@@ -15004,7 +15015,6 @@ function buildRunBody() {
     allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
     // Run tags (#718): omitted when empty, so a legacy body stays byte-identical. A slot wins its key.
     tags: (() => {
-      if (!flagOn('runTags')) return undefined;
       const all = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
       return all.length ? all : undefined;
     })(),
@@ -15682,6 +15692,7 @@ async function loadSettings() {
     paintSmartNamingSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
+    paintKeepAwakeRow(data.keepAwake !== false);
     paintPrSettings(data);
     await paintEngineSettings(data);
     await paintWorkspaceScanModelsSettings(data);
@@ -16574,7 +16585,7 @@ document.getElementById('networkWaitReset')?.addEventListener('click', (e) => po
 settingsCardDirty('networkWaitSave');
 
 // Settings › Runs › Smart run naming (Labs, flag smartRunNaming). The rows stay editable while the flag is off (muted), so a
-// team can prepare them. The master switch is the flag itself (bindFlagSwitch, below the Keep awake one).
+// team can prepare them. The master switch is the flag itself (bindFlagSwitch, below).
 const snCard = () => document.getElementById('smart-naming-settings-card');
 const SN_PREVIEW = { type: 'fix', slug: 'safari-sso-redirect-loop', ticket: 'proj-123' };
 let snTypesOn = [];            // the enabled types, in order
@@ -20050,22 +20061,7 @@ const statsOption = (text, value) => Object.assign(document.createElement('optio
 
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-async function paintStatsGroupOptions() {
-  const sel = document.getElementById('stats-group');
-  // /api/tags → { keys: [{ key, count, plain, valued }], values } (run-tags-store.mjs tagVocabulary)
-  const keys = flagOn('runTags') ? ((await fetchTagVocabulary())?.keys || []).map((k) => k.key) : [];
-  // Configured tag dimensions come first, by label ("Group by Cost centre"); none configured = slice 2's list.
-  const dims = flagOn('runTags') ? await loadAllTagDims() : [];
-  const sig = JSON.stringify([keys, dims.map((d) => [d.key, d.label])]);
-  if (sel.dataset.sig === sig) return;
-  sel.dataset.sig = sig;
-  sel.replaceChildren(statsOption('No grouping', ''), statsOption('Group by person', 'person'),
-    ...tagGroupOptions(dims, keys).map((o) => statsOption(o.text, o.value)));
-  sel.value = statsState.groupBy;
-  if (sel.value !== statsState.groupBy) statsState.groupBy = '';   // a key that vanished
-}
-
-/** Flag on: highlight the chosen #stats-view chip → the view to show and the dims (policy dimensions, in their
+/** Highlight the chosen #stats-view chip → the view to show and the dims (policy dimensions, in their
  *  order) the Cost report's picker leads with. Every chip shows: the Cost report's built-in dimensions always exist. */
 async function paintStatsViewChips() {
   const dims = await loadAllTagDims();
@@ -20112,27 +20108,19 @@ async function loadStatsView() {
   if (inverted) return;
   const body = el.statsBody;
   if (body.childElementCount) body.classList.add('is-loading');   // before any await: painted synchronously
-  const chips = flagOn('runTags');
-  document.getElementById('stats-group-wrap').hidden = chips;
-  const { view, dims } = chips
-    ? await paintStatsViewChips().catch(() => ({ view: 'overview', dims: [] }))
-    : { view: null, dims: [] };
-  if (!chips) await paintStatsGroupOptions().catch(() => {});      // a vanished tag key resets groupBy before the query
+  const { view, dims } = await paintStatsViewChips().catch(() => ({ view: 'overview', dims: [] }));
   // Cost has its own filter bar (cost-report.mjs), so the page's cost tag field and Person select step aside.
-  const cost = chips && view === 'cost';
+  const cost = view === 'cost';
   document.getElementById('stats-tags').hidden = cost;
   document.getElementById('stats-person').closest('.select-wrap').hidden = cost;
   // A network-level rejection is not an !res.ok — without this catch it escapes
   // as an unhandled rejection and leaves the body stuck in .is-loading.
   let res, data;
   try {
-    // Flag on: the chip decides groupBy, and Cost asks for the per-run facts (its own chips filter them in the
-    // browser). Flag off: the tag field is hidden, so its chips must not narrow the numbers either.
+    // The chip decides groupBy, and Cost asks for the per-run facts (its own chips filter them in the browser).
     const query = cost
       ? { range: statsState.range, from: statsState.from, to: statsState.to, report: true }
-      : chips
-        ? { ...statsState, groupBy: view === 'person' ? 'person' : '' }
-        : { ...statsState, tags: [] };
+      : { ...statsState, groupBy: view === 'person' ? 'person' : '' };
     res = await fetch(`/api/stats?${statsQuery(query)}`);
     data = await safeJson(res);
   } catch (err) {
@@ -20366,6 +20354,7 @@ async function stopRun(runId, btn, { pipelineId = '' } = {}) {
 // Resolves to the failure's reason (a page that does not show the log says it), or null.
 async function pauseRun(runId, btn) {
   if (btn) btn.disabled = true;
+  showPausePending(runId, true);
   try {
     const res = await fetch('/api/pause', {
       method: 'POST',
@@ -20374,17 +20363,67 @@ async function pauseRun(runId, btn) {
     });
     if (!res.ok) {
       const err = await safeJson(res);
+      // CANNOT_PAUSE because the run is pausing or paused already (another tab, the CLI, chat): not a failure. The
+      // refusal carries the server's status: show it now (no flash of Running, and a run that is paused already says
+      // so even when its frame never reaches this tab). Any other status reverts.
+      // awaitStatus tells the painters nothing is in flight any more, so the next status past pausing re-enables
+      // Pause (C16 would otherwise keep it disabled if that status is 'running' again).
+      if (err && err.code === 'CANNOT_PAUSE' && (err.status === 'pausing' || err.status === 'paused')) {
+        const r0 = runs.get(runId);
+        if (r0) { r0.pausePending = true; applyServerStatus(r0, err.status); repaintPending(r0); }
+        if (btn) btn.dataset.awaitStatus = '1';
+        return null;
+      }
+      showPausePending(runId, false);
       if (btn) btn.disabled = false;
       const r = runs.get(runId);
       if (r) onLog(r, { source: 'ui', level: 'error', text: `pause failed: ${err.error || res.status}`, ts: Date.now() });
       return String(err.error || `HTTP ${res.status}`);
     }
+    // Taken. While the run reads Pausing… nothing is in flight, so the next status past pausing re-arms Pause. The
+    // server's pausing frame follows any stale running one on the socket; should it never arrive, stop holding a later
+    // running back after a while.
+    if (btn && runs.get(runId)?.pausePending) btn.dataset.awaitStatus = '1';
+    endPauseHold(runId);
     return null;
   } catch (e) {
+    showPausePending(runId, false);
     if (btn) btn.disabled = false;
     const r = runs.get(runId);
     if (r) onLog(r, { source: 'ui', level: 'error', text: `pause error: ${e.message}`, ts: Date.now() });
     return e.message;
+  }
+}
+
+// A Pause or Resume click shows at once (Pausing… / Resuming…). Under load the request and the server's state frame can
+// take seconds, and until then the run still read Running / Paused. The server's next state frame takes over.
+function repaintPending(r) {
+  r._decorSeq = (r._decorSeq || 0) + 1;   // the memoised decor and progress line re-read the status
+  renderRunningView();
+  pokeAskRuns(r.runId, 'state');
+}
+function showPausePending(runId, on) {
+  const r = runs.get(runId);
+  if (!r) return;
+  if (on && r.status === 'running') { r.pausePending = true; r._pauseSeq = (r._pauseSeq || 0) + 1; r.status = 'pausing'; repaintPending(r); }
+  else if (!on && r.pausePending) { r.pausePending = false; if (r.status === 'pausing') r.status = 'running'; repaintPending(r); }
+}
+// How long after a taken Pause a 'running' status is still read as sent before the server took it.
+const PAUSE_HOLD_MS = 30000;
+function endPauseHold(runId) {
+  const r = runs.get(runId);
+  if (!r || !r.pausePending) return;
+  const seq = r._pauseSeq;
+  // unref: a no-op in browsers (number); under Node (the jsdom tests) a 30 s hold would keep the process alive.
+  setTimeout(() => { if (r.pausePending && r._pauseSeq === seq) r.pausePending = false; }, PAUSE_HOLD_MS).unref?.();
+}
+/** Every parked copy of the pipeline (a run page and a History resume address it by pipeline id). */
+function showResumePending(pipelineId, on) {
+  for (const r of runs.values()) {
+    if (r.pipelineId !== pipelineId || !!r.resumePending === on) continue;
+    if (on && !isPaused(r) && r.status !== 'interrupted') continue;
+    r.resumePending = on;
+    repaintPending(r);
   }
 }
 
@@ -20473,6 +20512,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
   const prevLines = Array.isArray(r.logLines) ? r.logLines.slice() : [];
   const prevBtnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = ' Resuming…'; }
+  showResumePending(pipelineId, true);
   try {
     const res = await fetch('/api/resume', {
       method: 'POST',
@@ -20481,6 +20521,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     });
     const data = await safeJson(res);
     if (!res.ok) {
+      showResumePending(pipelineId, false);   // on success the paused copy is dropped below; the new run reads Starting
       // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
       const again = await policyRefusalRetry(data, res.status);
       if (again) { if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; } return resumeRunFromCard(runId, btn, { ...opts, pastTeamCap: true, policyReason: again.reason }); }
@@ -20539,12 +20580,14 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     // shows only the new card (same pipelineId would otherwise render twice).
     alerts.onResolved(alertRun(r));
     runs.delete(runId);
+    showResumePending(pipelineId, false);   // any other parked copy of it
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
     // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
     landOnResumedRun(data.runId, { fromRunId: runId, pipelineId, navigate });
     renderRunningView();
   } catch (err) {
+    showResumePending(pipelineId, false);
     if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
     const rr = runs.get(runId);
     if (rr) onLog(rr, { source: 'ui', level: 'error', text: `resume failed: ${err.message}`, ts: Date.now() });
@@ -20740,7 +20783,6 @@ for (const id of ['stats-from', 'stats-to']) {
   });
 }
 document.getElementById('stats-person')?.addEventListener('change', (e) => { statsState.person = e.target.value; loadStatsView(); });
-document.getElementById('stats-group')?.addEventListener('change', (e) => { statsState.groupBy = e.target.value; loadStatsView(); });
 document.getElementById('stats-view')?.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-stats-view]');
   if (!b || b.hidden) return;
@@ -21814,7 +21856,7 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   if (!body || !chip || !scopeSel) return;
   const seq = ++tmState.loadSeq;
   // Dimension labels for the tag group-by: repaint as soon as the list arrives, not only on the next render.
-  if (flagOn('runTags')) loadAllTagDims().then((d) => { tmState.dims = d; if (tmState.data && tmState.tab === 'overview') renderTeamMetrics(); });
+  loadAllTagDims().then((d) => { tmState.dims = d; if (tmState.data && tmState.tab === 'overview') renderTeamMetrics(); });
   body.classList.add('is-loading');
   body.setAttribute('aria-busy', 'true');
   setTmChipBusy(true);
@@ -21971,6 +22013,8 @@ function mergePrStatus(a, b) {
     azure: b.azure && b.azure !== 'unused' ? b.azure : (a.azure ?? b.azure),
     azureError: b.azureError ?? a.azureError ?? null,
     azureTruncated: [...new Set([...(a.azureTruncated || []), ...(b.azureTruncated || [])])],
+    bitbucket: b.bitbucket && b.bitbucket !== 'unused' ? b.bitbucket : (a.bitbucket ?? b.bitbucket),
+    bitbucketError: b.bitbucketError ?? a.bitbucketError ?? null,
     actionRepos: [...new Set([...(a.actionRepos || []), ...(b.actionRepos || [])])],
     unsupportedRepos: [...new Set([...(a.unsupportedRepos || []), ...(b.unsupportedRepos || [])])],
   };
@@ -22092,8 +22136,7 @@ function renderTeamMetrics() {
   const data = tmState.data;
   if (!body || !data) return;
   // Run tags: the keys and tags on the loaded records; a group-by or tag filter they no longer carry falls back.
-  const tagsOn = flagOn('runTags');
-  const loadedTags = tagsOn ? [...new Set((data.records || []).flatMap(recordTags))] : [];
+  const loadedTags = [...new Set((data.records || []).flatMap(recordTags))];
   const tagKeys = [...new Set(loadedTags.map((t) => t.split(':')[0]))].sort();
   if (tmState.groupBy.startsWith('tag:') && !tagKeys.includes(tmState.groupBy.slice(4))) tmState.groupBy = 'workflow';
   if (tmState.tag && !loadedTags.includes(tmState.tag)) tmState.tag = '';
@@ -22114,9 +22157,9 @@ function renderTeamMetrics() {
     homeHint.append('Metrics home ', Object.assign(document.createElement('code'), { className: 'mono', textContent: data.scope.home || '—' }),
       ` · records from ${(data.scope.sources || []).length} member repositor${(data.scope.sources || []).length === 1 ? 'y' : 'ies'}, grouped by workspace name`);
   }
-  // View chips (flag on only). Cost is the Cost and value report over the team records in the range; the page's
+  // View chips. Cost is the Cost and value report over the team records in the range; the page's
   // #tm-tag select and #tm-filters chips step aside there (the report has its own filter bar).
-  const view = tagsOn ? tmState.view : null;
+  const view = tmState.view;
   let costEl = null;
   if (view === 'cost') {
     const facts = recordFacts(data.records || [], { range: tmState.range, from: tmState.from || null, to: tmState.to || null, now: Date.now() });
@@ -22132,7 +22175,7 @@ function renderTeamMetrics() {
   body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl }));
   tmState.lastAgg = agg;
   // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
-  const tagSel = renderTagFilterSelect(tagsOn ? data.records || [] : [], tmState.tag, { doc: document });
+  const tagSel = renderTagFilterSelect(data.records || [], tmState.tag, { doc: document });
   if (tmState.tab === 'timeline' || view === 'cost') tagSel.hidden = true;
   const oldTag = document.getElementById('tm-tag');
   oldTag?.replaceWith(tagSel);
@@ -22391,7 +22434,7 @@ async function loadHistoryView({ force = false } = {}) {
   state.historyError = '';
   crp.historySeen = true;   // Chat P4: a run panel id still unknown after this is missing, not pending
   state.ghAvailable = !!data.ghAvailable;
-  state.adoAvailable = !!(data.prHosts && data.prHosts.azure);
+  state.adoAvailable = !!(data.prHosts && (data.prHosts.azure || data.prHosts.bitbucket));
   paintHistory();                                        // fresh skeleton repaint
   rdRepaintOpenGlance();                                 // an open finished run reads its PR from these rows
   pokeAskRuns(null, 'history');                          // Chat P3: a finished run card's Create pull request reads prHostAvailable()
@@ -23608,7 +23651,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     // an archived row never appears in historyAll, so without this the stub —
     // no projectDir, no title — sticks and the glance head prints "(no project)".
     || (state.historyArchived || []).find(matchRow);
-  if (row) histDetailState.record = row;
+  if (row) { histDetailState.record = row; askPanel?.pageChanged?.(); }   // the side column's Run chip names the run
   // A deep-linked ARCHIVED run on a cold feed: the payload's stamp says the row
   // lives in the archived feed, so fetch that feed now (its lazy load runs
   // refreshHdFromRow at the end, which repairs the stub record and repaints).
@@ -23697,6 +23740,7 @@ function histStatusMeta(p) {
   const family = HIST_STATUS_FAMILY[s]
     || ((p && p.live) || s === 'running' || s === 'starting' ? 'paused' : '');
   const word = s === 'pausing' ? 'Pausing…'
+    : p && p.resumePending ? 'Resuming…'   // a Resume in flight (the browser's flag)
     : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown';
   return { family: family || 'paused', word };
 }
@@ -23789,6 +23833,7 @@ function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
   const cross = !!(push && base && push.slug && base.slug && push.slug.toLowerCase() !== base.slug.toLowerCase());
   if (base && base.prSupported === false) return base.prReason || `${base.prHost || 'This host'} pull requests are not available`;
   if (cross && base.forge === 'azure') return `Azure DevOps pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
+  if (cross && base.forge === 'bitbucket') return `Bitbucket pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
   return cross ? `Cross-repo: ${push.owner}:${branch || ''} → ${base.slug} ${baseBranch}` : '';
 }
 
@@ -24142,7 +24187,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (!q('.shipit-base-wrap').hidden) payload.baseBranch = q('.shipit-base-branch').value;
     if (!q('.shipit-remotes').hidden) {
       const baseRemote = (modal._remotes || []).find((r) => r.name === q('.shipit-base-remote').value);
-      if (baseRemote && baseRemote.forge === 'azure') payload.forge = 'azure';
+      if (baseRemote && (baseRemote.forge === 'azure' || baseRemote.forge === 'bitbucket')) payload.forge = baseRemote.forge;
     }
     try {
       const res = await fetch('/api/pr/describe', {
@@ -24280,7 +24325,7 @@ function rdRepaintOpenGlance(pipelineId = null) {
   paintRdGlance(runDetailState.screen, r);
 }
 
-/** Some PR host is reachable (gh, or an Azure DevOps token); the Ship-it modal and the server name the
+/** Some PR host is reachable (gh, or an Azure DevOps or Bitbucket token); the Ship-it modal and the server name the
  *  missing one for the chosen remote (D8). */
 function prHostAvailable() { return gitOn() && !!(state.ghAvailable || state.adoAvailable); }
 
@@ -25033,7 +25078,7 @@ function hdSyncPr(projectKey, id, row) {
   rdRepaintOpenGlance(id);
   if (!histDetailState || !histDetailState.screen || !histDetailState.data) return;
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
-  if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
+  if (row) { histDetailState.record = row; askPanel?.pageChanged?.(); }   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdHeaderMeta(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
@@ -25128,7 +25173,7 @@ const runSetupKnown = new Map();   // pipeline id -> setup object | null
 async function paintRunSavePreset(btn, run, isCurrent) {
   if (!btn) return;
   const id = run && run.id;
-  if (!id || !flagOn('runPresets')) { btn.hidden = true; btn.onclick = null; return; }
+  if (!id) { btn.hidden = true; btn.onclick = null; return; }
   if (!runSetupKnown.has(id)) {
     btn.hidden = true;
     const r = await mcpApi('GET', `/api/pipelines/${encodeURIComponent(id)}/setup`);
@@ -25313,6 +25358,14 @@ function paintHdActions(screen, record, data) {
   // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
   if (split && resumeBtn) split.hidden = resumeBtn.hidden;
 }
+// A live run in this tab has the last word (its frames are newer than any row). A parked one only ends, and a stop from
+// another tab or the CLI reaches only the row, so an ended row wins over it. (A resume mints a new, live run.)
+function hdShownStatus(tabRun, savedStatus) {
+  if (!tabRun) return { status: savedStatus };
+  if (tabRun.resumePending) return { status: tabRun.status, resumePending: true };
+  const ended = RD_TERMINAL.includes(savedStatus) && HD_RESUMABLE.has(tabRun.status);
+  return { status: ended ? savedStatus : tabRun.status };
+}
 function paintHdLive(screen, record, data) {
   // Three exits (the busy return, the not-resumable return, the end): the model has the last word after each.
   try {
@@ -25327,6 +25380,9 @@ function paintHdLive(screen, record, data) {
     // (refreshHdFromRow), so a stop or resume from another tab, the CLI or chat lands here — else
     // the detail loaded with the page (a deep link's minimal record carries no status).
     const savedStatus = String((record && record.status) || (data.state && data.state.status) || '').toLowerCase();
+    // The header's status pip: Pausing… / Resuming… at the click, as the bar does, else whichever of the run in this
+    // tab and the saved row is further along (a stop from another tab or the CLI reaches only the row).
+    paintHistStatusIcon(screen.querySelector('.hd-sic'), hdShownStatus(hdPipelineRun(record), savedStatus));
     // An archived run is a read-only record: no resume, and the stop refuses it (stopPausedRun).
     const archived = !!(data.state && data.state.archivedAt);
     // A paused saved run no run in this tab stands for is stopped through its row (POST /api/stop
@@ -25344,6 +25400,8 @@ function paintHdLive(screen, record, data) {
     const runId = live ? live.runId : '';
     if (pauseBtn.dataset.runId !== runId) { pauseBtn.dataset.runId = runId; pauseBtn.disabled = false; }
     if (live && live.status === 'pausing') pauseBtn.disabled = true;
+    // A refused Pause (pauseRun's CANNOT_PAUSE) has no request in flight: the first status past pausing re-arms it.
+    else if (pauseBtn.dataset.awaitStatus) { delete pauseBtn.dataset.awaitStatus; pauseBtn.disabled = false; }
 
     const split = screen.querySelector('.hd-resume-split');
     const resumeBtn = screen.querySelector('.hd-resume');
@@ -25706,8 +25764,8 @@ function paintHdFacts(screen, record, data) {
   const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
   paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
-    // D16: a finished run always has the row while runTags is on, so "Add cost tags" stays reachable.
-    costTags: flagOn('runTags') ? (tags || { tags: [], missing: [] }) : null });
+    // D16: a finished run always has the row, so "Add cost tags" stays reachable.
+    costTags: tags || { tags: [], missing: [] } });
   // Only when the row was rebuilt (its control is gone): re-appending on every glance repaint would move an open
   // editor's input out of the DOM and back, dropping focus and the caret while someone types.
   const row = screen.querySelector('.rd-kv [data-fact="tags"] .rd-cost-row');
@@ -25719,10 +25777,9 @@ function paintHdTags(screen, record, data) {
     row2: screen.querySelector('.hd-row2') };
   const st = data.state;
   // The open editor already in its host is left in place: moving it out and back drops focus and the caret.
-  const held = (where, host) => flagOn('runTags') && hdTagEditor && hdTagEditor.pipelineId === st.id && hdTagEditor.host === where
+  const held = (where, host) => hdTagEditor && hdTagEditor.pipelineId === st.id && hdTagEditor.host === where
     && hdTagEditor.el.parentElement?.parentElement === host;
   for (const [where, host] of Object.entries(hosts)) if (host && !held(where, host)) host.querySelector('.hd-tags')?.remove();
-  if (!flagOn('runTags')) return;
   const repaint = () => { paintHdTags(screen, record, data); paintHdFacts(screen, record, data); };
   for (const [where, host] of Object.entries(hosts)) {
     if (!host || held(where, host)) continue;
@@ -25971,6 +26028,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
   btn.dataset.resumeState = 'busy';
   const label = labelEl.textContent;
   labelEl.textContent = 'Resuming…';
+  showResumePending(p.id, true);
   try {
     const res = await fetch('/api/resume', {
       method: 'POST',
@@ -25979,6 +26037,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
     });
     const data = await safeJson(res);
     if (!res.ok) {
+      showResumePending(p.id, false);
       // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
       const again = await policyRefusalRetry(data, res.status);
       if (again) {
@@ -26037,12 +26096,14 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
       if (feat) nr.branchFeature = feat;
     }
     if (prior) { alerts.onResolved(alertRun(prior)); runs.delete(prior.runId); }   // drop the superseded paused run (no split/dup)
+    showResumePending(p.id, false);   // any other parked copy of it
     hideViewer();
     updateNavCounts();
     // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
     landOnResumedRun(data.runId, { fromRunId: prior ? prior.runId : '', pipelineId: p.id, navigate });
     renderRunningView();
   } catch (err) {
+    showResumePending(p.id, false);
     // Survives later repaints ON THE DETAIL SCREEN (it is never rebuilt). A LIST
     // card is rebuilt wholesale by renderHistory(), which drops flag, label and
     // title together — status quo, unchanged here.
@@ -26308,7 +26369,7 @@ function runMoreItems(screen, { away = [], extra = [] } = {}) {
   const offered = (sel) => { const b = screen.querySelector(sel); return b && !b.hidden ? b : null; };
   const items = [...away];
   const preset = offered('.hd-save-preset, .rd-save-preset');
-  if (preset && flagOn('runPresets')) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
+  if (preset) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
   items.push(...extra);
   // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
   if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', hint: 'Ctrl+`', onSelect: () => terminalPane?.toggle() });
@@ -26923,6 +26984,7 @@ function refreshHdFromRow() {
     : rowNewer(row.baseCheck, st.branch?.baseCheck);
   if (baseChanged && reloadHistDetail()) return;
   histDetailState.record = row;
+  askPanel?.pageChanged?.();
   const { screen, data } = histDetailState;
   paintHdHeaderMeta(screen, row, data);
   const held = paintHdBanners(screen, row, data);       // corrects in BOTH directions
@@ -28251,6 +28313,7 @@ function buildHdDiff(sec, record, data) {
     rowsHost.replaceChildren(tree);
     rowsHost.scrollTop = scrolled;
     paintCommentBadges();
+    if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     return firstNode;
   }
 
@@ -28773,10 +28836,9 @@ function buildHdOverview(sec, record, data) {
     paintActionsStrip(strip, record.id, runActionQuery(record.projectDir, record).toString());
   }
   if (checks.length) wrap.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
-  if (shapeFirstOn()) {   // spec D7: the same groups as the run page
-    const cl = renderChecklistGroups(document, data.reviews);
-    if (cl) wrap.appendChild(cl);
-  }
+  // spec D7: the same groups as the run page
+  const cl = renderChecklistGroups(document, data.reviews);
+  if (cl) wrap.appendChild(cl);
 
   // 2) Stat cards.
   const grid = document.createElement('div');
@@ -29492,6 +29554,7 @@ function buildRdDiff(sec, ctx) {
       if (!first || key === picked) first = { entry, btn };
     }
     pick(first.entry, first.btn);
+    if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     rdPaintTabBadges(runDetailState.screen || sec, rdCtx(r));
   };
   refresh.addEventListener('click', () => { void load(); });
@@ -30284,7 +30347,6 @@ function paintRunSkills(host, mount) {
  *  re-fetches when its status or a node's state moves (a review cycle finished); a live run that is not shaping
  *  never fetches for it. */
 function paintRdChecklists(host, run) {
-  if (!shapeFirstOn()) { host.hidden = true; host.replaceChildren(); delete host.dataset.sig; return; }
   const live = !RD_TERMINAL.includes(run.status);
   if (live && !isShapingRun(run)) { host.hidden = true; return; }
   const sig = `${run.status}|${JSON.stringify(run.nodeStatus || {})}`;
@@ -30640,6 +30702,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
   // Any pop-up on screen owns Escape — modal-guard.mjs hands it to the one on top — and the detail screen
   // stays. Capture phase, so this reads the state BEFORE the guard closes that pop-up.
   if (dialogOpen(document)) return;
@@ -30667,6 +30730,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
@@ -30688,6 +30752,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker (in <body>: the side column's Chats list too) closes first
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'projects') return;
   if (!el.projShell || !el.projShell.classList.contains('detail-open')) return;
@@ -31217,6 +31283,7 @@ function askRunSnapshot(r) {
     title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    ...(r.resumePending ? { resumePending: true } : {}),
     labels: Array.isArray(r.labels) ? r.labels : [],
     ...(r.shaping ? { shaping: r.shaping } : {}),
     ...(isGitRun(r) ? {} : { workMode: workModeOf(r), changes: null }),
@@ -31319,7 +31386,7 @@ function chatPaintQuestion(ref, host) {
     if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
   }
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
-    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, shapeFirstOn()) };
+    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true) };
 }
 // ---- Runs redesign slice 4: the one model's actions (D5, D6) and a run's group (D7), for the chat card and the pages.
 /** D7: the group a pipeline belongs to, as the list's group row, with its place in it. */
@@ -31470,7 +31537,7 @@ const chatRunControls = {
     // `shaping` is memory-only: after a reload only withShaper's card knows the feature.
     const fid = (snap && snap.shaper && snap.shaper.card && snap.shaper.card.feature && snap.shaper.card.feature.id)
       || (snap && snap.shaping && snap.shaping.feature && snap.shaping.feature.id) || null;
-    const home = groupHomeOf((ref && ref.pipelineId) || (snap && snap.pipelineId) || '', shapeFirstOn() ? (fid || '') : '');
+    const home = groupHomeOf((ref && ref.pipelineId) || (snap && snap.pipelineId) || '', fid || '');
     return home ? home.row : null;
   },
   memoFor: (key) => (key ? memoFor(key) : null),
@@ -31509,7 +31576,7 @@ function gateWireCopy(r, wireId) {
 // awaiting-input state is surfaced separately by the pulsing '?' end marker, so
 // it no longer hijacks the dot color.
 function runDotClass(r) {
-  if (r.status === 'starting' || r.status === 'pausing') return 'grey-pulse';
+  if (r.status === 'starting' || r.status === 'pausing' || r.resumePending) return 'grey-pulse';
   // Paused: parked + resumable. Static amber (NOT the red "did-not-complete" dot,
   // and NOT a pulse — nothing is running). Checked before the terminal branch
   // because a paused run is _finished.
@@ -31558,6 +31625,7 @@ function paintAutoBadge(el, stepper) {
 // pause is never mislabeled "awaiting answers".
 function statusPill(r) {
   if (r.status === 'pausing') return { family: 'amber', text: 'Pausing…' };
+  if (r.resumePending) return { family: 'amber', text: 'Resuming…' };
   if (r.status === 'paused') {
     // A cost pause names its cause so the pill alone explains why the run parked.
     if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
@@ -33054,7 +33122,7 @@ function runsLiveItem(r) {
     checks: rec && typeof rec.checks === 'number' ? rec.checks : null,
     ...(folder ? { changes: terminal ? { state: (fch && fch.state) || 'pending' } : null } : {}),
     files: folder ? (ffc ? ffc.total : null) : (rec && typeof rec.files === 'number' ? rec.files : null),
-    tags: flagOn('runTags') ? (r.tags || []) : [],
+    tags: r.tags || [],
     labels: flagOn('runLabels') ? (r.labels || []) : [],
     // S2: top-level so doneWord(it) / liveRowState read the outcome; rdModelRun spreads ...r so the model sees it too.
     ...(r.successful === false ? { successful: false, outcomeReason: r.outcomeReason || null } : {}),
@@ -33230,9 +33298,8 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
         if (GROUP_PAGE.id === id && GROUP_PAGE.route === route) { GROUP_PAGE.resolving = false; paintGroupPageNow(); }
       });
     }
-    if (route === 'feature' && shapeFirstOn()) {
-      // F47: a replaced feature id carries on as the newest one; the route answers the current id, or 404. It needs
-      // the Shaper flag (requireShapeFirst), so with the flag off the id is used as it is.
+    if (route === 'feature') {
+      // F47: a replaced feature id carries on as the newest one; the route answers the current id, or 404.
       GROUP_PAGE.resolving = true;
       const res = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
       if (GROUP_PAGE.id !== id || GROUP_PAGE.route !== route) return;
@@ -33291,7 +33358,7 @@ function paintGroupPageNow() {
   // The run page's Logs tab is Expert-only, so the group page offers its Logs (links to those tabs) at Expert too.
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
-  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature' && shapeFirstOn(), logs: levelAtLeast('expert'), labels }, {
+  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -33363,8 +33430,8 @@ function groupAction(row, id, btn) {
   switch (id) {
     case 'stop': case 'archive': return runBulkAction(id, [rowTarget(row)]);
     case 'ship': {
-      // One ship flow: a feature (Shaper on), a chain and a user group ship through the group Create PR dialog.
-      if ((row.groupKind === 'feature' && shapeFirstOn()) || row.groupKind === 'chain' || row.groupKind === 'user') {
+      // One ship flow: a feature, a chain and a user group ship through the group Create PR dialog.
+      if (row.groupKind === 'feature' || row.groupKind === 'chain' || row.groupKind === 'user') {
         // The slot's own Create PR passes no button; a head button (a partly shipped group) passes itself.
         const slot = document.querySelector('#group-detail .gpage-card .rd-pr-slot');
         return groupShip(row, slot, btn && btn.dataset && btn.dataset.head === 'ship' ? btn : null);
@@ -33447,7 +33514,7 @@ function runsHistItem(p) {
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
     files: folder ? (fc ? fc.total : null) : (typeof p.files === 'number' ? p.files : null),
     base: gitOn() ? baseRowNote(p.baseCheck) : '',
-    tags: flagOn('runTags') ? (p.tags || []) : [],
+    tags: p.tags || [],
     labels: flagOn('runLabels') ? (p.labels || []) : [],
     // S2: top-level so doneWord(p) / histRowState read the outcome; histRun threads it into the model's raw run.
     ...(p.successful === false ? { successful: false, outcomeReason: p.outcomeReason || null } : {}),
@@ -33573,6 +33640,7 @@ function paintRunsList() {
     runsUi.reveal = '';
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
+  paintLanded(host, runsUi);   // Add to group: the moved row keeps its brief fill across repaints (list-dom.mjs)
 }
 /** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows and their open members only: a
  *  top-level single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
@@ -33710,7 +33778,8 @@ function paintRunsChip(model) {
   chip.querySelector('.runs-view-chip-t').textContent = text;
   paintRunsLabelFilter();
 }
-document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', groupBy: 'none', person: '', labels: [] }));
+// The × clears what the chip names (the filter); the grouping is not on the chip, so it stays.
+document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', person: '', labels: [] }));
 
 // ── Run labels (slice 1): the Label filter, the selection bar's Label action ──
 async function sendJson(method, url, body) {
@@ -33819,6 +33888,11 @@ function runsLetterKey(action, item) {
     if (n) runsUi.focusKey = runsNavKey(n);
     focusRunsNav(n || roveRunsList());
   });
+  if (runsUi.sel.size && action === 'add-to-group') {
+    const t = pipelineTargets(selectedTargets());
+    if (t.length) openAddToGroup(runsBulkGroupBtn(), t, [...runsUi.sel.keys()][0]);
+    return;
+  }
   if (runsUi.sel.size && (action === 'stop' || action === 'archive' || action === 'delete')) {
     const act = action === 'archive' && runsUi.view.show === 'archived' ? 'restore' : action;
     const plan = planBulk(act, selectedTargets());
@@ -33861,11 +33935,12 @@ function runsListOwnsEscape() {
 }
 function overlayUp() {
   return [el.confirmModal, el.viewerCard, el.pluginModal, el.reportModal, document.getElementById('stop-modal'), document.getElementById('shipit-modal')]
-    .some((m) => m && !m.classList.contains('hidden')) || !!document.querySelector('.keys-modal');
+    .some((m) => m && !m.classList.contains('hidden')) || !!document.querySelector('.keys-modal, .chat-group-modal');
 }
 document.addEventListener('keydown', (e) => {
   // openMenu (workflows/menu.mjs) and the group picker stop their Escape at the menu, so it never gets here.
   if (e.key !== 'Escape' || e.defaultPrevented || overlayUp() || document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;
+  if (e.target?.closest?.('#ask-side')) return;   // Ask worca beside the page: an Escape typed in the side column is the chat's
   if (!runsUi.sel.size && !runsUi.selecting) return;
   e.preventDefault();
   runsUi.sel.clear();
@@ -33876,6 +33951,7 @@ document.addEventListener('keydown', (e) => {
 // ? anywhere on the Runs page (not while typing, not over a menu or a modal): the one Keyboard shortcuts sheet.
 document.addEventListener('keydown', (e) => {
   if (e.defaultPrevented || document.querySelector('section.view[data-view="runs"]')?.classList.contains('hidden') !== false) return;
+  if (e.target?.closest?.('#ask-side')) return;   // Ask worca beside the page: a ? typed in the side column opens the Chat keys
   const t = e.target;
   if (listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
     targetIsRow: false, inField: !!t.closest?.(LIST_FIELD) }) !== 'help') return;
@@ -33908,7 +33984,7 @@ function paintRunsBar() {
   }
   if (!on) return;
   const m = barModel(selectedTargets());
-  paintBulkBar(bar, { label: m.label, actions: { stop: m.stop, archive: m.archive, delete: m.delete } });
+  paintBulkBar(bar, { label: m.label, actions: { stop: m.stop, archive: m.archive, delete: m.delete, group: { count: pipelineTargets(selectedTargets()).length } } });
   const labelBtn = bar.querySelector('[data-bulk="label"]');
   if (labelBtn) {
     labelBtn.disabled = !labelTargets(selectedTargets()).length;
@@ -33960,6 +34036,7 @@ document.getElementById('runs-bulk')?.addEventListener('click', (e) => {
   if (!b) return;
   if (b.dataset.bulk === 'cancel') { runsUi.sel.clear(); runsUi.selecting = false; runsUi.anchorKey = null; paintRunsList(); return; }
   if (b.dataset.bulk === 'label') { void openRunsLabelPicker(b); return; }
+  if (b.dataset.bulk === 'group') { openAddToGroup(b, pipelineTargets(selectedTargets()), [...runsUi.sel.keys()][0]); return; }
   runBulkAction(b.dataset.bulk);
 });
 
@@ -34002,7 +34079,10 @@ function runsRowMenuItems(r, more) {
       ? { label: 'Restore', key: 'archive', hint: k('E'), disabled: !back.apply.length, title: skipText(back), onSelect: () => runBulkAction('restore', [t]) }
       : { label: 'Archive', key: 'archive', hint: k('E'), disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
     ...(adv ? [{ label: 'Delete', key: 'delete', hint: k('Backspace'), disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
-    ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'), onSelect: () => openAddToGroup(more, r) }] : []),
+    // A run in a user group can move (it leaves its group); a native feature slice never joins another. On a selected
+    // row it adds the whole selection, as the bar's Group N and G do.
+    ...(adv && r.kind !== 'chain' && r.pipelineId && !(g && !adhoc) ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'),
+      onSelect: () => openAddToGroup(more, runsUi.sel.has(r.key) ? pipelineTargets(selectedTargets()) : [{ pipelineId: r.pipelineId, title: r.title }], r.key) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
     ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
@@ -34012,7 +34092,7 @@ function runsRowMenuItems(r, more) {
  *  group page's header ⋯; the Overview draws no ⋯ of its own (clarify answer 3). Fetched per open: the feature object is
  *  only loaded once Overview is mounted, and the header ⋯ works on every tab. */
 async function groupFeatureMenuItems(anchor, row) {
-  if (row.groupKind !== 'feature' || !shapeFirstOn()) return [];
+  if (row.groupKind !== 'feature') return [];
   const res = await fetch(`/api/shape/features/${encodeURIComponent(row.groupId)}`).catch(() => null);
   const f = res && res.ok ? await res.json().catch(() => null) : null;
   if (!f) { notify({ tone: 'err', title: 'That did not work', detail: "The feature's actions could not be loaded." }); return []; }
@@ -34043,14 +34123,73 @@ async function openGroupMoreMenu(anchor, row) {
   toggleMenu({ doc: document, anchor, align: 'end', label: `More for ${row.title}`,
     items: [...feature, ...(feature.length && items.length ? [{ sep: true }] : []), ...items] });
 }
-function openAddToGroup(anchor, r) {
-  const groups = (state.runGroups || []).map((g) => {
+// Add to group (the shared picker, group-add.mjs, decisions 5 and 6): the picker, New group's dialog, the toast with Undo
+// and the focus on the moved run.
+const runsGroupApi = async (method, url, body, signal) => {
+  try {
+    const res = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, signal });
+    const out = await res.json().catch(() => ({}));
+    return res.ok ? out : { error: out.error || 'The server did not answer.', status: res.status };
+  } catch (err) { return err && err.name === 'AbortError' ? { aborted: true } : { error: 'The server is not reachable.', status: 0 }; }
+};
+/** A refusal runsGroupApi answered, as the Error actionError words (httpError needs a Response). */
+const httpErrorOf = (out) => Object.assign(new Error(out?.error || 'That did not work.'), { status: out?.status });
+const runsBulkGroupBtn = () => document.querySelector('#runs-bulk [data-bulk="group"]');
+/** An opener worth focusing: still in the page and not inside a hidden bar (after an add the bar hides with the selection). */
+const shownEl = (n) => (n && n.isConnected && !n.closest('[hidden]') ? n : null);
+/** `items`: [{ pipelineId, title }]; `rowKey`: the first item's row (Undo's focus); `anchor` the opener (re-queried). */
+function openAddToGroup(anchor, items, rowKey) {
+  if (!items.length) return;
+  const pids = items.map((x) => x.pipelineId);
+  const own = items.length === 1 ? groupOfRun(pids[0])?.id : '';
+  const groups = (state.runGroups || []).filter((g) => g.id !== own).map((g) => {
     const it = runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members });
     return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run) }) };
   });
-  openGroupPicker({ doc: document, anchor, groups,
-    onPick: (g) => groupCall(`/api/run-groups/${encodeURIComponent(g.id)}/members`, 'POST', { pipelineId: r.pipelineId }, `Added to ${g.title}`, 'add the run to the group'),
-    onCreate: (title) => groupCall('/api/run-groups', 'POST', { title, pipelineId: r.pipelineId }, `Added to ${title}`, 'create the group') });
+  const key = anchor.dataset.rowKey;
+  const opener = () => shownEl(key ? el.runsList.querySelector(`.runs-more[data-row-key="${cssEscape(key)}"]`) : null)
+    || shownEl(anchor) || shownEl(runsBulkGroupBtn());
+  const before = { keys: [...runsUi.sel.keys()], selecting: runsUi.selecting, anchorKey: runsUi.anchorKey, rowKey };
+  const done = (out) => afterRunsAdd(out, { items, before, opener });
+  openGroupPicker({ doc: document, anchor: opener, groups, recent: readRecentGroups(localStorage, 'runs'),
+    onPick: async (g) => done(await runsGroupApi('POST', `/api/run-groups/${encodeURIComponent(g.id)}/members`, { pipelineIds: pids })),
+    onCreate: async (title) => done(await runsGroupApi('POST', '/api/run-groups', { title, nameSource: 'user', pipelineIds: pids })),
+    onNew: () => openGroupDialog({ doc: document, mode: 'create', count: items.length, noun: 'run', icon, opener: opener(),
+      fallback: () => roveRunsList(), suggestOn: flagOn('smartRunNaming'),
+      adapter: { suggest: (signal) => runsGroupApi('POST', '/api/run-groups/suggest-name', { pipelineIds: pids }, signal),
+        create: ({ name, nameSource }) => runsGroupApi('POST', '/api/run-groups', { title: name, nameSource, pipelineIds: pids }) },
+      onDone: (_g, out) => done(out) }) });
+}
+async function afterRunsAdd(out, { items, before, opener }) {
+  if (!out || out.error || out.aborted) { notify(actionError('add the runs to the group', httpErrorOf(out))); return; }
+  const gid = (out.group && out.group.id) || out.groupId;
+  noteRecentGroup(localStorage, 'runs', gid);
+  runsUi.sel.clear();
+  runsUi.selecting = false;
+  runsUi.anchorKey = null;
+  runsUi.groupsToggled.set(`chain:${gid}`, true);   // a collapsed target group opens
+  await loadRunGroups();
+  paintRunsList();
+  const sec = collapsedSectionOf(runsUi.lastModel, `chain:${gid}`);
+  if (sec) { runsUi.collapsed.delete(sec); persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed); paintRunsList(); }
+  const want = new Set(items.map((x) => x.pipelineId));
+  const node = [...el.runsList.querySelectorAll('.runs-item[data-level="member"] > a.runs-row')].find((a) => want.has(a.dataset.pipelineId));
+  landOn({ host: el.runsList, rove: runsRove, state: runsUi, node, fallback: () => opener() || roveRunsList() });
+  const skipped = (out.skipped || []).filter((s) => s.reason === 'feature').length;
+  const added = Array.isArray(out.added) ? items.filter((x) => out.added.includes(x.pipelineId)) : items;
+  notify(addedNotice({ group: (out.group && out.group.title) || '', titles: added.map((x) => x.title), noun: 'run',
+    skipped, skipWhy: 'part of a Shaper feature', undo: out.undo ? () => undoRunsAdd(out.undo, before) : null }));
+}
+async function undoRunsAdd(token, before) {
+  const out = await runsGroupApi('POST', '/api/run-groups/undo', { token });
+  if (out.error) { notify({ tone: 'err', title: 'Could not undo', detail: out.error }); return; }
+  await loadRunGroups();
+  runsUi.sel.clear();
+  if (before.keys.length) runsUi.sel.selectAll(before.keys);
+  runsUi.selecting = before.selecting;
+  runsUi.anchorKey = before.anchorKey;
+  paintRunsList();
+  landOn({ host: el.runsList, rove: runsRove, state: runsUi, node: before.rowKey ? runsRove.find([`row:${before.rowKey}`]) : null, fallback: () => roveRunsList() });
 }
 const removeRunFromGroup = (r) => groupCall(`/api/run-groups/members/${encodeURIComponent(r.pipelineId)}`, 'DELETE', null, 'Removed from the group', 'remove the run from the group');
 async function groupCall(url, method, body, ok, what) {
@@ -35430,7 +35569,13 @@ function crpSyncSheet() {
 function installChatRunPanel() {
   chatPanelRouter = routeChatRunPanel;
   chatPanelContext = chatRunPanelContext;
-  chatDeps.openRunPanel = openChatRunPanel;
+  // Ask worca beside the page (L9): a run card in the side column opens the run's own page (no run panel in 440px);
+  // where the column covers the page it steps aside so that page shows (uncover).
+  chatDeps.openRunPanel = (ref, opts) => {
+    if (askPanel?.host?.() !== 'dock') return openChatRunPanel(ref, opts);
+    askSide?.uncover();
+    return chatOpenRunPage(ref, opts);
+  };
   if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { routeChatRunPanel, closeChatRunPanel, chatRunPanelContext, openChatRunPanel });
   const [view, param] = parseHash();
   const segs = view === 'chat' && currentShownView === 'chat' ? runPanel.panelSegments(param) : [];
@@ -35601,7 +35746,7 @@ function paintGroupLine(el, pipelineId, title, home) {
   el.dataset.sig = 'add';
   const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rd-group-add', textContent: 'Add to group…' });
   b.prepend(icon(document, 'plus', 12));
-  b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
+  b.addEventListener('click', () => openAddToGroup(b, [{ pipelineId, title }]));
   el.replaceChildren(b);
 }
 /** Run 3 (D6): the breadcrumb, from the run's group, and the facts rows' hidden state. The breadcrumb is the split
@@ -35879,7 +36024,7 @@ function activityOverviewValue(results) {
 // s2 (D11): the run target's dimensions, fetched once per project dir for the page session.
 const runTagDimsCache = new Map();   // projectDir → dims[] once answered, else { waiting: Set of repaint callbacks }
 function runRequiredKeys(projectDir, onLoad) {
-  if (!projectDir || !flagOn('runTags')) return [];
+  if (!projectDir) return [];
   const got = runTagDimsCache.get(projectDir);
   if (Array.isArray(got)) return got.filter((d) => d.required).map((d) => d.key);
   if (got) { if (onLoad) got.waiting.add(onLoad); return []; }
@@ -35895,7 +36040,6 @@ function runRequiredKeys(projectDir, onLoad) {
 }
 // D8: a workspace run has no single project, so it gets chips but never a missing slot (pass target 'workspace').
 const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
-  if (!flagOn('runTags')) return null;
   const have = new Set((tags || []).map((t) => parseTag(t).tag?.key));
   const missing = (target === 'workspace' ? [] : runRequiredKeys(projectDir, onLoad)).filter((k) => !have.has(k));
   return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
@@ -36798,8 +36942,8 @@ function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
 // replaces the panel's own header row (title + count badge).
 function askHeading(r, pq) {
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
-  // A step card says its title once, in its own head (shaper-cards D16): one wording, the gate on and off.
-  if (isStepCard(pq, r, shapeFirstOn())) return stepTitle(pq, who);
+  // A step card says its title once, in its own head (shaper-cards D16).
+  if (isStepCard(pq, r, true)) return stepTitle(pq, who);
   const n = Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 1);
   switch (pq.kind) {
     case 'workflow': return 'Review the workflow';
@@ -36816,7 +36960,7 @@ function paintShaperWait(screen, r) {
   const glance = screen.querySelector('.rd-glance');
   const host = screen.querySelector('.rd-questions');
   if (!glance || !host) return;
-  const wait = shaperWait(r, shapeFirstOn());
+  const wait = shaperWait(r, true);
   if (wait) glance.dataset.shaperWait = wait;
   else delete glance.dataset.shaperWait;
   // The Chat panel moved .rd-questions into its own head (presentRunScreenInPanel): leave it there.
@@ -36864,7 +37008,7 @@ function paintRdQuestions(screen, r) {
   host.hidden = pq == null;                    // drives the wr-rise entry
   const head = host.querySelector('.rd-ask-head');
   // A step card carries its own head (title + chip): the run page's heading stays empty for it (shaper-cards D16).
-  if (head) head.textContent = pq && !isStepCard(pq, r, shapeFirstOn()) ? askHeading(r, pq) : '';
+  if (head) head.textContent = pq && !isStepCard(pq, r, true) ? askHeading(r, pq) : '';
   if (panel && panel.dataset.qid !== key) {
     renderQpanel(r, host);                     // host contains the .qpanel node
     // Stamp '' rather than deleting: `clearQpanel` already removed the attribute,
@@ -37327,7 +37471,7 @@ function paintRdHeader(screen, r) {
   else if (stopBtn.title === STOP_INTERRUPTED) { stopBtn.disabled = false; stopBtn.title = ''; }
   // Run 3 (D13): every run page's bar is the primary action, Run after, Stop and ⋯ (D31's fold, for every run now; CSS
   // hides Away mode and the terminal, and ⋯ drives them; a shaped run's bar folds Run after too).
-  const shapedBar = shapeFirstOn() && isShapingRun(r);
+  const shapedBar = isShapingRun(r);
   screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
   const barMore = screen.querySelector('.rd-bar-more');
   if (barMore) barMore.hidden = false;
@@ -37377,10 +37521,12 @@ function paintRdHeader(screen, r) {
   // Rule: widen freely, narrow only when the control's ACTION flipped (the run
   // really did park or resume, at which point pauseRun's disable is meaningless),
   // when the button is already enabled (nothing is in flight), or when the disable
-  // is this painter's own budget gate (a gated button cannot have been clicked).
+  // is this painter's own budget gate (a gated button cannot have been clicked), or when pauseRun's refusal left it
+  // waiting on the server's status (awaitStatus: nothing in flight).
   const gated = pauseBtn.dataset.gated === '1';
-  if (!busy && (actionChanged || !pauseBtn.disabled || gated)) {
+  if (!busy && (actionChanged || !pauseBtn.disabled || gated || pauseBtn.dataset.awaitStatus)) {
     pauseBtn.disabled = !!totalBlocked || r.status === 'pausing';
+    if (r.status !== 'pausing') delete pauseBtn.dataset.awaitStatus;
   }
   pauseBtn.dataset.gated = totalBlocked ? '1' : '';
   pauseBtn.title = totalBlocked
@@ -38436,8 +38582,6 @@ function parseSettingsParam(param = '') {
   const i = param.indexOf('/');
   const tab = i === -1 ? param : param.slice(0, i);
   const sub = i === -1 ? '' : param.slice(i + 1);
-  if (tab === 'tags' && !flagOn('runTags')) return ['general', ''];   // the Tags tab exists only while runTags is on
-  if (tab === 'presets' && !flagOn('runPresets')) return ['general', ''];
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
 // The canonical param for a tab: General is plain '#settings', never '#settings/general'.
@@ -38482,9 +38626,8 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
-  // Runs redesign slice 4 (D16): #feature/ID is the group page whatever the Shaper flag (a feature group stays listed,
-  // and linked, after the flag goes off); only Overview and the replaced-id lookup need the flag. Both need an id.
-  if (name === 'feature' && !param) return showView(shapeFirstOn() ? 'chat' : 'runs', '');
+  // Runs redesign slice 4 (D16): #feature/ID is the group page; a bare #feature goes to Chat.
+  if (name === 'feature' && !param) return showView('chat', '');
   if (name === 'group' && !param) return showView('runs', '');
   // A caller that still names a Settings tab that became a page ('settings' + 'providers…')
   // lands on that page: parseSettingsParam would read the unknown tab as General.
@@ -38680,6 +38823,7 @@ function showView(name, param = '') {
   }
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
+  else requirementsView.leave();   // the Feature chat phone sheet makes the page inert; leaving the view puts it back
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -38707,6 +38851,7 @@ function showView(name, param = '') {
     if (prevView !== 'projects') void loadProjectsView();   // routes the LIVE hash after its fetch
     else routeProjectDetail(param);
   }
+  syncAskSide(name);
   if (name === 'chat') enterChatView(param, prevView);
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
@@ -39043,10 +39188,38 @@ function chatRoute(threadId, { replace = false } = {}) {
   }
   location.hash = target;
 }
+/** Ask worca beside the page: which host the ONE chat page has on this route (showView, after the leave-Chat block and
+ *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows: no
+ *  column (no top bar). Every other page: the button, and the column when the person left it open. */
+function syncAskSide(name) {
+  if (!askSide || !askPanel) return;
+  const btn = $('#topnav-ask');
+  if (name === 'chat') {
+    askSide.setAvailable(false);
+    if (btn) btn.hidden = true;
+    const section = $('section.view[data-view="chat"]');
+    if (section && askPanel.root.parentNode !== section) section.appendChild(askPanel.root);
+    askPanel.setHost('page');
+    if (askHistoryOnChat) { askHistoryOnChat = false; askPanel.setHistoryOpen(true, { persist: false }); }
+    return;
+  }
+  askHistoryOnChat = false;
+  if (btn) btn.hidden = name === 'workflows';
+  askSide.setAvailable(name !== 'workflows');
+}
+/** Below 1081px the side column covers the main column: the page behind it is inert while it shows (with the phone drawer's). */
+function paintAskSideCover() {
+  const covers = !!(askSide && askSide.shown()) && sideTier(window.innerWidth || 0) !== 'push';
+  $('.main')?.toggleAttribute('inert', covers || mobileNavOpen);
+}
 /** The Chat row's dot (ask-panel onUnread): a reply in the chat the page shows finished while Chat was not on screen. */
 function paintChatUnread(on) {
   const dot = document.getElementById('nav-chat-unread');
   if (dot) dot.hidden = !on;
+  // Ask worca beside the page (L13): the header toggle mirrors the Chat row's dot.
+  const askDot = document.getElementById('topnav-ask-dot');
+  if (askDot) askDot.hidden = !on;
+  document.getElementById('topnav-ask')?.setAttribute('aria-label', on ? 'Ask worca, new reply' : 'Ask worca');
   const row = document.querySelector('.nav button[data-nav="chat"]');
   if (!row) return;
   if (on) row.setAttribute('aria-label', 'Chat, new reply');
@@ -39061,6 +39234,19 @@ for (const a of document.querySelectorAll('.brand a.logo, .brand a.logo-mark')) 
  *  WITHOUT sending, so several can stack and the user presses send once. */
 function openChat({ text = '', threadId = null, quote = null } = {}) {
   const id = typeof threadId === 'string' && CHAT_THREAD_RE.test(threadId) ? threadId : '';
+  // Ask worca beside the page (L7): a page with the side column opens the chat there — no navigation. Chat and
+  // Workflows have no column (available() is false), so they keep going to the Chat page below.
+  if (askSide && askSide.available()) {
+    closeOpenViewer(document, { restore: false });   // the route to Chat closed an artifact popup: never open the column under one
+    askEntryThread = id || null;
+    try { askSide.show({ focus: true }); } finally { askEntryThread = null; }
+    if (id) askPanel?.open({ threadId: id });
+    if (quote) askPanel?.setQuote(quote);
+    const text1 = String(text ?? '').trim();
+    if (text1) askPanel?.appendToComposer(text1);
+    else document.querySelector('#ask-side [data-chat-page] textarea.ask-input')?.focus();
+    return;
+  }
   // Already on Chat and no chat named: stay put, the address too — a run panel open over the chat must not close.
   if (!(currentShownView === 'chat' && !id)) {
     const target = id ? `chat/${id}` : 'chat';
@@ -39094,7 +39280,8 @@ function chatOpenRunPage(ref = {}, opts = {}) {
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
     chat: {
-      deps: chatDeps, enterChatView, openChat, getPageContext,
+      deps: chatDeps, enterChatView, openChat, getPageContext, getPageChips, getPageScope, paintChatUnread,
+      get askSide() { return askSide; },
       setPanelRouter(fn) { chatPanelRouter = typeof fn === 'function' ? fn : null; },
       setPanelContext(fn) { chatPanelContext = typeof fn === 'function' ? fn : null; },
     },
@@ -39201,7 +39388,9 @@ function getPageContext() {
   // tools' page-following project resolves to it.
   if (ctx.view === 'projects' && param) {
     const parsed = parseProjParam(param);
-    if (parsed && projectByKey(parsed.key)) { ctx.view = 'project-detail'; ctx.projectKey = parsed.key; return ctx; }
+    // Ask worca beside the page: pageProjectKey names the page on screen even when the chat's scope is elsewhere
+    // (projectKey is a target key the panel replaces with the scope's).
+    if (parsed && projectByKey(parsed.key)) { ctx.view = 'project-detail'; ctx.projectKey = parsed.key; ctx.pageProjectKey = parsed.key; return ctx; }
   }
   if (ctx.view === 'new' && state.runTarget === 'workspace' && state.selectedWorkspaceId) {
     ctx.workspaceId = state.selectedWorkspaceId;
@@ -39216,7 +39405,7 @@ function getPageContext() {
   // A workspace page names its workspace (§9.1), like a project page names its project.
   if (ctx.view === 'workspaces' && param) {
     const ws = parseWsParam(param);
-    if (ws && workspaceById(ws.id)) { ctx.workspaceId = ws.id; return ctx; }
+    if (ws && workspaceById(ws.id)) { ctx.workspaceId = ws.id; ctx.pageWorkspaceId = ws.id; return ctx; }
   }
   // The Team metrics page's selection: scope id, range, group-by and the active filters, so
   // "why did spend jump?" refers to the chart on screen. Ids and enum slugs only — the server
@@ -39238,6 +39427,27 @@ function getPageContext() {
   const dir = selectedProjectPath();
   if (dir) { ctx.projectDir = dir; ctx.projectSource = 'fallback'; }
   return ctx;
+}
+/** Ask worca beside the page: the composer's chips for the page on screen (ask-page-chips.mjs), named with what this
+ *  tab knows — the live run's or the open saved run's title and status, the project's or the workspace's name. */
+function getPageChips() {
+  const ctx = getPageContext();
+  const names = {};
+  if (ctx.runId || ctx.pipelineId) {
+    const live = ctx.runId ? runs.get(ctx.runId) : null;
+    const saved = !live && histDetailState && histDetailState.id === ctx.pipelineId ? histDetailState.record : null;
+    const row = live || saved;
+    if (row && row.title) names.run = row.title;
+    if (row && row.status) names.runStatus = row.status;
+  }
+  if (ctx.pageProjectKey) names.project = projectByKey(ctx.pageProjectKey)?.name || '';
+  if (ctx.pageWorkspaceId) names.workspace = workspaceById(ctx.pageWorkspaceId)?.name || '';
+  return pageChips(ctx, names);
+}
+/** The project or workspace the page on screen is about: a new chat in the side column starts there (pageScopeOf).
+ *  The panel passes the page minus the chips the person left out; no argument = the whole page. */
+function getPageScope(ctx) {
+  return pageScopeOf(ctx && typeof ctx === 'object' ? ctx : getPageContext(), state.projects, state.workspaces);
 }
 
 function openNewPipeline(prefill) {
@@ -39599,7 +39809,7 @@ async function applyPreset(id) {
       await refreshBranches(selectedProjectPath());
       setSelectValueAdding(el.sourceBranch, s.sourceBranch);
     }
-    if (flagOn('runTags') && Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
+    if (Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
     applyPresetSwitches();
     await renderWorkflowConfig(state.workflowId);
   } finally {
@@ -39756,7 +39966,7 @@ const presetChangeError = (r) => notify({ tone: 'err', title: 'Could not change 
 // Settings › Presets (run-presets-view.mjs): Use / Rename / Duplicate / Edit scope / Delete.
 async function loadPresetsView() {
   const host = document.getElementById('presets-list');
-  if (!host || !flagOn('runPresets')) return;
+  if (!host) return;
   if (!(state.projects || []).length) await loadProjects();
   await withWorkspaces();   // Edit scope offers every workspace
   await loadPresets();
@@ -39783,17 +39993,7 @@ async function loadPresetsView() {
   }));
 }
 
-if (flagOn('runPresets')) void loadPresets();
-const offPresetsFlag = onFlagChange('runPresets', (on) => {
-  if (histDetailState?.screen) void paintHdSavePreset(histDetailState.screen, histDetailState.data);
-  if (chatHome && lastChatHomeFlags) chatHome.update({ flags: { ...lastChatHomeFlags, runPresets: on } });
-  if (on) { void loadPresets(); return; }
-  if (state.preset) leavePresetMode();
-  state.presets = [];
-  paintPresetMenu();
-});
-// Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
-if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
+void loadPresets();
 
 // Smart run naming (Labs): built once; every handler checks flagOn('smartRunNaming') itself, so it is inert while off.
 if (el.title && el.featureBranch && el.prompt && el.branchType && el.titleRetry) {
@@ -39819,21 +40019,25 @@ if (el.smartNamingSwitch) {
     api: (method, body) => mcpApi(method, '/api/flags', body), msgEl: $('#smartNamingMsg') });
 }
 
-// The account menu's Keep awake row (UI/UX review F): the keepAwake flag, one source with Settings › Labs.
-// The whole row is the switch; a refused change shows in its tip and as a toast, a lock in its tip.
-const KEEP_AWAKE_TIP = 'Keeps the computer awake while runs are working. The display may still turn off.';
-if (el.acctKeepAwake) {
+// The account menu's Keep awake row (UI/UX review F): the keepAwake setting (default on), painted by
+// loadSettings. The whole row is the switch; a refused change shows as a toast and the row flips back.
+function paintKeepAwakeRow(on) {
   const row = el.acctKeepAwake;
-  window.__np.offKeepAwakeSwitch?.();
-  window.__np.offKeepAwakeSwitch = bindFlagSwitch(row, 'keepAwake', {
-    api: (method, body) => mcpApi(method, '/api/flags', body),
-    onMsg: (text, { error }) => {
-      const tip = text ? `${KEEP_AWAKE_TIP} (${text})` : KEEP_AWAKE_TIP;
-      row.title = tip;
-      row.setAttribute('aria-description', tip);
-      if (error) notify({ tone: 'err', title: 'Could not change Keep awake', detail: text, key: 'keep-awake' });
-    } });
+  if (!row) return;
+  row.classList.toggle('on', on);
+  row.setAttribute('aria-checked', String(on));
 }
+el.acctKeepAwake?.addEventListener('click', async () => {
+  const want = el.acctKeepAwake.getAttribute('aria-checked') !== 'true';
+  paintKeepAwakeRow(want);
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keepAwake: want }) });
+    if (!res.ok) throw new Error((await safeJson(res)).error || `HTTP ${res.status}`);
+  } catch (err) {
+    paintKeepAwakeRow(!want);
+    notify({ tone: 'err', title: 'Could not change Keep awake', detail: err.message || 'network error', key: 'keep-awake' });
+  }
+});
 
 // ---- Away mode on the run page and New run --------------------------------
 // state.awayMode: the user-level GET /api/away-mode body (Settings card, boot, settings-changed).
@@ -40060,7 +40264,6 @@ function homePinned(id) { return isPinned(homePins || DEFAULT_HOME_PINS, id); }
 
 /** The Chat home's presets (#712 slice 2): the viewer's list, fresh per visit, and New run's current target. */
 async function chatHomePresets() {
-  if (!flagOn('runPresets')) return { presets: [], target: null };
   await loadPresets();
   return { presets: state.presets, target: presetTargetNow(), workflowNames: state.presetWorkflowNames };
 }
@@ -40192,10 +40395,6 @@ async function chatHomeFlags() {
     const data = await safeJson(res);
     if (res.ok && data && Array.isArray(data.sources)) out.tasks = data.sources.some((s) => s && s.type === 'plugin');
   } catch { /* none known */ }
-  // Read after the awaits: a boot's first load, started before the hello, would otherwise keep a stale gate.
-  out['shapeFirst'] = shapeFirstOn();
-  out.runPresets = flagOn('runPresets');
-  lastChatHomeFlags = { ...out };
   return out;
 }
 /** A quick action's prefill: an empty composer takes the text as is (a trailing space kept, the caret at the end);
@@ -40228,7 +40427,8 @@ askPanel = createAskPanel({
   },
   confirm: confirmModal,
   getPageContext,
-  openNewPipeline,
+  // Ask worca beside the page (R11): Open in New run from the chat is a page it opens, so a covering column steps aside.
+  openNewPipeline: (prefill) => { askSide?.uncover(); openNewPipeline(prefill); },
   openComposer: (id) => { openWorkflowFromAsk(id); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
@@ -40245,10 +40445,75 @@ askPanel = createAskPanel({
   onRoute: chatRoute,
   onUnread: paintChatUnread,
   summariseCommands: () => chatSummariesPref,
+  // Ask worca beside the page: the page on screen as chips and as a new side chat's scope, and the column's head buttons.
+  getPageChips,
+  getPageScope,
+  sideActions: {
+    hide: () => askSide?.hide(),
+    // L8: the thread moves to the Chat page; the column stays wanted, so the next page shows it again.
+    // An empty chat goes as chat/new (home): a bare #chat would open another, unread chat instead (enterChatView).
+    openInChat: (id) => { location.hash = id ? `chat/${id}` : 'chat/new'; },
+    openHistoryInChat: () => { askHistoryOnChat = true; location.hash = askPanel.threadId() ? `chat/${askPanel.threadId()}` : 'chat/new'; },
+    // R11: a page the chat opens itself (a topic row, Manage in Connectors, a run card's Open run) shows where the
+    // column covers the page.
+    uncover: () => askSide?.uncover(),
+  },
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
-// Command summaries (#911): read the person's switch once, and follow the flag.
-Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
+// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat and
+// Workflows (syncAskSide decides per route). Made here, after the panel and before the boot route below.
+if ($('#ask-side') && $('#topnav-ask')) {
+  askSide = createAskSide({
+    doc: document,
+    win: window,
+    storage: localStorage,
+    aside: $('#ask-side'),
+    button: $('#topnav-ask'),
+    getTermW: () => (terminalPane?.isOpen() ? (parseInt(document.body?.style.getPropertyValue('--term-w'), 10) || 460) : 0),
+    onShow: ({ focus, button }) => {
+      const host = $('#ask-side [data-ask-side-host]');
+      if (host && askPanel.root.parentNode !== host) host.appendChild(askPanel.root);
+      askPanel.setHost('dock');
+      // L13: the header button lands where the Chat row does, on the chat whose reply lit the dot; an entry point naming a
+      // chat (openChat({ threadId })) opens that one; a route or any other entry point keeps the chat the column showed.
+      const want = askEntryThread || (button ? askPanel.unreadThreadId() : null);
+      askPanel.open(want ? { threadId: want } : undefined, { focus });
+    },
+    onHide: () => askPanel?.close(),
+    onLayout: () => {
+      const was = document.body.classList.contains('rail-collapsed');
+      applySidebarCollapsed();
+      // A fold the column forces (or gives back) repaints the menu as the rail tier does: Runs' title, the run tiles, the bands.
+      if (document.body.classList.contains('rail-collapsed') !== was) repaintNavMode();
+      paintAskSideCover();
+    },
+  });
+  // L12: the terminal pane narrows the page too — its open, its close and a drag of its width (--term-w on the body)
+  // re-ask the rail question.
+  if (typeof window.MutationObserver === 'function') {
+    const body = document.body;
+    const termSig = () => `${body.classList.contains('term-open')}:${body.style.getPropertyValue('--term-w')}`;
+    let term = termSig();
+    new window.MutationObserver(() => {
+      if (document.body !== body) return;                    // a torn-down page (tests boot one app per window)
+      const now = termSig();
+      if (now !== term) { term = now; askSide.relayout(); }
+    }).observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
+  }
+  // A Details tab or a Diff file changes the page context with no hashchange (replaceState, a class): the chips follow.
+  $('.main')?.addEventListener('click', () => { if (askSide.shown()) queueMicrotask(() => askPanel?.pageChanged?.()); });
+  // A page link in the chat (a run, a project it names) opens that page: where the column covers the page it steps
+  // aside so the page shows. A link the chat handles itself, or one opened in a new tab, leaves it be.
+  $('#ask-side').addEventListener('click', (e) => {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e.target?.closest?.('a[href^="#"]')) askSide.uncover();
+  });
+}
+// Command summaries (#911) and the account menu's Keep awake row: read the person's switches once.
+Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => {
+  setChatSummariesPref(d && d.chat);
+  paintKeepAwakeRow(!(d && d.keepAwake === false));
+}).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
 // panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
@@ -40278,7 +40543,11 @@ pinpoint.addSurface(askPanel.root, {
 // The Chat home (worca Chat P6) inside the page's [data-chat-home], mounted before the boot route so the first Chat
 // render already has it (the section is still hidden here: the visit starts when the route shows it).
 mountChatHome();
-askRunStore.subscribe((runId, type) => { if (type !== 'log') chatHome?.update(); });   // a log line changes no tile
+askRunStore.subscribe((runId, type) => {
+  if (type === 'log') return;                                // a log line changes no tile
+  chatHome?.update();
+  if (askSide?.shown()) askPanel?.pageChanged?.();           // Ask worca beside the page: a live run's name and status reach its chip
+});
 
 
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
