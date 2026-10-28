@@ -416,3 +416,10 @@ test('server: the browser cannot drive an export op (D18): /api/sources/call ref
   const r = await call('POST', '/api/sources/call', { plugin: 'jira-source', sourceId: 'jira', op: 'createTicket', profile: 'acme', args: { ticket: {} } });
   assert.deepEqual([r.status, r.json.error], [400, 'op "createTicket" is not allowed for this source']);
 });
+
+test('server (a guard: it passes before A6.1 too): the browser cannot drive an import op (A6.1 D2): /api/sources/call refuses all four', async () => {
+  for (const op of ['importOptions', 'searchTickets', 'importTicket', 'downloadAttachment']) {
+    const r = await call('POST', '/api/sources/call', { plugin: 'jira-source', sourceId: 'jira', op, profile: 'acme', args: {} });
+    assert.deepEqual([r.status, r.json.error], [400, `op "${op}" is not allowed for this source`], op);
+  }
+});

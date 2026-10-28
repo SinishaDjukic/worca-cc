@@ -3,12 +3,18 @@
 // the projects and the search, the preview (D5–D9) and the create (D10–D12, below). The Requirements code knows only "a source that
 // can import" (D2): every call runs here, server-side, through callSource with the connection's profile (D15). Nothing is written to
 // the tracker. A failure is A6's reach sentence (design U1: Import and Export read alike); the log keeps its first line only.
+import { createHash } from 'node:crypto';
 import { callSource as shimCallSource } from '../plugin-shim.mjs';
-import { RequirementsError } from './spec.mjs';
-import { getExportSetup, linkByTicket } from './store.mjs';
+import { tx } from '../db.mjs';
+import { redactAskText } from '../ask/redact.mjs';
+import { RequirementsError, LIMITS, clip } from './spec.mjs';
+import { getExportSetup, linkByTicket, createFeature, saveExportLink, appendTurn, listAttachments } from './store.mjs';
 import { trackersWith, defaultConnection, connectionLabel, sameConn, reachSentence, firstLine } from './export.mjs';
 import { exportDate } from './ticket.mjs';
-import { IMPORT_LIMITS, processTicket, pickDefaults } from './ticket-import.mjs';
+import { IMPORT_LIMITS, processTicket, pickDefaults, commentsFileName, commentsMarkdown } from './ticket-import.mjs';
+import { REQ_ATTACH_LIMITS, checkNewFiles, displayName } from './attachments.mjs';
+import { addAttachments } from './attachment-job.mjs';
+import { insertDownloadRow, queueDownloads } from './attachment-fetch.mjs';
 
 /** D17: importOptions, searchTickets and importTicket (which may page through comments). */
 export const IMPORT_TIMEOUT_MS = 60_000;
@@ -117,4 +123,103 @@ export async function previewImport(scope, body = {}, d = {}) {
   const { fingerprint: _fp, ...shown } = p;
   return { ...shown, descriptionFile: p.descriptionFile ? { name: p.descriptionFile.name, bytes: p.descriptionFile.bytes } : null,
     connection: connectionLabel(conn), linkedTo: linked ? { id: linked.id, title: linked.title } : null };
+}
+
+// ---- the create (D10–D12): the ticket read again, then the feature at once; downloads run afterwards ----
+
+/** A generated text file (the comments, the long description): A8's text rules hold for it as for an upload (plan review S9):
+ *  no NUL (it would be inlined into a prompt) and well-formed UTF-8 (a lone surrogate from the tracker becomes U+FFFD). */
+const textFile = (name, body) => {
+  const text = String(body).replace(/\u0000/g, '').toWellFormed();
+  const data = Buffer.from(text, 'utf8');
+  return { name, kind: 'text', mime: 'text/markdown', data, text, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex') };
+};
+const ids = (v) => [...new Set((Array.isArray(v) ? v : []).map((x) => String(x)).slice(0, 200))];
+
+/** D10: the second read. The form's title, description and criteria are the product owner's; the comments and attachments are taken
+ *  by id from this fresh read (one no longer there is named in notOnTicket). A8's caps for the New feature form count the form's own
+ *  files, the generated ones and the downloads (D9, on the tracker's sizes). Writes nothing. The read keeps the newest 50 comments
+ *  (D8), so a comment the product owner picked that newer comments pushed out between the preview and Start is reported as "no
+ *  longer on SHOP-124" too (rare; accepted, plan review Minor 6). */
+export async function prepareImport(scope, ft, { diskFiles = [] } = {}, d = {}) {
+  if (!ft || typeof ft !== 'object' || Array.isArray(ft)) throw new RequirementsError('BAD_REQUEST', 'fromTicket must be an object');
+  const { conn, t } = await sourceFor(ft, d);
+  const key = keyOf(ft.key);
+  const raw = await readTicket(d, t, conn, key, scope);
+  const p = processTicket(raw, { tracker: t.name });
+  const wantComments = ids(ft.comments);
+  const wantFiles = ids(ft.attachments);
+  const comments = p.comments.filter((c) => wantComments.includes(c.id));
+  const downloads = p.attachments.filter((a) => wantFiles.includes(a.id) && !a.refused);
+  const notOnTicket = { key: p.key, comments: wantComments.filter((id) => !p.comments.some((c) => c.id === id)),
+    attachments: wantFiles.filter((id) => !downloads.some((a) => a.id === id)).map((id) => ({ id, reason: (p.attachments.find((a) => a.id === id) || {}).refused || null })) };
+  const generated = [
+    ...(comments.length ? [textFile(commentsFileName(p.key), commentsMarkdown(p.key, comments))] : []),
+    ...(ft.descriptionFile === true && p.descriptionFile ? [textFile(p.descriptionFile.name, p.descriptionFile.text)] : []),
+  ];
+  checkNewFiles('feature', [], [...generated, ...diskFiles]);   // A8: names, duplicates, 10 files
+  const all = [...generated, ...diskFiles, ...downloads];
+  if (all.length > REQ_ATTACH_LIMITS.files) {
+    throw new RequirementsError('BAD_REQUEST', `${displayName(all[REQ_ATTACH_LIMITS.files].name)} was not added: a feature takes up to ${REQ_ATTACH_LIMITS.files} files.`);
+  }
+  let total = 0;
+  for (const x of all) {
+    total += Number(x.bytes) || 0;
+    if (total > REQ_ATTACH_LIMITS.requestBytes) {
+      throw new RequirementsError('BAD_REQUEST', `${displayName(x.name)} was not added: a new feature's files can be up to 100 MB in all; add more on the feature page.`);
+    }
+  }
+  const criteria = (Array.isArray(ft.criteria) ? ft.criteria : []).slice(0, LIMITS.items).map((x) => ({ text: redactAskText(clip(x, LIMITS.item)), source: p.key }));
+  return { conn, tracker: t.name, key: p.key, url: p.url, meta: p.meta || {}, fingerprint: p.fingerprint, criteriaField: p.criteria.from === 'field' ? p.criteria.field : null,
+    criteria, comments: comments.length, generated, diskFiles, downloads, notOnTicket };
+}
+
+/** D11: the link's fields, from the ticket: its own issue type and priority (an Update keeps them), the label, where criteria are. */
+const importFields = (plan) => ({
+  projectName: plan.meta.projectName || plan.meta.project || null, issueType: plan.meta.type ? plan.meta.type.id : null,
+  issueTypeName: plan.meta.type ? plan.meta.type.name : null, priority: plan.meta.priority ? plan.meta.priority.id : null,
+  priorityName: plan.meta.priority ? plan.meta.priority.name : null, labels: ['worca'],
+  criteria: plan.criteriaField ? { target: 'field', field: plan.criteriaField.id, name: plan.criteriaField.name } : { target: 'description' },
+});
+
+/** D10–D12: the feature, its criteria, A6's link (unless another feature follows the ticket) and the `imported` turn in one transaction;
+ *  then the generated files (read at once), the downloading rows and their queue, then the form's own files. Nothing awaits a download.
+ *  A file that cannot be stored never undoes the feature (A8): its name goes to filesNotStored. Accepted (plan review Minor 5): the
+ *  turn's `comments` count (D14's "its comments are in …") is written with the feature, before the comments file is stored, so in the
+ *  rare case that file lands in filesNotStored the thread line still names it and the round's <attachments> simply lacks it. */
+export function createImported(scope, { title, description } = {}, plan, { by = null } = {}, d = {}) {
+  const linked = linkByTicket({ ...plan.conn, key: plan.key });   // D12: one ticket follows one feature
+  const at = new Date().toISOString();
+  const f = tx(() => {
+    const made = createFeature({ ...scope, title, description, criteria: plan.criteria }, { by });
+    if (!linked) {
+      saveExportLink(made.seq, { ...plan.conn, trackerProject: plan.meta.project || plan.key.split('-')[0], key: plan.key, url: plan.url, createdAt: at,
+        exportedAt: at, spec: made.spec, fields: importFields(plan), fingerprint: plan.fingerprint, origin: 'import' }, { by });
+    }
+    appendTurn(made.seq, { kind: 'export', payload: { action: 'imported', tracker: plan.tracker, key: plan.key, url: plan.url, at, linked: !linked,
+      ...(linked ? { linkedTo: linked.id } : {}), criteria: made.spec.criteria.map((c) => c.id), comments: plan.comments,
+      files: plan.downloads.map((a) => a.name) } }, { by });
+    return made;
+  });
+  const owner = { type: 'feature', id: f.seq };
+  const from = { tracker: plan.tracker, key: plan.key };
+  const filesNotStored = [];
+  const lost = (names, err) => {
+    console.error(`requirements: storing the files of new feature ${f.seq} failed:`, err && err.message ? err.message : err);
+    const have = new Set(listAttachments('feature', f.seq).map((r) => r.name));
+    filesNotStored.push(...names.filter((n) => !have.has(n)));
+  };
+  const store = (files, opts) => {
+    if (!files.length) return;
+    try { addAttachments(owner, files, { by, ...opts }, d); } catch (err) { lost(files.map((x) => x.name), err); }
+  };
+  store(plan.generated, { from });   // the comments (and description) file first, as board 35 lists them
+  let rows = [];
+  try {
+    rows = tx(() => plan.downloads.map((a) => insertDownloadRow(owner, { conn: plan.conn, tracker: plan.tracker, key: plan.key, id: a.id, name: a.name,
+      bytes: a.bytes, from }, { by })));
+  } catch (err) { lost(plan.downloads.map((a) => a.name), err); }
+  queueDownloads(owner, rows.map((r) => r.id), { by }, d);
+  store(plan.diskFiles, {});
+  return { seq: f.seq, filesNotStored, notOnTicket: plan.notOnTicket };
 }
