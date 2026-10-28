@@ -187,3 +187,77 @@ test('board 18/36: the Build chip for a download that failed says the Files card
   assert.equal(text(chips[2]), 'support-macro.txt Downloading…');
   m.view.destroy();
 });
+
+const PREVIEW_URL = `${F}/export/preview`;
+const AGAIN = (over = {}) => ({ mode: 'update', tracker: 'Jira', key: 'SHOP-124', ticket: { description: '## Goal\n\nx\n' }, comment: null, previewHash: 'h1',
+  changes: [{ line: 'Goal: 1 line added', id: null }, { line: 'Added R-po-4 A parcel that is picked up cannot be cancelled.', id: 'R-po-4' }],
+  fields: null, link: { key: 'SHOP-124', madeOn: '27 Oct', lastOn: '27 Oct', origin: 'import', importedOn: '27 Oct', sinceImport: true }, edited: false, gone: false, ...over });
+const ready = (over = {}) => feature({ busy: false, status: 'done', rounds: 3, state: 'ready', attachments: [],
+  readiness: { ok: true, passed: 6, total: 6, checks: [], overridable: false }, ...over });
+
+test('D7, D19: a criterion from SHOP-124 links to the ticket; one from a file stays the file tag', async () => {
+  const m = await openFeature(ready());
+  const tags = [...m.host.querySelectorAll('.req-src-tag')];
+  assert.deepEqual([tags[0].tagName, tags[0].href, tags[0].target, tags[0].rel, tags[0].getAttribute('aria-label')],
+    ['A', 'https://acme.test/browse/SHOP-124', '_blank', 'noopener', 'SHOP-124, opens the ticket in Jira in a new tab']);
+  assert.equal(text(tags[1]), 'from refund-matrix.pdf');
+  m.view.destroy();
+});
+
+test('D12, board 35: History names the import, linked or not', async () => {
+  const m = await openFeature(ready({ export: XV({ history: [
+    { action: 'imported', tracker: 'Jira', key: 'SHOP-124', url: LINK.url, when: '27 Oct, 09:12', by: 'Ann Example', linked: true, linkedTo: null },
+    { action: 'imported', tracker: 'Jira', key: 'SHOP-123', url: 'https://acme.test/browse/SHOP-123', when: '27 Oct, 09:12', by: null, linked: false, linkedTo: 'FEAT-7' }] }) }));
+  const lines = [...m.host.querySelectorAll('.req-history-list li')].map((li) => [text(li.firstChild), text(li.querySelector('.hint'))]);
+  assert.deepEqual(lines, [['Imported SHOP-124 from Jira · 27 Oct, 09:12', 'Ann Example'], ['Started from SHOP-123 in Jira, not linked: FEAT-7 is. · 27 Oct, 09:12', null]]);
+  m.view.destroy();
+});
+
+test('D11 (board 35): Export to Jira… on an imported feature without a setup opens "Export FEAT-8 to Jira" with the import\'s words', async () => {
+  const m = await openFeature(ready(), { [`POST ${PREVIEW_URL}`]: () => AGAIN() });
+  q('menu-export', m.host).click();
+  q('mi-export', m.host).click();
+  await settle();
+  const dl = document.querySelector('.req-dlg-wrap [role="dialog"]');
+  assert.equal(text(dl.querySelector('h2')), 'Export FEAT-8 to Jira');
+  assert.equal(text(dl.querySelector('#req-again-desc')), 'FEAT-8 started from SHOP-124 on 27 Oct. The spec has changed since. What should happen?');
+  const choice = (ui) => { const l = q(ui).closest('label'); return [text(l.querySelector('b')), text(l.querySelector('.hint'))]; };
+  assert.deepEqual(choice('again-update'), ['Update SHOP-124',
+    "Rewrites its summary, description and fields. Its description was written in Jira; Jira keeps the old text in the ticket's history."]);
+  assert.deepEqual(choice('again-comment'), ['Add a comment to SHOP-124', 'Lists what changed since the import. The description stays.']);
+  assert.equal(text(dl.querySelector('#req-again-chg')), 'What changed since the import (27 Oct)');
+  assert.equal(m.calls.filter((c) => c.url.startsWith('/api/requirements/export-setup')).length, 0, 'no setup asked for');
+  m.view.destroy();
+});
+
+test("D11: after the first export it is A6's dialog, saying when the ticket was imported", async () => {
+  const after1 = { ...LINK, exportedAt: '2026-10-28T10:00:00Z', lastOn: '28 Oct', sinceImport: false };
+  const m = await openFeature(ready({ export: XV({ link: after1 }) }), { [`POST ${PREVIEW_URL}`]: () => AGAIN({ link: { ...AGAIN().link, lastOn: '28 Oct', sinceImport: false } }) });
+  q('menu-export', m.host).click();
+  q('mi-export', m.host).click();
+  await settle();
+  const dl = document.querySelector('.req-dlg-wrap [role="dialog"]');
+  assert.equal(text(dl.querySelector('h2')), 'Export FEAT-8 again');
+  assert.equal(text(dl.querySelector('#req-again-desc')), 'SHOP-124 was imported on 27 Oct. The spec has changed since. What should happen?');
+  assert.equal(text(dl.querySelector('#req-again-chg')), 'What changed since the last export (28 Oct)');
+  m.view.destroy();
+});
+
+test('D11: Create a new ticket without a setup opens Set up export first, then the preview of a new ticket', async () => {
+  const SETUP_URL = '/api/requirements/export-setup/project/shop-1';
+  const m = await openFeature(ready(), {
+    [`POST ${PREVIEW_URL}`]: (b) => (b.mode === 'new' ? AGAIN({ mode: 'new', key: null, link: null }) : AGAIN()),
+    [`GET ${SETUP_URL}`]: { setup: null, trackers: [{ plugin: 'jira-source', sourceId: 'jira', name: 'Jira', multiProfile: true, profiles: [{ id: 'acme', label: 'acme.atlassian.net (Cloud)' }] }],
+      defaultProfile: { plugin: 'jira-source', sourceId: 'jira', profile: 'acme' } },
+    [`POST ${SETUP_URL}/options`]: { projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }], issueTypes: [{ value: '10001', label: 'Story' }], priorities: [], criteriaFields: [], doneStatus: null },
+    [`PUT ${SETUP_URL}`]: (b) => ({ setup: b }),
+  });
+  q('menu-export', m.host).click();
+  q('mi-export', m.host).click();
+  await settle();
+  q('again-new', m.host.ownerDocument).click();
+  q('again-continue', m.host.ownerDocument).click();
+  await settle();
+  assert.equal(text(document.querySelector('.req-dlg-wrap [role="dialog"] h2')), 'Set up export for shop');
+  m.view.destroy();
+});

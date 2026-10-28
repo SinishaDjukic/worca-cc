@@ -1653,9 +1653,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const unsendable = (a) => a.sendable === false;
   const cannotGo = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
   // a brief document's switch is "Send with every run": it speaks of runs and of interviews
+  const cannotGoDoc = (name) => `${name} cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.`;
   // the Files card's failed line for a tracker file whose download failed or was refused: the server's words (A6.1 D10)
   const downloadSaid = (a) => (a.error.code === 'DOWNLOAD' ? `${String(a.error.message || '')} The interview lists it by name only.` : String(a.error.message || ''));
-  const cannotGoDoc = (name) => `${name} cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.`;
   function filesForRun(f) {
     const files = Array.isArray(f.attachments) ? f.attachments : [];
     const docs = Array.isArray(f.briefDocuments) ? f.briefDocuments : [];
@@ -2349,6 +2349,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
    *  exists (case-insensitive), plain text once none does. */
   function srcTag(f, source) {
     if (!source) return null;
+    // A6.1 D7, D19: a criterion from the feature's own ticket links to it (the tag names the key; a key is not a file name). The link
+    // goes through the page's webHref guard, as exportChip (plan review S4); a URL it refuses leaves the plain tag below.
+    const l = linkOf(f);
+    const ticketHref = l ? webHref(l.url) : null;
+    if (ticketHref && String(source).toUpperCase() === String(l.key).toUpperCase()) {
+      return h('a', { class: 'req-src-tag req-src-ticket', href: ticketHref, target: '_blank', rel: 'noopener',
+        'aria-label': `${l.key}, opens the ticket in ${l.tracker || 'the tracker'} in a new tab` }, l.key, sharedIcon(document, 'external', 11));
+    }
     const k = String(source).toLowerCase();
     const all = [...(f.attachments || []), ...(f.briefDocuments || [])].filter(Boolean);
     const same = (name) => String(name || '').toLowerCase() === k;
@@ -3529,7 +3537,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function startExport(f, trigger) {
     const x = xOf(f);
     if (!x || !x.tracker || f.status === 'archived' || x.exporting) return;
-    if (!x.hasSetup) { void openSetup(f, { trigger, then: () => continueExport(f, trigger) }); return; }
+    // A6.1 D11: a linked feature updates or comments without a setup; only a new ticket needs one
+    if (!x.hasSetup && !linkOf(f)) { void openSetup(f, { trigger, then: () => continueExport(f, trigger) }); return; }
     continueExport(f, trigger);
   }
   /** After the setup (or with one): Not Ready asks for a reason first (D5); a feature with a ticket chooses what happens (D7);
@@ -3986,8 +3995,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const changes = h('div', { class: 'req-export-changes', role: 'group', 'aria-labelledby': 'req-again-chg', hidden: true });
     const note = h('p', { class: 'hint', hidden: true, text: 'The preview shows the result before anything is sent.' });
     const cont = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'again-continue', disabled: true,
-      onclick: () => { if (busy || !data) return; if (mode === 'comment') openComment(f, { reason, trigger }); else openPreview(f, { mode, reason, trigger }); } }, 'Continue');
-    const title = h('h2', { id: 'req-again-title', tabindex: '-1', text: `Export ${f.id} again` });
+      onclick: () => {
+        if (busy || !data) return;
+        if (mode === 'comment') openComment(f, { reason, trigger });
+        // A6.1 D11: a new ticket needs the export setup, which a feature that started from a ticket may not have yet
+        else if (mode === 'new' && !(xOf(f) || {}).hasSetup) void openSetup(f, { trigger, then: () => openPreview(f, { mode: 'new', reason, trigger }) });
+        else openPreview(f, { mode, reason, trigger });
+      } }, 'Continue');
+    const lk0 = linkOf(f) || {};
+    const title = h('h2', { id: 'req-again-title', tabindex: '-1',
+      text: lk0.origin === 'import' && lk0.sinceImport ? `Export ${f.id} to ${name}` : `Export ${f.id} again` });
     const card = h('section', { class: 'card req-dialog req-export req-export-again', role: 'dialog', 'aria-modal': 'true',
       'aria-labelledby': 'req-again-title', 'aria-describedby': 'req-again-desc' },
       // board 28: the alert (edited in Jira) under the choices, what changed and the note, so picking a choice moves no card
@@ -4018,18 +4035,32 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     function render() {
       const L = data.link;
       const changed = data.changes.length > 0;
-      desc.textContent = changed ? `${L.key} was made on ${L.madeOn}. The spec has changed since. What should happen?`
-        : `${L.key} was made on ${L.madeOn}. The spec has not changed since the last export (${L.lastOn}).`;
+      // A6.1 D11: an imported link says so: until the first export the dialog is about the import, then A6's with "was imported on"
+      const imported = L.origin === 'import';
+      const first = imported && L.sinceImport;
+      title.textContent = first ? `Export ${f.id} to ${name}` : `Export ${f.id} again`;
+      desc.textContent = first
+        ? (changed ? `${f.id} started from ${L.key} on ${L.importedOn}. The spec has changed since. What should happen?`
+          : `${f.id} started from ${L.key} on ${L.importedOn}. The spec has not changed since the import.`)
+        : imported
+          ? (changed ? `${L.key} was imported on ${L.importedOn}. The spec has changed since. What should happen?`
+            : `${L.key} was imported on ${L.importedOn}. The spec has not changed since the last export (${L.lastOn}).`)
+          : changed ? `${L.key} was made on ${L.madeOn}. The spec has changed since. What should happen?`
+            : `${L.key} was made on ${L.madeOn}. The spec has not changed since the last export (${L.lastOn}).`;
       if (data.gone) {
         modes.hidden = true; changes.hidden = true; note.hidden = true; cont.hidden = true;
         showFailure(box, goneError(L.key, name), ctx, { focus: false });   // load() places the focus once
         return;
       }
-      modes.replaceChildren(option('update', `Update ${L.key}`, 'Rewrites its summary, description and fields.'),
-        option('comment', `Add a comment to ${L.key}`, 'Lists what changed since the last export. The description stays.', !changed),
+      modes.replaceChildren(
+        option('update', `Update ${L.key}`, first ? `Rewrites its summary, description and fields. Its description was written in ${name}; ${name} keeps the old text in the ticket's history.`
+          : 'Rewrites its summary, description and fields.'),
+        option('comment', `Add a comment to ${L.key}`, first ? 'Lists what changed since the import. The description stays.'
+          : 'Lists what changed since the last export. The description stays.', !changed),
         option('new', 'Create a new ticket', 'For example when the feature was split.'));
       modes.hidden = false;
-      changes.replaceChildren(h('h3', { id: 'req-again-chg', text: `What changed since the last export (${L.lastOn})` }), ...data.changes.map(changeNode));
+      changes.replaceChildren(h('h3', { id: 'req-again-chg', text: first ? `What changed since the import (${L.importedOn})` : `What changed since the last export (${L.lastOn})` }),
+        ...data.changes.map(changeNode));
       changes.hidden = !changed;
       note.hidden = false;
       cont.disabled = false;
@@ -4164,6 +4195,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       created: (x) => [`Exported to ${tracker(x)} as `, keyLink(x)], new: (x) => [`Exported to ${tracker(x)} as `, keyLink(x)],
       updated: (x) => ['Updated ', keyLink(x), ` in ${tracker(x)}`], commented: (x) => ['Commented on ', keyLink(x), ` in ${tracker(x)}`],
       linked: (x) => ['Linked ', keyLink(x), ', which an earlier export made'], forgot: (x) => ['Forgot the link to ', keyLink(x)],
+      // A6.1 (board 35, D12): the import, linked to the ticket or not
+      imported: (x) => (x.linked === false ? [`Started from ${x.key} in ${tracker(x)}, not linked: ${x.linkedTo || 'another feature'} is.`]
+        : ['Imported ', keyLink(x), ` from ${tracker(x)}`]),
     };
     return h('section', { class: 'card req-history', 'aria-labelledby': 'req-history-h' },
       h('h3', { id: 'req-history-h', text: 'History' }),
