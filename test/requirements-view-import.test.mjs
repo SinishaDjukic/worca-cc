@@ -455,7 +455,7 @@ test('a preview answer that arrives after Back is dropped: nothing is painted in
 test('the comment and attachment checkboxes are described by the comment body and the kind and size', async () => {
   const m = await openNew();
   await toPreview(m);
-  const by = (ui) => (q(ui).getAttribute('aria-describedby') || '').split(/s+/).filter(Boolean).map((id) => text(document.getElementById(id)));
+  const by = (ui) => (q(ui).getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean).map((id) => text(document.getElementById(id)));
   assert.deepEqual(by('ipv-com-10231'), ['Picked per parcel.']);
   assert.deepEqual(by('ipv-att-10041'), ['Image · 840 KB']);
   const ids = [...dlg().querySelectorAll('[id]')].map((e) => e.id);
