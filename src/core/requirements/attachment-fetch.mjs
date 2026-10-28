@@ -180,17 +180,14 @@ async function runDownload(e) {
     d.writeBody(target, c.body);   // the checked bytes; never a rename of dest, which could have changed after the check (S7)
     try { chmodSync(target, FILE_MODE); } catch { /* no POSIX modes on Windows */ }
     if (e.cancelled || !getAttachment(row.id)) return;   // removed meanwhile: the body goes below
-    try {
-      updateAttachment(row.id, { kind: file.kind, mime: file.mime, bytes: file.bytes, sha256: file.sha256, status: 'reading', error: null }, { by: e.by });
-    } catch (err) {   // a twin stored in the same moment (the per-owner hash index)
-      console.error(`requirements: storing downloaded file ${row.id} failed:`, firstLine(err));
-      fail(row, 'REFUSED', 'it is already attached', e.by);
-      return;   // the body goes below
-    }
+    // Nothing awaits since the twin check, so a throw here is a database error (busy, full, I/O): the catch below fails the file
+    // with Try again (final review M1), and the body goes in finally.
+    updateAttachment(row.id, { kind: file.kind, mime: file.mime, bytes: file.bytes, sha256: file.sha256, status: 'reading', error: null }, { by: e.by });
     enqueueRead(e.owner, row.id, row.name, e.by, d);   // then exactly an A8 file (D9)
     target = null;   // the row owns its body now
   } catch (err) {
-    // M1: anything else (the folder, A8's store folder, the write, the validator, the read queue) fails the file with Try again
+    // M1: anything else (the folder, A8's store folder, the write, the validator, the row update, the read queue) fails the file
+    // with Try again
     console.error(`requirements: storing downloaded file ${row.id} failed:`, firstLine(err));
     if (!e.cancelled) fail(row, 'DOWNLOAD', 'Worca could not store it', e.by);
   } finally {

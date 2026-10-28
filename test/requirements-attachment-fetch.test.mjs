@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { tx } from '../src/core/db.mjs';
+import { getDb, tx } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { callSource, setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { createFeature, getFeature, getAttachment, listAttachments, listTurns } from '../src/core/requirements/store.mjs';
@@ -137,6 +137,27 @@ test('a body Worca cannot store (plan review M1): the file fails with Try again,
   assert.deepEqual([bodies(r.id), getDirs(), fetchJob.isDownloading(r.id)], [[], [], false]);
   assert.ok(logged.some((l) => /EBUSY/.test(l)) && !logged.some((l) => /second line/.test(l)), 'the first line only (M3)');
   assert.equal(fetchJob.redownload(own(f), now, {}, d).status, 'downloading');
+  await job.readsSettled(own(f));
+  assert.equal(getAttachment(r.id).status, 'done');
+});
+
+test('a database error after the store (final review M1): DOWNLOAD "Worca could not store it" with Try again, never a REFUSED; no body left', async () => {
+  setMockSourceResponses(null);
+  const f = feature();
+  const r = row(f, '10041', 'packing-slip.png', 860160);
+  getDb().exec(`CREATE TRIGGER fetch_store_fault BEFORE UPDATE ON req_attachments WHEN NEW.id = '${r.id}' AND NEW.status = 'reading' `
+    + "BEGIN SELECT RAISE(ABORT, 'database is locked (injected)'); END;");
+  const was = console.error;
+  console.error = () => {};
+  try {
+    fetchJob.queueDownloads(own(f), [r.id], { by: 'po' }, d);
+    await job.readsSettled(own(f));
+  } finally { console.error = was; getDb().exec('DROP TRIGGER fetch_store_fault'); }
+  const now = getAttachment(r.id);
+  assert.deepEqual([now.status, now.error.code, now.error.message],
+    ['failed', 'DOWNLOAD', 'Worca could not get this file from Jira: Worca could not store it.']);
+  assert.deepEqual([bodies(r.id), getDirs(), fetchJob.isDownloading(r.id)], [[], [], false]);
+  assert.equal(fetchJob.redownload(own(f), now, {}, d).status, 'downloading', 'Try again is offered');
   await job.readsSettled(own(f));
   assert.equal(getAttachment(r.id).status, 'done');
 });
