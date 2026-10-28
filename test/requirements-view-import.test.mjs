@@ -493,14 +493,17 @@ test('D9 (board 36, 6): a tick that would pass 10 files or 100 MB is disabled wi
   await toPreview(m);
   const tenth = q('ipv-att-30');
   assert.deepEqual([tenth.disabled, lastLine(tenth)], [true, 'A feature takes up to 10 files; 10 are picked.']);
+  assert.equal(tenth.closest('li').classList.contains('req-import-off'), true, 'a capped row looks off like a refused one');
   assert.deepEqual(describedBy(tenth), ['req-ipv-ameta-30', 'req-ipv-why-30'], 'the kind and size stay; the cap line comes last');
   q('ipv-att-20').click();
   assert.deepEqual([tenth.disabled, describedBy(tenth).includes('req-ipv-why-30'), document.getElementById('req-ipv-why-30').hidden], [false, false, true]);
   assert.deepEqual(describedBy(tenth), ['req-ipv-ameta-30'], 'only the kind and size once room is freed');
+  assert.equal(tenth.closest('li').classList.contains('req-import-off'), false, 'room made: the row looks on again');
   q('ipv-att-20').click();
   assert.equal(tenth.disabled, true, 'taking the room back disables it again');
   q('ipv-com-10231').click();
   q('ipv-com-10236').click();
+  assert.equal(q('ipv-att-20').closest('li').classList.contains('req-import-off'), false, 'a ticked row is never off');
   assert.equal(tenth.disabled, false, 'no comment picked: no comments file, one more room');
   m.view.destroy();
   const MB = 1024 * 1024;
@@ -509,6 +512,78 @@ test('D9 (board 36, 6): a tick that would pass 10 files or 100 MB is disabled wi
   await toPreview(h2);
   assert.equal(lastLine(q('ipv-att-44')), "Picked files are at 100 MB, a new feature's limit. Add more on the feature page.");
   h2.view.destroy();
+});
+
+/** Puts files on the New feature form (name, bytes) through its file input, as a pick would; sizes are faked, no memory is spent. */
+const formFiles = (specs) => {
+  const input = document.getElementById('req-new-files-input');
+  const files = specs.map(([name, bytes]) => { const f = new window.File(['x'], name, { type: 'application/pdf' }); Object.defineProperty(f, 'size', { value: bytes }); return f; });
+  Object.defineProperty(input, 'files', { value: files, configurable: true });
+  input.dispatchEvent(new window.Event('change'));
+};
+const MB = 1024 * 1024;
+/** Opens the preview over `over` (its attachments get one more, unticked: the probe), with the form already holding `form` files. */
+const capCase = async (form, over, probe = KB('99', 'probe.pdf', 1, { picked: false })) => {
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => PREVIEW({ comments: [], ...over, attachments: [...(over.attachments || []), probe] }) }));
+  formFiles(form);
+  await toPreview(m);
+  return { m, probe: q('ipv-att-99'), line: () => lastLine(q('ipv-att-99')) };
+};
+const FILES_LINE = 'A feature takes up to 10 files; 10 are picked.';
+const BYTES_LINE = "Picked files are at 100 MB, a new feature's limit. Add more on the feature page.";
+const smalls = (n) => Array.from({ length: n }, (_, i) => [`form-${i}.pdf`, 1024]);
+
+test("D9 caps: the form's own files count toward 10 files (10 cap one more, 9 do not)", async () => {
+  const ten = await capCase(smalls(10), {});
+  assert.deepEqual([ten.probe.disabled, ten.line()], [true, FILES_LINE]);   // kills: dropping form.count
+  ten.m.view.destroy();
+  const nine = await capCase(smalls(9), {});
+  assert.equal(nine.probe.disabled, false, 'the tenth file still fits');
+  nine.m.view.destroy();
+});
+
+test('D9 caps: the description file counts toward 10 files, and toward 100 MB', async () => {
+  const nine = Array.from({ length: 9 }, (_, i) => KB(`5${i}`, `n-${i}.md`, 1024));
+  const files = await capCase([], { attachments: nine, descriptionFile: { name: 'SHOP-124 description.md', bytes: 100 } });
+  assert.deepEqual([files.probe.disabled, files.line()], [true, FILES_LINE]);   // kills: dropping the description file's count
+  files.m.view.destroy();
+  const none = await capCase([], { attachments: nine });
+  assert.equal(none.probe.disabled, false, 'without a description file there is room');
+  none.m.view.destroy();
+  const three = [KB('60', 'a.pdf', 24 * MB), KB('61', 'b.pdf', 24 * MB), KB('62', 'c.pdf', 24 * MB)];
+  const bytes = await capCase([], { attachments: three, descriptionFile: { name: 'SHOP-124 description.md', bytes: 24 * MB } }, KB('99', 'probe.pdf', 5 * MB, { picked: false }));
+  assert.deepEqual([bytes.probe.disabled, bytes.line()], [true, BYTES_LINE]);   // kills: dropping the description file's bytes
+  bytes.m.view.destroy();
+});
+
+test("D9 caps: the form's files and the picked comments count toward 100 MB; exactly 100 MB is allowed, one byte more is capped", async () => {
+  const four = [['a.pdf', 24 * MB], ['b.pdf', 24 * MB], ['c.pdf', 24 * MB], ['d.pdf', 24 * MB]];
+  const over = await capCase(four, {}, KB('99', 'probe.pdf', 5 * MB, { picked: false }));
+  assert.deepEqual([over.probe.disabled, over.line()], [true, BYTES_LINE]);   // kills: dropping form.bytes
+  over.m.view.destroy();
+  const exact = await capCase(four, {}, KB('99', 'probe.pdf', 4 * MB, { picked: false }));
+  assert.equal(exact.probe.disabled, false, 'a total of exactly 100 MB is allowed');   // kills: > changed to >= on bytes
+  exact.m.view.destroy();
+  const plus = await capCase(four, {}, KB('99', 'probe.pdf', 4 * MB + 1, { picked: false }));
+  assert.deepEqual([plus.probe.disabled, plus.line()], [true, BYTES_LINE], 'one byte more is capped');
+  plus.m.view.destroy();
+  const three = [KB('60', 'a.pdf', 24 * MB), KB('61', 'b.pdf', 24 * MB), KB('62', 'c.pdf', 24 * MB)];
+  const com = { id: 'c1', author: 'Ann Example', authorKind: 'person', created: '2026-10-21T09:30:00.000Z', when: '21 Oct', body: 'Big', bytes: 24 * MB, picked: true };
+  const comments = await capCase([], { attachments: three, comments: [com] }, KB('99', 'probe.pdf', 5 * MB, { picked: false }));
+  assert.deepEqual([comments.probe.disabled, comments.line()], [true, BYTES_LINE]);   // kills: dropping the comments' bytes
+  q('ipv-com-c1').click();
+  assert.equal(comments.probe.disabled, false, 'unticking the comment gives its bytes back');
+  comments.m.view.destroy();
+});
+
+test('exactly three comments give no Show all; a refused row keeps looking off', async () => {
+  const m = await openNew();
+  await toPreview(m);
+  assert.equal(dlg().querySelectorAll('.req-import-com').length, 3);
+  assert.equal(q('ipv-showall'), null);
+  assert.equal(dlg().querySelectorAll('.req-import-com.folded').length, 0);
+  assert.equal(q('ipv-att-10044').closest('li').classList.contains('req-import-off'), true, 'refused');
+  m.view.destroy();
 });
 
 test('board 36 (1–3): unreachable says what changed and where it is fixed (Advanced); no match; a pasted key that is not there', async () => {
@@ -599,8 +674,16 @@ test('CSS (board 36): at 900 px and narrower one column, author and date only, t
   assert.ok(at > 0 && at < css.indexOf('/* ── marketplace P3 ── */'));
   const block = css.slice(at, css.indexOf('/* ── marketplace P3 ── */'));
   for (const rule of ['.req-import-cols{grid-template-columns:minmax(0,1fr)}', '.req-import-cbody{display:none}', '.req-import-com.folded{display:none}',
-    '.req-import-check::after{content:"";position:absolute;inset:-13px 0}', '.req-import-showall{display:none}']) {
+    '.req-import-check::after{content:"";position:absolute;inset:-13px 0}', '.req-import .btn-sm::after{content:"";position:absolute;inset:-9px 0}',
+    '.req-import-showall{display:block;width:100%;position:relative;text-align:left;margin-top:20px}']) {
     assert.ok(block.includes(rule), rule);
   }
+  const media = block.indexOf('@media (max-width:900px)');
+  assert.ok(media > 0 && block.indexOf('.req-import-showall{display:none}') < media, 'Show all is hidden outside the media query');
+  // a long file name, author or criterion shrinks and wraps inside the card instead of widening it; the hint stays inside
+  for (const rule of ['.req-import-aname{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}', '.req-import-check{min-width:0;overflow-wrap:anywhere}',
+    '.req-import-cby{overflow-wrap:anywhere}', '.req-import-check > .hint{flex:none;max-width:45%}']) assert.ok(css.includes(rule), rule);
+  // the two ::after tap areas (13 px each) touch, never overlap: 26 px between rows; the section's 6 px gap + 20 px margin above Show all
+  assert.ok(css.includes('.req-import-list{gap:26px}') && block.includes('margin-top:20px'));
   assert.ok(!/min-height:44px/.test(block));
 });

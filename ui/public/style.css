@@ -11002,6 +11002,10 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 .req-import-check{display:flex;align-items:flex-start;gap:8px;font-size:var(--fs-body);cursor:pointer}
 .req-import-check input{margin:3px 0 0;flex:none}
 .req-import-code{flex:none;font-size:var(--fs-meta)}
+.req-import-check{min-width:0;overflow-wrap:anywhere}
+.req-import-aname{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.req-import-check > .hint{flex:none;max-width:45%}
+.req-import-cby{overflow-wrap:anywhere}
 .req-import-ctext{display:flex;flex-direction:column;gap:2px;min-width:0}
 .req-import-cbody{overflow-wrap:anywhere;color:var(--ink-2)}
 .req-import-off .req-import-check{cursor:not-allowed;color:var(--ink-2)}
@@ -11018,7 +11022,7 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
   .req-import-list{gap:26px}
   .req-import-check{position:relative}
   .req-import-check::after{content:"";position:absolute;inset:-13px 0}
-  .req-import-showall{display:block;width:100%;position:relative;text-align:left}
+  .req-import-showall{display:block;width:100%;position:relative;text-align:left;margin-top:20px}
   .req-import-showall[hidden]{display:none}
   .req-import-showall::after{content:"";position:absolute;inset:-13px 0}
   .req-import .btn-sm{position:relative}

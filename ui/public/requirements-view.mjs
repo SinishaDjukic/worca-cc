@@ -4354,6 +4354,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         if (x.a.refused) continue;
         const cap = x.cb.checked ? null : count + 1 > REQ_ATTACH.maxFiles ? CAP_FILES_UI : bytes + x.a.bytes > REQ_ATTACH.maxRequestBytes ? CAP_BYTES_UI : null;
         x.cb.disabled = !!cap;
+        x.cb.closest('li').classList.toggle('req-import-off', !!cap);   // a capped row looks off like a refused one
         x.why.textContent = cap || '';
         x.why.hidden = !cap;
         x.cb.setAttribute('aria-describedby', cap ? `req-ipv-ameta-${x.a.id} ${x.why.id}` : `req-ipv-ameta-${x.a.id}`);
