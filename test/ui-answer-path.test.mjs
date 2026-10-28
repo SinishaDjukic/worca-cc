@@ -3,7 +3,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
 import { createChatRunCard } from '../ui/public/chat/run-card.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -31,7 +30,6 @@ function recorder() {
 async function host(kind, question) {
   const rec = recorder();
   const ctx = await bootApp({ fetchHandler: rec.fetchHandler });
-  applyFlags({ shapeFirst: true }, ctx.window.document);   // a fresh document per boot: nothing to reset
   helloRun(ctx, { runId: 'r1', pipelineId: 'p1' });
   ctx.dispatch({ type: 'question', runId: 'r1', ...question });
   await ctx.settle();

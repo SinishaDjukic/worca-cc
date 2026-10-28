@@ -235,13 +235,13 @@ const SEE_SETTINGS = { WORCA_TEST_ALLOW_HOME_FALLBACK: '1' };
 
 test('enforced tags: worca run refuses with the server message and exit 2; a default fills it (D14)', async () => {
   const cc = { key: 'cc', label: 'Cost centre', values: ['4410'], required: true };
-  writeHomeSettings({ tagDimensions: [cc], enforceTags: true, flags: { runTags: true } });
+  writeHomeSettings({ tagDimensions: [cc], enforceTags: true });
   try {
     const bad = await run(['--project', proj, '--prompt', 'Enforced', '--at', 'tomorrow 03:00', '--yes'], SEE_SETTINGS);
     assert.equal(bad.code, 2);
     assert.match(bad.stderr, /^worca: Add Cost centre to start$/m);
     assert.equal(listTickets({ all: true }).some((x) => x.title === 'Enforced'), false, 'no ticket is created');
-    writeHomeSettings({ tagDimensions: [{ ...cc, default: '4410' }], enforceTags: true, flags: { runTags: true } });
+    writeHomeSettings({ tagDimensions: [{ ...cc, default: '4410' }], enforceTags: true });
     const ok = await run(['--project', proj, '--prompt', 'Enforced ok', '--at', 'tomorrow 03:00', '--yes'], SEE_SETTINGS);
     assert.equal(ok.code, 0, ok.stderr);
     const t = listTickets().find((x) => x.title === 'Enforced ok');
@@ -255,14 +255,14 @@ test('enforced tags: --after with no --tag checks the tags the chain inherits an
   const bare = createTicket({ title: 'Bare parent', projectDir: proj, runAtMs: Date.now() + 3_600_000, request: { prompt: 'p' } });
   const storedTags = (title) => JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(listTickets().find((x) => x.title === title).id).request).tags;
   try {
-    writeHomeSettings({ tagDimensions: [cc], enforceTags: true, flags: { runTags: true } });
+    writeHomeSettings({ tagDimensions: [cc], enforceTags: true });
     const ok = await run(['--project', proj, '--prompt', 'Chain inherits', '--after', tagged.id.slice(0, 8), '--yes'], SEE_SETTINGS);
     assert.equal(ok.code, 0, ok.stderr);
     assert.equal(storedTags('Chain inherits'), undefined, 'no tags stored: the chain inherits at fire time');
     const bad = await run(['--project', proj, '--prompt', 'Chain refused', '--after', bare.id.slice(0, 8), '--yes'], SEE_SETTINGS);
     assert.equal(bad.code, 2);
     assert.match(bad.stderr, /^worca: Add Cost centre to start$/m);
-    writeHomeSettings({ tagDimensions: [{ ...cc, default: '4410' }], enforceTags: true, flags: { runTags: true } });
+    writeHomeSettings({ tagDimensions: [{ ...cc, default: '4410' }], enforceTags: true });
     const dflt = await run(['--project', proj, '--prompt', 'Chain keeps parent', '--after', tagged.id.slice(0, 8), '--yes'], SEE_SETTINGS);
     assert.equal(dflt.code, 0, dflt.stderr);
     assert.equal(storedTags('Chain keeps parent'), undefined, 'a default never replaces the inherited tags');

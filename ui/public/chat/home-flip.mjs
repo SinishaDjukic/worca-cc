@@ -32,7 +32,8 @@ export function createHeroFlip({ doc, win = doc.defaultView || globalThis, page,
   const rectOf = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
 
   function arm() {
-    if (dead || !page || prefersReducedMotion(win)) { armed = null; return false; }
+    // Ask worca beside the page: the side column docks the composer for good; there is no hero to glide from or to.
+    if (dead || !page || page.dataset.host === 'dock' || prefersReducedMotion(win)) { armed = null; return false; }
     const el = box();
     if (!el) return false;
     armed = { from: page.dataset.view || '', rect: rectOf(el), at: now() };

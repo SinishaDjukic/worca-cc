@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planClone, parseCloneAllow, cloneAllowed, runClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
+import { BB_GIT_CREDENTIAL_HELPER } from '../src/core/bitbucket-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { withNoGit } from './helpers/git-off.mjs';
 
@@ -151,6 +152,35 @@ test('a refused Azure clone names Azure DevOps and WORCA_ADO_TOKEN, and removes 
   await assert.rejects(
     withEnv({ WORCA_ADO_TOKEN: 'pat' }, () => runClone(p, { spawnImpl: git })),
     (e) => e instanceof CloneError && e.code === 'auth-failed' && /Azure DevOps refused the credential/.test(e.message) && /WORCA_ADO_TOKEN/.test(e.message));
+  assert.equal(existsSync(p.dir), false);
+});
+
+test('planClone: a Bitbucket Clone-button URL drops its user; a password is refused naming WORCA_BB_TOKEN', () => {
+  const p = plan({ url: 'https://jdoe@bitbucket.org/acme/bb-plan1.git' });
+  assert.deepEqual([p.url, p.host, p.owner, p.repo], ['https://bitbucket.org/acme/bb-plan1.git', 'bitbucket.org', 'acme', 'bb-plan1']);
+  assert.throws(() => plan({ url: 'https://jdoe:secret@bitbucket.org/acme/x.git' }), /WORCA_BB_TOKEN/);
+  assert.deepEqual([plan({ url: 'https://altssh.bitbucket.org/acme/bb-alt1' }).url, plan({ url: 'https://altssh.bitbucket.org/acme/bb-alt1' }).host], ['https://bitbucket.org/acme/bb-alt1.git', 'bitbucket.org']);
+});
+
+test('runClone: a Bitbucket plan gets the Bitbucket read helper, never a GitHub credential', async () => {
+  const seen = [];
+  const git = fakeGit();
+  const p = plan({ url: 'https://bitbucket.org/acme/bb-clone1' });
+  await withEnv({ WORCA_BB_TOKEN: 'bbtok', WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined, WORCA_BB_EMAIL: undefined, GH_TOKEN: 'ghp_x' },
+    () => runClone(p, { spawnImpl: git, credential: cred(seen) }));
+  assert.deepEqual(seen, [], 'the GitHub credential seam is never asked');
+  const { args, env } = git.calls[0];
+  assert.deepEqual(args, ['clone', '--filter=blob:none', '--', 'https://bitbucket.org/acme/bb-clone1.git', p.dir]);
+  assert.equal(env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(env.WORCA_BB_TOKEN, undefined);
+  assert.equal(env.GH_TOKEN, undefined);
+  assert.ok(Object.values(env).includes(BB_GIT_CREDENTIAL_HELPER));
+});
+
+test('a refused Bitbucket clone names Bitbucket and WORCA_BB_TOKEN, and removes the folder', async () => {
+  const git = fakeGit({ exit: 128, stderr: 'fatal: Authentication failed for \'https://bitbucket.org/acme/bb-clone2.git/\'' });
+  const p = plan({ url: 'https://bitbucket.org/acme/bb-clone2' });
+  await assert.rejects(runClone(p, { spawnImpl: git, credential: cred() }), (e) => e.code === 'auth-failed' && /Bitbucket refused the credential: check WORCA_BB_TOKEN/.test(e.message));
   assert.equal(existsSync(p.dir), false);
 });
 

@@ -149,6 +149,13 @@ egress overlay, add `dev.azure.com,.visualstudio.com,vssps.dev.azure.com` to
 own token (`WORCA_ADO_BOARDS_TOKEN`), which `compose.yml` does not pass: add it in a
 `compose.override.yml`. Scopes, URL shapes and limits: [Azure DevOps](azure-devops.md).
 
+### Bitbucket
+
+`WORCA_BB_TOKEN=<token>` in `.env` (or a read/write pair, `WORCA_BB_READ_TOKEN` and
+`WORCA_BB_WRITE_TOKEN`; plus `WORCA_BB_EMAIL` for an Atlassian API token) lets Worca clone, fetch, push and
+open pull requests on `bitbucket.org`. `compose.yml` passes these four through. With the egress overlay, add
+`bitbucket.org,api.bitbucket.org` to `WORCA_EGRESS_ALLOW`. Scopes and limits: [Bitbucket](bitbucket.md).
+
 ## Projects, paths and worktrees
 
 Worca isolates every run in a `git worktree`, and git records **absolute paths**
@@ -254,6 +261,7 @@ URL from `docker compose logs teams-tunnel`.
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | | commit identity |
 | `GH_TOKEN` | | GitHub over HTTPS |
 | `WORCA_ADO_TOKEN`, `WORCA_ADO_READ_TOKEN`, `WORCA_ADO_WRITE_TOKEN` | | Azure DevOps over HTTPS ([Azure DevOps](#azure-devops)) |
+| `WORCA_BB_TOKEN`, `WORCA_BB_READ_TOKEN`, `WORCA_BB_WRITE_TOKEN`, `WORCA_BB_EMAIL` | | Bitbucket over HTTPS ([Bitbucket](#bitbucket)) |
 | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` | | see *Logging in* |
 | `WORCA_UID`, `WORCA_GID` | `1000` | Linux Engine: your ids (`id -u`, `id -g`) when not 1000, so the box can write your bind-mounted repos; the volumes work for any uid |
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |

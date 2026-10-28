@@ -6,7 +6,7 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 const COLS = ['id', 'feature_seq', 'version', 'run_id', 'pipeline_id', 'spec_json', 'title', 'ready', 'failing_json',
-  'reason', 'workflow_id', 'source_branch', 'started_by', 'started_at'];
+  'reason', 'workflow_id', 'source_branch', 'started_by', 'started_at', 'files_json'];
 const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
 
 test('fresh DB has req_starts', () => {

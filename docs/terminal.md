@@ -201,7 +201,8 @@ shell's input: the program reading it gets end-of-input, and the shell then exit
 `WORCA_TERMINAL_PTY=0` forces this mode.
 node-pty 1.1.0's macOS package ships its `spawn-helper` without the execute bit; Worca sets it the
 first time a terminal opens. If it cannot (a read-only install), or node-pty still fails to start a
-shell, terminals use pipes and the banner gives the reason.
+shell, terminals use pipes and the banner gives the reason. `worca doctor` reports the helper's
+state and prints the `chmod +x` fix.
 
 ## Windows
 

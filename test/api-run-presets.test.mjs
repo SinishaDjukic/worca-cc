@@ -1,4 +1,4 @@
-// test/api-run-presets.test.mjs — run presets over HTTP (docs/run-presets.md, #712): CRUD behind the runPresets flag,
+// test/api-run-presets.test.mjs — run presets over HTTP (docs/run-presets.md, #712): CRUD,
 // the pick-time check, the start-time check on POST /api/run (409 preset-broken), the pin check, per-person presets
 // on a shared deployment, and a preset run that equals the hand-made run and writes no project config.
 import { test, before, after } from 'node:test';
@@ -24,12 +24,11 @@ const DAY = () => new Date(Date.now() + 86400000).toISOString();
 before(async () => {
   sandboxHome = await mkdtemp(join(tmpdir(), 'worca-cc-presets-home-'));
   projectsRoot = await mkdtemp(join(tmpdir(), 'worca-cc-presets-proot-'));
-  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_PROJECTS_ROOT', 'WORCA_MOCK', 'WORCA_FLAGS', 'WORCA_IDENTITY_HEADER']) prevEnv[k] = process.env[k];
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_PROJECTS_ROOT', 'WORCA_MOCK', 'WORCA_IDENTITY_HEADER']) prevEnv[k] = process.env[k];
   process.env.HOME = sandboxHome; process.env.USERPROFILE = sandboxHome;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_PROJECTS_ROOT = projectsRoot;
   process.env.WORCA_MOCK = '1';
-  process.env.WORCA_FLAGS = 'runPresets';
   process.env.WORCA_IDENTITY_HEADER = H;   // a request without the header is the local install (sees every preset)
   const mod = await import('../ui/server.mjs');
   ({ runs } = mod);
@@ -49,19 +48,6 @@ after(async () => {
   await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10 });
   await rm(projectsRoot, { recursive: true, force: true, maxRetries: 10 });
   for (const d of [projectDir, ...extraDirs]) if (d) await rm(d, { recursive: true, force: true, maxRetries: 10 });
-});
-
-test('with the flag off every /api/presets route is 404 and POST /api/run refuses a presetId', async () => {
-  process.env.WORCA_FLAGS = '-runPresets';
-  try {
-    assert.equal((await get('/api/presets')).status, 404);
-    assert.equal((await post('/api/presets', { name: 'x' })).status, 404);
-    const r = await post('/api/run', { projectDir: project.path, prompt: 'x', presetId: 'rp_000000000000' });
-    assert.equal(r.status, 400);
-    assert.match((await r.json()).error, /presetId needs the Run presets feature/);
-  } finally {
-    process.env.WORCA_FLAGS = 'runPresets';
-  }
 });
 
 test('CRUD: create, list, duplicate, rename, delete', async () => {
@@ -249,14 +235,6 @@ test('a preset saved from a run equals one saved in New run from the same picks;
   assert.deepEqual(a.setup, b.setup);
   assert.deepEqual(a.scope, { kind: 'project', ref: project.key });
   assert.equal((await post(`/api/pipelines/${pid}/preset`, { name: 'from RUN' })).status, 409, 'duplicate name');
-});
-
-test('with the flag off the run setup routes are 404', async () => {
-  process.env.WORCA_FLAGS = '-runPresets';
-  try {
-    assert.equal((await get('/api/pipelines/legacy0001/setup')).status, 404);
-    assert.equal((await post('/api/pipelines/legacy0001/preset', { name: 'x' })).status, 404);
-  } finally { process.env.WORCA_FLAGS = 'runPresets'; }
 });
 
 test('on a shared deployment the preset saved from a run belongs to the person who saved it', async () => {

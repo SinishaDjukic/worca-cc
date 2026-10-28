@@ -206,6 +206,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
     }
     case 'paused': {
       if (run.status === 'pausing') return line('Pausing', '', 'Steps in flight finish first');
+      if (run.resumePending) return line('Resuming', '', 'Waiting for the server to start it');   // the browser's flag
       if (run.status === 'interrupted') return line('Interrupted', '', 'Stopped mid-step · resume to continue');
       // statusPill says "Paused · cost limit": the reason is the part after the dot. A
       // pause is not one step's, so line 2 carries the reason.

@@ -1260,6 +1260,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'askWeb',                                  // Chat web access { enabled, allowedDomains, search }
   'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
+  'keepAwake',                               // the account menu's Keep awake switch (default on)
   'resumeAfterUsageLimit',
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
@@ -1864,6 +1865,52 @@ export async function setDebugSpawnEnabled(input) {
   else settings.debugSpawnEnabled = input;
   await persistSettings(settings);
   return { debugSpawnEnabled: debugSpawnEnabled() };
+}
+
+// ── Keep awake (the account menu's switch) ──────────────────────────────────
+// Holds off idle system sleep while runs have agents working (src/core/keep-awake.mjs). Default ON;
+// only `false` is stored. It used to be the beta flag keepAwake: migrateKeepAwakeFlag moves it here.
+export const DEFAULT_KEEP_AWAKE = true;
+
+/** @throws {Error} unless `input` is a boolean. */
+export function assertKeepAwakeInput(input) {
+  if (!isBool(input)) throw new Error('keepAwake must be true or false');
+}
+
+/** True unless keepAwake is stored false. A leftover flags.keepAwake (a home the boot migration
+ *  could not write) still counts while keepAwake is unset. */
+export function keepAwakeEnabled(settings = readSettings()) {
+  const s = settings && typeof settings === 'object' ? settings : {};
+  if (isBool(s.keepAwake)) return s.keepAwake;
+  return !(s.flags && s.flags.keepAwake === false);
+}
+
+export async function setKeepAwake(input) {
+  assertKeepAwakeInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_KEEP_AWAKE) delete settings.keepAwake;
+  else settings.keepAwake = input;
+  await persistSettings(settings);
+  return { keepAwake: keepAwakeEnabled() };
+}
+
+/** The graduated flag keepAwake becomes the keepAwake setting. Pure: {changed, settings}. */
+export function migrateLegacyKeepAwakeFlag(settings) {
+  const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+  const flags = s.flags && typeof s.flags === 'object' && !Array.isArray(s.flags) ? s.flags : null;
+  if (!flags || !Object.prototype.hasOwnProperty.call(flags, 'keepAwake')) return { changed: false, settings: s };
+  const { keepAwake: was, ...restFlags } = flags;
+  const next = { ...s };
+  if (Object.keys(restFlags).length) next.flags = restFlags; else delete next.flags;
+  if (was === false && !isBool(next.keepAwake)) next.keepAwake = false;
+  return { changed: true, settings: next };
+}
+
+/** Run once at server boot, before the first syncKeepAwake. @returns {Promise<boolean>} wrote */
+export async function migrateKeepAwakeFlag() {
+  const r = migrateLegacyKeepAwakeFlag(readSettings());
+  if (!r.changed) return false;
+  try { await persistSettings(r.settings); return true; } catch { return false; }   // keepAwakeEnabled still reads the flag
 }
 
 // ── Resume after a usage limit (opt-in) ──────────────────────────────────────

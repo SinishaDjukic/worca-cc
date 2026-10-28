@@ -18,6 +18,7 @@ import { pluginsRoot, pluginDir, readPluginsLock } from './plugins-lock.mjs';
 import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
 import { githubEnv } from './github-credentials.mjs';
 import { withAzureToken, readAzureCredentials } from './azure-credentials.mjs';
+import { withBitbucketToken, readBitbucketCredentials } from './bitbucket-credentials.mjs';
 import { mcpUpdatePreview } from './mcp/plugin-lifecycle.mjs';
 import { gitAvailable } from './git-available.mjs';
 import { accessChanges } from '../shared/plugin-access.mjs';
@@ -28,10 +29,11 @@ const httpsRepo = () => import('./git-free/plugin-repo.mjs');
 
 const execFileP = promisify(execFile);
 
-/** worca's own read credential for plugin repo git calls: GitHub (helper answers github.com) + Azure (dev.azure.com, *.visualstudio.com). */
+/** worca's own read credential for plugin repo git calls: GitHub (helper answers github.com) + Azure (dev.azure.com, *.visualstudio.com) + Bitbucket (bitbucket.org). */
 export async function pluginGitEnv() {
   const { env } = await githubEnv('read');
-  return withAzureToken(env, readAzureCredentials().read);
+  const bb = readBitbucketCredentials();
+  return withBitbucketToken(withAzureToken(env, readAzureCredentials().read), bb.read, bb.kind || undefined);
 }
 
 const defaultExec = async (cmd, args, opts = {}) => {

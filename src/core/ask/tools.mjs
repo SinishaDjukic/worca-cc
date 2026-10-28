@@ -466,9 +466,8 @@ export function createAskTools(deps) {
     return deps.composer;
   };
 
-  // No dep means no shape fields. Both deps or neither: an empty enum would accept no perspective at all.
-  const shapeOn = typeof deps.shapeFirstOn === 'function' && deps.shapeFirstOn() === true
-    && Array.isArray(deps.perspectiveKeys) && deps.perspectiveKeys.length > 0;
+  // No perspective keys means no shape fields: an empty enum would accept no perspective at all.
+  const shapeOn = Array.isArray(deps.perspectiveKeys) && deps.perspectiveKeys.length > 0;
   const PERSPECTIVE_LIST = { type: 'array', items: { type: 'string', enum: [...(deps.perspectiveKeys || [])] } };
   const SHAPE_PROPS = shapeOn ? {
     shape: { type: 'object', additionalProperties: false,
@@ -885,7 +884,7 @@ export function createAskTools(deps) {
     ] : []),
     ...(deps.clones ? [
       { name: 'propose_clone_project',
-        description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how the code host is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo or https://dev.azure.com/org/project/_git/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how the code host is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo, https://dev.azure.com/org/project/_git/repo or https://bitbucket.org/workspace/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
         inputSchema: SCHEMA.obj({ url: SCHEMA.s('https:// repository URL, e.g. https://github.com/acme/api or https://dev.azure.com/acme/shop/_git/api'),
           branch: SCHEMA.s('branch to check out (default: the repository default)'),
           name: SCHEMA.s('folder and project name (default: the repository name)'),
@@ -2658,9 +2657,8 @@ export function createAskTools(deps) {
       return { plugin: ref.plugin, sourceId: ref.sourceId, ...(ref.profile ? { profile: ref.profile } : {}), tasks, ...(r && r.cursor ? { more: true } : {}) };
     },
     async list_presets() {
-      // call() dispatches on handlers, not defs: without the dep the tool is unlisted AND answers off.
-      const all = typeof deps.listPresets === 'function' ? deps.listPresets() : null;
-      if (!all) return { presets: [], note: 'Run presets are turned off.' };
+      // call() dispatches on handlers, not defs: without the dep the tool is unlisted AND answers empty.
+      const all = typeof deps.listPresets === 'function' ? deps.listPresets() : [];
       const pin = pinnedScope();
       const fits = (p) => p.scope.kind === 'global' || (pin && (pin.projectKey ? p.scope.kind === 'project' && p.scope.ref === pin.projectKey
         : p.scope.kind === 'workspace' && p.scope.ref === pin.workspaceId));

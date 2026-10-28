@@ -849,3 +849,23 @@ test('pythonNoticeFor: only a python script + a failed probe; an ABSENT probe sa
   await pythonNoticeFor(py);
   await pythonProbeOrNull();
 });
+
+test('updatePlugin: swapping an existing `current` link (junction on Windows) leaves the old version intact', async () => {
+  const name = 'swap-plugin';
+  const o = await makeOriginRepo('origin-swap', name);
+  const { exec } = makeExec();
+  await installPlugin({ repoUrl: o.root, subdir: '', name, sha: o.sha }, { exec });
+  const sha1 = o.sha.slice(0, 7);
+  const oldManifest = join(pluginDir(name), 'versions', sha1, 'worca-cc-plugin.json');
+  assert.ok(lstatSync(pluginCurrentDir(name)).isSymbolicLink(), 'current is a link (symlink / junction)');
+
+  writeFileSync(join(o.root, 'connector/index.mjs'), 'export default () => ({ v: 2 });\n');
+  await git(o.root, 'add', '-A'); await git(o.root, 'commit', '-qm', 'c2');
+  const sha2 = await git(o.root, 'rev-parse', 'HEAD');
+
+  const r = await updatePlugin(name, { exec }); // swaps over the EXISTING link
+  assert.equal(r.updated, true);
+  assert.equal(readlinkSync(pluginCurrentDir(name)), curTarget(name, sha2.slice(0, 7)), 'current -> new version');
+  assert.equal(existsSync(join(pluginCurrentDir(name), 'worca-cc-plugin.json')), true, 'new current resolves');
+  assert.equal(existsSync(oldManifest), true, 'old version files survive the swap (target not deleted through the link)');
+});

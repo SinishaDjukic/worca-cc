@@ -39,12 +39,12 @@ const win = (s) => s.doc.defaultView;   // setup() returns no dom: build events 
 const WF = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_pay', name: 'Payroll close' }, { id: 'wf_post', name: 'Social post' }];
 const pinTiles = (s) => [...s.doc.querySelectorAll('.chat-home-act[data-pin]')];
 
-test('eight tiles before any pin shows — six intents, Add project and More — each naming its interface level', () => {
+test('nine tiles by default — six intents, the Shaper pin, Add project and More — each naming its interface level', () => {
   const s = setup();
   const tiles = [...s.doc.querySelectorAll('.chat-home-act')];
-  assert.deepEqual(tiles.map((b) => b.textContent), ['New run', 'Build workflow', 'Schedule a run', 'Track a run',
+  assert.deepEqual(tiles.map((b) => b.textContent), ['New run', 'Shaper', 'Build workflow', 'Schedule a run', 'Track a run',
     'Explain a diff', 'Write a script', 'Add project', 'More']);
-  assert.deepEqual(tiles.map((b) => b.dataset.minLevel), ['simple', 'simple', 'advanced', 'simple', 'advanced', 'simple', 'simple', 'simple']);
+  assert.deepEqual(tiles.map((b) => b.dataset.minLevel), ['simple', 'simple', 'simple', 'advanced', 'simple', 'advanced', 'simple', 'simple', 'simple']);
   assert.ok(tiles.every((b) => b.type === 'button' && b.querySelector('.chat-ic svg')));
   assert.ok(tiles.every((b) => b.classList.contains('btn') && b.classList.contains('btn-lg')), 'F-15: a tile wears the one button, large');
   assert.equal(s.actions.el.getAttribute('role'), 'group');
@@ -133,36 +133,29 @@ test('switches: script tools off hides Write a script; Add project has no off sw
   assert.equal(s.tile('script').hidden, true);
   s.actions.setFlags({ scripts: true });
   assert.equal(s.tile('script').hidden, false);
-  assert.deepEqual({ ...DEFAULT_FLAGS }, { scripts: true, tasks: false, shapeFirst: false });
+  assert.deepEqual({ ...DEFAULT_FLAGS }, { scripts: true, tasks: false });
   assert.equal(actionAvailable('project', { scripts: false, tasks: false }), true);
   assert.equal(actionAvailable('tasks', {}), false);
   assert.equal(actionAvailable('tasks', { tasks: true }), true);
   assert.equal(actionAvailable('script', {}), true);
 });
 
-test('default pin: Shaper is the 2nd tile (right after New run) while the flag is on, with its badge, and arms the shape intent', () => {
+test('default pin: Shaper is the 2nd tile (right after New run), with no badge, and arms the shape intent', () => {
   const s = setup();
   s.actions.setPins({ pins: DEFAULT_HOME_PINS, workflows: WF });
-  assert.equal(s.tile('shape'), null, 'the flag is off until the hello says otherwise');
-  s.actions.setFlags({ shapeFirst: true });
   const t = s.tile('shape');
   assert.equal(t.dataset.pin, 'wf_shape');
   assert.equal(t.dataset.minLevel, 'simple');
   assert.equal(t.querySelector('.chat-home-act-l').textContent, 'Shaper');
   assert.equal(t.querySelector('.chat-home-act-help'), null);
-  assert.equal(t.querySelector('.chat-home-act-badge').textContent, 'Beta');
+  assert.equal(t.querySelector('.chat-home-act-badge'), null, 'Shaper is no longer beta');
   assert.equal(s.tile('run').querySelector('.chat-home-act-badge'), null);
   assert.equal(t.previousElementSibling, s.tile('run'), 'pins sit right after New run (priority order)');
   t.click();
   assert.deepEqual(s.calls, [['setIntent', 'shape', null]]);
-  s.actions.setFlags({ shapeFirst: false });
-  assert.equal(s.tile('shape'), null);
-  const loaded = { scripts: false, tasks: true };
-  s.actions.setFlags({ ...loaded, shapeFirst: true });
-  assert.ok(s.tile('shape'));
-  assert.equal(s.tile('script').hidden, true, 'scripts keeps its state when the flags are re-pushed with the spread');
-  assert.equal(actionAvailable('shape', {}), false);
-  assert.equal(actionAvailable('shape', { shapeFirst: true }), true);
+  s.actions.setFlags({ scripts: false, tasks: true });
+  assert.ok(s.tile('shape'), 'a flag push keeps the Shaper pin');
+  assert.equal(actionAvailable('shape', {}), true);
   assert.ok(!MORE_INTENTS.includes('shape'), 'a pin, never also a built-in More item');
 });
 
@@ -182,7 +175,6 @@ test('a pinned workflow tile shows its name and icon and arms New run with that 
 
 test('one pin inline; the rest go into More under Pinned in pin order; a deleted pin never shows', () => {
   const s = setup();
-  s.actions.setFlags({ shapeFirst: true });
   s.actions.setPins({ pins: ['wf_gone', 'wf_shape', 'wf_post', 'wf_pay'], workflows: WF });
   assert.deepEqual(pinTiles(s).map((b) => b.dataset.pin), ['wf_shape']);
   assert.equal(s.doc.querySelectorAll('.chat-home-act').length, 9, 'the row keeps today\'s width');
@@ -216,7 +208,7 @@ test('a flag change while a pin menu is open closes that menu and keeps the focu
   pinTiles(s)[0].dispatchEvent(new (win(s).MouseEvent)('contextmenu', { bubbles: true, cancelable: true }));
   assert.ok(s.menu());
   assert.equal(pinTiles(s)[0].getAttribute('aria-haspopup'), 'menu');
-  s.actions.setFlags({ shapeFirst: true });   // re-renders the pins: the old anchor is gone
+  s.actions.setFlags({ scripts: true });   // re-renders the pins: the old anchor is gone
   assert.equal(s.menu(), null);
   assert.equal(s.doc.activeElement, pinTiles(s)[0], 'the rebuilt wf_pay tile, not body');
   assert.equal(s.doc.activeElement.dataset.pin, 'wf_pay');
@@ -274,7 +266,7 @@ test('an empty picker closes on Escape from its tile; closing a menu the focus i
   assert.equal(s.doc.activeElement, s.more(), 'back on its tile, never <body>');
 });
 
-test('only a workflow pin label shrinks: the badged Shaper pin keeps its name whole (web UI review 1)', () => {
+test('only a workflow pin label shrinks: a badged pin keeps its name whole (web UI review 1)', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   assert.match(css, /^\.chat-home-act-l\{flex:none;white-space:nowrap;\}$/m);
   const shrink = css.match(/^(\.chat-home-act\.is-pin[^{]*) \.chat-home-act-l\{[^}]*flex:0 1 auto;[^}]*\}$/m);
@@ -282,7 +274,7 @@ test('only a workflow pin label shrinks: the badged Shaper pin keeps its name wh
   assert.equal(shrink[1], '.chat-home-act.is-pin:not(:has(> .chat-home-act-badge))');
 });
 
-test('one row: the Shaper badge sits inline after its label at normal size and never truncates', () => {
+test('one row: a tile badge sits inline after its label at normal size and never truncates', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const rule = css.match(/^\.chat-home-act-badge\{([^}]*)\}/m)[1];
   assert.match(rule, /white-space:nowrap/);
@@ -311,7 +303,6 @@ function fakeLayout(s, rowWidth) {
 test('one row: tiles that do not fit move into the top of More, from the end of the row; New run, the pin and More stay', () => {
   const s = setup();
   s.actions.setPins({ pins: DEFAULT_HOME_PINS, workflows: WF });
-  s.actions.setFlags({ shapeFirst: true });
   fakeLayout(s, 700);                                 // 9 tiles × 100px in 700px: 2 have to go
   s.actions.fit();
   const hidden = [...s.doc.querySelectorAll('.chat-home-act[data-overflow]')].map((b) => b.dataset.intent || b.dataset.action);

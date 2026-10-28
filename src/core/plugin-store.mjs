@@ -372,12 +372,12 @@ const rmLink = (path) => {
  *  (EPERM). It CAN create a directory JUNCTION unprivileged, so there we
  *  remove-then-create a junction in place. A junction needs an ABSOLUTE target
  *  (POSIX keeps the relative "versions/<sha7>" so the link survives a moved
- *  plugin dir); rmSync on a junction drops only the link, never the target. */
+ *  plugin dir); unlinking a junction drops only the link, never the target. */
 function swapCurrent(name, target) {
   const current = pluginCurrentDir(name);
   mkdirSync(pluginDir(name), { recursive: true });
   if (IS_WINDOWS) {
-    rmSync(current, { force: true });
+    rmLink(current); // unlink drops the junction only; rmSync without recursive throws EISDIR on it
     symlinkSync(resolve(pluginDir(name), target), current, 'junction');
     return;
   }

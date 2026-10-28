@@ -32,7 +32,8 @@ test('the page fills the content column: .main gives up its gutter and scroll, t
   assert.equal(ruleBody('body.view-chat .main'), 'display:flex;flex-direction:column;overflow:hidden;padding:0;');
   assert.equal(ruleBody('.view[data-view="chat"]'), 'flex:1 1 auto;min-height:0;position:relative;');
   assert.match(ruleBody('.chat-page'), /^position:absolute;inset:0;display:flex;/);
-  assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;--chat-card-max:1040px;/);
+  assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;$/, 'one chat width: the text column');
+  assert.doesNotMatch(ruleBody('.chat-page'), /--chat-card-max/);
 });
 
 test('the conversation column carries the cap tokens (a 760px text column) for the transcript, the composer box and the jump pill', () => {

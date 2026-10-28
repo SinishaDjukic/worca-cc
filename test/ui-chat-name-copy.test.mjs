@@ -27,8 +27,9 @@ test('no user-visible "Ask Worca", "Ask Chat" or "Ask on <engine>" is left in th
       .replace(/(^\s*|[;,(){}[\]]\s+)\/\/.*$/gm, '$1');
     return f === 'src/core/db.mjs' ? out.replace(/\s--\s.*$/gm, '') : out;
   };
-  // Chat is a place, not someone you ask: "Ask in Chat", "Chat on Codex".
-  const banned = [/.{0,40}\bAsk Worca\b.{0,20}/gi, /.{0,40}\bAsk Chat\b.{0,20}/g, /.{0,40}\bAsk on (?:[A-Z]|\$\{).{0,20}/g];
+  // Chat is a place, not someone you ask: "Ask in Chat", "Chat on Codex". The old capitalised assistant name stays
+  // banned; "Ask worca" (the product's lowercase name) is the side column's header toggle (Ask worca beside the page).
+  const banned = [/.{0,40}\bAsk Worca\b.{0,20}/g, /.{0,40}\bAsk Chat\b.{0,20}/g, /.{0,40}\bAsk on (?:[A-Z]|\$\{).{0,20}/g];
   const left = files.flatMap((f) => { const src = bare(f, read(f)); return banned.flatMap((re) => [...src.matchAll(re)]
     .map((m) => `${f}: ${m[0].trim()}`)); });
   assert.deepEqual(left, []);

@@ -403,3 +403,30 @@ test('P4 the scope card: a pick switches the chat and continues the same message
     } },
   ]);
 });
+
+// Ask worca beside the page (Task 2): the project / workspace PAGE on screen reaches the header and the topics unless
+// it is the chat's scope; it is stored with the chat (not a target key) and never becomes the scope.
+test('the project or workspace page on screen: named apart from the scope, a topic chip, never the scope', async () => {
+  await idle();
+  const { createWorkspace } = await import('../src/core/workspaces.mjs');
+  const ws = await createWorkspace({ name: 'Havn on screen', projectPaths: [androidDir, iosDir] });
+  const t = (await (await post('/api/ask/threads', {})).json()).thread;
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'hi', ...MODEL, context: { view: 'project-detail', pinned: false, pageProjectKey: ios.key } });
+  assert.equal(r.status, 202, await r.clone().text());
+  assert.deepEqual((await r.json()).contexts, [{ kind: 'project', id: ios.key, label: 'Havn IOS' }]);
+  const stored = store.getThread(t.id).context;
+  assert.deepEqual(stored, { view: 'project-detail', pinned: false, pageProjectKey: ios.key });
+  const h = await mod._testing.resolveAskContext(t.id, stored, []);
+  assert.deepEqual([h.pageProject, h.project, h.noProject], [{ name: 'Havn IOS', key: ios.key }, undefined, true]);
+  const same = await mod._testing.resolveAskContext(t.id, { view: 'project-detail', pinned: true, projectKey: ios.key, pageProjectKey: ios.key }, []);
+  assert.deepEqual([same.project, same.pageProject], [{ name: 'Havn IOS', key: ios.key }, undefined], "the scope's own page adds nothing");
+  const onWs = await mod._testing.resolveAskContext(t.id, { view: 'workspaces', pinned: true, projectKey: android.key, pageWorkspaceId: ws.id }, []);
+  assert.deepEqual(onWs.pageWorkspace, { name: 'Havn on screen', id: ws.id });
+  const wsScope = await mod._testing.resolveAskContext(t.id, { view: 'workspaces', pinned: true, workspaceId: ws.id, pageWorkspaceId: ws.id }, []);
+  assert.equal(wsScope.pageWorkspace, undefined, "the scope's own workspace adds nothing");
+  const gone = await mod._testing.resolveAskContext(t.id, { view: 'workspaces', pinned: false, pageWorkspaceId: 'wks-gone-0000abcd', pageProjectKey: 'gone-00000001' }, []);
+  assert.deepEqual([gone.pageProject, gone.pageWorkspace], [undefined, undefined], 'a vanished row is an absent line');
+  const none = await mod._testing.resolveAskContext(t.id, { view: 'project-detail', pinned: false, pageProjectKey: 'no-project-00000000' }, []);
+  assert.equal(none.pageProject, undefined, 'No project is never a page on screen');
+  await idle();   // the mock turn (and its title job) ends before after() drops WORCA_MOCK: a later title spawn would be the real CLI
+});

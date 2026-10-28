@@ -162,7 +162,9 @@ test('the + after the list toggle carries data-ask-new-btn and starts a new chat
   const { ctx, doc } = await bootOn();
   const head = doc.querySelector('.chat-head');
   const plus = head.querySelector('[data-ask-new-btn]');
-  assert.equal(head.querySelectorAll('[data-ask-new-btn]').length, 1);
+  // Ask worca beside the page: the side column's own New chat (style.css shows it only there) is the head's other one.
+  assert.equal(head.querySelectorAll('[data-ask-new-btn]:not([data-ask-side-new])').length, 1);
+  assert.equal(head.querySelectorAll('[data-ask-new-btn]').length, 2);
   assert.equal(plus.previousElementSibling, head.querySelector('[data-ask-threads-btn]'));
   assert.match(plus.getAttribute('aria-label'), /^New chat /);
   assert.equal(head.querySelector('.chat-new-btn span'), null, 'no labelled New chat');

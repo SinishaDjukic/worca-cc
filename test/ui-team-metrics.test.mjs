@@ -13,7 +13,6 @@ import { JSDOM } from 'jsdom';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -282,7 +281,6 @@ test('switching back to a scope paints its cached payload at once, dimmed, while
 test('run tags: #tm-tag lists the records\' tags, narrows the page with a removable chip; hidden without tags and on the Timeline tab', async () => {
   const tagged = { ...TM_DATA, records: [{ ...makeRecord({ id: 'r1', startedAt: nowIso, usd: 3 }), tags: ['client:acme'] }, makeRecord({ id: 'r2', startedAt: nowIso, usd: 1 })] };
   const { window, tick } = await boot({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: tagged }) });
-  applyFlags({ runTags: true }, window.document);
   const doc = window.document;
   window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
   await tick(); await tick(); await tick();
@@ -305,7 +303,6 @@ test('run tags: #tm-tag lists the records\' tags, narrows the page with a remova
 
 test('run tags: tag-less records hide #tm-tag and leave the group-by options unchanged', async () => {
   const { window, tick } = await boot({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }) });
-  applyFlags({ runTags: true }, window.document);
   const doc = window.document;
   window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
   await tick(); await tick(); await tick();
@@ -313,19 +310,14 @@ test('run tags: tag-less records hide #tm-tag and leave the group-by options unc
   assert.deepEqual([...doc.querySelectorAll('#tm-group option')].map((o) => o.value), ['workflow', 'result', 'actor']);
 });
 
-const TAGGED = () => {
-  const nowIso = new Date().toISOString();
-  return { ...TM_DATA, records: [{ ...makeRecord({ id: 'r1', startedAt: nowIso, usd: 3 }), tags: ['client:acme'] }, makeRecord({ id: 'r2', startedAt: nowIso, usd: 1 })] };
-};
 async function openTm(opts) {
   const ctx = await boot(opts);
-  applyFlags({ runTags: true }, ctx.window.document);
   ctx.window.location.hash = 'team-metrics'; ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   await ctx.tick(); await ctx.tick(); await ctx.tick();
   return ctx;
 }
 
-test('Team metrics chips: By person = the By actor table alone; a stored By tag opens Cost without tags; flag off = no chips', async () => {
+test('Team metrics chips: By person = the By actor table alone; a stored By tag opens Cost without tags', async () => {
   const plain = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }), storage: { 'worca.teamMetrics.view': 'tag' } });
   const doc = plain.window.document;
   assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
@@ -334,12 +326,6 @@ test('Team metrics chips: By person = the By actor table alone; a stored By tag 
   doc.querySelector('#tm-view [data-tm-view="person"]').click(); await plain.tick();
   assert.equal(doc.querySelector('#tm-body .tm-run-tbl'), null);
   assert.deepEqual([...doc.querySelectorAll('#tm-body .tm-tbl')].map((t) => t.dataset.dim), ['actor']);
-
-  const off = await boot({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TAGGED() }), storage: { 'worca.teamMetrics.view': 'tag' } });
-  off.window.location.hash = 'team-metrics'; off.window.dispatchEvent(new off.window.Event('hashchange'));
-  await off.tick(); await off.tick(); await off.tick();
-  assert.equal(off.window.document.getElementById('tm-view'), null);
-  assert.ok(off.window.document.querySelector('#tm-body .tm-run-tbl'));
 });
 
 const DIMS = { dims: [{ key: 'client', label: 'Client', values: [], required: true }] };

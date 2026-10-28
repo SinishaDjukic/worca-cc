@@ -5,20 +5,23 @@
 //   1. PR event files on the worca-metrics branch (`.worca-metrics/prs/<number>.json`), written
 //      by the optional GitHub Action (docs/team-metrics-pr-events.md);
 //   2. the GitHub CLI: one batched GraphQL query per 30 branches, or for an Azure DevOps repo one
-//      REST listing of its PRs for the window, cached in ~/.worca-cc/metrics/pr-cache.json (a
-//      merged PR is never asked about again);
+//      REST listing of its PRs for the window (a Bitbucket repo: one query per 10 branches), cached in
+//      ~/.worca-cc/metrics/pr-cache.json (a merged PR is never asked about again);
 //   3. this machine's own pipelines table (pr_url / pr_state, no dates).
 // Every source is optional. Without gh and without the Action the page still renders; the
 // status block says which source was missing so the page can explain the gap. Never throws.
 import { execFile } from 'node:child_process';
 import { lstat, readdir, readFile, realpath, mkdir, writeFile, rename } from 'node:fs/promises';
 import { join, sep } from 'node:path';
-import { METRICS_DIR, metricsRoot, worktreePath, readableBranchDir, azureMetricsSlug, canonicalMetricsSlug, azureCoordsForSlug } from './sync.mjs';
+import { METRICS_DIR, metricsRoot, worktreePath, readableBranchDir, azureMetricsSlug, canonicalMetricsSlug, azureCoordsForSlug, metricsSlugFromUrl } from './sync.mjs';
 import { prepare } from '../db.mjs';
 import { listPullRequests } from '../pr/azure.mjs';
 import { readAzureCredentials } from '../azure-credentials.mjs';
 import { azurePrUrl, parseAzurePrUrl } from '../../shared/azure-remote.mjs';
 import { mapWithCap } from '../fanout.mjs';
+import { listPullRequestsForBranches, mergedAt as bitbucketMergedAt } from '../pr/bitbucket.mjs';
+import { readBitbucketCredentials } from '../bitbucket-credentials.mjs';
+import { bitbucketPrUrl, parseBitbucketPrUrl } from '../../shared/bitbucket-remote.mjs';
 
 export const PR_EVENTS_DIR = 'prs';
 export const MAX_EVENT_FILE_BYTES = 64 * 1024;
@@ -32,6 +35,7 @@ export const AZURE_CONCURRENCY = 4;
 export const AZURE_LOOKBACK_MS = 60 * DAY;   // a PR is looked for from 60 days before the earliest run's end
 export const AZURE_MAX_PAGES = 10;
 const AZ_STATE = { active: 'OPEN', completed: 'MERGED', abandoned: 'CLOSED' };
+const BB_STATE = { OPEN: 'OPEN', MERGED: 'MERGED', DECLINED: 'CLOSED', SUPERSEDED: 'CLOSED' };
 const STATES = new Set(['OPEN', 'MERGED', 'CLOSED']);
 
 function defaultRun(cmd, args, { timeout = 30_000 } = {}) {
@@ -53,15 +57,24 @@ const lower = (s) => String(s || '').toLowerCase();
 /** github.com slugs are exactly "owner/repo"; every other host keeps its host segment. */
 export const isGithubSlug = (slug) => typeof slug === 'string' && /^[a-z0-9._-]+\/[a-z0-9._-]+$/i.test(slug);
 export const isAzureSlug = (slug) => typeof slug === 'string' && /^dev\.azure\.com\/[^/]+\/[^/]+\/[^/]+$/i.test(slug);
-/** 'github' | 'azure' | null — which lookup a record slug can use. */
-export const forgeOfSlug = (slug) => (isGithubSlug(slug) ? 'github' : isAzureSlug(slug) ? 'azure' : null);
+export const isBitbucketSlug = (slug) => typeof slug === 'string' && /^bitbucket\.org\/[^/]+\/[^/]+$/i.test(slug);
+/** 'github' | 'azure' | 'bitbucket' | null — which lookup a record slug can use. */
+export const forgeOfSlug = (slug) => (isGithubSlug(slug) ? 'github' : isAzureSlug(slug) ? 'azure' : isBitbucketSlug(slug) ? 'bitbucket' : null);
+/** A Bitbucket metrics slug → its repository coordinates (Bitbucket workspace ids and repo slugs are lowercase). */
+export const bitbucketCoordsForSlug = (slug) => {
+  const m = /^bitbucket\.org\/([^/]+)\/([^/]+)$/i.exec(String(slug || ''));
+  return m ? { host: 'bitbucket.org', owner: m[1].toLowerCase(), repo: m[2].toLowerCase() } : null;
+};
 
-/** GitHub "…/pull/12" or Azure DevOps "…/pullrequest/12" → { repo: <metrics slug>, number } | null */
+/** GitHub "…/pull/12", Azure DevOps "…/pullrequest/12" or Bitbucket "…/pull-requests/12" → { repo: <metrics slug>, number } | null */
 export function parsePrUrl(url) {
   const m = /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/i.exec(String(url || ''));
   if (m) return { repo: `${m[1]}/${m[2]}`, number: Number(m[3]) };
   const az = parseAzurePrUrl(url);
-  return az ? { repo: azureMetricsSlug(az), number: az.number } : null;
+  if (az) return { repo: azureMetricsSlug(az), number: az.number };
+  const bb = parseBitbucketPrUrl(url);
+  if (bb) return { repo: metricsSlugFromUrl(`https://bitbucket.org/${bb.owner}/${bb.repo}.git`), number: bb.number };
+  return null;
 }
 
 /** One PR event file (v1) → a normalised PR, or null when it is not one. */
@@ -220,6 +233,53 @@ export async function lookupBranchesViaAzure(lookups, { coordsFor = azureCoordsF
   return { results, error, auth, truncated: truncated.sort() };
 }
 
+// ---- Bitbucket Cloud ----------------------------------------------------------------------
+
+function fromBitbucketPr(slug, coords, p, merged) {
+  const state = BB_STATE[p?.state];
+  if (!state || !Number.isInteger(p.id)) return null;
+  return { repo: slug, number: p.id, url: bitbucketPrUrl(coords, p.id), title: p.title || null,
+    head: p.source?.branch?.name || null, base: p.destination?.branch?.name || null, state,
+    createdAt: isoOrNull(p.created_on), mergedAt: state === 'MERGED' ? merged : null,
+    closedAt: state === 'OPEN' ? null : isoOrNull(p.closed_on) || merged || isoOrNull(p.updated_on), via: 'bitbucket' };
+}
+
+/**
+ * Bitbucket's BBQL filters by source branch: one query per 10 branches of each repo, every state. A MERGED PR's merge
+ * date costs one more read (D8) and is cached for good with it.
+ * @returns {Promise<{results: Map<string, object[]>, error: string|null, auth: 'unauthenticated'|null}>}
+ */
+export async function lookupBranchesViaBitbucket(lookups, { coordsFor = bitbucketCoordsForSlug } = {}) {
+  const byRepo = new Map();
+  for (const l of lookups) {
+    const g = byRepo.get(l.repo) || { slug: l.repo, branches: new Set() };
+    g.branches.add(l.branch);
+    byRepo.set(l.repo, g);
+  }
+  const results = new Map();
+  let error = null;
+  let auth = null;
+  await mapWithCap([...byRepo.values()], AZURE_CONCURRENCY, async (g) => {
+    try {                                        // everything that can throw stays inside: mapWithCap is Promise.all
+      const coords = coordsFor(g.slug);
+      if (!coords) { error ||= `no Bitbucket repository is known for ${g.slug}`; return; }
+      const listing = await listPullRequestsForBranches(coords, [...g.branches]);
+      const merged = new Map();
+      for (const p of listing.prs) if (p?.state === 'MERGED' && Number.isInteger(p.id)) merged.set(p.id, await bitbucketMergedAt(coords, p));
+      for (const b of g.branches) {
+        const found = listing.prs.filter((p) => p?.source?.branch?.name === b)
+          .map((p) => fromBitbucketPr(g.slug, coords, p, merged.get(p.id) ?? null)).filter(Boolean);
+        // A listing cut off by its page cap proves nothing about a branch it did not reach (M2): leave it unknown.
+        if (found.length || listing.complete) results.set(`${lower(g.slug)}#${b}`, found);
+      }
+    } catch (e) {
+      if (e.kind === 'auth') auth = 'unauthenticated';
+      error ||= String(e.message || e);
+    }
+  });
+  return { results, error, auth };
+}
+
 // ---- cache ---------------------------------------------------------------------------------
 
 export function cachePath() { return join(metricsRoot(), 'pr-cache.json'); }
@@ -271,7 +331,7 @@ function localPrs(ids) {
 // ---- resolve -------------------------------------------------------------------------------
 
 const RANK = { OPEN: 0, CLOSED: 1, MERGED: 2 };
-const VIA_RANK = { local: 1, gh: 2, azure: 2, action: 3 };
+const VIA_RANK = { local: 1, gh: 2, azure: 2, bitbucket: 2, action: 3 };
 /** The better of two answers for one PR: a more final state, then a more trusted source. */
 function better(a, b) {
   if (!a) return b;
@@ -298,15 +358,17 @@ const sinkDir = (sink) => (typeof sink === 'string' ? worktreePath(sink) : reada
  * @param {Array<string|{slug: string, projectDir: string|null}>} p.sinks  metrics slugs (or sinks) whose branch copies may hold PR events.
  * @param {boolean} [p.useGh]
  * @param {boolean} [p.useAzure]
+ * @param {boolean} [p.useBitbucket]
  * @param {(slug: string) => Promise<{org,project,repo}|null>} [p.coordsFor]  Azure coordinates of a metrics slug.
  * @returns {Promise<{ prs: Object<string, object[]|null>, status: object }>} status: gh/ghDetail/ghError;
  *   azure ('unused'|'missing'|'unauthenticated'|'ok'), azureError, azureTruncated (repos whose listing hit
- *   AZURE_MAX_PAGES and left a branch unknown); actionRepos, unsupportedRepos, checked.
+ *   AZURE_MAX_PAGES and left a branch unknown); bitbucket ('unused'|'missing'|'unauthenticated'|'ok'),
+ *   bitbucketError; actionRepos, unsupportedRepos, checked.
  */
-export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAzure = true, coordsFor = azureCoordsForSlug } = {}) {
+export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAzure = true, useBitbucket = true, coordsFor = azureCoordsForSlug } = {}) {
   const now = _now();
   const lookups = runs.map(sanitizeLookup).filter(Boolean).slice(0, MAX_LOOKUPS);
-  const status = { gh: 'unused', ghDetail: null, ghError: null, azure: 'unused', azureError: null, azureTruncated: [], actionRepos: [], unsupportedRepos: [], checked: 0 };
+  const status = { gh: 'unused', ghDetail: null, ghError: null, azure: 'unused', azureError: null, azureTruncated: [], bitbucket: 'unused', bitbucketError: null, actionRepos: [], unsupportedRepos: [], checked: 0 };
 
   // 1. Action events, indexed by repo#branch and repo#number.
   const byBranch = new Map();
@@ -329,7 +391,7 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAz
   // 2. Local pipelines (this machine's own runs).
   const local = localPrs(lookups.map((l) => l.id));
 
-  // 3. gh / Azure DevOps, for the repo#branch pairs the Action has not answered.
+  // 3. gh / Azure DevOps / Bitbucket, for the repo#branch pairs the Action has not answered.
   const cache = await loadCache();
   const need = new Map();   // key → { repo, branch, endedMs, forge }
   const unsupported = new Set();
@@ -373,7 +435,20 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAz
     }
   }
 
-  // Join per run — keep the source the cache recorded (Azure), default gh for older entries (m5).
+  const bbNeed = [...need.values()].filter((n) => n.forge === 'bitbucket');
+  if (useBitbucket && bbNeed.length) {
+    if (readBitbucketCredentials().mode === 'none') status.bitbucket = 'missing';
+    else {
+      const { results, error, auth } = await lookupBranchesViaBitbucket(bbNeed);
+      status.bitbucket = auth || 'ok';
+      status.bitbucketError = auth ? null : error;
+      status.checked += results.size;
+      for (const [key, prs] of results) cache.entries[key] = { prs, checkedAt: now };
+      if (results.size) await saveCache(cache);
+    }
+  }
+
+  // Join per run — keep the source the cache recorded (Azure, Bitbucket), default gh for older entries (m5).
   const prs = {};
   for (const l of lookups) {
     const found = new Map();   // repo#number → pr
@@ -403,7 +478,7 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAz
       }
     }
     // A PR known only from this machine's table is still a real PR, but "no PR" is only claimed
-    // when the Action, GitHub or Azure DevOps actually answered for the run's branch.
+    // when the Action, GitHub, Azure DevOps or Bitbucket actually answered for the run's branch.
     prs[l.id] = found.size ? [...found.values()] : known ? [] : null;
   }
   return { prs, status };

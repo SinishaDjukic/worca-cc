@@ -22,7 +22,8 @@ test('the view is remembered per browser; old keys migrate once; junk falls back
 test('chip: none for the default; "Running · 2 of 41 runs"; group by alone', () => {
   assert.equal(viewChip(DEFAULT_VIEW, { shown: 41, total: 41 }), '');
   assert.equal(viewChip({ show: 'running', groupBy: 'none', person: '' }, { shown: 2, total: 41 }), 'Running · 2 of 41 runs');
-  assert.equal(viewChip({ show: 'all', groupBy: 'project', person: '' }, { shown: 41, total: 41 }), 'By project');
+  assert.equal(viewChip({ show: 'all', groupBy: 'project', person: '' }, { shown: 41, total: 41 }), '', 'grouping alone draws no chip');
+  assert.equal(viewChip({ show: 'all', groupBy: 'date', person: '' }, { shown: 41, total: 41 }), '');
 });
 
 test('labels: the record round-trips them and drops non-strings; a labels-only filter shows "N of M runs"', () => {

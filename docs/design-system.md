@@ -148,6 +148,9 @@ extension sidebar's own settings checkbox (`.wx-settings-check`) keeps its nativ
 A checked checkbox and a checked radio fill `--ink`, never green; the tick is the page colour (`--tick`, `--tick-dash`).
 A disabled checked box fills `--seq`. A selected option row (`.opt-row`, `.chip-select label`) takes the `--field` fill and
 an ink border.
+Requirements' pressed toggles are the one green on/off: a pressed Confirm on an assumption (`.req-confirm`) takes a green
+outline and green text, and a Files for the run chip that goes with the run (`.req-fpick.on`) a green outline and a check
+on `--panel`; neither is ever green-filled.
 ### Segmented control
 `.seg`: one `--field` container, 28px / 13px buttons, the selected one `--surface`. `.seg-sm` is the same size.
 The run log's Summaries / Raw switch (`.log-view-seg`, flag `commandSummaries`) is a `.seg-sm` in the Logs bar and the step
@@ -228,6 +231,9 @@ and Group by. The run page's View PR ▾ is built with it. The sidebar flyouts (
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
 dropdowns. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
+The Requirements pages build their header and file menus as `.menu.hd-menu` and place them through their own
+`.req-menu` wrapper (the open list floats under its trigger, right-aligned); their danger row (Remove) takes
+`--red-ink-strong`, which keeps AA on `--panel` and on the `--red-bg` hover.
 ### Row button
 `.row-btn`: a whole divided-list row that a person opens (a Library folder, a Memory row, a keyed project row): full
 width, `--hover` fill and `--r-sm` corner on hover, an inset ring on keyboard focus. Each list keeps its own grid and
@@ -242,10 +248,10 @@ keep their divider, and an empty list draws no card. Each Settings section is on
 a preset, a guardrail) with the same divider and padding.
 ### Chat cards
 In the Chat conversation every card (run, files, applied change, command, run proposal, workflow, stubs) sits on the
-text column: `.ask-transcript-col` caps it at `--chat-text-max` (760px) and no card kind sets its own width. Only a graph
-well (`.gv-well`: the workflow card's and the run card's graph) widens, through one rule (`.chat-convo .ask-msg
-.gv-well`), up to `--chat-card-max` (1040px) and centred on the column; it is 1px `--line`, a 6px corner and the canvas
-fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
+text column: `.ask-transcript-col` caps it at `--chat-text-max` (760px) and no card kind sets its own width. No part of
+a chat card leaves the text column (checked): a graph well (`.gv-well`: the workflow card's, the Auto card's and the
+run card's graph) is exactly as wide as its card and lines up with the card's other content; it is 1px `--line`, a 6px
+corner and the canvas fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
 with the first node in view, never centred with both ends cut). The well is as tall as the graph at that zoom (220–480px),
 set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The transcript reserves its
 scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest

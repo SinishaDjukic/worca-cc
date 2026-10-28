@@ -700,11 +700,13 @@ test('Ask in Chat on a card appends the exact reference (and the reply count) an
   const { window } = ctx;
   const doc = window.document;
   await checkRows([
-    { name: 'the card\'s Ask in Chat button opens Chat with the exact reference and sends nothing', run: async () => {
+    { name: 'the card\'s Ask in Chat button opens the chat beside the diff with the exact reference and sends nothing', run: async () => {
+      const at = window.location.hash;
       click(window, doc.querySelector('[data-comment-id="dc_00000001"] .hd-cmt-ask'));
       await settle(window, 6);
-      assert.equal(window.location.hash, '#chat', 'Ask in Chat opens the Chat page');
-      const ta = doc.querySelector('.ask-input');
+      assert.equal(window.location.hash, at, 'Ask worca beside the page (L7): the side column opens, the diff stays');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      const ta = doc.querySelector('#ask-side .ask-input');
       assert.ok(ta, 'the Ask panel is mounted by the app boot');
       assert.equal(ta.value, '[diff comment dc_00000001 — src/a.js:2 (new), run fcec04e8] "please add a test"', 'the run rides along: Chat has no run of its own');
       await openDetail(ctx);                                            // back to the Diff tab for the next comment

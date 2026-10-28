@@ -249,3 +249,30 @@ test('boot: a product brief left making by a restart becomes INTERRUPTED', async
   assert.equal(b.error.message, 'The look at the code did not finish because Worca restarted. Try again.');
   assert.equal((await bootMaintenance({ log: () => {} })).recoveredBriefs, 0, 'idempotent');
 });
+
+// Requirements A8 (D5, D9): the three file janitors run at boot. The helpers are unit-tested in
+// requirements-attachment-job.test.mjs; this pins the WIRING.
+test('boot: a file left reading fails INTERRUPTED; old read folders and temp bodies go, fresh ones stay', async () => {
+  const store = await import('../src/core/requirements/store.mjs');
+  const left = store.insertAttachment({ id: store.mintAttachmentId(), ownerType: 'feature', ownerId: 1, name: 'x.md', kind: 'text', mime: 'text/plain', bytes: 1, sha256: 'boot-att-1' });
+  const reads = join(worcaHome(), 'tmp', 'requirements');
+  const bodies = join(worcaHome(), 'requirements', 'att');
+  const oldRead = join(reads, 'att-read-0123abcd');
+  const freshRead = join(reads, 'att-read-4567cdef');
+  const oldTemp = join(bodies, 'ratt_0123456789ab.txt.tmp-0123abcd');
+  const freshTemp = join(bodies, 'ratt_0123456789ab.txt.tmp-4567cdef');
+  for (const d of [oldRead, freshRead]) await mkdir(d, { recursive: true });
+  await mkdir(bodies, { recursive: true });
+  const { writeFileSync } = await import('node:fs');
+  for (const f of [oldTemp, freshTemp]) writeFileSync(f, 'x');
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  for (const p of [oldRead, oldTemp]) utimesSync(p, old, old);
+
+  const res = await bootMaintenance({ log: () => {} });
+
+  assert.equal(res.recoveredAttachmentReads, 1);
+  assert.equal(store.getAttachment(left.id).error.code, 'INTERRUPTED');
+  assert.deepEqual([res.attachmentReadFolders.removed, res.attachmentTempBodies.removed], [[oldRead], [oldTemp]]);
+  assert.deepEqual([existsSync(oldRead), existsSync(freshRead), existsSync(oldTemp), existsSync(freshTemp)], [false, true, false, true]);
+  assert.equal((await bootMaintenance({ log: () => {} })).recoveredAttachmentReads, 0, 'idempotent');
+});

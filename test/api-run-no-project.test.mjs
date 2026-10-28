@@ -19,7 +19,6 @@ import { createTicket, cancelTicket } from '../src/core/scheduler.mjs';
 useTempHome(after);   // outer isolation: /api/run finishes ASYNC in-process (api-run-memory-scope pattern)
 
 let homeDir, prevHome, srv, base, runs, _testing;
-const prevFlags = process.env.WORCA_FLAGS;
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,7 +69,6 @@ before(async () => {
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   delete process.env.WORCA_MOCK;
-  if (prevFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prevFlags;
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   await rmWithRetry(homeDir);
 });
@@ -96,14 +94,11 @@ test('refusals answer 400 before anything is created', async () => {
     assert.deepEqual(await r.json(), { error }, JSON.stringify(body));
   }
   assert.equal(existsSync(join(worcaHome(), 'runs')), false, 'no refusal made a run root');
-  // Shape it first on (WORCA_FLAGS locks the flag, as test/api-shape-first.test.mjs does): a sliced shaped run is refused.
-  process.env.WORCA_FLAGS = 'shapeFirst';
-  try {
-    for (const shape of [{ slices: 'auto' }, { perspectives: ['qa'], slices: 'auto' }]) {
-      const r = await post('/api/run', { noProject: true, prompt: 'x', shape });
-      assert.deepEqual([r.status, (await r.json()).error], [400, 'a run without a project cannot be planned in slices yet'], JSON.stringify(shape));
-    }
-  } finally { process.env.WORCA_FLAGS = '-shapeFirst'; }
+  // A sliced shaped run is refused.
+  for (const shape of [{ slices: 'auto' }, { perspectives: ['qa'], slices: 'auto' }]) {
+    const r = await post('/api/run', { noProject: true, prompt: 'x', shape });
+    assert.deepEqual([r.status, (await r.json()).error], [400, 'a run without a project cannot be planned in slices yet'], JSON.stringify(shape));
+  }
   assert.equal(existsSync(join(worcaHome(), 'runs')), false, 'no refusal made a run root');
 });
 
@@ -151,31 +146,28 @@ test('a mock default run with no project: its own folder, the No project History
 });
 
 test('the Shaper with no project (U13, L7): its shaped run is never sliced and ends done after the plan approval', { timeout: 180000 }, async () => {
-  process.env.WORCA_FLAGS = 'shapeFirst';
-  try {
-    const r = await post('/api/run', { noProject: true, prompt: 'Add a charts page.', workflowId: 'wf_shape', mock: true });
-    const text = await r.text();
-    assert.equal(r.status, 200, text);
-    const { runId } = JSON.parse(text);
-    const entry = runs.get(runId);
-    assert.equal(entry.orch.opts.shape.slices, 'off', 'New run sends no shape: the server turns slicing off');
-    let pq;
-    const t0 = Date.now();
-    while (Date.now() - t0 < 60000) {
-      pq = entry.pendingQuestion;
-      if (pq && pq.kind === 'plan') break;
-      if (pq && !answered.has(`${runId}:${pq.id}`)) {
-        answered.add(`${runId}:${pq.id}`);
-        await post('/api/answer', { runId, id: pq.id, payload: { answers: [] } });
-      }
-      await sleep(50);
+  const r = await post('/api/run', { noProject: true, prompt: 'Add a charts page.', workflowId: 'wf_shape', mock: true });
+  const text = await r.text();
+  assert.equal(r.status, 200, text);
+  const { runId } = JSON.parse(text);
+  const entry = runs.get(runId);
+  assert.equal(entry.orch.opts.shape.slices, 'off', 'New run sends no shape: the server turns slicing off');
+  let pq;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 60000) {
+    pq = entry.pendingQuestion;
+    if (pq && pq.kind === 'plan') break;
+    if (pq && !answered.has(`${runId}:${pq.id}`)) {
+      answered.add(`${runId}:${pq.id}`);
+      await post('/api/answer', { runId, id: pq.id, payload: { answers: [] } });
     }
-    assert.equal(pq?.kind, 'plan', 'the run reached the plan approval');
-    const a = await post(`/api/runs/${runId}/answer`, { id: pq.id, decision: 'approve' });
-    assert.equal(a.status, 200, await a.text());
-    const done = await untilLanded(runId);
-    assert.equal(done.status, 'done', JSON.stringify({ status: done.status, reason: done.pauseReason, detail: done.pauseDetail }));
-  } finally { process.env.WORCA_FLAGS = '-shapeFirst'; }
+    await sleep(50);
+  }
+  assert.equal(pq?.kind, 'plan', 'the run reached the plan approval');
+  const a = await post(`/api/runs/${runId}/answer`, { id: pq.id, decision: 'approve' });
+  assert.equal(a.status, 200, await a.text());
+  const done = await untilLanded(runId);
+  assert.equal(done.status, 'done', JSON.stringify({ status: done.status, reason: done.pauseReason, detail: done.pauseDetail }));
 });
 
 test('the noProject arm passes the run options through: guardrails, human in the loop, a markdown task, the title', { timeout: 180000 }, async () => {

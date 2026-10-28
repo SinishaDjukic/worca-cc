@@ -46,12 +46,12 @@ export function unpinWorkflow(pins, id) {
 }
 
 /** The pins that show, in pin order: [{ id, name, shaper }]. `workflows` null = not loaded yet. */
-export function visiblePins({ pins, workflows = null, flags = {} } = {}) {
+export function visiblePins({ pins, workflows = null } = {}) {
   const byId = new Map((Array.isArray(workflows) ? workflows : []).filter((w) => w && w.id).map((w) => [w.id, w]));
   const out = [];
   for (const id of normalizePins(pins).pins) {
     if (id === SHAPER_PIN_ID) {
-      if ((flags || {})['shapeFirst'] === true) out.push({ id, name: 'Shaper', shaper: true });
+      out.push({ id, name: 'Shaper', shaper: true });
       continue;
     }
     const w = byId.get(id);

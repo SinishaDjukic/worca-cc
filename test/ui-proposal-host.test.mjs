@@ -303,14 +303,14 @@ test('descriptions: descriptionOf fills the footers at mount; setDescriptions re
   assert.equal(well.setDescriptions((k) => `About ${k}`), false, 'nothing changed');
 });
 
-test('style.css: the well pans with a grab cursor and selects no text, its cluster sits in its own corner, and only a graph well outgrows a chat card\'s text column (#959)', () => {
+test('style.css: the well pans with a grab cursor and selects no text, its cluster sits in its own corner, and a chat graph well stays inside its card (#959)', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   for (const rule of [
     '.gv-well{user-select:none;-webkit-user-select:none;}',
     '.gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}',
     '.gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}',
     '.gv-well > .gv-nav{right:12px;bottom:12px;}',
-    '.chat-convo .ask-msg .gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}',
   ]) assert.ok(css.includes(rule), `missing: ${rule}`);
+  assert.doesNotMatch(css, /\.chat-convo \.ask-msg \.gv-well\{/, 'no rule widens a chat graph well past its card');
   assert.ok(css.includes('.ask-ccard{margin:6px 0;max-width:760px;'), 'the build card\'s text column keeps its width');
 });

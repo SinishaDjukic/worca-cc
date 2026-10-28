@@ -11,7 +11,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { minLevelFor } from '../ui/public/ui-level.mjs';
-import { applyFlags, flagOn } from '../ui/public/flags.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -28,9 +27,9 @@ const BUDGET = () => ({ totalLimitUsd: 50, resetPeriod: 'monthly', windowStartMs
 const FREE = { enabled: true, known: true, limit: 50, remaining: 4, resetAt: new Date(Date.now() + 3 * 3600000).toISOString(), models: [] };
 
 // width: a viewport (the nav tiers read `(max-width: …)` queries); hover: a mouse (`(hover: hover)` matches);
-// budget: false makes GET /api/budget fail (no snapshot ever arrives). keepAwake: the flag GET /api/flags reports;
-// flagsPatch: 'ok', or the { status, error } the server answers a PATCH /api/flags with.
-async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = { on: true, locked: false }, flagsPatch = 'ok' } = {}) {
+// budget: false makes GET /api/budget fail (no snapshot ever arrives). keepAwake: the setting GET /api/settings reports;
+// keepAwakeSave: 'ok', or the { status, error } the server answers a {keepAwake} save with.
+async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = true, keepAwakeSave = 'ok' } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/', pretendToBeVisual: true }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -44,27 +43,20 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
   window.__budgetTickMs = DAY;
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const posts = [];
-  const patches = [];
   window.fetch = (u, opts = {}) => {
     const url = String(u);
     const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
     const method = (opts.method || 'GET').toUpperCase();
-    if (url.endsWith('/api/flags')) {
-      if (method === 'PATCH') {
-        const body = JSON.parse(opts.body);
-        patches.push(body);
-        return flagsPatch === 'ok' ? ok({ flags: [{ key: 'keepAwake', on: body.keepAwake, locked: false }] })
-          : Promise.resolve({ ok: false, status: flagsPatch.status, json: async () => ({ error: flagsPatch.error }) });
-      }
-      return ok({ flags: [{ key: 'keepAwake', ...keepAwake }] });
-    }
+    if (url.endsWith('/api/flags')) return ok({ flags: [] });
     if (method === 'POST') {
       const body = JSON.parse(opts.body);
       posts.push({ url, body });
       // levelSave: 'ok', or the error the server answers a {uiLevel} save with.
       if (body.uiLevel && levelSave !== 'ok') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: levelSave }) });
+      if ('keepAwake' in body && keepAwakeSave !== 'ok') return Promise.resolve({ ok: false, status: keepAwakeSave.status, json: async () => ({ error: keepAwakeSave.error }) });
       return ok(body);
     }
+    if (url.endsWith('/api/settings')) return ok({ keepAwake, chat: {} });
     if (url.endsWith('/api/whoami')) return ok(whoami);
     if (url.includes('/api/budget')) return budget ? ok(BUDGET()) : Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
     if (url.includes('/api/openrouter/free-daily')) return ok(free || { enabled: false });
@@ -83,7 +75,7 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
   const click = (el, detail = 1) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, detail }));
   // Keys go where focus is, as in a browser (the menu reads its arrows on itself; Escape is the document's).
   const key = (k) => (doc.activeElement || doc.body).dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
-  return { window, doc, $, click, key, posts, patches };
+  return { window, doc, $, click, key, posts };
 }
 
 test('the account menu: the corner opens it upward; a click outside, Escape and a route close it', async () => {
@@ -370,11 +362,12 @@ test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairline
   assert.doesNotMatch(rule('.theme-ic') || '', /flex:1;/);
 });
 
-test('Keep awake in the account menu: a switch row, one source with Settings › Labs; a click PATCHes the flag and the menu stays open', async () => {
-  const { doc, $, click, patches } = await boot();
+test('Keep awake in the account menu: a switch row for the keepAwake setting; a click saves it and the menu stays open', async () => {
+  const { doc, $, click, posts } = await boot();
   const row = $('acct-keepawake');
+  const saves = () => posts.filter((p) => p.url.endsWith('/api/settings') && 'keepAwake' in p.body).map((p) => p.body);
   await checkRows([
-    { name: 'a menuitemcheckbox whose .switch is decoration, painted from GET /api/flags, with its tip', run: () => {
+    { name: 'a menuitemcheckbox whose .switch is decoration, painted from GET /api/settings, with its tip', run: () => {
       assert.deepEqual([row.getAttribute('role'), row.querySelector('.mi-lbl').textContent, row.getAttribute('aria-checked')], ['menuitemcheckbox', 'Keep awake', 'true']);
       const sw = row.querySelector('.switch');
       assert.deepEqual([sw.getAttribute('aria-hidden'), sw.hasAttribute('role'), sw.hasAttribute('tabindex')], ['true', false, false]);
@@ -382,45 +375,35 @@ test('Keep awake in the account menu: a switch row, one source with Settings ›
       assert.equal(row.getAttribute('aria-description'), row.title);
       assert.equal(row.querySelector('a'), null, 'no Beta chip link inside a menu row');
     } },
-    { name: 'a click sends PATCH {keepAwake:false}, repaints off, and the menu stays open', run: async () => {
+    { name: 'a click saves {keepAwake:false}, repaints off, and the menu stays open', run: async () => {
       click($('side-acct'));
       click(row);
       await settle();
-      assert.deepEqual(patches, [{ keepAwake: false }]);
+      assert.deepEqual(saves(), [{ keepAwake: false }]);
       assert.equal(row.getAttribute('aria-checked'), 'false');
-      assert.equal(flagOn('keepAwake', doc), false, 'the page state follows, so the Labs row repaints too');
       assert.equal($('acct-menu').hidden, false, 'a toggle leaves the menu open');
     } },
     { name: 'a keyboard click (Enter/Space on the button, detail 0) toggles it and keeps the menu open', run: async () => {
       row.focus();
       click(row, 0);
       await settle();
-      assert.deepEqual(patches.at(-1), { keepAwake: true });
+      assert.deepEqual(saves().at(-1), { keepAwake: true });
       assert.equal(row.getAttribute('aria-checked'), 'true');
       assert.equal($('acct-menu').hidden, false);
       assert.equal(doc.activeElement, row);
     } },
-    { name: 'a flags change from elsewhere (the Labs row, a flags frame) repaints the menu row', run: () => {
-      applyFlags({ keepAwake: false }, doc);
-      assert.equal(row.getAttribute('aria-checked'), 'false');
-    } },
   ]);
 });
 
-test('Keep awake in the account menu: a refused change reverts, names the error in the tip and toasts; a lock disables the row', async () => {
-  const { doc, $, click } = await boot({ flagsPatch: { status: 500, error: 'disk full' } });
+test('Keep awake in the account menu: a stored off paints off; a refused change reverts and toasts', async () => {
+  const off = await boot({ keepAwake: false });
+  assert.equal(off.$('acct-keepawake').getAttribute('aria-checked'), 'false');
+  const { doc, $, click } = await boot({ keepAwakeSave: { status: 500, error: 'disk full' } });
   const row = $('acct-keepawake');
   click(row);
   await settle();
   assert.equal(row.getAttribute('aria-checked'), 'true', 'reverted');
-  assert.match(row.title, / \(disk full\)$/);
-  assert.equal(row.getAttribute('aria-description'), row.title);
   assert.equal(doc.querySelector('.toast.err[data-key="keep-awake"] .td')?.textContent, 'disk full');
-  const locked = await boot({ keepAwake: { on: true, locked: true } });
-  const r2 = locked.$('acct-keepawake');
-  assert.equal(r2.getAttribute('aria-disabled'), 'true');
-  assert.match(r2.title, /\(Locked by WORCA_FLAGS\)$/);
-  assert.equal(locked.doc.querySelector('.toast[data-key="keep-awake"]'), null, 'a lock found at load is no toast');
 });
 
 test('stylesheet: a switch row paints its inner .switch from the row\'s aria-checked and aria-disabled, and the switch takes no pointer', () => {

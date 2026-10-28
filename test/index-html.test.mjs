@@ -16,14 +16,14 @@ test('renderIndexHtml with flags', async () => {
       assert.ok(shell.indexOf(FLAG_GATES_ANCHOR) > shell.indexOf('href="/style.css"'));
     } },
     { name: 'on: data-flags lists it, no gate rule for it', run: () => {
-      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, keepAwake: true, shapeFirst: true, runTags: true, runPresets: true, commandSummaries: true, runLabels: true, smartRunNaming: true, requirements: true, workflowTests: true, runTelemetry: true });
-      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo keepAwake shapeFirst runTags runPresets commandSummaries runLabels smartRunNaming requirements workflowTests runTelemetry">/);
+      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, commandSummaries: true, runLabels: true, smartRunNaming: true, requirements: true, workflowTests: true, runTelemetry: true });
+      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo commandSummaries runLabels smartRunNaming requirements workflowTests runTelemetry">/);
       assert.match(out, /<style id="flag-gates"><\/style>/);
     } },
     { name: 'off: empty data-flags and one rule per off flag', run: () => {
-      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, keepAwake: false, shapeFirst: false, runTags: false, runPresets: false, commandSummaries: false, runLabels: false, smartRunNaming: false, requirements: false, workflowTests: false, runTelemetry: false });
+      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, commandSummaries: false, runLabels: false, smartRunNaming: false, requirements: false, workflowTests: false, runTelemetry: false });
       assert.match(out, /<html lang="en" data-theme="light" data-flags="">/);
-      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="keepAwake"\]\{display:none!important\}\n\[data-flag~="shapeFirst"\]\{display:none!important\}\n\[data-flag~="runTags"\]\{display:none!important\}\n\[data-flag~="runPresets"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}\n\[data-flag~="requirements"\]\{display:none!important\}\n\[data-flag~="workflowTests"\]\{display:none!important\}\n\[data-flag~="runTelemetry"\]\{display:none!important\}<\/style>/);
+      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}\n\[data-flag~="requirements"\]\{display:none!important\}\n\[data-flag~="workflowTests"\]\{display:none!important\}\n\[data-flag~="runTelemetry"\]\{display:none!important\}<\/style>/);
     } },
     { name: 'flags omitted ⇒ byte-for-byte what it rendered before', run: () => {
       assert.equal(renderIndexHtml(mini, 'system'), mini);
@@ -34,7 +34,7 @@ test('renderIndexHtml with flags', async () => {
     } },
     { name: 'git: data-git after data-level / data-flags; omitted ⇒ no attribute', run: () => {
       assert.match(renderIndexHtml(mini, 'dark', 'simple', undefined, { git: false }), /<html lang="en" data-theme="dark" data-level="simple" data-git="off">/);
-      assert.match(renderIndexHtml(mini, 'light', 'expert', { flagsDemo: true, keepAwake: false, shapeFirst: false, runTags: false }, { git: true }),
+      assert.match(renderIndexHtml(mini, 'light', 'expert', { flagsDemo: true, commandSummaries: false, runLabels: false }, { git: true }),
         /<html lang="en" data-theme="light" data-level="expert" data-flags="flagsDemo" data-git="on">/);
       assert.equal(renderIndexHtml(mini, 'dark', 'expert'), mini.replace(INDEX_THEME_ANCHOR, '<html lang="en" data-theme="dark" data-level="expert">'));
     } },

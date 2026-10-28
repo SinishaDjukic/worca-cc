@@ -1,6 +1,6 @@
 // test/ui-question-shaping.test.mjs — Shape it first (spec §3.3, D3; shaper-cards D2–D4, D16): a shaping run's Clarify
 // ask on the run page is a step card ("A few questions before the plan", chip Clarify) with Answer and Use defaults
-// (every question's recommended option). A non-shaping run, or the gate off, keeps the Clarify panel and its heading.
+// (every question's recommended option). A non-shaping run keeps the Clarify panel and its heading.
 // Every step kind draws the same card on the run page and in the paintAsk host (the chat card's and the feature page's
 // path), and the paintAsk host — which has no click delegate, like the feature page — still posts.
 //
@@ -50,13 +50,12 @@ function recorder(status = 200, currentPq = QUESTIONS) {
   return { answers, fetchHandler };
 }
 
-async function openShaping({ gate = true, shaping = SHAPING, status = 200, pq = QUESTIONS } = {}) {
+async function openShaping({ shaping = SHAPING, status = 200, pq = QUESTIONS } = {}) {
   const rec = recorder(status, pq);
   const ctx = await bootApp({ fetchHandler: rec.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({
     type: 'hello',
-    flags: { shapeFirst: !!gate },
     runs: [{ runId: RUN_ID, pipelineId: 'pshape01', title: 'Shape demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
       startedAt: '2026-01-01T00:00:00Z', ...(shaping ? { shaping } : {}), pendingQuestion: pq }],
   });
@@ -122,18 +121,16 @@ test('Use defaults with /api/answer answering 500 says why it was not sent', asy
   assert.equal(err.textContent, 'Not sent: boom');
 });
 
-for (const [name, opts] of [['a non-shaping run', { shaping: null }], ['the gate off', { gate: false }]]) {
-  test(`${name} keeps the Clarify panel and its heading unchanged`, async () => {
-    const { panel, head } = await openShaping(opts);
-    assert.ok(panel, 'the run page panel is mounted');
-    assert.equal(panel.querySelector('.clarify-defaults'), null, 'no Use defaults button');
-    assert.equal(panel.querySelector('.ask-mcard-head'), null, 'not a step card');
-    assert.match(panel.querySelector('.qpanel-foot [data-qpanel-submit]').textContent, /Submit/);
-    assert.equal(panel.querySelectorAll('.qblock').length, 2);
-    assert.notEqual(head.textContent, 'A few questions before the plan');
-    assert.match(head.textContent, /2 questions/);
-  });
-}
+test('a non-shaping run keeps the Clarify panel and its heading unchanged', async () => {
+  const { panel, head } = await openShaping({ shaping: null });
+  assert.ok(panel, 'the run page panel is mounted');
+  assert.equal(panel.querySelector('.clarify-defaults'), null, 'no Use defaults button');
+  assert.equal(panel.querySelector('.ask-mcard-head'), null, 'not a step card');
+  assert.match(panel.querySelector('.qpanel-foot [data-qpanel-submit]').textContent, /Submit/);
+  assert.equal(panel.querySelectorAll('.qblock').length, 2);
+  assert.notEqual(head.textContent, 'A few questions before the plan');
+  assert.match(head.textContent, /2 questions/);
+});
 
 // ---- every step kind: the run page and the paintAsk host draw the same card (shaper-cards D2/D16)
 const slice = (id) => ({ id, title: `Run ${id}`, goal: `Goal ${id}`, inScope: [], outOfScope: [], acceptance: ['works'], dependsOn: [], estimate: 'medium' });
