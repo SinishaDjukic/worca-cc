@@ -59,7 +59,8 @@ export async function startFakeJira(o = {}) {
     version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false,
     brokenReadBack: false, noVersionNumbers: false, seed: [], forbid: [], extraFields: [],
     // A6.1 downloads: redirectTwice — the signed address redirects again; contentElsewhere — an attachment's content URL on another origin; contentStatus — the content route answers that status.
-    redirectTwice: false, contentElsewhere: false, contentStatus: null, ...o };
+    // mediaStatus — Cloud's signed address answers that status.
+    redirectTwice: false, contentElsewhere: false, contentStatus: null, mediaStatus: null, ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
@@ -88,6 +89,7 @@ export async function startFakeJira(o = {}) {
     if (req.headers.authorization) return send(res, 400, { error: 'An Authorization header is not allowed here.' });
     const id = (/^\/file\/(\d+)/.exec(req.url) || [])[1];
     if (opt.redirectTwice) { res.writeHead(302, { location: `${mediaBase}/file/${id}?again=1` }); return res.end(); }
+    if (opt.mediaStatus) return send(res, opt.mediaStatus, { error: 'The signed address was refused.' });
     const a = findAttachment(id);
     return a ? stream(res, a) : send(res, 404, {});
   });

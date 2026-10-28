@@ -85,6 +85,15 @@ test('an existing file at dest is never overwritten or deleted', async () => {
   assert.equal(readFileSync(to, 'utf8'), 'mine');
 });
 
+test("final review M2: a 401 from Cloud's signed address, which got no Authorization header, is not the token: a plugin error; nothing at dest", async () => {
+  const { jira, src } = await site({ mediaStatus: 401 });
+  const to = dest();
+  await assert.rejects(src.downloadAttachment({ key: 'SHOP-124', id: '10041', maxBytes: MAX, dest: to }),
+    (e) => e.kind === 'plugin' && !/token/i.test(e.message));
+  assert.deepEqual(jira.media.requests.map((r) => r.auth), [null], 'the signed address got no header');
+  assert.equal(existsSync(to), false);
+});
+
 test('401 throws auth; 403 is gone and forbidden; 404 and an attachment not on the ticket are gone; a relative dest is refused; nothing at dest', async () => {
   for (const [status, want] of [[401, null], [403, { gone: true, forbidden: true }], [404, { gone: true }]]) {
     const { src } = await site({ deployment: 'datacenter', contentStatus: status });

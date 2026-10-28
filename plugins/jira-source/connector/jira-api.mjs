@@ -59,6 +59,7 @@ export async function jiraDownload(jira, content, { dest, maxBytes, allowHttpRed
     headers: { accept: '*/*', 'user-agent': 'worca-cc-jira-source', ...(withAuth ? { authorization: authHeader(jira) } : {}) } });
   const drop = async (r) => { try { await r.body?.cancel(); } catch { /* nothing to read */ } };
   let res;
+  let authed = true;   // whether the answer below came from a request that carried the token
   try {
     res = await get(url, true);
     if (res.status >= 300 && res.status < 400) {
@@ -67,6 +68,7 @@ export async function jiraDownload(jira, content, { dest, maxBytes, allowHttpRed
       const same = next.origin === site;
       if (!same && next.protocol !== 'https:' && !(allowHttpRedirect && next.protocol === 'http:')) throw err('plugin', 'Jira redirected the file to an address that is not https');
       await drop(res);
+      authed = same;
       res = await get(next, same);
       if (res.status >= 300 && res.status < 400) { await drop(res); throw err('plugin', 'Jira redirected the file more than once'); }
     }
@@ -74,7 +76,9 @@ export async function jiraDownload(jira, content, { dest, maxBytes, allowHttpRed
     if (e && e.kind) throw e;
     throw err('network', `Jira unreachable: ${e?.message || e}`);
   }
-  if (res.status === 401) { await drop(res); throw err('auth', 'Jira token invalid or expired (or the email does not match it)', { status: 401 }); }
+  // A 401 is the token only when the request carried it; from Cloud's signed address (no header) it is that address's problem, and
+  // Try again asks the site for a new one (final review M2)
+  if (res.status === 401 && authed) { await drop(res); throw err('auth', 'Jira token invalid or expired (or the email does not match it)', { status: 401 }); }
   if (res.status === 403 || res.status === 404) { await drop(res); return { gone: true, ...(res.status === 403 ? { forbidden: true } : {}) }; }
   if (res.status === 429) { await drop(res); throw err('rate-limit', 'Jira rate limit'); }
   if (!res.ok || !res.body) { await drop(res); throw err('plugin', `Jira did not send the file (${res.status})`, { status: res.status }); }
