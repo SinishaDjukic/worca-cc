@@ -21,6 +21,8 @@ export const IMPORT_TIMEOUT_MS = 60_000;
 
 const callOf = (d) => (d && typeof d.callSource === 'function' ? d.callSource : shimCallSource);
 const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+/** The longest search cursor taken back from the page; a longer one from the tracker is not offered (final review M3). */
+const CURSOR_MAX = 500;
 const oneLine = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
 const httpUrl = (u) => (/^https?:\/\//i.test(String(u || '')) ? String(u) : null);
 const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/i;
@@ -81,7 +83,7 @@ export async function searchTickets(scope, body = {}, d = {}) {
   const { conn, t } = await sourceFor(body, d);
   const project = text(body.project, 100);
   const search = text(body.search, 200);
-  const cursor = text(body.cursor, 500);
+  const cursor = text(body.cursor, CURSOR_MAX);
   const r = (await trackerCall(d, t.name, conn, 'searchTickets', { ...(project ? { project } : {}), ...(search ? { search } : {}), ...(cursor ? { cursor } : {}) })) || {};
   const tickets = (Array.isArray(r.tickets) ? r.tickets : []).filter((x) => x && typeof x.key === 'string' && KEY_RE.test(x.key))
     .slice(0, IMPORT_LIMITS.page).map((x) => {
@@ -90,7 +92,8 @@ export async function searchTickets(scope, body = {}, d = {}) {
         status: x.status ? oneLine(x.status) : null, updatedOn: exportDate(x.updatedAt, { year: false }) || null,
         linkedTo: linked ? { id: linked.id, title: linked.title } : null };
     });
-  return { tickets, ...(typeof r.cursor === 'string' && r.cursor ? { cursor: r.cursor } : {}) };
+  // A cursor the next search would clip is dropped, so Show more hides instead of failing (M3)
+  return { tickets, ...(typeof r.cursor === 'string' && r.cursor && r.cursor.length <= CURSOR_MAX ? { cursor: r.cursor } : {}) };
 }
 
 export function keyOf(v) {
@@ -169,7 +172,9 @@ export async function prepareImport(scope, ft, { diskFiles = [] } = {}, d = {}) 
       throw new RequirementsError('BAD_REQUEST', `${displayName(x.name)} was not added: a new feature's files can be up to 100 MB in all; add more on the feature page.`);
     }
   }
-  const criteria = (Array.isArray(ft.criteria) ? ft.criteria : []).slice(0, LIMITS.items).map((x) => ({ text: redactAskText(clip(x, LIMITS.item)), source: p.key }));
+  // redacted before clipped (the constraint; final review M4): a secret cut at the limit would no longer match the redactor
+  const criteria = (Array.isArray(ft.criteria) ? ft.criteria : []).slice(0, LIMITS.items)
+    .map((x) => ({ text: clip(typeof x === 'string' ? redactAskText(x) : x, LIMITS.item), source: p.key }));
   return { conn, tracker: t.name, key: p.key, url: p.url, meta: p.meta || {}, fingerprint: p.fingerprint, criteriaField: p.criteria.from === 'field' ? p.criteria.field : null,
     criteria, comments: comments.length, generated, diskFiles, downloads, notOnTicket };
 }

@@ -9,7 +9,7 @@ import { createProfile } from '../src/core/plugin-config.mjs';
 import { callSource, setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { createFeature, saveExportLink, listFeatures } from '../src/core/requirements/store.mjs';
 import { saveSetup, _resetExportCaches } from '../src/core/requirements/export.mjs';
-import { IMPORT_TIMEOUT_MS, importView, importOptions, searchTickets, previewImport } from '../src/core/requirements/import.mjs';
+import { IMPORT_TIMEOUT_MS, importView, importOptions, searchTickets, previewImport, prepareImport } from '../src/core/requirements/import.mjs';
 
 useTempHome(after, 'worca-req-import-');
 const prevMock = process.env.WORCA_MOCK;
@@ -125,4 +125,30 @@ test("previewImport: the caps count the form's own files (D9); a ticket another 
   await assert.rejects(previewImport(SCOPE, { ...ACME, key: 'SHOP-999' }, d), (e) => e.code === 'NOT_FOUND' && e.data.gone === true
     && e.message === 'SHOP-999 was not found in Jira, or this connection cannot see it.');
   await assert.rejects(previewImport(SCOPE, { ...ACME, key: 'not a key' }, d), (e) => e.code === 'BAD_REQUEST' && e.message === 'key must be a ticket key such as SHOP-124');
+});
+
+test('final review M3: the search cursor is capped both ways: one longer than the 500 the search takes back is dropped (no Show more), never sent clipped', async () => {
+  reset();
+  const page = (cursor) => ({ tickets: [{ key: 'SHOP-124', title: 'Partial cancel', url: 'https://mock.test/browse/SHOP-124' }], cursor });
+  setMockSourceResponses({ searchTickets: () => page('c'.repeat(500)) });
+  assert.equal((await searchTickets(SCOPE, ACME, d)).cursor, 'c'.repeat(500), 'a cursor of 500 is offered');
+  setMockSourceResponses({ searchTickets: () => page('c'.repeat(501)) });
+  const r = await searchTickets(SCOPE, ACME, d);
+  assert.equal('cursor' in r, false, 'one that would come back clipped is dropped');
+  assert.equal(r.tickets.length, 1, 'the page itself is kept');
+  await searchTickets(SCOPE, { ...ACME, cursor: 'c'.repeat(500) }, d);
+  assert.equal(seen.filter((c) => c.op === 'searchTickets').at(-1).args.cursor, 'c'.repeat(500), 'and one of 500 goes back whole');
+});
+
+test('final review M4: at Start a criterion is redacted before it is clipped, so a secret cut at 500 characters is still hidden', async () => {
+  reset();
+  const secret = `sk-ant-${'Q'.repeat(40)}`;
+  const straddle = `${'a'.repeat(485)} ${secret}`;   // clipped first, only 7 of its characters would stay: too few to look like a key
+  const plan = await prepareImport(SCOPE, { ...ACME, key: 'SHOP-124', criteria: [straddle, `Keep ${secret} out`] }, {}, d);
+  assert.equal(plan.criteria.length, 2);
+  for (const c of plan.criteria) {
+    assert.ok(c.text.length <= 500, 'still clipped');
+    assert.equal(/Q/.test(c.text), false, `no part of the secret: ${c.text.slice(480)}`);
+  }
+  assert.ok(plan.criteria[0].text.startsWith('a'.repeat(485)));
 });
