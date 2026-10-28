@@ -14,6 +14,9 @@ import { main as s2, definitionFacts as s2Facts } from '../tools/spikes/session-
 import { main as s3 } from '../tools/spikes/session-host/s3-child-permissions.mjs';
 import { main as s4 } from '../tools/spikes/session-host/s4-cost.mjs';
 import { main as s6, scanCli } from '../tools/spikes/session-host/s6-depth-and-cap.mjs';
+import { main as s7, BRIEF_DIVIDER, replacesDefaultFrom } from '../tools/spikes/session-host/s7-prompt-and-quality.mjs';
+import { sum } from '../tools/spikes/session-host/fixtures/s7-repo/src/sum.mjs';
+import { slug } from '../tools/spikes/session-host/fixtures/s7-repo/src/slug.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -258,4 +261,37 @@ test('S6 scanCli: the cap default and the concurrent-cap literal from a CLI file
     assert.deepEqual(scanCli(f), { capDefault: 200, concurrentCapText: 'Concurrent subagent limit reached. You can run ' });
     assert.deepEqual(scanCli(null), { capDefault: null, concurrentCapText: null });
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('S7a --dry: two probe turns through the proxy, then three process and three sub-agent trials', async () => {
+  const { argv } = await dryRun(s7);
+  assert.equal(argv.length, 8, argv.join('\n'));
+  for (const l of argv.slice(0, 2)) assert.match(l, /ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:<port> /);
+  assert.match(argv[0], /--agents \S*agents-1\.json/);
+  assert.match(argv[1], /-p 'Reply OK\.' .*--append-system-prompt <\d+ bytes>/);
+  const trials = argv.slice(2);
+  for (const l of trials) assert.doesNotMatch(l, /ANTHROPIC_BASE_URL/);
+  assert.equal(trials.filter((l) => /--append-system-prompt <\d+ bytes> --permission-mode acceptEdits --allowedTools Read,Write,Edit,Bash,Grep,Glob --model claude-sonnet-4-5$/.test(l)).length, 3);
+  assert.equal(trials.filter((l) => /--agents \S*agents-\d+\.json .*--allowedTools Agent,Read,Write,Edit,Bash,Grep,Glob /.test(l)).length, 3);
+  assert.equal(BRIEF_DIVIDER, '\n\n<!-- worca: step brief -->\n\n', 'C4; Task 31 must export the same value');
+});
+
+test('S7a replacesDefaultFrom: only markers the definition does not carry; null without a default in the control', () => {
+  const req = (...m) => ({ markersInSystem: m });
+  assert.equal(replacesDefaultFrom(req('worca: step brief'), req('You are Claude Code', 'TodoWrite'), 'impl'), true);
+  assert.equal(replacesDefaultFrom(req('TodoWrite'), req('TodoWrite'), 'impl'), false);
+  assert.equal(replacesDefaultFrom(req('TodoWrite'), req('You are Claude Code', 'TodoWrite'), 'mentions TodoWrite'), true,
+    'a marker the definition carries itself proves nothing');
+  assert.equal(replacesDefaultFrom(req(), req(), 'impl'), null, 'the control shows no default');
+  assert.equal(replacesDefaultFrom(null, req('TodoWrite'), 'impl'), null, 'no child request');
+});
+
+test('s7-repo fixture: task A starts red (the off-by-one), task B green; CLAUDE.md carries the marker; no nested .git', () => {
+  assert.equal(sum([1, 2, 3]), 5);                 // the bug PLAN-A.md asks to fix
+  assert.equal(slug('  Hello   World '), 'hello-world');
+  const at = (p) => new URL(`../tools/spikes/session-host/fixtures/s7-repo/${p}`, import.meta.url);
+  assert.match(readFileSync(at('CLAUDE.md'), 'utf8'), /^Project rule MARK-CLAUDEMD-7: tests live in test\/\.$/m);
+  assert.equal(JSON.parse(readFileSync(at('package.json'), 'utf8')).scripts.test, 'node --test');
+  for (const f of ['PLAN-A.md', 'PLAN-B.md', 'test/sum.test.mjs', 'test/slug.test.mjs']) assert.ok(existsSync(at(f)), f);
+  assert.equal(existsSync(at('.git')), false);
 });

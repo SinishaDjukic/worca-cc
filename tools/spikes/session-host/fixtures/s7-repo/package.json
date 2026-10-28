@@ -1,0 +1,10 @@
+{
+  "name": "s7-repo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:a": "node --test test/sum.test.mjs",
+    "test:b": "node --test test/slug.test.mjs"
+  }
+}
