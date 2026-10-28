@@ -6,12 +6,15 @@
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { harnessesOf, modelGroups, modelSourceSuffix } from '../../../src/shared/connections.mjs';
-import { engineLabel } from '../../../src/shared/engine-switch.mjs';
+import { ENGINES, engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../../../src/shared/engine-switch.mjs';
+import { sessionCandidates, sessionNotes, SESSION_DEFAULT_LABEL, SESSION_SHARED_SELECTABLE } from '../../../src/shared/graph/sessions.mjs';
+import { SESSION_LABEL_MAX } from '../../../src/shared/graph/constants.mjs';
+import { icon } from '../icons.mjs';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
 // composer, the Scripts page's Overview tab and the Test tab share ONE copy (C3).
 import {
-  h, field, select, toggle, number, renderParamsForm, renderPortEditor,
+  h, field, select, toggle, number, text, renderParamsForm, renderPortEditor,
 } from '../script-forms.mjs';
 
 const ARITY_KINDS = new Set(['and', 'or', 'combine']);
@@ -55,7 +58,7 @@ function portList(doc, ports) {
   zone('Outputs', ports.outputs, 'out');
   return wrap;
 }
-export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], subagentModels = [], editorFor = null, doc = globalThis.document } = {}) {
+export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], subagentModels = [], editorFor = null, session = null, doc = globalThis.document } = {}) {
   const ports = portsFn(node) || { inputs: [], outputs: [] };
   const root = h(doc, 'div', `ins-panel ins-${node.kind === 'agent' ? 'agent' : node.kind === 'script' ? 'script' : `flow ins-${node.kind}`}`);
   root.dataset.nodeId = node.id;
@@ -63,6 +66,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
 
   if (node.kind === 'agent') {
     root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
+    if (session) body.appendChild(memberRow(doc, node.id, session));
     // Hidden built-ins (#422) leave the list unless one is THIS node's stored
     // pick — it still resolves at run time and must stay visible here.
     const offered = models.filter((m) => m && (!m.hidden || m.id === node.config.model));
@@ -190,6 +194,144 @@ export function renderWireInspector(wire, { loop = false, doc = globalThis.docum
   } else {
     body.appendChild(h(doc, 'p', 'ins-blurb', 'Plain data wire. Delete it to rewire the target input.'));
   }
+  root.appendChild(body);
+  return root;
+}
+
+/** A member's row under its head (05 §5.2): `session` = { sid, label, index (1-based), count }. */
+function memberRow(doc, nodeId, { sid, label, index, count }) {
+  const row = h(doc, 'div', 'ins-member');
+  row.appendChild(h(doc, 'span', 'ins-member-t', `In ${label} · step ${index} of ${count}`));
+  const pick = h(doc, 'button', 'btn btn-quiet btn-sm', 'Select session');
+  pick.type = 'button';
+  pick.dataset.sessSelect = sid;
+  const leave = h(doc, 'button', 'btn btn-quiet btn-sm', 'Leave');
+  leave.type = 'button';
+  leave.dataset.sessLeave = nodeId;
+  row.append(pick, leave);
+  return row;
+}
+
+const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+const MODE_HINT = {
+  live: 'Each step runs as its own sub-agent with a fresh context. The main agent hands work over and keeps their reports.',
+  separate: 'Each step runs in its own session, one after another.',
+};
+
+/**
+ * The session panel (05 §5.1). It says what runs where and promises nothing the gate denies: "Sub-agents" is offered
+ * only where `sessionSupport(engine, {verified})` says the steps really run as sub-agents. Fields route by data-field
+ * through the composer's delegated `change` listener; the panel names its session (`data-session-id`); buttons carry
+ * `data-sess-*` for the delegated click.
+ * @param {object} spec  a SessionSpec (sessions.mjs sessionsOf)
+ * @param {object} o  template + portsFn (the "Add" rows; none without them), labels {id: text}, models, efforts,
+ *   engine, verified, members (sessionNotes' member facts), split (a V27 fires), canAdd (the Labs flag), doc
+ */
+export function renderSessionInspector(spec, { template = null, portsFn = null, labels = {}, models = [], efforts = [],
+  engine = 'claude', verified = SESSION_SUBAGENTS_VERIFIED, members = [], split = false, canAdd = true, doc = globalThis.document } = {}) {
+  const s = spec.settings || {};
+  const labelOf = (id) => labels[id] || id;
+  const root = h(doc, 'div', 'ins-panel ins-session');
+  root.dataset.sessionId = spec.sid;
+  root.appendChild(head(doc, 'One session', `${spec.sid} · ${plural(spec.members.length, 'step')}`));
+  const body = h(doc, 'div', 'ins-body-in');
+  const name = text(doc, 'ins-sess-label', 'label', 'Name', s.label || SESSION_DEFAULT_LABEL);
+  name.querySelector('input').maxLength = SESSION_LABEL_MAX;      // V30 refuses a longer label, and Save with it
+  body.appendChild(name);
+
+  body.appendChild(h(doc, 'div', 'ins-zone', 'Steps'));
+  const nodeOf = (id) => ((template && template.nodes) || []).find((n) => n && n.id === id) || null;
+  const modelText = (id) => {
+    const cfg = (nodeOf(id) || {}).config || {};
+    const m = cfg.model ? models.find((x) => x && x.id === cfg.model) : null;
+    const name = cfg.model ? ((m && m.label) || cfg.model) : 'inherit';
+    return cfg.effort ? `${name} · ${cfg.effort}` : name;
+  };
+  const ol = h(doc, 'ol', 'ins-steps');
+  spec.members.forEach((id, i) => {
+    const li = h(doc, 'li', 'ins-step');
+    li.dataset.stepId = id;
+    li.append(h(doc, 'span', 'idx', String(i + 1)), h(doc, 'span', 'lbl', labelOf(id)), h(doc, 'span', 'mdl', modelText(id)));
+    const x = h(doc, 'button', 'btn btn-quiet btn-sm btn-icon ins-step-leave');
+    x.appendChild(icon(doc, 'x', 14));
+    x.type = 'button';
+    x.dataset.sessLeave = id;
+    x.title = 'Leave the session';
+    x.setAttribute('aria-label', `${labelOf(id)}: leave the session`);
+    li.appendChild(x);
+    ol.appendChild(li);
+  });
+  body.appendChild(ol);
+  if (canAdd && template && typeof portsFn === 'function') {
+    for (const c of sessionCandidates(template, portsFn, { sid: spec.sid, labelOf }).filter((x) => x.ok)) {
+      const add = h(doc, 'button', 'btn btn-quiet btn-sm ins-step-add');
+      add.append(icon(doc, 'plus', 14), doc.createTextNode(`Add ${labelOf(c.nodeId)} · ${c.side}`));
+      add.type = 'button';
+      add.dataset.sessAdd = c.nodeId;
+      body.appendChild(add);
+    }
+  }
+
+  const live = sessionSupport(engine, { verified }).subagents;
+  const how = field(doc, 'ins-sess-mode', 'How it runs');
+  const seg = h(doc, 'div', 'seg');
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', 'How it runs');
+  const segBtn = (mode, label) => {
+    const on = (s.mode || 'subagents') === mode;
+    const b = h(doc, 'button', on ? 'on' : '', label);
+    b.type = 'button';
+    b.dataset.sessMode = mode;
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    return b;
+  };
+  // Not live: the reason names what holds it back, the Labs flag (canAdd) or else the engine's gate.
+  if (live) seg.appendChild(segBtn('subagents', 'Sub-agents'));
+  else how.appendChild(h(doc, 'span', 'ins-resolved', `Separate sessions (${canAdd ? 'sub-agents not available yet' : 'off in Settings › Labs'})`));
+  const shared = segBtn('shared', 'One conversation');
+  shared.dataset.minLevel = 'expert';
+  // Selectable once `shared` runs: Task 66 flips SESSION_SHARED_SELECTABLE (sessions.mjs), here and in the toolbar.
+  if (!SESSION_SHARED_SELECTABLE) { shared.disabled = true; shared.title = 'Not available yet'; }
+  seg.appendChild(shared);
+  how.appendChild(seg);
+  body.appendChild(how);
+  if (s.mode !== 'shared') body.appendChild(h(doc, 'small', 'ins-hint', live ? MODE_HINT.live : MODE_HINT.separate));
+
+  const offered = models.filter((m) => m && (!m.hidden || m.id === s.hostModel));
+  const modelItems = modelGroups(offered).map((g) => ({ group: g.label, items: g.models.map((m) => ({ value: m.id, text: (m.label || m.id) + modelSourceSuffix(m) })) }));
+  body.appendChild(lv(select(doc, 'ins-sess-host-model', 'hostModel', 'Main agent model', [{ value: '', text: 'inherit' }, ...modelItems], s.hostModel || ''), 'advanced', Boolean(s.hostModel)));
+  // The main agent's model decides its efforts, as a step's model does; a saved value it lacks stays visible.
+  const hm = s.hostModel ? models.find((m) => m && m.id === s.hostModel) : null;
+  const hostEfforts = hm && Array.isArray(hm.efforts) && hm.efforts.length ? hm.efforts : efforts;
+  const effList = s.hostEffort && !hostEfforts.includes(s.hostEffort) ? [...hostEfforts, s.hostEffort] : hostEfforts;
+  body.appendChild(lv(select(doc, 'ins-sess-host-effort', 'hostEffort', 'Main agent effort',
+    [{ value: '', text: 'default' }, ...effList.map((e) => ({ value: e, text: e }))], s.hostEffort || ''), 'advanced', Boolean(s.hostEffort)));
+  if (live && s.mode !== 'shared') body.appendChild(lv(h(doc, 'small', 'ins-hint', 'A small model is enough: the main agent only hands work to its sub-agents.'), 'advanced'));
+
+  const harness = field(doc, 'ins-sess-harness', 'Harness');
+  harness.appendChild(h(doc, 'div', 'ins-resolved', "the run's engine, chosen at Start run"));
+  const yes = Object.keys(ENGINES).filter((e) => sessionSupport(e, { verified }).subagents);
+  harness.appendChild(h(doc, 'small', 'ins-hint', yes.length
+    ? `Sub-agents on ${yes.map(engineLabel).join(', ')}; every other engine runs these steps as separate sessions.`
+    : 'Every engine runs these steps as separate sessions.'));
+  body.appendChild(harness);
+
+  // The Labs flag off is the reason the steps run separately, whatever the gate says (C14): name the flag, not the engine.
+  const notes = sessionNotes(spec, { engine, verified, members, labelOf }).filter((n) => canAdd || n.code !== 'gate-off');
+  if (!canAdd) notes.unshift({ level: 'info', code: 'flag-off', text: 'One session is off in Settings › Labs: these steps run as separate sessions.' });
+  if (notes.length) {
+    const ul = h(doc, 'ul', 'ins-notes');
+    for (const n of notes) { const li = h(doc, 'li', `ins-note is-${n.level}`, n.text); li.dataset.code = n.code; ul.appendChild(li); }
+    body.appendChild(ul);
+  }
+  body.appendChild(h(doc, 'p', 'ins-blurb', 'worca still decides what runs next, so files, loop limits and reviews work as they do today.'));
+  const acts = h(doc, 'div', 'ins-sess-acts');
+  if (split) { const b = h(doc, 'button', 'btn btn-sm', 'Split'); b.type = 'button'; b.dataset.sessAct = 'split'; acts.appendChild(b); }
+  const ug = h(doc, 'button', 'btn btn-sm', 'Ungroup');
+  ug.type = 'button';
+  ug.dataset.sessAct = 'ungroup';
+  acts.appendChild(ug);
+  body.appendChild(acts);
   root.appendChild(body);
   return root;
 }

@@ -11,7 +11,7 @@
 //    finish() releases capture
 // Depth 3 ⇒ the shared core is three `..` up.
 import { createGraphView } from './view.mjs';
-import { renderNodeInspector, renderWireInspector, renderEmptyInspector, stripLevels } from './inspector.mjs';
+import { renderNodeInspector, renderWireInspector, renderEmptyInspector, renderSessionInspector, stripLevels } from './inspector.mjs';
 import { paramEditorHook } from '../script-forms.mjs';
 import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
 import { withButton, fieldError, clearFieldErrors, cardAlert } from '../feedback.mjs';
@@ -195,6 +195,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       stats.validations += 1;
       view.render(tpl, { selection: sel, report: shownReport() });
       paintChrome();
+      if (sel && sel.kind === 'session') paintInspector();   // the session panel's Split follows V27 too (focus is kept)
       hooks.onValidate?.();                               // the session toolbar's Split follows V27
     }, 0);
   }
@@ -647,6 +648,43 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const sid = sel && sel.kind === 'session' ? sel.id : sel && sel.kind === 'node' ? memberSid(sel.id) : null;
     if (sid) ungroupSession(sid);
   }
+  /** The inspector's session buttons (the session panel and a member's row). A button that closed the popover holding
+   *  it (a new selection repaints the toolbar) leaves the focus on <body>, where the canvas takes Delete: the
+   *  selection's strip or card takes it instead (correction 66's rule). */
+  function onSessionClick(b) {
+    if (b.disabled) return;
+    sessionAct(b);
+    const f = doc.activeElement;
+    if (f && f !== doc.body && f.isConnected) return;
+    const el = sel && sel.kind === 'session' ? stage.querySelector(`.gv-sess-head[data-session-id="${sel.id}"]`)
+      : sel && sel.kind === 'node' ? view.nodeEl(sel.id) : null;
+    if (el) el.focus({ preventScroll: true });
+  }
+  function sessionAct(b) {
+    const d = b.dataset;
+    if (d.sessSelect) { select({ kind: 'session', id: d.sessSelect }); return; }
+    const panel = b.closest('[data-session-id]');
+    const sid = panel ? panel.dataset.sessionId : null;
+    if (d.sessLeave) { leaveSession(d.sessLeave); return; }
+    if (!sid || !sessionById(sid)) return;
+    if (d.sessAdd) joinSession(d.sessAdd, sessionById(sid).members[0]);
+    else if (d.sessMode) setSessionSetting(sid, 'mode', d.sessMode);
+    else if (d.sessAct === 'split') splitSession(sid);
+    else if (d.sessAct === 'ungroup') ungroupSession(sid);
+  }
+  /** What sessionNotes needs to know about a member (05 §2.2): its label, model, effort, fan-out, endpoint, questions. */
+  function memberFacts(id) {
+    const n = nodeById(id);
+    const cfg = (n && n.config) || {};
+    const meta = n ? agents[n.key] : null;
+    const m = cfg.model ? models.find((x) => x && x.id === cfg.model) : null;
+    const asks = Boolean(meta && meta.asksQuestions) && (meta.questionsLocked ? Boolean(meta.questionsDefault)
+      : typeof cfg.askQuestions === 'boolean' ? cfg.askQuestions : Boolean(meta.questionsDefault));
+    return { nodeId: id, label: labelOfId(id), model: cfg.model || null, effort: cfg.effort || null,
+      fanOut: cfg.fanOut === true, routed: Boolean(m && m.routed), asks,
+      // Task 66's shared-not-independent note reads these from here (its file list has no composer.mjs).
+      runnerType: (meta && meta.runnerType) || null, sideEffect: (meta && meta.sideEffect) || null };
+  }
   /** The header strip under a world point: the painted rects (view.sessionRects), so paint and hit cannot diverge. */
   function hitSessionHeadAt(pt) {
     for (const [sid, r] of view.sessionRects()) {
@@ -821,11 +859,22 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
   function inspectorFor(s) {
     if (!s) return renderEmptyInspector({ doc });
+    if (s.kind === 'session') {
+      const spec = sessionById(s.id);
+      if (!spec) return renderEmptyInspector({ doc });
+      const on = flagOn('sessionGroups', doc);           // off: separate sessions whatever the gate, and no Add rows (C14)
+      return renderSessionInspector(spec, { template: tpl, portsFn, labels: Object.fromEntries(tpl.nodes.map((n) => [n.id, labelOfId(n.id)])),
+        models, efforts, members: spec.members.map(memberFacts), canAdd: on, verified: on ? sessionVerified : {}, doc,
+        split: (lastReport.errors || []).some((e) => e.code === 'V27' && e.sessionId === spec.sid) });
+    }
     if (s.kind === 'node') {
       const node = nodeById(s.id);
       if (!node) return renderEmptyInspector({ doc });
       const meta = node.kind === 'agent' ? (agents[node.key] || null) : (node.kind === 'script' ? (scripts[node.key] || null) : null);
-      return renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, subagentModels, editorFor: insEditorFor, doc });
+      const sid = memberSid(node.id);
+      const spec = sid ? sessionById(sid) : null;
+      const session = spec ? { sid, label: spec.settings.label, index: spec.members.indexOf(node.id) + 1, count: spec.members.length } : null;
+      return renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, subagentModels, editorFor: insEditorFor, session, doc });
     }
     const wire = wireById(s.id);
     return wire ? renderWireInspector(wire, { loop: view.isLoopWire(wire.id), doc }) : renderEmptyInspector({ doc });
@@ -856,9 +905,12 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     // The field's own panel names the card or wire it edits (inspector.mjs stamps it). A press on another card selects
     // that card FIRST and the field lets go after (its blur fires `change`), so `sel` would hand the typed value to the
     // card just pressed.
-    const panel = ev.target.closest ? ev.target.closest('[data-node-id], [data-wire-id]') : null;
-    const owner = panel ? (panel.dataset.nodeId ? { kind: 'node', id: panel.dataset.nodeId } : { kind: 'wire', id: panel.dataset.wireId }) : sel;
+    const panel = ev.target.closest ? ev.target.closest('[data-node-id], [data-wire-id], [data-session-id]') : null;
+    const owner = !panel ? sel : panel.dataset.nodeId ? { kind: 'node', id: panel.dataset.nodeId }
+      : panel.dataset.sessionId ? { kind: 'session', id: panel.dataset.sessionId } : { kind: 'wire', id: panel.dataset.wireId };
     if (!name || !owner) return;
+    // One commit, or none; either way the panel reads the stored value back (a trimmed or default value), as a node field does.
+    if (owner.kind === 'session') { setSessionSetting(owner.id, name, ev.target.value); paintInspector(); return; }
     if (owner.kind === 'wire') {
       const wire = wireById(owner.id);
       if (!wire || name !== 'maxCycles') return;
@@ -949,6 +1001,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   /** The port editor's add/remove buttons (script cards only). */
   function onInspectorClick(ev) {
+    const sess = ev.target.closest && ev.target.closest('[data-sess-select], [data-sess-leave], [data-sess-add], [data-sess-mode], [data-sess-act]');
+    if (sess) { onSessionClick(sess); return; }
     const add = ev.target.closest && ev.target.closest('[data-port-add]');
     const rm = ev.target.closest && ev.target.closest('[data-port-remove]');
     if ((!add && !rm) || !sel || sel.kind !== 'node') return;

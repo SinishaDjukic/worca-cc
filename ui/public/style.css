@@ -7683,6 +7683,19 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
   background:var(--field);border:1.5px solid transparent;color:var(--ink);resize:vertical;}
 .ins-panel .ins-textarea:focus{background:var(--field-focus);border-color:var(--ink);outline:none;}
 .ins-panel .ins-caption{display:block;margin-top:-7px;color:var(--ink-3);font-size:11px;}
+/* The session panel (05 §5.1) and a member's row (§5.2). */
+.ins-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;}
+.ins-step{display:flex;align-items:center;gap:8px;min-height:28px;font-size:12px;}
+.ins-step .idx{flex:0 0 auto;color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.ins-step .lbl{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);}
+.ins-step .mdl{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);font-size:11px;}
+.ins-step-add{align-self:flex-start;}
+.ins-notes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--ink-2);}
+.ins-note.is-warn{color:var(--amber-ink);}
+.ins-member{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12px;color:var(--ink-2);}
+.ins-member-t{flex:1 1 auto;min-width:0;}
+.ins-sess-acts{display:flex;gap:8px;}
+.ins-session .seg button:disabled{opacity:.45;cursor:default;}   /* "One conversation" until Task 66 */
 .ins-panel .ins-f.ins-missing .ins-label::after{content:" · required";color:var(--amber-ink);}
 .ins-panel .ins-chiprow{display:flex;gap:6px;align-items:center;}
 .ins-panel .ins-chiprow .chip.rt{font-family:var(--mono);text-transform:none;font-size:11px;padding:2px 8px;}
