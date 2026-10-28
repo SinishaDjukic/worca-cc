@@ -1458,18 +1458,22 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         }))));
   }
 
-  // A8 D2: a feature created with files reads them before round 1. One role=status node for the page, moved into
-  // each paint and updated in place, so a screen reader announces the count as it drops (2 → 1).
+  // A8 D2, A6.1 D10: a feature created with files gets them (from the tracker) and reads them before round 1. One role=status node for
+  // the page, moved into each paint and updated in place: "Getting 3 files from SHOP-124…" while any download runs, then "Reading 4 files…".
   function readingLine(f) {
-    const n = (f.attachments || []).filter((a) => a && a.status === 'reading').length;
-    if (!n || (Number(f.rounds) || 0) > 0 || f.pending) { readingEl = null; return null; }
-    if (!readingEl) {
-      readingEl = h('p', { class: 'req-reading', role: 'status' }, h('span', { class: 'badge blue' }), ' ',
-        h('span', { class: 'hint', text: 'Worca reads the files first, then shows round 1.' }));
-    }
+    const list = (f.attachments || []).filter(Boolean);
+    const getting = list.filter((a) => a.status === 'downloading');
+    const reading = list.filter((a) => a.status === 'reading').length;
+    if ((!getting.length && !reading) || (Number(f.rounds) || 0) > 0 || f.pending) { readingEl = null; return null; }
+    if (!readingEl) readingEl = h('p', { class: 'req-reading', role: 'status' }, h('span', { class: 'badge blue' }), ' ', h('span', { class: 'hint' }));
+    const from = (getting.find((a) => a.from) || {}).from || null;
+    const words = getting.length ? `Getting ${plural(getting.length, 'file')} from ${from ? from.key : 'the tracker'}…` : `Reading ${plural(reading, 'file')}…`;
+    const hint = getting.length ? `Worca gets the files from ${from && from.tracker ? from.tracker : 'the tracker'} and reads them first, then shows round 1.`
+      : 'Worca reads the files first, then shows round 1.';
     const badgeEl = readingEl.querySelector('.badge');
-    const words = `Reading ${plural(n, 'file')}…`;
+    const hintEl = readingEl.querySelector('.hint');
     if (badgeEl.textContent !== words) badgeEl.textContent = words;
+    if (hintEl.textContent !== hint) hintEl.textContent = hint;
     return readingEl;
   }
 
@@ -2193,19 +2197,22 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** The ⋯ of a file (boards 16, 20, 21): Open · Edit what Worca took from it (the pencil at phone width) · Ask about this
    *  file… · Replace with a newer version… · Read again · Remove. Each state offers only what applies: nothing but Open
    *  and Remove while the file is read; Ask once it is read; Read again not on a version that could not be stored. The
-   *  A1 lock disables all but Open. `replace` is the row's file picker (also behind a stored-version failure's button). */
+   *  A1 lock disables all but Open. `replace` is the row's file picker (also behind a stored-version failure's button).
+   *  A6.1: a tracker file without its body (downloading, or a failed or refused download) has no Open and no Read again. */
   function fileMenu(a, ctx, replace) {
-    const reading = a.status === 'reading' || !!a.asking;   // an ask in progress waits like a read (one job per file)
+    // an ask in progress waits like a read (one job per file); so does a download (A6.1 D10)
+    const reading = a.status === 'reading' || a.status === 'downloading' || !!a.asking;
+    const absent = a.status === 'downloading' || (!!a.error && a.error.job === 'download');   // A6.1: no body yet
     const stuck = storeFailedOf(a);
     const off = ctx.locked;
     const remove = menuItem('Remove', () => removeFile(a, ctx), { disabled: off, ui: `fmi-remove-${a.id}` });
     remove.classList.add('is-danger');
     const items = [
-      h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': `fmi-open-${a.id}`, href: a.href, target: '_blank', rel: 'noopener' }, 'Open'),
+      absent ? null : h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': `fmi-open-${a.id}`, href: a.href, target: '_blank', rel: 'noopener' }, 'Open'),
       hasTextOf(a) && !reading ? menuItem('Edit what Worca took from it', () => openEdit(a, ctx), { disabled: off, ui: `fmi-edit-${a.id}` }) : null,
       a.status === 'done' && !reading ? menuItem('Ask about this file…', () => openAsk(a, ctx), { disabled: off, ui: `fmi-ask-${a.id}` }) : null,
       reading ? null : menuItem('Replace with a newer version…', () => { focusMore(a); replace.click(); }, { disabled: off, ui: `fmi-replace-${a.id}` }),
-      reading || stuck ? null : menuItem('Read again', () => act(async () => {
+      reading || stuck || absent ? null : menuItem('Read again', () => act(async () => {   // a missing body: Try again on its failed line
         if (a.summaryEdited && !window.confirm("Read again? Your text goes to the file's history.")) { focusMore(a); return; }
         await api('POST', `${a.href}/read-again`, {});
         ctx.focus(moreUi(a));
@@ -2354,6 +2361,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (!n.badge) n.badge = h('span', { class: 'badge blue', role: 'status', text: 'Reading…' });
     return n.badge;
   }
+  /** A6.1 (board 35): the Downloading… badge (role=status), one node per file while its body is on its way from the tracker. */
+  function downloadingBadge(a) {
+    const n = fileNode(a.id);
+    if (!n.dl) n.dl = h('span', { class: 'badge blue', role: 'status', text: 'Downloading…' });
+    return n.dl;
+  }
   /** The Asking… badge (role=status), the same pattern: one node per file while a question about it is answered. */
   function askingBadge(a) {
     const n = fileNode(a.id);
@@ -2371,15 +2384,23 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     // A version that could not be stored (D11): the server's words, and Replace, which mends it (Read again is refused).
     const stuck = storeFailedOf(a);
+    const dl = !!a.error && a.error.job === 'download';   // A6.1 D10: a tracker file that could not be got, or used
     const said = stuck ? String(a.error.message || '')
-      : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
+      : dl ? (a.error.code === 'DOWNLOAD' ? `${a.error.message} The interview lists it by name only.` : String(a.error.message || ''))
+        : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
     if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
     const label = stuck ? 'Replace with a newer version…' : 'Try again';
     if (n.failed.btn.textContent !== label) n.failed.btn.textContent = label;
+    n.failed.btn.hidden = dl && a.error.code === 'REFUSED';   // the same file would be refused again: Remove is in the ⋯ menu
     n.failed.btn.setAttribute('data-ui', `${stuck ? 'file-replace' : 'file-retry'}-${a.id}`);
     n.failed.btn.disabled = ctx.locked;
     n.failed.run = stuck ? () => replace.click()
-      : () => act(async () => { await api('POST', `${a.href}/read-again`, {}); ctx.focus(`file-name-${a.id}`); await paint(); });
+      : () => {
+        if (n.failed.posting) return;   // one post per press
+        n.failed.posting = true;
+        act(async () => { await api('POST', `${a.href}/read-again`, {}); ctx.focus(`file-name-${a.id}`); await paint(); })
+          .finally(() => { if (n.failed) n.failed.posting = false; });
+      };
     return n.failed.p;
   }
   /** A failed ask (D12): one role=alert node per failure, so a repaint does not say it again. */
@@ -2395,14 +2416,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   /** One file of the Files card or of the Documents card (boards 16, 19, 20). The switch shows in every state but Reading (D1):
-   *  a file Worca could not read, or that the budget stopped, may still go to the run. Names and summaries are text only. */
+   *  a file Worca could not read, or that the budget stopped, may still go to the run. Names and summaries are text only.
+   *  A6.1 (boards 35, 36): a tracker file without its body yet (downloading, or a download that failed or was refused) has
+   *  no switch, no Open, no Read again and no link on its name (its href would answer 404). */
   function fileRow(a, ctx) {
     const s = fu(a.id);
     const reading = a.status === 'reading';
+    const downloading = a.status === 'downloading';   // A6.1 D10: its body is on its way
+    const waiting = reading || downloading;
+    const absent = downloading || (!!a.error && a.error.job === 'download');   // A6.1: no body yet (downloading, or a download that failed or was refused)
     const hasText = hasTextOf(a);
     const n = fileNode(a.id);
     if (!reading) n.badge = null;
-    const asking = !reading && !!a.asking;   // an ask in progress (D12): the answer's frame clears it
+    if (!downloading) n.dl = null;
+    const asking = !waiting && !!a.asking;   // an ask in progress (D12): the answer's frame clears it
     if (!asking) n.asking = null;
     if (a.status !== 'failed') n.failed = null;   // a later failure is a new alert
     if (s.ask != null && (a.status !== 'done' || asking)) {   // Ask is for a read file (board 21); the lock only disables it
@@ -2412,24 +2439,29 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const replace = filePicker((files) => openReplace(a, ctx, files[0]), { multiple: false });
     const sendKey = ctx.doc ? 'sendWithEveryRun' : 'sendWithRun';
     const usesIt = ctx.doc ? 'Interviews use it once it is read.' : 'The next round uses it.';
-    const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
+    const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.from ? `from ${a.from.key}` : null,
+      a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
     const top = h('div', { class: 'req-file-top' },
-      h('a', { class: 'req-file-name', href: a.href, target: '_blank', rel: 'noopener', 'data-ui': `file-name-${a.id}`, text: a.name }),
+      // no body yet: the name is text, with the same data-ui and a tabindex, so ctx.focus('file-name-…') still lands
+      absent ? h('span', { class: 'req-file-name', 'data-ui': `file-name-${a.id}`, tabindex: '-1', text: a.name })
+        : h('a', { class: 'req-file-name', href: a.href, target: '_blank', rel: 'noopener', 'data-ui': `file-name-${a.id}`, text: a.name }),
       h('span', { class: 'hint req-file-meta', text: meta }),
       h('span', { class: 'req-file-gap' }),
-      reading ? readingBadge(a) : null,
+      downloading ? downloadingBadge(a) : reading ? readingBadge(a) : null,
       asking ? askingBadge(a) : null,
       a.status === 'unread-budget' ? h('span', { class: 'badge amber', text: 'Not read yet' }) : null,
-      hasText && !reading && !asking ? icoBtn('pencil', `Edit what Worca took from ${a.name}`, () => openEdit(a, ctx),
+      hasText && !waiting && !asking ? icoBtn('pencil', `Edit what Worca took from ${a.name}`, () => openEdit(a, ctx),
         { cls: 'req-file-pencil', disabled: ctx.locked, 'data-ui': `file-edit-${a.id}` }) : null,
       fileMenu(a, ctx, replace));
-    const state = reading
-      ? h('p', { class: 'hint req-file-state', text: typeof a.estimateUsd === 'number'
-        ? `Worca is reading it (about ${usd(a.estimateUsd)}). ${usesIt}` : `Worca is reading it. ${usesIt}` })
-      : a.status === 'failed' ? failedLine(a, ctx, replace)
-        : a.status === 'unread-budget'
-          ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then ${ctx.doc ? 'interviews list' : 'the interview lists'} it by name only.` })
-          : asking ? h('p', { class: 'hint req-file-state req-file-asking', text: `Worca is looking for: “${a.asking}”…` }) : null;
+    const est = typeof a.estimateUsd === 'number' ? ` (about ${usd(a.estimateUsd)})` : '';
+    const state = downloading
+      ? h('p', { class: 'hint req-file-state', text: `Worca is getting it from ${a.from ? a.from.key : 'the tracker'}. Then it reads it${est}.` })
+      : reading
+        ? h('p', { class: 'hint req-file-state', text: `${a.fetched && a.from ? `Downloaded from ${a.from.key}. ` : ''}Worca is reading it${est}. ${usesIt}` })
+        : a.status === 'failed' ? failedLine(a, ctx, replace)
+          : a.status === 'unread-budget'
+            ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then ${ctx.doc ? 'interviews list' : 'the interview lists'} it by name only.` })
+            : asking ? h('p', { class: 'hint req-file-state req-file-asking', text: `Worca is looking for: “${a.asking}”…` }) : null;
     if (s.edit != null && (!hasText || reading)) {
       // The text went away under the open editor (read again, replaced): the draft cannot be saved, and the card says why.
       // The editor had the focus: it goes to the file's ⋯, which every state has.
@@ -2463,7 +2495,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       history.addEventListener('toggle', () => { s.history = history.open; });
     }
     let send = null;
-    if (!reading) {
+    if (!reading && !absent) {   // A6.1: a file without its body has nothing to send (and A8's "could not open the stored file" would mislead)
       const sw = makeSwitch(document, { label: ctx.doc ? 'Send with every run' : 'Send with the run',
         ariaLabel: ctx.doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, checked: !!a[sendKey], data: { ui: `file-send-${a.id}` } });
       // D14: a file Start would refuse (sendable: false) can be switched off, not on, as its Files for the run chip
