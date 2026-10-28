@@ -10014,10 +10014,10 @@ if (el.wsDetail) {
 // The automatic re-scan after a member change (server afterMembersChanged): a Workspace scan run
 // of the new set — graphs, the map and a new description — followed on the Projects card with the
 // wizard's loader look (spinner, status, a stage track) and a link to the run.
-// id -> { runId, state: running|done|failed|stopped|paused|skipped, reason, cleared, seen }
+// id -> { runId, state: running|done|failed|stopped|paused|skipped|pruned, reason, cleared, partial, note, seen }
 // An ended entry the page has shown (seen) is dropped when the page is next opened.
 const wsRescans = new Map();
-const WS_RESCAN_ENDED = new Set(['done', 'failed', 'stopped', 'skipped']);
+const WS_RESCAN_ENDED = new Set(['done', 'failed', 'stopped', 'skipped', 'pruned']);
 const WS_RESCAN_ENDS = {
   description: 'done', 'rescan-failed': 'failed', 'rescan-stopped': 'stopped', 'rescan-paused': 'paused',
 };
@@ -10027,14 +10027,18 @@ function subscribeRescan(runId) {
   if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify({ type: 'subscribe', runId })); } catch { /* ignore */ } }
 }
 
-/** Start (or keep) following a workspace's re-scan: {runId, paused?} or {skipped: reason}. A run
- *  already followed keeps its own state. */
+/** Start (or keep) following a workspace's re-scan: {runId, paused?, partial?|mode, note?}, {skipped: reason}
+ *  or {mode: 'none'} (a removal that kept the pruned map). A run already followed keeps its own state. */
 function trackWsRescan(id, rescan, cleared = null) {
   const cur = wsRescans.get(id);
   if (rescan.runId && cur && cur.runId === rescan.runId) { if (cleared) cur.cleared = cleared; return; }
+  const partial = rescan.mode === 'partial' || rescan.partial === true;
+  const base = { cleared: cleared || [], partial, note: String(rescan.note || '') };
   wsRescans.set(id, rescan.runId
-    ? { runId: rescan.runId, state: rescan.paused ? 'paused' : 'running', reason: '', cleared: cleared || [] }
-    : { runId: null, state: 'skipped', reason: String(rescan.skipped || ''), cleared: cleared || [] });
+    ? { ...base, runId: rescan.runId, state: rescan.paused ? 'paused' : 'running', reason: '' }
+    : rescan.mode === 'none'
+      ? { ...base, runId: null, state: 'pruned', reason: '', partial: false }
+      : { ...base, runId: null, state: 'skipped', reason: String(rescan.skipped || '') });
   if (rescan.runId && !rescan.paused) subscribeRescan(rescan.runId);
 }
 
@@ -10055,6 +10059,7 @@ function resumeWsRescan(id, runId) {
 function endWsRescan(id, how, runId = null) {
   const r = wsRescans.get(id);
   if (!r || (runId && r.runId && r.runId !== runId)) return;
+  if (!r.runId && runId) return;   // a box that follows no run (pruned / skipped) is not ended by some other run's frame
   r.state = how;
   r.seen = false;   // an end the page has not shown yet
   paintWsRescan(id);
@@ -10092,22 +10097,29 @@ function renderWsRescan(r) {
     lead.appendChild(Object.assign(document.createElement('div'), { className: 'spinner wd-rescan-spinner' }));
   } else {
     const mark = Object.assign(document.createElement('span'), { className: 'wd-rescan-mark' });
-    if (r.state === 'done') mark.append(icon(document, 'check', 12)); else mark.textContent = '!';
+    if (r.state === 'done' || r.state === 'pruned') mark.append(icon(document, 'check', 12)); else mark.textContent = '!';
     lead.appendChild(mark);
   }
   const body = document.createElement('div');
   body.className = 'wd-rescan-body';
   const LABEL = {
-    running: 'Members changed: re-scanning the workspace', done: 'Workspace re-scanned', failed: 'Re-scan failed',
-    stopped: 'Re-scan stopped', paused: 'Re-scan paused', skipped: 'Members changed: not re-scanned',
+    running: r.partial ? 'Member removed: partial re-scan' : 'Members changed: re-scanning the workspace',
+    done: r.partial ? 'Partial re-scan done' : 'Workspace re-scanned',
+    failed: 'Re-scan failed', stopped: 'Re-scan stopped', paused: 'Re-scan paused',
+    skipped: 'Members changed: not re-scanned',
+    pruned: 'Member removed: map pruned, not re-scanned',
   };
   const SUB = {
-    running: 'A Workspace scan run rebuilds the graphs, the map and the description.',
-    done: 'The map and the description were refreshed from the new member set.',
+    running: (r.note ? `${r.note} ` : '') + (r.partial
+      ? 'One agent rewrites the overview and coordination notes from the pruned map; no member is scanned again.'
+      : 'A Workspace scan run rebuilds the graphs, the map and the description.'),
+    done: r.partial ? 'The overview and coordination notes were rewritten for the members left. Use Re-scan for a full scan.'
+      : 'The map and the description were refreshed from the new member set.',
     failed: 'Use Re-scan to refresh the map and the description.',
     stopped: 'Use Re-scan to refresh the map and the description.',
     paused: 'Resume it under Running, or use Re-scan.',
     skipped: `${String(r.reason || 'The scan could not start').replace(/\.?$/, '.')} Use Re-scan once that is fixed.`,
+    pruned: (r.note ? `${r.note} ` : '') + 'Its edges and reviews left the map. The overview and notes are as the last scan wrote them — use Re-scan any time.',
   };
   const label = document.createElement('div');
   label.className = 'status-label';
@@ -10191,7 +10203,7 @@ async function postWsMembers(id, body) {
     } else {
       trackWsRescan(id, { skipped: 'choose a scan model to re-scan the workspace' }, cleared);
     }
-  } else if (data.rescan && (data.rescan.runId || data.rescan.skipped)) trackWsRescan(id, data.rescan, cleared);
+  } else if (data.rescan && (data.rescan.runId || data.rescan.skipped || data.rescan.mode === 'none')) trackWsRescan(id, data.rescan, cleared);
   if (wsDetail && wsDetail.id === id) { setWdError(wsDetail.screen, ''); refreshWdOverview(); }
   tpCache.at = 0;
   void paintWsMetricsRows(true);
@@ -10245,20 +10257,47 @@ function openWsAddMembers(id) {
   });
 }
 
-// Remove: confirm (naming a home it clears), then post; an error lands on the page header.
+// Remove: ask worca what the removal invalidates (GET …/members/remove-impact), confirm with its
+// recommended re-scan preselected among none / partial / full (naming a home it clears), then post the
+// choice; an error lands on the page header. A failed lookup still offers the three, full preselected.
+const WS_RESCAN_OPTIONS = [
+  { value: 'none', title: 'No re-scan', hint: 'Keep the pruned map. Instant — no agent runs; the overview and notes stay as the last scan wrote them.' },
+  { value: 'partial', title: 'Partial re-scan', hint: 'One agent rewrites the overview and coordination notes from the pruned map. A few minutes; no member is scanned again.' },
+  { value: 'full', title: 'Full re-scan', hint: 'Scan every member left again: graphs, edges, map and description. The slowest; runs in the background.' },
+];
+
+async function fetchRemoveImpact(id, path) {
+  try {
+    const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}/members/remove-impact?path=${encodeURIComponent(path)}`);
+    const data = await safeJson(r);
+    return r.ok && data && data.recommendation ? { rec: data.recommendation } : { error: (data && data.error) || (r.ok ? 'no answer' : `HTTP ${r.status}`) };
+  } catch (err) { return { error: err.message }; }
+}
+
 async function removeWsMember(id, path) {
   const w = workspaceById(id);
   if (!w || !path) return;
   const proj = state.projects.find((p) => p.path === path);
   const name = (proj && proj.name) || basenameOf(path);
   const homes = [w.metricsProject === path ? 'metrics' : '', w.policyProject === path ? 'policy' : ''].filter(Boolean);
-  const ok = await confirmModal({
+  const { rec, error } = await fetchRemoveImpact(id, path);
+  const recommended = rec ? rec.level : 'full';
+  const res = await confirmModal({
     title: 'Remove project', danger: true, confirmLabel: 'Remove',
     message: `Remove ${name} from "${w.name || w.id}"?\n\nThe project itself is untouched, and runs already started keep their members.`
-      + (homes.length ? `\n\n${name} is the ${homes.join(' and ')} home, so it is cleared.` : ''),
+      + (homes.length ? `\n\n${name} is the ${homes.join(' and ')} home, so it is cleared.` : '')
+      + `\n\n${rec ? rec.reason : `worca could not work out a recommendation (${error}); a full re-scan is preselected.`}`,
+    choices: {
+      name: 'ws-rescan', label: 'Re-scan after the removal', value: recommended,
+      options: WS_RESCAN_OPTIONS.map((o) => ({
+        ...o,
+        title: o.value === recommended && rec ? `${o.title} — recommended` : o.title,
+        disabled: o.value === 'partial' && rec ? !rec.partialAvailable : false,
+      })),
+    },
   });
-  if (!ok) return;
-  const r = await postWsMembers(id, { remove: path });
+  if (!res || !res.ok || !res.choice) return;
+  const r = await postWsMembers(id, { remove: path, rescan: res.choice });
   if (r.error && wsDetail && wsDetail.id === id) setWdError(wsDetail.screen, r.error);
 }
 
@@ -13692,7 +13731,7 @@ function showProjMemoryView(view) {
 // ---- Reusable confirm / prompt modal ---------------------------------------
 // One shell, two public entry points:
 //   confirmModal(opts) -> Promise<boolean>, or Promise<{ok, checked}> when
-//     opts.checkbox is given. Contract unchanged from before promptModal existed.
+//     opts.checkbox is given, or Promise<{ok, choice}> when opts.choices is given.
 //   promptModal(opts)  -> Promise<object|null> keyed by field id. This is what
 //     replaced window.prompt: it takes an ARRAY of fields, so the two places
 //     that used to fire two blocking prompts back to back (name + domain,
@@ -13710,7 +13749,7 @@ const confirmGuard = el.confirmModal ? guardModal(el.confirmModal) : null;
 let shellDone = null;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
-  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok',
+  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok', choices = null,
 } = {}) {
   return new Promise((resolve) => {
     modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
@@ -13781,6 +13820,31 @@ function modalShell({
     }
     syncOk();
 
+    // choices: ONE radio group as .radio-card rows — { name, label, value, options: [{value, title, hint, disabled}] }.
+    // confirmModal then resolves { ok, choice }. Built fresh each time, text only (never innerHTML).
+    const choiceInputs = [];
+    if (choices && Array.isArray(choices.options)) {
+      const group = document.createElement('div');
+      group.className = 'confirm-choices';
+      group.setAttribute('role', 'radiogroup');
+      if (choices.label) group.setAttribute('aria-label', choices.label);
+      for (const o of choices.options) {
+        const row = document.createElement('label');
+        row.className = `radio-card${o.disabled ? ' disabled' : ''}`;
+        const inp = document.createElement('input');
+        inp.type = 'radio'; inp.name = `confirm-choice-${choices.name || 'pick'}`; inp.value = o.value;
+        inp.checked = o.value === choices.value && !o.disabled; inp.disabled = !!o.disabled;
+        const text = document.createElement('span');
+        text.className = 'radio-card-text';
+        text.appendChild(Object.assign(document.createElement('b'), { textContent: o.title }));
+        if (o.hint) text.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: o.hint }));
+        row.append(inp, text);
+        group.appendChild(row);
+        choiceInputs.push(inp);
+      }
+      el.confirmFields.appendChild(group);
+    }
+
     // opt-in checkbox: shown only when requested, always reset to unchecked
     el.confirmCheckboxWrap.classList.toggle('hidden', !checkbox);
     el.confirmCheckbox.checked = false;
@@ -13802,6 +13866,7 @@ function modalShell({
       el.confirmMessage.classList.remove('err');
       el.confirmOk.disabled = false;
       el.confirmMessage.hidden = false;
+      const choice = (choiceInputs.find((i) => i.checked) || {}).value ?? null;
       el.confirmFields.replaceChildren();
       el.confirmModal.classList.add('hidden');
       el.confirmCheckboxWrap.classList.add('hidden');
@@ -13809,6 +13874,7 @@ function modalShell({
       el.confirmCancel.removeEventListener('click', onCancel);
       document.removeEventListener('keydown', onKey);
       if (fields) resolve(val ? values : null);
+      else if (choices) resolve({ ok: val, choice });
       else resolve(checkbox ? { ok: val, checked } : val);
     };
     const onOk = () => { if (!el.confirmOk.disabled) done(true); };

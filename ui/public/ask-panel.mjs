@@ -4666,6 +4666,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- Workspace card (propose_workspace_change): create, add / remove members, rename ------------------------------
   const WS_KIND_LABEL = { create: 'Create', add_members: 'Add members', remove_member: 'Remove member', rename: 'Rename' };
   const WS_APPLY_LABEL = { create: 'Create', add_members: 'Add', remove_member: 'Remove', rename: 'Rename' };
+  const WS_RESCAN = ['none', 'partial', 'full'];
+  const WS_RESCAN_LABEL = { none: 'no re-scan', partial: 'partial re-scan', full: 'full re-scan' };
+  const WS_RESCAN_TITLE = { none: 'No re-scan', partial: 'Partial re-scan', full: 'Full re-scan' };
+  const WS_RESCAN_HINT = {
+    none: 'Keep the pruned map. Instant — no agent runs.',
+    partial: 'One agent rewrites the overview and notes from the pruned map. A few minutes.',
+    full: 'Scan every member left again. The slowest; runs in the background.',
+  };
   /** proposed → applied | failed, or declined. Every value is text. */
   function buildWorkspaceCard(block) {
     const card = block.card || {};
@@ -4703,12 +4711,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       ul.appendChild(li);
     }
     body.appendChild(ul);
+    let rescanPick = null;
     if (block.state === 'proposed') {
       for (const [items, cls] of [[card.warnings, 'ask-mcard-effects ask-wscard-warn'], [card.effects, 'ask-mcard-effects ask-wscard-effects']]) {
         if (!Array.isArray(items) || !items.length) continue;
         const list = make('ul', cls);
         for (const w of items) list.appendChild(make('li', null, w));
         body.appendChild(list);
+      }
+      // A removal: worca's recommended re-scan and its reason (shown only here), and the three options, recommended preselected.
+      if (card.kind === 'remove_member' && card.recommendation) {
+        const rec = card.recommendation;
+        const box = make('fieldset', 'ask-wscard-rescan');
+        box.setAttribute('data-ask-ws-rescan', '');
+        box.appendChild(make('div', 'ask-wscard-rescan-reason', `Recommended: ${WS_RESCAN_LABEL[rec.level] || rec.level}. ${rec.reason || ''}`.trim()));
+        // The card's pick, unless it is the disabled partial (then worca's level) — never an empty group.
+        const chosen = WS_RESCAN.includes(card.rescan) && !(card.rescan === 'partial' && !rec.partialAvailable) ? card.rescan : rec.level;
+        for (const value of WS_RESCAN) {
+          const off = value === 'partial' && !rec.partialAvailable;
+          const lab = make('label', `radio-card${off ? ' disabled' : ''}`);
+          const input = make('input');
+          input.type = 'radio'; input.name = `ask-ws-rescan-${block.id}`; input.value = value;
+          input.checked = value === chosen && !off; input.disabled = off;
+          const text = make('span', 'radio-card-text');
+          text.append(make('b', null, `${WS_RESCAN_TITLE[value]}${value === rec.level ? ' — recommended' : ''}`), make('small', 'hint', WS_RESCAN_HINT[value]));
+          lab.append(input, text);
+          box.appendChild(lab);
+        }
+        rescanPick = () => (box.querySelector('input[type="radio"]:checked') || {}).value || null;
+        body.appendChild(box);
       }
     }
     const result = card.result || null;
@@ -4733,7 +4764,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.kind === 'remove_member';
       const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', WS_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-ws-apply', destructive ? null : WF_ICO.save);
-      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      apply.addEventListener('click', () => {
+        const pick = rescanPick ? rescanPick() : null;
+        postCard(block, rootEl, { state: 'applied', ...(pick ? { rescan: pick } : {}) }, apply);
+      });
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
     }

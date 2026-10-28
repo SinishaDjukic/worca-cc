@@ -2060,7 +2060,7 @@ div.ws-members:empty{display:none;}
 .wd-rescan-lead{flex:0 0 auto;padding-top:1px;}
 .wd-rescan-spinner{width:22px;height:22px;border-width:2.5px;}
 .wd-rescan-mark{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:var(--r-sm);font-size:12px;font-weight:700;}
-.wd-rescan.is-done .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
+.wd-rescan.is-done .wd-rescan-mark,.wd-rescan.is-pruned .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
 .wd-rescan.is-failed .wd-rescan-mark{color:var(--red-ink);background:var(--red-bg);}
 .wd-rescan-body{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto;}
 .wd-rescan .status-label{font-size:13px;}
@@ -6287,6 +6287,10 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* model card (buildModelCard; docs/models.md "Chat"): the policy card's change list + what will still block the model */
 .ask-modcard-warn,.ask-wscard-warn{color:var(--amber-ink);}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
+/* workspace removal card (buildWorkspaceCard): worca's recommended re-scan, its reason, and the three options */
+.ask-wscard-rescan{border:0;margin:10px 0 0;padding:0;min-width:0;}
+.ask-wscard-rescan-reason{font-size:12px;color:var(--ink-2);margin-bottom:2px;}
+.ask-wscard-rescan .radio-card{margin-top:6px;}
 
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
@@ -6872,6 +6876,8 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
 .confirm-field > label{display:block;font-weight:600;font-size:var(--fs-body);margin-bottom:6px;}
 .confirm-field .input{font-size:var(--fs-body);}
 .confirm-field .hint.err{color:var(--red-ink);}
+.confirm-choices{display:flex;flex-direction:column;margin-top:2px;}
+.confirm-choices .radio-card{margin-top:8px;}
 .confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
   background:var(--field);border-radius:var(--r-sm);font-size:var(--fs-body);color:var(--ink-2);
   cursor:pointer;line-height:1.45;}

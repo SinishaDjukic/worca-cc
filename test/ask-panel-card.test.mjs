@@ -1123,10 +1123,38 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       rmEl.querySelector('[data-ask-ws-decline]').click();
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000012', { state: 'declined' }]);
+      // A removal with worca's recommendation: the reason, three options, the recommended one preselected; Apply posts the pick.
+      const proposedCards = () => [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"]')];
+      const rmRec = { ...rm, rescan: 'partial', recommendation: { level: 'partial', reason: 'api had 1 edge with 1 member (web). A partial re-scan is recommended: one agent rewrites the overview and coordination notes from the pruned map.', partialAvailable: true } };
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000013', state: 'proposed', card: rmRec }, threadId: TID, messageId: MID, seq: 7 });
+      ctx.flush();
+      const recBox = [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"] [data-ask-ws-rescan]')].at(-1);
+      assert.ok(recBox, 'the removal card shows the re-scan choice');
+      const recCard = recBox.closest('[data-ask-wscard]');
+      assert.match(recBox.querySelector('.ask-wscard-rescan-reason').textContent, /^Recommended: partial re-scan\. api had 1 edge/);
+      assert.equal([...recCard.querySelectorAll('.ask-wscard-effects li')].some((li) => li.textContent.includes('api had 1 edge')), false, 'the reason is not repeated as an effect');
+      const radios = [...recBox.querySelectorAll('input[type="radio"]')];
+      assert.deepEqual(radios.map((x) => [x.value, x.checked]), [['none', false], ['partial', true], ['full', false]]);
+      radios[0].checked = true;   // rescanPick reads :checked at click time — no change event is needed
+      recCard.querySelector('[data-ask-ws-apply]').click();
+      await ctx.tick();
+      assert.deepEqual(rec.cardPosts.at(-1), ['card_00000013', { state: 'applied', rescan: 'none' }]);
+      // A removal card with no recommendation (an older card) renders no box and posts as before. The earlier
+      // proposed cards (…12 declined, …13 applied) are still "proposed" in the DOM until a server frame flips
+      // them, so take the LAST plain card — the one just pushed.
+      const countBefore = proposedCards().length;
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000014', state: 'proposed', card: rm }, threadId: TID, messageId: MID, seq: 8 });
+      ctx.flush();
+      assert.equal(proposedCards().length, countBefore + 1, 'the new card rendered');
+      const plain = proposedCards().filter((x) => !x.querySelector('[data-ask-ws-rescan]')).at(-1);
+      assert.equal(plain, proposedCards().at(-1), 'the last proposed card is the plain one just pushed');
+      plain.querySelector('[data-ask-ws-apply]').click();
+      await ctx.tick();
+      assert.deepEqual(rec.cardPosts.at(-1), ['card_00000014', { state: 'applied' }]);
       // P5: a Folder member of a create card carries its kind chip; a Git member carries none.
       const mk = { type: 'workspace', kind: 'create', summary: 'Create workspace Docs with api and notes', name: 'Docs', workspaceId: null, workspaceName: null,
         members: [{ key: 'ka', name: 'api', path: '/r/api' }, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }], effects: [], warnings: [], followUps: [] };
-      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000013', state: 'proposed', card: mk }, threadId: TID, messageId: MID, seq: 7 });
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000015', state: 'proposed', card: mk }, threadId: TID, messageId: MID, seq: 9 });
       ctx.flush();
       const mkEl = [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"]')].at(-1);
       const memberRows = [...mkEl.querySelectorAll('.ask-mcard-changes li')].filter((li) => li.querySelector('.ask-mcard-change-label').textContent === 'Member');

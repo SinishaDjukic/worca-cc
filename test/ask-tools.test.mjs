@@ -780,6 +780,14 @@ test('propose_run passes through validateProposal (commentIds untouched); unknow
   ]);
 });
 
+test('propose_workspace_change: remove_member takes an optional rescan, and the description says to relay card.recommendation', () => {
+  const def = createAskTools({ limits: ASK_LIMITS, workspaceChanges: {} }).list().find((d) => d.name === 'propose_workspace_change');
+  assert.ok(def.inputSchema.properties.rescan, 'rescan is in the schema');
+  assert.match(def.inputSchema.properties.rescan.description, /none \| partial \| full/);
+  assert.deepEqual(def.inputSchema.required, ['kind'], 'rescan stays optional');
+  assert.match(def.description, /card\.recommendation \{level, reason\}.*relay it in one or two sentences; the user picks on the card/);
+});
+
 test('propose_run hands the thread\'s attachment ledger to the validator', async () => {
   const rows = [{ id: 'att_00000001', name: 'notes.md', bytes: 3, kind: 'text' }];
   const t = createAskTools({ ...fake,

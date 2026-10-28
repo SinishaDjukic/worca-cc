@@ -897,12 +897,13 @@ export function createAskTools(deps) {
     ] : []),
     ...(deps.workspaceChanges ? [
       { name: 'propose_workspace_change',
-        description: 'Propose a workspace change for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. kind: "create" (name + projectKeys: two or more registered projects from list_projects), "add_members" (workspaceId + projectKeys to add), "remove_member" (workspaceId + projectKey of one member; at least two stay), "rename" (workspaceId + name). workspaceId defaults to the pinned workspace (not for create). The workspace keeps its id; runs already started keep their members. Returns {ok:true, card} (card.warnings: a live run, a new member off the metrics / policy home, a removed home, schedules naming members; card.followUps: what to offer once applied) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
+        description: 'Propose a workspace change for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. kind: "create" (name + projectKeys: two or more registered projects from list_projects), "add_members" (workspaceId + projectKeys to add), "remove_member" (workspaceId + projectKey of one member; at least two stay), "rename" (workspaceId + name). "remove_member" returns card.recommendation {level, reason}: the re-scan worca recommends (none: keep the pruned map; partial: one agent rewrites the overview and notes; full: re-scan every member) — relay it in one or two sentences; the user picks on the card. workspaceId defaults to the pinned workspace (not for create). The workspace keeps its id; runs already started keep their members. Returns {ok:true, card} (card.warnings: a live run, a new member off the metrics / policy home, a removed home, schedules naming members; card.followUps: what to offer once applied) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
         inputSchema: SCHEMA.obj({ kind: SCHEMA.s('create | add_members | remove_member | rename'),
           workspaceId: SCHEMA.s('add_members / remove_member / rename: the workspace (default: the pinned one)'),
           name: SCHEMA.s('create / rename: the workspace name'),
           projectKeys: { type: 'array', items: { type: 'string' }, description: 'create: the member projects; add_members: the projects to add (keys from list_projects)' },
           projectKey: SCHEMA.s('remove_member: the member to remove'),
+          rescan: SCHEMA.s('remove_member: none | partial | full — only when the user asked for one; the card preselects worca\'s recommendation otherwise'),
           note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['kind']) },
     ] : []),
     // Actions (docs/actions.md "Chat"): read the config, a run's checkout and the running services, and

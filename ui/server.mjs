@@ -390,9 +390,13 @@ import {
   readWorkspaceMap, setWorkspaceEdgeState, addWorkspaceManualEdge, removeWorkspaceManualEdge,
   regenerateWorkspaceDescription, readWorkspaceStacks, updateWorkspaceStacks, workspaceMembers,
   addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode, memberHasTeamRepo, setWorkspaceScanPick,
+  RESCAN_CHOICES, removeImpactFor, resynthBlocker, memoGitProbe,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
+import {
+  WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID, isWorkspaceScanWorkflow, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID,
+  GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID,
+} from '../src/core/graph/builtin-workflows.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
@@ -2682,7 +2686,7 @@ const startRunHandler = async (req, res) => {
 
     // The Workspace scan workflow starts only through scanRequest: a hand-built body would run
     // a read-only scan the launch never validated (D2).
-    if (workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !scanTarget) {
+    if (isWorkspaceScanWorkflow(workflowId) && !scanTarget) {
       return badRequest(res, 'the workspace scan starts from the Workspaces view');
     }
     // Credential broker: the run's own model, when the request names one, is checked here
@@ -5618,7 +5622,7 @@ class ResumeError extends Error {
 
 /** A workspace scan run, as the harness's _isWorkspaceScan() sees it once restored from the resume point. */
 function isWorkspaceScanResume(saved) {
-  return saved.row.target === 'workspace' && saved.resumePoint?.workflowId === WORKSPACE_SCAN_WORKFLOW_ID;
+  return saved.row.target === 'workspace' && isWorkspaceScanWorkflow(saved.resumePoint?.workflowId);
 }
 
 /** Per member: does the recorded source still exist, and how far did <remote>/<source> move since
@@ -10746,7 +10750,11 @@ function liveAutoRescan(id) {
 }
 function liveRescanOf(id) {
   const r = liveAutoRescan(id);
-  return r ? { runId: r.id, pipelineId: r.pipelineId || null, paused: String(r.status).toLowerCase() === 'paused' } : null;
+  if (!r) return null;
+  const out = { runId: r.id, pipelineId: r.pipelineId || null, paused: String(r.status).toLowerCase() === 'paused' };
+  // A resumed run's harness reads 'wf_default' until _resume() restores its workflowId (orchestrator.mjs:89,
+  // run-harness.mjs:1797): for that moment a partial run lists as a full one — harmless, it self-corrects.
+  return r.orch?.workflowId === WORKSPACE_RESYNTH_WORKFLOW_ID ? { ...out, partial: true } : out;
 }
 const withRescan = (w) => { const rescan = w && liveRescanOf(w.id); return rescan ? { ...w, rescan } : w; };
 
@@ -10872,7 +10880,7 @@ async function supersedeRescans(id) {
  * { needsModel: true } when the workspace has no usable stored pick (the page asks the user).
  * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
  */
-async function startAutoRescan(ws) {
+async function startAutoRescan(ws, { workflowId = WORKSPACE_SCAN_WORKFLOW_ID } = {}) {
   const problems = scanMemberProblems(ws.projectPaths);
   if (problems.length) return { skipped: `read-only workspace scan: ${problems.join('; ')}` };
   let models;
@@ -10891,7 +10899,7 @@ async function startAutoRescan(ws) {
     status(code) { this.statusCode = code; return this; },
     json(payload) { out = { status: this.statusCode, body: payload }; this.headersSent = true; return this; },
   };
-  await scanRequest({ body: {} }, res, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models });
+  await scanRequest({ body: {} }, res, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models, workflowId });
   const runId = out.body && out.body.runId;
   const entry = runId ? runs.get(runId) : null;
   if (!entry) return { skipped: (out.body && out.body.error) || `the re-scan could not start (HTTP ${out.status})` };
@@ -10901,31 +10909,85 @@ async function startAutoRescan(ws) {
 
 let autoRescanOn = true; // test seam: _testing.setAutoRescan(false) skips the re-scan a member change starts
 
+/** The re-scan worca recommends for removing `projectPath` (src/core/workspaces.mjs
+ *  memberRemoveImpact over the map as stored now). A live automatic re-scan this change would
+ *  replace (supersedeRescans) raises it: the earlier change still needs its re-scan. A just-resumed
+ *  partial run still reads 'wf_default' until _resume() restores its workflowId, so for that moment
+ *  it counts as 'full' — the safe direction (it recommends more, never less). Throws
+ *  removeWorkspaceMember's own coded refusals. `git`: a memoGitProbe shared with the removal. */
+function removeRecommendation(id, projectPath, git) {
+  const auto = liveAutoRescan(id);
+  const pendingRescan = !auto ? null : auto.orch?.workflowId === WORKSPACE_RESYNTH_WORKFLOW_ID ? 'partial' : 'full';
+  return removeImpactFor(id, projectPath, { pendingRescan, ...(git ? { git } : {}) });
+}
+
+/** A removal re-scanned with 'none' against a 'full' recommendation can leave the map short: a
+ *  member it never covered, or an earlier change's re-scan this one stopped (supersedeRescans).
+ *  The pruned notice says so (rescan.note) — the pick stands. */
+function prunedNote(rec) {
+  const s = (rec && rec.signals) || {};
+  if (s.uncovered && s.uncovered.length) return `The map still does not cover ${s.uncovered.join(', ')}.`;
+  if (s.pendingRescan) return 'The re-scan for an earlier member change was stopped, so the map may be missing what it changed.';
+  return null;
+}
+
 /**
  * After a member change (the members route and Ask's workspace card): discover the added
  * members' metrics / policy branches (so the Team tab and the homes read them at once), stop an
- * automatic re-scan of the old set, and re-scan the workspace — per-member graphify graphs, the
- * map and a new description, saved when the run ends done. Runs build their own graphs per
- * member worktree from the registry at start, so the next run already covers the new set.
- * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
+ * automatic re-scan of the old set, and re-scan as asked — 'full' (every member: graphs, map, description), 'partial' (wf_workspace_resynth: the
+ * synthesis rewritten from the stored, pruned map) or 'none' (the pruned map stands). Adds are
+ * always 'full'. A 'partial' whose stored map does not cover exactly the members (resynthBlocker)
+ * runs 'full' instead, with a `note` saying why — decided HERE, before launch, so a partial run that
+ * cannot work never starts (its seed would pause it, and a paused one owns the workspace).
+ * Runs build their own graphs per member worktree from the registry at start.
+ * @returns {Promise<{mode:'none'|'partial'|'full', runId?:string, skipped?:string, needsModel?:boolean, note?:string}>}
  */
-async function afterMembersChanged(workspace, added = []) {
+async function afterMembersChanged(workspace, added = [], { rescan = 'full' } = {}) {
   for (const dir of added) {
     if (getProjectByPath(dir)?.vcs === 'none') continue;   // P5: a Folder member has no origin of its own (nested in a repository it would take that one's)
     discoverProject(dir, { force: true }).then(() => emitChanged('team-metrics-changed', 'discovered')).catch(() => { /* retried hourly */ });
     discoverPolicy(dir, { force: true }).then(() => emitChanged('team-policy-changed', 'discovered')).catch(() => { /* retried hourly */ });
   }
   await supersedeRescans(workspace.id);
-  if (!autoRescanOn) return { skipped: 'automatic re-scans are off (test seam)' };
-  try { return await startAutoRescan(workspace); }
-  catch (err) { return { skipped: err && err.message ? err.message : String(err) }; }
+  if (rescan === 'none') return { mode: 'none' };
+  let mode = rescan === 'partial' ? 'partial' : 'full';
+  let note = null;
+  if (mode === 'partial') {
+    const stored = await readWorkspaceMap(workspace.id);
+    const why = resynthBlocker(stored && stored.map, workspace.projectKeys || []);
+    if (why) { mode = 'full'; note = `A partial re-scan could not run: ${why}. A full re-scan runs instead.`; }
+  }
+  const told = note ? { note } : {};
+  if (!autoRescanOn) return { mode, ...told, skipped: 'automatic re-scans are off (test seam)' };
+  const workflowId = mode === 'partial' ? WORKSPACE_RESYNTH_WORKFLOW_ID : WORKSPACE_SCAN_WORKFLOW_ID;
+  try { return { mode, ...told, ...(await startAutoRescan(workspace, { workflowId })) }; }
+  catch (err) { return { mode, ...told, skipped: err && err.message ? err.message : String(err) }; }
 }
 
-// Change the member set: body {add: [paths]} or {remove: path}. The id stays frozen
-// (workspaces.mjs D1). 409 while a run (or a scan the user started) owns the workspace —
-// a live run keeps its own frozen members, but the metrics / policy home it resolves at
-// its end must not move under it, and a scan would save a map of the old set. Removing the home member clears that home
-// (clearedHomes). Every change re-scans the workspace (afterMembersChanged -> rescan).
+// What removing one member would invalidate in the stored map, and the re-scan worca recommends
+// (none | partial | full) with its reason — read-only, computed in code (no model call) BEFORE
+// anything changes, so the Remove confirm can show it. The removal's own refusals: 400 not a
+// member / fewer than two left, 404 unknown workspace.
+app.get('/api/workspaces/:id/members/remove-impact', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+  const projectPath = typeof req.query.path === 'string' ? req.query.path : '';
+  if (!projectPath) return badRequest(res, 'give path (the member project to remove)');
+  try {
+    res.json({ recommendation: removeRecommendation(id, projectPath) });
+  } catch (err) {
+    return workspaceFail(res, err);
+  }
+});
+
+// Change the member set: body {add: [paths]} or {remove: path, rescan?: 'none'|'partial'|'full'}.
+// The id stays frozen (workspaces.mjs D1). 409 while a run (or a scan the user started) owns the
+// workspace — a live run keeps its own frozen members, but the metrics / policy home it resolves at
+// its end must not move under it, and a scan would save a map of the old set. Removing the home
+// member clears that home (clearedHomes). An add always re-scans in full. A removal re-scans as
+// asked; with no `rescan` the server applies its own recommendation (removeRecommendation), worked
+// out from the stored map BEFORE it is pruned and returned as `recommendation`. A partial the
+// recommendation marks unavailable (no stored map, or one that does not cover the members left) is a 400.
 app.post('/api/workspaces/:id/members', async (req, res) => {
   const id = req.params.id;
   if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
@@ -10933,21 +10995,32 @@ app.post('/api/workspaces/:id/members', async (req, res) => {
   const adding = Array.isArray(body.add);
   const removing = typeof body.remove === 'string';
   if (adding === removing) return badRequest(res, 'give add (an array of project paths) or remove (one project path)');
+  const asked = body.rescan === undefined || body.rescan === null ? null : body.rescan;
+  if (asked !== null && !RESCAN_CHOICES.includes(asked)) return badRequest(res, `rescan must be one of ${RESCAN_CHOICES.join(', ')}`);
+  if (adding && asked !== null && asked !== 'full') return badRequest(res, 'adding members always starts a full re-scan');
   if (workspaceMembersBusy(id)) return res.status(409).json({ error: 'cannot change the members of a workspace while a run or scan owns it' });
   try {
     const before = await readWorkspace(id);
     if (!before) return res.status(404).json({ error: 'workspace not found' });
+    const git = memoGitProbe();   // one set of git probes for the recommendation and the removal
+    const recommendation = removing ? removeRecommendation(id, body.remove, git) : null;
+    const mode = adding ? 'full' : (asked ?? recommendation.level);
+    if (mode === 'partial' && !recommendation.partialAvailable) {
+      return badRequest(res, `a partial re-scan is not available: ${recommendation.reason} Choose none or full.`);
+    }
     const workspace = adding
       ? await addWorkspaceMembers(id, body.add.map((p) => resolveProjectDir(p)).filter(Boolean))
-      : await removeWorkspaceMember(id, body.remove);
-    const rescan = await afterMembersChanged(workspace, workspace.projectPaths.filter((p) => !before.projectPaths.includes(p)));
+      : await removeWorkspaceMember(id, body.remove, { git });
+    let rescan = await afterMembersChanged(workspace, workspace.projectPaths.filter((p) => !before.projectPaths.includes(p)), { rescan: mode });
+    const short = rescan.mode === 'none' ? prunedNote(recommendation) : null;
+    if (short) rescan = { ...rescan, note: short };
     const clearedHomes = [
       ...(before.metricsProject && !workspace.metricsProject ? ['metrics'] : []),
       ...(before.policyProject && !workspace.policyProject ? ['policy'] : []),
     ];
     emitChanged('workspaces-changed', 'members');
     if (clearedHomes.includes('policy')) emitChanged('team-policy-changed', 'policy-home');
-    res.json({ workspace, clearedHomes, rescan });
+    res.json({ workspace, clearedHomes, rescan, ...(recommendation ? { recommendation } : {}) });
   } catch (err) {
     return workspaceFail(res, err);
   }
@@ -11075,7 +11148,7 @@ const setHashOf = (id) => workspaceSetHash(id) ?? String(id).slice(-8);
 function ownsWorkspaceTarget(r) {
   const s = String(r.status || '').toLowerCase();
   return ['created', 'starting', 'running', 'pausing'].includes(s)
-    || (s === 'paused' && r.orch?.workflowId === WORKSPACE_SCAN_WORKFLOW_ID);
+    || (s === 'paused' && isWorkspaceScanWorkflow(r.orch?.workflowId));
 }
 
 /** A run of this workspace or over this PROJECT SET that owns it, or a scan of the set still
@@ -11161,7 +11234,7 @@ async function scanModelsFor(body, projectPaths, workspace = null) {
  *  teardown deletes (D5). The live check and the reservation are the first two statements, with
  *  NO await between them: a second request for the same set, arriving while this one is still
  *  inside startRunHandler's awaits, finds the reservation and gets 409 (Review Focus 3). */
-async function scanRequest(req, res, { id, name, projectPaths, rescan, models }) {
+async function scanRequest(req, res, { id, name, projectPaths, rescan, models, workflowId = WORKSPACE_SCAN_WORKFLOW_ID }) {
   if (liveOverSet(id, projectPaths)) {
     return res.status(409).json({ error: rescan ? 'a live run exists for this workspace' : 'a scan of this project set is already running' });
   }
@@ -11170,11 +11243,12 @@ async function scanRequest(req, res, { id, name, projectPaths, rescan, models })
   try {
     const mock = !!(req.body && req.body.mock === true);
     req._workspaceScan = { id, name, projectPaths, description: '', models };   // D9: no Workspace Context
+    const partial = workflowId === WORKSPACE_RESYNTH_WORKFLOW_ID;
     req.body = {
       workspaceId: id,
-      prompt: scanRunPrompt({ name, projectNames: projectPaths.map((p) => path.basename(p)), rescan }),
-      title: scanRunTitle(name),
-      workflowId: WORKSPACE_SCAN_WORKFLOW_ID,
+      prompt: scanRunPrompt({ name, projectNames: projectPaths.map((p) => path.basename(p)), rescan, partial }),
+      title: scanRunTitle(name, { partial }),
+      workflowId,
       guardrailsId: 'normal',
       ...(mock ? { mock: true } : {}),
     };
@@ -16318,15 +16392,34 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
             throw new Error('cannot change the members of a workspace while a run or scan owns it');
           }
           const before = wid ? await readWorkspace(wid) : null;
-          result = await applyWorkspaceChange(card);
+          // A removal re-scans as the user picked on the card (body.rescan), else as they asked Ask for
+          // (card.rescan when card.rescanAsked), else as worca recommends NOW — worked out at apply time,
+          // BEFORE the map is pruned. A pick the recommendation marks unavailable falls back to it, never
+          // to a failed card; afterMembersChanged re-checks feasibility at launch anyway. An unknown
+          // body.rescan is ignored, not a 400 (unlike the members route): the card's own radios are its
+          // only sender, and failing the Apply would lose a change the user already confirmed.
+          let rescanMode = 'full';
+          let rec = null;
+          const git = memoGitProbe();
+          if (card.kind === 'remove_member') {
+            rec = removeRecommendation(wid, card.change && card.change.projectPath, git);
+            const pick = RESCAN_CHOICES.includes(body.rescan) ? body.rescan
+              : card.rescanAsked && RESCAN_CHOICES.includes(card.rescan) ? card.rescan : rec.level;
+            rescanMode = pick === 'partial' && !rec.partialAvailable ? rec.level : pick;
+          }
+          result = await applyWorkspaceChange(card, card.kind === 'remove_member' ? { remove: (w, p) => removeWorkspaceMember(w, p, { git }) } : {});
           if (card.kind !== 'rename') {
-            // A new or changed member set: discover the new members and re-scan (graphs + description).
+            // A new or changed member set: discover the new members and re-scan as chosen (adds: always full).
             const ws = await readWorkspace(result.workspaceId);
             if (ws) {
-              const rescan = await afterMembersChanged(ws, ws.projectPaths.filter((p) => !(before?.projectPaths || []).includes(p)));
-              result = rescan.runId
-                ? { ...result, rescanRunId: rescan.runId, detail: `${result.detail} · re-scanning the workspace` }
-                : { ...result, detail: `${result.detail} · no re-scan (${rescan.skipped})` };
+              let rescan = await afterMembersChanged(ws, ws.projectPaths.filter((p) => !(before?.projectPaths || []).includes(p)), { rescan: rescanMode });
+              const short = rescan.mode === 'none' ? prunedNote(rec) : null;
+              if (short) rescan = { ...rescan, note: short };
+              const what = rescan.mode === 'none' ? 'map pruned, not re-scanned'
+                : rescan.runId ? (rescan.mode === 'partial' ? 'partial re-scan (the overview and notes are rewritten)' : 're-scanning the workspace')
+                : `no re-scan (${rescan.skipped})`;
+              result = { ...result, rescan: rescan.mode, ...(rescan.runId ? { rescanRunId: rescan.runId } : {}),
+                detail: `${result.detail} · ${what}${rescan.note ? ` — ${rescan.note}` : ''}` };
             }
           }
           emitChanged('workspaces-changed', card.kind === 'create' ? 'created' : card.kind === 'rename' ? 'renamed' : 'members');
@@ -19156,6 +19249,7 @@ export const _testing = {
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
+  startAutoRescan,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },
