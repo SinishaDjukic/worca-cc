@@ -32,6 +32,7 @@ import {
   listReadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief,
 } from './store.mjs';
 import { callModel, interviewModel, maybeFollowUpFiles } from './interview.mjs';
+import { downloadsPending } from './attachment-fetch.mjs';
 
 export const MAX_READ_JOBS = 2;
 export const READ_TIMEOUT_MS = 180_000;
@@ -92,7 +93,8 @@ const queue = [];          // waiting jobs, in order: { id, name, owner, kind: '
 const running = new Map(); // attachment id → its running job (one per file), with `ctrl` and `cancelled`
 const waiters = new Map(); // owner key → readsSettled resolvers
 
-const pendingFor = (key) => queue.some((e) => ownerKey(e.owner) === key) || [...running.values()].some((e) => ownerKey(e.owner) === key);
+const pendingFor = (key) => queue.some((e) => ownerKey(e.owner) === key) || [...running.values()].some((e) => ownerKey(e.owner) === key)
+  || downloadsPending(key);
 export const isReading = (id) => queue.some((e) => e.id === id && e.kind === 'read') || running.get(id)?.kind === 'read';
 export const isAsking = (id) => queue.some((e) => e.id === id && e.kind === 'ask') || running.get(id)?.kind === 'ask';
 /** The question of the file's ask in progress (running, else queued), or null: the page's Asking… line (board 21). */
@@ -119,6 +121,14 @@ function release(key) {
 }
 
 function enqueue(e) { queue.push(e); pump(); }
+/** A6.1: a downloaded file joins the read queue (attachment-fetch.mjs); `deps` as any other job's. */
+export function enqueueRead(owner, id, name, by = null, deps = {}) { enqueue({ id, name, owner, kind: 'read', by, d: { ...DEFAULTS, ...deps } }); }
+/** A6.1: a download ended (in any way): the owner's frame, and readsSettled and the follow-up once nothing is left (as settle). */
+export function settleOwner(owner, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  notifyOwner(owner, d);
+  if (release(ownerKey(owner)) && owner.type === 'feature') maybeFollowUpFiles(owner.id, d);
+}
 function pump() {
   while (running.size < MAX_READ_JOBS) {
     const i = queue.findIndex((e) => !running.has(e.id));
