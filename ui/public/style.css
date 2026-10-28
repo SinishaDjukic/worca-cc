@@ -22,6 +22,10 @@
 
   --bg:light-dark(#F1F1EF,#161614);
   --canvas-2:light-dark(#FBFBF9,#1B1B19);
+  /* One session tray (05 §4.3): ink at 4% / 4% over the fill / 14%, resolved on --canvas-2; no hue on purpose. */
+  --sess-fill:light-dark(#F2F2F0,#232321);
+  --sess-head:light-dark(#E9E9E8,#2B2B29);
+  --sess-line:light-dark(#D4D4D2,#3F3F3D);
   --panel:light-dark(#FFFFFF,#222220);
   --side-bg:light-dark(#FAFAFA,#222220);
   --side-ink:light-dark(#737373,#B4B4AE);
@@ -7449,6 +7453,55 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .gv-world .node:focus-visible{outline:none;box-shadow:0 0 0 1.5px var(--ink),0 0 0 4.5px var(--field);}
 .gv-world .node.dragging{cursor:grabbing;transition:none;}
 .gv-static .node,.gv-static .wbadge{pointer-events:none;}
+/* One session (05 §4.3): the tray layer sits behind the wires (z 1) and the cards (z 2); only the edit host's header
+   strip takes the pointer. Rects and the strip's top/height are inline px from sessionRects (no new --gv-* variable). */
+.gv-sessions{position:absolute;left:0;top:0;width:0;height:0;z-index:0;pointer-events:none;}
+.gv-world .gv-sess{position:absolute;left:0;top:0;box-sizing:border-box;border:1px solid var(--sess-line);
+  border-radius:var(--r-md);background:var(--sess-fill);}
+.gv-world .gv-sess.sel{border-color:transparent;box-shadow:0 0 0 1.5px var(--ink);}
+.gv-world .gv-sess.bad{border-color:var(--red);}
+.gv-world .gv-sess.fallback,.gv-world .gv-sess.lone{border-style:dashed;}
+.gv-world .gv-sess.is-skipped{opacity:.35;border-style:dashed;}
+.gv-world .gv-sess-head{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;
+  gap:calc(6px * var(--gv-scale));padding:0 calc(10px * var(--gv-scale));box-sizing:border-box;
+  border-radius:var(--r-md) var(--r-md) 0 0;background:var(--sess-head);color:var(--ink-2);
+  font:500 max(9px,calc(11px * var(--gv-scale)))/1 var(--sans);white-space:nowrap;overflow:hidden;}
+.gv-world .gv-sess-head svg{flex:0 0 auto;width:calc(12px * var(--gv-scale));height:calc(12px * var(--gv-scale));}
+.gv-world .gv-sess-head .st{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.gv-world .gv-sess-head .sr{margin-left:auto;padding-left:8px;font-variant-numeric:tabular-nums;}
+.gv-world .gv-sess.bad .gv-sess-head .st{color:var(--red-ink-strong);}   /* --red-ink is 3.96:1 on --sess-head */
+/* A session's pip (applyReport) sits first in the strip, in the flow: the strip clips, and the card pip is at -5px. */
+.gv-world .gv-sess-head>.npip,.gv-world .gv-sess-head>.nwarn{position:static;flex:0 0 auto;}
+.gv-edit .gv-sess-head{pointer-events:auto;cursor:grab;}
+.gv-edit .gv-sess:not(.bad) .gv-sess-head:hover{background:var(--row-selected);}   /* --red-ink-strong is 4.39:1 on it */
+.gv-edit .gv-sess-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.gv-static .gv-sess-head{pointer-events:none;}
+/* The monitor's strip takes the click Task 57 wires to onSessionClick (its cursor comes with that handler). */
+.gv-monitor .gv-sess-head{pointer-events:auto;}
+.gv-world .gv-sess-head .sdot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;}
+.gv-world .gv-sess.is-active .sdot{background:var(--peach);color:var(--peach);animation:dotpulse 1.3s ease-in-out infinite;}
+.gv-world .gv-sess.warn .sdot,.gv-world .gv-sess.is-paused .sdot{background:var(--amber);}
+.gv-world .gv-sess.is-done .sdot{background:var(--green);}
+.gv-world .gv-sess.is-error .sdot{background:var(--red);}
+.gv-world .gv-sess.is-stopped .sdot,.gv-world .gv-sess.is-interrupted .sdot{background:var(--red);}
+.gv-world .gv-sess.is-pending .sdot{box-shadow:inset 0 0 0 1.5px var(--ink-3);}
+.gv-world .gv-sess.is-waiting .sdot{background:var(--ink-3);}
+/* AFTER the pulse rule on purpose: @media adds no specificity, so the stop must win on source order (see :1712). */
+@media (prefers-reduced-motion: reduce){.gv-world .gv-sess.is-active .sdot{animation:none;}}
+/* Small hosts (static, focus, card) show the dot only, the words in its title (05 §4.4); a flow row segment's open
+   side is dashed where the session continues on another row (§4.8). */
+.gv-static .gv-sess-head .st,.gv-static .gv-sess-head .sr,.gv-static .gv-sess-head .sglyph{display:none;}
+/* The chat run card and the chat proposal well are monitor views at a small zoom: dot only, and no member chip (§4.8). */
+.gv-wrap-card .gv-sess-head .st,.gv-wrap-card .gv-sess-head .sr,.gv-wrap-card .gv-sess-head .sglyph,.gv-wrap-card .nsess,
+.gv-well .gv-sess-head .st,.gv-well .gv-sess-head .sr,.gv-well .gv-sess-head .sglyph,.gv-well .nsess{display:none;}
+.gv-world .gv-sess.open-left{border-left-style:dashed;}
+.gv-world .gv-sess.open-right{border-right-style:dashed;}
+/* The member chip in a member's label row: slate is metadata, never a state. */
+.nsess{display:inline-flex;align-items:center;gap:3px;height:calc(16px * var(--gv-scale));padding:0 5px;border-radius:var(--r-xs);
+  background:var(--slate-bg);color:var(--slate-ink);font:600 max(9px,calc(10px * var(--gv-scale)))/1 var(--sans);min-width:0;flex:0 1 auto;}
+.nsess svg{flex:0 0 auto;width:calc(10px * var(--gv-scale));height:calc(10px * var(--gv-scale));}
+.nsess .t{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.nlabel:has(.nrun) .nsess .t{display:none;}
 /* The label row ABOVE the card (outside its box): family tile · title · quiet meta. */
 .gv-world .nlabel{position:absolute;left:1px;right:1px;top:calc(-1 * var(--gv-label-h));height:calc(18px * var(--gv-scale));
   display:flex;align-items:center;gap:calc(6px * var(--gv-scale));font-size:max(9px,calc(11.5px * var(--gv-scale)));white-space:nowrap;}

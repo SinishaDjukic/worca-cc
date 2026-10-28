@@ -215,6 +215,22 @@ list keeps the `prChip` with its state word, since a list row has no circle. At 
 pushed, applied or discarded, every changed workspace member merged) the route folds to one line (`.rd-route-fold`,
 for example "Merged into dev · worca/worka-cc#905") with a `Show route` / `Hide route` toggle (`.rd-route-toggle`,
 `aria-expanded`); the choice is remembered once for every run page (`worca-cc.run.showRoute`).
+### Workflow canvas: session tray
+One session (2–4 consecutive agent steps run together) is drawn as a tray behind its member cards, in the
+`.gv-sessions` layer (z 0, before the wire SVG, so wires and the glass cards stay on top). Anatomy: the tray
+(`.gv-sess`, `var(--r-md)` corners, `--sess-fill`, a 1px `--sess-line` border, 12px padding past the outermost box), its
+24px header strip (`.gv-sess-head`, `--sess-head`, 11px / 500 `--ink-2` text: the session's name, the engine and
+"N sub-agents", or "<Engine>: separate sessions"), and the member chip in each member's label row (`.nsess`, slate:
+`--slate-bg` / `--slate-ink`, `var(--r-xs)`, glyph plus "sub-agent"; only the glyph beside run totals). Use it for a
+session only, never for any other grouping. The tray has no hue: violet is Labs, amber loops and needs-you, blue md
+wires and info, green and red status. Selected is the `.node.sel` ring (`0 0 0 1.5px var(--ink)`); an error is a
+`--red` border with `--red-ink-strong` header text; a session that runs as separate sessions (the Labs flag off, or the engine
+has no sub-agents yet) and a lone member are dashed. On run hosts the header's status dot is peach only while
+working (it pulses; reduced motion stops it), amber paused, green done, red error, stopped or interrupted. The edit
+host's strip is a button (click, Enter or Space selects; drag moves every member; an issue's pip sits first in it);
+static hosts, the chat run card and the chat proposal well keep the strip so routes match, but show only the dot and no chip. Trays are
+placed in model px from `sessionRects` (`src/shared/graph/sessions.mjs`), never measured, and the strip is an
+obstacle the lanes router clears.
 ### Menu (checked)
 One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md` (8px), `--shadow-menu`, 13px. A row is
 `.menu-item`: at least 30px, `--r-sm` (6px), `--hover` on hover and keyboard focus; `.menu-sep` and `.menu-h` (12px /
