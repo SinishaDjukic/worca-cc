@@ -10673,7 +10673,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-files .req-menu .menu-item{white-space:nowrap}   /* board 21: one line a row */
 /* D13: a source after an item's text; a link while the file exists (--blue-ink-strong on --field, 5.5:1), else --ink-2. */
 .req-src-tag{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 6px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:12px;line-height:1.4;text-decoration:none;vertical-align:baseline;overflow-wrap:anywhere}
-.req-src-tag > svg{flex:none}
+.req-src-tag > svg,.req-src-tag > .ic{flex:none}
 a.req-src-tag{color:var(--blue-ink-strong)}
 a.req-src-tag:hover{color:var(--ink)}
 a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}

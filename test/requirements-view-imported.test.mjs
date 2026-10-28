@@ -261,3 +261,103 @@ test('D11: Create a new ticket without a setup opens Set up export first, then t
   assert.equal(text(document.querySelector('.req-dlg-wrap [role="dialog"] h2')), 'Set up export for shop');
   m.view.destroy();
 });
+
+// ── the review's fixes: the link, the copy, and a new ticket after a gone one ──
+const SETUP_URL = '/api/requirements/export-setup/project/shop-1';
+const SETUP_ROUTES = () => ({
+  [`GET ${SETUP_URL}`]: { setup: null, trackers: [{ plugin: 'jira-source', sourceId: 'jira', name: 'Jira', multiProfile: true, profiles: [{ id: 'acme', label: 'acme.atlassian.net (Cloud)' }] }],
+    defaultProfile: { plugin: 'jira-source', sourceId: 'jira', profile: 'acme' } },
+  [`POST ${SETUP_URL}/options`]: { projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }], issueTypes: [{ value: '10001', label: 'Story' }], priorities: [], criteriaFields: [], doneStatus: null },
+  [`PUT ${SETUP_URL}`]: (b) => ({ setup: b }),
+});
+const NEWFIELDS = { conn: { plugin: 'jira-source', sourceId: 'jira', profile: 'acme' }, connection: 'acme.atlassian.net (Cloud)', project: { value: 'SHOP', label: 'SHOP — Shop web' },
+  issueType: { value: '10001', label: 'Story' }, labels: ['worca'], fixedLabel: 'worca-FEAT-8', priority: null, criteria: { target: 'description' }, summary: 'Partial cancel' };
+const dlg = () => document.querySelector('.req-dlg-wrap [role="dialog"]');
+const exportNow = async (m) => { q('menu-export', m.host).click(); q('mi-export', m.host).click(); await settle(); };
+const previews = (m) => m.calls.filter((c) => c.method === 'POST' && c.url === PREVIEW_URL);
+
+test('D11, board 29 (3): a ticket gone from Jira, no setup: New ticket opens Set up export first, then previews mode new', async () => {
+  const m = await openFeature(ready(), { ...SETUP_ROUTES(),
+    [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode, gone: b.mode !== 'new', ...(b.mode === 'new' ? { key: null, link: null, changes: [], fields: NEWFIELDS } : {}) }) });
+  await exportNow(m);
+  assert.equal(text(dlg().querySelector('[role="alert"]')), 'SHOP-124 no longer exists in Jira.');
+  q('export-new').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Set up export for shop');
+  assert.deepEqual(previews(m).map((c) => c.body.mode), ['update'], 'no new-ticket preview before the setup is saved');
+  q('setup-save').click();
+  await settle();
+  assert.equal(previews(m).at(-1).body.mode, 'new');
+  assert.equal(text(q('export-go')), 'Create in Jira');
+  m.view.destroy();
+});
+
+test('D11: Create a new ticket without a setup: after the setup is saved the preview is asked with mode new', async () => {
+  const m = await openFeature(ready(), { ...SETUP_ROUTES(),
+    [`POST ${PREVIEW_URL}`]: (b) => (b.mode === 'new' ? AGAIN({ mode: 'new', key: null, link: null }) : AGAIN()) });
+  await exportNow(m);
+  q('again-new', m.host.ownerDocument).click();
+  q('again-continue', m.host.ownerDocument).click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Set up export for shop');
+  assert.equal(previews(m).length, 1);
+  q('setup-save').click();
+  await settle();
+  assert.deepEqual(previews(m).map((c) => c.body.mode), ['update', 'new']);
+  m.view.destroy();
+});
+
+test('D11: a plain A6 link (made by an export) without a setup also opens the again dialog, not the setup', async () => {
+  const plain = { ...LINK, origin: 'export', importedOn: null, sinceImport: false };
+  const m = await openFeature(ready({ export: XV({ link: plain }) }), { [`POST ${PREVIEW_URL}`]: () => AGAIN({ link: { ...plain, key: 'SHOP-124' } }) });
+  await exportNow(m);
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-8 again');
+  assert.equal(m.calls.filter((c) => c.url.startsWith('/api/requirements/export-setup')).length, 0);
+  m.view.destroy();
+});
+
+test('D11: the dialog is titled from the feature before the preview loads, and from the preview once it has', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const m = await openFeature(ready(), { [`POST ${PREVIEW_URL}`]: async () => { await gate; return AGAIN({ link: { ...AGAIN().link, sinceImport: false, lastOn: '28 Oct' } }); } });
+  await exportNow(m);
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-8 to Jira', 'from the feature\'s link, still unexported');
+  release();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-8 again', 'the preview says it was exported meanwhile');
+  m.view.destroy();
+});
+
+test('D11: nothing changed since the import / since the last export: the exact words', async () => {
+  let m = await openFeature(ready(), { [`POST ${PREVIEW_URL}`]: () => AGAIN({ changes: [] }) });
+  await exportNow(m);
+  assert.equal(text(dlg().querySelector('#req-again-desc')), 'FEAT-8 started from SHOP-124 on 27 Oct. The spec has not changed since the import.');
+  m.view.destroy();
+  m = await openFeature(ready(), { [`POST ${PREVIEW_URL}`]: () => AGAIN({ changes: [], link: { ...AGAIN().link, sinceImport: false, lastOn: '28 Oct' } }) });
+  await exportNow(m);
+  assert.equal(text(dlg().querySelector('#req-again-desc')), 'SHOP-124 was imported on 27 Oct. The spec has not changed since the last export (28 Oct).');
+  m.view.destroy();
+});
+
+test('D7, D19: the ticket tag has its external icon, matches the key in any case, and a javascript: URL leaves the plain tag', async () => {
+  let m = await openFeature(ready());
+  assert.ok(m.host.querySelector('a.req-src-tag .ic svg'), 'the external icon');
+  m.view.destroy();
+  const lower = { ...SPEC, criteria: [{ ...SPEC.criteria[0], source: 'shop-124' }] };
+  m = await openFeature(ready({ spec: lower }));
+  const t = m.host.querySelector('.req-src-tag');
+  assert.deepEqual([t.tagName, t.href], ['A', 'https://acme.test/browse/SHOP-124']);
+  m.view.destroy();
+  m = await openFeature(ready({ export: XV({ link: { ...LINK, url: 'javascript:alert(1)' } }) }));
+  const tag = m.host.querySelector('.req-src-tag');
+  assert.equal(tag.tagName === 'A' || m.host.querySelector('a[href^="javascript"]') !== null, false);
+  assert.equal(text(tag), 'from SHOP-124');
+  m.view.destroy();
+});
+
+test('D12: History\'s "Imported" line has the key as a link to the ticket', async () => {
+  const m = await openFeature(ready());
+  const a = m.host.querySelector('.req-history-list li a');
+  assert.deepEqual([a.textContent, a.href, a.target, a.rel], ['SHOP-124', 'https://acme.test/browse/SHOP-124', '_blank', 'noopener']);
+  m.view.destroy();
+});

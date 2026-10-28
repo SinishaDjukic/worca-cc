@@ -3592,6 +3592,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       },
     };
   }
+  /** A new ticket for a feature, the export setup first when it has none (one place for the again dialog's Continue and the gone
+   *  state's New ticket). */
+  function newTicket(f, { reason = null, trigger = null } = {}) {
+    const go = () => openPreview(f, { mode: 'new', reason, trigger });
+    if (!(xOf(f) || {}).hasSetup) void openSetup(f, { trigger, then: go });
+    else go();
+  }
   /** A ticket gone from the tracker, as the server says it (D11). */
   const goneError = (key, name) => ({ status: 409, data: { gone: true, error: `${key} no longer exists in ${name}.` } });
   /** Board 29's states (D11, D12): a tracker that cannot be reached (nothing recorded; the main button tries again), a field it
@@ -3640,7 +3647,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         }
       } }, 'Forget the link');
       const fresh = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'export-new',
-        onclick: () => { if (!forgetting) openPreview(f, { mode: 'new', reason, trigger }); } }, 'New ticket');
+        onclick: () => { if (!forgetting) newTicket(f, { reason, trigger }); } }, 'New ticket');
       const buttons = [forget, fresh];
       box.show(dd.error || `${key} no longer exists in ${name}.`, { note, buttons });
       lost(forget);
@@ -3999,7 +4006,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         if (busy || !data) return;
         if (mode === 'comment') openComment(f, { reason, trigger });
         // A6.1 D11: a new ticket needs the export setup, which a feature that started from a ticket may not have yet
-        else if (mode === 'new' && !(xOf(f) || {}).hasSetup) void openSetup(f, { trigger, then: () => openPreview(f, { mode: 'new', reason, trigger }) });
+        else if (mode === 'new') newTicket(f, { reason, trigger });
         else openPreview(f, { mode, reason, trigger });
       } }, 'Continue');
     const lk0 = linkOf(f) || {};
