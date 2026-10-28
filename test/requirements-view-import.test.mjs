@@ -833,3 +833,153 @@ test("a create the server refuses over the files' caps (400) says so in the form
   assert.deepEqual([m.routed, text(fail)], [['feature/8'], '']);
   m.view.destroy();
 });
+
+// ---- Task 14 fix round 1 ----
+const featurePage8 = () => fakeApi({ ...BASE, 'GET /api/requirements/8': { feature: { seq: 8, id: 'FEAT-8', scopeType: 'project', scopeKey: 'shop-1', title: 'Partial cancel for multi-item orders',
+  status: 'looking', rounds: 0, costUsd: 0, busy: true, orientation: null, pending: null, lastError: null, state: 'looking',
+  spec: { goal: { text: '', measure: '' }, actors: [], flow: [], edgeCases: [], rules: [], outOfScope: [], criteria: [], assumptions: [], openQuestions: [], edited: {} },
+  readiness: { ok: false, passed: 0, total: 6, checks: [], overridable: false }, starts: [], unaskedRejections: [], changedSinceStart: [], attachments: [],
+  briefDocuments: [], unaskedFiles: [], interview: null, resetPeriod: 'monthly', export: null }, turns: [] } });
+const goBtn = (m) => [...m.host.querySelectorAll('.req-new-btns .btn-primary')][0];
+const dropFiles = (m, files) => {
+  const ev = new window.Event('drop', { bubbles: true, cancelable: true });
+  ev.dataTransfer = { types: ['Files'], files };
+  m.host.querySelector('.req-new-files .req-drop').dispatchEvent(ev);
+};
+const mkFile = (name, body = 'x') => new window.File([body], name, { type: 'text/markdown' });
+const formCss = () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  return css.slice(css.indexOf('/* A6.1 (board 32): the form a ticket filled'), css.indexOf('/* ── marketplace P3 ── */'));
+};
+
+test("the caps count the ticket's files: with 9 in use, the first file picked from disk is added and the second is refused with the 10-files sentence", async () => {
+  const eight = Array.from({ length: 8 }, (_, i) => ({ id: `2000${i}`, name: `shot-${i}.png`, kind: 'image', mime: 'image/png', bytes: 1024, refused: null, picked: true, capped: null }));
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => PREVIEW({ attachments: eight }) }));
+  assert.equal(m.host.querySelector('.req-new-files-note').hidden, true);
+  await fillFrom(m);
+  assert.equal(m.host.querySelectorAll('.req-import-chips .req-new-chip').length, 9, 'the comments file and 8 attachments');
+  assert.equal(m.host.querySelector('.req-new-files-note').hidden, false, "the ticket's files alone show the note");
+  const cost = m.host.querySelector('.req-new-cost');
+  assert.ok(cost && !cost.hidden && /reads each file once before round 1/i.test(cost.textContent), "the ticket's files are in the cost line");
+  dropFiles(m, [mkFile('a.md'), mkFile('b.md')]);
+  assert.deepEqual([...m.host.querySelectorAll('.req-new-chips:not(.req-import-chips) .req-new-chip-name')].map(text), ['a.md']);
+  const refused = m.host.querySelector('.req-file-refused');
+  assert.deepEqual([refused.hidden, text(refused)], [false, 'b.md was not added: a feature takes up to 10 files.']);
+  m.view.destroy();
+});
+
+test('Start: a 404 with gone shows the gone sentence, not the flag message; the description file and a notOnTicket reason are carried; the alert clears on Use this ticket and Stop using', async () => {
+  const GONE_S = 'SHOP-124 no longer exists in Jira.';
+  let n = 0;
+  const m = await openNew(ROUTES({
+    [`POST ${IMP}/preview`]: () => PREVIEW({ clipped: true, descriptionFile: { name: 'SHOP-124 description.md', bytes: 30000 } }),
+    'POST /api/requirements': () => {
+      n += 1;
+      if (n === 1) return { __status: 404, body: { gone: true, error: GONE_S } };
+      if (n === 2) return { __status: 404, body: { error: 'nothing' } };
+      return { ...CREATED, notOnTicket: { key: 'SHOP-124', comments: [], attachments: [{ id: '10042', reason: 'Not offered: Worca reads text, images and PDF.' }] } };
+    } }));
+  await fillFrom(m);
+  goBtn(m).click();
+  await settle();
+  const fail = m.host.querySelector('.req-import-fail');
+  assert.equal(text(fail.children[0]), GONE_S);
+  assert.equal(fail.children.length, 2);
+  assert.equal(m.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements')[0].body.fromTicket.descriptionFile, true);
+  // Use this ticket clears it
+  q('import-change', m.host).click(); await settle(); q('pick-continue').click(); await settle(); q('ipv-use').click(); await settle();
+  assert.equal(fail.children.length, 0, 'cleared on Use this ticket');
+  goBtn(m).click();
+  await settle();
+  assert.equal(fail.children.length, 0, "a 404 without gone is the page's own message, not the form alert");
+  assert.notEqual(m.msgEl.textContent, '');
+  // Stop using clears it
+  n = 0;
+  goBtn(m).click();
+  await settle();
+  assert.equal(fail.children.length, 2);
+  q('import-stop', m.host).click();
+  assert.equal(fail.children.length, 0, 'cleared on Stop using');
+  // a reason on a notOnTicket line
+  n = 2;
+  await fillFrom(m);
+  goBtn(m).click();
+  await settle();
+  featurePage8();
+  await m.view.show('feature/8');
+  await settle();
+  assert.equal(m.msgEl.textContent, 'partial-cancel-flow.pdf was not added: Worca reads text, images and PDF.');
+  m.view.destroy();
+});
+
+test('× on the ticket file a 400 named takes the stale sentence away', async () => {
+  const m = await openNew(ROUTES({ 'POST /api/requirements': () => ({ __status: 400, body: { error: 'partial-cancel-flow.pdf was not added: a feature takes up to 10 files.' } }) }));
+  await fillFrom(m);
+  goBtn(m).click();
+  await settle();
+  const fail = m.host.querySelector('.req-import-fail');
+  assert.equal(fail.children.length, 1);
+  q('import-x-10042', m.host).click();
+  assert.equal(fail.children.length, 0);
+  m.view.destroy();
+});
+
+test("Stop using pressed while the create runs does not lose the page's notOnTicket lines", async () => {
+  let answer = null;
+  const m = await openNew(ROUTES({ 'POST /api/requirements': () => new Promise((r) => { answer = r; }) }));
+  await fillFrom(m);
+  goBtn(m).click();
+  await settle();
+  q('import-stop', m.host).click();
+  answer({ ...CREATED, notOnTicket: { key: 'SHOP-124', comments: ['10236'], attachments: [{ id: '10042', reason: null }] } });
+  await settle();
+  assert.deepEqual(m.routed, ['feature/8']);
+  featurePage8();
+  await m.view.show('feature/8');
+  await settle();
+  assert.equal(m.msgEl.textContent, 'The comment by Bo Example (25 Oct) was not added: it is no longer on SHOP-124. partial-cancel-flow.pdf was not added: it is no longer on SHOP-124.');
+  m.view.destroy();
+});
+
+test("the description hints: Keep mine hides \"From SHOP-131's description…\"; × on the description file hides the clause about it", async () => {
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: (b) => (b.key === 'SHOP-131'
+    ? PREVIEW({ key: 'SHOP-131', title: 'Cancel button hidden on the mobile order page', description: 'The button hides.', url: 'https://acme.test/browse/SHOP-131',
+      criteria: { from: null, name: null, field: null, items: [], picked: [] }, attachments: [] })
+    : PREVIEW({ clipped: true, descriptionFile: { name: 'SHOP-124 description.md', bytes: 30000 } })) }));
+  await fillFrom(m);
+  const desc = m.host.querySelector('#req-new-desc');
+  const clip = m.host.querySelector('.req-import-descclip');
+  const from = m.host.querySelector('.req-import-deschint');
+  assert.equal(text(clip), "SHOP-124's description is longer than 20,000 characters. The form keeps the start; the whole text goes along as SHOP-124 description.md.");
+  q('import-x-description', m.host).click();
+  assert.deepEqual([clip.hidden, text(clip), from.hidden], [false, "SHOP-124's description is longer than 20,000 characters. The form keeps the start.", false]);
+  desc.value = 'My words.';
+  q('import-change', m.host).click(); await settle(); q('pick-SHOP-131').click(); q('pick-continue').click(); await settle(); q('ipv-use').click(); await settle();
+  q('import-keep', m.host).click();
+  assert.deepEqual([desc.value, from.hidden, clip.hidden, desc.hasAttribute('aria-describedby')], ['My words.', true, true, false]);
+  q('import-change', m.host).click(); await settle(); q('pick-SHOP-124').click(); q('pick-continue').click(); await settle(); q('ipv-use').click(); await settle();
+  q('import-replace', m.host).click();
+  assert.deepEqual([from.hidden, text(from), desc.getAttribute('aria-describedby')],
+    [false, "From SHOP-124's description. Change it as you like: the interview starts from what is here.", 'req-import-descfrom']);
+  m.view.destroy();
+});
+
+test('the criteria list is named by its label, which is styled as a field label', async () => {
+  const m = await openNew();
+  await fillFrom(m);
+  const list = m.host.querySelector('.req-import-critlist');
+  assert.equal(text(document.getElementById(list.getAttribute('aria-labelledby'))), 'Acceptance criteria from SHOP-124');
+  m.view.destroy();
+  assert.ok(formCss().includes('.req-import-critfield > .req-export-fl{font-size:var(--fs-body);font-weight:600;color:inherit}'));
+});
+
+test("CSS: the strip has the form's 18px rhythm; the 28 px buttons get 44 px tap areas at 900 px; a ticket file's × too (no literal 44)", () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.field\{margin-bottom:18px;\}/);
+  const b = formCss();
+  assert.match(b, /\.req-import-strip\{[^}]*margin-bottom:18px/);
+  assert.ok(b.includes('.req-import-open::after,.req-import-askbtns .btn-sm::after{content:"";position:absolute;inset:-9px 0}'));
+  assert.ok(b.includes('.req-new-chip .req-import-chip-x{position:relative}') && b.includes('.req-new-chip .req-import-chip-x::after{content:"";position:absolute;inset:-10px}'));
+  assert.ok(b.lastIndexOf('.req-import-chip-x::after') > b.lastIndexOf('@media (min-width:601px) and (max-width:900px)'), 'only 601 to 900 px: A8 owns 600 and under');
+  assert.ok(!/min-height:44px/.test(b));
+});

@@ -649,6 +649,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const descClip = h('p', { class: 'hint req-import-descclip', hidden: true });
     // not a `.field`: the form's fields stay Title, Describe it, Files and For (it has no control to label); CSS gives it a field's spacing
     const critField = h('div', { class: 'req-import-critfield', hidden: true });
+    let descOwn = false;   // Keep mine: the description is the user's own, so the hint about the ticket's description no longer describes it
     const ticketChips = h('div', { class: 'req-new-chips req-import-chips' });
     const ticketNote = h('p', { class: 'hint req-import-filesnote', hidden: true });
     const createFail = h('div', { class: 'req-import-fail', role: 'alert' });   // persistent: board 36 (8)
@@ -660,11 +661,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     function renderImport() {
       const on = !!imp;
       strip.hidden = !on;
-      descFrom.hidden = !on;
-      descClip.hidden = !on || !imp.clipped;
+      descFrom.hidden = !on || descOwn;
+      descClip.hidden = !on || !imp.clipped || descOwn;
       critField.hidden = !on || !imp.criteria.length;
       ticketNote.hidden = !on || !ticketFiles().length;
-      if (on) desc.setAttribute('aria-describedby', 'req-import-descfrom'); else desc.removeAttribute('aria-describedby');
+      if (!descFrom.hidden) desc.setAttribute('aria-describedby', 'req-import-descfrom'); else desc.removeAttribute('aria-describedby');
       if (!on) { strip.replaceChildren(); critField.replaceChildren(); ticketChips.replaceChildren(); return; }
       const meta = [imp.meta.type && imp.meta.type.name, imp.meta.status].filter(Boolean).join(' · ');
       strip.replaceChildren(
@@ -683,9 +684,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         askEl);
       descFrom.textContent = imp.description ? `From ${imp.key}'s description. Change it as you like: the interview starts from what is here.`
         : `${imp.key} has no description. Describe it in a few sentences.`;
-      descClip.textContent = `${imp.key}'s description is longer than 20,000 characters. The form keeps the start; the whole text goes along as ${imp.key} description.md.`;
-      critField.replaceChildren(h('span', { class: 'req-export-fl' }, 'Acceptance criteria ', h('span', { class: 'opt', text: `from ${imp.key}` })),
-        h('ul', { class: 'req-import-critlist' }, ...imp.criteria.map((t, i) => h('li', {}, h('code', { text: `R-po-${i + 1}` }), ' ', h('span', { text: t })))),
+      // × on the description file takes the clause about it away: the sentence stops at what is still true
+      descClip.textContent = imp.descriptionFile
+        ? `${imp.key}'s description is longer than 20,000 characters. The form keeps the start; the whole text goes along as ${imp.key} description.md.`
+        : `${imp.key}'s description is longer than 20,000 characters. The form keeps the start.`;
+      critField.replaceChildren(h('span', { class: 'req-export-fl', id: 'req-import-critlabel' }, 'Acceptance criteria ', h('span', { class: 'opt', text: `from ${imp.key}` })),
+        h('ul', { class: 'req-import-critlist', 'aria-labelledby': 'req-import-critlabel' }, ...imp.criteria.map((t, i) => h('li', {}, h('code', { text: `R-po-${i + 1}` }), ' ', h('span', { text: t })))),
         h('p', { class: 'hint', text: 'They start the spec as your criteria. Edit or remove them on the feature page.' }));
       ticketChips.replaceChildren(...ticketFiles().map((x) => h('span', { class: 'req-new-chip' },
         icon(x.kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }), h('span', { class: 'req-new-chip-name', text: x.name }),
@@ -701,11 +705,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const edited = !!imp && !!filled && (title.value !== filled.title || desc.value !== filled.description);
       const fill = () => { title.value = t.title; desc.value = t.description; filled = { title: t.title, description: t.description }; };
       imp = t;
+      descOwn = edited;
       if (!edited) fill();
       renderImport();
       sync();
       if (!edited) { askEl.hidden = true; fromBtn.focus(); return; }
-      const done = (replace) => { if (replace) fill(); askEl.hidden = true; askEl.replaceChildren(); fromBtn.focus(); };
+      const done = (replace) => { if (replace) fill(); descOwn = !replace; renderImport(); askEl.hidden = true; askEl.replaceChildren(); fromBtn.focus(); };
       askEl.replaceChildren(h('p', { id: 'req-import-ask-q', text: `Replace the title and description with ${t.key}'s?` }),
         h('div', { class: 'req-import-askbtns' },
           h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'import-keep', onclick: () => done(false) }, 'Keep mine'),
@@ -715,7 +720,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     /** × "Stop using SHOP-124": what was typed stays; the criteria and the ticket's files go. */
     function stopUsing() {
-      imp = null; filled = null; lastPick = null;
+      imp = null; filled = null; lastPick = null; descOwn = false;
       askEl.hidden = true;
       askEl.replaceChildren();
       createFail.replaceChildren();
@@ -726,6 +731,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     /** × on a ticket file: it goes; the focus moves to the next chip's ×, else the previous one's, else Choose files. */
     function removeTicketFile(k) {
       if (!imp) return;
+      createFail.replaceChildren();   // a 400 that named this file no longer applies
       const at = ticketFiles().findIndex((x) => x.key === k);
       imp = k === 'comments' ? { ...imp, comments: [], commentsFile: null } : k === 'description' ? { ...imp, descriptionFile: null }
         : { ...imp, attachments: imp.attachments.filter((a) => a.id !== k) };
@@ -735,15 +741,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       (xs[Math.min(at, xs.length - 1)] || choose).focus();
     }
     /** The feature page's line for what the second read no longer found (D10). */
-    const notOnTicketLines = (gone) => {
-      if (!gone || !imp) return [];
+    const notOnTicketLines = (gone, sent) => {
+      if (!gone || !sent) return [];
       const out = [];
       for (const id of gone.comments || []) {
-        const c = imp.comments.find((x) => x.id === id);
+        const c = sent.comments.find((x) => x.id === id);
         if (c) out.push(`The comment by ${c.author} (${c.when}) was not added: it is no longer on ${gone.key}.`);
       }
       for (const a of gone.attachments || []) {
-        const x = imp.attachments.find((y) => y.id === a.id);
+        const x = sent.attachments.find((y) => y.id === a.id);
         if (x) out.push(a.reason ? `${x.name} was not added: ${String(a.reason).replace(/^Not offered: /, '')}` : `${x.name} was not added: it is no longer on ${gone.key}.`);
       }
       return out;
@@ -853,13 +859,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         try {
           const [scopeType, ...rest] = select.value.split(':');
           const attachments = picked.length ? await Promise.all(picked.map(encodeFile)) : undefined;
+          const sent = imp;   // the ticket as posted: Stop using or × while the create runs must not lose its lines
           const fromTicket = imp ? { ...imp.conn, key: imp.key, criteria: imp.criteria, comments: imp.comments.map((c) => c.id),
             attachments: imp.attachments.map((a) => a.id), descriptionFile: !!imp.descriptionFile } : undefined;
           const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value,
             ...(attachments ? { attachments } : {}), ...(fromTicket ? { fromTicket } : {}) });
           // A file the server could not store, and what the ticket no longer has, are named on the feature page (the feature stays).
           const lines = (Array.isArray(data.filesNotStored) ? data.filesNotStored : []).map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`);
-          lines.push(...notOnTicketLines(data.notOnTicket));
+          lines.push(...notOnTicketLines(data.notOnTicket, sent));
           if (lines.length) carry = { param: `feature/${data.feature.seq}`, text: lines.join(' ') };
           route(`feature/${data.feature.seq}`);
         } catch (err) {
