@@ -263,3 +263,28 @@ test('a script check whose script left the Library says so, on its line and in i
   const unknown = boot(ex, { scripts: null });
   assert.equal(unknown.root.querySelector('.wft-sect .wft-gone'), null, 'the Library did not load: no claim either way');
 });
+
+// Browser check M5: at 390px the Basics rows wrapped badly; a box showed while its switch was off.
+test('a limit Basic: the box and "times" go together, beside the switch, and show only while it is on (M5)', () => {
+  const { root, ed } = boot();
+  const val = (id) => root.querySelector(id).closest('.wft-basic-val');
+  assert.ok(val('#wft-b-cost-usd') && val('#wft-b-fix-n'), 'one group per limit');
+  assert.equal(val('#wft-b-fix-n').querySelector('.wft-basic-after').textContent, 'times');
+  assert.deepEqual([val('#wft-b-cost-usd').hidden, val('#wft-b-fix-n').hidden], [false, true], 'the cost limit is on, the fix limit off');
+  const fix = root.querySelector('#wft-b-fix');
+  fix.checked = true; fix.dispatchEvent(new fix.ownerDocument.defaultView.Event('change', { bubbles: true }));
+  assert.equal(val('#wft-b-fix-n').hidden, false);
+  assert.equal(ed.value().basics.maxSentBack, 2, 'switched on: the box it shows counts');
+  const cost = root.querySelector('#wft-b-cost');
+  cost.checked = false; cost.dispatchEvent(new cost.ownerDocument.defaultView.Event('change', { bubbles: true }));
+  assert.equal(val('#wft-b-cost-usd').hidden, true);
+  assert.equal(ed.value().basics.maxCostUsd, null);
+});
+
+test('style.css: the Basics boxes keep their width and the switch keeps its label beside it at phone width (M5)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.ok(/\.wft-basic \.wft-num\{[^}]*width:84px/.test(css), 'beats input[type="text"]{width:100%}');
+  assert.ok(/\.wft-basic > \.wft-chk\{[^}]*flex-wrap:nowrap/.test(css), 'the label never drops under the switch');
+  assert.ok(/\.wft-basic-val\{[^}]*white-space:nowrap/.test(css), 'the box and "times" stay together');
+});

@@ -204,9 +204,13 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
   inner.append(hr);
   for (const r of m.examples) {
     const row = el(doc, 'div', 'wft-crow2');
-    const cell = el(doc, 'span');
+    const cell = el(doc, 'span', 'wft-crow2-res');
     cell.append(badge(doc, r.result));
-    row.append(act(doc, root, runId, r.name, () => actions.open(r.id), 'wft-ex-open', `wft-cmp-ex-${r.id}`), passed(doc, r.a), passed(doc, r.b), cell);
+    // H1: on a phone the row stacks and each count names its column (style.css .wft-crow2 [data-label]).
+    const [pa, pb] = [passed(doc, r.a), passed(doc, r.b)];
+    pa.dataset.label = `${A} passed`;
+    pb.dataset.label = `${B} passed`;
+    row.append(act(doc, root, runId, r.name, () => actions.open(r.id), 'wft-ex-open', `wft-cmp-ex-${r.id}`), pa, pb, cell);
     if (r.luck) {
       const why = el(doc, 'span', 'wft-why');
       const luck = `Might be luck: only ${Math.max(r.a.total, r.b.total)} tries.`;
@@ -365,9 +369,10 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
   if (!once) hr.append(el(doc, 'span', '', `${s.labels.a} · try ${cur.n}`));
   hr.append(el(doc, 'span', '', `${s.labels.b} · try ${cur.n}`));
   inner.append(hr);
-  const cell = (v, key, label) => {
+  const cell = (v, key, label, column) => {
     const it = v && v.verdict ? (v.verdict[key] || []).find((x) => x.label === label) : null;
     const span = el(doc, 'span', 'wft-res');
+    span.dataset.label = column;   // H2: on a phone each version's cell is its own line, named (style.css .wft-crow [data-label])
     if (!it) { span.classList.add('is-none'); span.textContent = '—'; return span; }
     if (!it.met) span.classList.add('is-bad');
     const d = el(doc, 'span', `wft-dot ${it.met ? 'ok' : 'no'}`);
@@ -383,8 +388,8 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     for (const label of labels) {
       const row = el(doc, 'div', cls);
       row.append(el(doc, 'span', '', label));
-      if (!once) row.append(cell(cur.a, key, label));
-      row.append(cell(cur.b, key, label));
+      if (!once) row.append(cell(cur.a, key, label, `${s.labels.a} · try ${cur.n}`));
+      row.append(cell(cur.b, key, label, `${s.labels.b} · try ${cur.n}`));
       inner.append(row);
     }
   }

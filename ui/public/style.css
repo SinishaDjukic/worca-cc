@@ -8631,6 +8631,8 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-grid.is-one .wft-row{grid-template-columns:minmax(0,1fr) 200px 130px 40px;min-width:600px;}
 .wft-row:last-child{border-bottom:0;}
 .wft-row-head{padding:10px 18px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+/* A phone (browser check H1): each example stacks, the ⋯ beside its name, each result named by its column (data-label) */
+@media (max-width:700px){.wft-row{grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;min-width:0;}.wft-grid.is-one .wft-row{grid-template-columns:minmax(0,1fr) auto;min-width:0;}.wft-row-head{display:none;}.wft-row > .wft-ex{grid-column:1;grid-row:1;}.wft-row > .wft-more{grid-column:2;grid-row:1;align-self:start;}.wft-row > .wft-kinds,.wft-row > [data-label]{grid-column:1 / -1;}.wft-row [data-label]{flex-wrap:wrap;}.wft-row [data-label]::before{content:attr(data-label);flex:0 0 45%;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}}
 .wft-ex{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .wft-ex .hint{margin:0;}
 .wft-ex-open{border:0;background:transparent;padding:0;text-align:left;font:inherit;font-weight:500;color:var(--ink);cursor:pointer;}
@@ -8670,6 +8672,13 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-num{width:84px;}
 .wft-basic{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:4px 0;}
 .wft-basic > .wft-chk{padding:0;}
+/* Browser check M5: the label stays beside its switch, the box keeps its width, and the box and "times" go together */
+.wft-basic > .wft-chk{flex-wrap:nowrap;flex:0 1 auto;min-width:0;}
+.wft-basic > .wft-chk .switch{flex:0 0 auto;}
+.wft-basic > .wft-chk .switch-label{min-width:0;}
+.wft-basic .wft-num{width:84px;flex:0 0 auto;}
+.wft-basic-val{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;flex:0 0 auto;}
+@media (max-width:700px){.wft-basic{flex-wrap:nowrap;}}
 .wft-basic-after{font-size:var(--fs-body);color:var(--ink);}
 .wft-lines{display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
 .wft-line{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);align-self:stretch;}
@@ -8744,6 +8753,7 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-pill.is-stopped .pdot{background:var(--slate);}
 .wft-pill.is-parked .pdot{animation:none;}
 .wft-cap-label{font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+.wft-acts .wft-cap{width:96px;flex:0 0 auto;}   /* board 27: inline beside Finish the rest (input[type="text"] is 100% wide) */
 .wft-prog{display:flex;flex-direction:column;gap:14px;padding:18px 22px;}
 .wft-prog > .hint{margin:0;}
 .wft-stopped{margin:0;font-size:var(--fs-body);font-weight:600;color:var(--ink);}
@@ -8855,6 +8865,8 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-sent-head + .wft-sent-foot{border-top:0;padding-top:0;}
 .wft-sent-real{padding:14px 18px;}
 @media (max-width:700px){.wft-outs{grid-template-columns:minmax(0,1fr);}.wft-tiles{grid-template-columns:repeat(2,minmax(0,1fr));}.wft-call-full{margin-left:18px;}}
+/* A phone (browser check H1, H2): By example and What was checked stack; each version's cell is a line named by its column */
+@media (max-width:700px){.wft-crows2,.wft-crows,.wft-crows.is-one{min-width:0;}.wft-crow2{grid-template-columns:minmax(0,1fr) auto;}.wft-crow2.is-head,.wft-crow.is-head{display:none;}.wft-crow2 > .wft-ex-open{grid-column:1;grid-row:1;}.wft-crow2 > .wft-crow2-res{grid-column:2;grid-row:1;}.wft-crow2 > [data-label]{grid-column:1 / -1;}.wft-crow,.wft-crow.is-one{grid-template-columns:minmax(0,1fr);gap:4px;}.wft-crow2 [data-label],.wft-crow [data-label]{flex-wrap:wrap;}.wft-crow2 [data-label]::before{content:attr(data-label);flex:0 0 45%;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}.wft-crow [data-label]::before{content:attr(data-label);flex:0 0 45%;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}}
 @media (prefers-reduced-motion:reduce){.wft-call-chev{transition:none;}}
 @media (max-width:900px){.wft-steps,.wft-cols{grid-template-columns:minmax(0,1fr);}}
 @media (prefers-reduced-motion:reduce){.wft-run-dot{animation:none;}}

@@ -105,7 +105,9 @@ function table(doc, o, actions, dateText) {
     const more = iconBtn(doc, 'more', `More for ${e.name}`, null, 'btn btn-sm btn-quiet btn-icon wft-more');
     more.setAttribute('aria-haspopup', 'menu');
     more.addEventListener('click', () => actions.exampleMenu(more, e));
-    row.append(name, kinds, ...o.columns.map((c) => cellView(doc, e.cells[String(c.use)] || null)), more);
+    // H1: each result names its column, for the stacked phone layout (style.css .wft-row [data-label]).
+    const results = o.columns.map((c) => { const v = cellView(doc, e.cells[String(c.use)] || null); v.dataset.label = c.label; return v; });
+    row.append(name, kinds, ...results, more);
     grid.append(row);
   }
   scroll.append(grid);

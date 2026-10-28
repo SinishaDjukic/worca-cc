@@ -211,3 +211,21 @@ test('the focus stays on the page (inside the canvas-keys fence): after Hide, an
   renderTestsPage(root, overview(), actions, opts);
   assert.equal(doc.activeElement.id, 'out', 'a repaint never takes the focus from outside the page');
 });
+
+// Browser check H1: at 390px the result columns were cut off. On a phone each row stacks and each result names its column.
+test('the examples table: each result cell names its column, for the stacked phone layout (H1)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.ok(/@media \(max-width:700px\)\{[^\n]*\.wft-row\{[^}]*min-width:0/.test(css), 'no fixed table width on a phone');
+  assert.ok(/\.wft-row \[data-label\]::before\{content:attr\(data-label\)/.test(css));
+  assert.ok(/\.wft-crow2 \[data-label\]::before\{content:attr\(data-label\)/.test(css), 'Compare By example too');
+  assert.ok(/\.wft-crow \[data-label\]::before\{content:attr\(data-label\)/.test(css), 'and What was checked (H2)');
+});
+
+test('H1: every result cell carries its column name as data-label', () => {
+  const { root } = boot(overview());
+  const rows = [...root.querySelectorAll('.wft-row:not(.wft-row-head)')];
+  assert.deepEqual(rows.map((r) => [...r.querySelectorAll('[data-label]')].map((c) => c.dataset.label)),
+    rows.map(() => ['v4 · the team uses it', 'v5 draft · yours']));
+  assert.ok(rows.every((r) => [...r.querySelectorAll('[data-label]')].every((c) => c.classList.contains('wft-res'))));
+});

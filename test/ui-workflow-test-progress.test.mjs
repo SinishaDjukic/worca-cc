@@ -228,3 +228,8 @@ test('app.js (Task 13 review): frames repaint only the shown Tests page, re-entr
   const tv = body('wftTestVersion');
   assert.ok(/if \(!versions\) \{ notify\(\{ tone: 'err', title: 'Could not open Test a version'/.test(tv), 'no versions read: a toast, never "No saved version yet"');
 });
+
+test('style.css: the stopped page\'s cost limit sits inline beside Finish the rest, at the board\'s width (M2)', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.ok(/\.wft-acts \.wft-cap\{[^}]*width:96px/.test(css), 'beats input[type="text"]{width:100%}');
+});

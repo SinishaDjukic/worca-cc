@@ -362,3 +362,19 @@ test('app.js hands the side by side and Read the whole result the sandboxed rend
   assert.ok(/openWholeResult\(\{ doc: document, win: window, title, name: r\.data\.name, text: r\.data\.text, renderMarkdown: wftMarkdown \}\)/.test(app));
   assert.ok(/function wftMarkdown\(text, mount\) \{\s*const out = hdMarkdown\.render\(text\);/.test(app), 'hdMarkdown: marked + DOMPurify (ask-markdown.mjs)');
 });
+
+test('H1/H2: on a phone the By example and What was checked rows stack; each cell names its column', () => {
+  const c = boot(renderCompare, compare());
+  const rows = [...c.root.querySelectorAll('.wft-crow2:not(.is-head)')];
+  assert.ok(rows.length > 0);
+  for (const r of rows) {
+    assert.deepEqual([...r.querySelectorAll('[data-label]')].map((x) => x.dataset.label), ['v4 passed', 'v5 draft passed']);
+    assert.ok(r.querySelector('.wft-crow2-res .badge, .wft-crow2-res .hint'), 'the result has its own cell');
+  }
+  const s = boot(renderSideBySide, side(), { tryIndex: 1 });
+  const checked = [...s.root.querySelectorAll('.wft-crow:not(.is-head)')];
+  assert.ok(checked.length > 0);
+  for (const r of checked) assert.deepEqual([...r.querySelectorAll('[data-label]')].map((x) => x.dataset.label), ['v4 · try 2', 'v5 draft · try 2']);
+  const once = boot(renderSideBySide, side({ run: { id: 7, kind: 'once' }, labels: { a: null, b: 'v5 draft' } }), { tryIndex: 0 });
+  assert.deepEqual([...once.root.querySelectorAll('.wft-crow:not(.is-head)')][0].querySelectorAll('[data-label]').length, 1);
+});
