@@ -19,13 +19,15 @@ import { guardModal } from '../modal-guard.mjs';
 import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap }
   from '../../../src/shared/graph/geometry.mjs';
 import { hitRoute } from '../../../src/shared/graph/route.mjs';
-import { PARAMS_PORT } from '../../../src/shared/graph/constants.mjs';
+import { PARAMS_PORT, SESSION_ID_RE } from '../../../src/shared/graph/constants.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
   from '../../../src/shared/graph/template.mjs';
 import { validateGraph, CANVAS_WARNING_CODES } from '../../../src/shared/graph/validate.mjs';
 import { autoLayout } from '../../../src/shared/graph/layout.mjs';
 import { applyCanvasOps, newRealErrors } from '../../../src/shared/graph/canvas-ops.mjs';
-import { mintId } from '../../../src/shared/graph/template.mjs';
+import { mintId, normalizeSessions } from '../../../src/shared/graph/template.mjs';
+import { sessionsOf, sessionCandidates, sessionLegal, sessionIdOf, pruneSessions, SESSION_DEFAULT_LABEL }
+  from '../../../src/shared/graph/sessions.mjs';
 import { LABEL_H } from '../../../src/shared/graph/geometry.mjs';
 
 export const UNDO_LIMIT = 50;
@@ -56,7 +58,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   let tpl = emptyCanvas();
   let tplOrigin = '';             // 'plugin:<name>' of the LOADED row ('' = user-created)
-  let sel = null;                 // {kind:'node'|'wire', id}
+  let sel = null;                 // {kind:'node'|'wire'|'session', id}
   let dirty = false;
   let savedHash = '';
   let gesture = null;
@@ -101,6 +103,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   const nodeById = (id) => tpl.nodes.find((n) => n.id === id) || null;
   const wireById = (id) => tpl.wires.find((w) => w.id === id) || null;
+  /** A session's derived spec (members in step order, closure), or null when no agent card names it. */
+  const sessionById = (sid) => sessionsOf(tpl, portsFn).find((s) => s.sid === sid) || null;
 
   // -------------------------------------------------------------- rect cache
   let R = { left: 0, top: 0, width: 0, height: 0 };
@@ -163,7 +167,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
 
   // ------------------------------------------------------------ mutate/render
-  const snapshot = () => JSON.stringify({ nodes: tpl.nodes, wires: tpl.wires });
+  // `sessions` only when the template has the map (C21), so every existing row keeps its saved hash.
+  const snapshot = () => JSON.stringify(tpl.sessions ? { nodes: tpl.nodes, wires: tpl.wires, sessions: tpl.sessions } : { nodes: tpl.nodes, wires: tpl.wires });
   function pushUndo() {
     undoStack.push(snapshot());
     if (undoStack.length > UNDO_LIMIT) undoStack.shift();
@@ -208,7 +213,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const n = lastReport.errors.length;
     const real = lastReport.errors.filter((e) => !e.incomplete).length;
     const todo = n - real;
-    const warn = (lastReport.warnings || []).filter((w) => CANVAS_WARNING_CODES.includes(w.code) && warnNode(w)).length;
+    const warn = (lastReport.warnings || []).filter((w) => w.sessionId || (CANVAS_WARNING_CODES.includes(w.code) && warnNode(w))).length;
     const tip = real ? 'Fix the errors to save' : todo ? 'Wire Task → … → End to save' : '';
     if (hostEls.saveBtn) {
       hostEls.saveBtn.disabled = n > 0 || !ready;
@@ -288,8 +293,19 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
         view.nodeEl(node.id).focus({ preventScroll: true });   // Delete / Escape / arrows reach the card, not a Library tab
       } else {
         const wire = hitWireAt(pt);
+        const sid = wire ? null : hitSessionHeadAt(pt);
         if (wire) { select({ kind: 'wire', id: wire.id }); g = { type: 'idle' }; }
-        else {
+        else if (sid) {
+          // The header strip: select the session; a drag moves its members and its flow cards (05 §3.3).
+          const spec = sessionById(sid);
+          const ids = spec ? spec.closure.filter((id) => nodeById(id)) : [];
+          g = { type: 'session', id: sid, starts: new Map(ids.map((id) => { const n = nodeById(id); return [id, { x: n.x, y: n.y }]; })),
+            grab: { x: pt.x, y: pt.y }, dx: 0, dy: 0, moved: false };
+          select({ kind: 'session', id: sid });
+          // Delete, ⇧⌘G and the arrows must reach the canvas, not a Library row (the node branch focuses its card too).
+          const strip = stage.querySelector(`.gv-sess-head[data-session-id="${sid}"]`);
+          if (strip) strip.focus({ preventScroll: true });
+        } else {
           select(null); g = { type: 'pan' };
           const f = doc.activeElement;
           if (f && f !== doc.body && stage.contains(f)) f.blur();   // the card that held the focus lets go
@@ -324,6 +340,16 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     }
     if (g.type === 'idle') return;
     const pt = toWorld(p.x, p.y);
+    if (g.type === 'session') {
+      // The OFFSET snaps (members may sit off the grid): every card moves by the same multiple of SNAP.
+      const dx = snap(pt.x - g.grab.x);
+      const dy = snap(pt.y - g.grab.y);
+      if (dx === g.dx && dy === g.dy) return;
+      g.dx = dx; g.dy = dy; g.moved = dx !== 0 || dy !== 0;
+      for (const [id, s] of g.starts) { const n = nodeById(id); if (n) { n.x = s.x + dx; n.y = s.y + dy; } }
+      view.moveNodes([...g.starts.keys()]);                // one re-route for the whole session
+      return;
+    }
     if (g.type === 'node') {
       const n = nodeById(g.id);
       const nx = snap(pt.x - g.grab.dx);
@@ -371,6 +397,13 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       commit('move', () => { n.x = to.x; n.y = to.y; });
       return;
     }
+    if (g.type === 'session' && g.moved) {
+      const to = new Map([...g.starts.keys()].map((id) => { const n = nodeById(id); return [id, { x: n.x, y: n.y }]; }));
+      for (const [id, st] of g.starts) { const n = nodeById(id); if (n) { n.x = st.x; n.y = st.y; } }   // rewind: ONE undo entry
+      finish(g);
+      commit('move session', () => { for (const [id, p] of to) { const n = nodeById(id); if (n) { n.x = p.x; n.y = p.y; } } });
+      return;
+    }
     finish(g);
   }
 
@@ -383,6 +416,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       // the drag's dirty-filtered routes could outlive the gesture. Paint only —
       // no commit, no undo entry, no capture op.
       if (n) { n.x = g.start.x; n.y = g.start.y; view.moveNode(n.id); view.rerouteAll(); }
+    }
+    if (g.type === 'session' && g.moved) {
+      for (const [id, st] of g.starts) { const n = nodeById(id); if (n) { n.x = st.x; n.y = st.y; } }
+      view.moveNodes([...g.starts.keys()]);
     }
     finish(g);
   }
@@ -459,14 +496,26 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
   function deleteSelection() {
     if (!sel) return;
+    if (sel.kind === 'session') {                       // Delete on a session ungroups; it never deletes a card
+      if (ungroupSession(sel.id).ok) toast('Session removed. The steps stay.');
+      return;
+    }
     if (sel.kind === 'wire') { const id = sel.id; commit('delete wire', () => { tpl.wires = tpl.wires.filter((w) => w.id !== id); }); }
     else { const id = sel.id; commit('delete node', () => {
       tpl.nodes = tpl.nodes.filter((n) => n.id !== id);
       tpl.wires = tpl.wires.filter((w) => w.from.node !== id && w.to.node !== id);
+      pruneInPlace();                                   // a session left with one step dissolves (05 §1.7)
     }); }
     select(null);
   }
   function nudge(dx, dy) {
+    if (sel && sel.kind === 'session') {
+      const spec = sessionById(sel.id);
+      const ns = spec ? spec.closure.map(nodeById).filter(Boolean) : [];
+      // By the exact offset, like the header drag: members off the grid keep their layout.
+      if (ns.length) commit('nudge session', () => { for (const n of ns) { n.x += dx; n.y += dy; } });
+      return;
+    }
     if (!sel || sel.kind !== 'node') return;
     const n = nodeById(sel.id);
     if (!n) return;
@@ -475,13 +524,129 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function restore(json) {
     const st = JSON.parse(json);
     tpl.nodes = st.nodes; tpl.wires = st.wires;
-    if (sel && ((sel.kind === 'node' && !nodeById(sel.id)) || (sel.kind === 'wire' && !wireById(sel.id)))) sel = null;
+    if (st.sessions) tpl.sessions = st.sessions; else delete tpl.sessions;
+    if (sel && ((sel.kind === 'node' && !nodeById(sel.id)) || (sel.kind === 'wire' && !wireById(sel.id))
+      || (sel.kind === 'session' && !sessionById(sel.id)))) sel = null;
     dirty = metaDirty || snapshot() !== savedHash;
     render();
     scheduleValidate();
   }
   function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
   function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
+
+  // ------------------------------------------------------------- sessions (05 §3)
+  // Every gesture is ONE commit; a refusal commits nothing. Legality is sessions.mjs's, the same everywhere.
+  const SESSION_DEFAULTS = { label: SESSION_DEFAULT_LABEL, mode: 'subagents', hostModel: '', hostEffort: '' };
+  const labelOfId = (id) => { const n = nodeById(id); const m = n && agents[n.key]; return (m && m.displayName) || (n && (n.key || n.id)) || id; };
+  /** The well-formed session an AGENT card belongs to, else null. */
+  const memberSid = (id) => { const n = nodeById(id); const sid = n && n.kind === 'agent' ? sessionIdOf(n) : null; return sid && SESSION_ID_RE.test(sid) ? sid : null; };
+  function setSessionsMap(map) { const kept = normalizeSessions(map, tpl.nodes); if (kept) tpl.sessions = kept; else delete tpl.sessions; }
+  /** Inside a commit: drop lone memberships and orphan settings (pruneSessions; contiguity is never repaired). */
+  function pruneInPlace() {
+    const p = pruneSessions(tpl);
+    tpl.nodes = p.nodes;
+    if (p.sessions) tpl.sessions = p.sessions; else delete tpl.sessions;
+  }
+  function joinSession(a, b) {
+    const sid = memberSid(a) || memberSid(b);
+    const spec = sid ? sessionById(sid) : null;
+    const ids = [...new Set([...(spec ? spec.members : []), a, b])];
+    const legal = sessionLegal(tpl, portsFn, ids, { labelOf: labelOfId });
+    if (!legal.ok) return { ok: false, reason: legal.reason };
+    if (spec && ids.length === spec.members.length) return { ok: true, sid };      // both already in it: no commit
+    const id = sid || mintId('s_', new Set(tpl.nodes.map(sessionIdOf).filter(Boolean)));
+    commit('join session', () => { for (const nid of ids) nodeById(nid).config.session = id; });
+    return { ok: true, sid: id };
+  }
+  function leaveSession(nodeId) {
+    const n = nodeById(nodeId);
+    if (!n || sessionIdOf(n) === null) return { ok: false, reason: 'not in a session' };
+    const sid = sessionIdOf(n);
+    commit('leave session', () => { delete n.config.session; pruneInPlace(); });
+    if (sel && sel.kind === 'session' && sel.id === sid && !sessionById(sid)) select(null);   // the session dissolved
+    return { ok: true };
+  }
+  /** Ungroup: every card keeps its place; the selection moves to the first step, so ⌘Z brings the session back
+   *  with a member selected (⇧⌘G on it ungroups again). */
+  function ungroupSession(sid) {
+    const spec = sessionById(sid);
+    const named = tpl.nodes.filter((n) => sessionIdOf(n) === sid);
+    if (!named.length && !(tpl.sessions && Object.hasOwn(tpl.sessions, sid))) return { ok: false, reason: 'no such session' };
+    commit('ungroup', () => {
+      for (const n of named) delete n.config.session;
+      if (tpl.sessions) { const next = { ...tpl.sessions }; delete next[sid]; setSessionsMap(next); }
+    });
+    if (sel && sel.kind === 'session' && sel.id === sid) {
+      const first = spec && spec.members[0] ? spec.members[0] : null;
+      select(first ? { kind: 'node', id: first } : null);
+      // The strip, or the toolbar / inspector button, that held the focus is gone: the first step's card takes it, never
+      // <body>, where the canvas takes Delete (and a Delete there would delete the card the toast says stays).
+      const f = doc.activeElement;
+      const card = first ? view.nodeEl(first) : null;
+      if (card && (!f || f === doc.body || !f.isConnected)) card.focus({ preventScroll: true });
+    }
+    return { ok: true };
+  }
+  /** A setting at its default (or blank) deletes the key; an empty entry deletes the sid; an empty map deletes
+   *  `tpl.sessions` (the map stays sparse). An unchanged value commits nothing. */
+  function setSessionSetting(sid, key, value) {
+    if (!Object.hasOwn(SESSION_DEFAULTS, key) || !sessionById(sid)) return { ok: false, reason: 'not a session setting' };
+    const v = value == null ? '' : String(value).trim();
+    const cur = tpl.sessions && tpl.sessions[sid] && Object.hasOwn(tpl.sessions[sid], key) ? tpl.sessions[sid][key] : '';
+    const next = v === SESSION_DEFAULTS[key] ? '' : v;
+    if (next === cur) return { ok: true };
+    commit(`session ${key}`, () => {
+      const map = { ...(tpl.sessions || {}) };
+      const entry = { ...(map[sid] || {}) };
+      if (next === '') delete entry[key]; else entry[key] = next;
+      if (Object.keys(entry).length) map[sid] = entry; else delete map[sid];
+      setSessionsMap(map);
+    });
+    return { ok: true };
+  }
+  /** Split (05 §1.7): keep the longest consecutive run of the members (the earliest first step on a tie); the rest
+   *  leave. No consecutive pair left ungroups. One commit. */
+  function splitSession(sid) {
+    const spec = sessionById(sid);
+    if (!spec) return { ok: false, reason: 'no such session' };
+    if (spec.members.length > 10) return { ok: false, reason: 'too many steps to split' };   // every subset is tried
+    const m = spec.members;
+    let best = null;
+    for (let mask = 1; mask < (1 << m.length); mask += 1) {
+      const ids = m.filter((_, i) => mask & (1 << i));
+      if (ids.length < 2 || (best && ids.length < best.length)) continue;
+      if (!sessionLegal(tpl, portsFn, ids).ok) continue;
+      if (!best || ids.length > best.length || m.indexOf(ids[0]) < m.indexOf(best[0])) best = ids;
+    }
+    if (!best) return ungroupSession(sid);
+    if (best.length === m.length) return { ok: true, kept: best };                 // already one legal run: no commit
+    const keep = new Set(best);
+    commit('split session', () => { for (const id of m) if (!keep.has(id)) delete nodeById(id).config.session; pruneInPlace(); });
+    return { ok: true, kept: best };
+  }
+  /** The composer's one toast: the host's hook, else the injected notify (app.js passes feedback.mjs's). */
+  const toast = (text) => { if (hooks.onToast) hooks.onToast(text); else notify?.({ tone: 'info', title: text }); };
+  /** ⌘G: join the one legal NEXT step; 0 or 2+ candidates open the menu instead (the shell's hook). */
+  function joinNext() {
+    if (!sel || sel.kind !== 'node') return;
+    const n = nodeById(sel.id);
+    if (!n || n.kind !== 'agent') return;
+    const next = sessionCandidates(tpl, portsFn, { nodeId: n.id, labelOf: labelOfId }).filter((c) => c.ok && c.side === 'next');
+    if (next.length === 1) joinSession(n.id, next[0].nodeId);
+    else hooks.onSessionMenu?.(n.id);
+  }
+  /** ⇧⌘G: the selected session, or the selected member's. */
+  function ungroupSelected() {
+    const sid = sel && sel.kind === 'session' ? sel.id : sel && sel.kind === 'node' ? memberSid(sel.id) : null;
+    if (sid) ungroupSession(sid);
+  }
+  /** The header strip under a world point: the painted rects (view.sessionRects), so paint and hit cannot diverge. */
+  function hitSessionHeadAt(pt) {
+    for (const [sid, r] of view.sessionRects()) {
+      if (r.head && pt.x >= r.x && pt.x < r.x + r.w && pt.y >= r.head.y && pt.y < r.head.y + r.head.h) return sid;
+    }
+    return null;
+  }
 
   /** True while ANY modal owns the keyboard (MAJ-19). Two selectors, because no
    *  single one covers the two modal shapes this document carries:
@@ -521,12 +686,21 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     // click focuses it, and undo is the one key with no other meaning there. Fields stay theirs (isTyping, above).
     if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); return; }
     if (ev.target && ev.target.closest && ev.target.closest('[data-canvas-keys="off"]')) return;   // top bars, dock, Library, chat, sheet, menus
+    // ⌘G / ⇧⌘G (05 §3.1): only while the canvas has the keyboard; it overrides the browser's Find-next there.
+    // A held key repeats: one press joins one step (else the member's next step joins on the first repeat).
+    if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'g' || ev.key === 'G')) { ev.preventDefault(); if (!ev.repeat) { if (ev.shiftKey) ungroupSelected(); else joinNext(); } return; }
+    // A focused header strip is a button (05 §3.6): Enter or Space selects its session (Space is not the pan key there).
+    // Space on a strip whose session is already selected (after a press) is the hand-pan key again, as on a focused card.
+    const strip = (ev.key === 'Enter' || ev.key === ' ') && ev.target && ev.target.closest ? ev.target.closest('.gv-sess-head[data-session-id]') : null;
+    const already = Boolean(strip) && sel && sel.kind === 'session' && sel.id === strip.dataset.sessionId;
+    if (strip && stage.contains(strip) && !(ev.key === ' ' && already)) { ev.preventDefault(); select({ kind: 'session', id: strip.dataset.sessionId }); return; }
     if (ev.key === ' ') { if (!space) { space = true; stage.classList.add('space'); } ev.preventDefault(); return; }
     if (ev.key === 'Escape') {
       if (gesture) cancel(); else select(null);
       return;
     }
-    if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); deleteSelection(); return; }
+    // A held key repeats: after a session's ungroup its first step is selected, and a repeat must not delete that card.
+    if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); if (!ev.repeat) deleteSelection(); return; }
     if (ev.key === 'ArrowLeft') { ev.preventDefault(); nudge(-SNAP, 0); return; }
     if (ev.key === 'ArrowRight') { ev.preventDefault(); nudge(SNAP, 0); return; }
     if (ev.key === 'ArrowUp') { ev.preventDefault(); nudge(0, -SNAP); return; }
@@ -894,17 +1068,22 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const wire = w.wireId ? wireById(w.wireId) : null;
     return wire && wire.to ? wire.to.node : null;
   }
-  function firstErrorNode() {
-    const e = (lastReport.errors || []).find((x) => x.nodeId);
-    if (e) return e.nodeId;
-    const w = (lastReport.warnings || []).find((x) => CANVAS_WARNING_CODES.includes(x.code) && warnNode(x));
-    return w ? warnNode(w) : null;
+  /** What "show the first one" selects: an issue naming a session selects the session (its header carries the pip). */
+  function firstIssue() {
+    const e = (lastReport.errors || []).find((x) => x.sessionId || x.nodeId);
+    if (e) return e.sessionId ? { kind: 'session', id: e.sessionId, at: e.nodeId } : { kind: 'node', id: e.nodeId, at: e.nodeId };
+    const w = (lastReport.warnings || []).find((x) => x.sessionId || (CANVAS_WARNING_CODES.includes(x.code) && warnNode(x)));
+    if (!w) return null;
+    return w.sessionId ? { kind: 'session', id: w.sessionId, at: w.nodeId } : { kind: 'node', id: warnNode(w), at: warnNode(w) };
   }
-  const onErrChip = () => { const id = firstErrorNode(); if (id) { select({ kind: 'node', id }); view.centerOn(id); } };
+  const showIssue = (it) => { if (!it) return; select({ kind: it.kind, id: it.id }); if (it.at) view.centerOn(it.at); };
+  const onErrChip = () => showIssue(firstIssue());
   const onWorldClick = (ev) => {
     const pip = ev.target.closest && ev.target.closest('.npip, .nwarn');
     if (!pip) return;
     ev.stopPropagation();
+    const sid = pip.dataset.sessionId;
+    if (sid) { const spec = sessionById(sid); showIssue({ kind: 'session', id: sid, at: spec ? spec.members[0] : null }); return; }
     const id = pip.dataset.nodeId;
     if (id) { select({ kind: 'node', id }); view.centerOn(id); }
   };
@@ -1013,7 +1192,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   /** A chat-built workflow: a NEW unsaved document (no id, no origin), dirty from the start (D13). */
   function loadDraft(draft) {
     loadTemplate({ id: '', name: String(draft.name || ''), version: 2, domain: String(draft.domain || ''),
-      nodes: draft.nodes, wires: draft.wires });
+      nodes: draft.nodes, wires: draft.wires, ...(draft.sessions ? { sessions: draft.sessions } : {}) });
     metaDirty = true;
     dirty = true;
     paintChrome();
@@ -1027,8 +1206,12 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if (!r.ok) return r;
     const broke = newRealErrors(validateGraph(tpl, portsFn), validateGraph(r.tpl, portsFn));
     if (broke.length) return { ok: false, error: `that change would now leave the graph invalid (${broke[0].message})` };
-    commit(label, () => { tpl.nodes = r.tpl.nodes; tpl.wires = r.tpl.wires; });
-    if (sel && ((sel.kind === 'node' && !nodeById(sel.id)) || (sel.kind === 'wire' && !wireById(sel.id)))) select(null);
+    commit(label, () => {
+      tpl.nodes = r.tpl.nodes; tpl.wires = r.tpl.wires;
+      if (r.tpl.sessions) tpl.sessions = r.tpl.sessions; else delete tpl.sessions;   // canvas-ops prunes the map too
+    });
+    if (sel && ((sel.kind === 'node' && !nodeById(sel.id)) || (sel.kind === 'wire' && !wireById(sel.id))
+      || (sel.kind === 'session' && !sessionById(sel.id)))) select(null);
     return { ok: true, depth: undoStack.length, added: r.added, removed: r.removed };
   }
   /** Spawn from a Library drop at a CLIENT point: card top-left = point − (NODE_W/2, 20) (BRIEF.md). */
@@ -1048,6 +1231,13 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       const t = toScreen(n.x + s.w / 2, n.y - LABEL_H);
       return { x: b.x, y: b.y, top: t.y, kind: 'node' };
     }
+    if (sel.kind === 'session') {                       // under the tray's bottom centre (05 §3.3)
+      const r = view.sessionRects().get(sel.id);
+      if (!r) return null;
+      const b = toScreen(r.x + r.w / 2, r.y + r.h);
+      const t = toScreen(r.x + r.w / 2, r.y);
+      return { x: b.x, y: b.y, top: t.y, kind: 'session' };
+    }
     const c = view.curveOf(sel.id);
     if (!c) return null;
     const m = toScreen(c.mid.x, c.mid.y);
@@ -1061,6 +1251,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     spawn, paintInspector,
     guardDiscard,
     loadDraft, applyOps, spawnAtClient, selectionAnchor,
+    /** Session authoring (05 §3): each call is ONE commit, or `{ok:false, reason}` and no commit. */
+    sessions: { join: joinSession, leave: leaveSession, ungroup: ungroupSession, split: splitSession, setSetting: setSessionSetting, byId: sessionById },
     docToken: () => token,
     models: () => ({ models, efforts, subagentModels }),
     metaOf: (node) => (node && node.kind === 'agent' ? (agents[node.key] || null) : node && node.kind === 'script' ? (scripts[node.key] || null) : null),

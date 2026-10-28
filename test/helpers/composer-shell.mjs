@@ -62,6 +62,7 @@ export async function open(overrides = {}) {
   const c = createComposer(s.hostEls, {
     doc: s.doc, api: { ...API, ...(overrides.api || {}) }, raf: s.raf,
     viewport: () => ({ ...RECT }), storage: overrides.storage || null, portsFn,
+    ...(overrides.notify ? { notify: overrides.notify } : {}),
   });
   c.mount();
   c.loadTemplate(overrides.template === undefined ? fixture() : overrides.template);
