@@ -12,14 +12,20 @@
 //     schedules:  GET /api/schedules `schedules` — the series: { id, title, sentence, status }
 //     tickets:    GET /api/schedules `tickets` — { id, scheduleId, title, status, runAt, after }
 //     labels:     [string] — the label words in use on the listed runs (the Runs list label filter)
+//     level:      'simple'|'advanced'|'expert' — the interface mode (missing = expert); read only for locks
+//     flags:      { key: bool } — the Labs features that are on (missing = all off); read only for locks
 //   }
-//   Row = { kind: 'run'|'project'|'workspace'|'workflow'|'schedule'|'ticket'|'label', id, title, meta,
-//           tone?: 'need'|'run'|'fail'|'idle' (runs), href? (every kind but workflow and label), workflowId?, label? }
+//   Row = { kind: 'run'|'project'|'workspace'|'workflow'|'schedule'|'ticket'|'label'|'setting'|'addon', id, title, meta,
+//           tone?: 'need'|'run'|'fail'|'idle' (runs), href? (every kind but workflow and label), workflowId?, label?,
+//           locks?: [{ type: 'mode', min } | { type: 'flag', key, title }] and note? (setting, addon: what unlocks it) }
 import { liveRow, histRow } from './runs-list.mjs';
 import { formatInstant } from '../../src/shared/schedule/recurrence.mjs';
+import { SETTING_ENTRIES, ADDON_ENTRIES, locksFor, lockNote } from './settings-index.mjs';
 
 export const RUN_LIMIT = 5;
 export const OTHER_LIMIT = 6;
+export const SETTINGS_LIMIT = 5;
+export const ADDON_LIMIT = 4;
 
 const ENDED_ICONS = new Set(['done', 'stop', 'fail']);
 const KIND_ORDER = Object.freeze({ project: 0, workspace: 1, workflow: 2, schedule: 3, ticket: 3, label: 4 });
@@ -123,20 +129,39 @@ const byRun = (a, b) => (a.rank - b.rank) || (a.tier - b.tier) || (b.at - a.at) 
 const byOther = (a, b) => (a.rank - b.rank) || (KIND_ORDER[a.row.kind] - KIND_ORDER[b.row.kind])
   || a.row.title.localeCompare(b.row.title) || (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0);
 
+/** Settings / Add-ons rows (settings-index.mjs): every query word in the name (the title and, for a card, its tab's
+ *  title) or the alternative words. A name match ranks like any title (0-2); a match that needs an alternative word
+ *  ranks 3, after every name match (R-po-18). Ties: catalogue order, where every tab precedes the cards (A-5). */
+function catalogueRows(entries, words, q, ctx, kind, limit) {
+  const lc = (s) => String(s).toLowerCase();
+  return entries
+    .map((e, order) => ({ e, order, name: lc(`${e.title} ${e.tabTitle}`), all: lc(`${e.title} ${e.tabTitle} ${e.alts.join(' ')}`) }))
+    .filter((it) => words.every((w) => it.all.includes(w)))
+    .map((it) => ({ ...it, rank: words.every((w) => it.name.includes(w)) ? titleRank(it.e.title, q, words[0]) : 3 }))
+    .sort((a, b) => (a.rank - b.rank) || (a.order - b.order))   // SETTING_ENTRIES lists every tab before the cards (A-5)
+    .slice(0, limit)
+    .map(({ e }) => {
+      const locks = locksFor(e, ctx);
+      const where = kind === 'addon' ? 'Add-ons page' : e.type === 'tab' ? 'Settings tab' : `Settings · ${e.tabTitle}`;
+      return { kind, id: e.id, title: e.title, meta: where, note: lockNote(locks), href: e.href, locks };
+    });
+}
+
 /**
- * The popover's rows: { runs: Row[] (≤ RUN_LIMIT), other: Row[] (≤ OTHER_LIMIT) }.
+ * The popover's rows: { runs: Row[] (≤ RUN_LIMIT), other: Row[] (≤ OTHER_LIMIT), settings: Row[] (≤ SETTINGS_LIMIT),
+ * addons: Row[] (≤ ADDON_LIMIT) }.
  * Every whitespace-separated query word must appear (case-insensitive) in the row's haystack —
  * a run's title, project and state word; anything else's name and meta. Ranked title prefix >
  * a title word starting with the first query word > a match elsewhere; ties: needs you, live,
- * newest (runs) and project, workspace, workflow, schedule, name (the rest). An empty query
- * lists runs only: needs you, then live, then the newest finished.
+ * newest (runs) and project, workspace, workflow, schedule, name (the rest). Settings and Add-ons rows come
+ * from catalogueRows. An empty query lists runs only: needs you, then live, then the newest finished.
  */
 export function searchRows(sources = {}, query = '', { now = Date.now(), tz = localZone() } = {}) {
   const src = sources || {};
   const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
   const runs = runRows(src.live, src.history, now);
   if (!words.length) {
-    return { runs: runs.map((r) => ({ ...r, rank: 0 })).sort(byRun).slice(0, RUN_LIMIT).map((r) => r.row), other: [] };
+    return { runs: runs.map((r) => ({ ...r, rank: 0 })).sort(byRun).slice(0, RUN_LIMIT).map((r) => r.row), other: [], settings: [], addons: [] };
   }
   const q = words.join(' ');
   const pick = (items, cmp, limit) => items
@@ -151,5 +176,11 @@ export function searchRows(sources = {}, query = '', { now = Date.now(), tz = lo
     })
     .map((it) => ({ ...it, rank: titleRank(it.row.title, q, words[0]) }))
     .sort(cmp).slice(0, limit).map((it) => it.row);
-  return { runs: pick(runs, byRun, RUN_LIMIT), other: pick(otherRows(src, tz), byOther, OTHER_LIMIT) };
+  const ctx = { level: src.level, flags: src.flags };
+  return {
+    runs: pick(runs, byRun, RUN_LIMIT),
+    other: pick(otherRows(src, tz), byOther, OTHER_LIMIT),
+    settings: catalogueRows(SETTING_ENTRIES, words, q, ctx, 'setting', SETTINGS_LIMIT),
+    addons: catalogueRows(ADDON_ENTRIES, words, q, ctx, 'addon', ADDON_LIMIT),
+  };
 }

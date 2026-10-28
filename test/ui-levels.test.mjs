@@ -320,3 +320,36 @@ test('a fresh install starts simple; an install with history keeps the full UI',
   assert.equal(defaultUiLevel({ fresh: false }), 'expert');
   assert.equal(defaultUiLevel(), 'expert', 'unknown ⇒ the safe side: hide nothing');
 });
+
+test('mode dialog: onClose fires once per open → closed, from Done, a backdrop click or close() (the search hand-off forgets on it)', () => {
+  const doc = new JSDOM(html).window.document;
+  let closed = 0;
+  const ctl = createLevelController({ doc, save: async (l) => ({ ok: true, level: l }), onClose: () => { closed += 1; } });
+  ctl.close();
+  assert.equal(closed, 0, 'an already closed dialog reports nothing');
+  ctl.open();
+  ctl.close();
+  ctl.close();
+  assert.equal(closed, 1);
+  ctl.open();
+  doc.getElementById('mode-done').click();
+  assert.equal(closed, 2, 'Done');
+  ctl.open();
+  doc.querySelector('#mode-cards [data-level-choice="advanced"]').click();
+  assert.equal(closed, 2, 'a card applies the mode and leaves the dialog open');
+});
+
+test('mode dialog: a settings read that answers while a pick is saving never undoes the pick (a search pick reloads Settings at once)', async () => {
+  const doc = new JSDOM(html).window.document;
+  let answer = null;
+  const ctl = createLevelController({ doc, save: () => new Promise((r) => { answer = r; }) });
+  ctl.confirm('simple');
+  const saved = ctl.choose('advanced');
+  ctl.confirm('simple');
+  assert.equal(currentLevel(doc), 'advanced', 'the GET read before the save landed is ignored');
+  answer({ ok: true, level: 'advanced' });
+  await saved;
+  assert.equal(currentLevel(doc), 'advanced');
+  ctl.confirm('expert');
+  assert.equal(currentLevel(doc), 'expert', 'once the save answered, a value from elsewhere applies again');
+});

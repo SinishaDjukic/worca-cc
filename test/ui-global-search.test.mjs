@@ -3,7 +3,7 @@
 // built from real fields only, and the ⌘K / Ctrl K chord and label.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { searchRows, shortcutLabel, isSearchCombo, RUN_LIMIT, OTHER_LIMIT } from '../ui/public/global-search.mjs';
+import { searchRows, shortcutLabel, isSearchCombo, RUN_LIMIT, OTHER_LIMIT, SETTINGS_LIMIT, ADDON_LIMIT } from '../ui/public/global-search.mjs';
 
 const NOW = new Date(2026, 9, 9, 15, 0).getTime();            // Fri Oct 9 2026, 15:00 local
 const at = (d, h, m = 0) => new Date(2026, 9, d, h, m).toISOString();
@@ -87,9 +87,9 @@ test('the empty query lists runs only: needs you, then running, then the newest 
   assert.deepEqual(out.other, []);
 });
 
-test('no match: both groups are empty (the popover shows "No matches" and the Ask row)', () => {
+test('no match: every group is empty (the popover shows "No matches" and the Ask row)', () => {
   const out = run({ live: [live('r1')], projects: [{ key: 'k', name: 'proj' }] }, 'zzz');
-  assert.deepEqual(out, { runs: [], other: [] });
+  assert.deepEqual(out, { runs: [], other: [], settings: [], addons: [] });
 });
 
 test('plain matching: regex characters are literal, accents are case-folded only, surrounding spaces are dropped', () => {
@@ -207,4 +207,70 @@ test('labels: "hotfix", "label:hot" and "label:hotfix" offer "Runs labelled hotf
   assert.deepEqual(run(src, 'runs').other, [], 'the row title is not searched: "runs" does not list every label');
   assert.deepEqual(run({}, 'hotfix').other, []);
   assert.deepEqual(run(src, '').other, [], 'an empty query lists runs only');
+});
+
+// ── Settings and Add-ons groups (settings-index.mjs) ─────────────────────────
+const UNLOCKED = { level: 'expert', flags: { runTags: true, runPresets: true, runLabels: true } };
+const setRows = (q, over = {}) => run({ ...UNLOCKED, ...over }, q);
+
+test('R-po-1/3/5/14: a tab name finds a Settings row in its own group; an empty query lists neither group', () => {
+  const r = setRows('Guardrails');
+  assert.deepEqual(r.settings.map((x) => x.href), ['#settings/guardrails']);
+  assert.equal(r.settings[0].meta, 'Settings tab');
+  assert.deepEqual([r.runs, r.other, r.addons], [[], [], []]);
+  const none = setRows('');
+  assert.deepEqual([none.settings, none.addons], [[], []]);
+});
+
+test('R-po-4: every word must match; a title prefix ranks first', () => {
+  assert.deepEqual(setRows('budget zzz').settings, []);
+  assert.deepEqual(setRows('budget limits').settings.map((x) => x.title), ['Budget & cost limits']);
+  assert.equal(setRows('run').settings[0].title, 'Runs', 'the tab whose name starts with the query leads');
+});
+
+test('R-po-8/17: a setting row names its tab; "dark mode" finds Appearance on General', () => {
+  const r = setRows('dark mode').settings;
+  assert.deepEqual(r.map((x) => x.title), ['Appearance']);
+  assert.equal(r[0].meta, 'Settings · General');
+  assert.equal(r[0].href, '#settings/general/appearance-card');
+  assert.equal(r[0].note, '', 'nothing to unlock');
+});
+
+test('R-po-12/A-6: former Settings tabs and alternative words land in Add-ons, never in Settings', () => {
+  for (const [q, href] of [['Marketplace', '#marketplace'], ['connectors', '#connectors'], ['Models', '#models'], ['providers', '#providers'], ['integrations', '#connectors']]) {
+    const r = setRows(q);
+    assert.ok(r.addons.some((x) => x.href === href && x.meta === 'Add-ons page'), q);
+    assert.ok(!r.settings.some((x) => x.href === href), `${q} is not a Settings row`);
+  }
+});
+
+test('R-po-18/A-5: every name match is listed before an alternative-word-only match; a tab before its settings', () => {
+  // "run": the Presets tab holds it only in an alternative word ("run presets"). It ranks after every name match
+  // (the card "Budget & cost limits" matches through its tab's name, Runs), so the five rows have no room for it.
+  assert.deepEqual(setRows('run').settings.map((x) => x.title),
+    ['Runs', 'Smart run naming', 'Sync before run', 'Scheduled runs', 'Budget & cost limits']);
+  assert.deepEqual(setRows('mode').settings.map((x) => x.title), ['Interface mode', 'Away mode', 'Engine & models', 'Appearance'],
+    'Appearance has "mode" only in "dark mode"');
+  assert.deepEqual(setRows('chat').settings.map((x) => x.title), ['Chat', 'Chat notifications', 'Engine & models', 'Limits & access'],
+    'the Chat tab before the card that also starts with "chat", then the cards found through the tab name');
+});
+
+test('R-po-10/11: locked rows stay listed with a note naming the mode and the Labs feature', () => {
+  const p = setRows('presets', { level: 'simple', flags: {} }).settings[0];
+  assert.equal(p.href, '#settings/presets');
+  assert.deepEqual(p.locks.map((l) => l.type), ['mode', 'flag']);
+  assert.equal(p.meta, 'Settings tab');
+  assert.equal(p.note, 'Switch to Advanced mode · Turn on Labs: Run presets');
+  assert.equal(setRows('guardrails', { level: 'simple' }).settings[0].note, 'Switch to Advanced mode');
+  const away = setRows('away mode', { level: 'simple' }).settings[0];
+  assert.deepEqual([away.title, away.note], ['Away mode', 'Switch to Advanced mode']);
+  const cost = setRows('cost tags', { flags: {} }).settings.find((x) => x.title === 'Cost tags');
+  assert.equal(cost.note, 'Turn on Labs: Cost tags');
+  assert.deepEqual(setRows('marketplace', { level: 'simple', flags: {} }).addons[0].locks, [], 'A-9: add-ons never lock');
+});
+
+test('group limits: Settings ≤ SETTINGS_LIMIT (5), Add-ons ≤ ADDON_LIMIT (4)', () => {
+  assert.deepEqual([SETTINGS_LIMIT, ADDON_LIMIT], [5, 4]);
+  assert.equal(setRows('a').settings.length, SETTINGS_LIMIT, '"a" matches more than five settings');
+  assert.equal(setRows('s').addons.length, ADDON_LIMIT);
 });

@@ -267,7 +267,7 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
@@ -284,6 +284,7 @@ import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
+import { createSearchUnlock } from './search-unlock.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
@@ -1243,9 +1244,28 @@ function topnavSources() {
     workspaces: (state.workspaces || []).map((w) => ({ id: w.id, name: w.name, projectCount: (w.projectPaths || []).length })),
     // D17: the label words in use on listed runs (the items carry [] while runLabels is off).
     labels: [...new Set([...live, ...history].flatMap((r) => r.labels || []))].sort(),
+    level: currentLevel(), flags: currentFlags(),
     ...topnavLazy,
   };
 }
+// A route by hash text. The same hash fires no hashchange, so route it directly (as the Settings tab buttons do).
+function gotoHash(hash) {
+  const target = String(hash).replace(/^#/, '');
+  if (location.hash.slice(1) !== target) { location.hash = target; return; }
+  const i = target.indexOf('/');
+  showView(i < 0 ? target : target.slice(0, i), i < 0 ? '' : target.slice(i + 1));
+}
+// A locked search result: open the place that unlocks it, then take the user on (search-unlock.mjs).
+const searchUnlock = createSearchUnlock({
+  levelOk: (min) => levelAtLeast(min),
+  flagOk: (key) => flagOn(key),
+  openMode: () => levelCtl.open(),
+  closeMode: () => levelCtl.close(),
+  go: gotoHash,
+  labsHash: (key) => `settings/experimental/${key}`,
+});
+document.addEventListener('worca:level', () => searchUnlock.changed());
+document.addEventListener('worca:flags', () => searchUnlock.changed());
 const topnavSearchRoot = $('.topnav-c .tsearch');
 if (topnavSearchRoot) createTopnavSearch({
   doc: document, win: window, root: topnavSearchRoot,
@@ -1255,6 +1275,7 @@ if (topnavSearchRoot) createTopnavSearch({
   onAsk: (query) => { openChat({ text: query }); },
   navigate: (href) => { location.hash = href; },
   openWorkflow: (id) => { void openWorkflowFromAsk(id); },
+  openSetting: (row) => { if (row.locks && row.locks.length) searchUnlock.arm(row); else gotoHash(row.href); },
   // D17: "Runs labelled hotfix" adds the word to the Runs list label filter and opens the Runs LIST: a bare #runs
   // reopens the remembered run (D6), which may sit outside the filter, so go through goRunsList.
   onLabel: (label) => {
@@ -37442,6 +37463,7 @@ const levelCtl = createLevelController({
   },
   // A pick from the account menu's side menu that the server refused: the check went back, say why.
   onError: (error) => notify({ tone: 'err', title: 'Could not save the mode', detail: error, key: 'ui-level-save' }),
+  onClose: () => searchUnlock.modeClosed(),   // the search hand-off forgets a pick when the dialog closes (R-po-21)
 });
 // The lowest mode whose menu lists each page. Pages not named here are simple.
 const VIEW_MIN_LEVEL = Object.freeze({
@@ -37534,9 +37556,10 @@ function parseSettingsParam(param = '') {
   if (tab === 'presets' && !flagOn('runPresets')) return ['general', ''];
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
-// The canonical param for a tab: General is plain '#settings', never '#settings/general'.
+// The canonical param for a tab: General is plain '#settings', never '#settings/general'; a link to one of its
+// cards keeps the card ('general/appearance-card', a top bar search pick).
 function settingsParamFor(tab, sub = '') {
-  if (tab === 'general') return '';
+  if (tab === 'general') return sub ? `general/${sub}` : '';
   return sub ? `${tab}/${sub}` : tab;
 }
 // null for a page's own address; otherwise the [view, param] an old one means now.
@@ -37693,6 +37716,7 @@ function showView(name, param = '') {
   // The schedule sheet and the Start menu are body-level overlays of the view that opened them.
   if (prevView !== name) { closeScheduleSheet(); closeStartMenu(); }
   currentShownView = name;
+  searchUnlock.routed(name, param);
   paintLevelBanner();
   // The guide re-derives its hop on a tick, so it is told here — before a view's
   // own loader runs — and never misses a switch because a loader threw.
@@ -37874,13 +37898,20 @@ function showSettingsTab(param = '') {
   if (tab === 'experimental') loadFlagsTab(sub);
 }
 
-// A link to one card ('#settings/runs/actions', '#models/engine'): scroll to the
-// `<sub>-settings-card` inside `scope` and focus its first field. Any other sub is ignored.
+// A link to one card ('#settings/runs/actions', '#models/engine', a top bar search pick '#settings/general/appearance-card'):
+// scroll to `<sub>-settings-card` (else the card whose id IS `sub`) inside `scope`, focus its first field and
+// highlight it for 3 s (A-7). Any other sub is ignored.
+const foundTimers = new WeakMap();
 function focusSettingsCard(scope, sub) {
-  const card = sub ? document.getElementById(`${sub}-settings-card`) : null;
+  const card = sub ? (document.getElementById(`${sub}-settings-card`) || document.getElementById(sub)) : null;
   if (!card || !scope || !scope.contains(card)) return;
   card.scrollIntoView({ block: 'start', behavior: 'smooth' });
   card.querySelector('input, select, textarea')?.focus({ preventScroll: true });
+  clearTimeout(foundTimers.get(card));
+  card.classList.remove('is-found');
+  void card.offsetWidth;                                  // restart the fade when the same card is picked again
+  card.classList.add('is-found');
+  foundTimers.set(card, setTimeout(() => card.classList.remove('is-found'), 3000));
 }
 
 // The Connectors page (mcp-view.mjs): one controller, made on first entry; its sub-route

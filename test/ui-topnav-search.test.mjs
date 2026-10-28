@@ -26,6 +26,7 @@ const SOURCES = {
   projects: [{ key: 'billing-1', name: 'billing-api' }],
   workspaces: [{ id: 'wks-1', name: 'login team', projectCount: 2 }],
   workflows: [], schedules: [], tickets: [],
+  level: 'expert', flags: {},
 };
 
 function setup({ platform = '', sources = SOURCES, lazy = null } = {}) {
@@ -33,7 +34,7 @@ function setup({ platform = '', sources = SOURCES, lazy = null } = {}) {
   const doc = window.document;
   if (platform) Object.defineProperty(window.navigator, 'platform', { value: platform, configurable: true });
   window.Element.prototype.scrollIntoView = function () {};
-  const calls = { navigate: [], workflow: [], ask: [], label: [], lazy: 0 };
+  const calls = { navigate: [], workflow: [], ask: [], label: [], setting: [], lazy: 0 };
   const src = { ...sources };
   const search = createTopnavSearch({
     doc, win: window, root: doc.querySelector('.tsearch'),
@@ -43,6 +44,7 @@ function setup({ platform = '', sources = SOURCES, lazy = null } = {}) {
     navigate: (href) => calls.navigate.push(href),
     openWorkflow: (id) => calls.workflow.push(id),
     onLabel: (l) => calls.label.push(l),
+    openSetting: (row) => calls.setting.push(row),
   });
   const $ = (id) => doc.getElementById(id);
   const key = (target, k, init = {}) => {
@@ -509,4 +511,53 @@ test('a label row: tag icon, Enter calls onLabel with the word and never navigat
   key($('tsearch-input'), 'Enter');
   assert.deepEqual(calls.label, ['hotfix']);
   assert.deepEqual(calls.navigate, []);
+});
+
+test('Settings and Add-ons groups follow Runs and Projects…; the empty box shows neither; the Ask row stays (R-po-3/5/6/14)', () => {
+  const { type, doc, options } = setup();
+  const heads = () => [...doc.querySelectorAll('.tsearch-label')].map((n) => n.textContent);
+  type('login');
+  assert.deepEqual(heads(), ['Runs', 'Projects, workflows, schedules'], 'nothing in Settings says "login"');
+  type('guardrails');
+  assert.deepEqual(heads(), ['Settings']);
+  assert.equal(options().at(-1).getAttribute('aria-label'), 'Ask in Chat, opens a chat');
+  type('models');
+  assert.deepEqual(heads(), ['Settings', 'Add-ons'], 'A-4: Add-ons right after Settings');
+  type('');
+  assert.deepEqual(heads(), ['Runs'], 'A-1: the empty box lists runs only');
+});
+
+test('R-po-7: "No matches" only when no group, Settings and Add-ons included, has a row', () => {
+  const { type, doc } = setup();
+  type('zzzzqq');
+  assert.equal(doc.querySelector('.tsearch-none')?.textContent, 'No matches');
+  type('theme');
+  assert.equal(doc.querySelector('.tsearch-none'), null);
+  type('integrations');
+  assert.equal(doc.querySelector('.tsearch-none'), null, 'an Add-ons row alone is a match');
+});
+
+test('R-po-2/13: picking a Settings or Add-ons row hands the row to openSetting, never to navigate', () => {
+  const { type, options, calls } = setup();
+  type('guardrails');
+  options()[0].click();
+  assert.equal(calls.setting[0].href, '#settings/guardrails');
+  type('connectors');
+  options().find((o) => o.classList.contains('tsearch-opt-addon')).click();
+  assert.equal(calls.setting[1].href, '#connectors');
+  assert.deepEqual(calls.navigate, []);
+});
+
+test('R-po-8/10/11: a setting row names its tab; a locked row adds its unlock note on a line of its own', () => {
+  const { type, options } = setup({ sources: { ...SOURCES, level: 'simple', flags: {} } });
+  type('dark mode');
+  const a = options()[0];
+  assert.equal(a.querySelector('.tsearch-meta').textContent, 'Settings · General');
+  assert.equal(a.querySelector('.tsearch-note'), null);
+  assert.ok(!a.classList.contains('is-locked'));
+  type('presets');
+  const o = options()[0];
+  assert.ok(o.classList.contains('is-locked'));
+  assert.equal(o.querySelector('.tsearch-note').textContent, 'Switch to Advanced mode · Turn on Labs: Run presets');
+  assert.equal(o.getAttribute('aria-label'), 'Presets, Settings tab, Switch to Advanced mode · Turn on Labs: Run presets');
 });

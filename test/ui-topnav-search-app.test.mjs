@@ -281,3 +281,142 @@ test('the Escape that closes the search never steps an open run back to the list
   await settle(window);
   assert.equal(window.location.hash, '#runs', 'with the search shut, Escape is the page’s again');
 });
+
+// ── Settings and Add-ons rows (FEAT-1): the route, the highlight, and the hand-off after a locked pick ──
+async function searchPick(ctx, query, title) {
+  ctx.key(ctx.doc.body, 'k', { metaKey: true });
+  ctx.type(query);
+  ctx.click(title);
+  await settle(ctx.window, 8);
+}
+const modeOpen = (doc) => !doc.getElementById('mode-modal').classList.contains('hidden');
+const found = (doc, id) => doc.getElementById(id).classList.contains('is-found');
+
+test('Settings and Add-ons rows route to their own address; a setting is scrolled to and highlighted (R-po-2/9/13)', async () => {
+  await checkRows([
+    { name: 'a tab → #settings/guardrails', run: async () => {
+      const ctx = await boot();
+      await searchPick(ctx, 'guardrails', 'Guardrails');
+      assert.equal(ctx.window.location.hash, '#settings/guardrails');
+      assert.ok(!ctx.doc.querySelector('.settings-pane[data-tab="guardrails"]').classList.contains('hidden'));
+    } },
+    { name: 'a General setting → #settings/general/appearance-card, highlighted, then the highlight fades (A-7)', run: async () => {
+      const ctx = await boot();
+      await searchPick(ctx, 'dark mode', 'Appearance');
+      assert.equal(ctx.window.location.hash, '#settings/general/appearance-card', 'the sub survives on General');
+      assert.ok(found(ctx.doc, 'appearance-card'));
+      await new Promise((r) => setTimeout(r, 3100));
+      assert.ok(!found(ctx.doc, 'appearance-card'));
+    } },
+    { name: 'picking the setting already open replays the highlight (same hash, no hashchange)', run: async () => {
+      const ctx = await boot();
+      await searchPick(ctx, 'budget', 'Budget & cost limits');
+      ctx.doc.getElementById('budget-settings-card').classList.remove('is-found');
+      await searchPick(ctx, 'budget', 'Budget & cost limits');
+      assert.ok(found(ctx.doc, 'budget-settings-card'));
+    } },
+    { name: 'an Add-ons row → its page, found by an alternative word too (A-6)', run: async () => {
+      const ctx = await boot();
+      await searchPick(ctx, 'plugins', 'Marketplace');
+      assert.equal(ctx.window.location.hash, '#marketplace');
+    } },
+  ]);
+});
+
+test('a mode-locked pick opens the mode dialog; the mode that unlocks it takes the user on; a closed dialog forgets (R-po-16/20/21)', async () => {
+  await checkRows([
+    { name: 'Simple: Away mode → the dialog; Expert-only Spawn diagnostics stays; Advanced → the card, highlighted', run: async () => {
+      const ctx = await boot();
+      ctx.doc.documentElement.dataset.level = 'simple';
+      const before = ctx.window.location.hash;
+      await searchPick(ctx, 'away mode', 'Away mode');
+      assert.ok(modeOpen(ctx.doc), 'R-po-16: the place where the mode is changed');
+      assert.equal(ctx.window.location.hash, before, 'not on the locked setting');
+      ctx.doc.querySelector('#mode-cards [data-level-choice="advanced"]').click();
+      await settle(ctx.window, 8);
+      assert.ok(!modeOpen(ctx.doc));
+      assert.equal(ctx.window.location.hash, '#settings/runs/night-settings-card');
+      assert.ok(found(ctx.doc, 'night-settings-card'));
+    } },
+    { name: 'a mode below the one needed keeps the dialog open and the pick armed (edge: unlocking something else)', run: async () => {
+      const ctx = await boot();
+      ctx.doc.documentElement.dataset.level = 'simple';
+      const before = ctx.window.location.hash;
+      await searchPick(ctx, 'spawn', 'Spawn diagnostics');
+      ctx.doc.querySelector('#mode-cards [data-level-choice="advanced"]').click();
+      await settle(ctx.window, 8);
+      assert.ok(modeOpen(ctx.doc));
+      assert.equal(ctx.window.location.hash, before);
+      ctx.doc.querySelector('#mode-cards [data-level-choice="expert"]').click();
+      await settle(ctx.window, 8);
+      assert.equal(ctx.window.location.hash, '#settings/general/debug-spawn-settings-card');
+    } },
+    { name: 'Done first, then Advanced from the account menu: nothing moves (A-10)', run: async () => {
+      const ctx = await boot();
+      ctx.doc.documentElement.dataset.level = 'simple';
+      const before = ctx.window.location.hash;
+      await searchPick(ctx, 'away mode', 'Away mode');
+      ctx.doc.getElementById('mode-done').click();
+      ctx.doc.querySelector('#lvl-menu [data-level-choice="advanced"]').click();
+      await settle(ctx.window, 8);
+      assert.equal(ctx.doc.documentElement.dataset.level, 'advanced');
+      assert.equal(ctx.window.location.hash, before);
+    } },
+    { name: 'the Settings reload of the route answers before the mode is saved: the old mode never comes back', run: async () => {
+      const ctx = await boot();
+      ctx.doc.documentElement.dataset.level = 'simple';
+      const base = ctx.window.fetch;
+      let release = null;
+      globalThis.fetch = ctx.window.fetch = (u, opts = {}) => {
+        if (String(u).split('?')[0] !== '/api/settings') return base(u, opts);
+        if (opts.method === 'POST') {
+          return new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({ uiLevel: 'advanced' }) }); });
+        }
+        return base(u, opts).then((res) => ({ ...res, json: async () => ({ ...(await res.json()), uiLevel: 'simple' }) }));
+      };
+      await searchPick(ctx, 'away mode', 'Away mode');
+      ctx.doc.querySelector('#mode-cards [data-level-choice="advanced"]').click();
+      await settle(ctx.window, 8);
+      assert.equal(ctx.window.location.hash, '#settings/runs/night-settings-card');
+      assert.equal(ctx.doc.documentElement.dataset.level, 'advanced', 'the read that predates the save is not applied');
+      assert.ok(found(ctx.doc, 'night-settings-card'));
+      release();
+      await settle(ctx.window, 8);
+      assert.equal(ctx.doc.documentElement.dataset.level, 'advanced');
+    } },
+  ]);
+});
+
+test('a Labs-locked pick opens its row in Labs; turning it on takes the user on; leaving Labs forgets (R-po-15/19/21)', async () => {
+  await checkRows([
+    { name: 'Cost tags → #settings/experimental/runTags; runTags on → the card, highlighted', run: async () => {
+      const ctx = await boot();
+      await searchPick(ctx, 'cost tags', 'Cost tags');
+      assert.equal(ctx.window.location.hash, '#settings/experimental/runTags');
+      ctx.recv({ type: 'flags', flags: { runTags: true } });
+      await settle(ctx.window, 8);
+      assert.equal(ctx.window.location.hash, '#settings/tags/tag-dims-settings-card');
+      assert.ok(found(ctx.doc, 'tag-dims-settings-card'));
+    } },
+    { name: 'Labels needs Cost tags and Run labels: each row in turn, then the card', run: async () => {
+      const ctx = await boot();
+      await searchPick(ctx, 'labels', 'Labels');
+      assert.equal(ctx.window.location.hash, '#settings/experimental/runTags');
+      ctx.recv({ type: 'flags', flags: { runTags: true } });
+      await settle(ctx.window, 8);
+      assert.equal(ctx.window.location.hash, '#settings/experimental/runLabels');
+      ctx.recv({ type: 'flags', flags: { runLabels: true } });
+      await settle(ctx.window, 8);
+      assert.equal(ctx.window.location.hash, '#settings/tags/labels-settings-card');
+    } },
+    { name: 'leaving Labs, then turning the flag on elsewhere: nothing moves', run: async () => {
+      const ctx = await boot();
+      await searchPick(ctx, 'cost tags', 'Cost tags');
+      ctx.window.location.hash = '#runs';
+      await settle(ctx.window, 8);
+      ctx.recv({ type: 'flags', flags: { runTags: true } });
+      await settle(ctx.window, 8);
+      assert.equal(ctx.window.location.hash, '#runs');
+    } },
+  ]);
+});
