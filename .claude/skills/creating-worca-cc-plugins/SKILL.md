@@ -125,13 +125,17 @@ export default function createTaskSource(ctx) {
 | `listTasks` | `({inputs, search, cursor})` | `{tasks:[{id,title,url,state,labels,updatedAt}], cursor?}` |
 | `getTask` | `(id)` — **positional** | `{...summary, body /* markdown */, meta}` |
 | `reportResult` | `(id, {status, summary, links, inputs})` — **positional** | anything |
-| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync, export?}`; missing → `writeBack: true`; `export: true` turns on the export ops below |
+| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync, export?, import?}`; missing → `writeBack: true`; `export: true` turns on the export ops below, `import: true` the import ops |
 | `exportOptions` | `({project?, issueType?})` — optional, export | `{projects:[{value,label}], issueTypes?, priorities?, criteriaFields?, doneStatus, tooOld?}` — `issueTypes` with a project, the last two with both |
 | `createTicket` | `({ticket})` — optional, export | `{key, url, fingerprint}` \| `{refused:{field, message}}` |
 | `updateTicket` | `({key, ticket})` — optional, export | `{key, url, fingerprint}` \| `{gone:true}` \| `{refused}` |
 | `commentTicket` | `({key, body})` — optional, export | `{ok:true}` \| `{gone:true}` |
 | `ticketState` | `({key})` — optional, export | `{exists:true, url, fingerprint}` \| `{exists:false}` |
 | `findTicket` | `({project, label, marker})` — optional, export | `{key, url, fingerprint, lastLine, marker, labels}` \| `null` |
+| `importOptions` | `({})` — optional, import | `{projects:[{value,label}]}` |
+| `searchTickets` | `({project?, search?, cursor?})` — optional, import | `{tickets:[{key,title,url,type,status,updatedAt}], cursor?}` — no search: most recently updated first; a pasted key or ticket link finds that ticket in any project |
+| `importTicket` | `({key, criteriaField?})` — optional, import | `{key, url, title, description, criteria, comments, commentsTotal, restrictedComments, attachments, meta, fingerprint}` \| `{gone:true}` |
+| `downloadAttachment` | `({key, id, maxBytes, dest})` — optional, import | the body written to `dest`, and `{name, mime, bytes}` \| `{tooLarge:true, bytes}` \| `{gone:true, forbidden?}` |
 | custom | `(args)` | whatever the widget needs |
 
 The export ops (Requirements' **Export to a tracker**) receive a tool-neutral ticket: `{project, issueType, title, description
@@ -142,6 +146,19 @@ create (Worca finds a ticket whose create answer was lost by it), add labels on 
 always gives the same string. Worca compares fingerprints only. A field the tracker refuses and a ticket that is gone are
 results (`refused`, `gone`), not throws; every call runs in the host, never from the browser, with a 60 s limit. The
 reference implementation is `plugins/jira-source`.
+
+The import ops (Requirements' **New feature › From a ticket…**) only read. `importTicket` answers the ticket tool-neutrally:
+`description` and comment bodies as Markdown (never HTML), `criteria` only from a field (`{field:{id,name}, items}`, else
+`null`: Worca finds a criteria section in the description itself), the newest 50 comments oldest first with the author's
+display name and `authorKind: 'person' | 'app'` only (never an email, account id or avatar; profile links and mentions become
+plain names), comments restricted to a group or role left out and counted in `restrictedComments`, attachments as metadata
+`{id, name, mime, bytes, created}`, `meta: {project, projectName, type:{id,name}, status, priority}` and the description's
+`fingerprint` as `ticketState` computes it. A ticket the connection cannot see is `{gone:true}`. `downloadAttachment` checks the
+attachment belongs to `key`, refuses before downloading when its size is over `maxBytes` (`{tooLarge}`), downloads only from the
+site's own address (one redirect at most, `https:` only and without the Authorization header when it leaves the site), streams
+the body into `dest` — a fixed file name inside a fresh private folder the host made — creating it exclusively, deletes what it
+wrote on any failure or once the body grows past `maxBytes`, and never writes anywhere else. Worca checks the file before it
+trusts it.
 
 `ctx` = `{ apiVersion, profile, config, state: {get, set}, log }` — `apiVersion` is the negotiated highest version your range admits.
 

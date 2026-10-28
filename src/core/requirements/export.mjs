@@ -56,46 +56,52 @@ const versionOf = (plugin) => { try { return String((readPluginsLock()[plugin] |
 /** A source's connections: a multi-profile source's profiles; a single-profile source is its one configuration. */
 const connectionsOf = (s) => (s.multiProfile === true ? (s.profiles || []) : [{ id: null, label: s.displayName }]);
 
+const NO_CAPS = Object.freeze({ export: false, import: false });
+
 async function probe(s, first, d) {
   try {
     const caps = await callOf(d)({ plugin: s.plugin, sourceId: s.sourceId, op: 'capabilities', args: { inputs: {} },
       profile: first.id || undefined, timeoutMs: PROBE_TIMEOUT_MS });
-    return { keep: true, ok: !!(caps && caps.export === true) };
+    // A6 D3 and A6.1 D2: one answer says both; only `true` counts
+    return { keep: true, caps: { export: !!(caps && caps.export === true), import: !!(caps && caps.import === true) } };
   } catch (err) {
-    // A connector without the op cannot export (kept); any other failure stands for PROBE_RETRY_MS (D3)
-    return { keep: (err && err.kind) === 'unimplemented', ok: false };
+    // A connector without the op can do neither (kept); any other failure stands for PROBE_RETRY_MS (D3)
+    return { keep: (err && err.kind) === 'unimplemented', caps: NO_CAPS };
   }
 }
 
-async function canExport(s, first, d) {
+async function capsOf(s, first, d) {
   const key = `${s.plugin}/${s.sourceId}@${versionOf(s.plugin)}`;
   if (capCache.has(key)) return capCache.get(key);
   const failKey = `${s.plugin}/${s.sourceId}/${first.id || ''}`;
-  if (capFailed.has(failKey) && msOf(d) - capFailed.get(failKey) < PROBE_RETRY_MS) return false;
+  if (capFailed.has(failKey) && msOf(d) - capFailed.get(failKey) < PROBE_RETRY_MS) return NO_CAPS;
   if (!capInflight.has(key)) {
     capInflight.set(key, probe(s, first, d).then((r) => {
-      if (r.keep) { capCache.set(key, r.ok); capFailed.delete(failKey); } else capFailed.set(failKey, msOf(d));
-      return r.ok;
+      if (r.keep) { capCache.set(key, r.caps); capFailed.delete(failKey); } else capFailed.set(failKey, msOf(d));
+      return r.caps;
     }).finally(() => capInflight.delete(key)));
   }
   return capInflight.get(key);
 }
 
-/** The sources that can export (D1, D3): enabled plugin task sources with a connection (a multi-profile source needs a
- *  profile; it is probed with its first, since it refuses a call without one) whose capabilities() say export: true, in
+/** The sources whose capabilities() say `cap` ('export' for A6, 'import' for A6.1): enabled plugin task sources with a
+ *  connection (a multi-profile source needs a profile; it is probed with its first, since it refuses a call without one), in
  *  listTaskSources' order. All sources are probed at once, so one slow connector costs a view at most PROBE_TIMEOUT_MS.
  *  Never throws. */
-export async function exportTrackers(d = {}) {
+export async function trackersWith(cap, d = {}) {
   let sources = [];
   try { sources = listTaskSources().filter((s) => s.type === 'plugin'); } catch { return []; }
   const found = await Promise.all(sources.map(async (s) => {
     const conns = connectionsOf(s);
-    if (!conns.length || !(await canExport(s, conns[0], d))) return null;
+    if (!conns.length || !(await capsOf(s, conns[0], d))[cap]) return null;
     return { plugin: s.plugin, sourceId: s.sourceId, name: s.displayName, multiProfile: s.multiProfile === true,
       profiles: conns.map((p) => ({ id: p.id || null, label: String(p.label || p.id || s.displayName) })) };
   }));
   return found.filter(Boolean);
 }
+
+/** D1, D3: the sources that can export. */
+export const exportTrackers = (d = {}) => trackersWith('export', d);
 
 const bindingsOf = (scope) => { try { return listBindingsForScope(scope.scopeType, scope.scopeKey); } catch { return []; } };
 
@@ -154,7 +160,7 @@ const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 /** A one-line field in the ticket (the Export anyway reason, a file name): its line breaks cannot make Markdown structure. */
 const oneLine = (v) => String(v).replace(/\s+/g, ' ').trim();
 const connOf = (x) => ({ plugin: x.plugin, sourceId: x.sourceId, profile: x.profile || null });
-const sameConn = (a, b) => !!a && !!b && a.plugin === b.plugin && a.sourceId === b.sourceId && (a.profile || null) === (b.profile || null);
+export const sameConn = (a, b) => !!a && !!b && a.plugin === b.plugin && a.sourceId === b.sourceId && (a.profile || null) === (b.profile || null);
 const connKey = (c) => `${c.plugin}/${c.sourceId}/${c.profile || ''}`;
 const nowOf = (d) => (d && typeof d.now === 'function' ? d.now() : new Date());
 const mintMarker = () => `rexp_${randomBytes(6).toString('hex')}`;
@@ -170,10 +176,14 @@ function sourceName(conn) {
   } catch { return conn.plugin; }
 }
 /** The connection as the setup's select names it: the profile's label, else the source's name. */
-function connectionLabel(conn) {
+export function connectionLabel(conn) {
   if (!conn.profile) return sourceName(conn);
   try { return (listProfiles(conn.plugin).find((p) => p.id === conn.profile) || {}).label || conn.profile; } catch { return conn.profile; }
 }
+
+/** What the server log may keep of a failure: its first line, at most 200 characters — never a plugin's whole stdout/stderr,
+ *  which can carry config or environment fragments (A6's final review; A6.1 uses it for every import and download log line). */
+export const firstLine = (err) => String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);
 
 /** One op through the connection, in EXPORT_TIMEOUT_MS; any failure is D11's sentence (TRACKER, 502). An op the connector
  *  no longer has (a cached "yes", then a downgrade) says so instead of "connector does not implement op …". */
@@ -182,8 +192,7 @@ async function trackerCall(d, name, conn, op, args) {
     return await callOf(d)({ plugin: conn.plugin, sourceId: conn.sourceId, profile: conn.profile || undefined, op, args, timeoutMs: EXPORT_TIMEOUT_MS });
   } catch (err) {
     const kind = (err && err.kind) || 'plugin';
-    const firstLine = String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);   // never a plugin's whole stdout/stderr
-    console.error(`requirements: export op ${op} via ${conn.plugin}/${conn.sourceId} failed (${kind}):`, firstLine);
+    console.error(`requirements: export op ${op} via ${conn.plugin}/${conn.sourceId} failed (${kind}):`, firstLine(err));
     if (kind === 'unimplemented') throw new RequirementsError('TRACKER', `${name || 'The tracker'} cannot export any more.`, { kind: 'unimplemented' });
     throw new RequirementsError('TRACKER', reachSentence(name, { kind, message: err && err.message }), { kind });
   }

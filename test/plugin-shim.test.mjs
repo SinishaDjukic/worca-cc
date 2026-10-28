@@ -311,8 +311,8 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
     // …and an op with NO canned response mirrors the real child's kind
     // 'unimplemented' (the capabilities tolerant-default keys on it).
     await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'noSuchOp' }), 'unimplemented');
-    // A6: capabilities has a canned answer now: write-back stays on, and the mock source can export.
-    assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities', args: { inputs: {} } }), { writeBack: true, export: true });
+    // A6/A6.1: capabilities has a canned answer now: write-back stays on, and the mock source can export and import.
+    assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities', args: { inputs: {} } }), { writeBack: true, export: true, import: true });
     // A map entry set to undefined still means "no canned response" (writeback.test.mjs keeps the missing-op default that way).
     setMockSourceResponses({ capabilities: undefined });
     await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities' }), 'unimplemented');
@@ -371,4 +371,37 @@ test('corporate proxy: the credential-free loopback URL reaches plugins, nothing
     assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1,intranet.example');
     assert.equal(scrubbedEnv('win32').HTTPS_PROXY, 'http://127.0.0.1:41234', 'same on Windows');
   } finally { restore(); }
+});
+
+test('A6.1 mock answers (D18): search, a ticket, a gone key, a download into dest, too large and gone', async () => {
+  process.env.WORCA_MOCK = '1';
+  const dir = mkdtempSync(join(tmpdir(), 'worca-shim-dl-'));
+  const call = (op, args) => callSource({ plugin: 'x', sourceId: 'x', op, args });
+  try {
+    assert.deepEqual((await call('importOptions', {})).projects.map((p) => p.label), ['SHOP — Shop web', 'OPS — Operations']);
+    assert.deepEqual((await call('searchTickets', {})).tickets.map((t) => t.key), ['SHOP-123', 'SHOP-124', 'SHOP-131', 'SHOP-98'], 'newest first');
+    assert.deepEqual((await call('searchTickets', { search: 'partial cancel' })).tickets.map((t) => t.key), ['SHOP-124']);
+    assert.deepEqual((await call('searchTickets', { search: 'https://mock.test/browse/SHOP-131' })).tickets.map((t) => t.key), ['SHOP-131']);
+    assert.deepEqual((await call('searchTickets', { project: 'OPS' })).tickets, []);
+    const t = await call('importTicket', { key: 'SHOP-124' });
+    assert.deepEqual([t.key, t.title, t.comments.length, t.commentsTotal, t.restrictedComments, t.attachments.length],
+      ['SHOP-124', 'Partial cancel for multi-item orders', 6, 7, 1, 5]);
+    assert.ok(t.comments.some((c) => c.authorKind === 'app' && c.author === 'Jira Automation'));
+    assert.ok(t.comments.filter((c) => c.authorKind === 'person').every((c) => / Example$/.test(c.author)), 'made-up names only');
+    assert.match(t.description, /## Acceptance criteria/);
+    assert.deepEqual(await call('importTicket', { key: 'SHOP-999' }), { gone: true });
+    const dest = join(dir, 'body.part');
+    const r = await call('downloadAttachment', { key: 'SHOP-124', id: '10042', maxBytes: 25 * 1024 * 1024, dest });
+    assert.deepEqual([r.name, r.mime], ['partial-cancel-flow.pdf', 'application/pdf']);
+    const { readFileSync } = await import('node:fs');
+    assert.equal(readFileSync(dest).length, r.bytes);
+    assert.match(readFileSync(dest, 'latin1'), /^%PDF-/);
+    assert.deepEqual(await call('downloadAttachment', { key: 'SHOP-124', id: '10045', maxBytes: 25 * 1024 * 1024, dest: join(dir, 'b.part') }),
+      { tooLarge: true, bytes: 32505856 });
+    assert.deepEqual(await call('downloadAttachment', { key: 'SHOP-124', id: '1', maxBytes: 10, dest: join(dir, 'c.part') }), { gone: true });
+  } finally {
+    delete process.env.WORCA_MOCK;
+    setMockSourceResponses(null);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

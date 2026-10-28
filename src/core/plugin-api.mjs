@@ -23,6 +23,8 @@
 // Requirements A6 adds optional task-source connector ops (capabilities().export, exportOptions, createTicket,
 // updateTicket, commentTicket, ticketState, findTicket). They are additive: a connector without them answers
 // 'unimplemented' and simply cannot export, so the API stays 5.
+// Requirements A6.1 adds optional import ops (capabilities().import, importOptions, searchTickets, importTicket, downloadAttachment).
+// Additive in the same way: a connector without them simply cannot import, so the API stays 5.
 export const WORCA_PLUGIN_API = 5;
 export const WORCA_PLUGIN_APIS = [1, 2, 3, 4, 5];
 

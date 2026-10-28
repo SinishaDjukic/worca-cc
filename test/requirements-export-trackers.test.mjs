@@ -12,7 +12,7 @@ import { readPluginsLock, writePluginsLock } from '../src/core/plugins-lock.mjs'
 import { setBinding } from '../src/core/source-bindings.mjs';
 import { PluginOpError } from '../src/core/plugin-shim.mjs';
 import {
-  EXPORT_TIMEOUT_MS, PROBE_TIMEOUT_MS, PROBE_RETRY_MS, exportTrackers, defaultConnection, reachReason, reachSentence, _resetExportCaches,
+  EXPORT_TIMEOUT_MS, PROBE_TIMEOUT_MS, PROBE_RETRY_MS, exportTrackers, trackersWith, defaultConnection, reachReason, reachSentence, _resetExportCaches,
 } from '../src/core/requirements/export.mjs';
 
 useTempHome(after, 'worca-req-export-trackers-');
@@ -140,4 +140,15 @@ test('reach sentences (D11): the token, a minute, else the plugin\'s own words w
   assert.equal(reachReason(new PluginOpError('timeout', 'plugin "jira-source" op "createTicket" exceeded 60000ms (child killed)')), 'it did not answer within a minute');
   assert.equal(reachReason(new PluginOpError('network', 'Jira unreachable: fetch failed.')), 'Jira unreachable: fetch failed');
   assert.equal(reachSentence('Jira', new PluginOpError('auth', 'x')), 'Worca could not reach Jira: the API token was refused.');
+});
+
+test('A6.1 D2: one capabilities call answers export and import; a source that only imports is an import source, not an export tracker', async () => {
+  _resetExportCaches();
+  const callSource = fakeCall({ 'jira-source': { export: true, import: true }, 'mock-source': { writeBack: true, import: true } });
+  assert.deepEqual((await trackersWith('import', { callSource })).map((x) => x.plugin), ['jira-source', 'mock-source']);
+  assert.deepEqual((await exportTrackers({ callSource })).map((x) => x.plugin), ['jira-source']);
+  assert.equal(callSource.calls.length, 2, 'one probe per source answers both');
+  _resetExportCaches();
+  const truthy = fakeCall({ 'jira-source': { import: 'yes' }, 'mock-source': {} });
+  assert.deepEqual(await trackersWith('import', { callSource: truthy }), [], 'import must be true, not truthy');
 });
