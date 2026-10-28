@@ -39,7 +39,8 @@ const callOf = (d) => (d && typeof d.callSource === 'function' ? d.callSource : 
 /** Milliseconds now, or a test's clock (d.now() → a Date or a number). */
 const msOf = (d) => (d && typeof d.now === 'function' ? Number(d.now()) : Date.now());
 
-// D3: capabilities() answers per plugin, source id and installed version, for the process's life ("yes" and "no" alike).
+// D3: capabilities() answers per plugin, source id and what is installed (installOf), for the process's life ("yes" and
+// "no" alike); an update, a link or a re-link changes installOf, so the source is asked again.
 // A failed probe is remembered for PROBE_RETRY_MS per plugin, source id and profile (the source cannot export meanwhile),
 // then asked again. In-flight probes are shared, so several views at once ask once.
 const capCache = new Map();
@@ -52,7 +53,14 @@ const createFailures = new Map();
 /** Tests: forget every probe answer, failure, done status and failed create. */
 export function _resetExportCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); lastDone.clear(); createFailures.clear(); }
 
-const versionOf = (plugin) => { try { return String((readPluginsLock()[plugin] || {}).version || ''); } catch { return ''; } };
+/** What is installed for a plugin, from its lock entry: the version alone misses an update to a new commit (pinnedSha) and
+ *  a link (linked; the lock keeps no linked path, but every link writes a new installedAt), since neither need change it. */
+const installOf = (plugin) => {
+  try {
+    const e = readPluginsLock()[plugin] || {};
+    return JSON.stringify([e.version ?? '', e.pinnedSha ?? '', e.linked === true, e.installedAt ?? '']);
+  } catch { return ''; }
+};
 /** A source's connections: a multi-profile source's profiles; a single-profile source is its one configuration. */
 const connectionsOf = (s) => (s.multiProfile === true ? (s.profiles || []) : [{ id: null, label: s.displayName }]);
 
@@ -71,7 +79,7 @@ async function probe(s, first, d) {
 }
 
 async function capsOf(s, first, d) {
-  const key = `${s.plugin}/${s.sourceId}@${versionOf(s.plugin)}`;
+  const key = `${s.plugin}/${s.sourceId}@${installOf(s.plugin)}`;
   if (capCache.has(key)) return capCache.get(key);
   const failKey = `${s.plugin}/${s.sourceId}/${first.id || ''}`;
   if (capFailed.has(failKey) && msOf(d) - capFailed.get(failKey) < PROBE_RETRY_MS) return NO_CAPS;

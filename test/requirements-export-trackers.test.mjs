@@ -84,6 +84,32 @@ test('the cache is per installed version: a new version is asked again', async (
   writePluginsLock(lock);
 });
 
+test('the cache follows what is installed: an update to a new commit, a link or a re-link is asked again; an unchanged lock is not', async () => {
+  _resetExportCaches();
+  const callSource = fakeCall({ 'jira-source': { export: true }, 'mock-source': { writeBack: true } });
+  const asked = () => callSource.calls.filter((c) => c.plugin === 'jira-source').length;
+  const lock = readPluginsLock();
+  const linked = lock['jira-source'];
+  const { linked: _wasLinked, ...unlinked } = linked;
+  const installed = { ...unlinked, repo: 'https://example.test/jira.git', pinnedSha: 'a'.repeat(40) };
+  writePluginsLock({ ...lock, 'jira-source': installed });
+  await exportTrackers({ callSource });
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 1, 'an unchanged lock is answered from the cache');
+  writePluginsLock({ ...lock, 'jira-source': { ...installed, pinnedSha: 'b'.repeat(40) } });
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 2, 'an update to a new commit (same version) is asked again');
+  writePluginsLock({ ...lock, 'jira-source': { ...linked, installedAt: '2026-10-28T10:00:00.000Z' } });
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 3, 'a link (same version) is asked again');
+  writePluginsLock({ ...lock, 'jira-source': { ...linked, installedAt: '2026-10-28T11:00:00.000Z' } });
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 4, 'a re-link (same version) is asked again');
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 4, 'and then cached again');
+  writePluginsLock(lock);
+});
+
 test('a missing op means no export (cached); a failed probe is remembered for a minute, then asked again; any other answer is no', async () => {
   _resetExportCaches();
   let clock = 1_000_000;
@@ -151,4 +177,22 @@ test('A6.1 D2: one capabilities call answers export and import; a source that on
   _resetExportCaches();
   const truthy = fakeCall({ 'jira-source': { import: 'yes' }, 'mock-source': {} });
   assert.deepEqual(await trackersWith('import', { callSource: truthy }), [], 'import must be true, not truthy');
+});
+
+test('A6.1: import follows what is installed too: a link that adds import is asked again, and one probe still answers both', async () => {
+  _resetExportCaches();
+  let answer = { export: false, import: false };
+  const callSource = fakeCall({ 'jira-source': () => answer, 'mock-source': {} });
+  const asked = () => callSource.calls.filter((c) => c.plugin === 'jira-source').length;
+  const lock = readPluginsLock();
+  const linked = lock['jira-source'];
+  assert.deepEqual(await trackersWith('import', { callSource }), [], 'the old connector imports nothing');
+  answer = { export: true, import: true };
+  assert.deepEqual(await trackersWith('import', { callSource }), [], 'an unchanged lock is answered from the cache');
+  assert.equal(asked(), 1);
+  writePluginsLock({ ...lock, 'jira-source': { ...linked, installedAt: '2026-10-28T12:00:00.000Z' } });
+  assert.deepEqual((await trackersWith('import', { callSource })).map((x) => x.plugin), ['jira-source'], 'a re-link is asked again');
+  assert.deepEqual((await exportTrackers({ callSource })).map((x) => x.plugin), ['jira-source'], 'export reads the same answer');
+  assert.equal(asked(), 2, 'one probe per install answers export and import');
+  writePluginsLock(lock);
 });
