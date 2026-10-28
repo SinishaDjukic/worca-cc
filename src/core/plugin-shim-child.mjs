@@ -99,6 +99,9 @@ main()
       // stdout carries ONE frame: whatever a connector's leftover work prints
       // after it is dropped, as the immediate exit used to drop it.
       process.stdout.write = () => true;
+      // A natural end honours process.exitCode, which a connector may have set;
+      // the answer is out, so the exit is 0 whichever way the child ends.
+      process.exitCode = 0;
       clearInterval(hold);
       setTimeout(() => process.exit(0), EXIT_GRACE_MS).unref();
     });

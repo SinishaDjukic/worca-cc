@@ -60,6 +60,14 @@ const CONNECTOR = [
   // Answers but leaves a live handle (a ref'd 60 s timer): the child must
   // still end promptly once the frame is written.
   '    async lingers() { setTimeout(() => {}, 60000); return { lingered: true }; },',
+  // Answers, then the process is slow to end: an exit listener busy-waits
+  // args.ms, so the parent's kill timer fires AFTER the frame is out.
+  '    async answersThenStalls(args) {',
+  "      process.on('exit', () => { const end = Date.now() + args.ms; while (Date.now() < end); });",
+  '      return { stalled: true };',
+  '    },',
+  // Answers, but leaves process.exitCode set by stray connector code.
+  "    async answersWithExitCode() { process.exitCode = 1; return { coded: true }; },",
   // Answers, then background work prints to stdout after the frame is out.
   "    async printsLate() { setTimeout(() => console.log('late junk'), 50); return { early: true }; },",
   // Writes args.out to stdout (no frame), then exits args.code before the
@@ -321,7 +329,10 @@ test('a child that crashes on exit AFTER writing its frame still answers; worca 
   const logLines = [];
   const result = await callSource({
     plugin: NAME, sourceId: 'main', op: 'answerThenCrash',
-    args: { stderr: `Assertion failed: simulated crash on exit ${'x'.repeat(500)}\nsecond line\n` },
+    args: { stderr: `first line
+Assertion failed: simulated crash on exit ${'x'.repeat(500)}
+
+` },
     logger: (level, msg) => logLines.push(`${level}:${msg}`),
   });
   assert.deepEqual(result, { answered: true });
@@ -331,9 +342,31 @@ test('a child that crashes on exit AFTER writing its frame still answers; worca 
   assert.match(warns[0], /plugin "mock-echo" op "answerThenCrash"/);
   assert.match(warns[0], /crashed on exit after answering/);
   assert.match(warns[0], /exit 7/);
-  assert.match(warns[0], /Assertion failed: simulated crash on exit/);
-  assert.doesNotMatch(warns[0], /second line/, 'only the first stderr line');
+  assert.match(warns[0], /Assertion failed: simulated crash on exit/, 'the LAST non-empty stderr line is quoted');
+  assert.doesNotMatch(warns[0], /first line/, 'not the first line');
   assert.ok(warns[0].length < 400, `the stderr line is capped: ${warns[0].length} chars`);
+});
+
+test('a frame that arrived before the timeout is kept even if the child is killed while ending', async () => {
+  const logLines = [];
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'answersThenStalls', args: { ms: 5000 }, timeoutMs: 3000,
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { stalled: true });
+  const warns = logLines.filter((l) => l.startsWith('warn:'));
+  assert.equal(warns.length, 1, logLines.join(' | '));
+  assert.match(warns[0], /killed after answering/);
+});
+
+test('a stray process.exitCode in the connector neither logs a crash nor loses the result', async () => {
+  const logLines = [];
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'answersWithExitCode',
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { coded: true });
+  assert.deepEqual(logLines, [], 'exit 0, so no warning');
 });
 
 test('a connector that leaves a live handle still answers promptly, with no warning', async () => {

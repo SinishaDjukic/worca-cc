@@ -292,6 +292,15 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
     child.on('error', (err) => settle(rejectFrame, new PluginOpError('protocol', `plugin "${plugin}": spawn failed — ${err.message}`)));
     child.on('close', (code, signal) => {
       if (timedOut) {
+        // A frame written just before the deadline can still be followed by a
+        // slow exit (leftover handle, grace period): the answer wins. An op
+        // that never answers has no frame and still ends as a timeout.
+        const answered = completeFrame(stdout);
+        if (answered) {
+          log('warn', `plugin "${plugin}" op "${op}": the child was killed after answering `
+            + `(timeout ${timeoutMs}ms); its answer is kept`);
+          return settle(resolveFrame, answered);
+        }
         return settle(rejectFrame, new PluginOpError('timeout', `plugin "${plugin}" op "${op}" exceeded ${timeoutMs}ms (child killed)`));
       }
       if (code !== 0) {
@@ -301,7 +310,9 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
         // it and say so. Anything less is still "crashed before the frame".
         const answered = completeFrame(stdout);
         if (answered) {
-          const line = stderr.split(/\r?\n/).find((l) => l.trim()) || '';
+          // The crash line is usually the last one, not the first.
+          const lines = stderr.split(/\r?\n/).filter((l) => l.trim());
+          const line = lines.length ? lines[lines.length - 1] : '';
           log('warn', `plugin "${plugin}" op "${op}": the child crashed on exit after answering `
             + `(exit ${code ?? signal})${line ? ` — ${line.trim().slice(0, 160)}` : ''}; its answer is kept`);
           return settle(resolveFrame, answered);
