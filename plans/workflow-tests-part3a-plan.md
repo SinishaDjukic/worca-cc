@@ -112,6 +112,10 @@ D41–D51 are the brief's (approved). These continue them. The `(technical)` row
   - Name the UI level and update `docs/ui-levels.md`.
 - **Never push or open a PR without the user's explicit go.**
 - **Run one test file:** `node tools/test.mjs test/<file>.test.mjs` (hermetic home + no-real-claude guard). About 170 failures already exist on clean `dev` on this laptop, so compare against the Task 0 baseline before blaming the branch.
+- **Test facts found in Task 1** (the plan's test code gets these wrong in places; correct it in your task, do not change product code for it):
+  - `worcaHome()` is `<WORCA_HOME>/.worca-cc`, not `WORCA_HOME` itself. Paths such as `runs/<pid>` and `workflow-tests/repos/<key>` sit under `join(WORCA_HOME, '.worca-cc')`.
+  - `invokeStartRun` and `POST /api/run` answer only `{ runId }`. The pipeline id comes from the run entry (`runs.get(runId).pipelineId`) once it is known, e.g. after the run settles.
+  - `setHumanInLoop(false)` does not change a saved workflow: the mock `wf_default` run still parks at its clarify gate. A test that waits for a run to settle answers its pending questions with `server._testing.answerRun`, as `test/api-run-no-project.test.mjs` and `test/workflow-test-project-key.test.mjs` do.
 - **The person's repository is only read.** In 3a code, the only git commands on a registered project's folder are:
   - `clone` and `fetch` (as the source);
   - `rev-parse`, `rev-list`, `ls-tree`, `cat-file`, `show`, `grep <tree>`, `symbolic-ref`, `for-each-ref`, `remote get-url`;
