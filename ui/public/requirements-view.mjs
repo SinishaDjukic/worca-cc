@@ -4032,7 +4032,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const empty = h('p', { class: 'hint req-import-empty', hidden: true, text: "Try other words, or paste the ticket's key or link." });
     const failEl = h('p', { class: 'form-msg err req-export-alert', role: 'alert' });
     const note = h('p', { class: 'hint req-import-note', hidden: true }, 'Nothing was changed.', h('span', { 'data-min-level': 'advanced' }));
-    const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'pick-retry', hidden: true, onclick: () => { void (st.info ? run() : load()); } }, 'Try again');
+    // Try again re-runs the step that failed: the sources, the connection's projects (then the search), or the search
+    const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'pick-retry', hidden: true,
+      onclick: () => { void (!st.info ? load() : projFailed ? projectsThenSearch() : run()); } }, 'Try again');
     const results = h('div', { class: 'req-import-results', role: 'radiogroup', 'aria-label': 'Tickets' });
     const more = h('button', { type: 'button', class: 'btn btn-sm req-import-more', 'data-ui': 'pick-more', hidden: true, onclick: () => { void run({ next: true }); } },
       'Show more');
@@ -4050,7 +4052,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn', 'data-ui': 'pick-cancel', onclick: () => closeDialog(true) }, 'Cancel'), cont));
     openModal(card, { trigger: ctx.trigger, first: title, page: true });
     const g = dlgGen;
+    let projFailed = false;   // the last projects call for this connection failed: Try again loads them again
     const where = () => st.project || null;
+    const searching = () => status.replaceChildren(h('span', { class: 'badge blue', text: where() ? `Searching ${where()}…` : 'Searching all projects…' }));
     // D16 (board 36, 1): the server's sentence; for a tracker that could not be reached also "Nothing was changed." and, at the
     // Advanced level, where the connection is fixed
     const showFail = (err) => {
@@ -4076,15 +4080,19 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     function render() {
       status.textContent = countText();
       empty.hidden = !(st.searched && !st.tickets.length && !pastedKeyOf(st.searched));
-      results.replaceChildren(...st.tickets.map((t) => {
-        const radio = h('input', { type: 'radio', name: 'req-pick-ticket', value: t.key, 'data-ui': `pick-${t.key}`, 'aria-label': `${t.key} ${t.title}` });
+      results.replaceChildren(...st.tickets.map((t, i) => {
+        // the radio's name is the key and title; the rest of the row (type, status, date, D12's chip) describes it
+        const hintId = `req-pick-row-${i}-hint`;
+        const chipId = `req-pick-row-${i}-link`;
+        const radio = h('input', { type: 'radio', name: 'req-pick-ticket', value: t.key, 'data-ui': `pick-${t.key}`, 'aria-label': `${t.key} ${t.title}`,
+          'aria-describedby': t.linkedTo ? `${hintId} ${chipId}` : hintId });
         radio.checked = st.chosen === t.key;
         radio.addEventListener('change', () => { if (radio.checked) { st.chosen = t.key; cont.disabled = false; } });
         return h('label', { class: 'req-import-ticket' }, radio,
           h('span', { class: 'req-import-ticket-txt' },
             h('span', { class: 'req-import-ticket-head' }, h('b', { text: t.key }), ' ', h('span', { text: t.title })),
-            h('span', { class: 'hint', text: [t.type, t.status, t.updatedOn ? `updated ${t.updatedOn}` : null].filter(Boolean).join(' · ') })),
-          t.linkedTo ? h('span', { class: 'chip req-import-linkchip', text: `Linked to ${t.linkedTo.id}` }) : null);
+            h('span', { class: 'hint', id: hintId, text: [t.type, t.status, t.updatedOn ? `updated ${t.updatedOn}` : null].filter(Boolean).join(' · ') })),
+          t.linkedTo ? h('span', { class: 'chip req-import-linkchip', id: chipId, text: `Linked to ${t.linkedTo.id}` }) : null);
       }));
       more.hidden = !st.cursor;
       cont.disabled = !st.chosen;
@@ -4094,16 +4102,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const n = ++st.seq;
       const typed = search.value.trim();
       clearFail();
-      status.replaceChildren(h('span', { class: 'badge blue', text: where() ? `Searching ${where()}…` : 'Searching all projects…' }));
+      searching();
       try {
         const r = await api('POST', importUrl(s, '/search'), { ...st.conn, ...(st.project ? { project: st.project } : {}), ...(typed ? { search: typed } : {}),
           ...(next && st.cursor ? { cursor: st.cursor } : {}) });
-        if (!live(g) || n !== st.seq) return;   // the dialog is gone, or a newer search superseded this one
+        if (!live(g) || n !== st.seq) return;   // the dialog is gone, or a newer search (or a Connection change) superseded this one
+        const had = next ? st.tickets.length : 0;
         st.searched = typed;
         st.tickets = next ? [...st.tickets, ...(r.tickets || [])] : (r.tickets || []);
         st.cursor = r.cursor || null;
         if (!next && st.chosen && !st.tickets.some((t) => t.key === st.chosen)) st.chosen = null;
         render();
+        // Show more hides itself on the last page: the focus goes to the first ticket it added, not to <body>
+        const added = next && st.tickets.length > had ? results.querySelectorAll('input[type="radio"]')[had] : null;
+        if (added) added.focus();
       } catch (err) { if (live(g) && n === st.seq) showFail(err); }
     }
     // The connection's projects. Its own request number (plan review S8): after two quick Connection changes only the last one's
@@ -4112,13 +4124,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const n = ++st.projSeq;
       let r;
       try { r = await api('POST', importUrl(s, '/options'), { ...st.conn }); }
-      catch (err) { if (live(g) && n === st.projSeq) throw err; return false; }
+      catch (err) { if (live(g) && n === st.projSeq) { projFailed = true; throw err; } return false; }
       if (!live(g) || n !== st.projSeq) return false;
+      projFailed = false;
       st.projects = r.projects || [];
       if (st.project && !st.projects.some((p) => p.value === st.project)) st.project = '';
       syncSelect(projSel, [{ value: '', label: 'All projects' }, ...st.projects], st.project);
       return true;
     }
+    // The projects, then a search with them (a Connection change, and Try again after a projects call failed)
+    const projectsThenSearch = () => {
+      clearFail();
+      searching();
+      return loadProjects().then((used) => (used ? run() : undefined), (err) => { if (live(g)) showFail(err); });
+    };
     async function load() {
       clearFail();
       try {
@@ -4146,7 +4165,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
                 st.project = '';
                 st.chosen = null;
                 importPrefs = { conn: st.conn, project: '' };
-                void loadProjects().then((used) => (used ? run() : undefined), (err) => { if (live(g)) showFail(err); });
+                // the old connection's tickets go at once (none can be picked and previewed through the new one), and its
+                // search in flight is superseded; the select keeps only All projects until the new projects arrive
+                st.seq += 1;
+                st.tickets = [];
+                st.cursor = null;
+                st.searched = '';
+                st.projects = [];
+                syncSelect(projSel, [{ value: '', label: 'All projects' }], '');
+                render();
+                void projectsThenSearch();
               } }));
           connField.hidden = false;
         }

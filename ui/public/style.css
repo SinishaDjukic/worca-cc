@@ -10967,8 +10967,8 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 
 /* A6.1 (plans/requirements-a61-design.md §7, boards 32–34): Start from a ticket. Both dialogs are A6's .req-dialog.req-export cards, so its
    900 px sheet rules apply; the pick is 560 px, the preview 880 px in two columns. A picked ticket row has an ink border, never a fill. */
-.req-import-labrow{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.req-import-labrow > label{margin:0}
+.req-import-labrow{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.req-import-labrow > label{margin:0;font-weight:600;font-size:var(--fs-body)}
 .req-import-open[hidden]{display:none}
 .req-import-search{display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink-2)}
 .req-import-search input{flex:1;min-width:0;border:0;background:transparent;padding:7px 0;font-size:var(--fs-body);color:var(--ink)}

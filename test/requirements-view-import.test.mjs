@@ -184,3 +184,122 @@ test('CSS: the pick\'s rules sit inside the Requirements block, use tokens only,
   assert.ok(mine.every((l) => !bad.test(l)), mine.filter((l) => bad.test(l)).join('\n'));
   assert.match(css, /\.req-import-ticket:has\(input:checked\)\{border-color:var\(--ink\)\}/);
 });
+
+// ---- Task 11 review fixes (fix round 1) ----
+const TWO_CONNS = { sources: [{ plugin: 'jira-source', sourceId: 'jira', name: 'Jira', profiles: [ACME, { id: 'beta', label: 'jira.beta.test (Data Center)' }] }],
+  defaultConnection: CONN, defaultProject: null };
+const radios = () => [...dlg().querySelectorAll('[role="radiogroup"] input')].map((r) => r.value);
+const switchConn = async (value) => { const sel = q('pick-conn'); sel.value = value; sel.dispatchEvent(new window.Event('change')); await settle(); };
+
+test('a Connection change clears the old connection\'s tickets at once: none is pickable while the new projects load', async () => {
+  let release = null;
+  const m = await openNew(ROUTES({ [`GET ${IMP}`]: TWO_CONNS,
+    [`POST ${IMP}/options`]: (b) => (b.profile === 'beta' ? new Promise((r) => { release = () => r({ projects: [{ value: 'OPS', label: 'OPS — Operations' }] }); }) : { projects: [] }) }));
+  q('import-open', m.host).click();
+  await settle();
+  assert.equal(radios().length, 4);
+  q('pick-SHOP-124').click();
+  assert.equal(q('pick-continue').disabled, false);
+  await switchConn('jira-source|jira|beta');
+  assert.deepEqual([radios(), q('pick-continue').disabled, q('pick-more').hidden], [[], true, true], 'no old ticket stays on screen');
+  assert.equal(text(dlg().querySelector('.req-import-status .badge')), 'Searching all projects…');
+  release();
+  await settle();
+  const last = m.calls.filter((c) => c.url === `${IMP}/search`).at(-1);
+  assert.equal(last.body.profile, 'beta', 'the new connection searches');
+  assert.deepEqual(optionTexts(q('pick-project')), ['All projects', 'OPS — Operations']);
+  assert.equal(radios().length, 4);
+  m.view.destroy();
+});
+
+test('a search answer for the old connection that lands after a Connection change is dropped', async () => {
+  let slow = null;
+  const m = await openNew(ROUTES({ [`GET ${IMP}`]: TWO_CONNS,
+    [`POST ${IMP}/options`]: (b) => (b.profile === 'beta' ? new Promise(() => {}) : { projects: [] }),
+    [`POST ${IMP}/search`]: (b) => (b.search === 'zz' ? new Promise((r) => { slow = () => r({ tickets: [TICKETS[3]] }); }) : searchAnswer(b)) }));
+  q('import-open', m.host).click();
+  await settle();
+  await typeSearch('zz');
+  await switchConn('jira-source|jira|beta');
+  slow();
+  await settle();
+  assert.deepEqual(radios(), [], 'the acme answer is not shown as beta\'s');
+  assert.equal(text(dlg().querySelector('.req-import-status')), 'Searching all projects…');
+  m.view.destroy();
+});
+
+test('Try again after the projects call failed loads the projects again, then searches', async () => {
+  let fail = true;
+  const m = await openNew(ROUTES({ [`POST ${IMP}/options`]: () => (fail ? { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.' } }
+    : { projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }] }) }));
+  q('import-open', m.host).click();
+  await settle();
+  assert.equal(text(dlg().querySelector('.req-export-alert')), 'Worca could not reach Jira: the API token was refused.');
+  assert.equal(q('pick-retry').hidden, false);
+  fail = false;
+  q('pick-retry').click();
+  await settle();
+  assert.equal(m.calls.filter((c) => c.url === `${IMP}/options`).length, 2, 'the projects are asked for again');
+  assert.deepEqual([q('pick-project').value, optionTexts(q('pick-project'))], ['SHOP', ['All projects', 'SHOP — Shop web']]);
+  assert.deepEqual([text(dlg().querySelector('.req-export-alert')), q('pick-retry').hidden, radios().length], ['', true, 4]);
+  assert.equal(text(dlg().querySelector('.req-import-status')), 'Recently updated in SHOP');
+  m.view.destroy();
+});
+
+test('Try again after a Connection change whose projects call failed loads that connection\'s projects again', async () => {
+  let fail = true;
+  const m = await openNew(ROUTES({ [`GET ${IMP}`]: TWO_CONNS,
+    [`POST ${IMP}/options`]: (b) => (b.profile !== 'beta' ? { projects: [] } : fail ? { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.' } }
+      : { projects: [{ value: 'OPS', label: 'OPS — Operations' }] }) }));
+  q('import-open', m.host).click();
+  await settle();
+  await switchConn('jira-source|jira|beta');
+  assert.equal(text(dlg().querySelector('.req-export-alert')), 'Worca could not reach Jira: the API token was refused.');
+  assert.deepEqual(radios(), []);
+  fail = false;
+  q('pick-retry').click();
+  await settle();
+  assert.deepEqual(m.calls.filter((c) => c.url === `${IMP}/options`).map((c) => c.body.profile), ['acme', 'beta', 'beta']);
+  assert.deepEqual(optionTexts(q('pick-project')), ['All projects', 'OPS — Operations']);
+  assert.equal(m.calls.filter((c) => c.url === `${IMP}/search`).at(-1).body.profile, 'beta');
+  assert.equal(radios().length, 4);
+  m.view.destroy();
+});
+
+test('a ticket row\'s radio is described by its type, status and date, and by its Linked to chip', async () => {
+  const m = await openNew();
+  q('import-open', m.host).click();
+  await settle();
+  const described = (key) => (q(`pick-${key}`).getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean).map((id) => document.getElementById(id));
+  const linked = described('SHOP-123');
+  assert.ok(linked.length === 2 && linked.every(Boolean), 'both targets exist');
+  assert.deepEqual(linked.map(text), ['Story · To do · updated 26 Oct', 'Linked to FEAT-7']);
+  assert.deepEqual(described('SHOP-124').map(text), ['Story · In progress · updated 25 Oct']);
+  assert.equal(q('pick-SHOP-123').getAttribute('aria-label'), 'SHOP-123 Cancel an order before it ships', 'the name stays');
+  const ids = [...dlg().querySelectorAll('[role="radiogroup"] [id]')].map((el) => el.id);
+  assert.equal(new Set(ids).size, ids.length, 'unique ids');
+  m.view.destroy();
+});
+
+test('Show more on the last page moves the focus to the first ticket it added', async () => {
+  const m = await openNew(ROUTES({ [`POST ${IMP}/search`]: (b) => (b.cursor ? { tickets: [TICKETS[3]] } : { tickets: TICKETS.slice(0, 3), cursor: 'p2' }) }));
+  q('import-open', m.host).click();
+  await settle();
+  const more = q('pick-more');
+  more.focus();
+  more.click();
+  await settle();
+  assert.equal(more.hidden, true);
+  assert.equal(document.activeElement, q('pick-SHOP-98'), 'the focus is on the first new ticket, not lost to <body>');
+  m.view.destroy();
+});
+
+test('CSS: the Describe it label row matches the other field labels (8px below, weight 600 at the body size)', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = (sel) => { const m = new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\>]/g, '\\$&')}\\{([^}]*)\\}`).exec(css); return m ? m[1] : null; };
+  assert.match(css, /\.field > label,\.field \.label\{display:block;font-weight:600;font-size:13px;margin-bottom:8px;\}/, 'the shared rule it matches');
+  assert.match(rule('.req-import-labrow') || '', /(?:^|;)margin-bottom:8px(?:;|$)/);
+  const label = rule('.req-import-labrow > label') || '';
+  assert.match(label, /(?:^|;)font-weight:600(?:;|$)/);
+  assert.match(label, /(?:^|;)font-size:var\(--fs-body\)(?:;|$)/);
+});

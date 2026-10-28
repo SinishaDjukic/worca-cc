@@ -418,7 +418,10 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   select.dispatchEvent(new window.Event('change'));
   assert.equal(fields[3].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
   assert.equal(fields[3].querySelector('.req-brief-line'), null, 'no brief, no green line');
-  // A6.1: From a ticket… is in the form but hidden until a connection can import (none here)
+  // A6.1: From a ticket… is in the form but hidden until a connection can import (none here); it is the one button skipped
+  const fromTicket = form.querySelector('[data-ui="import-open"]');
+  assert.deepEqual([fromTicket && fromTicket.textContent, fromTicket && fromTicket.hidden], ['From a ticket…', true]);
+  assert.deepEqual([...form.querySelectorAll('.btn, .btn-primary')].filter((b) => b.hidden), [fromTicket], 'the only hidden button is From a ticket…');
   assert.deepEqual([...form.querySelectorAll('.btn, .btn-primary')].filter((b) => !b.hidden).map((b) => b.textContent), ['Cancel', 'Start the interview']);
   assert.ok([...form.querySelectorAll('.btn-primary')].at(-1).textContent === 'Start the interview', 'the CDP proof clicks the last .req-new .btn-primary');
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
