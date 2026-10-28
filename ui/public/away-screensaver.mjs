@@ -91,7 +91,16 @@ export function createAwayScreensaver({ doc, win, getState, now = () => Date.now
   let pos = null, net = [], lastFrame = 0, lastSpark = 0;
   let eatUntil = 0;   // the rest of the click that woke the window (mousedown, click) after the overlay is gone
 
+  let lastPt = null;  // where the pointer last was, in screen pixels
+
   const onInput = (ev) => {
+    if (ev.type === 'pointermove') {
+      // Safari (WebKit) sends a pointermove without any movement whenever the page under a still cursor changes:
+      // Worca repaints every second and the screensaver itself moves. Only a real move counts.
+      const moved = !lastPt || Math.abs(ev.screenX - lastPt.x) + Math.abs(ev.screenY - lastPt.y) > 2;
+      lastPt = { x: ev.screenX, y: ev.screenY };
+      if (!moved) return;
+    }
     lastInput = now();
     const eat = ev.type !== 'pointermove' && (root || (ev.type !== 'keydown' && now() < eatUntil));
     // The input that wakes the window only wakes it: it does not type, click or scroll the page under it.
