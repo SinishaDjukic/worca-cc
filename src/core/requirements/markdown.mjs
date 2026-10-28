@@ -3,6 +3,7 @@
 const STATUS_LABEL = { looking: 'Looking at the code', thinking: 'Interview running', your_turn: 'Interview running', done: 'Interview done', archived: 'Archived' };
 const none = '_None yet._';
 const bullets = (list) => (list.length ? list.map((s) => `- ${s}`).join('\n') : none);
+const from = (x) => (x.source ? ` (from ${x.source})` : '');   // A8 D13: an item a file gave
 const numbered = (list) => (list.length ? list.map((s, i) => `${i + 1}. ${s}`).join('\n') : none);
 
 export function renderSpecMarkdown(f, { targetName = null } = {}) {
@@ -18,8 +19,8 @@ export function renderSpecMarkdown(f, { targetName = null } = {}) {
     '## Edge cases', bullets(s.edgeCases),
     '## Business rules', bullets(s.rules),
     '## Out of scope', bullets(s.outOfScope),
-    '## Acceptance criteria', s.criteria.length ? s.criteria.map((c) => `- **${c.id}** ${c.text}`).join('\n') : none,
-    '## Assumptions', s.assumptions.length ? s.assumptions.map((a) => `- **${a.id}** (${a.status}) ${a.text}`).join('\n') : none,
+    '## Acceptance criteria', s.criteria.length ? s.criteria.map((c) => `- **${c.id}** ${c.text}${from(c)}`).join('\n') : none,
+    '## Assumptions', s.assumptions.length ? s.assumptions.map((a) => `- **${a.id}** (${a.status}) ${a.text}${from(a)}`).join('\n') : none,
     '## Open questions', bullets(s.openQuestions),
     '## Description, as first given', f.description.split(/\r?\n/).map((l) => `> ${l}`).join('\n'),
   ].join('\n\n') + '\n';

@@ -164,6 +164,27 @@ test('updateCheck: GET defaults to true, POST false round-trips, a non-boolean a
   ]);
 });
 
+test('keepAwake: GET defaults to true, POST false round-trips, a non-boolean answers 400 naming the field', async () => {
+  await checkRows([
+    { name: 'GET /api/settings: keepAwake defaults to true', run: async () => {
+      assert.equal((await (await fetch(`${base}/api/settings`)).json()).keepAwake, true);
+    } },
+    { name: 'POST keepAwake false round-trips through GET and back to true', run: async () => {
+      try {
+        assert.equal((await (await postJson({ keepAwake: false })).json()).keepAwake, false);
+        assert.equal((await (await fetch(`${base}/api/settings`)).json()).keepAwake, false);
+      } finally {
+        assert.equal((await (await postJson({ keepAwake: true })).json()).keepAwake, true);
+      }
+    } },
+    { name: 'POST keepAwake "no" answers 400 naming the field', run: async () => {
+      const r = await postJson({ keepAwake: 'no' });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).field, 'keepAwake');
+    } },
+  ]);
+});
+
 test('GET /api/app/version: unknown with no fetch under tests; a fake fetcher drives outdated + links; setting off = no fetch', async () => {
   const get = async () => (await fetch(`${base}/api/app/version`)).json();
   const pkgVersion = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
@@ -272,7 +293,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, keepAwake: true, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',

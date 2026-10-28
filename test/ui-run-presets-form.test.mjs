@@ -1,15 +1,13 @@
 // test/ui-run-presets-form.test.mjs — run presets on the New run form (app.js boot, #712): the hand-made body the
 // extract pins, a pick → prompt → start body with the run-only lane and 0 project-config writes, the source-branch
 // switch, Start disabled on a broken item until Reset, the Simple-mode note, the late run-defaults race, the Save
-// dialog's duplicate name, and the picker gated by the runPresets flag.
+// dialog's duplicate name.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
-import { renderIndexHtml } from '../src/core/index-html.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -33,9 +31,7 @@ const NODES4 = { n_plan: { model: 'claude-haiku-4-5', effort: 'medium' }, n_refi
 const preset = (over = {}) => ({ id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope: { kind: 'global', ref: null }, updatedAt: '2026-10-16T00:00:00Z',
   setup: { workflowId: 'wf_default', guardrailsId: 'normal', humanInLoop: false, overlay: { nodes: { n_plan: { model: 'claude-haiku-4-5', effort: 'medium' } } } }, ...over });
 
-let offPrev = null;
 async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults = null, runReply = null, wsConfigDelayMs = 0, namesDelayMs = 0, activeWorkflowId = 'wf_default' } = {}) {
-  if (offPrev) offPrev();   // flags.mjs's listener map is shared across boots: drop the previous app's subscription
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/#new' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -90,7 +86,6 @@ async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults 
   window.localStorage.setItem('worca-cc.runTarget', 'project');
   window.localStorage.setItem('worca-cc.lastProject', 'web');
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  offPrev = window.__np && window.__np.offPresetsFlag;
   const doc = window.document;
   await waitFor(() => doc.querySelector('#projectSelect').value === '/a/web');
   for (let i = 0; i < 10; i++) await tick();
@@ -100,8 +95,7 @@ const configWrites = (calls) => calls.filter((c) => c.url.includes('/api/config'
 // Applied and unmodified: the Preset button names the preset, the summary says it is for this run, no "Modified" chip.
 const applied = (doc) => doc.getElementById('preset-btn').classList.contains('is-on') && doc.getElementById('preset-chip').hidden
   && /applies to this run only$/.test(doc.getElementById('preset-summary').textContent);
-async function pick(ctx, id, flags = { runPresets: true }) {
-  applyFlags(flags, ctx.doc);
+async function pick(ctx, id) {
   await waitFor(() => [...ctx.doc.querySelectorAll('#presetSelect option')].some((o) => o.value === id));
   const sel = ctx.doc.querySelector('#presetSelect');
   sel.value = id;
@@ -199,15 +193,13 @@ test('Simple mode: the hidden-settings note names the preset\'s picks and Away m
 test('a pinned preset survives the late run-defaults answer: its engine and tags stay', async () => {
   const pinned = preset({ scope: { kind: 'project', ref: 'api-22222222' }, setup: { workflowId: 'wf_default', engine: 'claude', tags: ['team:api'] } });
   const ctx = await boot({ presets: [pinned], runDefaults: { delayMs: 60, body: { engine: { value: 'codex', source: 'project' }, steps: { codex: {} }, tags: ['team:web'], projectKey: 'web-11111111' } } });
-  applyFlags({ runTags: true }, ctx.doc);
-  await pick(ctx, 'rp_aaaaaaaaaaaa', { runPresets: true, runTags: true });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
   assert.equal(ctx.doc.querySelector('#projectSelect').value, '/a/api', 'the pin switched the project');
   await new Promise((r) => setTimeout(r, 120));   // the late /api/run-defaults lands
   const body = await submit(ctx);
   assert.equal(body.engine, 'claude');
   assert.deepEqual(body.tags, ['team:api']);
   assert.equal(body.projectDir, '/a/api');
-  applyFlags({ runTags: false }, ctx.doc);
 });
 
 test('a workspace-pinned preset keeps its workflow, guardrails and Human in the loop over the workspace config load', async () => {
@@ -250,7 +242,6 @@ test('after a fresh load the menu labels pinned presets with the project and wor
   const presets = [preset({ id: 'rp_pppppppppppp', name: 'P', scope: { kind: 'project', ref: 'api-22222222' } }),
     preset({ id: 'rp_wwwwwwwwwwww', name: 'W', scope: { kind: 'workspace', ref: 'ws_1' } })];
   const ctx = await boot({ presets, namesDelayMs: 40 });
-  applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelectorAll('#presetSelect optgroup').length === 2);
   await new Promise((r) => setTimeout(r, 80));
   const labels = [...ctx.doc.querySelectorAll('#presetSelect optgroup')].map((g) => g.label);
@@ -260,7 +251,6 @@ test('after a fresh load the menu labels pinned presets with the project and wor
 test('Settings › Presets after a fresh load names the pinned workspace, with no false Workspace gone badge', async () => {
   const presets = [preset({ id: 'rp_wwwwwwwwwwww', name: 'W', scope: { kind: 'workspace', ref: 'ws_1' } })];
   const ctx = await boot({ presets, namesDelayMs: 40 });
-  applyFlags({ runPresets: true }, ctx.doc);
   ctx.window.location.hash = '#settings/presets';
   await waitFor(() => /Only workspace/.test(ctx.doc.querySelector('#presets-list').textContent));
   assert.match(ctx.doc.querySelector('#presets-list').textContent, /Only workspace Both/);
@@ -270,7 +260,6 @@ test('Settings › Presets after a fresh load names the pinned workspace, with n
 
 test('Save as preset under a name the menu holds reopens with the duplicate message and sends nothing', async () => {
   const ctx = await boot({ presets: [preset()] });
-  applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelectorAll('#presetSelect option').length > 2);
   openPresetMenu(ctx.doc); menuItem(ctx.doc, 'Save as preset').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
@@ -287,7 +276,6 @@ test('Save as preset under a name the menu holds reopens with the duplicate mess
 
 test('Save as preset names the workflow and says when it is the project\'s default (review G)', async () => {
   const ctx = await boot({ activeWorkflowId: 'wf_auto' });
-  applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelector('#workflowSelect').value === 'wf_auto');
   openPresetMenu(ctx.doc); menuItem(ctx.doc, 'Save as preset').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
@@ -296,20 +284,8 @@ test('Save as preset names the workflow and says when it is the project\'s defau
   await tick();
 });
 
-test('with the flag off the picker is gated and no /api/presets request is made', async () => {
-  const ctx = await boot({ presets: [preset()] });
-  for (let i = 0; i < 10; i++) await tick();
-  assert.equal(ctx.calls.filter((c) => c.url.includes('/api/presets')).length, 0);
-  const html = renderIndexHtml(readFileSync(htmlPath, 'utf8'), 'light', 'expert', { runPresets: false });
-  const gated = new JSDOM(html).window.document;
-  assert.match(gated.querySelector('#flag-gates').textContent, /\[data-flag~="runPresets"\]/);
-  assert.equal(gated.querySelector('#preset-row').dataset.flag, 'runPresets');
-  applyFlags({ runPresets: false }, ctx.doc);
-});
-
 test('the Chat home lists the scoped presets and picking one opens New run with the form filled', async () => {
   const ctx = await boot({ presets: [preset(), preset({ id: 'rp_bbbbbbbbbbbb', name: 'Elsewhere', scope: { kind: 'project', ref: 'other-99999999' } })] });
-  applyFlags({ runPresets: true }, ctx.doc);
   ctx.window.location.hash = '#chat/new';
   await waitFor(() => ctx.doc.querySelectorAll('.chat-home-preset').length > 0);
   assert.deepEqual([...ctx.doc.querySelectorAll('.chat-home-preset')].map((b) => b.textContent), ['Quick fix'], 'another project\'s pinned preset is not listed');
@@ -319,18 +295,15 @@ test('the Chat home lists the scoped presets and picking one opens New run with 
   await waitFor(() => ctx.doc.querySelector('#guardrailsSelect').value === 'normal');
   await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('prompt'));
   assert.equal(ctx.doc.getElementById('prompt').value, '');
-  applyFlags({ runPresets: false }, ctx.doc);
 });
 
 test('Settings › Presets Use opens New run with the preset applied and the prompt focused', async () => {
   const ctx = await boot({ presets: [preset()] });
-  applyFlags({ runPresets: true }, ctx.doc);
   ctx.window.location.hash = '#settings/presets';
   await waitFor(() => ctx.doc.querySelector('#presets-list [data-act="use"]'));
   ctx.doc.querySelector('#presets-list [data-act="use"]').click();
   await waitFor(() => ctx.window.location.hash === '#new' && ctx.doc.getElementById('presetSelect').value === 'rp_aaaaaaaaaaaa');
   await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('prompt'));
-  applyFlags({ runPresets: false }, ctx.doc);
 });
 
 const menuItem = (doc, label) => [...doc.querySelectorAll('.wfv-menu[role="menu"] [role^="menuitem"]')].find((b) => b.textContent.trim() === label);
@@ -340,7 +313,6 @@ const openPresetMenu = (doc) => doc.getElementById('preset-btn').click();
 test('Preset ▾: one quiet button with No preset; its menu lists the presets, Save as preset and (Advanced) Manage presets…', async () => {
   const ctx = await boot({ presets: [preset()] });
   ctx.doc.documentElement.dataset.level = 'simple';
-  applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelectorAll('#presetSelect option').length > 1);
   const btn = ctx.doc.getElementById('preset-btn');
   assert.equal(btn.textContent, 'Preset');
@@ -356,7 +328,6 @@ test('Preset ▾: one quiet button with No preset; its menu lists the presets, S
   ctx.doc.documentElement.dataset.level = 'advanced';
   openPresetMenu(ctx.doc);
   assert.equal(menuLabels(ctx.doc).at(-1), 'Manage presets…');
-  applyFlags({ runPresets: false }, ctx.doc);
 });
 
 test('Preset ▾ with a preset applied: the filled name, ✕ clears it, the menu ticks it and lists Rename… and Delete…', async () => {
@@ -374,7 +345,6 @@ test('Preset ▾ with a preset applied: the filled name, ✕ clears it, the menu
   assert.equal(btn.textContent, 'Preset');
   assert.equal(ctx.doc.getElementById('preset-clear').hidden, true);
   assert.equal(ctx.doc.activeElement, btn);
-  applyFlags({ runPresets: false }, ctx.doc);
 });
 
 test('Rename… from the Preset menu: the Settings prompt, one PUT, the menu and button renamed, focus back on Preset', async () => {
@@ -392,7 +362,6 @@ test('Rename… from the Preset menu: the Settings prompt, one PUT, the menu and
   assert.deepEqual(ctx.calls.filter((c) => c.method === 'PUT').map((c) => [c.url.replace(/^.*\/api/, '/api'), c.body]),
     [['/api/presets/rp_aaaaaaaaaaaa', { name: 'Faster fix' }]]);
   await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('preset-btn'));
-  applyFlags({ runPresets: false }, ctx.doc);
 });
 
 test('Delete… from the Preset menu: the danger confirm; Cancel sends nothing; Delete leaves preset mode', async () => {
@@ -415,12 +384,12 @@ test('Delete… from the Preset menu: the danger confirm; Cancel sends nothing; 
   assert.equal(ctx.doc.getElementById('preset-clear').hidden, true);
   assert.equal(ctx.doc.getElementById('presetSelect').value, '');
   assert.ok(![...ctx.doc.querySelectorAll('#presetSelect option')].some((o) => o.value === 'rp_aaaaaaaaaaaa'));
-  applyFlags({ runPresets: false }, ctx.doc);
 });
 
 test('Simple: no "Manage presets…", the broken scope hint names ⋯; switching to Advanced brings both back', async () => {
   const ctx = await boot({ presets: [preset()], check: () => ({ broken: [{ item: 'project', ref: 'gone-1', message: 'Project gone-1 is no longer registered in worca', reset: false }] }) });
   ctx.doc.documentElement.dataset.level = 'simple';
+  ctx.doc.dispatchEvent(new ctx.window.CustomEvent('worca:level', { detail: { level: 'simple', previous: 'expert' } }));
   await pick(ctx, 'rp_aaaaaaaaaaaa');
   const opts = () => [...ctx.doc.querySelectorAll('#presetSelect option')].map((o) => o.value);
   assert.ok(!opts().includes('__manage__'));
@@ -429,29 +398,24 @@ test('Simple: no "Manage presets…", the broken scope hint names ⋯; switching
   ctx.doc.dispatchEvent(new ctx.window.CustomEvent('worca:level', { detail: { level: 'advanced', previous: 'simple' } }));   // as ui-level.mjs dispatches it
   assert.ok(opts().includes('__manage__'));
   assert.match(ctx.doc.getElementById('preset-broken').textContent, /Edit the preset's scope in Settings › Presets/);
-  applyFlags({ runPresets: false }, ctx.doc);
 });
 
 test('a picker option\'s tooltip and Settings › Presets name the workflow and engine, with no ids', async () => {
   const ctx = await boot({ presets: [preset({ setup: { workflowId: 'wf_auto', engine: 'codex' } })] });
-  applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelector('#presetSelect option[value="rp_aaaaaaaaaaaa"]'));
   assert.equal(ctx.doc.querySelector('#presetSelect option[value="rp_aaaaaaaaaaaa"]').title, 'Auto workflow · Codex');
   ctx.window.location.hash = '#settings/presets';
   await waitFor(() => ctx.doc.querySelector('#presets-list .preset-meta'));
   assert.match(ctx.doc.querySelector('#presets-list .preset-meta').textContent, /^Auto workflow · Codex · Updated/);
   ctx.window.location.hash = '#new';
-  applyFlags({ runPresets: false }, ctx.doc);
 });
 
 test('Simple: a deep link to Settings › Presets shows the Advanced level banner', async () => {
   const ctx = await boot({ presets: [preset()] });
   ctx.doc.documentElement.dataset.level = 'simple';
-  applyFlags({ runPresets: true }, ctx.doc);
   ctx.window.location.hash = '#settings/presets';
   await waitFor(() => ctx.doc.getElementById('level-banner').hidden === false);
   assert.equal(ctx.doc.getElementById('level-banner-text').textContent, 'Presets is part of Advanced mode, so it is not in your menu.');
   assert.equal(ctx.doc.getElementById('level-banner-pill').dataset.lv, 'advanced');
   ctx.window.location.hash = '#new';
-  applyFlags({ runPresets: false }, ctx.doc);
 });

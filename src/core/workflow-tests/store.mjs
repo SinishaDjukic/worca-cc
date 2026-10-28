@@ -1,5 +1,5 @@
 // src/core/workflow-tests/store.mjs
-// Workflow tests storage (plans/workflow-tests-part2-plan.md Task 2, schema v78, D26, D31): examples and their files,
+// Workflow tests storage (plans/workflow-tests-part2-plan.md Task 2, schema v80, D26, D31): examples and their files,
 // test runs, tries, and the tries a run shows. Every write validates; reads never throw on bad JSON.
 import { createHash, randomBytes } from 'node:crypto';
 import { getDb, prepare, tx } from '../db.mjs';

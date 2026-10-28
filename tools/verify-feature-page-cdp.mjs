@@ -42,7 +42,6 @@ process.env.HOME = home; process.env.USERPROFILE = home;
 process.env.WORCA_HOME = path.join(home, '.worca-cc');
 process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
 process.env.WORCA_MOCK = '1';
-process.env.WORCA_FLAGS = 'shapeFirst';
 proj = await mkdtemp(path.join(tmpdir(), 'worca-fp-proj-'));
 for (const a of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'proof@worca.local'], ['config', 'user.name', 'proof']]) execFileSync('git', a, { cwd: proj });
 await writeFile(path.join(proj, 'README.md'), '# feature page proof\n');

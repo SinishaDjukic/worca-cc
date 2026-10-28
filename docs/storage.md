@@ -12,6 +12,9 @@ project's working tree, so nothing is ever committed to your repo.
 <worcaHome>/                            default ~/.worca-cc
   settings.json                         { root } only — the bootstrap that locates the DB
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
+                                        (the Requirements Feature chat: req_helper_messages (v78), one row per
+                                        message, kept until Clear chat; its spend is in req_cost_ledger with
+                                        helper_message_id, which Clear chat keeps)
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -32,7 +35,7 @@ project's working tree, so nothing is ever committed to your repo.
       skipped/           the run's version of files Apply to folder skipped
       skills/            the run's set skills (docs/skills.md): one generated plugin per set, passed
                          with --plugin-dir; rebuilt on resume, never inside a checkout
-      extras/            any optional extra files you attached
+      extras/            any optional extra files you attached (a Requirements start's switched-on files too)
                          Internal, line-anchored review comments on that diff are DB
                          rows (diff_comments), never files; ask_card_comments carries
                          a proposal's comment ids from propose_run through to launch.
@@ -68,6 +71,15 @@ project's working tree, so nothing is ever committed to your repo.
                                         removed with the thread, reconciled at boot)
   ask/<threadId>/skills/<messageId>/    an Ask turn's set skills, one generated plugin per set;
                                         written before the turn's spawn, removed when the turn ends
+  requirements/att/<id>.<ext>           Requirements files and brief documents — .txt for text kinds, the real
+                                        extension for images and PDF; the name is the store's id (ratt_<12 hex>),
+                                        never the file's. Rows: req_attachments (v77). Folder 0700, files 0600.
+                                        Removed with the file, or with the brief for its documents; an archived
+                                        feature keeps its files. A replace writes <id>.<ext>.tmp-<8 hex> and renames
+                                        it over the body; one a crash left, older than an hour, is swept at boot
+  tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
+                                        redacted text), mode 0700 / 0600, removed when the read ends (a restart's
+                                        leftovers older than an hour are swept at boot)
   tmp/ask/                              the Chat assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search
@@ -150,7 +162,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v77)
+### Workflow history and versions (v79)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -177,7 +189,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v78)
+### Workflow tests (v80)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.

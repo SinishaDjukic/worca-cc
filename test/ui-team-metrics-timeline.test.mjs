@@ -174,4 +174,6 @@ test('mergePrStatus keeps an earlier batch\'s Azure notice', async () => {
   assert.equal(m({ ...base, azure: 'missing' }, { ...base, azure: 'ok' }).azure, 'ok', 'a later real answer wins, as for gh');
   assert.equal(m({ ...base, azure: 'unauthenticated' }, { ...base }).azure, 'unauthenticated', 'an older server without the field');
   assert.deepEqual(m({ ...base, azureTruncated: ['dev.azure.com/a/p/r'] }, { ...base, azureTruncated: [] }).azureTruncated, ['dev.azure.com/a/p/r'], 'a cut-off repo stays named');
+  assert.equal(m({ ...base, bitbucket: 'missing' }, { ...base, bitbucket: 'unused' }).bitbucket, 'missing', 'an earlier Bitbucket notice is kept');
+  assert.equal(m({ ...base, bitbucketError: 'Bitbucket 500: boom' }, { ...base }).bitbucketError, 'Bitbucket 500: boom');
 });

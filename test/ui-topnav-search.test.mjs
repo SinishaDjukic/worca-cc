@@ -28,7 +28,7 @@ const SOURCES = {
   workflows: [], schedules: [], tickets: [],
 };
 
-function setup({ platform = '', sources = SOURCES, lazy = null, searchChats = null, chatsFirst = () => false } = {}) {
+function setup({ platform = '', sources = SOURCES, lazy = null, askRow = undefined, searchChats = null, chatsFirst = () => false } = {}) {
   const { window } = new JSDOM(PAGE);
   const doc = window.document;
   if (platform) Object.defineProperty(window.navigator, 'platform', { value: platform, configurable: true });
@@ -43,6 +43,7 @@ function setup({ platform = '', sources = SOURCES, lazy = null, searchChats = nu
     navigate: (href) => calls.navigate.push(href),
     openWorkflow: (id) => calls.workflow.push(id),
     onLabel: (l) => calls.label.push(l),
+    ...(askRow ? { askRow } : {}),
     searchChats, chatsFirst,
   });
   const $ = (id) => doc.getElementById(id);
@@ -510,6 +511,41 @@ test('a label row: tag icon, Enter calls onLabel with the word and never navigat
   key($('tsearch-input'), 'Enter');
   assert.deepEqual(calls.label, ['hotfix']);
   assert.deepEqual(calls.navigate, []);
+});
+
+test('Ask worca beside the page: the Ask row reads askRow at every render; without it, Ask in Chat', () => {
+  let words = { title: 'Ask worca', meta: 'with this page' };
+  const { key, type, options, calls } = setup({ askRow: () => words });
+  key(null, 'k', { metaKey: true });
+  type('why');
+  const last = () => options().at(-1);
+  assert.deepEqual([last().querySelector('.tsearch-title').textContent, last().querySelector('.tsearch-meta').textContent], ['Ask worca', 'with this page']);
+  assert.equal(last().getAttribute('aria-label'), 'Ask worca, with this page');
+  words = { title: 'Ask in Chat', meta: 'opens a chat' };
+  type('why not');
+  assert.equal(last().querySelector('.tsearch-title').textContent, 'Ask in Chat', 'read again at render');
+  last().click();
+  assert.deepEqual(calls.ask, ['why not'], 'the row still hands the text to onAsk');
+  const plain = setup();
+  plain.key(null, 'k', { metaKey: true });
+  plain.type('why');
+  assert.equal(plain.options().at(-1).querySelector('.tsearch-title').textContent, 'Ask in Chat');
+});
+
+test('Ask worca beside the page: a bad askRow (throws, wrong shape, empty words) falls back to the default words', () => {
+  const words = (askRow) => {
+    const { key, type, options } = setup({ askRow });
+    key(null, 'k', { metaKey: true });
+    type('why');
+    const last = options().at(-1);
+    return [last.querySelector('.tsearch-title').textContent, last.querySelector('.tsearch-meta').textContent, last.getAttribute('aria-label')];
+  };
+  const plain = ['Ask in Chat', 'opens a chat', 'Ask in Chat, opens a chat'];
+  assert.deepEqual(words(() => { throw new Error('boom'); }), plain);
+  assert.deepEqual(words(() => null), plain);
+  assert.deepEqual(words(() => ({ title: 5, meta: 7 })), plain, 'numbers are not words');
+  assert.deepEqual(words(() => ({ title: '', meta: 'x' })), ['Ask in Chat', 'x', 'Ask in Chat, x'], 'an empty title is no title');
+  assert.deepEqual(words(() => ({ title: 'T' })), ['T', 'opens a chat', 'T, opens a chat'], 'a missing meta keeps the default');
 });
 
 test('#948 s2: the Chats group comes first or after Runs, shows a query that only matches chats, drops a stale answer', async () => {

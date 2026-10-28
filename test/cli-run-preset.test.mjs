@@ -17,7 +17,7 @@ const ELSEWHERE = { id: 'rp_cccccccccccc', name: 'Other only', scope: { kind: 'p
 
 const servers = [];
 after(() => { for (const s of servers) s.close(); });
-async function fakeServer({ presets = [QUICK, DOCS, ELSEWHERE], run = { status: 200, body: { runId: 'run_1' } }, presetsStatus = 200,
+async function fakeServer({ presets = [QUICK, DOCS, ELSEWHERE], run = { status: 200, body: { runId: 'run_1' } },
   live = [{ id: '44599ed6', runId: 'run_1', status: 'running', live: true }] } = {}) {
   const posts = [];
   const runLists = [];
@@ -26,7 +26,7 @@ async function fakeServer({ presets = [QUICK, DOCS, ELSEWHERE], run = { status: 
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
       const send = (status, obj) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
-      if (req.method === 'GET' && req.url === '/api/presets') return send(presetsStatus, presetsStatus === 200 ? { presets } : { error: 'not found' });
+      if (req.method === 'GET' && req.url === '/api/presets') return send(200, { presets });
       if (req.method === 'POST' && req.url === '/api/run') { posts.push(JSON.parse(raw)); return send(run.status, run.body); }
       if (req.method === 'GET' && req.url.startsWith('/api/runs?')) { runLists.push(new URL(req.url, 'http://x').searchParams); return send(200, { pipelines: [], live }); }
       send(404, {});
@@ -98,14 +98,11 @@ test('a broken preset exits 1 with one line per broken item', async () => {
   assert.deepEqual(lines.err, ['worca run: Preset "Quick fix" cannot start:', '  - Guardrail set gr_1 no longer exists', '  - Planner: model my-gateway-opus is no longer in the catalog']);
 });
 
-test('no server, the flag off, and usage errors', async () => {
+test('no server, a lost server, and usage errors', async () => {
   const none = io(null);
   assert.equal(await cmdRun(['--preset', 'Quick fix', '--prompt', 'x'], none.opts), 1);
   assert.match(none.lines.err.join('\n'), /none is running — start it with: worca ui/);
-  const off = await fakeServer({ presetsStatus: 404 });
-  const o = io(off.base);
-  assert.equal(await cmdRun(['--preset', 'Quick fix', '--prompt', 'x'], o.opts), 1);
-  assert.match(o.lines.err.join('\n'), /run presets are turned off — turn them on with: worca flags on runPresets/);
+  const o = io((await fakeServer()).base);
   const dead = io('http://127.0.0.1:9');   // nothing listens on the discard port: the request is refused
   assert.equal(await cmdRun(['--preset', 'Quick fix', '--prompt', 'x'], dead.opts), 1);
   assert.match(dead.lines.err.join('\n'), /lost the Worca server/);

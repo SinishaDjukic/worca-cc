@@ -63,6 +63,7 @@ test('runPill table and progressRoute (live → #running, rest → History, unkn
       assert.deepEqual(runPill(base), { family: 'green', text: 'Implementer' }, 'one active agent: its label in its colour');
       assert.deepEqual(runPill({ ...base, active: [base.active[0], base.active[0]] }), { family: 'peach', text: '2 agents running' });
       assert.deepEqual(runPill({ ...base, status: 'pausing' }), { family: 'amber', text: 'Pausing…' });
+      assert.deepEqual(runPill({ ...base, status: 'paused', resumePending: true }), { family: 'amber', text: 'Resuming…' }, 'a Resume in flight');
       assert.deepEqual(runPill({ ...base, status: 'paused', pauseReason: 'cost_total' }), { family: 'amber', text: 'Paused · total budget' });
       assert.deepEqual(runPill({ ...base, status: 'paused', pauseReason: null }), { family: 'amber', text: 'Paused' });
       assert.deepEqual(runPill({ ...base, status: 'interrupted' }), { family: 'amber', text: 'Interrupted' });

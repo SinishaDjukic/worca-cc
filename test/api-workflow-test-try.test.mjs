@@ -154,7 +154,7 @@ test('a try that pauses on a usage limit books no resume ticket (Review Focus 10
 
 test('enforced run tags neither refuse nor tag a try (review I2)', async () => {
   const CCD = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
-  await post('/api/settings', { tagDimensions: [CCD], enforceTags: true, flags: { runTags: true } });
+  await post('/api/settings', { tagDimensions: [CCD], enforceTags: true });   // runTags has graduated: tags are always on
   try {
     const plain = await post('/api/run', { noProject: true, workflowId: 'wf_try', prompt: 'x', mock: true });
     assert.equal(plain.status, 422, 'a normal run without the tag is refused');

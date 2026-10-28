@@ -90,6 +90,110 @@ switched off, interviews still read an existing brief; only new looks (Create, R
 **Workspaces.** A workspace brief starts from the workspace's own description (its map of projects) and reads at
 most 8 of its projects, each at its default branch; any left out are named on the page before you create it.
 
+**Documents.** A made brief can keep documents (a style guide, a glossary, a policy) that every feature there uses;
+see [Documents on the brief](#files) below. Deleting the brief deletes its documents too.
+
+## Files
+
+A feature can come with material: emails, support tickets, a spec, screenshots, a mockup. Add up to 10 files to a
+feature, on **New feature** or later on the feature page's **Files** card: text (`.md`, `.markdown`, `.txt`, `.csv`,
+`.json`, `.log`, `.html`, `.htm`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) and PDF, up to 25 MB each (on
+New feature, up to 100 MB in all; add more on the feature page). Word, Excel and PowerPoint files are not read yet:
+save them as PDF. A file with the same content as one already attached is refused and names that one.
+
+**What Worca reads.** Worca reads each file once, when it is added, with the interview model, and writes down what it
+took from it. Every interview round uses that, and the full text of text files while they stay within 24 KB in all.
+A feature created with files reads them first: the page says **Reading N files…**, then shows round 1. You can edit
+what Worca took from a file; your text wins, and Worca never overwrites it without asking. **Ask about this file…**
+has Worca read the file again for one question; the answer is kept under the summary (one question at a time, up to
+20 answers; the file says **Asking…** meanwhile). **Replace with a newer version…** keeps the file's place and its
+switch, and asks whether to keep your text when you edited it; **Read again** reads the same file again. Earlier
+texts are kept in the file's history (**Earlier text**, in Advanced mode). A file that could not be read says why
+("it ran out of time", "Worca restarted", …) and offers **Try again**; until then the interview knows it by name only.
+Files cannot be changed while Worca works on the feature, while it is archived or while a run starts. When a new
+version cannot be stored, the file says "Worca could not store the new version. Replace it again." and cannot go with
+the run until it is replaced. When New feature cannot store one of its files, the feature is still created and its page
+names the file: "<name> was not added: Worca could not store it. Add it on the feature page."
+
+**What it costs.** A read costs a few cents (about $0.05–0.20; each file says what its reads cost) and counts toward
+your spending limit. When the limit is reached, a new file waits as **Not read yet**, at no cost, and is read
+at the next round once the limit allows, or when you press **Read again**. Worca reads at most two files at a time;
+the others wait as **Reading…**.
+
+**Privacy.** Worca sends each file to the interview model to read it. Text is checked for keys and passwords first;
+images and PDFs go as they are. A read can open only its own copy of the file: a guard refuses any other file and any
+other tool, so a file that asks the reader to open something else gets nowhere. Worca keeps a record of what the guard
+allowed, and throws away a read it cannot confirm ("Worca stopped this read: it could not confirm the read stayed
+inside this file. Try again."). Every read, every question and the product brief's look also refuse private files
+(keys, credentials, Worca's own data, other chats and stored files), as Chat does. Reads, questions, the brief's
+look and Feature chat messages also ask Claude Code to keep no session transcript of the call (`--no-session-persistence`),
+so neither the file nor the chat's prompt is left in Claude Code's own session logs. Interview rounds and looks keep Claude
+Code's usual session logs
+(under its `projects` folder, until Claude Code's own cleanup), and those hold what a round's prompt carries: what
+Worca took from each file and the text of small text files. Remove deletes the file and what Worca took from it from
+Worca; it does not reach Claude Code's logs. Where the files are kept: [storage.md](storage.md).
+
+**Testing.** In mock mode (`WORCA_MOCK=1`) nothing is sent: a read writes a `[mock]` summary at once, or after
+`WORCA_MOCK_READ_MS` milliseconds when that is set (the browser proof uses it to see "Reading N files…").
+
+**When a file changes the interview.** During the interview the next round uses a new or replaced file. After the
+interview finished, Worca asks about it in one short follow-up round; until that round has run, the feature shows
+**Decide** and the interview check says "<file> to ask about". A feature that is busy gets its follow-up as soon as its
+current round or look ends. When Worca cannot start the round itself (the feature was archived, Worca is already
+running four interviews or looks, or the spending limit is reached), the Decide panel offers **Ask about <file>**.
+After you started a run, a change to the files counts as a change since the start.
+
+**Sources.** A criterion, an assumption or a question that came from a file names it, on the page, in the Markdown and in
+the run's task ("(from <file>)").
+
+**Files and runs.** A file goes to the run only when you switch on **Send with the run** (also on the **Ready to build**
+card's **Files for the run** row, whose chips are the same switches). The run gets it as an attached file, and the
+started version records which files went with it. A file whose stored copy Worca cannot open cannot go with the run:
+Start names it, and you replace it or leave it out. The run's copies are named after the files, made safe for Windows
+(`: * ? " < > |` become `_`, trailing dots and spaces go, a device name such as `CON` gets a leading `_`, and a name
+used twice gets " (2)"); the start keeps the files' own names. The copies Worca stages for a start are removed once the
+run has its own copy, or when the start is refused. **Changed since the run started** lists a file that goes with the
+run now, no longer goes, or was replaced; **Undo my changes** puts the files' Send switches back, but not a removed or
+replaced file, and not the documents' switches.
+
+**Documents on the brief.** A made Product brief has a **Documents** card: every feature of that project or workspace
+uses its documents from its next round. **Send with every run** adds a document to every run started from a feature
+there. The brief's own sections change only when you refresh it.
+
+## Feature chat
+
+**Feature chat** in a feature's header opens a chat about that feature beside the spec. On a wide screen it takes the right
+column, and **Ready to start?**, **Files** and **Spec** move under the question card until you close it; on a narrower screen it
+is a full-screen sheet with **Back**. **Help me answer** on a question of the round waiting for you opens it with that question
+in the composer. You send it yourself: every message costs money.
+
+**What it knows.** What the interview already has: the spec, the interview so far, the product brief, your files (what Worca
+took from them, and small text files in full) and what Worca found in the code. It has no tools: it reads no code and opens no
+file. When that is not enough it says so and suggests **Look closer** or **Ask about this file**.
+
+**Drafts.** Worca can draft answers to the open questions. A draft fills the question card, marked **drafted by Worca**, with
+Worca's reason under the options. **×** puts the question back to the recommended answer, and picking or typing an answer
+yourself removes the mark. A draft is never sent by itself: **Submit** sends it like any answer. A draft for a round that was
+answered meanwhile is dropped, and the reply says so.
+
+**Proposed changes.** Worca can propose spec changes as cards: set a section to a new value (the card shows the lines that
+change), add, reword or remove an acceptance criterion, or confirm or reject an assumption (it never rewrites an assumption's
+text). Nothing changes until you press **Accept**: the change is then your own edit, so later rounds never overwrite it, after
+a start it shows under **Changed since the run started**, and **Undo my changes** undoes it like any edit. **Reject** dismisses
+a card. When the spec changed since Worca proposed something, the card says so and offers **Ask again**.
+
+**Costs.** Each message is one call to the interview model (asked once more if the reply cannot be read; both attempts
+are paid), booked as Requirements spend: the header's "$X so far" includes it, it counts toward the spending limit, and each reply shows what it cost. The composer shows the range of the last messages
+("about $L–H a message"); before the project has any, it shows "about $0.05 a message", the measured cost of a typical message. **Stop** cancels a reply and keeps your message; a stopped reply may be booked low, or at $0, because
+a call's cost is known only once the model reports it.
+
+**The chat and the interview.** The chat never feeds the interview rounds, and it never holds the interview up: while Worca
+answers you can submit answers, edit the spec, add files or start a round. Only what you accept or submit reaches the
+interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
+
+**Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
+not used. Everything here is behind the `requirements` flag.
+
 ## Which model interviews
 
 The newest Opus at medium effort, unless **Requirements interview** on Models › Engines › Claude › Helper
@@ -148,6 +252,7 @@ always refuses a feature that is busy, archived or whose project or workspace is
 - It uses the **Auto** workflow and the project's default branch, unless you change them under **Change** on the
   Ready to build card. Auto picks a workflow for the task and, when the project asks for confirmation, shows
   its pick on the run page for you to accept.
+- The files and brief documents whose Send switch is on go with it as attached files ([Files](#files)).
 - Only runs started from Requirements are checked this way. **New run**, **Ask**, schedules and the CLI
   work as before and do not look at Requirements.
 

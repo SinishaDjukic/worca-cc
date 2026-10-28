@@ -353,13 +353,11 @@ test('pull-request: an applied card shows no watch line; each PR link\'s tooltip
   ]);
 });
 
-test('s5: an applied pull-request card carries the Ask for changes field while the gate is on; it posts the run ref', async () => {
+test('s5: an applied pull-request card carries the Ask for changes field; it posts the run ref', async () => {
   const { ctx } = ctxOf();
   const sent = [];
   ctx.postChanges = async (ref, text) => { sent.push([ref, text]); };
   const applied = { ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } };
-  assert.equal(buildPullRequestCard(applied, ctx).el.querySelector('.ask-changes'), null, 'gate off: no field');
-  ctx.doc.documentElement.dataset.flags = 'shapeFirst';
   assert.equal(buildPullRequestCard(PR, ctx).el.querySelector('.ask-changes'), null, 'proposed: no field');
   const ws = { ...applied, card: { ...applied.card, workspaceId: 'ws_1' } };
   assert.equal(buildPullRequestCard(ws, ctx).el.querySelector('.ask-changes'), null, 'workspace run: no field');

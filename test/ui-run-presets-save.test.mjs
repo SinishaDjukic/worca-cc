@@ -1,10 +1,9 @@
 // test/ui-run-presets-save.test.mjs — Save setup as preset on a run's page (ui/public/run-presets-save.mjs + app.js):
-// the scope options, the request body, and the button shown only with the flag on and a stored setup.
+// the scope options, the request body, and the button shown only with a stored setup.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runPresetScopeOptions, runPresetRequest, runPresetErrorText } from '../ui/public/run-presets-save.mjs';
 import { bootApp } from './helpers/run-page-boot.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
 
 test('scope options: the run\'s own target first (the default), then Any project', () => {
   assert.deepEqual(runPresetScopeOptions({ projectKey: 'api-1' }, { 'project:api-1': 'api' }),
@@ -26,14 +25,12 @@ test('error text: duplicate and no-setup have their own words; anything else is 
   assert.equal(runPresetErrorText(500, null), 'HTTP 500');
 });
 
-// The app-level part boots the app on a history run page: the button's visibility depends on setupHdActions, the flag
-// and a fetch together.
+// The app-level part boots the app on a history run page: the button's visibility depends on setupHdActions and a
+// fetch together.
 const ok = (body, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => body });
 const DETAIL = (id) => ({ state: { id, title: 'Fix login', status: 'done', projectKey: 'k1', projectDir: '/tmp/p', startedAt: '2026-10-10T10:00:00.000Z', steps: [], subAgents: [], tags: [] }, artifacts: [] });
 
-let offPrev = null;
-async function openRun({ setup, flag = true }) {
-  if (offPrev) offPrev();   // flags.mjs's listener map is shared across boots: drop the previous app's subscription
+async function openRun({ setup }) {
   const posted = [];
   const ctx = await bootApp({ fetchHandler: (url, opts = {}) => {
     if (url === '/api/history/k1/aaaa0001' || url.startsWith('/api/history/k1/aaaa0001?')) return ok(DETAIL('aaaa0001'));
@@ -43,9 +40,7 @@ async function openRun({ setup, flag = true }) {
     if (url === '/api/projects') return ok({ projects: [{ name: 'p', key: 'k1', path: '/tmp/p', exists: true }] });
     return null;
   } });
-  offPrev = ctx.window.__np && ctx.window.__np.offPresetsFlag;
   const doc = ctx.window.document;
-  applyFlags({ runPresets: flag }, doc);
   ctx.go('history/k1/aaaa0001');
   await ctx.settle(8);
   return { ctx, doc, posted, btn: () => doc.querySelector('.hd-save-preset') };
@@ -65,9 +60,8 @@ test('the button shows for a run with a stored setup and saves with the run\'s p
   assert.deepEqual(posted, [{ name: 'From run', scope: { kind: 'project' } }]);
 });
 
-test('a pre-migration run (setup null) and the flag off both leave the button hidden', async () => {
+test('a pre-migration run (setup null) leaves the button hidden', async () => {
   assert.equal((await openRun({ setup: null })).btn().hidden, true);
-  assert.equal((await openRun({ setup: { workflowId: 'wf_default' }, flag: false })).btn().hidden, true);
 });
 
 test('the run page button reads "Save as preset" (A14: 1–3 words, verb first); the tooltip keeps the long form', async () => {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // tools/verify-chat-layout-cdp.mjs — headless-Chrome proof of the Chat layout rules (#959): one column edge for every
-// card, every graph inside its well, the run card's dot centred on its title line, one centre for the column, the
+// card, no part of a card outside the text column (a graph well is as wide as its card), no horizontal page overflow,
+// every graph inside its well, the run card's dot centred on its title line, one centre for the column, the
 // composer and Jump to latest, nothing under the composer, and the run proposal's fields (one-line labels, a whole
 // placeholder, an ellipsized branch with its tooltip, no pill), and the proposed workflow card's well: a graph that fits
 // is drawn whole, one still wider than its well at the 0.3 floor opens at its start edge, and no well is taller than
@@ -56,7 +57,7 @@ try {
   const REAL_ENV = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };   // Chrome keeps the real HOME, as verify-ask-forms does
   Object.assign(process.env, { HOME: home, USERPROFILE: home, WORCA_HOME: WH, WORCA_TEST_ALLOW_HOME_FALLBACK: '1' });
   const port = await freePort();   // never the inherited PORT (the host app's 4317)
-  const childEnv = { ...process.env, WORCA_FLAGS: 'runTags' };
+  const childEnv = { ...process.env };
   delete childEnv.FORCE_COLOR; delete childEnv.PORT;
   cli = spawn(process.execPath, [path.join(ROOT, 'src/cli/worca-cc.mjs'), 'ui', 'start', '--mock', '--port', String(port)],
     { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -207,11 +208,24 @@ try {
     const tr = page.querySelector('.ask-transcript');
     const fade = parseFloat(getComputedStyle(page.querySelector('.chat-convo')).getPropertyValue('--chat-dock-fade')) || 0;
     const jumpEl = page.querySelector('.chat-dock > .ask-jump');
-    const out = { col, fade, cards: [], wells: [], head: null, composer: R(page.querySelector('.chat-dock .ask-composer-box')),
+    const out = { col, fade, cards: [], wells: [], spill: [], head: null, overflowX: document.documentElement.scrollWidth - innerWidth, composer: R(page.querySelector('.chat-dock .ask-composer-box')),
       dock: R(page.querySelector('.chat-dock')), last: null, radii: [], rp: null,
       jump: jumpEl && !jumpEl.hidden ? R(jumpEl) : null };
     const CARDS = '.ask-transcript-col > .ask-msg > :is(.ask-card,.ask-card-stub,.ask-ccard)';
     for (const c of page.querySelectorAll(CARDS)) out.cards.push({ cls: c.className, ...R(c) });
+    // No part of a card leaves the text column: each descendant's box, cut by the ancestors that clip it (a graph well
+    // clips its panned graph, a scroller its wide output), lies within the column.
+    for (const c of page.querySelectorAll(CARDS)) {
+      for (const e of c.querySelectorAll('*')) {
+        const b = e.getBoundingClientRect(); if (!b.width && !b.height) continue;
+        let l = b.left, r = b.right;
+        for (let p = e.parentElement; p && p !== c.parentElement; p = p.parentElement) {
+          if (getComputedStyle(p).overflowX === 'visible') continue;
+          const pb = p.getBoundingClientRect(); l = Math.max(l, pb.left); r = Math.min(r, pb.right);
+        }
+        if (r > l && (l < col.l - 0.5 || r > col.r + 0.5)) out.spill.push(((typeof e.className === 'string' && e.className) || e.tagName) + ' ' + Math.round(l) + '..' + Math.round(r));
+      }
+    }
     // A proposal well (.ask-wfcard) PANS by design when its graph is still wider than the span left of the nav cluster
     // (proposal-host NAV_INSET 54) at the 0.3 floor: then it opens at its start edge. Its height is the placed graph's
     // (the world's drawn content, nodes, wires and their pills, at its zoom) plus the padding, clamped 220..480; view.bounds
@@ -223,7 +237,9 @@ try {
       const drawn = world ? [...world.querySelectorAll('.node, svg path, .wbadge')].map(R).filter((x) => x.w || x.h) : [];
       const l = Math.min(...nodes.map((n) => n.l)), r = Math.max(...nodes.map((n) => n.r));
       const wf = !!w.closest('.ask-wfcard');
-      out.wells.push({ well: R(w), l, r, n: nodes.length, z, wf, first: nodes.length ? nodes.reduce((a, x) => (x.l < a.l ? x : a)) : null,
+      const host = w.closest('.ask-card,.ask-card-stub,.ask-ccard'), hs = getComputedStyle(host), hb = host.getBoundingClientRect();
+      const inner = { l: hb.left + parseFloat(hs.borderLeftWidth) + parseFloat(hs.paddingLeft), r: hb.right - parseFloat(hs.borderRightWidth) - parseFloat(hs.paddingRight) };
+      out.wells.push({ well: R(w), inner, l, r, n: nodes.length, z, wf, first: nodes.length ? nodes.reduce((a, x) => (x.l < a.l ? x : a)) : null,
         pans: wf && z <= 0.3 + 1e-6 && r - l + 2 * 24 * z > R(w).w - 54 + 1,
         graphH: drawn.length ? Math.max(...drawn.map((x) => x.b)) - Math.min(...drawn.map((x) => x.t)) : 0 });
     }
@@ -283,6 +299,9 @@ try {
       await settle(`${w} ${t}`); await sleep(400); await settle(`${w} ${t}`);
       const m = await ev(MEASURE);
       check(`${w}px ${t}: every card's left and right edge is the text column's`, m.cards.length > 0 && m.cards.every((c) => near(c.l, m.col.l, 0.5) && near(c.r, m.col.r, 0.5)), JSON.stringify(m.cards.filter((c) => !near(c.l, m.col.l, 0.5) || !near(c.r, m.col.r, 0.5))));
+      check(`${w}px ${t}: no part of a card leaves the text column`, m.spill.length === 0, `col ${Math.round(m.col.l)}..${Math.round(m.col.r)}: ` + m.spill.slice(0, 8).join(', '));
+      check(`${w}px ${t}: every graph well is as wide as its card's content`, m.wells.every((x) => near(x.well.l, x.inner.l, 0.5) && near(x.well.r, x.inner.r, 0.5)), JSON.stringify(m.wells.map((x) => ({ well: [x.well.l, x.well.r], card: [x.inner.l, x.inner.r] }))));
+      check(`${w}px ${t}: the page has no horizontal overflow`, m.overflowX <= 0, `scrollWidth - innerWidth = ${m.overflowX}`);
       const fits = m.wells.filter((x) => !x.pans);
       check(`${w}px ${t}: no graph wider than its well`, fits.every((x) => x.n && x.l >= x.well.l - 1 && x.r <= x.well.r + 1), JSON.stringify(fits));
       if (t === 'workflows') {
@@ -312,6 +331,10 @@ try {
         check(`${w}px ${t}: Jump to latest sits in the band above the dock, on the column's centre`,
           !!j && j.b <= s.dock.t + 1 && j.t >= s.dock.t - s.fade - 1 && near(j.cx, s.col.cx, 0.5), JSON.stringify({ j, dock: s.dock.t, fade: s.fade, col: s.col.cx }));
         await shot(`${LABEL}-${t}-${w}-scrolled.png`);
+        // The run card itself, its graph well in view: the before/after pair for the well's width.
+        await ev(`document.querySelector('.chat-rc').scrollIntoView({ block: 'start' }); 1`);
+        await settle('card'); await sleep(250);
+        await shot(`${LABEL}-${t}-${w}-card.png`);
       }
     }
   }

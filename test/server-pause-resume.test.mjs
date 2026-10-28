@@ -87,6 +87,14 @@ test('pauseRun signals CANNOT_PAUSE via err.code, not message text', async () =>
   await assert.rejects(async () => _testing.chatActions.pause(runId), (err) => err.code === 'CANNOT_PAUSE');
 });
 
+test('POST /api/pause: a run that is not running -> 400 with code CANNOT_PAUSE and the status it has instead', async () => {
+  const runId = pauseEntry('r-cannot-http', false);
+  runs.get(runId).status = 'paused';   // paused from elsewhere first: the browser keeps its Pausing… quietly
+  const res = await post('/api/pause', { runId });
+  assert.equal(res.status, 400);
+  assert.deepEqual(await res.json(), { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'paused' });
+});
+
 test('pauseRun happy path still marks the entry pausing and resolves the pending question', async () => {
   const okRunId = pauseEntry('r-ok', true);
   runs.get(okRunId).pendingQuestion = { id: 'q-1', kind: 'gate' };

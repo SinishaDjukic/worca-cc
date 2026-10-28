@@ -308,14 +308,8 @@ test('shapingGroups: finished runs with a size, shaped vs unshaped per size', as
   assert.equal(g[1].unshaped.avgCostUsd, null);
 });
 
-test('GET /api/stats: shaping only with the shapeFirst flag on', async () => {
-  const saved = process.env.WORCA_FLAGS;
-  try {
-    process.env.WORCA_FLAGS = '-shapeFirst';
-    assert.equal('shaping' in await (await fetch(`${base}/api/stats?range=month`)).json(), false);
-    process.env.WORCA_FLAGS = 'shapeFirst';
-    assert.ok(Array.isArray((await (await fetch(`${base}/api/stats?range=all`)).json()).shaping.groups));
-  } finally { if (saved === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = saved; }
+test('GET /api/stats carries shaping', async () => {
+  assert.ok(Array.isArray((await (await fetch(`${base}/api/stats?range=all`)).json()).shaping.groups));
 });
 
 test('GET /api/stats?report=1 adds report (runs, prevRuns, buckets, ask); without it there is no report key', async () => {

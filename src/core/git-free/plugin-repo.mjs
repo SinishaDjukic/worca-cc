@@ -23,10 +23,10 @@ const KEEP_SNAPSHOTS = 3;
 const BRANCH_RE = /^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
-/** The GitHub repository of a plugin source, or GIT_MISSING (a source off github.com needs git). */
+/** The GitHub repository of a plugin source, or GIT_MISSING (a source off github.com needs git; a Bitbucket one says so). */
 export function githubPluginRepo(url) {
   const r = githubRepoOf(url);
-  if (!r) throw gitMissingError();
+  if (!r) throw gitMissingError(url);
   return r;
 }
 

@@ -2,7 +2,9 @@
 // Requirements storage (plans/requirements-design.md §3): FEAT-<seq> features, their append-only
 // interview thread, and the shared context per project or workspace (D10). The only module that
 // touches the req_* tables, except the spend ledger (cost-budget.mjs).
-import { getDb, prepare } from '../db.mjs';
+import { randomBytes } from 'node:crypto';
+import { getDb, prepare, tx } from '../db.mjs';
+import { REQ_ATT_ID_RE } from './attachments.mjs';
 import {
   RequirementsError, SCOPE_TYPES, STATUSES, TURN_KINDS, LIMITS, emptySpec, featureId,
 } from './spec.mjs';
@@ -143,17 +145,17 @@ function toStart(r) {
     pipelineId: r.pipeline_id || null, spec: { ...emptySpec(), ...json(r.spec_json, {}) }, title: r.title,
     ready: !!r.ready, failing: json(r.failing_json, []), reason: r.reason || null,
     workflowId: r.workflow_id || null, sourceBranch: r.source_branch || null,
-    startedBy: r.started_by || null, startedAt: r.started_at,
+    startedBy: r.started_by || null, startedAt: r.started_at, files: json(r.files_json, []),
   };
 }
 
 export function createStart({ featureSeq, version, runId, spec, title, ready, failing = [], reason = null,
-  workflowId = null, sourceBranch = null } = {}, { by = null } = {}) {
+  workflowId = null, sourceBranch = null, files = [] } = {}, { by = null } = {}) {
   getDb();
   const r = prepare(`INSERT INTO req_starts (feature_seq, version, run_id, spec_json, title, ready, failing_json,
-      reason, workflow_id, source_branch, started_by, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      reason, workflow_id, source_branch, started_by, started_at, files_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(Number(featureSeq), Number(version), runId, JSON.stringify(spec), title, ready ? 1 : 0,
-      JSON.stringify(failing), reason, workflowId, sourceBranch, by, iso());
+      JSON.stringify(failing), reason, workflowId, sourceBranch, by, iso(), JSON.stringify(files || []));
   return toStart(prepare('SELECT * FROM req_starts WHERE id = ?').get(Number(r.lastInsertRowid)));
 }
 
@@ -286,7 +288,13 @@ export function addBriefCost(id, usd) {
 export function deleteBrief(scopeType, scopeKey) {
   checkScope(scopeType, scopeKey);
   getDb();
-  return Number(prepare('DELETE FROM req_briefs WHERE scope_type = ? AND scope_key = ?').run(scopeType, scopeKey.trim()).changes) > 0;
+  const b = getBrief(scopeType, scopeKey);
+  if (!b) return false;
+  // A8 D9: its documents' rows go in the same transaction; the caller removes their bodies (rows first, then bodies).
+  return tx(() => {
+    prepare("DELETE FROM req_attachments WHERE owner_type = 'brief' AND owner_id = ?").run(b.id);
+    return Number(prepare('DELETE FROM req_briefs WHERE id = ?').run(b.id).changes) > 0;
+  });
 }
 
 /** Features of the scope (not archived) with a round that names the scope's current brief id. */
@@ -302,6 +310,186 @@ export function briefUsers(scopeType, scopeKey) {
 /** Costs of the newest brief looks (ledger rows with a brief_id), newest first. */
 export function recentBriefCosts(limit = 10) {
   getDb();
-  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE brief_id IS NOT NULL ORDER BY id DESC LIMIT ?')
+  // a document's read is not a look (A8 D5)
+  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE brief_id IS NOT NULL AND attachment_id IS NULL ORDER BY id DESC LIMIT ?')
+    .all(Number(limit)).map((r) => Number(r.amount_usd));
+}
+
+// ---- attachments (plans/requirements-a8-design.md §3, D9): a feature's files and a made brief's documents ----
+
+const OWNER_TYPES = Object.freeze(['feature', 'brief']);
+const ATT_STATUSES = Object.freeze(['reading', 'done', 'failed', 'unread-budget']);
+
+/** The id a body and its row are named by: the only part of a body's path that is not the store's own. */
+export const mintAttachmentId = () => `ratt_${randomBytes(6).toString('hex')}`;
+
+function toAttachment(r) {
+  if (!r) return null;
+  return {
+    id: r.id, ownerType: r.owner_type, ownerId: Number(r.owner_id), name: r.name, kind: r.kind, mime: r.mime, bytes: Number(r.bytes),
+    sha256: r.sha256, status: r.status, error: json(r.error_json, null), summary: r.summary || '', summaryEdited: !!r.summary_edited,
+    asks: json(r.asks_json, []), history: json(r.history_json, []), sendWithRun: !!r.send_with_run,
+    costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4, readCostUsd: r.read_cost_usd == null ? null : Number(r.read_cost_usd),
+    readModel: r.read_model || null, readAt: r.read_at || null,
+    createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+  };
+}
+
+export function insertAttachment({ id, ownerType, ownerId, name, kind, mime, bytes, sha256, status = 'reading' } = {}, { by = null } = {}) {
+  if (typeof id !== 'string' || !REQ_ATT_ID_RE.test(id)) throw new Error('insertAttachment: refusing an id the store never minted');
+  if (!OWNER_TYPES.includes(ownerType)) throw new Error(`insertAttachment: unknown owner type "${ownerType}"`);
+  if (!ATT_STATUSES.includes(status)) throw new Error(`insertAttachment: unknown status "${status}"`);
+  getDb();
+  const ts = iso();
+  prepare(`INSERT INTO req_attachments (id, owner_type, owner_id, name, kind, mime, bytes, sha256, status, created_by, created_at,
+      updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, ownerType, Number(ownerId), name, kind, mime, Number(bytes), sha256, status, by, ts, by, ts);
+  return getAttachment(id);
+}
+
+export function getAttachment(id) {
+  getDb();
+  return toAttachment(prepare('SELECT * FROM req_attachments WHERE id = ?').get(String(id)));
+}
+
+/** An owner's files in upload order. */
+export function listAttachments(ownerType, ownerId) {
+  getDb();
+  return prepare('SELECT * FROM req_attachments WHERE owner_type = ? AND owner_id = ? ORDER BY rowid').all(ownerType, Number(ownerId)).map(toAttachment);
+}
+
+const ATT_COLUMNS = Object.freeze({
+  name: 'name', kind: 'kind', mime: 'mime', bytes: 'bytes', sha256: 'sha256', status: 'status', error: 'error_json', summary: 'summary',
+  summaryEdited: 'summary_edited', asks: 'asks_json', history: 'history_json', sendWithRun: 'send_with_run',
+  readCostUsd: 'read_cost_usd', readModel: 'read_model', readAt: 'read_at',
+});
+const ATT_JSON = new Set(['error', 'asks', 'history']);
+const ATT_BOOL = new Set(['summaryEdited', 'sendWithRun']);
+
+export function updateAttachment(id, patch = {}, { by = null } = {}) {
+  const sets = [];
+  const vals = [];
+  for (const [k, v] of Object.entries(patch)) {
+    const col = ATT_COLUMNS[k];
+    if (!col) throw new Error(`updateAttachment: unknown field "${k}"`);
+    if (k === 'status' && !ATT_STATUSES.includes(v)) throw new Error(`updateAttachment: unknown status "${v}"`);
+    sets.push(`${col} = ?`);
+    vals.push(ATT_JSON.has(k) ? (v == null ? (k === 'error' ? null : '[]') : JSON.stringify(v)) : ATT_BOOL.has(k) ? (v ? 1 : 0) : v);
+  }
+  sets.push('updated_by = ?', 'updated_at = ?');
+  vals.push(by, iso());
+  getDb();
+  prepare(`UPDATE req_attachments SET ${sets.join(', ')} WHERE id = ?`).run(...vals, String(id));
+  return getAttachment(id);
+}
+
+export function addAttachmentCost(id, usd) {
+  if (!Number.isFinite(usd) || usd <= 0) return;
+  getDb();
+  prepare('UPDATE req_attachments SET cost_usd = cost_usd + ? WHERE id = ?').run(usd, String(id));
+}
+
+export function deleteAttachmentRow(id) {
+  getDb();
+  return Number(prepare('DELETE FROM req_attachments WHERE id = ?').run(String(id)).changes) > 0;
+}
+
+/** Deletes an owner's rows and returns them (the caller removes their bodies: row first, then body, D9). */
+export function deleteOwnerAttachments(ownerType, ownerId) {
+  const rows = listAttachments(ownerType, ownerId);
+  prepare('DELETE FROM req_attachments WHERE owner_type = ? AND owner_id = ?').run(ownerType, Number(ownerId));
+  return rows;
+}
+
+export function listReadingAttachments() {
+  getDb();
+  return prepare("SELECT * FROM req_attachments WHERE status = 'reading' ORDER BY rowid").all().map(toAttachment);
+}
+
+/** The last reads' costs of one kind, newest finished first (the estimates, D5 / §5). */
+export function recentReadCosts(kind, limit = 10) {
+  getDb();
+  return prepare('SELECT read_cost_usd FROM req_attachments WHERE kind = ? AND read_cost_usd IS NOT NULL ORDER BY read_at DESC LIMIT ?')
+    .all(String(kind), Number(limit)).map((r) => Number(r.read_cost_usd));
+}
+
+export function getBriefById(id) {
+  getDb();
+  return briefById(id);
+}
+
+// ---- the helper chat (plans/requirements-a3-design.md §3, D14): one Feature chat per feature ----
+
+const HELPER_ROLES = Object.freeze(['po', 'worca']);
+
+function toHelperMessage(r) {
+  if (!r) return null;
+  return {
+    id: Number(r.id), featureSeq: Number(r.feature_seq), role: r.role, text: r.text || '', focus: json(r.focus_json, null),
+    roundTurnId: r.round_turn_id == null ? null : Number(r.round_turn_id), drafts: json(r.drafts_json, []), proposals: json(r.proposals_json, []),
+    error: json(r.error_json, null), costUsd: r.cost_usd == null ? null : Math.round(Number(r.cost_usd) * 1e4) / 1e4, model: r.model || null,
+    createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+  };
+}
+
+export function insertHelperMessage({ featureSeq, role, text = '', focus = null, roundTurnId = null, drafts = [], proposals = [], error = null,
+  costUsd = null, model = null } = {}, { by = null } = {}) {
+  if (!HELPER_ROLES.includes(role)) throw new Error(`insertHelperMessage: unknown role "${role}"`);
+  getDb();
+  const ts = iso();
+  const r = prepare(`INSERT INTO req_helper_messages (feature_seq, role, text, focus_json, round_turn_id, drafts_json, proposals_json, error_json,
+      cost_usd, model, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(Number(featureSeq), role, String(text ?? ''), focus ? JSON.stringify(focus) : null, roundTurnId == null ? null : Number(roundTurnId),
+      JSON.stringify(drafts || []), JSON.stringify(proposals || []), error ? JSON.stringify(error) : null,
+      Number.isFinite(costUsd) ? costUsd : null, model || null, by, ts, by, ts);
+  return getHelperMessage(Number(r.lastInsertRowid));
+}
+
+export function getHelperMessage(id) {
+  getDb();
+  return toHelperMessage(prepare('SELECT * FROM req_helper_messages WHERE id = ?').get(Number(id)));
+}
+
+/** A feature's chat, oldest first. */
+export function listHelperMessages(seq) {
+  getDb();
+  return prepare('SELECT * FROM req_helper_messages WHERE feature_seq = ? ORDER BY id').all(Number(seq)).map(toHelperMessage);
+}
+
+/** How many messages a feature's chat holds (the feature view's `helper.messages`), without reading the rows. */
+export function countHelperMessages(seq) {
+  getDb();
+  return Number(prepare('SELECT count(*) AS n FROM req_helper_messages WHERE feature_seq = ?').get(Number(seq)).n);
+}
+
+const HELPER_COLUMNS = Object.freeze({ text: 'text', drafts: 'drafts_json', proposals: 'proposals_json', error: 'error_json', costUsd: 'cost_usd', model: 'model' });
+const HELPER_JSON = new Set(['drafts', 'proposals', 'error']);
+
+export function updateHelperMessage(id, patch = {}, { by = null } = {}) {
+  const sets = [];
+  const vals = [];
+  for (const [k, v] of Object.entries(patch)) {
+    const col = HELPER_COLUMNS[k];
+    if (!col) throw new Error(`updateHelperMessage: unknown field "${k}"`);
+    sets.push(`${col} = ?`);
+    vals.push(HELPER_JSON.has(k) ? (v == null ? (k === 'error' ? null : '[]') : JSON.stringify(v)) : k === 'costUsd' ? (Number.isFinite(v) ? v : null) : v);
+  }
+  sets.push('updated_by = ?', 'updated_at = ?');
+  vals.push(by, iso());
+  getDb();
+  prepare(`UPDATE req_helper_messages SET ${sets.join(', ')} WHERE id = ?`).run(...vals, Number(id));
+  return getHelperMessage(id);
+}
+
+/** Clear chat (D14): the feature's rows go; the ledger keeps what the chat cost, and accepted changes stay in the spec. */
+export function deleteHelperMessages(seq) {
+  getDb();
+  return Number(prepare('DELETE FROM req_helper_messages WHERE feature_seq = ?').run(Number(seq)).changes);
+}
+
+/** The amounts of the newest helper calls (ledger rows with a helper_message_id), newest first: the composer's estimate (D13). */
+export function recentHelperCosts(limit = 10) {
+  getDb();
+  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE helper_message_id IS NOT NULL ORDER BY id DESC LIMIT ?')
     .all(Number(limit)).map((r) => Number(r.amount_usd));
 }

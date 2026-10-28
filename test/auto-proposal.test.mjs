@@ -174,7 +174,6 @@ const askDeps = (hasHouseBrief) => ({
   readGuardrailSet: async (id) => (id === 'normal' ? { id } : null),
   isGitRepo: () => true,
   pathExists: (p) => p === '/p/demo',
-  shapeFirst: () => true,
   hasHouseBrief,
 });
 // claudeAuth pinned: otherwise `notes` follows the host's WORCA_ASK_CLAUDE_AUTH (proposal.mjs:485) and the

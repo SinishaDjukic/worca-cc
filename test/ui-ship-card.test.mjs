@@ -111,8 +111,6 @@ test('s5: Ask for changes shows in ready and applied, never in waiting or declin
   const doc = docOf(); const sent = [];
   const block = { kind: 'card', id: 'card_1', state: 'applied', card: { ...READY, result: { mode: 'one' } } };
   const ctx = { doc, postCard: async () => ({}), postChanges: async (ref, t) => { sent.push([ref, t]); } };
-  assert.equal(buildShipChatCard(block, ctx).el.querySelector('.ask-changes'), null, 'gate off: no field');
-  doc.documentElement.dataset.flags = 'shapeFirst';
   const { el } = buildShipChatCard(block, ctx);
   const input = el.querySelector('.ask-changes-input');
   input.value = 'one more'; input.dispatchEvent(new doc.defaultView.Event('input'));

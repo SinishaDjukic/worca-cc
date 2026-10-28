@@ -45,13 +45,12 @@ test('buildCatalog/shapeWorkflow: contract shape, wf_default first once, names f
         listWorkspaces: async () => [{ id: 'wks-team-0000abcd', name: 'Team', description: '', projectPaths: ['/p/a', '/p/b'], projectKeys: srcKeys, exists: [true, true] }],
         listWorkflows: async () => [TPL, { ...GRAPH_DEFAULT_WORKFLOW, name: 'Shadow' }],
         loadAgentRegistry: () => REGISTRY,
-        shapeFirst: () => false,   // Shaper is on by default; wf_shape's place is test/ask-catalog-shape.test.mjs
       });
       const cat = await build();
       assert.deepEqual(cat.projects, [{ key: 'demo-00000001', name: 'Demo', path: '/p/demo' }, { key: 'gone-00000002', name: 'Gone', path: '/p/gone' }]);
       assert.deepEqual(cat.workspaces, [{ id: 'wks-team-0000abcd', name: 'Team', projectKeys: ['a-00000001', 'b-00000002'] }]);
       assert.notEqual(cat.workspaces[0].projectKeys, srcKeys, 'projectKeys is copied, never aliased to the reader\'s array');
-      assert.deepEqual(cat.workflows.map((w) => w.id), ['wf_default', 'wf_memory_defrag', 'wf_review'], 'built-ins first, a stored twin of a built-in id is dropped');
+      assert.deepEqual(cat.workflows.map((w) => w.id), ['wf_default', 'wf_memory_defrag', 'wf_shape', 'wf_review'], 'built-ins first, a stored twin of a built-in id is dropped');
       assert.equal(cat.workflows[0].name, 'Default');
       assert.equal(cat.workflows[0].steps.length, 5);
       assert.equal(cat.workflows[0].steps[1][0].key, 'planner');

@@ -5,6 +5,12 @@ import { posix } from 'node:path';
 import { findOnPath as defaultFindOnPath } from './actions/builtins.mjs';
 
 export const GIT_MISSING = Object.freeze({ code: 'GIT_MISSING', message: 'git is not installed on this machine' });
+/** Without git, team branches and plugin sources work on GitHub only (P6 speaks the GitHub API): a Bitbucket one says so. */
+export const BITBUCKET_NEEDS_GIT = 'git is required for Bitbucket repositories here: install git where worca runs (without git, team branches and plugin sources work on GitHub only)';
+// The HOST is bitbucket.org (or a subdomain: altssh.): after scheme://[user@], or before the first ":" / "/" (scp, host slug).
+const BITBUCKET_REF_RE = /^\s*(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/\s]*@)?(?:[a-z0-9-]+\.)*bitbucket\.org(?::|\/|$)/i;
+/** The "needs git" message for a slug, URL or remote: Bitbucket's own, else GIT_MISSING's. Code stays GIT_MISSING. */
+export function gitMissingMessage(ref) { return BITBUCKET_REF_RE.test(String(ref ?? '')) ? BITBUCKET_NEEDS_GIT : GIT_MISSING.message; }
 export const GIT_PROBE_TIMEOUT_MS = 5_000;
 const MAC_SHIM = '/usr/bin/git';
 // worca's macOS stub (nogit-stub.mjs) leads PATH in every terminal, agent and script started while git was missing.
@@ -72,7 +78,7 @@ export function gitState({ maxAgeMs = 60_000, fresh = false } = {}) {
 }
 export function onGitChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 export function gitMissingResult() { return { ok: false, stdout: '', stderr: GIT_MISSING.message, code: -1 }; }
-export function gitMissingError() { const e = new Error(GIT_MISSING.message); e.code = GIT_MISSING.code; return e; }
+export function gitMissingError(ref) { const e = new Error(gitMissingMessage(ref)); e.code = GIT_MISSING.code; return e; }
 export const _testing = {
   set(partial = {}) {
     return commit({ ...NOT_PROBED, reason: partial.available === true ? 'forced-on' : 'forced-off', checkedAt: Date.now(), ...partial, available: partial.available === true });

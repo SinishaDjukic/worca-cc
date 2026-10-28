@@ -1,14 +1,17 @@
 // src/core/requirements/start.mjs
 // Start in Worca (plans/requirements-a2-design.md D5, D6, D8, D10): a feature's spec becomes a normal run,
 // started through the run handler the server injects (deps.startRun), never around it. The spec the run
-// got is frozen in req_starts. No import of ui/server.mjs: the handler arrives as a dependency.
+// got is frozen in req_starts, and so are the files it sent (A8 D14). No import of ui/server.mjs: the handler arrives as
+// a dependency.
 import { randomUUID } from 'node:crypto';
 import { tx } from '../db.mjs';
 import { RequirementsError } from './spec.mjs';
 import {
-  requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId,
+  requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId, listAttachments,
 } from './store.mjs';
 import { isBusy } from './interview.mjs';
+import { runFiles, unsendableRunFile, cannotGoWithRun } from './attachment-job.mjs';
+import { markStarting, unmarkStarting, isStarting } from './starting.mjs';
 import { readiness } from './ready.mjs';
 import { renderTaskMarkdown } from './markdown.mjs';
 
@@ -16,10 +19,9 @@ export const REASON_MAX = 500;
 export const DEFAULT_WORKFLOW_ID = 'wf_auto';
 const WORKFLOW_ID = /^wf_[a-z0-9_-]+$/i;
 
-/** Features with a start between the run handler's call and the stored row: a second start waits its turn. */
-const starting = new Set();
-/** A start is between the run handler's call and its stored row: archive and a scope change wait (edits.mjs). */
-export const isStarting = (seq) => starting.has(Number(seq));
+/** A start is between the run handler's call and its stored row (starting.mjs): a second start waits its turn, and so do
+ *  archive, a scope change (edits.mjs) and a follow-up round (interview.mjs). */
+export { isStarting };
 
 /** The run handler's refusal as a RequirementsError (D6): 403 budget → BUDGET, 400 → BAD_REQUEST, other 4xx
  *  → CONFLICT, anything else a plain Error (500). Carries the handler's own message. */
@@ -35,11 +37,15 @@ function refusal(res) {
 
 /**
  * Start a run from a feature (D5, D6). Refused while busy, archived or without a target, always; when any
- * other check fails, only with a reason (1–500 characters), else NOT_READY with the failing keys.
+ * other check fails, only with a reason (1–500 characters), else NOT_READY with the failing keys. A8 D14: the
+ * switched-on files and documents go as `extrasFiles` (the key only when there are some), each with the sha256 the
+ * staging checks its copy against; one Worca cannot open refuses the start (CONFLICT, naming it), so a run never
+ * goes without a file the product owner chose. The start row records `files`.
  * @param {number} seq
  * @param {{ reason?:string, workflowId?:string, sourceBranch?:string }} input
  * @param {{ by?:string|null }} who
- * @param {{ startRun:(body:object, opts:{runId:string, startedBy:string|null})=>Promise<{status:number, body:any}>,
+ * @param {{ startRun:(body:object, opts:{runId:string, startedBy:string|null,
+ *     extrasFiles?:Array<{id:string, name:string, path:string, sha256:string}>})=>Promise<{status:number, body:any}>,
  *   target:{ ok:boolean, label?:string, hint?:string, name?:string, path?:string }, newRunId?:()=>string }} deps
  * @returns {Promise<{ runId:string, version:number }>}
  */
@@ -49,10 +55,11 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
   const f = requireFeature(seq);
   if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
   if (isBusy(f.seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
-  if (starting.has(f.seq)) throw new RequirementsError('BUSY', 'this feature is already starting a run. Try again in a moment.');
-  starting.add(f.seq);   // before the first await: two starts at once cannot both pass
+  if (isStarting(f.seq)) throw new RequirementsError('BUSY', 'this feature is already starting a run. Try again in a moment.');
+  markStarting(f.seq);   // before the first await: two starts at once cannot both pass
   try {
-    const r = readiness(f, { turns: listTurns(f.seq), target });
+    // A8 D8: a file no round asked about fails "Interview finished" here too (an override, with a reason)
+    const r = readiness(f, { turns: listTurns(f.seq), target, files: listAttachments('feature', f.seq) });
     if (!target || !target.ok) throw new RequirementsError('CONFLICT', r.checks.find((c) => c.key === 'target').hint);
     const failing = r.checks.filter((c) => !c.ok).map((c) => c.key);
     const why = typeof reason === 'string' ? reason.trim() : '';
@@ -77,15 +84,20 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
       guardrailsId: 'normal',
       ...(branch ? { sourceBranch: branch } : {}),
     };
+    const sent = runFiles(f);   // A8 D14
+    const bad = unsendableRunFile(sent);
+    if (bad) throw new RequirementsError('CONFLICT', cannotGoWithRun(bad.name));
     const runId = newRunId();
-    const res = await startRun(body, { runId, startedBy: by });
+    const res = await startRun(body, { runId, startedBy: by,
+      ...(sent.length ? { extrasFiles: sent.map(({ id, name, path, sha256 }) => ({ id, name, path, sha256 })) } : {}) });
     const status = Number(res && res.status);
     if (!(status >= 200 && status <= 299)) throw refusal(res);
     const stored = (res.body && typeof res.body.runId === 'string' && res.body.runId) || runId;
     try {
       tx(() => {
         createStart({ featureSeq: f.seq, version, runId: stored, spec, title: f.title, ready: r.ok, failing,
-          reason: failing.length ? why : null, workflowId: body.workflowId, sourceBranch: body.sourceBranch || null }, { by });
+          reason: failing.length ? why : null, workflowId: body.workflowId, sourceBranch: body.sourceBranch || null,
+          files: sent.map(({ id, name, sha256, from }) => ({ id, name, sha256, from })) }, { by });
         appendTurn(f.seq, { kind: 'start', payload: { version, runId: stored, override: failing.length > 0 } }, { by });
       });
     } catch (err) {
@@ -95,7 +107,7 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
     }
     return { runId: stored, version };
   } finally {
-    starting.delete(f.seq);
+    unmarkStarting(f.seq);
   }
 }
 
@@ -116,6 +128,7 @@ export async function startView(start, runSummary = () => null) {
   return {
     version: start.version, runId: start.runId, pipelineId, startedBy: start.startedBy, startedAt: start.startedAt,
     ready: start.ready, failing: start.failing, reason: start.reason, workflowId: start.workflowId, sourceBranch: start.sourceBranch,
+    files: start.files || [],   // A8 D14: what the start sent, [{ id, name, sha256, from }]
     run: s ? { status: s.status ?? null, phase: s.phase ?? null, costUsd: s.costUsd ?? null,
       href: (typeof s.href === 'string' && s.href) || `#running/${start.runId}`,
       ...(s.waiting === true ? { waiting: true } : {}) } : null,   // the live run waits for the person

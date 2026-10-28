@@ -440,6 +440,9 @@ test('routeGroupOf: previous run, builds-on, the feature\'s base and ship mode f
 test('prRef: owner/repo#N for GitHub, #N elsewhere', () => {
   assert.equal(prRef(PR(912)), 'worca/worka-cc#912');
   assert.equal(prRef({ url: 'https://dev.azure.com/o/p/_git/r/pullrequest/7', number: 7 }), '#7');
+  assert.equal(prRef({ url: 'https://dev.azure.com/o/p/_git/r/pullrequest/7', number: null }), '#7', 'a PR opened in this session has no number yet');
+  assert.equal(prRef({ url: 'https://bitbucket.org/acme/api/pull-requests/12', number: null }), '#12');
+  assert.equal(prRef({ url: 'https://bitbucket.org/acme/api/pull-requests/12/overview', number: null }), '#12');
 });
 
 const routeWin = () => new JSDOM('<!doctype html><body><div class="rd-route" hidden></div><div class="rd-route b" hidden></div></body>',

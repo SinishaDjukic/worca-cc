@@ -21,6 +21,7 @@ export const DECIDING_TEXT = 'Auto is deciding the workflow…';
 export function decidingText(s) {
   const st = String((s && s.status) || '').toLowerCase();
   if (RESULT_STATUS.has(st)) return 'Auto did not decide a workflow';
+  if (s && s.resumePending) return 'Resuming…';   // a Resume in flight (the browser's flag)
   if (st === 'paused' || st === 'pausing' || st === 'interrupted') return 'Paused before deciding';
   if (s && s.pendingQuestion && s.pendingQuestion.kind === 'workflow') return 'Waiting for your decision';
   return DECIDING_TEXT;
