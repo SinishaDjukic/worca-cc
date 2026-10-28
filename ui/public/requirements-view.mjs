@@ -628,6 +628,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
     const title = h('input', { id: 'req-new-title', type: 'text', maxlength: '200', placeholder: 'Cancel an order before it ships' });
     const desc = h('textarea', { id: 'req-new-desc', rows: '5', placeholder: 'A few sentences, the way you would tell a colleague.' });
+    // A6.1 (board 32, D1): From a ticket… at the right of the Describe it label, shown once a connection can import (no nudge without one)
+    const scopeNow = () => { const [scopeType, ...rest] = select.value.split(':'); return { scopeType, scopeKey: rest.join(':') }; };
+    const fromBtn = h('button', { type: 'button', class: 'btn btn-sm req-import-open', 'data-ui': 'import-open', 'aria-haspopup': 'dialog', hidden: true,
+      onclick: () => openPick(importCtx, null) }, 'From a ticket…');
+    // the preview's caps count the files already picked on this form (D9); Task 12 adds `onUse` (Use this ticket)
+    const importCtx = { scope: scopeNow, trigger: fromBtn, formFiles: () => ({ count: picked.length, bytes: picked.reduce((n, p) => n + p.size, 0) }) };
+    if (select.value) {
+      const mine = paintNo;
+      api('GET', importUrl(scopeNow())).then((r) => { if (mine === paintNo && r && Array.isArray(r.sources) && r.sources.length) fromBtn.hidden = false; }, () => {});
+    }
     // A brief is usable once made (D10), also while it is being refreshed.
     const usable = new Map(briefs.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
     const cost = costHint(lookCost, interview, estimates);
@@ -741,7 +751,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('p', { class: 'req-sub', text: 'Describe it the way you would to a colleague. Worca asks the rest, a few questions at a time.' })),
       h('div', { class: 'card req-new' },
         field('req-new-title', ['Title'], title),
-        field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
+        h('div', { class: 'field' },
+          h('div', { class: 'req-import-labrow' },
+            h('label', { for: 'req-new-desc' }, 'Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })), fromBtn),
+          desc),
         h('div', { class: 'field req-new-files' },
           h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', id: 'req-new-files-opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
           input, zone, privacyNote(interview, 'req-new-files-privacy'), chips, refused),
@@ -3977,6 +3990,182 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('span', {}, ...LINE[x.action](x), x.when ? ` · ${x.when}` : '', x.reason ? ` · before Ready: ${x.reason}` : ''),
         x.by ? h('span', { class: 'hint', text: x.by }) : null))));
   }
+
+  // ---- A6.1: start from a ticket (plans/requirements-a61-design.md §7, boards 32–36). Both dialogs are the page's modal with the page
+  // behind inert (openModal's `page`; closeDialog and leave() release it); dlgGen drops an answer for a dialog that is gone and a
+  // search's own number drops one a newer search superseded. Ticket text is set with textContent only, never as HTML. ----
+  let importPrefs = null;   // D3: the connection and project last used, for the page session: { conn, project }
+  const importUrl = (s, path = '') => `/api/requirements/import/${s.scopeType}/${encodeURIComponent(s.scopeKey)}${path}`;
+  const SEARCH_MS = 300;
+  const pastedKeyOf = (v) => {
+    const s = String(v || '').trim();
+    if (/^[A-Z][A-Z0-9_]*-\d+$/i.test(s)) return s.toUpperCase();
+    const m = /(?:\/browse\/|[?&]selectedIssue=)([A-Z][A-Z0-9_]*-\d+)\b/i.exec(s);
+    return m ? m[1].toUpperCase() : null;
+  };
+  /** An import route's refusal: a gone ticket answers 404 with `gone` and its own sentence, which is not the flag's 404. */
+  const importErr = (err) => (err && err.data && err.data.gone && typeof err.data.error === 'string' ? err.data.error : errText(err));
+  const sameConnUi = (a, b) => !!a && !!b && a.plugin === b.plugin && a.sourceId === b.sourceId && (a.profile || null) === (b.profile || null);
+  /** The tracker's name for a pick's connection (its source's displayName). */
+  const pickTracker = (st) => {
+    const src = st && st.info && st.conn ? (st.info.sources || []).find((x) => x.plugin === st.conn.plugin && x.sourceId === st.conn.sourceId) : null;
+    return (src && src.name) || 'the tracker';
+  };
+  /** D19 (board 36): a sheet's way back to New feature (shown at 900 px and narrower only, by A6's CSS). */
+  const importBack = () => h('button', { type: 'button', class: 'link-btn req-export-back', 'data-ui': 'import-back', 'aria-label': 'Back to New feature',
+    onclick: () => { if (dialog && dialog.canClose()) closeDialog(true); } }, '← New feature');
+
+  /** Start from a ticket (board 33; D3, D4, D19). `keep`: the pick Back comes back to (its search, results and choice). */
+  function openPick(ctx, keep = null) {
+    closeDialog(false);
+    const s = ctx.scope();
+    const st = keep || { info: null, conn: null, project: '', projects: [], search: '', searched: '', tickets: [], cursor: null, chosen: null, seq: 0, projSeq: 0 };
+    let timer = null;
+    const title = h('h2', { id: 'req-pick-title', tabindex: '-1', text: 'Start from a ticket' });
+    const lead = h('p', { class: 'req-dlg-lead', id: 'req-pick-desc' });
+    const connField = h('div', { class: 'field req-export-fld', hidden: true });
+    const projLabel = h('label', { for: 'req-pick-project' });
+    const projSel = h('select', { id: 'req-pick-project', 'data-ui': 'pick-project' });
+    const search = h('input', { type: 'search', id: 'req-pick-search', 'data-ui': 'pick-search', placeholder: 'Search by key or words',
+      'aria-describedby': 'req-pick-paste', autocomplete: 'off' });
+    const status = h('p', { class: 'req-import-status', role: 'status' });   // one node: "Searching SHOP…", then the count line
+    const empty = h('p', { class: 'hint req-import-empty', hidden: true, text: "Try other words, or paste the ticket's key or link." });
+    const failEl = h('p', { class: 'form-msg err req-export-alert', role: 'alert' });
+    const note = h('p', { class: 'hint req-import-note', hidden: true }, 'Nothing was changed.', h('span', { 'data-min-level': 'advanced' }));
+    const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'pick-retry', hidden: true, onclick: () => { void (st.info ? run() : load()); } }, 'Try again');
+    const results = h('div', { class: 'req-import-results', role: 'radiogroup', 'aria-label': 'Tickets' });
+    const more = h('button', { type: 'button', class: 'btn btn-sm req-import-more', 'data-ui': 'pick-more', hidden: true, onclick: () => { void run({ next: true }); } },
+      'Show more');
+    const cont = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'pick-continue', disabled: true,
+      onclick: () => { if (!st.chosen) return; importPrefs = { conn: st.conn, project: st.project }; openImportPreview(ctx, st); } }, 'Continue');
+    const card = h('section', { class: 'card req-dialog req-export req-import req-import-pick', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'req-pick-title', 'aria-describedby': 'req-pick-desc' },
+      importBack(), title, lead, connField,
+      h('div', { class: 'field req-export-fld' }, projLabel, h('div', { class: 'select-wrap' }, projSel)),
+      h('div', { class: 'field req-export-fld' }, h('label', { for: 'req-pick-search' }, 'Find a ticket'),
+        h('div', { class: 'req-import-search' }, sharedIcon(document, 'search', 14), search),
+        h('p', { class: 'hint', id: 'req-pick-paste', text: "Paste a ticket's key or link to find it in any project." })),
+      status, empty, failEl, note, retry, results, more,
+      h('div', { class: 'req-dlg-btns' },
+        h('button', { type: 'button', class: 'btn', 'data-ui': 'pick-cancel', onclick: () => closeDialog(true) }, 'Cancel'), cont));
+    openModal(card, { trigger: ctx.trigger, first: title, page: true });
+    const g = dlgGen;
+    const where = () => st.project || null;
+    // D16 (board 36, 1): the server's sentence; for a tracker that could not be reached also "Nothing was changed." and, at the
+    // Advanced level, where the connection is fixed
+    const showFail = (err) => {
+      status.textContent = '';
+      failEl.textContent = importErr(err);
+      note.lastChild.textContent = ` Fix the connection on the Marketplace page (Installed › ${pickTracker(st)}), then try again.`;
+      note.hidden = !(err && err.status === 502);
+      retry.hidden = false;
+    };
+    const clearFail = () => { failEl.textContent = ''; note.hidden = true; retry.hidden = true; };
+    const countText = () => {
+      const typed = st.searched;
+      if (!typed) return where() ? `Recently updated in ${where()}` : 'Recently updated';
+      const n = st.tickets.length;
+      const key = pastedKeyOf(typed);
+      if (!n) {
+        return key ? `${key} was not found in ${pickTracker(st)}, or this connection cannot see it.`
+          : where() ? `No ticket in ${where()} matches “${typed}”.` : `No ticket matches “${typed}”.`;
+      }
+      const verb = n === 1 ? 'matches' : 'match';
+      return where() ? `${plural(n, 'ticket')} in ${where()} ${verb} “${typed}”.` : `${plural(n, 'ticket')} ${verb} “${typed}”.`;
+    };
+    function render() {
+      status.textContent = countText();
+      empty.hidden = !(st.searched && !st.tickets.length && !pastedKeyOf(st.searched));
+      results.replaceChildren(...st.tickets.map((t) => {
+        const radio = h('input', { type: 'radio', name: 'req-pick-ticket', value: t.key, 'data-ui': `pick-${t.key}`, 'aria-label': `${t.key} ${t.title}` });
+        radio.checked = st.chosen === t.key;
+        radio.addEventListener('change', () => { if (radio.checked) { st.chosen = t.key; cont.disabled = false; } });
+        return h('label', { class: 'req-import-ticket' }, radio,
+          h('span', { class: 'req-import-ticket-txt' },
+            h('span', { class: 'req-import-ticket-head' }, h('b', { text: t.key }), ' ', h('span', { text: t.title })),
+            h('span', { class: 'hint', text: [t.type, t.status, t.updatedOn ? `updated ${t.updatedOn}` : null].filter(Boolean).join(' · ') })),
+          t.linkedTo ? h('span', { class: 'chip req-import-linkchip', text: `Linked to ${t.linkedTo.id}` }) : null);
+      }));
+      more.hidden = !st.cursor;
+      cont.disabled = !st.chosen;
+    }
+    async function run({ next = false } = {}) {
+      if (!st.conn) return;
+      const n = ++st.seq;
+      const typed = search.value.trim();
+      clearFail();
+      status.replaceChildren(h('span', { class: 'badge blue', text: where() ? `Searching ${where()}…` : 'Searching all projects…' }));
+      try {
+        const r = await api('POST', importUrl(s, '/search'), { ...st.conn, ...(st.project ? { project: st.project } : {}), ...(typed ? { search: typed } : {}),
+          ...(next && st.cursor ? { cursor: st.cursor } : {}) });
+        if (!live(g) || n !== st.seq) return;   // the dialog is gone, or a newer search superseded this one
+        st.searched = typed;
+        st.tickets = next ? [...st.tickets, ...(r.tickets || [])] : (r.tickets || []);
+        st.cursor = r.cursor || null;
+        if (!next && st.chosen && !st.tickets.some((t) => t.key === st.chosen)) st.chosen = null;
+        render();
+      } catch (err) { if (live(g) && n === st.seq) showFail(err); }
+    }
+    // The connection's projects. Its own request number (plan review S8): after two quick Connection changes only the last one's
+    // answer fills the select; an earlier one (also an earlier failure) is dropped. Answers whether this answer was used.
+    async function loadProjects() {
+      const n = ++st.projSeq;
+      let r;
+      try { r = await api('POST', importUrl(s, '/options'), { ...st.conn }); }
+      catch (err) { if (live(g) && n === st.projSeq) throw err; return false; }
+      if (!live(g) || n !== st.projSeq) return false;
+      st.projects = r.projects || [];
+      if (st.project && !st.projects.some((p) => p.value === st.project)) st.project = '';
+      syncSelect(projSel, [{ value: '', label: 'All projects' }, ...st.projects], st.project);
+      return true;
+    }
+    async function load() {
+      clearFail();
+      try {
+        if (!st.info) {
+          const info = await api('GET', importUrl(s));
+          if (!live(g)) return;
+          st.info = info;
+        }
+        const sources = st.info.sources || [];
+        const conns = sources.flatMap((t) => (t.profiles || []).map((p) => ({ conn: { plugin: t.plugin, sourceId: t.sourceId, profile: p.id || null },
+          label: sources.length > 1 ? `${t.name} · ${p.label}` : p.label })));
+        if (!st.conn) {
+          const pref = importPrefs && conns.find((c) => sameConnUi(c.conn, importPrefs.conn));
+          st.conn = pref ? pref.conn : st.info.defaultConnection || (conns[0] && conns[0].conn) || null;
+          st.project = pref ? importPrefs.project || '' : st.info.defaultProject || '';
+        }
+        const name = pickTracker(st);
+        lead.textContent = `Pick the ticket this feature starts from. Worca reads it through your ${name} connection and changes nothing in ${name}.`;
+        projLabel.textContent = `${name} project`;
+        if (conns.length > 1) {
+          connField.replaceChildren(h('label', { for: 'req-pick-conn' }, 'Connection'),
+            exportSelect({ id: 'req-pick-conn', ui: 'pick-conn', list: conns.map((c) => ({ value: connValue(c.conn), label: c.label })), value: connValue(st.conn),
+              onchange: (e) => {
+                st.conn = connFrom(e.target.value);
+                st.project = '';
+                st.chosen = null;
+                importPrefs = { conn: st.conn, project: '' };
+                void loadProjects().then((used) => (used ? run() : undefined), (err) => { if (live(g)) showFail(err); });
+              } }));
+          connField.hidden = false;
+        }
+        await loadProjects();
+        if (!live(g)) return;
+        if (keep) { search.value = st.search; render(); } else await run();
+      } catch (err) { if (live(g)) showFail(err); }
+    }
+    projSel.addEventListener('change', () => { st.project = projSel.value; importPrefs = { conn: st.conn, project: st.project }; void run(); });
+    search.addEventListener('input', () => {
+      st.search = search.value;
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (live(g)) void run(); }, SEARCH_MS);   // D4: 300 ms after the last key
+    });
+    void load();
+  }
+
+  // Task 12 replaces this stand-in with the preview (Continue calls it)
+  function openImportPreview() {}
 
   // A repaint from the feature on screen, without a fetch (a fold, an editor opened, Change, Cancel).
   function redraw() { if (current) paintFeature(current.f, current.turns); }

@@ -90,7 +90,8 @@ function assertInRequirementsBlock(selectors) {
 
 test('board 15: a Files field after Describe it: the drop zone, its limits, the privacy note naming the model; no chips yet', async () => {
   const { host, zone } = await openNew();
-  const ids = [...host.querySelectorAll('.req-new .field > label')].map((l) => l.getAttribute('for'));
+  // A6.1: Describe it's label shares a row with From a ticket… (.req-import-labrow)
+  const ids = [...host.querySelectorAll('.req-new .field > label, .req-new .field > .req-import-labrow > label')].map((l) => l.getAttribute('for'));
   assert.deepEqual(ids, ['req-new-title', 'req-new-desc', 'req-new-files-input', 'req-new-target']);
   assert.equal(text(host.querySelector('.req-new-files > label')), 'Files optional: emails, a spec, screenshots, a mockup');
   assert.equal(zone.firstChild.textContent, 'Drop files here, paste them, or ');
