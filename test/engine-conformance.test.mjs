@@ -214,10 +214,13 @@ conformanceRow('C-GROUPKILL', "(sandbox) a stopped step's grandchild dies; the s
 // running is group-killed, so a step whose background child holds its stdout settles. Per engine: each adapter tells
 // superviseSpawn when its turn is over (turnOver). Every case kills its grandchild in a `finally`.
 const LEFTOVER_ENV = { WORCA_LEFTOVER_GRACE_MS: '300' };
+// The C-GROUPKILL rows need the engine itself to exit within the grace after its result: 300 ms missed that under load
+// (75 test files in parallel, 2026-10-28), so its own exit counted as a leftover.
+const GROUPKILL_ENV = { WORCA_LEFTOVER_GRACE_MS: '1000' };
 const leftoverLine = (events) => events.filter((e) => e.type === 'stderr' && /^\[worca\] .*after its result/.test(e.text || ''));
 
 conformanceRow('C-GROUPKILL', 'after its result, a step whose background child holds its stdout settles; the child dies', async (engine) => {
-  Object.assign(process.env, LEFTOVER_ENV);
+  Object.assign(process.env, GROUPKILL_ENV);
   const events = [];
   let settled = null;
   const p = runFake(engine, { env: { FAKE_GRANDCHILD_STDOUT: '1' }, onEvent: (e) => events.push(e) }).then((r) => { settled = r; });
@@ -236,7 +239,7 @@ conformanceRow('C-GROUPKILL', 'after its result, a step whose background child h
 
 conformanceRow('C-GROUPKILL', "(sandbox) after its result, a step whose background child holds its stdout settles; the sandbox lives on", async (engine, t) => {
   if (!ENGINES[engine].remote) { t.skip('no sandbox runs this engine yet (catalog remote: false)'); return; }
-  Object.assign(process.env, LEFTOVER_ENV);
+  Object.assign(process.env, GROUPKILL_ENV);
   const upstream = await startEngineUpstream();
   t.after(() => upstream.close());
   const out = join(tmp('worca-conf-gk-'), 'rec.json');
