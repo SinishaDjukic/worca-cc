@@ -4,7 +4,7 @@
 
 **Goal:** A product owner sends a feature's spec to the team's tracker as a ticket and keeps that ticket in step: **Export ▾ › Export to Jira…** opens a one-time **Set up export for <name>**, then a preview of the ticket exactly as it will be sent; a feature that is not Ready goes only with a recorded reason; after an export the header shows the ticket chip and a **History** card records it; **Export again** updates the ticket, adds a comment (shown before it is sent) or makes a new ticket, and warns before replacing a description edited in the tracker; a run started from the feature reports back to the ticket. No model call, no cost; behind the `requirements` flag.
 
-**Architecture:** The Requirements code knows only "a task source that can export": six optional connector ops (`exportOptions`, `createTicket`, `updateTicket`, `commentTicket`, `ticketState`, `findTicket`) plus `capabilities().export`, called server-side through the existing `callSource` (plugin API stays 5). A pure module `src/core/requirements/ticket.mjs` builds the tool-neutral ticket, the changes since the last export, the comment and the preview hash; `src/core/requirements/export.mjs` is the service (tracker discovery, setup, preview, export with the duplicate guard, Forget the link, the feature's `export` view). Storage is two new tables (schema v79): the export setup per project or workspace and the ticket link per feature; every export is an `export` turn. Jira's part lives only in `plugins/jira-source/connector/` (REST v2, wiki markup, Cloud and Data Center). Start gains **Report back**: an in-process `reportTo` makes the run's pipeline row a `plugin` row, so today's write-back reports to the ticket unchanged. The page module `ui/public/requirements-view.mjs` gains the menu items, the dialogs, the chip, the History card and the Report back row; CSS goes into the Requirements block of `ui/public/style.css`.
+**Architecture:** The Requirements code knows only "a task source that can export": six optional connector ops (`exportOptions`, `createTicket`, `updateTicket`, `commentTicket`, `ticketState`, `findTicket`) plus `capabilities().export`, called server-side through the existing `callSource` (plugin API stays 5). A pure module `src/core/requirements/ticket.mjs` builds the tool-neutral ticket, the changes since the last export, the comment and the preview hash; `src/core/requirements/export.mjs` is the service (tracker discovery, setup, preview, export with the duplicate guard, Forget the link, the feature's `export` view). Storage is two new tables (schema v80): the export setup per project or workspace and the ticket link per feature; every export is an `export` turn. Jira's part lives only in `plugins/jira-source/connector/` (REST v2, wiki markup, Cloud and Data Center). Start gains **Report back**: an in-process `reportTo` makes the run's pipeline row a `plugin` row, so today's write-back reports to the ticket unchanged. The page module `ui/public/requirements-view.mjs` gains the menu items, the dialogs, the chip, the History card and the Report back row; CSS goes into the Requirements block of `ui/public/style.css`.
 
 **Tech Stack:** Node ESM, `node:sqlite`, `node:test`, jsdom, Express (`ui/server.mjs` → `src/core/requirements/routes.mjs`), the plugin shim (`src/core/plugin-shim.mjs`, one child per op, `WORCA_MOCK=1` canned answers), vanilla DOM (`ui/public/*.mjs`), headless Chrome over CDP for the browser proof.
 
@@ -17,7 +17,7 @@
 - One commit per task; subjects start `Requirements:`; every message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. A merge of the base is a merge commit.
 - **No model call, no real tracker in tests.** Every tracker call in a test goes to the mock shim (`WORCA_MOCK=1`), an injected `callSource`, or the fake Jira HTTP server of Task 4 (on `127.0.0.1`).
 - **Flag (D19).** Every new route is in `REQUIREMENTS_ROUTES` behind `requireFlag('requirements')`, so the flag-off walk of `test/requirements-api.test.mjs` covers it; changes reach the page only through the flag-checking `requirements-changed` frame (`requirementsChangeNotifier`); nothing is booked in `req_cost_ledger`.
-- **Schema v79:** `req_export_setups` and `req_export_links` exactly as design §3, `IF NOT EXISTS`, both in `INCREMENTAL_TABLES`; the rung `if (current < 79) db.exec(REQUIREMENTS_EXPORT_DDL);` after A3's v78 rung; no column on an existing table. If the base takes 79 first, the rung is renumbered as A8's was.
+- **Schema v80** (first written as v79; `dev` took 79): `req_export_setups` and `req_export_links` exactly as design §3, `IF NOT EXISTS`, both in `INCREMENTAL_TABLES`; the rung `if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);` after A3's v78 rung and dev's v79; no column on an existing table. If the base takes 79 first, the rung is renumbered as A8's was.
 - **The contract (D3):** the six ops are optional and additive; `WORCA_PLUGIN_API` stays 5, jira-source keeps `"worca-cc-api": ">=5 <6"`. A source can export only when `capabilities()` answers `export: true`. The new ops are never added to `POST /api/sources/call`'s allowlist.
 - **Safety (D18):** every tracker call is `callSource` from `export.mjs` (server-side); the setup and link tables hold plugin, source id and profile, never a config value; no view or response carries config except `doneStatus`; only the previewed ticket or comment is sent; file names only, never file contents. A preview renders as text nodes, never `innerHTML`. A plugin URL is kept only when it is `http(s)`.
 - **Timeouts (D14):** every export op `EXPORT_TIMEOUT_MS = 60_000`. A timeout (or any thrown failure) on a create or a new ticket keeps the pending marker (D10).
@@ -45,7 +45,7 @@
 
 | File | Task(s) | Responsibility |
 |---|---|---|
-| `src/core/db.mjs` | 1 | v79: `REQUIREMENTS_EXPORT_DDL`, `INCREMENTAL_TABLES`, the rung |
+| `src/core/db.mjs` | 1 | v80: `REQUIREMENTS_EXPORT_DDL`, `INCREMENTAL_TABLES`, the rung |
 | `src/core/requirements/spec.mjs` | 1, 5 | turn kind `export`; error code `TRACKER` |
 | `src/core/requirements/store.mjs` | 1 | export setup and link rows |
 | `src/core/requirements/markdown.mjs` | 2 | `renderTicketMarkdown`, `criterionLine` (sharing the Markdown export's helpers) |
@@ -62,13 +62,13 @@
 
 ---
 
-### Task 1: Schema v79, the setup and link rows, the `export` turn
+### Task 1: Schema v80, the setup and link rows, the `export` turn
 
 The tables and the store rows every later task reads.
 
 **Files:**
-- Modify: `src/core/db.mjs` (`SCHEMA_VERSION`, `REQUIREMENTS_EXPORT_DDL`, `INCREMENTAL_TABLES`, the v79 rung), `src/core/requirements/spec.mjs` (`TURN_KINDS`), `src/core/requirements/store.mjs`
-- Test: create `test/db-migrate-v79.test.mjs`, `test/requirements-export-store.test.mjs`
+- Modify: `src/core/db.mjs` (`SCHEMA_VERSION`, `REQUIREMENTS_EXPORT_DDL`, `INCREMENTAL_TABLES`, the v80 rung), `src/core/requirements/spec.mjs` (`TURN_KINDS`), `src/core/requirements/store.mjs`
+- Test: create `test/db-migrate-v80.test.mjs`, `test/requirements-export-store.test.mjs`
 
 **Interfaces:**
 - `store.mjs`: `getExportSetup(scopeType, scopeKey)`, `upsertExportSetup({ scopeType, scopeKey, plugin, sourceId, profile, trackerProject, trackerProjectName, issueType, issueTypeName, labels = ['worca'], priority, priorityName, criteria = { target: 'description' }, doneStatus }, { by })` (who made it is kept on an update), `setExportSetupDoneStatus(scopeType, scopeKey, doneStatus)`; `getExportLink(seq)` (a row holding only a pending create has `key: null`), `setPendingExport(seq, { plugin, sourceId, profile, trackerProject, marker }, { by })` (an existing row keeps its connection, project and key), `saveExportLink(seq, link, { by })` (the whole link; clears the pending marker), `clearPendingExport(seq)` (a keyless row is deleted), `deleteExportLink(seq)`. A link is `{ featureSeq, plugin, sourceId, profile, trackerProject, key, url, createdAt, exportedAt, spec, fields, fingerprint, pendingMarker, pendingAt, updatedBy, updatedAt }`.
@@ -249,7 +249,7 @@ Each task landed as one commit; review fixes landed as their own commits.
 
 | Task | Delivered | Tested by |
 |---|---|---|
-| 1 | v79 with both tables; setup and link rows; the `export` turn | `db-migrate-v79` (8 tests), `requirements-export-store` (4) |
+| 1 | v80 with both tables; setup and link rows; the `export` turn | `db-migrate-v80` (9 tests), `requirements-export-store` (4) |
 | 2 | `ticket.mjs`, `renderTicketMarkdown`, the changes and the comment | `requirements-ticket` (9) |
 | 3 | the optional ops in the contract and the plugin skill; the probe and its cache; mock answers; reach sentences | `requirements-export-trackers` (8), `plugin-shim`, `writeback` |
 | 4 | jira-source's six ops, `fingerprintOf`, the README's Export section; the key always answered once Jira made the ticket; version-based "too old" | `jira-source-export` (24) against a fake Jira, Cloud and Data Center |

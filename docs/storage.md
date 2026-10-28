@@ -15,7 +15,7 @@ project's working tree, so nothing is ever committed to your repo.
                                         (the Requirements Feature chat: req_helper_messages (v78), one row per
                                         message, kept until Clear chat; its spend is in req_cost_ledger with
                                         helper_message_id, which Clear chat keeps)
-                                        Requirements export (v79): req_export_setups (one row per project or
+                                        Requirements export (v80): req_export_setups (one row per project or
                                         workspace: the connection — plugin, source, profile, never a token —, the
                                         tracker project, issue type, labels, priority, where criteria go, the done
                                         status) and req_export_links (one row per feature: its current ticket, the

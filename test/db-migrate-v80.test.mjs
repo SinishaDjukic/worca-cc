@@ -1,6 +1,7 @@
-// test/db-migrate-v79.test.mjs — req_export_setups and req_export_links (plans/requirements-a6-design.md §3). A3's sibling
-// branch takes v78, so A6 is v79: a DB at 77 (A8), at 78 (stamped by A3's numbering, none of A6's tables), at A8's early 75,
-// at upstream's 74–76, from below 72, or a fresh one reaches 79 with both tables.
+// test/db-migrate-v80.test.mjs — req_export_setups and req_export_links (plans/requirements-a6-design.md §3). A3 took v78
+// and dev took v79 (run_groups.name_source), so A6, first written as v79, is v80: a DB at 79 (stamped by A6's early
+// numbering, without dev's column), at 77 (A8), at 78 (stamped by A3's numbering, none of A6's tables), at A8's early 75,
+// at upstream's 74–76, from below 72, or a fresh one reaches 80 with both tables.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -47,8 +48,19 @@ const fromStamp = (sql, stamp) => {
 test('a fresh DB has both export tables', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  assert.ok(SCHEMA_VERSION >= 79);
+  assert.ok(SCHEMA_VERSION >= 80);
   assertComplete(db);
+});
+
+test("a DB stamped 79 by A6's early numbering (A6's tables, no run_groups.name_source) reaches the current version complete", () => {
+  const db = fromStamp(`ALTER TABLE run_groups DROP COLUMN name_source;
+    INSERT INTO run_groups (id, title, created_at, updated_at) VALUES ('grp_1', 'A', 'x', 'x');
+    INSERT INTO req_export_links (feature_seq, plugin, source_id, tracker_project, ticket_key, updated_at)
+      VALUES (7, 'jira-source', 'jira', 'SHOP', 'SHOP-1', 't');`, 79);
+  assertComplete(db);
+  assert.ok(cols(db, 'run_groups').includes('name_source'), "dev's v79 column");
+  assert.equal(db.prepare("SELECT name_source FROM run_groups WHERE id = 'grp_1'").get().name_source, 'user');
+  assert.equal(db.prepare('SELECT ticket_key FROM req_export_links WHERE feature_seq = 7').get().ticket_key, 'SHOP-1', "A6's link kept");
 });
 
 test('a DB at 77 (A8) gets both tables', () => assertComplete(fromStamp(A6, 77)));
