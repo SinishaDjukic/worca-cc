@@ -4875,6 +4875,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* #1012: a staged live member draws the four-section block (bar and Plan / Build / Review / Ready) under its line. */
 .runs-members .runs-row:has(> .runs-stage){flex-wrap:wrap;}
 .runs-members .runs-row > .runs-stage{order:3;flex:1 0 calc(100% - 16px);margin:4px 0 2px 16px;}
+/* One step below the group row's 3px line: a 2px bar, the 11px marks closer under it. */
+.runs-members .runs-stage > .run-prog-track{height:2px;}
+.runs-members .runs-stage > .run-prog-marks{margin-top:3px;}
 .runs-members .runs-pick,.runs-members .runs-row-tail{height:26px;}
 @media (pointer: coarse){.runs-members .runs-pick,.runs-members .runs-row-tail{height:40px;}.runs-members .runs-row{min-height:40px;}}
 /* A group row heads its runs. */

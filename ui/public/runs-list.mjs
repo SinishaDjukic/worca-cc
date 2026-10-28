@@ -654,9 +654,10 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   // #955: a member is one line: no state word its dot says, no project its group names, no label chips.
   if (level === 'member') line = dropLead(memberLine(r.model, line), r.kind === 'chat' ? parentWhere : '');
   // #1012: a staged member draws the four-section block, whose marks name its stage, so its line drops that word.
+  // A working one names no step either ("Refine Plan"): only a state its dot does not say (needs you, paused) stays.
   const staged = level === 'member' && r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed'
     && !r.model.prNeeds && r.model.progress && r.model.progress.mode === 'stages';
-  if (staged) line = dropLead(line, r.model.progress.label);
+  if (staged) line = DOT_SAYS.has(r.model.state) ? '' : dropLead(line, r.model.progress.label);
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
   const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
   a.append(...[title, lab, right, textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));

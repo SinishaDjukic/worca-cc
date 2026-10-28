@@ -343,8 +343,9 @@ and hand the focus back to the opener.
   13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
   touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
   and ellipsises first), then its PR chip; no label chips and no Independent tag. A live member's 3px line sits under
-  its title; a live member with stages draws the four-section block instead (bar, then Plan / Build / Review / Ready
-  with its stage bold), and its status drops that stage word. Its ⋯ stays 28px, centred.
+  its title; a live member with stages draws the four-section block instead (a 2px bar, one step below the group
+  row's 3px line, then the 11px Plan / Build / Review / Ready with its stage bold); its status names no step, only a
+  state its dot does not say (needs you, paused). Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).

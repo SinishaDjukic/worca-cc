@@ -695,7 +695,7 @@ test('#955 a one-line member: PR chip kept with no repeated word, no labels, no 
   assert.equal(live.querySelector(':scope > a.runs-row').dataset.line, liveModel.line, 'data-line keeps the canonical line (D11)');
 });
 
-test('#1012 a staged live member draws the four-section block, and its line drops the stage word the marks say', () => {
+test('#1012 a staged live member draws the four-section block; a working one names no step, a needing one keeps why', () => {
   const run = { status: 'running', steps: [{ nodeId: 'n' }], active: ['n'], stepper: { auto: { status: 'deciding' } } };   // Plan · choosing the workflow
   const chain = { id: 'p:c1012', groupKind: 'chain', title: 'Chain', members: [
     { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
@@ -706,8 +706,15 @@ test('#1012 a staged live member draws the four-section block, and its line drop
   assert.ok(row.querySelector(':scope > .runs-stage .run-prog-track'), 'the four-section bar');
   assert.equal(row.querySelector(':scope > .runs-stage .run-prog-mark[data-state="current"]').textContent, 'Plan');
   assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line beside it');
-  assert.equal(row.querySelector('.runs-row-sub').textContent, 'choosing the workflow', 'the marks say Plan');
+  assert.equal(row.querySelector('.runs-row-sub').textContent, '', 'the marks say Plan, the dot says Working: no step');
   assert.equal(row.dataset.line, 'Plan · choosing the workflow', 'data-line keeps the canonical line (D11)');
+  const asking = { ...run, pendingQuestion: { questions: [{ id: 'q1', question: 'Which?' }] } };
+  const m2 = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run: asking })],
+    groups: [{ ...chain, members: [{ ...chain.members[0], run: asking }] }], now: NOW });
+  const host2 = doc.createElement('div');
+  host2.append(...renderRunsList(doc, m2));
+  const sub2 = host2.querySelector('.runs-members .runs-item[data-level="member"] .runs-row-sub').textContent;
+  assert.match(sub2, /^needs you/, 'a state the dot does not say stays, without the stage word');
 });
 
 test('#955 a chat inside a one-project topic group does not repeat the project; a "2 projects" group keeps it', () => {
