@@ -13660,7 +13660,8 @@ let detectSystemProxyImpl = detectSystemProxy;
 app.get('/api/proxy/detect', async (req, res) => {
   // Like the proxy routes that act: it fetches a PAC file and starts processes, so an agent run is refused.
   if (refuseProxyAgent(req, res)) return;
-  res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl());
+  // Linux falls back to the HTTPS_PROXY Worca started with: the pre-swap sourceEnv, never its own local proxy URL.
+  res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl({ env: upstreamEnv(egressNow()?.sourceEnv ?? process.env) }));
 });
 
 app.post('/api/proxy/login', (req, res) => {
