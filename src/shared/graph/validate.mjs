@@ -1,5 +1,5 @@
 // src/shared/graph/validate.mjs
-// THE authority on v2 graph legality (base spec §2, V1-V24; V22 (script config)
+// THE authority on v2 graph legality (base spec §2, V1-V24, sessions V25-V30; V22 (script config)
 // reuses the number the retired single-wire rule freed). Server save (422), plugin import, the composer's
 // live report, the run-time check and the seed drift guard all come through
 // here, so it is pure, never throws on a malformed template, and every lookup
@@ -682,7 +682,7 @@ export const RULES = [
         }
       }
       for (const wid of s.crossingLoops) {
-        const w = wires.find((x) => x.id === wid);
+        const w = wires.find((x) => x?.id === wid && nodeById.has(x?.from?.node) && nodeById.has(x?.to?.node));   // a duplicate id may be malformed (V6)
         const src = w ? nodeById.get(w.from.node) : null;
         if (!src || !members.has(w.to.node) || inC.has(src.id) || (src.kind !== 'agent' && src.kind !== 'script') || !reach.has(src.id)) continue;
         add(`loop wire '${w.id}' runs '${src.id}' outside session '${s.sid}' — the session waits for it`, { nodeId: w.to.node, sessionId: s.sid });

@@ -26,6 +26,11 @@ test('04 §2.5 reference table on wf_no-clarify', async () => {
       { ok: false, code: 'V26', reason: '4 steps max' }) },
     { name: 'one step V26', run: () => assert.deepEqual(sessionLegal(t, portsFn, ['n_impl', 'n_impl']), { ok: false, code: 'V26', reason: 'a session needs 2 steps' }) },
     { name: 'unknown id V25', run: () => assert.deepEqual(sessionLegal(t, portsFn, ['n_impl', 'n_gone']), { ok: false, code: 'V25', reason: 'not on the canvas' }) },
+    { name: '[script, impl] V25', run: () => {
+      const s = seed('wf_no-clarify');
+      s.nodes.push({ id: 'n_tests', kind: 'script', key: 'shell', x: 1500, y: 198, config: {} });
+      assert.deepEqual(sessionLegal(s, portsFn, ['n_tests', 'n_impl']), { ok: false, code: 'V25', reason: 'a script runs on its own' });
+    } },
   ]);
 });
 
@@ -55,6 +60,26 @@ test('sessionCandidates for Implementation: next first, then previous, each in s
     { nodeId: 'n_refine', side: 'previous', ok: false, reason: 'Decompose runs between Refine Plan and Implementation' },
     { nodeId: 'n_decompose', side: 'previous', ok: true },
   ]);
+});
+
+test('sessionCandidates walks through and/or/combine cards only: a combine joins Plan to Implementation, a script does not', () => {
+  // wf_quick-fix with Plan's plan reaching Implementation through a combine that only Plan feeds, then through a shell
+  // script instead.
+  const viaCombine = seed('wf_quick-fix');
+  viaCombine.nodes.push({ id: 'n_comb', kind: 'combine', x: 500, y: 198, config: { arity: 2 } });
+  viaCombine.wires.find((w) => w.id === 'w2').to = { node: 'n_comb', port: 'in1' };
+  viaCombine.wires.push({ id: 'w7', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_comb', port: 'in2' } });
+  viaCombine.wires.push({ id: 'w8', from: { node: 'n_comb', port: 'out' }, to: { node: 'n_impl', port: 'plan' } });
+  assert.deepEqual(sessionCandidates(viaCombine, portsFn, { nodeId: 'n_impl' }), [
+    { nodeId: 'n_review', side: 'next', ok: true },
+    { nodeId: 'n_plan', side: 'previous', ok: true },
+  ]);
+  const viaScript = seed('wf_quick-fix');
+  viaScript.nodes.push({ id: 'n_sh', kind: 'script', key: 'shell', x: 500, y: 198, config: { params: { command: 'npm test' },
+    ports: { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] } } });
+  viaScript.wires.find((w) => w.id === 'w2').to = { node: 'n_sh', port: 'in' };
+  viaScript.wires.push({ id: 'w7', from: { node: 'n_sh', port: 'log' }, to: { node: 'n_impl', port: 'plan' } });
+  assert.deepEqual(sessionCandidates(viaScript, portsFn, { nodeId: 'n_impl' }), [{ nodeId: 'n_review', side: 'next', ok: true }]);
 });
 
 test('a neighbour in another session is offered disabled; a full session offers nothing ok', () => {
@@ -128,4 +153,16 @@ test('sessionNotes past the gate: fan-out, asks, inherited main-agent model; sha
   assert.equal(shared[1].text, 'One conversation has no main agent: the main-agent model and effort are not used.');
   assert.equal(sessionNotes(spec, { engine: 'claude', verified: { claude: false }, members }).some((n) => n.code === 'inherits-host-model'), false,
     'nothing about the main agent while the steps run as separate sessions');
+});
+
+test('sessionNotes: routed and asks stay quiet while the gate is closed; the main-agent effort alone inherits, and shared ignores it', () => {
+  const spec = { sid: 's_aaaaaaaa', members: ['n_impl', 'n_review'], closure: ['n_impl', 'n_review'], flows: [], internalWires: [], entryWires: [], exitWires: [], crossingLoops: [],
+    settings: { label: 'One session', mode: 'subagents', hostModel: null, hostEffort: 'high' } };
+  const members = [{ nodeId: 'n_impl', label: 'Implementation', routed: true, asks: true }, { nodeId: 'n_review', label: 'Review', effort: 'low' }];
+  assert.deepEqual(sessionNotes(spec, { engine: 'claude', verified: { claude: false }, members }).map((n) => n.code), ['gate-off']);
+  const on = sessionNotes(spec, { engine: 'claude', verified: { claude: true }, members });
+  assert.deepEqual(on.map((n) => n.code), ['routed-model', 'asks', 'inherits-host-model']);
+  assert.deepEqual(on[2], { level: 'info', code: 'inherits-host-model', text: "Implementation has no effort of its own, so it runs at the main agent's effort (high)." });
+  const shared = sessionNotes({ ...spec, settings: { ...spec.settings, mode: 'shared' } }, { engine: 'claude', verified: { claude: true }, members });
+  assert.deepEqual(shared.map((n) => n.code), ['asks', 'shared-ignores']);
 });

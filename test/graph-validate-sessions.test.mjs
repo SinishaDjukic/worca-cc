@@ -3,8 +3,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateGraph, SESSION_ISSUE_CODES } from '../src/shared/graph/validate.mjs';
 import { removeNode } from '../src/shared/graph/template.mjs';
-import { pruneSessions } from '../src/shared/graph/sessions.mjs';
+import { pruneSessions, sessionsOf } from '../src/shared/graph/sessions.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
+import { GRAPH_SHAPE_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { realPortsFn } from './helpers/graph-ports.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -24,8 +25,13 @@ test('a legal session adds no issue; session is not an unknown config key; the c
 test('every rule fires with its pinned message, nodeId and sessionId', async () => {
   await checkRows([
     { name: 'V25 bad id', run: () => {
-      const [i] = issues(join(seed('wf_quick-fix'), ['n_impl'], 7));
-      assert.deepEqual(i, { code: 'V25', message: "node 'n_impl' config.session must be an id like 's_k3f9a2b1' (got 7)", nodeId: 'n_impl', sessionId: null });
+      assert.deepEqual(issues(join(seed('wf_quick-fix'), ['n_impl'], 7)),
+        [{ code: 'V25', message: "node 'n_impl' config.session must be an id like 's_k3f9a2b1' (got 7)", nodeId: 'n_impl', sessionId: null }]);
+    } },
+    { name: 'correction 22: config.session null is absent (a chat op\'s remove) — no issue at all', run: () => {
+      const r = validateGraph(join(seed('wf_quick-fix'), ['n_impl', 'n_review'], null), portsFn);
+      assert.deepEqual(r.errors, []);
+      assert.deepEqual(r.warnings, []);
     } },
     { name: 'V25 script card (E), card-level', run: () => {
       const t = seed('wf_quick-fix');
@@ -39,8 +45,17 @@ test('every rule fires with its pinned message, nodeId and sessionId', async () 
       assert.equal(validateGraph(join(seed('wf_provided-plan'), ['n_or']), portsFn).warnings.some((w) => w.code === 'V17'), false);
     } },
     { name: 'V26 one step (W)', run: () => {
-      const [i] = issues(join(seed('wf_quick-fix'), ['n_impl']));
-      assert.deepEqual(i, { code: 'V26', message: `session '${S}' has one step ('n_impl') — it runs as its own session`, nodeId: 'n_impl', sessionId: S });
+      assert.deepEqual(issues(join(seed('wf_quick-fix'), ['n_impl'])),
+        [{ code: 'V26', message: `session '${S}' has one step ('n_impl') — it runs as its own session`, nodeId: 'n_impl', sessionId: S }]);
+    } },
+    { name: 'V26 at exactly 4 steps is legal (a session holds 2 to 4)', run: () => {
+      const r = validateGraph(join(seed('wf_no-clarify'), ['n_refine', 'n_decompose', 'n_impl', 'n_review']), portsFn);
+      assert.deepEqual(r.errors, []);
+      assert.deepEqual([...r.errors, ...r.warnings].filter((i) => i.code === 'V26'), []);
+    } },
+    { name: 'V29 skips a one-step session (V26 speaks for it), even on a ×N member', run: () => {
+      assert.deepEqual(issues(join(seed('wf_no-clarify'), ['n_impl'])),
+        [{ code: 'V26', message: `session '${S}' has one step ('n_impl') — it runs as its own session`, nodeId: 'n_impl', sessionId: S }]);
     } },
     { name: 'V27 between (E)', run: () => {
       const r = validateGraph(join(seed('wf_no-clarify'), ['n_refine', 'n_impl']), portsFn);
@@ -51,8 +66,37 @@ test('every rule fires with its pinned message, nodeId and sessionId', async () 
       const w = validateGraph(join(seed('wf_no-clarify'), ['n_decompose', 'n_impl', 'n_review']), portsFn).warnings.filter((x) => x.code === 'V29');
       assert.deepEqual(w, [{ code: 'V29', nodeId: 'n_impl', sessionId: S, message: `node 'n_impl' fans out ×N in session '${S}' — its tasks run outside the session; fix rounds run inside` }]);
     } },
+    { name: 'V29 role-review member (W): Shaper [roles, refine]', run: () => {
+      const r = validateGraph(join(structuredClone(GRAPH_SHAPE_WORKFLOW), ['n_roles', 'n_refine']), portsFn);
+      assert.deepEqual(r.errors, []);
+      assert.deepEqual(r.warnings, [{ code: 'V29', nodeId: 'n_roles', sessionId: S, message: `node 'n_roles' fans out ×N in session '${S}' — its tasks run outside the session; fix rounds run inside` }]);
+    } },
     { name: 'V28 does NOT fire on wf_provided-plan [impl, review] (loop through a flow card)', run: () => {
       assert.deepEqual(issues(join(seed('wf_provided-plan'), ['n_impl', 'n_review'])).filter((i) => i.code === 'V28'), []);
+    } },
+    { name: 'V28 does NOT fire when no member reaches the outside source of a crossing loop', run: () => {
+      // Implementation's fix input (loop:true, so its wire is in L) now comes from an outside planner the Task card
+      // feeds: w5 crosses into the session, but no member runs before that planner, so the session never waits on it.
+      const t = join(seed('wf_quick-fix'), ['n_impl', 'n_review']);
+      t.nodes.push({ id: 'n_fixer', kind: 'agent', key: 'planner', x: 700, y: 400, config: {} });
+      t.wires.push({ id: 'w7', from: { node: 'n_task', port: 'task' }, to: { node: 'n_fixer', port: 'task' } });
+      const w5 = t.wires.find((w) => w.id === 'w5');
+      w5.from = { node: 'n_fixer', port: 'plan' };
+      delete w5.config;
+      assert.deepEqual(sessionsOf(t, portsFn)[0].crossingLoops, ['w5'], 'precondition: w5 is a crossing loop from an outside agent');
+      const r = validateGraph(t, portsFn);
+      assert.deepEqual(r.errors, []);
+      assert.deepEqual(r.warnings, []);
+    } },
+    { name: 'V28 never throws: a malformed wire sharing a crossing loop\'s id is V5/V6, not a TypeError', run: () => {
+      // sessionsOf keeps only well-formed wires, so crossingLoops names the real w9; a lookup in the RAW wires would
+      // find this { id: 'w9' } first.
+      const t = join(seed('wf_provided-plan'), ['n_impl', 'n_review']);
+      t.wires.unshift({ id: 'w9' });
+      assert.deepEqual(sessionsOf(t, portsFn)[0].crossingLoops, ['w9', 'w14'], 'precondition: w9 is a crossing loop');
+      const r = validateGraph(t, portsFn);
+      assert.deepEqual(r.errors.map((e) => e.code), ['V5', 'V5', 'V6'], 'the same errors as without the session');
+      assert.deepEqual(r.warnings.filter((w) => w.code === 'V28'), []);
     } },
     { name: 'V30 bad mode (E) and V17 unknown setting (W)', run: () => {
       const t = join(seed('wf_quick-fix'), ['n_impl', 'n_review']);
@@ -68,6 +112,36 @@ test('every rule fires with its pinned message, nodeId and sessionId', async () 
         `session '${S}' label must be 1 to 60 characters with no control characters`,
         `session '${S}' hostModel must be a non-empty string`,
       ]);
+    } },
+    { name: 'V30 an empty label and a label with a control character (E)', run: () => {
+      for (const label of ['', 'a\u2028b', 'a\nb']) {
+        const t = join(seed('wf_quick-fix'), ['n_impl', 'n_review']);
+        t.sessions = { [S]: { label } };
+        assert.deepEqual(issues(t), [{ code: 'V30', nodeId: 'n_impl', sessionId: S,
+          message: `session '${S}' label must be 1 to 60 characters with no control characters` }], JSON.stringify(label));
+      }
+    } },
+    { name: 'V30 hostEffort gets the same check as hostModel (E)', run: () => {
+      const t = join(seed('wf_quick-fix'), ['n_impl', 'n_review']);
+      t.sessions = { [S]: { hostModel: 'claude-haiku-4-5', hostEffort: ' ' } };
+      assert.deepEqual(issues(t), [{ code: 'V30', nodeId: 'n_impl', sessionId: S, message: `session '${S}' hostEffort must be a non-empty string` }]);
+    } },
+    { name: 'V30 a non-string main-agent setting (E)', run: () => {
+      const t = join(seed('wf_quick-fix'), ['n_impl', 'n_review']);
+      t.sessions = { [S]: { hostModel: 7 } };
+      assert.deepEqual(issues(t), [{ code: 'V30', nodeId: 'n_impl', sessionId: S, message: `session '${S}' hostModel must be a non-empty string` }]);
+    } },
+    { name: 'V30 every setting null is the default — no issue', run: () => {
+      const t = join(seed('wf_quick-fix'), ['n_impl', 'n_review']);
+      t.sessions = { [S]: { label: null, mode: null, hostModel: null, hostEffort: null } };
+      const r = validateGraph(t, portsFn);
+      assert.deepEqual(r.errors, []);
+      assert.deepEqual(r.warnings, []);
+    } },
+    { name: 'correction 28: a whitespace-only label is no V30 (it reads as the default)', run: () => {
+      const t = join(seed('wf_quick-fix'), ['n_impl', 'n_review']);
+      t.sessions = { [S]: { label: '   ' } };
+      assert.deepEqual(issues(t), []);
     } },
   ]);
 });
@@ -95,6 +169,6 @@ test('REVIEW FOCUS 4 — deleting the middle member leaves a V27 "not wired toge
 
 test('a 5-member session is V26 (E)', () => {
   const t = join(seed('wf_no-clarify'), ['n_plan', 'n_refine', 'n_decompose', 'n_impl', 'n_review']);
-  assert.ok(validateGraph(t, portsFn).errors.some((e) => e.code === 'V26' && e.nodeId === 'n_plan' && e.sessionId === S
-    && e.message === `session '${S}' has 5 steps — a session holds 2 to 4`));
+  assert.deepEqual(validateGraph(t, portsFn).errors.filter((e) => e.code === 'V26'),
+    [{ code: 'V26', nodeId: 'n_plan', sessionId: S, message: `session '${S}' has 5 steps — a session holds 2 to 4` }]);
 });

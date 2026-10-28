@@ -74,7 +74,7 @@ test('plugin workflows/*.json keep sessions and codeGraph', () => {
 });
 
 test('the run manifest carries sessions and manifestTemplate restores them (the only copy a resumed run has)', () => {
-  const m = buildGraphManifest(grouped(), realRegistryIndex());
+  const m = buildGraphManifest({ ...grouped(), canvas: { x: 0, y: 0, zoom: 1 } }, realRegistryIndex());
   assert.deepEqual(m.sessions, SETTINGS);
   assert.equal(m.codeGraph, false);
   assert.equal('canvas' in m, false);
