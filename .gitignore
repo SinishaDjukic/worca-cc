@@ -34,3 +34,4 @@ e2e/extension/playwright-report/
 # demo video output (tools/demo/extension-video)
 tools/demo/extension-video/out/
 .gstack/
+.test-timings/
