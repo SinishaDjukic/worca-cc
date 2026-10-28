@@ -7,7 +7,7 @@
 import cp from 'node:child_process';
 import { accessSync, constants as FS, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -213,16 +213,52 @@ export function median(xs) {
 }
 
 // Text-bearing keys (plan Task 1) plus path- and output-bearing keys: the S9 fixture is committed to the repo.
+// `output` is a hook_response's whole hook payload (worca's sub-agent hook is `cat`: transcript_path, cwd, the prompt
+// and the child's reply); a string `tool_use_result` is a tool error, which can print the cwd. `signature` is a thinking
+// block's encrypted signature (tools/ask-capture-fixtures.mjs blanks it too); `message` and `error` here are only string
+// values (plugin_errors[].message, an error frame's text), never a frame's message object.
 const STRIP_KEYS = new Set(['text', 'thinking', 'content', 'prompt', 'command', 'description', 'result', 'stdout',
-  'stderr', 'cwd', 'path', 'file_path', 'filePath', 'pattern', 'old_string', 'new_string']);
+  'stderr', 'cwd', 'path', 'file_path', 'filePath', 'pattern', 'old_string', 'new_string', 'output', 'tool_use_result',
+  'transcript_path', 'scratchpad_dir', 'scratchpad_path', 'messaging_socket_path', 'output_file', 'summary', 'detail',
+  'status_detail', 'task_description', 'signature', 'outputFile', 'needs_action', 'error', 'message', 'partial_json']);
+// Keys whose value is an object or array of paths (init.memory_paths, Glob's tool_use_result.filenames) or of the
+// owner's installed inventory (init's skills, slash commands, agents, plugins, MCP server names and mcp__<server>__
+// tool names): every string in it.
+const BLANK_KEYS = new Set(['memory_paths', 'filenames', 'skills', 'slash_commands', 'agents', 'plugins', 'mcp_servers', 'tools']);
 
-/** Replace, at any depth, every string value of STRIP_KEYS with "x". Ids, types, names, usage, model and cost survive. */
+/**
+ * [root, placeholder] pairs replaced inside every string strip() keeps, longest first (tools/ask-capture-fixtures.mjs
+ * createSanitizer): the home dir, the tmpdir and the cwd, each also as its realpath (macOS: /var → /private/var) and in
+ * the dashed form Claude names a project folder by (~/.claude/projects/-Users-…).
+ */
+function stripRoots() {
+  const real = (p) => { try { return realpathSync(p); } catch { return p; } };
+  const pairs = [[homedir(), '/HOME'], [tmpdir(), '/TMP'], [real(tmpdir()), '/TMP'], [process.cwd(), '/REPO'],
+    [real(process.cwd()), '/REPO']].filter(([root]) => root && root.length > 1);
+  return [...pairs, ...pairs.map(([root, ph]) => [root.replace(/[^A-Za-z0-9]/g, '-'), ph.replace('/', '-')])]
+    .sort((a, b) => b[0].length - a[0].length);
+}
+
+const blank = (v) => (typeof v === 'string' ? 'x' : Array.isArray(v) ? v.map(blank)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, blank(x)])) : v);
+
+/**
+ * Replace, at any depth, every string value of STRIP_KEYS and every string under BLANK_KEYS with "x", and the home,
+ * tmp and cwd roots in every other string with a placeholder. Ids, types, names, usage, model and cost survive.
+ */
 export function strip(frame) {
-  if (Array.isArray(frame)) return frame.map(strip);
-  if (!frame || typeof frame !== 'object') return frame;
-  const out = {};
-  for (const [k, v] of Object.entries(frame)) out[k] = STRIP_KEYS.has(k) && typeof v === 'string' ? 'x' : strip(v);
-  return out;
+  const roots = stripRoots();
+  const walk = (v) => {
+    if (typeof v === 'string') return roots.reduce((s, [root, ph]) => s.split(root).join(ph), v);
+    if (Array.isArray(v)) return v.map(walk);
+    if (!v || typeof v !== 'object') return v;
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      out[k] = BLANK_KEYS.has(k) ? blank(x) : STRIP_KEYS.has(k) && typeof x === 'string' ? 'x' : walk(x);
+    }
+    return out;
+  };
+  return walk(frame);
 }
 
 // ---- API request facts and the recording proxy ------------------------------------------------------------------

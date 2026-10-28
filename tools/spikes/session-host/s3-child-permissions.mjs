@@ -9,6 +9,10 @@ import { CLIS, childCall, cliText, isMain, spikeContext, summarize, toolResult, 
 
 const DENY = 'Bash(echo s3-denied*)';
 const GUARD_RE = /host guard: blocked/;                             // src/core/host-guard.mjs evaluateKillCommand
+// A deny rule's refusal (CLI 2.1.293–2.1.308): `Permission to use Bash with command <cmd> has been denied.`. Anchored, it
+// matches none of the no-grant wordings (`This command requires approval`, `Claude requested permissions to use …`,
+// the don't-ask and `IMPORTANT:` variants), a hook block (`PreToolUse:Bash hook error: …`) or a failed command.
+const DENY_RE = /^Permission to use [\w.-]+ (?:with (?:command )?[\s\S]+ )?has been denied\.$/;
 const CHILD = { s3c: { description: 's3 child', prompt: 'Do exactly what the brief says with your tools, then reply DONE.', tools: ['Bash', 'Write'] } };
 const dispatch = (task) => `call the Agent tool once with subagent_type "s3c" and prompt "${task}". Then reply DONE.`;
 // Appends the tool name and the hook input's TOP-LEVEL KEY NAMES (never values), one JSON line per call (D11).
@@ -18,6 +22,41 @@ const KEYS_HOOK = [
   "  try { const j = JSON.parse(d); require('fs').appendFileSync(process.env.S3E_KEYS, JSON.stringify({ tool: j.tool_name ?? null, keys: Object.keys(j).sort() }) + '\\n'); } catch {}",
   '});',
 ].join('\n');
+
+/** The Bash tool_uses (id and command) whose parent is `parent` (null = the host). */
+function bashCalls(frames, parent) {
+  return frames.filter((f) => f.type === 'assistant' && (f.parent_tool_use_id ?? null) === parent)
+    .flatMap((f) => (Array.isArray(f.message?.content) ? f.message.content : []))
+    .filter((b) => b.type === 'tool_use' && b.name === 'Bash').map((b) => ({ id: b.id, command: String(b.input?.command ?? '') }));
+}
+
+/**
+ * Turn c's deny facts (review M2). `hostWrote` / `childWrote`: whether s3c-host.txt / s3c.txt exist after the turn.
+ * `denyMatchesHost` is false when the host's file appeared, true only when a host Bash call was refused in deny-rule
+ * wording, else null (a failed command or a no-grant refusal is not the rule). `denyReachesChildren` is null unless
+ * the rule matched the host and the child attempted Bash; then true when a child Bash call was refused in the host's
+ * own refusal wording (each command masked), even if the child then made its file another way (it holds Write; a Bash
+ * rule does not cover Write), else false when the child's file appeared. A child refused for having no grant (turn a
+ * measures whether --allowedTools reaches children) or by anything else reads null (D10).
+ * The CLI embeds `command.trim()`, so the trimmed command is masked too. For a piped command it embeds only the denied
+ * segment without its redirections: masking then fails and the fact reads null (safe; mind it if the probe changes).
+ */
+export function denyFacts(frames, { hostWrote, childWrote }) {
+  const shape = (call) => {
+    const r = toolResult(frames, call.id);
+    const text = (r?.text ?? '').replace(/<\/?tool_use_error>/g, '').trim();
+    if (!r?.isError || !DENY_RE.test(text)) return null;
+    return [call.command, call.command.trim()].filter(Boolean).reduce((s, cmd) => s.split(cmd).join('<command>'), text);
+  };
+  const host = bashCalls(frames, null);
+  const hostShapes = host.map(shape).filter(Boolean);
+  const denyMatchesHost = !host.length ? null : hostWrote ? false : hostShapes.length ? true : null;
+  const { call } = childCall(frames, 's3c');
+  const child = call ? bashCalls(frames, call.id) : [];
+  const refused = child.some((x) => hostShapes.includes(shape(x)));
+  const denyReachesChildren = denyMatchesHost !== true || !child.length ? null : refused ? true : childWrote ? false : null;
+  return { denyMatchesHost, denyReachesChildren };
+}
 
 /** The exact --settings payload worca sends for a guarded spawn with one deny rule. */
 export function worcaSettings() {
@@ -54,7 +93,7 @@ export async function main(args = process.argv.slice(2), { log = console.log } =
     const has = (f) => existsSync(join(cwd, f));
     const childCalls = (t, name) => { const { call } = childCall(t.frames, 's3c'); return call ? summarize(t.frames).toolCalls.filter((x) => x.parent === call.id && x.name === name) : []; };
     const hostCalls = (t, name) => summarize(t.frames).toolCalls.filter((x) => x.parent === null && x.name === name);
-    const denyMatchesHost = hostCalls(c, 'Bash').length ? !has('s3c-host.txt') : null;
+    const deny = denyFacts(c.frames, { hostWrote: has('s3c-host.txt'), childWrote: has('s3c.txt') });
     const guardCalls = childCalls(d, 'Bash');
     const lines = existsSync(keysFile) ? readFileSync(keysFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
     const bash = lines.filter((l) => l.tool === 'Bash');
@@ -67,9 +106,8 @@ export async function main(args = process.argv.slice(2), { log = console.log } =
       // a/b: null when the child never tried; only `false` (the file WAS written) can select HOST_TOOLS_MODE 'agent-only'.
       allowedToolsReachChildren: childCalls(a, 'Write').length ? !has('s3a.txt') : null,
       toolsFlagRestrictsChildren: childCalls(b, 'Write').length ? !has('s3b.txt') : null,
-      denyMatchesHost,
-      // true only with evidence: the rule matched the host, the child attempted the command, and no file appeared (D10).
-      denyReachesChildren: denyMatchesHost !== true ? null : childCalls(c, 'Bash').length ? !has('s3c.txt') : null,
+      // true only with evidence: the rule refused the host, and the child's attempt was refused in the same words (D10).
+      ...deny,
       hostGuardReachesChildren: guardCalls.length
         ? guardCalls.some((x) => { const r = toolResult(d.frames, x.id); return Boolean(r?.isError && GUARD_RE.test(r.text)); }) : null,
       hookSeesAgentContext: childLine ? onlyChild.length > 0 || hostLine.keys.some((k) => !childLine.keys.includes(k)) : null,

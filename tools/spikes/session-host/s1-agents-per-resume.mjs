@@ -27,6 +27,7 @@ export async function main(args = process.argv.slice(2), { log = console.log } =
   const five = childCall(t5.frames, 'spike-b');
   const calls = [t1, t2, t3].flatMap((t) => hostAgentCalls(t.frames));
   const newDefinitionUsed = Boolean(r2 && !r2.isError && r2.text.includes('BRAVO'));
+  const missingDescriptionTested = Boolean(five.call) && !five.call.inputKeys.includes('description');
   const facts = {
     newDefinitionUsed,
     bigDefinitionUsed: newDefinitionUsed,                    // the same check, recorded so a size limit shows by name
@@ -34,8 +35,9 @@ export async function main(args = process.argv.slice(2), { log = console.log } =
     sameSessionId: Boolean(t1.sessionId) && t1.sessionId === t2.sessionId && t2.sessionId === t3.sessionId,
     vanishedText: [t4.stderr, t4.result?.result ?? ''].join(' ').replace(/\s+/g, ' ').trim().slice(0, 200),
     descriptionSent: calls.length ? calls.every((c) => c.inputKeys.includes('description')) : null,   // no call: no evidence (D25)
-    missingDescriptionTested: Boolean(five.call) && !five.call.inputKeys.includes('description'),
-    missingDescriptionText: five.result?.isError ? five.result.text.slice(0, 200) : null,
+    missingDescriptionTested,
+    // Only a call that really lacked description: another turn-5 error must not seed INVALID_INPUT_RE.
+    missingDescriptionText: missingDescriptionTested && five.result?.isError ? five.result.text.slice(0, 200) : null,
   };
   verdict('S1', facts.newDefinitionUsed && facts.sameSessionId, facts, { log });
 }

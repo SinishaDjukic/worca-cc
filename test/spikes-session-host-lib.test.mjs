@@ -4,14 +4,14 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import http from 'node:http';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { summarize, strip, runTurn, requestFacts, bigPrompt, toolResult, hostAgentCalls, assistantMessages, sumUsage,
   dryLine, runJsonl, recordingProxy, defaultUpstream, spikeContext, verdict } from '../tools/spikes/session-host/lib.mjs';
 import { main as s1 } from '../tools/spikes/session-host/s1-agents-per-resume.mjs';
-import { main as s2, definitionFacts as s2Facts } from '../tools/spikes/session-host/s2-definition-fields.mjs';
-import { main as s3 } from '../tools/spikes/session-host/s3-child-permissions.mjs';
+import { main as s2, definitionFacts as s2Facts, mcpGrantFact } from '../tools/spikes/session-host/s2-definition-fields.mjs';
+import { main as s3, denyFacts } from '../tools/spikes/session-host/s3-child-permissions.mjs';
 import { main as s4 } from '../tools/spikes/session-host/s4-cost.mjs';
 import { main as s6, scanCli } from '../tools/spikes/session-host/s6-depth-and-cap.mjs';
 import { main as s7, BRIEF_DIVIDER, replacesDefaultFrom } from '../tools/spikes/session-host/s7-prompt-and-quality.mjs';
@@ -81,6 +81,41 @@ test('strip: absolute paths and stderr do not survive either (the S9 fixture is 
     tool_use_result: { stderr: 'boom', filePath: '/Users/someone/repo/a.txt' } }));
   assert.ok(!out.includes('/Users/someone') && !out.includes('boom'), out);
   assert.ok(out.includes('"R1"') && out.includes('"Read"'));
+  // Review M1: worca's `cat` sub-agent hook puts its whole payload in hook_response.output; init carries memory paths;
+  // Glob's filenames and tool errors carry absolute paths; any other string is backstopped by root replacement.
+  const home = homedir();
+  const tmp = realpathSync(tmpdir());
+  const run = join(tmp, 'worca-spikes', 'S9', 'work-local');
+  const dashed = (p) => p.replace(/[^A-Za-z0-9]/g, '-');
+  const frames = [
+    { type: 'system', subtype: 'init', session_id: 'S9', model: 'claude-haiku-4-5', tools: ['Agent', 'mcp__corp-srv__query'], cwd: run,
+      memory_paths: { auto: `${home}/.claude/projects/${dashed(run)}/memory/` }, scratchpad_path: `${tmp}/scratch`,
+      // Cycle-2 review m1: the owner's installed inventory and other free text.
+      skills: ['owner-skill'], slash_commands: ['owner-cmd'], agents: ['owner-agent'],
+      plugins: [{ name: 'owner-plugin', source: 'owner-market' }], mcp_servers: [{ name: 'corp-srv', status: 'connected' }],
+      plugin_errors: [{ message: 'owner-plugin-error' }] },
+    { type: 'assistant', parent_tool_use_id: 'T9', task_description: 'owner brief', error: 'owner error', needs_action: 'owner action',
+      message: { content: [{ type: 'thinking', thinking: 'x', signature: 'owner-signature' }] } },
+    { type: 'stream_event', event: { delta: { type: 'input_json_delta', partial_json: '{"prompt":"owner partial' } } },
+    { type: 'user', message: { content: [] }, tool_use_result: { outputFile: `${tmp}/tasks/owner.output` } },
+    { type: 'system', subtype: 'hook_response', hook_id: 'H1', hook_name: 'PostToolUse:Agent', hook_event: 'PostToolUse',
+      output: JSON.stringify({ transcript_path: `${home}/.claude/projects/${dashed(run)}/S9.jsonl`, cwd: run,
+        tool_use_id: 'T9', tool_input: { prompt: 'brief' }, tool_response: { content: [{ type: 'text', text: 'child reply' }] } }) },
+    { type: 'user', parent_tool_use_id: 'T9', message: { content: [{ type: 'tool_result', tool_use_id: 'G1', content: 'x' }] },
+      tool_use_result: { filenames: [join(run, 'a.txt'), join(tmpdir(), 'b.txt')], numFiles: 2, durationMs: 3 } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'B1', is_error: true, content: 'x' }] },
+      tool_use_result: `Error: cwd ${process.cwd()} is not ${home}/repo` },
+    { type: 'system', subtype: 'task_notification', tool_use_id: 'T9', output_file: `${tmp}/tasks/a.output`, summary: 'child reply',
+      usage: { total_tokens: 20 } },
+    { type: 'system', subtype: 'files_persisted', files: [{ filename: join(run, 'c.txt') }, { filename: join(home, 'd.txt') }],
+      note: `${home}/.claude/projects/${dashed(home)}-x` },
+  ];
+  const stripped = JSON.stringify(frames.map(strip));
+  for (const leak of [home, tmp, tmpdir(), process.cwd(), dashed(home), dashed(tmp), '/Users/', 'child reply', 'brief', 'owner', 'corp-srv']) {
+    assert.ok(!stripped.includes(leak), `${leak} survived: ${stripped}`);
+  }
+  for (const kept of ['"S9"', '"H1"', '"PostToolUse:Agent"', '"T9"', '"G1"', '"B1"', '"numFiles":2', '"total_tokens":20',
+    '"claude-haiku-4-5"', '/TMP/worca-spikes/S9/work-local/c.txt', '/HOME/d.txt']) assert.ok(stripped.includes(kept), `${kept} lost: ${stripped}`);
 });
 
 test('dryLine: one line; long or multi-line args become a byte count; env and placeholders print bare', () => {
@@ -211,8 +246,12 @@ test('S2 definitionFacts: null without child evidence; a child holding Bash or r
   const none = { toolsRestrict: null, maxTurnsHonoured: null, childToolsWithList: null };
   assert.deepEqual(s2Facts([]), none, 'no Agent call');
   assert.deepEqual(s2Facts([host]), none, 'the child left no frame');
+  // Cycle-2 review M1: sub-agents emit no init, so a child that did tool work of its own and never tried Bash (told to
+  // run it first) is the positive evidence (D20).
   assert.deepEqual(s2Facts([host, msg('m1', read('R1')), msg('m2', read('R2'))]),
-    { toolsRestrict: true, maxTurnsHonoured: true, childToolsWithList: null }, 'cut after 2 messages with work left');
+    { toolsRestrict: true, maxTurnsHonoured: true, childToolsWithList: null }, 'cut after 2 messages with work left; no init, no Bash try');
+  assert.equal(s2Facts([host, msg('m1', { type: 'text', text: 'I have no Bash tool.' })]).toolsRestrict, null,
+    'a child that made no tool call tested nothing');
   assert.equal(s2Facts([host, msg('m1', read('R1')), msg('m2', { type: 'text', text: 'x' })]).maxTurnsHonoured, null,
     'a child that stopped by itself after 2 messages tested nothing');
   assert.equal(s2Facts([host, msg('m1', read('R1'))]).maxTurnsHonoured, null, 'one message tested nothing');
@@ -222,6 +261,29 @@ test('S2 definitionFacts: null without child evidence; a child holding Bash or r
   const bash = [host, msg('m1', { type: 'tool_use', id: 'B1', name: 'Bash', input: {} }),
     { type: 'user', parent_tool_use_id: 'A1', message: { content: [{ type: 'tool_result', tool_use_id: 'B1', content: 's2' }] } }];
   assert.equal(s2Facts(bash).toolsRestrict, false, 'a Bash call that ran');
+  // Review M3: a child that emitted a Bash tool_use held Bash; only an unknown-tool error shows `tools` removed it.
+  const refused = (text) => [host, msg('m1', { type: 'tool_use', id: 'B1', name: 'Bash', input: {} }), { type: 'user',
+    parent_tool_use_id: 'A1', message: { content: [{ type: 'tool_result', tool_use_id: 'B1', is_error: true, content: text }] } }];
+  assert.equal(s2Facts(refused('This command requires approval')).toolsRestrict, false,
+    'a permission refusal (`claude -p`, no grant) is not the definition restricting tools');
+  assert.equal(s2Facts(refused('<tool_use_error>Error: No such tool available: Bash</tool_use_error>')).toolsRestrict, true,
+    'the CLI did not know the tool');
+  assert.equal(s2Facts(refused('<tool_use_error>Error: No such tool available: Bash. Bash is not among the tools available here. '
+    + 'Continue with the tools you have.</tool_use_error>')).toolsRestrict, true, 'with the suffix newer CLIs add');
+  assert.equal(s2Facts([host, { type: 'system', subtype: 'init', parent_tool_use_id: 'A1', tools: ['Read'] }]).toolsRestrict, true,
+    'the child init lists no Bash');
+});
+
+test('S2 mcpGrantFact: null unless the spike server connected and the child ran; then whether it held the MCP tool', () => {
+  const init = (status) => ({ type: 'system', subtype: 'init', session_id: 'S', mcp_servers: [{ name: 'spike', status }] });
+  const host = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'A1', name: 'Agent', input: { subagent_type: 's2m' } }] } };
+  const child = (name) => ({ type: 'assistant', parent_tool_use_id: 'A1', message: { id: 'm1', content: [{ type: 'tool_use', id: 'E1', name, input: {} }] } });
+  const result = (isError) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'A1', is_error: isError, content: 'DONE' }] } });
+  assert.equal(mcpGrantFact([init('connected'), host, result(false)]), null, 'an Agent call but no child frame');
+  assert.equal(mcpGrantFact([init('connected'), host, child('mcp__spike__echo'), result(true)]), null, 'the Agent call failed');
+  assert.equal(mcpGrantFact([init('failed'), host, child('mcp__spike__echo'), result(false)]), null, 'the server never connected');
+  assert.equal(mcpGrantFact([init('connected'), host, child('mcp__spike__echo'), result(false)]), true);
+  assert.equal(mcpGrantFact([init('connected'), host, child('Read'), result(false)]), false, 'the child ran without the MCP tool');
 });
 
 test('S3 --dry: five turns per CLI; c carries worca\'s deny settings, d the guard env, e the key-logging hook', async () => {
@@ -234,6 +296,40 @@ test('S3 --dry: five turns per CLI; c carries worca\'s deny settings, d the guar
   for (const l of turn('c')) { assert.ok(l.includes('"deny":["Bash(echo s3-denied*)"]'), l); assert.match(l, /host-guard\.mjs/); }
   for (const l of turn('d')) { assert.match(l, /WORCA_HOST_GUARD=1 WORCA_HOST_PID=\d+ /); assert.ok(l.includes('"deny":["Bash(echo s3-denied*)"]')); }
   for (const l of turn('e')) assert.match(l, /S3E_KEYS=\S+s3e\.keys .*--settings .*"matcher":"\*"/);
+});
+
+test('S3 denyFacts: true only when the child is refused in the host\'s deny wording; a no-grant refusal is null', () => {
+  const use = (id, command, parent) => ({ type: 'assistant', ...(parent && { parent_tool_use_id: parent }),
+    message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const res = (id, text, isError, parent) => ({ type: 'user', ...(parent && { parent_tool_use_id: parent }),
+    message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content: text }] } });
+  const agent = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'A1', name: 'Agent', input: { subagent_type: 's3c' } }] } };
+  const HOST = 'echo s3-denied > s3c-host.txt';
+  const CHILD = 'echo s3-denied > s3c.txt';
+  const DENIED = (cmd) => `Permission to use Bash with command ${cmd} has been denied.`;
+  const NO_GRANT = 'This command requires approval';                 // `claude -p`, Bash with no grant (CLI 2.1.293–2.1.308)
+  const turn = (text, isError = true) => [use('H1', HOST), res('H1', DENIED(HOST), true), agent, use('C1', CHILD, 'A1'), res('C1', text, isError, 'A1')];
+  const absent = { hostWrote: false, childWrote: false };
+  assert.deepEqual(denyFacts(turn(DENIED(CHILD)), absent), { denyMatchesHost: true, denyReachesChildren: true });
+  for (const text of [NO_GRANT, 'Claude requested permissions to use Bash, but you haven\'t granted it yet.',
+    'PreToolUse:Bash hook error: ["node" "hook.cjs"]: blocked', 'Exit code 1\nzsh: read-only file system: s3c.txt']) {
+    assert.deepEqual(denyFacts(turn(text), absent), { denyMatchesHost: true, denyReachesChildren: null }, `not the rule: ${text}`);
+  }
+  assert.equal(denyFacts(turn(`Permission to use Bash with command ${CHILD} has been denied. IMPORTANT: retry`), absent).denyReachesChildren,
+    null, 'not the host\'s refusal wording');
+  assert.deepEqual(denyFacts(turn('', false), { hostWrote: false, childWrote: true }), { denyMatchesHost: true, denyReachesChildren: false },
+    'the child wrote the file');
+  // Cycle-2 review m2: the rule refused the child's Bash; a file it then made with Write is not the Bash rule failing.
+  assert.equal(denyFacts(turn(DENIED(CHILD)), { hostWrote: false, childWrote: true }).denyReachesChildren, true,
+    'refused in the host\'s wording, then wrote the file another way');
+  // Cycle-2 review s1: the CLI embeds command.trim(), so a command with trailing whitespace is masked trimmed too.
+  assert.equal(denyFacts([use('H1', HOST), res('H1', DENIED(HOST), true), agent, use('C1', `${CHILD}\n`, 'A1'),
+    res('C1', DENIED(CHILD), true, 'A1')], absent).denyReachesChildren, true, 'a trailing newline in the child\'s command');
+  assert.deepEqual(denyFacts([use('H1', HOST), res('H1', '', false)], { hostWrote: true, childWrote: false }),
+    { denyMatchesHost: false, denyReachesChildren: null }, 'the rule missed the host');
+  assert.equal(denyFacts([use('H1', HOST), res('H1', NO_GRANT, true)], absent).denyMatchesHost, null, 'a no-grant refusal is not the rule');
+  assert.equal(denyFacts([use('H1', HOST), res('H1', 'Exit code 1', true)], absent).denyMatchesHost, null, 'a failed command is not the rule');
+  assert.deepEqual(denyFacts([agent], absent), { denyMatchesHost: null, denyReachesChildren: null }, 'the host never tried');
 });
 
 test('S4 --dry: six turns; the third and fourth carry --max-budget-usd', async () => {

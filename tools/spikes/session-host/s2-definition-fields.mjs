@@ -31,12 +31,17 @@ const S2_PROMPT = 'First run the Bash command `echo s2`. Then read s2-1.txt, s2-
 const initTools = (frames) => frames.find((f) => f.type === 'system' && f.subtype === 'init')?.tools ?? null;
 const starts = (v, p) => typeof v === 'string' && v.startsWith(p);
 const hit = (r) => r.markersInSystem.includes(MARK) || r.markersInMessages.includes(MARK);
+// The CLI's answer to a tool_use for a tool the agent does not hold (2.1.293–2.1.308), often with a suffix after the name.
+const NO_SUCH_TOOL_RE = /^(?:<tool_use_error>)?Error: No such tool available: Bash\b/;
 /** Tri-state: null when there is no evidence, so a missing result never reads as a decisive false (D18). */
 const startsOrNull = (v, p) => (typeof v === 'string' ? v.startsWith(p) : null);
 
 /**
  * The `s2` child's `tools` and `maxTurns` facts from the host turn's frames. Each is null unless the child left
- * evidence (D20, D25): `toolsRestrict` needs the child's init tool list or a tool call of its own. `maxTurnsHonoured`
+ * evidence (D20, D25). `toolsRestrict` is false when the child held Bash: its init lists Bash, or it issued a Bash
+ * tool_use the CLI did not answer as an unknown tool (a permission refusal is not the definition's `tools` at work,
+ * review M3). Otherwise it is true when the child made tool calls of its own: told to run Bash first, a child that held
+ * Bash would have tried it (D20). Sub-agents emit no init frame, so the init only ever adds a false. `maxTurnsHonoured`
  * is false when the child wrote more than 2 assistant messages, and true only when it wrote exactly 2 and the second
  * ended on a tool call (work was left and the cap stopped it). A child that stopped by itself tested nothing.
  * A `true` from a child that never ran would keep the field out of dropDefinitionFields.
@@ -44,16 +49,31 @@ const startsOrNull = (v, p) => (typeof v === 'string' ? v.startsWith(p) : null);
 export function definitionFacts(frames, type = 's2') {
   const c = childCall(frames, type);
   const tools = initTools(c.frames);
-  const calls = summarize(c.frames).toolCalls;
+  const own = summarize(c.frames).toolCalls;                                // the child's own calls
+  const bash = own.filter((x) => x.name === 'Bash').map((x) => toolResult(frames, x.id));
+  const heldBash = (tools ?? []).includes('Bash') || bash.some((r) => !(r?.isError && NO_SUCH_TOOL_RE.test(r.text.trim())));
   const turns = assistantMessages(c.frames).length;
   const last = c.frames.filter((f) => f.type === 'assistant').at(-1);
   const endsOnToolCall = Array.isArray(last?.message?.content) && last.message.content.some((b) => b.type === 'tool_use');
   return {
-    toolsRestrict: !c.call || (tools === null && !calls.length) ? null : !(tools ?? []).includes('Bash')
-      && calls.filter((x) => x.name === 'Bash').every((x) => toolResult(frames, x.id)?.isError === true),
+    toolsRestrict: !c.call ? null : heldBash ? false : tools !== null || own.length ? true : null,
     maxTurnsHonoured: turns > 2 ? false : turns === 2 && endsOnToolCall ? true : null,
     childToolsWithList: tools,
   };
+}
+
+/**
+ * `mcpGrantInTools` from the s2m turn's frames: null unless the host's `spike` server connected, the child left frames
+ * and its Agent call did not fail (review M3). A false drops `tools` lists for MCP members, which then get the host's
+ * union (D18), so a child that never ran must not read it.
+ */
+export function mcpGrantFact(frames, type = 's2m') {
+  const c = childCall(frames, type);
+  const hostInit = frames.find((f) => f.type === 'system' && f.subtype === 'init' && !f.parent_tool_use_id);
+  const connected = (hostInit?.mcp_servers ?? []).some((s) => s?.name === 'spike' && s.status === 'connected');
+  if (!connected || !c.frames.length || !c.result || c.result.isError) return null;
+  return summarize(c.frames).toolCalls.some((x) => x.name === 'mcp__spike__echo')
+    || (initTools(c.frames) ?? []).includes('mcp__spike__echo');
 }
 
 export async function main(args = process.argv.slice(2), { log = console.log } = {}) {
@@ -92,7 +112,6 @@ export async function main(args = process.argv.slice(2), { log = console.log } =
       const c2 = childCall(s2.frames, 's2');
       const cb = childCall(bare.frames, 's2bare');
       const cp2 = childCall(pin.frames, 's2pin');
-      const cm = childCall(mcp.frames, 's2m');
       const controlModel = control.frames.find((f) => f.type === 'system' && f.subtype === 'init' && !f.parent_tool_use_id)?.model ?? null;
       const ranClean = new Set(summarize(control.frames).toolCalls
         .filter((c) => c.parent === null && PROBED.includes(c.name) && toolResult(control.frames, c.id)?.isError === false)
@@ -123,8 +142,7 @@ export async function main(args = process.argv.slice(2), { log = console.log } =
         permissionFreeTools: PROBED.filter((t) => ranClean.has(t) && (childToolsWithoutList ?? PROBED).includes(t)).sort(),
         taskCallModelOverridesDefinition: cp2.call?.inputKeys.includes('model') ? startsOrNull(cp2.result?.meta?.resolvedModel, 'claude-sonnet') : null,
         // false ⇒ Task 31 drops `tools` for members with MCP grants, so it needs a child that ran (D18).
-        mcpGrantInTools: !cm.call ? null : summarize(cm.frames).toolCalls.some((c) => c.name === 'mcp__spike__echo')
-          || (initTools(cm.frames) ?? []).includes('mcp__spike__echo'),
+        mcpGrantInTools: mcpGrantFact(mcp.frames),
       };
       verdict('S2', facts.modelHonoured, facts, { log });
     }
