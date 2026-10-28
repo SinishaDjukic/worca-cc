@@ -705,6 +705,9 @@ test('#955 Runs list: rows inside a group are one 26px line (40px on touch); a g
   assert.match(bodyOf('.runs-members .runs-row-title'), /font-weight:400/);
   assert.match(bodyOf('.runs-members .runs-row-sub'), /text-overflow:ellipsis/);
   assert.match(bodyOf('.runs-members .runs-row-sub'), /flex:0 1000 auto/, 'the status gives way before the title');
+  // #1012: a staged live member's four-section block wraps under its line, indented with its title.
+  assert.match(bodyOf('.runs-members .runs-row:has(> .runs-stage)'), /flex-wrap:wrap/);
+  assert.match(bodyOf('.runs-members .runs-row > .runs-stage'), /margin:4px 0 2px 16px/);
   assert.match(bodyOf('.runs-members .runs-pick'), /height:26px/);
   assert.match(bodyOf('.runs-members .runs-row-tail'), /height:26px/);
   assert.match(css, /@media \(pointer: coarse\)\{\.runs-members \.runs-pick,\.runs-members \.runs-row-tail\{height:40px;\}/);

@@ -653,6 +653,10 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (spansProjects && level === 'top' && r.groupName) line = and(line, r.groupName);
   // #955: a member is one line: no state word its dot says, no project its group names, no label chips.
   if (level === 'member') line = dropLead(memberLine(r.model, line), r.kind === 'chat' ? parentWhere : '');
+  // #1012: a staged member draws the four-section block, whose marks name its stage, so its line drops that word.
+  const staged = level === 'member' && r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed'
+    && !r.model.prNeeds && r.model.progress && r.model.progress.mode === 'stages';
+  if (staged) line = dropLead(line, r.model.progress.label);
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
   const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
   a.append(...[title, lab, right, textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
@@ -660,8 +664,8 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
   } else if (r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
     // A run in Needs you only through its PR (conflicts, failing checks) has finished: no progress bar to draw.
-    if (level === 'member') {
-      // #955: a one-line member keeps the list's 3px line; paintRunsProgress (app.js) moves it in place.
+    if (level === 'member' && !staged) {
+      // #955: a one-line member without stages keeps the list's 3px line; paintRunsProgress (app.js) moves it in place.
       a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
     } else {
       const stage = doc.createElement('div');

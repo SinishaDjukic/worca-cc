@@ -695,6 +695,21 @@ test('#955 a one-line member: PR chip kept with no repeated word, no labels, no 
   assert.equal(live.querySelector(':scope > a.runs-row').dataset.line, liveModel.line, 'data-line keeps the canonical line (D11)');
 });
 
+test('#1012 a staged live member draws the four-section block, and its line drops the stage word the marks say', () => {
+  const run = { status: 'running', steps: [{ nodeId: 'n' }], active: ['n'], stepper: { auto: { status: 'deciding' } } };   // Plan · choosing the workflow
+  const chain = { id: 'p:c1012', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run })], groups: [chain], now: NOW });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const row = host.querySelector('.runs-members .runs-item[data-level="member"] > a.runs-row');
+  assert.ok(row.querySelector(':scope > .runs-stage .run-prog-track'), 'the four-section bar');
+  assert.equal(row.querySelector(':scope > .runs-stage .run-prog-mark[data-state="current"]').textContent, 'Plan');
+  assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line beside it');
+  assert.equal(row.querySelector('.runs-row-sub').textContent, 'choosing the workflow', 'the marks say Plan');
+  assert.equal(row.dataset.line, 'Plan · choosing the workflow', 'data-line keeps the canonical line (D11)');
+});
+
 test('#955 a chat inside a one-project topic group does not repeat the project; a "2 projects" group keeps it', () => {
   const chat = (id, line) => ({ key: `chat:${id}`, id, kind: 'chat', title: id, href: `#chat/${id}`, labels: [],
     model: { state: 'idle', word: 'Idle', line, dot: 'grey', pulse: false, symbol: null, icon: 'chat' } });
