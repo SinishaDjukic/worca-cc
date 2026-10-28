@@ -14,7 +14,7 @@ import { join, basename, resolve, isAbsolute, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
-import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY } from './store.mjs';
+import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY, testCopyKeyOf } from './store.mjs';
 import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
 import { workModeOfRow } from './project-kind.mjs';
 import { rollupChanges } from './folder-members.mjs';
@@ -966,6 +966,9 @@ async function ensureMeta(projectDir, _root, { projectKey, plain = false } = {})
   if (existing) return existing;                       // firstSeenAt preserved
   // P1 (v8): a non-git run's folder is its own root — never an enclosing repo's (a parent git-inited after registration)
   const canonical = plain ? (() => { const d = resolve(projectDir); try { return realpathSync(d); } catch { return d; } })() : canonicalProjectRoot(projectDir);
+  // Workflow tests 3a (D52): Worca's copy of a project is never written as the project's meta. The first write wins
+  // (firstSeenAt), so a project that never ran would otherwise keep the copy as its path for good.
+  if (!plain && testCopyKeyOf(canonical)) return { key, path: canonical, name: basename(canonical), firstSeenAt: new Date().toISOString() };
   let name = basename(canonical) || 'project';
   try {
     const projects = await listProjects();

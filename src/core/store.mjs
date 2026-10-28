@@ -99,9 +99,43 @@ export function isNoProjectWorkDir(dir) {
   try { return same(realpathSync(runs), realpathSync(resolve(home, 'runs'))); } catch { return false; }   // macOS /var ↔ /private/var
 }
 
-/** P3: a pipelines row's project dir — its own work folder for the reserved key (lookup never called), else lookup(key). */
+/** Workflow tests 3a (D42, D52): Worca's own copies of projects, one per project key. */
+export function testCopiesRoot() {
+  return join(worcaHome(), 'workflow-tests', 'repos');
+}
+
+/** The folder of Worca's own copy of the project `key`. */
+export function testCopyDirFor(key) {
+  if (!PROJECT_KEY_RE.test(String(key ?? ''))) throw new Error(`testCopyDirFor: not a project key: ${JSON.stringify(key ?? null)}`);
+  return join(testCopiesRoot(), key);
+}
+
+/**
+ * The real project's key when `dir` is exactly Worca's copy of it (<worcaHome>/workflow-tests/repos/<key>), else null.
+ * A path test (realpath only as a fallback), like isNoProjectWorkDir. projectKey() applies it to the canonical root, so
+ * every worktree of the copy answers the same key (D52).
+ */
+export function testCopyKeyOf(dir) {
+  if (!dir) return null;
+  const r = resolve(String(dir));
+  const fold = (s) => (process.platform === 'win32' ? s.toLowerCase() : s);   // NTFS: one folder, any case
+  const name = fold(basename(r));
+  if (!PROJECT_KEY_RE.test(name)) return null;
+  const parent = dirname(r);
+  if (fold(basename(parent)) !== 'repos' || fold(basename(dirname(parent))) !== 'workflow-tests') return null;   // cheap first
+  let root;
+  try { root = testCopiesRoot(); } catch { return null; }                       // node:test without WORCA_HOME
+  if (fold(parent) === fold(resolve(root))) return name;
+  try { return fold(realpathSync(parent)) === fold(realpathSync(root)) ? name : null; } catch { return null; }
+}
+
+/** P3: a pipelines row's project dir — its own work folder for the reserved key (lookup never called), else lookup(key).
+ *  Workflow tests 3a (D52): a test try with a project ran in Worca's copy of it, so whatever acts on its row (a stop of a
+ *  paused try) acts there, never in the person's folder. */
 export async function runProjectDir(row, lookup) {
-  return isNoProjectKey(row?.project_key) ? noProjectWorkDir(row.id) : lookup(row?.project_key);
+  if (isNoProjectKey(row?.project_key)) return noProjectWorkDir(row.id);
+  if (row?.is_test && row?.target !== 'workspace' && PROJECT_KEY_RE.test(String(row?.project_key ?? ''))) return testCopyDirFor(row.project_key);
+  return lookup(row?.project_key);
 }
 
 /** Stable key for a project. Memoized by resolved input path. */
@@ -111,6 +145,12 @@ export function projectKey(projectDir) {
   const hit = _keyCache.get(cacheKey);
   if (hit) return hit;
   const root = canonicalProjectRoot(projectDir);
+  // Workflow tests 3a (D52): Worca's own copy of a project, and every worktree of it, is that project.
+  const copyKey = testCopyKeyOf(root);
+  if (copyKey) {
+    if (gitAvailable()) _keyCache.set(cacheKey, copyKey);
+    return copyKey;
+  }
   const slug =
     basename(root).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
   const hash = createHash('sha1').update(root).digest('hex').slice(0, 8);
