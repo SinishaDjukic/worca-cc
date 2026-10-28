@@ -14,6 +14,7 @@ import { tx } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { callSource, setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { createFeature, getFeature, getAttachment, listAttachments, listTurns } from '../src/core/requirements/store.mjs';
+import { fileOrigins } from '../src/core/requirements/attachments.mjs';
 
 useTempHome(after, 'worca-req-fetch-');
 const prevMock = process.env.WORCA_MOCK;
@@ -181,4 +182,90 @@ test('checkFetched (D9, D15, S7): inside the folder, a regular file and no link,
       assert.deepEqual(fetchJob.checkFetched(dir, dest, { bytes: 3 }), { ok: false, why: 'not-a-file' });
     }
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true }); }
+});
+
+test("A8's Try again on a failed download fetches it again; a file Worca refused cannot be tried again; a restart fails a file left downloading (D10)", async () => {
+  const f = feature();
+  setMockSourceResponses({ downloadAttachment: () => { throw new PluginOpError('timeout', 'x'); } });
+  const r = await queue(f, row(f, '10042'));
+  setMockSourceResponses(null);
+  assert.equal(job.readAgain(own(f), r.id, {}, d).status, 'downloading');
+  await job.readsSettled(own(f));
+  assert.equal(getAttachment(r.id).status, 'done');
+  setMockSourceResponses({ downloadAttachment: () => ({ tooLarge: true, bytes: 30 * 1024 * 1024 }) });
+  const big = await queue(f, row(f, '10045', 'pick-route-scan.pdf', 30 * 1024 * 1024));
+  assert.throws(() => job.readAgain(own(f), big.id, {}, d), (e) => e.code === 'CONFLICT' && e.message === 'Worca cannot use this file. Remove it from the ⋯ menu.');
+  setMockSourceResponses(null);
+  const left = row(f, '10043', 'support-macro.txt', 4096);   // nobody queued it: as after a restart
+  assert.ok(job.recoverAttachmentReads() >= 1);
+  const now = getAttachment(left.id);
+  assert.deepEqual([now.status, now.error.code, now.error.job, now.error.message], ['failed', 'INTERRUPTED', 'download', 'Worca restarted before it got this file from Jira.']);
+});
+
+test('a link left at dest is refused and never followed (POSIX)', { skip: process.platform === 'win32' ? 'symlinks need privileges on Windows' : false }, async () => {
+  const f = feature();
+  const secret = join(worcaHome(), 'secret.txt');
+  writeFileSync(secret, 'secret');
+  setMockSourceResponses({ downloadAttachment: (a) => { symlinkSync(secret, a.dest); return { name: 'x.txt', mime: 'text/plain', bytes: 6 }; } });
+  const now = await queue(f, row(f, '10043', 'support-macro.txt', 4096));
+  assert.equal(now.error.message, 'Worca could not use this file: it is not the file Jira described.');
+  assert.equal(readFileSync(secret, 'utf8'), 'secret');
+});
+
+test('a downloading file refuses Read again; removing it deletes its row at once, its late result is thrown away, its folder removed (D10)', async () => {
+  const h = hold();
+  const f = feature();
+  const r = row(f, '10042');
+  fetchJob.queueDownloads(own(f), [r.id], {}, d);
+  await waitFor(() => h.waiting.length === 1);
+  assert.throws(() => job.readAgain(own(f), r.id, {}, d), (e) => e.code === 'CONFLICT' && e.message === 'Worca is still getting this file from Jira.');
+  job.removeAttachment(own(f), r.id, {}, d);
+  assert.equal(getAttachment(r.id), null);
+  assert.equal(listTurns(f.seq).at(-1).payload.action, 'removed');
+  h.release(0);
+  await job.readsSettled(own(f));
+  await waitFor(() => !fetchJob.isDownloading(r.id));
+  assert.equal(listAttachments('feature', f.seq).length, 0);
+  assert.deepEqual(bodies(r.id), []);
+  assert.deepEqual(getDirs(), []);
+});
+
+test('round 1 waits for downloads and reads (D10): readsSettled holds while one runs; a file still downloading is in <attachments> by name only', async () => {
+  const h = hold();
+  const f = feature();
+  const r = row(f, '10042');
+  fetchJob.queueDownloads(own(f), [r.id], {}, d);
+  await waitFor(() => h.waiting.length === 1);
+  let done = false;
+  const p = job.readsSettled(own(f)).then(() => { done = true; });
+  assert.equal(job.filesPending(own(f)), true);
+  assert.equal(job.promptFiles(getFeature(f.seq)).attachments, 'partial-cancel-flow.pdf (PDF, 1.2 MB): being downloaded from SHOP-124; known by name only.');
+  await new Promise((res) => setTimeout(res, 20));
+  assert.equal(done, false);
+  h.release(0);
+  await p;
+  assert.equal(getAttachment(r.id).status, 'done');
+});
+
+test("the boot sweep removes att-get folders older than an hour, as A8's att-read ones", () => {
+  const base = join(worcaHome(), 'tmp', 'requirements');
+  mkdirSync(join(base, 'att-get-0123abcd'), { recursive: true });
+  mkdirSync(join(base, 'att-get-89abcdef'), { recursive: true });
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  utimesSync(join(base, 'att-get-0123abcd'), old, old);
+  const r = job.sweepReadFolders(base);
+  assert.deepEqual(r.removed.map((p) => p.split(/[\\/]/).pop()), ['att-get-0123abcd']);
+  assert.equal(existsSync(join(base, 'att-get-89abcdef')), true);
+  rmSync(join(base, 'att-get-89abcdef'), { recursive: true, force: true });
+});
+
+test("fileOrigins (D14): an import's added file names its ticket; a replaced file loses it; an upload has none", () => {
+  const turns = [
+    { kind: 'file', payload: { action: 'added', id: 'a', name: 'SHOP-124 comments.md', from: { tracker: 'Jira', key: 'SHOP-124' } } },
+    { kind: 'file', payload: { action: 'added', id: 'b', name: 'notes.md' } },
+    { kind: 'file', payload: { action: 'added', id: 'c', name: 'slip.png', from: { tracker: 'Jira', key: 'SHOP-124' } } },
+    { kind: 'file', payload: { action: 'replaced', id: 'c', name: 'slip2.png', before: 'slip.png' } },
+  ];
+  const m = fileOrigins(turns);
+  assert.deepEqual([m.get('a'), m.get('b'), m.get('c')], [{ tracker: 'Jira', key: 'SHOP-124' }, null, null]);
 });

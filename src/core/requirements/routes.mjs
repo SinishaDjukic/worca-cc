@@ -18,7 +18,7 @@ import {
 import {
   sendMessage, retryMessage, stopHelper, acceptProposal, rejectProposal, askAgain, clearChat, isAnswering, helperView,
 } from './helper.mjs';
-import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles } from './attachments.mjs';
+import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles, fileOrigins } from './attachments.mjs';
 import {
   addAttachments, removeAttachment, editSummary, setSend, readAgain, askAttachment, replaceAttachment, ownAttachment, fileView, readEstimates,
   attachmentFile, removeOwnerBodies, stopJobs, runFiles,
@@ -215,6 +215,7 @@ export async function featureView(seq, d = {}) {
   const busy = isBusy(seq);
   const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
   const files = listAttachments('feature', seq);
+  const origins = fileOrigins(turns);   // A6.1 D14: "from SHOP-124"
   const brief = usableBrief(f.scopeType, f.scopeKey);
   const docs = brief ? listAttachments('brief', brief.id) : [];
   const ready = readiness({ ...f, pending }, { turns, target: await targetFor(f), files });
@@ -232,7 +233,7 @@ export async function featureView(seq, d = {}) {
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
       starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec, sentFiles(rows[0], f)) : [],
       brief: featureBrief(f), lookCostUsd: lookCostUsd(model),
-      attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates })),
+      attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates, from: origins.get(r.id) || null })),
       briefDocuments: docs.map((r) => fileView(r, { spec: f.spec, href: `${briefPathOf(f.scopeType, f.scopeKey)}/documents/${r.id}`, doc: true, estimates })),
       unaskedFiles: unaskedFiles(files, turns),
       interview: await interviewInfo(async () => im, d.listModels || listModels),

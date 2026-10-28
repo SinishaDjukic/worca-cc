@@ -30,6 +30,7 @@ import {
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
 import { readsSettled, queueUnread, promptFiles, isReading, filesPending } from './attachment-job.mjs';
+import { isDownloading } from './attachment-fetch.mjs';
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const ROUND_TIMEOUT_MS = 180_000;
@@ -513,7 +514,8 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   // busy meanwhile, as during any job: its status stays `looking` and the page says "Reading N files…"). The look before
   // it and round 1 after it each take a job slot only when one is free, so MAX_JOBS still bounds the model calls. Such a
   // job is outside MAX_JOBS from its start, so several creates in a row are all taken while their reads run.
-  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id));
+  // A6.1 D10: a file still being downloaded counts as one being read.
+  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id) || isDownloading(r.id));
   return startJob(seq, d, async (job) => {
     if (waits) await takeSlot(f.seq);
     await runOrientation(seq, d, by, { useBrief: thenRound });

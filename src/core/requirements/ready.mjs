@@ -32,14 +32,14 @@ export function unaskedRejections(spec, turns = []) {
  *  only when its prompt carried the file's text (its payload `files`, recorded by runRound): a round that ran while the
  *  file was still being read listed it by name only. A file still being read counts; one that failed or that the budget
  *  stopped does not (the interview lists it by name only). After a start there are none: a change then counts as a
- *  change since the start. */
+ *  change since the start. A6.1 D10: a file still being downloaded counts as one being read. */
 export function unaskedFiles(files = [], turns = []) {
   const list = Array.isArray(turns) ? turns : [];
   if (list.some((t) => t && t.kind === 'start')) return [];
   const rounds = list.filter((t) => t && t.kind === 'round' && t.payload);
   const out = [];
   for (const f of files || []) {
-    if (!f || (f.status !== 'reading' && f.status !== 'done')) continue;
+    if (!f || (f.status !== 'reading' && f.status !== 'downloading' && f.status !== 'done')) continue;
     let changed = -Infinity;
     for (const t of list) {
       if (t && t.kind === 'file' && t.payload && t.payload.id === f.id && (t.payload.action === 'added' || t.payload.action === 'replaced') && t.id > changed) changed = t.id;
@@ -66,8 +66,8 @@ export function readiness(feature, { turns = [], target = { ok: true }, files = 
   const unaskedF = unaskedFiles(files, turns);   // A8 D8: a file added or replaced after the interview fails "Interview finished"
   const nameOf = (id) => ((files || []).find((x) => x && x.id === id) || {}).name || id;
   // A file to ask about that is still being read: the follow-up waits for the read, and the check says so in the
-  // page's reading words (A8 D2), not "to ask about" yet.
-  const readingF = unaskedF.filter((id) => ((files || []).find((x) => x && x.id === id) || {}).status === 'reading');
+  // page's reading words (A8 D2), not "to ask about" yet (A6.1: a ticket file still downloading too).
+  const readingF = unaskedF.filter((id) => ['reading', 'downloading'].includes(((files || []).find((x) => x && x.id === id) || {}).status));
 
   let assumptionHint = '';
   if (open) assumptionHint = `${open} to decide`;
