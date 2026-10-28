@@ -11,7 +11,7 @@ const SETUP_COLS = ['scope_type', 'scope_key', 'plugin', 'source_id', 'profile',
   'issue_type_name', 'labels_json', 'priority', 'priority_name', 'criteria_json', 'done_status', 'created_by', 'created_at', 'updated_by',
   'updated_at'];
 const LINK_COLS = ['feature_seq', 'plugin', 'source_id', 'profile', 'tracker_project', 'ticket_key', 'ticket_url', 'created_at', 'exported_at',
-  'spec_json', 'fields_json', 'fingerprint', 'pending_marker', 'pending_at', 'updated_by', 'updated_at'];
+  'spec_json', 'fields_json', 'fingerprint', 'pending_marker', 'pending_at', 'updated_by', 'updated_at', 'origin'];
 const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
 
 /** Every table with its columns (sorted: a repaired column is appended, not in DDL order) and every index name. */

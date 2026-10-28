@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { getDb, prepare, tx } from '../db.mjs';
 import { REQ_ATT_ID_RE } from './attachments.mjs';
 import {
-  RequirementsError, SCOPE_TYPES, STATUSES, TURN_KINDS, LIMITS, emptySpec, featureId,
+  RequirementsError, SCOPE_TYPES, STATUSES, TURN_KINDS, LIMITS, emptySpec, featureId, clip,
 } from './spec.mjs';
 
 const iso = () => new Date().toISOString();
@@ -37,15 +37,26 @@ function toFeature(r) {
   };
 }
 
-export function createFeature({ scopeType, scopeKey, title, description } = {}, { by = null } = {}) {
+/** A1 §3; A6.1 D7: `criteria` ([{ text, source }]) start the spec as the product owner's own R-po-1… (edited, with their source). */
+export function createFeature({ scopeType, scopeKey, title, description, criteria = [] } = {}, { by = null } = {}) {
   checkScope(scopeType, scopeKey);
   const t = requiredText(title, 'title', LIMITS.title, { oneLine: true });   // one line: the Markdown heading cannot break
   const d = requiredText(description, 'description', LIMITS.description);
+  const spec = emptySpec();
+  const seen = new Set();
+  for (const c of Array.isArray(criteria) ? criteria : []) {
+    if (spec.criteria.length >= LIMITS.items) break;
+    const text = clip(c && c.text, LIMITS.item);
+    if (!text || seen.has(text.toLowerCase())) continue;
+    seen.add(text.toLowerCase());
+    const source = clip(c && c.source, 100);
+    spec.criteria.push({ id: `R-po-${spec.criteria.length + 1}`, text, edited: true, ...(source ? { source } : {}) });
+  }
   getDb();
   const ts = iso();
-  const r = prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json,
-      created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, 'looking', ?, ?, ?, ?, ?)`)
-    .run(scopeType, scopeKey.trim(), t, d, JSON.stringify(emptySpec()), by, ts, by, ts);
+  const r = prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json, criteria_seq,
+      created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, 'looking', ?, ?, ?, ?, ?, ?)`)
+    .run(scopeType, scopeKey.trim(), t, d, JSON.stringify(spec), spec.criteria.length, by, ts, by, ts);
   return getFeature(Number(r.lastInsertRowid));
 }
 
@@ -318,7 +329,7 @@ export function recentBriefCosts(limit = 10) {
 // ---- attachments (plans/requirements-a8-design.md §3, D9): a feature's files and a made brief's documents ----
 
 const OWNER_TYPES = Object.freeze(['feature', 'brief']);
-const ATT_STATUSES = Object.freeze(['reading', 'done', 'failed', 'unread-budget']);
+const ATT_STATUSES = Object.freeze(['downloading', 'reading', 'done', 'failed', 'unread-budget']);
 
 /** The id a body and its row are named by: the only part of a body's path that is not the store's own. */
 export const mintAttachmentId = () => `ratt_${randomBytes(6).toString('hex')}`;
@@ -327,7 +338,7 @@ function toAttachment(r) {
   if (!r) return null;
   return {
     id: r.id, ownerType: r.owner_type, ownerId: Number(r.owner_id), name: r.name, kind: r.kind, mime: r.mime, bytes: Number(r.bytes),
-    sha256: r.sha256, status: r.status, error: json(r.error_json, null), summary: r.summary || '', summaryEdited: !!r.summary_edited,
+    sha256: r.sha256, fetch: json(r.fetch_json, null), status: r.status, error: json(r.error_json, null), summary: r.summary || '', summaryEdited: !!r.summary_edited,
     asks: json(r.asks_json, []), history: json(r.history_json, []), sendWithRun: !!r.send_with_run,
     costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4, readCostUsd: r.read_cost_usd == null ? null : Number(r.read_cost_usd),
     readModel: r.read_model || null, readAt: r.read_at || null,
@@ -335,15 +346,15 @@ function toAttachment(r) {
   };
 }
 
-export function insertAttachment({ id, ownerType, ownerId, name, kind, mime, bytes, sha256, status = 'reading' } = {}, { by = null } = {}) {
+export function insertAttachment({ id, ownerType, ownerId, name, kind, mime, bytes, sha256, status = 'reading', fetch = null } = {}, { by = null } = {}) {
   if (typeof id !== 'string' || !REQ_ATT_ID_RE.test(id)) throw new Error('insertAttachment: refusing an id the store never minted');
   if (!OWNER_TYPES.includes(ownerType)) throw new Error(`insertAttachment: unknown owner type "${ownerType}"`);
   if (!ATT_STATUSES.includes(status)) throw new Error(`insertAttachment: unknown status "${status}"`);
   getDb();
   const ts = iso();
-  prepare(`INSERT INTO req_attachments (id, owner_type, owner_id, name, kind, mime, bytes, sha256, status, created_by, created_at,
-      updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, ownerType, Number(ownerId), name, kind, mime, Number(bytes), sha256, status, by, ts, by, ts);
+  prepare(`INSERT INTO req_attachments (id, owner_type, owner_id, name, kind, mime, bytes, sha256, status, fetch_json, created_by, created_at,
+      updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, ownerType, Number(ownerId), name, kind, mime, Number(bytes), sha256, status, fetch ? JSON.stringify(fetch) : null, by, ts, by, ts);
   return getAttachment(id);
 }
 
@@ -404,6 +415,12 @@ export function deleteOwnerAttachments(ownerType, ownerId) {
 export function listReadingAttachments() {
   getDb();
   return prepare("SELECT * FROM req_attachments WHERE status = 'reading' ORDER BY rowid").all().map(toAttachment);
+}
+
+/** A6.1 D10: the rows still waiting for their tracker download (a restart turns them failed, recoverDownloads). */
+export function listDownloadingAttachments() {
+  getDb();
+  return prepare("SELECT * FROM req_attachments WHERE status = 'downloading' ORDER BY rowid").all().map(toAttachment);
 }
 
 /** The last reads' costs of one kind, newest finished first (the estimates, D5 / §5). */
@@ -546,7 +563,7 @@ function toLink(r) {
     featureSeq: Number(r.feature_seq), plugin: r.plugin, sourceId: r.source_id, profile: r.profile || null, trackerProject: r.tracker_project,
     key: r.ticket_key || null, url: r.ticket_url || null, createdAt: r.created_at || null, exportedAt: r.exported_at || null,
     spec: json(r.spec_json, null), fields: json(r.fields_json, null), fingerprint: r.fingerprint || null,
-    pendingMarker: r.pending_marker || null, pendingAt: r.pending_at || null, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+    pendingMarker: r.pending_marker || null, pendingAt: r.pending_at || null, origin: r.origin === 'import' ? 'import' : 'export', updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
 }
 
@@ -569,20 +586,22 @@ export function setPendingExport(seq, { plugin, sourceId, profile = null, tracke
 }
 
 /** The feature's current ticket, whole (D7, D8, D9): written after a create, an update, a comment, a new ticket or a
- *  ticket found again; the pending marker goes. Keys of the argument this table has no column for are ignored. */
+ *  ticket found again; the pending marker goes. `origin` (A6.1 D11): 'import' for a link an import made; a save that passes
+ *  the link on ({ ...link }) keeps it; anything else is 'export'. Keys this table has no column for are ignored. */
 export function saveExportLink(seq, { plugin, sourceId, profile = null, trackerProject, key, url = null, createdAt = null, exportedAt = null, spec = null,
-  fields = null, fingerprint = null } = {}, { by = null } = {}) {
+  fields = null, fingerprint = null, origin = 'export' } = {}, { by = null } = {}) {
   getDb();
   const ts = iso();
   prepare(`INSERT INTO req_export_links (feature_seq, plugin, source_id, profile, tracker_project, ticket_key, ticket_url, created_at, exported_at,
-      spec_json, fields_json, fingerprint, pending_marker, pending_at, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+      spec_json, fields_json, fingerprint, origin, pending_marker, pending_at, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
       ON CONFLICT (feature_seq) DO UPDATE SET plugin = excluded.plugin, source_id = excluded.source_id, profile = excluded.profile,
         tracker_project = excluded.tracker_project, ticket_key = excluded.ticket_key, ticket_url = excluded.ticket_url,
         created_at = excluded.created_at, exported_at = excluded.exported_at, spec_json = excluded.spec_json, fields_json = excluded.fields_json,
-        fingerprint = excluded.fingerprint, pending_marker = NULL, pending_at = NULL, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+        fingerprint = excluded.fingerprint, origin = excluded.origin, pending_marker = NULL, pending_at = NULL, updated_by = excluded.updated_by,
+        updated_at = excluded.updated_at`)
     .run(Number(seq), plugin, sourceId, profile || null, trackerProject, key, url || null, createdAt || null, exportedAt || null,
-      spec ? JSON.stringify(spec) : null, fields ? JSON.stringify(fields) : null, fingerprint || null, by, ts);
+      spec ? JSON.stringify(spec) : null, fields ? JSON.stringify(fields) : null, fingerprint || null, origin === 'import' ? 'import' : 'export', by, ts);
   return getExportLink(seq);
 }
 
@@ -597,4 +616,13 @@ export function clearPendingExport(seq) {
 export function deleteExportLink(seq) {
   getDb();
   return Number(prepare('DELETE FROM req_export_links WHERE feature_seq = ?').run(Number(seq)).changes);
+}
+
+/** A6.1 D12: the feature (archived ones too) already linked to this ticket on this connection, else null. */
+export function linkByTicket({ plugin, sourceId, profile = null, key } = {}) {
+  getDb();
+  const r = prepare(`SELECT l.feature_seq, f.title FROM req_export_links l JOIN req_features f ON f.seq = l.feature_seq
+      WHERE l.plugin = ? AND l.source_id = ? AND COALESCE(l.profile, '') = ? AND UPPER(l.ticket_key) = UPPER(?) ORDER BY l.feature_seq LIMIT 1`)
+    .get(String(plugin || ''), String(sourceId || ''), profile || '', String(key || ''));
+  return r ? { seq: Number(r.feature_seq), id: featureId(r.feature_seq), title: r.title } : null;
 }
