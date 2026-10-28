@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { lastToast } from './helpers/feedback.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -285,6 +286,31 @@ test('Save-as-defaults PATCHes every row\'s effective config onto the workflow, 
   assert.deepEqual(promo.body.defaults.n1, { fanOut: false });
   // Promotion is only half the job: the now-redundant overrides are cleared.
   assert.ok(sink.some((c) => c.method === 'DELETE' && c.url.includes('/api/config/workflow')), 'overrides not cleared');
+});
+
+test('Save-as-defaults with a version in use: the draft gets the defaults, the project keeps its picks, and the hint says so', async () => {
+  const sink = [];
+  const config = { workflows: { wf_t: { nodes: { n0: { model: 'claude-haiku-4-5', effort: 'high' } }, feedbacks: {} } } };
+  // GET /api/workflows/:id?use=live carries versionNo once a version is in use (flag workflowTests on).
+  const { window } = await boot({ fetchHandler: apiFetch({ config, sink, workflow: { ...WF_TUNED, versionNo: 2 } }) });
+  await openTuned(window);
+  window.document.querySelector('#agentsPromote').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(); await tick(); await tick();
+  assert.ok(sink.some((c) => c.method === 'PATCH' && /\/defaults$/.test(c.url)), 'the defaults still go into the draft');
+  assert.equal(sink.some((c) => c.method === 'DELETE' && c.url.includes('/api/config/workflow')), false,
+    'the project picks are kept: new runs use the version in use, which does not have these defaults');
+  assert.equal(lastToast(window.document)?.title, 'Saved to your draft. New runs keep these picks until you use a new version.');
+});
+
+test('Save-as-defaults without a version in use (versionNo null): exactly as before, the picks are cleared and no hint', async () => {
+  const sink = [];
+  const config = { workflows: { wf_t: { nodes: { n0: { model: 'claude-haiku-4-5', effort: 'high' } }, feedbacks: {} } } };
+  const { window } = await boot({ fetchHandler: apiFetch({ config, sink, workflow: { ...WF_TUNED, versionNo: null } }) });
+  await openTuned(window);
+  window.document.querySelector('#agentsPromote').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(); await tick(); await tick();
+  assert.ok(sink.some((c) => c.method === 'DELETE' && c.url.includes('/api/config/workflow')), 'overrides cleared');
+  assert.equal(lastToast(window.document), null);
 });
 
 test('the built-in Default workflow cannot promote defaults (it has no row to store them)', async () => {

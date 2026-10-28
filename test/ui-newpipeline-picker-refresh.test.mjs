@@ -48,7 +48,8 @@ async function boot() {
     server.calls.push(u);
     if (u.includes('/api/projects')) return json({ projects: [{ name: 'proj', path: '/tmp/proj', exists: true }] });
     if (u.endsWith('/api/workflows')) return json({ workflows: [WF_DEFAULT, ...server.workflows] });
-    const m = u.match(/\/api\/workflows\/([^/?]+)$/);
+    // New run reads ?use=live (what a run uses, plans/workflow-tests-plan.md D15).
+    const m = u.match(/\/api\/workflows\/([^/?]+)(?:\?.*)?$/);
     if (m) {
       const wf = server.workflows.find((w) => w.id === decodeURIComponent(m[1]));
       if (m[1] === 'wf_default') return json(WF_DEFAULT);

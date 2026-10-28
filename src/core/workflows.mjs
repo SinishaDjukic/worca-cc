@@ -14,6 +14,8 @@ import { join } from 'node:path';
 import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
+import { snapshotRowTx, readVersion, liveVersionNo } from './workflow-revisions.mjs';
+import { flagEnabled } from './flags.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine, projectRolesFor } from './config.mjs';
 import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine, MODEL_ENGINES } from './model-env.mjs';
@@ -237,6 +239,12 @@ function rowToTpl(r) {
 
 const ROW_COLS = 'id, name, version, domain, steps, feedbacks, graph, archived_at, created_at, updated_at, origin';
 
+/** D3: does this write change what the row holds? (name, domain, graph, or un-archiving it). */
+function rowChanges(prev, { name, domain, graph }) {
+  return prev.version !== 2 || prev.name !== name || (prev.domain || 'general') !== domain
+    || prev.graph !== JSON.stringify(graph) || !!prev.archived_at;
+}
+
 /** Read + shallow-validate one stored template row. Unsafe id / missing => null. */
 function readRaw(id, { includeArchived = false } = {}) {
   if (!isSafeWorkflowId(id)) return null; // SECURITY: reject path-traversal / unsafe ids
@@ -299,7 +307,7 @@ export async function writeWorkflow(tpl) {
  * upsert; the API's save path is the one caller that turns it on.
  *
  * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object}} tpl
- * @param {{rejectCollision?:boolean}} [opts]
+ * @param {{rejectCollision?:boolean, revisionSource?:string, by?:string|null}} [opts]
  * @throws {Error} code 'RESERVED_NAME' (the name slugs onto wf_default) or,
  *   with rejectCollision, code 'ID_TAKEN' + `.id` (the minted id is in use)
  */
@@ -346,6 +354,10 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   }
   const createdAt = (typeof tpl?.createdAt === 'string' && tpl.createdAt) || existing?.created_at || now;
   tx(() => {
+    const prev = prepare(`SELECT ${ROW_COLS} FROM workflows WHERE id = ?`).get(id);
+    if (prev && rowChanges(prev, { name, domain, graph })) {
+      snapshotRowTx(prev, { source: opts?.revisionSource || 'save', by: opts?.by ?? null, now });
+    }
     prepare(`
       INSERT INTO workflows (id, name, version, domain, steps, feedbacks, graph, archived_at, created_at, updated_at, origin)
       VALUES (?, ?, 2, ?, '[]', '[]', ?, NULL, ?, ?, ?)
@@ -383,6 +395,47 @@ export async function readWorkflow(id, opts = {}) {
   if (id === SHAPE_WORKFLOW_ID) return GRAPH_SHAPE_WORKFLOW;
   if (id === SHAPE_UX_WORKFLOW_ID) return GRAPH_SHAPE_UX_WORKFLOW;
   return readRaw(id, opts);
+}
+
+/**
+ * What a RUN of this workflow uses (plans/workflow-tests-plan.md D2, D9, D13). `use`:
+ *   'live'  (default) — the version marked in use when the workflowTests flag is on and one is set; else the row
+ *   'draft' — always the row (the canvas's draft)
+ *   n > 0   — that named version (the Tests page; no flag needed: its routes are flag-gated)
+ * Built-ins and plugin rows are never versioned: they come back as readWorkflow returns them. The result carries
+ * `versionNo` (null = the row).
+ * @param {string} id
+ * @param {{use?: 'live'|'draft'|number}} [opts]
+ */
+export async function readRunnableWorkflow(id, { use = 'live' } = {}) {
+  return runnableOf(await readWorkflow(id), { use });
+}
+
+/** readRunnableWorkflow over a template already read (readWorkflow / listWorkflows output). Synchronous.
+ *  @throws code 'BAD_REQUEST' on a `use` that is none of 'live', 'draft' or a positive integer (M8);
+ *  code 'NOT_FOUND' when the version asked for does not exist */
+export function runnableOf(row, { use = 'live' } = {}) {
+  if (use !== 'live' && use !== 'draft' && !(Number.isInteger(use) && use > 0)) {
+    throw Object.assign(new Error(`use must be 'live', 'draft' or a version number, not ${JSON.stringify(use)}`), { code: 'BAD_REQUEST' });
+  }
+  if (!row || row.version !== 2 || isReservedWorkflowId(row.id)
+    || (typeof row.origin === 'string' && row.origin.startsWith('plugin:'))) return row;
+  const id = row.id;
+  let no = null;
+  if (Number.isInteger(use) && use > 0) no = use;
+  else if (use === 'live' && flagEnabled('workflowTests')) no = liveVersionNo(row.id);
+  if (!no) return { ...row, versionNo: null };
+  const v = readVersion(row.id, no);
+  if (!v) throw Object.assign(new Error(`workflow "${id}" has no version ${no}`), { code: 'NOT_FOUND' });
+  const g = v.graph && typeof v.graph === 'object' ? v.graph : {};
+  const { canvas: _c, codeGraph: _g, nodes: _n, wires: _w, ...rest } = row;
+  return {
+    ...rest, name: v.name, domain: v.domain || row.domain,
+    nodes: Array.isArray(g.nodes) ? g.nodes : [], wires: Array.isArray(g.wires) ? g.wires : [],
+    ...(g.canvas && typeof g.canvas === 'object' ? { canvas: g.canvas } : {}),
+    ...(g.codeGraph === false ? { codeGraph: false } : {}),
+    versionNo: no,
+  };
 }
 
 /**
@@ -449,13 +502,16 @@ function assertValidGraph(tpl, registry, scripts) {
  *  `checkGraph:false` is the READ escape hatch (GET /api/workflows/:id): a
  *  stale template must still open in the Composer, or it can never be repaired.
  *  @param {string} id
- *  @param {{registry?:Record<string,object>, scripts?:Record<string,object>, checkGraph?:boolean}} [opts]
+ *  `use` (readRunnableWorkflow): default 'live' for a run's check, 'draft' with checkGraph:false.
+ *  @param {{registry?:Record<string,object>, scripts?:Record<string,object>, checkGraph?:boolean, use?:'live'|'draft'|number}} [opts]
  */
-export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph = true } = {}) {
+export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph = true, use } = {}) {
   const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
   // The Auto entry has no graph to check: the run decides one (spec §5.1).
   if (wanted === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
-  const live = await readWorkflow(wanted);
+  // D2: a run is checked against what it will run; the Composer's read (checkGraph:false) opens the draft unless the
+  // caller asks for another (GET /api/workflows/:id?use=live: the screens before a run).
+  const live = await readRunnableWorkflow(wanted, { use: use !== undefined ? use : checkGraph ? 'live' : 'draft' });
   if (live) {
     // A disabled plugin's template is neither runnable nor openable: its agents
     // are withdrawn with the plugin. Same posture as ARCHIVED — a coded refusal
@@ -514,9 +570,11 @@ export async function setWorkflowNodeDefaults(id, map) {
       return { ...node, config: { ...kept, ...clean } };
     });
     const now = new Date().toISOString();
+    const nextGraph = JSON.stringify({ nodes, wires: tpl.wires, ...(tpl.canvas ? { canvas: tpl.canvas } : {}) });
     tx(() => {
-      prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?')
-        .run(JSON.stringify({ nodes, wires: tpl.wires, ...(tpl.canvas ? { canvas: tpl.canvas } : {}) }), now, id);
+      const prev = prepare(`SELECT ${ROW_COLS} FROM workflows WHERE id = ?`).get(id);
+      if (prev && prev.graph !== nextGraph) snapshotRowTx(prev, { source: 'defaults', now });
+      prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?').run(nextGraph, now, id);
     });
     return { ...tpl, nodes, updatedAt: now };
   }
@@ -552,6 +610,8 @@ export async function deleteWorkflow(id) {
   getDb();
   let changed = 0;
   tx(() => {
+    const prev = prepare(`SELECT ${ROW_COLS} FROM workflows WHERE id = ?`).get(id);
+    if (prev) snapshotRowTx(prev, { source: 'delete' });
     changed = prepare('DELETE FROM workflows WHERE id = ?').run(id).changes;
   });
   return changed > 0;
@@ -643,7 +703,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   if (workflowId === AUTO_WORKFLOW_ID) {
     throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
   }
-  const stored = await readWorkflow(workflowId);
+  const stored = await readRunnableWorkflow(workflowId, { use: opts.use ?? 'live' });
   if (!stored) throw new Error(`unknown workflowId "${workflowId}"`);
   if (stored.version !== 2) throw new Error('template is not a graph — runs on the v1 engine');
   // The RESOLVED template: a private deep copy (the alias row spreads a deep-frozen
@@ -816,5 +876,5 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const raw = Number(wireCfg[w.id]?.maxCycles ?? w.config?.maxCycles);
     wires[w.id] = { maxCycles: Number.isInteger(raw) && raw >= 1 ? raw : DEFAULT_MAX_CYCLES };
   }
-  return { template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys };
+  return { template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys, versionNo: stored.versionNo ?? null };
 }

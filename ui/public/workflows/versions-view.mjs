@@ -1,0 +1,95 @@
+// ui/public/workflows/versions-view.mjs — the Versions page of a workflow (plans/workflow-tests-plan.md Task 8;
+// canvas board 7). Pure DOM: app.js owns data and actions. Words per D10.
+// A history entry is the row as it was just BEFORE a write (workflow-revisions.mjs snapshotRowTx), stamped with the
+// write's time: each line says what Restore gives back, never the state after that write.
+const BEFORE_TEXT = {
+  save: (at) => `Before the save of ${at}`,
+  defaults: (at) => `Before step defaults changed, ${at}`,
+  restore: (at) => `Before the restore of ${at}`,
+  delete: (at) => `As it was when deleted, ${at}`,
+};
+
+const el = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+const btn = (doc, label, onClick, cls = 'btn btn-sm') => { const b = el(doc, 'button', cls, label); b.type = 'button'; b.addEventListener('click', onClick); return b; };
+/** Row buttons share a short label; the accessible name says which version or save it acts on. */
+const named = (b, label) => { b.setAttribute('aria-label', label); return b; };
+/** A data-focus-key per button: app.js puts the focus back on it after a repaint, and a closing dialog finds it (layers.mjs). */
+const keyed = (b, key) => { b.dataset.focusKey = key; return b; };
+/** Who did it, or null: 'local' (a local install, identity.mjs actorLabel) is nobody in particular. */
+const who = (by) => (typeof by === 'string' && by.trim() && by.trim() !== 'local' ? by.trim() : null);
+const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
+
+/**
+ * @param {HTMLElement} root
+ * @param {{name:string, liveVersionNo:number|null, draft:null|{changed:boolean, changes:string[]}, versions:Array, history:Array}} o
+ * @param {{saveVersion:Function, useVersion:Function, restore:Function, openCanvas:Function}} actions
+ * @param {{doc: Document, error?: string|null, loading?: boolean}} ctx  error: why there is no overview (the server's
+ *   reason, or no answer); loading: the overview of the workflow now open is still being read
+ */
+export function renderVersionsPage(root, o, actions, { doc, error = null, loading = false }) {
+  root.replaceChildren();
+  const wrap = el(doc, 'div', 'wfv-vpage');
+  wrap.append(el(doc, 'p', 'subtitle', 'Your changes stay in a draft until you choose Save version. Every run remembers which version it used, so you can always go back.'));
+
+  if (!o && loading) {
+    wrap.append(el(doc, 'p', 'hint wfv-vloading', 'Reading the versions…'));
+    root.append(wrap);
+    return;
+  }
+  if (!o && error) {
+    const box = el(doc, 'div', 'card wfv-vempty');
+    box.append(el(doc, 'h2', '', 'Versions are not available'), el(doc, 'p', 'hint', error));
+    wrap.append(box);
+  } else if (!o || !Array.isArray(o.versions) || !o.versions.length) {
+    const empty = el(doc, 'div', 'card wfv-vempty');
+    empty.append(el(doc, 'h2', '', 'No versions yet'),
+      el(doc, 'p', 'hint', 'New runs use what you last saved. Save a version to keep this state; after that, you choose when new runs get your changes.'),
+      keyed(btn(doc, 'Save version', () => actions.saveVersion(), 'btn btn-primary'), 'vp:save'));
+    wrap.append(empty);
+  } else {
+    const table = el(doc, 'div', 'card wfv-vt');
+    const draft = el(doc, 'div', 'wfv-vt-draft');
+    const d = o.draft;
+    // M1: a workflow deleted and saved again keeps its old versions with none in use: new runs use the draft.
+    const what = !Number.isInteger(o.liveVersionNo) ? 'No version in use yet: new runs use your draft'
+      : d && d.changed ? d.changes.join(' · ') : `Same as v${o.liveVersionNo}`;
+    draft.append(el(doc, 'span', 'wfv-vt-no', 'Draft'),
+      (() => { const c = el(doc, 'span', 'wfv-vt-main'); c.append(el(doc, 'b', '', 'Your draft'), el(doc, 'span', 'hint', what)); return c; })(),
+      keyed(btn(doc, 'Save version', () => actions.saveVersion(), 'btn btn-sm btn-primary'), 'vp:save'));
+    table.append(draft);
+    for (const v of o.versions) {
+      const row = el(doc, 'div', 'wfv-vt-row');
+      const main = el(doc, 'span', 'wfv-vt-main');
+      const head = el(doc, 'span', 'wfv-vt-head');
+      head.append(el(doc, 'b', '', v.note || `Version ${v.versionNo}`));
+      if (v.inUse) head.append(el(doc, 'span', 'badge wfv-inuse', 'New runs use this'));
+      main.append(head, el(doc, 'span', 'hint', [when(v.createdAt), who(v.by)].filter(Boolean).join(' · ')),
+        el(doc, 'span', 'hint', v.changes.join(' · ')));
+      const used = el(doc, 'span', 'wfv-vt-used', v.runs === 0 ? 'Not used yet' : v.runs === 1 ? 'Used once' : `Used ${v.runs} times`);
+      const acts = el(doc, 'span', 'wfv-vt-acts');
+      if (!v.inUse) acts.append(keyed(named(btn(doc, 'Use for new runs', () => actions.useVersion(v.versionNo)), `Use v${v.versionNo} for new runs`), `vp:use:${v.versionNo}`));
+      acts.append(keyed(named(btn(doc, 'Restore into draft', () => actions.restore(v.id, `v${v.versionNo}`), 'btn btn-sm btn-quiet'), `Restore v${v.versionNo} into draft`), `vp:restore:${v.id}`));
+      row.append(el(doc, 'span', 'wfv-vt-no', `v${v.versionNo}`), main, used, acts);
+      table.append(row);
+    }
+    wrap.append(table);
+  }
+
+  if (o && Array.isArray(o.history) && o.history.length) {
+    const hist = el(doc, 'section', 'wfv-vh');
+    hist.setAttribute('aria-label', 'Every save');
+    hist.append(el(doc, 'h2', '', 'Every save'),
+      el(doc, 'p', 'hint', 'Each entry is the workflow as it was just before that change. Worca keeps the last 50, so any change can be undone.'));
+    for (const h of o.history) {
+      const row = el(doc, 'div', 'wfv-vh-row');
+      const at = when(h.createdAt);
+      const text = (BEFORE_TEXT[h.source] || BEFORE_TEXT.save)(at);
+      const label = `the state from before ${at}`;
+      row.append(el(doc, 'span', 'wfv-vh-what', text), ...(who(h.by) ? [el(doc, 'span', 'hint wfv-vh-by', `by ${who(h.by)}`)] : []),
+        keyed(named(btn(doc, 'Restore', () => actions.restore(h.id, label), 'btn btn-sm btn-quiet'), `Restore ${label} into draft`), `vp:history:${h.id}`));
+      hist.append(row);
+    }
+    wrap.append(hist);
+  }
+  root.append(wrap);
+}

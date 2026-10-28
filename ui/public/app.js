@@ -210,10 +210,13 @@ import {
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
-import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
+import { createComposer, isReservedWorkflowId, pluginOriginName } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
+import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workflows/version-dialogs.mjs';
+import { renderVersionsPage } from './workflows/versions-view.mjs';
+import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -3186,6 +3189,10 @@ const gvNewIds = new Set(); // workflows imported this page session (a NEW pill 
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
 const WF_ID_RE = /^[A-Za-z0-9_-]+$/;
 
+/** Plugin rows and the built-ins never have versions (D5); a format-1 row is not a graph (isVersionableRow). */
+function workflowCanHaveVersions(w) {
+  return !!w && Number(w.version) === 2 && !isReservedWorkflowId(w.id) && !String(w.origin || '').startsWith('plugin:');
+}
 const gvApi = {
   agents: async () => { const r = await fetchAgents(); return Array.isArray(r) ? r : (r && r.agents) || []; },
   agentsAll: async () => {
@@ -3220,7 +3227,35 @@ const gvApi = {
     const d = await safeJson(res);
     // 422 = the shared validator's issues, rendered verbatim by the dialog.
     if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error, id: d && d.id };
+    setTimeout(() => void wfvRefreshVersions(), 0);
     return { ok: true, workflow: (d && d.workflow) || d };
+  },
+  // {ok, overview} | {ok: false, status, error}: never throws (a refused fetch is status 0). 400 = this row cannot
+  // have versions (a plugin's, or not a graph).
+  versionsRead: async (id) => {
+    try {
+      const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`);
+      const d = await safeJson(res);
+      return res.ok ? { ok: true, overview: d } : { ok: false, status: res.status, error: (d && d.error) || `versions failed (${res.status})` };
+    } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
+  },
+  versions: async (id) => { const r = await gvApi.versionsRead(id); return r.ok ? r.overview : null; },
+  saveVersion: async (id, body) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const d = await safeJson(res);
+    return res.ok ? { ok: true, overview: d } : { ok: false, error: d && d.error };
+  },
+  useVersion: async (id, no) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions/${no}/use`, { method: 'POST' });
+    const d = await safeJson(res);
+    return res.ok ? { ok: true, overview: d } : { ok: false, error: d && d.error };
+  },
+  restoreRevision: async (id, rev) => {
+    try {
+      const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/history/${rev}/restore`, { method: 'POST' });
+      const d = await safeJson(res);
+      return res.ok ? { ok: true, ...d } : { ok: false, status: res.status, error: d && d.error, errors: d && d.errors };
+    } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
   },
   // {ok, error} — the refusal string comes from the JSON body, because every
   // delete this API can refuse (the built-in, a 404, a 409) says WHY there and
@@ -3263,6 +3298,7 @@ function wfvEls() {
     autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
     dialogHost: g('wfv-dialog-host'), chat: g('wfc'),
+    pages: g('wfv-pages'), vstatus: g('wfv-vstatus'), saveVersion: g('wfv-saveversion'), versions: g('wfv-versions'),
   };
 }
 
@@ -3333,6 +3369,14 @@ async function initWorkflows() {
   });
   wfvLibrary = createLibrary({ doc: document, host: els.library, actions: wfvLibraryActions() });
   wfvShell = createWorkflowsShell({ doc: document, els: { ...els, inspector: insBody }, composer: gvComposer, actions: wfvShellActions() });
+  {
+    const e = wfvEls();
+    e.pages?.addEventListener('click', (ev) => { const b = ev.target.closest('button[data-page]'); if (b) wfvShowPage(b.dataset.page); });
+    e.saveVersion?.addEventListener('click', () => void wfvSaveVersion());
+  }
+  // Every new document on the canvas (a Library row's Open, an address, New canvas, a chat build) repaints the
+  // version line, so it never shows the previous workflow's version.
+  gvComposer.hooks.onDocChange = () => { void wfvRefreshVersions(); };
   wfvChat = createChatDock({
     doc: document, host: els.chat, composer: gvComposer, sessionId: WFV_SESSION,
     fetch: (...a) => fetch(...a),
@@ -3392,6 +3436,176 @@ function wfvSetLibraryOpen(open) {
   wfvShell?.paintLibToggle(open);
 }
 
+// Workflow versions (plans/workflow-tests-plan.md Part 1): the Canvas · Versions switch, the status line and Save version.
+let wfvVersionsOverview = null;
+let wfvVersionsError = null;     // {status, error} of the last failed read (status 0: no answer, 400: cannot have versions)
+/** Read the open workflow's versions, paint the status line and (when shown) the Versions page. Never rejects. */
+async function wfvRefreshVersions() {
+  const els = wfvEls();
+  const paintPage = () => { if (els.versions && !els.versions.hidden) wfvRenderVersionsPage(); };
+  const t = gvComposer && gvComposer.template();
+  if (!flagOn('workflowTests') || !t || !t.id) {
+    wfvVersionsOverview = null; wfvVersionsError = null;
+    if (els.vstatus) els.vstatus.hidden = true;
+    paintPage();
+    return null;
+  }
+  // Another workflow is open now: the page drops the rows of the one that left at once ("Reading the versions…").
+  if (!wfvVersionsOverview || wfvVersionsOverview.workflowId !== t.id) paintPage();
+  const r = await gvApi.versionsRead(t.id);
+  // Another workflow opened while this one was asked for: its own refresh paints the line, not this late answer.
+  const now = gvComposer.template();
+  if (!now || now.id !== t.id) return null;
+  wfvVersionsOverview = r.ok ? r.overview : null;
+  wfvVersionsError = r.ok ? null : { status: r.status, error: r.error, workflowId: t.id };
+  const text = statusText(wfvVersionsOverview);
+  // M5: #wfv-vstatus is aria-live: a repeat of the same text after every save is not news, so only a change is written.
+  if (els.vstatus) { if (els.vstatus.textContent !== text) els.vstatus.textContent = text; els.vstatus.hidden = !text; }
+  paintPage();
+  return wfvVersionsOverview;
+}
+function wfvShowPage(page) {
+  const els = wfvEls();
+  for (const b of els.pages ? els.pages.querySelectorAll('button[data-page]') : []) {
+    const on = b.dataset.page === page;
+    b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  if (els.versions) els.versions.hidden = page !== 'versions';
+  if (page !== 'versions') return;
+  // The canvas keys skip only targets inside [data-canvas-keys="off"]: nothing stays selected on the hidden canvas,
+  // and the focus sits on the page (tabindex -1), so a click on its text never hands Delete or the arrows to <body>.
+  gvComposer?.select(null);
+  els.versions?.focus();
+  void wfvRefreshVersions();       // paints the page (it is shown now)
+}
+async function wfvSaveVersion({ afterSave = false } = {}) {
+  // Save the draft first when the canvas has unsaved changes: the same path Export… takes (wfvShellActions
+  // exportCurrent → gvComposer.openSaveDialog({ then })), so an unsaved canvas is never versioned by surprise.
+  // A plugin's row and the built-ins never have versions: their Save is Save a copy (composer saveMode), and the copy can.
+  const t = gvComposer.template();
+  const copyFirst = !t || !t.id || isReservedWorkflowId(t.id) || Boolean(pluginOriginName(gvComposer.origin()));
+  // afterSave is the loop guard: a save that still left nothing to version (an edit during the save) stops here.
+  const stop = () => notify({ tone: 'err', title: 'Save version did not start', detail: 'Save the pipeline, then press Save version again.' });
+  if (gvComposer.isDirty() || copyFirst) {
+    if (afterSave) { stop(); return; }
+    gvComposer.openSaveDialog({ then: () => void wfvSaveVersion({ afterSave: true }) });
+    return;
+  }
+  const o = await wfvRefreshVersions();
+  if (gvComposer.template().id !== t.id) return;            // another workflow opened meanwhile
+  if (!o && wfvVersionsError && wfvVersionsError.status === 400) {
+    // The server says this row cannot have versions: save it (a copy where the composer must) first. After that save
+    // a 400 again is the server's verdict on this row, not a save left undone: its reason is the useful text.
+    if (afterSave) { notify({ tone: 'err', title: 'Save version did not start', detail: wfvVersionsError.error }); return; }
+    gvComposer.openSaveDialog({ then: () => void wfvSaveVersion({ afterSave: true }) });
+    return;
+  }
+  if (!o) {
+    notify({ tone: 'err', title: 'Versions are not available', detail: (wfvVersionsError && wfvVersionsError.error) || 'Worca did not answer.' });
+    return;
+  }
+  // What Save version compares against: the latest version (null: this will be the first).
+  const since = o.sinceLatest || null;
+  openSaveVersionDialog({ doc: document, win: window, nextNo: (since ? since.versionNo : 0) + 1,
+    sinceNo: since ? since.versionNo : null, changes: since ? since.changes : [],
+    onSubmit: async (body) => { const r = await gvApi.saveVersion(t.id, body); if (r.ok) await wfvRefreshVersions(); return r; } });
+}
+/** Paint the Versions page (versions-view.mjs) from the last overview; without one, wfvVersionsError says why. */
+function wfvRenderVersionsPage() {
+  const els = wfvEls();
+  if (!els.versions || !gvComposer) return;
+  const t = gvComposer.template();
+  const id = t && t.id;
+  const o = id && wfvVersionsOverview && wfvVersionsOverview.workflowId === id ? wfvVersionsOverview : null;
+  // A repaint replaces the page's buttons: the focus they held goes to the same button again (its data-focus-key),
+  // else to the page, never <body>, where the canvas keys would answer.
+  const focused = document.activeElement;
+  const hadKey = focused && focused !== els.versions && els.versions.contains(focused) ? (focused.dataset.focusKey || '') : null;
+  try { wfvPaintVersions(els, id, o); } finally {
+    if (hadKey !== null && !els.versions.contains(document.activeElement)) {
+      const again = hadKey ? [...els.versions.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === hadKey) : null;
+      (again || els.versions).focus();
+    }
+  }
+}
+function wfvPaintVersions(els, id, o) {
+  const err = wfvVersionsError && wfvVersionsError.workflowId === id ? wfvVersionsError : null;
+  renderVersionsPage(els.versions, o, {
+    saveVersion: () => void wfvSaveVersion(),
+    useVersion: (no) => {
+      if (!o) return;
+      const target = o.versions.find((v) => v.versionNo === no);
+      const inUse = o.versions.find((v) => v.inUse);
+      openUseVersionDialog({ doc: document, win: window, versionNo: no,
+        // What changes for new runs: the version in use → this one (server changesFromInUse), not this version's own changes.
+        // null: no version is in use yet (a workflow deleted and saved again), never "Nothing differs".
+        changes: target && Array.isArray(target.changesFromInUse) ? target.changesFromInUse : null,
+        // D6: every version runs today's Library text; say so once when either version recorded older text.
+        libraryEdited: Boolean((target && target.libraryEdited) || (inUse && inUse.libraryEdited)),
+        onConfirm: async () => {
+          const r = await gvApi.useVersion(id, no);
+          // Another workflow opened meanwhile: its overview is not this answer.
+          if (r.ok && gvComposer.template().id === id) { wfvVersionsOverview = r.overview; await wfvRefreshVersions(); }
+          return r;
+        } });
+    },
+    restore: async (rev, label) => {
+      // #721: restoring the workflow open on the canvas while it has unsaved changes asks first. That one question
+      // covers the canvas too: the restored draft loads with loadTemplate, not openTemplate, whose own
+      // "Discard changes?" would ask the same thing a second time.
+      if (gvComposer.isDirty()) {
+        const ok = await confirmModal({ title: 'Restore into your draft?', confirmLabel: 'Restore',
+          message: 'Your canvas has unsaved changes. Restoring replaces them with the saved state.' });
+        if (!ok) return;
+      }
+      const r = await gvApi.restoreRevision(id, rev);
+      if (!r.ok) { notify({ tone: 'err', title: 'Not restored', detail: wfvRestoreRefusal(r) }); return; }
+      if (gvComposer.template().id !== id) {
+        // Another workflow opened meanwhile: the canvas keeps it, and the toast says which workflow's draft changed.
+        notify({ tone: 'ok', title: `Restored ${label} into the draft of "${(o && o.name) || id}"` });
+        return;
+      }
+      gvComposer.loadTemplate(r.workflow);
+      wfvVersionsOverview = r.overview || wfvVersionsOverview;
+      wfvRenderVersionsPage();
+      notify({ tone: 'ok', title: `Restored ${label} into your draft` });
+    },
+    openCanvas: () => wfvShowPage('canvas'),
+  }, { doc: document, error: id && !o && err ? err.error : null, loading: Boolean(id && !o && !err) });
+}
+/** A refused restore in plain words. A 422 carries the validator's issues under the bare message 'invalid graph':
+ *  name the agents and scripts they cite (display names where Worca knows them), never the code words. */
+function wfvRestoreRefusal(r) {
+  const errors = Array.isArray(r.errors) ? r.errors : [];
+  if (!errors.length && r.error && r.error !== 'invalid graph') return r.error;
+  const agents = (gvComposer.getAgents && gvComposer.getAgents()) || {};
+  const scripts = (gvComposer.getScripts && gvComposer.getScripts()) || {};
+  const names = [];
+  for (const e of errors) {
+    const m = /\b(?:agent|script) "([^"]+)"/.exec(String((e && e.message) || ''));
+    if (!m) continue;
+    const meta = agents[m[1]] || scripts[m[1]];
+    const name = (meta && meta.displayName) || m[1];
+    if (!names.includes(name)) names.push(name);
+  }
+  if (!names.length) return 'This saved state no longer fits the agents and steps it uses.';
+  const list = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
+  return `This saved state no longer fits the agents it uses: ${list}.`;
+}
+// ⌘Z / ⇧⌘Z reach the canvas even from a fenced button (composer.mjs onKeyDown, before its data-canvas-keys fence).
+// While the Versions page covers the canvas, an undo there would edit a graph nobody sees: it does nothing. Capture
+// phase, so the composer's document listener sees defaultPrevented and returns. Fields keep their own undo.
+document.addEventListener('keydown', (ev) => {
+  if (!(ev.metaKey || ev.ctrlKey) || (ev.key !== 'z' && ev.key !== 'Z')) return;
+  const page = document.getElementById('wfv-versions');
+  if (!page || page.hidden || page.closest('.view.hidden')) return;      // the Workflows view, its Versions page shown
+  const t = ev.target;
+  if (t && ((t.matches && t.matches('input, textarea, select')) || t.isContentEditable)) return;
+  ev.preventDefault();
+}, true);
+// The flag flips live: off leaves the Versions page (its markup hides, the canvas tools come back); on paints the line.
+onFlagChange('workflowTests', (on) => { if (!on) wfvShowPage('canvas'); void wfvRefreshVersions(); });
+
 function wfvShellActions() {
   return {
     pinState: () => { const t = gvComposer.template(); return t && t.id ? { id: t.id, pinned: homePinned(t.id) } : null; },
@@ -3410,7 +3624,7 @@ function wfvShellActions() {
     // first and the export follows; a blank canvas has nothing to export — open the saved list instead.
     exportCurrent: () => {
       const t = gvComposer.template();
-      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id });
+      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id, versionable: workflowCanHaveVersions(wf) });
       if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
       if (gvComposer.isPristine()) {
         wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
@@ -3717,6 +3931,13 @@ function wfvLibraryActions() {
       const full = await gvApi.readWorkflow(id);
       if (full && await gvComposer.openTemplate(full)) gvComposer.fit();
     },
+    openVersions: async (id) => {
+      const full = await gvApi.readWorkflow(id);
+      if (full && await gvComposer.openTemplate(full)) { gvComposer.fit(); wfvShowPage('versions'); }
+    },
+    // Plugin rows and the built-ins never have versions (D5); their ⋯ menu has no Versions….
+    // A format-1 row is not a graph and cannot have versions either (isVersionableRow).
+    versionsEnabled: (w) => flagOn('workflowTests') && workflowCanHaveVersions(w),
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
@@ -3736,7 +3957,7 @@ function wfvLibraryActions() {
       if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
       await wfvRefreshWorkflows();
     },
-    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id }),
+    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id, versionable: workflowCanHaveVersions(wf) }),
     newAgent: () => { location.hash = 'workflows/agents/new'; },
     newScript: () => { location.hash = 'workflows/scripts/new'; },
     viewAgent: (key) => { location.hash = `workflows/agents/${key}`; },
@@ -4201,8 +4422,11 @@ async function listWorkflowsApi() {
 async function getWorkflowApi(id) {
   if (state.workflowCache[id]) return state.workflowCache[id];
   try {
-    const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `?engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
-    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}${q}`);
+    // use=live: what a run of this workflow will use — the version in use once it has versions (plans/workflow-tests-plan.md
+    // D2), never the Composer's draft, so the step rows describe the graph that runs. Without the workflowTests flag the
+    // server answers the row, as before.
+    const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `&engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}?use=live${q}`);
     const data = await safeJson(res);
     // Shape gate, both engines: a v2 graph carries `nodes`, a v1 template
     // `steps`. Demanding `steps` (the pre-P8 guard) rejected every stored row
@@ -5350,9 +5574,19 @@ if (el.agentsPromote) {
         appendLog({ source: 'ui', level: 'error', text: `workflow defaults: ${data.error || res.status}`, ts: Date.now() });
         return;
       }
+      // A version in use (flag workflowTests; GET ?use=live carries its versionNo): the defaults went into the draft,
+      // and new runs keep using the version in use, which does not have them. The project's picks are therefore kept,
+      // so new runs keep running them; the hint says where the defaults went (user decision, final review).
+      const shown = state.workflowCache[workflowId];
+      const versionInUse = Boolean(shown && Number.isInteger(shown.versionNo));
       // The cached template still carries the OLD defaults; drop it so the
       // reset below repaints against what was just persisted.
       delete state.workflowCache[workflowId];
+      if (versionInUse) {
+        notify({ tone: 'ok', title: 'Saved to your draft. New runs keep these picks until you use a new version.' });
+        await renderWorkflowConfig(workflowId);
+        return;
+      }
       el.agentsReset.click(); // clearing the now-redundant overrides is the second half
     } catch (err) {
       appendLog({ source: 'ui', level: 'error', text: `workflow defaults error: ${err.message}`, ts: Date.now() });
@@ -40528,7 +40762,12 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // read in flight, shared by every caller while it runs and reset per open (a reopen reads afresh;
 // the older read's late answer is dropped). `busy`: a Preview or an Export is in flight. `seq`: bumped by every
 // plan invalidation, close and open; a Preview answer that lands after a bump is for a dialog that no longer exists.
-const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0 };
+// `exportUse` (D17): the Version field's choices (export-use.mjs), null while it is hidden (flag off, no version, the
+// versions not read yet) — then no `use` is sent and the export is of the draft, as before. `useSeq`: bumped by every
+// open and close only (not by a plan invalidation): a versions read that lands after a bump is for another open.
+// `useLoading`: that read is out; Download, Preview and Export wait for it (exportHoldForUse), so nothing is exported
+// as the draft while the default (the version new runs use) is still unknown.
+const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0, exportUse: null, useSeq: 0, useLoading: false };
 const exportModalHidden = () => { const m = document.getElementById('export-modal'); return !m || m.classList.contains('hidden'); };
 // Set by bindExportModal. A form: a backdrop click never closes it; Escape asks once a choice changed; while
 // a Preview or an Export is out, Cancel and Escape wait for its answer.
@@ -40547,6 +40786,10 @@ function openExportModal(item) {
   exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
+  exportModalState.exportUse = null;                     // read afresh below: a version may have been saved since
+  exportModalState.useSeq++;
+  exportModalState.useLoading = flagOn('workflowTests') && !!item.versionable;   // D17: the Version field
+  paintExportUse(exportUseEls(), null, { doc: document });
   document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
   exportSetBusy(false);
   document.getElementById('export-slug').value = '';
@@ -40562,13 +40805,46 @@ function openExportModal(item) {
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
   exportGuard?.opened();
+  if (exportModalState.useLoading) void exportLoadUse(item.id);
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
   exportModalState.seq++;                                 // a Preview still in flight has no dialog to land in
+  exportModalState.useSeq++;                              // so has a versions read
   exportSetDone(false);
 }
+const exportUseEls = () => ({ field: document.getElementById('export-use-field'), select: document.getElementById('export-use'),
+  hint: document.getElementById('export-use-hint') });
+/** The Version field (D17): read the workflow's versions (the Versions page's call) and show the field when it has
+ *  one, defaulting to the version new runs use. A failed read or no version keeps it hidden: the export is of the
+ *  draft, as before. Download, Preview and Export wait for the answer (useLoading), so no request is ever built
+ *  before it. An answer for an earlier open is dropped. */
+async function exportLoadUse(workflowId) {
+  const ticket = exportModalState.useSeq;
+  const r = await gvApi.versionsRead(workflowId);
+  if (ticket !== exportModalState.useSeq || exportModalHidden()) return;
+  exportModalState.useLoading = false;
+  const choices = r.ok ? exportUseChoices(r.overview) : null;
+  if (choices) {
+    exportModalState.exportUse = choices;
+    paintExportUse(exportUseEls(), choices, { doc: document });
+    if (exportGuard && !exportGuard.touched) exportGuard.markClean();   // a filled-in default is no change of the user's
+  }
+  // The buttons back, by the dialog's own rules (the marketplace's: targets and busy).
+  document.getElementById('export-plan-btn').disabled = false;
+  document.getElementById('export-apply-btn').disabled = false;
+  exportSyncMarketplaceButtons();
+}
+/** While the versions read is out (useLoading), Download, Preview and Export stay disabled; every sync that enables
+ *  them ends here. */
+function exportHoldForUse() {
+  if (!exportModalState.useLoading) return;
+  document.getElementById('export-plan-btn').disabled = true;
+  document.getElementById('export-apply-btn').disabled = true;
+}
+/** The request's `use`: the Version field's pick, or undefined while the field is hidden (send nothing). */
+const exportUseNow = () => (exportModalState.exportUse ? exportUseValue(document.getElementById('export-use').value) : undefined);
 /** Swap the form for the result view (or back). The dialog stays open so the
  *  user reads where the export went and what to do next, then clicks Done. */
 function exportSetDone(done) {
@@ -40643,6 +40919,7 @@ function exportSyncFormat() {
   const apply = document.getElementById('export-apply-btn');
   apply.textContent = json ? 'Download' : market ? CREATE_PR_LABEL : 'Export';
   apply.disabled = false;
+  exportHoldForUse();
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
@@ -40702,9 +40979,11 @@ async function exportFetchTargets() {
   } catch (err) { return { error: err && err.message ? err.message : String(err) }; }
 }
 function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).length) {
-  if (!exportIsMarketplace()) return;
-  syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
-    { busy: exportModalState.busy, targets: n });
+  if (exportIsMarketplace()) {
+    syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
+      { busy: exportModalState.busy, targets: n });
+  }
+  exportHoldForUse();
 }
 /** A Preview or an Export starts (`busy`) or ends: Cancel is off while it runs (the guard holds Escape too). For a
  *  marketplace request both action buttons are off as well, then back by the dialog's rule
@@ -40714,7 +40993,7 @@ function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).lengt
 function exportSetBusy(busy) {
   exportModalState.busy = busy;
   document.getElementById('export-cancel').disabled = busy;
-  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft']) document.getElementById(id).disabled = busy;
+  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft', 'export-use']) document.getElementById(id).disabled = busy;
   if (busy) {
     if (!exportIsMarketplace()) return;
     document.getElementById('export-plan-btn').disabled = true;
@@ -40751,7 +41030,13 @@ function exportSyncSlugPreview() {
   const el = document.getElementById('export-slug-preview');
   el.textContent = valid ? `Command: ${preview}` : 'Invalid slug (letters, digits, . _ - only)';
 }
+/** The export request body: the format's own fields plus `use` when the Version field is shown (D17). */
 function exportBuildOpts() {
+  const opts = exportBuildFormatOpts();
+  const use = exportUseNow();
+  return use === undefined ? opts : { ...opts, use };
+}
+function exportBuildFormatOpts() {
   const dest = exportModalState.destination;
   if (exportModalState.format === 'plugin') {
     if (exportModalState.pluginDest === 'marketplace') {
@@ -40838,6 +41123,7 @@ function exportUpdateApplyEnabled() {
   const resolutions = exportGatherResolutions();
   const allResolved = exportModalState.conflicts.every((cf) => resolutions[cf.path]);
   document.getElementById('export-apply-btn').disabled = !allResolved;
+  exportHoldForUse();
 }
 // A plan is keyed to the slug/destination/include-agents/folder in effect when Plan ran.
 // If any of those change afterward, the shown plan (and its gathered resolutions) no longer
@@ -40875,6 +41161,10 @@ function bindExportModal() {
   document.getElementById('export-plugin-name').addEventListener('input', () => { exportSyncPluginNamePreview(); exportInvalidatePlan(); });
   document.getElementById('export-folder').addEventListener('input', () => { if (exportModalState.format === 'plugin') exportSyncPluginNamePreview(); });
   document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
+  document.getElementById('export-use').addEventListener('change', () => {
+    paintExportUse(exportUseEls(), exportModalState.exportUse, { doc: document, keep: true });   // the draft's hint
+    exportInvalidatePlan();
+  });
   // Browse…: the native OS folder dialog (the server opens it — a web page never
   // learns an absolute path from its own file picker), exactly like Add Project;
   // the in-app browser is the fallback when the native one is unsupported.
@@ -40895,6 +41185,7 @@ function bindExportModal() {
   // marketplace, a switched destination, a close) and the inputs still build the body that was sent. A
   // marketplace plan has no `created` list, so rendering it after a switch to Local folder would also throw.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    if (exportModalState.useLoading) return;               // a synthetic click reaches a disabled button too
     const market = exportIsMarketplace();
     const nameProblem = market ? marketplaceNameProblem(exportPluginName()) : '';
     if (nameProblem) { exportSay(nameProblem, true); return; }
@@ -40925,10 +41216,12 @@ function bindExportModal() {
   // itself first; a conflict (only the skill format can raise one) stops it and is
   // shown for per-file resolution — nothing is ever written past an unresolved one.
   document.getElementById('export-apply-btn').addEventListener('click', async () => {
+    if (exportModalState.useLoading) return;               // the default version is not known yet (D17)
     if (exportModalState.format === 'json') {
-      // A plain download of the stored graph — the server sets Content-Disposition.
+      // A plain download of the stored graph, or of the version picked (D17) — the server sets Content-Disposition.
       const a = document.createElement('a');
-      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`;
+      const use = exportUseNow();
+      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json${use === undefined ? '' : `?use=${encodeURIComponent(use)}`}`;
       a.setAttribute('download', '');
       document.body.appendChild(a);
       a.click();
@@ -40964,17 +41257,17 @@ function bindExportModal() {
     }
     exportSetBusy(true);
     exportSay('Exporting…');
+    const opts = exportBuildOpts();                        // ONE body per click: the dry run and the write agree
     try {
       if (!exportModalState.planned) {
-        const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+        const plan = await exportPlan(exportModalState.item.id, opts);
         if ((plan.conflicts || []).length) {
           exportRenderPlan(plan);
           exportSay('Resolve each conflict below, then Export.');
           return;
         }
       }
-      const opts = { ...exportBuildOpts(), resolutions: exportGatherResolutions() };
-      const applied = await exportApply(exportModalState.item.id, opts);
+      const applied = await exportApply(exportModalState.item.id, { ...opts, resolutions: exportGatherResolutions() });
       // A conflict Apply left UNWRITTEN (e.g. a TOCTOU conflict between Plan and Apply that
       // had no resolution and fell to the blanket skip) is a stale partial export — re-render
       // the fresh plan so the user can resolve it, and keep the modal open.

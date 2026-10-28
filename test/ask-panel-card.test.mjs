@@ -69,7 +69,10 @@ function apiHandler(recorder = {}) {
     if (path === `/api/ask/threads/${TID}/attachments/att_00000002`) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, json: async () => ({}) };
     if (path.startsWith(`/api/ask/threads/${TID}/attachments/`)) return { ok: false, status: 404, json: async () => ({ error: 'attachment not found' }) };
     if (recorder.laneFail && path === '/api/agents') return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
-    if (path === '/api/workflows/wf_default' || path === '/api/workflows/wf_review') return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: path.split('/').pop(), name: path.endsWith('wf_review') ? 'Review only' : 'Default' }) };
+    if (path === '/api/workflows/wf_default' || path === '/api/workflows/wf_review') {
+      recorder.workflowGets = [...(recorder.workflowGets || []), url];
+      return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: path.split('/').pop(), name: path.endsWith('wf_review') ? 'Review only' : 'Default' }) };
+    }
     if (path === '/api/agents') return { ok: true, status: 200, json: async () => ({ agents: recorder.agents || AGENTS, mockWriterRoles: [] }) };
     if (path === '/api/config' && method === 'GET') {
       recorder.configGets = [...(recorder.configGets || []), url];
@@ -403,6 +406,8 @@ test('ask-panel-card v2: the lane renders one tile per agent with effective valu
       const ctx = await openWithCard(PROJECT_CARD, rec);
       const lane = await laneOf(ctx);
       assert.ok(rec.configGets.some((u) => u.includes('projectDir=%2Frepos%2Fproj')), 'config fetched for the card\'s project');
+      // I3: the lane shows what the run will use (the version in use), never the Composer's draft.
+      assert.ok(rec.workflowGets.length && rec.workflowGets.every((u) => new URL(u, 'http://x').searchParams.get('use') === 'live'), rec.workflowGets.join(', '));
       const tiles = [...lane.querySelectorAll('.ask-rp-tile')];
       assert.deepEqual(tiles.map((t) => t.dataset.nodeId), ['n_plan', 'n_impl', 'n_rev']);
       assert.deepEqual(tiles.map((t) => t.querySelector('.ask-rp-name b').textContent), ['Plan', 'Implement', 'Review']);

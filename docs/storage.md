@@ -162,6 +162,33 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
+### Workflow history and versions (v79)
+
+Behind the experimental flag `workflowTests`; the data is kept either way.
+
+- `workflow_revisions` holds two kinds of rows for a user workflow. Every save, step-defaults change, restore and
+  delete keeps the workflow **as it was just before** the change (`version_no` NULL; the last 50 per workflow, older
+  ones pruned). **Save version** keeps a numbered state (`version_no` 1, 2, …); numbered versions are never pruned.
+  The table is append-only and has no foreign keys, so a deleted workflow's history stays.
+- `workflows.live_version_no` is the version new runs use; NULL means the workflow row itself (the draft).
+  `GET /api/workflows/:id` also returns `versionNo` (null = the draft row). Plugin workflows have neither.
+  `GET /api/workflows/:id?use=live` returns what a run uses (the version in use): the New run form and the Ask run
+  card read it, and Auto and Ask match a saved twin on it, so every screen before a run shows the graph that runs.
+  The Composer opens the draft (no `use`).
+- A workflow that is deleted and then saved again under the same name gets the same id, so its old versions and
+  history come back with it (#721's way back after a delete), with no version in use until the next Save version or Use.
+- Save version compares with the latest saved version (the overview carries `sinceLatest`); the Use dialog compares
+  with the version in use (each version carries `changesFromInUse`: graph changes only).
+- A version stores the workflow graph and, for each agent and script it uses, a **content hash**, not their text.
+  A live version therefore runs today's agent and script text from the Library. The draft status and Save version say
+  "changed in the Library" when a hash differs (the next version records the new one); the Use dialog never lists it,
+  since every version runs today's text, and says so once (`libraryEdited`).
+- The hash covers only what defines behaviour, so it is the same on every install: the key, the origin, the agent's
+  markdown text or the script's source, and the sidecar fields that change a run (ports, runner type, fan-out,
+  questions, verdict, timeout, params…; `AGENT_HASH_FIELDS` / `SCRIPT_HASH_FIELDS` in `src/core/workflow-parts.mjs`).
+  Never a path, a display name, a colour, an icon or the order.
+- A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
+
 ### Run groups (v65)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:

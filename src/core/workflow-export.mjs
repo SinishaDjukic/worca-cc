@@ -9,7 +9,8 @@
 //   applyExport(opts)    -> resolve + classify + apply resolutions + write
 //   exportWorkflow(opts) -> dispatcher: dryRun -> planExport else applyExport
 // opts = { workflowId, destination:'global'|'project', projectDir?, slug?,
-//          includeAgents=true, dryRun?, onConflict?, resolutions?, repoRoot? }
+//          includeAgents=true, dryRun?, onConflict?, resolutions?, repoRoot?,
+//          use='draft' (D17: 'draft' or a version number — what is exported) }
 
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -17,7 +18,7 @@ import { readFile, writeFile, mkdir, cp, readdir, rename } from 'node:fs/promise
 import { join, resolve, dirname, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readWorkflow, resolveGraph } from './workflows.mjs';
-import { exportGraphJson, workflowFileSlug, summarizeUnknownAgents } from './workflow-share.mjs';
+import { exportGraphJson, exportContentOf, workflowFileSlug, summarizeUnknownAgents } from './workflow-share.mjs';
 import { validatePluginDir, PLUGIN_NAME_RE } from './plugin-manifest.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph, formatIssue } from '../shared/graph/validate.mjs';
@@ -379,13 +380,16 @@ function deriveNodeIo(graph, tnode, nodeKey, { cycle = 1, channelDefs } = {}) {
 
 // ── Step 2: buildExportSet (shared deterministic core) ───────────────────────
 
-async function buildExportSet({ workflowId, destination, projectDir, slug, includeAgents = true, repoRoot }) {
-  const tpl = await readWorkflow(workflowId);
+async function buildExportSet({ workflowId, destination, projectDir, slug, includeAgents = true, repoRoot, use = 'draft' }) {
+  // D17: the content follows `use`; the skill itself (its default slug, so its /command) is the stored workflow's —
+  // the dialog previews the slug from that name, and exporting v1 after renaming the draft updates the same skill.
+  const row = await readWorkflow(workflowId);
+  const tpl = exportContentOf(row, use);
   if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
   if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
 
   const dest = resolveDest({ destination, projectDir });
-  const finalSlug = assertName(slug || slugify(tpl.name).slice(0, 48) || 'workflow', 'slug');
+  const finalSlug = assertName(slug || slugify(row.name).slice(0, 48) || 'workflow', 'slug');
 
   const registry = loadAgentRegistry();
   const channelDefs = collectChannelDefs(registry);     // custom channel kind/filename map (mirrors allocate())
@@ -397,7 +401,7 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   //    with resolveGraph's full node (tools/fanOut/askQuestions/model/effort/meta) and
   //    its consumes/produces (derived from ports + wires, §2). Flow cards (task/end/
   //    and/or/combine) are NOT dispatched — only agent nodes become steps.
-  const graph = await resolveGraph(destination === 'project' ? projectDir : null, workflowId, registry);
+  const graph = await resolveGraph(destination === 'project' ? projectDir : null, workflowId, registry, undefined, { use });
   // D19: the exported skill tree simulates the graph in Claude Code; a child-process
   // card has no rendering there yet. Refuse loudly rather than export a skill that
   // silently skips the gate.
@@ -500,7 +504,8 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   // ── Stamp lineage identity shared by every emitted file ──
   const ident = { workflow: tpl.id, version: tpl.version || 1, updatedAt: tpl.updatedAt || '' };
 
-  return { tpl, template: graph.template, dest, slug: finalSlug, resolved, nodes, loops, agents, depSkills, ident, warnings, includeAgents, agentSrcCache: new Map() };
+  // title: the skill's description and heading name the workflow itself, like its slug (D17).
+  return { tpl, title: row.name, template: graph.template, dest, slug: finalSlug, resolved, nodes, loops, agents, depSkills, ident, warnings, includeAgents, agentSrcCache: new Map() };
 }
 
 // ── Step 3: SKILL.md generation ──────────────────────────────────────────────
@@ -512,18 +517,18 @@ function instanceKey(resolved, instanceId) {
 }
 
 function makeSkillMd(set, nameFor) {
-  const { tpl, slug, resolved, nodes, loops } = set;
+  const { title, slug, resolved, nodes, loops } = set;
   const desc = (
-    `Run the "${tpl.name}" workflow (exported from Worca) end-to-end in this repo: ` +
+    `Run the "${title}" workflow (exported from Worca) end-to-end in this repo: ` +
     `${resolved.steps.map((g) => g.map((n) => n.uiPhase).join('+')).join(' → ')}. ` +
     `Clarify asks you real questions; feedback loops iterate on critical/major issues.`
-  ).replace(/\n+/g, ' ');   // collapse any newline (e.g. from tpl.name) so the quoted scalar stays one line
+  ).replace(/\n+/g, ' ');   // collapse any newline (e.g. from the title) so the quoted scalar stays one line
 
   const L = [];
-  // description is YAML-quoted: tpl.name may contain ':', '#', or quotes that would otherwise
+  // description is YAML-quoted: the title may contain ':', '#', or quotes that would otherwise
   // break the frontmatter fence. slug is already validated to [A-Za-z0-9._-], so it needs none.
   L.push('---', `name: ${slug}`, `description: ${yamlScalar(desc)}`, '---', '');
-  L.push(`# ${tpl.name} — exported pipeline`, '');
+  L.push(`# ${title} — exported pipeline`, '');
   L.push('Run this pipeline yourself (you are the runner). Recommended: launch Claude Code with',
          '`--permission-mode acceptEdits` so subagent edits do not block on prompts.', '');
 
@@ -1038,20 +1043,22 @@ async function readTextOrNull(path) {
 /**
  * Plan (dryRun) or write a plugin folder for one saved v2 workflow.
  * @param {{workflowId:string, targetDir:string, pluginName?:string, keepVersion?:boolean,
- *          dryRun?:boolean, repoRoot?:string}} opts
+ *          dryRun?:boolean, repoRoot?:string, use?:'draft'|number}} opts  `use` (D17): what is exported, the draft
+ *          (default) or that saved version; the slug stays the workflow id's either way
  * @returns {Promise<{dir, name, slug, version, created:string[], updated:string[], noop:string[],
  *   skipped:Array<{path:string, reason:string}>, conflicts:[], warnings:string[], orphans:[],
  *   written:string[], validation:{ok:boolean, problems:Array}|null,
  *   builtins:{agents:string[], scripts:string[]}}>}
  * Error codes: BAD_REQUEST | NOT_FOUND | UNSUPPORTED | INVALID_GRAPH | CONFLICT | MISSING_SKILL
  */
-export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, keepVersion = false, dryRun = false, repoRoot } = {}) {
+export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, keepVersion = false, dryRun = false, repoRoot, use = 'draft' } = {}) {
   if (!workflowId || typeof workflowId !== 'string') throw err('workflowId is required', 'BAD_REQUEST');
   if (!targetDir || typeof targetDir !== 'string' || !targetDir.trim()) throw err('a target plugin folder is required', 'BAD_REQUEST');
   const dir = resolve(targetDir);
+  // D17: the graph follows `use`; the plugin's identity (slug, manifest description, export entry) is the stored row's.
   const tpl = await readWorkflow(workflowId);
-  if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
-  const payload = await exportGraphJson(workflowId);            // UNSUPPORTED for a v1 row
+  if (!exportContentOf(tpl, use)) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
+  const payload = await exportGraphJson(workflowId, { use });   // UNSUPPORTED for a v1 row
   const slug = workflowFileSlug(tpl.id);
   const warnings = [];
 

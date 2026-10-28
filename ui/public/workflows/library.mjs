@@ -562,6 +562,7 @@ export function createLibrary({ doc, host, actions }) {
         const pinned = act('isPinned', w.id) === true;
         toggleMenu({ doc, anchor: more, align: 'end', label: `More for ${w.name || w.id}`, items: [
           { label: pinned ? 'Unpin from Chat home' : 'Pin to Chat home', onSelect: () => act('togglePin', w) },
+          ...(act('versionsEnabled', w) === true ? [{ label: 'Versions…', onSelect: () => act('openVersions', w.id) }] : []),
         ] });
       });
       tail.appendChild(more);

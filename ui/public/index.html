@@ -1493,6 +1493,7 @@
               <div class="wfv-canvas gv-canvas" id="wfv-canvas">
                 <div class="gv-chip" id="wfv-chip" hidden></div>
               </div>
+              <section class="wfv-versions" id="wfv-versions" role="tabpanel" aria-labelledby="wfv-page-versions" tabindex="-1" data-flag="workflowTests" data-canvas-keys="off" hidden></section>
               <div class="wfv-float wfv-tl" data-canvas-keys="off">
                 <div class="wfv-bar">
                   <button type="button" class="btn btn-quiet btn-icon" id="wfv-back" aria-label="Back" title="Back">
@@ -1506,6 +1507,12 @@
                   </button>
                   <span class="wfv-sep" aria-hidden="true"></span>
                   <input type="text" class="wfv-name" id="wfv-name" placeholder="Untitled pipeline" aria-label="Pipeline name" spellcheck="false" autocomplete="off">
+                  <span class="wfv-vstatus hint" id="wfv-vstatus" data-flag="workflowTests" aria-live="polite" hidden></span>
+                  <span class="wfv-sep" aria-hidden="true" data-flag="workflowTests"></span>
+                  <div class="seg wfv-pages" id="wfv-pages" role="tablist" aria-label="Workflow views" data-flag="workflowTests">
+                    <button type="button" role="tab" aria-selected="true" class="on" id="wfv-page-canvas" aria-controls="wfv-canvas" data-page="canvas">Canvas</button>
+                    <button type="button" role="tab" aria-selected="false" id="wfv-page-versions" aria-controls="wfv-versions" data-page="versions" data-flag-chip="workflowTests">Versions</button>
+                  </div>
                   <button type="button" class="btn btn-sm btn-danger wfv-errchip" id="wfv-errors" hidden></button>
                   <input type="file" id="wfv-import-file" accept=".json,application/json" hidden>
                 </div>
@@ -1515,6 +1522,7 @@
                   <button type="button" class="btn btn-quiet btn-icon" id="wfv-lib-toggle" aria-label="Library" title="Library" aria-pressed="true" aria-controls="wfv-library">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
                   </button>
+                  <button type="button" class="btn btn-quiet" id="wfv-saveversion" data-flag="workflowTests">Save version</button>
                   <span class="wfv-savewrap" id="wfv-savewrap"><span class="wfv-save-reason hint" id="wfv-save-reason" hidden></span><button type="button" class="btn btn-primary" id="wfv-save" aria-describedby="wfv-save-reason">Save</button></span>
                 </div>
               </div>
@@ -2938,6 +2946,13 @@
               <button type="button" class="seg-btn" data-format="plugin" data-min-level="expert">Worca plugin</button>
             </div>
             <span id="export-format-hint" class="hint"></span>
+          </div>
+          <!-- D17 (canvas board 21): which saved version, or the draft, every format exports. Shown only with
+               the flag on and at least one version; it defaults to the version new runs use. -->
+          <div id="export-use-field" class="export-field hidden" data-flag="workflowTests">
+            <label class="export-label" for="export-use">Version</label>
+            <span class="select-wrap"><select id="export-use" class="select"></select></span>
+            <span id="export-use-hint" class="hint hidden" aria-live="polite"></span>
           </div>
           <div id="export-dest-field" class="export-field hidden">
             <span class="export-label">Location</span>

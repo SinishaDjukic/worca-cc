@@ -3567,7 +3567,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   async function loadLane(workflowId, projectDir, picked = '') {
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
     const [wf, agents, cfg, defaults] = await Promise.all([
-      fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
+      // use=live: the graph the run will use (the version in use, plans/workflow-tests-plan.md D2), not the Composer's draft.
+      fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}?use=live`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
       fetchJsonOk(`/api/run-defaults${qs}`),
     ]);
     // §6: the card's agent models follow the engine the proposed run will start on (the same default /api/run resolves).

@@ -190,6 +190,7 @@ export class GraphOrchestrator extends RunHarness {
     const hasWires = Object.keys(overlayWires).length > 0;
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
+      use: this.opts && this.opts.workflowUse !== undefined ? this.opts.workflowUse : 'live',
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
     });
@@ -221,6 +222,8 @@ export class GraphOrchestrator extends RunHarness {
     // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
     // those pills "this run only"; resume reads the cells, never this).
     if (overlay) manifest.runOverlay = structuredClone(overlay);
+    // D8: the named version this run used (plans/workflow-tests-plan.md); absent = the workflow's row.
+    if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     return {
       manifest,
       agentKeys: new Set(this.resolved.agentKeys),
@@ -606,8 +609,11 @@ export class GraphOrchestrator extends RunHarness {
     const overlayNodes = {};
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
+    // I2: run exactly the graph the twin was matched on. autoCandidates offers a versioned row as its version in use
+    // (runnableOf); pinning that number keeps the node ids the tunables were remapped onto, even if Use moved meanwhile.
+    const use = match && Number.isInteger(match.candidate.versionNo) ? match.candidate.versionNo : 'live';
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      use, engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -622,6 +628,8 @@ export class GraphOrchestrator extends RunHarness {
     manifest.auto = fallback
       ? { status: 'decided', via: 'fallback', saved: via, reason: fallback, rounds: round, humanInLoop: this.humanInLoop, workflowId }
       : { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
+    // D8: the named version this run used, as the non-Auto path records it (_buildManifest).
+    if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
