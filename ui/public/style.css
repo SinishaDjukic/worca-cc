@@ -4918,6 +4918,16 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .gp-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:6px 4px;border:0;background:none;text-align:left;color:inherit;cursor:pointer;}
 .gp-row:hover{background:var(--hover);}
 .gp-row[hidden]{display:none;}
+.gp-list{margin-top:4px;}
+.gp-row{border-radius:var(--r-sm);cursor:pointer;}   /* rows are now div[role=option], not buttons */
+.gp-row.is-active{background:var(--hover);}
+.gp-new,.gp-create{grid-template-columns:16px minmax(0,1fr);font-weight:500;}
+.group-picker .menu-h{padding:8px 4px 4px;}
+.gp-head[hidden],.group-picker .menu-sep[hidden]{display:none;}
+.gp-foot{display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 0;padding:6px 4px 0;border-top:1px solid var(--line);color:var(--ink-2);font-size:var(--fs-meta);}
+.gp-hint .kbd + .kbd{margin-left:2px;}
+/* Add to group (decision 5): the moved row's brief fill, the lighter row highlight; static, so no motion to reduce. */
+.runs-list a.runs-row.is-landed{background:var(--row-open);}
 @media (pointer: coarse){.runs-pick,.runs-row-tail{height:40px;}}
 @media (max-width: 480px){.runs-bulk-n{flex-basis:100%;}.group-picker{width:calc(100vw - 16px);}}
 .runs-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding-inline:8px;}
@@ -9195,6 +9205,10 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-expand:hover{color:var(--ink);background:var(--hover);}
 .chat-rc-expand:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-expand[hidden]{display:none;}
+/* Expand's overlay (chat/run-graph-overlay.mjs): the large workflow pop-up (.wf-pop) around a run monitor host that
+   fills its canvas (mountRunGraph `fill`): no --run-host-h height, and none of the page wrap's margin, border or corner. */
+.chat-rc-zoom .run-flow-wrap.wf-pop-canvas{flex:1 1 0;height:auto;margin:0;border:0;border-radius:0;}
+.chat-rc-zoom-acts{display:flex;align-items:center;gap:8px;flex:none;}
 .chat-rc-q{margin-top:14px;}
 .chat-rc-q[hidden]{display:none;}
 /* The question is the Runs page's ask card: the `:is(.rd-questions,.chat-rc-q)` rules of the questions panel block draw

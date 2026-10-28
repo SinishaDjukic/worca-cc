@@ -10,6 +10,7 @@ import { progressRoute, projectLabel, snapshotFromState, PROGRESS_CARD_TYPE } fr
 import { registerChatCard } from './extensions.mjs';
 import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
+import { openRunGraphOverlay } from './run-graph-overlay.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
 import { CREATE_PR_LABEL, VIEW_PR_LABEL } from '../ship-words.mjs';
@@ -246,6 +247,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   deciding.hidden = true;
   const expand = button('chat-rc-expand');
   expand.setAttribute('aria-label', 'Expand');
+  expand.setAttribute('aria-haspopup', 'dialog');
   expand.title = 'Expand';
   expand.appendChild(icon(doc, 'expand'));
   well.append(graphHost, deciding, expand);
@@ -305,7 +307,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   // Card order: the model's head / status / members, then Shaper's slots; the log sits before the open step.
   el.append(head, sub, statusEl, labelsEl, fixEl, shapedEl, membersEl, stats, agentsBox, well, logEl, notesEl, watchEl, qSec, resultSec, reason, foot);
 
-  let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
+  let last = null, graph = null, zoom = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
   let curRow = null;          // the group row while this card shows a group (D11)
   let createPrBtn = null;     // the result's "Create pull request" button while paintResult shows it (D4: it is `ship`)
@@ -391,7 +393,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   // A group card's Open follows its #feature/… or #group/… href; a single run's card keeps opening the run panel.
   open.addEventListener('click', (e) => { if (curRow) return; e.preventDefault(); call(ctx.openRunPanel, ref(), {}); });
-  expand.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: 'workflow' }));
+  // Expand: the same live graph, large, in an overlay over the chat (run-graph-overlay.mjs); paintGraph keeps it live.
+  // Nothing navigates; the overlay's Open run is the way to the run's Workflow tab.
+  expand.addEventListener('click', () => {
+    if (zoom || !graph || !last) return;
+    zoom = openRunGraphOverlay({ doc, title: title.textContent, opener: expand,
+      onOpenRun: () => call(ctx.openRunPanel, ref(), { tab: 'workflow' }),
+      onGateClick: () => focusQuestion(), onClose: () => { zoom = null; } });
+    zoom.update(graphRunId(last), last.stepper, last.decor);
+  });
   pauseBtn.addEventListener('click', (e) => {
     // One press per action: the same button flips in place (Resume → Pause once the resumed lineage runs, Pause →
     // Resume once the pause settles), so a double-click's second press (detail 2) would undo the first.
@@ -474,6 +484,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (typeof qSec.scrollIntoView === 'function') qSec.scrollIntoView({ block: 'nearest' });
   }
 
+  const graphRunId = (s) => s.pipelineId || s.runId || id.pipelineId || id.runId || 'run';
+
   function paintGraph(s, chip) {
     const isDeciding = !!(chip && chip.deciding);
     const stepper = s && s.stepper;
@@ -483,6 +495,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     well.classList.toggle('is-deciding', isDeciding);
     deciding.hidden = !isDeciding;
     expand.hidden = !drawable;
+    if (!drawable && zoom) zoom.close();   // after Expand hides, so the close does not refocus it
     if (!drawable) {
       if (isDeciding) {
         // The run page's A24 words (app.js paintAutoDeciding): a run that waits on its proposal, is parked, or can never
@@ -498,7 +511,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       return;
     }
     if (!graph) graph = mountRunGraph(graphHost, { mode: 'card', doc, onGateClick: () => focusQuestion() });
-    graph.update(s.pipelineId || s.runId || id.pipelineId || id.runId || 'run', stepper, s.decor);
+    graph.update(graphRunId(s), stepper, s.decor);
+    if (zoom) zoom.update(graphRunId(s), stepper, s.decor);
     well.setAttribute('aria-label', `Workflow graph: ${manifestNodes(stepper).filter((n) => KEYED.has(n.kind)).map((n) => n.label || n.id).join(' → ')}`);
   }
 
@@ -932,7 +946,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     paintActions(lastM, s); // last: the model decides what shows
   }
 
-  function relayout() { if (graph) graph.repaint(); }
+  function relayout() { if (graph) graph.repaint(); if (zoom) zoom.repaint(); }
 
   function paintFix() {
     const f = id.fix && typeof id.fix === 'object' ? id.fix : null;
@@ -952,6 +966,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   function destroy() {
     dead = true;
+    expand.hidden = true;   // a card going away does not take the focus back to its Expand
+    if (zoom) zoom.close();
     if (graph) { graph.destroy(); graph = null; }
     call(controls.releaseQuestion, qBody);
   }

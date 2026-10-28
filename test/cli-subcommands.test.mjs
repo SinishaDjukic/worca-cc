@@ -207,6 +207,15 @@ test('doctor runs the reconcile + sweep pair and exits 0 on an empty home', asyn
   assert.match(r.stdout, /legacy worktrees: skipped/, 'and the legacy sweep reports itself skipped');
 });
 
+test('doctor reports node-pty spawn-helper state (or that node-pty is absent) and still exits 0', async () => {
+  const home = await freshHome();
+  const r = await run(['doctor'], { home, extraEnv: { WORCA_RUN_ROOT: 'legacy' } });
+  assert.equal(r.code, 0, r.stderr);
+  // Under `legacy` the legacy block returns early — the check must already have run.
+  assert.match(r.stdout, /^(node-pty: not installed|node-pty spawn-helper: (ok|none for this platform|NOT executable — fix with: chmod \+x ))/m);
+  assert.doesNotMatch(r.stderr, /spawn-helper check failed/);
+});
+
 test('doctor reclaims a terminal run root and KEEPS an interrupted one (the keep-set, end to end)', async () => {
   const home = await freshHome();
   // Two run roots with hand-written manifests (no worktrees: the sweep tolerates
