@@ -53,7 +53,7 @@ test('export then import keeps membership and settings', async () => {
   assert.deepEqual((await readWorkflow(workflow.id)).sessions, SETTINGS);
 });
 
-test('import refuses a 5-member session with V26', { todo: 'V26 lands in Task 16, which removes this marker' }, async () => {
+test('import refuses a 5-member session with V26', async () => {
   await writeGraphWorkflow({ ...grouped(), id: 'wf_sess_five', name: 'Sess Five' });
   const five = await exportGraphJson('wf_sess_five');
   five.nodes.push(...['a', 'b', 'c'].map((s, i) => ({ id: `n_x${s}`, kind: 'agent', key: 'reviewer', x: 1500 + i * 300, y: 198, config: { session: SID } })));
