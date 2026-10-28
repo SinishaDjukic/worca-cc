@@ -192,3 +192,11 @@ Pull requests (add each number when it opens):
 Pull requests (add each number when it opens):
 
 - Plugins: update works on Windows when the current version is a junction (#987)
+
+## Plugin answers survive a crash on exit
+
+On Windows with Node 24, a plugin call that made one web request (such as Jira's issue list or a single issue) failed with `child exited 3221226505`, although the plugin had answered. Node crashed while the plugin's process was exiting. Worca now keeps an answer that arrived in full and logs a warning, and the plugin's process ends in a way that avoids the crash.
+
+Pull requests (add each number when it opens):
+
+- Plugins: keep a plugin's answer when its process crashes on exit
