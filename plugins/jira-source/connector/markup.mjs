@@ -2,6 +2,7 @@
 // Jira's rendered HTML (renderedFields: description, comments) → plain markdown, and the host's result summary
 // (markdown) → Jira wiki markup for a comment. Small and dependency-free: headings, paragraphs, line breaks,
 // lists, bold/italic, code, links; every other tag is dropped.
+// A6.1: images by their alt text, table rows as `| a | b |` lines, people's links as their names; `plainWiki` for a site that renders nothing.
 const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 // Named, decimal (&#39;) and hex (&#x27;) entities; fromCodePoint so astral characters (emoji) survive.
 const entity = (m, e) => {
@@ -17,6 +18,12 @@ export function htmlToMarkdown(html) {
   s = s.replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
     // Code panels first, so the tag rules below do not touch their content (it is unescaped at the end).
     .replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_, code) => `\n\n\`\`\`\n${code.replace(/<[^>]+>/g, '')}\n\`\`\`\n\n`)
+    // A6.1 (§5): a picture says where it was (the file itself is one of the ticket's attachments); a table row is one line
+    .replace(/<img\b[^>]*>/gi, (tag) => { const alt = /\balt="([^"]*)"/i.exec(tag); return alt && alt[1].trim() ? `(image: ${alt[1].trim()})` : ''; })
+    .replace(/<table[^>]*>/gi, '\n\n')
+    .replace(/<tr(?=[\s>])[^>]*>([\s\S]*?)<\/tr>/gi, (_, row) => `| ${[...row.matchAll(/<t[hd](?=[\s>])[^>]*>([\s\S]*?)<\/t[hd]>/gi)]
+      .map((c) => c[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()).join(' | ')} |\n`)
+    .replace(/<\/table>/gi, '\n\n')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => `\n\n${'#'.repeat(Number(n))} ${t}\n\n`)
     .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1')
@@ -24,6 +31,8 @@ export function htmlToMarkdown(html) {
     .replace(/<(b|strong)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**')
     .replace(/<(i|em)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>/gi, '_$2_')
     .replace(/<(code|tt)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>/gi, '`$2`')
+    // A6.1 (D8, D15): a link to a person (a profile, a mention) is their name only: no account id leaves the connector
+    .replace(/<a [^>]*href="[^"]*(?:\/secure\/ViewProfile|\/jira\/people\/|\/people\/)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi, '$1')
     .replace(/<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, text) => {
       const h = safeHref(href.replace(/&amp;/g, '&'));
       return h ? `[${text}](${h})` : text;
@@ -62,4 +71,18 @@ export function markdownToWiki(md) {
     else out.push(inline(line));
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** A6.1 (D8, D15): Jira wiki text as plain text, used when a site renders nothing. A mention ([~accountid:…] on Cloud, [~name] on
+ *  Data Center) becomes "someone" (the wiki text holds no display name); a link [text|url] becomes "text (url)" for http(s) only, else
+ *  its text alone (so [Ann|~accountid:…] is "Ann"). Nothing else is converted: the text stays as Jira holds it. */
+export function plainWiki(text) {
+  return String(text || '')
+    .replace(/\[~[^\]\n]*\]/g, 'someone')
+    .replace(/\[([^|\]\n]*)\|([^\]\n]*)\]/g, (_, t, u) => {
+      const href = safeHref(u);
+      const label = t.trim();
+      return href ? (label ? `${label} (${href})` : href) : label;
+    })
+    .trim();
 }

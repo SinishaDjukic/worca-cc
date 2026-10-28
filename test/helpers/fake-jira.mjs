@@ -17,21 +17,51 @@ const BASE_FIELDS = [
     schema: { type: 'string', custom: 'com.atlassian.jira.plugin.system.customfieldtypes:textfield' } },
 ];
 
+const SYSTEM_NAMES = { summary: 'Summary', description: 'Description', issuetype: 'Issue Type', priority: 'Priority', status: 'Status', project: 'Project',
+  attachment: 'Attachment', comment: 'Comment' };
+/** A6.1: a seeded issue's GET /rest/api/2/issue/<key>, with only the fields asked for, renderedFields and names when expanded.
+ *  `contentOf(attachment)` names an attachment's content address (Task 5). */
+function seededAnswer(s, url, contentOf = () => undefined) {
+  const want = new Set((url.searchParams.get('fields') || '').split(','));
+  const expand = url.searchParams.get('expand') || '';
+  const fields = {}; const rendered = {}; const names = {};
+  if (want.has('summary')) fields.summary = s.summary;
+  if (want.has('description')) { fields.description = s.description; rendered.description = s.rendered ?? null; }
+  if (want.has('issuetype')) fields.issuetype = { id: s.type.id, name: s.type.name };
+  if (want.has('priority')) fields.priority = s.priority || null;
+  if (want.has('status')) fields.status = { name: s.status };
+  if (want.has('project')) fields.project = { key: s.project, name: s.projectName };
+  if (want.has('updated')) fields.updated = s.updated;
+  if (want.has('attachment')) fields.attachment = (s.attachments || []).map((a) => ({ id: a.id, filename: a.filename, mimeType: a.mimeType, size: a.size,
+    created: a.created, content: contentOf(a) }));
+  if (want.has('comment')) {
+    const list = s.comments.slice(0, s.embedded ?? s.comments.length);
+    fields.comment = { total: s.comments.length, maxResults: list.length, startAt: 0, comments: list.map((c) => ({ id: c.id, author: c.author, created: c.created,
+      body: c.body, ...(c.visibility ? { visibility: c.visibility } : {}) })) };
+    rendered.comment = { comments: list.map((c) => ({ id: c.id, body: c.rendered })) };
+  }
+  for (const [id, c] of Object.entries(s.custom || {})) if (want.has(id)) { fields[id] = c.value; rendered[id] = c.rendered; names[id] = c.name; }
+  for (const k of Object.keys(fields)) names[k] = names[k] || SYSTEM_NAMES[k] || k;
+  return { key: s.key, fields, ...(/renderedFields/.test(expand) ? { renderedFields: rendered } : {}), ...(/names/.test(expand) ? { names } : {}) };
+}
+
 export async function startFakeJira(o = {}) {
   // refusePropertyPut: a role that may create issues but not edit them (403 on the property PUT); failReadBack: a description
   // read fails (500); refuseIssuetypeEdit: an edit naming issuetype is refused; fail: one request answers that status and body.
   // version: what serverInfo says (Data Center 8.4 added create metadata per project); hangPropertyPut / hangReadBack: that
   // request never gets an answer; staleSearch: a search answers a description that differs from the issue's own;
   // brokenReadBack: a description read answers 200 with a body that is not JSON; noVersionNumbers: serverInfo names only `version`.
+  // A6.1: seed — issues the import ops read (SeededIssue in the A6.1 plan); forbid — keys whose read answers 403.
   const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, refusePropertyPut: false,
     failReadBack: false, refuseIssuetypeEdit: false, fail: null, oldCreatemeta: false, requiredField: null, refuseOnUpdate: null, storeCrlf: false,
     version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false,
-    brokenReadBack: false, noVersionNumbers: false, ...o };
+    brokenReadBack: false, noVersionNumbers: false, seed: [], forbid: [], ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
     schema: { type: 'option', custom: 'com.atlassian.jira.plugin.system.customfieldtypes:select' } }] : [])];
   const issues = new Map();   // key → { key, project, fields, properties, comments }
+  const seeded = new Map((opt.seed || []).map((s) => [s.key, s]));
   const requests = [];
   let next = 101;
   // Cloud keeps descriptions as ADF and answers v2 reads in wiki markup it re-renders: storeCrlf mimics a re-render that is
@@ -55,6 +85,9 @@ export async function startFakeJira(o = {}) {
     if (opt.fail && req.method === opt.fail.method && p === opt.fail.path) return send(res, opt.fail.status, opt.fail.body);
     if (cloud && p === '/rest/api/2/project/search') return send(res, 200, { values: PROJECTS, isLast: true });
     if (!cloud && p === '/rest/api/2/project') return send(res, 200, PROJECTS);
+    if (p === '/rest/api/2/field') {
+      return send(res, 200, BASE_FIELDS.map((f) => ({ id: f.fieldId, name: f.name, custom: /^customfield_/.test(f.fieldId), schema: f.schema })));
+    }
     let m = /^\/rest\/api\/2\/issue\/createmeta\/([^/]+)\/issuetypes(?:\/([^/]+))?$/.exec(p);
     if (m) {
       if (opt.oldCreatemeta) return send(res, 404, { errorMessages: ['null for uri'], errors: {} });
@@ -87,6 +120,13 @@ export async function startFakeJira(o = {}) {
       return m[2] in i.properties ? send(res, 200, { key: m[2], value: i.properties[m[2]] }) : send(res, 404, { errorMessages: ['The property was not found.'] });
     }
     m = /^\/rest\/api\/2\/issue\/([^/]+)\/comment$/.exec(p);
+    if (m && req.method === 'GET' && seeded.has(m[1])) {
+      const s = seeded.get(m[1]);
+      const newest = [...s.comments].reverse().slice(0, Number(url.searchParams.get('maxResults')) || 50);
+      return send(res, 200, { total: s.comments.length, startAt: 0, maxResults: newest.length, comments: newest.map((c) => ({ id: c.id, author: c.author,
+        created: c.created, body: c.body, ...(c.visibility ? { visibility: c.visibility } : {}),
+        ...(/renderedBody/.test(url.searchParams.get('expand') || '') ? { renderedBody: c.rendered } : {}) })) });
+    }
     if (m) {
       const i = issues.get(m[1]);
       if (!i) return gone(res);
@@ -95,6 +135,8 @@ export async function startFakeJira(o = {}) {
     }
     m = /^\/rest\/api\/2\/issue\/([^/]+)$/.exec(p);
     if (m) {
+      if ((opt.forbid || []).includes(m[1])) return send(res, 403, { errorMessages: ['You do not have the permission to see the specified issue.'], errors: {} });
+      if (seeded.has(m[1]) && req.method === 'GET') return send(res, 200, seededAnswer(seeded.get(m[1]), url));
       const i = issues.get(m[1]);
       if (!i) return gone(res);
       if (req.method === 'PUT') {
@@ -118,6 +160,20 @@ export async function startFakeJira(o = {}) {
         issuetype: i.fields.issuetype } });
     }
     if ((cloud && p === '/rest/api/2/search/jql') || (!cloud && p === '/rest/api/2/search')) {
+      if (seeded.size) {
+        const q = url.searchParams.get('jql') || '';
+        const project = (/project = "([^"]+)"/.exec(q) || [])[1];
+        const text = ((/text ~ "([^"]+)"/.exec(q) || [])[1] || '').toLowerCase();
+        const all = [...seeded.values()].filter((s) => (!project || s.project === project) && (!text || s.summary.toLowerCase().includes(text)))
+          .sort((a, b) => b.updated.localeCompare(a.updated));
+        const max = Number(url.searchParams.get('maxResults')) || 50;
+        const start = cloud ? Number(url.searchParams.get('nextPageToken') || 0) : Number(url.searchParams.get('startAt') || 0);
+        const page = all.slice(start, start + max).map((s) => ({ key: s.key, fields: { summary: s.summary, status: { name: s.status },
+          issuetype: { id: s.type.id, name: s.type.name }, updated: s.updated } }));
+        const more = start + page.length < all.length;
+        return send(res, 200, cloud ? { issues: page, isLast: !more, ...(more ? { nextPageToken: String(start + page.length) } : {}) }
+          : { issues: page, startAt: start, maxResults: max, total: all.length });
+      }
       const jql = url.searchParams.get('jql') || '';
       const project = (/project = "([^"]+)"/.exec(jql) || [])[1];
       const label = (/labels = "([^"]+)"/.exec(jql) || [])[1];

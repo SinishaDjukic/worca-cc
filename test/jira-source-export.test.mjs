@@ -25,10 +25,10 @@ const TICKET = { project: 'SHOP', issueType: '10001', title: 'Cancel an order be
   priority: '3', criteria: { target: 'description' } };
 const BOTH = ['cloud', 'datacenter'];
 
-test('capabilities: export is on; write-back still follows the run\'s input', async () => {
+test('capabilities: export and import are on; write-back still follows the run\'s input', async () => {
   const { src } = await site();
-  assert.deepEqual(src.capabilities({ inputs: { writeBack: 'yes' } }), { writeBack: true, incrementalSync: false, export: true });
-  assert.deepEqual(src.capabilities({}), { writeBack: false, incrementalSync: false, export: true });
+  assert.deepEqual(src.capabilities({ inputs: { writeBack: 'yes' } }), { writeBack: true, incrementalSync: false, export: true, import: true });
+  assert.deepEqual(src.capabilities({}), { writeBack: false, incrementalSync: false, export: true, import: true });
 });
 
 test('exportOptions: projects as "SHOP — Shop web"; issue types without sub-tasks; priorities; only multi-line text fields; doneStatus', async () => {
