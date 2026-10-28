@@ -1659,6 +1659,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const cannotGoDoc = (name) => `${name} cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.`;
   // the Files card's failed line for a tracker file whose download failed or was refused: the server's words (A6.1 D10)
   const downloadSaid = (a) => (a.error.code === 'DOWNLOAD' ? `${String(a.error.message || '')} The interview lists it by name only.` : String(a.error.message || ''));
+  // the Build chip's line for such a file (copy Q3, the user's call): A8's "<name> cannot go with the run: …" with the download's own
+  // reason, without the Files card's interview tail
+  const cannotGoDownload = (a) => `${a.name} cannot go with the run: ${String(a.error.message || '')}`;
   function filesForRun(f) {
     const files = Array.isArray(f.attachments) ? f.attachments : [];
     const docs = Array.isArray(f.briefDocuments) ? f.briefDocuments : [];
@@ -1671,9 +1674,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const reading = a.status === 'reading' || a.status === 'downloading';
       const stuck = !reading && unsendable(a);
       const why = stuck || reading ? `req-fpick-why-${a.id}` : null;
-      // a download that failed or was refused never had a stored file: say what the Files card's failed line says
+      // a download that failed or was refused never had a stored file: say why with the download's reason
       const noBody = !!a.error && a.error.job === 'download';
-      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why, text: noBody ? `${a.name}: ${downloadSaid(a)}` : cannotGo(a.name) }));
+      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why, text: noBody ? cannotGoDownload(a) : cannotGo(a.name) }));
       return h('button', { type: 'button', class: `req-fpick${sel ? ' on' : ''}${stuck ? ' bad' : ''}`, 'aria-pressed': sel ? 'true' : 'false',
         'aria-label': doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, 'aria-describedby': why, 'data-ui': `fpick-${a.id}`,
         disabled: starting || reading || (stuck && !sel),

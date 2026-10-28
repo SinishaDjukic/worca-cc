@@ -265,7 +265,8 @@ Built with upstream's classes as A6 and A8 are (`.card`, `.btn` / `.btn-mini` / 
   "Without its Acceptance criteria section, which becomes the criteria below.", the redaction line, **Acceptance criteria**
   with where they were found ("found under “Acceptance criteria” in the description" / "found in the Jira field
   “Acceptance Criteria”") and "Ticked criteria start the spec as R-po-1 to R-po-3, kept as your own edits and marked “from SHOP-124”. Unticked ones
-  are left out; they stay in Jira."; right: **Comments · 5 of 6** with "Context for the interview, not spec text. Worca
+  are left out; they stay in Jira." (hidden while no criterion is ticked, with no other wording: the user, copy Q1); a ticked
+  criterion's checkbox is "Use R-po-1: <text>", an unticked one's "Use this criterion: <text>" (the user, copy Q2); right: **Comments · 5 of 6** with "Context for the interview, not spec text. Worca
   puts the picked ones in one file, SHOP-124 comments.md, and reads it like your other files. Authors are shown by name
   only." and the restricted line; **Attachments · 3 of 5** with "Picked files become feature files. Worca gets them from
   Jira when you start the interview and reads each once, like a file you add." and the refused rows; footer "Nothing is
@@ -294,6 +295,11 @@ Built with upstream's classes as A6 and A8 are (`.card`, `.btn` / `.btn-mini` / 
   and the ticket's file chips, and asks first when the product owner edited the title or description since: "Replace the
   title and description with SHOP-131's?" **Replace** / **Keep mine** (the criteria and files are replaced either way).
 - Leaving New feature drops the import (nothing was stored).
+- Build's "Files for the run" line for a tracker file whose download failed or was refused (the user, copy Q3; A8's "<name>
+  cannot go with the run: …"): "<name> cannot go with the run: <the download's own sentence>", without the Files card's "The
+  interview lists it by name only.", e.g. "partial-cancel-flow.pdf cannot go with the run: Worca could not get this file from
+  Jira: it did not answer within 2 minutes." and "scan-notes.pdf cannot go with the run: Worca could not use this file: it is
+  already attached as call-notes.pdf."
 
 ## 8. Code changes
 

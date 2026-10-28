@@ -169,7 +169,7 @@ test('board 36: a Try again the server refused (409) does not stick: the next pr
   m.view.destroy();
 });
 
-test('board 18/36: the Build chip for a download that failed says the Files card words, not stored file; for one on its way it waits', async () => {
+test("board 18/36: the Build chip for a download that failed says it cannot go with the run, with the download's own reason (copy Q3), not stored file; for one on its way it waits", async () => {
   const id = 'ratt_000000000003';
   const ready = (attachments) => feature({ busy: false, status: 'done', state: 'ready', rounds: 1, attachments,
     readiness: { ok: true, passed: 6, total: 6, checks: [], overridable: false } });
@@ -177,8 +177,9 @@ test('board 18/36: the Build chip for a download that failed says the Files card
     dlFailed('ratt_000000000005', 'scan-notes.pdf', 'REFUSED', 'Worca could not use this file: it is already attached as call-notes.pdf.'),
     file('ratt_000000000004', 'support-macro.txt', 'text', 4096, 'downloading')]));
   const bad = [...m.host.querySelectorAll('.req-build-files-bad')].map((l) => text(l));
-  assert.deepEqual(bad, [`partial-cancel-flow.pdf: ${DL_MSG} The interview lists it by name only.`,
-    'scan-notes.pdf: Worca could not use this file: it is already attached as call-notes.pdf.']);
+  assert.deepEqual(bad, [`partial-cancel-flow.pdf cannot go with the run: ${DL_MSG}`,
+    'scan-notes.pdf cannot go with the run: Worca could not use this file: it is already attached as call-notes.pdf.']);
+  assert.ok(bad.every((t) => !t.includes('by name only')), "the interview tail is the Files card's, not the run's");
   assert.ok(bad.every((t) => !t.includes('stored file')));
   assert.equal(text(row(m.host, id).querySelector('.req-file-failed-text')),
     `${DL_MSG} The interview lists it by name only.`, 'the same sentence as the Files card');
