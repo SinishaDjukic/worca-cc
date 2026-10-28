@@ -17,6 +17,7 @@ import { main as s6, scanCli } from '../tools/spikes/session-host/s6-depth-and-c
 import { main as s7, BRIEF_DIVIDER, replacesDefaultFrom } from '../tools/spikes/session-host/s7-prompt-and-quality.mjs';
 import { sum } from '../tools/spikes/session-host/fixtures/s7-repo/src/sum.mjs';
 import { slug } from '../tools/spikes/session-host/fixtures/s7-repo/src/slug.mjs';
+import { main as s8b } from '../tools/spikes/session-host/s8b-continue-child.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -294,4 +295,12 @@ test('s7-repo fixture: task A starts red (the off-by-one), task B green; CLAUDE.
   assert.equal(JSON.parse(readFileSync(at('package.json'), 'utf8')).scripts.test, 'node --test');
   for (const f of ['PLAN-A.md', 'PLAN-B.md', 'test/sum.test.mjs', 'test/slug.test.mjs']) assert.ok(existsSync(at(f)), f);
   assert.equal(existsSync(at('.git')), false);
+});
+
+test('S8b --dry: two turns; the second resumes and names the first child', async () => {
+  const { argv } = await dryRun(s8b);
+  assert.equal(argv.length, 2, argv.join('\n'));
+  assert.doesNotMatch(argv[0], /--resume/);
+  assert.match(argv[1], /--resume <session-1> /);
+  assert.match(argv[1], /agent id <agent-id>/);
 });
