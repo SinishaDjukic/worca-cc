@@ -138,6 +138,9 @@ function ageOld(iso) {
 
 // ---- A8: files (plans/requirements-a8-design.md §6; design round 3, boards 15–21) ----
 const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF' });
+// A6.1 (D9, board 36): A8's caps for the New feature form, said where a ticket's attachment cannot be ticked
+const CAP_FILES_UI = 'A feature takes up to 10 files; 10 are picked.';
+const CAP_BYTES_UI = "Picked files are at 100 MB, a new feature's limit. Add more on the feature page.";
 const READ_RANGE = '$0.05–0.20';   // a read's cost before any read has been made
 /** 640 B, 9 KB, 2.1 MB (the server's sizeLabel). */
 export function sizeText(bytes) {
@@ -4266,9 +4269,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             h('span', { class: 'req-import-cbody', id: `req-ipv-cbody-${c.id}`, text: c.body }))));
       });
       const restricted = Number(L.restrictedComments) || 0;
+      // board 36 (phone): author and date only, three at first; the rest fold behind Show all (CSS shows it at 900 px and narrower)
+      const folded = rows.length > 3;
+      rows.forEach((li, i) => { if (folded && i >= 3) li.classList.add('folded'); });
+      const showAll = folded ? h('button', { type: 'button', class: 'link-btn req-import-showall', 'data-ui': 'ipv-showall',
+        onclick: () => {
+          for (const li of rows) li.classList.remove('folded');
+          showAll.hidden = true;
+          rows[3].querySelector('input').focus();   // the button hid itself: the focus goes to the first comment it unfolded (A6's Show all)
+        } }, `Show all ${rows.length} comments`) : null;
       return h('section', { class: 'req-import-sec' }, ui.comHead,
         rows.length ? h('p', { class: 'hint', text: `Context for the interview, not spec text. Worca puts the picked ones in one file, ${L.key} comments.md, and reads it like your other files. Authors are shown by name only.` }) : null,
-        rows.length ? h('ul', { class: 'req-import-list' }, ...rows) : null,
+        rows.length ? h('ul', { class: 'req-import-list' }, ...rows) : null, showAll,
         L.olderComments ? h('p', { class: 'hint', text: `and ${plural(L.olderComments, 'older comment')}` }) : null,
         restricted ? h('p', { class: 'hint', text: restricted === 1 ? `1 comment visible only to a ${name} group or role is left out.`
           : `${restricted} comments visible only to a ${name} group or role are left out.` }) : null);
@@ -4331,6 +4343,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       ui.comHead.textContent = L.comments.length ? `Comments · ${coms.length} of ${L.comments.length}` : 'Comments · none';
       const atts = [...ui.atts.values()].filter((x) => x.cb.checked);
       ui.attHead.textContent = L.attachments.length ? `Attachments · ${atts.length} of ${L.attachments.length}` : 'Attachments · none';
+      // D9: the caps count every file the form would hold: its own files, the comments file, the description file, the ticked attachments.
+      // An unticked attachment whose tick would pass one is disabled with that line (aria-describedby, after its kind and size); room
+      // made frees it again.
+      const form = ctx.formFiles();
+      const count = form.count + (coms.length ? 1 : 0) + (L.descriptionFile ? 1 : 0) + atts.length;
+      const bytes = form.bytes + coms.reduce((sum, c) => sum + (Number(c.bytes) || 0), 0) + (L.descriptionFile ? L.descriptionFile.bytes : 0)
+        + atts.reduce((sum, x) => sum + x.a.bytes, 0);
+      for (const x of ui.atts.values()) {
+        if (x.a.refused) continue;
+        const cap = x.cb.checked ? null : count + 1 > REQ_ATTACH.maxFiles ? CAP_FILES_UI : bytes + x.a.bytes > REQ_ATTACH.maxRequestBytes ? CAP_BYTES_UI : null;
+        x.cb.disabled = !!cap;
+        x.why.textContent = cap || '';
+        x.why.hidden = !cap;
+        x.cb.setAttribute('aria-describedby', cap ? `req-ipv-ameta-${x.a.id} ${x.why.id}` : `req-ipv-ameta-${x.a.id}`);
+      }
     }
     /** What Use this ticket hands the form. */
     function chosen() {

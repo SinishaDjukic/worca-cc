@@ -11007,6 +11007,24 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 .req-import-off .req-import-check{cursor:not-allowed;color:var(--ink-2)}
 .req-import-why{margin:2px 0 0 24px;font-size:var(--fs-meta)}
 .req-import-why[hidden]{display:none}
+/* A6.1 (board 36, D19): at 900 px and narrower both dialogs are A6's full-screen sheets (← New feature first, full-width buttons); the
+   preview is one column, a comment shows its author and date only, three at first; every row and small button reaches 44 px through an
+   ::after hit area (a 19–20 px row + 2 × 13; rows 26 px apart, so the areas touch but never overlap; a 28 px .btn-sm + 2 × 9). */
+.req-import-showall{display:none}
+@media (max-width:900px){
+  .req-import-cols{grid-template-columns:minmax(0,1fr)}
+  .req-import-cbody{display:none}
+  .req-import-com.folded{display:none}
+  .req-import-list{gap:26px}
+  .req-import-check{position:relative}
+  .req-import-check::after{content:"";position:absolute;inset:-13px 0}
+  .req-import-showall{display:block;width:100%;position:relative;text-align:left}
+  .req-import-showall[hidden]{display:none}
+  .req-import-showall::after{content:"";position:absolute;inset:-13px 0}
+  .req-import .btn-sm{position:relative}
+  .req-import .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-import-results{max-height:none}
+}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */

@@ -481,3 +481,126 @@ test('in the preview a 502 puts "Nothing was changed." before Try again, as the 
   assert.equal(order(dlg(), 'ipv-retry'), true, 'the preview matches');
   p.view.destroy();
 });
+
+const KB = (id, name, bytes, extra = {}) => ({ id, name, kind: 'text', mime: 'text/plain', bytes, refused: null, picked: true, capped: null, ...extra });
+// Task 12's fix round describes an attachment by its kind and size (req-ipv-ameta-<id>) at all times; a cap line is appended last
+const describedBy = (el) => (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+const lastLine = (el) => { const ids = describedBy(el); return ids.length ? text(document.getElementById(ids[ids.length - 1])) : null; };
+
+test('D9 (board 36, 6): a tick that would pass 10 files or 100 MB is disabled with the line; freeing room enables it again', async () => {
+  const nine = Array.from({ length: 9 }, (_, i) => KB(`2${i}`, `notes-${i}.md`, 2048));
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => PREVIEW({ attachments: [...nine, KB('30', 'notes-9.md', 2048, { picked: false, capped: 'files' })] }) }));
+  await toPreview(m);
+  const tenth = q('ipv-att-30');
+  assert.deepEqual([tenth.disabled, lastLine(tenth)], [true, 'A feature takes up to 10 files; 10 are picked.']);
+  assert.deepEqual(describedBy(tenth), ['req-ipv-ameta-30', 'req-ipv-why-30'], 'the kind and size stay; the cap line comes last');
+  q('ipv-att-20').click();
+  assert.deepEqual([tenth.disabled, describedBy(tenth).includes('req-ipv-why-30'), document.getElementById('req-ipv-why-30').hidden], [false, false, true]);
+  assert.deepEqual(describedBy(tenth), ['req-ipv-ameta-30'], 'only the kind and size once room is freed');
+  q('ipv-att-20').click();
+  assert.equal(tenth.disabled, true, 'taking the room back disables it again');
+  q('ipv-com-10231').click();
+  q('ipv-com-10236').click();
+  assert.equal(tenth.disabled, false, 'no comment picked: no comments file, one more room');
+  m.view.destroy();
+  const MB = 1024 * 1024;
+  const big = [KB('40', 'a.pdf', 24 * MB), KB('41', 'b.pdf', 24 * MB), KB('42', 'c.pdf', 24 * MB), KB('43', 'd.pdf', 24 * MB), KB('44', 'e.pdf', 24 * MB, { picked: false, capped: 'bytes' })];
+  const h2 = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => PREVIEW({ attachments: big }) }));
+  await toPreview(h2);
+  assert.equal(lastLine(q('ipv-att-44')), "Picked files are at 100 MB, a new feature's limit. Add more on the feature page.");
+  h2.view.destroy();
+});
+
+test('board 36 (1–3): unreachable says what changed and where it is fixed (Advanced); no match; a pasted key that is not there', async () => {
+  const m = await openNew(ROUTES({ [`POST ${IMP}/search`]: (b) => (b.search === 'partial refund' ? { tickets: [] } : b.search === 'SHOP-999' ? { tickets: [] }
+    : { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } }) }));
+  q('import-open', m.host).click();
+  await settle();
+  const dl = dlg();
+  assert.equal(text(dl.querySelector('.req-export-alert')), 'Worca could not reach Jira: the API token was refused.');
+  const note = dl.querySelector('.req-import-note');
+  assert.equal(note.hidden, false);
+  assert.equal(text(note), 'Nothing was changed. Fix the connection on the Marketplace page (Installed › Jira), then try again.');
+  assert.equal(note.querySelector('[data-min-level="advanced"]').textContent, ' Fix the connection on the Marketplace page (Installed › Jira), then try again.');
+  assert.equal(q('pick-retry').hidden, false);
+  await typeSearch('partial refund');
+  assert.deepEqual([text(dl.querySelector('.req-import-status')), dl.querySelector('.req-import-empty').hidden],
+    ['No ticket in SHOP matches “partial refund”.', false]);
+  assert.equal(text(dl.querySelector('.req-import-empty')), "Try other words, or paste the ticket's key or link.");
+  await typeSearch('SHOP-999');
+  assert.deepEqual([text(dl.querySelector('.req-import-status')), dl.querySelector('.req-import-empty').hidden],
+    ['SHOP-999 was not found in Jira, or this connection cannot see it.', true]);
+  m.view.destroy();
+});
+
+test('board 36 (4, 5, 7): the ticket another feature follows (an amber alert above the columns); no criteria, comments or attachments; a long description', async () => {
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => PREVIEW({ key: 'SHOP-131', linkedTo: { id: 'FEAT-7', title: 'Cancel an order before it ships' },
+    criteria: { from: null, name: null, field: null, items: [], picked: [] }, comments: [], restrictedComments: 0, attachments: [], redacted: 0, clipped: true,
+    descriptionFile: { name: 'SHOP-131 description.md', bytes: 24002 } }) }));
+  await toPreview(m);
+  const dl = dlg();
+  const alert = dl.querySelector('.req-import-linked');
+  assert.deepEqual([alert.getAttribute('role'), text(alert)], ['alert',
+    'SHOP-131 is linked to FEAT-7 · Cancel an order before it ships. The new feature can start from it but stays unlinked: one ticket follows one feature.']);
+  assert.ok(alert.compareDocumentPosition(dl.querySelector('.req-import-cols')) & window.Node.DOCUMENT_POSITION_FOLLOWING, 'above the columns');
+  for (const s of ['Acceptance criteria · none', 'None found in SHOP-131. Round 1 asks for them.', 'Comments · none', 'Attachments · none',
+    "SHOP-131's description is longer than 20,000 characters. The form keeps the start; the whole text goes along as SHOP-131 description.md."]) {
+    assert.ok(text(dl).includes(s), s);
+  }
+  m.view.destroy();
+});
+
+test('the preview of a ticket that is gone says its sentence (not the flag text) and offers no Try again; a 502 offers Try again and says nothing changed (D16); a late answer after Back is dropped', async () => {
+  const gone = await openNew(ROUTES({ [`POST ${IMP}/preview`]: { __status: 404, body: { gone: true, error: 'SHOP-124 was not found in Jira, or this connection cannot see it.' } } }));
+  await toPreview(gone);
+  assert.equal(text(dlg().querySelector('.req-export-alert')), 'SHOP-124 was not found in Jira, or this connection cannot see it.');
+  assert.equal(q('ipv-retry'), null);
+  assert.equal(q('ipv-use').disabled, true);
+  assert.equal(dlg().querySelector('.req-import-note').hidden, true, 'a gone ticket is not a connection to fix');
+  gone.view.destroy();
+  const down = await openNew(ROUTES({ [`POST ${IMP}/preview`]: { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } } }));
+  await toPreview(down);
+  const note = dlg().querySelector('.req-import-note');
+  assert.deepEqual([text(dlg().querySelector('.req-export-alert')), note.hidden, text(note), !!q('ipv-retry')],
+    ['Worca could not reach Jira: the API token was refused.', false,
+      'Nothing was changed. Fix the connection on the Marketplace page (Installed › Jira), then try again.', true]);
+  assert.equal(note.querySelector('[data-min-level="advanced"]').textContent, ' Fix the connection on the Marketplace page (Installed › Jira), then try again.');
+  down.view.destroy();
+  let release = null;
+  const late = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => new Promise((r) => { release = () => r(PREVIEW()); }) }));
+  await toPreview(late);
+  q('ipv-back').click();
+  await settle();
+  release();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Start from a ticket', 'the pick stays; the late preview changed nothing');
+  late.view.destroy();
+});
+
+test('board 36 (phone): past three comments the rest fold behind "Show all 6 comments", which unfolds them', async () => {
+  const six = Array.from({ length: 6 }, (_, i) => ({ id: `c${i}`, author: i % 2 ? 'Bo Example' : 'Ann Example', authorKind: 'person', created: '2026-10-21T09:30:00.000Z',
+    when: '21 Oct', body: `Comment ${i}`, bytes: 40, picked: true }));
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => PREVIEW({ comments: six }) }));
+  await toPreview(m);
+  const rows = [...dlg().querySelectorAll('.req-import-com')];
+  assert.deepEqual(rows.map((r) => r.classList.contains('folded')), [false, false, false, true, true, true]);
+  const all = q('ipv-showall');
+  assert.equal(all.textContent, 'Show all 6 comments');
+  all.click();
+  assert.ok(rows.every((r) => !r.classList.contains('folded')));
+  assert.equal(all.hidden, true);
+  assert.equal(document.activeElement, q('ipv-com-c3'), 'the focus goes to the first comment it unfolded, not <body>');
+  m.view.destroy();
+});
+
+test('CSS (board 36): at 900 px and narrower one column, author and date only, the fold, 44 px hit areas without min-height on a button', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const at = css.indexOf('/* A6.1 (board 36, D19)');
+  assert.ok(at > 0 && at < css.indexOf('/* ── marketplace P3 ── */'));
+  const block = css.slice(at, css.indexOf('/* ── marketplace P3 ── */'));
+  for (const rule of ['.req-import-cols{grid-template-columns:minmax(0,1fr)}', '.req-import-cbody{display:none}', '.req-import-com.folded{display:none}',
+    '.req-import-check::after{content:"";position:absolute;inset:-13px 0}', '.req-import-showall{display:none}']) {
+    assert.ok(block.includes(rule), rule);
+  }
+  assert.ok(!/min-height:44px/.test(block));
+});
