@@ -929,7 +929,7 @@ if (!ONLY_A61) {
   check('A6 board 28: the text of Export again is AA in light and dark', againAA.light.length === 0 && againAA.dark.length === 0, JSON.stringify(againAA));
   await A.evalJs(`(() => { document.querySelector('[data-ui="again-comment"]').click(); document.querySelector('[data-ui="again-continue"]').click(); })()`);
   check('A6 board 28: the comment is shown before it is sent',
-    await until(() => A.evalJs(`(() => { const d = ${DLG}; const box = d && d.querySelector('[aria-label="Comment preview"]'); if (!box) return false;
+    await until(() => A.evalJs(`(() => { const d = ${DLG}; const box = d && d.querySelector('[aria-label="Comment preview"]'); if (!box || !box.querySelector('p')) return false;
       return d.querySelector('h2').textContent === 'Comment on SHOP-123' && box.querySelector('p').textContent.startsWith('Updated in Worca since the last export (')
         && [...box.querySelectorAll('p')].some((p) => p.textContent.startsWith('Added R-po-2 ')); })()`), 15000));
   await shot('a6-board28-comment');

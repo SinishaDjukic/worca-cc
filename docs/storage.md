@@ -23,7 +23,7 @@ project's working tree, so nothing is ever committed to your repo.
                                         a pending create's marker). Every export is also an `export` turn.
                                         Requirements import (v80): req_export_links.origin ('export' | 'import'; a link
                                         an import made keeps the ticket's issue type and priority) and
-                                        req_attachments.fetch_json (a tracker file still to be downloaded: the
+                                        req_attachments.fetch_json (the tracker file a row comes from: the
                                         connection, the ticket key and the attachment id; NULL for an upload).
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";

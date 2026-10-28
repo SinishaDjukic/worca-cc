@@ -839,7 +839,7 @@ const INCREMENTAL_COLUMNS = {
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v80: where the link came from, 'export' | 'import' (A6.1 D11, D13)
-  req_attachments:        { fetch_json: 'TEXT' },   // v80: a tracker file still to be downloaded (A6.1 D10, D13); NULL for an upload
+  req_attachments:        { fetch_json: 'TEXT' },   // v80: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
