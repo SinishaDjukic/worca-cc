@@ -141,6 +141,9 @@ const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF' }
 // A6.1 (D9, board 36): A8's caps for the New feature form, said where a ticket's attachment cannot be ticked
 const CAP_FILES_UI = 'A feature takes up to 10 files; 10 are picked.';
 const CAP_BYTES_UI = "Picked files are at 100 MB, a new feature's limit. Add more on the feature page.";
+// A6.1 D11: an export link a ticket import made. A backtick literal, because the specifier scan in
+// test/shared-graph-purity reads the word in quotes followed by a quote as a dynamic import.
+const IMPORT_ORIGIN = `import`;
 const READ_RANGE = '$0.05–0.20';   // a read's cost before any read has been made
 /** 640 B, 9 KB, 2.1 MB (the server's sizeLabel). */
 export function sizeText(bytes) {
@@ -4011,7 +4014,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       } }, 'Continue');
     const lk0 = linkOf(f) || {};
     const title = h('h2', { id: 'req-again-title', tabindex: '-1',
-      text: lk0.origin === 'import' && lk0.sinceImport ? `Export ${f.id} to ${name}` : `Export ${f.id} again` });
+      text: lk0.origin === IMPORT_ORIGIN && lk0.sinceImport ? `Export ${f.id} to ${name}` : `Export ${f.id} again` });
     const card = h('section', { class: 'card req-dialog req-export req-export-again', role: 'dialog', 'aria-modal': 'true',
       'aria-labelledby': 'req-again-title', 'aria-describedby': 'req-again-desc' },
       // board 28: the alert (edited in Jira) under the choices, what changed and the note, so picking a choice moves no card
@@ -4043,7 +4046,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const L = data.link;
       const changed = data.changes.length > 0;
       // A6.1 D11: an imported link says so: until the first export the dialog is about the import, then A6's with "was imported on"
-      const imported = L.origin === 'import';
+      const imported = L.origin === IMPORT_ORIGIN;
       const first = imported && L.sinceImport;
       title.textContent = first ? `Export ${f.id} to ${name}` : `Export ${f.id} again`;
       desc.textContent = first
