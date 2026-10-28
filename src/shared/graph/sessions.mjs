@@ -6,6 +6,7 @@
 import { classifyLoops } from './loops.mjs';
 import { SESSION_ID_RE, SESSION_MODES, MAX_SESSION_MEMBERS, SESSION_MIN_MEMBERS } from './constants.mjs';
 import { mintId, normalizeSessions } from './template.mjs';
+import { LABEL_H } from './geometry.mjs';
 import { ENGINES, engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../engine-switch.mjs';
 
 export const SESSION_DEFAULT_LABEL = 'One session';
@@ -312,4 +313,79 @@ export function sessionNotes(spec, { engine = 'claude', verified = SESSION_SUBAG
  *  `worca-x-` prefix agentTypeFor mints (Task 31), or it says memberOf. Sub-agent cost totals skip these (C8). */
 export function isMemberDispatch(rec) {
   return rec?.memberOf != null || /^worca-x-/.test(String(rec?.subagentType || ''));
+}
+
+// ── Tray geometry (05 §4.2): from the model's x/y and the host's sizeOf alone; nothing is measured ──
+
+export const SESS_PAD_X = 12;      // tray side padding past the outermost box
+export const SESS_PAD_B = 12;      // tray padding below the lowest box
+export const SESS_HEAD_H = 24;     // the header strip
+export const SESS_HEAD_GAP = 4;    // between the strip and the label rows below it
+export const SESS_GUTTER = 8;      // the least gap between two trays side by side
+export const SESS_PAD_MIN = 4;     // a clamped side never comes closer to its boxes than this
+
+const sc = (scale) => (Number(scale) > 0 ? Number(scale) : 1);
+const membersOn = (spec, nodesById) => (Array.isArray(spec?.members) ? spec.members : []).map((id) => nodesById.get(id)).filter(Boolean);
+
+/** The header strip of every session, model x/y only (step 1): the router's obstacles. A session none of whose
+ *  members is on the canvas has none. */
+export function sessionHeads(specs, nodesById, sizeOf, { scale = 1 } = {}) {
+  const s = sc(scale);
+  const out = [];
+  for (const spec of Array.isArray(specs) ? specs : []) {
+    const ms = membersOn(spec, nodesById);
+    if (!ms.length) continue;
+    const x = Math.min(...ms.map((n) => Number(n.x) || 0)) - SESS_PAD_X * s;
+    const r = Math.max(...ms.map((n) => (Number(n.x) || 0) + sizeOf(n).w)) + SESS_PAD_X * s;
+    const b = Math.min(...ms.map((n) => (Number(n.y) || 0) - LABEL_H * s)) - SESS_HEAD_GAP * s;
+    out.push({ id: spec.sid, x, y: b - SESS_HEAD_H * s, w: r - x, h: SESS_HEAD_H * s });
+  }
+  return out;
+}
+
+/** Tray rectangles (steps 2-4). `routes` is the router's Map<wireId, {pts, mid}>; only each session's internal
+ *  wires are read. `head` is the painted strip: the head's y, the tray's x and width (null with `header: false`). */
+export function sessionRects(specs, nodesById, sizeOf, routes, { scale = 1, header = true } = {}) {
+  const s = sc(scale);
+  const heads = header ? new Map(sessionHeads(specs, nodesById, sizeOf, { scale: s }).map((h) => [h.id, h])) : new Map();
+  const trays = [];
+  for (const spec of Array.isArray(specs) ? specs : []) {
+    const ms = membersOn(spec, nodesById);
+    if (!ms.length) continue;
+    const boxes = [...ms, ...(Array.isArray(spec.flows) ? spec.flows : []).map((id) => nodesById.get(id)).filter(Boolean)];
+    const c = { x: Infinity, y: Infinity, r: -Infinity, b: -Infinity };
+    const take = (x, y, r = x, b = y) => { c.x = Math.min(c.x, x); c.y = Math.min(c.y, y); c.r = Math.max(c.r, r); c.b = Math.max(c.b, b); };
+    for (const n of boxes) {
+      const { w, h } = sizeOf(n);
+      const x = Number(n.x) || 0; const y = Number(n.y) || 0;
+      take(x, y - LABEL_H * s, x + w, y + h);
+    }
+    for (const wid of Array.isArray(spec.internalWires) ? spec.internalWires : []) {
+      const rt = routes instanceof Map ? routes.get(wid) : null;
+      if (!rt) continue;
+      for (const p of Array.isArray(rt.pts) ? rt.pts : []) take(p.x, p.y);
+      if (rt.mid) take(rt.mid.x, rt.mid.y, rt.mid.x, rt.mid.y + 12 * s);
+    }
+    const head = heads.get(spec.sid) || null;
+    const y = head ? Math.min(head.y, c.y - 8 * s) : c.y - 8 * s;
+    trays.push({ sid: spec.sid, x: c.x - SESS_PAD_X * s, r: c.r + SESS_PAD_X * s, y, b: c.b + SESS_PAD_B * s, head, content: c });
+  }
+  // Step 4: side-by-side trays share the gap between their boxes, GUTTER apart; a side keeps PAD_MIN to its boxes.
+  const order = [...trays].sort((p, q) => p.content.x - q.content.x || (p.sid < q.sid ? -1 : p.sid > q.sid ? 1 : 0));
+  for (let i = 0; i < order.length; i += 1) {
+    for (let j = i + 1; j < order.length; j += 1) {
+      const A = order[i]; const B = order[j];
+      // Only trays whose boxes sit side by side: stacked rows (contents overlapping in x) keep their pads.
+      if (!(A.y < B.b && B.y < A.b) || B.content.x < A.content.r || !(A.r + SESS_GUTTER * s > B.x)) continue;
+      const m = (A.content.r + B.content.x) / 2;
+      A.r = Math.max(m - (SESS_GUTTER * s) / 2, A.content.r + SESS_PAD_MIN * s);
+      B.x = Math.min(m + (SESS_GUTTER * s) / 2, B.content.x - SESS_PAD_MIN * s);
+    }
+  }
+  const out = new Map();
+  for (const t of trays) {
+    out.set(t.sid, { x: t.x, y: t.y, w: t.r - t.x, h: t.b - t.y,
+      head: t.head ? { x: t.x, y: t.head.y, w: t.r - t.x, h: t.head.h } : null, content: t.content });
+  }
+  return out;
 }
