@@ -11066,7 +11066,6 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
   .req-new-chip .req-import-chip-x::after{content:"";position:absolute;inset:-10px}
 }
 /* A6.1 (board 35): the Files card while a file comes from the tracker — A8's row, its Downloading… badge blue (blue means active). */
-.req-file .badge.blue + .badge{margin-left:6px}
 /* a file without its body yet is named in plain text, not link blue: there is nothing to open */
 span.req-file-name{color:var(--ink)}
 

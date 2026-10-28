@@ -97,6 +97,8 @@ test('board 35: each file says where it came from and where it is: Downloading�
   q('file-more-ratt_000000000003', m.host).click();
   assert.deepEqual([q('fmi-open-ratt_000000000003', m.host), q('fmi-again-ratt_000000000003', m.host)], [null, null]);
   assert.ok(q('fmi-remove-ratt_000000000003', m.host), 'Remove stays');
+  assert.deepEqual(['replace', 'ask', 'edit'].map((k) => q(`fmi-${k}-ratt_000000000003`, m.host)), [null, null, null],
+    'a file on its way offers no Replace, Ask or Edit (one job per file)');
   assert.equal(text(row(m.host, 'ratt_000000000002').querySelector('.req-file-state')),
     'Downloaded from SHOP-124. Worca is reading it (about $0.06). The next round uses it.');
   assert.equal(text(row(m.host, 'ratt_000000000001').querySelector('.req-file-meta')), 'Text · 3 KB · from SHOP-124');
@@ -137,5 +139,51 @@ test('board 36 (9–11): a download that failed (Try again, one post per press),
   q('file-more-ratt_000000000005', m.host).click();
   assert.deepEqual([q('fmi-open-ratt_000000000005', m.host), q('fmi-again-ratt_000000000005', m.host)], [null, null]);
   assert.ok(q('fmi-remove-ratt_000000000005', m.host), 'Remove mends a refused file');
+  m.view.destroy();
+});
+
+const dlFailed = (id, name, code, message) => file(id, name, 'binary', 1258291, 'failed', { error: { code, message, job: 'download', at: 't' } });
+const DL_MSG = 'Worca could not get this file from Jira: it did not answer within 2 minutes.';
+
+test('board 36: while the feature is busy (locked) Try again is disabled; once it is free it works', async () => {
+  const id = 'ratt_000000000003';
+  const m = await openFeature(feature({ busy: true, attachments: [dlFailed(id, 'partial-cancel-flow.pdf', 'DOWNLOAD', DL_MSG)] }));
+  assert.equal(q(`file-retry-${id}`, m.host).disabled, true, 'locked: no Try again');
+  m.set(feature({ busy: false, status: 'your_turn', rounds: 1, attachments: [dlFailed(id, 'partial-cancel-flow.pdf', 'DOWNLOAD', DL_MSG)] }));
+  await m.view.changed(8);
+  await settle();
+  assert.equal(q(`file-retry-${id}`, m.host).disabled, false, 'free again: Try again is on');
+  m.view.destroy();
+});
+
+test('board 36: a Try again the server refused (409) does not stick: the next press posts again', async () => {
+  const id = 'ratt_000000000003';
+  const f = feature({ busy: false, status: 'your_turn', rounds: 1, attachments: [dlFailed(id, 'partial-cancel-flow.pdf', 'DOWNLOAD', DL_MSG)] });
+  let n = 0;
+  const m = await openFeature(f, { [`POST ${F}/attachments/${id}/read-again`]: () => (++n === 1 ? { __status: 409, body: { error: 'busy' } } : { feature: f, turns: [] }) });
+  q(`file-retry-${id}`, m.host).click();
+  await settle();
+  q(`file-retry-${id}`, m.host).click();
+  await settle();
+  assert.equal(m.calls.filter((c) => c.method === 'POST' && c.url.endsWith('/read-again')).length, 2, 'the second press posts again');
+  m.view.destroy();
+});
+
+test('board 18/36: the Build chip for a download that failed says the Files card words, not stored file; for one on its way it waits', async () => {
+  const id = 'ratt_000000000003';
+  const ready = (attachments) => feature({ busy: false, status: 'done', state: 'ready', rounds: 1, attachments,
+    readiness: { ok: true, passed: 6, total: 6, checks: [], overridable: false } });
+  const m = await openFeature(ready([dlFailed(id, 'partial-cancel-flow.pdf', 'DOWNLOAD', DL_MSG),
+    dlFailed('ratt_000000000005', 'scan-notes.pdf', 'REFUSED', 'Worca could not use this file: it is already attached as call-notes.pdf.'),
+    file('ratt_000000000004', 'support-macro.txt', 'text', 4096, 'downloading')]));
+  const bad = [...m.host.querySelectorAll('.req-build-files-bad')].map((l) => text(l));
+  assert.deepEqual(bad, [`partial-cancel-flow.pdf: ${DL_MSG} The interview lists it by name only.`,
+    'scan-notes.pdf: Worca could not use this file: it is already attached as call-notes.pdf.']);
+  assert.ok(bad.every((t) => !t.includes('stored file')));
+  assert.equal(text(row(m.host, id).querySelector('.req-file-failed-text')),
+    `${DL_MSG} The interview lists it by name only.`, 'the same sentence as the Files card');
+  const chips = [...m.host.querySelectorAll('.req-fpick')];
+  assert.deepEqual(chips.map((c) => c.disabled), [true, true, true], 'off and disabled');
+  assert.equal(text(chips[2]), 'support-macro.txt Downloading…');
   m.view.destroy();
 });

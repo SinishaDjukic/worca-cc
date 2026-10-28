@@ -1653,6 +1653,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const unsendable = (a) => a.sendable === false;
   const cannotGo = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
   // a brief document's switch is "Send with every run": it speaks of runs and of interviews
+  // the Files card's failed line for a tracker file whose download failed or was refused: the server's words (A6.1 D10)
+  const downloadSaid = (a) => (a.error.code === 'DOWNLOAD' ? `${String(a.error.message || '')} The interview lists it by name only.` : String(a.error.message || ''));
   const cannotGoDoc = (name) => `${name} cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.`;
   function filesForRun(f) {
     const files = Array.isArray(f.attachments) ? f.attachments : [];
@@ -1663,10 +1665,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const chip = (a, doc) => {
       const key = doc ? 'sendWithEveryRun' : 'sendWithRun';
       const sel = !!a[key];
-      const reading = a.status === 'reading';
+      const reading = a.status === 'reading' || a.status === 'downloading';
       const stuck = !reading && unsendable(a);
       const why = stuck || reading ? `req-fpick-why-${a.id}` : null;
-      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why, text: cannotGo(a.name) }));
+      // a download that failed or was refused never had a stored file: say what the Files card's failed line says
+      const noBody = !!a.error && a.error.job === 'download';
+      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why, text: noBody ? `${a.name}: ${downloadSaid(a)}` : cannotGo(a.name) }));
       return h('button', { type: 'button', class: `req-fpick${sel ? ' on' : ''}${stuck ? ' bad' : ''}`, 'aria-pressed': sel ? 'true' : 'false',
         'aria-label': doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, 'aria-describedby': why, 'data-ui': `fpick-${a.id}`,
         disabled: starting || reading || (stuck && !sel),
@@ -1680,7 +1684,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         } },
       icon(stuck ? ICONS.warn : sel ? ICONS.check : ICONS.plus, { size: 13, width: sel && !stuck ? 2.6 : 2.2 }),
       h('span', { class: 'req-fpick-name', text: a.name }),
-      reading ? [' ', h('span', { class: 'req-fpick-state', id: why, text: 'Reading…' })] : null);
+      reading ? [' ', h('span', { class: 'req-fpick-state', id: why, text: a.status === 'downloading' ? 'Downloading…' : 'Reading…' })] : null);
     };
     const told = [...files, ...docs].filter((a) => (a.mentions || []).length).map((a) => `${a.name} (${a.mentions.join(', ')})`);
     return h('div', { class: 'req-build-files', role: 'group', 'aria-labelledby': 'req-build-files-h' },
@@ -2386,7 +2390,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const stuck = storeFailedOf(a);
     const dl = !!a.error && a.error.job === 'download';   // A6.1 D10: a tracker file that could not be got, or used
     const said = stuck ? String(a.error.message || '')
-      : dl ? (a.error.code === 'DOWNLOAD' ? `${a.error.message} The interview lists it by name only.` : String(a.error.message || ''))
+      : dl ? downloadSaid(a)
         : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
     if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
     const label = stuck ? 'Replace with a newer version…' : 'Try again';
