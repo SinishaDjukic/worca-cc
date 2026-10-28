@@ -4229,7 +4229,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       'aria-labelledby': 'req-ipv-title', 'aria-describedby': 'req-ipv-desc' },
       importBack(), title,
       h('p', { class: 'req-dlg-lead', id: 'req-ipv-desc', text: `This is what the new feature takes from ${key}. Untick what it should not start with. Nothing changes in ${name}.` }),
-      ...box.els, note, body,
+      box.els[0], note, ...box.els.slice(1), body,
       h('div', { class: 'req-export-foot' }, h('p', { class: 'hint', text: `Nothing is sent to ${name}.` }),
         h('div', { class: 'req-dlg-btns' }, h('button', { type: 'button', class: 'btn', 'data-ui': 'ipv-back', onclick: () => openPick(ctx, pick) }, 'Back'), use)));
     openModal(card, { trigger: ctx.trigger, first: title, page: true });
@@ -4257,13 +4257,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       ui.comments.clear();
       ui.comHead = h('h3', { class: 'req-import-h' });
       const rows = L.comments.map((c) => {
-        const cb = h('input', { type: 'checkbox', 'data-ui': `ipv-com-${c.id}`, 'aria-label': `Use the comment by ${c.author}, ${c.when}` });
+        const cb = h('input', { type: 'checkbox', 'data-ui': `ipv-com-${c.id}`, 'aria-label': `Use the comment by ${c.author}, ${c.when}`, 'aria-describedby': `req-ipv-cbody-${c.id}` });
         cb.checked = !!c.picked;
         cb.addEventListener('change', sync);
         ui.comments.set(c.id, cb);
         return h('li', { class: 'req-import-com' }, h('label', { class: 'req-import-check' }, cb,
           h('span', { class: 'req-import-ctext' }, h('span', { class: 'req-import-cby' }, h('b', { text: c.author }), ` · ${c.when}`),
-            h('span', { class: 'req-import-cbody', text: c.body }))));
+            h('span', { class: 'req-import-cbody', id: `req-ipv-cbody-${c.id}`, text: c.body }))));
       });
       const restricted = Number(L.restrictedComments) || 0;
       return h('section', { class: 'req-import-sec' }, ui.comHead,
@@ -4282,11 +4282,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         cb.disabled = !!a.refused;
         cb.addEventListener('change', sync);
         const why = h('p', { class: 'hint req-import-why', id: `req-ipv-why-${a.id}`, hidden: !a.refused, text: a.refused || '' });
-        if (a.refused) cb.setAttribute('aria-describedby', why.id);
+        cb.setAttribute('aria-describedby', a.refused ? `req-ipv-ameta-${a.id} ${why.id}` : `req-ipv-ameta-${a.id}`);
         ui.atts.set(a.id, { cb, why, a });
         return h('li', { class: a.refused ? 'req-import-off' : null }, h('label', { class: 'req-import-check' }, cb,
           icon(a.kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }), h('span', { class: 'req-import-aname', text: a.name }),
-          h('span', { class: 'hint', text: a.kind ? `${KIND_TITLE[a.kind]} · ${sizeText(a.bytes)}` : sizeText(a.bytes) })), why);
+          h('span', { class: 'hint', id: `req-ipv-ameta-${a.id}`, text: a.kind ? `${KIND_TITLE[a.kind]} · ${sizeText(a.bytes)}` : sizeText(a.bytes) })), why);
       });
       return h('section', { class: 'req-import-sec' }, ui.attHead,
         rows.length ? h('p', { class: 'hint', text: `Picked files become feature files. Worca gets them from ${name} when you start the interview and reads each once, like a file you add.` }) : null,
@@ -4354,9 +4354,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         note.hidden = true;
         render();
         use.disabled = false;
+        focusLost(title);   // Try again was the focus and is gone
       } catch (err) {
         if (!live(g)) return;
-        box.show(importErr(err), { buttons: err && err.data && err.data.gone ? [] : [retry] });
+        const gone = !!(err && err.data && err.data.gone);
+        box.show(importErr(err), { buttons: gone ? [] : [retry] });
+        if (gone) focusLost(title);
         note.lastChild.textContent = ` Fix the connection on the Marketplace page (Installed › ${name}), then try again.`;
         note.hidden = !(err && err.status === 502);
       } finally { loading = false; }

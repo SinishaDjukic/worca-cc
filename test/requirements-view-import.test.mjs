@@ -333,7 +333,7 @@ test('board 34: Continue opens Start from SHOP-124: its title focused; the descr
   assert.equal(q('ipv-com-10231').getAttribute('aria-label'), 'Use the comment by Ann Example, 21 Oct');
   assert.ok(text(dl).includes('Comments · 2 of 3'));
   const xlsx = q('ipv-att-10044');
-  assert.deepEqual([xlsx.disabled, xlsx.checked, text(document.getElementById(xlsx.getAttribute('aria-describedby')))],
+  assert.deepEqual([xlsx.disabled, xlsx.checked, text(document.getElementById(xlsx.getAttribute('aria-describedby').split(' ').at(-1)))],
     [true, false, 'Not offered: Worca reads text, images and PDF. Save it as PDF to attach it here.']);
   assert.equal(q('ipv-att-10041').getAttribute('aria-label'), 'Add packing-slip.png as a feature file');
   assert.ok(text(dl).includes('Attachments · 2 of 3'));
@@ -409,4 +409,75 @@ test('Back from the preview keeps the search words and the tickets when the proj
   assert.equal(m.calls.filter((c) => c.url === `${IMP}/search`).at(-1).body.search, 'cancel', 'Try again searches the kept words');
   assert.deepEqual([text(dlg().querySelector('.req-import-status')), q('pick-SHOP-124').checked], ['4 tickets in SHOP match “cancel”.', true]);
   m.view.destroy();
+});
+
+test('after Try again the focus lands on the preview title, not <body>; also when the retry answers gone', async () => {
+  let n = 0;
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => ((n += 1) === 1
+    ? { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } } : PREVIEW()) }));
+  await toPreview(m);
+  assert.ok(text(dlg()).includes('Nothing was changed.'));
+  q('ipv-retry').focus();
+  assert.equal(document.activeElement, q('ipv-retry'));
+  q('ipv-retry').click();
+  await settle();
+  assert.ok(q('ipv-use') && !q('ipv-use').disabled, 'the preview loaded');
+  assert.equal(document.activeElement, document.getElementById('req-ipv-title'), 'the focus is on the title');
+  m.view.destroy();
+  let k = 0;
+  const g = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => ((k += 1) === 1
+    ? { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.' } }
+    : { __status: 409, body: { gone: true, error: 'SHOP-124 no longer exists in Jira.' } }) }));
+  await toPreview(g);
+  q('ipv-retry').focus();
+  q('ipv-retry').click();
+  await settle();
+  assert.equal(q('ipv-retry'), null, 'no Try again for a ticket that is gone');
+  assert.equal(document.activeElement, document.getElementById('req-ipv-title'));
+  g.view.destroy();
+});
+
+test('a preview answer that arrives after Back is dropped: nothing is painted into the pick', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: async () => { await gate; return PREVIEW(); } }));
+  await toPreview(m);
+  q('ipv-back').click();
+  await settle();
+  release();
+  await settle();
+  assert.ok(q('pick-search'), 'the pick is on screen');
+  assert.equal(dlg().querySelector('.req-import-body'), null);
+  assert.equal(q('ipv-use'), null);
+  m.view.destroy();
+});
+
+test('the comment and attachment checkboxes are described by the comment body and the kind and size', async () => {
+  const m = await openNew();
+  await toPreview(m);
+  const by = (ui) => (q(ui).getAttribute('aria-describedby') || '').split(/s+/).filter(Boolean).map((id) => text(document.getElementById(id)));
+  assert.deepEqual(by('ipv-com-10231'), ['Picked per parcel.']);
+  assert.deepEqual(by('ipv-att-10041'), ['Image · 840 KB']);
+  const ids = [...dlg().querySelectorAll('[id]')].map((e) => e.id);
+  assert.equal(new Set(ids).size, ids.length, 'the ids are unique');
+  m.view.destroy();
+});
+
+test('in the preview a 502 puts "Nothing was changed." before Try again, as the pick does', async () => {
+  const fail = { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } };
+  const order = (root, retry) => {
+    const all = [...root.querySelectorAll('*')];
+    const note = all.find((e) => e.classList.contains('req-import-note') && !e.hidden);
+    const btn = root.querySelector(`[data-ui="${retry}"]`);
+    return !!note && !!btn && !!(note.compareDocumentPosition(btn) & window.Node.DOCUMENT_POSITION_FOLLOWING);
+  };
+  const m = await openNew(ROUTES({ [`POST ${IMP}/search`]: fail }));
+  q('import-open', m.host).click();
+  await settle();
+  assert.equal(order(dlg(), 'pick-retry'), true, 'the pick: note then Try again');
+  m.view.destroy();
+  const p = await openNew(ROUTES({ [`POST ${IMP}/preview`]: fail }));
+  await toPreview(p);
+  assert.equal(order(dlg(), 'ipv-retry'), true, 'the preview matches');
+  p.view.destroy();
 });
