@@ -20398,7 +20398,8 @@ function endPauseHold(runId) {
   const r = runs.get(runId);
   if (!r || !r.pausePending) return;
   const seq = r._pauseSeq;
-  setTimeout(() => { if (r.pausePending && r._pauseSeq === seq) r.pausePending = false; }, PAUSE_HOLD_MS);
+  // unref: a no-op in browsers (number); under Node (the jsdom tests) a 30 s hold would keep the process alive.
+  setTimeout(() => { if (r.pausePending && r._pauseSeq === seq) r.pausePending = false; }, PAUSE_HOLD_MS).unref?.();
 }
 /** Every parked copy of the pipeline (a run page and a History resume address it by pipeline id). */
 function showResumePending(pipelineId, on) {

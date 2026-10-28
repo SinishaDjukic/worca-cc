@@ -114,6 +114,24 @@ test('--timings-out writes the run\'s own per-file seconds, spawn to exit (what 
   } finally { rmSync(dir, rmOpts); }
 });
 
+test('a file whose process stays up over 2 s after its last test gets a tail warning; a file that exits at once does not', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-tail-'));
+  try {
+    const held = join(dir, 'held.test.mjs');
+    const clean = join(dir, 'clean.test.mjs');
+    // A ref'd timer armed by the test holds the process 2.5 s after the test passes.
+    writeFileSync(held, "import { test } from 'node:test';\ntest('arms a timer', () => { setTimeout(() => {}, 2500); });\n");
+    writeFileSync(clean, "import { test } from 'node:test';\ntest('arms an unref timer', () => { setTimeout(() => {}, 2500).unref(); });\n");
+    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), held, clean],
+      { encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const warned = r.stderr.split('\n').filter((l) => l.startsWith('warning: '));
+    assert.equal(warned.length, 1, r.stderr);
+    const m = warned[0].match(/\/held\.test\.mjs stayed up (\d+\.\d) s outside its tests/);
+    assert.ok(m && +m[1] >= 2.4, warned[0]);
+  } finally { rmSync(dir, rmOpts); }
+});
+
 test('mergeTimings: later measurements win, files that are gone drop out, keys sorted; timingFiles walks dirs for .json only', () => {
   const live = new Set(['test/a.test.mjs', 'test/b.test.mjs', 'test/c.test.mjs']);
   assert.deepEqual(
