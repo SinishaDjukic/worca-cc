@@ -6,7 +6,7 @@
 // never shell out to real git/gh/GitHub. Nothing here ever throws.
 
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm, readFile, copyFile, rename, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile, copyFile, rename, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
@@ -232,11 +232,12 @@ const PATCH_ENV_STRIP = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJE
  * `add -A` stages the working tree THERE, and `diff --cached --binary` renders it. So it is safe on a
  * person's own clone (a linked checkout folder) and on a checkout left mid-merge (its conflicts stay
  * unresolved). The only trace is the blobs `add` hashes into the object store (unreferenced; gc drops them).
+ * With `scratchObjects`, nothing at all is written to the repository.
  * Never throws.
  * @returns {Promise<{ok:true, file:string|null, bytes:number}|{ok:false, step:string, message:string}>}
  *   file null = nothing uncommitted.
  */
-export async function uncommittedPatch(dir, { base = 'HEAD', outFile } = {}) {
+export async function uncommittedPatch(dir, { base = 'HEAD', outFile, scratchObjects = false } = {}) {
   if (!dir || !outFile) return { ok: false, step: 'path', message: 'dir and outFile are required' };
   const env = { ...process.env };
   for (const k of PATCH_ENV_STRIP) delete env[k];
@@ -254,6 +255,16 @@ export async function uncommittedPatch(dir, { base = 'HEAD', outFile } = {}) {
     // GIT_INDEX_FILE: git answers `--git-path index` with $GIT_INDEX_FILE whenever it is set.
     const real = await _run('git', ['rev-parse', '--git-path', 'index'], { cwd: dir, env });
     const realPath = real.ok ? real.stdout.trim() : '';
+    // Workflow tests 3a (D53): the blobs `add -A` hashes go to a scratch object folder that reads through to the
+    // repository's own objects, so the person's repository gets no new object at all. Asked before any GIT_* is set.
+    if (scratchObjects) {
+      const o = await _run('git', ['rev-parse', '--git-path', 'objects'], { cwd: dir, env });
+      const objPath = o.ok ? o.stdout.trim() : '';
+      if (!objPath) return fail('objects', o);
+      env.GIT_OBJECT_DIRECTORY = join(tmp, 'objects');
+      await mkdir(env.GIT_OBJECT_DIRECTORY, { recursive: true });
+      env.GIT_ALTERNATE_OBJECT_DIRECTORIES = isAbsolute(objPath) ? objPath : join(dir, objPath);
+    }
     env.GIT_INDEX_FILE = join(tmp, 'index');
     let seeded = false;
     if (realPath) {
