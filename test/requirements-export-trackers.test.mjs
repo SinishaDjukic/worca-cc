@@ -84,6 +84,32 @@ test('the cache is per installed version: a new version is asked again', async (
   writePluginsLock(lock);
 });
 
+test('the cache follows what is installed: an update to a new commit, a link or a re-link is asked again; an unchanged lock is not', async () => {
+  _resetExportCaches();
+  const callSource = fakeCall({ 'jira-source': { export: true }, 'mock-source': { writeBack: true } });
+  const asked = () => callSource.calls.filter((c) => c.plugin === 'jira-source').length;
+  const lock = readPluginsLock();
+  const linked = lock['jira-source'];
+  const { linked: _wasLinked, ...unlinked } = linked;
+  const installed = { ...unlinked, repo: 'https://example.test/jira.git', pinnedSha: 'a'.repeat(40) };
+  writePluginsLock({ ...lock, 'jira-source': installed });
+  await exportTrackers({ callSource });
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 1, 'an unchanged lock is answered from the cache');
+  writePluginsLock({ ...lock, 'jira-source': { ...installed, pinnedSha: 'b'.repeat(40) } });
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 2, 'an update to a new commit (same version) is asked again');
+  writePluginsLock({ ...lock, 'jira-source': { ...linked, installedAt: '2026-10-28T10:00:00.000Z' } });
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 3, 'a link (same version) is asked again');
+  writePluginsLock({ ...lock, 'jira-source': { ...linked, installedAt: '2026-10-28T11:00:00.000Z' } });
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 4, 'a re-link (same version) is asked again');
+  await exportTrackers({ callSource });
+  assert.equal(asked(), 4, 'and then cached again');
+  writePluginsLock(lock);
+});
+
 test('a missing op means no export (cached); a failed probe is remembered for a minute, then asked again; any other answer is no', async () => {
   _resetExportCaches();
   let clock = 1_000_000;
