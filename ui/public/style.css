@@ -11037,7 +11037,7 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 .req-import-strip-top .hint,.req-import-site{margin:0}
 .req-import-tchip{font-size:var(--fs-caption);padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);color:var(--ink-2);background:var(--field)}
 .req-import-critfield{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
-.req-import-critfield .opt{color:var(--ink-3);font-weight:500}
+.req-import-critfield .opt{color:var(--ink-2);font-weight:500}
 .req-import-critfield > .req-export-fl{font-size:var(--fs-body);font-weight:600;color:inherit}   /* a field label: .field > label's size, weight and ink */
 .req-import-critfield > .hint{margin:0}
 .req-import-critlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:var(--fs-body)}
