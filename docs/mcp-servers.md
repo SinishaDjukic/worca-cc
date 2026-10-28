@@ -28,6 +28,11 @@ under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well 
   `disabledMcpjsonServers` of the settings it passes at each spawn, because Claude Code started in
   `-p` would otherwise start every one of them. **Approve** names a server in the project's untracked
   `.claude/settings.local.json`; when git tracks that file, approve it in `~/.claude/settings.json`.
+- On Claude, a pipeline agent loads only the run's own servers (its sets, the project's `.mcp.json` and
+  local scope), not those of your `~/.claude.json`, your Claude Code plugins or your claude.ai connectors:
+  their tool definitions would ride every call of every agent. An agent still loads all of them when its
+  agent file names one of their tools (e.g. a plugin's Playwright), and so does every agent of a run that
+  uses an approved server of the repository's committed `.mcp.json`.
 - Different credentials per project ⇒ different sets: **Duplicate** a set (the copy starts with
   the same members, values and secrets), replace what differs, assign it. Duplicating a Team set
   gives an ordinary set with the same members, values and secrets.
@@ -54,7 +59,7 @@ plugin's `README.md` says where to get its credentials.
 - Pipeline agents call these servers' tools without asking. Give each token only the permissions
   your agents need; a broad token lets an agent delete what the token can reach.
 - A server you also have in Claude Code (your `~/.claude.json` or a Claude Code plugin) loads twice
-  in pipeline agents; turn one off.
+  in a pipeline agent that loads your Claude Code servers too (above); turn one off.
 - `firebase` and `railway` fall back to your own `firebase login` / `railway login` when their
   key or token is blank. Under agent isolation the server runs as the agent user, who has neither:
   fill in the key file or token.
