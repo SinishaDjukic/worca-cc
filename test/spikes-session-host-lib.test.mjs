@@ -331,3 +331,17 @@ test('S10 --dry: installed engines print their two turns through the adapters\' 
     assert.deepEqual(verdicts.map((v) => [v.spike, v.pass, v.facts.skipped]), [['S10-copilot', null, 'not installed']]);
   } finally { rmSync(bin, { recursive: true, force: true }); }
 });
+
+test('RESULTS.md: every spike row present; the Decisions block is the first fenced JSON block, parses, and is self-consistent', () => {
+  const md = readFileSync(new URL('../tools/spikes/session-host/RESULTS.md', import.meta.url), 'utf8');
+  for (const row of ['S1', 'S2', 'S3', 'S4', 'S6', 'S7a', 'S7b', 'S8b', 'S9', 'S10-codex', 'S10-copilot', 'S10-opencode']) {
+    assert.match(md, new RegExp(`^\\| ${row} \\| [^|\\s][^|]* \\|`, 'm'), row);         // a non-empty Pass cell
+  }
+  const FENCE = String.fromCharCode(96).repeat(3);
+  const D = JSON.parse(md.split(FENCE + 'json')[1].split(FENCE)[0]);
+  assert.ok(!D.phase0Go || (D.S3.denyReachesChildren && D.S3.hostGuardReachesChildren), 'phase0Go needs S3 (C40)');
+  assert.ok(!D.claudeGo || (D.phase0Go && D.S7b.pass), 'claudeGo needs phase0Go and S7b');
+  assert.doesNotThrow(() => new RegExp(D.SUBAGENT_CAP_RE, 'i'));
+  assert.doesNotThrow(() => new RegExp(D.VANISHED_RE, 'i'));
+  for (const e of ['codex', 'copilot', 'opencode']) assert.equal(typeof D.engines[e], 'boolean', e);
+});
