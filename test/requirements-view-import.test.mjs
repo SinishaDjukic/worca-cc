@@ -303,3 +303,110 @@ test('CSS: the Describe it label row matches the other field labels (8px below, 
   assert.match(label, /(?:^|;)font-weight:600(?:;|$)/);
   assert.match(label, /(?:^|;)font-size:var\(--fs-body\)(?:;|$)/);
 });
+
+// ---- Task 12: the preview (board 34), and Use this ticket ----
+const toPreview = async (m) => { q('import-open', m.host).click(); await settle(); await typeSearch('cancel'); q('pick-SHOP-124').click(); q('pick-continue').click(); await settle(); };
+
+test('board 34: Continue opens Start from SHOP-124: its title focused; the description as text; criteria renumbered; ticks; reasons; notices; Back keeps the search', async () => {
+  const m = await openNew();
+  await toPreview(m);
+  const dl = dlg();
+  assert.equal(text(dl.querySelector('h2')), 'Start from SHOP-124');
+  assert.equal(document.activeElement, dl.querySelector('h2'));
+  assert.equal(text(dl.querySelector('#req-ipv-desc')), 'This is what the new feature takes from SHOP-124. Untick what it should not start with. Nothing changes in Jira.');
+  assert.deepEqual(m.calls.find((c) => c.url === `${IMP}/preview`).body, { ...CONN, key: 'SHOP-124', formFiles: { count: 0, bytes: 0 } });
+  assert.equal(text(dl.querySelector('.req-import-meta')), 'Story · In progress · Medium · acme.atlassian.net (Cloud)');
+  const desc = dl.querySelector('[aria-label="Description preview"]');
+  assert.ok(desc.textContent.includes('<img src=x onerror=alert(1)> stays text'));
+  assert.equal(desc.querySelector('img'), null, 'ticket text is never HTML');
+  assert.ok(text(dl).includes('Without its Acceptance criteria section, which becomes the criteria below.'));
+  assert.ok(text(dl).includes('Worca hid 1 thing that looked like a key or password.'));
+  assert.ok(text(dl).includes('1 comment visible only to a Jira group or role is left out.'));
+  assert.ok(text(dl).includes('found under “Acceptance criteria” in the description'));
+  const crits = () => [...dl.querySelectorAll('[data-ui^="ipv-crit-"]')].map((b) => b.getAttribute('aria-label'));
+  assert.deepEqual(crits(), ['Use R-po-1: A customer can cancel the items not picked up.', 'Use R-po-2: Shipped items stay on the order.',
+    'Use R-po-3: The refund covers only the cancelled items.']);
+  q('ipv-crit-0').click();
+  assert.deepEqual([...dl.querySelectorAll('.req-import-code')].map((c) => c.textContent), ['', 'R-po-1', 'R-po-2']);
+  assert.ok(text(dl).includes('Ticked criteria start the spec as R-po-1 to R-po-2, kept as your own edits and marked “from SHOP-124”. Unticked ones are left out; they stay in Jira.'));
+  assert.deepEqual([q('ipv-com-10231').checked, q('ipv-com-10234').checked, q('ipv-com-10236').checked], [true, false, true]);
+  assert.equal(q('ipv-com-10231').getAttribute('aria-label'), 'Use the comment by Ann Example, 21 Oct');
+  assert.ok(text(dl).includes('Comments · 2 of 3'));
+  const xlsx = q('ipv-att-10044');
+  assert.deepEqual([xlsx.disabled, xlsx.checked, text(document.getElementById(xlsx.getAttribute('aria-describedby')))],
+    [true, false, 'Not offered: Worca reads text, images and PDF. Save it as PDF to attach it here.']);
+  assert.equal(q('ipv-att-10041').getAttribute('aria-label'), 'Add packing-slip.png as a feature file');
+  assert.ok(text(dl).includes('Attachments · 2 of 3'));
+  assert.ok(text(dl).includes('Nothing is sent to Jira.'));
+  q('ipv-back').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Start from a ticket');
+  assert.deepEqual([q('pick-search').value, q('pick-SHOP-124').checked, q('pick-continue').disabled], ['cancel', true, false]);
+  m.view.destroy();
+});
+
+test('D1, D5: Use this ticket only fills the form: the title and the description; the dialog closes, the page is released, the focus on From a ticket…; nothing is posted', async () => {
+  const m = await openNew();
+  await toPreview(m);
+  q('ipv-use').click();
+  await settle();
+  assert.equal(dlg(), null);
+  assert.equal(m.host.querySelector('#req-new-title').value, 'Partial cancel for multi-item orders');
+  assert.equal(m.host.querySelector('#req-new-desc').value, PREVIEW().description);
+  assert.equal(document.activeElement, q('import-open', m.host));
+  assert.ok([...document.body.children].every((el) => !el.hasAttribute('inert')));
+  assert.equal(m.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements').length, 0, 'nothing created');
+  m.view.destroy();
+});
+
+test("CSS: the preview's rules sit inside the Requirements block", () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  for (const sel of ['.req-import-cols', '.req-import-check', '.req-import-why', '.req-import-linked']) {
+    const at = css.indexOf(sel);
+    assert.ok(at > start && at < end, `${sel} inside the Requirements block`);
+  }
+});
+
+// ---- Task 11 re-review fixes (in Task 12) ----
+test('Show more does not take the focus from the search box when its page answers while the user types', async () => {
+  let page = null;
+  const m = await openNew(ROUTES({ [`POST ${IMP}/search`]: (b) => (b.cursor ? new Promise((r) => { page = () => r({ tickets: [TICKETS[3]] }); })
+    : { tickets: TICKETS.slice(0, 3), cursor: 'p2' }) }));
+  q('import-open', m.host).click();
+  await settle();
+  const more = q('pick-more');
+  more.focus();
+  more.click();
+  await settle();
+  const box = q('pick-search');
+  box.focus();
+  box.value = 'refund';
+  box.dispatchEvent(new window.Event('input'));
+  page();
+  await settle();
+  assert.ok(q('pick-SHOP-98'), 'the next page is shown');
+  assert.equal(document.activeElement, box, 'the focus stays in the search box');
+  m.view.destroy();
+});
+
+test('Back from the preview keeps the search words and the tickets when the projects call fails; Try again searches the same words', async () => {
+  let options = 0;
+  const m = await openNew(ROUTES({ [`POST ${IMP}/options`]: () => ((options += 1) === 2
+    ? { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } }
+    : { projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }] }) }));
+  await toPreview(m);
+  q('ipv-back').click();
+  await settle();
+  assert.equal(options, 2, 'Back asked for the projects again');
+  assert.equal(text(dlg().querySelector('.req-export-alert')), 'Worca could not reach Jira: the API token was refused.');
+  assert.equal(q('pick-retry').hidden, false);
+  assert.deepEqual([q('pick-search').value, radios().length, q('pick-SHOP-124').checked, q('pick-continue').disabled, q('pick-project').value],
+    ['cancel', 4, true, false, 'SHOP'], 'the kept pick stays');
+  q('pick-retry').click();
+  await settle();
+  assert.equal(m.calls.filter((c) => c.url === `${IMP}/search`).at(-1).body.search, 'cancel', 'Try again searches the kept words');
+  assert.deepEqual([text(dlg().querySelector('.req-import-status')), q('pick-SHOP-124').checked], ['4 tickets in SHOP match “cancel”.', true]);
+  m.view.destroy();
+});

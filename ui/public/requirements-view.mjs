@@ -632,8 +632,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const scopeNow = () => { const [scopeType, ...rest] = select.value.split(':'); return { scopeType, scopeKey: rest.join(':') }; };
     const fromBtn = h('button', { type: 'button', class: 'btn btn-sm req-import-open', 'data-ui': 'import-open', 'aria-haspopup': 'dialog', hidden: true,
       onclick: () => openPick(importCtx, null) }, 'From a ticket…');
-    // the preview's caps count the files already picked on this form (D9); Task 12 adds `onUse` (Use this ticket)
-    const importCtx = { scope: scopeNow, trigger: fromBtn, formFiles: () => ({ count: picked.length, bytes: picked.reduce((n, p) => n + p.size, 0) }) };
+    // the preview's caps count the files already picked on this form (D9); `onUse` is Use this ticket
+    const importCtx = { scope: scopeNow, trigger: fromBtn, formFiles: () => ({ count: picked.length, bytes: picked.reduce((n, p) => n + p.size, 0) }),
+      onUse: (t, pick) => useTicket(t, pick) };
+    /** Use this ticket (D1): it only fills the form; nothing is created until Start the interview. */
+    function useTicket(t) {
+      title.value = t.title;
+      desc.value = t.description;
+      fromBtn.focus();
+    }
     if (select.value) {
       const mine = paintNo;
       api('GET', importUrl(scopeNow())).then((r) => { if (mine === paintNo && r && Array.isArray(r.sources) && r.sources.length) fromBtn.hidden = false; }, () => {});
@@ -4113,9 +4120,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         st.cursor = r.cursor || null;
         if (!next && st.chosen && !st.tickets.some((t) => t.key === st.chosen)) st.chosen = null;
         render();
-        // Show more hides itself on the last page: the focus goes to the first ticket it added, not to <body>
+        // Show more hides itself on the last page: the focus goes to the first ticket it added, not to <body>; only while it is
+        // still on Show more (or left the dialog), never taken from the search box the user went on to type in
         const added = next && st.tickets.length > had ? results.querySelectorAll('input[type="radio"]')[had] : null;
-        if (added) added.focus();
+        if (added && (document.activeElement === more || !card.contains(document.activeElement))) added.focus();
       } catch (err) { if (live(g) && n === st.seq) showFail(err); }
     }
     // The connection's projects. Its own request number (plan review S8): after two quick Connection changes only the last one's
@@ -4178,9 +4186,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
               } }));
           connField.hidden = false;
         }
+        // Back from the preview (`keep`): its search words, project and tickets are on screen before the projects call, so a
+        // failed call shows its error and Try again under them and Try again searches the same words
+        if (keep) {
+          search.value = st.search;
+          syncSelect(projSel, [{ value: '', label: 'All projects' }, ...st.projects], st.project);
+          render();
+        }
         await loadProjects();
         if (!live(g)) return;
-        if (keep) { search.value = st.search; render(); } else await run();
+        if (keep) render(); else await run();   // the kept pick again, with the projects as they came back
       } catch (err) { if (live(g)) showFail(err); }
     }
     projSel.addEventListener('change', () => { st.project = projSel.value; importPrefs = { conn: st.conn, project: st.project }; void run(); });
@@ -4192,8 +4207,162 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     void load();
   }
 
-  // Task 12 replaces this stand-in with the preview (Continue calls it)
-  function openImportPreview() {}
+  /** Start from SHOP-124 (board 34; D5–D9, D12, D19): what the new feature takes, each part with a checkbox. Nothing is imported
+   *  until Start the interview; Use this ticket only fills the form. */
+  function openImportPreview(ctx, pick) {
+    closeDialog(false);
+    const s = ctx.scope();
+    const key = pick.chosen;
+    const name = pickTracker(pick);
+    let data = null;
+    let loading = false;
+    const title = h('h2', { id: 'req-ipv-title', tabindex: '-1', text: `Start from ${key}` });
+    const box = stateBox();
+    const body = h('div', { class: 'req-import-body' });
+    // D16 (plan review S2): a tracker that could not be reached also says nothing changed and, at the Advanced level, where the
+    // connection is fixed — the same persistent line as the pick's
+    const note = h('p', { class: 'hint req-import-note', hidden: true }, 'Nothing was changed.', h('span', { 'data-min-level': 'advanced' }));
+    const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'ipv-retry', onclick: () => { void load(); } }, 'Try again');
+    const use = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'ipv-use', disabled: true,
+      onclick: () => { if (!data) return; const t = chosen(); closeDialog(false); ctx.onUse(t, pick); } }, 'Use this ticket');
+    const card = h('section', { class: 'card req-dialog req-export req-import req-import-preview', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'req-ipv-title', 'aria-describedby': 'req-ipv-desc' },
+      importBack(), title,
+      h('p', { class: 'req-dlg-lead', id: 'req-ipv-desc', text: `This is what the new feature takes from ${key}. Untick what it should not start with. Nothing changes in ${name}.` }),
+      ...box.els, note, body,
+      h('div', { class: 'req-export-foot' }, h('p', { class: 'hint', text: `Nothing is sent to ${name}.` }),
+        h('div', { class: 'req-dlg-btns' }, h('button', { type: 'button', class: 'btn', 'data-ui': 'ipv-back', onclick: () => openPick(ctx, pick) }, 'Back'), use)));
+    openModal(card, { trigger: ctx.trigger, first: title, page: true });
+    const g = dlgGen;
+    const ui = { crit: [], comments: new Map(), atts: new Map(), critHead: null, critHint: null, comHead: null, attHead: null };
+
+    function critSection(L) {
+      const items = L.criteria.items || [];
+      ui.crit = items.map((t, i) => {
+        const cb = h('input', { type: 'checkbox', 'data-ui': `ipv-crit-${i}` });
+        cb.checked = !Array.isArray(L.criteria.picked) || L.criteria.picked[i] !== false;
+        cb.addEventListener('change', sync);
+        return { cb, code: h('code', { class: 'req-import-code' }), text: t };
+      });
+      const found = L.criteria.from === 'field' ? `found in the ${name} field “${L.criteria.name}”`
+        : L.criteria.from === 'section' ? `found under “${L.criteria.name}” in the description` : null;
+      ui.critHead = h('h3', { class: 'req-import-h' });
+      ui.critHint = h('p', { class: 'hint' });
+      return h('section', { class: 'req-import-sec' }, ui.critHead, found ? h('p', { class: 'hint', text: found }) : null,
+        items.length ? h('ul', { class: 'req-import-list' }, ...ui.crit.map((c) => h('li', {}, h('label', { class: 'req-import-check' }, c.cb, c.code, h('span', { text: c.text })))))
+          : null,
+        ui.critHint);
+    }
+    function commentsSection(L) {
+      ui.comments.clear();
+      ui.comHead = h('h3', { class: 'req-import-h' });
+      const rows = L.comments.map((c) => {
+        const cb = h('input', { type: 'checkbox', 'data-ui': `ipv-com-${c.id}`, 'aria-label': `Use the comment by ${c.author}, ${c.when}` });
+        cb.checked = !!c.picked;
+        cb.addEventListener('change', sync);
+        ui.comments.set(c.id, cb);
+        return h('li', { class: 'req-import-com' }, h('label', { class: 'req-import-check' }, cb,
+          h('span', { class: 'req-import-ctext' }, h('span', { class: 'req-import-cby' }, h('b', { text: c.author }), ` · ${c.when}`),
+            h('span', { class: 'req-import-cbody', text: c.body }))));
+      });
+      const restricted = Number(L.restrictedComments) || 0;
+      return h('section', { class: 'req-import-sec' }, ui.comHead,
+        rows.length ? h('p', { class: 'hint', text: `Context for the interview, not spec text. Worca puts the picked ones in one file, ${L.key} comments.md, and reads it like your other files. Authors are shown by name only.` }) : null,
+        rows.length ? h('ul', { class: 'req-import-list' }, ...rows) : null,
+        L.olderComments ? h('p', { class: 'hint', text: `and ${plural(L.olderComments, 'older comment')}` }) : null,
+        restricted ? h('p', { class: 'hint', text: restricted === 1 ? `1 comment visible only to a ${name} group or role is left out.`
+          : `${restricted} comments visible only to a ${name} group or role are left out.` }) : null);
+    }
+    function attachmentsSection(L) {
+      ui.atts.clear();
+      ui.attHead = h('h3', { class: 'req-import-h' });
+      const rows = L.attachments.map((a) => {
+        const cb = h('input', { type: 'checkbox', 'data-ui': `ipv-att-${a.id}`, 'aria-label': `Add ${a.name} as a feature file` });
+        cb.checked = !!a.picked && !a.refused;
+        cb.disabled = !!a.refused;
+        cb.addEventListener('change', sync);
+        const why = h('p', { class: 'hint req-import-why', id: `req-ipv-why-${a.id}`, hidden: !a.refused, text: a.refused || '' });
+        if (a.refused) cb.setAttribute('aria-describedby', why.id);
+        ui.atts.set(a.id, { cb, why, a });
+        return h('li', { class: a.refused ? 'req-import-off' : null }, h('label', { class: 'req-import-check' }, cb,
+          icon(a.kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }), h('span', { class: 'req-import-aname', text: a.name }),
+          h('span', { class: 'hint', text: a.kind ? `${KIND_TITLE[a.kind]} · ${sizeText(a.bytes)}` : sizeText(a.bytes) })), why);
+      });
+      return h('section', { class: 'req-import-sec' }, ui.attHead,
+        rows.length ? h('p', { class: 'hint', text: `Picked files become feature files. Worca gets them from ${name} when you start the interview and reads each once, like a file you add.` }) : null,
+        rows.length ? h('ul', { class: 'req-import-list' }, ...rows) : null);
+    }
+    function render() {
+      const L = data;
+      const meta = [L.meta && L.meta.type && L.meta.type.name, L.meta && L.meta.status, L.meta && L.meta.priority && L.meta.priority.name, L.connection]
+        .filter(Boolean).join(' · ');
+      const hidden = Number(L.redacted) || 0;
+      body.replaceChildren(
+        L.linkedTo ? h('p', { class: 'req-import-linked', role: 'alert',
+          text: `${L.key} is linked to ${L.linkedTo.id} · ${L.linkedTo.title}. The new feature can start from it but stays unlinked: one ticket follows one feature.` }) : null,
+        h('p', { class: 'hint req-import-meta', text: meta }),
+        h('div', { class: 'req-import-cols' },
+          h('div', { class: 'req-import-col' },
+            exportField(null, 'Title', h('p', { class: 'req-import-title', text: L.title })),
+            exportField(null, 'Description', L.description
+              ? h('div', { class: 'req-export-desc req-import-desc', role: 'region', 'aria-label': 'Description preview', tabindex: '0' }, ...mdBlocks(L.description))
+              : h('p', { class: 'hint', text: `${L.key} has no description.` })),
+            L.criteria.from === 'section' ? h('p', { class: 'hint', text: 'Without its Acceptance criteria section, which becomes the criteria below.' }) : null,
+            L.clipped ? h('p', { class: 'hint', text: `${L.key}'s description is longer than 20,000 characters. The form keeps the start; the whole text goes along as ${L.key} description.md.` }) : null,
+            hidden ? h('p', { class: 'hint', text: hidden === 1 ? 'Worca hid 1 thing that looked like a key or password.' : `Worca hid ${hidden} things that looked like keys or passwords.` }) : null,
+            critSection(L)),
+          h('div', { class: 'req-import-col' }, commentsSection(L), attachmentsSection(L))));
+      sync();
+    }
+    /** The ticks as they stand: the criteria's future ids, the headings' counts. */
+    function sync() {
+      const L = data;
+      let n = 0;
+      for (const c of ui.crit) {
+        if (c.cb.checked) { n += 1; c.code.textContent = `R-po-${n}`; c.cb.setAttribute('aria-label', `Use R-po-${n}: ${c.text}`); }
+        else { c.code.textContent = ''; c.cb.setAttribute('aria-label', `Use this criterion: ${c.text}`); }
+      }
+      const items = L.criteria.items || [];
+      const k = n || items.length;
+      ui.critHead.textContent = items.length ? `Acceptance criteria · ${items.length}` : 'Acceptance criteria · none';
+      ui.critHint.textContent = !items.length ? `None found in ${L.key}. Round 1 asks for them.`
+        : `Ticked criteria start the spec as ${k === 1 ? 'R-po-1' : `R-po-1 to R-po-${k}`}, kept as your own edits and marked “from ${L.key}”. Unticked ones are left out; they stay in ${name}.`;
+      const coms = L.comments.filter((c) => ui.comments.get(c.id).checked);
+      ui.comHead.textContent = L.comments.length ? `Comments · ${coms.length} of ${L.comments.length}` : 'Comments · none';
+      const atts = [...ui.atts.values()].filter((x) => x.cb.checked);
+      ui.attHead.textContent = L.attachments.length ? `Attachments · ${atts.length} of ${L.attachments.length}` : 'Attachments · none';
+    }
+    /** What Use this ticket hands the form. */
+    function chosen() {
+      const L = data;
+      const comments = L.comments.filter((c) => ui.comments.get(c.id).checked);
+      return { conn: pick.conn, tracker: L.tracker, key: L.key, url: L.url, meta: L.meta || {}, connection: L.connection, linkedTo: L.linkedTo || null,
+        title: L.title, description: L.description, clipped: !!L.clipped, descriptionFile: L.descriptionFile || null,
+        criteria: ui.crit.filter((c) => c.cb.checked).map((c) => c.text),
+        comments: comments.map((c) => ({ id: c.id, author: c.author, when: c.when, bytes: c.bytes })),
+        commentsFile: comments.length ? { name: `${L.key} comments.md`, bytes: comments.reduce((sum, c) => sum + (Number(c.bytes) || 0), 0) } : null,
+        attachments: [...ui.atts.values()].filter((x) => x.cb.checked).map(({ a }) => ({ id: a.id, name: a.name, kind: a.kind, bytes: a.bytes })) };
+    }
+    async function load() {
+      if (loading) return;
+      loading = true;
+      try {
+        const answer = await api('POST', importUrl(s, '/preview'), { ...pick.conn, key, formFiles: ctx.formFiles() });
+        if (!live(g)) return;   // Back, Cancel or Escape came first
+        data = answer;
+        box.clear();
+        note.hidden = true;
+        render();
+        use.disabled = false;
+      } catch (err) {
+        if (!live(g)) return;
+        box.show(importErr(err), { buttons: err && err.data && err.data.gone ? [] : [retry] });
+        note.lastChild.textContent = ` Fix the connection on the Marketplace page (Installed › ${name}), then try again.`;
+        note.hidden = !(err && err.status === 502);
+      } finally { loading = false; }
+    }
+    void load();
+  }
 
   // A repaint from the feature on screen, without a fetch (a fold, an editor opened, Change, Cancel).
   function redraw() { if (current) paintFeature(current.f, current.turns); }

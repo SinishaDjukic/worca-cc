@@ -10986,6 +10986,27 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 .req-import-linkchip{flex:none;align-self:center}
 .req-import-more{align-self:flex-start}
 .req-import-more[hidden]{display:none}
+/* A6.1 (board 34): the preview, two columns of checkboxes; a refused row says why under it. */
+.req-dlg-wrap .card.req-dialog.req-import-preview{width:min(880px,100%)}
+.req-import-body{display:flex;flex-direction:column;gap:12px;min-width:0}
+.req-import-meta{margin:0}
+.req-import-linked{margin:0;padding:8px 10px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+.req-import-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.req-import-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.req-import-col > .hint{margin:0}
+.req-import-title{margin:0;font-size:var(--fs-body);font-weight:600}
+.req-import-sec{display:flex;flex-direction:column;gap:6px}
+.req-import-sec > .hint{margin:0}
+.req-import-h{margin:0;font-size:var(--fs-body);font-weight:600}
+.req-import-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.req-import-check{display:flex;align-items:flex-start;gap:8px;font-size:var(--fs-body);cursor:pointer}
+.req-import-check input{margin:3px 0 0;flex:none}
+.req-import-code{flex:none;font-size:var(--fs-meta)}
+.req-import-ctext{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-import-cbody{overflow-wrap:anywhere;color:var(--ink-2)}
+.req-import-off .req-import-check{cursor:not-allowed;color:var(--ink-2)}
+.req-import-why{margin:2px 0 0 24px;font-size:var(--fs-meta)}
+.req-import-why[hidden]{display:none}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
