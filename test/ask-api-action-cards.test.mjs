@@ -342,6 +342,12 @@ test('startAskTurn wiring (askChatTurnDeps): chat actions run as "<person> via w
   } finally { h.apply = apply; h.awaySwitch = awaySwitch; }
 });
 
+test('askChatTurnDeps: changes/route go to askShapeAction with the turn\'s thread; other kinds stay on the host', async () => {
+  const d = mod._testing.askChatTurnDeps('ada@example.com');
+  assert.deepEqual(await d.chatAction({ kind: 'changes', pipelineId: 'aaaa0001', request: 'x' }, { threadId: 'ask_x' }),
+    { ok: false, notice: 'Not applied: this chat does not follow run aaaa0001' });
+});
+
 test('one turn\'s set_away_now and change_setting both land: the Away switch shares the settings write queue (refine cycle 2)', async () => {
   const { nightModeToggle } = await import('../src/core/settings.mjs');
   const h = host();
@@ -456,7 +462,7 @@ test('per-person Away on a shared sign-in: in an ownerless (legacy) thread every
 
 test('receipt Revert brings back the Settings page\'s "No cap" tick (a stored null), never an unset cap a team default fills', async () => {
   const { readSettings } = await import('../src/core/settings.mjs');
-  assert.equal((await post('/api/settings', { askMaxBudgetUsd: null })).status, 200);   // Settings › Ask Worca: No cap ticked
+  assert.equal((await post('/api/settings', { askMaxBudgetUsd: null })).status, 200);   // Settings › Chat: No cap ticked
   assert.equal(readSettings().askMaxBudgetUsd, null);
   const minted = await host().apply({ kind: 'setting', id: 'askMaxBudgetUsd', scope: 'user', value: 5 }, { actor: 'local' });
   assert.equal(minted.ok, true, JSON.stringify(minted));
@@ -472,4 +478,22 @@ test('receipt Revert brings back the Settings page\'s "No cap" tick (a stored nu
   assert.equal((await mod._testing.askChatSettings.check({ id: 'askMaxBudgetUsd', scope: 'user', value: null })).value, null,
     'the child hands the parent the model\'s own null, never the stored marker');
   assert.equal((await post('/api/settings', { askMaxBudgetUsd: '' })).status, 200);
+});
+
+test('pull-request card of a mixed workspace run counts only its Git members: a Folder member ships in no pull request', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const { seedWorkspacePipeline } = await import('./helpers/db-seed.mjs');
+  const WK = 'wks-cards-00000002';
+  const FK = 'notes-0000000f';
+  const members = [{ projectKey: FK, projectDir: '/nowhere/notes', projectName: 'notes', workMode: 'folder' },
+    { projectKey: project.key, projectDir: project.path, projectName: 'actcards' }];
+  const feat = { source: 'main', feature: 'worca/ws-mixed', branchKept: true };
+  const ws = await seedWorkspacePipeline(project.path, WK, { title: 'Mixed', status: 'done', workspaceName: 'Team', projects: members,
+    projectKeys: members.map((m) => m.projectKey),
+    branches: { [FK]: { workMode: 'folder', runRootMode: 'detached', copyDir: '/nowhere/copy', realDir: '/nowhere/notes' }, [project.key]: feat }, branch: {} }, members);
+  const sum = (n, add) => ({ filesNew: n, filesChanged: 0, filesDeleted: 0, linesAdded: add, linesRemoved: 0 });
+  await writeFile(join(ws.dir, 'results.json'), JSON.stringify({ summary: sum(5, 50), perProject: { [FK]: { summary: sum(3, 30) }, [project.key]: { summary: sum(2, 20) } } }));
+  const w = await host().apply({ kind: 'pull-request', runId: ws.id }, { actor: 'local' });
+  assert.equal(w.ok, true, JSON.stringify(w));
+  assert.deepEqual([w.block.card.branch, w.block.card.filesChanged, w.block.card.additions, w.block.card.deletions], ['worca/ws-mixed', 2, 20, 0]);
 });

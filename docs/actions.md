@@ -14,14 +14,18 @@ a ready check and a live log come with them.
 
 | Place | What it holds |
 | --- | --- |
-| Run page and History detail › **Actions** tab | Check out / Discard, setup state, each action's Start / Stop, ports, Open link and log; Open in editor, terminal, file manager; Copy command |
-| Run Overview › actions strip, Ship It › **Try it first** | The same actions, one click from the result |
+| Run page and History detail › **Actions** tab | Check out / Discard, setup state, each action's Start / Stop, ports, Open link and log; Open in editor, terminal, file manager; Copy command; Download patch |
+| Run Overview › actions strip, Create PR › **Try it first** (the Try it first button at the left of the Create PR dialog's footer; once checked out, the strip above it) | The same actions, one click from the result |
+| Run page and History detail › summary card **Results › Actions row** | `Local copy open · since 18:12` (or `Linked to your folder · since 18:12`, `2 local copies open · since 18:12`) once checked out, `Try it on this machine` before; opens the Actions tab. Advanced, like the tab. At Simple a plain row with the same words carries Discard / Unlink while a checkout exists |
+| Run page and History detail › summary card **worktree notice** | Work kept after a failed end-of-run commit (Apply to branch, recovery patch, Discard worktree). Every level |
 | Project page › **Actions** tab | The project's setup command, its actions and the built-in buttons |
 | Workspace page › **Actions** tab | Stacks: one click starts actions across several member projects |
 | Header pill, sidebar **Running actions** rows | Every service still running, each with a Stop button; on the collapsed rail one tile with the count opens them. Shown at every level, only while something runs |
 | Settings › Runs › **Actions** | Keep policy, port range, editor and terminal, checkout cap |
 
-The tabs, strips and the Settings card are Advanced (see [ui-levels.md](ui-levels.md)).
+The tabs, strips and the Settings card are Advanced (see [ui-levels.md](ui-levels.md)). The worktree
+notice is not: it shows at every level, because it explains refusals anyone can hit. Neither is the Simple
+checkout row: Archive is refused while a checkout exists, so its Discard / Unlink must stay in reach.
 
 A run can be checked out when it ended `done`, `stopped` or `error`, is not archived, has a feature
 branch, and kept no uncommitted work of its own. Paused and interrupted runs are refused: resume or
@@ -38,6 +42,47 @@ else (usually your own clone), Check out cannot make a copy, so the card shows t
   policy never touch it.
 - Setup does not run there by itself. **Run setup** on the card runs it when you want.
 - **Unlink** stops using the folder. It stays exactly as it is.
+
+### Download patch
+
+Each checked-out member card has **Download patch** before Discard (or Unlink). It downloads a patch of
+the folder's uncommitted changes (edits, deletions, new files git does not ignore) against its last
+commit, which is the run's branch while the folder is on it, as `uncommitted-<branch>.patch`. It is
+read-only. The patch is built in a temporary git index, so nothing in the folder is staged or changed:
+not in your own folder, and not in a checkout left mid-merge, whose conflicts stay unresolved. A clean
+folder answers "Nothing uncommitted". After Discard or Unlink the card says what happened ("Checkout
+discarded. …", "Folder unlinked. …").
+
+## The worktree notice on the summary card: work kept after a failed commit
+
+Git keeps a branch in one folder at a time. While a live worktree holds a finished run's branch, Check out,
+Archive and a new run on that branch are refused. A checkout says so in the summary card's Results ›
+Actions row (see [Where it lives](#where-it-lives)) and is handled in the Actions tab. Work kept after a
+failed commit gets a notice under the status line, on the run page and in History, at every interface
+level. For a workspace run it lists the members concerned.
+
+**Work kept after a failed commit.** At the end of a run Worca commits the agents' work onto the run's
+branch. If that commit fails (a hook, signing, a stale `index.lock`, a full disk), the worktree is kept
+with the work staged but **not on the branch**. A pull request opened now would not include it; the card's
+headline does not change, so read the notice. It offers:
+
+- **Apply to branch**: commits the staged work in that worktree, exactly as the end of the run would have.
+  It tries the repository's identity, then a local one. For a detached run it tries once more with commit
+  hooks off, as the run's own teardown did. Then it removes the worktree (the branch is kept) and refreshes
+  the base check. Check out and Create PR then work as for any finished run. For a run on its
+  source branch, Apply also fast-forwards the source branch onto the work and deletes the run's hidden
+  branch. If the source moved on in the meantime, the merge-back notice explains how to merge by hand. If
+  the commit fails again, nothing changes and git's message is shown.
+- **Download the recovery patch**: the snapshot saved when the work was kept.
+- **Discard worktree**: saves a recovery patch of anything uncommitted, then removes the worktree. The
+  branch and the run's history stay.
+
+Once the worktree itself is gone, nothing holds the branch and the notice does not show. The recovery patch
+stays in the run's Artifacts tab, for `git apply` by hand.
+
+API: `GET /api/runs/<id>/checkout/diff?<scope>[&member=<projectKey>]` (200 patch, 204 nothing uncommitted)
+and `POST /api/runs/<id>/apply-retained?<scope>` (409 `COMMIT_FAILED` with git's message when every commit
+failed again).
 
 ## The action model
 
@@ -229,7 +274,7 @@ or was last checked more than 5 minutes ago. That automatic check reuses a fetch
 and pushes nothing: a resolution done in a terminal is finished by **Re-check**. It does not run on a
 timer.
 
-After Update branch or a resolution, a branch that was already published (Publish branch, Ship it, a
+After Update branch or a resolution, a branch that was already published (Publish branch, Create PR, a
 PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch
 in the meantime, the push is refused and the merge stays local. The header then shows **Push changes**;
 pull their work into the branch first, or that push is refused too. A resolution that still has conflict
@@ -269,9 +314,9 @@ A workspace's Actions tab defines **stacks**: one start for actions across membe
 - **Stop** stops exactly what the stack started, newest first.
 - A `task` stack may contain only task actions.
 
-## Ask Worca
+## Chat
 
-Ask Worca reads Actions and drafts their config, but it never runs anything.
+Chat reads Actions and drafts their config, but it never runs anything.
 
 | Tool | What it returns |
 | --- | --- |
@@ -281,22 +326,22 @@ Ask Worca reads Actions and drafts their config, but it never runs anything.
 | `list_running_actions` | Every action still starting or running, on any run |
 | `propose_actions_change` | A card with a project's new setup and actions, or a workspace's new stacks |
 
-- **Configure from the chat.** Ask "set up actions for this project": Ask Worca reads the project's
+- **Configure from the chat.** Ask "set up actions for this project": Chat reads the project's
   files in a worktree (`package.json` scripts, a `Makefile`, the README) and proposes a card. The
   card shows every command word for word, next to what it replaces, and nothing is stored until you
   click **Save**. Saving goes through the same validation as the Project and Workspace Actions tabs.
 - **Debug from the chat.** "Why is Run stuck on starting?" reads the instance's ready error and log
   tail. Usually the app listens on another port than the `PORT` Worca gave it.
-- **No start, stop, check out or discard.** There is no tool for them: Ask Worca names the button
+- **No start, stop, check out or discard.** There is no tool for them: Chat names the button
   instead. Under agent isolation the card's Save is refused like the config routes
   (`ACTIONS_AGENT_BLOCKED`).
-- **Redaction.** Commands and log lines are redacted like every other text Ask Worca reads. An action
+- **Redaction.** Commands and log lines are redacted like every other text Chat reads. An action
   that comes back with a redacted value is kept as stored when it is sent back unchanged. A changed
   one is refused, so a redaction marker is never saved.
 - **Hosted.** The context's `deployment:` line says `actions=off` while `WORCA_ACTIONS_REMOTE` is
-  unset, so Ask Worca says why nothing can run.
+  unset, so Chat says why nothing can run.
 
-Running services reach Ask Worca through `<worca home>/actions/state.json`, which the server's
+Running services reach Chat through `<worca home>/actions/state.json`, which the server's
 registry rewrites on every status change. It holds each active instance, the 20 newest finished
 ones, and up to 40 log lines per instance.
 

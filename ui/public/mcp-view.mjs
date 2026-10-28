@@ -4,6 +4,7 @@
 // overview card and the Settings › Ask Worca block. The manual definition form is mcp-definition-form.mjs.
 // Every write goes through `api(method, path, body)` and repaints from the server's read models; no
 // secret value is ever fetched. The modal shells (#plugin-modal, confirm) are app.js's, passed in.
+import { icon } from './icons.mjs';
 import { relTime } from './plugins-view.mjs';
 import { compileDefinition, formFromDefinition, blankDefinitionForm, createDefinitionForm } from './mcp-definition-form.mjs';
 import { splitMessage } from './feedback.mjs';
@@ -22,6 +23,8 @@ function button(doc, cls, label, data = {}) {
   Object.assign(b.dataset, data);
   return b;
 }
+// One "Add …" button: the shared plus icon, never a typed "+" (docs/design-system.md › Button).
+const addBtn = (doc, label, data) => { const b = button(doc, 'btn btn-sm', label, data); b.prepend(icon(doc, 'plus', 14)); return b; };
 
 // ── routes: #connectors (General), #connectors/sets/<id>, #connectors/servers, #connectors/skills ──
 // The Skills view has its own constant: a set may be named "Skills", and mcpRoute('skills') is that set.
@@ -80,7 +83,7 @@ export function skillStateText(m) {
   if (m.team && !m.team.consented) return { text: 'turn on in the team checklist', tone: '' };
   if (m.problem) return { text: m.problem, tone: 'err' };
   if (!m.enabled) return { text: 'off', tone: '' };
-  if (m.pluginRootRefs) return { text: 'in runs · references its plugin’s other files — may not work from a set', tone: 'warn' };
+  if (m.pluginRootRefs) return { text: 'in runs · references its plugin’s other files, so it may not work from a set', tone: 'warn' };
   return { text: 'in runs', tone: 'ok' };
 }
 
@@ -165,7 +168,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       else if (r.data.newer) say('MCP registry files need a newer Worca', 'err-inline');
       else if (lib.newer || lib.damaged) {   // P1 reads no imported skill then: say why none is listed
         say(lib.newer ? 'The skill library needs a newer Worca: imported skills are not listed'
-          : 'The skill library file skills/library.json is damaged — fix it or remove it: imported skills are not listed', 'err-inline');
+          : 'The skill library file skills/library.json is damaged (fix it or remove it): imported skills are not listed', 'err-inline');
       }
     } else {
       const [l, s] = await Promise.all([api('GET', '/api/mcp/sets'), api('GET', setPath(st.setId))]);
@@ -181,7 +184,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   function topbar() {
     const bar = h(doc, 'div', 'topbar');
     const title = h(doc, 'div');
-    title.append(h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects'));
+    title.append(h(doc, 'div', 'sub page-intro', 'MCP servers and skills worca’s agents and Chat get, grouped in sets attached to projects'));
     const seg = h(doc, 'div', 'seg');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', 'View');
@@ -190,15 +193,15 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       b.setAttribute('aria-pressed', String(st.view === v));
       seg.appendChild(b);
     }
-    const primary = st.view === 'sets' ? button(doc, 'btn-go', 'New set', { act: 'new-set' })
-      : st.view === 'servers' ? button(doc, 'btn-go', 'Add MCP server', { act: 'add-server' })
-        : button(doc, 'btn-go', 'Import skill', { act: 'import-skill' });
+    const primary = st.view === 'sets' ? button(doc, 'btn btn-primary', 'New set', { act: 'new-set' })
+      : st.view === 'servers' ? button(doc, 'btn btn-primary', 'Add MCP server', { act: 'add-server' })
+        : button(doc, 'btn btn-primary', 'Import skill', { act: 'import-skill' });
     bar.append(title, seg, primary);
     return bar;
   }
 
   function usedByText(s) {
-    if (s.group === 'general') return `Ask Worca · ${s.usedBy.length} project${s.usedBy.length === 1 ? '' : 's'}`;
+    if (s.group === 'general') return `Chat · ${s.usedBy.length} project${s.usedBy.length === 1 ? '' : 's'}`;
     if (s.greyed) return `no project here follows ${s.home}`;
     return s.usedBy.length ? s.usedBy.map((p) => p.name).join(', ') : 'no projects';
   }
@@ -230,16 +233,17 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     cb.dataset.toggle = m.serverId;
     cb.disabled = team && !m.team.consented;
     cb.setAttribute('aria-label', `Use ${m.copy} in ${set.name}`);
-    sw.append(cb, h(doc, 'span', 'switch switch-sm'));
+    sw.append(cb, h(doc, 'span', 'switch'));
+    if (team && !m.team.consented) sw.appendChild(h(doc, 'span', 'switch-why', 'Allow it in Connectors first'));
     head.append(sw, h(doc, 'b', 'mono', m.copy));
     if (m.provisional) head.appendChild(h(doc, 'span', 'badge amber', 'name provisional'));
     head.appendChild(h(doc, 'span', 'badge', m.sourceLabel));
     head.appendChild(h(doc, 'span', 'mono hint', m.type || ''));
     head.appendChild(h(doc, 'span', 'hint', m.description));
-    const test = button(doc, 'btn-ghost btn-mini', 'Test', { test: m.serverId });
+    const test = button(doc, 'btn btn-sm', 'Test', { test: m.serverId });
     test.disabled = team && !m.team.consented;
     head.appendChild(test);
-    if (!team) head.appendChild(button(doc, 'btn-ghost btn-mini', 'Remove', { remove: m.serverId }));
+    if (!team) head.appendChild(button(doc, 'btn btn-sm', 'Remove', { remove: m.serverId }));
     card.appendChild(head);
     if (team && !m.team.consented) card.appendChild(h(doc, 'small', 'hint', 'Turn on in the team checklist'));
     for (const f of m.fields) {
@@ -251,10 +255,10 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
           box.appendChild(h(doc, 'span', 'mono', f.state.env ? `$${f.state.env}` : '••••••••'));
           if (f.oauth) box.appendChild(h(doc, 'span', 'badge', 'OAuth'));
           box.appendChild(h(doc, 'span', `badge${f.state.old ? ' amber' : ''}`, `set · updated ${relTime(f.state.updatedAt, now())}`));
-          box.appendChild(button(doc, 'btn-ghost btn-mini', 'Replace', { secret: f.key, server: m.serverId }));
+          box.appendChild(button(doc, 'btn btn-sm', 'Replace', { secret: f.key, server: m.serverId }));
         } else {
           box.appendChild(h(doc, 'span', 'hint err', 'not set'));
-          box.appendChild(button(doc, 'btn btn-primary btn-mini', 'Set', { secret: f.key, server: m.serverId }));
+          box.appendChild(button(doc, 'btn btn-primary btn-sm', 'Set', { secret: f.key, server: m.serverId }));
         }
         row.appendChild(box);
       } else {
@@ -270,7 +274,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       const tip = team && m.team.suggests.find((x) => x.key === f.key);
       if (tip) {
         const note = h(doc, 'small', 'hint mcp-suggest', `Team suggests ${tip.value} · `);
-        note.appendChild(button(doc, 'linkish', 'Use team value', { useTeam: f.key, server: m.serverId, value: tip.value }));
+        note.appendChild(button(doc, 'btn btn-sm btn-quiet', 'Use team value', { useTeam: f.key, server: m.serverId, value: tip.value }));
         card.appendChild(note);
       }
     }
@@ -288,7 +292,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     const w = h(doc, 'span', 'sk-prefix');
     w.append(h(doc, 'span', 'badge amber', `loads as ${set.pluginName}:`),
-      h(doc, 'span', 'hint', `— a Claude Code plugin named ${set.pluginName.replace(/-set(?:-\d+)?$/, '')} is installed`));
+      h(doc, 'span', 'hint', `because a Claude Code plugin named ${set.pluginName.replace(/-set(?:-\d+)?$/, '')} is installed`));
     return w;
   }
   function skillCard(set, m) {
@@ -306,10 +310,11 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     // (P2's PUT needs a catalog entry: 404) — only removed.
     cb.disabled = missing || (team && !(m.team && m.team.consented));
     cb.setAttribute('aria-label', `Use ${m.qualifiedName} in ${set.name}`);
-    sw.append(cb, h(doc, 'span', 'switch switch-sm'));
+    sw.append(cb, h(doc, 'span', 'switch'));
+    if (!missing && team && !(m.team && m.team.consented)) sw.appendChild(h(doc, 'span', 'switch-why', 'Allow it in Connectors first'));
     head.append(sw, h(doc, 'b', 'mono', m.qualifiedName), sourceBadge(m), h(doc, 'span', 'hint', m.description || ''));
     if (!missing) head.appendChild(mdButton(m.skillId));
-    if (!team) head.appendChild(button(doc, 'btn-ghost btn-mini', 'Remove', { skillRemove: m.skillId }));
+    if (!team) head.appendChild(button(doc, 'btn btn-sm', 'Remove', { skillRemove: m.skillId }));
     card.appendChild(head);
     if (m.hooks) {   // SkillMemberView.hooks: the catalog entry's frontmatter.hooks
       const note = h(doc, 'small', 'hint err sk-hooks');   // the badge, then the rest of SKILL_HOOKS_TEXT (not its first words twice)
@@ -318,7 +323,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     if (!missing) {
       const facts = h(doc, 'small', 'hint sk-facts', skillCountsText(m));
-      if (hasShellScripts(m)) facts.appendChild(h(doc, 'span', 'badge amber', 'shell scripts — Windows'));
+      if (hasShellScripts(m)) facts.appendChild(h(doc, 'span', 'badge amber', 'shell scripts (may not run on Windows)'));
       card.appendChild(facts);
       if (st.mdOpen.has(m.skillId)) card.appendChild(mdDrawer(m));
     }
@@ -330,13 +335,13 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   function skillSection(set, skills) {
     const head = h(doc, 'div', 'mcp-usedby sk-head');
     head.appendChild(h(doc, 'span', 'label', 'Skills'));
-    if (!isTeam(set)) head.appendChild(button(doc, 'btn-ghost btn-mini', '+ Add skill', { act: 'add-skill' }));
+    if (!isTeam(set)) head.appendChild(addBtn(doc, 'Add skill', { act: 'add-skill' }));
     head.appendChild(h(doc, 'span', 'hint', `agents call /${set.pluginName || 'general'}:<name> · no values, no secrets, no Test`));
     const out = [head];
     // A Team set lists the required skills installed here (a required plugin not installed yet brings none): the policy may
     // still require some — its setup checklist knows.
     if (!skills.length) out.push(h(doc, 'div', 'hist-empty', isTeam(set)
-      ? 'No skill this team policy requires is installed here — its setup checklist lists what it requires.' : 'No skills in this set yet.'));
+      ? 'No skill this team policy requires is installed here. Its setup checklist lists what it requires.' : 'No skills in this set yet.'));
     for (const m of skills) out.push(skillCard(set, m));
     return out;
   }
@@ -352,10 +357,10 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     if (set.pluginName && !set.greyed) title.appendChild(pluginPrefix(set));
     head.appendChild(title);
     const acts = h(doc, 'div', 'pl-actions');
-    if (user) acts.appendChild(button(doc, 'btn-ghost btn-mini', 'Rename', { act: 'rename' }));
-    if (!set.greyed) acts.appendChild(button(doc, 'btn-ghost btn-mini', 'Duplicate', { act: 'duplicate' }));
-    if (user) acts.appendChild(button(doc, 'btn-ghost btn-mini', 'Delete', { act: 'delete' }));
-    if (set.greyed) acts.appendChild(button(doc, 'btn-ghost btn-mini', 'Forget', { act: 'forget' }));
+    if (user) acts.appendChild(button(doc, 'btn btn-sm', 'Rename', { act: 'rename' }));
+    if (!set.greyed) acts.appendChild(button(doc, 'btn btn-sm', 'Duplicate', { act: 'duplicate' }));
+    if (user) acts.appendChild(button(doc, 'btn btn-sm', 'Delete', { act: 'delete' }));
+    if (set.greyed) acts.appendChild(button(doc, 'btn btn-sm', 'Forget', { act: 'forget' }));
     head.appendChild(acts);
     card.appendChild(head);
     if (set.greyed) {
@@ -365,21 +370,22 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     const used = h(doc, 'div', 'mcp-usedby');
     used.appendChild(h(doc, 'span', 'label', 'Used by'));
     for (const p of set.usedBy) {
-      const chip = h(doc, 'span', 'chip mcp-chip', p.name);
+      const chip = h(doc, 'span', 'chip', p.name);
       if (!isTeam(set)) {
-        const x = button(doc, 'mcp-x', '×', { unassign: p.key });
+        const x = button(doc, 'btn btn-sm btn-quiet btn-icon mcp-x', null, { unassign: p.key });
+        x.append(icon(doc, 'x', 12));
         x.title = set.group === 'general' ? `Turn Include General off for ${p.name}` : `Remove ${set.name} from ${p.name}`;
         x.setAttribute('aria-label', x.title);
         chip.appendChild(x);
       }
       used.appendChild(chip);
     }
-    if (set.group === 'general') used.appendChild(h(doc, 'span', 'chip mcp-chip', 'Ask Worca'));
-    if (!isTeam(set)) used.appendChild(button(doc, 'btn-ghost btn-mini', '+ Add project', { act: 'add-project' }));
+    if (set.group === 'general') used.appendChild(h(doc, 'span', 'chip', 'Chat'));
+    if (!isTeam(set)) used.appendChild(addBtn(doc, 'Add project', { act: 'add-project' }));
     card.appendChild(used);
     const sh = h(doc, 'div', 'mcp-usedby');
     sh.appendChild(h(doc, 'span', 'label', 'Servers'));
-    if (!isTeam(set)) sh.appendChild(button(doc, 'btn-ghost btn-mini', '+ Add server', { act: 'add-member' }));
+    if (!isTeam(set)) sh.appendChild(addBtn(doc, 'Add server', { act: 'add-member' }));
     card.appendChild(sh);
     if (!members.length) card.appendChild(h(doc, 'div', 'hist-empty', 'No servers in this set yet.'));
     for (const m of members) card.appendChild(memberCard(set, m));
@@ -407,9 +413,9 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     sets.appendChild(h(doc, 'span', 'hint', s.tools == null ? '— tools' : `${s.tools} tools`));
     row.appendChild(sets);
     const acts = h(doc, 'div', 'pl-actions');
-    acts.appendChild(button(doc, 'btn-ghost btn-mini', 'Add to set', { addTo: s.id }));
-    if (s.source === 'manual') acts.appendChild(button(doc, 'btn-ghost btn-mini', 'Edit definition', { edit: s.id }));
-    if (s.source === 'manual' || s.retired) acts.appendChild(button(doc, 'btn-ghost btn-mini', 'Remove', { removeServer: s.id }));
+    acts.appendChild(button(doc, 'btn btn-sm', 'Add to set', { addTo: s.id }));
+    if (s.source === 'manual') acts.appendChild(button(doc, 'btn btn-sm', 'Edit definition', { edit: s.id }));
+    if (s.source === 'manual' || s.retired) acts.appendChild(button(doc, 'btn btn-sm', 'Remove', { removeServer: s.id }));
     row.appendChild(acts);
     return row;
   }
@@ -417,7 +423,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   // ── skills: source badge, origin, the read-only SKILL.md drawer, the Skills view's rows (spec §6.2, §6.3) ──
   function sourceBadge(x) {
     const plugin = x.source === 'plugin';
-    return h(doc, 'span', plugin ? 'badge violet' : 'badge', x.sourceLabel || (plugin ? x.plugin : 'Imported'));
+    return h(doc, 'span', plugin ? 'badge slate' : 'badge', x.sourceLabel || (plugin ? x.plugin : 'Imported'));
   }
   function originText(e) {
     if (e.source === 'plugin') return e.code === 'linked' ? 'linked' : e.code ? `@ ${e.code}` : '';
@@ -427,7 +433,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   }
   function mdButton(id) {
     const open = st.mdOpen.has(id);
-    const b = button(doc, 'btn-ghost btn-mini', open ? 'Hide SKILL.md' : 'View SKILL.md', { skillMd: id });
+    const b = button(doc, 'btn btn-sm', open ? 'Hide SKILL.md' : 'View SKILL.md', { skillMd: id });
     b.setAttribute('aria-expanded', String(open));
     return b;
   }
@@ -464,14 +470,14 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     head.append(h(doc, 'b', 'mono', e.name), sourceBadge(e), h(doc, 'span', 'mono hint', originText(e)));
     const pluginRoot = !!(e.frontmatter && e.frontmatter.pluginRootRefs);
     const badges = [[e.pluginEnabled === false, 'plugin disabled'], [e.updateAvailable, 'update available'],
-      [hasShellScripts(e), 'shell scripts — Windows'], [pluginRoot, 'plugin-root refs']];
+      [hasShellScripts(e), 'shell scripts (may not run on Windows)'], [pluginRoot, 'plugin-root refs']];
     for (const [on, text] of badges) if (on) head.appendChild(h(doc, 'span', 'badge amber', text));
     if (e.valid === false) head.appendChild(h(doc, 'span', 'badge red', 'invalid'));
     const hooks = !!(e.frontmatter && e.frontmatter.hooks);
     if (hooks) head.appendChild(h(doc, 'span', 'badge red', 'declares hooks'));
     row.append(head, h(doc, 'small', 'hint', [e.description, skillCountsText(e)].filter(Boolean).join(' · ')));
     if (e.valid === false) row.appendChild(h(doc, 'small', 'hint err', `invalid: ${(e.problems || []).join('; ')} · never mounted`));
-    if (pluginRoot) row.appendChild(h(doc, 'small', 'hint warn', 'references its plugin’s other files — may not work from a set'));
+    if (pluginRoot) row.appendChild(h(doc, 'small', 'hint warn', 'references its plugin’s other files, so it may not work from a set'));
     if (hooks) row.appendChild(h(doc, 'small', 'hint err', SKILL_HOOKS_TEXT));
     const sets = h(doc, 'div', 'mcp-usedby');
     sets.appendChild(h(doc, 'span', 'label', 'In sets'));
@@ -483,14 +489,14 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     row.appendChild(sets);
     const actions = h(doc, 'div', 'pl-actions');
-    const add = button(doc, 'btn-ghost btn-mini', 'Add to set', { skillAddTo: e.id });
+    const add = button(doc, 'btn btn-sm', 'Add to set', { skillAddTo: e.id });
     add.disabled = e.valid === false;
     actions.appendChild(add);
     if (e.source === 'library' && e.origin) {
-      actions.appendChild(e.updateAvailable ? button(doc, 'btn btn-primary btn-mini', 'Update…', { skillUpdate: e.id })
-        : button(doc, 'btn-ghost btn-mini', 'Check for updates', { skillUpdate: e.id }));
+      actions.appendChild(e.updateAvailable ? button(doc, 'btn btn-primary btn-sm', 'Update…', { skillUpdate: e.id })
+        : button(doc, 'btn btn-sm', 'Check for updates', { skillUpdate: e.id }));
     }
-    if (e.source === 'library') actions.appendChild(button(doc, 'btn-ghost btn-mini', 'Remove', { skillDelete: e.id }));
+    if (e.source === 'library') actions.appendChild(button(doc, 'btn btn-sm', 'Remove', { skillDelete: e.id }));
     actions.appendChild(mdButton(e.id));
     row.appendChild(actions);
     if (st.mdOpen.has(e.id)) row.appendChild(mdDrawer(e));
@@ -576,12 +582,12 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     const first = options.find((o) => !o.disabled);
     if (!first) {   // every choice is already there: an empty value would address no set or server
       body.replaceChildren(h(doc, 'p', 'hint', `${label}: every choice is already there.`));
-      modal.open(title, body, [['Close', 'btn btn-ghost btn-mini', () => modal.close()]]);
+      modal.open(title, body, [['Close', 'btn btn-sm', () => modal.close()]]);
       return;
     }
     sel.value = first.value;
     renderExtra();
-    modal.open(title, body, [['Cancel', 'btn btn-ghost btn-mini', () => modal.close()], [onPick.label, 'btn btn-primary btn-mini', () => onPick.fn(sel.value, slot, msg)]]);
+    modal.open(title, body, [['Cancel', 'btn btn-sm', () => modal.close()], [onPick.label, 'btn btn-primary btn-sm', () => onPick.fn(sel.value, slot, msg)]]);
   }
 
   /** Add a server to a set: server (or set) picker, then that server's fields; Save and test. */
@@ -747,8 +753,12 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     inp.setAttribute('aria-label', 'Name');
     body.append(h(doc, 'label', '', 'Name'), inp);
     return new Promise((resolve) => {
-      modal.open(title, body, [['Cancel', 'btn btn-ghost btn-mini', () => { modal.close(); resolve(null); }],
-        ['Save', 'btn btn-primary btn-mini', () => { modal.close(); resolve(inp.value.trim() || null); }]]);
+      // The shell's own dismissal (header Close, Escape) answers "no name" too — never a caller waiting forever.
+      let unhook = null;
+      const settle = (v) => { if (unhook) { unhook(); unhook = null; } modal.close(); resolve(v); };
+      if (typeof modal.onClose === 'function') unhook = modal.onClose(() => settle(null));
+      modal.open(title, body, [['Cancel', 'btn btn-sm', () => settle(null)],
+        ['Save', 'btn btn-primary btn-sm', () => settle(inp.value.trim() || null)]]);
     });
   }
 
@@ -760,8 +770,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     const msg = h(doc, 'p', 'form-msg');
     msg.setAttribute('aria-live', 'polite');
     body.append(fieldInputs(doc, [{ ...f, required: true }]), msg);
-    modal.open(`${f.label} · ${m.copy}`, body, [['Cancel', 'btn btn-ghost btn-mini', () => modal.close()],
-      ['Save', 'btn btn-primary btn-mini', async () => {
+    modal.open(`${f.label} · ${m.copy}`, body, [['Cancel', 'btn btn-sm', () => modal.close()],
+      ['Save', 'btn btn-primary btn-sm', async () => {
         const { secrets } = collectFieldInputs(body);
         if (!Object.keys(secrets).length) { modal.close(); return; }
         if (await write('PUT', memberPath(setId, serverId), { secrets }, '', msg)) { modal.close(); await load(); }
@@ -816,8 +826,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       await load();
       if (thenAdd) await addMember({ serverId: `manual:${name}` });
     };
-    const list = [['Cancel', 'btn btn-ghost btn-mini', () => modal.close()], ['Save', 'btn btn-ghost btn-mini', () => save(false)]];
-    if (!edit) list.push(['Save and add to set', 'btn btn-primary btn-mini', () => save(true)]);
+    const list = [['Cancel', 'btn btn-sm', () => modal.close()], ['Save', 'btn btn-sm', () => save(false)]];
+    if (!edit) list.push(['Save to set', 'btn btn-primary btn-sm', () => save(true)]);
     modal.open(edit ? `Edit definition · ${server.base}` : 'Add MCP server', wrap, list);
   }
 
@@ -848,7 +858,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     const names = new Set(inSet.values());
     const r = await api('GET', '/api/skills');
     if (!r.ok) {   // a catalog that could not be read is never "No skills yet"
-      modal.open(`Add skill to ${set.name}`, h(doc, 'p', 'hint err', (r.data && r.data.error) || `HTTP ${r.status}`), [['Close', 'btn btn-ghost btn-mini', () => modal.close()]]);
+      modal.open(`Add skill to ${set.name}`, h(doc, 'p', 'hint err', (r.data && r.data.error) || `HTTP ${r.status}`), [['Close', 'btn btn-sm', () => modal.close()]]);
       return;
     }
     const cat = r.data.skills;
@@ -871,14 +881,14 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     if (!first) {
       const why = cat.length ? 'Every skill in the catalog is in this set already.'
         : 'No skills yet. Install a plugin that ships some, or Import skill in Connectors › Skills.';
-      modal.open(`Add skill to ${set.name}`, h(doc, 'p', 'hint', why), [['Close', 'btn btn-ghost btn-mini', () => modal.close()]]);
+      modal.open(`Add skill to ${set.name}`, h(doc, 'p', 'hint', why), [['Close', 'btn btn-sm', () => modal.close()]]);
       return;
     }
     const msg = h(doc, 'p', 'form-msg', 'Added skills start on. A skill carries no values and no secrets.');
     msg.setAttribute('aria-live', 'polite');
     const body = h(doc, 'div');
     body.append(list, msg);
-    modal.open(`Add skill to ${set.name}`, body, [['Cancel', 'btn btn-ghost btn-mini', () => modal.close()], ['Add', 'btn btn-primary btn-mini', async () => {
+    modal.open(`Add skill to ${set.name}`, body, [['Cancel', 'btn btn-sm', () => modal.close()], ['Add', 'btn btn-primary btn-sm', async () => {
       const picked = list.querySelector('input[name="sk-pick"]:checked');
       if (picked && await write('PUT', skillMemberPath(set.id, picked.value), { enabled: true }, 'Skill added', msg)) { modal.close(); await load(); }
     }]]);
@@ -897,6 +907,10 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       return;
     }
     say('');
+    if (!r.ok && r.status === 409 && r.data?.code === 'GIT_MISSING') {   // its origin is off GitHub and git is missing: say so in the dialog
+      modal.open(`Update ${e.name}`, h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git'), [['Close', 'btn btn-sm', () => modal.close()]]);
+      return;
+    }
     if (!r.ok) { fail(r); return; }
     const { stage, added = [], removed = [], changed = [], inspection = null } = r.data;
     const discard = () => api('DELETE', `/api/skills/import/${enc(stage)}`);
@@ -904,7 +918,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     // when the modal shows "up to date" or is cancelled, so the row's badge says what the check found.
     if (!added.length && !removed.length && !changed.length) {
       await discard();
-      modal.open(`${e.name} is up to date`, h(doc, 'p', 'hint', 'Its origin holds the files the library has.'), [['Close', 'btn btn-ghost btn-mini', () => modal.close()]]);
+      modal.open(`${e.name} is up to date`, h(doc, 'p', 'hint', 'Its origin holds the files the library has.'), [['Close', 'btn btn-sm', () => modal.close()]]);
       await load();
       return;
     }
@@ -928,8 +942,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     let applying = false;
     const cancel = async () => { modal.close(); await discard(); await load(); };
     modal.open(`Update ${e.name}`, body, [
-      ['Cancel', 'btn btn-ghost btn-mini', cancel],
-      ['Update', 'btn btn-primary btn-mini', async () => {
+      ['Cancel', 'btn btn-sm', cancel],
+      ['Update', 'btn btn-primary btn-sm', async () => {
         if (problems.length) { msg.textContent = 'This update cannot be applied: see the problems above.'; msg.className = 'form-msg err'; return; }
         if (applying) return;   // a second click would post the stage again, after the first one moved it
         applying = true;
@@ -966,7 +980,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
 
 // ── resolution tables: the project MCP tab and the workspace overview (spec §8) ───────────────────
 function statusFor(row, sets) {
-  if (row.why) return row.reason === 'off' ? 'off' : row.reason === 'needs-consent' ? `off — ${row.why}` : `${row.why} in ${row.setName}`;
+  if (row.why) return row.reason === 'off' ? 'off' : row.reason === 'needs-consent' ? `off: ${row.why}` : `${row.why} in ${row.setName}`;
   const member = (sets || []).find((s) => s.id === row.setId)?.members.find((m) => m.serverId === row.serverId);
   return { ok: 'ok', stale: 'stale', none: 'not tested', failed: 'test failed' }[member ? member.test : 'none'];
 }
@@ -1006,7 +1020,7 @@ const SKILL_LAYER_WORDS = {
 function skillStatus(r, blocked = false) {
   if (!r.reason) return blocked ? 'not loaded' : 'ok';
   if (r.reason === 'off') return 'off';
-  if (r.reason === 'needs-consent') return `off — ${r.why || 'turn it on in the team checklist'}`;
+  if (r.reason === 'needs-consent') return `off: ${r.why || 'turn it on in the team checklist'}`;
   return r.why || r.reason;
 }
 /** Mounted then skipped skills, by the name agents call: P4's preview puts `qualifiedName` (`<plugin name>:<skill>`) on
@@ -1130,17 +1144,18 @@ export async function mountProjectMcp(sec, { key, name, api, doc = globalThis.do
   card.appendChild(h(doc, 'h2', '', 'Sets'));
   const chips = h(doc, 'div', 'mcp-usedby');
   for (const s of a.sets) {
-    const chip = h(doc, 'span', 'chip mcp-chip');
+    const chip = h(doc, 'span', 'chip');
     const link = h(doc, 'a', '', s.name);
     link.href = `#${mcpRoute(s.id)}`;
-    const x = button(doc, 'mcp-x', '×', { drop: s.id });
+    const x = button(doc, 'btn btn-sm btn-quiet btn-icon mcp-x', null, { drop: s.id });
+    x.append(icon(doc, 'x', 12));
     x.setAttribute('aria-label', `Remove ${s.name}`);
     x.addEventListener('click', () => save({ ...a, sets: a.sets.filter((y) => y.id !== s.id) }));
     chip.append(link, x);
     chips.appendChild(chip);
   }
   if (a.team) {
-    const t = h(doc, 'a', 'chip mcp-chip', a.team.name);
+    const t = h(doc, 'a', 'chip', a.team.name);
     t.href = `#${mcpRoute(a.team.id)}`;
     chips.appendChild(t);
   }
@@ -1159,8 +1174,8 @@ export async function mountProjectMcp(sec, { key, name, api, doc = globalThis.do
   cb.checked = a.includeGeneral;
   cb.setAttribute('aria-label', 'Include General in runs');
   cb.addEventListener('change', () => save({ ...a, includeGeneral: cb.checked }));
-  sw.append(cb, h(doc, 'span', 'switch switch-sm'), h(doc, 'span', 'txt', 'Include General in runs'));
-  card.append(sw, h(doc, 'small', 'hint', 'Ask Worca always includes General; a workspace run includes it when any member does'));
+  sw.append(cb, h(doc, 'span', 'switch'), h(doc, 'span', 'txt', 'Include General in runs'));
+  card.append(sw, h(doc, 'small', 'hint', 'Chat always includes General; a workspace run includes it when any member does'));
   if (a.none) card.appendChild(h(doc, 'p', 'hint err', 'No MCP servers in runs on this project'));
   card.appendChild(h(doc, 'small', 'hint err mcp-proj-msg'));
   const committed = h(doc, 'div');
@@ -1192,7 +1207,7 @@ export async function paintCommittedMcp(sec, { key, api, doc = globalThis.docume
     row.append(h(doc, 'span', 'mono', s.name), h(doc, 'span', `hint${s.status === 'approved' ? '' : ' mcp-res-skip'}`, COMMITTED_STATUS[s.status] || s.status));
     const cell = h(doc, 'span');
     if (s.status === 'unapproved' && canApprove) {
-      const b = button(doc, 'btn btn-ghost btn-mini', 'Approve', { approve: s.name });
+      const b = button(doc, 'btn btn-sm', 'Approve', { approve: s.name });
       b.addEventListener('click', () => approve([s.name]));
       cell.appendChild(b);
     }

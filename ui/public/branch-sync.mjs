@@ -1,8 +1,11 @@
 // ui/public/branch-sync.mjs
 // Sync-before-run UI (#527): the status pill + Sync button + Auto-sync switch under the Source
 // branch dropdown, the details dialog, the diverged/offline chooser, and the Projects chips.
-// Models are pure (unit-tested without a DOM); the DOM helpers follow schedule-sheet.mjs
-// (Escape in the capture phase, outside click, focus returns to the opener).
+// Models are pure (unit-tested without a DOM); the dialogs follow modal-guard.mjs
+// (Escape and a real outside click close them; focus returns to the opener).
+import { icon } from './icons.mjs';
+import { guardModal } from './modal-guard.mjs';
+import { layoutDialog } from './dialog-layout.mjs';
 
 const WORD = { diverged: 'diverged', dirty: 'dirty', behind: 'behind', offline: 'offline', local: 'not on the remote', ok: 'up to date' };
 const TONE = { diverged: 'amber', dirty: 'amber', behind: 'blue', offline: 'grey', local: 'grey', ok: 'green' };
@@ -105,11 +108,15 @@ export function runOutcomeModel(sync, { origin = true, base = '' } = {}) {
   return o;
 }
 
+/** An unborn repo (Use git, no commit yet): the no-remote bar's and the Branch card's hint. */
+export const NO_COMMITS_HINT = 'No commits yet · the first run commits these files';
+
 /** One row of the Workspaces list's project table (design board 1): what the repo is, and the one
  *  thing Worca can do about it. action ∈ sync|details|retry|null — Worca never merges or resets.
  *  `dirty` no longer hides `behind`: a dirty repo that is behind says both. */
 export function listRowModel(b) {
   if (!b || !b.remote) return { icon: 'local', tone: 'muted', label: 'No remote', hint: '', action: null, state: 'none' };
+  if (b.noCommits) return { icon: 'local', tone: 'ink', label: 'No commits yet', hint: 'The first run commits these files', action: null, state: 'local' };
   if (b.state === 'unknown') return { icon: 'none', tone: 'muted', label: 'Status unknown', hint: '', action: null, state: 'none' };
   const dirty = !!(b.dirty && b.checkedOutHere);
   const autoSync = !(b.settings && b.settings.beforeRun === false);
@@ -140,7 +147,7 @@ const BAR_GROUP = { ok: 'ok', behind: 'behind', diverged: 'diverged', dirty: 'di
 export function projectBarModel(b) {
   const base = { hint: '', action: null, actionLabel: '', vs: '' };
   if (b === undefined) return { ...base, icon: 'spin', tone: 'grey', label: 'Checking…', state: 'checking', group: null };
-  if (!b || !b.remote) return { ...base, icon: 'noRemote', tone: 'none', label: 'No git remote', hint: 'Local folder · nothing to sync', state: 'none', group: 'local' };
+  if (!b || !b.remote) return { ...base, icon: 'noRemote', tone: 'none', label: 'No git remote', hint: b && b.noCommits ? NO_COMMITS_HINT : 'Local folder · nothing to sync', state: 'none', group: 'local' };
   const m = listRowModel(b);
   const bar = { ...m, tone: BAR_TONE[m.state] || 'grey', actionLabel: BAR_ACTION[m.action] || '',
     vs: b.base && m.state !== 'local' ? `${b.remote}/${b.base}` : '', group: BAR_GROUP[m.state] || null };
@@ -196,7 +203,7 @@ export function sourceRefNote(ref) {
   const bits = [];
   if (ref.remoteOnly) bits.push('remote only');
   if (ref.behind > 0) bits.push(`${ref.behind} behind`);
-  if (ref.stale) bits.push('could not fetch — last known refs');
+  if (ref.stale) bits.push('could not fetch: last known refs');
   return bits.length ? `from ${ref.ref} (${bits.join(', ')})` : '';
 }
 
@@ -220,16 +227,32 @@ export function ffRefusalCopy(ff, base, remote = 'origin') {
   }[ff.kind] || `Could not update ${base}.`;
 }
 
-/** The run header's Sync button label from a member's sync record (plan D6, §6.5). */
-export function syncStageLabel(record, base = '') {
+/** The run header's Sync button label from a member's sync record (plan D6, §6.5). Short and
+ *  branch-free: the source branch already sits on the left of the same row (.rd-base). */
+export function syncStageLabel(record) {
   if (!record) return 'Sync';
   const n = record.commits || 0;
   switch (record.result) {
     case 'fast-forwarded': return `Synced ${n} commit${n === 1 ? '' : 's'}`;
-    case 'remote-start': return `Started from ${record.remote || 'origin'}/${base}`;
-    case 'fetch-failed': return 'Sync: used the last fetch';
-    case 'diverged': return 'Sync: diverged';
+    case 'remote-start': return `From ${record.remote || 'origin'}`;
+    case 'fetch-failed': return 'Used last fetch';
+    case 'diverged': return 'Diverged';
     default: return 'Sync';
+  }
+}
+
+/** The Sync button's tooltip: the long form of syncStageLabel plus what a click does. */
+export function syncStageTitle(record, base = '') {
+  const action = 'Show the Sync log';
+  if (!record) return action;
+  const remote = record.remote || 'origin';
+  const n = record.commits || 0;
+  switch (record.result) {
+    case 'fast-forwarded': return `Synced ${n} commit${n === 1 ? '' : 's'} from ${remote}/${base}. ${action}`;
+    case 'remote-start': return `Started from ${remote}/${base}: the local branch was left untouched. ${action}`;
+    case 'fetch-failed': return `Could not fetch ${remote}: started from the last fetch. ${action}`;
+    case 'diverged': return `${base} has diverged from ${remote}/${base}. ${action}`;
+    default: return action;
   }
 }
 
@@ -299,24 +322,19 @@ export function paintSyncRow(host, sync, { autoSync = true, busy = false } = {})
   return model;
 }
 
-/** Shared modal lifecycle: Escape (capture phase, never reaches the page), scrim click, focus return. */
-function openModal(modal, { opener, fallbackFocus, focusEl, onClose }) {
+/** Shared modal lifecycle: modal-guard's Escape and backdrop rules (`kind`), focus return to the opener. */
+function openModal(modal, { opener, fallbackFocus, focusEl, onClose, kind = 'decision' }) {
   let closed = false;
   function close(result) {
     if (closed) return;
     closed = true;
-    document.removeEventListener('keydown', onKey, true);
     modal.remove();
     const target = opener && opener.isConnected ? opener : (typeof fallbackFocus === 'function' ? fallbackFocus() : null);
     if (target && typeof target.focus === 'function') { try { target.focus(); } catch { /* gone */ } }
     onClose(result);
   }
-  function onKey(e) {
-    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(null); }
-  }
-  document.addEventListener('keydown', onKey, true);
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(null); });
   document.body.append(modal);
+  guardModal(modal, { kind, close: () => close(null) }).opened();
   if (focusEl) focusEl.focus();
   return close;
 }
@@ -398,20 +416,20 @@ export function openSyncDialog({ title = 'Sync status', subtitle = '', sync, aut
     let refusal = '';
     let busy = false;
 
-    const xBtn = h('button', { type: 'button', class: 'btn btn-mini sync-x', 'aria-label': 'Close', text: '×' });
+    const xBtn = h('button', { type: 'button', class: 'btn btn-quiet btn-icon sync-x', 'aria-label': 'Close' }, icon(document, 'x', 16));
     const pill = h('span', { class: 'sync-pill grey' }, h('span', { class: 'sdot', 'aria-hidden': 'true' }), h('span', { class: 'sync-pill-txt' }));
     const kv = h('dl', { class: 'sync-kv' });
     const commitsHead = h('h3', { class: 'sync-commits-head', text: 'Incoming commits' });
     const commits = h('ol', { class: 'sync-commits' });
     const note = h('div', { class: 'sync-note', hidden: true });
-    const closeBtn = h('button', { type: 'button', class: 'btn btn-mini', text: 'Close' });
-    const syncBtn = h('button', { type: 'button', class: 'btn btn-primary btn-mini sync-go', text: 'Sync' });
+    const closeBtn = h('button', { type: 'button', class: 'btn', text: 'Close' });
+    const syncBtn = h('button', { type: 'button', class: 'btn btn-primary sync-go', text: 'Sync' });
     const prefsSection = prefs ? buildPrefsSection(prefs) : null;
-    const card = h('div', { class: 'card sync-card' },
-      h('div', { class: 'card-head' }, h('h2', { id: 'sync-dlg-title', text: title }), xBtn),
-      subtitle ? h('div', { class: 'sync-sub', text: subtitle }) : null,
-      pill, kv, commitsHead, commits, note, prefsSection,
-      h('div', { class: 'confirm-actions' }, closeBtn, syncBtn));
+    const head = h('div', { class: 'card-head' }, h('h2', { id: 'sync-dlg-title', text: title }), xBtn);
+    const sub = subtitle ? h('div', { class: 'sync-sub', text: subtitle }) : null;
+    const actions = h('div', { class: 'confirm-actions' }, closeBtn, syncBtn);
+    const card = h('div', { class: 'card sync-card' }, head, sub, pill, kv, commitsHead, commits, note, prefsSection, actions);
+    layoutDialog(card, { head: [head, sub], foot: [actions] });
     const modal = h('div', { class: 'viewer-modal confirm-modal sync-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sync-dlg-title' }, card);
 
     function paint() {
@@ -444,7 +462,8 @@ export function openSyncDialog({ title = 'Sync status', subtitle = '', sync, aut
       syncBtn.classList.toggle('busy', busy); syncBtn.disabled = busy;
     }
 
-    const close = openModal(modal, { opener, fallbackFocus, focusEl: xBtn, onClose: resolve });
+    // Read-only status: its two selects save on change, so nothing is ever pending.
+    const close = openModal(modal, { opener, fallbackFocus, focusEl: xBtn, onClose: resolve, kind: 'viewer' });
     xBtn.addEventListener('click', () => close(null));
     closeBtn.addEventListener('click', () => close(null));
     syncBtn.addEventListener('click', async () => {
@@ -500,15 +519,16 @@ export function chooseSyncRefusal(data = {}) {
         body.append(h('p', { class: 'qtext', text: many ? `${m.projectName || m.projectKey}: ${line}` : line }));
       }
       if (options.includes('last-fetch')) {
-        goBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Start anyway from last fetch' });
+        goBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Start anyway' });
         choice = 'last-fetch';
       }
     }
     const cancelBtn = h('button', { type: 'button', class: 'btn', text: 'Cancel' });
-    const panel = h('div', { class: 'qpanel' },
-      h('div', { class: 'qpanel-head' }, questionSvg(), h('b', { id: 'sync-refusal-title', text: head })),
-      body,
-      h('div', { class: 'qpanel-foot' }, cancelBtn, goBtn));
+    const panelHead = h('div', { class: 'qpanel-head' }, questionSvg(), h('b', { id: 'sync-refusal-title', text: head }));
+    const panelFoot = h('div', { class: 'qpanel-foot' }, cancelBtn, goBtn);
+    const panel = h('div', { class: 'qpanel' }, panelHead, body, panelFoot);
+    // The shared dialog anatomy one level down: the amber panel is the column, its .qbody the one scroller.
+    layoutDialog(panel, { head: [panelHead], foot: [panelFoot] });
     const modal = h('div', { class: 'viewer-modal confirm-modal sync-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sync-refusal-title' },
       h('div', { class: 'card' }, panel));
     const close = openModal(modal, { opener: document.activeElement, focusEl: goBtn || cancelBtn, onClose: resolve });

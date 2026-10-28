@@ -117,7 +117,7 @@ export function createChatActionHost({
       if (pr && pr.url) return notice(`${run.title} already has a pull request: ${pr.url}`);
       let facts;
       try { facts = await prCardFacts(run.row); } catch (err) { return notice(`Could not offer a pull request for ${run.title}: ${msg(err)}`); }
-      if (!facts || !facts.branch) return notice(`${run.title} has no feature branch to open a pull request from`);
+      if (!facts || !facts.branch) return notice(`${run.title} has no feature branch to create a PR from`);
       return proposed({ type: 'pull-request', ...facts });
     }
     return notice('Could not do that: unknown action');
@@ -201,7 +201,7 @@ export function createChatActionHost({
     }
   }
 
-  /** The run-stop card's "Stop pipeline" (R7): the same split POST /api/stop makes — a live run stops in place, a paused
+  /** The run-stop card's "Stop run" (R7): the same split POST /api/stop makes — a live run stops in place, a paused
    *  run settles from its saved row; an interrupted one is never stopped. */
   async function stop(card, { actor = 'local' } = {}) {
     const run = runOf(card && (card.pipelineId || card.runId));

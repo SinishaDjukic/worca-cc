@@ -323,7 +323,9 @@ test('a plugin that ships Skills/ (another case): the preview names what the cat
 
 // ---- the Plugins view: update preview lines and the uninstall confirm (Task 7) -------------------
 import { JSDOM } from 'jsdom';
-import { renderUpdatePreview, renderPluginList } from '../ui/public/plugins-view.mjs';
+import { renderUpdatePreview } from '../ui/public/plugins-view.mjs';
+import { removeChanges } from '../ui/public/marketplace/installed-model.mjs';
+import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
 
 test('Plugins view: skill lines join the review lines (red ones in the secret style); Remove carries the sets its skills leave', () => {
   const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -341,11 +343,9 @@ test('Plugins view: skill lines join the review lines (red ones in the secret st
     ['pl-delta-secret', 'SKILL CHANGED: grows — in Team · acme/platform (+1 script)'],
   ]);
   assert.ok(el.querySelector('.pl-confirm-update'), 'never automatic: Apply is a click');
-  const list = renderPluginList([{ name: 'acme', contributions: {}, mcpSets: [], skillSets: ['Billing', 'Team · acme/platform'] }, { name: 'x', contributions: {} }], { doc });
-  assert.equal(list.querySelector('.pl-remove[data-name="acme"]').dataset.skillSets, 'Billing, Team · acme/platform');
-  assert.equal(list.querySelector('.pl-remove[data-name="acme"]').dataset.mcpSets, undefined);
-  assert.equal(list.querySelector('.pl-remove[data-name="x"]').dataset.skillSets, undefined);
-  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
-  const at = app.indexOf("title: 'Uninstall plugin'");
-  assert.match(app.slice(at, at + 500), /\$\{t\.dataset\.skillSets\s*\? `\\n\\nIt also removes its skills from \$\{t\.dataset\.skillSets\}\.` : ''\}/, 'the confirm names them (board 11)');
+  const { body } = renderRemoveDialog(doc, { name: 'acme', iconKind: 'skills', goesAway: [],
+    changes: removeChanges({ name: 'acme', contributions: {}, mcpSets: [], skillSets: ['Billing', 'Team · acme/platform'] }, { skills: ['deploy'] }) });
+  assert.deepEqual([...body.querySelectorAll('.mk-changes > li')].map((li) => [li.querySelector('.badge').textContent, li.querySelector('.mk-meta').textContent]),
+    [['Billing', 'loses the deploy skill'], ['Team · acme/platform', 'loses the deploy skill']], 'the Remove dialog names the skill sets (board 11)');
+  assert.deepEqual(removeChanges({ name: 'x', contributions: {} }, null), []);
 });

@@ -46,7 +46,7 @@ export function renderCredentials(data, doc = document) {
   if (data.mode === 'multi' && data.keyPage) {
     const missing = (data.slots || []).some((s) => s.state === 'missing' || s.state === 'invalid');
     const actions = h(doc, 'div', 'cred-actions');
-    const a = h(doc, 'a', `btn ${missing ? 'btn-primary' : 'btn-ghost'} btn-mini`, 'Manage keys');
+    const a = h(doc, 'a', `btn ${missing ? 'btn-primary' : 'btn'} btn btn-sm`, 'Manage keys');
     a.href = data.keyPage;
     a.target = '_blank';
     a.rel = 'noopener';

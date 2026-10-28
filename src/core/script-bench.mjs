@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { mkdir, writeFile, readdir, rm, stat, open } from 'node:fs/promises';
 import { worcaHome, listProjects } from './projects.mjs';
+import { gitAvailable } from './git-available.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import {
@@ -177,6 +178,7 @@ export function buildBenchCtx({ id, meta, resolved, ports, bindings, dirs, cwd, 
 
 /** The HEAD of a project checkout, or null when it is not a git repo. */
 function headRef(dir) {
+  if (!gitAvailable()) return null;
   try {
     return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }).trim() || null;
   } catch { return null; }

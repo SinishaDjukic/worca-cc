@@ -28,8 +28,10 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsIn
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
-import { CODEX_PRICES } from '../list-prices.mjs';
-import { codexEndpointSpawn, findCodexEndpointEntry } from './codex-endpoint.mjs';
+import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
+import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
+import { makeChatDescriptor, openaiListRates } from './chat-descriptor.mjs';
+import { chatEnginesTaking } from '../../shared/engine-switch.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
 
 export const CODEX_DEFAULT_BIN = process.env.WORCA_CODEX_BIN || 'codex';
@@ -56,10 +58,10 @@ export function codexThreadOf(sessionId) {
  *  - Skills: codex loads `.agents/skills` from the cwd, where the run context mounts them. */
 const CODEX_FALSE = new Set(['allowedTools', 'hookTelemetry', 'turnBudget']);
 
-/** The model a codex spawn runs when worca names none: codex-cli 0.146's own built-in default under
- *  --ignore-user-config (seen in the session log of an unnamed-model exec). Naming it changes nothing codex
- *  runs, and keeps every Codex call priced (CODEX_PRICES) instead of a $0.00 "cost unknown". */
-export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
+/** The model a codex spawn runs when worca names none: codex's own bundled default (GPT-6.1 Sol since
+ *  codex-cli 0.153.4; 0.146's was gpt-5.6-sol). `exec --json` never names the model it ran, so worca names it on
+ *  every spawn: that keeps every Codex call priced (CODEX_PRICES) instead of a $0.00 "cost unknown". */
+export const CODEX_DEFAULT_MODEL = 'gpt-6.1-sol';
 export const codexCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !CODEX_FALSE.has(k)])));
 
 /** Ask Worca on Codex (cascading-settings-design.md D13): the flags that leave codex no shell, no image viewer, no native
@@ -100,6 +102,15 @@ function bashPrefix(rule) {
   return body.split(/\s+/);
 }
 
+/** A deny rule's MCP target: `{server}` for a whole server (`mcp__pg`, `mcp__pg__*`), `{server, tool}` for one tool
+ *  (`mcp__pg__drop`), or null when it is not an MCP rule or names its tool by a glob. */
+function mcpTarget(rule) {
+  const m = /^mcp__([A-Za-z0-9_-]+?)(?:__(.+))?$/.exec(String(rule).trim());
+  if (!m || !MCP_NAME_RE.test(m[1])) return null;
+  if (m[2] === undefined || m[2] === '*') return { server: m[1] };
+  return /^[A-Za-z0-9_.-]+$/.test(m[2]) ? { server: m[1], tool: m[2] } : null;
+}
+
 /** How far a codex command rule reaches (verified on codex-cli 0.146). codex
  *  splits a shell script into commands only when it is plain words: a redirect, a `$(…)`, a `$VAR` or a `VAR=x cmd`
  *  makes it match the whole `bash -lc …` argv instead, so the rule never sees the command. The gate and the run log
@@ -113,12 +124,14 @@ export const CODEX_COMMAND_RULE_REACH = 'they catch a command run directly, by f
  * them like the rules codex cannot hold (they need --allow-unguarded-engine) while the spawn still writes them.
  * A bare `Bash` turns the shell off; `WebSearch` turns codex's web search off. `WebFetch` has no codex tool to deny,
  * and codex fetches a page through its shell (`curl`) or its web search: it is held only when the same rules turn
- * both off, else it is `unenforced`. Path rules (`Read(…)`, `Edit(…)`, `Write(…)`), MCP tool rules and globs cannot
- * be held: they are `unenforced`.
- * @returns {{prefixes:string[][], shellOff:boolean, webSearchOff:boolean, enforced:string[], partial:string[], unenforced:string[]}}
+ * both off, else it is `unenforced`. An MCP rule is held: `mcp__<server>__<tool>` lists the tool in the server's
+ * `disabled_tools` (codex then never offers it), and `mcp__<server>` / `mcp__<server>__*` leaves the server unattached.
+ * Every spawn passes --ignore-user-config, so codex has no MCP server worca did not attach. Path rules (`Read(…)`,
+ * `Edit(…)`, `Write(…)`) and other globs cannot be held: they are `unenforced`.
+ * @returns {{prefixes:string[][], shellOff:boolean, webSearchOff:boolean, mcpServersOff:string[], mcpToolsOff:Record<string,string[]>, enforced:string[], partial:string[], unenforced:string[]}}
  */
 export function codexRulePlan(permissionRules) {
-  const out = { prefixes: [], shellOff: false, webSearchOff: false, enforced: [], partial: [], unenforced: [] };
+  const out = { prefixes: [], shellOff: false, webSearchOff: false, mcpServersOff: [], mcpToolsOff: {}, enforced: [], partial: [], unenforced: [] };
   const deny = Array.isArray(permissionRules?.deny) ? permissionRules.deny : [];
   const denied = new Set(deny.map((r) => String(r).trim()));
   const noFetch = denied.has('Bash') && denied.has('WebSearch');
@@ -128,6 +141,16 @@ export function codexRulePlan(permissionRules) {
     if (rule === 'Bash') { out.shellOff = true; out.enforced.push(rule); continue; }
     if (rule === 'WebSearch') { out.webSearchOff = true; out.enforced.push(rule); continue; }
     if (rule === 'WebFetch') { (noFetch ? out.enforced : out.unenforced).push(rule); continue; }
+    const mcp = mcpTarget(rule);
+    if (mcp) {
+      if (!mcp.tool) { if (!out.mcpServersOff.includes(mcp.server)) out.mcpServersOff.push(mcp.server); }
+      else {
+        const tools = (out.mcpToolsOff[mcp.server] ??= []);
+        if (!tools.includes(mcp.tool)) tools.push(mcp.tool);
+      }
+      out.enforced.push(rule);
+      continue;
+    }
     const prefix = bashPrefix(rule);
     if (prefix) {
       if (!out.prefixes.some((p) => p.join(' ') === prefix.join(' '))) out.prefixes.push(prefix);
@@ -341,9 +364,10 @@ const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * The per-call `-c mcp_servers.<name>.*` overrides for the stdio servers of an --mcp-config document (spec §4.6).
  * Env VALUES never ride argv (any local user can read argv): they are returned for the codex process env, and only
  * their names go to `env_vars`, which codex copies into the server's env (plans/ask-on-codex-spike.md (d)).
- * `passEnv` adds names already in the codex env (SSH_AUTH_SOCK, the web search key's variable).
+ * `passEnv` adds names already in the codex env (SSH_AUTH_SOCK, the web search key's variable). `disabledTools` maps a
+ * server to the tools codex must not offer (MCP deny rules, codexRulePlan).
  */
-export function codexMcpOverrides(servers, { passEnv = [] } = {}) {
+export function codexMcpOverrides(servers, { passEnv = [], disabledTools = {} } = {}) {
   const args = [];
   const env = {};
   const all = Object.entries(servers && typeof servers === 'object' ? servers : {});
@@ -362,6 +386,8 @@ export function codexMcpOverrides(servers, { passEnv = [] } = {}) {
     }
     for (const k of passEnv) if (ENV_NAME_RE.test(k) && !names.includes(k) && !declared.has(k)) names.push(k);
     if (names.length) args.push('-c', `${key}.env_vars=[${names.map(tomlString).join(',')}]`);
+    const off = Object.hasOwn(disabledTools, name) && Array.isArray(disabledTools[name]) ? disabledTools[name] : [];
+    if (off.length) args.push('-c', `${key}.disabled_tools=[${off.map(tomlString).join(',')}]`);
     args.push('-c', `${key}.required=true`, '-c', `${key}.startup_timeout_sec=30`,
       '-c', `${key}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`, '-c', `${key}.default_tools_approval_mode="approve"`);
   }
@@ -459,7 +485,6 @@ function diffUsage(now, prior) {
  *  billed per token, so these are estimates; worca's per-model cost overrides
  *  (config.mjs#resolveModelCost) still apply on top. */
 export { CODEX_PRICES };
-const CACHED_INPUT_RATE = 0.1;
 
 /** $ estimate for one turn's usage delta, or null for an unknown model. Cached
  *  input is part of `input`; reasoning is part of `output` (never added twice). */
@@ -470,7 +495,7 @@ export function estimateCodexCostUsd(model, usage) {
   const cached = Math.min(Number(usage.cached) || 0, input);
   const output = Number(usage.output) || 0;
   const [inRate, outRate] = price;
-  return ((input - cached) * inRate + cached * inRate * CACHED_INPUT_RATE + output * outRate) / 1e6;
+  return ((input - cached) * inRate + cached * codexCachedRate(price) + output * outRate) / 1e6;
 }
 
 /** A usage delta in the Claude-style keys worca's cost overrides read. */
@@ -764,7 +789,7 @@ export async function runCodexProcess({
   // CODEX_ASK_LOCKDOWN) or an explicit, verified flag list.
   const lockdown = Array.isArray(askLockdown) ? askLockdown : CODEX_ASK_LOCKDOWN;
   // An empty list is no lockdown at all: refused exactly like none.
-  if (askLockdown && (!Array.isArray(lockdown) || !lockdown.length)) throw new Error(`${bin}: this codex cannot be locked down for a chat (its image viewer and sub-agents stay on) — Ask on Codex is unavailable`);
+  if (askLockdown && (!Array.isArray(lockdown) || !lockdown.length)) throw new Error(`${bin}: this codex cannot be locked down for a chat (its image viewer and sub-agents stay on) — Chat on Codex is unavailable`);
   // The sandbox writes only the cwd: the memory mount and the node's output dirs
   // become writable roots (--add-dir fresh, writable_roots on resume).
   const dirs = [...new Set([...(addDirs || []), ...(writableDirs || [])])];
@@ -779,6 +804,8 @@ export async function runCodexProcess({
   // (plus codex's own CODEX_/OPENAI_ keys), never the host's cloud or model credentials.
   const scrub = envScrub || sandbox === 'read-only';
   const envOpts = { envScrub: scrub, envAllowlist, prefixes: ['CODEX_', 'OPENAI_'], hostPid: guardOn ? process.pid : null };
+  // Guardrails: the deny rules codex can hold (codexRulePlan). A denied MCP server is never attached.
+  const plan = codexRulePlan(permissionRules);
   let mcpServers = null;
   if (mcpConfigPath) {
     let doc;
@@ -791,7 +818,7 @@ export async function runCodexProcess({
     // (the registry copies' MCPSECRET_* values), which reaches the servers only through those references.
     const from = composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     // Two registry copies of one server would share a launcher env name in codex's one env: each copy reads its own.
-    mcpServers = expandMcpRefs(Object.fromEntries(Object.entries(all).filter(([n]) => !unattachable.has(n)).map(([n, srv]) => [n, scopeLauncherEnv(srv)])), from);
+    mcpServers = expandMcpRefs(Object.fromEntries(Object.entries(all).filter(([n]) => !unattachable.has(n) && !plan.mcpServersOff.includes(n)).map(([n, srv]) => [n, scopeLauncherEnv(srv)])), from);
   }
   const serverEnv = codexMcpOverrides(mcpServers).env;
   // An Ask chat (askLockdown: no shell, so nothing but codex reads its env) hands its spawn env to its MCP servers the
@@ -806,8 +833,10 @@ export async function runCodexProcess({
   const normalizer = createCodexNormalizer({ model, priorUsage: thread ? loadUsage(usageDir, thread) : null, unpriced: !!endpoint,
     subagent: role ? { type: CODEX_INVESTIGATOR_ROLE, model: role.model } : null });
   const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(ownEnv).length ? { runEnv: ownEnv } : {}) });
-  // Guardrails: the deny rules codex can hold (codexRulePlan). Command rules live in a worca-managed CODEX_HOME.
-  const plan = codexRulePlan(permissionRules);
+  // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
+  // of a run without a project is no secret and must reach the agent's own git.
+  if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
+  // Command rules live in a worca-managed CODEX_HOME.
   if (plan.prefixes.length) env.CODEX_HOME = guardedCodexHome(codexRulesFile(plan.prefixes));
   const home = (env.CODEX_HOME && String(env.CODEX_HOME).trim()) || join(homedir(), '.codex');
   if (thread) bringCodexThreadHome(home, thread);
@@ -827,7 +856,7 @@ export async function runCodexProcess({
   }
   // codex hands an MCP server only a short default env plus `env_vars`: name every variable of codex's own env, so the
   // worca server gets what a Claude chat's child inherits (proxy, CA bundle, WORCA_CODEX_BIN, codex's own keys…).
-  const mcp = codexMcpOverrides(mcpServers, { passEnv: Object.keys(env) });
+  const mcp = codexMcpOverrides(mcpServers, { passEnv: Object.keys(env), disabledTools: plan.mcpToolsOff });
   // The endpoint's key and headers join codex's env only now, so no MCP server is handed them.
   if (endpoint) { Object.assign(env, endpoint.env); extra.push(...endpoint.args); }
   const args = buildCodexArgs({ systemPrompt: sys, model: endpoint ? endpoint.model : model, effort, resumeThreadId: thread, addDirs: dirs, sandbox, mcp: [...mcp.args, ...extra],
@@ -904,3 +933,30 @@ export async function runCodexProcess({
   }
   return { text: redactor ? redactor.text(final.text) : final.text, exitCode: res.code };
 }
+
+/** Codex's chat descriptor (engines/chat-descriptor.mjs; cascading-settings-design.md §4.6, D13, D14). The lockdown is
+ *  CODEX_ASK_LOCKDOWN; a chat model on its own endpoint needs no codex sign-in, only the binary (codex-endpoint.mjs).
+ *  Each `impl` is the function a test hands the turn in its place. */
+export const codexChat = makeChatDescriptor({
+  engine: 'codex',
+  lockdown: () => CODEX_ASK_LOCKDOWN,
+  noLockdownMessage: "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.",
+  askSupport: (o, impl = codexAskSupport) => impl(o),
+  preflight: ({ model } = {}, impl = codexPreflight) => impl({ signIn: !hasCodexEndpoint(model) }),
+  // OpenAI's list price, unless the model runs on an endpoint of its own (its Models page price then, or none).
+  listRates: (model) => { const m = model || CODEX_DEFAULT_MODEL; return findCodexEndpointEntry(m) ? null : openaiListRates(m); },
+  resumeNotFound: codexResumeNotFound,
+  shellTrippedMessage: 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
+  titles: true,
+  suggestionModel: 'gpt-5.6-luna',
+  turnImages: true,
+  signIn: () => ['CODEX_', 'OPENAI_'],
+  // codex's MCP resource tools (plans/ask-on-codex-spike.md (h)): they read what the chat's own MCP servers publish.
+  metaTools: ['mcp__codex__list_mcp_resources', 'mcp__codex__list_mcp_resource_templates', 'mcp__codex__read_mcp_resource'],
+  prompt: {
+    cli: "the Codex CLI with Codex's own sign-in",
+    attachments: `Image attachments are different: you see an image with the message it came with; read_attachment returns any image attachment itself as content[1] of its result — called directly, the image is attached to the result; called from exec, pass that block to image() to look at it again. A Codex chat cannot view a PDF: read_attachment returns only its kind and size, and ${chatEnginesTaking('pdfs')} chats can.`,
+    composerBinary: 'An image arrives with the message that carried it — you see it there; read_attachment returns it again as content[1] of its result (called from exec, pass that block to image()). A Codex chat cannot view a PDF.',
+    webOff: "Codex's own web search stays off.",
+  },
+});

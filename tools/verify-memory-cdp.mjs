@@ -209,7 +209,7 @@ try {
     head.tab === true && head.title === 'Settings' && head.badge === 'Healthy' && /\bgreen\b/.test(head.cls)
     && head.rows.join(',') === 'style,testing,traps' && head.hooks.join('|') === 'Terse commit subjects.|How the suite runs|grep -P does not exist on macOS.'
     && head.defragDisabled === false && head.runEl === false
-    && head.defragText === 'Defragment' && head.hint === 'Runs on memproof — pick another project on the New run page.', head);
+    && head.defragText === 'Defragment' && head.hint === 'Runs on memproof. Pick another project on the New run page.', head);
 
   // ---- (2) the deep link opens the file, read-locked on its name -------------
   await go('settings/memory/testing');
@@ -224,6 +224,12 @@ try {
     && ed.text.startsWith('---\nname: testing\n') && ed.text.includes('source: user'), { ...ed, text: ed.text.slice(0, 60) });
   check('2b', 'the History panel lists the seeds\' snapshots newest first, each counting its files',
     ed.ids.length === 2 && ed.ids[0] > ed.ids[1] && ed.counts.join('|') === '2 files|1 file', { ids: ed.ids, counts: ed.counts });
+  const RAW = String.raw`/run[:-][0-9a-f]{8}/.test(t)||/\d{8}-\d{6}-run-/.test(t)`;
+  const plain = await ev(`(()=>{const p=document.querySelector('${PANE}');
+    const els=[...p.querySelectorAll('.mem-snap,.mem-row-meta')];
+    return {n:els.length,raw:els.map(e=>e.textContent).filter(t=>${RAW}),
+      tips:[...p.querySelectorAll('.mem-snap')].every(s=>s.title===s.dataset.id)};})()`);
+  check('2c', 'History and file meta show plain words; the raw id is only the tooltip', plain.n > 0 && plain.raw.length === 0 && plain.tips, plain);
 
   // ---- (3) edit + Save -> a real PUT, a repainted hook ----------------------
   await ev(`(()=>{const ta=document.querySelector('${PANE} .mem-text');ta.value=${JSON.stringify(EDITED)};return 1;})()`);
@@ -282,8 +288,8 @@ try {
   const live = await ev(`(async()=>{const m=await import('/memory-view.mjs');const rep=await (await fetch('/api/memory/global')).json();
     const el=m.renderHealthCard({...rep,defragRunId:'proof-run'},{doc:document});const b=el.querySelector('.mem-defrag');
     return {runId:b.dataset.runId,disabled:b.disabled,text:b.textContent,run:!!el.querySelector('.mem-run'),hint:!!el.querySelector('.mem-host-hint')};})()`);
-  check('6b', 'while a defragment run is live the SAME button opens it: data-run-id, enabled, "Defragmenting… open the run", and no second control',
-    live.runId === 'proof-run' && live.disabled === false && live.text === 'Defragmenting… open the run' && live.run === false && live.hint === false, live);
+  check('6b', 'while a defragment run is live the SAME button opens it: data-run-id, enabled, "Open run", and no second control',
+    live.runId === 'proof-run' && live.disabled === false && live.text === 'Open run' && live.run === false && live.hint === false, live);
 
   // ---- (6c) and the real card is back to an enabled Defragment --------------
   await go('settings/memory');
@@ -294,6 +300,20 @@ try {
   check('6c', 'after the run the button is an enabled Defragment again, and the merged scope lost the file the mock emptied',
     after6.disabled === false && after6.runId === null && after6.text === 'Defragment' && after6.run === false
     && after6.rows.join(',') === 'style,traps', after6);
+
+  // ---- (6d) the defragmented file and the newest snapshot name the run (page reloaded on #settings/memory) ----
+  const hist6 = await api('/api/history');
+  const rec6 = (hist6.body.pipelines || []).find((p) => p.id === entry.pipelineId);
+  if (!rec6) throw new Error(`pipeline ${entry.pipelineId} is not in /api/history`);
+  const href6 = `#history/${rec6.projectKey}/${rec6.id}`;
+  await until(`document.querySelector('${PANE} .mem-row[data-name="style"] .mem-row-meta a[href="${href6}"]')`, 'style.md names its run');
+  const named = await ev(`(()=>{const p=document.querySelector('${PANE}');const a=p.querySelector('.mem-row[data-name="style"] .mem-row-meta a');
+    const s=p.querySelector('.mem-snap .mem-snap-src a');
+    return {text:a.textContent,href:a.getAttribute('href'),snapHref:s&&s.getAttribute('href'),
+      leak:[...p.querySelectorAll('.mem-snap,.mem-row-meta')].some(e=>e.textContent.includes(${JSON.stringify(entry.pipelineId)}))};})()`);
+  check('6d', 'the defragmented file and the newest snapshot name the defrag run by its title, linked to its History page',
+    named.text === (String(rec6.title || '').trim() || 'a run') && named.href === href6 && named.snapHref === href6 && named.leak === false,
+    { ...named, title: rec6.title });
 
   // ---- (7) the project page's Memory tab + its deep link -------------------
   await go(`projects/${project.key}/memory/conventions`);

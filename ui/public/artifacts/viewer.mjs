@@ -7,7 +7,7 @@
 import {
   relOf, baseName, displayPath, formatBytes, previewKindFor, RAW_PREVIEW_KINDS, TEXT_PREVIEW_MAX_BYTES,
 } from './common.mjs';
-import { renderPreview } from './preview.mjs';
+import { renderPreview, PINNABLE_PREVIEW_KINDS } from './preview.mjs';
 
 const GLYPH = {
   prev: '<path d="M15 6l-6 6 6 6"/>',
@@ -26,6 +26,13 @@ const NUL = String.fromCharCode(0);
 /** Dialogs that can stack over the popup (the confirm, the Stop warning, a native <dialog>): they own the keys and the focus. */
 const STACKED = '#confirm-modal:not(.hidden), #stop-modal:not(.hidden), dialog[open]';
 const OPEN = new WeakMap();                     // document -> the viewer open in it
+
+/** Close the popup open in `doc`, if any: an entry point that opens the chat beside the page (app.js openChat), where
+ *  the route to Chat used to close it. */
+export function closeOpenViewer(doc, opts) {
+  const open = OPEN.get(doc);
+  if (open) open.close(opts);
+}
 
 /** Where a popup is: the view (the first hash segment) and the run it belongs to — a run page's run (`#running/<id>…`,
  *  `#history/<key>/<id>…`, its Details suffix dropped), the run the Chat panel shows (`#chat/<thread>/run/<id>…`). */
@@ -110,7 +117,7 @@ export async function downloadArtifact({ doc, fetch: fetchFn, url, name = '' }) 
  * @param {Document} o.doc
  * @param {Window} [o.win]
  * @param {(url:string, opts?:object) => Promise<Response>} o.fetch
- * @param {{kind?:string, relPath?:string, path?:string, bytes?:number, nodeId?:string|null, cycle?:number|null}} o.artifact
+ * @param {{kind?:string, relPath?:string, path?:string, bytes?:number, nodeId?:string|null, cycle?:number|null, previewKind?:string}} o.artifact
  * @param {{text(rel:string):string, raw(rel:string):string, download(rel:string):string}} o.urls
  * @param {Array<object>} [o.list]   the files ←/→ step through (o.artifact among them)
  * @param {{step?:string, cycle?:number}} [o.meta]   the first file's step and cycle (CONTRACT §7)
@@ -150,7 +157,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     return s;
   };
   const iconBtn = (cls, label, glyph) => {
-    const b = h('button', `apv-ib ${cls}`);
+    const b = h('button', `btn btn-quiet btn-icon apv-ib ${cls}`);
     b.type = 'button';
     b.title = label;
     b.setAttribute('aria-label', label);
@@ -178,7 +185,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
   const prevBtn = iconBtn('apv-prev', 'Previous file', GLYPH.prev);
   const pos = h('span', 'apv-pos mono');
   const nextBtn = iconBtn('apv-next', 'Next file', GLYPH.next);
-  const dlBtn = h('button', 'apv-btn apv-dl');
+  const dlBtn = h('button', 'btn apv-dl');
   dlBtn.type = 'button';
   dlBtn.setAttribute('aria-label', 'Download');
   dlBtn.append(svg(GLYPH.download), h('span', null, 'Download'));
@@ -273,9 +280,9 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     fact('Step', m.step || '');
     fact('Cycle', cycleOf(a, m) || '');
     fact('Path', displayPath(rel));
-    const dl = h('button', 'apv-btn apv-btn-primary apv-info-dl');
+    const dl = h('button', 'btn btn-primary apv-info-dl');
     dl.type = 'button';
-    dl.setAttribute('aria-label', 'Download');      // ≤760 px hides its text (.apv-btn span): the name must stay
+    dl.setAttribute('aria-label', 'Download');      // ≤760 px hides its text (.apv-info-dl span): the name must stay
     dl.append(svg(GLYPH.download), h('span', null, 'Download'));
     dl.addEventListener('click', (e) => { if (!(e.detail > 1)) download(); });
     box.append(ic, h('p', 'apv-info-name', baseName(rel)), h('p', 'apv-info-note', reason), facts, dl);
@@ -297,7 +304,9 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
     const live = () => my === token && !closed;
     const rel = relOf(a);
     const shown = displayPath(rel);             // what an alt text, a frame title or a player's label may say
-    const kind = previewKindFor(a.kind, rel);
+    const kind = a.previewKind
+      ? (a.previewKind === 'none' || PINNABLE_PREVIEW_KINDS.has(a.previewKind) ? a.previewKind : 'none')
+      : previewKindFor(a.kind, rel);
     try {
       if (kind === 'none') { info(stage, a, 'No preview for this file type'); return; }
       if (RAW_PREVIEW_KINDS.has(kind)) {
@@ -309,7 +318,7 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
         const err = probe.ok ? null : { status: probe.status };
         if (err && (err.status === 413 || err.status === 415)) { info(stage, a, errorText(err)); return; }
         if (err) { fail(stage, errorText(err)); return; }
-        await renderPreview({ kind: a.kind || null, relPath: shown, url }, stage, deps);
+        await renderPreview({ kind: a.kind || null, relPath: shown, url, previewKind: a.previewKind || null }, stage, deps);
         // A player the browser cannot feed (an HEVC .mp4, a damaged file) says so instead of sitting there dead.
         const media = stage.querySelector('audio, video');
         if (media) {
@@ -340,10 +349,10 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
         const wide = text.charCodeAt(0) === 0xfffd && text.charCodeAt(1) === 0xfffd ? await utf16Text(fetchFn, urls.download(rel)) : null;
         if (!live()) return;
         if (wide == null) { info(stage, a, 'No preview for this file type'); return; }
-        await renderPreview({ kind: a.kind || null, relPath: shown, text: wide }, stage, deps);
+        await renderPreview({ kind: a.kind || null, relPath: shown, text: wide, previewKind: a.previewKind || null }, stage, deps);
         return;
       }
-      await renderPreview({ kind: a.kind || null, relPath: shown, text }, stage, deps);
+      await renderPreview({ kind: a.kind || null, relPath: shown, text, previewKind: a.previewKind || null }, stage, deps);
       if (live() && typeof decorate === 'function') {
         try { undecorate = decorate({ artifact: a, stage, body, root }) || null; } catch { undecorate = null; }
       }
@@ -488,7 +497,15 @@ export function openArtifactViewer({ doc, win = doc.defaultView, fetch: fetchFn,
   closeBtn.addEventListener('click', () => close());
   wrap.addEventListener('focus', () => { (stops()[0] || card).focus(); });
   // The backdrop: the overlay itself, never the card; the second press of a double click (the first opened us) is not a dismissal.
-  root.addEventListener('click', (e) => { if (e.target === root && !(e.detail > 1)) close(); });
+  // The press must land on the overlay too (modal-guard.mjs's rule): a text selection dragged out of the preview ends
+  // with a click on the overlay, and that is not one.
+  let pressedRoot = false;
+  root.addEventListener('mousedown', (e) => { pressedRoot = e.target === root; });
+  root.addEventListener('click', (e) => {
+    const pressed = pressedRoot;
+    pressedRoot = false;
+    if (e.target === root && pressed && !(e.detail > 1)) close();
+  });
   win.addEventListener('keydown', onKey, true);
   win.addEventListener('hashchange', onHash);
   doc.addEventListener('fullscreenchange', onFs);

@@ -47,7 +47,7 @@ after(async () => {
     new Promise((r) => { const t = setTimeout(r, 500); t.unref?.(); }),
   ]);
   for (const k of Object.keys(prevEnv)) { if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k]; }
-  await rm(sandboxHome, { recursive: true, force: true });
+  await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }).catch(() => {});
 });
 
 test('a body without an engine starts on the project default (codex refuses this set at once)', async () => {
@@ -91,7 +91,7 @@ test('POST /api/settings runEngine: stored, shown, validated, cleared', async ()
   assert.deepEqual((await get(`/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}`)).body.engine, { value: 'codex', source: 'user' });
   const bad = await post('/api/settings', { runEngine: 'gpt' });
   assert.equal(bad.status, 400);
-  assert.equal((await bad.json()).error, '“Default engine” must be one of claude, codex, copilot, cursor.');
+  assert.equal((await bad.json()).error, '“Default engine” must be one of claude, codex, copilot, cursor, gemini, goose, opencode, qwen.');
   assert.equal((await (await post('/api/settings', { runEngine: null })).json()).runEngine, null);
 });
 

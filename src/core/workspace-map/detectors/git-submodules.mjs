@@ -9,11 +9,13 @@ import { dirname } from 'node:path';
 import { splitLines, fact, onePerKey, cleanUnresolved } from './lib/text.mjs';
 import { resolveRelativeRemote } from './lib/git-remote.mjs';
 import { remoteSlug } from '../../../shared/workspace-map/keys.mjs';
+import { gitAvailable } from '../../git-available.mjs';
 
 /** This checkout's origin URL, or null. git never looks above the member (GIT_CEILING_DIRECTORIES:
  *  a non-repo member inside another repo must not borrow that repo's origin), and an inherited
  *  GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR never points it at another repo. */
 function originOf(dir) {
+  if (!gitAvailable()) return null;
   try {
     const env = { ...process.env, GIT_CEILING_DIRECTORIES: dirname(dir) };
     for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
@@ -40,7 +42,8 @@ function finish(ctx) {
   // P1's extract already aliases every member's origin slug (source 'git-remote'); git runs here
   // only when a relative submodule URL needs this member's own origin.
   const needsOrigin = (ctx.state.subs || []).some((s) => s.url && /^\.\.?\//.test(s.url));
-  const origin = needsOrigin ? originOf(ctx.member.dir) : null;
+  // P5: a Folder member's copy is never asked of git (it has no origin).
+  const origin = needsOrigin && ctx.member?.workMode !== 'folder' ? originOf(ctx.member.dir) : null;
   const originNorm = origin ? remoteSlug(origin) : null;
   const aliases = [];
   const facts = [];

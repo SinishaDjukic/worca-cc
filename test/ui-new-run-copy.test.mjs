@@ -12,14 +12,13 @@ const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 test('every string that names the page reads "New run"', () => {
   for (const [file, text] of [
     ['ui/public/ask-panel.mjs', "'↗ Open in New run'"],
-    ['ui/public/app.js', "'Onboard at least two projects (in New run) to create a workspace.'"],
     ['ui/public/app.js', "emptyText: 'No runs yet. Start one from New run.'"],
     ['ui/public/engine-settings-view.mjs', "hint: 'New run starts on this engine. You can still switch per run.'"],
-    ['ui/public/memory-view.mjs', ' — pick another project on the New run page.`'],
-    ['ui/public/models-view.mjs', "'Drops the built-ins from every model picker — New run, the Workflows view, Ask Worca, title generation."],
-    ['ui/public/schedules-view.mjs', "', then describe the task — or use Schedule… next to Start run on New run.'"],
-    ['ui/public/stats-view.mjs', "'No pipelines yet — run one from New run.'"],
-    ['ui/public/ui-level.mjs', "adds: 'Shows: New run, Runs, Projects, Workflows (agents and scripts included), budget limits and Ask Worca.'"],
+    ['ui/public/memory-view.mjs', '. Pick another project on the New run page.`'],
+    ['ui/public/models-view.mjs', "'Drops the built-ins from every model picker: New run, the Workflows view, Chat, title generation."],
+    ['ui/public/schedules-view.mjs', "', then describe the task. Or use Schedule… next to Start run on New run.'"],
+    ['ui/public/stats-view.mjs', "'No pipelines yet. Run one from New run.'"],
+    ['ui/public/ui-level.mjs', "adds: 'Shows: New run, Runs, Projects, Workflows (agents and scripts included), budget limits and Chat.'"],
     ['src/core/ask/prompt.mjs', "The team\\'s default guardrail set only preselects the New run picker."],
     ['src/core/policy/registry.mjs', "help: 'What the New run picker starts on."],
   ]) assert.ok(read(file).includes(text), `${file}: ${text}`);

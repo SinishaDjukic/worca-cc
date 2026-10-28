@@ -1,5 +1,5 @@
 // test/ask-schedules.test.mjs
-// Scheduled runs in Ask Worca (docs/scheduled-runs.md "Ask Worca"), end to end over WORCA_MOCK:
+// Scheduled runs in Ask Worca (docs/scheduled-runs.md "Chat"), end to end over WORCA_MOCK:
 // a "schedule …" message proposes a run card carrying its schedule (read in the browser's zone);
 // the card schedules once or becomes a repeating schedule it then follows; a schedule-change card
 // is applied or declined behind the click through the same verbs the Schedules page uses; and the
@@ -17,6 +17,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { _stopToolProbes } from '../src/core/preflight.mjs';
 
 useTempHome(after);
 
@@ -59,6 +60,7 @@ after(async () => {
   for (const [, job] of mod._testing.askJobs) { try { job.turn?.stop?.(); } catch { /* reap */ } }
   for (const r of mod.runs.values()) { try { r.orch?.stop?.(); } catch { /* reap */ } }
   mod.runs.clear();
+  _stopToolProbes(); // a stopped run's preflight `pip show` probe would hold the process seconds after the last test
   if (srv) {
     await Promise.race([
       new Promise((r) => { srv.close(r); srv.closeAllConnections?.(); }),

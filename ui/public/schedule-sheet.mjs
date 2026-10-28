@@ -13,9 +13,12 @@
 //   + sync: { beforeRun?, onDiverged? }  only with the opt-in `sync` option, and only what was set
 
 import {
-  WEEKDAYS, normalizeRule, previewOccurrences, describeRule, formatInstant, formatCountdown,
+  WEEKDAYS, normalizeRule, previewOccurrences, describeRule, formatCountdown,
   zonedToUtc, zonedParts, localDate, isValidTimeZone,
 } from '../../src/shared/schedule/recurrence.mjs';
+import { guardModal } from './modal-guard.mjs';
+import { layoutDialog } from './dialog-layout.mjs';
+import { whenLabel } from './runs-list.mjs';
 
 const DAY_LABEL = { mo: 'Mo', tu: 'Tu', we: 'We', th: 'Th', fr: 'Fr', sa: 'Sa', su: 'Su' };
 const DAY_NAME = { mo: 'Monday', tu: 'Tuesday', we: 'Wednesday', th: 'Thursday', fr: 'Friday', sa: 'Saturday', su: 'Sunday' };
@@ -29,6 +32,8 @@ const AFTER_STATE_WORD = { running: 'running', starting: 'starting', created: 's
   scheduled: 'scheduled', firing: 'starting', missed: 'missed', fired: 'starting',
   done: 'finished', error: 'ended with an error', stopped: 'stopped', interrupted: 'interrupted', canceled: 'canceled',
   failed: 'could not start', skipped: 'skipped' };
+/** How a repeating rule fills its day: one time, a list of times, or every N minutes/hours. */
+const DAY_PLANS = [['time', 'Once'], ['times', 'At set times'], ['step', 'Every few minutes or hours']];
 const GRACE_CHOICES = [[30, '30 minutes'], [60, '1 hour'], [120, '2 hours'], [360, '6 hours'], [720, '12 hours'], [1440, '24 hours']];
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -118,6 +123,13 @@ export function openScheduleSheet({
       endType: initial.rule?.end?.type || 'never',
       until: initial.rule?.end?.until || '',
       count: initial.rule?.end?.count || 10,
+      dayPlan: initial.rule?.step ? 'step' : initial.rule?.times ? 'times' : 'time',
+      times: initial.rule?.times ? initial.rule.times.join(', ') : '09:00, 13:00, 17:00',
+      stepN: initial.rule?.step ? (initial.rule.step.minutes % 60 ? initial.rule.step.minutes : initial.rule.step.minutes / 60) : 15,
+      stepUnit: initial.rule?.step && initial.rule.step.minutes % 60 === 0 ? 'hours' : 'minutes',
+      between: !!initial.rule?.step && (initial.rule.step.from !== '00:00' || initial.rule.step.to !== '23:59'),
+      from: initial.rule?.step?.from && initial.rule.step.from !== '00:00' ? initial.rule.step.from : '09:00',
+      to: initial.rule?.step?.to && initial.rule.step.to !== '23:59' ? initial.rule.step.to : '18:00',
       overlap: initial.overlap || 'skip',
       maxFailures: initial.maxFailures ?? defaults.maxFailures,
       ifMissed: initial.ifMissed || defaults.ifMissed,
@@ -173,6 +185,23 @@ export function openScheduleSheet({
       h('div', { class: 'sched-inline' }, endSel, untilIn, countIn));
     const repeatRow = h('div', { class: 'field-grid-2 sched-repeat' }); // time + ends (time field moves in here)
 
+    // Times a day: once (the time field), a list of times, or every N minutes/hours in an optional range.
+    const planSel = selectEl('sched-plan', DAY_PLANS, state.dayPlan, 'Times a day');
+    const timesIn = h('input', { type: 'text', id: 'sched-times', class: 'input', spellcheck: 'false', placeholder: '09:00, 13:00, 17:00', 'aria-label': 'Times of day' });
+    const timesField = h('div', { class: 'field field-compact' }, h('label', { for: 'sched-times', text: 'At' }), timesIn);
+    const stepIn = h('input', { type: 'number', id: 'sched-step', class: 'input', min: '1', max: '1440', 'aria-label': 'Every' });
+    const stepUnitSel = selectEl('sched-step-unit', [['minutes', 'minutes'], ['hours', 'hours']], state.stepUnit, 'Unit');
+    const betweenIn = h('input', { type: 'checkbox', id: 'sched-between' });
+    const fromIn = h('input', { type: 'time', id: 'sched-from', class: 'input', 'aria-label': 'From' });
+    const toIn = h('input', { type: 'time', id: 'sched-to', class: 'input', 'aria-label': 'To' });
+    const rangeDash = h('span', { class: 'sched-range-dash', text: '–' });
+    const stepField = h('div', { class: 'field field-compact' }, h('label', { for: 'sched-step', text: 'Every' }),
+      h('div', { class: 'sched-inline' }, stepIn, stepUnitSel),
+      h('div', { class: 'sched-inline sched-range' },
+        h('label', { class: 'sched-between', for: 'sched-between' }, betweenIn, h('span', { text: 'Only between' })), fromIn, rangeDash, toIn));
+    const planRow = h('div', { class: 'field-grid-2 sched-plan' },
+      h('div', { class: 'field field-compact' }, h('label', { for: 'sched-plan', text: 'Times a day' }), planSel), timesField, stepField);
+
     const sentence = h('div', { class: 'sched-sentence', 'aria-live': 'polite' });
     const tzLine = h('div', { class: 'sched-tz' });
     const tzIn = h('input', { type: 'text', id: 'sched-tz', class: 'input', spellcheck: 'false', list: 'sched-tz-list', 'aria-label': 'Timezone', hidden: true });
@@ -204,7 +233,7 @@ export function openScheduleSheet({
     const divergedSel = selectEl('sched-sync-diverged', divergedOpts, divergedStart, 'If the base has diverged');
     const syncRow = showSync ? h('div', { class: 'field-grid-2 sched-sync' },
       h('div', { class: 'field field-compact' }, h('span', { class: 'label', text: 'Sync' }),
-        h('label', { class: 'switch-row' }, syncAutoIn, h('span', { class: 'switch switch-sm' }), h('span', { class: 'txt', text: 'Auto-sync before the run' }))),
+        h('label', { class: 'switch-row' }, syncAutoIn, h('span', { class: 'switch' }), h('span', { class: 'txt', text: 'Auto-sync before the run' }))),
       h('div', { class: 'field field-compact' }, h('label', { for: 'sched-sync-diverged', text: 'If the base has diverged' }), divergedSel)) : null;
     syncAutoIn.addEventListener('change', () => { syncAutoTouched = true; });
     /** Only what the person chose: undefined when nothing was set, so no `sync` key at all. */
@@ -221,30 +250,42 @@ export function openScheduleSheet({
     const engineRow = engineSel ? h('div', { class: 'field field-compact' }, h('label', { for: 'sched-engine', text: 'Resume on' }), engineSel) : null;
 
     const err = h('div', { class: 'hint err sched-err', hidden: true });
-    const cancelBtn = h('button', { type: 'button', class: 'btn btn-mini sched-cancel', text: 'Cancel' });
-    const okBtn = h('button', { type: 'button', class: 'btn btn-primary btn-mini sched-ok', text: confirmLabel });
-    const closeBtn = h('button', { type: 'button', class: 'btn btn-mini', text: 'Close' });
+    const cancelBtn = h('button', { type: 'button', class: 'btn sched-cancel', text: 'Cancel' });
+    const okBtn = h('button', { type: 'button', class: 'btn btn-primary sched-ok', text: confirmLabel });
 
+    const head = h('div', { class: 'card-head' }, h('h2', { id: 'sched-title', text: heading }));
+    const runTitleEl = runTitle ? h('div', { class: 'sched-run-title', text: runTitle }) : null;
+    const actions = h('div', { class: 'confirm-actions' }, cancelBtn, okBtn);
     const card = h('div', { class: 'card sched-card' },
-      h('div', { class: 'card-head' }, h('h2', { id: 'sched-title', text: heading }), closeBtn),
-      runTitle ? h('div', { class: 'sched-run-title', text: runTitle }) : null,
+      head, runTitleEl,
       showKind ? kindSeg : null,
       showPresets ? seg : null,
-      quick, onceRow, daysField, customField, monthField, showKind ? afterRow : null, repeatRow,
+      quick, onceRow, daysField, customField, monthField, showKind ? afterRow : null, planRow, repeatRow,
       sentence, tzLine, tzIn, tzList,
       policyRow, missedRow, syncRow, engineRow,
       h('small', { class: 'hint sched-note', text: 'A scheduled run starts only while Worca is running and this computer is awake.' }),
       warning ? h('div', { class: 'hint warn sched-warn', text: warning }) : null,
-      err,
-      h('div', { class: 'confirm-actions' }, cancelBtn, okBtn));
+      err, actions);
+    // The error line goes with the buttons: a failed save must stay in view when the form is scrolled.
+    layoutDialog(card, { head: [head, runTitleEl], foot: [err, actions] });
     const modal = h('div', { id: 'schedule-modal', class: 'viewer-modal confirm-modal sched-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sched-title' }, card);
 
     // ── state -> DOM ─────────────────────────────────────────────────────────
     dateIn.value = state.date; timeIn.value = state.time; intervalIn.value = state.interval;
     untilIn.value = state.until; countIn.value = state.count; failIn.value = state.maxFailures;
+    timesIn.value = state.times; stepIn.value = state.stepN; betweenIn.checked = state.between; fromIn.value = state.from; toIn.value = state.to;
 
+    /** The rule's day part: { time } | { times } | { step }. */
+    const dayPart = () => {
+      if (state.dayPlan === 'times') return { times: state.times.split(/[\s,]+/).filter(Boolean) };
+      if (state.dayPlan === 'step') {
+        const minutes = Number(state.stepN) * (state.stepUnit === 'hours' ? 60 : 1);
+        return { step: { minutes, ...(state.between ? { from: state.from, to: state.to } : {}) } };
+      }
+      return { time: state.time };
+    };
     const currentRule = () => {
-      const base = { time: state.time, tz, anchor: initial.rule?.anchor };
+      const base = { ...dayPart(), tz, anchor: initial.rule?.anchor };
       const end = state.endType === 'until' ? { type: 'until', until: state.until } : state.endType === 'count' ? { type: 'count', count: Number(state.count) } : { type: 'never' };
       let r;
       if (state.preset === 'daily') r = { freq: 'daily', interval: 1 };
@@ -339,8 +380,11 @@ export function openScheduleSheet({
       }) : []));
       // The time field lives beside Date (once) or beside Ends (repeat).
       const timeField = timeIn.closest('.field');
-      if (once) { onceRow.append(timeField); } else { repeatRow.replaceChildren(timeField, endField); }
+      if (once) { onceRow.append(timeField); } else { repeatRow.replaceChildren(...(state.dayPlan === 'time' ? [timeField] : []), endField); }
       onceRow.hidden = !once || after; repeatRow.hidden = once || after;
+      planRow.hidden = once || after;
+      timesField.hidden = state.dayPlan !== 'times'; stepField.hidden = state.dayPlan !== 'step';
+      fromIn.hidden = toIn.hidden = rangeDash.hidden = !state.between;
       afterRow.hidden = !after;
       daysField.hidden = after || !usesDays; monthField.hidden = after || !usesMonth; customField.hidden = after || state.preset !== 'custom';
       policyRow.hidden = once || after;
@@ -367,21 +411,23 @@ export function openScheduleSheet({
         if (ms == null) problem = 'Pick a date and a time.';
         else if (ms <= Date.now()) problem = 'That time is already in the past.';
         sentence.replaceChildren(
-          h('b', { text: ms == null ? 'Once' : `Once, on ${formatInstant(ms, tz, { withYear: true })}` }),
+          h('b', { text: ms == null ? 'Once' : `Once, on ${whenLabel(ms, Date.now(), tz)}` }),
           h('div', { class: 'sched-next', text: ms != null && ms > Date.now() ? `Starts in ${formatCountdown(ms - Date.now())}` : '' }));
       } else {
         const norm = currentRule();
         if (!norm.ok) {
           problem = norm.error.replace(/^rule\.weekdays needs at least one day$/, 'Pick at least one day.')
             .replace(/^rule\.end\.until.*/, 'Pick the last day it may run.').replace(/^rule\.end\.count.*/, 'Enter how many times it should run.')
-            .replace(/^rule\.interval.*/, 'Enter how often it repeats, from 1 to 365.').replace(/^rule\.time.*/, 'Pick a time.');
+            .replace(/^rule\.interval.*/, 'Enter how often it repeats, from 1 to 365.').replace(/^rule\.times.*/, 'Enter the times as HH:MM, separated by commas.')
+            .replace(/^rule\.time\b.*/, 'Pick a time.').replace(/^rule\.step\.minutes.*/, 'Enter how often it runs: every 15 minutes or more.')
+            .replace(/^rule\.step\.(from|to).*/, 'Pick the start and end of the time range; the end must come after the start.');
           sentence.replaceChildren(h('b', { text: 'Repeats' }), h('div', { class: 'sched-next', text: '' }));
         } else {
           const next = previewOccurrences(norm.rule, Date.now(), 3, { firedCount: 0 });
           if (!next.length) problem = 'This schedule has no future run.';
           sentence.replaceChildren(
             h('b', { text: describeRule(norm.rule) }),
-            h('div', { class: 'sched-next', text: next.length ? `Next: ${next.map((t) => formatInstant(t, tz)).join('  ·  ')}` : '' }));
+            h('div', { class: 'sched-next', text: next.length ? `Next: ${next.map((t) => whenLabel(t, Date.now(), tz)).join('  ·  ')}` : '' }));
         }
       }
       sentence.classList.toggle('bad', !!problem);
@@ -408,9 +454,12 @@ export function openScheduleSheet({
     const bind = (node, key, conv = (v) => v) => node.addEventListener('input', () => { state[key] = conv(node.value); paint(); });
     bind(dateIn, 'date'); bind(timeIn, 'time'); bind(intervalIn, 'interval', Number); bind(untilIn, 'until'); bind(countIn, 'count', Number);
     bind(failIn, 'maxFailures', Number);
+    bind(timesIn, 'times'); bind(stepIn, 'stepN', Number); bind(fromIn, 'from'); bind(toIn, 'to');
+    betweenIn.addEventListener('change', () => { state.between = betweenIn.checked; paint(); });
     const bindSel = (wrap, key, conv = (v) => v) => wrap.firstChild.addEventListener('change', () => { state[key] = conv(wrap.firstChild.value); paint(); });
     bindSel(unitSel, 'unit'); bindSel(endSel, 'endType'); bindSel(overlapSel, 'overlap'); bindSel(missedSel, 'ifMissed');
     bindSel(graceSel, 'graceMin', Number);
+    bindSel(planSel, 'dayPlan'); bindSel(stepUnitSel, 'stepUnit');
     bindSel(monthSel, 'monthDay', (v) => (v === 'last' ? 'last' : Number(v)));
     kindSeg.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-kind]');
@@ -431,19 +480,12 @@ export function openScheduleSheet({
       const chosen = result ? syncResult() : undefined;
       if (chosen) result = { ...result, sync: chosen };
       if (result && engineSel && engineSel.firstChild.value !== engine.choices[0][0]) result = { ...result, engine: engineSel.firstChild.value };
-      document.removeEventListener('keydown', onKey, true);
       modal.remove();
       openSheet = null;
       if (prevFocus && typeof prevFocus.focus === 'function') { try { prevFocus.focus(); } catch { /* gone */ } }
       resolve(result);
     }
-    function onKey(e) {
-      if (e.key === 'Escape') { e.stopPropagation(); finish(null); }
-    }
-    document.addEventListener('keydown', onKey, true);
-    modal.addEventListener('click', (e) => { if (e.target === modal) finish(null); });
     cancelBtn.addEventListener('click', () => finish(null));
-    closeBtn.addEventListener('click', () => finish(null));
     okBtn.addEventListener('click', () => {
       const maxFailures = Number.isInteger(state.maxFailures) && state.maxFailures >= 0 && state.maxFailures <= 100 ? state.maxFailures : defaults.maxFailures;
       const common = { ifMissed: state.ifMissed, graceMin: state.graceMin };
@@ -464,6 +506,9 @@ export function openScheduleSheet({
     openSheet = finish;
     document.body.append(modal);
     paint();
+    // A form: a backdrop click never closes it; Escape closes it untouched and asks once a time, a preset
+    // or a policy changed (the run list it loads later is not a change). Cancel discards at once.
+    guardModal(modal, { kind: 'form', close: () => finish(null) }).opened();
     (showKind ? kindSeg.querySelector('button.on') : showPresets ? seg.querySelector('button.on') : dateIn)?.focus();
   });
 }

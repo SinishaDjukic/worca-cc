@@ -8,7 +8,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { _resetForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
-let home, srv, base, prev;
+let home, srv, base, prev, testing;
 
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'worca-cc-setapi-'));
@@ -27,7 +27,8 @@ before(async () => {
   delete process.env.WORCA_PROJECTS_ROOT;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   _resetForTests();
-  const { app } = await import('../ui/server.mjs');
+  const { app, _testing: t } = await import('../ui/server.mjs');
+  testing = t;
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
@@ -105,8 +106,24 @@ test('POST sets debugSpawnEnabled; GET reflects it; does not touch root', async 
   }
 });
 
-test('resumeAfterUsageLimit: GET defaults to false, POST true round-trips, a non-boolean answers 400 naming the field', async () => {
+test('resumeAfterUsageLimit / autoGeneratePrDescription: GET defaults to false, POST true round-trips, a non-boolean answers 400 naming the field', async () => {
   await checkRows([
+    { name: 'GET /api/settings: autoGeneratePrDescription defaults to false', run: async () => {
+      assert.equal((await (await fetch(`${base}/api/settings`)).json()).autoGeneratePrDescription, false);
+    } },
+    { name: 'POST autoGeneratePrDescription true round-trips through GET and back to false', run: async () => {
+      try {
+        assert.equal((await (await postJson({ autoGeneratePrDescription: true })).json()).autoGeneratePrDescription, true);
+        assert.equal((await (await fetch(`${base}/api/settings`)).json()).autoGeneratePrDescription, true);
+      } finally {
+        assert.equal((await (await postJson({ autoGeneratePrDescription: false })).json()).autoGeneratePrDescription, false);
+      }
+    } },
+    { name: 'POST autoGeneratePrDescription "yes" answers 400 naming the field', run: async () => {
+      const r = await postJson({ autoGeneratePrDescription: 'yes' });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).field, 'autoGeneratePrDescription');
+    } },
     { name: 'GET /api/settings: resumeAfterUsageLimit defaults to false', run: async () => {
       assert.equal((await (await fetch(`${base}/api/settings`)).json()).resumeAfterUsageLimit, false);
     } },
@@ -122,6 +139,130 @@ test('resumeAfterUsageLimit: GET defaults to false, POST true round-trips, a non
       const r = await postJson({ resumeAfterUsageLimit: 'yes' });
       assert.equal(r.status, 400);
       assert.equal((await r.json()).field, 'resumeAfterUsageLimit');
+    } },
+  ]);
+});
+
+test('updateCheck: GET defaults to true, POST false round-trips, a non-boolean answers 400 naming the field', async () => {
+  await checkRows([
+    { name: 'GET /api/settings: updateCheck defaults to true', run: async () => {
+      assert.equal((await (await fetch(`${base}/api/settings`)).json()).updateCheck, true);
+    } },
+    { name: 'POST updateCheck false round-trips through GET and back to true', run: async () => {
+      try {
+        assert.equal((await (await postJson({ updateCheck: false })).json()).updateCheck, false);
+        assert.equal((await (await fetch(`${base}/api/settings`)).json()).updateCheck, false);
+      } finally {
+        assert.equal((await (await postJson({ updateCheck: true })).json()).updateCheck, true);
+      }
+    } },
+    { name: 'POST updateCheck "yes" answers 400 naming the field', run: async () => {
+      const r = await postJson({ updateCheck: 'yes' });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).field, 'updateCheck');
+    } },
+  ]);
+});
+
+test('keepAwake: GET defaults to true, POST false round-trips, a non-boolean answers 400 naming the field', async () => {
+  await checkRows([
+    { name: 'GET /api/settings: keepAwake defaults to true', run: async () => {
+      assert.equal((await (await fetch(`${base}/api/settings`)).json()).keepAwake, true);
+    } },
+    { name: 'POST keepAwake false round-trips through GET and back to true', run: async () => {
+      try {
+        assert.equal((await (await postJson({ keepAwake: false })).json()).keepAwake, false);
+        assert.equal((await (await fetch(`${base}/api/settings`)).json()).keepAwake, false);
+      } finally {
+        assert.equal((await (await postJson({ keepAwake: true })).json()).keepAwake, true);
+      }
+    } },
+    { name: 'POST keepAwake "no" answers 400 naming the field', run: async () => {
+      const r = await postJson({ keepAwake: 'no' });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).field, 'keepAwake');
+    } },
+  ]);
+});
+
+test('GET /api/app/version: unknown with no fetch under tests; a fake fetcher drives outdated + links; setting off = no fetch', async () => {
+  const get = async () => (await fetch(`${base}/api/app/version`)).json();
+  const pkgVersion = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
+  // The test tree is itself a git checkout: pin "installed from npm" unless a row says otherwise.
+  testing.setSourceBuild(false);
+  await checkRows([
+    { name: 'default fetcher under NODE_TEST_CONTEXT: unknown, no network', run: async () => {
+      testing.setUpdateFetcher(null);
+      const j = await get();
+      assert.equal(j.status, 'unknown');
+      assert.equal(j.current, pkgVersion);
+      assert.equal(j.links.releaseNotes, 'https://docs.worca.dev/changelog/');
+      assert.equal(j.links.whatsNew, '');
+    } },
+    { name: 'a newer latest reads outdated with What\'s new and compare links', run: async () => {
+      let calls = 0;
+      testing.setUpdateFetcher(async () => { calls++; return '99.0.0'; });
+      const j = await get();
+      assert.equal(j.status, 'outdated');
+      assert.equal(j.latest, '99.0.0');
+      assert.equal(j.links.whatsNew, 'https://docs.worca.dev/changelog/99.0.0/');
+      assert.match(j.links.compare, new RegExp(`/compare/worca-app-v${pkgVersion.replace(/\./g, '\\.')}\\.\\.\\.worca-app-v99\\.0\\.0$`));
+      await get();
+      assert.equal(calls, 1, 'cached');
+      const forced = await (await fetch(`${base}/api/app/version/check`, { method: 'POST' })).json();
+      assert.equal(forced.status, 'outdated');
+      assert.equal(calls, 1, 'Check now inside the minimum interval does not refetch');
+    } },
+    { name: 'updateCheck false: unknown, enabled false, fetcher never called', run: async () => {
+      let calls = 0;
+      testing.setUpdateFetcher(async () => { calls++; return '99.0.0'; });
+      try {
+        await postJson({ updateCheck: false });
+        const j = await get();
+        assert.equal(j.status, 'unknown');
+        assert.equal(j.enabled, false);
+        assert.equal(calls, 0);
+      } finally { await postJson({ updateCheck: true }); testing.setUpdateFetcher(null); }
+    } },
+    { name: 'POST updateCheck false clears the cached answer: back on = a fresh fetch', run: async () => {
+      let calls = 0;
+      testing.setUpdateFetcher(async () => { calls++; return calls === 1 ? '99.0.0' : '0.0.1'; });   // not pkgVersion: an RC is never an npm latest, so it reads unknown
+      try {
+        assert.equal((await get()).status, 'outdated');
+        await postJson({ updateCheck: false });
+        await postJson({ updateCheck: true });
+        assert.equal((await get()).status, 'ahead', 'the second answer, not the cached one');
+        assert.equal(calls, 2);
+      } finally { await postJson({ updateCheck: true }); testing.setUpdateFetcher(null); }
+    } },
+    { name: 'a source build: status source, no links, no fetch, Check now included', run: async () => {
+      let calls = 0;
+      testing.setUpdateFetcher(async () => { calls++; return '99.0.0'; });
+      testing.setSourceBuild(true);
+      try {
+        for (const j of [await get(), await (await fetch(`${base}/api/app/version/check`, { method: 'POST' })).json()]) {
+          assert.equal(j.status, 'source');
+          assert.equal(j.latest, null);
+          assert.equal(j.current, pkgVersion);
+          assert.deepEqual(j.links, { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: '', compare: '' });
+        }
+        assert.equal(calls, 0);
+      } finally { testing.setSourceBuild(false); testing.setUpdateFetcher(null); }
+    } },
+    { name: 'the real detection on this checkout: source build, unless WORCA_UPDATE_CHECK_LATEST is set', run: async () => {
+      const prevLatest = process.env.WORCA_UPDATE_CHECK_LATEST;
+      testing.setSourceBuild(null);
+      try {
+        delete process.env.WORCA_UPDATE_CHECK_LATEST;
+        assert.equal((await get()).status, 'source');
+        process.env.WORCA_UPDATE_CHECK_LATEST = '99.1.0';
+        const j = await get();
+        assert.equal(j.status, 'outdated');
+        assert.equal(j.latest, '99.1.0');
+      } finally {
+        if (prevLatest === undefined) delete process.env.WORCA_UPDATE_CHECK_LATEST; else process.env.WORCA_UPDATE_CHECK_LATEST = prevLatest;
+        testing.setSourceBuild(false); testing.setUpdateFetcher(null);
+      }
     } },
   ]);
 });
@@ -152,19 +293,27 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false,
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, keepAwake: true, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',
       memoryDefrag: null,
+      requirementsInterview: null,
+      agentGenModel: null,
+      namingModel: null,
+      commandSummaryModel: null,
       workspaceScan: null,
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',
       sync: null,
+      networkWait: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
-      askEngine: null, askModels: {},                        // Ask Worca's engine (Plan 2b, D17): null / {} change nothing
+      modelRoles: {},                                        // Models › Roles: {} changes nothing
+      askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
+      tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)
+      enforceTags: false,                                    // Settings › Tags › Require mandatory tags: false clears (already clear)
     };
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;
@@ -241,6 +390,38 @@ test('GET has askWeb; POST askWeb validates, saves, and null clears', async () =
   assert.deepEqual((await (await postJson({ askWeb: null })).json()).askWeb, { enabled: false, anyHost: false, allowedDomains: [], search: null });
 });
 
+test('smartNaming: GET has defaults, POST saves a partial block, rejects a bad pattern, null clears', async () => {
+  const get = async () => (await fetch(`${base}/api/settings`)).json();
+  const g = (await get()).smartNaming;
+  assert.equal(g.pattern, '{type}/{slug}'); assert.equal(g.trigger, 'debounce'); assert.equal(g.addRunId, false);
+  assert.equal('model' in g, false, 'the model is a helper job of its own (namingModel)');
+  const ok = await postJson({ smartNaming: { pattern: '{type}/{ticket}-{slug}', types: ['fix', 'feat'] } });
+  assert.equal(ok.status, 200);
+  const saved = (await get()).smartNaming;
+  assert.equal(saved.pattern, '{type}/{ticket}-{slug}'); assert.deepEqual(saved.types, ['fix', 'feat']);
+  const bad = await postJson({ smartNaming: { pattern: '{type}/no-slug' } });
+  assert.equal(bad.status, 400);
+  const body = await bad.json();
+  assert.match(body.error, /\{slug\}/); assert.equal(body.field, 'smartNaming');
+  assert.equal((await postJson({ smartNaming: { types: ['Bad Type'] } })).status, 400);
+  assert.equal((await get()).smartNaming.pattern, '{type}/{ticket}-{slug}', 'a refused save writes nothing');
+  assert.deepEqual((await (await postJson({ smartNaming: null })).json()).smartNaming.types, ['feat', 'fix', 'chore', 'docs', 'refactor', 'test']);
+});
+
+test('smartNaming: a leftover stored model is ignored on read and dropped on the next save; a posted one is ignored', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  const cur = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+  mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  writeFileSync(file, JSON.stringify({ ...cur, smartNaming: { model: { model: 'x' }, pattern: '{type}/{slug}-b' } }));
+  const g = (await (await fetch(`${base}/api/settings`)).json()).smartNaming;
+  assert.equal('model' in g, false); assert.equal(g.pattern, '{type}/{slug}-b');
+  const r = await postJson({ smartNaming: { suggestTitle: false, model: { model: 'y' } } });
+  assert.equal(r.status, 200);
+  const stored = JSON.parse(readFileSync(file, 'utf8')).smartNaming;
+  assert.deepEqual(stored, { pattern: '{type}/{slug}-b', suggestTitle: false });
+  assert.equal((await postJson({ smartNaming: null })).status, 200);
+});
+
 // #555: a POST /api/settings validation failure answers 400 { error, field }, where `field` is the
 // body path of the bad input (the path a Settings input carries in data-setting) and `error`
 // names the visible label, never an internal camelCase or dotted key.
@@ -271,4 +452,60 @@ test('POST /api/settings validation failures → 400 { error, field } with the b
       assert.doesNotMatch(j.error, NO_KEY);
     },
   })));
+});
+
+test('POST tagDimensions: a bad entry is 400 with field tagDimensions; a valid list round-trips through GET', async () => {
+  const bad = await postJson({ tagDimensions: [{ key: '', label: 'x' }] });
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).field, 'tagDimensions');
+  const ok = await postJson({ tagDimensions: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] });
+  assert.equal(ok.status, 200);
+  assert.deepEqual((await (await fetch(`${base}/api/settings`)).json()).tagDimensions, [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }]);
+  await postJson({ tagDimensions: [] });
+  assert.deepEqual((await (await fetch(`${base}/api/settings`)).json()).tagDimensions, []);
+});
+
+test('POST enforceTags: a non-boolean is 400 with field enforceTags; true round-trips through GET', async () => {
+  const bad = await postJson({ enforceTags: 'yes' });
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).field, 'enforceTags');
+  const ok = await postJson({ enforceTags: true });
+  assert.equal(ok.status, 200);
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).enforceTags, true);
+  await postJson({ enforceTags: false });
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).enforceTags, false);
+});
+
+test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#911)', async () => {
+  let s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.summariseCommands, true);
+  let r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { summariseCommands: false } }) });
+  assert.equal(r.status, 200);
+  s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.summariseCommands, false);
+  r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { summariseCommands: 'no' } }) });
+  assert.equal(r.status, 400);
+  // settingsErrorReply (src/core/settings-errors.mjs) answers { error, field }: the field is the body key validated.
+  const body = await r.json();
+  assert.equal(body.field, 'chat');
+  assert.equal(typeof body.error, 'string');
+});
+
+test('POST modelRoles: a model outside the catalog or a bad effort is 400 and writes nothing; ids are stored canonical', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  const ok0 = await postJson({ enforceTags: false });   // the file exists before the byte comparison
+  assert.equal(ok0.status, 200);
+  const before = readFileSync(file);
+  const unknown = await postJson({ modelRoles: { claude: { deep: { model: 'nope' } } } });
+  assert.equal(unknown.status, 400);
+  assert.match((await unknown.json()).field, /^modelRoles/);
+  const effort = await postJson({ modelRoles: { claude: { deep: { model: 'claude-opus-5-5', effort: 'rm -rf' } } } });
+  assert.equal(effort.status, 400);
+  assert.equal((await effort.json()).field, 'modelRoles.claude.deep.effort');
+  assert.deepEqual(readFileSync(file), before, 'a refused POST leaves settings.json byte-identical');
+  const canon = await postJson({ modelRoles: { claude: { deep: { model: 'Claude-Opus-5-5' } } } });
+  assert.equal(canon.status, 200);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { model: 'claude-opus-5-5' } } });
+  assert.equal((await postJson({ modelRoles: { claude: { deep: null } } })).status, 200);
+  assert.equal('modelRoles' in JSON.parse(readFileSync(file, 'utf8')), false);
 });

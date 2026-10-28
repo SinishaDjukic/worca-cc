@@ -8,15 +8,18 @@ import { listWorkspaces, readWorkspace, WORKSPACE_KEY_RE } from '../workspaces.m
 import {
   METRICS_DIR, REMOTE_REF, ensureWorktree, fetchMetricsBranch, runGit, withSlugLock, worktreePath, pushHint,
   resolveProjectSink, discoverProject, listOutbox, projectMetricsStatus, workspaceMetricsStatus, recordsLocally,
-  metricsEvents, keepProjectRecord,
+  metricsEvents, keepProjectRecord, snapshotPath, ensureSnapshot, refreshSnapshot, branchDirOf, projectSlug,
 } from './sync.mjs';
+import { teamOverHttps } from '../git-free/team-repo.mjs';
+import { repoOfSlug } from '../git-free/team-branch.mjs';
+import { onGitChange, gitMissingMessage } from '../git-available.mjs';
 import { readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
 import { parseRecordLine } from '../../shared/team-metrics/aggregate.mjs';
 import { matchesWorkspace } from '../../shared/team-metrics/workspace-match.mjs';
 
 export {
-  aggregate, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl, RANGES, GROUP_BYS, CSV_COLUMNS,
+  aggregate, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl, RANGES, GROUP_BYS, CSV_COLUMNS, isGroupBy,
 } from '../../shared/team-metrics/aggregate.mjs';
 
 export const FETCH_TTL_MS = 60_000;
@@ -25,11 +28,17 @@ export const MAX_RECORD_FILE_BYTES = 8 * 1024 * 1024;
 export const PROJECT_KEY_RE = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/;   // server.mjs imports this (one source)
 
 let _now = () => Date.now();
-const _lastFetch = new Map();   // slug → ms of the last successful fetch (implicit or forced)
-const _lastForced = new Map();  // slug → ms of the last refresh=1 fetch
-const _lastFetchFail = new Map(); // slug → ms of the last failed fetch
-const _lastFetchError = new Map(); // slug → stderr of the last failed DEFERRED fetch (a later deferred read reports it)
-const _deferred = new Map();       // slug → Promise of the deferred fetch in flight (one per slug, never stacked)
+// Keyed by the slug's local copy (P6: `branchDirOf` — its worktree, or a team repository's HTTPS snapshot): a typed Folder's
+// snapshot and a git clone's worktree of one repository fetch apart, and a fetch begun before git arrived books its own copy.
+const _lastFetch = new Map();   // copy → ms of the last successful fetch (implicit or forced)
+const _lastForced = new Map();  // copy → ms of the last refresh=1 fetch
+const _lastFetchFail = new Map(); // copy → ms of the last failed fetch
+const _lastFetchError = new Map(); // copy → stderr of the last failed DEFERRED fetch (a later deferred read reports it; P6: also a
+                                   // failed inline snapshot build that served a git session's worktree instead)
+const _deferred = new Map();       // copy → Promise of the deferred fetch in flight (one per copy, never stacked)
+// P6: git installed (or gone) switches a project's copy between the HTTPS snapshot and the git worktree: the other
+// copy's fetch history must not hold back the first fetch of this one.
+onGitChange(() => { _lastFetch.clear(); _lastForced.clear(); _lastFetchFail.clear(); _lastFetchError.clear(); });
 
 /** "project:<projectKey>" | "workspace:<wks-…>" → {kind, id} | null */
 export function parseScopeParam(s) {
@@ -79,12 +88,12 @@ export async function readRecordsFromDir(dir) {
   return out;
 }
 
-/** §4.9 rate limit: implicit fetch ≤ 1/60 s per slug; refresh=1 forces one, throttled to 1/60 s per slug. */
-export function fetchDecision(slug, { refresh = false, now = _now() } = {}) {
-  const sinceFetch = now - (_lastFetch.get(slug) ?? -Infinity);
-  const sinceFail = now - (_lastFetchFail.get(slug) ?? -Infinity);
+/** §4.9 rate limit: implicit fetch ≤ 1/60 s per copy; refresh=1 forces one, throttled to 1/60 s per copy. */
+export function fetchDecision(copy, { refresh = false, now = _now() } = {}) {
+  const sinceFetch = now - (_lastFetch.get(copy) ?? -Infinity);
+  const sinceFail = now - (_lastFetchFail.get(copy) ?? -Infinity);
   if (!refresh) return { fetch: sinceFetch >= FETCH_TTL_MS && sinceFail >= FETCH_FAIL_TTL_MS, limited: false, retryInMs: 0 };
-  const sinceForced = now - (_lastForced.get(slug) ?? -Infinity);
+  const sinceForced = now - (_lastForced.get(copy) ?? -Infinity);
   if (sinceForced >= FETCH_TTL_MS) return { fetch: true, forced: true, limited: false, retryInMs: 0 };
   // Throttled: fall back to the implicit rule INCLUDING the failed-fetch TTL. Offline, _lastFetch is
   // never set, so without it every throttled Refresh ran a (≤120 s, slug-locked) fetch anyway.
@@ -92,9 +101,9 @@ export function fetchDecision(slug, { refresh = false, now = _now() } = {}) {
 }
 
 /** Test seam for the fetch bookkeeping readSink does (a forced attempt and a failure). */
-export function noteFetch(slug, { forced = false, ok = true, now = _now() } = {}) {
-  if (forced) _lastForced.set(slug, now);
-  if (ok) { _lastFetch.set(slug, now); _lastFetchFail.delete(slug); } else _lastFetchFail.set(slug, now);
+export function noteFetch(copy, { forced = false, ok = true, now = _now() } = {}) {
+  if (forced) _lastForced.set(copy, now);
+  if (ok) { _lastFetch.set(copy, now); _lastFetchFail.delete(copy); } else _lastFetchFail.set(copy, now);
 }
 
 /**
@@ -102,16 +111,22 @@ export function noteFetch(slug, { forced = false, ok = true, now = _now() } = {}
  * worktree holds NOW and runs the due fetch here, after the request, under the slug lock. When
  * it settles — new commits or not, failure included — one `changed` event ({ action: 'fetched'
  * | 'fetch-failed', updated }) reaches the UI, which reloads the page and repaints its chip. One
- * deferred fetch per slug: a second deferred read while one is in flight joins it. `create`
+ * deferred fetch per local copy: a second deferred read while one is in flight joins it. `create`
  * builds the worktree (first read ever), which ensureWorktree fetches on its own.
  */
 function scheduleDeferredFetch(slug, projectDir, { forced = false, create = false } = {}) {
-  if (_deferred.has(slug)) return _deferred.get(slug);
+  const copy = branchDirOf(slug, projectDir);
+  if (_deferred.has(copy)) return _deferred.get(copy);
   const p = withSlugLock(slug, async () => {
     let ok = false; let stderr = ''; let before = null; let after = null;
+    const https = teamOverHttps(projectDir);
     try {
-      if (create) { await ensureWorktree(slug, projectDir); ok = true; }
-      else {
+      if (create) { if (https) await ensureSnapshot(slug, projectDir); else await ensureWorktree(slug, projectDir); ok = true; }
+      else if (https) {
+        const r = await refreshSnapshot(slug, projectDir);
+        ok = r.ok; stderr = String(r.stderr || '').trim();
+        if (ok && r.changed) after = r.sha;   // before stays null: updated = changed
+      } else {
         const dir = worktreePath(slug);
         before = (await runGit(dir, ['rev-parse', REMOTE_REF], { timeoutMs: 10_000 })).stdout.trim();
         const f = await fetchMetricsBranch(dir);
@@ -123,12 +138,12 @@ function scheduleDeferredFetch(slug, projectDir, { forced = false, create = fals
         }
       }
     } catch (err) { ok = false; stderr = String(err?.stderr || err?.message || err).trim(); }
-    noteFetch(slug, { forced, ok, now: _now() });
-    if (ok) _lastFetchError.delete(slug); else _lastFetchError.set(slug, stderr || 'git fetch failed');
+    noteFetch(copy, { forced, ok, now: _now() });
+    if (ok) _lastFetchError.delete(copy); else _lastFetchError.set(copy, stderr || 'git fetch failed');
     metricsEvents.emit('changed', { slug, action: ok ? 'fetched' : 'fetch-failed', updated: ok && (create || after !== before) });
   }).catch(() => {});
-  const tail = p.finally(() => { if (_deferred.get(slug) === tail) _deferred.delete(slug); });
-  _deferred.set(slug, tail);
+  const tail = p.finally(() => { if (_deferred.get(copy) === tail) _deferred.delete(copy); });
+  _deferred.set(copy, tail);
   return tail;
 }
 
@@ -146,8 +161,16 @@ async function readSink(slug, projectDir, { refresh, defer = false }) {
     // ensureWorktree runs its OWN fetch (≤120 s) when the worktree does not exist yet, before
     // fetchDecision is consulted. Offline that made every GET — and every throttled refresh=1 —
     // pay a full fetch under the slug lock while reporting nothing. Consult the throttle first.
-    const pre = fetchDecision(slug, { refresh, now: _now() });
-    const hadWorktree = existsSync(worktreePath(slug));
+    const copy = branchDirOf(slug, projectDir);
+    const pre = fetchDecision(copy, { refresh, now: _now() });
+    const https = teamOverHttps(projectDir);
+    const hadWorktree = existsSync(https ? snapshotPath(slug) : worktreePath(slug));
+    // P6: no snapshot yet, but the worktree a git session left (P0 kept serving it offline): read it until the snapshot exists.
+    if (https && !hadWorktree && existsSync(worktreePath(slug))) return readLeftWorktree(slug, projectDir, copy, pre, defer);
+    // P6: nothing local, and GitHub cannot be asked (a host slug, a repository the slug misnames): git is needed, not a retry.
+    if (https && !hadWorktree && (!repoOfSlug(slug) || (projectDir && (await projectSlug(projectDir)).needsGit))) {
+      throw Object.assign(new Error(gitMissingMessage(slug)), { code: 'GIT_MISSING' });
+    }
     if (!hadWorktree && !pre.fetch) {
       throw Object.assign(new Error(`the ${slug} metrics branch has not been fetched yet; retrying shortly`), { code: 'FETCH_FAILED' });
     }
@@ -158,31 +181,32 @@ async function readSink(slug, projectDir, { refresh, defer = false }) {
       return { records: [], files: 0, malformed: 0, unknownV: 0, decision: { ...pre, fetch: false, deferred: true }, pending: true, fetchError: null, fetchedAt: null };
     }
     let dir;
-    try { dir = await ensureWorktree(slug, projectDir); }
-    catch (err) { if (err?.code === 'FETCH_FAILED') noteFetch(slug, { forced: !!pre.forced, ok: false }); throw err; }
+    try { dir = https ? await ensureSnapshot(slug, projectDir) : await ensureWorktree(slug, projectDir); }
+    catch (err) { if (err?.code === 'FETCH_FAILED') noteFetch(copy, { forced: !!pre.forced, ok: false }); throw err; }
     // ensureWorktree runs its OWN fetch when it has to create the worktree. Book that fetch here,
     // before re-deciding: otherwise the very first refresh=1 for a slug fetched TWICE under the
     // slug lock (once inside ensureWorktree, then again because _lastForced was still unset) —
     // doubling the worst-case latency of the exact path the throttle exists to bound.
     const now = _now();
-    if (!hadWorktree) noteFetch(slug, { forced: !!pre.forced, ok: true, now });
-    const decision = fetchDecision(slug, { refresh, now });
+    if (!hadWorktree) noteFetch(copy, { forced: !!pre.forced, ok: true, now });
+    const decision = fetchDecision(copy, { refresh, now });
     let fetchError = null;
     let pending = false;
     if (decision.fetch && defer) {
       scheduleDeferredFetch(slug, projectDir, { forced: !!decision.forced });
       pending = true;
       decision.deferred = true;
-    } else if (defer && _lastFetchError.has(slug)) {
+    } else if (defer && _lastFetchError.has(copy)) {
       // The last deferred fetch failed and the throttle skips this one: say so, as the inline
       // path would have on its own request (the chip's "offline" state).
-      fetchError = _lastFetchError.get(slug);
+      fetchError = _lastFetchError.get(copy);
     }
     if (decision.fetch && !defer) {
-      const f = await fetchMetricsBranch(dir);
+      const f = https ? await refreshSnapshot(slug, projectDir) : await fetchMetricsBranch(dir);
       // A forced attempt counts even if it fails (flood guard).
-      noteFetch(slug, { forced: !!decision.forced, ok: f.ok, now });
-      if (f.ok) {
+      noteFetch(copy, { forced: !!decision.forced, ok: f.ok, now });
+      if (f.ok && https) { /* the snapshot is already current */ }
+      else if (f.ok) {
         await runGit(dir, ['reset', '--hard', REMOTE_REF]);
         await runGit(dir, ['clean', '-fdq']);
       } else {
@@ -190,8 +214,40 @@ async function readSink(slug, projectDir, { refresh, defer = false }) {
       }
     }
     const parsed = await readRecordsFromDir(dir);
-    return { ...parsed, decision, pending, fetchError, fetchedAt: _lastFetch.has(slug) ? new Date(_lastFetch.get(slug)).toISOString() : null };
+    return { ...parsed, decision, pending, fetchError, fetchedAt: _lastFetch.has(copy) ? new Date(_lastFetch.get(copy)).toISOString() : null };
   });
+}
+
+/**
+ * P6: over HTTPS before the slug's snapshot exists, the worktree a git session left is served READ-ONLY (no git runs
+ * there). An inline read builds the snapshot when due and, failing, answers the worktree's records with the error; a
+ * deferred read answers them pending and builds the snapshot after the request. Once built, the snapshot supersedes it.
+ * Inside readSink's slug lock.
+ */
+async function readLeftWorktree(slug, projectDir, copy, pre, defer) {
+  let dir = worktreePath(slug);
+  let fetchError = null;
+  let pending = false;
+  const decision = { ...pre };
+  if (pre.fetch && defer) {
+    scheduleDeferredFetch(slug, projectDir, { forced: !!pre.forced, create: true });
+    pending = true;
+    Object.assign(decision, { fetch: false, deferred: true });
+  } else if (pre.fetch) {
+    try {
+      dir = await ensureSnapshot(slug, projectDir);
+      noteFetch(copy, { forced: !!pre.forced, ok: true });
+      _lastFetchError.delete(copy);
+    } catch (err) {
+      noteFetch(copy, { forced: !!pre.forced, ok: false });
+      fetchError = String(err?.stderr || err?.message || err).trim();
+      _lastFetchError.set(copy, fetchError);
+    }
+  } else {
+    fetchError = _lastFetchError.get(copy) ?? null;   // the last build failed and the throttle skips this one
+  }
+  const parsed = await readRecordsFromDir(dir);
+  return { ...parsed, decision, pending, fetchError, fetchedAt: _lastFetch.has(copy) ? new Date(_lastFetch.get(copy)).toISOString() : null };
 }
 
 function syncFor(slug, prefs, pending) {

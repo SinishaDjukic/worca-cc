@@ -33,7 +33,7 @@ test('Dockerfile and .dockerignore: non-root, pinned CLI, tini, healthcheck, tar
       assert.match(d, /^ENTRYPOINT \["tini", "-s", "-e", "143", "--", "worca-entrypoint"\]$/m, 'a stop (exit 143) is a clean container exit');
       assert.match(d, /^HEALTHCHECK/m);
       assert.match(d, /WORCA_NO_NATIVE_DIALOG=1/);
-      assert.match(d, /WORCA_CONTAINER=1/, 'Ask Worca knows it runs in the image (src/core/deployment.mjs)');
+      assert.match(d, /WORCA_CONTAINER=1/, 'Chat knows it runs in the image (src/core/deployment.mjs)');
       assert.match(d, /CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1/);
       assert.match(d, /dev\.worca\.claude-code\.version/, 'the pin is a label');
       assert.match(d, /chmod 0777 \/worca \/projects \/home\/worca \/home\/worca\/\.claude/, 'volume mount points are writable for any uid (Linux Engine WORCA_UID)');
@@ -126,6 +126,19 @@ test('Azure DevOps: compose passes the tokens, egress names the hosts, the entry
   assert.ok(gh > 0 && ado > gh, 'the Azure mode is logged after the GitHub mode');
   assert.match(e, /log "Azure DevOps: split read\/write tokens, per call"/);
   assert.match(e, /elif \[ -n "\$\{WORCA_ADO_TOKEN:-\}\$\{AZURE_DEVOPS_EXT_PAT:-\}" \]; then\n\s+log "Azure DevOps: one token for clone, push and PRs, per call"/);
+});
+
+test('Bitbucket: compose passes the tokens, egress names the hosts, the entrypoint logs the mode after Azure', () => {
+  const c = read('docker/compose.yml');
+  for (const k of ['WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL']) {
+    assert.match(c, new RegExp(`^\\s+${k}: \\$\\{${k}:-\\}$`, 'm'), `${k} reaches the container`);
+  }
+  assert.match(read('docker/compose.egress.yml'), /Bitbucket: add bitbucket\.org,api\.bitbucket\.org/);
+  const e = read('docker/entrypoint.sh');
+  const ado = e.indexOf('log "Azure DevOps: one token for clone, push and PRs, per call"');
+  const bb = e.indexOf('if [ -n "${WORCA_BB_READ_TOKEN:-}${WORCA_BB_WRITE_TOKEN:-}" ]; then');
+  assert.ok(ado > 0 && bb > ado, 'the Bitbucket mode is logged after the Azure mode');
+  assert.match(e, /log "Bitbucket: one token for clone, push and PRs, per call"/);
 });
 
 test('overlays: egress confines worca to an internal network; clone-in drops the bind mount; ssh mounts only the socket', () => {

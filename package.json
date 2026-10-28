@@ -1,6 +1,6 @@
 {
   "name": "@worca/app",
-  "version": "1.11.0",
+  "version": "1.14.0",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
   "author": "Sinisha Djukic",
@@ -48,6 +48,7 @@
     "assets/deck-kit/",
     "assets/deck-narration/",
     "assets/deck-preview/",
+    "assets/promo-kit/",
     "tools/install.mjs",
     "docker/compose*.yml",
     "docker/.env.example",
@@ -55,6 +56,7 @@
   ],
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning ui/server.mjs",
+    "stop": "node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs ui stop",
     "cli": "node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs",
     "install:agents": "node tools/install.mjs",
     "deck:sync": "node tools/deck-sync.mjs",
@@ -75,10 +77,15 @@
     "verify:ask-forms": "node --disable-warning=ExperimentalWarning tools/verify-ask-forms-cdp.mjs",
     "verify:workspace-map": "node --disable-warning=ExperimentalWarning tools/verify-workspace-map-cdp.mjs",
     "verify:flags": "node --disable-warning=ExperimentalWarning tools/verify-flags-cdp.mjs",
+    "verify:feature-page": "node --disable-warning=ExperimentalWarning tools/verify-feature-page-cdp.mjs",
+    "verify:runs-list": "node --disable-warning=ExperimentalWarning tools/verify-runs-list-cdp.mjs",
+    "verify:requirements": "node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs",
+    "verify:chat-layout": "node --disable-warning=ExperimentalWarning tools/verify-chat-layout-cdp.mjs",
     "test": "node tools/test.mjs",
     "test:fast": "node tools/test.mjs --tier fast",
     "test:slow": "node tools/test.mjs --tier slow",
     "test:timings": "node tools/test.mjs --write-timings",
+    "test:timings:merge": "node tools/test-timings-merge.mjs",
     "test:related": "node tools/test.mjs --related",
     "test:live": "node --disable-warning=ExperimentalWarning test/live/run.mjs",
     "ext:build": "node tools/build-extension.mjs",
@@ -93,16 +100,20 @@
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@ricky0123/vad-web": "0.0.31",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "dompurify": "3.4.16",
+    "diff": "8.0.4",
+    "dompurify": "3.4.17",
     "express": "^4.19.2",
+    "gsap": "3.12.5",
     "htmlparser2": "12.0.0",
     "marked": "18.0.10",
     "onnxruntime-web": "1.22.0",
+    "playwright-core": "1.56.0",
     "smol-toml": "1.9.0",
+    "tar": "7.5.22",
     "undici": "7.30.0",
     "ws": "^8.18.0",
     "yaml": "2.9.1"
@@ -113,7 +124,7 @@
     "@playwright/test": "1.56.0",
     "esbuild": "^0.25.0",
     "jsdom": "^29.1.1",
-    "web-ext": "^8.9.0"
+    "web-ext": "^10.8.0"
   },
   "overrides": {
     "addons-scanner-utils": {
@@ -121,6 +132,7 @@
     }
   },
   "optionalDependencies": {
+    "ffmpeg-static": "5.3.0",
     "node-pty": "1.1.0"
   }
 }

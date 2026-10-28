@@ -12,6 +12,7 @@
 //   keep      keepVisible(el, true)                         (a non-default value stays on screen)
 //
 // Levels are cumulative: advanced shows everything simple shows, expert shows all.
+import { guardModal } from './modal-guard.mjs';
 
 export const UI_LEVELS = Object.freeze(['simple', 'advanced', 'expert']);
 export const DEFAULT_UI_LEVEL = 'expert';   // no attribute (tests, an old shell) ⇒ gate nothing
@@ -21,7 +22,7 @@ export const LEVEL_INFO = Object.freeze({
     label: 'Simple',
     who: 'New to Worca',
     desc: 'Pick a project, describe the task, watch the run, answer its questions and read the result. Nothing here can break a run.',
-    adds: 'Shows: New run, Runs, Projects, Workflows (agents and scripts included), budget limits and Ask Worca.',
+    adds: 'Shows: New run, Runs, Projects, Workflows (agents and scripts included), budget limits and Chat.',
   }),
   advanced: Object.freeze({
     label: 'Advanced',
@@ -139,7 +140,7 @@ export function levelCardsHtml(level) {
  *  click is a choose like a dialog card), the bars, the name, a check and one short line. */
 export function levelMenuHtml(level) {
   const cur = normalizeLevel(level);
-  return UI_LEVELS.map((id) => `<button type="button" class="lv-opt" role="menuitemradio" data-level-choice="${id}" aria-checked="${id === cur}">`
+  return UI_LEVELS.map((id) => `<button type="button" class="menu-item lv-opt" role="menuitemradio" data-level-choice="${id}" aria-checked="${id === cur}">`
     + levelBarsSvg(id)
     + `<span class="lv-opt-name">${esc(LEVEL_INFO[id].label)}</span>`
     + '<svg class="lv-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>'
@@ -169,7 +170,7 @@ export function createLevelController({ doc, save, onError = null } = {}) {
     const info = LEVEL_INFO[lvl];
     for (const b of d.querySelectorAll('[data-mode-open]')) {
       b.setAttribute('aria-label', `Interface mode: ${info.label}. Change how much of Worca is shown`);
-      b.title = `${info.label} — change how much of Worca is shown`;
+      b.title = `${info.label}. Change how much of Worca is shown`;
     }
     const sIcon = $('#modeSettingsIcon'); if (sIcon) sIcon.innerHTML = levelIconSvg(lvl);
     const sName = $('#modeSettingsName'); if (sName) sName.textContent = info.label;
@@ -194,6 +195,7 @@ export function createLevelController({ doc, save, onError = null } = {}) {
     if (msg && !keepMsg) { msg.textContent = ''; msg.className = 'hint'; }
     cards.innerHTML = levelCardsHtml(currentLevel(d));
     modal.classList.remove('hidden');
+    guard?.opened();
     const b = cards.querySelector('[aria-checked="true"]'); if (b) b.focus();
   }
   function close() {
@@ -204,6 +206,8 @@ export function createLevelController({ doc, save, onError = null } = {}) {
     if (back && typeof back.focus === 'function') back.focus();
     opener = null;
   }
+  // A decision (each card applies at once — nothing is pending): a backdrop click or Escape closes it.
+  const guard = modal ? guardModal(modal, { kind: 'decision', close: () => close() }) : null;
 
   /** `report: false`: the caller shows why a save failed itself (a tour's start opens the dialog), so no onError. */
   async function choose(level, { report = true } = {}) {
@@ -233,7 +237,7 @@ export function createLevelController({ doc, save, onError = null } = {}) {
     if (!t || !t.closest) return;
     const card = t.closest('[data-level-choice]');
     if (card) { choose(card.dataset.levelChoice); return; }
-    if (t.closest('#mode-done') || t === modal) { close(); return; }
+    if (t.closest('#mode-done')) { close(); return; }
     const op = t.closest('[data-mode-open], [data-mode-set]');
     if (!op) return;
     // A banner's "Switch to …" sets the mode directly; everything else opens the dialog.
@@ -242,7 +246,6 @@ export function createLevelController({ doc, save, onError = null } = {}) {
   });
   d.addEventListener('keydown', (e) => {
     if (!modal || modal.classList.contains('hidden')) return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
     const step = (e.key === 'ArrowDown' || e.key === 'ArrowRight') ? 1 : (e.key === 'ArrowUp' || e.key === 'ArrowLeft') ? -1 : 0;
     if (step && e.target.closest && e.target.closest('#mode-cards')) {
       e.preventDefault();

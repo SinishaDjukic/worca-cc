@@ -9,13 +9,15 @@ import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, lstatSync, readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { delimiter, join, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import {
-  addPluginRepo, fetchCandidate, exportVersion, repoCacheDir, parseMarketplaceManifest, repoSlug, pluginGitEnv,
+  addPluginRepo, discoverAtCommit, fetchCandidate, exportVersion, repoCacheDir, parseMarketplaceManifest, repoSlug, pluginGitEnv,
+  emptyManifestDelta, manifestVersion,
 } from '../src/core/plugin-repo.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
+import { BB_GIT_CREDENTIAL_HELPER } from '../src/core/bitbucket-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { writePluginsLock } from '../src/core/plugins-lock.mjs';
 
@@ -81,6 +83,21 @@ test('addPluginRepo: no marketplace manifest -> depth 0-1 scan finds both subdir
   ]);
 });
 
+test('plugin repo git runs in the C locale, so a failed sync reads the same on every host (G12)', { skip: process.platform === 'win32' && 'a POSIX shell script stands in for git' }, async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'worca-cc-fakegit-'));
+  writeFileSync(join(bin, 'git'), '#!/bin/sh\necho "fatal: LC_ALL=$LC_ALL" >&2\nexit 128\n', { mode: 0o755 });
+  const saved = { PATH: process.env.PATH, LC_ALL: process.env.LC_ALL };
+  process.env.PATH = `${bin}${delimiter}${saved.PATH}`;
+  process.env.LC_ALL = 'de_DE.UTF-8';
+  try {
+    await assert.rejects(addPluginRepo(join(bin, 'no-such-repo')), (e) => /^fatal: LC_ALL=C$/m.test(String(e.stderr)));
+  } finally {
+    process.env.PATH = saved.PATH;
+    if (saved.LC_ALL === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = saved.LC_ALL;
+    rmSync(bin, { recursive: true, force: true });
+  }
+});
+
 test('addPluginRepo: reserved model-env key -> plugin still discovered, warning surfaced', async () => {
   const { root } = await makeRepo('reserved-env', {
     'ds/worca-cc-plugin.json': JSON.stringify({
@@ -93,6 +110,9 @@ test('addPluginRepo: reserved model-env key -> plugin still discovered, warning 
   assert.equal(r.discovered[0].manifest.models[0].env.CLAUDE_CODE_SUBAGENT_MODEL, undefined, 'key stripped');
   assert.equal(r.discovered[0].manifest.models[0].env.ANTHROPIC_MODEL, 'ds-stable', 'legal key kept');
   assert.match(r.warnings.join('\n'), /env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
+  assert.deepEqual(r.discovered[0].warnings,
+    ['ds/worca-cc-plugin.json: models[0] ("ds-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored'],
+    'G14: the plugin carries its own notes');
 });
 
 test('addPluginRepo: no manifest anywhere -> empty discovery; invalid manifest skipped with warning', async () => {
@@ -126,7 +146,7 @@ test('fetchCandidate: commit list + diffstat between pinned and new HEAD', async
   assert.deepEqual(fc.commits, [{ sha: sha2, subject: 'tweak connector' }]);
   assert.match(fc.diffstat, /index\.mjs/);
   assert.deepEqual(fc.manifestDelta, {
-    newSecrets: [], newTaskSources: [], newAgents: [], setupChanged: false,
+    newSecrets: [], newTaskSources: [], newChatChannels: [], newChannelSecrets: [], newAgents: [], setupChanged: false,
     newModels: [], removedModels: [], envChangedModels: [], newModelSecrets: [],
     newMcpServers: [], removedMcpServers: [], changedMcpServers: [], mcpLines: [],
     newSkills: [], removedSkills: [], changedSkills: [], skillLines: [],
@@ -370,4 +390,70 @@ test('plugin repo git calls carry worca\'s GitHub read env plus the host-scoped 
     AZURE_DEVOPS_EXT_PAT: undefined }, () => pluginGitEnv());
   assert.equal(none.WORCA_ADO_GIT_TOKEN, undefined);
   assert.equal(Object.values(none).includes(ADO_GIT_CREDENTIAL_HELPER), false);
+});
+
+test('plugin repo git calls carry the host-scoped Bitbucket helper too (a git-backed Bitbucket marketplace, D11)', async () => {
+  const NO_APP = { WORCA_GH_APP_ID: undefined, WORCA_GH_APP_KEY_FILE: undefined, WORCA_GH_APP_KEY_B64: undefined };
+  const env = await withEnv({ ...NO_APP, WORCA_BB_TOKEN: 'bbtok', WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined,
+    WORCA_BB_EMAIL: undefined }, () => pluginGitEnv());
+  assert.equal(env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(env.WORCA_BB_TOKEN, undefined, 'the raw token variable is stripped');
+  assert.ok(Object.values(env).includes(BB_GIT_CREDENTIAL_HELPER));
+});
+
+test('discoverAtCommit: discovery at a given commit of a checkout — index authoritative, version read from that commit', async () => {
+  const root = mkdtempSync(join(scratch, 'disc-'));
+  await git(root, 'init', '-q', '-b', 'main');
+  writeTree(root, {
+    'worca-cc-marketplace.json': JSON.stringify({ name: 'M', plugins: ['plugins/aa'] }),
+    'plugins/aa/worca-cc-plugin.json': JSON.stringify({ name: 'aa', version: '0.1.0' }),
+  });
+  await git(root, 'add', '-A'); await git(root, 'commit', '-qm', 'c1');
+  const first = await git(root, 'rev-parse', 'HEAD');
+  writeTree(root, { 'plugins/aa/worca-cc-plugin.json': JSON.stringify({ name: 'aa', version: '0.1.1' }) });
+  await git(root, 'commit', '-qam', 'c2');
+  const gitDirAbs = await git(root, 'rev-parse', '--absolute-git-dir');      // <root>/.git — a NON-bare checkout's git dir
+
+  const atFirst = await discoverAtCommit(gitDirAbs, first);
+  assert.equal(atFirst.sha, first);
+  assert.deepEqual(atFirst.discovered.map((p) => [p.name, p.subdir, p.manifest.version]), [['aa', 'plugins/aa', '0.1.0']]);
+  assert.deepEqual(atFirst.marketplace, { name: 'M', description: '' });
+  const atHead = await discoverAtCommit(gitDirAbs, await git(root, 'rev-parse', 'HEAD'));
+  assert.equal(atHead.discovered[0].manifest.version, '0.1.1');
+});
+
+test('fetchCandidate: versions, previewedAt and access ride at the top level; a new chat channel and its secret are in the delta', async () => {
+  const { root, sha } = await makeRepo('chan-moving', { 'worca-cc-plugin.json': JSON.stringify({ name: 'chan-plugin', version: '0.1.0' }) });
+  await addPluginRepo(root);
+  writePluginsLock({ 'chan-plugin': { repo: root, subdir: '', pinnedSha: sha, version: '0.1.0', enabled: true, installedAt: 'x' } });
+  writeTree(root, {
+    'worca-cc-plugin.json': JSON.stringify({ name: 'chan-plugin', version: '0.2.0', chatChannels: [{ id: 'main', platform: 'slack',
+      module: './w.mjs', configSchema: [{ key: 'botToken', secret: true, required: true }, { key: 'notifyChatIds' }] }] }),
+    'w.mjs': 'export {};\n',
+  });
+  await git(root, 'add', '-A');
+  await git(root, 'commit', '-qm', 'add slack');
+  const sha2 = await git(root, 'rev-parse', 'HEAD');
+  const fc = await fetchCandidate('chan-plugin');
+  assert.deepEqual([fc.pinnedVersion, fc.candidateVersion], ['0.1.0', '0.2.0']);
+  assert.match(fc.previewedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.deepEqual([fc.manifestDelta.newChatChannels, fc.manifestDelta.newChannelSecrets], [['main'], ['main.botToken']]);
+  assert.deepEqual(fc.access, [{ kind: 'channelSecret', id: 'main.botToken', red: true }, { kind: 'chatChannel', id: 'main', red: false }]);
+  writePluginsLock({ 'chan-plugin': { repo: root, subdir: '', pinnedSha: sha2, version: '0.2.0', enabled: true, installedAt: 'x' } });
+  const same = await fetchCandidate('chan-plugin');
+  assert.deepEqual(Object.keys(same.manifestDelta).sort(), Object.keys(fc.manifestDelta).sort(), 'an equal candidate\'s delta has every key a moved one has');
+  assert.deepEqual([manifestVersion({ version: ' 0.3.0 ' }), manifestVersion({ version: '  ' }), manifestVersion(null)], ['0.3.0', null, null],
+    'normalizeManifest\'s reading: trimmed, a blank or missing version is none');
+  assert.deepEqual([same.pinnedVersion, same.candidateVersion, same.access, same.manifestDelta], ['0.2.0', '0.2.0', [], emptyManifestDelta()]);
+  writeFileSync(join(root, 'w.mjs'), 'export const v = 3;\n');   // the channel on both sides: not new
+  await git(root, 'commit', '-qam', 'touch the worker');
+  const kept = await fetchCandidate('chan-plugin');
+  assert.deepEqual([kept.candidateVersion, kept.manifestDelta.newChatChannels, kept.manifestDelta.newChannelSecrets, kept.access], ['0.2.0', [], [], []]);
+});
+
+test('addPluginRepo reports reading once the commit is fetched (onProgress, G4)', async () => {
+  const { root, sha } = await makeRepo('progress', { 'worca-cc-plugin.json': MANIFEST('progress-plugin'), 'index.mjs': 'export default () => ({});\n' });
+  const events = [];
+  await addPluginRepo(root, { onProgress: (e) => events.push(e) });
+  assert.deepEqual(events, [{ phase: 'reading', sha }]);
 });

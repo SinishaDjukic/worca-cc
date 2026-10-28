@@ -53,10 +53,7 @@ const EQUAL_ARMS = ['--green', '--peach', '--red', '--blue', '--violet', '--ambe
   '--teal', '--pink', '--indigo', '--lime', '--cocoa', '--slate'];                     // … + the six script-only bases (script-wizard plan S10)
 
 const rootBody = ruleBody(':root');
-// `.hd-diff{display:grid;…}` precedes the token block of the same selector — take the block that OPENS with the token.
-const hdBody = (bare.match(/\.hd-diff\s*\{\s*(--hd-count-add[^}]*)\}/) || [])[1] || null;
-const synBody = (bare.match(/\.hd-diff-pane,\.ask-md[^{]*\{\s*(--hd-syntax-comment[^}]*)\}/) || [])[1] || null;
-const tokens = new Map([...declarations(rootBody), ...declarations(hdBody), ...declarations(synBody)]);
+const tokens = new Map(declarations(rootBody));          // the diff counts and syntax colours live in :root too (D10)
 const arm = (name, which) => { const v = tokens.get(name); if (v == null) return null; const a = arms(v); return a ? a[which === 'dark' ? 1 : 0] : v; };
 
 test('theme: every colour token is a light-dark() pair, both arms colours; the six bases are plain and equal to the spec', () => {
@@ -93,9 +90,17 @@ const PAIRS = [
   ['--hd-count-add', '--panel', 4.5], ['--hd-count-del', '--panel', 4.5],
   ...['comment', 'keyword', 'type', 'string', 'literal', 'title'].map((s) => [`--hd-syntax-${s}`, '--panel', 4.5]),
   ['--chip-ink', '--field', 4.5], ['--trunc-ink', '--panel', 4.5], ['--h-blue-ink', '--blue-bg', 4.5], ['--h-peach-ink', '--peach-bg', 4.5],
-  ['--blue-ink-strong', '--blue-bg', 4.5], ['--violet-ink', '--violet-bg', 4.5],   // the pull request buttons (.rd-cta.pr-view / .pr-merged, .hd-pr-link)
+  ['--blue-ink-strong', '--blue-bg', 4.5], ['--violet-ink', '--violet-bg', 4.5],   // the PR state colours (.rd-pr-fill.pr-view / .pr-merged, .hd-pr-link)
   ['--amber-ink-strong', '--field', 4.5], ['--red-ink-strong', '--field', 4.5],   // the account menu's spend card tones on its --field panel
   ['--side-ink', '--side-bg', 4.5], ['--side-sel-ink', '--side-sel-bg', 4.5],   // the sidebar rows and group labels (.nav button, .nav-sect) and the open page
+  ['--on-signal', '--amber', 4.5], ['--on-signal', '--red', 4.5],   // the status dot's '?' / '!' glyph (ui/public/status-dot.mjs)
+  ['--violet-ink-strong', '--violet-bg', 4.5], ['--lime-ink-strong', '--lime-bg', 4.5], ['--slate-ink-strong', '--slate-bg', 4.5],
+  ['--pink-ink-strong', '--pink-bg', 4.5],   // the Marketplace kind tiles' glyphs (.mk-t-chat / -skill / -wf / -mix)
+  ['--teal-ink-strong', '--teal-bg', 4.5], ['--indigo-ink', '--indigo-bg', 4.5], ['--cocoa-ink', '--cocoa-bg', 4.5],   // and .mk-t-mcp / -model / -script
+  ['--green-ink-strong', '--green-bg', 4.5], ['--amber-ink-strong', '--amber-bg', 4.5], ['--red-ink-strong', '--red-bg', 4.5],   // Marketplace status chips (L19)
+  ['--ink-2', '--hover', 4.5],   // the Marketplace "off" chip (.mk-chip-off)
+  ['--ink-2', '--line', 4.5],   // the Marketplace counts (.mk-count in the tabs and group heads, LC-P3-18)
+  ['--slate-ink', '--slate-bg', 4.5],   // .badge.slate: the Official and policy badges
 ];
 const DARK_ONLY = [   // light fails these today (spec §7.4 baseline); dark must not
   ['--ink-3', '--panel', 4.5], ['--ink-3', '--bg', 4.5], ['--ink-3', '--field', 4.5], ['--ink-3', '--field-focus', 4.5], ['--ink-3', '--surface', 4.5], ['--ink-3', '--canvas-2', 4.5], ['--ink-3', '--amber-wash', 4.5],
@@ -119,7 +124,7 @@ test('theme: light and dark arms clear the spec minimums', async () => {
 
 test('theme: no colour literal outside the token blocks (spec §4.2; Task 2 codemod)', () => {
   const noData = bare.replace(/url\("data:[^"]*"\)/g, 'url(DATA)');              // :805 keeps stroke='%23fff' inside its SVG
-  const withoutTokens = noData.replace(rootBody, '').replace(hdBody, '').replace(synBody, '');
+  const withoutTokens = noData.replace(rootBody, '');
   const bodies = withoutTokens.match(/\{[^{}]*\}/g) || [];
   const offenders = [];
   for (const b of bodies) {

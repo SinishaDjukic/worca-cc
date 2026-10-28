@@ -16,6 +16,10 @@ const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const arr = (v) => (Array.isArray(v) ? v : []);
 const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
 const int = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+/** Ask Worca's graph card target: the scope pinned for the chat — a project or a workspace, never both ({} = none). */
+const targetOf = (t) => (isObj(t) && typeof t.projectKey === 'string' && t.projectKey ? { projectKey: t.projectKey }
+  : isObj(t) && typeof t.workspaceId === 'string' && t.workspaceId ? { workspaceId: t.workspaceId } : {});
+const isManifest = (m) => isObj(m) && isObj(m.graph) && Array.isArray(m.graph.nodes) && Array.isArray(m.graph.wires);
 
 /** @returns {{ok:true, value:object} | {ok:false, error:string}} */
 export function validateComposerPayload(raw) {
@@ -62,8 +66,9 @@ export const COMPOSER_TOOL_CARDS = Object.freeze({
   mcp__worca__draft_script: 'script-draft',
 });
 
-/** A tool result → its card payload (null = no card: an error, a foreign tool, an oversized result). */
-export function composerCardFrom(toolName, out, session) {
+/** A tool result → its card payload (null = no card: an error, a foreign tool, an oversized result). `target` is Ask
+ *  Worca's: the turn's pinned scope, which a graph card's Save event names. */
+export function composerCardFrom(toolName, out, session, { target = null } = {}) {
   const type = COMPOSER_TOOL_CARDS[toolName];
   if (!type || !isObj(out) || out.ok !== true) return null;
   const base = { type, sessionId: (session && session.sessionId) || null, docToken: (session && session.docToken) || null };
@@ -75,7 +80,12 @@ export function composerCardFrom(toolName, out, session) {
     if (!isObj(out.workflow)) return null;
     card = { ...base, name: str(out.name, 60), domain: str(out.domain, 60), reasoning: str(out.reasoning, 600),
       workflow: { nodes: arr(out.workflow.nodes), wires: arr(out.workflow.wires) }, counts: isObj(out.counts) ? out.counts : {},
-      loops: arr(out.loops).slice(0, 20), drafts: arr(out.drafts).slice(0, 8), todo: int(out.todo), warnings: arr(out.warnings).slice(0, 8) };
+      loops: arr(out.loops).slice(0, 20), drafts: arr(out.drafts).slice(0, 8), todo: int(out.todo), warnings: arr(out.warnings).slice(0, 8),
+      // Ask Worca's graph card only (its build returns them; the Workflows chat's never does): "Save & propose run", the
+      // graph its card draws, the commands it shows before Save (D10), and the target its Save event names. Every
+      // command, never a cut list: Save confirms what the card shows, and the card byte cap below bounds it.
+      ...(out.thenRun === true ? { thenRun: true } : {}), ...(isManifest(out.manifest) ? { manifest: out.manifest } : {}),
+      ...(arr(out.scriptNodes).length ? { scriptNodes: arr(out.scriptNodes) } : {}), ...targetOf(target) };
   } else {
     if (!isObj(out.draft)) return null;
     card = { ...base, draft: out.draft, then: isObj(out.then) ? { ops: arr(out.then.ops) } : null };
@@ -100,7 +110,9 @@ export function composerHeaderCard(b) {
   const d = isObj(c.draft) ? c.draft : {};
   const name = c.type === 'canvas-edit' ? c.summary : c.type === 'workflow-build' ? c.name : ((isObj(d.meta) && d.meta.displayName) || d.key);
   // A model-written name never spells a block marker: this line sits just before the real [composer canvas] block.
-  return { id: b.id, type: c.type, state: b.state, summary: str(name, 160).replace(MARKER_RE, '($1)') };
+  return { id: b.id, type: c.type, state: b.state, summary: str(name, 160).replace(MARKER_RE, '($1)'),
+    // Ask's graph card, once saved: the workflow its event turn proposes a run with.
+    ...(c.type === 'workflow-build' && typeof b.workflowId === 'string' && b.workflowId ? { workflowId: b.workflowId } : {}) };
 }
 
 /** A click on a composer card → the store patch, or why not. */

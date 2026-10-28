@@ -6,6 +6,7 @@
 // (to stamp stream deltas).
 import { isNormalized } from './events.mjs';
 import { extractResultCost, isHookEvent } from './claude.mjs';
+import { flagEnabled } from '../flags.mjs';
 
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
 const str = (v) => (typeof v === 'string' ? v : undefined);
@@ -89,12 +90,18 @@ export function createClaudeNormalizer() {
     return [];
   }
 
+  // total_cost_usd is the SESSION's running total: a process re-woken by a background task or
+  // Monitor notification reports the earlier turns again, and `--resume` restores the session's cost
+  // from the transcript into its first result. `cumulativeCost` tells the consumer to book the
+  // difference. `usage` stays the turn's own.
   function result(raw, e) {
     const costUsd = e.costUsd != null ? Number(e.costUsd) : extractResultCost(raw);
+    const priced = costUsd != null && Number.isFinite(costUsd);
     return [defined({
       type: 'result',
       text: typeof raw.result === 'string' ? raw.result : (e.text || ''),
-      costUsd: costUsd != null && Number.isFinite(costUsd) ? costUsd : undefined,
+      costUsd: priced ? costUsd : undefined,
+      cumulativeCost: priced ? true : undefined,
       usage: raw.usage && typeof raw.usage === 'object' ? raw.usage : undefined,
       subtype: str(raw.subtype),
       isError: !!raw.is_error,
@@ -143,6 +150,14 @@ export function createClaudeNormalizer() {
           return [defined({ type: 'retry', parentId, attempt: num(raw.attempt), maxRetries: num(raw.max_retries),
             delayMs: num(raw.retry_delay_ms), httpStatus: Number.isFinite(raw.error_status) ? raw.error_status : null,
             reason: str(raw.error) || 'unknown', waitedMs: num(raw.no_response?.waited_ms) })];
+        }
+        // The CLI compacted the conversation: the context starts again from a summary. Its text (if any)
+        // stays a log line. `compact` exists for Run telemetry only, so it is emitted only while that Labs
+        // flag is on (read here, on this rare frame); off, the output is what it always was.
+        // compact_metadata: {trigger, pre_tokens}.
+        if (raw.subtype === 'compact_boundary' && flagEnabled('runTelemetry')) {
+          const m = raw.compact_metadata && typeof raw.compact_metadata === 'object' ? raw.compact_metadata : {};
+          return [...otherText(), defined({ type: 'compact', parentId, trigger: str(m.trigger), preTokens: num(m.pre_tokens) })];
         }
         return otherText();
       case 'assistant': return assistant(raw, parentId, e);

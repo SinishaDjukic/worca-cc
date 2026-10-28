@@ -7,13 +7,14 @@ import { getProjectsRoot } from '../settings.mjs';
 import { listProjects } from '../projects.mjs';
 import { githubMode } from '../deployment.mjs';
 import { readAzureCredentials } from '../azure-credentials.mjs';
+import { readBitbucketCredentials } from '../bitbucket-credentials.mjs';
 import { createCloneValidator, hostCredentialLabel } from './clone-proposal.mjs';
 
 /** The parent's validator: the card carries the code-host credential line (never a secret). */
 export const validateCloneProposal = createCloneValidator({
   projectsRoot: () => getProjectsRoot(),
   listProjects: () => listProjects(),
-  github: (host) => hostCredentialLabel(githubMode(process.env), { host, appId: (process.env.WORCA_GH_APP_ID || '').trim() || null, adoMode: readAzureCredentials().mode }),
+  github: (host) => hostCredentialLabel(githubMode(process.env), { host, appId: (process.env.WORCA_GH_APP_ID || '').trim() || null, adoMode: readAzureCredentials().mode, bbMode: readBitbucketCredentials().mode }),
 });
 
 /** The MCP child's bundle. */

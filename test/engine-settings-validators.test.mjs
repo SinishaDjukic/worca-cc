@@ -33,6 +33,8 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
     ['autoWorkflowModel', 'gpt-5.5', 'gpt-5.5'],
     ['prDescriptionModel', 'gpt-5.6-sol', 'gpt-5.6-sol'],
     ['memoryDefrag', { model: 'gpt-5.5', effort: 'low' }, 'gpt-5.5'],
+    ['agentGenModel', { model: 'gpt-5.5', effort: 'high' }, 'gpt-5.5'],
+    ['namingModel', { model: 'gpt-5.5', effort: 'high' }, 'gpt-5.5'],
     ['workspaceScan', { scanModel: 'gpt-5.5', scanEffort: 'low', agentModel: 'sonnet', agentEffort: 'medium' }, 'gpt-5.5'],
   ];
   for (const [key, value, id] of cases) {
@@ -40,12 +42,14 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
     assert.equal(r.status, 400, key);
     const body = await r.json();
     // #555: the error names the setting by its visible label, and `field` by its key.
-    assert.match(body.error, new RegExp(`^“[^”]+”: "${id.replace(/\./g, '\\.')}" runs on Codex — this setting picks a model Claude Code can run\\.$`), key);
+    assert.match(body.error, new RegExp(`^“[^”]+”: "${id.replace(/\./g, '\\.')}" runs on Codex\\. This setting picks a model Claude Code can run\\.$`), key);
     assert.equal(body.field.split('.')[0], key);
   }
   const s = await get();
   assert.equal(s.prDescriptionModel, '');
   assert.equal(s.autoWorkflowModel, '');
+  assert.deepEqual(s.agentGenModel, { model: null, effort: null });
+  assert.deepEqual(s.namingModel, { model: null, effort: null });
   assert.notEqual(s.theme, 'dark', 'a refused POST writes no key');
   const ok = await post({ titleModel: 'claude-haiku-4-5' });
   assert.equal(ok.status, 200, 'a Claude id is still accepted');
@@ -64,10 +68,28 @@ test('Cursor: step models without effort; no helper slots', async () => {
   assert.throws(() => assertStepModelsInput({ cursor: { plan: { model: 'x', effort: 'high' } } }), /^Error: stepModels\.cursor\.plan: Cursor takes no effort$/);
 });
 
+test('Goose: step models with its efforts; no helper slots; Ask', async () => {
+  const { assertUtilityModelsInput, assertStepModelsInput, assertAskEngineInput, assertRunEngineInput } = await import('../src/core/settings.mjs');
+  assert.equal(assertRunEngineInput('goose'), 'goose');
+  assert.equal(assertAskEngineInput('goose'), 'goose', 'Chat runs on it, locked down (plans/ask-on-qwen-gemini-spike.md)');
+  assert.throws(() => assertUtilityModelsInput({ goose: { title: { model: 'x/y' } } }), /Goose runs no helper jobs/);
+  assert.deepEqual(assertStepModelsInput({ goose: { plan: { model: 'x/y', effort: 'max' } } }), { goose: { plan: { model: 'x/y', effort: 'max' } } });
+  assert.throws(() => assertStepModelsInput({ goose: { plan: { model: 'x/y', effort: 'xhigh' } } }), /effort must be one of low \| medium \| high \| max/);
+});
+
+test('OpenCode: step models with its variants; no helper slots; Ask', async () => {
+  const { assertUtilityModelsInput, assertStepModelsInput, assertAskEngineInput, assertRunEngineInput } = await import('../src/core/settings.mjs');
+  assert.equal(assertRunEngineInput('opencode'), 'opencode');
+  assert.equal(assertAskEngineInput('opencode'), 'opencode', 'Chat runs on it, locked down (plans/ask-on-qwen-gemini-spike.md)');
+  assert.throws(() => assertUtilityModelsInput({ opencode: { title: { model: 'x/y' } } }), /OpenCode runs no helper jobs/);
+  assert.deepEqual(assertStepModelsInput({ opencode: { plan: { model: 'x/y', effort: 'max' } } }), { opencode: { plan: { model: 'x/y', effort: 'max' } } });
+  assert.throws(() => assertStepModelsInput({ opencode: { plan: { model: 'x/y', effort: 'xhigh' } } }), /effort must be one of minimal \| low \| medium \| high \| max/);
+});
+
 test('a Cursor id in a Claude utility setting is a 400 naming it', async () => {
   const { addGlobalModel } = await import('../src/core/settings.mjs');
   await addGlobalModel({ id: 'cursor-m', engine: 'cursor' });
   const r = await post({ titleModel: 'cursor-m' });
   assert.equal(r.status, 400);
-  assert.match((await r.json()).error, /^“[^”]+”: "cursor-m" runs on Cursor — this setting picks a model Claude Code can run\.$/);
+  assert.match((await r.json()).error, /^“[^”]+”: "cursor-m" runs on Cursor\. This setting picks a model Claude Code can run\.$/);
 });

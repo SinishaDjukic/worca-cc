@@ -3,7 +3,7 @@
 // that is not the top folder of its own git repository (a folder inside a monorepo), or a repository
 // with no commit, stops the scan at setup with the read-only error — on the first run and again when
 // the paused scan resumes (the setup replay) — and leaves every tree byte-identical. Any other
-// workspace run still gets its own repository there (C2). The finalize files the workspace under the
+// workspace run refuses such a member too, and never git-inits it (#693). The finalize files the workspace under the
 // id the launch froze (scan D3): a member whose repository root moved while the scan ran fails the
 // save instead of creating the workspace under another id. The members worca users really have — a
 // linked worktree and a submodule checkout (their `.git` is a FILE), a path reached through a symlink
@@ -27,6 +27,7 @@ import * as workspaces from '../src/core/workspaces.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { finalizeWorkspaceScan, WORKSPACE_SCAN_OUTPUT_FILE } from '../src/core/workspace-scan-run.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { isTerminal } from '../src/core/failure-policy.mjs';
 
 useTempHome(after);
 const prevRunRoot = process.env.WORCA_RUN_ROOT;
@@ -124,7 +125,7 @@ test('a repository with no commit stops the scan at setup: nothing is committed,
   assert.deepEqual([treeState(fresh), treeState(other)], before, 'both trees byte-identical');
 });
 
-test('the setup check is scan-only: another workspace run still gives a nested member its own repository (C2)', async () => {
+test('the setup check is scan-only, and a nested member is never git-inited by any run (#693)', async () => {
   const mono = await repo('mono', { 'README.md': '# mono\n', 'svc/app.txt': 'app\n' });
   const sub = join(mono, 'svc');
   const other = await repo('other', { 'a.txt': 'a\n' });
@@ -132,8 +133,9 @@ test('the setup check is scan-only: another workspace run still gives a nested m
   await assert.rejects(() => scan._ensureGitCheckpointFor(sub), /read-only workspace scan: .*svc is not its own git repository/);
   assert.ok(!existsSync(join(sub, '.git')));
   const normal = createOrchestrator(scanOpts([sub, other], 'Normal Run', 'wf_default'));
-  assert.match(await normal._ensureGitCheckpointFor(sub), /^[0-9a-f]{40}$/);
-  assert.ok(existsSync(join(sub, '.git')), 'C2: a non-scan run isolates the nested member in its own repository');
+  await assert.rejects(() => normal._ensureGitCheckpointFor(sub),
+    (e) => e.code === 'NESTED_IN_REPO' && isTerminal(e) && /svc is inside the git repository at /.test(e.message));
+  assert.ok(!existsSync(join(sub, '.git')), 'a non-scan run refuses the nested member too');
 });
 
 test('finalize files the workspace under the frozen id: a member whose repository root moved fails the save and creates nothing', async () => {

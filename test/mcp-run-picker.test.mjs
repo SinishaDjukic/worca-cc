@@ -46,7 +46,7 @@ test('New Pipeline MCP picker: label, tri-state set rows, skipped rows, workspac
       const rows = [...pop.querySelectorAll('.mcp-runs-row')].map((r) => [r.querySelector('.mono').textContent, r.querySelector('input') ? r.querySelector('input').checked : r.querySelector('.hint').textContent]);
       assert.deepEqual(rows, [
         ['postgres-ro_billing', false], ['sentry_billing', true], ['manual:gone', 'the server is no longer installed'], ['jira_billing', 'API token not set'],
-        ['datadog_team-platfor', true], ['github_team-platfor', 'token not set'], ['sentry_team-platfor', 'off — turn it on in the team checklist'],
+        ['datadog_team-platfor', true], ['github_team-platfor', 'token not set'], ['sentry_team-platfor', 'off: turn it on in the team checklist'],
       ]);
       assert.equal(pop.querySelectorAll('.mcp-runs-row.is-skipped input').length, 0, 'a skipped membership is never a checkbox');
       assert.deepEqual([...pop.querySelectorAll('.mcp-runs-row.is-problem .mono')].map((n) => n.textContent), ['manual:gone', 'jira_billing', 'github_team-platfor'], '§5.7: off / needs-consent read as choices; a missing server shows its id');

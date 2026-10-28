@@ -7,16 +7,19 @@ import { promisify } from 'node:util';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { withNoGit } from './helpers/git-off.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   readMarketplaces, writeMarketplaces, normalizeMarketplaceUrl, marketplaceId,
   addMarketplace, syncMarketplace, refreshAllMarketplaces, removeMarketplace,
   listMarketplaces, resolveInstallSource, marketplacesFile,
   seedBuiltinMarketplace, builtinMarketplaceSource, BUILTIN_MARKETPLACE_REF,
+  marketplaceDisplayName, syncErrorOf, checkMarketplaceAdd,
 } from '../src/core/marketplaces.mjs';
 import { repoCacheDir, repoSlug } from '../src/core/plugin-repo.mjs';
 import { writePluginsLock, pluginsRoot } from '../src/core/plugins-lock.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { GithubError } from '../src/core/git-free/github.mjs';
 
 useTempHome(after);
 const execFileP = promisify(execFile);
@@ -110,7 +113,8 @@ test('addMarketplace: syncs the snapshot; duplicate add -> EXISTS; junk url not 
   assert.equal(entry.plugins[0].description, 'aa fixture'); // E8: discovery carries manifest fields
   assert.equal(entry.plugins[0].version, '0.1.0');
   await assert.rejects(() => addMarketplace(root), (e) => e.code === 'EXISTS');
-  await assert.rejects(() => addMarketplace(join(scratch, 'no-such-repo')));
+  await assert.rejects(() => addMarketplace(join(scratch, 'no-such-repo')),
+    (e) => e.code === 'BAD_REQUEST' && e.syncError?.code === 'UNREACHABLE' && /does not exist/.test(e.syncError.message));
   assert.equal(readMarketplaces().marketplaces[marketplaceId(join(scratch, 'no-such-repo'))], undefined,
     'failed add records nothing'); // B3: order-independent (no length-vs-polluted-state coupling)
 });
@@ -127,6 +131,7 @@ test('syncMarketplace: picks up new commits; failure keeps stale snapshot + warn
   await git(root, 'commit', '-qm', 'c2');
   const sha2 = await git(root, 'rev-parse', 'HEAD');
   const synced = await syncMarketplace(entry.id);
+  assert.equal(synced.lastError, null, 'G12: a good sync has no lastError');
   assert.deepEqual(synced.plugins.map((p) => p.name), ['cc', 'dd']);
   assert.equal(synced.lastSync.sha, sha2); // E3
   rmSync(root, { recursive: true, force: true }); // repo vanishes
@@ -136,6 +141,8 @@ test('syncMarketplace: picks up new commits; failure keeps stale snapshot + warn
   assert.equal(stale.lastSync.sha, sha2, 'stale sync keeps the last good sha'); // E3
   assert.match(stale.warnings.join('\n'), /refresh failed:/); // C4 wording
   assert.match(stale.warnings.join('\n'), /last sync|never synced/);
+  assert.equal(stale.lastError.code, 'UNREACHABLE', 'G12: a vanished repo cannot be reached');
+  assert.match(stale.lastError.message, /does not exist|does not appear to be a git repository/);
 });
 
 test('removeMarketplace: entry gone, installed plugins keep the cache; unknown -> NOT_FOUND', async () => {
@@ -246,6 +253,36 @@ test('addMarketplace of a manifest-less repo falls back to the scan (E15)', asyn
   const entry = await addMarketplace(root);
   assert.equal(entry.plugins.length, 1); // discovered by the depth 0-1 scan
   assert.equal(entry.plugins[0].name, 'solo');
+  assert.equal(entry.name, 'no-manifest', 'G6: no marketplace manifest -> the folder name, never the hashed id');
+  assert.equal(readMarketplaces().marketplaces[entry.id].name, 'no-manifest', 'stored on add');
+});
+
+test('listMarketplaces sorts by the name a read shows; an entry with neither name nor url reads as its id (G6)', () => {
+  const off = 'https://gitlab.com/acme/zeta';
+  const offId = marketplaceId(off);
+  const row = (eid, url, name) => ({ id: eid, url, name, description: '', addedAt: '2026-09-03T00:00:00.000Z', lastSync: null, plugins: [], warnings: [] });
+  writeMarketplaces({ seededBuiltin: true, marketplaces: {
+    [offId]: row(offId, off, offId), 'beta-0000eeee': row('beta-0000eeee', 'https://github.com/acme/beta', 'Beta'), 'bare-0000dddd': row('bare-0000dddd', '', ''),
+  } });
+  try {
+    assert.deepEqual(listMarketplaces().map((m) => m.name), ['acme/zeta', 'bare-0000dddd', 'Beta']);
+  } finally {
+    writeMarketplaces({ seededBuiltin: true, marketplaces: {} });
+  }
+});
+
+test('refresh-all without git keeps an off-GitHub marketplace as a read shows it (G6)', async (t) => {
+  const url = 'https://gitlab.com/acme/offgit';
+  const id = marketplaceId(url);
+  writeMarketplaces({ seededBuiltin: true, marketplaces: { [id]: { id, url, name: id, description: '', addedAt: '2026-09-03T00:00:00.000Z', lastSync: null, plugins: [{ name: 'og', subdir: '' }], warnings: [] } } });
+  withNoGit(t);
+  try {
+    const out = await refreshAllMarketplaces();
+    assert.deepEqual(out, [listMarketplaces().find((m) => m.id === id)]);
+    assert.equal(out[0].name, 'acme/offgit');
+  } finally {
+    writeMarketplaces({ seededBuiltin: true, marketplaces: {} });
+  }
 });
 
 // The builtin marketplace is this package's GitHub repo on its `dev` branch — never the checkout
@@ -323,6 +360,7 @@ test('seedBuiltinMarketplace: the same repo added by hand becomes the builtin on
   writeMarketplaces({ seededBuiltin: false, marketplaces: { [id]: {
     id, url: GH.url, name: 'Mine', description: '', addedAt: '2026-09-01T00:00:00Z',
     lastSync: { sha: 'a'.repeat(40), at: '2026-09-01T00:00:00Z' }, plugins: [{ name: 'old' }], warnings: [],
+    lastError: { message: 'HTTP 403', code: 'UNREACHABLE', at: '2026-09-01T00:00:00Z' },
   } } });
   assert.equal(seedBuiltinMarketplace({ source: GH }).seeded, true);
   const entry = readMarketplaces().marketplaces[id];
@@ -331,6 +369,7 @@ test('seedBuiltinMarketplace: the same repo added by hand becomes the builtin on
   assert.equal(entry.name, 'Mine');
   assert.equal(entry.lastSync, null);
   assert.deepEqual(entry.plugins, []);
+  assert.equal(Object.hasOwn(entry, 'lastError'), false, 'G12: the new branch has not failed yet');
 });
 
 test('a marketplace with a ref discovers that branch, not HEAD; a missing branch is a sync warning', async () => {
@@ -357,4 +396,245 @@ test('a marketplace with a ref discovers that branch, not HEAD; a missing branch
   const bad = await syncMarketplace(id);
   assert.match(bad.warnings[0], /refresh failed: branch "nope" not found/);
   assert.equal(bad.lastSync.sha, devSha, 'the last snapshot stays usable');
+  assert.deepEqual([bad.lastError.code, bad.lastError.message], ['SYNC_FAILED', 'branch "nope" not found']);
+  assert.match(bad.lastError.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/);
+  assert.deepEqual(readMarketplaces().marketplaces[id].lastError, bad.lastError, 'stored through mutateEntry');
+  const back = readMarketplaces();
+  back.marketplaces[id].ref = 'dev';
+  writeMarketplaces(back);
+  assert.equal((await syncMarketplace(id)).lastError, null, 'a good sync clears it');
+  assert.equal(Object.hasOwn(readMarketplaces().marketplaces[id], 'lastError'), false, 'the key is deleted, not nulled');
+});
+
+test('marketplaceDisplayName: owner/repo on GitHub, the last two path segments of another URL (its host when it has none), else the folder name — never a credential; / and \\ both separate (G6)', async () => {
+  await checkRows([
+    ['https://github.com/BD-AI-SDLC/worca-marketplace', 'BD-AI-SDLC/worca-marketplace'],
+    ['git@github.com:acme/plugins', 'acme/plugins'],
+    ['https://u:tok@gitlab.com/group/sub/market', 'sub/market'],
+    ['ssh://git@git.acme.dev:2222/team/market', 'team/market'],
+    ['git@gitlab.com:team/market', 'team/market'],
+    ['https://dev.azure.com/acme/Shop/_git/market', 'Shop/market'],
+    ['https://git.acme.dev/market', 'market'],
+    ['/Users/dp/exports/release-notes', 'release-notes'],
+    ['/srv/markets/acme/', 'acme'],
+    ['C:\\Users\\dp\\markets\\acme', 'acme'],
+    ['\\\\server\\share\\team-market', 'team-market'],
+    ['https://gitlab.com/team/market.git', 'team/market'],
+    ['git@gitlab.com:team/market.git/', 'team/market'],
+    ['https://git.acme.dev/a/b?private_token=SECRET#top', 'a/b'],
+    ['https://u:tok-secret@git.acme.dev:8443', 'git.acme.dev'],
+    ['https://u:tok-secret@git.acme.dev:8443?private_token=SECRET#top', 'git.acme.dev'],
+    ['https://git.acme.dev#top', 'git.acme.dev'],
+    ['https://git.acme.dev?private_token=/SECRET', 'git.acme.dev'],
+    ['file:///srv/markets/acme', 'acme'],
+    ['FILE:///srv/markets/acme', 'acme'],
+    ['file://u:tok-secret@host', ''],
+    ['file://u:tok-secret@host/', ''],
+    ['/srv/git/acme.git', 'acme'],
+    ['', ''],
+    [undefined, ''],
+    [null, ''],
+    [{ toString: 0 }, ''],
+  ].map(([url, want]) => ({ name: `${JSON.stringify(url)} -> ${JSON.stringify(want)}`, run: () => assert.equal(marketplaceDisplayName(url), want) })));
+});
+
+test('a marketplace an older worca named by its hashed id: read shows the fallback at once, its next good sync stores it; a given name is never replaced (G6)', async () => {
+  const root = join(scratch, 'old-nameless');
+  writeTree(root, { 'solo2/worca-cc-plugin.json': PLUGIN('solo2'), 'solo2/index.mjs': 'export default () => ({});\n' });
+  await git(root, 'init', '-q', '-b', 'main');
+  await git(root, 'add', '-A');
+  await git(root, 'commit', '-qm', 'c1');
+  const id = marketplaceId(root);
+  const row = (eid, url, name) => ({ id: eid, url, name, description: '', addedAt: '2026-09-03T00:00:00.000Z', lastSync: null, plugins: [], warnings: [] });
+  writeMarketplaces({ seededBuiltin: true, marketplaces: {
+    [id]: row(id, root, id),
+    'github.com-acme-nameless-0000aaaa': row('github.com-acme-nameless-0000aaaa', 'https://github.com/acme/nameless', 'github.com-acme-nameless-0000aaaa'),
+    'named-0000bbbb': row('named-0000bbbb', 'https://github.com/acme/named', 'Acme Named'),
+  } });
+  try {
+    const byId = Object.fromEntries(listMarketplaces().map((m) => [m.id, m.name]));
+    assert.deepEqual([byId[id], byId['github.com-acme-nameless-0000aaaa'], byId['named-0000bbbb']],
+      ['old-nameless', 'acme/nameless', 'Acme Named']);
+    assert.equal(readMarketplaces().marketplaces[id].name, id, 'a read never writes');
+    assert.equal((await syncMarketplace(id)).name, 'old-nameless');
+    assert.equal(readMarketplaces().marketplaces[id].name, 'old-nameless', 'the good sync stored it');
+  } finally {
+    writeMarketplaces({ seededBuiltin: true, marketplaces: {} });
+  }
+});
+
+test('syncErrorOf: each git phrase for a source it cannot reach is enough on its own; every GitHub access code is UNREACHABLE (G12)', async () => {
+  const gitErr = (stderr) => Object.assign(new Error('Command failed: git fetch'), { code: 128, stderr });
+  const code = (err) => syncErrorOf(err).code;
+  const RPC = 'error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502\nfatal: expected flush after ref listing\n';
+  const rows = [
+    ['unable to access', "fatal: unable to access 'https://git.acme.dev/a/b/': Failed to connect to git.acme.dev port 443 after 2 ms: Couldn't connect to server\n"],
+    ['could not resolve host', 'fatal: Could not resolve host: git.acme.dev\n'],
+    ['does not appear to be a git repository', "fatal: '/srv/gone' does not appear to be a git repository\n"],
+    ['could not read from remote repository', 'git@git.acme.dev: Permission denied.\nfatal: Could not read from remote repository.\n'],
+    ['could not read Username', "fatal: could not read Username for 'https://git.acme.dev': No such device or address\n"],
+    ['could not read Password', "fatal: could not read Password for 'https://u@git.acme.dev': No such device or address\n"],
+    ['authentication failed', "remote: Invalid username or password.\nfatal: Authentication failed for 'https://git.acme.dev/a/b/'\n"],
+    ['terminal prompts disabled', 'fatal: terminal prompts disabled\n'],
+    ['permission denied (publickey)', 'git@git.acme.dev: Permission denied (publickey).\n'],
+    ['host key verification failed', 'Host key verification failed.\n'],
+    ['connection refused', 'ssh: connect to host git.acme.dev port 22: Connection refused\n'],
+    ['connection timed out', 'ssh: connect to host git.acme.dev port 22: Connection timed out\n'],
+    ['connection reset', 'kex_exchange_identification: read: Connection reset by peer\n'],
+    ['network is unreachable', 'ssh: connect to host git.acme.dev port 22: Network is unreachable\n'],
+    ['repository not exported', 'fatal: remote error: repository not exported: /a/b\n'],
+    ['smart-HTTP status', RPC],
+  ].map(([name, stderr]) => ({ name, run: () => assert.equal(code(gitErr(stderr)), 'UNREACHABLE') }));
+  rows.push({ name: 'smart-HTTP status message', run: () => assert.equal(syncErrorOf(gitErr(RPC)).message, 'HTTP 502') });
+  for (const c of ['GITHUB_AUTH', 'GITHUB_FORBIDDEN', 'GITHUB_RATE_LIMITED']) rows.push({ name: c, run: () => assert.equal(code(new GithubError(c, `${c} text`)), 'UNREACHABLE') });
+  rows.push({ name: 'a plain failure stays SYNC_FAILED', run: () => assert.equal(code(gitErr('fatal: bad object 0123\n')), 'SYNC_FAILED') });
+  await checkRows(rows);
+});
+
+test('a failed sync is cleaned in linear time: a 200 kB line comes back masked in well under a second (G12)', () => {
+  const gitErr = (stderr) => Object.assign(new Error('Command failed: git clone'), { code: 128, stderr });
+  const t0 = Date.now();
+  for (const s of ['a'.repeat(200_000), 'a.'.repeat(100_000), `https://${'u'.repeat(200_000)}@git.acme.dev/a`]) syncErrorOf(gitErr(`fatal: repository '${s}' not found\n`));
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0} ms`);
+});
+
+test('syncErrorOf: a failed sync as { message, code, at } — an HTTP status, network, auth or a missing repo is UNREACHABLE, the rest SYNC_FAILED; a URL credential never survives (G12)', async () => {
+  const AT = '2026-10-20T00:00:00.000Z';
+  const gitErr = (stderr) => Object.assign(new Error('Command failed: git clone'), { code: 128, stderr });
+  const want = (message, code) => ({ message, code, at: AT });
+  await checkRows([
+    { name: 'git HTTP 403 -> "HTTP 403"', run: () => assert.deepEqual(syncErrorOf(gitErr("Cloning into bare repository 'x'...\nfatal: unable to access 'https://github.com/BD-AI-SDLC/worca-marketplace/': The requested URL returned error: 403\n"), AT), want('HTTP 403', 'UNREACHABLE')) },
+    { name: 'a lone user name in a URL git prints is masked', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: could not read Password for 'http://tok-secret-123@127.0.0.1:5': terminal prompts disabled\n"), AT), want("could not read Password for 'http://***@127.0.0.1:5': terminal prompts disabled", 'UNREACHABLE')) },
+    { name: 'a raw @ in a password keeps no tail', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: repository 'https://u:p@ss@git.acme.dev/a/b/' not found\n"), AT), want("repository 'https://***@git.acme.dev/a/b/' not found", 'UNREACHABLE')) },
+    { name: 'a timeout: no command line, no cache folder', run: () => assert.deepEqual(syncErrorOf(Object.assign(new Error(`Command failed: git clone --quiet --bare https://u:tok@git.acme.dev/a/b ${join(pluginsRoot(), '.cache', 'u-tok-git.acme.dev-a-b-1234abcd.git')}`), { killed: true, signal: 'SIGKILL', code: null, stderr: '' }), AT), want('timed out', 'UNREACHABLE')) },
+    { name: "worca's cache folder never shows, with either slash", run: () => assert.deepEqual([join(pluginsRoot(), '.cache', 'u-tok-x-1234abcd.git'), `${pluginsRoot().replace(/\\/g, '/')}/.cache/u-tok-x-1234abcd.git`].map((p) => syncErrorOf(gitErr(`fatal: not a git repository: '${p}'\n`), AT)), [want("not a git repository: '<worca cache>'", 'SYNC_FAILED'), want("not a git repository: '<worca cache>'", 'SYNC_FAILED')]) },
+    { name: 'a file-system error names no worca folder', run: () => assert.deepEqual(syncErrorOf(Object.assign(new Error(`EACCES: permission denied, mkdir '${join(pluginsRoot(), '.cache')}'`), { code: 'EACCES' }), AT), want("EACCES: permission denied, mkdir '<worca cache>'", 'SYNC_FAILED')) },
+    { name: 'a git daemon refusal', run: () => assert.deepEqual(syncErrorOf(gitErr('fatal: remote error: access denied or repository not exported: /a/b\n'), AT), want('remote error: access denied or repository not exported: /a/b', 'UNREACHABLE')) },
+    { name: 'a long message is cut to 300 characters', run: () => { const m = syncErrorOf(gitErr(`fatal: remote error: ${'x'.repeat(5000)}\n`), AT).message; assert.deepEqual([m.length, m.endsWith('…'), m.startsWith('remote error: xxx')], [300, true, true]); } },
+    { name: 'GitHub 5xx is reachability', run: () => assert.deepEqual(syncErrorOf(new GithubError('GITHUB_HTTP', 'GitHub (HTTP 502)', { status: 502 }), AT), want('GitHub (HTTP 502)', 'UNREACHABLE')) },
+    { name: 'git DNS -> the reason, URL prefix dropped', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: unable to access 'https://git.worca-test.invalid/a/b/': Could not resolve host: git.worca-test.invalid\n"), AT), want('Could not resolve host: git.worca-test.invalid', 'UNREACHABLE')) },
+    { name: 'git: a local repo that is gone', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: repository '/srv/gone' does not exist\n"), AT), want("repository '/srv/gone' does not exist", 'UNREACHABLE')) },
+    { name: 'git: an origin that is not a repository', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: '/srv/gone' does not appear to be a git repository\nfatal: Could not read from remote repository.\n"), AT), want("'/srv/gone' does not appear to be a git repository", 'UNREACHABLE')) },
+    { name: 'git: credentials in a URL are masked', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: repository 'https://u:tok123@git.acme.dev/a/b/' not found\n"), AT), want("repository 'https://***@git.acme.dev/a/b/' not found", 'UNREACHABLE')) },
+    { name: 'git: an empty repo', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.\n"), AT), want('repository has no commits yet', 'SYNC_FAILED')) },
+    { name: 'a missing branch', run: () => assert.deepEqual(syncErrorOf(new Error('branch "nope" not found'), AT), want('branch "nope" not found', 'SYNC_FAILED')) },
+    { name: 'GitHub over HTTPS: its own message', run: () => assert.deepEqual(syncErrorOf(new GithubError('GITHUB_NETWORK', 'GitHub unreachable (ENOTFOUND)'), AT), want('GitHub unreachable (ENOTFOUND)', 'UNREACHABLE')) },
+    { name: 'GitHub 404 keeps its private-repo hint', run: () => assert.deepEqual(syncErrorOf(new GithubError('GITHUB_NOT_FOUND', 'not found on GitHub: acme/nope (a private repository needs GH_TOKEN)', { status: 404 }), AT), want('not found on GitHub: acme/nope (a private repository needs GH_TOKEN)', 'UNREACHABLE')) },
+    { name: 'GitHub: too large is not reachability', run: () => assert.deepEqual(syncErrorOf(new GithubError('GITHUB_HTTP', 'the repository is too large to read without git'), AT), want('the repository is too large to read without git', 'SYNC_FAILED')) },
+  ]);
+});
+
+test('a hand-edited snapshot whose plugins is not a list reads as no plugins (G14)', () => {
+  const id = 'handmade-0000ffff';
+  writeMarketplaces({ seededBuiltin: true, marketplaces: { [id]: { id, url: 'https://github.com/acme/handmade', name: 'Handmade', plugins: { not: 'a list' }, warnings: [] } } });
+  try {
+    assert.deepEqual(listMarketplaces().map((m) => [m.name, m.plugins]), [['Handmade', []]]);
+  } finally {
+    writeMarketplaces({ seededBuiltin: true, marketplaces: {} });
+  }
+});
+
+test('each snapshot plugin carries its own manifest notes; warnings stay as today; an older snapshot reads notes: [] (G14)', async () => {
+  const NOTE = 'plugins/ds/worca-cc-plugin.json: models[0] ("ds-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored';
+  const root = join(scratch, 'noted');
+  writeTree(root, {
+    'worca-cc-marketplace.json': JSON.stringify({ name: 'noted market', plugins: ['plugins/clean', 'plugins/ds'] }),
+    'plugins/clean/worca-cc-plugin.json': PLUGIN('clean'),
+    'plugins/clean/index.mjs': 'export default () => ({});\n',
+    'plugins/ds/worca-cc-plugin.json': JSON.stringify({ name: 'noted-ds', version: '0.4.0',
+      models: [{ id: 'ds-stable', env: { ANTHROPIC_MODEL: 'ds-stable', CLAUDE_CODE_SUBAGENT_MODEL: 'ds-stable' } }] }),
+  });
+  await git(root, 'init', '-q', '-b', 'main');
+  await git(root, 'add', '-A');
+  await git(root, 'commit', '-qm', 'c1');
+  const entry = await addMarketplace(root);
+  assert.deepEqual(entry.plugins.map((p) => [p.name, p.notes]), [['clean', []], ['noted-ds', [NOTE]]]);
+  assert.deepEqual(entry.warnings, [NOTE], 'the marketplace-level list is unchanged');
+  const st = readMarketplaces();
+  for (const p of st.marketplaces[entry.id].plugins) delete p.notes;
+  writeMarketplaces(st);
+  assert.deepEqual(listMarketplaces().find((m) => m.id === entry.id).plugins.map((p) => p.notes), [[], []]);
+});
+
+test('addMarketplace reports its phases through onProgress: resolving, fetching, reading, checking per plugin, saved (G4)', async () => {
+  const { root, sha } = await makeMarketRepo('m-phases', ['p1', 'p2']);
+  const events = [];
+  const entry = await addMarketplace(root, { onProgress: (e) => events.push(e) });
+  assert.deepEqual(events, [
+    { phase: 'resolving', resolvedUrl: root },
+    { phase: 'fetching' },
+    { phase: 'reading', sha },
+    { phase: 'checking', done: 0, total: 2, plugin: null },
+    { phase: 'checking', done: 1, total: 2, plugin: 'p1' },
+    { phase: 'checking', done: 2, total: 2, plugin: 'p2' },
+    { phase: 'saved' },
+  ]);
+  assert.equal(entry.lastSync.sha, sha);
+  const { root: root2 } = await makeMarketRepo('m-phases-throw', ['p3']);
+  assert.ok((await addMarketplace(root2, { onProgress: () => { throw new Error('listener bug'); } })).lastSync,
+    'a listener that throws never breaks the add');
+});
+
+test('checkMarketplaceAdd: the refusals an add makes before any git work; EXISTS names the marketplace it already is (G5)', async () => {
+  const { root } = await makeMarketRepo('m-check', ['c1']);
+  assert.deepEqual(checkMarketplaceAdd(root), { url: root, id: marketplaceId(root) });
+  const entry = await addMarketplace(root);
+  assert.throws(() => checkMarketplaceAdd(root),
+    { code: 'EXISTS', message: `marketplace already added: ${root}`, existing: { id: entry.id, name: 'm-check market' } });
+  assert.throws(() => checkMarketplaceAdd('  '), { code: 'BAD_REQUEST', message: 'marketplace url is required' });
+  const folder = join(scratch, 'plain-plugin');
+  writeTree(folder, { 'worca-cc-plugin.json': PLUGIN('plain'), 'index.mjs': 'export default () => ({});\n' });
+  assert.throws(() => checkMarketplaceAdd(folder), (e) => e.code === 'PLUGIN_FOLDER' && e.dir === folder);
+});
+
+test('an add that loses a race to the same url refuses EXISTS naming the winner (B8 re-check, G5)', async () => {
+  const { root } = await makeMarketRepo('m-race-add', ['r1']);
+  const id = marketplaceId(root);
+  let raced = false;
+  const exec = (cmd, args, opts) => {
+    if (!raced) {
+      raced = true;
+      const st = readMarketplaces();
+      st.marketplaces[id] = { id, url: root, name: 'Winner', description: '', addedAt: '2026-10-20T00:00:00.000Z', lastSync: null, plugins: [], warnings: [] };
+      writeMarketplaces(st);
+    }
+    return execFileP(cmd, args, opts);
+  };
+  await assert.rejects(addMarketplace(root, { exec }), { code: 'EXISTS', existing: { id, name: 'Winner' } });
+});
+
+test('a plugin is reported checked only after its inventory is read; saved once the entry is on disk; the add returns the entry as a read shows it (G4)', async () => {
+  const { root } = await makeMarketRepo('m-order', ['o1', 'o2']);
+  const log = [];
+  const exec = (cmd, args, opts) => {
+    if (cmd === 'git' && args.includes('archive')) log.push(`archive ${args.at(-1)}`);
+    return execFileP(cmd, args, opts);
+  };
+  let savedSeen = null;
+  const entry = await addMarketplace(root, { exec, onProgress: (e) => {
+    if (e.phase === 'checking' && e.plugin) log.push(`checked ${e.plugin}`);
+    if (e.phase === 'saved') savedSeen = Boolean(readMarketplaces().marketplaces[marketplaceId(root)]);
+  } });
+  assert.deepEqual(log, ['archive plugins/o1', 'checked o1', 'archive plugins/o2', 'checked o2']);
+  assert.equal(savedSeen, true, 'saved is heard once the entry is on disk');
+  assert.deepEqual(entry, listMarketplaces().find((m) => m.id === entry.id), 'the add returns the entry as a read shows it');
+});
+
+test('EXISTS names an older worca entry by the name a read shows (G5, G6)', () => {
+  const oldDir = join(scratch, 'old-exists');
+  const oldId = marketplaceId(oldDir);
+  writeMarketplaces({ seededBuiltin: true, marketplaces: { [oldId]: { id: oldId, url: oldDir, name: oldId, description: '', addedAt: '2026-09-03T00:00:00.000Z', lastSync: null, plugins: [], warnings: [] } } });
+  try {
+    assert.throws(() => checkMarketplaceAdd(oldDir), { code: 'EXISTS', existing: { id: oldId, name: 'old-exists' } });
+  } finally {
+    writeMarketplaces({ seededBuiltin: true, marketplaces: {} });
+  }
+});
+
+test('checkMarketplaceAdd reads a megabyte url in linear time: a long run of trailing slashes or dashes costs one pass', () => {
+  const t0 = Date.now();
+  for (const url of [`https://h.invalid/${'/'.repeat(100_000)}a`, `git@h.invalid:x${'/'.repeat(100_000)}a`, `https://h.invalid/${'-'.repeat(100_000)}a`]) checkMarketplaceAdd(url);
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0} ms`);
+  assert.equal(marketplaceId('https://git.acme.dev/a/b///'), marketplaceId('https://git.acme.dev/a/b'), 'trailing slashes still go');
+  assert.match(marketplaceId('https://git.acme.dev/a/b--'), /^git\.acme\.dev-a-b-[0-9a-f]{8}$/, 'trailing dashes still go');
 });

@@ -564,3 +564,37 @@ test('V17/V22: paramsPort is a known key, legal only where a wire has something 
   assert.deepEqual(v22(wired({ params: { cmd: 'x' }, paramsPort: true }), req), [], 'wired: the runner enforces it');
   assert.deepEqual(v22(wired({ params: {}, paramsPort: true }), req), ["script node 'n_tests' is missing required param 'cmd'"], 'a command param is never deferred');
 });
+
+test('V23 Shape-it-first agent config: approve, maxQuestions, promptHints', () => {
+  const withPlan = (config, key = 'planner') => { const t = ok(); t.nodes = t.nodes.map((n) => (n.id === 'n_plan' ? A('n_plan', key, config) : n)); return t; };
+  const v23 = (t) => V(t).errors.filter((e) => e.code === 'V23');
+  assert.equal(v23(withPlan({ approve: { kind: 'plan' } })).length, 1, 'approve without a port');
+  assert.match(v23(withPlan({ approve: { kind: 'plan' } }))[0].message, /config\.approve must be/);
+  assert.equal(v23(withPlan({ approve: 'plan' })).length, 1, 'approve must be an object');
+  assert.equal(v23(withPlan({ approve: { kind: 'nope', port: 'plan' } })).length, 1, 'approve.kind must be plan');
+  assert.match(v23(withPlan({ approve: { kind: 'plan', port: 'nope' } }))[0].message, /'nope' is not an md output/);
+  assert.equal(v23(withPlan({ approve: { kind: 'plan', port: 'pass' } }, 'reviewer')).length, 1, 'pass is a void output');
+  const good = withPlan({ approve: { kind: 'plan', port: 'plan' } });
+  assert.deepEqual(v23(good), []);
+  assert.deepEqual(V(good).warnings.filter((w) => w.code === 'V17'), [], 'approve is a known key');
+  for (const bad of [9, 0, 2.5, '3']) assert.equal(v23(withPlan({ maxQuestions: bad })).length, 1, `maxQuestions ${bad}`);
+  for (const good1 of [1, 8]) assert.deepEqual(v23(withPlan({ maxQuestions: good1 })), []);
+  assert.equal(v23(withPlan({ promptHints: 3 })).length, 1, 'promptHints must be a string');
+  const fine = withPlan({ maxQuestions: 5, promptHints: 'be brief' });
+  assert.deepEqual(v23(fine), []);
+  assert.deepEqual(V(fine).warnings.filter((w) => w.code === 'V17'), [], 'maxQuestions / promptHints are known keys');
+});
+
+test('V24 role reviews: roleReview is a known agent key; onExhausted is clean|gate on a loop wire only', () => {
+  const withWire = (cfg, id = 'w5') => { const t = ok(); t.wires = t.wires.map((w) => (w.id === id ? { ...w, config: { ...(w.config || {}), ...cfg } } : w)); return t; };
+  const v24 = (t) => V(t).errors.filter((e) => e.code === 'V24');
+  const role = ok(); role.nodes = role.nodes.map((n) => (n.id === 'n_rev' ? A('n_rev', 'reviewer', { roleReview: true }) : n));
+  assert.deepEqual(V(role).warnings.filter((w) => w.code === 'V17'), [], 'roleReview is a known key');
+  for (const mode of ['clean', 'gate']) {
+    const r = V(withWire({ onExhausted: mode }));
+    assert.deepEqual(v24(withWire({ onExhausted: mode })), []);
+    assert.deepEqual(r.warnings, [], JSON.stringify(r.warnings));
+  }
+  assert.match(v24(withWire({ onExhausted: 'nope' }))[0].message, /onExhausted must be 'clean' or 'gate'/);
+  assert.match(v24(withWire({ onExhausted: 'clean' }, 'w2'))[0].message, /onExhausted but is not a loop wire/);
+});

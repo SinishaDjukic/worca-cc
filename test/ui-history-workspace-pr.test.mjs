@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { cardAlertOf } from './helpers/feedback.mjs';
+import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 // Workspace runs: one PR per AFFECTED member repo. The saved-run detail header's
 // per-repo list and the workspace Ship-it dialog (per-repo rows, sequential POSTs,
@@ -260,9 +262,11 @@ test('detail header lists every member repo with its status', async () => {
   // Name and status asserted separately (v2 review M2) ...
   assert.deepEqual(lis.map((li) => li.querySelector('b').textContent), ['api', 'web', 'doc', 'ops', 'cli']);
   assert.deepEqual(lis.map((li) => (li.querySelector('.hd-pr-repo-link, .hd-pr-repo-note') || {}).textContent),
-    ['Merged', 'No PR yet', 'No changes — skipped', 'Branch no longer exists', 'No branch recorded']);
+    ['View PR', 'No PR yet', 'No changes, skipped', 'Branch no longer exists', 'No branch recorded']);
   // ... and the rendered line reads with a space between them (the ' ' text node).
-  assert.equal(lis[0].textContent.replace(/\s+/g, ' ').trim(), 'api Merged');
+  assert.equal(lis[0].textContent.replace(/\s+/g, ' ').trim(), 'api View PR');
+  // PR controls (design system): a merged repo's link is "View PR" led by the merge glyph.
+  assert.equal(list.querySelector('.hd-pr-repo-link > .ic svg').innerHTML, ICONS.merge);
   assert.equal(list.querySelector('.hd-pr-repo-link').href, 'https://x/api/pull/1');
   assert.equal(hdPr(ctx.window).hidden, false, 'web can still be shipped');
   assert.equal(hdPrLink(ctx.window).hidden, true, 'never the single-PR link');
@@ -274,18 +278,22 @@ test('dialog lists affected repos (ticked), says which were skipped, loads remot
   click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
   const modal = modalOf(ctx.window);
   assert.equal(isOpen(ctx.window), true);
-  assert.equal(modal.querySelector('.shipit-summary').hidden, true);
+  assert.equal(modal.querySelector('.shipit-into').hidden, true, 'each repo row carries its own remotes and base');
+  assert.equal(modal.querySelector('#shipit-title-input').hidden, true, 'each repo\'s PR keeps the run title');
+  assert.equal(modal.querySelector('#shipit-pr-label').textContent, 'Description');
   const rows = [...modal.querySelectorAll('#shipit-repos .shipit-repo')];
   assert.deepEqual(rows.map((r) => r.dataset.memberKey), [API, WEB]);
   assert.ok(rows.every((r) => r.querySelector('.shipit-repo-pick').checked), 'default: all affected');
-  assert.match(modal.querySelector('.shipit-skipped').textContent, /No changes in doc — skipped/);
+  assert.match(modal.querySelector('.shipit-skipped').textContent, /No changes in doc\. Skipped\./);
   assert.equal(rows[0].querySelector('.shipit-repo-stat').textContent, '2 files · +7 −1');
   const keys = remotesCalls(ctx).map((c) => new URL(c.url, 'http://x').searchParams.get('memberKey')).sort();
   assert.deepEqual(keys, [API, WEB]);
-  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Open 2 pull requests');
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 2 PRs');
+  assert.equal(modal.querySelector('.shipit-title').textContent, 'Create 2 PRs', 'the title equals the confirm');
   rows[1].querySelector('.shipit-repo-pick').checked = false;
   rows[1].querySelector('.shipit-repo-pick').dispatchEvent(new ctx.window.Event('change'));
-  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Open 1 pull request');
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create PR');
+  assert.equal(modal.querySelector('.shipit-title').textContent, 'Create PR');
 });
 
 test('partial failure: per-repo error, success kept, retry re-POSTs ONLY the failed repo, cross-links', async () => {
@@ -310,9 +318,9 @@ test('partial failure: per-repo error, success kept, retry re-POSTs ONLY the fai
   const [apiRow, webRow] = modal.querySelectorAll('#shipit-repos .shipit-repo');
   assert.match(apiRow.querySelector('.shipit-repo-status').textContent, /View PR/);
   assert.equal(apiRow.querySelector('.shipit-repo-pick').disabled, true, 'an opened repo is done');
-  assert.match(webRow.querySelector('.shipit-repo-status').textContent, /Could not open PR: git push failed: denied/);
+  assert.match(webRow.querySelector('.shipit-repo-status').textContent, /Could not create PR: git push failed: denied/);
   assert.equal(modal.querySelector('.shipit-ok').textContent, 'Retry 1 failed');
-  assert.match(cardAlertOf(modal.querySelector('.shipit-card')).detail, /1 of 2 pull requests could not be opened/);
+  assert.match(cardAlertOf(modal.querySelector('.shipit-card')).detail, /1 of 2 PRs could not be created/);
   assert.equal(crossPosts(ctx).length, 1, 'cross-linked after the round that opened api');
   assert.equal(hdRepos(ctx.window).querySelector('.hd-pr-repo-link').href, 'https://x/api-00000001/pull/1', 'header in step');
 
@@ -362,6 +370,49 @@ test('workspace Ship it: Watch PR resets on open and one snapshot applies to eve
   assert.deepEqual(prPosts(ctx).map((c) => [JSON.parse(c.opts.body).memberKey, JSON.parse(c.opts.body).watch]), [[API, true], [WEB, true]]);
 });
 
+test('s4: workspace Ship it starts Watch PR on only when every listed repository has the project setting on', async () => {
+  for (const [api, web, want] of [[true, true, true], [true, false, false], [true, undefined, false]]) {
+    const value = { [API]: api, [WEB]: web };
+    const arms = (url) => {
+      const m = /\/api\/projects\/([^/]+)\/settings$/.exec(url);
+      if (!m || !(m[1] in value)) return null;
+      const v = value[m[1]];
+      return ok({ own: {}, effective: v === undefined ? {} : { watchNewPrs: { value: v, source: 'project' } }, layers: {}, roles: [] });
+    };
+    const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([member(API, 'api'), member(WEB, 'web')])] });
+    await openDetail(ctx, wksDetailHash);
+    click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+    assert.equal(modalOf(ctx.window).querySelector('.shipit-watch-input').checked, want, `api ${api}, web ${web}`);
+  }
+});
+
+test('workspace Ship it is a form: a backdrop click keeps it and its picks; Escape asks once a pick changed; Cancel closes at once', async () => {
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), member(WEB, 'web')])] });
+  await openDetail(ctx, wksDetailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  const doc = ctx.window.document;
+  pressEscape(ctx.window);
+  assert.equal(discardPrompt(doc), null, 'untouched (the remotes that loaded are no change): no question');
+  assert.equal(isOpen(ctx.window), false, 'Escape closes an untouched dialog');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const pick = modal.querySelectorAll('#shipit-repos .shipit-repo-pick')[1];
+  pick.checked = false;
+  pick.dispatchEvent(new ctx.window.Event('change'));
+  backdropClick(ctx.window, modal);
+  assert.equal(isOpen(ctx.window), true, 'never on a backdrop click');
+  assert.equal(modal.querySelectorAll('#shipit-repos .shipit-repo-pick')[1].checked, false, 'the pick is kept');
+  pressEscape(ctx.window);
+  assert.ok(discardPrompt(doc), 'a changed pick: Escape asks');
+  discardChanges(doc);
+  await settle(ctx.window);
+  assert.equal(isOpen(ctx.window), false, 'Discard closes it');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  click(ctx.window, modal.querySelector('.shipit-cancel'));
+  assert.equal(isOpen(ctx.window), false, 'Cancel closes at once');
+  assert.equal(prPosts(ctx).length, 0);
+});
+
 const memberChecks = (watch) => ({ checks: { state: 'passing', total: 3, failed: 0, pending: 0, skipped: 0 }, mergeable: 'MERGEABLE',
   status: { tone: 'ok', label: 'Ready to merge', detail: 'All 3 checks passed' }, watch });
 const ovRows = (w) => [...w.document.querySelectorAll('#hist-detail .hd-ov-pr')];
@@ -409,4 +460,228 @@ test('workspace detail: pr-watch-changed for the run\'s store key rereads only t
   send({ projectKey: WKS_KEY, memberKey: API });
   await settle(ctx.window);
   assert.deepEqual([gets(API), gets(WEB)], [before[0] + 1, before[1]]);
+});
+
+test('workspace card head: a member PR read that fails after going stale is not retried back to back', async () => {
+  // api answers at once; web's first read is held. Once api's answer is stale and its endpoint fails, web's late
+  // answer repaints the head, which asks api again: that failed read must not repaint (and ask) again in a loop.
+  let down = false;
+  const held = [];
+  const answer = () => ok(memberChecks({ watching: false, status: 'idle', reason: null, activePipelineId: null }));
+  const arms = (url) => {
+    if (!/\/api\/pr\/checks\?/.test(url)) return null;
+    const mk = new URL(url, 'http://x').searchParams.get('memberKey');
+    if (mk === WEB && !held.done) return new Promise((r) => held.push(r));
+    return down ? fail(500, { error: 'rate limited' }) : answer();
+  };
+  const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([
+    member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1', number: 1 } }),
+    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2', number: 2 } })])] });
+  await openDetail(ctx, wksDetailHash); await settle(ctx.window, 6);
+  const gets = () => ctx.calls.filter((c) => /\/api\/pr\/checks\?/.test(c.url) && new URL(c.url, 'http://x').searchParams.get('memberKey') === API).length;
+  assert.ok(gets() > 0, 'the api member PR was read');
+  assert.ok(held.length > 0, 'the web member read is in flight');
+  const realNow = Date.now;
+  Date.now = () => realNow() + 60000;                  // api's cached answer is stale now
+  try {
+    down = true;
+    held.done = true;
+    const before = gets();
+    while (held.length) held.shift()(answer());
+    await settle(ctx.window, 30);
+    assert.ok(gets() - before <= 1, `no read loop: ${gets() - before} api reads after one repaint`);
+  } finally { Date.now = realNow; }
+});
+
+const NOTES = 'notes-00000004';
+const folderMember = (state) => member(NOTES, 'notes', { workMode: 'folder', branch: null, sourceBranch: null, survived: false,
+  affected: true, added: 0, removed: 0, diffFrozen: false, changes: { state, counts: { added: 2, modified: 0, deleted: 0 } } });
+
+test('a Folder member: the header names its Changes state, Ship it leaves it out and says so', async () => {
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), folderMember('pending')])] });
+  await openDetail(ctx, wksDetailHash);
+  const lis = [...hdRepos(ctx.window).querySelectorAll('.hd-pr-repo')];
+  assert.deepEqual(lis.map((li) => [li.querySelector('b').textContent, li.querySelector('.hd-pr-repo-note, .hd-pr-repo-link').textContent]),
+    [['api', 'No PR yet'], ['notes', 'On a copy']]);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  assert.deepEqual([...modal.querySelectorAll('#shipit-repos .shipit-repo')].map((r) => r.dataset.memberKey), [API]);
+  assert.equal(modal.querySelector('.shipit-folder-skipped').textContent, 'notes (Folder). Skipped.');
+  assert.ok(!remotesCalls(ctx).some((c) => c.url.includes(NOTES)), 'no git remotes read for a Folder member');
+});
+
+test('Folder member notes follow its Changes: Applied, Discarded; an all-Folder run offers no Create PR', async () => {
+  for (const [state, note] of [['applied', 'Applied'], ['discarded', 'Discarded']]) {
+    const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([folderMember(state), member(DOC, 'doc', { affected: false })])] });
+    await openDetail(ctx, wksDetailHash);
+    assert.equal(hdRepos(ctx.window).querySelector(`.hd-pr-repo[data-member-key="${NOTES}"] .hd-pr-repo-note`).textContent, note);
+    assert.equal(hdPr(ctx.window).hidden, true);
+  }
+});
+
+// test/ui-history-workspace-pr.test.mjs — append
+const CHANGES = { state: 'pending', files: [{ path: 'src/feature.mjs', change: 'added', size: 120 }, { path: 'test/feature.test.mjs', change: 'added', size: 90 }],
+  counts: { added: 2, modified: 0, deleted: 0 } };
+const PLAN = { target: '/tmp/notes', add: ['src/feature.mjs', 'test/feature.test.mjs'], update: [], delete: [], skipped: [] };
+const folderArms = (url, opts) => {
+  if (url.includes(`/api/runs/${ROW.id}/changes?memberKey=${NOTES}`)) return ok(CHANGES);
+  if (url.includes(`/api/runs/${ROW.id}/apply-plan?memberKey=${NOTES}`)) return ok(PLAN);
+  if (url.includes(`/api/runs/${ROW.id}/apply?memberKey=${NOTES}`) && opts.method === 'POST') return ok({ applied: 2, skipped: [] });
+  return null;
+};
+const byText = (root, sel, text) => [...root.querySelectorAll(sel)].find((n) => n.textContent.trim() === text);
+
+test('a mixed workspace run shows Diff and Changes; Changes holds one section per Folder member with its own Apply to folder', async () => {
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), folderMember('pending')])], arms: folderArms });
+  await openDetail(ctx, wksDetailHash);
+  const d = ctx.window.document;
+  assert.ok(d.querySelector('#hist-detail button[role="tab"][data-sec="diff"]'), 'the Git member keeps its Diff');
+  const tab = d.querySelector('#hist-detail button[role="tab"][data-sec="changes"]');
+  assert.ok(tab, 'a Changes tab');
+  assert.equal(tab.querySelector('.hd-tab-badge')?.textContent, '2', 'its badge = the Folder members\' file count');
+  click(ctx.window, tab); await settle(ctx.window, 6);
+  const secs = [...d.querySelectorAll('#hist-detail .hd-sec[data-sec="changes"] section[data-member-key]')];
+  assert.deepEqual(secs.map((n) => n.dataset.memberKey), [NOTES], 'one section for the one Folder member (never the Git member)');
+  assert.equal(secs.length, 1, 'one section for the one Folder member');
+  const sec = secs[0];
+  assert.match(sec.textContent, /notes/);
+  assert.ok(byText(sec, '.kind-chip', 'Folder'));
+  assert.ok(byText(sec, '*', '2 files · on a copy'));
+  assert.ok(byText(sec, 'button', 'Discard'));
+  click(ctx.window, byText(sec, 'button', 'Apply to folder')); await settle(ctx.window, 6);
+  const dlg = [...d.querySelectorAll('dialog[open], [role="dialog"], .modal:not(.hidden)')].find((n) => /Apply to folder/.test(n.textContent));
+  assert.ok(dlg, 'the Apply dialog opened');
+  const line = dlg.querySelector('.fc-member-line');
+  assert.ok(line, 'the dialog names the member');
+  assert.equal(line.querySelector('.fc-member-name').textContent, 'notes');
+  assert.equal(line.querySelector('.kind-chip.kind-folder').textContent, 'Folder');
+  assert.equal(line.nextElementSibling, dlg.querySelector('.fc-target'), 'the member line sits above the target line');
+  assert.match(dlg.querySelector('.fc-target').textContent, /\/tmp\/notes/);
+  click(ctx.window, byText(dlg, 'button', 'Apply 2 files')); await settle(ctx.window, 6);
+  assert.ok(ctx.calls.some((c) => c.url.includes(`/api/runs/${ROW.id}/apply?memberKey=${NOTES}`) && c.opts.method === 'POST'));
+  const bar = d.querySelector(`#hist-detail .hd-sec[data-sec="changes"] section[data-member-key="${NOTES}"] .fc-bar-l`);
+  assert.equal(bar && bar.textContent, '2 files · Applied', 'the member\'s bar settles; the glance repaint never blanks it');
+  assert.ok(!ctx.calls.some((c) => /\/api\/runs\/[^/]+\/(changes|apply-plan|apply|discard)(\/patch)?(\?|$)/.test(c.url) && !c.url.includes('memberKey=')),
+    'no memberless Changes call on a workspace run');
+});
+
+const DOCS = 'docs-00000005';
+const docsMember = (state) => member(DOCS, 'docs', { workMode: 'folder', branch: null, sourceBranch: null, survived: false,
+  affected: true, added: 0, removed: 0, diffFrozen: false, changes: { state, counts: { added: 1, modified: 2, deleted: 0 } } });
+
+test('an all-Folder workspace run: no Diff, Changes per member with the summed badge, no run-level Apply bar; one member settles alone', async () => {
+  const arms = (url, opts) => {
+    if (url.includes(`/api/runs/${ROW.id}/changes?memberKey=`)) return ok(CHANGES);
+    if (url.includes(`/api/runs/${ROW.id}/discard?memberKey=${DOCS}`) && opts.method === 'POST') return ok({ ok: true });
+    return null;
+  };
+  const allFolder = wsRow([folderMember('pending'), docsMember('pending')],
+    { workMode: 'folder', branch: null, sourceBranch: null, survived: false, changes: { state: 'pending', counts: { added: 3, modified: 2, deleted: 0 } } });
+  const ctx = await bootShip({ detail: { ...WS_DETAIL, state: { ...WS_DETAIL.state, workMode: 'folder', branch: { workMode: 'folder' } } }, rows: [allFolder], arms });
+  await openDetail(ctx, wksDetailHash);
+  const d = ctx.window.document;
+  assert.equal(d.querySelector('#hist-detail button[role="tab"][data-sec="diff"]'), null, 'no Diff');
+  const tab = d.querySelector('#hist-detail button[role="tab"][data-sec="changes"]');
+  assert.equal(tab.querySelector('.hd-tab-badge').textContent, '5', '2 + 3 files');
+  // Slice 3 (D14): the head offers no run-level Apply or Discard on a workspace run (it would POST without a memberKey).
+  assert.equal(d.querySelector('#hist-detail .hd-glance .rd-head-acts [data-head="apply-folder"]'), null);
+  assert.equal(d.querySelector('#hist-detail .hd-glance .rd-head-acts [data-head="discard-folder"]'), null);
+  click(ctx.window, tab); await settle(ctx.window, 6);
+  const secs = [...d.querySelectorAll('#hist-detail .hd-sec[data-sec="changes"] section[data-member-key]')];
+  assert.deepEqual(secs.map((n) => [n.dataset.memberKey, n.querySelector('.fc-member-name').textContent, n.querySelector('.fc-bar-l').textContent]),
+    [[NOTES, 'notes', '2 files · on a copy'], [DOCS, 'docs', '3 files · on a copy']]);
+  const notesApply = secs[0].querySelector('.fc-apply');
+  click(ctx.window, byText(secs[1], 'button', 'Discard')); await settle(ctx.window, 2);
+  assert.equal(d.getElementById('confirm-title').textContent, 'Discard 3 files?');
+  click(ctx.window, d.getElementById('confirm-ok')); await settle(ctx.window, 8);
+  assert.ok(ctx.calls.some((c) => c.url.endsWith(`/api/runs/${ROW.id}/discard?memberKey=${DOCS}`) && c.opts.method === 'POST'));
+  const after = [...d.querySelectorAll('#hist-detail .hd-sec[data-sec="changes"] section[data-member-key]')];
+  assert.deepEqual(after.map((n) => n.querySelector('.fc-bar-l').textContent), ['2 files · on a copy', '3 files · Discarded']);
+  assert.deepEqual([...after[0].querySelectorAll('button')].map((b) => b.textContent).filter((t) => t === 'Discard' || t === 'Apply to folder'),
+    ['Discard', 'Apply to folder'], 'the other member keeps its own actions');
+  assert.equal(after[0].querySelector('.fc-apply'), notesApply, 'the run-level repaint leaves a member\'s bar alone (no rebuild, focus stays)');
+  assert.equal(allFolder.changes.state, 'pending', 'the row rollup stays pending while a member is pending');
+});
+
+
+test('an unchanged Folder member reads No changes, skipped and is named only in the No changes line', async () => {
+  const quiet = member(DOCS, 'docs', { workMode: 'folder', branch: null, sourceBranch: null, survived: false, affected: false,
+    added: 0, removed: 0, diffFrozen: false, changes: { state: 'discarded', counts: { added: 0, modified: 0, deleted: 0 } } });
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), folderMember('pending'), quiet])] });
+  await openDetail(ctx, wksDetailHash);
+  assert.equal(hdRepos(ctx.window).querySelector(`.hd-pr-repo[data-member-key="${DOCS}"] .hd-pr-repo-note`).textContent, 'No changes, skipped');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  assert.deepEqual([...modal.querySelectorAll('#shipit-repos p')].map((p) => p.textContent),
+    ['No changes in docs. Skipped.', 'notes (Folder). Skipped.']);
+});
+
+test('a mixed workspace run: the Diff tab lists and counts its Git member only (the Folder member is in Changes)', async () => {
+  const MIXED_RES = { summary: { filesNew: 3, filesChanged: 1, linesAdded: 12, linesRemoved: 1 },
+    perProject: { [API]: { summary: { filesNew: 1, filesChanged: 1, linesAdded: 7, linesRemoved: 1 }, newFiles: [{ path: 'src/a.mjs', added: 5, removed: 0 }], changedFiles: [{ path: 'src/b.mjs', added: 2, removed: 1 }] },
+      [NOTES]: { summary: { filesNew: 2, filesChanged: 0, linesAdded: 5, linesRemoved: 0 }, newFiles: [{ path: 'src/feature.mjs', added: 3, removed: 0 }, { path: 'test/feature.test.mjs', added: 2, removed: 0 }], changedFiles: [] } } };
+  const ctx = await bootShip({ detail: { ...WS_DETAIL, results: MIXED_RES }, rows: [wsRow([member(API, 'api'), folderMember('pending')])], arms: folderArms });
+  await openDetail(ctx, wksDetailHash);
+  const d = ctx.window.document;
+  assert.equal(d.querySelector('#hist-detail button[role="tab"][data-sec="diff"] .hd-tab-badge').textContent, '2', 'the Git member\'s 2 files, not 2 + the Folder member\'s 2');
+  go(ctx.window, `${wksDetailHash}/details/diff`); await settle(ctx.window, 10);
+  const sec = d.querySelector('#hist-detail .hd-sec[data-sec="diff"]');
+  assert.match(sec.querySelector('.hd-diff-list-head').textContent, /^2 files changed/);
+  assert.ok(![...sec.querySelectorAll('.rd-diff-row, .hd-diff-rows button')].some((b) => /feature/.test(b.textContent)), 'no Folder file (it has no git diff) in the Diff');
+});
+
+test('#620: each repo line reads the newer check and a stale one is redone quietly when the dialog opens', async () => {
+  const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const conflicts = (at) => ({ status: 'conflicts', base: 'main', fileCount: 1, at });
+  const up = (at) => ({ status: 'up-to-date', base: 'main', behind: 0, at });
+  const branches = {
+    [API]: { source: 'main', feature: 'worca-cc/feat-api', baseCheck: up(ago(60_000)) },     // newer than the row's
+    [WEB]: { source: 'main', feature: 'worca-cc/feat-web' },                                   // only the row's, old
+  };
+  const detail = { ...WS_DETAIL, state: { ...WS_DETAIL.state, branches } };
+  const answers = [fail(500, { error: 'boom' }),                                                // the detail's own try
+    ok({ ok: true, members: [{ projectKey: WEB, baseCheck: up(ago(0)) }], settled: {} })];
+  const checks = [];
+  const ctx = await bootShip({ detail, rows: [wsRow([
+    member(API, 'api', { baseCheck: conflicts(ago(3 * 60_000)) }),
+    member(WEB, 'web', { baseCheck: conflicts(ago(10 * 60_000)) })])],
+  arms: (url, opts) => {
+    if (!(/\/api\/runs\/[^/]+\/base-check\?/.test(url) && opts.method === 'POST')) return null;
+    checks.push(JSON.parse(opts.body));
+    return answers.shift();
+  } });
+  await openDetail(ctx, wksDetailHash);
+  assert.equal(checks.length, 1, 'the detail checks the old one on open');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 8);
+  assert.deepEqual(checks, [{ auto: true }, { auto: true }], 'the dialog redoes it');
+  const lines = [...modalOf(ctx.window).querySelectorAll('#shipit-repos .shipit-repo')]
+    .map((r) => [r.dataset.memberKey, r.querySelector('.shipit-basecheck').hidden]);
+  assert.deepEqual(lines, [[API, true], [WEB, true]], 'no conflict line: both repos are up to date now');
+});
+
+// A single-run open shows Try it first and binds it to that run's checkout. The workspace dialog
+// shows no Try it first, so its open must not inherit the earlier run's button or strip.
+test('workspace Create PR after a single-run open: no Try it first button or strip is left over', async () => {
+  const tryModel = { enabled: true, finished: true, workspace: false, estimate: null, stacks: [], stackStates: [], instances: [],
+    members: [{ projectKey: KEY, projectName: 'Alpha', branch: 'feat/log-ux', checkout: null, actions: [], builtins: [] }] };
+  const ctx = await bootShip({
+    rows: [row(), wsRow([member(API, 'api'), member(WEB, 'web')])],
+    arms: (url, opts) => (/\/api\/runs\/[^/]+\/actions\?/.test(url) && (opts.method || 'GET') === 'GET' ? ok(tryModel) : null),
+  });
+  await openDetail(ctx, detailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  assert.equal(modal.querySelector('.shipit-try-btn').hidden, false, 'the single run is not checked out: Try it first shows');
+  click(ctx.window, modal.querySelector('.shipit-cancel'));
+  assert.equal(isOpen(ctx.window), false);
+
+  ctx.box.detail = WS_DETAIL;
+  await openDetail(ctx, wksDetailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  assert.equal(isOpen(ctx.window), true);
+  const tryBtn = modal.querySelector('.shipit-try-btn');
+  assert.equal(tryBtn.hidden, true, 'the workspace footer has no Try it first');
+  assert.equal(tryBtn.onclick, null, 'and it no longer checks out the earlier run');
+  assert.equal(modal.querySelector('.shipit-try').hidden, true);
+  assert.equal(modal.querySelector('.shipit-try').children.length, 0);
 });

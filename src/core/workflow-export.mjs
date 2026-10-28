@@ -1041,7 +1041,8 @@ async function readTextOrNull(path) {
  *          dryRun?:boolean, repoRoot?:string}} opts
  * @returns {Promise<{dir, name, slug, version, created:string[], updated:string[], noop:string[],
  *   skipped:Array<{path:string, reason:string}>, conflicts:[], warnings:string[], orphans:[],
- *   written:string[], validation:{ok:boolean, problems:Array}|null}>}
+ *   written:string[], validation:{ok:boolean, problems:Array}|null,
+ *   builtins:{agents:string[], scripts:string[]}}>}
  * Error codes: BAD_REQUEST | NOT_FOUND | UNSUPPORTED | INVALID_GRAPH | CONFLICT | MISSING_SKILL
  */
 export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, keepVersion = false, dryRun = false, repoRoot } = {}) {
@@ -1241,6 +1242,7 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
     dir, name, slug, version: manifest.version || null,
     created, updated, noop, skipped, conflicts: [], warnings, orphans: [], written: [],
     scripts: bundledScripts, validation: null,
+    builtins: { agents: builtins, scripts: builtinScripts },   // left out: on every Worca host (#717 PR body)
   };
   if (dryRun) return plan;
 

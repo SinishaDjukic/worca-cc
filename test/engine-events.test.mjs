@@ -9,7 +9,7 @@ const env = (raw, extra = {}) => ({ type: raw.type, raw, ...extra });
 const norm = () => createClaudeNormalizer();
 
 test('the vocabulary', () => {
-  assert.deepEqual([...EVENT_TYPES].sort(), ['hook', 'log', 'result', 'retry', 'session', 'stderr', 'subagent', 'text', 'tool', 'toolResult', 'usage']);
+  assert.deepEqual([...EVENT_TYPES].sort(), ['compact', 'hook', 'log', 'result', 'retry', 'session', 'stderr', 'subagent', 'text', 'tool', 'toolResult', 'usage']);
 });
 
 test('isNormalized: raw envelopes are not, hook and raw-free events are', () => {
@@ -128,7 +128,7 @@ test('stream_event -> usage start/delta and text deltas on the main stream only'
 test('result -> result with every field worca reads', () => {
   const raw = { type: 'result', subtype: 'error_max_turns', is_error: true, result: 'r', total_cost_usd: 0.5, usage: { input_tokens: 1 },
     terminal_reason: 'max_turns', num_turns: 3, duration_ms: 99, session_id: 's', errors: ['e'], modelUsage: { m: {} } };
-  assert.deepEqual(norm()(env(raw, { text: 'r', costUsd: 0.5 })), [{ type: 'result', text: 'r', costUsd: 0.5, usage: { input_tokens: 1 },
+  assert.deepEqual(norm()(env(raw, { text: 'r', costUsd: 0.5 })), [{ type: 'result', text: 'r', costUsd: 0.5, cumulativeCost: true, usage: { input_tokens: 1 },
     subtype: 'error_max_turns', isError: true, terminalReason: 'max_turns', numTurns: 3, durationMs: 99, sessionId: 's', errors: ['e'], modelUsage: { m: {} } }]);
 });
 
@@ -196,6 +196,21 @@ test('text on a frame of no known type is kept as text{from:other} (logged, neve
     [{ type: 'text', text: 'Considering.', parentId: null, from: 'other' }]);
   assert.deepEqual(norm()(env({ type: 'system', subtype: 'compact_boundary', content: 'x' }, { text: 'x' })),
     [{ type: 'text', text: 'x', parentId: null, from: 'other' }]);
+});
+
+test('compact_boundary: only with Run telemetry on, a compact event after its log text (trigger, pre_tokens)', () => {
+  const prev = process.env.WORCA_FLAGS;
+  const frame = { type: 'system', subtype: 'compact_boundary', content: 'x', compact_metadata: { trigger: 'auto', pre_tokens: 155000 } };
+  try {
+    process.env.WORCA_FLAGS = '-runTelemetry';
+    assert.deepEqual(norm()(env(frame, { text: 'x' })), [{ type: 'text', text: 'x', parentId: null, from: 'other' }]);
+    process.env.WORCA_FLAGS = 'runTelemetry';
+    assert.deepEqual(norm()(env(frame, { text: 'x' })),
+      [{ type: 'text', text: 'x', parentId: null, from: 'other' }, { type: 'compact', parentId: null, trigger: 'auto', preTokens: 155000 }]);
+    assert.deepEqual(norm()(env({ type: 'system', subtype: 'compact_boundary' })), [{ type: 'compact', parentId: null }]);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev;
+  }
 });
 
 test('a tool_result without an id is still a result (id null)', () => {

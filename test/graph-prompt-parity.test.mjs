@@ -1,5 +1,5 @@
 // test/graph-prompt-parity.test.mjs
-// THE prompt snapshot pin, in two layers. For each of the 16 non-presentation builtins this
+// THE prompt snapshot pin, in two layers. For each of the 24 non-presentation builtins this
 // assembles the v2 task prompt through the SAME builder runAgentExecution ships
 // (buildAgentPrompt, driven by the REAL agents/*.meta.json sidecars — never a
 // fixture) and then:
@@ -34,36 +34,21 @@ import { posix } from './helpers/posix-path.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { runOpts, RESUME_HEADER, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS } from '../src/core/phases.mjs';
+import { buildAgentPrompt, taskSourcedPorts, allocateOutputs, allocateVerdict } from '../src/core/graph/executor.mjs';
 import {
-  buildAgentPrompt, allocateOutputs, allocateVerdict, expandsOutputPort,
-  taskSourcedPorts,
-} from '../src/core/graph/executor.mjs';
+  REGISTRY, TASK_PROMPT, ORDINAL, nodeId, BUILTIN_KEYS, PARITY_TPL,
+  frontmatterTools, makeCtxFor, portsFn,
+} from './helpers/prompt-ctx.mjs';
 
 // `store:'project'` allocations resolve under worcaHome() — isolate it FIRST.
 useTempHome(after);
-
-const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
-/** Builtin layer only — the pin is about the 14 coding/workspace files that ship
- *  in agents/, plus the two architecture builtins (architectSetup, architect), which
- *  have no v1 prompt but take the same generic builder and so get the same
- *  marker + whole-prompt pins. The eight presentation-domain builtins (wf_presentation) embed the
- *  designing-presentations criteria and their own directions block; they are not
- *  part of this byte-for-byte coding-prompt pin, so they are excluded here. */
-const RAW_REGISTRY = loadAgentRegistry(AGENTS_DIR, { userAgentsDir: null, includePlugins: false });
-const REGISTRY = Object.fromEntries(Object.entries(RAW_REGISTRY).filter(([, m]) => m.domain !== 'presentation'));
-const portsFn = registryPortsFn(REGISTRY);
 
 const scratch = [];
 const tmp = (p) => { const d = mkdtempSync(join(tmpdir(), p)); scratch.push(d); return d; };
 after(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
 const projectDir = tmp('worca-parity-proj-');
 const pipelineDir = tmp('worca-parity-pipe-');
-
-const TASK_PROMPT = 'BUILD THE THING';
-const ORDINAL = 2;                       // proves {cycle} still renders the cycle
 
 // ── the v1 bytes (verbatim copies; see the header note) ──────────────────────
 
@@ -130,82 +115,7 @@ const V1_RESUME_HEADER =
 const V2_FIX_REVIEW_ARM = '(the review to address — fix EVERY critical and major issue)';
 const V2_ANSWERS_ARM = '(the clarifying questions and the answers already given)';
 
-// ── the graph the builtins are wired into ────────────────────────────────────
-// Only two wire facts matter to the prompt: which ports a `kind:'task'` node feeds
-// (the request/attachments gate), and which output lands on an `expands` input (the
-// decomposer's contract block + MOCK markers). Everything else is sidecar data.
-
-const nodeId = (key) => `n_${key}`;
-const BUILTIN_KEYS = Object.keys(REGISTRY).sort();
-
-const PARITY_TPL = {
-  id: 'wf_parity', name: 'Parity', version: 2, domain: 'coding',
-  nodes: [
-    { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
-    ...BUILTIN_KEYS.map((key, i) => ({ id: nodeId(key), kind: 'agent', key, x: 200 + i * 40, y: 0, config: {} })),
-  ],
-  wires: [
-    { id: 'w_t_clarify', from: { node: 'n_task', port: 'task' }, to: { node: nodeId('clarify'), port: 'task' } },
-    { id: 'w_t_planner', from: { node: 'n_task', port: 'task' }, to: { node: nodeId('planner'), port: 'task' } },
-    { id: 'w_dec_impl', from: { node: nodeId('decomposer'), port: 'tasks' }, to: { node: nodeId('implementer'), port: 'task' } },
-  ],
-};
-
-/** The frontmatter `tools:` line of an agent .md — what resolveGraph stamps onto
- *  `node.tools` in production (workflows.mjs#parseFrontmatterTools, private). */
-function frontmatterTools(key) {
-  const file = REGISTRY[key].agentFile;
-  const text = readFileSync(join(AGENTS_DIR, file), 'utf8');
-  const m = /^---\s*\n([\s\S]*?)\n---/.exec(text);
-  const line = m ? m[1].split(/\r?\n/).find((l) => /^tools\s*:/.test(l)) : null;
-  return line ? line.replace(/^tools\s*:/, '').split(',').map((s) => s.trim()).filter(Boolean) : [];
-}
-
-const tok = (over = {}) => ({ seq: 1, type: 'md', ...over });
-
-/** Bind a port to a plausible absolute artifact path; a void port binds a
- *  payload-free token (which is exactly what an `as:'worktree'` input gets). */
-function bind(port) {
-  if (port.type === 'void') return tok({ type: 'void' });
-  return tok({ type: port.type, path: `/abs/${port.id}.${port.type === 'json' ? 'json' : 'md'}` });
-}
-
-/**
- * The ctx `runAgentExecution` hands its builder, assembled the way `prepare` does —
- * real sidecar meta, real allocation, graph-derived expands port. `only` names the
- * ports to bind; absent it, every REQUIRED input is bound (the steady-state first
- * execution). Optional inputs (the reviewer's `as:'worktree'` `done`, the planner's
- * `answers`/`revise`) are bound only when named.
- */
-function ctxFor(key, { only = null, workspace = null, extras = [], slice = null, runRoot = null } = {}) {
-  const meta = REGISTRY[key];
-  const node = {
-    id: nodeId(key), kind: 'agent', key, x: 0, y: 0, config: {},
-    fanOut: !!meta.fanOut, agentPrompt: `You are ${meta.displayName}.`, tools: frontmatterTools(key),
-  };
-  const ports = portsFn(node);                 // spreads the meta: ports.verdict IS the sidecar block
-  let v = 0;
-  const runCtx = {
-    pipelineDir, projectDir, baseName: 'feature', datePrefix: '01-01-26',
-    workspaceKey: null, duplicateKey: false, slice: slice?.id ?? null,
-    planVersion: () => { v += 1; return v; },
-  };
-  const chosen = (ports.inputs || []).filter((p) => p.id !== 'await' && (only ? only.includes(p.id) : p.required));
-  const bindings = {};
-  for (const port of chosen) bindings[port.id] = bind(port);
-  const executionId = `x:${node.id}:${ORDINAL}`;
-  return {
-    node, nodeId: node.id, ports, meta, bindings,
-    trigger: { wireIds: [], freshPorts: Object.keys(bindings) },
-    ordinal: ORDINAL, cycle: ORDINAL, executionId, runCtx, slice,
-    outputs: allocateOutputs({ node, ports, executionId, ordinal: ORDINAL, runCtx }),
-    verdict: allocateVerdict({ node, ports, ordinal: ORDINAL, runCtx }),
-    expandsPort: expandsOutputPort(PARITY_TPL, portsFn, node.id),
-    projectDir, pipelineDir, taskPrompt: TASK_PROMPT, toolInstruction: 'TOOLS',
-    checkpointRef: 'abc1234', extras, workspace, runRoot, template: PARITY_TPL,
-    priorAnswers: [], agentPrompts: {}, claudeOpts: { mock: true },
-  };
-}
+const ctxFor = makeCtxFor({ pipelineDir, projectDir });
 
 const promptFor = (key, opts) => buildAgentPrompt(ctxFor(key, opts));
 
@@ -275,6 +185,10 @@ const MOCK_ROLES = {
   // The architecture pair is post-v1: the setup form rides the clarify writer, the
   // architect has its own c4-architect writer.
   architectSetup: 'clarify', architect: 'c4-architect',
+  // The promo video crew is post-v1 too: two form clarifiers on the clarify writer, the
+  // producers on the generic writer, the review on the generic verifier (no bespoke roles).
+  promoSetup: 'clarify', promoVoice: 'clarify', promoExplorer: 'generic-producer', promoWriter: 'generic-producer',
+  promoCapture: 'generic-producer', promoMascot: 'generic-producer', promoScenes: 'generic-producer', promoReview: 'generic-verifier',
 };
 
 test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolutely', () => {
@@ -326,7 +240,7 @@ test('planner keeps its instruction, the REVISE arm and the inline answers block
 });
 
 test('refiner, reviewer, planReviewer and workspaceReviewer keep their v1 instructions', () => {
-  assert.deepEqual(BUILTIN_KEYS.filter((k) => REGISTRY[k].verdict).sort(), ['manualWebUiTesting', 'planReviewer', 'refiner', 'reviewer', 'workspaceReviewer']);
+  assert.deepEqual(BUILTIN_KEYS.filter((k) => REGISTRY[k].verdict).sort(), ['manualWebUiTesting', 'planReviewer', 'promoReview', 'refiner', 'reviewer', 'workspaceReviewer']);
   assert.ok(promptFor('refiner').includes(V1_REFINER_INSTRUCTION));
   const rev = promptFor('reviewer', { only: ['plan', 'done'] });   // `done` is optional: bind it to reach the worktree arm
   assert.ok(rev.includes(V1_REVIEWER_INSTRUCTION));
@@ -436,4 +350,56 @@ test('every builtin prompt matches its committed whole-prompt snapshot', () => {
       + 'If the change is deliberate, review the diff and regenerate with '
       + 'UPDATE_PROMPT_SNAPSHOTS=1 (see this file\'s header).');
   }
+});
+
+// ── role reviews (spec §3) ───────────────────────────────────────────────────
+
+const RECORDED_PLAN = readFileSync(new URL('./fixtures/role-review/recorded-plan.md', import.meta.url), 'utf8');
+
+/** A role-review slice ctx as the orchestrator builds it: the roleReview port set, the slice, the role and its plan. */
+function roleSliceCtx(role, siblings) {
+  const base = ctxFor('planReviewer', { slice: { id: `role-${role}`, title: role, phase: 1, path: null, role, index: 0, siblings } });
+  const node = { ...base.node, config: { roleReview: true } };
+  const ports = portsFn(node);
+  const executionId = base.executionId;
+  return {
+    ...base, node, ports, bindings: { plan: { seq: 1, type: 'md', path: '/abs/plan.md' } },
+    outputs: allocateOutputs({ node, ports, executionId, ordinal: ORDINAL, runCtx: base.runCtx }),
+    verdict: allocateVerdict({ node, ports, ordinal: ORDINAL, runCtx: base.runCtx }),
+    role, rolePlanText: RECORDED_PLAN,
+  };
+}
+
+test('role reviews: a role slice prompt carries its own brief and markers only, no siblings block', () => {
+  const ux = buildAgentPrompt(roleSliceCtx('ux', [{ id: 'role-qa', title: 'QA', file: null }]));
+  assert.equal(ux.match(/## Your role:/g).length, 1);
+  assert.match(ux, /## Your role: UX/);
+  assert.doesNotMatch(ux, /## Your role: QA|`R-qa-/);
+  assert.match(ux, /^MOCK_PERSPECTIVE: ux$/m);
+  assert.match(ux, /^MOCK_CHECKLIST: R-ux-1,R-ux-2,/m);
+  assert.match(ux, /^MOCK_ROLE: plan-review$/m);
+  assert.doesNotMatch(ux, /Parallel siblings/);
+  assert.doesNotMatch(ux, /^MOCK_FINDINGS:/m);
+  const plain = promptFor('planReviewer');
+  assert.doesNotMatch(plain, /## Your role:|MOCK_PERSPECTIVE|MOCK_CHECKLIST/);
+});
+
+test('role reviews: only the Project fit slice carries the house brief', () => {
+  const brief = '# House brief\n\n## Components\n- ui/public/shape/check-row.mjs — rows\n';
+  const fit = buildAgentPrompt({ ...roleSliceCtx('fit', []), houseBrief: brief });
+  assert.match(fit, /^## Project fit: the house brief$/m);
+  assert.match(fit, /^# House brief$/m);
+  assert.match(fit, /^MOCK_PERSPECTIVE: fit$/m);
+  const ux = buildAgentPrompt({ ...roleSliceCtx('ux', []), houseBrief: brief });
+  assert.doesNotMatch(ux, /House brief/);
+  for (const key of ['planner', 'refiner', 'planReviewer']) assert.doesNotMatch(promptFor(key), /House brief/, key);
+});
+
+test('role reviews: the refiner renders the findings directive and MOCK_FINDINGS only when findings is bound', () => {
+  const bound = promptFor('refiner', { only: ['plan', 'findings'] });
+  assert.match(bound, /## Role reviews/);
+  assert.match(bound, /"addressed": \["ux-1-1"/);
+  assert.match(bound, /^MOCK_FINDINGS: \/abs\/findings\.md$/m);
+  const plain = promptFor('refiner');
+  assert.doesNotMatch(plain, /## Role reviews|MOCK_FINDINGS/);
 });

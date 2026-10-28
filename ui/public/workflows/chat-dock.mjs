@@ -1,16 +1,18 @@
 // ui/public/workflows/chat-dock.mjs
 // The Workflows view's chat dock (composer-mockup.html chat.js): a one-line frosted pill beside the black "+"
-// that grows UPWARD into a panel while you type. Scope pill ("Auto" or a registered project), New chat, and
+// that grows UPWARD into a panel while you type. Scope pill (No project, a project or a workspace), New chat, and
 // attachments as in Ask (the paperclip, a drop on the dock, a paste; attach-files.mjs). It runs on Ask Worca as a
 // composer thread (chat-client.mjs); its cards change the open canvas (chat-cards.mjs). Everything inside carries
 // data-canvas-keys="off" (on #wfc), so typing never edits the graph. The worca orb (dot-orb.mjs) leads the input row: still
 // while idle, moving while a reply runs (thinking · a tool call · writing) — collapsed too — and right above it a
 // shimmering line says what the reply does (a chip over the pill while collapsed).
+import { icon } from '../icons.mjs';
 import { createComposerChatClient } from './chat-client.mjs';
 import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { createCardController } from './chat-cards.mjs';
 import { toggleMenu, closeMenus } from './menu.mjs';
+import { NO_PROJECT_LABEL, scopeIcon, scopeKind, kindChip, projectKind } from '../chat/scope-ui.mjs';
 
 export const PLACEHOLDERS = Object.freeze([
   'Add a security review after Implementation…',
@@ -30,7 +32,6 @@ const ICON = {
   stop: '<rect x="7" y="7" width="10" height="10" rx="1.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',
-  folder: '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"/>',
   chev: '<path d="M6 15l6-6 6 6"/>',
   clip: '<path d="M20.5 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
 };
@@ -55,6 +56,7 @@ export const REPLY_PLACEHOLDER = 'Reply';
  * @param {object} [o.actions]  chat-cards actions (save/open drafts, reloadRegistry, libraryHas, notify)
  * @param {Function} o.canvas  () => the composer payload of the OPEN canvas (D11), drafts excluded
  * @param {Function} [o.projects]  async () => [{key, name}]; rejects when the list could not be read
+ * @param {Function} [o.workspaces]  async () => [{id, name}]; rejects when the list could not be read
  * @param {HTMLElement} [o.stage]  #wfv-stage: the dock never grows wider than it
  * @param {HTMLElement} [o.cluster]  #wfv-br: the Auto-layout + zoom bars, lifted clear of the dock when the two meet
  * @param {HTMLElement} [o.plus]  #wfv-add: the "+" beside the pill (its width is not the chat's)
@@ -62,7 +64,7 @@ export const REPLY_PLACEHOLDER = 'Reply';
  *   absent = go ahead (headless callers), a throw = no
  */
 export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn, sendWs, storage = null, renderMarkdown = null,
-  actions = {}, canvas, projects = async () => [], stage = null, cluster = null, plus = null, confirm: confirmFn = null }) {
+  actions = {}, canvas, projects = async () => [], workspaces = async () => [], stage = null, cluster = null, plus = null, confirm: confirmFn = null }) {
   const win = doc.defaultView || globalThis;
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const svg = (name) => {
@@ -74,7 +76,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     return s;
   };
   const iconBtn = (id, label, icon) => {
-    const b = h('button', 'wfc-ibtn');
+    const b = h('button', 'btn btn-sm btn-quiet btn-icon wfc-ibtn');
     b.type = 'button'; b.id = id; b.title = label; b.setAttribute('aria-label', label);
     b.appendChild(svg(icon));
     return b;
@@ -89,7 +91,13 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   let pendingFiles = [];        // the next message's attachments: {name, bytes, dataBase64, attKind, mime}
   let adding = Promise.resolve();   // the batch of files being read (addFiles): send() waits for it
 
-  const client = createComposerChatClient({ fetch: fetchFn, sendWs, storage, onChange: (kind) => schedule(kind) });
+  // U5: a new chat starts in No project, also when the client drops its thread by itself (the stored chat answers 404
+  // or is not a composer chat; Settings › "Delete all chat history"). Outside a send, the client reports no thread only
+  // from newChat(). Not while a message is on its way: it carries the pin the pill shows, and the chat it creates keeps it.
+  const client = createComposerChatClient({ fetch: fetchFn, sendWs, storage, onChange: (kind) => {
+    if (!client.threadId() && scope.pinned && !pending) saveScope({ pinned: false });
+    schedule(kind);
+  } });
   const orbs = createDotOrbs({ doc, win });
   const blocks = () => {
     const m = client.model();
@@ -108,7 +116,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   const head = h('div', 'wfc-head');
   const title = h('span', 'wfc-title', 'Composer chat');
   const ctx = h('span', 'wfc-ctx');
-  const sel = h('button', 'wfc-sel');
+  const sel = h('button', 'btn btn-sm btn-quiet wfc-sel');
   sel.type = 'button';
   sel.title = 'Show on canvas';
   const newBtn = iconBtn('wfc-new', 'New chat', 'plus');
@@ -132,7 +140,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   input.rows = 1;
   input.placeholder = PLACEHOLDERS[0];
   input.setAttribute('aria-label', 'Message the composer chat');
-  const scopeBtn = h('button', 'wfc-scope');
+  const scopeBtn = h('button', 'btn btn-sm btn-quiet wfc-scope');
   scopeBtn.type = 'button';
   scopeBtn.id = 'wfc-scope';
   scopeBtn.setAttribute('aria-haspopup', 'menu');
@@ -265,7 +273,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     // The modal restores no focus: keep it on New chat, never <body> (where the canvas owns Backspace and the arrows).
     if (drafts.length && !(await leaveDrafts(drafts))) { newBtn.focus(); return; }
     if (pending || client.busy()) { input.focus(); return; }          // a reply started while the question was open
-    client.newChat(); cards.reset(); cardEls.clear(); userAtts.clear(); clearFiles(); error = ''; render(); input.focus();
+    client.newChat(); saveScope({ pinned: false }); cards.reset(); cardEls.clear(); userAtts.clear(); clearFiles(); error = ''; render(); input.focus();
   });
   stopBtn.addEventListener('click', () => { void client.stop(); });
   sendBtn.addEventListener('click', () => { void send(); });
@@ -273,8 +281,10 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
 
   // ── scope ──────────────────────────────────────────────────────────────────
   function paintScope() {
-    scopeBtn.replaceChildren(svg('folder'), h('span', 'wfc-scope-l', scope.pinned ? (scope.label || scope.projectKey) : 'Auto'), svg('chev'));
-    scopeBtn.title = scope.pinned ? `Scope: project ${scope.label || scope.projectKey}` : 'Scope: Auto';
+    const kind = scopeKind(scope);
+    const name = scope.label || scope.projectKey || scope.workspaceId;
+    scopeBtn.replaceChildren(scopeIcon(doc, kind, 13), h('span', 'wfc-scope-l', kind === 'none' ? NO_PROJECT_LABEL : name), svg('chev'));
+    scopeBtn.title = kind === 'none' ? `Scope: ${NO_PROJECT_LABEL}` : `Scope: ${kind} ${name}`;
     scopeBtn.setAttribute('aria-label', scopeBtn.title);
     scopeBtn.classList.toggle('is-set', Boolean(scope.pinned));
   }
@@ -283,20 +293,30 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     try { if (storage) storage.setItem(SCOPE_KEY, JSON.stringify(scope)); } catch { /* private mode */ }
     paintScope();
   }
-  /** A pin whose project is gone (removed since) falls back to Auto. Only a list that loaded may drop it. */
-  function prunePin(list) {
-    if (scope.pinned && Array.isArray(list) && !list.some((p) => p && p.key === scope.projectKey)) saveScope({ pinned: false });
+  /** A pin whose project or workspace is gone (removed since) falls back to No project. Only a list that loaded may
+   *  drop it: a rejection keeps the pin. */
+  function prunePin(kind, list) {
+    if (!Array.isArray(list) || !scope.pinned || scopeKind(scope) !== kind) return;
+    const here = kind === 'project' ? list.some((p) => p && p.key === scope.projectKey) : list.some((w) => w && w.id === scope.workspaceId);
+    if (!here) saveScope({ pinned: false });
   }
-  void Promise.resolve().then(() => projects()).then(prunePin, () => { /* offline: keep the pin */ });
+  void Promise.resolve().then(() => projects()).then((list) => prunePin('project', list), () => { /* offline: keep the pin */ });
+  void Promise.resolve().then(() => workspaces()).then((list) => prunePin('workspace', list), () => { /* offline: keep the pin */ });
   scopeBtn.addEventListener('click', async () => {
-    let list = [];
-    try { list = await projects(); prunePin(list); } catch { list = []; }
+    // Both lists are read again (each prunes the pin; a rejection reads as empty). A row without a key or an id is skipped.
+    const read = (load, kind) => Promise.resolve().then(() => load()).then((list) => { prunePin(kind, list); return Array.isArray(list) ? list : []; }, () => []);
+    const [projectRows, workspaceRows] = await Promise.all([read(projects, 'project'), read(workspaces, 'workspace')]);
+    const projs = projectRows.filter((p) => p && p.key);
+    const spaces = workspaceRows.filter((w) => w && w.id);
     const set = (next) => { saveScope(next); input.focus(); };
-    toggleMenu({ doc, anchor: scopeBtn, side: 'top', align: 'end', label: 'Scope', items: [
-      { label: 'Auto', checked: !scope.pinned, onSelect: () => set({ pinned: false }) },
-      ...(list.length ? [{ sep: true }, { header: 'Projects' }] : []),
-      ...list.map((p) => ({ label: p.name || p.key, checked: Boolean(scope.pinned && scope.projectKey === p.key),
+    toggleMenu({ doc, anchor: scopeBtn, side: 'top', align: 'end', label: 'Chat scope', items: [
+      { label: NO_PROJECT_LABEL, checked: !scope.pinned, onSelect: () => set({ pinned: false }) },
+      ...(projs.length ? [{ sep: true }, { header: 'Projects' }] : []),
+      ...projs.map((p) => ({ label: p.name || p.key, chip: kindChip(doc, projectKind(p)), checked: Boolean(scope.pinned && scope.projectKey === p.key),
         onSelect: () => set({ pinned: true, projectKey: p.key, label: p.name || p.key }) })),
+      ...(spaces.length ? [{ sep: true }, { header: 'Workspaces' }] : []),
+      ...spaces.map((w) => ({ label: w.name || w.id, checked: Boolean(scope.pinned && scope.workspaceId === w.id),
+        onSelect: () => set({ pinned: true, workspaceId: w.id, label: w.name || w.id }) })),
     ] });
   });
 
@@ -310,7 +330,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     await adding;                                       // a file still being read rides this message, not the next
     const sent = pendingFiles.slice();
     const payload = { ...canvas(), drafts: cards.pendingDrafts() };
-    const context = { view: 'workflows', pinned: Boolean(scope.pinned), ...(scope.pinned ? { projectKey: scope.projectKey } : {}) };
+    const context = { view: 'workflows', pinned: Boolean(scope.pinned), ...(scope.pinned && scope.projectKey ? { projectKey: scope.projectKey } : scope.pinned && scope.workspaceId ? { workspaceId: scope.workspaceId } : {}) };
     const r = await client.send(text, { context, composer: payload, attachments: sent });
     pending = false;
     // The chips clear only once the message is in: a refused send keeps them for the retry.
@@ -343,7 +363,8 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
         img.src = `data:${f.mime};base64,${f.dataBase64}`;
         chip.appendChild(img);
       }
-      const x = h('button', 'wfc-file-x', '×');
+      const x = h('button', 'btn btn-sm btn-quiet btn-icon wfc-file-x');
+      x.append(icon(doc, 'x', 12));
       x.type = 'button';
       x.setAttribute('aria-label', `Remove ${f.name}`);
       x.addEventListener('click', () => removeFile(f));
@@ -448,7 +469,9 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     const i = b.input && typeof b.input === 'object' ? b.input : {};
     const target = i.summary || i.name || i.displayName || i.key || (short === 'read_attachment' ? attachmentName(i.id) : '') || '';
     const el = h('div', `wfc-tool is-${b.status || 'running'}`);
-    el.append(h('span', 'wfc-tool-i', b.status === 'done' ? '✓' : b.status === 'error' ? '!' : '…'),
+    const mark = h('span', 'wfc-tool-i', b.status === 'done' ? null : b.status === 'error' ? '!' : '…');
+    if (b.status === 'done') mark.append(icon(doc, 'check', 12));
+    el.append(mark,
       h('span', 'mono', `${TOOL_VERB[short] || short}${target ? ` ${String(target).slice(0, 80)}` : ''}`));
     if (b.status === 'error' && b.error) el.title = b.error;
     return el;
@@ -541,7 +564,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     stopBtn.hidden = !live;
     sendBtn.hidden = Boolean(live);
     newBtn.disabled = newOff;
-    newBtn.title = newBtn.disabled ? 'New chat — after this reply' : 'New chat';
+    newBtn.title = newBtn.disabled ? 'New chat (after this reply)' : 'New chat';
     if (replying()) input.placeholder = REPLY_PLACEHOLDER;
     else if (input.placeholder === REPLY_PLACEHOLDER) input.placeholder = PLACEHOLDERS[ph];
     paintScope();
@@ -562,7 +585,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     if (!kind) return '';
     const name = (c.draft && ((c.draft.meta && c.draft.meta.displayName) || c.draft.key)) || kind;
     const why = cards.notAdded(b.id);                                  // "Save & add" saved it, the canvas refused the add
-    return b.state === 'proposed' ? `New ${kind}: ${name}` : b.state === 'saved' ? `Saved ${kind}: ${name}${why ? ` — not added to the canvas: ${why}` : ''}` : b.state === 'added' ? `Saved and added ${kind}: ${name}` : '';
+    return b.state === 'proposed' ? `New ${kind}: ${name}` : b.state === 'saved' ? `Saved ${kind}: ${name}${why ? `. Not added to the canvas: ${why}` : ''}` : b.state === 'added' ? `Saved and added ${kind}: ${name}` : '';
   }
   let srModel = null;           // the thread model the announcer last read; a new one (load, New chat) is read silently
   const srSeen = new Map();     // card id → the state already announced
@@ -612,6 +635,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     const kids = [];
     const msgs = m ? m.messages() : [];
     for (const msg of msgs) {
+      if (msg.role === 'system' && (msg.blocks || []).some((b) => b && b.kind === 'divider')) continue;
       if (msg.role === 'user') {
         if (Array.isArray(msg.blocks) && msg.blocks.some((b) => b && b.synthetic)) continue;
         kids.push(h('div', 'wfc-msg wfc-u', msg.text));

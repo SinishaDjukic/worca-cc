@@ -60,14 +60,14 @@ test('API-5 plugins count honoured MCP servers and report nothing ignored; API-4
   ]);
 });
 
-test('consent modal: listed servers, nothing when none, "unknown — refresh" for an old snapshot', () => {
+test('consent modal: listed servers, nothing when none, "unknown. Refresh" for an old snapshot', () => {
   const entry = { name: 'acme-tools', repoUrl: 'https://github.com/acme/p', sha: 'a1b2c3d4e5f6' };
   const heads = (inv) => [...renderInstallConsent(entry, inv, { doc }).querySelectorAll('.pl-consent-h')].map((n) => n.textContent);
   const withRows = renderInstallConsent(entry, { mcpServers: [{ name: 'jira', type: 'stdio', command: 'node <plugin-dir>/mcp/jira.mjs' }] }, { doc });
   assert.ok([...withRows.querySelectorAll('.pl-consent-h')].some((n) => n.textContent === 'MCP servers (1)'));
-  assert.ok([...withRows.querySelectorAll('.pl-consent-row')].some((n) => n.textContent === 'jira (stdio) — node <plugin-dir>/mcp/jira.mjs'));
+  assert.ok([...withRows.querySelectorAll('.pl-consent-row')].some((n) => n.textContent === 'jira (stdio): node <plugin-dir>/mcp/jira.mjs'));
   assert.ok(!heads({ mcpServers: [] }).some((t) => t.startsWith('MCP servers')), 'none shipped: no section');
-  assert.ok(heads({ agents: [] }).includes('MCP servers: unknown — refresh the marketplace'),
+  assert.ok(heads({ agents: [] }).includes('MCP servers: unknown. Refresh the marketplace'),
     'a snapshot persisted before API 5 has no key: never read that as "none"');
 });
 

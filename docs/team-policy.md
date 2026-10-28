@@ -1,7 +1,7 @@
 # Team policy
 
 Team policy is a **git-backed set of team-wide expectations** Worca reads for a repository:
-cost caps, an advisory pooled budget, Ask Worca limits, guardrail defaults, allowed models,
+cost caps, an advisory pooled budget, Chat limits, guardrail defaults, allowed models,
 required plugins and marketplaces, a default workflow. A product manager or lead publishes it
 to an orphan branch `worca-policy` on the project's own `origin`; every teammate's Worca reads
 it on start and hourly. There is no server and no account: **authority is push permission on
@@ -21,7 +21,7 @@ Every value in a policy carries a **kind**:
 | `soft` | An expectation. For a cap, the tighter of team and local applies; you can go past it after a confirmation, and the overshoot is recorded to team metrics. For a list (allowed models, required plugins, a minimum guardrail tier), a deviation is a warning plus a record. |
 | `hard` | Reserved. Accepted and treated as soft with a note in the run log; the editor does not offer it. A later version can enforce it without a format change. |
 
-No run is ever blocked by a policy. The two Ask Worca web fields are the exception to "you can go past it": they only narrow (off, or a cap on hosts) and they bind, because web access is each developer's own opt-in. A soft cap that would pause an **unattended** run
+No run is ever blocked by a policy. The two Chat web fields are the exception to "you can go past it": they only narrow (off, or a cap on hosts) and they bind, because web access is each developer's own opt-in. A soft cap that would pause an **unattended** run
 (`--yes`) warns instead — nobody is there to click "continue past" — and the record says so.
 
 ## What a policy can set
@@ -32,21 +32,49 @@ No run is ever blocked by a policy. The two Ask Worca web fields are the excepti
 | Total cap per period (USD) | the windowed total limit, per developer; acknowledged once per window per home | default · soft |
 | Reset period | weekly / monthly, when you have not stored one | default |
 | Pooled budget (USD) | the whole team's figure, read from team metrics; advisory only | soft |
-| Ask Worca turn limit, per-turn cap | Settings › Ask Worca, when you have not stored them | default |
-| Ask Worca web access | off switches web access off for chats pinned to the project; a policy can never switch it on | soft (off only) |
-| Ask Worca web allowlist | the most a developer may allow: hosts outside it are dropped from their own list for chats pinned to the project; it never adds a host | soft |
+| Chat turn limit, per-turn cap | Settings › Chat, when you have not stored them | default |
+| Chat web access | off switches web access off for chats pinned to the project; a policy can never switch it on | soft (off only) |
+| Chat web allowlist | the most a developer may allow: hosts outside it are dropped from their own list for chats pinned to the project; it never adds a host | soft |
 | Guardrails default set / minimum tier | what the New pipeline picker starts on; a run below the tier warns | default / soft |
+| Model roles (`models.roles`) | Deep thinking, Everyday coding, Quick jobs per harness, by upstream model; each machine maps it to its own source | default / soft |
+| Interface level, AI-written PR descriptions, Smart run names, Coding agent, Sync before run, Wait for the network (`setup.*`) | offered in the setup assistant on Review; nothing changes before Apply | default |
 | Allowed models, step defaults, hide built-ins | pickers warn on an off-list model; roles you have not configured start from the team's | soft / default |
 | Marketplaces, required plugins, blocked plugins | marketplaces are added once (metadata only); required plugins go through the setup checklist with consent; blocked ones warn | default / soft |
 | Required MCP servers (`mcp.required`) | servers each developer turns on with consent; they form the **Team** set ([below](#mcp-servers-the-team-set)); never in `workspaceRuns` | soft |
 | Required skills (`skills.required`) | plugin skills each developer turns on with consent; they join the **Team** set ([below](#skills-required-plugin-skills)); never in `workspaceRuns` | soft |
 | Default workflow, human in the loop | when the project has no active workflow / switch of its own | default |
 | Record runs to team metrics, minimum Worca version | a hint when "Include my runs" is off; a banner on an older client | soft |
+| Tag dimensions (`runs.tagDimensions`) | up to 10 `{ key, label, values?, required?, default? }` run-tag keys: one New run slot each, a picker of the allowed values; `default` pre-fills it (one of the values, when there are values). A mandatory (`required`) key the run does not carry records a `tag-missing:cc` finding: mandatory keys warn, or block a start with Require mandatory tags on. Setting it replaces the developer's Settings › Tags rows and makes them read-only | soft |
+| Require mandatory tags (`runs.enforceTags`) | bool. On: a run cannot start (New run, Chat, schedules, Run after, API, CLI) while a mandatory tag has no value after pre-fill, or a tag is outside its values; a scheduled firing is skipped with the reason. Off, or unset under a policy that sets `runs.tagDimensions`: mandatory tags only warn. Unset with no policy list: the developer's own Settings › Tags switch applies | soft |
 | Catalogs: guardrail sets, models | distributed as read-only rows with a **policy** badge; model env may use `${VAR}` indirection only — secrets never go on the branch | — |
 
 A document may also carry a **`workspaceRuns`** block: the same fields, applied instead of the
 project-run values to runs that target a workspace (they span several repositories and are
 usually larger, so one cap is normally wrong for one of the two).
+
+## Team setup
+
+The **Setup** fields (`models.roles` and `setup.*`), with the spend limits and `models.hideBuiltins`, form a
+team setup: "which models do which work" and the team's working defaults, published once.
+
+- **Never carried.** A team setup never carries network or proxy settings, model sources, provider addresses,
+  keys, tokens or passwords. A policy home whose Setup fields carry one is not offered, and a `models.roles`
+  value that would be refused is not applied to runs.
+- **Mapping.** A role names an upstream model (`claude-opus-5-5`). Each machine maps it to its own source: the
+  harness sign-in first, then a GitHub Copilot import, then an OpenAI- or Anthropic-compatible entry. Only
+  built-in models and the developer's own entries are picked, never a policy, plugin or project catalog row. A
+  role no source serves shows "None of your sources offer it." and the developer's own pick applies.
+- **Reach of `models.roles`.** Team roles apply to the pipeline steps of this project's runs. Titles, run
+  naming, PR descriptions, Chat, Auto and workspace runs use each developer's own roles. `default` fills the
+  roles a developer has not set; `soft` applies over their own. Nothing is written to their settings.
+- **The notice.** When the Setup fields of a policy home change, each developer's account menu shows "Your team
+  updated the recommended setup · Review", which opens the setup assistant on Review with only the changed rows.
+- **The Setup tab.** The Team policy editor has a Setup tab: six model-role rows (Claude and Codex × Deep
+  thinking, Everyday coding, Quick jobs) and one control per sub-key of each record field.
+- **Tags stay here.** Team tags stay in `runs.tagDimensions` and `runs.enforceTags`; a team setup file does not
+  carry them.
+
+A team setup can also be a standalone file: see [Setup assistant › Team setup](setup-assistant.md#team-setup).
 
 ## Homes, following, workspaces
 
@@ -56,9 +84,9 @@ usually larger, so one cap is normally wrong for one of the two).
   or follows a policy, and uses that policy (with its `workspaceRuns` block) for workspace runs.
   Member projects' own policies are never unioned into a workspace run; the run log names a
   member with a tighter cap. The pointer is per machine, like the metrics home, and defaults to
-  the metrics home when that member's policy resolves. "Route all to policy home" writes a
+  the metrics home when that member's policy resolves. "Route all" writes a
   marker on every member that has no branch yet.
-- Set up from the project page's **Team** tab (`Set up team policy…`: here, or follow; the Projects
+- Set up from the project page's **Team** tab (`Set up policy…`: here, or follow; the Projects
   list row only carries a one-line status chip), the workspace page's **Team** tab (the policy
   home), or `worca policy init --here | --follow <slug>`.
 
@@ -87,10 +115,13 @@ local value where yours is looser than a soft team cap.
 
 A policy can add **marketplaces** (metadata only, done automatically once; a marketplace you
 remove is remembered and not re-added) and require **plugins** with a minimum version. Installing
-runs code, so Worca never installs without your click: the Marketplace page shows a "Required by team
-policy" strip and a setup checklist with one combined consent per plugin (source, commit,
-inventory). A plugin that is installed but below the policy's floor gets **Update…** (the normal
-update preview) instead of Install…; **Install all…** / **Update all…** / **Install & update all…**
+runs code, so Worca never installs without your click: the Marketplace page's **Installed** tab shows
+a **Team policy** card — each missing, outdated, switched-off or not-yet-set-up plugin with
+**Install**, **Update**, **Turn on** or **Set up** — and its **Set up…** opens the setup checklist
+with one combined consent per plugin (source, commit, inventory). A plugin that is installed but
+below the policy's floor gets **Update** instead of Install (applied at once when the new version
+asks for no new access, else its update review opens);
+**Install all…** / **Update all…** / **Install & update all…**
 runs those dialogs one after another — each still waits for its own click, and cancelling one moves
 on to the next. A per-home **trust switch** on this machine may install and update required plugins
 automatically; it is off by default and revocable. Versions are floors, not pins: update whenever
@@ -172,11 +203,13 @@ cache at all pays one bounded fetch. A CLI-only machine refreshes with `worca po
 A missing, unreadable or newer-schema policy means your local settings apply, with one loud line
 in the run log and a red chip on the Projects row (the sentence is on the project page's Team tab).
 
+Without git the branch is read and published through the GitHub API (github.com only), with the same cache; a run that finds nothing cached reads the policy once at its start, as with git. A private repository needs `GH_TOKEN` or the GitHub App: without one the policy shows as not read yet and each run logs that your local settings apply. A team repository on another host waits for git: **Set up team policy…** shows `Needs git` inside its dialog.
+
 ## Getting started
 
 The checklist's ninth tile, **Set a team policy** (docs/getting-started.md), walks the
-real controls: a project row → its **Team** tab → **Set up team policy…** → the dialog's
-**Create branch and enable** → the new home's page, ending on **Edit policy** with Done.
+real controls: a project row → its **Team** tab → **Set up policy…** → the dialog's
+**Create and enable** → the new home's page, ending on **Edit policy** with Done.
 A project pointed at another home stays on its page and the block is explained; one with no
 origin remote, or one already on, gets its block ringed with the reason. The tick is derived:
 any project or workspace that resolves a policy from the cached branch reads
@@ -214,7 +247,7 @@ commit to the home's branch. A rejection
 JSON and open a pull request against `worca-policy`, or ask a maintainer. Hand edits are fine:
 the reader drops a malformed field with a warning and never fails the page.
 
-## Ask Worca
+## Chat
 
 The chat reads the team policy and can propose changes to it, the same way it handles team
 metrics. It works with homes, following, fields and caps. It never sees worktrees or branch

@@ -1,7 +1,7 @@
 // test/title.test.mjs
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizeTitle, generateTitle, isRefusalTitle } from '../src/core/title.mjs';
+import { sanitizeTitle, clipTitle, generateTitle, isRefusalTitle } from '../src/core/title.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,7 +11,7 @@ import { CODEX_DEFAULT_MODEL } from '../src/core/engines/codex.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
-test('sanitizeTitle: strips quotes/labels/fences, first line only, caps at 70 on a word boundary', async () => {
+test('sanitizeTitle: strips quotes/labels/fences, first line only, caps at 60 on a word boundary', async () => {
   await checkRows([
     { name: 'sanitizeTitle strips quotes, collapses whitespace, caps length', run: () => {
       assert.equal(sanitizeTitle('  "Add user auth"\n'), 'Add user auth');
@@ -20,19 +20,31 @@ test('sanitizeTitle: strips quotes/labels/fences, first line only, caps at 70 on
       assert.equal(sanitizeTitle('Title: Fix the thing'), 'Fix the thing');
       assert.equal(sanitizeTitle('Title: Fix the\n  thing'), 'Fix the'); // 2nd line dropped (first-line-only)
       const long = 'x'.repeat(120);
-      assert.ok(sanitizeTitle(long).length <= 70);
+      assert.ok(sanitizeTitle(long).length <= 60);
       assert.equal(sanitizeTitle(''), '');
       assert.equal(sanitizeTitle('```\ncode\n```'), 'code'); // strips stray code fences
     } },
     { name: 'sanitizeTitle truncates at a word boundary, never mid-word', run: () => {
       const long = 'Implement the new authentication middleware layer for every incoming request handler';
       const t = sanitizeTitle(long);
-      assert.ok(t.length <= 70);
+      assert.ok(t.length <= 60);
       assert.ok(!t.endsWith('reque'), 'must not cut mid-word');
       // every word of the output is a whole word of the input
       for (const w of t.split(' ')) assert.ok(long.split(' ').includes(w), `"${w}" is a fragment`);
       // a single unbroken run longer than the cap still hard-slices (nothing to break on)
-      assert.equal(sanitizeTitle('x'.repeat(120)).length, 70);
+      assert.equal(sanitizeTitle('x'.repeat(120)).length, 60);
+      // a 61-char sentence is cut at a word, not hard-sliced at 60
+      const s61 = 'Add a short tag picker to every run row in the Runs list view';
+      assert.equal(s61.length, 61);
+      assert.equal(sanitizeTitle(s61), 'Add a short tag picker to every run row in the Runs list');
+    } },
+    { name: 'clipTitle cuts at a word at or after max/2, hard-cuts an unbroken word, drops trailing punctuation (review D)', run: () => {
+      assert.equal(clipTitle('Customer perspective: upgrade safety, empty states', 40), 'Customer perspective: upgrade safety');
+      assert.equal(clipTitle('Pin charts', 40), 'Pin charts');
+      assert.equal(clipTitle('y'.repeat(50), 40), 'y'.repeat(40));
+      assert.equal(clipTitle('ab ' + 'z'.repeat(50), 40), 'ab ' + 'z'.repeat(37), 'a space before max/2 is too early: hard cut');
+      assert.equal(clipTitle('  spaced\n  out  ', 40), 'spaced out');
+      assert.equal(clipTitle(null, 40), '');
     } },
   ]);
 });
@@ -57,7 +69,7 @@ test('isRefusalTitle: refusals flagged, real titles (incl. What/Which/Unable/Ple
       assert.equal(isRefusalTitle('Improve History Diff Viewer'), false);
       assert.equal(isRefusalTitle('I/O Error Handling Cleanup'), false);   // "I/" is not first-person "I "
       assert.equal(isRefusalTitle('I18n Support For Settings Page'), false);
-      assert.equal(isRefusalTitle('[mock] role unknown complete'), false); // mock-mode title must survive
+      assert.equal(isRefusalTitle('[mock] role unknown complete'), false); // not a refusal; titleAttempt refuses mock markers separately
       assert.equal(isRefusalTitle(''), false);
     } },
     { name: 'isRefusalTitle: legitimate titles starting with What/Which/Unable/Please are NOT refusals; real refusals still are', run: () => {
@@ -124,21 +136,30 @@ test('generateTitle forwards envScrub/envAllowlist to the spawn (no leak during 
   }
 });
 
-test('generateTitle honors opts.mock without WORCA_MOCK — no spawn even with a bogus bin', async () => {
+test('generateTitle honors opts.mock without WORCA_MOCK, and a mock marker is never a title (D35)', async () => {
   const prevMock = process.env.WORCA_MOCK;
   delete process.env.WORCA_MOCK;
   try {
+    const errors = [];
     const t = await generateTitle('Add a settings page with dark mode', {
-      cwd: process.cwd(),
-      mock: true,
-      bin: '/nonexistent/claude-must-not-spawn',
+      cwd: process.cwd(), mock: true, bin: '/nonexistent/claude-must-not-spawn',
+      onError: (e) => errors.push(String(e.error && e.error.message)),
     });
-    // runMock's unknown-role body. Without the passthrough the bogus bin is
-    // spawned, ENOENTs, and generateTitle swallows that into ''.
-    assert.equal(t, '[mock] role unknown complete');
+    // runMock answered (no spawn: a spawn would ENOENT with a different error); its marker is refused.
+    assert.equal(t, '');
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /mock marker/);
   } finally {
     if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
   }
+});
+
+test('a "[mock] …" reply from the engine is refused; a real title passes', async () => {
+  const run = (text) => async () => ({ text });
+  const offline = { bin: '/nonexistent/claude-must-not-spawn', mock: false };
+  assert.equal(await generateTitle('plan this in slices', { ...offline, run: run('[mock] planner-plan: no MOCK_OUT given') }), '');
+  assert.equal(await generateTitle('plan this in slices', { ...offline, run: run('[MOCK] role unknown complete') }), '');
+  assert.equal(await generateTitle('plan this in slices', { ...offline, run: run('Slice the billing feature') }), 'Slice the billing feature');
 });
 
 test('generateTitle on codex: one codex spawn, read-only, codex\'s default model and no Claude title model', POSIX_SHIM, async () => {

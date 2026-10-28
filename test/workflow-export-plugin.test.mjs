@@ -86,6 +86,7 @@ test('dry-run classifies every intended file and writes nothing', async () => {
   assert.equal(plan.skipped.length, 1);
   assert.match(plan.skipped[0].reason, /bundled-skill.*ships with Worca \(bundle\)/);
   assert.ok(plan.warnings.some((w) => /built-in agent\(s\) not bundled.*planner/.test(w)), plan.warnings.join('\n'));
+  assert.deepEqual(plan.builtins, { agents: ['planner'], scripts: [] });
   assert.deepEqual(plan.written, []);
   assert.equal(plan.validation, null);
   assert.equal(existsSync(pluginDir), false, 'dry-run creates nothing');

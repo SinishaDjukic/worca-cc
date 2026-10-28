@@ -67,7 +67,8 @@ test('askCatalog: both engines; a Codex row says so, a Claude row carries no eng
   assert.equal('engine' in cat.models[0], false);
   assert.equal(cat.models[3].engine, 'codex');
   assert.deepEqual(cat.models[3].efforts, CODEX_EFFORTS);
-  assert.deepEqual(cat.defaults, { claude: { model: 'claude-opus-5-5', effort: 'high' }, codex: { model: 'gpt-6-astra', effort: 'medium' } });
+  assert.deepEqual(cat.defaults, { claude: { model: 'claude-opus-5-5', effort: 'high' }, codex: { model: 'gpt-6-astra', effort: 'medium' }, copilot: null, gemini: null, goose: null, opencode: null, qwen: null },
+    'no Copilot, Gemini or Qwen row in this catalog: no default there');
   assert.equal(cat.askEngine, 'claude');
   assert.deepEqual(cat.default, cat.defaults.claude);
 });
@@ -106,5 +107,5 @@ test('Cursor models never reach the Ask catalog, and a hand-made pick of one is 
 });
 
 test('the Ask turn refuses an engine Ask does not run on', () => {
-  assert.throws(() => createAskTurn({ engine: 'cursor' }), /Ask on Cursor is unavailable/);
+  assert.throws(() => createAskTurn({ engine: 'cursor' }), /Chat on Cursor is unavailable/);
 });

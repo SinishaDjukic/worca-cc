@@ -3,13 +3,14 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { buildReceiptCard, buildRunStopCard, buildPullRequestCard, registerChatActionCards } from '../ui/public/chat/action-cards.mjs';
+import { buildReceiptCard, buildRunStopCard, buildPullRequestCard, registerChatActionCards, refreshChatPrWatch } from '../ui/public/chat/action-cards.mjs';
 import { chatCardBuilder, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 const doms = [];
 afterEach(() => { for (const d of doms.splice(0)) d.window.close(); _resetChatExtensions(); });
-function ctxOf({ post = async () => ({}), openShipIt } = {}) {
+function ctxOf({ post = async () => ({}), openShipIt, fetch } = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>');
   doms.push(dom);
   const posts = []; const said = [];
@@ -19,6 +20,7 @@ function ctxOf({ post = async () => ({}), openShipIt } = {}) {
     postCard: async (block, body) => { posts.push(body); return post(block, body); },
     announce: (t) => said.push(t),
     ...(openShipIt ? { openShipIt } : {}),
+    ...(fetch ? { fetch } : {}),
   };
   return { ctx, posts, said };
 }
@@ -54,7 +56,7 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
       const { el } = buildReceiptCard(RECEIPT, ctx);
       const revert = el.querySelector('[data-chat-revert]');
       click(revert); await tick();
-      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Changed since — not reverted');
+      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Not reverted: it changed since');
       assert.equal(revert.disabled, true);
       assert.equal(el.querySelector('.ask-card-err').textContent, '');
     } },
@@ -62,7 +64,7 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
       const { ctx } = ctxOf();
       const { el } = buildReceiptCard({ ...RECEIPT, card: { ...RECEIPT.card, result: { code: 'CHANGED_SINCE', error: 'Changed since — not reverted' } } }, ctx);
       assert.equal(el.querySelector('[data-chat-revert]').disabled, true);
-      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Changed since — not reverted');
+      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Not reverted: it changed since');
     } },
     { name: 'a failed write', run: async () => {
       const { ctx } = ctxOf({ post: async () => { throw refused('REVERT_FAILED', 'The run is still pausing — try again in a moment'); } });
@@ -95,20 +97,21 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
 });
 
 const STOP = { kind: 'card', id: 'card_00000003', state: 'proposed', card: { type: 'run-stop', runId: 'uuid-1', pipelineId: 'aaaa0001', title: 'Fix login', branch: 'worca/fix-login', status: 'running' } };
-test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep running / red Stop pipeline; busy and inline errors', async () => {
+test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep running / red Stop run; busy and inline errors', async () => {
   await checkRows([
     { name: 'proposed', run: async () => {
       const { ctx, posts } = ctxOf();
       const { el } = buildRunStopCard(STOP, ctx);
-      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Stop this pipeline?');
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Stop this run?');
       assert.equal(el.querySelector('.ask-stopcard-title').textContent, 'Fix login');
-      assert.equal(el.querySelector('.ask-stopcard-branch').textContent, 'worca/fix-login');
+      assert.equal(el.querySelector('.ask-stopcard-title').title, 'worca/fix-login');
+      assert.equal(el.querySelector('.ask-stopcard-branch'), null);
       assert.equal(el.querySelector('.ask-stopcard-copy').textContent, "A stopped run can't be resumed. Its work so far stays on its branch.");
       const keep = el.querySelector('[data-chat-stop-keep]');
       const stop = el.querySelector('[data-chat-stop-confirm]');
       assert.equal(keep.textContent, 'Keep running');
-      assert.equal(stop.textContent, 'Stop pipeline');
-      assert.ok(stop.classList.contains('is-danger'), 'the Ask cards\' red button (4.5:1 in both themes)');
+      assert.equal(stop.textContent, 'Stop run');
+      assert.ok(stop.classList.contains('btn-danger'), 'the danger button: red text on the light red fill');
       click(stop);
       assert.equal(stop.textContent, 'Stopping…'); assert.equal(keep.disabled, true);
       await tick();
@@ -131,7 +134,7 @@ test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep runni
       const stop = el.querySelector('[data-chat-stop-confirm]');
       click(stop); await tick();
       assert.equal(el.querySelector('.ask-card-err').textContent, 'card is applied');
-      assert.equal(stop.disabled, false); assert.equal(stop.textContent, 'Stop pipeline');
+      assert.equal(stop.disabled, false); assert.equal(stop.textContent, 'Stop run');
     } },
     { name: 'applied, failed, declined', run: async () => {
       const { ctx } = ctxOf();
@@ -140,7 +143,7 @@ test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep runni
       assert.equal(applied.querySelector('[data-chat-stop-confirm]'), null);
       assert.equal(buildRunStopCard({ ...STOP, state: 'failed', error: "An interrupted run can't be stopped — it stays resumable" }, ctx).el.querySelector('.ask-mcard-failed').textContent,
         "Could not stop: An interrupted run can't be stopped — it stays resumable");
-      assert.equal(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.textContent, 'Not stopped — Fix login');
+      assert.equal(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.textContent, 'Not stopped: Fix login');
     } },
   ]);
 });
@@ -157,12 +160,18 @@ test('pull-request: branch → base and files ±; Create opens Ship it with the 
       assert.equal(el.querySelector('.ask-prcard-branch').textContent, 'worca/fix-login→main');
       assert.equal(el.querySelector('.ask-prcard-stat').textContent, '14 files · +412 −188');
       const create = el.querySelector('[data-chat-pr-create]');
+      // PR controls (design system): a small primary button led by the pr-create glyph at 14px.
+      assert.equal(create.className, 'btn btn-sm btn-primary');
+      assert.equal(create.firstElementChild.className, 'ic');
+      assert.equal(create.firstElementChild.style.width, '14px');
+      assert.equal(create.querySelector('.ic svg').innerHTML, ICONS['pr-create']);
+      assert.equal(create.textContent, 'Create PR');
       click(create); await tick();
       assert.deepEqual(opened, [[{ pipelineId: 'aaaa0005', projectKey: 'shop-1a2b3c4d' }, { askThreadId: 'ask_aaaaaaaa', askCardId: 'card_00000004' }]]);
       assert.equal(create.disabled, true, 'one dialog per card');
       close({ opened: true, url: 'https://x/pull/7' }); await tick();
       assert.equal(create.disabled, true, 'the server flips the card; it rebuilds as applied');
-      assert.deepEqual(said, ['Pull request opened']);
+      assert.deepEqual(said, ['PR created']);
     } },
     { name: 'closed without a PR: Create comes back; Not now declines', run: async () => {
       const { ctx, posts } = ctxOf({ openShipIt: async () => ({ opened: false }) });
@@ -184,21 +193,21 @@ test('pull-request: branch → base and files ±; Create opens Ship it with the 
       const { ctx } = ctxOf({ openShipIt: () => undefined });
       const { el } = buildPullRequestCard(PR, ctx);
       click(el.querySelector('[data-chat-pr-create]')); await tick();
-      assert.equal(el.querySelector('.ask-card-err').textContent, 'Could not open the Ship it dialog.');
+      assert.equal(el.querySelector('.ask-card-err').textContent, 'Could not open the Create PR dialog.');
       assert.equal(el.querySelector('[data-chat-pr-create]').disabled, false);
     } },
-    { name: 'applied: View pull request opens in a new tab; a workspace lists each member; declined is a stub', run: async () => {
+    { name: 'applied: View PR opens in a new tab; a workspace lists each member; declined is a stub', run: async () => {
       const { ctx } = ctxOf();
       const one = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7', draft: false, existed: false } } }, ctx).el;
       const a = one.querySelector('.ask-prcard-link');
-      assert.equal(a.textContent, 'View pull request'); assert.equal(a.href, 'https://x/pull/7');
+      assert.equal(a.textContent, 'View PR'); assert.equal(a.href, 'https://x/pull/7');
       assert.equal(a.target, '_blank'); assert.equal(a.rel, 'noopener noreferrer');
       assert.equal(one.querySelector('[data-chat-pr-create]'), null);
       const ws = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/1', draft: false, existed: false,
         members: [{ url: 'https://x/pull/1', memberKey: 'api-11111111' }, { url: 'https://x/pull/2', draft: true, memberKey: 'web-22222222' }] } } }, ctx).el;
-      assert.deepEqual([...ws.querySelectorAll('.ask-prcard-link')].map((x) => x.textContent), ['View pull request · api', 'View pull request · web']);
+      assert.deepEqual([...ws.querySelectorAll('.ask-prcard-link')].map((x) => x.textContent), ['View PR · api', 'View PR · web']);
       assert.equal(ws.querySelectorAll('.ask-prcard-links .ask-mcard-kind').length, 1, 'one Draft chip');
-      assert.equal(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.textContent, 'Not now — Fix login');
+      assert.equal(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.textContent, 'Not now: Fix login');
     } },
   ]);
 });
@@ -207,7 +216,7 @@ test('registerChatActionCards registers the three types with P1\'s card registry
   _resetChatExtensions();
   registerChatActionCards();
   registerChatActionCards();                         // app.js runs again on every jsdom boot
-  for (const t of ['receipt', 'run-stop', 'pull-request']) assert.equal(typeof chatCardBuilder(t), 'function', t);
+  for (const t of ['receipt', 'run-stop', 'pull-request', 'ship', 'changes', 'route']) assert.equal(typeof chatCardBuilder(t), 'function', t);
 });
 
 test('receipt: a Revert another tab already made says so in the note, no error, Revert stays off (mutation killer)', async () => {
@@ -252,7 +261,7 @@ test('refine cycle 2: Away now names itself once; declined stubs carry the reada
   assert.equal(away.querySelector('[data-chat-revert]').getAttribute('aria-label'), 'Revert Away mode');
   assert.equal(away.querySelector('.ask-rcard-note').hasAttribute('role'), false, 'no live region beside ctx.announce');
   click(away.querySelector('[data-chat-revert]')); await tick();
-  assert.deepEqual(said, ['Changed since — not reverted']);
+  assert.deepEqual(said, ['Not reverted: it changed since']);
   assert.ok(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.classList.contains('ask-actcard-stub'));
   assert.ok(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.classList.contains('ask-actcard-stub'));
 });
@@ -262,8 +271,10 @@ test('refine cycle 2: the action-card rules that keep every text at 4.5:1 in lig
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const p2 = css.slice(css.indexOf('/* ===== Chat P2: Action cards ===== */'));
   assert.ok(!/is-reverted[^{]*\{[^}]*opacity/.test(p2), 'reverted text is never faded with opacity');
-  for (const rule of ['.ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}', ':is(.ask-rcard,.ask-prcard) .ask-mcard-arrow{color:var(--ink-2);}',
-    '.ask-stopcard .ask-card-start.is-danger:hover{box-shadow:var(--shadow-hover);}']) assert.ok(p2.includes(rule), rule);
+  for (const rule of ['.ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}', ':is(.ask-rcard,.ask-prcard) .ask-mcard-arrow{color:var(--ink-2);}']) assert.ok(p2.includes(rule), rule);
+  assert.ok(!p2.includes('.ask-card-start'), 'the stop button is .btn-danger: no skin of its own');
+  const stop = buildRunStopCard(STOP, ctxOf().ctx).el.querySelector('[data-chat-stop-confirm]');
+  assert.deepEqual([...stop.classList], ['btn', 'btn-sm', 'btn-danger'], 'red text on the light red fill, a small card-footer button');
 });
 
 test('refine cycle 3 mutation killers: every Revert outcome is spoken once by name — Away now as "Away mode", "Already reverted" too', async () => {
@@ -281,6 +292,78 @@ test('refine cycle 3 mutation killers: a disabled Revert / Keep running / Not no
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const p2 = css.slice(css.indexOf('/* ===== Chat P2: Action cards ===== */'));
-  for (const rule of [':is(.ask-rcard,.ask-stopcard,.ask-prcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}',
-    '.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}']) assert.ok(p2.includes(rule), rule);
+  assert.ok(p2.includes('.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}'));
+  // Revert / Keep running / Not now are .btn-quiet: its hover skips a disabled button, so the --ink-2 text stays.
+  assert.ok(css.includes('.btn-quiet{background:transparent;border-color:transparent;color:var(--ink-2);}'));
+  assert.ok(css.includes('.btn-quiet:hover:not(:disabled){'));
+  const keep = buildRunStopCard(STOP, ctxOf().ctx).el.querySelector('[data-chat-stop-keep]');
+  assert.ok(keep.classList.contains('btn-quiet') && keep.classList.contains('ask-card-not-now'));
+});
+
+test('pull-request: an applied card shows no watch line; each PR link\'s tooltip says whether it is watched, re-read on pr-watch-changed', async () => {
+  const views = { '': { watching: true, status: 'fixing', reason: null, activePipelineId: 'f1', resolving: false, mergingBase: null },
+    'api-11111111': { watching: true, status: 'watching', reason: null, activePipelineId: null, resolving: false, mergingBase: null },
+    'web-22222222': { watching: true, status: 'needs-person', reason: 'cap', activePipelineId: null, resolving: false, mergingBase: null } };
+  const calls = [];
+  const fetch = async (url) => {
+    calls.push(url);
+    const v = views[new URL(url, 'http://x').searchParams.get('memberKey') || ''];
+    return v ? { ok: true, status: 200, json: async () => v } : { ok: false, status: 400, json: async () => ({ error: 'no open PR' }) };
+  };
+  const { ctx } = ctxOf({ fetch });
+  await checkRows([
+    { name: 'project run: the link title from GET /api/pr/watch', run: async () => {
+      const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/781', draft: false, existed: false } } }, ctx);
+      await tick(); await tick();
+      const link = card.el.querySelector('.ask-prcard-link');
+      assert.equal(calls[0], '/api/pr/watch?id=aaaa0005&projectKey=shop-1a2b3c4d');
+      assert.equal(card.el.querySelectorAll('.ask-prcard-watch').length, 0, 'no watch line');
+      assert.equal(link.title, 'PR #781 · watched');
+      views[''] = { ...views[''], status: 'needs-person', reason: 'cap' };
+      assert.equal(refreshChatPrWatch({ type: 'pr-watch-changed', projectKey: 'shop-1a2b3c4d', pipelineId: 'aaaa0005', memberKey: null }), 1);
+      await tick(); await tick();
+      assert.equal(link.title, 'PR #781 · watch stopped');
+      views[''] = { ...views[''], watching: false, status: 'watching', reason: null };
+      refreshChatPrWatch({ pipelineId: 'aaaa0005', memberKey: null });
+      await tick(); await tick();
+      assert.equal(link.title, 'PR #781', 'not watched');
+      card.dispose();
+      assert.equal(refreshChatPrWatch({ pipelineId: 'aaaa0005', memberKey: null }), 0, 'a disposed card is not read again');
+    } },
+    { name: 'workspace run: one tooltip per member PR; a frame re-reads only its member', run: async () => {
+      calls.length = 0;
+      const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, projectKey: 'workspaces/wk1', workspaceId: 'wk1', result: { url: 'https://x/pull/1', draft: false, existed: false,
+        members: [{ url: 'https://x/pull/1', memberKey: 'api-11111111' }, { url: 'https://x/pull/2', memberKey: 'web-22222222' }] } } }, ctx);
+      await tick(); await tick();
+      assert.deepEqual([...card.el.querySelectorAll('.ask-prcard-link')].map((l) => l.title), ['PR #1 · watched', 'PR #2 · watch stopped']);
+      calls.length = 0;
+      assert.equal(refreshChatPrWatch({ pipelineId: 'aaaa0005', memberKey: 'web-22222222' }), 1);
+      assert.deepEqual(calls, ['/api/pr/watch?id=aaaa0005&projectKey=workspaces%2Fwk1&memberKey=web-22222222']);
+      card.dispose();
+    } },
+    { name: 'a PR the server cannot answer for (merged, closed) and a ctx without fetch: a plain PR tooltip, or none', run: async () => {
+      views[''] = undefined;
+      const card = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } }, ctx);
+      await tick(); await tick();
+      assert.equal(card.el.querySelector('.ask-prcard-link').title, 'PR #7');
+      card.dispose();
+      const bare = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } }, ctxOf().ctx);
+      assert.equal(bare.el.querySelector('.ask-prcard-link').title, '');
+    } },
+  ]);
+});
+
+test('s5: an applied pull-request card carries the Ask for changes field; it posts the run ref', async () => {
+  const { ctx } = ctxOf();
+  const sent = [];
+  ctx.postChanges = async (ref, text) => { sent.push([ref, text]); };
+  const applied = { ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7' } } };
+  assert.equal(buildPullRequestCard(PR, ctx).el.querySelector('.ask-changes'), null, 'proposed: no field');
+  const ws = { ...applied, card: { ...applied.card, workspaceId: 'ws_1' } };
+  assert.equal(buildPullRequestCard(ws, ctx).el.querySelector('.ask-changes'), null, 'workspace run: no field');
+  const { el } = buildPullRequestCard(applied, ctx);
+  const input = el.querySelector('.ask-changes-input');
+  input.value = 'make it blue'; input.dispatchEvent(new ctx.win.Event('input'));
+  el.querySelector('.ask-changes-send').click(); await tick();
+  assert.deepEqual(sent, [[{ pipelineId: 'aaaa0005' }, 'make it blue']]);
 });

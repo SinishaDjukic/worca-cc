@@ -523,6 +523,38 @@ test('spawnEnv never sets a reserved key or a non-string; absent keeps the env b
   }
 });
 
+// ── fork sub-agents off (#810) ───────────────────────────────────────────────
+// Claude Code 2.1.302 offers `subagent_type: "fork"` in -p by default. A fork inherits the parent's
+// context, tools and model, so it bypasses worca's pinned investigator (--agents) and the sub-agent
+// model policy. Every Claude spawn sets CLAUDE_CODE_FORK_SUBAGENT=0, whatever the ambient env, the
+// run env or a model entry says.
+const FORK_KEY = 'CLAUDE_CODE_FORK_SUBAGENT';
+
+test('every Claude spawn turns fork sub-agents off: over the ambient env, a run env and a model env, scrubbed or not', POSIX_SHIM, async () => {
+  const prev = process.env[FORK_KEY];
+  const realWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  try {
+    for (const [label, ambient, extra] of [
+      ['unset everywhere', undefined, {}],
+      ['ambient 1', '1', {}],
+      ['ambient 1, scrubbed', '1', { envScrub: true, envAllowlist: [] }],
+      ['run env 1', undefined, { spawnEnv: { [FORK_KEY]: '1' } }],
+      ['model env 1', undefined, { modelEnv: { [FORK_KEY]: '1', ANTHROPIC_BASE_URL: 'https://ok.example' } }],
+    ]) {
+      if (ambient === undefined) delete process.env[FORK_KEY]; else process.env[FORK_KEY] = ambient;
+      const env = await dumpWithAmbientCap(undefined, extra);
+      assert.equal(env.line(FORK_KEY), `${FORK_KEY}=0`, label);
+    }
+  } finally {
+    console.warn = realWarn;
+    if (prev === undefined) delete process.env[FORK_KEY]; else process.env[FORK_KEY] = prev;
+  }
+  assert.equal(warnings.filter((w) => w.includes(`modelEnv: dropping reserved/invalid key "${FORK_KEY}"`)).length, 1,
+    `a model entry cannot turn forks back on, and says so: ${JSON.stringify(warnings)}`);
+});
+
 test('cleanRunEnv: string values only, reserved keys dropped, null when nothing survives', () => {
   assert.deepEqual(cleanRunEnv({ [CAP_KEY]: '8', HOME: '/h', WORCA_X: '1', N: 8 }), { [CAP_KEY]: '8' });
   assert.equal(cleanRunEnv({ PATH: '/x' }), null);
@@ -708,7 +740,7 @@ test('a resolved card whose ANTHROPIC_MODEL equals the catalog id logs its routi
   assert.equal(warnings.filter((w) => w.includes('wire model "')).length, 0, 'plain wire-model line does NOT fire when ids match');
 });
 
-test('a model env with no ANTHROPIC_* routing key (the Ask Worca CLAUDE_CODE_* knob) logs nothing', POSIX_SHIM, async () => {
+test('a model env with no ANTHROPIC_* routing key (the Chat CLAUDE_CODE_* knob) logs nothing', POSIX_SHIM, async () => {
   const realWarn = console.warn; const warnings = [];
   console.warn = (...a) => warnings.push(a.join(' '));
   const prevDbg = process.env.WORCA_DEBUG_SPAWN; delete process.env.WORCA_DEBUG_SPAWN;
@@ -769,7 +801,8 @@ test('WORCA_DEBUG_SPAWN on: ONE stderr event with bin + argv + routing env; NO s
 // ── GitHub credentials never reach claude (src/core/github-credentials.mjs) ──
 
 test('no GitHub or Azure DevOps credential reaches claude: scrub off, scrub on with it allowlisted, or set by a model env', POSIX_SHIM, async () => {
-  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN'];
+  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN',
+    'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER'];
   const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'WORCA_GH_READ_TOKEN', 'WORCA_GH_WRITE_TOKEN', ...ADO_KEYS];
   const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) process.env[k] = `secret-${k}`;
@@ -875,4 +908,27 @@ test('runClaude FORWARDS pluginDirs and extraSettings to runReal (both reach the
   assert.deepEqual(argv.filter((a, i) => argv[i - 1] === '--plugin-dir'), plugins);
   assert.deepEqual(JSON.parse(argv[argv.indexOf('--settings') + 1]),
     { disableSkillShellExecution: true, permissions: { deny: ['Read(.env*)'] } });
+});
+
+test('runClaude FORWARDS systemPromptMode to runReal (--system-prompt reaches the spawn; absent keeps the append flag)', POSIX_SHIM, async () => {
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;                       // must reach runReal, not runMock
+  const spawnArgv = async (extra) => {
+    const dir = await tmp();
+    const out = join(dir, 'argv.txt');
+    const bin = await fakeBin(dir, out);
+    await runClaude({ cwd: dir, bin, prompt: 'p', systemPrompt: 'SYS', ...extra });
+    return (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  };
+  try {
+    const replaced = await spawnArgv({ systemPromptMode: 'replace' });
+    assert.equal(replaced[replaced.indexOf('--system-prompt') + 1], 'SYS', JSON.stringify(replaced));
+    assert.ok(!replaced.includes('--append-system-prompt'));
+    const appended = await spawnArgv({});
+    assert.equal(appended[appended.indexOf('--append-system-prompt') + 1], 'SYS');
+    assert.ok(!appended.includes('--system-prompt'));
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK;
+    else process.env.WORCA_MOCK = prevMock;
+  }
 });

@@ -6,7 +6,7 @@
 // Layout (legacy, the retained default):
 //         <projectDir>/.worca-cc/worktrees/<pipelineId>/   <- checkout
 // Layout (detached, caller passes baseDir + checkoutName):
-//         <worcaHome>/runs/<pipelineId>/repos/<projectKey>/
+//         <worcaHome>/runs/<pipelineId>/repos/<projectKey>/   (shortened by boundCheckoutName)
 // Either way the shared .git store stays in <projectDir>/.git <- no duplication.
 //
 // Branch naming: callers pass a fully-formed feature branch (e.g. "worca-cc/foo-abc12345")
@@ -19,13 +19,16 @@ import { mkdir, rm, realpath, readdir, rename, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
-import { clearStaleIndexLock } from './git-lock.mjs';
+import { clearStaleGitLocks } from './git-lock.mjs';
 // settings.mjs is a leaf (node builtins only), so importing the §10 flag reader here
 // adds no dependency on the DB layer — worktree.mjs stays DB-free.
 import { runRootMode } from './settings.mjs';
 import {
-  readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo,
+  readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, liveRetainMembers,
+  removeInjectedPaths,
 } from './run-manifest.mjs';
+import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { ownWorkDir } from './no-project-work.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
 const BRANCH_PREFIX = 'worca-cc/';
@@ -54,6 +57,7 @@ const SLOW_GIT_TIMEOUT_MS = 120_000;
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
  *  credential helper need PATH/HOME. Only the Ask Worca callers pass it. */
 function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0 } = {}) {
+  if (!gitAvailable()) return Promise.resolve(gitMissingResult());
   return new Promise((res) => {
     let child;
     try {
@@ -130,6 +134,16 @@ function keywordSlug(text) {
   return (kept.length ? kept : words).slice(0, MAX_BRANCH_WORDS).join('-');
 }
 
+/** The title-first slug suggestBranchName uses (no prefix, no id). '' when there is nothing to slug. */
+export function deriveBranchSlug({ prompt, title } = {}) {
+  // A title is explicit intent — slugify it verbatim (only word-cap for length),
+  // never strip stopwords (would mangle deliberate names like "A/B Testing").
+  const fromTitle = title
+    ? slugify(title).split('-').filter(Boolean).slice(0, MAX_BRANCH_WORDS).join('-')
+    : '';
+  return fromTitle || keywordSlug(prompt);
+}
+
 /**
  * Propose a feature branch name WITHOUT an LLM (so preflight stays free and
  * fully deterministic). Title-first: a caller-supplied title is the clearest
@@ -138,12 +152,7 @@ function keywordSlug(text) {
  */
 export function suggestBranchName({ prompt, title, pipelineId } = {}) {
   const shortId = String(pipelineId || '').slice(0, 8) || 'run';
-  // A title is explicit intent — slugify it verbatim (only word-cap for length),
-  // never strip stopwords (would mangle deliberate names like "A/B Testing").
-  const fromTitle = title
-    ? slugify(title).split('-').filter(Boolean).slice(0, MAX_BRANCH_WORDS).join('-')
-    : '';
-  const core = fromTitle || keywordSlug(prompt) || 'feature';
+  const core = deriveBranchSlug({ prompt, title }) || 'feature';
   return sanitizeBranchName(`${BRANCH_PREFIX}${core}-${shortId}`);
 }
 
@@ -154,12 +163,49 @@ export async function listLocalBranches(projectDir) {
   return r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
 
-/** The branch HEAD currently points to in `projectDir`, or null. */
-export async function currentBranch(projectDir) {
-  const r = await git(projectDir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+/** The branch HEAD currently points to in `projectDir`, or null. `timeout` (ms) overrides git()'s 30 s default. */
+export async function currentBranch(projectDir, { timeout } = {}) {
+  const r = await git(projectDir, ['rev-parse', '--abbrev-ref', 'HEAD'], { timeout });
   if (!r.ok) return null;
   const name = r.stdout.trim();
   return name && name !== 'HEAD' ? name : null;
+}
+
+/** An unborn HEAD (git init, no commit yet): the branch the first commit lands on; null once HEAD has a commit or outside a repo. */
+export async function unbornBranch(projectDir) {
+  if ((await git(projectDir, ['rev-parse', '--verify', '-q', 'HEAD'])).ok) return null;
+  const r = await git(projectDir, ['symbolic-ref', '--short', '-q', 'HEAD']);
+  const name = r.ok ? r.stdout.trim() : '';
+  return name || null;
+}
+
+/**
+ * The product's default branch and the ref to READ it at (Requirements A7, design D8 / Q-B).
+ * Differs from resolveDefaultBranch on purpose: that one answers "which branch is this work
+ * based on" and starts from the CHECKED-OUT branch; a product brief must describe the repository's
+ * default branch whatever the operator happens to have checked out, so the order is
+ * origin/HEAD, then init.defaultBranch (if it exists locally), and the checked-out branch last.
+ * `timeout` (ms) bounds each git call (default: git()'s 30 s); a call that times out counts as "not there".
+ * @returns {Promise<{branch:string, ref:string}|null>} never throws; null = no usable branch
+ */
+export async function defaultBranchRef(projectDir, { timeout } = {}) {
+  try {
+    if (!projectDir) return null;
+    const o = { timeout };
+    const oh = await git(projectDir, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], o);
+    const m = oh.ok ? /^refs\/remotes\/origin\/(.+)$/.exec(oh.stdout.trim()) : null;
+    if (m) {
+      const b = m[1];
+      if (await commitOf(projectDir, `refs/heads/${b}`, o)) return { branch: b, ref: `refs/heads/${b}` };
+      if (await commitOf(projectDir, `refs/remotes/origin/${b}`, o)) return { branch: b, ref: `refs/remotes/origin/${b}` };
+    }
+    const cfg = await git(projectDir, ['config', '--get', 'init.defaultBranch'], o);
+    const c = cfg.ok ? cfg.stdout.trim() : '';
+    if (c && await commitOf(projectDir, `refs/heads/${c}`, o)) return { branch: c, ref: `refs/heads/${c}` };
+    const cur = await currentBranch(projectDir, o);
+    if (cur && await commitOf(projectDir, `refs/heads/${cur}`, o)) return { branch: cur, ref: `refs/heads/${cur}` };
+    return null;
+  } catch { return null; }
 }
 
 /**
@@ -219,6 +265,43 @@ export async function worktreePathForBranch(projectDir, branch) {
   return null;
 }
 
+// git's fsmonitor daemon binds `<git common dir>/worktrees/<checkout name>/fsmonitor--daemon.ipc`
+// and its client connects by that ABSOLUTE path. Past AF_UNIX's sun_path the daemon still binds (it
+// chdirs first) but no client ever connects, so with core.fsmonitor on every index refresh in the
+// checkout hangs and leaks one daemon (#411). Usable bytes: 103 on macOS/BSD, 107 on Linux; Windows
+// uses named pipes. git appends a counter to an admin dir name that is taken (another run of the same
+// project), so 2 bytes are kept for it.
+const FSMONITOR_IPC_TAIL = '/fsmonitor--daemon.ipc';
+const ADMIN_COUNTER_RESERVE = 2;
+const KEY_HASH_RE = /^(.*)-([0-9a-f]{8})$/;
+
+/**
+ * The checkout dir name to use for `name` in the repo whose git common dir is `gitCommonDir`: `name`
+ * itself when the fsmonitor socket path fits, else a projectKey-shaped name (`<slug>-<8 hex>`) with
+ * only its slug cut, so the hash that makes it unique stays. Never throws: a long path only hurts
+ * with core.fsmonitor on, so a name it cannot shorten safely (no hash), or one no shortening would
+ * make fit, is returned unchanged.
+ */
+export function boundCheckoutName(name, gitCommonDir, platform = process.platform) {
+  if (platform === 'win32' || !gitCommonDir) return name;
+  const usable = platform === 'linux' ? 107 : 103;
+  const budget = usable - ADMIN_COUNTER_RESERVE
+    - Buffer.byteLength(`${gitCommonDir}/worktrees/${FSMONITOR_IPC_TAIL}`);
+  if (Buffer.byteLength(name) <= budget) return name;
+  const m = KEY_HASH_RE.exec(name);
+  // No hash to keep, or a common dir so deep that even the hash alone overflows: no name can help.
+  if (!m || budget < m[2].length) return name;
+  const slug = m[1].slice(0, Math.max(0, budget - 9)).replace(/[-._]+$/, '');
+  return slug ? `${slug}-${m[2]}` : m[2];
+}
+
+/** The realpath'd git common dir of `projectDir` (what git builds the fsmonitor socket path from), or null. */
+async function gitCommonDir(projectDir) {
+  const r = await git(projectDir, ['rev-parse', '--git-common-dir']);
+  const out = r.ok ? r.stdout.trim() : '';
+  return out ? realpath(resolve(projectDir, out)).catch(() => null) : null;
+}
+
 /**
  * Create a worktree checking out a new branch <featureBranch> off <sourceBranch>.
  * When the branch already exists locally we attach to it instead of forking (resume
@@ -260,10 +343,12 @@ export async function createWorktree({
   // reports (git emits realpaths). Without this the M2 self-equality check below
   // mis-fires on symlinked roots (e.g. macOS /tmp -> /private/tmp).
   const baseReal = await realpath(base).catch(() => resolve(base));
-  const name = checkoutName || pipelineId;
-  if (!/^[A-Za-z0-9._-]+$/.test(name) || name === '.' || name === '..') {
-    throw new Error(`invalid checkout name: ${JSON.stringify(name)}`);
+  if (checkoutName && (!/^[A-Za-z0-9._-]+$/.test(checkoutName) || checkoutName === '.' || checkoutName === '..')) {
+    throw new Error(`invalid checkout name: ${JSON.stringify(checkoutName)}`);
   }
+  // A caller-named checkout (a detached run's projectKey) is bounded so git's fsmonitor socket fits
+  // (#411); the returned worktreeDir is the name on disk, so callers render basename(worktreeDir).
+  const name = checkoutName ? boundCheckoutName(checkoutName, await gitCommonDir(projectDir)) : pipelineId;
   const worktreeDir = join(baseReal, name);
   // Belt-and-braces: the sanitized name can't traverse, but assert containment
   // so a future caller can't turn this into a delete-anything primitive.
@@ -398,15 +483,34 @@ export async function createDetachedWorktree({ projectDir, worktreeDir, ref, sig
     throw new Error(`ref is not a valid commit-ish: ${JSON.stringify(ref ?? null)}`);
   }
   await git(projectDir, ['worktree', 'prune']);
+  // Never spawn with an already-aborted signal: Node kills the child only on the next tick,
+  // and a fast git can register the worktree first — a checkout no caller knows to remove.
+  if (signal?.aborted) throw abortError('git worktree add --detach aborted before it started');
+  const existed = existsSync(worktreeDir);
   const r = await git(projectDir, ['worktree', 'add', '--detach', '--', worktreeDir, ref],
     { signal, timeout: SLOW_GIT_TIMEOUT_MS });
   if (!r.ok) {
-    const err = new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
-    if (signal?.aborted) err.name = 'AbortError';
-    throw err;
+    if (signal?.aborted) {
+      // Killed mid-way: git may already have registered (or even finished) the checkout.
+      // Undo it only when this add created the dir — a dir that existed before may be
+      // someone's worktree with uncommitted work — then prune any registration left dangling.
+      if (!existed) {
+        await git(projectDir, ['worktree', 'remove', '--force', '--', worktreeDir]);
+        await rm(worktreeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+      }
+      await git(projectDir, ['worktree', 'prune']);
+      throw abortError(`git worktree add --detach aborted: ${r.stderr.trim() || `exit ${r.code}`}`);
+    }
+    throw new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
   }
   const head = await git(worktreeDir, ['rev-parse', 'HEAD']);
   return { worktreeDir, commit: head.ok ? head.stdout.trim() : null };
+}
+
+function abortError(message) {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
 }
 
 /** HEAD commit sha of any checkout (worktree or repo), or null. */
@@ -416,17 +520,17 @@ export async function worktreeHead(dir) {
 }
 
 /** Full SHA of `ref^{commit}` in `dir`, or null. Rejects a leading '-' (a git option). */
-export async function commitOf(dir, ref) {
+export async function commitOf(dir, ref, { timeout } = {}) {
   if (typeof ref !== 'string' || !ref || /^-/.test(ref)) return null;
-  const r = await git(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  const r = await git(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { timeout });
   return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
 }
 
-/** True iff commit `a` is an ancestor of (or equal to) `b` in `dir`. False on any failure. */
-export async function isAncestor(dir, a, b) {
-  const [x, y] = await Promise.all([commitOf(dir, a), commitOf(dir, b)]);
+/** True iff commit `a` is an ancestor of (or equal to) `b` in `dir`. False on any failure (a timeout included). */
+export async function isAncestor(dir, a, b, { timeout } = {}) {
+  const [x, y] = await Promise.all([commitOf(dir, a, { timeout }), commitOf(dir, b, { timeout })]);
   if (!x || !y) return false;
-  return (await git(dir, ['merge-base', '--is-ancestor', x, y])).ok;
+  return (await git(dir, ['merge-base', '--is-ancestor', x, y], { timeout })).ok;
 }
 
 /**
@@ -482,6 +586,75 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
 }
 
 /**
+ * Commit a retained worktree's work onto its checked-out branch: the end-of-run commit that failed
+ * (run-harness `_commitWork`), asked for again by Apply to branch. Same staging — each `exclude` path is
+ * dropped from the index first (`git add -A` with an exclude never unstages) and excluded from `add -A`
+ * while it still exists on disk — and the same attempts: the repo's identity, then a local fallback
+ * identity, then, only when `bypassHooks` (a detached run, exactly as at teardown), once more with hooks
+ * off. Never overrides signing. Stale git locks are cleared once. Never throws. With `branch`, it refuses
+ * (step 'branch') unless HEAD is that branch: a person may have detached or switched the retained worktree
+ * while recovering by hand, and Apply deletes the worktree after a good commit. For the same reason it refuses
+ * (step 'add') a worktree with unresolved conflicts, which `add -A` would mark resolved.
+ * @returns {Promise<{ok:true, committed:boolean, sha:string|null, hooksBypassed:boolean}
+ *                  |{ok:false, step:'status'|'branch'|'add'|'commit', message:string}>}
+ */
+export async function commitStagedWork(worktreeDir, { message, exclude = [], bypassHooks = false, branch = null } = {}) {
+  const run = (args) => git(worktreeDir, args, { timeout: SLOW_GIT_TIMEOUT_MS });
+  const msgOf = (r) => r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
+  const indexWrite = async (args) => {
+    let r = await run(args);
+    if (!r.ok && (await clearStaleGitLocks(worktreeDir)).length) r = await run(args);
+    return r;
+  };
+  const status = await run(['status', '--porcelain']);
+  if (!status.ok) return { ok: false, step: 'status', message: msgOf(status) };
+  if (branch) {
+    // Committing on whatever HEAD is would put the work on another branch, or on none (a detached HEAD),
+    // and the release after a good commit then deletes the only worktree that knows it.
+    const sym = await run(['symbolic-ref', '-q', 'HEAD']);
+    const on = sym.ok ? sym.stdout.trim().replace(/^refs\/heads\//, '') : '';
+    if (on !== branch) {
+      return { ok: false, step: 'branch', message: `the worktree is on ${on || 'a detached HEAD'}, not ${branch}: switch it back to ${branch}, then apply again` };
+    }
+  }
+  // `add -A` would mark unresolved conflicts resolved, and the release after a good commit deletes the
+  // worktree: a merge or cherry-pick the person left half-done by hand would land with its conflict markers.
+  const unmerged = await run(['-c', 'core.quotePath=false', 'ls-files', '-u']);
+  if (unmerged.ok && unmerged.stdout.trim()) {
+    const files = [...new Set(unmerged.stdout.trim().split('\n').map((l) => l.slice(l.indexOf('\t') + 1)))];
+    return { ok: false, step: 'add', message: `the worktree has unresolved conflicts (${files.slice(0, 5).join(', ')}${files.length > 5 ? ', and more' : ''}): resolve them or abort the merge, then apply again` };
+  }
+  for (const p of exclude) await indexWrite(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--', p]);
+  const present = exclude.filter((p) => existsSync(join(worktreeDir, p)));
+  const add = await indexWrite(['add', '-A', '--', '.', ...present.map((p) => `:(exclude)${p}`)]);
+  if (!add.ok) return { ok: false, step: 'add', message: msgOf(add) };
+  const staged = await run(['diff', '--cached', '--quiet']);
+  if (staged.ok) return { ok: true, committed: false, sha: null, hooksBypassed: false };   // exit 0 = nothing staged
+  const local = ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator'];
+  let commit = await indexWrite(['commit', '-m', message]);
+  if (!commit.ok) commit = await run([...local, 'commit', '-m', message]);
+  let hooksBypassed = false;
+  if (!commit.ok && bypassHooks) {
+    commit = await run(['-c', 'core.hooksPath=', ...local, 'commit', '-m', message]);
+    hooksBypassed = commit.ok;
+  }
+  if (!commit.ok) return { ok: false, step: 'commit', message: msgOf(commit) };
+  const head = await run(['rev-parse', 'HEAD']);
+  return { ok: true, committed: true, sha: head.ok ? head.stdout.trim() : null, hooksBypassed };
+}
+
+/**
+ * Whether the checkout's index tracks anything under `rel`, in any letter case: the memory mount guard's own
+ * test (run-harness `_mountMemoryUnguarded`, which refuses the mount on such a checkout). `null` when git
+ * cannot tell.
+ * @returns {Promise<boolean|null>}
+ */
+export async function indexTracks(dir, rel) {
+  const r = await git(dir, ['ls-files', '--', `:(icase)${rel}`]);
+  return r.ok ? !!r.stdout.trim() : null;
+}
+
+/**
  * Stage every remaining change and render a binary-capable patch against HEAD
  * DIRECTLY INTO outFile (no in-memory patch string — agent-created artifacts can
  * be huge). Staging is intentional: it makes untracked files part of the patch.
@@ -491,21 +664,21 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
  * name. A clean tree is SUCCESS with `file: null` (nothing to save is not a
  * failure — discard after a manual commit relies on it). A git failure returns
  * without removing anything so the checkout stays authoritative.
- * When a stale index lock had to be removed first, every result after that carries
- * `clearedLock: { path, ageMs }` so the caller can leave a trace of it.
+ * When stale git locks had to be removed first, every result after that carries
+ * `clearedLocks: [{ kind, path, ageMs }]` so the caller can leave a trace of each.
  */
 export async function snapshotWorktreePatch(worktreeDir, outFile) {
   if (!worktreeDir || !outFile) {
     return { ok: false, step: 'path', message: 'worktreeDir and outFile are required' };
   }
   let add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
-  // A leftover lock from a killed git is the usual reason a retained run's commit failed;
-  // without this, discard and delete could never save the work once it is stale.
-  const clearedLock = add.ok ? null : await clearStaleIndexLock(worktreeDir);
-  if (clearedLock) {
+  // Leftover locks from a killed git are the usual reason a retained run's commit failed;
+  // without this, discard and delete could never save the work once they are stale.
+  const clearedLocks = add.ok ? [] : await clearStaleGitLocks(worktreeDir);
+  if (clearedLocks.length) {
     add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
   }
-  const done = (res) => (clearedLock ? { ...res, clearedLock } : res);
+  const done = (res) => (clearedLocks.length ? { ...res, clearedLocks } : res);
   if (!add.ok) {
     return done({ ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}`, fromStderr: !!add.stderr.trim() });
   }
@@ -592,7 +765,7 @@ export const RUN_ROOT_REMOVE = new Set(['done', 'stopped', 'error']);
  *                    failed:string[], warnings:string[]}>}
  */
 export async function sweepRunRoots({
-  worcaHome, statusOf, membersOf, pipelineDirOf, retainOf, log,
+  worcaHome, statusOf, membersOf, pipelineDirOf, retainOf, harvestWorkOf, log,
 } = {}) {
   const out = { keep: [], removed: [], quarantined: [], failed: [], warnings: [] };
   const say = typeof log === 'function'
@@ -636,10 +809,8 @@ export async function sweepRunRoots({
     // still exists. This makes manual recovery/removal self-clearing instead of
     // leaking the run root forever. The DB callback is an independent fallback.
     const manifestRetain = manifest?.retain;
-    const manifestMembers = Array.isArray(manifestRetain?.members) ? manifestRetain.members : [];
-    let retained = manifestMembers.some((m) => m?.worktreeDir && existsSync(m.worktreeDir))
-      ? manifestRetain
-      : null;
+    // P1 (P1b S17): a Folder run's pending copy (`copyDir`) keeps its root the same way.
+    let retained = liveRetainMembers(manifestRetain).length ? manifestRetain : null;
     // Same three-state doctrine as statusOf/membersOf: "retention unknown" must
     // never collapse into "remove", so a lookup throw skips this root untouched
     // and is reported in `failed` + logged loudly (it must NOT abort the sweep —
@@ -674,15 +845,42 @@ export async function sweepRunRoots({
       let pipelineDir = null;
       try { pipelineDir = pipelineDirOf ? await pipelineDirOf(id) : null; } catch { pipelineDir = null; }
       const injected = manifest?.injectedPaths || {};
+      // P3-D19: a no-project run's mounts are rescued and removed only inside its own work/, never through one an agent
+      // swapped for a link (the harvest refuses that one and keeps the root).
+      const ownWork = manifest?.workMode === 'none' ? await ownWorkDir(join(dir, 'work')) : true;
       for (const [scope, list] of Object.entries(injected)) {
+        if (manifest?.workMode === 'none' && scope !== 'runRoot' && !ownWork) continue;
         const baseDir = scope === 'runRoot'
           ? dir
+          : manifest?.workMode === 'none' ? join(dir, 'work')       // P3 (S71): a no-project run's mounts live in work/
           : (manifest?.members || []).find((m) => m?.projectKey === scope)?.worktreeDir || join(dir, 'repos', scope);
         const w = await rescueModifiedMounts({
-          baseDir, entries: list, pipelineDir, scope, pipelineId: id,
+          baseDir, entries: list, pipelineDir, scope, pipelineId: id, strict: manifest?.workMode === 'none',
         });
         out.warnings.push(...w);
         for (const line of w) say('warn', `${id}: ${line}`);
+        // P3: work/ outlives the root (it moves into the pipeline dir), so worca's mounts leave it first — rescued above.
+        if (manifest?.workMode === 'none' && scope !== 'runRoot') await removeInjectedPaths(baseDir, list, { strict: true });
+      }
+      // P3: a no-project run's work/ is its deliverable — moved into the pipeline dir before anything is reclaimed.
+      // A throw is a lookup failure (skip; only worca's own mounts, rescued above, have left work/); a failed copy keeps
+      // the root (its files stay in work/).
+      if (manifest?.workMode === 'none' && !manifest.workHarvested && typeof harvestWorkOf === 'function') {
+        let h;
+        try {
+          h = await harvestWorkOf(id, dir, pipelineDir);
+        } catch (err) {
+          const reason = `skip ${dir}: work/ harvest FAILED (${err?.message || err}) — leaving it untouched`;
+          out.failed.push(dir);
+          out.warnings.push(reason);
+          say('warn', reason);
+          continue;
+        }
+        if (!h?.ok) {
+          out.keep.push(dir);
+          say('info', `keep ${dir} (work/ not copied${h?.error ? `: ${h.error}` : ''})`);
+          continue;
+        }
       }
       const strays = await scanStrayEntries({ runRoot: dir, pipelineDir });
       out.warnings.push(...strays);
@@ -720,7 +918,7 @@ export async function sweepRunRoots({
     }
     members = members ?? [];
     for (const m of members) {
-      if (!m?.projectDir || !m?.worktreeDir) continue;
+      if (!m?.projectDir || !m?.worktreeDir || m.workMode === 'folder') continue;   // a copy is no git worktree (P5 S-P5-a)
       await removeWorktree({ projectDir: m.projectDir, worktreeDir: m.worktreeDir, branch: null, force: true });
     }
     const res = await rmGuarded(dir, { worcaHome, pipelineId: basename(dir) });

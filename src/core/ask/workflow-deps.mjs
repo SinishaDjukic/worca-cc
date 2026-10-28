@@ -24,6 +24,9 @@ import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
 import { runsOn } from '../../shared/connections.mjs';
+import { lockedChatEngine } from '../model-env.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
+import { chatModelRates } from './chat-price.mjs';
 
 const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
 const flat = (v, max) => cleanText(v, max);
@@ -152,7 +155,8 @@ export async function revalidateWorkflowProposal({ shape, projectKey = null, wor
  *  `[/worca context]` tag typed into a name is neutralised (prompt.mjs:47-49 does that only for header lines). */
 const eventName = (name) => flat(name, 60).replace(/"/g, "'").replace(/\[(\/?)worca context\]/gi, '($1worca context)');
 export function workflowEventPrompt({ cardId, state, workflowId = null, name = '', thenRun = false, projectKey = '', workspaceId = '' }) {
-  const tgt = workspaceId ? `workspace=${flat(workspaceId, 120)}` : `project=${flat(projectKey, 120)}`;   // a workspace wins; never both
+  // A workspace wins; never both. Ask's graph card proposed with nothing pinned names neither (rule 12: "no target").
+  const tgt = workspaceId ? `workspace=${flat(workspaceId, 120)}` : projectKey ? `project=${flat(projectKey, 120)}` : 'no target';
   if (state === 'declined') return `[worca event] workflow card ${cardId} declined; ${tgt}`;
   return `[worca event] workflow card ${cardId} saved as ${flat(workflowId, 120)} "${eventName(name)}"; thenRun=${thenRun ? 'true' : 'false'}; ${tgt}`;
 }
@@ -174,8 +178,11 @@ export function workflowNoticeText({ state, name = '', matched = false, thenRun 
  */
 export function defaultWorkflowDeps({ threadId = null, signal = null, classify = classifyTask, env = process.env } = {}) {   // eslint-disable-line no-unused-vars
   const bundleSignal = signal;
-  // A Codex chat's classifier runs on Codex too: a Codex chat makes no Claude call (D8).
-  const chatEngine = env && env.WORCA_ASK_ENGINE === 'codex' ? 'codex' : null;
+  // A locked-down chat's classifier runs on its own engine, through the chat's own lockdown with no MCP server
+  // (classify.mjs askLockdown): such a chat makes no Claude call (D8). Its model: the engine's classifier slot, else the
+  // chat's own (WORCA_ASK_MODEL, spawn.mjs buildMcpConfig).
+  const chatEngine = env && lockedChatEngine(env.WORCA_ASK_ENGINE) ? env.WORCA_ASK_ENGINE : null;
+  const chatModel = chatEngine && typeof env.WORCA_ASK_MODEL === 'string' ? env.WORCA_ASK_MODEL : '';
   return {
     workflow: {
       /**
@@ -213,15 +220,15 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
           // D6 amendment: the classifier may Read/Grep/Glob a throwaway detached checkout of the
           // project's HEAD to SIZE the change. Mock never spawns, so it never borrows one; a project
           // without git (or a failed `git worktree add`) classifies text-only, exactly as before.
-          // A Codex chat's classifier runs on codex with its shell off (classify.mjs): no look to borrow.
+          // A Codex or Copilot chat's classifier runs read-only with no shell (classify.mjs): no look to borrow.
           // A workspace gets one checkout per member under repos/<projectKey> (the run root's shape).
-          const look = mockEnabled({}) || chatEngine === 'codex' ? null : ws
+          const look = mockEnabled({}) || chatEngine ? null : ws
             ? await openWorkspaceRepoLook(ws.members, cwd, { signal: signal || bundleSignal })
             : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
           const input = {
             taskText: String(task).slice(0, ASK_LIMITS.workflowTaskMaxChars), extras: [], fingerprint, models, registry, domain: 'coding',
-            humanInLoop: true, feedback: [], priorShape: null, model: chatEngine ? (utilityModelFor(chatEngine, 'classifier').model || '') : resolveAutoModel(models),
-            ...(chatEngine ? { engine: chatEngine } : {}),
+            humanInLoop: true, feedback: [], priorShape: null, model: chatEngine ? (utilityModelFor(chatEngine, 'classifier').model || chatModel) : resolveAutoModel(models),
+            ...(chatEngine ? { engine: chatEngine, askLockdown: true, rates: chatModelRates(chatDescriptor(chatEngine), utilityModelFor(chatEngine, 'classifier').model || chatModel) } : {}),
             cwd: look ? look.cwd : cwd, repoLook: !!look,
             mock: mockEnabled({}), signal: signal || bundleSignal,
             ...(ws ? { workspace: {

@@ -9,7 +9,9 @@
 // Formatters are injected via opts.fmt = { usd, usd4, duration, hours, estTitle };
 // DEFAULT_FMT keeps pure tests standalone.
 
+import { flagOn } from './flags.mjs';
 import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
+import { rowsToCsv } from '../../src/shared/csv.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -37,7 +39,7 @@ export const DEFAULT_FMT = {
     const v = Math.round(((h || 0) + Number.EPSILON) * 10) / 10;
     return `${v.toLocaleString('en-US', { maximumFractionDigits: 1 })} h`;
   },
-  estTitle: (n) => `Estimated cost $${(n || 0).toLocaleString('en-US', USD_4DP)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing`,
+  estTitle: (n) => `Estimated cost $${(n || 0).toLocaleString('en-US', USD_4DP)}. Claude Code client-side estimate (total_cost_usd), not authoritative billing`,
 };
 
 function h(doc, tag, cls, text) {
@@ -72,6 +74,8 @@ const ICONS = {
   finished: 'M20 7 9 18l-5-5',
   // Money bag resting on an open hand (not a board glyph): bag tie, knot, body; thumb, fingers, cuff.
   saved: 'M9.6 4.6h3.8 M9.9 4.6c.3-1.5 2.9-1.5 3.2 0 M9.6 4.6C7.8 6.2 6.8 7.8 6.8 9.4c0 1.6.6 2.9 1.4 3.8h6.6c.8-.9 1.4-2.2 1.4-3.8 0-1.6-1-3.2-2.8-4.8 M8.2 13.2c-.5 0-1 .2-1.3.6L3 17.6 M7 21l1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91L14.8 13.2 M2 16.6l6 6',
+  // The Requirements nav entry's glyph (index.html), the three paths joined.
+  requirements: 'M8 4h8l3 3v13H5V4h3M9 11h6M9 15h4M9 4v2h6V4',
   prs: 'M6 8.6v6.8M18 15.4V11a4 4 0 0 0-4-4h-2M6 3.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM6 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM18 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z',
 };
 
@@ -94,8 +98,8 @@ function deltaChip(doc, cur, prevVal, range) {
   if (range === 'all' || prevVal == null || !(prevVal > 0)) return null;
   const pct = Math.round(((cur - prevVal) / prevVal) * 100);
   const chip = h(doc, 'span', 'stat-delta', `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}%`);
-  chip.title = range === 'today' ? 'vs yesterday'
-    : range === 'week' ? 'vs previous week' : 'vs previous month';
+  chip.title = range === 'today' ? 'vs yesterday' : range === 'week' ? 'vs previous week'
+    : range === 'lastMonth' ? 'vs the month before' : range === 'custom' ? 'vs the previous period' : 'vs previous month';
   return chip;
 }
 
@@ -128,15 +132,19 @@ function subEl(doc, str) {
   return el;
 }
 
-function tile(doc, { iconD, label, chip, valueNodes, meter, sub, title }) {
+function tile(doc, { iconD, label, href, chip, valueNodes, meter, sub, title }) {
   const card = h(doc, 'section', 'card stat-tile');
   if (title) card.title = title;
   const lab = h(doc, 'div', 'stat-label');
   lab.appendChild(icon(doc, iconD));
-  lab.appendChild(h(doc, 'span', null, label));
+  if (href) {
+    const a = h(doc, 'a', 'stat-link', label);
+    a.href = href;
+    lab.appendChild(a);
+  } else lab.appendChild(h(doc, 'span', null, label));
   if (chip) lab.appendChild(chip);
   card.appendChild(lab);
-  const value = h(doc, 'div', 'stat-value mono');
+  const value = h(doc, 'div', 'stat-value');
   for (const n of valueNodes) value.appendChild(n);
   card.appendChild(value);
   if (meter) card.appendChild(meter);
@@ -153,7 +161,8 @@ function meterEl(doc, cls, pct) {
 }
 
 /** KPI row: Spent · Pipeline spend · Ask Worca · Time worked · Pipelines finished · PRs merged (D4). */
-export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
+export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_FMT, requirementsEnabled } = {}) {
+  const reqOn = requirementsEnabled ?? flagOn('requirements', doc);
   const { totals, prev, budget, range } = model;
   const row = h(doc, 'div', 'stat-row');
 
@@ -165,7 +174,7 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
   // window's own spend explicitly instead.
   const limit = budget ? budget.totalLimitUsd : null;
   const windowRange = budget && budget.resetPeriod === 'weekly' ? 'week' : 'month';
-  const limitInRange = limit != null && range === windowRange;
+  const limitInRange = limit != null && range === windowRange && !model.filtered;
   const spentMeter = limitInRange
     ? (() => {
         const m = meterEl(doc, 'stat-meter', (totals.spentUsd / limit) * 100);
@@ -179,7 +188,7 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
     chip: prev ? deltaChip(doc, totals.spentUsd, prev.spentUsd, range) : null,
     valueNodes: [doc.createTextNode(fmt.usd(totals.spentUsd))],
     meter: spentMeter,
-    sub: limit == null
+    sub: model.filtered ? 'Filtered' : limit == null
       ? 'No total limit set'
       : limitInRange
         ? `of ${fmt.usd(limit)} · resets in ${fmtIn(budget.msUntilReset)}`
@@ -221,15 +230,34 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
   // Ask Worca (D5/D6): chat spend; a session = a thread with a costed turn in
   // the range, so cost/session is window spend over that count.
   const ask = totals.ask || { spendUsd: 0, sessions: 0, turns: 0 };
-  row.appendChild(tile(doc, {
-    iconD: ICONS.ask, label: 'Ask Worca',
+  const chatTile = tile(doc, {
+    iconD: ICONS.ask, label: 'Chat',
     chip: prev ? deltaChip(doc, ask.spendUsd, prev.ask?.spendUsd, range) : null,
     valueNodes: [doc.createTextNode(fmt.usd(ask.spendUsd))],
     sub: ask.sessions > 0
       ? `${ask.sessions} session${ask.sessions === 1 ? '' : 's'} · ${fmt.usd(ask.spendUsd / ask.sessions)}/session · ${ask.turns} turn${ask.turns === 1 ? '' : 's'}`
       : 'no sessions in this period',
     title: fmt.estTitle(ask.spendUsd),
-  }));
+  });
+  // Smart run naming (Labs): spend with no run behind it, its own line and never part of the spend above.
+  const naming = model.utility?.naming;
+  if (naming && naming.usd > 0) {
+    const cents = naming.usd < 0.01 ? naming.usd.toFixed(4) : naming.usd.toFixed(2);
+    chatTile.appendChild(subEl(doc, `Naming $${cents} · ${naming.count} suggestion${naming.count === 1 ? '' : 's'}`));
+  }
+  row.appendChild(chatTile);
+
+  // Requirements (A2): interview/orientation spend, already inside Spent. Flag-gated; absent data = no tile.
+  if (reqOn && totals.requirements) {
+    const rq = totals.requirements;
+    row.appendChild(tile(doc, {
+      iconD: ICONS.requirements, label: 'Requirements', href: '#requirements',
+      chip: prev?.requirements ? deltaChip(doc, rq.spendUsd, prev.requirements.spendUsd, range) : null,
+      valueNodes: [doc.createTextNode(fmt.usd(rq.spendUsd))],
+      sub: `${rq.features} feature${rq.features === 1 ? '' : 's'}`,
+      title: fmt.estTitle(rq.spendUsd),
+    }));
+  }
 
   // Time worked
   row.appendChild(tile(doc, {
@@ -310,11 +338,11 @@ export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DE
   const el = h(doc, 'div', `cost-banner ${kind}`);
   const text = h(doc, 'div', 'cb-text');
   const actions = h(doc, 'div', 'cb-actions');
-  const settingsBtn = h(doc, 'button', 'btn btn-mini cb-settings', 'Open Settings');
+  const settingsBtn = h(doc, 'button', 'btn btn-sm cb-settings', 'Open Settings');
   settingsBtn.type = 'button';
 
   if (kind === 'cb-pipeline') {
-    el.appendChild(h(doc, 'b', null, 'Paused — pipeline cost limit reached'));
+    el.appendChild(h(doc, 'b', null, 'Paused: pipeline cost limit reached'));
     text.appendChild(doc.createTextNode("This pipeline's estimated cost hit "));
     text.appendChild(h(doc, 'span', 'mono', fmt.usd(rec.totalCostUsd || 0)));
     text.appendChild(doc.createTextNode(' of its '));
@@ -322,14 +350,14 @@ export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DE
     text.appendChild(doc.createTextNode(
       ' limit. Raise or clear the limit in Settings, or continue without a cap.'));
     el.appendChild(text);
-    const override = h(doc, 'button', 'btn btn-primary btn-mini cb-override',
+    const override = h(doc, 'button', 'btn btn-primary btn-sm cb-override',
       'Continue without cap (this pipeline)');
     override.type = 'button';
     override.dataset.pipelineId = rec.pipelineId || '';
     actions.appendChild(settingsBtn);
     actions.appendChild(override);
   } else {
-    el.appendChild(h(doc, 'b', null, 'Paused — total budget reached'));
+    el.appendChild(h(doc, 'b', null, 'Paused: total budget reached'));
     text.appendChild(doc.createTextNode('Estimated spend is '));
     text.appendChild(h(doc, 'span', 'mono', fmt.usd(b.windowSpendUsd || 0)));
     text.appendChild(doc.createTextNode(' of the '));
@@ -396,6 +424,9 @@ function compactUsd(fmt, v) {
   return fmt.usd(v);
 }
 
+// The Cost report (cost-report.mjs, cost-area-chart.mjs) reuses these private helpers.
+export { tile as statTile, deltaChip as statDeltaChip, ICONS as STAT_ICONS, bucketLabel, tipDate, compactUsd };
+
 /** Shared chart scaffolding: svg + grid + x labels + hit rects + sr table. */
 function chartScaffold(doc, spec, { yMax, yFmt, ariaLabel, srHead, srRow, tip, drawBucket, integerScale = false }) {
   const { series, bucket } = spec;
@@ -409,7 +440,7 @@ function chartScaffold(doc, spec, { yMax, yFmt, ariaLabel, srHead, srRow, tip, d
     svg.appendChild(s(doc, 'line', { x1: L, y1: y, x2: CW - R, y2: y,
       stroke: v === 0 ? 'var(--line-2)' : 'var(--line)', 'stroke-width': 1 }));
     const t = s(doc, 'text', { class: 'ch-ytick', x: L - 6, y: y + 3.5,
-      'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--ink-3)' });
+      'text-anchor': 'end', 'font-size': 11, fill: 'var(--ink-3)' });
     t.textContent = yFmt(v);
     svg.appendChild(t);
   }
@@ -421,7 +452,7 @@ function chartScaffold(doc, spec, { yMax, yFmt, ariaLabel, srHead, srRow, tip, d
     drawBucket({ svg, pt, i, bx, bandW, yOf, isCurrent });
     if (i % labelEvery === 0 || i === series.length - 1) {
       const t = s(doc, 'text', { x: bx + bandW / 2, y: CH - 8, 'text-anchor': 'middle',
-        'font-size': 10.5, fill: 'var(--ink-3)' });
+        'font-size': 11, fill: 'var(--ink-3)' });
       t.textContent = bucketLabel(pt.bucketStartMs, bucket);
       svg.appendChild(t);
     }
@@ -484,6 +515,14 @@ export function renderSpendChart(spec, { doc = globalThis.document, fmt = DEFAUL
         fill: 'var(--blue)' }));
     },
   });
+  // One-item legend (docs/design-system.md › Charts): the series and its total, like the Runs chart.
+  const legend = h(doc, 'div', 'chart-legend');
+  const item = h(doc, 'span', 'lg-item');
+  const sw = h(doc, 'span', 'lg-swatch');
+  sw.style.background = 'var(--blue)';
+  item.append(sw, doc.createTextNode('Spend '), h(doc, 'b', '', fmt.usd(total)));
+  legend.appendChild(item);
+  card.appendChild(legend);
   card.appendChild(fig);
   return card;
 }
@@ -506,7 +545,7 @@ export function renderRunsChart(spec, { doc = globalThis.document, fmt = DEFAULT
     sw.style.background = o.color;
     item.appendChild(sw);
     item.appendChild(doc.createTextNode(`${o.label} `));
-    item.appendChild(h(doc, 'b', 'mono', String(sums[o.key])));
+    item.appendChild(h(doc, 'b', null, String(sums[o.key])));
     legend.appendChild(item);
   }
   card.appendChild(legend);
@@ -555,6 +594,9 @@ export function renderRunsChart(spec, { doc = globalThis.document, fmt = DEFAULT
 
 /** Full Statistics body: KPI row + the two chart cards (or empty notes). */
 const SLOT_NAMES = { anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter', copilot: 'Copilot', local: 'Local' };
+/** Stacked on phones the thead is clipped: the first cell leads the row, every other cell names its column. */
+const labelCells = (tr, heads) => { tr.cells[0].classList.add('table-main'); for (let i = 1; i < tr.cells.length; i++) tr.cells[i].dataset.label = heads[i]; };
+
 const compactCount = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 
 /**
@@ -576,9 +618,10 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
   }
   const top = Math.max(...people.map((p) => p.usd), 0);
   const total = people.reduce((a, p) => a + p.usd, 0);
-  const table = h(doc, 'table', 'people-table');
+  const table = h(doc, 'table', 'table people-table');
   const head = h(doc, 'tr', null);
-  for (const t of ['Person', 'Spend', 'Requests', 'Tokens in / out', 'Providers']) head.appendChild(h(doc, 'th', null, t));
+  const heads = ['Person', 'Spend', 'Requests', 'Tokens in / out', 'Providers'];
+  for (const t of heads) head.appendChild(h(doc, 'th', null, t));
   const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
   const tbody = h(doc, 'tbody', null);
   for (const p of people) {
@@ -595,13 +638,149 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
     tr.appendChild(h(doc, 'td', 'num', compactCount(p.requests)));
     tr.appendChild(h(doc, 'td', 'num', `${compactCount(p.inputTokens + (p.cacheReadTokens || 0))} / ${compactCount(p.outputTokens)}`));
     tr.appendChild(h(doc, 'td', 'people-slots', [...new Set(p.slots.map((s) => `${SLOT_NAMES[s.slot] || s.slot}${s.plan === 'subscription' ? ' (subscription)' : ''}`))].join(', ')));
+    labelCells(tr, heads);
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
-  const scroll = h(doc, 'div', 'people-scroll');
-  scroll.appendChild(table);
-  card.appendChild(scroll);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.appendChild(table);
+  card.appendChild(wrap);
   card.appendChild(h(doc, 'small', 'hint', `${fmt.usd(total)} in total, metered by the credential broker. Each call is charged to the person whose action caused it.`));
+  return card;
+}
+
+/** The /api/stats query string for the page's state. */
+export function statsQuery({ range, from = '', to = '', tags = [], person = '', groupBy = '', byTag = false, tagKeys = [], report = false }) {
+  const q = new URLSearchParams({ range });
+  if (range === 'custom') { q.set('from', from); q.set('to', to); }
+  for (const t of tags) q.append('tag', t);
+  if (person) q.set('person', person);
+  if (groupBy) q.set('groupBy', groupBy);
+  if (byTag) { q.set('byTag', '1'); for (const k of tagKeys) q.append('tagKey', k); }
+  if (report) q.set('report', '1');
+  return q.toString();
+}
+
+const GROUP_CSV_COLS = ['spendUsd', 'runs', 'finished', 'stopped', 'failed', 'running', 'paused', 'prsOpened', 'prsMerged'];
+
+/** The grouped rows as CSV (BOM, RFC 4180). The first column is named after the group (client / person). */
+export function groupsToCsv(groups) {
+  return rowsToCsv([groups.label, ...GROUP_CSV_COLS], groups.rows.map((r) => [
+    r.label, r.spentUsd, r.runs, r.finished, r.stopped, r.failed, r.running, r.paused, r.prsOpened, r.prsMerged,
+  ]));
+}
+
+/**
+ * "By <client|person>": spend, share and outcomes per group in the stats window. Rows reconcile
+ * to the Spent tile. The Export CSV button is wired by app.js (renderers attach no listeners).
+ */
+export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document, fmt = DEFAULT_FMT, totalUsd = 0, totalRuns = 0 } = {}) {
+  const card = chartCard(doc, `By ${groups.label}`, rangeLabel);
+  card.classList.add('groups-card');
+  const exp = h(doc, 'button', 'btn btn-sm stats-export', 'Export CSV');
+  exp.type = 'button';
+  exp.disabled = !groups.rows.length;
+  card.querySelector('.card-head').appendChild(exp);     // chartCard builds section.card > div.card-head > h2
+  if (!groups.rows.length) {
+    card.appendChild(h(doc, 'p', 'chart-empty hint', 'Nothing spent and no runs in this period.'));
+    return card;
+  }
+  const top = Math.max(...groups.rows.map((r) => r.spentUsd), 0);
+  const table = h(doc, 'table', 'table people-table groups-table');
+  const head = h(doc, 'tr', null);
+  const label = groups.label === 'person' ? 'Person' : groups.label;
+  const heads = [label, 'Spend', 'Share', 'Runs', 'Finished', 'Stopped', 'Failed', 'PRs merged'];
+  for (const t of heads) head.appendChild(h(doc, 'th', null, t));
+  const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
+  const tbody = h(doc, 'tbody', null);
+  for (const r of groups.rows) {
+    // Chat and Requirements spend rows carry no runs (their spend is not per run)
+    const noRuns = r.kind === 'ask' || r.kind === 'requirements';
+    const tr = h(doc, 'tr', r.kind === 'none' ? 'groups-row-none' : noRuns ? `groups-row-${r.kind}` : null);
+    tr.appendChild(h(doc, 'td', 'people-name', r.label));
+    const spend = h(doc, 'td', 'people-spend');
+    const bar = h(doc, 'span', 'people-bar');
+    const fill = h(doc, 'span', 'people-bar-fill');
+    fill.style.width = `${top > 0 ? Math.max(2, Math.round((r.spentUsd / top) * 100)) : 0}%`;
+    bar.appendChild(fill);
+    spend.appendChild(h(doc, 'span', 'people-usd', fmt.usd(r.spentUsd)));
+    spend.appendChild(bar);
+    tr.appendChild(spend);
+    tr.appendChild(h(doc, 'td', 'num', totalUsd > 0 ? `${Math.round((r.spentUsd / totalUsd) * 100)}%` : '—'));
+    for (const c of ['runs', 'finished', 'stopped', 'failed', 'prsMerged']) {
+      tr.appendChild(h(doc, 'td', 'num', noRuns ? '—' : String(r[c])));
+    }
+    labelCells(tr, heads);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  const tfoot = h(doc, 'tfoot', null);
+  const ft = h(doc, 'tr', null);
+  ft.appendChild(h(doc, 'td', 'table-main', 'Total'));
+  ft.appendChild(h(doc, 'td', 'people-usd', fmt.usd(totalUsd))).dataset.label = heads[1];
+  ft.appendChild(h(doc, 'td', 'num', ''));
+  ft.appendChild(h(doc, 'td', 'num', String(totalRuns))).dataset.label = heads[3];
+  for (let i = 0; i < 4; i++) ft.appendChild(h(doc, 'td', 'num', ''));   // finished … PRs merged: 8 cells, like the head
+  tfoot.appendChild(ft); table.appendChild(tfoot);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.appendChild(table);
+  card.appendChild(wrap);
+  card.appendChild(h(doc, 'small', 'hint', 'Runs are counted in the period they started; spend is counted when it happened, so a row can show spend with 0 runs.'));
+  return card;
+}
+
+/** The card hint for a stats model's window: "Aug 1 – Aug 31", one day for today, "last 12 months" for all. */
+export function statsRangeLabel(model) {
+  return model.range === 'all'
+    ? 'last 12 months'
+    : model.range === 'today'
+      ? tipDate(model.windowStartMs, 'day')
+      : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
+}
+
+/** The By person chip (#718 slice 4): that table alone, without the KPI row and charts. The Cost chip is cost-report.mjs. */
+export function renderStatsView(model, view, opts = {}) {
+  const { doc = globalThis.document } = opts;
+  const rangeLabel = statsRangeLabel(model);
+  const g = h(doc, 'div', 'charts-grid people-grid');
+  g.appendChild(renderGroupsCard(model.groups || { label: 'person', rows: [] }, rangeLabel,
+    { ...opts, totalUsd: model.totals.spentUsd, totalRuns: model.totals.runs }));
+  return g;
+}
+
+const SIZE_LABELS = { small: 'Small', medium: 'Medium', large: 'Large' };
+
+/** Shaper (D28): finished runs of the same size, planned with the person vs not. */
+export function renderShapingCard(shaping, rangeLabel, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
+  const card = chartCard(doc, 'Shaper', rangeLabel);
+  card.classList.add('shaping-card');
+  const groups = shaping?.groups || [];
+  if (!groups.length) {
+    card.appendChild(h(doc, 'p', 'chart-empty hint', 'No finished runs with a recorded size in this period.'));
+    return card;
+  }
+  const table = h(doc, 'table', 'table people-table');
+  const head = h(doc, 'tr', null);
+  const heads = ['Size', 'Planned', 'Runs', 'Average cost', 'Average active time', 'Average review cycles'];
+  for (const t of heads) head.appendChild(h(doc, 'th', null, t));
+  const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
+  const tbody = h(doc, 'tbody', null);
+  const dash = (v, f) => (v == null ? '–' : f(v));
+  for (const g of groups) {
+    for (const [i, [label, c]] of [['With Shaper', g.shaped], ['Without', g.unshaped]].entries()) {
+      const tr = h(doc, 'tr', null);
+      if (i === 0) { const size = h(doc, 'td', 'people-name table-main', SIZE_LABELS[g.size] || g.size); size.rowSpan = 2; tr.appendChild(size); }
+      // The size cell spans both rows, so the second row starts at Planned: label by name, not by index.
+      const cells = [label, String(c.runs), dash(c.avgCostUsd, fmt.usd), dash(c.avgActiveMs, fmt.duration), dash(c.avgReviewCycles, String)];
+      cells.forEach((text, k) => { tr.appendChild(h(doc, 'td', k ? 'num' : null, text)).dataset.label = heads[k + 1]; });
+      tbody.appendChild(tr);
+    }
+  }
+  table.appendChild(tbody);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.appendChild(table);
+  card.appendChild(wrap);
+  card.appendChild(h(doc, 'small', 'hint', 'Finished runs started in this period. Size comes from the lines and files each run changed: small is up to 150 lines and 5 files, medium up to 800 lines and 20 files.'));
   return card;
 }
 
@@ -610,16 +789,12 @@ export function renderStatsBody(model, opts = {}) {
   const wrap = h(doc, 'div', null);
   wrap.appendChild(renderKpiRow(model, opts));
   const grid = h(doc, 'div', 'charts-grid');
-  const rangeLabel = model.range === 'all'
-    ? 'last 12 months'
-    : model.range === 'today'
-      ? tipDate(model.windowStartMs, 'day')
-      : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
+  const rangeLabel = statsRangeLabel(model);
   const currentBucketStartMs = model.series.length
     ? model.series[model.series.length - 1].bucketStartMs : 0;
   if (!model.totals.runs && !model.series.some((p) => p.spentUsd > 0)) {
-    const emptyText = model.range === 'all'
-      ? 'No pipelines yet — run one from New run.'
+    const emptyText = model.filtered ? 'No runs match these filters in this period.' : model.range === 'all'
+      ? 'No pipelines yet. Run one from New run.'
       : 'No runs in this period.';
     for (const title of ['Spend', 'Runs']) {
       const card = chartCard(doc, `${title} per ${unitWord(model.bucket)}`, rangeLabel);
@@ -633,10 +808,21 @@ export function renderStatsBody(model, opts = {}) {
       currentBucketStartMs, rangeLabel }, opts));
   }
   wrap.appendChild(grid);
+  if (model.groups) {
+    const g = h(doc, 'div', 'charts-grid people-grid');
+    g.appendChild(renderGroupsCard(model.groups, rangeLabel, { ...opts, totalUsd: model.totals.spentUsd, totalRuns: model.totals.runs }));
+    wrap.appendChild(g);
+  }
   if (model.byPerson) {
     const people = h(doc, 'div', 'charts-grid people-grid');
     people.appendChild(renderPeopleCard(model.byPerson, rangeLabel, opts));
     wrap.appendChild(people);
+  }
+  if (model.shaping) {
+    const shapingGrid = h(doc, 'div', 'charts-grid people-grid');
+    // the server counts all time for `all` (Decision 14); rangeLabel says "last 12 months" there, which is the charts' span
+    shapingGrid.appendChild(renderShapingCard(model.shaping, model.range === 'all' ? 'all time' : rangeLabel, opts));
+    wrap.appendChild(shapingGrid);
   }
   return wrap;
 }

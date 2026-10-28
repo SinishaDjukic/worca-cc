@@ -5,7 +5,7 @@
 // turn re-validates authoritatively (the metrics-proposal.mjs split). Nothing here writes —
 // applying a card is ui/server.mjs's business, behind the user's click.
 //
-// Why a card at all (docs/team-policy.md "Ask Worca"): every kind pushes to a shared branch or
+// Why a card at all (docs/team-policy.md "Chat"): every kind pushes to a shared branch or
 // changes what a whole team's runs start from. Outward-facing and read by teammates — never a
 // direct tool. Continuing past a team cap is deliberately NOT a kind: that override carries a
 // person's reason and stays on the pause banner.

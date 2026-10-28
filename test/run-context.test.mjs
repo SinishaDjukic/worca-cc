@@ -29,10 +29,12 @@ import {
   mergeMcpConfigs,
   auditAncestors,
   mcpjsonApproval,
+  generateClaudeMd,
 } from '../src/core/run-context.mjs';
 import { readRunManifest, rescueModifiedMounts, removeInjectedPaths } from '../src/core/run-manifest.mjs';
 import { skipMessage } from '../src/core/mcp/registry.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { NO_PROJECT_KEY } from '../src/shared/no-project.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -120,6 +122,7 @@ async function assemble(over = {}) {
     ...(over.registry ? { registry: over.registry } : {}),
     ...(over.engine ? { engine: over.engine } : {}),
     ...(over.agentIsolated ? { agentIsolated: true } : {}),
+    ...(over.projectsRootIsDefault ? { projectsRootIsDefault: true } : {}),
   });
 }
 
@@ -215,8 +218,8 @@ test('generated CLAUDE.md: title + rosters + per-member sections, byte-identical
   const a = await writeTree(await tmp('worca-cc-rc-alpha-'), { 'CLAUDE.md': 'ALPHA MEMORY\n' });
   const b = await writeTree(await tmp('worca-cc-rc-beta-'), { '.claude/CLAUDE.md': 'BETA MEMORY\n' });
   const members = [
-    { projectKey: 'alpha-1', projectName: 'Alpha', projectDir: a, worktreeDir: join(await tmp(), 'wa') },
-    { projectKey: 'beta-2', projectName: 'Beta', projectDir: b, worktreeDir: join(await tmp(), 'wb') },
+    { projectKey: 'alpha-1', projectName: 'Alpha', projectDir: a, worktreeDir: join(await tmp(), 'alpha-1') },
+    { projectKey: 'beta-2', projectName: 'Beta', projectDir: b, worktreeDir: join(await tmp(), 'beta-2') },
   ];
   const rr1 = await mkRunRoot('pidaaaa1');
   const rr2 = await mkRunRoot('pidaaaa1');   // same pipelineId -> same bytes
@@ -328,7 +331,7 @@ test('§8.20: a DELETED member real dir degrades to worktree-only context with a
   const rr = await mkRunRoot();
   const rc = await assemble({
     runRoot: rr,
-    members: [{ projectKey: 'ghost-1', projectName: 'Ghost', projectDir: gone, worktreeDir: join(await tmp(), 'w') }],
+    members: [{ projectKey: 'ghost-1', projectName: 'Ghost', projectDir: gone, worktreeDir: join(await tmp(), 'ghost-1') }],
   });
   const text = await readFile(rc.claudeMdPath, 'utf8');
   assert.match(text, /^## Project: Ghost — repos\/ghost-1$/m, 'the roster stays symmetric');
@@ -351,6 +354,24 @@ test('§8.20: a nonexistent projectsRoot contributes nothing and warns exactly O
   const hits = rc.warnings.filter((w) => w.includes(missing));
   assert.equal(hits.length, 1, `exactly one warning, not one per read: ${JSON.stringify(rc.warnings)}`);
   assert.match(hits[0], /projects root/i);
+});
+
+test('the default projects root (nothing configured) never warns — missing, or members elsewhere — and is still read when it exists', async () => {
+  const missing = join(await tmp('worca-cc-rc-defroot-'), 'projects');
+  const rc = await assemble({ runRoot: await mkRunRoot(), projectsRoot: missing, projectsRootIsDefault: true,
+    members: [{ projectKey: 'a-1', projectName: 'A', projectDir: await tmp(), worktreeDir: join(await tmp(), 'wa') }] });
+  assert.deepEqual(rc.warnings.filter((w) => /projects root/.test(w)), []);
+  const present = await writeTree(await tmp('worca-cc-rc-defroot2-'), { 'CLAUDE.md': 'DEFAULT ROOT MEMORY\n' });
+  const rc2 = await assemble({ runRoot: await mkRunRoot(), projectsRoot: present, projectsRootIsDefault: true,
+    members: [{ projectKey: 'b-2', projectName: 'B', projectDir: await tmp(), worktreeDir: join(await tmp(), 'wb') }] });
+  assert.deepEqual(rc2.warnings.filter((w) => /projects root/.test(w)), [], 'a member elsewhere is not "outside" the default');
+  assert.match(await readFile(rc2.claudeMdPath, 'utf8'), /DEFAULT ROOT MEMORY/, 'the root layer still loads (L10)');
+});
+
+test('P3: a run\'s own work/ (the no-project member) is never "not under" an explicit projects root', async () => {
+  const rc = await assemble({ runRoot: await mkRunRoot(), projectsRoot: await tmp('worca-cc-rc-np-root-'),
+    members: [{ projectKey: NO_PROJECT_KEY, projectName: 'No project', projectDir: await tmp(), worktreeDir: join(await tmp(), 'wn') }] });
+  assert.deepEqual(rc.warnings.filter((w) => /not under the projects root/.test(w)), []);
 });
 
 // ── §5.4 caps ───────────────────────────────────────────────────────────────
@@ -733,7 +754,7 @@ async function committedMcpMember({ user = {}, project = {}, local = {} } = {}) 
 
 const committedWarning = (ws) => ws.filter((w) => /not approved/.test(w));
 
-for (const engine of ['codex', 'copilot', 'cursor']) test(`${engine}: the committed .mcp.json servers Claude Code approved by name join mcp.json; disabled ones never do; unapproved ones are named once`, async () => {
+for (const engine of ['codex', 'copilot', 'cursor', 'goose']) test(`${engine}: the committed .mcp.json servers Claude Code approved by name join mcp.json; disabled ones never do; unapproved ones are named once`, async () => {
   const { member, home, wt } = await committedMcpMember({
     user: { enabledMcpjsonServers: ['a'] }, local: { enabledMcpjsonServers: ['b', 'c'], disabledMcpjsonServers: ['c'] },
   });
@@ -757,7 +778,7 @@ test('an approved committed server an engine cannot attach meets the same engine
   const { member, home, wt } = await committedMcpMember({ user: { enableAllProjectMcpServers: true } });
   await writeFile(join(wt, '.mcp.json'), JSON.stringify({ mcpServers: { web: { type: 'http', url: 'https://mcp.example/' }, 'bad.name': { command: 'node' } } }), 'utf8');
   const lines = {};
-  for (const engine of ['codex', 'copilot', 'cursor']) {
+  for (const engine of ['codex', 'copilot', 'cursor', 'goose']) {
     const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, engine, platform: 'darwin' });
     assert.deepEqual(Object.keys(JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers).sort(), ['a', 'bad.name', 'web'], engine);
     lines[engine] = createOrchestrator({ projectDir: member.projectDir, claude: { mock: true, engine } })._engineMcpWarnings(rc);
@@ -765,6 +786,7 @@ test('an approved committed server an engine cannot attach meets the same engine
   assert.deepEqual(lines.codex, ['engine codex: MCP servers not attached on codex — remote, and codex attaches stdio servers only: web; a name codex cannot use (only letters, digits, _ and -, at most 64 characters): bad.name']);
   assert.deepEqual(lines.copilot, ['engine copilot: MCP servers not attached on copilot — a name copilot cannot use (only letters, digits, _ and -, at most 64 characters): bad.name']);
   assert.deepEqual(lines.cursor, [], 'cursor attaches every server of mcp.json');
+  assert.deepEqual(lines.goose, ['engine goose: MCP servers not attached on goose — remote, and goose attaches stdio servers only: web; a name goose cannot use (only letters, digits, _ and -, at most 64 characters): bad.name']);
 });
 
 test('codex: enableAllProjectMcpServers approves every committed server but a disabled one; the last layer to set it decides', async () => {
@@ -1716,4 +1738,74 @@ test('registry layer: a resolver that throws adds nothing and names only a plain
   assert.ok(rc.warnings.includes('MCP registry could not be resolved (EMCPSTORE); no registry MCP servers were added to this run'));
   assert.ok(!JSON.stringify(rc.warnings).includes('sntrys_live_token_value'), 'the error text (it may quote a store file) is never recorded');
   assert.deepEqual(rc.mcpServerNames, []);
+});
+
+// test/run-context.test.mjs — append (add `generateClaudeMd` to its import from '../src/core/run-context.mjs')
+test('generateClaudeMd: a Folder member reads as a copy without git; an all-git roster is byte-identical', () => {
+  const base = { pipelineId: 'p1', projectsRoot: '/root', graphInstructions: {},
+    members: [{ projectKey: 'api-1', projectName: 'api', projectDir: '/r/api', branch: 'worca-cc/x', checkpointRef: 'abc', workMode: 'git' }] };
+  const gitOnly = generateClaudeMd(base).text;
+  const mixed = generateClaudeMd({ ...base, members: [...base.members,
+    { projectKey: 'notes-2', projectName: 'notes', projectDir: '/r/notes', branch: null, checkpointRef: null, workMode: 'folder' }] }).text;
+  const MIXED_INTRO = 'one checkout per project below (a git worktree for a Git project, a copy for a Folder project)';
+  const MIXED_LAYOUT = '- `repos/<projectKey>/` — one git worktree per Git project and one copy per Folder project in this run. **All code edits happen here.**';
+  const NOTES = '- `repos/notes-2` — **notes**\n  - real directory: `/r/notes`\n  - Folder project: a copy with no git; the person applies its changes after the run\n';
+  assert.ok(mixed.includes(NOTES));
+  assert.ok(mixed.includes(MIXED_INTRO));
+  assert.ok(mixed.includes(MIXED_LAYOUT));
+  // Nothing else moves: swapping the three mixed pieces back (and the member's memory section) gives the git bytes.
+  assert.equal(mixed.replace(MIXED_INTRO, 'one git checkout per project below')
+    .replace(MIXED_LAYOUT, '- `repos/<projectKey>/` — one git worktree per project in this run. **All code edits happen here.**')
+    .replace(NOTES, '').replace('## Project: notes — repos/notes-2\n\n*(no CLAUDE.md found in this project)*\n\n', ''), gitOnly);
+  // An all-Folder roster takes P1a's folder variant instead (members.every(folder)), with no mixed roster line.
+  const allFolder = generateClaudeMd({ ...base, members: [{ ...base.members[0], branch: null, checkpointRef: null, workMode: 'folder' }] }).text;
+  assert.ok(allFolder.includes('a copy of the project\'s folder (no git)'));
+  assert.ok(!allFolder.includes('Folder project:'));
+  assert.ok(!gitOnly.includes('Folder'));
+  assert.ok(gitOnly.includes('one git checkout per project below'));
+  // A workMode-less (pre-P1) member list keeps the same bytes as an explicit 'git' one.
+  assert.equal(generateClaudeMd({ ...base, members: [{ ...base.members[0], workMode: undefined }] }).text, gitOnly);
+});
+
+test('generateClaudeMd: an all-Folder workspace names one copy per project; a one-member all-Folder roster keeps P1\'s words', () => {
+  const m = (k, n) => ({ projectKey: k, projectName: n, projectDir: `/r/${n}`, branch: null, checkpointRef: null, workMode: 'folder' });
+  const two = generateClaudeMd({ pipelineId: 'p', projectsRoot: '/r', graphInstructions: {}, members: [m('a-1', 'a'), m('b-2', 'b')] }).text;
+  assert.ok(two.includes('All edits happen inside `repos/<projectKey>`, one copy per project below of that project\'s folder (not a git repository: never run git there)'));
+  assert.ok(two.includes('generated per run from those projects\' real directories'));
+  assert.ok(two.includes('- `repos/<projectKey>/` — one copy of each project\'s folder in this run (no git). **All code edits happen here.**'));
+  assert.ok(!two.includes('the project\'s folder (') && !two.includes('the project\'s real directory'), 'no singular wording');
+  const one = generateClaudeMd({ pipelineId: 'p', projectsRoot: '/r', graphInstructions: {}, members: [m('a-1', 'a')] }).text;
+  assert.ok(one.includes('a copy of the project\'s folder (not a git repository: never run git there)'));
+  assert.ok(one.includes('- `repos/<projectKey>/` — a copy of the project\'s folder (no git). **All code edits happen here.**'));
+});
+
+// #411: a detached checkout's dir can be a shortened projectKey (worktree.mjs boundCheckoutName), so every
+// `repos/<…>` an agent reads names the dir on disk: basename(worktreeDir), not the projectKey.
+test('generateClaudeMd / assembleSkills: a shortened checkout is named by its dir, not its projectKey', async () => {
+  const key = 'my-awesome-microservice-1234abcd';
+  const m = { projectKey: key, projectName: 'svc', projectDir: '/r/svc', worktreeDir: '/rr/repos/my-awe-1234abcd',
+    branch: 'worca-cc/x', checkpointRef: 'abc', workMode: 'git' };
+  const text = generateClaudeMd({ pipelineId: 'p1', projectsRoot: '/root', graphInstructions: {}, members: [m],
+    projectAgents: { [key]: ['helper.md'] } }).text;
+  assert.ok(text.includes('- `repos/my-awe-1234abcd` — **svc**'), 'the roster line');
+  assert.ok(text.includes('- **svc** (`repos/my-awe-1234abcd`): helper.md'), 'the sub-agents note');
+  assert.ok(text.includes('## Project: svc — repos/my-awe-1234abcd'), 'the memory heading');
+  assert.ok(!text.includes(`repos/${key}`), 'the projectKey never stands in for the dir');
+  // No worktreeDir yet (a pending member): the projectKey, as before.
+  assert.ok(generateClaudeMd({ pipelineId: 'p1', projectsRoot: '/root', graphInstructions: {},
+    members: [{ ...m, worktreeDir: undefined }] }).text.includes(`- \`repos/${key}\` — **svc**`));
+
+  const proj = await mkdtemp(join(tmpdir(), 'worca-cc-rc-short-'));
+  const target = await mkdtemp(join(tmpdir(), 'worca-cc-rc-short-t-'));
+  try {
+    await mkdir(join(proj, '.claude', 'skills', 'svc-skill'), { recursive: true });
+    await writeFile(join(proj, '.claude', 'skills', 'svc-skill', 'SKILL.md'), '---\nname: svc-skill\ndescription: d\n---\nbody\n');
+    const out = await assembleSkills({ target: join(target, '.claude', 'skills'), members: [{ ...m, projectDir: proj }], homeDir: target });
+    const rec = out.roster.find((s) => s.name.endsWith('svc-skill'));
+    assert.ok(rec, 'the member skill is mounted');
+    assert.equal(rec.origin, 'svc (repos/my-awe-1234abcd)');
+  } finally {
+    await rm(proj, { recursive: true, force: true });
+    await rm(target, { recursive: true, force: true });
+  }
 });

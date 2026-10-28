@@ -18,8 +18,9 @@ import { mkdir, writeFile, unlink, rm, readdir, lstat } from 'node:fs/promises';
 import { runClaude } from '../claude-runner.mjs';
 import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
 import { failedBecauseSignedOut } from '../claude-auth.mjs';
-import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
-import { worcaHome } from '../projects.mjs';
+import { resolveModelEnv, resolveModelCost, estimateCost, isPriceableUsage, liveCostRates as defaultLiveCostRates } from '../config.mjs';
+import { worcaHome, listProjects, displayPath } from '../projects.mjs';
+import { gitAvailable } from '../git-available.mjs';
 import { generateTitle } from '../title.mjs';
 import { cleanText } from '../../shared/graph/assemble.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../../shared/mcp-tool-name.mjs';
@@ -28,6 +29,7 @@ import { redactAskText } from './redact.mjs';
 import { createTurnReducer } from './events.mjs';
 import { buildAskSpawnOptions, buildMcpConfig, ASK_MCP_SERVER_PATH } from './spawn.mjs';
 import { refreshAskMemoryMount } from './memory-deps.mjs';
+import { createUsageTally, noteOfReadMemory, recordMemoryUsage } from '../memory-usage.mjs';
 import { materializeSkillMount } from '../skills-registry/mount.mjs';
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
 import { renderSkillsSection, renderCodexSkillsSection, codexSkillNames } from './prompt.mjs';
@@ -37,28 +39,34 @@ import { validateAwayChange } from './away-deps.mjs';
 import { validatePolicyChange } from './policy-deps.mjs';
 import { validateModelChange } from './model-deps.mjs';
 import { validateCloneProposal } from './clone-deps.mjs';
+import { validateProjectProposal } from './project-deps.mjs';
 import { validateWorkspaceChange } from './workspace-deps.mjs';
 import { validateActionsChange } from './actions-deps.mjs';
 import { actionsProposalInput } from './actions-proposal.mjs';
+import { validateProxyChange, validateProxyFlagOn } from './proxy-deps.mjs';
 import { createWebValidator } from './web-proposal.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
+import { readWorkspace } from '../workspaces.mjs';
+import { scopeRefusalText, targetInScope, validateScopeSwitch, scopeCardKeys } from './scope.mjs';
 import { effectiveTimeZone } from './schedule-spec.mjs';
-import { scheduleDefaults } from '../settings.mjs';
+import { scheduleDefaults, chatPrefs } from '../settings.mjs';
 import { ASK_ENGINES } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { composerCardFrom } from './composer-payload.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
-import { codexPreflight, codexAskSupport, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
-import { hasCodexEndpoint } from '../engines/codex-endpoint.mjs';
+import { chatDescriptor, chatCostCapRefusal } from '../engines/chat.mjs';
+import { chatModelRates } from './chat-price.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
+import { withRole } from '../model-roles.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, ASK_ID_RE,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE,
 } from './store.mjs';
-import { recordAskCostDelta } from '../cost-budget.mjs';
+import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
+import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
 import { setPendingCardComments } from '../diff-comments.mjs';
 
 export function createAskTurn(opts) { return new AskTurn(opts); }
@@ -66,21 +74,31 @@ export function createAskTurn(opts) { return new AskTurn(opts); }
 const TERMINAL = new Set(['done', 'stopped', 'error']);
 // worca Chat P2 (review P2-1): what a sub-agent's chat-action call asked for, in the "Not applied: …" notice.
 const SUB_ACTION_WORDS = Object.freeze({ change_setting: 'change a setting', pause_run: 'pause a run', resume_run: 'resume a run',
-  propose_stop_run: 'stop a run', send_direction: 'send a direction to a run', propose_pull_request: 'open a pull request' });
+  propose_stop_run: 'stop a run', send_direction: 'send a direction to a run', propose_pull_request: 'create a PR',
+  propose_changes: 'propose changes', route_message: 'route a message' });
 
 // The classified notice's raw-detail cap — the runner's own reject is already
 // tail-capped tighter than this; the slice(-N) here only bounds the unusual
 // non-runner error paths so a huge message can never bloat the persisted block.
 const ERROR_DETAIL_MAX = 2000;
-// Ask Worca on Codex (cascading-settings-design.md §4.6, D13, D14).
-export const CODEX_NOT_READY_CODE = 'codex-not-ready';
-export const CODEX_SETUP_DOCS_URL = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#codex';
-export const CODEX_NO_LOCKDOWN_MESSAGE = "Ask on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.";
+// Chat on an engine other than Claude (cascading-settings-design.md §4.6, D13, D14): each engine's words and checks are
+// its chat descriptor's (engines/chat.mjs); these names stay for the callers and tests that read them.
+export const CODEX_NOT_READY_CODE = chatDescriptor('codex').notReady.code;
+export const CODEX_SETUP_DOCS_URL = chatDescriptor('codex').notReady.docsUrl;
+export const CODEX_NO_LOCKDOWN_MESSAGE = chatDescriptor('codex').noLockdownMessage;
 export const CODEX_MCP_NOTE = 'Your MCP servers are available in Claude chats';
-export const CODEX_SHELL_TRIPPED_MESSAGE = 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.';
-/** D13 fail-closed beyond the shell: a Codex chat may call worca's own tools (mcp__…) only. */
-export const codexToolTrippedMessage = (what) => `Codex used ${what}, which a chat must not have — worca stopped the turn.`;
-const askSlotOf = (engine) => { try { return resolveSetting(`models.${engine}.ask`).value; } catch { return undefined; } };
+export const CODEX_SHELL_TRIPPED_MESSAGE = chatDescriptor('codex').shellTrippedMessage;
+/** D13 fail-closed beyond the shell: a locked-down chat may call worca's own tools (mcp__…) only. */
+export const codexToolTrippedMessage = (what, engine = 'codex') => `${engineLabel(engine)} used ${what}, which a chat must not have — worca stopped the turn.`;
+export const COPILOT_NOT_READY_CODE = chatDescriptor('copilot').notReady.code;
+export const COPILOT_SETUP_DOCS_URL = chatDescriptor('copilot').notReady.docsUrl;
+export const COPILOT_SHELL_TRIPPED_MESSAGE = chatDescriptor('copilot').shellTrippedMessage;
+/** The per-engine stand-ins a test may hand a turn (`codexAskSupport`, `qwenSelfTest`, …): each replaces the descriptor's
+ *  own function of that name. */
+const ENGINE_DEP_RE = /^[a-z]+(?:Preflight|AskSupport|Lockdown|ModelPriced|SelfTest)$/;
+const engineDeps = (deps) => Object.fromEntries(Object.entries(deps).filter(([k, v]) => ENGINE_DEP_RE.test(k) && typeof v === 'function'));
+// Model roles (D3): an unset Chat slot takes the everyday role.
+const askSlotOf = (engine) => { try { return withRole(resolveSetting(`models.${engine}.ask`).value, engine, 'askModels'); } catch { return undefined; } };
 
 // MCP registry §10 (Ask column): what a registry copy's `system/init` status reads as (connected/pending: nothing).
 const MCP_UNAVAILABLE = Object.freeze({
@@ -119,7 +137,7 @@ class AskTurn extends EventEmitter {
     model, effort, resumeSessionId = null,
     firstTurn = false, firstText = '', deterministicTitle = null,
     mock = null, attachmentNames = {},
-    pinnedScope = null,
+    pinnedScope = undefined,
     memoryProject = null,
     timeZone = null,
     reader = null,
@@ -129,23 +147,28 @@ class AskTurn extends EventEmitter {
     skills = null,
     agentMode = true,
     composer = null,
+    suggest = false,
     deps = {},
   } = {}) {
     super();
     // D5 backstop: an engine Ask does not run on (Cursor: CURSOR_ASK_LOCKDOWN = null) is refused outright.
-    if (engine && !ASK_ENGINES.includes(engine)) throw new Error(`Ask on ${engineLabel(engine)} is unavailable`);
+    if (engine && !ASK_ENGINES.includes(engine)) throw new Error(`Chat on ${engineLabel(engine)} is unavailable`);
     this.threadId = threadId;
     // The chat's engine (D12) — fixed by the server from the chat's model; a Claude turn never reads the fields below.
-    this.engine = engine === 'codex' ? 'codex' : 'claude';
+    this.engine = ASK_ENGINES.includes(engine) ? engine : 'claude';
+    // Every engine but Claude runs locked down (no shell, no file tools of its own): worca's read_file/grep/glob, the
+    // stream watchdog, no registry copies, memory read by hand. Its readiness gate is its chat descriptor's (_engineGate).
+    this.lockedDown = this.engine !== 'claude';
+    this.chat = this.lockedDown ? chatDescriptor(this.engine) : null;
     this.images = Array.isArray(images) ? images.filter((p) => typeof p === 'string' && p) : [];   // D16: this turn's images (-i)
-    this.mcpCodexNote = this.engine === 'codex' && mcpCodexNote === true;
+    this.mcpCodexNote = this.lockedDown && mcpCodexNote === true;
     this._cap = null;                 // Task 10: the watchdog's verdict ('max_turns' | 'max_budget' | 'shell')
     this._toolCalls = 0;
     this._spentUsd = 0;
     // Skills registry §4.4: resolveAskSkills()'s result for this turn; null, a blocked layer or no plugin ⇒ no mount and a
     // byte-identical spawn. Set to null again when the mount fails or the CLI refuses --plugin-dir. A Codex chat mounts
     // the same way but reads the skills through read_file (#635), so Claude Code's --plugin-dir block does not apply.
-    this.skills = skills && (this.engine === 'codex' || !skills.blocked) && Array.isArray(skills.plugins) && skills.plugins.length ? skills : null;
+    this.skills = skills && (this.lockedDown || !skills.blocked) && Array.isArray(skills.plugins) && skills.plugins.length ? skills : null;
     this.skillMount = null;           // materializeSkillMount()'s answer: { base, pluginDirs, plugins, failed }
     this.skillNames = [];             // the qualified names the mount holds — the prompt section, the note, the allow rules
     this._promptWithoutSkills = null; // the route's system prompt, restored when the safety net drops the layer
@@ -167,7 +190,13 @@ class AskTurn extends EventEmitter {
     this.agentMode = agentMode !== false;
     // Workflows chat (D13): the page session + open document its composer cards are stamped with; null on an Ask chat.
     this.composer = composer && typeof composer === 'object' ? { sessionId: composer.sessionId || null, docToken: composer.docToken || null } : null;
+    // Next-prompt suggestion (ask-suggestion): the server sets it for a user's message (never an event turn). Off by
+    // default, so a turn built without it — every test fixture — never spawns the suggestion call.
+    this.suggest = suggest === true;
+    this.suggestionPromise = Promise.resolve();   // stored for test determinism, never awaited by run()
+    this._replyText = '';                         // the finished reply's text (set in _complete), the suggestion's input
     this.commands = null;
+    this.proxyBridge = null;
     this.assistantMessageId = assistantMessageId;
     this.userMessageId = userMessageId;
     this.prompt = prompt;
@@ -183,46 +212,53 @@ class AskTurn extends EventEmitter {
     this.attachmentNames = attachmentNames || {};
     // #397: {projectKey}|{workspaceId}|null — the user-pinned scope at POST time.
     this.pinnedScope = pinnedScope && typeof pinnedScope === 'object' ? pinnedScope : null;
+    // P4: undefined = no gate (fixtures); null = No project; object = the chat scope. The server always passes one.
+    this.scopeGated = pinnedScope !== undefined;
     // The user's timezone (the browser's, validated) — the zone a proposal's when / every is read in.
     this.timeZone = effectiveTimeZone(timeZone);
     // Native-rules revision (D16): {key, name}|null — the scope set this turn mounts through --add-dir.
     this.memoryProject = memoryProject && typeof memoryProject === 'object' ? memoryProject : null;
     this.memoryDir = null;
+    this._memoryReads = createUsageTally();   // memory usage: this turn's read_memory calls, one per note, merged at turn end
     this._wfCards = new Map();        // tool_use id → card id (START → RESULT of one propose_workflow call)
     this._tracked = new Set();        // pipeline ids minted as progress cards in THIS reply (one card per pipeline)
     this.extraCostUsd = 0;            // PD2: money the MCP child spent on the workflow classifier, booked by this turn
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       failedBecauseSignedOut: deps.failedBecauseSignedOut ?? failedBecauseSignedOut,
-      codexPreflight: deps.codexPreflight ?? ((o) => codexPreflight(o)),
-      codexAskSupport: deps.codexAskSupport ?? ((o) => codexAskSupport(o)),
-      codexLockdown: deps.codexLockdown ?? (() => CODEX_ASK_LOCKDOWN),
-      codexModelPriced: deps.codexModelPriced ?? codexModelPriced,
+      ...engineDeps(deps),
       askSlot: deps.askSlot ?? askSlotOf,
       memoryMount: deps.memoryMount ?? refreshAskMemoryMount,
       // Skills registry §4.4: the per-turn set-skill mount (P3) and its removal.
       materializeSkillMount: deps.materializeSkillMount ?? materializeSkillMount,
       removeSkillMount: deps.removeSkillMount ?? ((base) => rm(base, { recursive: true, force: true })),
       store: {
-        finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments,
+        finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment,
         ...(deps.store || {}),
       },
       // Claude Code's sign-in for propose_run's per-agent picks, asked once per turn (proposal.mjs proposalClaudeAuth: a
       // probe only when the catalog holds a Claude-run routed model).
       claudeAuthState: deps.claudeAuthState ?? proposalClaudeAuth,
       validateProposal: deps.validateProposal ?? validateProposal,
+      // P4: the member projects of a workspace scope (the _onProposal gate); its caller catches a throw.
+      workspaceMemberKeys: deps.workspaceMemberKeys ?? (async (id) => [...((await readWorkspace(id))?.projectKeys || [])]),
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
       validateAwayChange: deps.validateAwayChange ?? validateAwayChange,
+      validateProxyChange: deps.validateProxyChange ?? validateProxyChange,
+      validateProxyFlagOn: deps.validateProxyFlagOn ?? validateProxyFlagOn,
       validatePolicyChange: deps.validatePolicyChange ?? validatePolicyChange,
       validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
       validateModelChange: deps.validateModelChange ?? validateModelChange,
       validateCloneProposal: deps.validateCloneProposal ?? validateCloneProposal,
+      validateProjectProposal: deps.validateProjectProposal ?? validateProjectProposal,
       validateWorkspaceChange: deps.validateWorkspaceChange ?? validateWorkspaceChange,
       validateActionsChange: deps.validateActionsChange ?? validateActionsChange,
       // The web card's authoritative check runs against THIS turn's resolved access (allowlist + team cap).
       validateWebProposal: deps.validateWebProposal ?? ((input) => createWebValidator({
         allowed: () => (this.web ? this.web.allowedDomains : []), teamCap: () => (this.web ? this.web.teamCap ?? null : null) })(input)),
+      // P4: the scope card's parent re-check (SEAMS S22/S45: the card shows P1a's display path; listProjects rows carry none).
+      validateScopeSwitch: deps.validateScopeSwitch ?? (async (input, { scope, threadId }) => validateScopeSwitch(input, { scope, projects: (await listProjects()).map((p) => ({ ...p, displayPath: displayPath(p.path) })), asked: scopeCardKeys(listMessages(threadId)) })),
       scheduleDefaults: deps.scheduleDefaults ?? scheduleDefaults,
       // A proposed plugin task is looked up here, once: it must exist, and the card shows its title.
       lookupTask: deps.lookupTask === undefined ? lookupTask : deps.lookupTask,
@@ -233,12 +269,25 @@ class AskTurn extends EventEmitter {
       // Conversation chips: (refs) → resolved chip entries (ui/server.mjs resolveAskMentions). null = none.
       resolveMentions: deps.resolveMentions ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
+      generateSuggestion: deps.generateSuggestion ?? generateSuggestion,
+      // #911 slice 2: ({ cardId, blockId, command }) → void, fire-and-forget (ui/server.mjs, ask/command-summary.mjs). null = none.
+      summariseCommand: deps.summariseCommand ?? null,
+      suggestionModel: deps.suggestionModel ?? suggestionModel,
+      // Read per kickoff: a Settings save reaches the very next suggestion.
+      suggestionsEnabled: deps.suggestionsEnabled ?? (() => chatPrefs().suggestions !== false),
+      budgetStatus: deps.budgetStatus ?? budgetStatus,
+      claimSuggestion: deps.claimSuggestion ?? claimSuggestion,
+      releaseSuggestion: deps.releaseSuggestion ?? releaseSuggestion,
+      cancelSuggestion: deps.cancelSuggestion ?? cancelSuggestion,
       askLimits: deps.askLimits ?? askLimits,
       limits: deps.limits ?? ASK_LIMITS,
       resolveModelEnv: deps.resolveModelEnv ?? resolveModelEnv,
       resolveModelCost: deps.resolveModelCost ?? resolveModelCost,
+      chatModelRates: deps.chatModelRates ?? chatModelRates,
       worcaHome: deps.worcaHome ?? worcaHome,
       buildMcpConfig: deps.buildMcpConfig ?? buildMcpConfig,
+      // git on this machine (P0): handed to the classic MCP child (WORCA_GIT) and to the sub-agent note.
+      gitAvailable: deps.gitAvailable ?? gitAvailable,
       // ({threadId, reader, web}) => {url, token, dispose()} | null. Set by the server when agents run
       // under their own users (agent-pool.mjs): the chat's claude then runs as the person's
       // agent user and its worca tools run in the server through this relay. null = classic.
@@ -246,6 +295,7 @@ class AskTurn extends EventEmitter {
       // Agent mode (#574): ({threadId}) => {url, token, dispose()} | null. Set by the server only where the
       // terminal is enabled (terminalEnabledHere). null = no command tools.
       commandBridge: deps.commandBridge ?? null,
+      proxyBridge: deps.proxyBridge ?? null,
       serverPath: deps.serverPath ?? ASK_MCP_SERVER_PATH,
       newAskId: deps.newAskId ?? newAskId,
       setPendingCardComments: deps.setPendingCardComments ?? setPendingCardComments,
@@ -265,6 +315,7 @@ class AskTurn extends EventEmitter {
       mcpJoinNotice: deps.mcpJoinNotice ?? null,
       mcpJoinNoticeMs: deps.mcpJoinNoticeMs ?? 5000,   // its bound: a hung resolve never wedges the terminal write
       onMemoryMutation: deps.onMemoryMutation ?? (() => {}),
+      recordMemoryUsage: deps.recordMemoryUsage ?? recordMemoryUsage,
       onScriptMutation: deps.onScriptMutation ?? (() => {}),
       onScheduleMutation: deps.onScheduleMutation ?? (() => {}),
       // DISPLAY-ONLY rates for the footer's live "≈" estimate (config.mjs
@@ -311,17 +362,30 @@ class AskTurn extends EventEmitter {
     catch { /* thread may be gone — the terminal write is equally guarded */ }
   }
 
-  async _onProposal(input) {
+  async _onProposal(input, childOk = null) {
     const d = this.deps;
     const cardId = d.newAskId('card');
     const raw = input && typeof input === 'object' ? input : {};
-    // #397: a proposal that names NO target falls back to the user-pinned scope.
-    // Mirrors the MCP child's own defaulting, so this authoritative re-validation
-    // builds the same card the model was shown.
-    const pin = this.pinnedScope;
-    const hasTarget = (typeof raw.projectKey === 'string' && raw.projectKey.trim())
-      || (typeof raw.workspaceId === 'string' && raw.workspaceId.trim());
-    const inp = pin && !hasTarget ? { ...raw, ...pin } : raw;
+    // P4 (CONTRACT §4): the MCP child's gate, replayed for this authoritative re-validation. A named target outside
+    // the chat scope is refused before validation (a notice only when the child did not refuse: then the model was
+    // already told). A proposal that names NO target takes the chat scope; No project proposes noProject.
+    // noProject: true is never gated (noProject plus a key is validateProposal's tooManyTargets).
+    const scope = this.pinnedScope;
+    const key = typeof raw.projectKey === 'string' ? raw.projectKey.trim() : '';
+    const ws = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : '';
+    const named = raw.noProject === true ? null : key ? { projectKey: key } : ws ? { workspaceId: ws } : null;
+    if (this.scopeGated && named) {
+      let members = [];
+      if (scope && scope.workspaceId && named.projectKey) {
+        try { members = await d.workspaceMemberKeys(scope.workspaceId); } catch { members = []; }
+      }
+      if (!targetInScope(scope, named, members)) {
+        if (childOk !== false) this.reducer.addBlock({ kind: 'notice', text: `Proposal rejected: ${scopeRefusalText(scope, named)}` });
+        this._persistBlocks();
+        return;
+      }
+    }
+    const inp = named || raw.noProject === true ? raw : scope ? { ...raw, ...scope } : this.scopeGated ? { ...raw, noProject: true } : raw;
     try {
       // The thread's attachment ledger, so attachmentIds the model cites resolve
       // to real rows (spec §6.4). A ledger failure never blocks the card.
@@ -330,14 +394,10 @@ class AskTurn extends EventEmitter {
       let defaults = {};
       try { defaults = d.scheduleDefaults() || {}; } catch { defaults = {}; }
       // The sign-in answer this turn handed its MCP child (run()): the card is checked as the model's own call was.
-      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask, ...(this.claudeAuth ? { claudeAuth: this.claudeAuth } : {}) });
+      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask, ...(this.claudeAuth ? { claudeAuth: this.claudeAuth } : {}), ...(this.reader ? { owner: this.reader } : {}) });
       if (r && r.ok) {
-        // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
-        // the pinned one is accepted but flagged — the card renders the mismatch
-        // instead of silently absorbing it.
-        const scopeMismatch = !!pin && ((pin.projectKey && r.card.projectKey !== pin.projectKey)
-          || (pin.workspaceId && r.card.workspaceId !== pin.workspaceId));
-        this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card, ...(scopeMismatch ? { scopeMismatch: true } : {}) });
+        // P4: the card is in the chat scope by construction — nothing to flag
+        this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card });
         // commentIds are propose_run INPUT only: they never enter the card block (its
         // key set is pinned in test/ask-proposal.test.mjs) nor CARD_PATCH_KEYS. Parked
         // against the card id until the user starts the run; unknown ids are dropped,
@@ -362,8 +422,46 @@ class AskTurn extends EventEmitter {
     try { r = JSON.parse(text); } catch { return; }
     if (!r || r.ok !== true || typeof r.blockId !== 'string') return;
     const card = { type: 'command', blockId: r.blockId, sessionId: r.sessionId, seq: r.seq, command: String(r.command || '').slice(0, 4000),
-      folder: r.folder || null, cwd: r.cwd || null, warning: r.warning || null };
-    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', card });
+      folder: r.folder || null, cwd: r.cwd || null, warning: r.warning || null,
+      summary: typeof r.summary === 'string' && r.summary ? r.summary.slice(0, ASK_LIMITS.commandSummaryMaxChars) : null };
+    // textAt: the card sits in the answer where the command ran, not below it.
+    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', textAt: this.reducer.textLength(), card });
+    if (!block) return;
+    this._persistBlocks();
+    // #911 slice 2: no summary from the chat → the Command summaries helper job may write one (never awaited).
+    if (!card.summary && typeof this.deps.summariseCommand === 'function') {
+      try { this.deps.summariseCommand({ cardId: block.id, blockId: card.blockId, command: card.command }); } catch { /* cosmetic */ }
+    }
+  }
+
+  /** show_files RESULT → a display-only files card, inline where the answer stands (textAt). The card is rebuilt from
+   *  THIS thread's attachment rows: an id the store does not hold for this chat is dropped, and name/mime/bytes come
+   *  from the row, never from the tool's echo. Only the sniffed kind, the optional image size, the caption and the
+   *  "not shown" notes are taken from the result. */
+  _onShowFiles(text, isError) {
+    if (isError) return;
+    let r = null;
+    try { r = JSON.parse(text); } catch { return; }
+    if (!r || r.ok !== true || !Array.isArray(r.items)) return;
+    const dim = (n) => (Number.isInteger(n) && n > 0 && n <= 100_000 ? n : null);
+    const items = [];
+    for (const it of r.items.slice(0, ASK_LIMITS.showFiles.maxFiles)) {
+      const att = it && typeof it.attId === 'string' ? this.deps.store.getAttachment(this.threadId, it.attId) : null;
+      if (!att) continue;
+      const w = dim(it.width); const h = dim(it.height);
+      // typeof first: RegExp#test(undefined) tests the string "undefined", which would pass.
+      items.push({ attId: att.id, name: att.name, kind: typeof it.kind === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(it.kind) ? it.kind : 'file',
+        mime: att.mime || null, bytes: att.bytes, ...(w && h ? { width: w, height: h } : {}),
+        ...(att.hasSource ? { source: true } : {}) });   // from the row: Show in folder opens the file this was copied from
+    }
+    if (!items.length) return;
+    const caption = typeof r.caption === 'string' ? r.caption.slice(0, 300) : '';
+    const skipped = (Array.isArray(r.refused) ? r.refused : []).slice(0, 10)
+      .map((x) => ({ name: String(x?.source || '').split(/[\\/]/).pop().slice(0, 120), reason: String(x?.reason || '').slice(0, 200) }))
+      .filter((x) => x.name || x.reason);
+    const title = caption || (items.length === 1 ? items[0].name : `${items.length} files`);
+    const card = { type: 'files', title, items, ...(caption ? { caption } : {}), ...(skipped.length ? { skipped } : {}) };
+    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'shown', textAt: this.reducer.textLength(), card });
     if (block) this._persistBlocks();
   }
 
@@ -602,6 +700,30 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /**
+   * propose_project_change RESULT: the clone card's split — the child validated for the model, the parent
+   * re-validates the same INPUT (dry runs against the live registry and disk) and mints the card. A child
+   * {ok:false} already reached the model as text: no card, no notice.
+   */
+  async _onProjectProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = await d.validateProjectProposal(input && typeof input === 'object' ? input : {});
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Project change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Project change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
   /** propose_web_access RESULT: the clone card's split — a child {ok:false} already reached the model as text. */
   async _onWebProposal(input, text, isError) {
     if (isError || !this.web) return;
@@ -619,6 +741,25 @@ class AskTurn extends EventEmitter {
     } catch (err) {
       this.reducer.addBlock({ kind: 'notice', text: `Web access request rejected: ${err?.message || err}` });
     }
+    this._persistBlocks();
+  }
+
+  /** propose_scope_switch RESULT (P4): the clone card's split — the child validated for the model; the parent re-checks
+   *  against this turn's scope and the thread's earlier scope cards, then mints the ask card. A child refusal, or a
+   *  duplicate the child could not see yet, adds nothing: the model already has the child's answer. */
+  async _onScopeSwitch(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    let r = null;
+    try { r = await d.validateScopeSwitch(input && typeof input === 'object' ? input : {}, { scope: this.pinnedScope, threadId: this.threadId }); } catch { r = null; }
+    if (!r || !r.ok) return;
+    // Two calls in one message both pass the stored-card check: this turn's own cards count too (U14).
+    const live = scopeCardKeys([this.reducer.snapshot()]);
+    if ((r.card.candidates || []).some((c) => live.includes(c.projectKey))) return;
+    this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
     this._persistBlocks();
   }
 
@@ -676,6 +817,30 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /**
+   * propose_network_proxy_change / propose_corporate_proxy_on RESULT: the child's {ok:true} is only a hint — the parent
+   * re-validates the same INPUT against the flag and the stored settings now, and mints the card. A child {ok:false}
+   * already reached the model as text: no card, no notice.
+   */
+  async _onProxyProposal(name, input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = name === 'propose_corporate_proxy_on' ? await d.validateProxyFlagOn(input) : await d.validateProxyChange(input);
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Proxy change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Proxy change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
   /** The card exists from the tool_use on (spec §8.2, PD7): a building block with the four-step trace, persisted. */
   _onWorkflowStart(toolUseId, input) {
     const d = this.deps;
@@ -705,7 +870,8 @@ class AskTurn extends EventEmitter {
     if (isError) return;
     let out = null;
     try { out = JSON.parse(text); } catch { out = null; }
-    const card = composerCardFrom(name, out, this.composer);
+    // An Ask chat (no composer session) stamps its pinned scope on a graph card: its Save event names that target.
+    const card = composerCardFrom(name, out, this.composer, this.composer ? {} : { target: this.pinnedScope });
     if (!card) return;
     if (!this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'proposed', card })) return;   // finished reducer
     this._persistBlocks();
@@ -759,14 +925,14 @@ class AskTurn extends EventEmitter {
     // One settings read per attempt, never per frame. null → the frames carry
     // estimatedCostUsd:null and the footer keeps today's behaviour.
     let liveRates = null;
-    try { liveRates = d.liveCostRates(this.model) ?? null; } catch { liveRates = null; }
+    try { liveRates = (this.lockedDown ? this._ratesFor() : d.liveCostRates(this.model)) ?? null; } catch { liveRates = null; }
     this.reducer = createTurnReducer({
       onFrame: (f) => this._frame(f),
       now: d.now,
       setTimeout: d.setTimeout,
       clearTimeout: d.clearTimeout,
       attachmentNames: this.attachmentNames,
-      ...(this.engine === 'codex' ? { emitWholeMessages: true } : {}),
+      ...(this.lockedDown ? { emitWholeMessages: true } : {}),
       // MCP registry §5.5.3: the persisted text is redacted whole with this turn's registry values (the runner redacts
       // per event, and a value split across stream deltas is only whole here). Without secrets: the default redactor.
       ...(this._mcpRedact ? { redact: this._mcpRedact } : {}),
@@ -781,12 +947,13 @@ class AskTurn extends EventEmitter {
       // still reports a hallucinated propose_run as an is_error result — which onProposal re-validates into a
       // "Proposal rejected: …" notice — and a propose_workflow tool_use opens a building card before any result.
       // (onWorkflowResult needs the card onWorkflowStart made, so it stays inert there.)
-      onProposal: this.composer ? null : ({ input }) => this._onProposal(input),
+      onProposal: this.composer ? null : ({ input, childOk }) => this._onProposal(input, childOk),
       onWorkflowStart: this.composer ? null : ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
       onWorkflowResult: ({ toolUseId, text, isError }) => this._onWorkflowResult(toolUseId, text, isError),   // the hook's `input` is not needed here: the card is rebuilt from `out`
       onComposerResult: ({ name, text, isError }) => this._onComposerResult(name, text, isError),
       onTrackRun: this.composer ? null : ({ input, isError }) => this._onTrackRun(input, isError),
       onRunCommand: ({ text, isError }) => this._onRunCommand(text, isError),
+      onShowFiles: ({ text, isError }) => this._onShowFiles(text, isError),
       onAwaySwitch: this.composer ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
       onChatAction: this.composer ? null : ({ name, text, isError, sub }) => this._onChatAction(name, text, isError, sub === true),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
@@ -795,9 +962,13 @@ class AskTurn extends EventEmitter {
       onScheduleProposal: ({ input, text, isError }) => this._onScheduleProposal(input, text, isError),
       onModelProposal: ({ input, text, isError }) => this._onModelProposal(input, text, isError),
       onCloneProposal: ({ input, text, isError }) => this._onCloneProposal(input, text, isError),
+      onProjectProposal: ({ input, text, isError }) => this._onProjectProposal(input, text, isError),
       onWorkspaceProposal: ({ input, text, isError }) => this._onWorkspaceProposal(input, text, isError),
       onActionsProposal: ({ input, text, isError }) => this._onActionsProposal(input, text, isError),
+      onProxyProposal: ({ input, text, isError }) => this._onProxyProposal('propose_network_proxy_change', input, text, isError),
+      onProxyFlagProposal: ({ input, text, isError }) => this._onProxyProposal('propose_corporate_proxy_on', input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
+      onScopeSwitch: this.composer ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
       onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // The MCP child cannot broadcast; the parent turns its comment writes into
@@ -808,6 +979,7 @@ class AskTurn extends EventEmitter {
       onWorktreeMutation: (e) => { this._worktreeMutated = true; try { this.deps.onWorktreeMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // ...and for memory: a remember/forget in the child becomes the server's memory-changed frame.
       onMemoryMutation: (e) => { try { this.deps.onMemoryMutation(e); } catch { /* a broken sink never breaks the turn */ } },
+      onMemoryRead: (r) => { this._memoryReads.add(noteOfReadMemory(r), 'read'); },
       // ...and for scripts: a save_script in the child becomes the server's scripts-changed frame.
       onScriptMutation: (e) => { try { this.deps.onScriptMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // DISPLAY ONLY — never a sink input: prices the running usage sum (main +
@@ -862,7 +1034,7 @@ class AskTurn extends EventEmitter {
       if (!kept.length || !Array.isArray(mount.pluginDirs)) throw new Error('no skill was written');   // P3 writes no empty plugin
       this.skillMount = mount;
       // A Codex chat has no plugin namespace (#635): its names come from the whole resolved list, as the picker's do.
-      const codexNames = this.engine === 'codex' ? codexSkillNames(this.skills.mounted) : null;
+      const codexNames = this.lockedDown ? codexSkillNames(this.skills.mounted) : null;
       const nameOf = (m) => (codexNames ? codexNames.get(m.qualifiedName) : m.qualifiedName);
       this.skillNames = kept.map(nameOf);
       const lost = this.skills.mounted.filter((m) => !kept.includes(m)).map(nameOf);
@@ -967,6 +1139,7 @@ class AskTurn extends EventEmitter {
       });
     }
     const summary = this.reducer.finish();
+    this._replyText = typeof summary.text === 'string' ? summary.text : '';
     const finalStatus = kind === 'error' ? 'error' : status;
     // Already AUTHORITATIVE: the reducer applied this turn's per-model cost
     // override (the `resolveCost` hook in _makeReducer), so this one value is
@@ -1054,8 +1227,8 @@ class AskTurn extends EventEmitter {
 
   _limitNotice(reason, limitsNow) {
     const text = reason === 'max_budget'
-      ? `Stopped: reached the $${limitsNow.maxBudgetUsd} per-turn cap (Settings → Ask Worca)`
-      : `Stopped: reached the ${limitsNow.maxTurns}-turn limit (Settings → Ask Worca)`;
+      ? `Stopped: reached the $${limitsNow.maxBudgetUsd} per-turn cap (Settings → Chat)`
+      : `Stopped: reached the ${limitsNow.maxTurns}-turn limit (Settings → Chat)`;
     this.reducer.addBlock({ kind: 'notice', text });
     this._persistBlocks();
   }
@@ -1072,8 +1245,12 @@ class AskTurn extends EventEmitter {
     if (e.type === 'subagent' && e.event === 'spawn') { this._trip('tool', 'a sub-agent'); return; }
     if (e.type === 'tool' && Array.isArray(e.calls)) {
       if (e.calls.some((c) => c && c.name === 'Bash')) { this._trip('shell'); return; }
-      // Any other tool that is not worca's (a native web search, a file edit, …) means the lockdown did not hold either.
-      const foreign = e.calls.find((c) => c && !String(c.name || '').startsWith('mcp__'));
+      // Any other tool that is not worca's or one of this turn's registry copies' (a native web search, a file edit, a
+      // server of the user's own, …) means the lockdown did not hold either; only the engine's own meta tools its chat
+      // descriptor names (plans/: Goose's load_skill) are kept.
+      const meta = this.chat ? this.chat.metaTools : [];
+      const servers = ['worca', ...(this.mcp ? this.mcp.copies.map((c) => c.name) : [])];
+      const foreign = e.calls.find((c) => c && !servers.some((s) => String(c.name || '').startsWith(`mcp__${s}__`)) && !meta.includes(String(c.name || '')));
       if (foreign) { this._trip('tool', String(foreign.name || 'an unknown tool')); return; }
       if ((e.parentId ?? null) !== null) return;
       this._toolCalls += e.calls.length;
@@ -1089,6 +1266,24 @@ class AskTurn extends EventEmitter {
     }
   }
 
+  /** worca's rates for `model` on this chat's engine (ask/chat-price.mjs), or null; read once per turn. */
+  _ratesFor(model = this.model) {
+    if (model !== this.model) return this.deps.chatModelRates(this.chat, model);
+    if (this._rates === undefined) this._rates = this.deps.chatModelRates(this.chat, this.model);
+    return this._rates;
+  }
+
+  /** A locked-down turn's `result` that carries no cost, priced with worca's rates from its token usage when worca has a
+   *  price: an engine that reports no cost (Copilot, Gemini CLI, Qwen Code) is booked and capped like one that does. A
+   *  reported cost passes through (the reducer re-prices it with a Models page price, resolveModelCost). */
+  _priced(e) {
+    if (!e || e.type !== 'result' || Number.isFinite(e.costUsd) || !isPriceableUsage(e.usage)) return e;
+    const rates = this._ratesFor();
+    if (!rates) return e;
+    const costUsd = Math.round(estimateCost(e.usage, rates) * 1e6) / 1e6;
+    return Number.isFinite(costUsd) ? { ...e, costUsd } : e;
+  }
+
   _trip(kind, what = null) {
     this._cap = kind;
     this._capWhat = what;
@@ -1102,36 +1297,50 @@ class AskTurn extends EventEmitter {
 
   /** The error a fail-closed trip ends the turn with, or null for a cap (a stop, not an error). */
   _trippedMessage() {
-    if (this._cap === 'shell') return CODEX_SHELL_TRIPPED_MESSAGE;
-    if (this._cap === 'tool') return codexToolTrippedMessage(this._capWhat);
+    if (this._cap === 'shell') return this.chat ? this.chat.shellTrippedMessage : CODEX_SHELL_TRIPPED_MESSAGE;
+    if (this._cap === 'tool') return codexToolTrippedMessage(this._capWhat, this.engine);
     return null;
   }
 
-  /** A Codex turn starts only with its lockdown, a priced model under a cost cap (D14), a codex that has every lockdown
-   *  flag, and a ready codex (§4.6). Returns
-   *  the completed result when it refuses, else null. The mock never asks the real binary. */
-  async _codexGate(limitsNow) {
+  /** A locked-down turn starts only with its engine's lockdown (chat descriptor, engines/chat.mjs), a per-turn cost cap
+   *  it can keep (D14: a priced model on an engine that reports cost; never on one that reports none), a binary that has
+   *  every lockdown flag, a passed self-test where the engine has one (engines/chat-selftest.mjs: the lockdown proven on
+   *  this binary and this user's config), and a ready, signed-in engine (§4.6). Returns the completed result when it
+   *  refuses, else null. The mock never asks the real binary. */
+  async _engineGate(limitsNow) {
     const d = this.deps;
-    if (!d.codexLockdown()) return this._complete({ kind: 'error', message: CODEX_NO_LOCKDOWN_MESSAGE });
-    if (limitsNow.maxBudgetUsd != null && !d.codexModelPriced(this.model)) {
-      return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Ask Worca).` });
+    const c = this.chat;
+    const own = (k) => d[`${this.engine}${k}`];
+    const lockdown = own('Lockdown') ?? c.lockdown;
+    if (!lockdown()) return this._complete({ kind: 'error', message: c.noLockdownMessage });
+    const modelProblem = c.modelProblem(this.model);
+    if (modelProblem) return this._complete({ kind: 'error', message: `${this.model} cannot run a chat on ${c.label}: ${modelProblem}. Pick another model for this chat.` });
+    if (limitsNow.maxBudgetUsd != null) {
+      const capped = chatCostCapRefusal(c, this.model, own('ModelPriced') ?? ((m) => !!this._ratesFor(m)));
+      if (capped) return this._complete({ kind: 'error', message: capped });
     }
     if (this.mock) return null;
     const refuse = (refusal) => {
-      this.reducer.addBlock({ kind: 'notice', text: `Codex isn't ready: ${refusal}`, href: CODEX_SETUP_DOCS_URL, hrefLabel: 'Codex setup', codexSetup: true });
-      return this._complete({ kind: 'error', message: refusal, code: CODEX_NOT_READY_CODE });
+      this.reducer.addBlock({ kind: 'notice', text: `${c.notReady.prefix}: ${refusal}`, href: c.notReady.docsUrl, hrefLabel: c.notReady.setupLabel, [c.notReady.flag]: true });
+      return this._complete({ kind: 'error', message: refusal, code: c.notReady.code });
     };
-    // The lockdown's flags must all exist in this codex (codexAskSupport): a property of the binary, so a relayed turn,
-    // which runs the same binary as the person's agent user, is checked too.
+    // The lockdown's flags must all exist in this binary (askSupport), and where the lockdown is built from the CLI's
+    // own switches, a self-test proves it: properties of the binary, so a relayed turn, which runs the same binary as the
+    // person's agent user, is checked too.
     let support = null;
-    try { support = await d.codexAskSupport(); } catch (err) { support = { refusal: err?.message || String(err) }; }
+    try { support = await c.askSupport(undefined, own('AskSupport')); } catch (err) { support = { refusal: err?.message || String(err) }; }
     if (support && support.refusal) return refuse(support.refusal);
-    // A relayed turn runs codex as the person's agent user, with that user's HOME and sign-in (agent-user.mjs): a check
-    // run here would ask about the server user's codex instead. Its sign-in failure surfaces from the turn itself.
+    const selfTest = c.selfTest ? () => c.selfTest(undefined, own('SelfTest')) : own('SelfTest');
+    if (selfTest) {
+      let st = null;
+      try { st = await selfTest(); } catch (err) { st = { refusal: err?.message || String(err) }; }
+      if (st && st.refusal) return refuse(st.refusal);
+    }
+    // A relayed turn runs the engine as the person's agent user, with that user's HOME and sign-in (agent-user.mjs): a
+    // check run here would ask about the server user's sign-in instead. Its sign-in failure surfaces from the turn itself.
     if (this.relay) return null;
     let pf = null;
-    // A chat model on its own endpoint needs no codex sign-in, only the binary (codex-endpoint.mjs).
-    try { pf = await d.codexPreflight({ signIn: !hasCodexEndpoint(this.model) }); } catch (err) { pf = { warning: err?.message || String(err) }; }
+    try { pf = await c.preflight({ model: this.model }, own('Preflight')); } catch (err) { pf = { warning: err?.message || String(err) }; }
     if (pf && pf.refusal) return refuse(pf.refusal);
     return null;
   }
@@ -1140,6 +1349,8 @@ class AskTurn extends EventEmitter {
     if (this.status !== 'created') return { status: this.status };
     this.status = 'running';
     const d = this.deps;
+    // A new turn on this thread makes the previous reply's suggestion stale (it may still be writing).
+    try { d.cancelSuggestion(this.threadId); } catch { /* best effort */ }
     this._makeReducer();
     // §4.6: a Codex chat names the registry servers it does not get, once per chat (the server decides "once").
     if (this.mcpCodexNote) this.reducer.addBlock({ kind: 'notice', text: CODEX_MCP_NOTE, mcpCodex: true });
@@ -1162,9 +1373,9 @@ class AskTurn extends EventEmitter {
       // D13 title runs CONCURRENTLY with the turn from here — the haiku call
       // cwd's into scratchDir, so not a line earlier. Idempotent: the call after
       // _attempts below is the backstop for a mkdir/write failure, so "fires
-      // after ANY terminal status of the first turn" stays true. A Codex chat's
-      // title is a codex spawn too, so it waits for the gate below.
-      if (this.engine !== 'codex') this._kickoffTitle();
+      // after ANY terminal status of the first turn" stays true. A Codex or Copilot chat's
+      // title is a spawn of that engine too, so it waits for the gate below.
+      if (!this.lockedDown) this._kickoffTitle();
       // Native-rules revision: refresh the chat's memory mount for this turn's scope set and hand
       // it to the spawn as --add-dir. A store failure never breaks a turn — the turn carries no
       // memory and says so on the server log (the rules are additive; the chat is unaffected).
@@ -1182,10 +1393,11 @@ class AskTurn extends EventEmitter {
         : dirname(d.worcaHome());
       mcpConfigPath = join(scratchDir, `mcp-${this.assistantMessageId}.json`);
       // A Codex turn's set skills (#635): this message's mount folder only, read through read_file for this turn only.
-      const skillRoot = this.engine === 'codex' && this.skills && this.skillMount ? this._skillBase : null;
-      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(skillRoot ? { skillRoot } : {}) }) : null;
+      const skillRoot = this.lockedDown && this.skills && this.skillMount ? this._skillBase : null;
+      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
+      this.proxyBridge = !this.relay && d.proxyBridge ? d.proxyBridge({ threadId: this.threadId }) : null;
       // One sign-in answer per turn: handed to the MCP child (spawn.mjs WORCA_ASK_CLAUDE_AUTH) and used by _onProposal,
       // so the model and the card get one verdict however long the turn runs. A relayed chat runs its tools here, in
       // this process (preflight's cache), so its child gets nothing.
@@ -1194,7 +1406,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
@@ -1208,11 +1420,12 @@ class AskTurn extends EventEmitter {
       timer = d.setTimeout(() => { this.timedOut = true; try { this.abort.abort(); } catch { /* ignore */ } }, d.limits.turnTimeoutMs);
       // D12: read fresh every turn. The pinned project's team policy may start the limits off (team-policy §5).
       const limitsNow = d.askLimits({ projectKey: this.pinnedScope?.projectKey || null });
-      if (this.engine === 'codex') {
-        out = await this._codexGate(limitsNow);
-        // A refused turn never starts codex — not even for the title, which falls back to the prompt's own words.
-        if (out) this._titleOffline = true;
-        else this._kickoffTitle();
+      if (this.lockedDown) {
+        out = await this._engineGate(limitsNow);
+        // A refused turn never starts the engine — not even for the title, which falls back to the prompt's own words,
+        // as it does on an engine that makes no title call (chat descriptor `titles`).
+        if (out || !this.chat.titles) this._titleOffline = true;
+        if (!out) this._kickoffTitle();
       }
       out = out || await this._attempts(limitsNow, mcpConfigPath, scratchDir);
     } catch (err) {
@@ -1224,8 +1437,15 @@ class AskTurn extends EventEmitter {
       if (this._skillBase) { try { await d.removeSkillMount(this._skillBase); } catch { /* best effort: the thread's folder goes with the thread */ } }
       if (this.relay) { try { this.relay.dispose(); } catch { /* already gone */ } this.relay = null; }
       if (this.commands) { try { this.commands.dispose(); } catch { /* already gone */ } this.commands = null; }
+      if (this.proxyBridge) { try { this.proxyBridge.dispose(); } catch { /* already gone */ } this.proxyBridge = null; }
+      // Memory usage: ONE merge per turn (an Ask turn is one execution). Best-effort: a failure costs the counts only.
+      if (this._memoryReads.size) {
+        try { await d.recordMemoryUsage(this._memoryReads.events()); }
+        catch (err) { console.warn(`[worca-ask] thread ${this.threadId}: memory usage not recorded (${err?.message || err})`); }
+      }
     }
     this._kickoffTitle();
+    this._kickoffSuggestion();
     return out;
   }
 
@@ -1256,7 +1476,7 @@ class AskTurn extends EventEmitter {
         turn: {
           prompt: isRetry ? this.restoredPrompt : this.prompt,
           // A Codex chat reads its memory rules itself (no --add-dir rules loading, D13); Claude's prompt is unchanged.
-          systemPrompt: this.engine === 'codex' ? this.systemPrompt + codexMemoryLine(this.memoryDir) : this.systemPrompt,
+          systemPrompt: this.lockedDown ? this.systemPrompt + codexMemoryLine(this.memoryDir) : this.systemPrompt,
           model: this.model,
           effort: this.effort,
           modelEnv: this.engine === 'claude' ? d.resolveModelEnv(this.model) : undefined,   // routing env is Claude's (§4.3)
@@ -1271,8 +1491,9 @@ class AskTurn extends EventEmitter {
               this.sessionId = e.sessionId;
               try { d.store.updateThread(this.threadId, { sessionId: e.sessionId }); } catch { /* deleted thread */ }
             }
+            if (this.lockedDown) e = this._priced(e);          // worca's prices, the same on every engine (chat-price.mjs)
             this.reducer.push(e);
-            if (this.engine === 'codex') this._watch(e, limitsNow);   // D13/D14: Claude's caps are the CLI's own
+            if (this.lockedDown) this._watch(e, limitsNow);   // D13/D14: Claude's caps are the CLI's own
             // §10: the turn's own init only (the normalizer sets mcpServers on a main-stream init only), and only with
             // a list — an init without one says nothing (never "absent"). After the push, so a failing note can never
             // cost the reducer its init.
@@ -1288,8 +1509,10 @@ class AskTurn extends EventEmitter {
         web: this.web,
         relayed: !!this.relay,
         registry: this.mcp,   // MCP registry §9.2: EVERY attempt, the resume-fallback retry included
-        ...(this.engine === 'codex' ? { engine: 'codex' } : {}),
+        ...(this.lockedDown ? { engine: this.engine } : {}),
         commands: this.commands,
+        proxy: this.proxyBridge,
+        git: d.gitAvailable(),
         ...(this.composer ? { composer: true } : {}),   // the Workflows chat: no Task built-in (spawn.mjs)
         // Skills registry §4.4: every attempt too, until the sideload safety net drops the layer.
         skills: this.skills && this.skillMount ? { pluginDirs: this.skillMount.pluginDirs, names: this.skillNames } : null,
@@ -1348,7 +1571,7 @@ class AskTurn extends EventEmitter {
         // never produced an init or said "No conversation found".
         if (!isRetry && this.resumeSessionId
           && (!s.sawInit || s.errors.some((m) => /No conversation found/.test(m))
-            || (this.engine === 'codex' && codexResumeNotFound(err)))) {   // §4.6: codex's own "no rollout found"
+            || (this.chat && this.chat.resumeNotFound(err)))) {     // §4.6: the engine's own no-such-session error
           continue;
         }
         // (4) Everything else is a turn failure.
@@ -1375,17 +1598,19 @@ class AskTurn extends EventEmitter {
     // Stored for test determinism, never awaited by run() (orchestrator.mjs:3821).
     // NO signal: a user stop aborts this.abort mid-turn and would kill the call
     // before it spawns. permissionMode 'dontAsk' is the B-1 fix.
+    const aux = this._auxCwd();
     this.titlePromise = Promise.resolve()
       .then(() => (this._titleOffline ? '' : d.generateTitle(this.firstText, {
-        cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
+        cwd: aux.cwd,
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',
         // The chat's own model is the title default (#422) — a chat on a
         // custom endpoint titles itself there, not on a first-party Haiku.
         runModel: this.model,
-        // §4.6: a Codex chat titles itself on Codex, read-only (D11), with the Ask slot's model or the chat's own.
-        ...(this.engine === 'codex' ? { engine: 'codex', model: d.askSlot('codex')?.model || this.model } : {}),
+        // §4.6: a locked-down chat titles itself on its own engine, locked down as the chat is but with no MCP server
+        // (title.mjs auxTextCall askLockdown), with the Ask slot's model or the chat's own.
+        ...(this.lockedDown ? { engine: this.engine, askLockdown: true, model: d.askSlot(this.engine)?.model || this.model } : {}),
         onError: ({ model, error }) => console.warn(
           `[worca-ask] thread ${this.threadId}: title generation failed (${model ? `model ${model}` : 'the CLI default model'}): ${error?.message || error} — keeping the fallback title`),
       })))
@@ -1406,6 +1631,64 @@ class AskTurn extends EventEmitter {
           try { d.onOutOfTurn({ type: 'ask-title', title }); } catch { /* sink */ }
         }
       })
-      .catch(() => { /* generateTitle already swallows; final backstop */ });
+      .catch(() => { /* generateTitle already swallows; final backstop */ })
+      .finally(aux.done);
+  }
+
+  /** Where a helper call of this chat (its title, its suggestion) runs: the scratch dir, or — on an engine that keeps its
+   *  settings and sessions per folder (chat descriptor `ownFolder`: Gemini CLI writes the lockdown's settings file into
+   *  the cwd) — a fresh folder of its own, removed when the call is over, so it never shares one with the chat or with
+   *  another helper call. */
+  _auxCwd() {
+    const d = this.deps;
+    const base = this.scratchDir || join(d.worcaHome(), 'tmp', 'ask');
+    if (!this.chat || !this.chat.ownFolder) return { cwd: base, done: () => {} };
+    const cwd = join(base, this.engine, `aux-${this.threadId}-${Math.random().toString(36).slice(2, 10)}`);
+    return { cwd, done: () => rm(cwd, { recursive: true, force: true }).catch(() => {}) };
+  }
+
+  /** The next-prompt suggestion (ask-suggestion): one cheap, tool-less, out-of-turn call after a turn that finished
+   *  cleanly. Fire-and-forget like the title; holds no turn slot (settleJob already released it). Cancellable: a new
+   *  turn on the thread aborts it (run() → cancelSuggestion), and so does its own 30 s timeout. The frame is live-only
+   *  and tagged with this reply's id, so the panel drops it once anything newer happened. Its cost is Ask spend. */
+  _kickoffSuggestion() {
+    if (!this.suggest || this.status !== 'done' || this.mock || this.composer) return;
+    const d = this.deps;
+    let model = null;
+    try {
+      if (!d.suggestionsEnabled() || d.budgetStatus().blocked) return;
+      model = d.suggestionModel(this.engine, { chatModel: this.model });
+    } catch { return; }
+    if (!model) return;
+    const ctl = d.claimSuggestion(this.threadId);
+    const signal = AbortSignal.any([ctl.signal, AbortSignal.timeout(SUGGESTION_TIMEOUT_MS)]);
+    const aux = this._auxCwd();
+    this.suggestionPromise = Promise.resolve()
+      .then(() => d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
+        cwd: aux.cwd,
+        model,
+        ...(this.lockedDown ? { engine: this.engine, askLockdown: true, rates: this._ratesFor(model) } : {}),
+        tools: [], strictMcpConfig: true, settingSources: ['project'],
+        disableSlashCommands: true, envScrub: true, envAllowlist: [],
+        permissionMode: 'dontAsk',
+        signal,
+        onCost: ({ costUsd, usage, model: m }) => {
+          try {
+            d.recordAskCost({
+              threadId: this.threadId, messageId: this.assistantMessageId, amountUsd: costUsd,
+              tokens: ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']
+                .reduce((a, k) => a + (Number(usage?.[k]) || 0), 0),
+              model: m || model, tsMs: d.now(),
+            });
+          } catch { /* ledger append is best-effort */ }
+        },
+        onError: (err) => console.warn(`[worca-ask] thread ${this.threadId}: suggestion failed (model ${model}): ${err?.message || err} — the default placeholder stays`),
+      }))
+      .then((text) => {
+        if (!text || ctl.signal.aborted) return;
+        try { d.onOutOfTurn({ type: 'ask-suggestion', messageId: this.assistantMessageId, text }); } catch { /* sink */ }
+      })
+      .catch(() => { /* generateSuggestion never throws; final backstop */ })
+      .finally(() => { try { d.releaseSuggestion(this.threadId, ctl); } catch { /* best effort */ } aux.done(); });
   }
 }

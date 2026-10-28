@@ -13,6 +13,7 @@ import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, listModels, modelForEngine } from './config.mjs';
 import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { prDescriptionModel as storedPrDescriptionModel } from './settings.mjs';
+import { roleModelFor, jobSlot } from './model-roles.mjs';
 import { AUX_EFFORT, helperEngineFor } from './model-env.mjs';
 import { pickCatalogModel } from './auto/model.mjs';
 import {
@@ -52,8 +53,14 @@ export const PR_DESCRIPTION_SYSTEM_PROMPT = [
   'no closing remarks, no code fence around the whole reply.',
 ].join(' ');
 
-/** The system prompt for the PR host: GitHub's as before; Azure DevOps names the host and its 4,000-char cap. */
+/** The system prompt for the PR host: GitHub's as before; Azure DevOps names the host and its 4,000-char cap;
+ *  Bitbucket names the host and plain markdown (it renders no GitHub-only syntax). */
 export function prDescriptionSystemPrompt(forge = 'github') {
+  if (forge === 'bitbucket') {
+    return PR_DESCRIPTION_SYSTEM_PROMPT
+      .replace('a GitHub pull request', 'a Bitbucket pull request')
+      .replace('GitHub-flavored markdown', 'plain markdown (no task lists, no HTML)');
+  }
   if (forge !== 'azure') return PR_DESCRIPTION_SYSTEM_PROMPT;
   return PR_DESCRIPTION_SYSTEM_PROMPT
     .replace('a GitHub pull request', 'an Azure DevOps pull request')
@@ -70,7 +77,7 @@ export function prDescriptionSystemPrompt(forge = 'github') {
  * @param {{setting?:string}} [o] injectable for tests
  * @returns {{model:string, source:'settings'|'default', stale:string|null}}
  */
-export function resolvePrDescriptionModel(models, { setting = storedPrDescriptionModel() } = {}) {
+export function resolvePrDescriptionModel(models, { setting = storedPrDescriptionModel() || roleModelFor('claude', 'prDescriptionModel')?.model || '' } = {}) {
   const configured = typeof setting === 'string' ? setting.trim() : '';
   const model = pickCatalogModel(models, configured);
   const source = configured && model.toLowerCase() === configured.toLowerCase() ? 'settings' : 'default';
@@ -138,7 +145,8 @@ export async function generatePrDescription(key, id, {
 
   const slot = utilityModelFor(engine, 'prDescription', scopeForRunKey(key));
   let model = modelForEngine(typeof explicitModel === 'string' ? explicitModel.trim() : '', engine) || '';
-  if (!model && !onClaude) model = slot.model || '';
+  // Model roles (D3): an unset non-Claude slot takes the quick role (Claude's comes from resolvePrDescriptionModel).
+  if (!model && !onClaude) model = slot.model || roleModelFor(engine, jobSlot(engine, 'prDescription'))?.model || '';
   if (!model && onClaude) {
     const pick = setting !== undefined ? setting : (slot.source === 'project' ? slot.model : undefined);
     const r = resolvePrDescriptionModel(await listModels(''), pick === undefined ? undefined : { setting: pick });

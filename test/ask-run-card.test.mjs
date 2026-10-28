@@ -42,6 +42,12 @@ test('snapshotFromState: a REST row becomes a frozen snapshot with decor, progre
   assert.equal(s.live, true);
   assert.deepEqual(snapshotFromState(STATE({ status: 'paused' }), { now: 0 }).decor.liveWireIds, [], 'a paused row is resolved: no ants');
   assert.equal(snapshotFromState(STATE({ status: 'done' })).terminal, true);
+  assert.deepEqual(snapshotFromState(STATE({ labels: ['hotfix'] })).labels, ['hotfix'], 'run labels (slice 1) ride the snapshot');
+  // Runs redesign slice 4 (D9): the raw run the one model reads; a REST state never carries the question.
+  const up = snapshotFromState(STATE({ status: 'PAUSED' }), { now: 0 });
+  assert.equal(up.run.status, up.status);
+  assert.equal(up.run.status, 'paused');
+  assert.equal(up.run.pendingQuestion, null);
   assert.equal(snapshotFromState(STATE({ target: 'workspace', workspaceId: 'wks-1', projects: [{ projectName: 'a' }, { projectName: 'b' }] })).workspaceId, 'wks-1');
   const v1 = snapshotFromState(STATE({ stepper: null }));
   assert.equal(v1.decor, null, 'a v1 row draws no graph');
@@ -57,6 +63,7 @@ test('runPill table and progressRoute (live → #running, rest → History, unkn
       assert.deepEqual(runPill(base), { family: 'green', text: 'Implementer' }, 'one active agent: its label in its colour');
       assert.deepEqual(runPill({ ...base, active: [base.active[0], base.active[0]] }), { family: 'peach', text: '2 agents running' });
       assert.deepEqual(runPill({ ...base, status: 'pausing' }), { family: 'amber', text: 'Pausing…' });
+      assert.deepEqual(runPill({ ...base, status: 'paused', resumePending: true }), { family: 'amber', text: 'Resuming…' }, 'a Resume in flight');
       assert.deepEqual(runPill({ ...base, status: 'paused', pauseReason: 'cost_total' }), { family: 'amber', text: 'Paused · total budget' });
       assert.deepEqual(runPill({ ...base, status: 'paused', pauseReason: null }), { family: 'amber', text: 'Paused' });
       assert.deepEqual(runPill({ ...base, status: 'interrupted' }), { family: 'amber', text: 'Interrupted' });
@@ -140,7 +147,7 @@ test('createRunProgressCard: head, stats, chips, graph, question banner, error r
       card.update({ ...snapshotFromState(STATE(), { now: 0 }), source: 'live', runId: 'r', pendingQuestion: { kind: 'questions', questions: [{}, {}] } }, 0);
       const banner = card.el.querySelector('.ask-rc-banner');
       assert.equal(banner.hidden, false);
-      assert.equal(banner.textContent, 'Waiting for your answer — 2 questions');
+      assert.equal(banner.textContent, 'Waiting for your answer (2 questions)');
       assert.equal(card.el.querySelector('.ask-rc-pill').textContent, 'Waiting for your answer');
       card.update({ ...snapshotFromState(STATE({ status: 'error', active: [] }), { now: 0 }) }, 0);
       assert.equal(banner.hidden, true);

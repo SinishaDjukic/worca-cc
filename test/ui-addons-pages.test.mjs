@@ -156,8 +156,11 @@ test('Providers is a page of its own: its loader, its title, its level banner, a
 });
 
 test('Models is a page of its own: the catalog, the Engines card from GET /api/settings, a card deep link, its banner and leave-guard', async () => {
-  // A bridged catalog row that is not signed in yet: its "Sign in" leaves for the Providers page.
-  const CP = { id: 'cp-gpt', label: 'GPT (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5' },
+  // A bridged catalog row that is not signed in yet: an OpenAI-compatible "Sign in" leaves for the Providers page;
+  // a Copilot one opens the setup assistant on Model access instead (AC-4.5, the row after this one).
+  const CP = { id: 'oa-gpt', label: 'GPT (OpenAI-compatible)', efforts: ['medium'], upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-5' },
+    bridged: 'openai', needsSignIn: true, signInReason: 'not_signed_in', signInMessage: 'not signed in' };
+  const COPILOT = { id: 'cp-gpt', label: 'GPT (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5' },
     bridged: 'copilot', needsSignIn: true, signInReason: 'not_signed_in', signInMessage: 'not signed in' };
   await checkRows([
     { name: 'a catalog row\'s Sign in opens the Providers page; the OpenAI row\'s Import models… opens the Models page with the import dialog', run: async () => {
@@ -172,6 +175,15 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.equal(window.location.hash, '#models');
       assert.deepEqual(shownView(doc), ['models']);
       assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the import dialog opens over the catalog');
+    } },
+    { name: 'a Copilot row\'s Sign in opens the setup assistant on Model access, and the page stays (AC-4.5, R-qa-4)', run: async () => {
+      const { window, doc } = await boot({ routes: { '/api/models': { models: [COPILOT], predefined: [], efforts: [] } } });
+      await go(window, 'models');
+      doc.querySelector('#models-list .mv-signin[data-provider="copilot"]').click();
+      await settle();
+      assert.ok(doc.getElementById('setup-modal'), 'the assistant is up');
+      assert.equal(doc.querySelector('#setup-modal h2#setup-title').textContent, 'Where should Worca get its models?');
+      assert.equal(window.location.hash, '#models');
     } },
     { name: '#models loads the catalog and GET /api/settings into its own section, titled Models; Settings has no Models tab', run: async () => {
       const { window, doc, calls } = await boot({ routes: { '/api/settings': { root: '/tmp/x', default: '/tmp/x', runEngine: 'codex' } } });
@@ -277,7 +289,7 @@ test('Marketplace is a page of its own: its loader and background refresh, its t
       assert.equal(doc.getElementById('topnav-title').textContent, 'Marketplace');
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="plugins"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #plugins-list'), null);
-      assert.deepEqual([...doc.querySelectorAll('#settings-tabs button[data-tab]')].map((b) => b.dataset.tab), ['general', 'runs', 'experimental', 'ask', 'guardrails', 'memory']);
+      assert.deepEqual([...doc.querySelectorAll('#settings-tabs button[data-tab]')].map((b) => b.dataset.tab), ['general', 'tags', 'presets', 'runs', 'experimental', 'ask', 'guardrails', 'memory']);
     } },
     { name: 'at Simple, #marketplace still opens under a banner naming Advanced', run: async () => {
       const { window, doc } = await boot({ level: 'simple' });
@@ -313,10 +325,8 @@ test('no in-app link, route call or tab check names an old address', () => {
   assert.deepEqual(offenders, []);
 });
 
-// U7: the four pages are named as pages ("the Providers page", "Connectors › Skills"); no string, prompt,
-// comment or user doc still sends anyone to a Settings tab that is gone. (docs/superpowers, docs/plans and
-// docs/changelog are history: they keep the words of their day.)
-test('no copy in the app, the server or the docs points at Settings › Plugins / Sets / Models / Providers', () => {
+/** The files the copy sweeps read: the app, the server, the user docs and each plugin's README. */
+function copyFiles() {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const walk = (dir) => readdirSync(root + dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory()
     ? (e.name === 'vendor' ? [] : walk(`${dir}/${e.name}`)) : [`${dir}/${e.name}`]));
@@ -324,6 +334,14 @@ test('no copy in the app, the server or the docs points at Settings › Plugins 
     ...readdirSync(root + 'docs').filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`),
     ...readdirSync(root + 'plugins').map((d) => `plugins/${d}/README.md`).filter((f) => { try { readFileSync(root + f); return true; } catch { return false; } })];
   const files = [...walk('ui/public'), ...walk('src'), 'ui/server.mjs'].filter((f) => /\.(m?js|html|css)$/.test(f)).concat(docs);
+  return { root, files, docs };
+}
+
+// U7: the four pages are named as pages ("the Providers page", "Connectors › Skills"); no string, prompt,
+// comment or user doc still sends anyone to a Settings tab that is gone. (docs/superpowers, docs/plans and
+// docs/changelog are history: they keep the words of their day.)
+test('no copy in the app, the server or the docs points at Settings › Plugins / Sets / Models / Providers', () => {
+  const { root, files, docs } = copyFiles();
   assert.ok(files.length > 50 && docs.length > 10, 'the sweep reads the tree');
   const offenders = [];
   for (const f of files) {
@@ -335,13 +353,29 @@ test('no copy in the app, the server or the docs points at Settings › Plugins 
   assert.deepEqual(offenders, []);
 });
 
+// P7 (final sweep): nothing names the Marketplace page's old sections — the Available list, a plugin card, a plugin's
+// Settings reached straight from the page (it lives under Installed now).
+test('no copy points at the Marketplace page\'s old Available list, plugin cards or a Settings path past Installed', () => {
+  const { root, files } = copyFiles();
+  const offenders = [];
+  for (const f of files) {
+    const src = readFileSync(root + f, 'utf8');
+    for (const re of [/Marketplace\s*[›>→▸]\s*Available\b/g, /\bAvailable list\b/g, /\*\*Available\*\*/g, /\bMarketplace card\b/g,
+      /Marketplace\s*[›>→▸]\s*(?!Installed\b|Browse\b|Marketplaces\b|Add marketplace\b)\S+\s*[›>→▸]\s*Settings\b/g,
+      /Marketplace page:\s*(?!Installed\b)\S+\s*›\s*Settings\b/g]) {
+      for (const m of src.matchAll(re)) offenders.push(`${f}: ${m[0]}`);
+    }
+  }
+  assert.deepEqual(offenders, []);
+});
+
 // ── the sidebar's Add-ons group (CONTRACT §3) ─────────────────────────────────
 test('the sidebar\'s Add-ons group sits between Workflows and Manage: a label and four rows, each with its level', () => {
   const doc = new JSDOM(html).window.document;
   const sect = [...doc.querySelectorAll('.nav > .nav-sect')].find((s) => s.textContent.trim() === 'Add-ons');
   assert.ok(sect, 'the Add-ons label');
   assert.equal(sect.dataset.minLevel, 'advanced', 'the label hides with its Advanced rows');
-  assert.equal(sect.previousElementSibling.dataset.nav, 'workflows', 'right after the Workflows row');
+  assert.equal(sect.previousElementSibling.dataset.nav, 'requirements', 'right after the last Build row (Requirements follows Workflows)');
   const rows = [];
   for (let n = sect.nextElementSibling; n && n.tagName === 'BUTTON'; n = n.nextElementSibling) rows.push(n);
   assert.deepEqual(rows.map((b) => [b.dataset.nav, b.dataset.minLevel, b.querySelector(':scope > span').textContent]), [
@@ -365,7 +399,8 @@ test('an Add-ons row opens its page, lights itself and names the page in the top
       assert.deepEqual(shownView(doc), [view]);
       assert.ok(row.classList.contains('active'));
       assert.equal(row.getAttribute('aria-current'), 'page');
-      assert.deepEqual([...doc.querySelectorAll('[aria-current="page"]')], [row], 'only the open page is lit: Settings is not');
+      // The Marketplace page's own tab strip marks its selected tab too (marketplace CONTRACT §5); the sidebar lights one row.
+      assert.deepEqual([...doc.querySelectorAll('[aria-current="page"]:not(.mk-tab)')].map((n) => n === row), [true], 'only the open page is lit: Settings is not');
       assert.equal(doc.getElementById('topnav-title').textContent, label);
     } })),
     { name: 'at Simple the Models row stays on screen while Models is open, and goes when you leave', run: async () => {

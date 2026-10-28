@@ -5,6 +5,9 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { isomorphic } from '../src/shared/graph/isomorphic.mjs';
 import { remapTunables, buildProposal, sanitizeProposalAnswer, mintAutoWorkflowId } from '../src/core/auto/proposal.mjs';
+import { JSDOM } from 'jsdom';
+import { createProposalValidator } from '../src/core/ask/proposal.mjs';
+import { shapeCardExtras } from '../ui/public/shape/proposal.mjs';
 
 const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
 const MODELS = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'max'] }, { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high'] }, { id: 'claude-hidden-9', label: 'Hidden', efforts: ['medium'], hidden: true }];
@@ -156,4 +159,65 @@ test('mintAutoWorkflowId slugs the name, avoids reserved ids and bumps on collis
   assert.equal(await mintAutoWorkflowId('auto', exists), 'wf_auto-workflow');
   assert.equal(await mintAutoWorkflowId('', exists), 'wf_auto-workflow');
   assert.equal(await mintAutoWorkflowId('memory_defrag', exists), 'wf_memory-defrag');
+});
+
+// ── Project fit (slice 3): the Ask run card (src/core/ask/proposal.mjs) carries the perspectives; this file keeps
+// the slice 3 acceptance name. ──
+
+const WFS = new Set(['wf_default', 'wf_shape', 'wf_shape_ux']);
+const askDeps = (hasHouseBrief) => ({
+  listProjects: async () => [{ key: 'demo-00000001', name: 'Demo', path: '/p/demo', exists: true }],
+  readWorkspace: async (id) => (id === 'wks-team-0000abcd'
+    ? { id, name: 'Team', description: '', projectPaths: ['/p/demo'], projectKeys: ['demo-00000001'], exists: [true] } : null),
+  readWorkflow: async (id) => (WFS.has(id) ? { id, name: id } : null),
+  assertRunnableWorkflow: async (id) => { if (!WFS.has(id)) throw new Error(`unknown workflowId "${id}"`); return { id, name: id }; },
+  readGuardrailSet: async (id) => (id === 'normal' ? { id } : null),
+  isGitRepo: () => true,
+  pathExists: (p) => p === '/p/demo',
+  hasHouseBrief,
+});
+// claudeAuth pinned: otherwise `notes` follows the host's WORCA_ASK_CLAUDE_AUTH (proposal.mjs:485) and the
+// "no note" assertion below would depend on the machine.
+const propose = (hasHouseBrief, input) => createProposalValidator(askDeps(hasHouseBrief))
+  .validateProposal({ projectKey: 'demo-00000001', brief: 'x', ...input }, { claudeAuth: 'signed-in' });
+const chips = (card) => {
+  const ui = shapeCardExtras(new JSDOM('<!doctype html><body></body>').window.document, card);
+  ui.el.querySelector('.shape-chip-more')?.click();
+  return Object.fromEntries([...ui.el.querySelectorAll('.shape-chip')].map((b) => [b.dataset.perspective, b.getAttribute('aria-pressed')]));
+};
+
+test('Project fit: a project with a house brief proposes it ticked (shaped and nudged cards)', async () => {
+  const shaped = await propose(async () => true, { shape: {} });
+  assert.equal(shaped.ok, true, JSON.stringify(shaped));
+  assert.deepEqual(shaped.card.shape.perspectives, ['product', 'architect', 'qa', 'fit']);
+  assert.equal(shaped.card.workflowId, 'wf_shape');
+  assert.equal(chips(shaped.card).fit, 'true');
+  const nudged = await propose(async () => true, { assess: { size: 'large', openDecisions: [] } });
+  assert.ok(nudged.card.nudge.perspectives.includes('fit'));
+});
+
+test('Project fit: without a brief the chip is absent and no error is raised', async () => {
+  const plain = await propose(async () => false, { shape: {} });
+  assert.equal(plain.ok, true);
+  assert.deepEqual(plain.card.shape.perspectives, ['product', 'architect', 'qa']);
+  const shown = chips(plain.card);
+  assert.equal('fit' in shown, false);
+  assert.equal(Object.keys(shown).length, 7);
+  const asked = await propose(async () => false, { shape: { perspectives: ['qa', 'fit'] } });
+  assert.equal(asked.ok, true, JSON.stringify(asked));
+  assert.deepEqual(asked.card.shape.perspectives, ['product', 'qa']);
+  const broken = await propose(async () => { throw new Error('EACCES'); }, { shape: {} });
+  assert.equal(broken.ok, true);
+  assert.equal(broken.card.shape.perspectives.includes('fit'), false);
+  assert.equal(broken.errors, undefined);
+  assert.equal(broken.notes, undefined);
+});
+
+test('Project fit: a workspace card never asks for a brief and has no fit', async () => {
+  let asked = 0;
+  const r = await createProposalValidator(askDeps(async () => { asked++; return true; }))
+    .validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', shape: {} }, { claudeAuth: 'signed-in' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.card.shape.perspectives.includes('fit'), false);
+  assert.equal(asked, 0);
 });

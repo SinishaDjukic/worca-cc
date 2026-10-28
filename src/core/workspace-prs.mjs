@@ -8,9 +8,10 @@
 export const changedFileCount = (s) => (s ? (s.filesNew | 0) + (s.filesChanged | 0) : 0);
 
 /**
- * The run's members as { memberKey, name, projectDir, feature, source }, in
+ * The run's members as { memberKey, name, projectDir, feature, source, workMode }, in
  * state.projects order. projectDir is the member's REAL repo dir (run-harness
  * resolves it before the worktree), which is where its feature branch is kept.
+ * workMode is 'folder' only for a Folder member (state.projects[i].workMode), else 'git'.
  */
 export function workspaceMembers(state) {
   const branches = state && state.branches && typeof state.branches === 'object' ? state.branches : {};
@@ -25,6 +26,7 @@ export function workspaceMembers(state) {
         projectDir: p.projectDir || null,
         feature: typeof b.feature === 'string' && b.feature ? b.feature : null,
         source: typeof b.source === 'string' && b.source ? b.source : null,
+        workMode: p.workMode === 'folder' ? 'folder' : 'git',
       };
     });
 }
@@ -35,6 +37,7 @@ export function memberPrTarget(state, memberKey) {
   if (!key) return { ok: false, error: 'memberKey is required for a workspace run' };
   const m = workspaceMembers(state).find((x) => x.memberKey === key);
   if (!m) return { ok: false, error: `unknown workspace member: ${key.slice(0, 80)}` };
+  if (m.workMode === 'folder') return { ok: false, error: `a Folder member has no branch to create a PR from: ${m.memberKey}` };
   return { ok: true, target: { repoDir: m.projectDir, feature: m.feature, source: m.source, memberKey: m.memberKey, memberName: m.name } };
 }
 

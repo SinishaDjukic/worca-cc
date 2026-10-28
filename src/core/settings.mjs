@@ -19,6 +19,9 @@
 //                            override); this module never writes process.env.
 //   resumeAfterUsageLimit  — opt-in boolean (default false): schedule a usage-limit pause's
 //                            resume for just after the limit resets, unattended.
+//   autoGeneratePrDescription — opt-in boolean (default false): the Create PR dialog
+//                            drafts its description with AI as soon as it opens.
+//   updateCheck            — boolean (default true): check npm for a newer stable Worca (Settings › About).
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
@@ -57,15 +60,19 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
-  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
+  COPILOT_TERMS_VERSION, isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
+import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
+import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
+import { normalizePins, storedPins } from '../shared/home-pins.mjs';
+import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -133,6 +140,14 @@ async function persistSettings(settings) {
   await rename(tmp, file);
 }
 
+/** Setup apply (D20): set or delete whole top-level keys in ONE read and ONE persistSettings. `undefined` deletes. */
+export async function writeSettingsKeys(values) {
+  const settings = readSettings();
+  for (const [k, v] of Object.entries(values)) { if (v === undefined) delete settings[k]; else settings[k] = v; }
+  await persistSettings(settings);
+  return Object.keys(values);
+}
+
 /**
  * Persist the chosen root base. Pass '' / null / non-string to CLEAR it (reset
  * to default). A non-empty value is resolved to an absolute path and validated:
@@ -169,12 +184,15 @@ export async function setWorcaRoot(input) {
 //
 // DELIBERATELY NOT derived from `root`: `root` means "where worca-cc's data
 // lives", so relocating the data dir to an external volume must not silently
-// relocate the user's instruction root.
+// relocate the user's instruction root — that holds for an explicit value. The
+// DEFAULT (nothing set) is `<worcaHome>/projects` (U6): New and Clone from URL
+// create projects there, so it follows WORCA_HOME and the Settings root. Existing
+// projects stay where they are.
 // ---------------------------------------------------------------------------
 
 /**
  * The effective projects root. Precedence: WORCA_PROJECTS_ROOT env →
- * settings.projectsRoot → defaultRoot(). ALWAYS an absolute path (never '',
+ * settings.projectsRoot → <worcaHome>/projects (worcaProjectsFolder()). ALWAYS an absolute path (never '',
  * unlike getWorcaRoot()) — the root context layer must always have a base.
  *
  * Only the SETTER validates dir-ness. The env tier passes through unchecked, so a
@@ -186,15 +204,15 @@ export function getProjectsRoot() {
   const env = process.env.WORCA_PROJECTS_ROOT;
   if (env && env.trim()) return resolve(expandTilde(env.trim()));
   const r = readSettings().projectsRoot;
-  return typeof r === 'string' && r.trim() ? resolve(expandTilde(r.trim())) : defaultRoot();
+  return typeof r === 'string' && r.trim() ? resolve(expandTilde(r.trim())) : worcaProjectsFolder();
 }
 
 /**
  * The RAW persisted projectsRoot — '' when the key is absent, blank, or not a
  * string. The exact mirror of getWorcaRoot(), and what the settings UI puts in
  * its field: "unset" must stay distinguishable from "explicitly set", so a blank
- * field can round-trip as blank and the "leave blank to use your home folder"
- * affordance is real.
+ * field can round-trip as blank and the "leave blank to use worca's projects
+ * folder" affordance is real.
  *
  * DELIBERATELY ignores the WORCA_PROJECTS_ROOT env tier: the env is an
  * override, not a setting, and surfacing it as the field value would let a plain
@@ -209,7 +227,7 @@ export function rawProjectsRoot() {
 
 /**
  * What applies when projectsRoot is left blank — the env tier if it is exported,
- * else defaultRoot(). This is the settings-UI placeholder, i.e. the honest answer
+ * else <worcaHome>/projects (worcaProjectsFolder()). This is the settings-UI placeholder, i.e. the honest answer
  * to "what do I get if I clear this field?", and it is why the API cannot just
  * reuse `default` (which is defaultRoot(), the worca-cc root default, and would
  * lie whenever WORCA_PROJECTS_ROOT is set).
@@ -221,14 +239,34 @@ export function rawProjectsRoot() {
 export function defaultProjectsRoot() {
   const env = process.env.WORCA_PROJECTS_ROOT;
   if (env && env.trim()) return resolve(expandTilde(env.trim()));
-  return defaultRoot();
+  return worcaProjectsFolder();
+}
+
+/**
+ * The DEFAULT projects root, <worcaHome>/projects (U6): New and Clone from URL create projects there. Mirrors
+ * projects.mjs#worcaHome()'s base rule (this module may not import projects.mjs); no node:test guard — it only
+ * computes a path. Never creates it.
+ */
+export function worcaProjectsFolder() {
+  const env = process.env.WORCA_HOME;
+  const base = env && env.trim() ? env : (getWorcaRoot() || defaultRoot());
+  return join(resolve(base), '.worca-cc', 'projects');
+}
+
+/** Which tier getProjectsRoot() used: 'env' | 'settings' | 'default'. Read fresh on every call. */
+export function projectsRootSource() {
+  const env = process.env.WORCA_PROJECTS_ROOT;
+  if (env && env.trim()) return 'env';
+  const r = readSettings().projectsRoot;
+  return typeof r === 'string' && r.trim() ? 'settings' : 'default';
 }
 
 /**
  * Persist the projects root. Pass '' / null / non-string to CLEAR it (reset to
- * defaultRoot()). A non-empty value is `~`-expanded, resolved absolute, and must
- * be an EXISTING directory — worca-cc never writes anything under projectsRoot
- * (this is the one divergence from setWorcaRoot, which pre-creates
+ * <worcaHome>/projects). A non-empty value is `~`-expanded, resolved absolute, and must
+ * be an EXISTING directory — worca writes under projectsRoot only to create a
+ * project folder (New, Clone from URL) and the root itself on first use; a typed
+ * path must still exist, so a typo is rejected, not created (this is the one divergence from setWorcaRoot, which pre-creates
  * <base>/.worca-cc to prove writability; there is nothing to pre-create here, and
  * silently mkdir-ing a mistyped path would be worse than rejecting it).
  * Atomic temp+rename over the same read-modify-write object, so `root` and every
@@ -301,6 +339,7 @@ export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health 
 export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
 export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
 export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
+export const DEFAULT_MEMORY_TEAM_MAX_FILES = 50;   // team notes a run or chat LOADS per project, newest first (team memory 1a)
 
 export const DEFAULT_MEMORY_DEFRAG_WRITES = 10;     // writesSinceDefrag at which a scope is "due"
 export const DEFAULT_MEMORY_DEFRAG_FILES = 30;      // file count at which a scope is "due"
@@ -348,6 +387,7 @@ export function memoryCaps(scope) {
     hardBytesPerFile: projectOverride('memory.maxBytesPerFile', scope) ?? readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
     maxFilesPerScope: projectOverride('memory.maxFilesPerScope', scope) ?? readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
     hookMaxChars: projectOverride('memory.hookMaxChars', scope) ?? readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
+    teamMaxFiles: projectOverride('memory.teamMaxFiles', scope) ?? readMemoryCap('teamMaxFiles', DEFAULT_MEMORY_TEAM_MAX_FILES),
     defrag: {
       writes: projectOverride('memory.defrag.writes', scope) ?? readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
       files: projectOverride('memory.defrag.files', scope) ?? readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
@@ -356,6 +396,19 @@ export function memoryCaps(scope) {
     },
   };
 }
+
+/** Team memory (phase 1a) is on for this project. The PROJECT layer only — no settings.json default, no team-policy
+ *  field: sharing is opted into one project at a time. No scope (a global note, a workspace run) is always off.
+ *  `memory.team` is `true` (on, runs and chats load local and team notes) or `"only"` (on, they load team notes only:
+ *  team-memory-load-choice.md); anything else is off. */
+export function teamMemoryEnabled(scope) { return teamMemoryLoad(scope) !== 'local'; }
+/** Which notes of this project a run or chat loads: 'local' (team memory off), 'both' (`memory.team: true`) or 'team'
+ *  (`memory.team: "only"`). */
+export function teamMemoryLoad(scope) {
+  const v = projectOverride('memory.team', scope);
+  return v === true ? 'both' : v === TEAM_MEMORY_ONLY ? 'team' : 'local';
+}
+export const TEAM_MEMORY_ONLY = 'only';
 
 // ── Memory defragment model (Settings › Memory) ─────────────────────────────
 // `memory.defrag.model` / `memory.defrag.effort`: the pair EVERY Memory defragment run uses
@@ -406,19 +459,25 @@ export function memoryDefragModel() {
  *   the model does not offer
  */
 export function assertMemoryDefragModelInput(input, models = null) {
+  return assertModelPairInput('memoryDefrag', input, models);
+}
+
+/** The `{ model, effort }` pair check shared by memoryDefrag, agentGenModel, namingModel and commandSummaryModel; `key`
+ *  names the setting in every message. */
+function assertModelPairInput(key, input, models) {
   if (input === '' || input === null || input === undefined) return null;
-  if (typeof input !== 'object' || Array.isArray(input)) throw new Error('memoryDefrag must be { model, effort } or null');
+  if (typeof input !== 'object' || Array.isArray(input)) throw new Error(`${key} must be { model, effort } or null`);
   const blank = (v) => v === null || v === undefined || (typeof v === 'string' && !v.trim());
   if (blank(input.model)) {
-    if (!blank(input.effort)) throw new Error('memoryDefrag.effort needs a model — an effort without a model means nothing');
+    if (!blank(input.effort)) throw new Error(`${key}.effort needs a model — an effort without a model means nothing`);
     return null;
   }
   if (typeof input.model !== 'string' || !input.model.trim() || input.model.length > DEFRAG_MODEL_MAX_LEN) {
-    throw new Error('memoryDefrag.model must be a catalog model id');
+    throw new Error(`${key}.model must be a catalog model id`);
   }
   const effortIn = typeof input.effort === 'string' ? input.effort.trim() : input.effort;   // trimmed like setNodeModel / checkStartPair
   if (!blank(effortIn) && !EFFORTS.includes(effortIn)) {
-    throw new Error(`memoryDefrag.effort must be one of ${EFFORTS.join(' | ')}`);
+    throw new Error(`${key}.effort must be one of ${EFFORTS.join(' | ')}`);
   }
   let model = input.model.trim();
   const effort = blank(effortIn) ? null : effortIn;
@@ -790,6 +849,64 @@ export async function setAskWeb(input) {
   return { askWeb: askWeb() };
 }
 
+// ── Smart run naming (src/core/naming.mjs, flag smartRunNaming) ───────────────
+// `smartNaming` = { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }. The stored
+// block holds only what differs from the defaults. The project layer may hold `pattern` and `types` only.
+// The model is a helper job of its own (`namingModel`); a leftover `model` key from before is ignored.
+export const SMART_NAMING_DEFAULTS = Object.freeze({
+  suggestTitle: true, suggestBranch: true,
+  pattern: DEFAULT_PATTERN, types: Object.freeze([...DEFAULT_TYPES]), trigger: 'debounce', addRunId: false,
+});
+
+/** Validate + normalise a user-layer block (partial allowed). Throws Error with a field-ready message. */
+export function assertSmartNamingInput(input) {
+  if (!isObj(input)) throw new Error('smart run naming must be an object');
+  const out = {};
+  for (const k of ['suggestTitle', 'suggestBranch', 'addRunId']) {
+    if (k in input) { if (typeof input[k] !== 'boolean') throw new Error(`${k} must be true or false`); out[k] = input[k]; }
+  }
+  if ('pattern' in input) { const p = patternProblem(input.pattern); if (p) throw new Error(p); out.pattern = input.pattern.trim(); }
+  if ('types' in input) {
+    const t = input.types;
+    if (!Array.isArray(t) || !t.length || t.length > 20 || t.some((x) => typeof x !== 'string' || !TYPE_RE.test(x))) {
+      throw new Error('types must be 1 to 20 short lowercase words');
+    }
+    out.types = [...new Set(t)];
+  }
+  if ('trigger' in input) { if (!['debounce', 'manual'].includes(input.trigger)) throw new Error('trigger must be debounce or manual'); out.trigger = input.trigger; }
+  return out;
+}
+
+/** Effective config: defaults, then the user block, then the project layer (pattern and types only). */
+export function smartNaming(scope) {
+  const user = readSettings().smartNaming;
+  const proj = projectOverride('smartNaming', scope);
+  const pick = (o) => (isObj(o) ? o : {});
+  const { model: _legacyModel, ...stored } = pick(user);   // the model moved to namingModel: ignore a leftover
+  const merged = { ...SMART_NAMING_DEFAULTS, ...stored };
+  merged.types = [...merged.types];
+  for (const k of ['pattern', 'types']) if (pick(proj)[k] !== undefined) merged[k] = k === 'types' ? [...proj[k]] : proj[k];
+  return merged;
+}
+
+/** setSmartNaming's merge, pure: `null` deletes; keys equal to the default are dropped. undefined = delete the block. */
+export function nextSmartNaming(current, input) {
+  if (input === null) return undefined;
+  const { model: _legacyModel, ...prev } = isObj(current) ? current : {};   // dropped on save
+  const next = { ...prev, ...assertSmartNamingInput(input) };
+  for (const [k, def] of Object.entries(SMART_NAMING_DEFAULTS)) if (JSON.stringify(next[k]) === JSON.stringify(def)) delete next[k];
+  return Object.keys(next).length ? next : undefined;
+}
+
+/** `null` deletes the block; otherwise the validated keys merge over the stored block and keys equal to the default are dropped. */
+export async function setSmartNaming(input) {
+  const settings = readSettings();
+  const next = nextSmartNaming(settings.smartNaming, input);
+  if (next !== undefined) settings.smartNaming = next; else delete settings.smartNaming;
+  await persistSettings(settings);
+  return { smartNaming: smartNaming() };
+}
+
 // ── Night mode (src/core/night/*) ─────────────────────────────────────────────
 // `nightMode` is the user layer of the night config (only the fields the user set);
 // `nightModeToggle` is the live global switch and is NOT part of the field precedence.
@@ -929,12 +1046,15 @@ export async function addAskWebHost(host) {
     search: s ? { url: s.url, key: s.key, keyHeader: s.keyHeader, keyPrefix: s.keyPrefix } : null });
 }
 
+/** setUsdCap's value, pure: the number to store, or undefined = delete (unlimited). */
+export function nextUsdCap(key, input) { assertUsdCapInput(key, input); return isClearInput(input) ? undefined : input; }
+
 /** Write (or clear) a USD cap key. @throws {Error} unless positive finite number (or empty). */
 async function setUsdCap(key, input) {
-  assertUsdCapInput(key, input);
+  const v = nextUsdCap(key, input);
   const settings = readSettings();
-  if (isClearInput(input)) delete settings[key];  // reset to unlimited
-  else settings[key] = input;
+  if (v === undefined) delete settings[key];  // reset to unlimited
+  else settings[key] = v;
   await persistSettings(settings);
   return { [key]: readUsdCap(key) };            // the EFFECTIVE value
 }
@@ -968,8 +1088,10 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * enabled (an absent "<plugin>/<channelId>" key means enabled — presence with
  * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
- * takes save_script / test_script away.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean}}
+ * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
+ * each reply (one cheap model call per reply), default ON as well. `summariseCommands` (#911, flag
+ * commandSummaries) shows chat commands as one-line rows, default ON too.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -980,13 +1102,17 @@ export function chatPrefs() {
   for (const [key, v] of Object.entries(chat.channels && typeof chat.channels === 'object' ? chat.channels : {})) {
     channels[key] = { enabled: v?.enabled !== false };
   }
-  return { notify, channels, scriptTools: chat.scriptTools !== false };
+  // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
+  // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
+    summariseCommands: chat.summariseCommands !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean}. Unknown
- * notify keys and a non-boolean scriptTools are rejected (400 at the API layer);
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
+ * summariseCommands?: boolean}.
+ * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
  * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
@@ -996,6 +1122,10 @@ export async function setChatPrefs(patch = {}) {
   }
   const hasScriptTools = Object.prototype.hasOwnProperty.call(patch, 'scriptTools');
   if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
+  const hasSuggestions = Object.prototype.hasOwnProperty.call(patch, 'suggestions');
+  if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
+  const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
+  if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1008,17 +1138,22 @@ export async function setChatPrefs(patch = {}) {
       },
     } : {}),
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
+    ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
+    ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
 }
 
+/** setCostLimitResetPeriod's value, pure: undefined = delete (back to 'monthly'). */
+export function nextCostLimitResetPeriod(input) { assertResetPeriodInput(input); return isClearInput(input) ? undefined : input; }
+
 /** @throws {Error} unless `input` is 'weekly' | 'monthly' (or empty, which resets). */
 export async function setCostLimitResetPeriod(input) {
-  assertResetPeriodInput(input);
+  const v = nextCostLimitResetPeriod(input);
   const settings = readSettings();
-  if (isClearInput(input)) delete settings.costLimitResetPeriod;  // reset to 'monthly'
-  else settings.costLimitResetPeriod = input;
+  if (v === undefined) delete settings.costLimitResetPeriod;  // reset to 'monthly'
+  else settings.costLimitResetPeriod = v;
   await persistSettings(settings);
   return { costLimitResetPeriod: costLimitResetPeriod() };
 }
@@ -1122,24 +1257,36 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'root', 'projectsRoot', 'chat',
   'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
-  'askWeb',                                  // Ask Worca web access { enabled, allowedDomains, search }
+  'askWeb',                                  // Chat web access { enabled, allowedDomains, search }
+  'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
+  'keepAwake',                               // the account menu's Keep awake switch (default on)
   'resumeAfterUsageLimit',
+  'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
   'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
+  'autoGeneratePrDescription',               // run that Generate with AI when the modal opens
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
+  'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
+  'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
+  'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
   'nightModeToggle',                         // night mode live switch: auto | on | off
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
+  'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
-  'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
+  'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
+  'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
+  'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
+  'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
+  'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
 
 let projectLayerReader = null;
@@ -1179,6 +1326,23 @@ export function askModelsSetting() {
   const value = readSettings().askModels;
   return isObj(value) ? value : {};
 }
+/** The Requirements interview's STORED { model?, effort? } (A1.1 D1), or undefined: user-only, Claude-only, not a UTILITY_JOBS entry. */
+export function requirementsInterviewSetting() {
+  if (homeGuarded()) return undefined;
+  const value = readSettings().requirementsInterview;
+  return isObj(value) ? value : undefined;
+}
+/** Validate a POST value: { model?, effort? } (an effort alone is allowed), null / '' to clear. */
+export function assertRequirementsInterviewInput(input) {
+  return normalizeModelPair('claude', input, 'requirementsInterview');
+}
+export async function setRequirementsInterview(input) {
+  const value = assertRequirementsInterviewInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.requirementsInterview; else settings.requirementsInterview = value;
+  await persistSettings(settings);
+  return { requirementsInterview: requirementsInterviewSetting() ?? null };
+}
 export function assertAskEngineInput(input) {
   if (input === null || input === undefined || input === '') return null;
   if (!ASK_ENGINES.includes(input)) throw new Error(`askEngine must be one of ${ASK_ENGINES.join(' | ')}`);
@@ -1214,10 +1378,12 @@ export function assertRunEngineInput(input) {
   if (!RUN_ENGINES.includes(input)) throw new Error(`runEngine must be one of ${RUN_ENGINES.join(' | ')}`);
   return input;
 }
+/** setRunEngineSetting's value, pure: undefined = delete. */
+export function nextRunEngine(input) { const v = assertRunEngineInput(input); return v === null ? undefined : v; }
 export async function setRunEngineSetting(input) {
-  const value = assertRunEngineInput(input);
+  const value = nextRunEngine(input);
   const settings = readSettings();
-  if (value === null) delete settings.runEngine; else settings.runEngine = value;
+  if (value === undefined) delete settings.runEngine; else settings.runEngine = value;
   await persistSettings(settings);
   return { runEngine: runEngineSetting() ?? null };
 }
@@ -1246,6 +1412,55 @@ export async function setStepModels(input) {
   }
   if (Object.keys(all).length) settings.stepModels = all; else delete settings.stepModels;
   await persistSettings(settings); return { stepModels: stepModelsSetting() };
+}
+/** modelRoles (D1, D5): { <engine>: { deep|everyday|quick: { model, effort? } } }. Empty under node:test (homeGuarded). */
+export function modelRolesSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().modelRoles;
+  return isObj(value) ? value : {};
+}
+/** A role names a model; its effort is any reasoning level, mapped to the harness's nearest one when used (effortOn). */
+export function normalizeRolePair(input, label = 'role') {
+  if (input === null || input === undefined || input === '') return null;
+  if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
+  const model = typeof input.model === 'string' ? input.model.trim() : '';
+  const effort = typeof input.effort === 'string' ? input.effort.trim() : '';
+  if (!model) throw new Error(`${label}.model is required: a role names the model its jobs use`);
+  if (model.length > MODEL_PAIR_MAX_LEN) throw new Error(`${label}.model is too long`);
+  if (effort && !REASONING_EFFORT_LEVELS.includes(effort)) throw new Error(`${label}.effort must be one of ${REASONING_EFFORT_LEVELS.join(' | ')}`);
+  return { model, ...(effort ? { effort } : {}) };
+}
+export function assertModelRolesInput(input) {
+  if (!isObj(input)) throw new Error('modelRoles must be { <engine>: { deep|everyday|quick: { model, effort } | null } }');
+  const out = {};
+  for (const [engine, roles] of Object.entries(input)) {
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`modelRoles: unknown engine "${engine}"`);
+    if (!isObj(roles)) throw new Error(`modelRoles.${engine} must be an object of role → { model, effort } | null`);
+    out[engine] = {};
+    for (const [role, value] of Object.entries(roles)) {
+      if (!MODEL_ROLES.includes(role)) throw new Error(`modelRoles.${engine}: unknown role "${role}" (one of ${MODEL_ROLES.join(', ')})`);
+      out[engine][role] = normalizeRolePair(value, `modelRoles.${engine}.${role}`);
+    }
+  }
+  return out;
+}
+/** setModelRoles' merge, pure, over an ALREADY asserted patch (the server canonicalises ids in between). undefined = delete. */
+export function nextModelRoles(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, roles] of Object.entries(patch)) {
+    const cur = isObj(all[engine]) ? { ...all[engine] } : {};
+    for (const [role, pair] of Object.entries(roles)) { if (pair === null) delete cur[role]; else cur[role] = pair; }
+    if (Object.keys(cur).length) all[engine] = cur; else delete all[engine];
+  }
+  return Object.keys(all).length ? all : undefined;
+}
+/** Merge a role patch (null clears a role) and write it. Returns what it wrote, so the answer holds under homeGuarded. */
+export async function setModelRoles(input) {
+  const patch = assertModelRolesInput(input); const settings = readSettings();
+  const v = nextModelRoles(settings.modelRoles, patch);
+  if (v === undefined) delete settings.modelRoles; else settings.modelRoles = v;
+  await persistSettings(settings); return { modelRoles: v ?? {} };
 }
 export function assertUtilityModelsInput(input) {
   if (!isObj(input)) throw new Error('utilityModels must be { <engine>: { <job>: { model, effort } | null } }');
@@ -1290,6 +1505,8 @@ export function normalizeModelPair(engine, input, label = 'model') {
 }
 export const SETTING_CHECKS = Object.freeze({
   usdCap: (value) => isUsdCap(value), byteCap: (value) => isByteCap(value),
+  bool: (value) => typeof value === 'boolean',
+  teamMemory: (value) => typeof value === 'boolean' || value === TEAM_MEMORY_ONLY,
   pct: (value) => isByteCap(value) && value <= 100,
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),
@@ -1461,6 +1678,139 @@ export async function setPrDescriptionModel(input, { models = null } = {}) {
   return { prDescriptionModel: prDescriptionModel() };
 }
 
+// ── Agent generation model (Workflows › Agents › + › Generate) ───────────────
+// `agentGenModel`: the { model, effort } pair of the agent wizard's one claude call
+// (agent-gen.mjs). User-level and Claude-only: agent generation always runs on Claude and has
+// no project, so there is no project override and no other engine's slot. Unset = the CLI's
+// default model. Read when Generate is clicked (server.mjs startAgentGen).
+const warnedAgentGenModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws: a bad hand
+ *  edit warns once and reads as unset (a bad effort alone reads as the model's default effort).
+ *  The memoryDefragModel node:test guard: settings.json lives under HOME, not WORCA_HOME. */
+export function agentGenModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().agentGenModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedAgentGenModel.has(id)) return;
+    warnedAgentGenModel.add(id);
+    console.warn(`[worca] invalid agentGenModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'agent generation uses the CLI default');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'agent generation uses the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+/**
+ * Validate a POST value exactly like assertMemoryDefragModelInput: `{ model, effort }`, or null /
+ * '' / a blank model to clear. With `models` (the effective catalog) the model must name an entry —
+ * it comes back in the catalog's casing — and the effort must be one that entry offers.
+ * @returns {{model:string, effort:(string|null)}|null} the pair to store, null to clear
+ * @throws {Error} on a malformed value, an effort without a model, an unknown model or an effort
+ *   the model does not offer
+ */
+export function assertAgentGenModelInput(input, models = null) {
+  return assertModelPairInput('agentGenModel', input, models);
+}
+
+export async function setAgentGenModel(input, { models = null } = {}) {
+  const pair = assertAgentGenModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.agentGenModel;
+  else settings.agentGenModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { agentGenModel: agentGenModel() };
+}
+
+// ── Run naming model (Models › Engines › Claude › Helper jobs › Run naming) ───
+// `namingModel`: the { model, effort } pair of Smart run naming's one cheap call (naming.mjs suggestNames).
+// User-level and Claude-only like agentGenModel: naming always runs on Claude (auxTextCall) and the New run
+// form's suggestion is not a run, so there is no project override and no other engine's slot. Unset = the
+// cheapest ready Claude model at its lowest effort (naming.mjs#resolveNamingModel).
+const warnedNamingModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws (agentGenModel's rules). */
+export function namingModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().namingModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedNamingModel.has(id)) return;
+    warnedNamingModel.add(id);
+    console.warn(`[worca] invalid namingModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'run naming uses the cheapest ready Claude model');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'run naming uses the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+/** Validate a POST value exactly like assertAgentGenModelInput. */
+export function assertNamingModelInput(input, models = null) {
+  return assertModelPairInput('namingModel', input, models);
+}
+
+export async function setNamingModel(input, { models = null } = {}) {
+  const pair = assertNamingModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.namingModel;
+  else settings.namingModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { namingModel: namingModel() };
+}
+
+// ── Command summaries model (Models › Engines › Claude › Helper jobs › Command summaries) ───
+// `commandSummaryModel`: the { model, effort } pair of the chat command summary call (ask/command-summary.mjs).
+// User-level and Claude-only like namingModel. Unset = the cheapest ready Claude model at its lowest effort
+// (naming.mjs#resolveNamingModel); none ready = no summary, the row keeps the raw command.
+const warnedCommandSummaryModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws (namingModel's rules). */
+export function commandSummaryModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().commandSummaryModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedCommandSummaryModel.has(id)) return;
+    warnedCommandSummaryModel.add(id);
+    console.warn(`[worca] invalid commandSummaryModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'command summaries use the cheapest ready Claude model');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'command summaries use the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+export function assertCommandSummaryModelInput(input, models = null) {
+  return assertModelPairInput('commandSummaryModel', input, models);
+}
+
+export async function setCommandSummaryModel(input, { models = null } = {}) {
+  const pair = assertCommandSummaryModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.commandSummaryModel;
+  else settings.commandSummaryModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { commandSummaryModel: commandSummaryModel() };
+}
+
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
 // Like every other stored setting (skillMount, the cost caps, the ask caps) this
 // is READ AT USE TIME: claude-runner.mjs#debugSpawnEnabled calls
@@ -1517,6 +1867,52 @@ export async function setDebugSpawnEnabled(input) {
   return { debugSpawnEnabled: debugSpawnEnabled() };
 }
 
+// ── Keep awake (the account menu's switch) ──────────────────────────────────
+// Holds off idle system sleep while runs have agents working (src/core/keep-awake.mjs). Default ON;
+// only `false` is stored. It used to be the beta flag keepAwake: migrateKeepAwakeFlag moves it here.
+export const DEFAULT_KEEP_AWAKE = true;
+
+/** @throws {Error} unless `input` is a boolean. */
+export function assertKeepAwakeInput(input) {
+  if (!isBool(input)) throw new Error('keepAwake must be true or false');
+}
+
+/** True unless keepAwake is stored false. A leftover flags.keepAwake (a home the boot migration
+ *  could not write) still counts while keepAwake is unset. */
+export function keepAwakeEnabled(settings = readSettings()) {
+  const s = settings && typeof settings === 'object' ? settings : {};
+  if (isBool(s.keepAwake)) return s.keepAwake;
+  return !(s.flags && s.flags.keepAwake === false);
+}
+
+export async function setKeepAwake(input) {
+  assertKeepAwakeInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_KEEP_AWAKE) delete settings.keepAwake;
+  else settings.keepAwake = input;
+  await persistSettings(settings);
+  return { keepAwake: keepAwakeEnabled() };
+}
+
+/** The graduated flag keepAwake becomes the keepAwake setting. Pure: {changed, settings}. */
+export function migrateLegacyKeepAwakeFlag(settings) {
+  const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+  const flags = s.flags && typeof s.flags === 'object' && !Array.isArray(s.flags) ? s.flags : null;
+  if (!flags || !Object.prototype.hasOwnProperty.call(flags, 'keepAwake')) return { changed: false, settings: s };
+  const { keepAwake: was, ...restFlags } = flags;
+  const next = { ...s };
+  if (Object.keys(restFlags).length) next.flags = restFlags; else delete next.flags;
+  if (was === false && !isBool(next.keepAwake)) next.keepAwake = false;
+  return { changed: true, settings: next };
+}
+
+/** Run once at server boot, before the first syncKeepAwake. @returns {Promise<boolean>} wrote */
+export async function migrateKeepAwakeFlag() {
+  const r = migrateLegacyKeepAwakeFlag(readSettings());
+  if (!r.changed) return false;
+  try { await persistSettings(r.settings); return true; } catch { return false; }   // keepAwakeEnabled still reads the flag
+}
+
 // ── Resume after a usage limit (opt-in) ──────────────────────────────────────
 export const DEFAULT_RESUME_AFTER_USAGE_LIMIT = false;
 
@@ -1542,6 +1938,66 @@ export async function setResumeAfterUsageLimit(input) {
   else settings.resumeAfterUsageLimit = input;
   await persistSettings(settings);
   return { resumeAfterUsageLimit: resumeAfterUsageLimit() };
+}
+
+// ── Draft the PR description automatically (opt-in) ──────────────────────────
+export const DEFAULT_AUTO_GENERATE_PR_DESCRIPTION = false;
+
+/** @throws {Error} unless `input` is a boolean (the route and the setter share this). */
+export function assertAutoGeneratePrDescriptionInput(input) {
+  if (!isBool(input)) throw new Error('autoGeneratePrDescription must be true or false');
+}
+
+/** The Create PR dialog runs its Generate with AI on open when this is on. */
+export function autoGeneratePrDescription() {
+  const v = readSettings().autoGeneratePrDescription;
+  if (v === undefined) return DEFAULT_AUTO_GENERATE_PR_DESCRIPTION;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid autoGeneratePrDescription ${JSON.stringify(v)} — using the default (${DEFAULT_AUTO_GENERATE_PR_DESCRIPTION})`);
+  return DEFAULT_AUTO_GENERATE_PR_DESCRIPTION;
+}
+
+/** setAutoGeneratePrDescription's value, pure: the default is elided (undefined = delete). */
+export function nextAutoGeneratePrDescription(input) {
+  assertAutoGeneratePrDescriptionInput(input);
+  return input === DEFAULT_AUTO_GENERATE_PR_DESCRIPTION ? undefined : input;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export async function setAutoGeneratePrDescription(input) {
+  const v = nextAutoGeneratePrDescription(input);
+  const settings = readSettings();
+  if (v === undefined) delete settings.autoGeneratePrDescription;
+  else settings.autoGeneratePrDescription = v;
+  await persistSettings(settings);
+  return { autoGeneratePrDescription: autoGeneratePrDescription() };
+}
+
+// ── Check for new Worca versions (issue #841) ────────────────────────────────
+export const DEFAULT_UPDATE_CHECK = true;
+
+/** @throws {Error} unless `input` is a boolean (the route and the setter share this). */
+export function assertUpdateCheckInput(input) {
+  if (!isBool(input)) throw new Error('updateCheck must be true or false');
+}
+
+/** Whether the About card may ask npm for the latest version. Read at use time. */
+export function updateCheckEnabled() {
+  const v = readSettings().updateCheck;
+  if (v === undefined) return DEFAULT_UPDATE_CHECK;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid updateCheck ${JSON.stringify(v)} — using the default (${DEFAULT_UPDATE_CHECK})`);
+  return DEFAULT_UPDATE_CHECK;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export async function setUpdateCheck(input) {
+  assertUpdateCheckInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_UPDATE_CHECK) delete settings.updateCheck;
+  else settings.updateCheck = input;
+  await persistSettings(settings);
+  return { updateCheck: updateCheckEnabled() };
 }
 
 // ---------------------------------------------------------------------------
@@ -1591,9 +2047,13 @@ function sanitizeGlobalModel(raw) {
     const why = codexUpstreamProblem(upstream);
     if (why) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${why}`); upstream = undefined; }
   }
-  if (engine === 'cursor') {
-    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
-    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
+  if (OWN_SIGNIN_ENGINES.includes(engine)) {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — ${aModelOf(engine)} takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${ownSignInNote(engine)}`); upstream = undefined; }
+  }
+  if (engine === 'copilot') {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a copilot model takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a copilot model runs through the Copilot CLI's own sign-in`); upstream = undefined; }
   }
   if (upstream) {
     // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
@@ -1607,7 +2067,7 @@ function sanitizeGlobalModel(raw) {
   return {
     id,
     label,
-    efforts: engine === 'cursor' ? [] : (efforts.length ? efforts : [...effortsForEngine(engine)]),
+    efforts: effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : [],
     ...(engine !== 'claude' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
@@ -1702,11 +2162,17 @@ function assertModelEngine(input) {
   if (MODEL_ENGINES.includes(input)) return input;
   throw new Error(`engine must be one of ${MODEL_ENGINES.join(' | ')}`);
 }
-/** A Cursor model takes no routing env and no upstream: cursor-agent connects with its own sign-in. */
-function assertCursorFields(engine, env, upstream) {
-  if (engine !== 'cursor') return;
-  if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
-  if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
+/** A model of an own-sign-in engine (OWN_SIGNIN_ENGINES) takes no routing env and no upstream: the engine connects with its own sign-in. */
+function assertOwnSignInFields(engine, env, upstream) {
+  if (!OWN_SIGNIN_ENGINES.includes(engine)) return;
+  if (Object.keys(env || {}).length) throw new Error(`${aModelOf(engine)} takes no env`);
+  if (upstream) throw new Error(`${aModelOf(engine)} takes no upstream — ${ownSignInNote(engine)}`);
+}
+/** A Copilot model takes no routing env and no upstream: the Copilot CLI connects with its own sign-in. */
+function assertCopilotFields(engine, env, upstream) {
+  if (engine !== 'copilot') return;
+  if (Object.keys(env || {}).length) throw new Error('a copilot model takes no env');
+  if (upstream) throw new Error('a copilot model takes no upstream — the Copilot CLI connects with its own sign-in');
 }
 /** A Codex model takes no routing env, and only an OpenAI-compatible Responses endpoint as its upstream (codexUpstreamProblem). */
 function assertCodexFields(engine, env, upstream) {
@@ -1727,9 +2193,13 @@ function assertIdForEngine(id, engine, conn = {}) {
   // A built-in id names a harness's own sign-in (ChatGPT for Codex's): an entry on another connection — a gateway, a
   // provider — that serves the same model takes an id of its own; the endpoint still gets the model's own id.
   if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is the id of Codex's built-in ${id} (ChatGPT sign-in) — ${handleHint(id, conn)}`);
-  // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
-  // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
-  if (engine === 'cursor' && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id`);
+  // A sign-in engine's own ids may look like Claude's (Cursor's sonnet-4.5): the catalog row decides the owner. Only a
+  // built-in id is taken (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
+  if ((OWN_SIGNIN_ENGINES.includes(engine) || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
+  // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
+  if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
+  const why = modelIdProblem(engine, id);   // a Goose or OpenCode id is provider/model, so it never collides with a built-in
+  if (why) throw new Error(why);
 }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
@@ -1747,7 +2217,7 @@ function assertEnvPairs(env, { allowNull = false } = {}) {
 
 /** Catalog WRITES under node:test would hit the user's REAL settings.json —
  *  throw unless the test sandboxes HOME and opts in (worcaHome-guard mirror). */
-function assertTestSettingsAccess() {
+export function assertTestSettingsAccess() {
   if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) {
     throw new Error(
       'global model catalog write under the node:test runner — sandbox HOME/USERPROFILE ' +
@@ -1809,7 +2279,8 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vcost = assertModelCost(cost);
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
-  assertCursorFields(vengine, venv, vupstream);
+  assertOwnSignInFields(vengine, venv, vupstream);
+  assertCopilotFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
@@ -1871,7 +2342,8 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
-  assertCursorFields(curEngine, nextEnv, nextUpstream);
+  assertOwnSignInFields(curEngine, nextEnv, nextUpstream);
+  assertCopilotFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
   settings.models = models.slice();
@@ -2007,16 +2479,9 @@ export function copilotTermsAcknowledged() {
   return !!c.acknowledgedTerms && (c.termsVersion || 0) >= COPILOT_TERMS_VERSION;
 }
 
-/**
- * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
- * key. Validates the whole patch before writing. `dryRun` returns the
- * would-be effective config without persisting.
- * @returns {Promise<object>} the effective config
- * @throws {Error}
- */
-export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+/** updateProvider's validation alone (it throws the same messages). */
+export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
-  assertTestSettingsAccess();
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
     ...(name === 'copilot' ? ['accountType', 'acknowledgedTerms', 'termsVersion', 'login'] : ['baseUrl'])]);
@@ -2038,18 +2503,44 @@ export async function updateProvider(name, patch = {}, { dryRun = false } = {}) 
       if (!Number.isInteger(v) || v <= 0) throw new Error('termsVersion must be a positive integer');
     }
   }
-  const settings = readSettings();
-  const all = settings.providers && typeof settings.providers === 'object' && !Array.isArray(settings.providers) ? settings.providers : {};
-  const cur = all[name] && typeof all[name] === 'object' && !Array.isArray(all[name]) ? { ...all[name] } : {};
+}
+
+/** One provider's stored block after `patch` (validated by the caller). */
+function mergeProviderBlock(currentProviders, name, patch) {
+  const cur = isObj(currentProviders) && isObj(currentProviders[name]) ? { ...currentProviders[name] } : {};
   for (const [k, v] of Object.entries(patch)) {
     if (isClearInput(v)) delete cur[k];
     else if (k === 'maxConcurrent') cur[k] = Number(v);
     else if (k === 'baseUrl') cur[k] = v.trim().replace(/\/+$/, '');
     else cur[k] = typeof v === 'string' ? v.trim() : v;
   }
-  if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, cur) };
+  return cur;
+}
+
+/** updateProvider's merge, pure: the whole next `providers` block (undefined = delete it). */
+export function nextProviders(currentProviders, name, patch) {
+  assertProviderPatch(name, patch);
+  const all = isObj(currentProviders) ? { ...currentProviders } : {};
+  const cur = mergeProviderBlock(currentProviders, name, patch);
   if (Object.keys(cur).length) all[name] = cur; else delete all[name];
-  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  return Object.keys(all).length ? all : undefined;
+}
+
+/**
+ * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
+ * key. Validates the whole patch before writing. `dryRun` returns the
+ * would-be effective config without persisting.
+ * @returns {Promise<object>} the effective config
+ * @throws {Error}
+ */
+export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+  if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
+  assertTestSettingsAccess();
+  assertProviderPatch(name, patch);
+  const settings = readSettings();
+  if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, mergeProviderBlock(settings.providers, name, patch)) };
+  const v = nextProviders(settings.providers, name, patch);
+  if (v === undefined) delete settings.providers; else settings.providers = v;
   await persistSettings(settings);
   return providerConfig(name);
 }
@@ -2197,12 +2688,15 @@ export function assertUiLevelInput(input) {
   if (!isUiLevel(input)) throw new Error('uiLevel must be simple, advanced or expert');
 }
 
+/** setUiLevel's value, pure: undefined = delete (a clear). */
+export function nextUiLevel(input) { assertUiLevelInput(input); return isClearInput(input) ? undefined : input; }
+
 /** Persist the mode. Every valid value is stored (there is no fixed default to elide); a clear deletes the key. */
 export async function setUiLevel(input) {
-  assertUiLevelInput(input);
+  const v = nextUiLevel(input);
   const settings = readSettings();
-  if (isClearInput(input)) delete settings.uiLevel;
-  else settings.uiLevel = input;
+  if (v === undefined) delete settings.uiLevel;
+  else settings.uiLevel = v;
   await persistSettings(settings);
   return { uiLevel: uiLevel() };
 }
@@ -2333,6 +2827,63 @@ export async function setScheduleDefaults(patch = {}) {
   return scheduleDefaults();
 }
 
+/** The person a Chat home pin list belongs to: the signed-in name lowercased, '' for a local or operator install. */
+const pinsPersonKey = (person) => String(person ?? '').trim().toLowerCase();
+function pinsMap(settings) {
+  const m = settings.chatHomePins;
+  // A null-prototype copy: a person named "__proto__" stays an ordinary key.
+  return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+}
+
+/** The person's pinned workflow ids (Chat home quick actions), in pin order. Never set = ['wf_shape']. Never throws. */
+export function chatHomePinsFor(person) {
+  if (homeGuarded()) return storedPins(undefined);
+  return storedPins(pinsMap(readSettings())[pinsPersonKey(person)]);
+}
+
+/** Replace the person's list ([] = nothing pinned, kept as such). Throws { code: 'BAD_HOME_PINS' } before any write. */
+export async function setChatHomePinsFor(person, list) {
+  const { pins, errors } = normalizePins(list);
+  if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_HOME_PINS' });
+  const settings = readSettings();
+  const map = pinsMap(settings);
+  map[pinsPersonKey(person)] = pins;
+  settings.chatHomePins = map;
+  await persistSettings(settings);
+  return chatHomePinsFor(person);
+}
+
+/** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */
+export function userTagDimensions() {
+  if (homeGuarded()) return [];
+  return normaliseDimensions(readSettings().tagDimensions).dims;
+}
+
+/** Replace the local list; [] or null clears it. Throws { code: 'BAD_TAG_DIMENSIONS' } before any write. */
+export async function setUserTagDimensions(list) {
+  const { dims, errors } = normaliseDimensions(list ?? []);
+  if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_TAG_DIMENSIONS' });
+  const settings = readSettings();
+  if (dims.length) settings.tagDimensions = dims; else delete settings.tagDimensions;
+  await persistSettings(settings);
+  return userTagDimensions();
+}
+
+/** Settings › Tags › "Require mandatory tags to start a run" (local; a team policy's runs.enforceTags wins). */
+export function userEnforceTags() {
+  if (homeGuarded()) return false;
+  return readSettings().enforceTags === true;
+}
+
+/** true/false; false removes the key. Throws { code: 'BAD_ENFORCE_TAGS' } before any write. */
+export async function setUserEnforceTags(v) {
+  if (typeof v !== 'boolean') throw Object.assign(new Error('enforceTags must be true or false'), { code: 'BAD_ENFORCE_TAGS' });
+  const settings = readSettings();
+  if (v) settings.enforceTags = true; else delete settings.enforceTags;
+  await persistSettings(settings);
+  return userEnforceTags();
+}
+
 // ── Sync before run (#527) ─────────────────────────────────────────────────
 export const SYNC_ON_DIVERGED = Object.freeze(['ask', 'origin', 'fail']);
 export const DEFAULT_SYNC_SETTINGS = Object.freeze({ beforeRun: true, remote: 'origin', refreshMinutes: 10, onDiverged: 'ask' });
@@ -2361,18 +2912,216 @@ export function assertSyncSettingsInput(patch) {
   if (set('refreshMinutes') && !(Number.isInteger(patch.refreshMinutes) && patch.refreshMinutes >= 0 && patch.refreshMinutes <= 1440)) throw new Error('sync.refreshMinutes must be an integer 0–1440 (0 = never)');
   if (set('onDiverged') && !SYNC_ON_DIVERGED.includes(patch.onDiverged)) throw new Error(`sync.onDiverged must be one of ${SYNC_ON_DIVERGED.join(' | ')}`);
 }
-export async function setSyncDefaults(patch) {
+/** The stored `sync` after `patch` (undefined = delete the key). Pure; shared by the setter and the setup apply. */
+export function nextSyncSettings(current, patch) {
   assertSyncSettingsInput(patch);
+  if (patch === null || patch === '') return undefined;
+  // Store only the keys someone set: a key left out follows the built-in default as it changes.
+  const prev = isObj(current) ? current : {};
+  const next = {};
+  for (const k of Object.keys(DEFAULT_SYNC_SETTINGS)) if (Object.hasOwn(prev, k)) next[k] = normalizeSyncSettings(prev)[k];
+  for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  return Object.keys(next).length ? next : undefined;
+}
+export async function setSyncDefaults(patch) {
   const settings = readSettings();
-  if (patch === null || patch === '') delete settings.sync;
-  else {
-    // Store only the keys someone set: a key left out follows the built-in default as it changes.
-    const prev = settings.sync && typeof settings.sync === 'object' && !Array.isArray(settings.sync) ? settings.sync : {};
-    const next = {};
-    for (const k of Object.keys(DEFAULT_SYNC_SETTINGS)) if (Object.hasOwn(prev, k)) next[k] = normalizeSyncSettings(prev)[k];
-    for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
-    if (Object.keys(next).length) settings.sync = next; else delete settings.sync;
-  }
+  const v = nextSyncSettings(settings.sync, patch);
+  if (v === undefined) delete settings.sync; else settings.sync = v;
   await persistSettings(settings);
   return syncDefaults();
+}
+
+// ── Wait for the network (auto-resume on network errors) ─────────────────────
+// A network-class step failure waits for the step's endpoint to answer again, then retries,
+// up to maxWaitMin from the FIRST network failure; past it a run behaves as before.
+// Env pins (tests, CI) win when non-empty: WORCA_NETWORK_WAIT (0/false = off) and
+// WORCA_NETWORK_WAIT_MAX_MS (the cap in ms).
+export const DEFAULT_NETWORK_WAIT = Object.freeze({ enabled: true, maxWaitMin: 240 });
+const isNetworkMaxWaitMin = (v) => Number.isInteger(v) && v >= 1 && v <= 1440;
+
+/** Merge `v` over the defaults, keeping only valid keys. Pure. */
+export function normalizeNetworkWait(v, base = DEFAULT_NETWORK_WAIT) {
+  const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return {
+    enabled: typeof o.enabled === 'boolean' ? o.enabled : base.enabled,
+    maxWaitMin: isNetworkMaxWaitMin(o.maxWaitMin) ? o.maxWaitMin : base.maxWaitMin,
+  };
+}
+export function networkWaitSettings() { return normalizeNetworkWait(readSettings().networkWait); }
+
+/** @throws {Error} on anything but a partial, valid networkWait object (null / '' resets; a null key resets that key). */
+export function assertNetworkWaitInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkWait must be an object');
+  for (const k of Object.keys(patch)) if (!Object.hasOwn(DEFAULT_NETWORK_WAIT, k)) throw new Error(`unknown networkWait setting: ${k}`);
+  const set = (k) => k in patch && patch[k] !== null;
+  if (set('enabled') && typeof patch.enabled !== 'boolean') throw new Error('networkWait.enabled must be true or false');
+  if (set('maxWaitMin') && !isNetworkMaxWaitMin(patch.maxWaitMin)) throw new Error('networkWait.maxWaitMin must be a whole number of minutes from 1 to 1440');
+}
+
+/** The stored `networkWait` after `patch` (undefined = delete the key). Pure; shared by the setter and the setup apply. */
+export function nextNetworkWait(current, patch) {
+  assertNetworkWaitInput(patch);
+  if (patch === null || patch === '') return undefined;
+  // Store only the keys someone set: a key left out follows the built-in default as it changes.
+  const prev = isObj(current) ? current : {};
+  const next = {};
+  for (const k of Object.keys(DEFAULT_NETWORK_WAIT)) if (Object.hasOwn(prev, k)) next[k] = normalizeNetworkWait(prev)[k];
+  for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  return Object.keys(next).length ? next : undefined;
+}
+export async function setNetworkWait(patch) {
+  const settings = readSettings();
+  const v = nextNetworkWait(settings.networkWait, patch);
+  if (v === undefined) delete settings.networkWait; else settings.networkWait = v;
+  await persistSettings(settings);
+  return networkWaitSettings();
+}
+
+/** What a run does right now: the stored setting, with a non-empty env pin winning. */
+export function effectiveNetworkWait(env = process.env) {
+  const s = networkWaitSettings();
+  const flag = env?.WORCA_NETWORK_WAIT;
+  const enabled = flag !== undefined && flag !== '' ? !/^(0|false|off|no)$/i.test(String(flag).trim()) : s.enabled;
+  const raw = env?.WORCA_NETWORK_WAIT_MAX_MS;
+  const n = Number(raw);
+  const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
+  return { enabled, maxWaitMs };
+}
+
+// Settings › Network proxy (networkProxy.enabled; applied live by egress-policy.mjs startLiveEgress).
+// The same list as upstream-proxy.mjs AUTH_MODES: this module imports nothing from the core graph (test pins it).
+export const NETWORK_PROXY_AUTH = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
+const NETWORK_PROXY_TIMEOUTS = ['connectMs', 'authMs', 'idleMs'];
+const isProxyMs = (v) => Number.isInteger(v) && v >= 500 && v <= 3_600_000;
+// The same range as upstream-proxy.mjs fixedPortOf (D17; a test feeds both the same values).
+const isFixedPort = (v) => Number.isInteger(v) && v >= 1024 && v <= 65535;
+
+export function networkProxySettings() {
+  const v = readSettings().networkProxy;
+  return v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {};
+}
+
+/** True when the corporate proxy is on (D6). A leftover flags.corporateProxy (a home the boot
+ *  migration could not write) still counts, unless networkProxy.enabled says false. */
+export function networkProxyEnabled(settings = readSettings()) {
+  const s = settings && typeof settings === 'object' ? settings : {};
+  const np = s.networkProxy && typeof s.networkProxy === 'object' ? s.networkProxy : {};
+  if (typeof np.enabled === 'boolean') return np.enabled;
+  return !!(s.flags && s.flags.corporateProxy === true);
+}
+
+/** D6: the Labs flag that became networkProxy.enabled. Pure: {changed, settings}. */
+export function migrateLegacyProxyFlag(settings) {
+  const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+  const flags = s.flags && typeof s.flags === 'object' && !Array.isArray(s.flags) ? s.flags : null;
+  if (!flags || !Object.prototype.hasOwnProperty.call(flags, 'corporateProxy')) return { changed: false, settings: s };
+  const { corporateProxy: was, ...restFlags } = flags;
+  const next = { ...s };
+  if (Object.keys(restFlags).length) next.flags = restFlags; else delete next.flags;
+  const np = next.networkProxy && typeof next.networkProxy === 'object' ? next.networkProxy : {};
+  if (was === true && typeof np.enabled !== 'boolean') next.networkProxy = { ...np, enabled: true };
+  return { changed: true, settings: next };
+}
+
+/** Run once per process start (server boot, CLI main), before the egress proxy starts. @returns {Promise<boolean>} wrote */
+export async function migrateCorporateProxyFlag() {
+  const r = migrateLegacyProxyFlag(readSettings());
+  if (!r.changed) return false;
+  try { await persistSettings(r.settings); return true; } catch { return false; }   // networkProxyEnabled still reads the flag
+}
+
+/** Poll settings.json by stat signature (the watchProxyLogin pattern, proxy-credentials.mjs). @returns {() => void} stop */
+export function watchSettingsFile(onChange, { intervalMs = 1000 } = {}) {
+  const file = settingsFile();
+  const sig = () => {
+    try { const st = statSync(file); return `${st.ino}|${st.mtimeMs}|${st.ctimeMs}|${st.size}`; } catch (err) { return err && err.code ? err.code : 'error'; }
+  };
+  let last = sig();
+  const timer = setInterval(() => {
+    const cur = sig();
+    if (cur === last) return;
+    last = cur;
+    try { onChange(); } catch { /* ignore */ }
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+/** readSettings() for watchers: null when the file is missing or is not a JSON object, so a tick
+ *  mid-write, a broken hand edit or a deleted file never reads as "proxy off" (R-sec-5). */
+export function readSettingsStrict() {
+  try {
+    const d = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+    return d && typeof d === 'object' && !Array.isArray(d) ? d : null;
+  } catch { return null; }
+}
+
+/** "host:port" or "http://host:port" -> "http://host:port"; throws on userinfo or another scheme. */
+function normalizeProxyUpstream(raw) {
+  const s = String(raw).trim();
+  let u;
+  try { u = new URL(s.includes('://') ? s : `http://${s}`); } catch { throw new Error('networkProxy.upstream is not a valid host:port'); }
+  if (u.protocol !== 'http:') throw new Error('networkProxy.upstream must be an http:// proxy');
+  if (u.username || u.password) throw new Error('networkProxy.upstream must not carry a user name or password (a password never goes into settings.json; use Log in)');
+  if (!u.hostname) throw new Error('networkProxy.upstream has no host');
+  return `http://${u.host}`;
+}
+
+export function assertNetworkProxyInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkProxy must be an object');
+  for (const k of Object.keys(patch)) if (!['enabled', 'upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  if (patch.enabled != null && typeof patch.enabled !== 'boolean') throw new Error('networkProxy.enabled must be true or false');
+  if (patch.upstream != null && patch.upstream !== '') normalizeProxyUpstream(patch.upstream);
+  if (patch.auth != null && !NETWORK_PROXY_AUTH.includes(patch.auth)) throw new Error(`networkProxy.auth must be one of ${NETWORK_PROXY_AUTH.join(', ')}`);
+  if (patch.fixedPort != null && !isFixedPort(patch.fixedPort)) throw new Error('networkProxy.fixedPort must be a port from 1024 to 65535');
+  if (patch.noProxy != null) {
+    const ok = typeof patch.noProxy === 'string' ? patch.noProxy.length <= 4096
+      : Array.isArray(patch.noProxy) && patch.noProxy.length <= 200 && patch.noProxy.every((e) => typeof e === 'string' && e.length <= 253);
+    if (!ok) throw new Error('networkProxy.noProxy must be a comma-separated list of hosts');
+  }
+  if (patch.timeouts != null) {
+    if (typeof patch.timeouts !== 'object' || Array.isArray(patch.timeouts)) throw new Error('networkProxy.timeouts must be an object');
+    for (const [k, v] of Object.entries(patch.timeouts)) {
+      if (!NETWORK_PROXY_TIMEOUTS.includes(k)) throw new Error(`unknown networkProxy timeout: ${k}`);
+      if (v !== null && !isProxyMs(v)) throw new Error(`networkProxy.timeouts.${k} must be 500 to 3600000 ms`);
+    }
+  }
+}
+
+/** The merge PUT /api/proxy/settings applies (null/'' drops a key; the whole patch null/'' drops it all). Pure. */
+export function mergeNetworkProxy(current, patch) {
+  if (patch === null || patch === '') return {};
+  const next = { ...(current || {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null || v === '') delete next[k];
+    else if (k === 'upstream') next.upstream = normalizeProxyUpstream(v);
+    else if (k === 'timeouts') {
+      const t = { ...(next.timeouts || {}) };
+      for (const [tk, tv] of Object.entries(v)) { if (tv === null) delete t[tk]; else t[tk] = tv; }
+      if (Object.keys(t).length) next.timeouts = t; else delete next.timeouts;
+    } else next[k] = v;
+  }
+  return next;
+}
+
+/** What setNetworkProxy(patch) would store, without writing (the chat card's validator). Throws like it. */
+export function previewNetworkProxy(patch) {
+  assertNetworkProxyInput(patch);
+  return mergeNetworkProxy(networkProxySettings(), patch);
+}
+
+/** setNetworkProxy's merge, pure (previewNetworkProxy validates). undefined = delete. */
+export function nextNetworkProxy(patch) {
+  const next = previewNetworkProxy(patch);
+  return Object.keys(next).length ? next : undefined;
+}
+
+export async function setNetworkProxy(patch) {
+  const next = nextNetworkProxy(patch);
+  const settings = readSettings();
+  if (next !== undefined) settings.networkProxy = next; else delete settings.networkProxy;
+  await persistSettings(settings);
+  return networkProxySettings();
 }

@@ -127,7 +127,7 @@ test('non-done run (results null) shows the empty state and never fetches /diff'
   const empty = doc.querySelector('#hist-detail .hd-diff-empty');
   assert.ok(empty, 'the Diff tab shows the D1 empty state');
   assert.match(empty.textContent, /No diff captured for this run\./);
-  assert.match(empty.textContent, /the run has committed no work, or its artifacts have been archived/);
+  assert.match(empty.textContent, /The run has committed no work, or its artifacts have been archived/);
   // The old copy promised diffs only on completion — stopped/errored runs now
   // persist one, so that sentence must be gone.
   assert.doesNotMatch(empty.textContent, /captured when a run completes/);
@@ -751,7 +751,7 @@ ${lines.join('\n')}
   assert.equal(rowsOf(doc).length, W);
   const body = bodyOf(doc);
   const note = body.querySelector('.hd-diff-trunc');
-  assert.equal(note.textContent, '(large file — diff truncated)');
+  assert.equal(note.textContent, '(large file, diff truncated)');
   assert.doesNotMatch(note.textContent, /KB/);
   assert.equal(note, body.lastElementChild, 'the note stays the last row');
   assert.equal(note.previousElementSibling, moreOf(doc), 'show-more sits just above it');

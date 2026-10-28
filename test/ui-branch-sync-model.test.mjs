@@ -6,12 +6,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ago, syncPillModel, chipState, projectChipModel, worstChip, sourceRefNote,
-  fetchFailureCopy, ffRefusalCopy, syncStageLabel, cssEscape,
+  fetchFailureCopy, ffRefusalCopy, syncStageLabel, syncStageTitle, cssEscape,
   mountSyncRow, paintSyncRow, isSyncableBranchName, fetchedAgo, syncPrefsModel, syncPrefsPatch,
-  runOutcomeModel, listRowModel, projectBarModel, wsRollupModel,
+  runOutcomeModel, listRowModel, projectBarModel, wsRollupModel, NO_COMMITS_HINT,
 } from '../ui/public/branch-sync.mjs';
 import { isSafeBranchName } from '../src/core/git-sync.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick } from './helpers/popups.mjs';
 
 const block = (over = {}) => ({
   base: 'dev', remote: 'origin', state: 'up-to-date', ahead: 0, behind: 0,
@@ -174,17 +175,28 @@ test('sync copy helpers: sourceRefNote, syncStageLabel, ffRefusalCopy and fetchF
       assert.equal(sourceRefNote({ ref: 'dev' }), '');
       assert.equal(sourceRefNote({ ref: 'origin/feat', remoteOnly: true }), 'from origin/feat (remote only)');
       assert.equal(sourceRefNote({ ref: 'dev', behind: 2 }), 'from dev (2 behind)');
-      assert.equal(sourceRefNote({ ref: 'dev', behind: 2, stale: true }), 'from dev (2 behind, could not fetch — last known refs)');
+      assert.equal(sourceRefNote({ ref: 'dev', behind: 2, stale: true }), 'from dev (2 behind, could not fetch: last known refs)');
     } },
     { name: 'syncStageLabel for all five results', run: () => {
       assert.equal(syncStageLabel(null), 'Sync');
       assert.equal(syncStageLabel({ result: 'fast-forwarded', commits: 3 }), 'Synced 3 commits');
       assert.equal(syncStageLabel({ result: 'fast-forwarded', commits: 1 }), 'Synced 1 commit');
-      assert.equal(syncStageLabel({ result: 'remote-start', remote: 'origin' }, 'dev'), 'Started from origin/dev');
-      assert.equal(syncStageLabel({ result: 'remote-start' }, 'main'), 'Started from origin/main');
-      assert.equal(syncStageLabel({ result: 'fetch-failed' }), 'Sync: used the last fetch');
-      assert.equal(syncStageLabel({ result: 'diverged' }), 'Sync: diverged');
+      assert.equal(syncStageLabel({ result: 'remote-start', remote: 'origin' }), 'From origin');
+      assert.equal(syncStageLabel({ result: 'remote-start', remote: 'upstream' }), 'From upstream');
+      assert.equal(syncStageLabel({ result: 'remote-start' }), 'From origin');
+      assert.equal(syncStageLabel({ result: 'fetch-failed' }), 'Used last fetch');
+      assert.equal(syncStageLabel({ result: 'diverged' }), 'Diverged');
       assert.equal(syncStageLabel({ result: 'up-to-date' }), 'Sync');
+    } },
+    { name: 'syncStageTitle carries the long form plus the action, naming the remote and base', run: () => {
+      assert.equal(syncStageTitle(null, 'dev'), 'Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'up-to-date' }, 'dev'), 'Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'remote-start', remote: 'origin' }, 'dev'), 'Started from origin/dev: the local branch was left untouched. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'remote-start', remote: 'upstream' }, 'main'), 'Started from upstream/main: the local branch was left untouched. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'fast-forwarded', commits: 3 }, 'dev'), 'Synced 3 commits from origin/dev. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'fast-forwarded', commits: 1, remote: 'upstream' }, 'dev'), 'Synced 1 commit from upstream/dev. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'fetch-failed' }, 'dev'), 'Could not fetch origin: started from the last fetch. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'diverged', remote: 'origin' }, 'dev'), 'dev has diverged from origin/dev. Show the Sync log');
     } },
     { name: 'ffRefusalCopy: dirty, in-use, diverged, unknown kind, ok', run: () => {
       assert.match(ffRefusalCopy({ ok: false, kind: 'dirty' }, 'dev'), /^dev has uncommitted changes, so it was not moved\. Runs start from origin\/dev/);
@@ -245,7 +257,7 @@ async function dom(body = '') {
 }
 const ROW = `<div class="sync-row" id="sync-row" hidden>
   <button type="button" class="sync-pill grey" id="sync-pill"><span class="sdot"></span><span class="sync-pill-txt">Checking…</span></button>
-  <button type="button" class="btn btn-mini sync-btn" id="sync-btn"><span>Sync</span></button>
+  <button type="button" class="btn btn-sm sync-btn" id="sync-btn"><span>Sync</span></button>
   <label class="switch-row sync-auto"><input id="syncAuto" class="sw-input" type="checkbox" checked></label>
 </div><button id="opener">open</button>`;
 
@@ -305,6 +317,7 @@ test('openSyncDialog: rows, commits as text, Escape/scrim close with focus retur
       assert.ok(dlg.classList.contains('sync-modal'));
       assert.equal(dlg.getAttribute('aria-labelledby'), 'sync-dlg-title');
       assert.ok(dlg.querySelector('.card.sync-card'));
+      assert.ok(dlg.querySelector('.sync-card.dlg > .dlg-head #sync-dlg-title') && dlg.querySelector('.sync-card.dlg > .dlg-foot .sync-go'), 'the shared dialog anatomy');
       const dts = [...dlg.querySelectorAll('.sync-kv dt')].map((n) => n.textContent);
       assert.deepEqual(dts, ['Local base', 'origin/dev', 'Behind / ahead', 'Last fetched', 'Remote', 'Working tree', 'Auto-sync']);
       const li = dlg.querySelector('.sync-commits li');
@@ -318,7 +331,9 @@ test('openSyncDialog: rows, commits as text, Escape/scrim close with focus retur
 
       done = openSyncDialog({ sync: b, opener });
       const m2 = w.document.querySelector('.sync-modal');
-      m2.dispatchEvent(new w.Event('click', { bubbles: true }));
+      m2.dispatchEvent(new w.Event('click', { bubbles: true }));            // a release with no press: not an outside click
+      assert.ok(m2.isConnected, 'a selection dragged out of the card does not close it');
+      backdropClick(w, m2);                                                   // press + release on the scrim
       assert.equal(await done, null);
 
       // onSync returns nothing → the current block stays; returns a refused ff → the note explains.
@@ -359,6 +374,7 @@ test('chooseSyncRefusal: diverged → origin; forbidden → Cancel only; fetch-f
   let p = chooseSyncRefusal({ code: 'sync-diverged', options: ['origin', 'cancel'], members });
   let m = w.document.querySelector('.sync-modal');
   assert.ok(m.querySelector('.qpanel'));
+  assert.ok(m.querySelector('.qpanel.dlg > .dlg-head #sync-refusal-title') && m.querySelector('.qpanel.dlg > .dlg-body .qtext') && m.querySelector('.qpanel.dlg > .dlg-foot .btn'), 'the shared dialog anatomy, one level down');
   assert.equal(m.querySelector('.qopt'), null);
   assert.match(m.textContent, /dev has diverged from origin\/dev \(1 ahead, 2 behind\)\./);
   const go = [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start from origin/dev');
@@ -379,7 +395,7 @@ test('chooseSyncRefusal: diverged → origin; forbidden → Cancel only; fetch-f
   m = w.document.querySelector('.sync-modal');
   assert.match(m.textContent, /A: Sign-in to origin failed/);
   assert.match(m.textContent, /B: origin could not be reached/);
-  [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start anyway from last fetch').click();
+  [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start anyway').click();
   assert.equal(await p, 'last-fetch');
 
   p = chooseSyncRefusal({ code: 'sync-diverged', options: ['origin', 'cancel'], members });
@@ -464,4 +480,15 @@ test('openSyncDialog prefs: "This project" loads, saves each select on change, r
   assert.equal(w.document.querySelector('.sync-modal .sync-prefs'), null);
   w.document.querySelector('.sync-modal .sync-x').click();
   await d2;
+});
+
+test('noCommits: "No commits yet" with a remote, the no-remote bar keeps its label and swaps its hint', () => {
+  const withRemote = { base: 'trunk', remote: 'origin', state: 'missing', noCommits: true };
+  assert.deepEqual(listRowModel(withRemote), { icon: 'local', tone: 'ink', label: 'No commits yet', hint: 'The first run commits these files', action: null, state: 'local' });
+  assert.equal(projectBarModel(withRemote).label, 'No commits yet');
+  assert.equal(projectBarModel(withRemote).vs, '');
+  const bare = projectBarModel({ base: 'trunk', remote: null, state: 'unknown', noCommits: true });
+  assert.equal(bare.label, 'No git remote');
+  assert.equal(bare.hint, NO_COMMITS_HINT);
+  assert.equal(projectBarModel({ base: null, remote: null, state: 'unknown' }).hint, 'Local folder · nothing to sync', 'unchanged without the flag');
 });

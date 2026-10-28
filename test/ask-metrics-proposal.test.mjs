@@ -1,5 +1,5 @@
 // test/ask-metrics-proposal.test.mjs
-// The propose_metrics_change validator (docs/team-metrics.md "Ask Worca") over fake readers, the
+// The propose_metrics_change validator (docs/team-metrics.md "Chat") over fake readers, the
 // four kinds and their refusals, and the card's event / notice text. Pure — no DB, no git.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

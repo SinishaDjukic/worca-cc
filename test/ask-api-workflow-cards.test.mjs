@@ -20,6 +20,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { holdMockTurn, isToolResult } from './helpers/ask-hold.mjs';
+import { withNoGit } from './helpers/git-off.mjs';
 
 useTempHome(after);
 
@@ -353,7 +354,7 @@ test('an event turn that cannot start (queued behind a spent cost window, or fai
         release();
         await waitFor(() => frames(w.msgs, t.id, 'ask-done').length >= 1, 15_000);   // the slow turn ends → settleJob → drainAskDeferred → 403 at START
         const notice = await waitFor(() => frames(w.msgs, t.id, 'ask-message').find((f) => f.message.role === 'system' && /could not reply to an event/.test(f.message.text)));
-        assert.equal(notice.message.text, 'Ask Worca could not reply to an event: total cost limit reached');
+        assert.equal(notice.message.text, 'Chat could not reply to an event: total cost limit reached');
         assert.equal(notice.message.blocks[0].kind, 'notice');
         const snap = await snapshot(t.id);
         assert.equal(snap.messages.filter((m) => m.status === 'streaming').length, 0, 'no assistant row was opened');
@@ -381,7 +382,7 @@ test('an event turn that cannot start (queued behind a spent cost window, or fai
         assert.equal(body.turn.status, 403);
         assert.equal(body.turn.error, 'total cost limit reached', 'the API client still gets the machine-readable error');
         const notice = await waitFor(() => frames(w.msgs, thread.id, 'ask-message').find((f) => f.message.role === 'system' && /could not reply to an event/.test(f.message.text)));
-        assert.equal(notice.message.text, 'Ask Worca could not reply to an event: total cost limit reached');
+        assert.equal(notice.message.text, 'Chat could not reply to an event: total cost limit reached');
         assert.equal(notice.message.blocks[0].kind, 'notice');
         assert.equal(frames(w.msgs, thread.id, 'ask-start').length, 0, 'no turn ever started');
       } finally {
@@ -390,4 +391,137 @@ test('an event turn that cannot start (queued behind a spent cost window, or fai
       }
     } },
   ]);
+});
+
+test('Ask graph card (workflow-build on an Ask chat): Save writes the graph (origin auto, fresh id) and starts the event turn; Decline starts one; an unsaved key is refused with 422', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const { GRAPH_DEFAULT_WORKFLOW } = await import('../src/core/workflows.mjs');
+  const thread = await newThread();
+  let swapped = false;
+  const unknownFirst = GRAPH_DEFAULT_WORKFLOW.nodes.map((n) => (!swapped && n.kind === 'agent' ? ((swapped = true), { ...n, key: 'releaseNotesDraft' }) : n));
+  const build = (id, nodes) => ({ kind: 'card', id, state: 'proposed', card: { type: 'workflow-build', sessionId: null, docToken: null, name: 'Ask graph', domain: 'coding',
+    reasoning: 'r', workflow: { nodes, wires: GRAPH_DEFAULT_WORKFLOW.wires }, counts: {}, loops: [], drafts: [], todo: 0, warnings: [], projectKey } });
+  store.appendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [
+    build('card_0000b001', GRAPH_DEFAULT_WORKFLOW.nodes), build('card_0000b002', GRAPH_DEFAULT_WORKFLOW.nodes), build('card_0000b003', unknownFirst)] });
+  const w = openWs(); await w.opened;
+
+  const bad = await post(`/api/ask/threads/${thread.id}/cards/card_0000b003`, { state: 'saved' });
+  assert.equal(bad.status, 422);
+  assert.match((await bad.json()).error, /not valid/);
+  assert.equal((await snapshot(thread.id)).messages.flatMap((m) => m.blocks || []).find((b) => b.id === 'card_0000b003').state, 'proposed', 'a refused save leaves the card proposed');
+
+  const r = await post(`/api/ask/threads/${thread.id}/cards/card_0000b001`, { state: 'saved' });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.block.state, 'saved');
+  assert.match(body.block.workflowId, /^wf_ask-graph/);
+  assert.ok(body.turn && body.turn.assistantMessageId, 'Save starts the workflow-card event turn');
+  const rows = (await (await fetch(`${base}/api/workflows`)).json()).workflows;
+  const row = rows.find((x) => x.id === body.block.workflowId);
+  assert.equal(row.origin, 'auto');
+  assert.equal(row.name, 'Ask graph');
+  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);
+  const notice = (await snapshot(thread.id)).messages.find((m) => m.role === 'user' && (m.blocks || []).some((b) => b.kind === 'notice' && b.synthetic));
+  assert.equal(notice.text, `[worca event] workflow card card_0000b001 saved as ${body.block.workflowId} "Ask graph"; thenRun=false; project=${projectKey}`);
+  assert.equal((await post(`/api/ask/threads/${thread.id}/cards/card_0000b001`, { state: 'saved' })).status, 409, 'saved once');
+
+  const d = await post(`/api/ask/threads/${thread.id}/cards/card_0000b002`, { state: 'declined' });
+  assert.equal(d.status, 200);
+  const dBody = await d.json();
+  assert.equal(dBody.block.state, 'declined');
+  assert.ok(dBody.turn, 'Decline starts (or queues) the event turn too');
+  assert.equal((await post(`/api/ask/threads/${thread.id}/cards/card_0000b002`, { state: 'applied' })).status, 400, 'no canvas states on an Ask graph card');
+  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 2);
+  const events = (await snapshot(thread.id)).messages.filter((m) => m.role === 'user' && (m.blocks || []).some((b) => b.kind === 'notice' && b.synthetic)).map((m) => m.text);
+  assert.ok(events.includes(`[worca event] workflow card card_0000b002 declined; project=${projectKey}`), events.join('\n'));
+  w.ws.close();
+});
+
+test('Ask graph card with thenRun: Save names thenRun=true and the event turn proposes a run with the saved workflow', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const { GRAPH_DEFAULT_WORKFLOW } = await import('../src/core/workflows.mjs');
+  const thread = await newThread();
+  store.updateThread(thread.id, { context: { projectKey } });   // the event turn's [worca context]: the mock's propose_run target
+  store.appendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_0000b011', state: 'proposed', card: { type: 'workflow-build', sessionId: null, docToken: null, name: 'Ask run graph', domain: 'coding',
+    reasoning: 'r', workflow: { nodes: GRAPH_DEFAULT_WORKFLOW.nodes, wires: GRAPH_DEFAULT_WORKFLOW.wires }, counts: {}, loops: [], drafts: [], todo: 0, warnings: [], thenRun: true, projectKey } }] });
+  const w = openWs(); await w.opened;
+  const r = await post(`/api/ask/threads/${thread.id}/cards/card_0000b011`, { state: 'saved' });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);
+  const snap = await snapshot(thread.id);
+  const notice = snap.messages.find((m) => m.role === 'user' && (m.blocks || []).some((b) => b.kind === 'notice' && b.synthetic));
+  assert.equal(notice.text, `[worca event] workflow card card_0000b011 saved as ${body.block.workflowId} "Ask run graph"; thenRun=true; project=${projectKey}`);
+  assert.equal(notice.blocks[0].text, 'Workflow "Ask run graph" saved · Auto will propose a run next');
+  const runCard = (snap.messages.at(-1).blocks || []).find((b) => b.kind === 'card' && !b.card.type);
+  assert.ok(runCard && runCard.state === 'proposed', 'the mock event arm proposed a run');
+  assert.equal(runCard.card.workflowId, body.block.workflowId, 'with the saved workflow');
+  w.ws.close();
+});
+
+test('Ask graph card with a command (D10): Save without the list the card showed is refused 409 with the server\'s commands and writes nothing — a bare true or another list too; the shown list saves', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const { GRAPH_DEFAULT_WORKFLOW } = await import('../src/core/workflows.mjs');
+  const { loadScriptRegistry } = await import('../src/core/script-registry.mjs');
+  const shell = loadScriptRegistry({ userScriptsDir: null, includePlugins: false }).shell;
+  const task = GRAPH_DEFAULT_WORKFLOW.nodes.find((n) => n.kind === 'task');
+  const nodes = [...GRAPH_DEFAULT_WORKFLOW.nodes, { id: 'n_sh', kind: 'script', key: 'shell', x: 900, y: 300,
+    config: { params: { command: 'npm test' }, ports: { inputs: shell.defaultPorts.inputs, outputs: shell.defaultPorts.outputs } } }];
+  const wires = [...GRAPH_DEFAULT_WORKFLOW.wires, { id: 'w_sh', from: { node: task.id, port: 'task' }, to: { node: 'n_sh', port: 'in' } }];
+  const thread = await newThread();
+  store.appendMessage(thread.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_0000b021', state: 'proposed', card: { type: 'workflow-build', sessionId: null, docToken: null,
+    name: 'Shell graph', domain: 'coding', reasoning: 'r', workflow: { nodes, wires }, counts: {}, loops: [], drafts: [], todo: 0, warnings: [], projectKey,
+    scriptNodes: [{ nodeId: 'n_sh', key: 'shell', displayName: 'Shell', runtime: 'shell', params: { command: 'npm test' } }] } }] });
+  const w = openWs(); await w.opened;
+  const refused = await post(`/api/ask/threads/${thread.id}/cards/card_0000b021`, { state: 'saved' });
+  assert.equal(refused.status, 409);
+  const rb = await refused.json();
+  assert.equal(rb.code, 'SCRIPTS_UNCONFIRMED');
+  assert.deepEqual(rb.scriptNodes.map((n) => [n.nodeId, n.params.command]), [['n_sh', 'npm test']], 'the server re-derives them over the real registry');
+  assert.equal((await snapshot(thread.id)).messages.flatMap((m) => m.blocks || []).find((b) => b.id === 'card_0000b021').state, 'proposed');
+  assert.equal((await (await fetch(`${base}/api/workflows`)).json()).workflows.some((x) => x.name === 'Shell graph'), false, 'nothing written');
+  // The confirmation is the list the card showed: a yes/no flag, or a list that differs from what the server re-derives
+  // (a command cut from the card, or one that changed since the proposal), is refused with the server's list.
+  for (const acceptScripts of [true, [], [{ nodeId: 'n_sh', params: { command: 'echo ok' } }]]) {
+    const again = await post(`/api/ask/threads/${thread.id}/cards/card_0000b021`, { state: 'saved', acceptScripts });
+    assert.equal(again.status, 409, JSON.stringify(acceptScripts));
+    const ab = await again.json();
+    assert.equal(ab.code, 'SCRIPTS_UNCONFIRMED');
+    assert.deepEqual(ab.scriptNodes.map((n) => [n.nodeId, n.params.command]), [['n_sh', 'npm test']]);
+  }
+  assert.equal((await snapshot(thread.id)).messages.flatMap((m) => m.blocks || []).find((b) => b.id === 'card_0000b021').state, 'proposed');
+  const r = await post(`/api/ask/threads/${thread.id}/cards/card_0000b021`, { state: 'saved', acceptScripts: rb.scriptNodes.map((n) => ({ nodeId: n.nodeId, params: n.params })) });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).block.state, 'saved');
+  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);
+  w.ws.close();
+});
+
+test('askSystemPromptFor: the scripts section (draft_script\'s contract) is always in Ask\'s prompt; save_script only with "Create and run scripts" on', async () => {
+  const p = await mod._testing.askSystemPromptFor({ projects: [], workspaces: [], workflows: [], agents: [] });
+  assert.ok(p.includes('## Scripts you can create'));
+  assert.match(p, /call draft_script with the meta's fields as named above/);
+  assert.match(p, /save_script never creates a key/, 'the switch is on by default');
+});
+
+test('askSystemPromptFor with "Create and run scripts" off: draft_script keeps its contract, the save_script line goes', async () => {
+  assert.equal((await post('/api/settings', { chat: { scriptTools: false } })).status, 200);
+  try {
+    const p = await mod._testing.askSystemPromptFor({ projects: [], workspaces: [], workflows: [], agents: [] });
+    assert.ok(p.includes('## Scripts you can create'), 'the contract draft_script needs');
+    assert.match(p, /call draft_script with the meta's fields as named above/);
+    assert.equal(p.includes('save_script'), false, 'no save_script with the switch off');
+  } finally { assert.equal((await post('/api/settings', { chat: { scriptTools: true } })).status, 200); }
+});
+
+// P0 Task 10: the server's prompt builder hands the git state to buildSystemPrompt.
+test('askSystemPromptFor follows the git state: without git it names no worktree tool and carries the no-git rule 7', async () => {
+  const cat = { projects: [], workspaces: [], workflows: [], agents: [] };
+  assert.ok((await mod._testing.askSystemPromptFor(cat)).includes('open_worktree'), 'git on: the prompt of today');
+  const restore = withNoGit();
+  try {
+    const p = await mod._testing.askSystemPromptFor(cat);
+    assert.equal(p.includes('open_worktree'), false);
+    assert.match(p, /^7\. This machine has no git: /m);
+  } finally { restore(); }
 });

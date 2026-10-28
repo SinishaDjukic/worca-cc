@@ -74,7 +74,7 @@ test('the Chat row leads the sidebar (simple, "Chat", an unread dot that starts 
     const a = doc.querySelector(sel);
     assert.ok(a, sel);
     assert.equal(a.getAttribute('href'), '#chat/new', sel);   // home: a new chat, never a restored one
-    assert.equal(a.getAttribute('aria-label'), 'worca — Chat', sel);
+    assert.equal(a.getAttribute('aria-label'), 'worca: Chat', sel);
   }
   assert.equal(pageTitle('chat'), 'Chat');
 });
@@ -165,7 +165,7 @@ test('chatDeps.openRunPanel is the Chat run panel (P4): a saved run by its pipel
 });
 
 test('openChat routes to Chat and stacks text in the composer without sending; a thread id opens that chat', async () => {
-  const { window, doc, chat, calls } = await boot('#runs');
+  const { window, doc, chat, calls } = await boot('#workflows');   // Ask worca beside the page (L7): #runs would open the side column
   chat.openChat({ text: '[diff comment dc_1 — a.js:3 (new)] "why?"' });
   await settle();
   assert.equal(window.location.hash, '#chat');

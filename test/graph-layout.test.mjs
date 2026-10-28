@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rankNodes, autoLayout } from '../src/shared/graph/layout.mjs';
+import { rankNodes, autoLayout, ROW_GAP } from '../src/shared/graph/layout.mjs';
 import { classifyLoops } from '../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { LABEL_H, nodeSize } from '../src/shared/graph/geometry.mjs';
+import { LABEL_H, nodeSize, snap } from '../src/shared/graph/geometry.mjs';
 
 const REG = {
   planner: { key: 'planner', inputs: [{ id: 'task', type: 'md', required: true }],
@@ -102,4 +102,23 @@ test('autoLayout: a card fed only by loop wires sits after the cards it collects
   assert.ok(pos.n_end.y < pos.n_or.y, 'End keeps the main row');
   const applied = { ...tpl, nodes: tpl.nodes.map((n) => ({ ...n, ...pos[n.id] })) };
   assert.deepEqual(autoLayout(applied, deckPortsFn, { describe: true }), pos, 'idempotent');
+});
+
+test('autoLayout {band}: a chat well with a chip band bills BAND_H on agent cards — a stacked card clears the banded, described card above it', () => {
+  const A = { key: 'a', displayName: 'A', inputs: [{ id: 'task', type: 'md', required: true }], outputs: [{ id: 'x', type: 'md' }] };
+  const pf = portsFnFor({ a: A }, {});
+  const tpl = { id: '', name: '', version: 2, domain: '',
+    nodes: [{ id: 'n_t', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_1', kind: 'agent', key: 'a', x: 0, y: 0, config: {} }, { id: 'n_2', kind: 'agent', key: 'a', x: 0, y: 0, config: {} }],
+    wires: [{ id: 'w_1', from: { node: 'n_t', port: 'task' }, to: { node: 'n_1', port: 'task' } },
+      { id: 'w_2', from: { node: 'n_t', port: 'task' }, to: { node: 'n_2', port: 'task' } }] };
+  const lift = (pos) => [pos.n_1, pos.n_2].sort((p, q) => p.y - q.y);
+  const h = nodeSize(tpl.nodes[1], pf(tpl.nodes[1]), { describe: true, band: true }).h;
+  const [top, low] = lift(autoLayout(tpl, pf, { describe: true, band: true }));
+  assert.equal(top.x, low.x, 'one column');
+  assert.equal(low.y, snap(top.y + h + ROW_GAP), 'stacked from the BANDED height');
+  assert.ok(low.y - LABEL_H >= top.y + h, `the lower card's label row (${low.y - LABEL_H}) clears the banded upper card's bottom (${top.y + h})`);
+  const [t0, l0] = lift(autoLayout(tpl, pf));
+  assert.ok(l0.y - LABEL_H < t0.y + h, 'the Auto proposal\'s own layout (assemble: no describe, no band) would overlap the chat\'s card — restack is what makes room');
+  assert.deepEqual(autoLayout(tpl, pf, { describe: true, band: false }), autoLayout(tpl, pf, { describe: true }), 'band off is today\'s layout');
 });

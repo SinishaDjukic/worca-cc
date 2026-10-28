@@ -5,6 +5,9 @@
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { recordArtifact, resolvePipelineId, readPipelineExtras } from './artifacts.mjs';
+import { latestChecklist, checklistTally } from '../shared/shape/review-checklist.mjs';
+import { CHANGES_PATCH_FILE } from './project-kind.mjs';
+import { readRegularText } from './folder-copy.mjs';
 
 const NEW_STATUS = new Set(['A', 'C']);
 
@@ -128,6 +131,7 @@ export function assembleResults({ nameStatus, numstat, reviews }) {
   const keyThingsToCheck = selectKeyChecks(reviews);
   const nitpicks = splitNitpicks(reviews);
   linkIssues(keyThingsToCheck, files);
+  const latest = latestChecklist(reviews);   // spec D7: a shaped run's last checklist, for the Chat tally
   return {
     summary: {
       ...files.counts,
@@ -138,6 +142,7 @@ export function assembleResults({ nameStatus, numstat, reviews }) {
     changedFiles: files.changedFiles,
     keyThingsToCheck,
     nitpicks,
+    ...(latest ? { checklist: { ...checklistTally(latest.checklist), cycle: latest.cycle } } : {}),
   };
 }
 
@@ -154,6 +159,18 @@ export function rollupSummary(perProject) {
   const s = Object.fromEntries(keys.map((k) => [k, 0]));
   for (const r of Object.values(perProject)) for (const k of keys) s[k] += (r.summary?.[k] || 0);
   return s;
+}
+
+/** A finished run's size from its results summary (Shaper D28): null without line counts or with no change. */
+export function sizeOfChange(summary) {
+  const s = summary && typeof summary === 'object' ? summary : null;
+  if (!s || !Number.isFinite(s.linesAdded) || !Number.isFinite(s.linesRemoved)) return null;
+  const lines = s.linesAdded + s.linesRemoved;
+  const files = (Number(s.filesNew) || 0) + (Number(s.filesChanged) || 0) + (Number(s.filesDeleted) || 0);
+  if (!lines && !files) return null;
+  if (lines <= 150 && files <= 5) return 'small';
+  if (lines <= 800 && files <= 20) return 'medium';
+  return 'large';
 }
 
 /** Write results.json into the pipeline dir and index it (best-effort index). */
@@ -180,7 +197,8 @@ export async function readRunContextBundle(dir, pipelineId) {
   const read = async (f) => { try { return await readFile(join(dir, f), 'utf8'); } catch { return null; } };
   const resultsTxt = await read(RESULTS_FILE);
   return {
-    diffPatch: await read(DIFF_PATCH_FILE),
+    // a Folder run's changes.patch sits in the agent-writable pipeline dir: never read through a link planted there
+    diffPatch: (await read(DIFF_PATCH_FILE)) ?? (await readRegularText(join(dir, CHANGES_PATCH_FILE)).catch(() => null)),
     results: resultsTxt ? JSON.parse(resultsTxt) : null,
     reviews: readPipelineExtras(pipelineId).reviews || [],
     audit: null, // audit markdown is rebuilt by buildAuditMarkdown at the API layer

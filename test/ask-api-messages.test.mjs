@@ -11,6 +11,7 @@ import { WebSocket } from 'ws';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { holdMockTurn, isAssistant, isTextDelta } from './helpers/ask-hold.mjs';
+import { INTENT_LEADS } from '../src/shared/intent-leads.mjs';
 
 useTempHome(after);
 
@@ -99,6 +100,18 @@ test('validation: 404 unknown thread, 400 model/effort/context/text', async () =
   assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: '   ', ...MODEL })).status, 400);
 });
 
+test('run 4 D19: a first message led by the Shaper lead is titled from what was typed', async () => {
+  const t = await newThread();
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: `${INTENT_LEADS.shape}\n\nUploads fail on large files`, ...MODEL });
+  assert.equal(r.status, 202);
+  // Under WORCA_MOCK the generated title is refused, so the deterministic fallback is the title.
+  const titled = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
+  assert.equal(titled.title, 'Uploads fail on large files');
+  ws.close();
+});
+
 test('a full mock turn: 202, stamped frames to ask-done, persistence, session, title, echo', async () => {
   const t = await newThread();
   const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
@@ -110,7 +123,8 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   // §7.4: NOTHING is stamped before the 202 — the row stays untitled (the header
   // reads "Ask Worca") until the D13 background title lands. That call runs
   // CONCURRENTLY with the turn, so by the time this GET is answered the row may
-  // already carry the announced title — but never the prompt text. The frame is
+  // already carry the announced title (under WORCA_MOCK the deterministic
+  // fallback, which for a short prompt is the prompt). The frame is
   // written to the socket before the DB read below can be answered, but it is
   // parsed on a different socket — so WAIT for it rather than peeking at msgs.
   const early = (await snapshot(t.id)).thread.title;
@@ -140,7 +154,7 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   assert.equal(snap.thread.sessionId, 'mock-session-ask-1');
   assert.equal(snap.inFlight, null);
   // D13: the background title call titles the still-untitled thread and
-  // announces it out-of-turn (under WORCA_MOCK it echoes the title prompt).
+  // announces it out-of-turn (under WORCA_MOCK the mock marker is refused, so the title is the deterministic fallback).
   const titled = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
   assert.ok(typeof titled.title === 'string' && titled.title, 'ask-title carries the new title');
   assert.equal((await snapshot(t.id)).thread.title, titled.title, 'the announced title is the stored one');
@@ -542,4 +556,45 @@ test('a composer chat (Workflows view) takes attachments as an Ask chat does: st
   assert.ok(user.blocks.some((b) => b.kind === 'attachment' && b.id === flow.id && b.attKind === 'image'));
   assert.equal(snap.thread.composer.sessionId, 'cs_ab12cd34', 'the canvas is still stored before the turn');
   ws.close();
+});
+
+// Ask worca beside the page (Task 2): the page a message was sent from rides its user row as a `where` block.
+const settled = async (id) => {
+  for (let i = 0; i < 600; i++) { const s = await snapshot(id); if (!s.inFlight) return s; await new Promise((r) => setTimeout(r, 15)); }
+  throw new Error('the turn never settled');
+};
+const RUN_UUID = '0f0f0f0f-0000-4000-8000-000000000001';
+
+test('a message sent from a page stores where it was sent, first in the user row blocks, and the echo carries it', async () => {
+  const t = await newThread();
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'why?', ...MODEL, context: { view: 'running', runPage: 'diff', runId: RUN_UUID, pinned: false } });
+  assert.equal(r.status, 202, await r.clone().text());
+  const echo = await waitFor(() => msgs.find((m) => m.type === 'ask-message' && m.threadId === t.id && m.message && m.message.role === 'user'));
+  assert.deepEqual(echo.message.blocks, [{ kind: 'where', label: 'Run · Diff', icon: 'diff' }]);
+  const snap = await settled(t.id);
+  assert.deepEqual(snap.messages.find((m) => m.role === 'user').blocks, [{ kind: 'where', label: 'Run · Diff', icon: 'diff' }]);
+  ws.close();
+});
+
+test('a Chat-page message stores no where block', async () => {
+  const t = await newThread();
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'hi', ...MODEL, context: { view: 'chat', pinned: false } });
+  assert.equal(r.status, 202, await r.clone().text());
+  const snap = await settled(t.id);
+  assert.deepEqual(snap.messages.find((m) => m.role === 'user').blocks || [], []);
+});
+
+test('an attachment keeps the where block in front of the attachment blocks', async () => {
+  const t = await newThread();
+  const r = await post(`/api/ask/threads/${t.id}/messages`, {
+    text: 'read this', ...MODEL, context: { view: 'projects', pinned: false },
+    attachments: [{ name: 'a.md', dataBase64: Buffer.from('hi').toString('base64') }],
+  });
+  assert.equal(r.status, 202, await r.clone().text());
+  const snap = await settled(t.id);
+  const blocks = snap.messages.find((m) => m.role === 'user').blocks;
+  assert.deepEqual(blocks.map((b) => b.kind), ['where', 'attachment']);
+  assert.deepEqual(blocks[0], { kind: 'where', label: 'Projects', icon: 'project' });
 });

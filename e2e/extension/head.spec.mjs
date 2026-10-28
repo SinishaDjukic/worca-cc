@@ -39,10 +39,10 @@ test('pinned: a project picked before the first message pins the chat, and the p
     expect(add.status, JSON.stringify(add.body)).toBe(200);
     const key = add.body.projects.find((p) => p.name === 'ACME API').key;
     const { sidebar } = await pairedSidebar({ context, sw, extensionId, worca: freshWorca, site });
-    await expect(sidebar.locator('.ask-scope-label')).toHaveText('Any project');
-    await expect(pill(sidebar)).toHaveAttribute('title', 'Worca picks the project from your message');
+    await expect(sidebar.locator('.ask-scope-label')).toHaveText('No project');
+    await expect(pill(sidebar)).toHaveAttribute('title', 'Chat scope: No project');
     await pill(sidebar).click();
-    await expect(pop(sidebar).locator('.ask-scope-item').first()).toHaveText(/Any project/);
+    await expect(pop(sidebar).locator('.ask-scope-item').first()).toHaveText(/No project/);
     await pop(sidebar).getByRole('menuitem', { name: 'ACME API' }).click();
     await expect(pill(sidebar)).toHaveAttribute('data-pinned', '');
     await expect(sidebar.locator('.ask-scope-label')).toHaveText('ACME API');
@@ -51,8 +51,8 @@ test('pinned: a project picked before the first message pins the chat, and the p
     await expect(sidebar.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 30_000 });
     const snap = await snapshotOf(freshWorca, sidebar);
     expect(snap.thread.context).toMatchObject({ pinned: true, projectKey: key });
-    await sidebar.reload();                                                       // a fresh sidebar: New chat, Any project
-    await expect(sidebar.locator('.ask-scope-label')).toHaveText('Any project');
+    await sidebar.reload();                                                       // a fresh sidebar: New chat, No project
+    await expect(sidebar.locator('.ask-scope-label')).toHaveText('No project');
     await sidebar.getByRole('combobox', { name: 'Chat' }).selectOption(snap.thread.id);
     await expect(sidebar.locator('.ask-scope-label')).toHaveText('ACME API');
     await expect(pill(sidebar)).toHaveAttribute('data-pinned', '');

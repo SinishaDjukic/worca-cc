@@ -155,7 +155,7 @@ test('engine: Copilot sends engine copilot, says it runs on its default model, a
   pick(ctx, 'copilot');
   assert.equal(doc.getElementById('engineSelect').value, 'copilot');
   assert.equal(doc.getElementById('engine-hint').hidden, false);
-  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model/);
+  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries \(on its default model\)\. Step models: Models › Copilot\./);
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'copilot');
   await waitFor(() => !doc.getElementById('engineRefusal').hidden);
@@ -245,7 +245,7 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
-  assert.deepEqual([...doc.querySelectorAll('#engineSelect option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual([...doc.querySelectorAll('#engineSelect option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
   pick(ctx, 'cursor');
   assert.equal(doc.getElementById('engineSelect').value, 'cursor');
   const hint = doc.getElementById('engine-hint');
@@ -254,6 +254,17 @@ test('engine: Cursor is the third choice; it sends engine cursor and says helper
   assert.doesNotMatch(hint.textContent, /including titles and summaries/);
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'cursor');
+});
+
+test('engine: OpenCode is the fifth choice; it sends engine opencode and says helper jobs run on Claude', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
+  pick(ctx, 'opencode');
+  assert.equal(ctx.doc.getElementById('engineSelect').value, 'opencode');
+  assert.equal(ctx.doc.querySelector('#engineSelect option[value="opencode"]').textContent, 'OpenCode (Beta)');
+  assert.equal(ctx.doc.getElementById('engine-hint').textContent.trim(),
+    'OpenCode runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › OpenCode.');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).engine, 'opencode');
 });
 
 test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent model', async () => {
@@ -272,3 +283,34 @@ test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent
   assert.equal(model.options[0].textContent, '(default model)');
   assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
 });
+
+for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']]) {
+  test(`engine: ${label} is offered (beta); it sends engine ${engine} and says helper jobs run on Claude`, async () => {
+    const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
+    const doc = ctx.doc;
+    const opt = doc.querySelector(`#engineSelect option[value="${engine}"]`);
+    assert.equal(opt.textContent, `${label} (Beta)`, 'marked beta');
+    pick(ctx, engine);
+    const hint = doc.getElementById('engine-hint');
+    assert.equal(hint.textContent.trim(), `${label} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › ${label}.`);
+    await submit(ctx);
+    assert.equal(ctx.posted.at(-1).engine, engine);
+  });
+
+  test(`engine: on ${label} the agent rows offer ${label} models only and no sub-agent model`, async () => {
+    const ctx = await boot();
+    const np = ctx.window.__np;
+    np._setModels([
+      { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'] },
+      { id: `my-${engine}-m`, label: 'Mine', engine, efforts: [], custom: 'global' },
+      { id: 'my-cursor-m', label: 'My Cursor', engine: 'cursor', efforts: [], custom: 'global' },
+    ]);
+    pick(ctx, engine);
+    const def = { model: '', effort: '', fanOut: false, askQuestions: false, subagentModel: '' };
+    np.renderAgentRows([{ nodeId: 'n1', key: 'planner', label: 'Plan', color: '', stepIndex: 0, parallel: false,
+      model: '', effort: '', fanOut: false, subagentModel: '', askQuestions: null, def, override: {}, modified: false }]);
+    const model = ctx.doc.querySelector('#agents-rows .step-model');
+    assert.deepEqual([...model.options].map((o) => o.value).filter((v) => v !== '__add__'), ['', `my-${engine}-m`]);
+    assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
+  });
+}

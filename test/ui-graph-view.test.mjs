@@ -705,3 +705,22 @@ test('a loop pill between two STACKED cards stays off the lower card\'s label ro
     }
   }
 });
+
+test('repaintMeta swaps the registry for the label rows and description footers only: no card moves, no wire is rewritten', async () => {
+  const { createGraphView } = await import(viewPath);
+  const { doc, host } = boot();
+  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS, describe: true });
+  view.render(loopFixture(), {});
+  const card = view.nodeEl('n_agent');
+  const foot = () => card.querySelector(':scope > .ncap.desc');
+  assert.equal(foot().textContent, '', 'no description in the registry yet: an empty, full-height footer');
+  const geo = () => ({ transform: card.style.transform, height: card.style.height, d: view.wireEl('w4').getAttribute('d') });
+  const before = geo();
+  view.wireEl('w4').classList.add('is-hid');                     // a build animation's mid-flight state
+  view.repaintMeta({ planner: { ...AGENTS.planner, description: 'Writes the plan.' } });
+  assert.equal(foot().querySelector(':scope > span').textContent, 'Writes the plan.');
+  assert.equal(foot().title, 'Writes the plan.');
+  assert.deepEqual(geo(), before, 'geometry untouched');
+  assert.ok(view.wireEl('w4').classList.contains('is-hid'), 'no wire class rewrite (setAgents re-renders; repaintMeta does not)');
+  view.destroy();
+});

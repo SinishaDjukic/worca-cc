@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -97,6 +97,9 @@ test('legacy single-project run: worktree off main with derived worca-cc/ branch
       const state = orch.getState();
       assert.equal(state.target, undefined, 'no workspace discriminator on a single-project run');
       assert.equal(state.workspaceKey, undefined);
+      // P1 (Review Focus #4): a git run's state stays byte-identical — no Folder-run keys
+      assert.equal('workMode' in state, false, 'no workMode on a git run');
+      assert.equal('projectKey' in state, false, 'no stored projectKey on a git run');
       // Phase 1 (run-root plumbing): the per-member maps are initialized in the
       // constructor state literal so getState()'s snapshot shape is stable across modes
       // and targets — a single-project run now carries a ONE-entry map keyed by its own
@@ -107,6 +110,7 @@ test('legacy single-project run: worktree off main with derived worca-cc/ branch
       assert.deepEqual(Object.keys(state.branches), [onlyKey], 'one-entry per-member branches map');
       // The single-project branch object shape is unchanged.
       assert.ok(state.branch && typeof state.branch === 'object');
+      assert.equal('workMode' in state.branch, false, 'no workMode in a git run\'s branch record');
       assert.equal(state.branch.source, 'main');
       assert.match(state.branch.feature, /^worca-cc\//);
       // Pipeline routes to the PROJECT store, never workspaces/.
@@ -168,8 +172,9 @@ test('C1: on stop the worktree dir is removed but the branch is KEPT with partia
   assert.match(fileInCommit.stdout.toString(), /work in progress/);
 });
 
-// ── C2: nested projectDir must NOT mutate the enclosing repo ──────────────────
-test('C2: a projectDir nested in an enclosing repo gets its own repo, parent untouched', async () => {
+// ── C2 / #693: a projectDir nested in an enclosing repo is refused, never git-inited ──
+// (an UNREGISTERED nested dir: git mode, L4 — e.g. a CLI run in a sub-folder)
+test('C2 (#693): a projectDir nested in an enclosing repo ends the run with a clear error; nothing is git-inited', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-'));
   created.push(parent);
   const gp = (a) => spawnSync('git', a, { cwd: parent });
@@ -177,21 +182,77 @@ test('C2: a projectDir nested in an enclosing repo gets its own repo, parent unt
   gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
   await writeFile(join(parent, 'root.txt'), 'root\n');
   gp(['add', '-A']); gp(['commit', '-qm', 'init']);
-
-  // Nested dir with NO .git of its own (this is the C2 footgun).
   const sub = join(parent, 'sub');
   await mkdir(sub, { recursive: true });
   await writeFile(join(sub, 'app.txt'), 'app\n');
 
   const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true } });
+  const errors = [];
+  orch.on('error', (e) => errors.push(e.message));
+  const result = await orch.run();
+  assert.equal(result.status, 'error', JSON.stringify(result));   // terminal: not "Paused after an error"
+  assert.match(errors.join('\n'), /is inside the git repository at .*Worca runs only on the top folder of a git repository\. Add .* as a project and run there\./);
+  assert.equal(existsSync(join(sub, '.git')), false, 'sub must NOT be git-inited');
+  assert.ok(!branchList(parent).some((b) => b.startsWith('worca-cc/')), 'parent repo must have no worca-cc/* branches');
+  assert.equal(gp(['status', '--porcelain']).stdout.toString(), '?? sub/\n', 'the parent work tree only has the user\'s own untracked sub/');
+});
+
+test('C2 (#693): where git cannot see the enclosing repo (a ceiling, a "dubious ownership" parent), the stat walk still refuses', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-')); created.push(parent);
+  const gp = (a) => spawnSync('git', a, { cwd: parent });
+  gp(['init', '-q', '-b', 'main']); gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
+  await writeFile(join(parent, 'root.txt'), 'root\n'); gp(['add', '-A']); gp(['commit', '-qm', 'init']);
+  const sub = join(parent, 'sub'); await mkdir(sub, { recursive: true }); await writeFile(join(sub, 'app.txt'), 'app\n');
+  const prev = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = realpathSync(parent);             // rev-parse in sub no longer finds parent
+  try {
+    const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true } });
+    const errors = [];
+    orch.on('error', (e) => errors.push(e.message));
+    assert.equal((await orch.run()).status, 'error');
+    assert.match(errors.join('\n'), /sub is inside the git repository at /);
+    assert.equal(existsSync(join(sub, '.git')), false, 'sub must NOT be git-inited');
+  } finally {
+    if (prev === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = prev;
+  }
+});
+
+test('#693: a repository an older worca git-inited inside the user\'s repository runs, with a warning that says how to fix it', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-')); created.push(parent);
+  const gp = (a) => spawnSync('git', a, { cwd: parent });
+  gp(['init', '-q', '-b', 'main']); gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
+  await writeFile(join(parent, 'root.txt'), 'root\n'); gp(['add', '-A']); gp(['commit', '-qm', 'init']);
+  const sub = join(parent, 'sub'); await mkdir(sub, { recursive: true }); await writeFile(join(sub, 'app.txt'), 'app\n');
+  // What 1.10.0 left behind (run-harness _ensureGitCheckpointFor's old !isOwnRepo branch).
+  const gs = (a) => spawnSync('git', a, { cwd: sub });
+  gs(['init', '-q', '-b', 'main']); gs(['config', 'user.email', 'orchestrator@local']); gs(['config', 'user.name', 'orchestrator']);
+  gs(['add', '-A']); gs(['commit', '-qm', 'orchestrator: initial checkpoint']);
+  const configBefore = readFileSync(join(sub, '.git', 'config'), 'utf8');
+
+  const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true } });
+  const warns = [];
+  orch.on('log', (e) => { if (e.level === 'warn' && e.source === 'git') warns.push(e.text); });
   const result = await orch.run();
   assert.equal(result.status, 'done', JSON.stringify(result));
+  assert.equal(warns.length, 1, warns.join('\n'));
+  assert.match(warns[0], /An older Worca created it\..*delete it, remove this project from Worca, then add /s);
+  assert.ok(existsSync(join(sub, '.git')), 'nothing removed');
+  assert.equal(readFileSync(join(sub, '.git', 'config'), 'utf8'), configBefore, 'its config is untouched');
+});
 
-  assert.ok(existsSync(join(sub, '.git')), 'sub should have been given its OWN git repo');
-  const feature = orch.getState().branch.feature;
-  assert.ok(branchList(sub).includes(feature), `feature branch should live in sub's repo`);
-  assert.ok(!branchList(parent).includes(feature), `parent repo must NOT have ${feature}`);
-  assert.ok(!branchList(parent).some((b) => b.startsWith('worca-cc/')), 'parent repo must have no worca-cc/* branches');
+test('C2 (Folder mode): the same nested dir on a copy gets no .git, the parent repo is left alone, the run root is used even under legacy', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-')); created.push(parent);
+  const gp = (a) => spawnSync('git', a, { cwd: parent });
+  gp(['init', '-q', '-b', 'main']); gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
+  await writeFile(join(parent, 'root.txt'), 'root\n'); gp(['add', '-A']); gp(['commit', '-qm', 'init']);
+  const sub = join(parent, 'sub'); await mkdir(sub, { recursive: true }); await writeFile(join(sub, 'app.txt'), 'app\n');
+  const before = gp(['status', '--porcelain']).stdout.toString();
+  const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true }, workMode: 'folder' });
+  assert.equal((await orch.run()).status, 'done');
+  assert.equal(existsSync(join(sub, '.git')), false);
+  assert.ok(!branchList(parent).some((b) => b.startsWith('worca-cc/')));
+  assert.equal(gp(['status', '--porcelain']).stdout.toString(), before, 'the parent work tree is unchanged');
+  assert.match(posix(orch.getState().branch.copyDir), /\/runs\/[0-9a-f]{8}\/repos\//);
 });
 
 test('source branch defaults to actual HEAD when not "main"', async () => {
@@ -209,4 +270,72 @@ test('source branch defaults to actual HEAD when not "main"', async () => {
   });
   assert.equal((await stopAt(orch, afterStarts(1))).status, 'stopped');
   assert.equal(orch.getState().branch.source, 'master');
+});
+
+// ── Smart run naming (flag smartRunNaming): derived names go through the pattern ──
+async function withFlag(on, fn) {
+  const prev = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = on ? 'smartRunNaming' : '-smartRunNaming';
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+}
+const branchOf = async (repo, extra) => {
+  const orch = createOrchestrator({ projectDir: repo, prompt: 'Rate limiter for the api', auto: true, claude: { mock: true }, ...extra });
+  assert.equal((await stopAt(orch, afterStarts(1))).status, 'stopped');
+  return { orch, feature: orch.getState().branch.feature };
+};
+
+test('smart naming off: the derived name is today\'s worca-cc/words-id', async () => {
+  await withFlag(false, async () => {
+    const { feature } = await branchOf(await freshRepo(), { branch: { source: 'main' } });
+    assert.match(feature, /^worca-cc\/.+-[0-9a-f]{8}$/);
+  });
+});
+
+test('smart naming on: a derived name uses the pattern and the first type (the ticket part is pinned in naming-derive)', async () => {
+  await withFlag(true, async () => {
+    const { feature } = await branchOf(await freshRepo(), { branch: { source: 'main' } });
+    assert.match(feature, /^feat\/rate-limiter/);
+  });
+});
+
+test('smart naming on: a derived name that already exists gets the short run id; a suggested one too', async () => {
+  await withFlag(true, async () => {
+    const repo = await freshRepo();
+    const first = await branchOf(repo, { branch: { source: 'main' } });
+    assert.ok(branchList(repo).includes(first.feature));
+    const second = await branchOf(repo, { branch: { source: 'main' } });
+    assert.notEqual(second.feature, first.feature);
+    assert.match(second.feature, new RegExp(`^${first.feature}-[0-9a-f]{8}$`));
+    const marked = await branchOf(repo, { branch: { source: 'main', feature: first.feature, suggested: true } });
+    assert.match(marked.feature, new RegExp(`^${first.feature}-`));
+  });
+});
+
+test('smart naming on: a typed branch stays verbatim even when it exists', async () => {
+  await withFlag(true, async () => {
+    const repo = await freshRepo();
+    spawnSync('git', ['-C', repo, 'branch', 'fix/typed', 'main']);
+    const { feature } = await branchOf(repo, { branch: { source: 'main', feature: 'fix/typed' } });
+    assert.equal(feature, 'fix/typed');
+  });
+});
+
+test('smart naming on: branch.legacy gives today\'s exact name, no pattern', async () => {
+  await withFlag(true, async () => {
+    const { feature } = await branchOf(await freshRepo(), { branch: { source: 'main', legacy: true } });
+    assert.match(feature, /^worca-cc\/.+-[0-9a-f]{8}$/);
+  });
+});
+
+test('smart naming on: a replay keeps the derived name and never asks git for the branch list', async () => {
+  await withFlag(true, async () => {
+    const repo = await freshRepo();
+    spawnSync('git', ['-C', repo, 'branch', 'feat/rate-limiter-api', 'main']);
+    const orch = createOrchestrator({ projectDir: repo, prompt: 'Rate limiter for the api', auto: true, claude: { mock: true }, branch: { source: 'main' } });
+    orch.pipeline = { id: 'a1b2c3d4e5f6', promptText: 'Rate limiter for the api' };
+    const first = await orch._resolveSingleBranches();
+    assert.equal(first.featureRaw, 'feat/rate-limiter-api-a1b2c3d4', 'a first attempt makes the collision unique');
+    const replay = await orch._resolveSingleBranches({ replay: true });
+    assert.equal(replay.featureRaw, 'feat/rate-limiter-api', 'a replay re-derives without touching the branch list');
+  });
 });

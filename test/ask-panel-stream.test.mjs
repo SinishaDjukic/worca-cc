@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, key, openChat } from './helpers/ask-panel-harness.mjs';
 import { replayFixture, stampFrames } from './helpers/ask-frames.mjs';
 
 const TID = 'ask_00000001';
@@ -29,12 +29,7 @@ function handlerFor(snapshotRef) {
 
 async function openWith(snapshotRef, overrides = {}) {
   const ctx = makePanel({ fetchHandler: handlerFor(snapshotRef), ...overrides });
-  ctx.panel.open();
-  await ctx.tick();                                    // the first show loaded the History column
-  ctx.doc.querySelector('[data-chat-history] .ask-thread-pick').click();
-  await ctx.tick();
-  await ctx.tick();
-  ctx.flush();
+  await openChat(ctx, TID);
   return ctx;
 }
 
@@ -390,13 +385,7 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   };
   const ctx = makePanel({ fetchHandler: handler });
   ctx.panel.open();
-  const pick = async (i) => {
-    await ctx.tick();
-    ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[i].click();
-    await ctx.tick();
-    await ctx.tick();
-    ctx.flush();
-  };
+  const pick = (i) => openChat(ctx, [TID, TID2][i]);
   await pick(0);
   ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 'x', threadId: TID, messageId: MID, seq: 1 });
   ctx.flush();
@@ -406,7 +395,66 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   assert.equal(ctx.doc.querySelector('[data-ask-send]').hidden, false, 'send back');
 });
 
-test('ask-panel-stream: the History column refetches its rows on ask-run-status / ask-start for ANY thread (debounced) while Chat shows — column open or not — keeps its node and the composer focus, and stops once Chat is hidden', async () => {
+// The snapshot of a chat whose turn is still running: its assistant row is the unfinished `streaming` placeholder.
+function streamingAssistant(over = {}) {
+  return { id: MID, threadId: TID, seq: 2, role: 'assistant', text: '', blocks: [], status: 'streaming', reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't', ...over };
+}
+function inFlightSnap() {
+  const base = snapBody({ inFlight: { messageId: MID } });
+  return { ...base, messages: [...base.messages, streamingAssistant()] };
+}
+
+test('ask-panel-stream: switching back to a chat whose turn still runs re-subscribes it, and its row never reads Done', async () => {
+  const TID2 = 'ask_00000002';
+  const idle = { ...snapBody(), thread: { ...snapBody().thread, id: TID2 } };
+  const handler = (url) => {
+    if (url.startsWith(`/api/ask/threads/${TID2}`)) return { ok: true, status: 200, json: async () => idle };
+    if (url.startsWith(`/api/ask/threads/${TID}`)) return { ok: true, status: 200, json: async () => inFlightSnap() };
+    if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => ({ threads: [
+      { id: TID, title: 'T', updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: true, tracking: false },
+      { id: TID2, title: 'T2', updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false, tracking: false },
+    ] }) };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const ctx = makePanel({ fetchHandler: handler });
+  ctx.panel.open();
+  const pick = (i) => openChat(ctx, [TID, TID2][i]);
+  const subs = () => ctx.wsSends.filter((s) => s.type === 'subscribe' && s.threadId === TID).length;
+  await pick(0);
+  assert.equal(subs(), 1, 'the first load subscribed A');
+  await pick(1);
+  await pick(0);
+  assert.equal(subs(), 2, 'coming back to A asks the server to replay its running turn again');
+  const label = ctx.doc.querySelector('.ask-msg-assistant .ask-activity-label');
+  assert.ok(label, 'A shows its assistant row');
+  assert.notEqual(label.textContent, 'Done', 'a turn still running is not Done');
+  assert.equal(label.textContent, 'Thinking');
+  // The replay (from seq 1) makes the turn live again: still Thinking, now with the orb row.
+  ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: '2026-10-18T00:00:00Z', threadId: TID, messageId: MID, seq: 1 });
+  ctx.panel.pushServerFrame({ type: 'ask-delta', text: 'partial', threadId: TID, messageId: MID, seq: 2 });
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-msg-assistant .ask-activity-label').textContent, 'Thinking');
+  assert.ok(ctx.doc.querySelector('.ask-thinking'), 'the adopted turn gets the orb row');
+});
+
+test('ask-panel-stream: an unfinished assistant row reads Thinking before any frame arrives, never Done', async () => {
+  await checkRows([
+    { name: 'ask-panel-stream: the snapshot\'s in-flight row reads Thinking with no frame yet', run: async () => {
+      const ref = { body: inFlightSnap() };
+      const ctx = await openWith(ref);
+      assert.equal(ctx.doc.querySelector('.ask-msg-assistant .ask-activity-label').textContent, 'Thinking');
+      assert.equal(ctx.doc.querySelector('.ask-msg-assistant .ask-activity-elapsed'), null, 'no empty Done meter beside it');
+    } },
+    { name: 'ask-panel-stream: a row whose status is still streaming reads Thinking even without inFlight', run: async () => {
+      const base = snapBody();
+      const ref = { body: { ...base, messages: [...base.messages, streamingAssistant()] } };
+      const ctx = await openWith(ref);
+      assert.equal(ctx.doc.querySelector('.ask-msg-assistant .ask-activity-label').textContent, 'Thinking');
+    } },
+  ]);
+});
+
+test('ask-panel-stream: the Chats column refetches on ask-run-status / ask-start for ANY thread (debounced) while Chat shows — column open or not — keeps its node and the composer focus, and stops once Chat is hidden', async () => {
   const TID2 = 'ask_00000002';
   const listRow = (id, inFlight, tracking) => ({ id, title: id, updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight, tracking });
   const list = { threads: [listRow(TID, false, false), listRow(TID2, false, false)], total: 2 };
@@ -421,48 +469,35 @@ test('ask-panel-stream: the History column refetches its rows on ask-run-status 
   ctx.panel.open();
   await ctx.tick();
   assert.equal(listFetches(), 1, 'one fetch on the first show');
-  assert.equal(ctx.panel.root.dataset.history, 'closed', 'jsdom is 1024px wide: the column is closed, its rows are built');
+  assert.equal(ctx.panel.root.dataset.history, 'closed', 'jsdom is 1024px wide: the column is closed, it still loads');
   const col = ctx.doc.querySelector('[data-chat-history]');
-  const rows = () => [...col.querySelectorAll('.ask-thread-pick')];
-  assert.equal(rows().length, 2);
-  assert.equal(rows()[1].querySelector('.ask-dot-track'), null, 'T2 not tracking at open');
   const input = ctx.doc.querySelector('textarea.ask-input');
   assert.equal(ctx.doc.activeElement, input, 'open() focused the composer');
   // The chat behind row 2 starts following a run: no thread is active (st.threadId null),
   // so the frame would otherwise be dropped before the model — the column still refetches.
   list.threads[1] = listRow(TID2, false, true);
-  list.total = 3;
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'plan' });
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'implement' });
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: 'ask_ffffffff', runId: 'uuid-2', pipelineId: 'bbbb2222', cardId: null, status: 'done', phase: null });
   assert.equal(listFetches(), 1, 'nothing refetched synchronously — the burst is debounced');
   await settle();
   assert.equal(listFetches(), 2, 'three frames in a burst → ONE refetch');
-  assert.ok(rows()[1].querySelector('.ask-dot-track'), 'T2 now shows the violet tracking dot');
-  assert.equal(rows()[0].querySelector('.ask-dot-track'), null);
-  assert.equal(rows().length, 2, 'the rows were replaced, not appended');
-  assert.equal(col.querySelector('.chat-history-meter').textContent, '3 chats', 'the meter follows the fresh total');
   assert.equal(ctx.doc.querySelector('[data-chat-history]'), col, 'same column node');
   assert.equal(ctx.doc.activeElement, input, 'a refresh never steals focus');
-  // A turn starting elsewhere arms the thinking dot the same way.
+  // A turn starting elsewhere refetches the same way.
   list.threads[1] = listRow(TID2, true, true);
   ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 't', threadId: TID2, messageId: 'askm_00000009', seq: 1 });
   await settle();
   assert.equal(listFetches(), 3);
-  assert.ok(rows()[1].querySelector('.ask-dot-live'), 'T2 thinking');
-  assert.ok(rows()[1].querySelector('.ask-dot-track'), 'and still tracking');
-  // The run settles but the chat follows another: the row is re-read, never flipped from the frame's status.
-  list.threads[1] = listRow(TID2, true, true);
-  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'done', phase: null });
-  await settle();
-  assert.equal(listFetches(), 4);
-  assert.ok(rows()[1].querySelector('.ask-dot-track'), 'a terminal status alone does not clear the dot');
   // Hidden: a pending debounce fetches nothing, later frames neither (they mark the list stale for the next show).
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'x' });
   ctx.panel.close();
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'y' });
   await settle();
-  assert.equal(listFetches(), 4, 'no refetch while Chat is hidden');
+  assert.equal(listFetches(), 3, 'no refetch while Chat is hidden');
+  ctx.panel.open();
+  await ctx.tick();
+  assert.equal(listFetches(), 4, 'the next show fetches the stale list once');
 });
 
 test('ask-panel-stream: an adopted turn (no ask-start) gets the orb row and Stop; the subscribe replay renders the whole answer', async () => {
@@ -499,4 +534,65 @@ test('ask-panel-stream: an adopted turn (no ask-start) gets the orb row and Stop
       assert.equal(ctx.doc.querySelector('.ask-stop').hidden, false, 'still streaming');
     } },
   ]);
+});
+
+// ---- the next-prompt suggestion (ask-suggestion, live-only ghost text) ---------------------------------------------
+const suggest = (ctx, text = 'Open a PR', messageId = MID) => {
+  ctx.panel.pushServerFrame({ type: 'ask-suggestion', threadId: TID, messageId, text });
+  ctx.flush();
+};
+async function finishedTurn() {
+  const ctx = await openWith({ body: snapBody() });
+  for (const f of stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-done', text: 'Here is the diff summary.', blocks: [], usage: null, costUsd: 0, durationMs: 1, model: 'm', status: 'done' },
+  ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+  ctx.flush();
+  return ctx;
+}
+
+test('ask-panel-stream: a suggestion replaces the default placeholder; Tab accepts it; Enter on empty never sends it; screen readers get it', async () => {
+  const ctx = await finishedTurn();
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  suggest(ctx);
+  assert.equal(input.placeholder, 'Open a PR');
+  assert.ok(input.classList.contains('is-suggesting'));
+  const hintId = input.getAttribute('aria-describedby');
+  assert.match(ctx.doc.getElementById(hintId).textContent, /Open a PR.*Tab/);
+  const before = ctx.fetchCalls.filter((c) => /\/messages$/.test(c.url)).length;
+  const enter = key(ctx.window, input, 'Enter');
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.fetchCalls.filter((c) => /\/messages$/.test(c.url)).length, before, 'Enter on an empty input sends nothing');
+  assert.equal(enter.defaultPrevented, true);
+  const tab = key(ctx.window, input, 'Tab');
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(input.value, 'Open a PR');
+  assert.equal(input.selectionStart, 'Open a PR'.length, 'caret at the end');
+  assert.equal(input.placeholder, 'Ask about any run, agent, or project…');
+  assert.equal(input.hasAttribute('aria-describedby'), false);
+});
+
+test('ask-panel-stream: typing hides the suggestion for good; Tab without one keeps focus behaviour', async () => {
+  const ctx = await finishedTurn();
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  suggest(ctx);
+  input.value = 'x';
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  input.value = '';
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  assert.equal(input.placeholder, 'Ask about any run, agent, or project…', 'a typed-over suggestion does not come back');
+  assert.equal(key(ctx.window, input, 'Tab').defaultPrevented, false);
+});
+
+test('ask-panel-stream: a stale suggestion is dropped — typed before it landed, an older reply, another thread, or a turn running', async () => {
+  const ctx = await finishedTurn();
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  input.value = 'typing'; input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  input.value = ''; input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  suggest(ctx);
+  assert.equal(input.placeholder, 'Ask about any run, agent, or project…', 'typed after the reply: dropped');
+  suggest(ctx, 'Old', 'askm_older');
+  ctx.panel.pushServerFrame({ type: 'ask-suggestion', threadId: 'ask_ffffffff', messageId: MID, text: 'Other' });
+  ctx.flush();
+  assert.equal(input.placeholder, 'Ask about any run, agent, or project…');
 });

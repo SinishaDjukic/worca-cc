@@ -11,14 +11,19 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { writePluginConfig, readPluginState } from '../src/core/plugin-config.mjs';
-import { PluginOpError } from '../src/core/plugin-shim.mjs';
+import { PluginOpError, _resetWithheldProxyNotice } from '../src/core/plugin-shim.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { startProxyNet, setProxyEnv, assertProxyRouting, NO_PROXY_HOST } from './helpers/proxy-net.mjs';
+import { importClosure } from './helpers/import-closure.mjs';
 import {
   createChannelHost, discoverChannels,
   setMockChannelBehavior, mockSentMessages, clearMockSentMessages,
 } from '../src/core/chat/channel-host.mjs';
 
 useTempHome(after);
+// The developer's own proxy variables never reach these real children (the proxy
+// tests set their own) or spend the once-per-process withheld-proxy warning early.
+after(setProxyEnv({}));
 
 // The fake child processes below (makeFakeProc) are plain EventEmitters over
 // in-memory PassThroughs: unlike a real spawned child, they hold no libuv
@@ -106,6 +111,13 @@ function collectingHost() {
   });
   return { host, seen };
 }
+
+test('the worker child loads no worca module but channel-protocol and env-proxy (its scrubbed env has no WORCA_HOME)', () => {
+  assert.deepEqual(importClosure('src/core/chat/channel-worker-child.mjs'), {
+    modules: ['src/core/chat/channel-protocol.mjs', 'src/core/env-proxy.mjs'],
+    bare: ['node:module', 'node:readline', 'node:url'],
+  });
+});
 
 test('discoverChannels: enabled + configured -> spawnable entry; missing config flagged', () => {
   installFixture();
@@ -229,6 +241,7 @@ test('unconfigured channel: not spawned, sendMessage fails closed', async () => 
   const row = host.status()[0];
   assert.equal(row.state, 'unconfigured');
   assert.match(row.detail, /missing config: token/);
+  assert.deepEqual(row.missingConfig, ['token'], 'CONTRACT §1.6: the keys, not only the sentence');
   await assert.rejects(
     host.sendMessage({ plugin: NAME, channelId: 'main', chatId: '1', message: { title: null, body: [], severity: 'info' } }),
     /unconfigured/,
@@ -245,6 +258,7 @@ test('reloadPlugin restarts workers against fresh config', async () => {
   await waitFor(() => host.status()[0]?.state === 'connected', { label: 'connect' });
   await host.reloadPlugin(NAME);
   await waitFor(() => host.status()[0]?.state === 'connected', { label: 'reconnect after reload' });
+  assert.deepEqual(host.status()[0].missingConfig, []);
   assert.equal(host.status().length, 1, 'no duplicate workers after reload');
   await host.stop();
 });
@@ -259,6 +273,121 @@ test('checkChannel: one-shot --check runs the module validateConfig offline', as
   assert.equal(bad.ok, false);
   assert.equal(bad.errors[0].field, 'token');
   writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+});
+
+// Proxy fixture: fetches the URLs its token lists (JSON), in order, and reports
+// each outcome. A send stores them in the state; --check returns them.
+const PROXY_WORKER = [
+  'async function probe(token) {',
+  '  const out = [];',
+  '  for (const url of JSON.parse(token)) {',
+  '    try { const res = await fetch(url); out.push({ url, status: res.status, body: await res.text() }); }',
+  '    catch (err) { out.push({ url, error: String((err.cause && err.cause.code) || err.message) }); }',
+  '  }',
+  '  return out;',
+  '}',
+  'export function createChannelWorker(ctx) {',
+  '  return {',
+  "    async start() { return { identity: 'proxy-bot' }; },",
+  '    async stop() {},',
+  "    async send() { await ctx.state.set('probe', await probe(ctx.config.token)); return { ok: true }; },",
+  '  };',
+  '}',
+  'export async function validateConfig(config) { return { ok: true, probe: await probe(config.token) }; }',
+].join('\n');
+
+test('real worker and --check child: with the proxy variables set, fetch() goes through the proxy; loopback and NO_PROXY go direct', async () => {
+  const net = await startProxyNet();
+  // HTTP_PROXY too: a loopback http fetch would reach the proxy if the child did not bypass it.
+  const restore = setProxyEnv({ https_proxy: net.proxyUrl, HTTP_PROXY: net.proxyUrl, NO_PROXY: NO_PROXY_HOST });
+  installFixture({ worker: PROXY_WORKER, config: { token: JSON.stringify(net.targets) } });
+  const { host, seen } = collectingHost();
+  try {
+    await checkRows([
+      { name: 'a send from the persistent worker', run: async () => {
+        host.start();
+        await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+        await host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'PROBE', message: MSG });
+        assertProxyRouting(net, readPluginState(NAME).probe);
+        const proxyLogs = seen.logs.filter((l) => /outbound requests|proxy:/.test(l.msg));
+        assert.deepEqual(proxyLogs, [], 'an applied proxy is no news: the worker logs warnings only');
+      } },
+      { name: 'validateConfig in the --check child', run: async () => {
+        net.seen.length = 0;
+        assertProxyRouting(net, (await host.checkChannel(NAME, 'main')).probe);
+      } },
+    ]);
+  } finally {
+    await host.stop();
+    restore();
+    await net.close();
+    writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+  }
+});
+
+test('a proxy the worker cannot apply is a warn line in the channel log; --check keeps its stdout to the result line', async () => {
+  const restore = setProxyEnv({ HTTPS_PROXY: 'http://[not-a-host' });
+  const { host, seen } = collectingHost();
+  try {
+    await checkRows([
+      { name: 'the persistent worker logs it instead of a bare "fetch failed"', run: async () => {
+        installFixture();
+        host.start();
+        const line = await waitFor(() => seen.logs.find((l) => /proxy:/.test(l.msg)), { label: 'proxy warning' });
+        assert.equal(line.level, 'warn');
+        assert.match(line.msg, /^\[chat:fixture-chat\/main\] proxy: .*not a valid proxy URL; outbound requests go direct$/);
+        await host.stop();
+      } },
+      { name: '--check writes no warning line: a child that dies before its result still reads as no result', run: async () => {
+        installFixture({ worker: "throw new Error('broken at import');" });
+        await assert.rejects(host.checkChannel(NAME, 'main'), (err) => err instanceof PluginOpError && /no result frame/.test(err.message));
+      } },
+    ]);
+  } finally {
+    await host.stop();
+    restore();
+  }
+});
+
+test('a proxy URL with credentials never reaches a worker or the --check child: they go direct, and worca says why on stderr', async (t) => {
+  const net = await startProxyNet();
+  const restore = setProxyEnv({ HTTPS_PROXY: net.proxyUrl.replace('://', '://user:s3cret@'), NO_PROXY: NO_PROXY_HOST });
+  installFixture({ worker: PROXY_WORKER, config: { token: JSON.stringify(net.targets.slice(0, 1)) } });
+  // The CLI's --check host logs nowhere, so the warning goes to the process's stderr, never a logger.
+  const stderr = t.mock.method(console, 'error', () => {});
+  const assertWarnedOnce = () => {
+    const warned = stderr.mock.calls.map((c) => String(c.arguments[0]));
+    assert.equal(warned.length, 1, JSON.stringify(warned));
+    assert.match(warned[0], /^worca: proxy: HTTP\(S\)_PROXY carries credentials.*go direct$/);
+    assert.doesNotMatch(warned[0], /s3cret/);
+  };
+  const host = createChannelHost({ logger: () => {} });
+  try {
+    await checkRows([
+      { name: 'the persistent worker', run: async () => {
+        _resetWithheldProxyNotice();
+        stderr.mock.resetCalls();
+        host.start();
+        await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+        await host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'PROBE', message: MSG });
+        assert.ok(readPluginState(NAME).probe[0].error, 'the outside host was fetched directly, and failed in DNS');
+        assert.deepEqual(net.seen, [], 'nothing reached the proxy');
+        assertWarnedOnce();
+      } },
+      { name: 'the --check child', run: async () => {
+        _resetWithheldProxyNotice();
+        stderr.mock.resetCalls();
+        assert.ok((await host.checkChannel(NAME, 'main')).probe[0].error, 'the outside host was fetched directly, and failed in DNS');
+        assert.deepEqual(net.seen, [], 'nothing reached the proxy');
+        assertWarnedOnce();
+      } },
+    ]);
+  } finally {
+    await host.stop();
+    restore();
+    await net.close();
+    writePluginConfig(NAME, SCHEMA, { token: 'sekret' });
+  }
 });
 
 test('WORCA_MOCK=1: no spawn, instant connected, hooks drive both directions', async () => {

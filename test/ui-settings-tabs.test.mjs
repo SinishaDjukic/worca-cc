@@ -153,7 +153,7 @@ test('legacy #guardrails (incl. #guardrails/<id> and a boot-time deep link) redi
   ]);
 });
 
-test('opening Runs or Ask Worca loads the settings payload', async () => {
+test('opening Runs or Chat loads the settings payload', async () => {
   for (const tab of ['runs', 'ask']) {
     const { window, calls } = await boot();
     await go(window, `settings/${tab}`);
@@ -346,4 +346,26 @@ test('#555 Away: a server field nightMode.maxDecisions lands on the data-field i
   assert.equal(num.getAttribute('aria-invalid'), 'true');
   assert.equal(fieldErrorText(num), '“Answer limit” must be a whole number from 1 to 500.');
   assert.equal(doc.getElementById('nightModeMsg'), null, 'no grey status line');
+});
+
+test('Settings › Tags: its own tab after General at every level', async () => {
+  await checkRows([
+    { name: '#settings/tags shows the Tags pane and nothing else', run: async () => {
+      const { window } = await boot();
+      await go(window, 'settings/tags');
+      assert.equal(shown(window, 'tags'), true);
+      assert.equal(shown(window, 'general'), false);
+      assert.equal(window.document.querySelector('#settings-tabs button[data-tab="tags"]').getAttribute('aria-pressed'), 'true');
+    } },
+    { name: 'the chip is a Simple-level tab with no flag gate; neither is the pane', run: async () => {
+      const { window } = await boot();
+      const chip = window.document.querySelector('#settings-tabs button[data-tab="tags"]');
+      assert.equal(chip.dataset.minLevel, 'simple');
+      assert.equal(chip.dataset.flag, undefined);
+      assert.equal(chip.previousElementSibling.dataset.tab, 'general');
+      assert.equal(paneOf(window, 'tags').dataset.flag, undefined);
+      assert.equal(window.document.getElementById('tag-dims-settings-card').dataset.minLevel, 'simple');
+      assert.equal(paneOf(window, 'runs').querySelector('#tag-dims-settings-card'), null, 'the card left the Runs pane');
+    } },
+  ]);
 });

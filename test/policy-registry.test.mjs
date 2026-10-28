@@ -169,7 +169,7 @@ test('catalog models: a Codex entry keeps its engine, Codex efforts and a Respon
       { id: 'acme-codex-local', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen', baseUrl: 'http://gw.acme:8000/v1', apiKey: '${ACME_KEY}' } },
       { id: 'acme-codex-chat', engine: 'codex', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen' } },
       { id: 'acme-codex-literal', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen', apiKey: 'sk-literal-key-123456' } },
-      { id: 'acme-odd', engine: 'gemini' },
+      { id: 'acme-odd', engine: 'gpt' },
       { id: 'acme-claude', efforts: ['high'] },
     ] },
   });
@@ -185,20 +185,141 @@ test('catalog models: a Codex entry keeps its engine, Codex efforts and a Respon
   assert.ok(warnings.some((w) => w.includes('acme-odd') && w.includes('engine')), warnings.join('\n'));
 });
 
-test('catalog models: a Cursor entry keeps its engine with no efforts; env or an upstream drops it', () => {
+test('catalog models: a Cursor entry keeps its engine with no efforts, a Gemini one its own; env or an upstream drops it', () => {
   const { doc, warnings } = normalizePolicyDoc({
     schema: 1,
     catalogs: { models: [
       { id: 'acme-cursor', engine: 'cursor', efforts: ['high'] },
       { id: 'acme-cursor-env', engine: 'cursor', env: { X: 'y' } },
       { id: 'acme-cursor-up', engine: 'cursor', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen' } },
+      { id: 'acme-gemini', engine: 'gemini', efforts: ['high'] },
+      { id: 'acme-qwen-env', engine: 'qwen', env: { X: 'y' } },
       { id: 'acme-claude' },
     ] },
   });
   assert.deepEqual(doc.catalogs.models, [
     { id: 'acme-cursor', label: 'acme-cursor', efforts: [], engine: 'cursor' },
+    { id: 'acme-gemini', label: 'acme-gemini', efforts: ['high'], engine: 'gemini' },
     { id: 'acme-claude', label: 'acme-claude', efforts: ['medium', 'high'] },
   ]);
   assert.ok(warnings.some((w) => w.includes('acme-cursor-env') && w.includes('a cursor model takes no env')), warnings.join('\n'));
   assert.ok(warnings.some((w) => w.includes('acme-cursor-up') && w.includes('a cursor model takes no upstream')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-qwen-env') && w.includes('a qwen model takes no env')), warnings.join('\n'));
+});
+
+test('catalog models: a Goose entry keeps its engine and efforts; env, an upstream or a bare id drops it', () => {
+  const { doc, warnings } = normalizePolicyDoc({
+    schema: 1,
+    catalogs: { models: [
+      { id: 'google/gemini-2.5-flash', engine: 'goose', efforts: ['high', 'xhigh'] },
+      { id: 'acme/goose-env', engine: 'goose', env: { X: 'y' } },
+      { id: 'acme-goose-bare', engine: 'goose' },
+    ] },
+  });
+  assert.deepEqual(doc.catalogs.models, [{ id: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash', efforts: ['high'], engine: 'goose' }]);
+  assert.ok(warnings.some((w) => w.includes('acme/goose-env') && w.includes('a goose model takes no env')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-goose-bare') && w.includes('provider/model')), warnings.join('\n'));
+});
+
+test('runs.tagDimensions: soft only, bad entries dropped one warning each, field kept', () => {
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [
+    { key: 'cc', label: 'Cost centre', required: true }, { key: '', label: 'nope' },
+  ] } } });
+  assert.deepEqual(doc.fields['runs.tagDimensions'].value, [{ key: 'cc', label: 'Cost centre', values: [], required: true }]);
+  assert.ok(warnings.some((w) => /^runs\.tagDimensions: .*entry dropped$/.test(w)));
+  assert.equal(validateValue(fieldMeta('runs.tagDimensions'), 'x'), 'must be a list of { key, label, values?, required? }');
+});
+
+test('runs.tagDimensions: an 11th dimension is dropped with a warning', () => {
+  const value = Array.from({ length: 11 }, (_, i) => ({ key: `k${i}`, label: `K${i}` }));
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value } } });
+  assert.equal(doc.fields['runs.tagDimensions'].value.length, 10);
+  assert.ok(warnings.some((w) => /k10: at most 10 tag dimensions/.test(w)));
+});
+
+test('runs.enforceTags: a soft bool in the runs group; a non-boolean is dropped with a warning', () => {
+  const meta = fieldMeta('runs.enforceTags');
+  assert.deepEqual({ type: meta.type, kinds: meta.kinds, group: meta.group }, { type: 'bool', kinds: ['soft'], group: 'runs' });
+  assert.equal(normalizePolicyDoc({ schema: 1, fields: { 'runs.enforceTags': { kind: 'soft', value: true } } }).doc.fields['runs.enforceTags'].value, true);
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'runs.enforceTags': { kind: 'soft', value: 'yes' } } });
+  assert.equal('runs.enforceTags' in doc.fields, false);
+  assert.ok(warnings.some((w) => /^runs\.enforceTags: /.test(w)), warnings.join('\n'));
+});
+
+test('runs.tagDimensions: an entry with a default keeps it', () => {
+  const { doc } = normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [
+    { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' },
+  ] } } });
+  assert.deepEqual(doc.fields['runs.tagDimensions'].value, [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' }]);
+});
+
+test('catalog models: an OpenCode entry keeps its engine and variants; env, an upstream or a bare id drops it', () => {
+  const { doc, warnings } = normalizePolicyDoc({
+    schema: 1,
+    catalogs: { models: [
+      { id: 'acme/oc', engine: 'opencode', efforts: ['high', 'xhigh'] },
+      { id: 'acme/oc-env', engine: 'opencode', env: { X: 'y' } },
+      { id: 'acme-oc-bare', engine: 'opencode' },
+    ] },
+  });
+  assert.deepEqual(doc.catalogs.models, [{ id: 'acme/oc', label: 'acme/oc', efforts: ['high'], engine: 'opencode' }]);
+  assert.ok(warnings.some((w) => w.includes('acme/oc-env') && w.includes('an opencode model takes no env')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-oc-bare') && w.includes('provider/model')), warnings.join('\n'));
+});
+
+import { UI_LEVELS } from '../src/core/settings.mjs';
+import { ENGINES } from '../src/shared/engine-switch.mjs';
+import { fmtValue } from '../src/core/policy/effective.mjs';
+
+test('Setup group: seven fields in order, enums match the settings they govern', () => {
+  assert.ok(GROUP_ORDER.includes('setup'));
+  const setup = FIELDS.filter((f) => f.group === 'setup').map((f) => f.key);
+  assert.deepEqual(setup, ['models.roles', 'setup.uiLevel', 'setup.autoPrDescription', 'setup.smartNaming', 'setup.runEngine', 'setup.sync', 'setup.networkWait']);
+  assert.deepEqual(fieldMeta('models.roles').kinds, ['default', 'soft']);
+  assert.deepEqual(fieldMeta('setup.uiLevel').values, [...UI_LEVELS]);
+  assert.deepEqual(fieldMeta('setup.runEngine').values, Object.keys(ENGINES));
+  for (const k of setup.slice(1)) assert.deepEqual(fieldMeta(k).kinds, ['default'], k);
+  assert.equal(fieldMeta('setup.tags'), null);
+  assert.equal(fieldMeta('setup.flags'), null);
+});
+
+test('a policy with a Setup group validates; malformed Setup fields are dropped with one warning each', () => {
+  const good = { schema: 1, fields: {
+    'models.roles': { kind: 'default', value: { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' }, quick: { model: 'claude-haiku-5-5' } } } },
+    'setup.uiLevel': { kind: 'default', value: 'advanced' },
+    'setup.smartNaming': { kind: 'default', value: { suggestTitle: true, types: ['feat', 'fix'] } },
+    'setup.sync': { kind: 'default', value: { beforeRun: true, onDiverged: 'ask', refreshMinutes: 10 } },
+    'setup.networkWait': { kind: 'default', value: { enabled: true, maxWaitMin: 60 } },
+  } };
+  const ok = normalizePolicyDoc(good);
+  assert.deepEqual(ok.warnings, []);
+  assert.equal(Object.keys(ok.doc.fields).length, 5);
+
+  const bad = normalizePolicyDoc({ schema: 1, fields: {
+    ...good.fields,
+    'models.roles': { kind: 'default', value: { claude: { fast: { model: 'x' } } } },
+    'setup.sync': { kind: 'default', value: { remote: 'origin', pushUrl: 'x' } },
+    'setup.runEngine': { kind: 'soft', value: 'claude' },
+    'setup.networkWait': { kind: 'default', value: { enabled: 'yes' } },
+  } });
+  for (const k of ['models.roles', 'setup.sync', 'setup.runEngine', 'setup.networkWait']) {
+    assert.equal(k in bad.doc.fields, false, k);
+    assert.ok(bad.warnings.some((w) => w.startsWith(`${k}: `)), `${k}\n${bad.warnings.join('\n')}`);
+  }
+  assert.equal(bad.doc.fields['setup.uiLevel'].value, 'advanced');   // the rest still applies
+  assert.match(bad.warnings.find((w) => w.startsWith('models.roles')), /role "fast" is not one of deep \| everyday \| quick/);
+  assert.match(bad.warnings.find((w) => w.startsWith('setup.sync')), /unknown field "pushUrl"/);
+});
+
+test('setup.smartNaming accepts every stored smartNaming key', () => {
+  const full = { suggestTitle: false, suggestBranch: true, pattern: '{type}/{slug}', types: ['feat'], trigger: 'manual', addRunId: true };
+  const r = normalizePolicyDoc({ schema: 1, fields: { 'setup.smartNaming': { kind: 'default', value: full } } });
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(r.doc.fields['setup.smartNaming'].value, full);
+  assert.match(normalizePolicyDoc({ schema: 1, fields: { 'setup.smartNaming': { kind: 'default', value: { trigger: 'always' } } } }).warnings[0], /trigger must be one of debounce \| manual/);
+});
+
+test('fmtValue shows roles and records in words', () => {
+  assert.equal(fmtValue(fieldMeta('models.roles'), { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' } } }), 'Claude Deep thinking claude-opus-5-5 / high');
+  assert.equal(fmtValue(fieldMeta('setup.networkWait'), { enabled: true, maxWaitMin: 60 }), 'enabled on · maxWaitMin 60');
 });

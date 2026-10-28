@@ -8,6 +8,7 @@
 // that loops or branches has no honest "n of m", so the glance never claims one.
 import { ledgerRows } from './graph/run-decor.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../../src/shared/graph/constants.mjs';
+import { folderDoneWords } from './folder-changes.mjs';
 
 /** Dots per stacked column before the rest collapse into "+N". */
 export const TRAIL_STACK_CAP = 3;
@@ -175,8 +176,10 @@ export function glanceState(run) {
  * be opened). `files` is how many files the run changed (null while unknown).
  * A finished run also names its own glyph in `icon` (renderOrb), one per headline.
  * `limitNote` ("resets 18:00") replaces "resume to continue" on a usage-limit pause.
+ * `progress` is runProgress's result: while the run runs or waits for you, its `text` ("Build · task 2 of 4")
+ * is line 2, in place of the step names. An open preflight with nothing running still names itself.
  */
-export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null, limitNote = '' } = {}) {
+export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null, limitNote = '', progress = null, changes = null, gitChrome = true, workMode = 'git' } = {}) {
   const state = glanceState(run);
   const now = nowRows(run);
   const names = now.map((x) => x.label);
@@ -195,6 +198,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       const who = pq.nodeId ? nodeLabel(run.stepper, pq.nodeId) : (names[0] || '');
       const wait = 'Waiting for you';
       // The step alone: the panel right below says what it asks and why.
+      if (progress && progress.text) return line(wait, '', progress.text);
       if (pq.kind === 'workflow') return line(wait, '', 'Review the workflow');
       if (who) return line(wait, '', `Step: ${who}`);
       const what = { form: 'Input needed', gate: 'A decision', recovery: 'A step failed' };
@@ -202,6 +206,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
     }
     case 'paused': {
       if (run.status === 'pausing') return line('Pausing', '', 'Steps in flight finish first');
+      if (run.resumePending) return line('Resuming', '', 'Waiting for the server to start it');   // the browser's flag
       if (run.status === 'interrupted') return line('Interrupted', '', 'Stopped mid-step · resume to continue');
       // statusPill says "Paused · cost limit": the reason is the part after the dot. A
       // pause is not one step's, so line 2 carries the reason.
@@ -214,15 +219,18 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       const p = String(pr || '').toUpperCase();
       const nFiles = (n) => `${n} file${n === 1 ? '' : 's'} changed`;
       const fin = (icon, lead, sub) => line(lead, '', sub, { icon });
+      if (changes) { const w = folderDoneWords(changes.state, files); return fin('finished', w.lead, w.sub); }
       if (p === 'MERGED') return fin('merged', 'Merged', 'The pull request was merged');
+      if (p === 'IN_BASE') return fin('merged', 'Merged', 'Its work is already in the base branch');
       if (p === 'OPEN') return fin('pr-open', 'In review', 'The pull request is open');
       if (p === 'CLOSED') return fin('pr-closed', 'PR closed', 'Closed without merging');
+      if (gitChrome === false) return fin('finished', 'Finished', files === 0 ? 'No files changed' : files ? nFiles(files) : '');
       if (files === 0) return fin('finished', 'Finished', 'No files changed');
       if (p === 'PENDING') return fin('finished', 'Finished', 'Checking for a pull request…');
       if (p === 'UNAVAILABLE') return fin('finished', 'Finished', files ? nFiles(files) : 'Review the changes in Diff');
-      if (checks == null) return fin('finished', 'Finished', 'Review the changes before you open a pull request');
+      if (checks == null) return fin('finished', 'Finished', 'Review the changes before you create a PR');
       if (checks === 0) return fin('ship', 'Ready to ship', 'The review flagged nothing');
-      return fin('review', 'Ready to review', `${checks} thing${checks === 1 ? '' : 's'} to check before you open a pull request`);
+      return fin('review', 'Ready to review', `${checks} thing${checks === 1 ? '' : 's'} to check before you create a PR`);
     }
     case 'fail': {
       const failed = ledgerRows(run || {}).filter((r) => r.status === 'error').pop();
@@ -233,10 +241,11 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
     case 'stop':
       return line('Stopped', '', 'Stopped before it finished');
     case 'start':
-      return line('Starting', '', 'Setting up the worktree');
+      return line('Starting', '', workMode === 'folder' ? 'Copying the folder' : workMode === 'none' ? '' : 'Setting up the worktree');
     default:
       // The state word alone; the line under it names what runs (no time: the facts
       // row carries the run's time, and a second, unlabelled one read as a contradiction).
+      if (progress && progress.text && (now.length || !preflightOpen(run))) return line('Running', '', progress.text);
       if (now.length > 1) return line('Running', '', `Steps: ${join(names)}`);
       if (now.length === 1) return line('Running', '', `Step: ${names[0]}`);
       // Nothing of the workflow runs yet: the preflight, and what it is doing.

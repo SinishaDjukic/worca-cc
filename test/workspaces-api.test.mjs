@@ -18,10 +18,10 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdtemp, rm, mkdir, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -29,7 +29,8 @@ import { checkRows } from './helpers/rows.mjs';
 import { seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { writeStoreMeta, recordArtifact } from '../src/core/artifacts.mjs';
-import { _resetForTests } from '../src/core/db.mjs';
+import { noProjectWorkDir, projectKey } from '../src/core/store.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 
 // ── Robust temp-repo teardown (fixes a full-suite-only ENOTEMPTY flake) ──────
 // The run-returns-200 workspace test POSTs a workspace run; the route fires
@@ -41,18 +42,18 @@ import { _resetForTests } from '../src/core/db.mjs';
 // recursive rm of created[], and the final `rmdir .git` loses the race ->
 // ENOTEMPTY. It only surfaces under full-suite event-loop load (the teardown git
 // finishes promptly when this file runs alone). Two layers, defense-in-depth:
-//   (1) drainWorktrees(): after stopping, wait (bounded) for each member's
-//       .git/worktrees to drain + git lock files to clear, so the teardown
-//       `worktree remove` is done before we touch the dir;
+//   (1) drainWorktrees(): after stopping, wait (bounded) for each run's launch
+//       promise (orch.run() settles only after its teardown git) and for git lock
+//       files to clear, so the teardown `worktree remove` is done before we touch
+//       the dir. Not for .git/worktrees to empty: a run that finished keeps its
+//       worktree, so that wait always ran to its bound and held the file 4 s;
 //   (2) rmWithRetry(): a bounded ENOTEMPTY/EBUSY retry on the recursive rm, so a
 //       teardown git that lands in the residual window can't fail cleanup.
 
-/** True while a member repo still has a live worktree entry or a git lock. */
-async function gitBusy(dir) {
+/** True while a member repo still holds a git lock. */
+function gitBusy(dir) {
   try {
     if (!existsSync(join(dir, '.git'))) return false;
-    const wt = join(dir, '.git', 'worktrees');
-    if (existsSync(wt) && (await readdir(wt)).length > 0) return true;
     for (const lock of ['index.lock', 'HEAD.lock', 'config.lock']) {
       if (existsSync(join(dir, '.git', lock))) return true;
     }
@@ -62,13 +63,12 @@ async function gitBusy(dir) {
   }
 }
 
-/** Wait (bounded) for in-flight teardown git to release every member repo. */
-async function drainWorktrees(dirs, { timeoutMs = 4000, stepMs = 25 } = {}) {
+/** Wait (bounded) for the runs to settle and in-flight teardown git to release every member repo. */
+async function drainWorktrees(launches, dirs, { timeoutMs = 4000, stepMs = 25 } = {}) {
   const deadline = Date.now() + timeoutMs;
+  await Promise.race([Promise.allSettled(launches), delay(timeoutMs, undefined, { ref: false })]);
   for (;;) {
-    const busy = [];
-    for (const d of dirs) if (await gitBusy(d)) busy.push(d);
-    if (busy.length === 0 || Date.now() >= deadline) return;
+    if (!dirs.some(gitBusy) || Date.now() >= deadline) return;
     await delay(stepMs);
   }
 }
@@ -147,6 +147,7 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   // Defensive: abort every still-registered orch so no background worktree
   // creation outlives this file (belt to the chdir-sandbox suspenders).
+  const launches = [...runs.values()].map((r) => r.launch).filter(Boolean);
   for (const r of runs.values()) {
     try { r.orch && typeof r.orch.stop === 'function' && r.orch.stop(); } catch { /* best-effort */ }
   }
@@ -155,7 +156,7 @@ after(async () => {
   // ignoreAbort git that outlives the abort. Wait for that teardown to release the
   // member repos BEFORE removing them, so `git worktree remove` can't race the rm
   // and leave .git non-empty (the full-suite-only ENOTEMPTY flake). See header.
-  await drainWorktrees([...created, cwdSandbox].filter(Boolean));
+  await drainWorktrees(launches, [...created, cwdSandbox].filter(Boolean));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   delete process.env.WORCA_MOCK;
   _resetForTests(); // next file reopens the DB singleton clean
@@ -187,6 +188,16 @@ const get = (p) => fetch(`${base}${p}`);
 const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
 const patch = (p, body) => fetch(`${base}${p}`, { method: 'PATCH', headers: JSONH, body: JSON.stringify(body) });
 const del = (p) => fetch(`${base}${p}`, { method: 'DELETE' });
+const put = (p, body) => fetch(`${base}${p}`, { method: 'PUT', headers: JSONH, body: JSON.stringify(body) });
+// A pick-less workspace's add/remove auto-rescan answers { rescan: { needsModel: true } } by
+// design (the page asks the user). Tests about the auto re-scan itself give the fresh workspace a
+// saved pick first — exactly what the prompted page does — so the re-scan starts silently.
+const savePick = async (wsId) => {
+  const r = await put(`/api/workspaces/${wsId}/scan-models`, {
+    workspaceScan: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'opus', agentEffort: 'xhigh' },
+  });
+  assert.equal(r.status, 200, `PUT /scan-models: ${(await r.json()).error || r.status}`);
+};
 
 // ───────────────────────────────────────────────────────────────────────────
 // Workspace CRUD
@@ -223,6 +234,13 @@ test('POST /api/workspaces refusals: 400 for <2 paths / a non-git member, 409 fo
       const plain = await freshDir();
       const r = await post('/api/workspaces', { name: 'Not Git', projectPaths: [a, plain] });
       assert.equal(r.status, 400);
+    } },
+    { name: 'POST /api/workspaces with a run\'s work folder (P3-D11) -> 400, before any git runs in it', run: async () => {
+      const work = noProjectWorkDir('abcd1234');
+      await mkdir(work, { recursive: true });
+      const r = await post('/api/workspaces', { name: 'Work WS', projectPaths: [a, work] });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).error, 'this folder belongs to a run without a project');
     } },
     { name: 'POST /api/workspaces duplicate name (case-insensitive) -> 409', run: async () => {
       assert.equal((await post('/api/workspaces', { name: 'DupName', projectPaths: [a, b] })).status, 201);
@@ -440,6 +458,7 @@ test('a member change starts a Workspace scan run of the new set (graphs, map, d
   const b = await freshRepo();
   const c = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Rescanned', projectPaths: [a, b], description: 'old text' })).json();
+  await savePick(workspace.id);
   const r = await post(`/api/workspaces/${workspace.id}/members`, { add: [c] });
   assert.equal(r.status, 200, await r.clone().text());
   const body = await r.json();
@@ -463,6 +482,7 @@ test('a second member change supersedes the automatic re-scan; a scan the user s
   const b = await freshRepo();
   const c = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Superseded', projectPaths: [a, b] })).json();
+  await savePick(workspace.id);
   const stopped = [];
   runs.set('auto-scan-1', { id: 'auto-scan-1', kind: 'workspace-run', workspaceId: workspace.id, status: 'running', autoRescan: true,
     events: [], orch: { stop() { stopped.push('auto-scan-1'); } } });
@@ -546,6 +566,7 @@ async function mappedWorkspace(name, { extraEdge = null } = {}) {
   const { sampleMap } = await import('./helpers/wsmap-stored.mjs');
   const [a, b, c] = [await freshRepo(), await freshRepo(), await freshRepo()];
   const { workspace: ws } = await (await post('/api/workspaces', { name, projectPaths: [a, b, c] })).json();
+  await savePick(ws.id);   // the re-scans these tests start must not stop at needsModel
   const k = (p) => ws.projectKeys[ws.projectPaths.indexOf(p)];
   const s = sampleMap({ keys: [k(a), k(b)], names: ['a', 'b'], name });
   s.map.members.push({ ...s.map.members[0], key: k(c), name: 'c', aliases: [] });
@@ -734,7 +755,7 @@ test('POST /api/run workspace target validation: both/neither/no prompt -> 400, 
     { name: 'POST /api/run with BOTH workspaceId and projectDir -> 400',
       body: { workspaceId: workspace.id, projectDir: a, prompt: 'x', mock: true }, status: 400, errorRe: /not both|workspaceId|projectDir/i },
     { name: 'POST /api/run with NEITHER workspaceId nor projectDir -> 400',
-      body: { prompt: 'x', mock: true }, status: 400, errorRe: /workspaceId or projectDir/i },
+      body: { prompt: 'x', mock: true }, status: 400, errorRe: /provide one of projectDir, workspaceId or noProject/ },
     { name: 'POST /api/run with a malformed workspaceId -> 404',
       body: { workspaceId: 'not-a-ws-id', prompt: 'x', mock: true }, status: 404 },
     { name: 'POST /api/run with an unknown (well-formed) workspaceId -> 404',
@@ -968,4 +989,294 @@ test('GET /api/runs and DELETE /api/runs/:id 400 without projectDir/workspaceId'
       assert.equal(r.status, 400);
     } },
   ]);
+});
+
+// test/workspaces-api.test.mjs — append (imports gain `projectKey` from '../src/core/store.mjs' and `basename` from 'node:path')
+function freshFolder() {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-wsapi-folder-'));
+  writeFileSync(join(dir, 'notes.txt'), 'n\n');
+  created.push(dir);
+  return dir;
+}
+
+/** A mock run parks at wf_default's clarify gate (humanInLoop:false too): answer each question as auto mode would until
+ *  the run settles (entry.settled: the harness's finally — teardown included — has run). */
+async function settle(runId, ms = 120000) {
+  const entry = testing.liveRunEntry(runId);
+  const answered = new Set();
+  const t0 = Date.now();
+  while (!entry.settled) {
+    if (Date.now() - t0 > ms) throw new Error(`run ${runId} never settled: ${entry.status} ${entry.pendingQuestion?.id ?? ''}`);
+    const pq = entry.pendingQuestion;
+    if (pq && !answered.has(pq.id)) {
+      answered.add(pq.id);
+      const payload = pq.kind === 'clarify' || pq.kind === 'questions'
+        ? { answers: (pq.questions || []).map((q) => ({ id: q.id, choice: (q.options || []).find((o) => o && o.trim()) || 'auto' })) }
+        : { decision: 'continue' };
+      await post('/api/answer', { runId, id: pq.id, payload });
+    }
+    await delay(50);
+  }
+  await entry.launch;
+  return entry;
+}
+
+test('POST /api/run on a workspace with a registered Folder member: 200, the member runs on a copy, the folder never gets a .git', async () => {
+  const a = await freshRepo();
+  const f = freshFolder();
+  assert.equal((await post('/api/projects', { name: 'WS Notes', path: f })).status, 200);
+  const cr = await post('/api/workspaces', { name: 'Folder Run', projectPaths: [a, f] });
+  assert.equal(cr.status, 201);
+  const { workspace } = await cr.json();
+  const r = await post('/api/run', { workspaceId: workspace.id, prompt: 'x', mock: true });
+  assert.equal(r.status, 200);
+  const { runId } = await r.json();
+  const entry = testing.liveRunEntry(runId);
+  assert.deepEqual(Object.fromEntries(entry.orch.workspace.projects.map((p) => [p.projectDir, p.workMode ?? 'git'])), { [a]: 'git', [f]: 'folder' });
+  await settle(runId);
+  const st = entry.orch.getState();
+  assert.equal(st.status, 'done', JSON.stringify({ status: st.status, reason: st.pauseReason, detail: st.pauseDetail }));
+  assert.ok(!existsSync(join(f, '.git')));
+});
+
+test('POST /api/workspaces/metrics-scan lists a Folder member as one that cannot record, without a 400', async () => {
+  const a = await freshRepo();
+  const f = freshFolder();
+  assert.equal((await post('/api/projects', { name: 'WS Metrics Notes', path: f })).status, 200);
+  const r = await post('/api/workspaces/metrics-scan', { projectPaths: [a, f] });
+  assert.equal(r.status, 200);
+  const { members } = await r.json();
+  assert.deepEqual(members.map((m) => m.path), [a, f]);
+  assert.deepEqual(members[1], { path: f, key: projectKey(f), slug: basename(f), hasOrigin: false, enabled: false,
+    delegateTo: null, recordsLocally: false, enabledAt: null, workspaceRuns: null, error: null });
+});
+
+test('POST /api/run on a workspace whose Folder member is over the copy limits: 413 FOLDER_TOO_BIG before any row exists', async () => {
+  const a = await freshRepo();
+  const f = freshFolder();
+  for (const n of ['n1.txt', 'n2.txt']) writeFileSync(join(f, n), 'n\n');          // 3 files with notes.txt
+  assert.equal((await post('/api/projects', { name: 'WS Big Notes', path: f })).status, 200);
+  const cr = await post('/api/workspaces', { name: 'Folder Too Big', projectPaths: [a, f] });
+  assert.equal(cr.status, 201);
+  const { workspace } = await cr.json();
+  const rowCount = () => getDb().prepare('SELECT COUNT(*) n FROM pipelines').get().n;
+  const n0 = rowCount();
+  process.env.WORCA_FOLDER_MAX_FILES = '2';
+  try {
+    const r = await post('/api/run', { workspaceId: workspace.id, prompt: 'x', mock: true });
+    assert.equal(r.status, 413);
+    assert.equal((await r.json()).code, 'FOLDER_TOO_BIG');
+    assert.equal(rowCount(), n0);
+  } finally { delete process.env.WORCA_FOLDER_MAX_FILES; }
+});
+
+test('POST /api/run with syncBeforeStart on a workspace with a Folder member: only the Git member gets sync options', async () => {
+  const a = await freshRepo();
+  const f = freshFolder();
+  assert.equal((await post('/api/projects', { name: 'WS Sync Notes', path: f })).status, 200);
+  const cr = await post('/api/workspaces', { name: 'Folder Sync', projectPaths: [a, f] });
+  assert.equal(cr.status, 201);
+  const { workspace } = await cr.json();
+  const r = await post('/api/run', { workspaceId: workspace.id, prompt: 'x', mock: true, syncBeforeStart: true, syncPolicy: 'origin' });
+  const body = await r.clone().json();
+  assert.equal(r.status, 200, JSON.stringify(body));
+  const entry = testing.liveRunEntry(body.runId);
+  const sync = entry.orch.opts.sync;
+  assert.deepEqual(Object.keys(sync.members), [workspace.projectKeys[workspace.projectPaths.indexOf(a)]], JSON.stringify(sync));
+  await post('/api/stop', { runId: body.runId });
+  await entry.launch;
+});
+
+test('POST /api/workspaces/:id/members never discovers a Folder member\'s origin (a folder inside a repository is not that repository)', async () => {
+  const { readTeamMetricsPrefs, readTeamPolicyPrefs } = await import('../src/core/config.mjs');
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const d = await freshRepo();
+  const outer = await freshRepo();
+  const inner = join(outer, 'notes');
+  await mkdir(inner);
+  writeFileSync(join(inner, 'n.txt'), 'n\n');
+  // A registered Folder project inside a repository (POST /api/projects refuses NESTED_IN_REPO): its `git remote -v`
+  // would answer for the outer repository and cache that as the folder's team-metrics and team-policy home.
+  getDb().prepare("INSERT INTO projects (key, name, path, created_at, vcs) VALUES (?, 'WS Nested Notes', ?, ?, 'none')")
+    .run(projectKey(inner), inner, new Date().toISOString());
+  const { workspace } = await (await post('/api/workspaces', { name: 'Discover', projectPaths: [a, b] })).json();
+  testing.setAutoRescan(false);
+  try {
+    const r = await post(`/api/workspaces/${workspace.id}/members`, { add: [d, inner] });
+    assert.equal(r.status, 200, await r.clone().text());
+  } finally { testing.setAutoRescan(true); }
+  // Discovery is fire-and-forget: wait for the Git member's two answers, then a little longer for any other.
+  const kd = projectKey(d);
+  for (const t0 = Date.now(); !(readTeamMetricsPrefs(kd) && readTeamPolicyPrefs(kd));) {
+    if (Date.now() - t0 > 10000) assert.fail('the Git member was never discovered');
+    await delay(25);
+  }
+  await delay(300);
+  assert.equal(readTeamMetricsPrefs(projectKey(inner)), null, 'team metrics discovered for a Folder member');
+  assert.equal(readTeamPolicyPrefs(projectKey(inner)), null, 'team policy discovered for a Folder member');
+});
+
+test('POST /api/run chained from the previous run\'s branches on an all-Folder workspace: 400 at once; a mixed workspace is still scheduled', async () => {
+  const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
+  const { cancelTicket } = await import('../src/core/scheduler.mjs');
+  const a = await freshRepo();
+  const f1 = freshFolder();
+  const f2 = freshFolder();
+  assert.equal((await post('/api/projects', { name: 'WS Chain One', path: f1 })).status, 200);
+  assert.equal((await post('/api/projects', { name: 'WS Chain Two', path: f2 })).status, 200);
+  const chained = async (name, paths, id) => {
+    const cr = await post('/api/workspaces', { name, projectPaths: paths });
+    assert.equal(cr.status, 201, await cr.clone().text());
+    const { workspace } = await cr.json();
+    seedPipelineRow({ id, projectKey: projectKey(paths[0]), workspaceKey: workspace.id, target: 'workspace', status: 'done',
+      startedAt: new Date().toISOString(), workspaceMeta: { workspaceId: workspace.id, branches: {} } });
+    const r = await post('/api/run', { workspaceId: workspace.id, prompt: 'next step', mock: true, after: { kind: 'pipeline', id }, sourceFromPrevious: true });
+    return { status: r.status, body: await r.json() };
+  };
+  const folderOnly = await chained('Folder Chain', [f1, f2], 'c0ffee05');
+  assert.deepEqual([folderOnly.status, folderOnly.body.error], [400, "a Folder project run cannot start from the previous run's branch"]);
+  const mixed = await chained('Mixed Chain', [a, f1], 'c0ffee06');
+  assert.equal(mixed.status, 202, JSON.stringify(mixed.body));
+  cancelTicket(mixed.body.runId);
+});
+
+test('POST /api/run on a workspace refreshes a stale git answer before it decides each member\'s mode (U4: on demand)', async () => {
+  const { _testing: gitCap } = await import('../src/core/git-available.mjs');
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const { workspace } = await (await post('/api/workspaces', { name: 'Stale Git', projectPaths: [a, b] })).json();
+  const saved = process.env.WORCA_GIT;
+  delete process.env.WORCA_GIT;                                         // the stored answer, not the runner's WORCA_GIT=1
+  gitCap.set({ available: false, checkedAt: 0 });                       // "missing", probed long ago
+  let n = 0;
+  gitCap.useProbe(async () => { n += 1; return { available: true, path: '/g', version: '2', reason: 'ok', checkedAt: Date.now() }; });
+  let r;
+  try { r = await post('/api/run', { workspaceId: workspace.id, prompt: 'x', mock: true }); }
+  finally { if (saved === undefined) delete process.env.WORCA_GIT; else process.env.WORCA_GIT = saved; gitCap.reset(); }
+  const body = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(body));
+  const entry = testing.liveRunEntry(body.runId);
+  try {
+    assert.equal(n, 1, 'the start re-probed git');
+    assert.deepEqual(entry.orch.workspace.projects.map((p) => p.workMode ?? 'git'), ['git', 'git']);
+  } finally {
+    await post('/api/stop', { runId: body.runId });
+    await entry.launch;
+  }
+});
+
+test('GET / POST /api/workspaces/:id/sync never runs git in a Folder member (nested in a repository it would fast-forward that one)', async () => {
+  const a = await freshRepo();
+  const f = freshFolder();
+  assert.equal((await post('/api/projects', { name: 'WS Sync Plain Notes', path: f })).status, 200);
+  const outerParent = await freshDir('worca-cc-wsapi-nested-sync-');
+  const g = (cwd, ...args) => { const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  const outer = join(outerParent, 'outer'); await mkdir(join(outer, 'notes'), { recursive: true });
+  writeFileSync(join(outer, 'notes', 'n.txt'), 'n\n');
+  g(outer, 'init', '-q', '-b', 'main'); g(outer, 'add', '-A'); g(outer, 'commit', '-q', '-m', 'init');
+  const bare = join(outerParent, 'origin.git'); g(outerParent, 'clone', '-q', '--bare', outer, bare);
+  g(outer, 'remote', 'add', 'origin', bare); g(outer, 'fetch', '-q', 'origin'); g(outer, 'branch', '-q', '-u', 'origin/main');
+  const other = join(outerParent, 'other'); g(outerParent, 'clone', '-q', bare, other);
+  writeFileSync(join(other, 'up.txt'), 'u\n'); g(other, 'add', '-A'); g(other, 'commit', '-q', '-m', 'up'); g(other, 'push', '-q', 'origin', 'main');
+  const head0 = g(outer, 'rev-parse', 'HEAD');
+  const inner = join(outer, 'notes');   // a legacy registered Folder project inside a repository (POST /api/projects refuses it now)
+  getDb().prepare("INSERT INTO projects (key, name, path, created_at, vcs) VALUES (?, 'WS Sync Nested Notes', ?, ?, 'none')")
+    .run(projectKey(inner), inner, new Date().toISOString());
+  for (const paths of [[a, f], [a, inner]]) {
+    const cr = await post('/api/workspaces', { name: `Sync Folder ${basename(paths[1])}`, projectPaths: paths });
+    assert.equal(cr.status, 201);
+    const { workspace } = await cr.json();
+    const k = workspace.projectKeys[workspace.projectPaths.indexOf(paths[1])];
+    for (const r of [await get(`/api/workspaces/${workspace.id}/sync`), await post(`/api/workspaces/${workspace.id}/sync`, { mode: 'ff' })]) {
+      assert.equal(r.status, 200);
+      assert.deepEqual((await r.json()).members.find((m) => m.projectKey === k), { projectKey: k, base: null, remote: null, state: 'unknown', folder: true });
+    }
+  }
+  assert.equal(g(outer, 'rev-parse', 'HEAD'), head0, 'the enclosing repository moved');
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Import candidates: the creation wizard's Add… / paste box
+// ───────────────────────────────────────────────────────────────────────────
+
+test('POST /api/workspaces/import-candidates refusals: 400 without a path, for a non-array paths, a non-string text, past 100 paths', async () => {
+  await checkRows([
+    { name: 'no path at all -> 400', run: async () => {
+      const r = await post('/api/workspaces/import-candidates', {});
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /at least one path/);
+    } },
+    { name: 'paths that is not an array -> 400', run: async () => {
+      const r = await post('/api/workspaces/import-candidates', { paths: '/a' });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /paths must be an array/);
+    } },
+    { name: 'text that is not a string -> 400', run: async () => {
+      const r = await post('/api/workspaces/import-candidates', { text: ['/a'] });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /text must be a string/);
+    } },
+    { name: 'more than 100 paths -> 400', run: async () => {
+      const r = await post('/api/workspaces/import-candidates', { paths: Array.from({ length: 101 }, (_, i) => `/nowhere/${i}`) });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /at most 100 paths/);
+    } },
+  ]);
+});
+
+test('POST /api/workspaces/import-candidates: a folder of repos, a .code-workspace file and pasted paths answer registered / new / problem rows', async () => {
+  const parent = await freshDir('worca-cc-wsimp-parent-');
+  const repoIn = (...rel) => templateRepo('wsimp-api', { branch: 'main', user: true, files: { 'README.md': '# hi\n' }, into: join(parent, ...rel) });
+  const a = repoIn('alpha');
+  const b = repoIn('beta');
+  repoIn('.hidden');
+  repoIn('node_modules', 'dep');
+  repoIn('group', 'gamma');
+  await mkdir(join(parent, 'notes'));
+  const reg = await post('/api/projects/bulk', { projects: [{ name: 'Alpha Project', path: a }] });
+  assert.equal(reg.status, 200);
+  assert.equal((await reg.json()).results[0].status, 'added');
+  try {
+    await checkRows([
+      { name: 'a folder of repositories: the registered one is reused, the other is new', run: async () => {
+        const r = await post('/api/workspaces/import-candidates', { paths: [parent] });
+        assert.equal(r.status, 200);
+        const j = await r.json();
+        assert.deepEqual(j.candidates.map((c) => [basename(c.path), c.status, c.name]), [
+          ['alpha', 'registered', 'Alpha Project'],
+          ['beta', 'new', 'beta'],
+        ]);
+        assert.equal(j.candidates[0].path, a, "a registered row names the project's own path");
+        assert.equal(j.workspaceName, null);
+        assert.equal(j.truncated, false);
+      } },
+      { name: 'depth 2 finds group/gamma too; hidden folders and node_modules never show up', run: async () => {
+        const j = await (await post('/api/workspaces/import-candidates', { paths: [parent], depth: 2 })).json();
+        assert.deepEqual(j.candidates.map((c) => basename(c.path)), ['alpha', 'beta', 'gamma']);
+      } },
+      { name: 'a .code-workspace file (JSONC) names the workspace and lists its folders', run: async () => {
+        const file = join(parent, 'acme.code-workspace');
+        await writeFile(file, `{
+  // VS Code keeps comments and trailing commas
+  "folders": [
+    { "path": "beta", "name": "Beta Service" },
+    { "path": ${JSON.stringify(a)} },
+    { "path": "notes" },
+  ],
+}`);
+        const j = await (await post('/api/workspaces/import-candidates', { paths: [file] })).json();
+        assert.equal(j.workspaceName, 'acme');
+        assert.deepEqual(j.candidates.map((c) => [c.status, c.name]), [['new', 'Beta Service'], ['registered', 'Alpha Project'], ['problem', 'notes']]);
+        assert.equal(j.candidates[2].problem, 'Not in a git repository');
+      } },
+      { name: 'pasted text: quotes and # lines dropped; a relative path is a problem', run: async () => {
+        const j = await (await post('/api/workspaces/import-candidates', { text: `# my repos\n"${b}"\n\nrelative/path\n` })).json();
+        assert.deepEqual(j.candidates.map((c) => c.status), ['new', 'problem']);
+        assert.match(j.candidates[1].problem, /full path/);
+      } },
+    ]);
+  } finally {
+    await (await del(`/api/projects?name=${encodeURIComponent('Alpha Project')}`)).arrayBuffer();
+  }
 });

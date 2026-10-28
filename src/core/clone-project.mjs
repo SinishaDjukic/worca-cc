@@ -1,7 +1,7 @@
 // Add a project by cloning a repository into the projects folder (docs/deploy-railway.md).
 // On a hosted worca this replaces a `railway ssh` session: the clone runs in the server,
 // as the server's user, with the read credential for that one command
-// (host-credentials.mjs#gitEnvFor: GitHub's token or App, or the Azure DevOps PAT), and lands in a NEW folder directly under the
+// (host-credentials.mjs#gitEnvFor: GitHub's token or App, the Azure DevOps PAT, or the Bitbucket token), and lands in a NEW folder directly under the
 // projects root. Registration is the ordinary add-project step.
 //
 //   URLs     https only; no credentials inside the URL (use the token variables); Azure DevOps
@@ -13,11 +13,13 @@
 //            failed clone removes its folder
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor } from './host-credentials.mjs';
 import { isAzureHost, parseAzurePath } from '../shared/azure-remote.mjs';
+import { isBitbucketHost } from '../shared/bitbucket-remote.mjs';
+import { gitAvailable, GIT_MISSING } from './git-available.mjs';
 
 export const CLONE_TIMEOUT_MS = 10 * 60_000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -56,9 +58,12 @@ export function planClone({ url, branch = null, name = null } = {}, { projectsRo
   try { u = new URL(url.trim()); } catch { throw new CloneError('invalid', 'not a valid URL'); }
   if (u.protocol !== 'https:') throw new CloneError('invalid', 'only https:// repository URLs are supported');
   const azure = isAzureHost(u.hostname);
-  // Azure's "Clone" button puts the org as a user ("https://acme@dev.azure.com/…"): a user alone is dropped.
-  if (u.password || (u.username && !azure)) {
-    throw new CloneError('invalid', `the URL contains credentials; remove them and set ${azure ? 'WORCA_ADO_TOKEN' : 'the GitHub token or App variables'} where worca is deployed`);
+  const bitbucket = isBitbucketHost(u.hostname);
+  // Azure's and Bitbucket's "Clone" buttons put a user in the URL ("https://acme@dev.azure.com/…",
+  // "https://jdoe@bitbucket.org/…"): a user alone is dropped (the canonical URL below carries none).
+  if (u.password || (u.username && !azure && !bitbucket)) {
+    const vars = azure ? 'WORCA_ADO_TOKEN' : bitbucket ? 'WORCA_BB_TOKEN' : 'the GitHub token or App variables';
+    throw new CloneError('invalid', `the URL contains credentials; remove them and set ${vars} where worca is deployed`);
   }
   if (u.search || u.hash) throw new CloneError('invalid', 'the URL must not have a query or fragment');
   if (u.port) throw new CloneError('invalid', 'the URL must not name a port');
@@ -74,7 +79,7 @@ export function planClone({ url, branch = null, name = null } = {}, { projectsRo
     const e = encodeURIComponent;
     canonical = `https://dev.azure.com/${e(az.org)}/${e(az.project)}/_git/${e(az.repo)}`;
   } else {
-    host = u.hostname.toLowerCase();
+    host = bitbucket ? 'bitbucket.org' : u.hostname.toLowerCase();
     if (segs.length !== 2 || !segs.every((s) => SEG_RE.test(s))) {
       throw new CloneError('invalid', 'the URL must name one repository, like https://github.com/owner/repo');
     }
@@ -107,7 +112,9 @@ function classify(stderr, host = 'github.com') {
   if (/Authentication failed|could not read Username|terminal prompts disabled|403/i.test(s)) {
     return new CloneError('auth-failed', isAzureHost(host)
       ? 'Azure DevOps refused the credential: check WORCA_ADO_TOKEN (Code: Read) and that it can see this repository'
-      : 'GitHub refused the credential: check the token or that the App is installed on this repository');
+      : isBitbucketHost(host)
+        ? 'Bitbucket refused the credential: check WORCA_BB_TOKEN (Repositories: Read) and that it can see this repository'
+        : 'GitHub refused the credential: check the token or that the App is installed on this repository');
   }
   if (/Remote branch .* not found/i.test(s)) return new CloneError('not-found', 'that branch does not exist');
   if (/Repository not found|not found|404/i.test(s)) {
@@ -119,6 +126,7 @@ function classify(stderr, host = 'github.com') {
 
 /** Run `git clone` for a plan. Resolves the plan; rejects with CloneError after removing the folder. */
 export async function runClone(plan, { timeoutMs = CLONE_TIMEOUT_MS, credential = githubEnv, spawnImpl = spawn } = {}) {
+  if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);
   // Each host gets ITS read credential for this one command (gitEnvFor); GitHub keeps the injectable seam.
   const cred = await gitEnvFor('read', plan.url, { githubEnvImpl: credential });
   if (cred.error) throw new CloneError('auth-failed', cred.error);
@@ -151,6 +159,8 @@ export async function cloneProject(req, { projectsRoot, env = process.env, listP
   if (existing.some((p) => p && typeof p.name === 'string' && p.name.toLowerCase() === plan.name.toLowerCase())) {
     throw new CloneError('exists', `a project named "${plan.name}" already exists; pick another folder name`);
   }
+  if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);   // as runClone, before the root is made
+  await mkdir(resolve(projectsRoot), { recursive: true });   // U6: the projects root is made on first use
   await run(plan);
   try {
     const projects = await addProject({ name: plan.name, path: plan.dir });

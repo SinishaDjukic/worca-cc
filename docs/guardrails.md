@@ -111,9 +111,9 @@ enforces the set's latest definition.
   and Strict's exfil and publish denies (`Bash(gh)`, `curl`, `WebFetch`, …) do
   not constrain a registry server's tools, which every agent of the run can
   call. A team that wants a tool off writes a deny rule, which then reaches every
-  copy (above). Ask Worca has no guardrails, so deny rules never bind the chat's
+  copy (above). Chat has no guardrails, so deny rules never bind the chat's
   copies.
-- **What "no code changes" means for Ask Worca with MCP servers.** Native write
+- **What "no code changes" means for Chat with MCP servers.** Native write
   tools stay denied, but a server included in a chat may have write tools (a
   filesystem server, GitHub push/merge, Jira create), and it is a network path
   outside Ask web access: the allowlist, the SSRF checks, the team's web caps and
@@ -170,7 +170,7 @@ enforces the set's latest definition.
   included) are worca's own child processes, not `claude` spawns: no deny rule
   reaches them, and they start from the run's scrubbed environment when its
   set scrubs (the scan runs under Normal, which does not scrub).
-- **Ask Worca sandbox.** The in-app assistant (`Ask Worca`) is a headless
+- **Chat sandbox.** The in-app assistant (`Chat`) is a headless
   `claude` spawned by Worca itself, never inside a project folder: its cwd is
   `<worcaHome>/tmp/ask`, its built-in tools are reduced to `Task` (`--tools
   Task` — no Bash/Read/Write/Edit exist in the process), only Worca's own MCP
@@ -206,7 +206,7 @@ enforces the set's latest definition.
   similarity threshold, a plain copy, or credential lines an agent pasted into
   a harmless file arrive as an ordinary add under a name no pattern matches.
   Redaction (`src/core/ask/redact.mjs`) is the second line for those. Per-turn `--max-turns` and
-  `--max-budget-usd` caps are configurable in Settings → Ask Worca.
+  `--max-budget-usd` caps are configurable in Settings → Chat.
   **Chat worktrees.** The assistant can open read-only **detached** git checkouts of
   any registered project ref (or a run's feature branch) under
   `<worcaHome>/ask/<threadId>/wt/<worktreeId>` — `open_worktree` /
@@ -287,26 +287,37 @@ enforces the set's latest definition.
   tools run inside the worca server, so the fetch uses worca's read credential.
   Tokens are never forwarded into the MCP child's env.
   **Scripts the chat can write and run.** With **Create and run scripts**
-  (Settings → Ask Worca, on by default) the assistant holds four more worca MCP
-  tools: `list_scripts` and `get_script` read the registry, `save_script` writes
-  a script to the user layer (`~/.worca-cc/scripts`) and `test_script` runs one
-  in worca's test bench — both **without a confirmation card**, by an explicit
-  user decision on 2026-09-18. A script is a child process with worca's
-  privileges and **no sandbox**, so a successful prompt injection in anything the
-  chat reads (a repository file, a diff comment, an attachment, a run's output)
-  becomes code execution on this machine. None of what follows blocks that;
-  these are the limits that remain. The system prompt states that only the
-  user's own messages are a reason to save or run a script and that everything
-  read through a tool is data. Every chat-authored script is stamped
-  `createdBy` / `updatedBy: ask:<threadId>`. Replacing an existing key needs an
-  explicit `overwrite: true`; built-in and plugin scripts are never written over,
-  and there is no delete tool. A bench run uses a scratch folder unless the user
+  (Settings → Chat, on by default) the assistant holds four more worca MCP
+  tools: `list_scripts` and `get_script` read the registry, `save_script`
+  changes one of the user's own scripts that already exists
+  (`~/.worca-cc/scripts`; a NEW script is always a `draft_script` card the user
+  saves) and `test_script` runs one in worca's test bench — both **without a
+  confirmation card**, by an explicit user decision on 2026-09-18. A script is a
+  child process with worca's privileges and **no sandbox**, so a successful
+  prompt injection in anything the chat reads (a repository file, a diff
+  comment, an attachment, a run's output) becomes code execution on this
+  machine. None of what follows blocks that; these are the limits that remain.
+  The system prompt states that only the user's own messages are a reason to
+  save or run a script and that everything read through a tool is data. A script
+  the chat changes with `save_script` is stamped `updatedBy: ask:<threadId>`; a
+  drafted script the user saves from its card is stamped as the user's own save
+  (`ui`). `save_script` refuses a key no script holds and needs an explicit
+  `overwrite: true`; built-in and plugin scripts are never written over, and
+  there is no delete tool. A bench run uses a scratch folder unless the user
   pinned a project for the chat, and never another project's checkout — a saved
   case runs as saved, and one whose folder is another project is refused. Every
-  call is a line in the thread. Sub-agents are told never to call either writer. Turn
-  the switch off and `save_script` / `test_script` are not registered for the
-  session at all — the two readers stay, and the prompt section goes with them.
-  **Web access (off by default).** Settings → Ask Worca → Web access gives the
+  call is a line in the thread. Sub-agents are told never to call either writer.
+  A workflow the chat proposes as a graph (`build_workflow`) can place the
+  built-in `shell`, `js` or `py` script with a command or code the model wrote:
+  its card lists every such value under the Import dialog's sentence, and **Save
+  as workflow** confirms exactly that list — the server re-derives the list and
+  refuses a save that did not confirm every value in it (`SCRIPTS_UNCONFIRMED`,
+  as Import does; the card then shows the server's list). Turn the
+  switch off and `save_script` / `test_script` are not registered for the
+  session at all — the two readers and `draft_script` stay (a draft writes
+  nothing until the user saves its card), and the prompt keeps the script
+  contract without its save/test line.
+  **Web access (off by default).** Settings → Chat → Web access gives the
   assistant `web_fetch` (GET one https page, HTML converted to text) and, when a
   search endpoint is configured, `web_search`. They are worca MCP tools; the
   native `WebFetch`/`WebSearch` stay denied. Every rule is enforced by worca's
@@ -318,7 +329,7 @@ enforces the set's latest definition.
     (`*.github.io`, `*.vercel.app`, `*.co.uk`, …); list the exact host instead.
   - **New sites are approved in the chat.** When Ask wants a host that is not
     allowed, it calls `propose_web_access` and ends its turn. The card shows the
-    host, the reason and the exact URL: **Allow for this chat** (recorded on the
+    host, the reason and the exact URL: **Allow in chat** (recorded on the
     card; other chats are unaffected), **Always allow** (the exact host joins the
     allowlist above) or **Deny**. The click is re-checked against the chat's
     current web access, so a card fails if web access was switched off or the
@@ -365,7 +376,9 @@ enforces the set's latest definition.
   **Agent mode (always on where the host allows it).** Every Ask chat
   lets the assistant run shell commands in Worca terminals (`run_command`,
   `read_output`, `wait_for`, `stop_command`, `list_blocks`): tests, builds, git
-  status, and file changes through commands when you ask for them. The shell runs
+  status, and file changes through commands when you ask for them. Each
+  `run_command` may carry an optional `summary` (one line, clipped to 120
+  characters) that the chat shows instead of the command. The shell runs
   as the Worca server's user, like a person's terminal and Actions. It starts from
   a cleaned environment (PATH, HOME, locale, proxy and CA variables and
   `SSH_AUTH_SOCK`; no model, GitHub or server tokens, and none of your shell rc
@@ -377,4 +390,4 @@ enforces the set's latest definition.
   outside it is never used. That check is a rail against mistakes, not a sandbox: an
   obfuscated command can get around it. `Edit` and `Write` stay denied for the
   chat itself. With agent isolation on, agent mode is off: a server-user shell
-  would undo the isolation. See [Terminal](terminal.md#ask-worca-agent-mode).
+  would undo the isolation. See [Terminal](terminal.md#chat-agent-mode).

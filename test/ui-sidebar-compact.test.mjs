@@ -1,5 +1,5 @@
 // test/ui-sidebar-compact.test.mjs — the compact sidebar (plan P1, docs/superpowers/plans/2026-10-08-compact-sidebar.md):
-// three bands, the 254px column and the 60px rail, the row rhythm, the counts and the Nodes flyout, read
+// three bands, the 224px column and the 60px rail, the row rhythm, the counts and the Nodes flyout, read
 // straight from index.html and style.css. jsdom has no layout, so sizes are pinned in the stylesheet; the
 // behaviour lives in ui-sidebar-collapse, ui-nodes-flyout, ui-mobile-nav and side-flyout tests.
 import { test } from 'node:test';
@@ -30,9 +30,9 @@ test('three bands: the logo row and the foot stay put, the pages scroll between 
   }
 });
 
-test('the column is 254px and never scrolls itself; #side-scroll is the one scroller; the rail is 60px', () => {
+test('the column is 224px and never scrolls itself; #side-scroll is the one scroller; the rail is 60px', () => {
   const side = ruleBody('.sidebar');
-  assert.match(side, /width:254px;flex:0 0 254px;/);
+  assert.match(side, /width:224px;flex:0 0 224px;/);
   assert.match(side, /display:flex;flex-direction:column;/);
   assert.match(side, /overflow:hidden;/);
   assert.doesNotMatch(side, /overflow-y|padding/, 'the bands own the padding and the scrolling');
@@ -52,7 +52,7 @@ test('the column is 254px and never scrolls itself; #side-scroll is the one scro
 });
 
 test('the phone drawer follows the new widths; no 298 / 76px literal is left', () => {
-  assert.match(css, /\.sidebar\{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min\(254px,86vw\);/);
+  assert.match(css, /\.sidebar\{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min\(224px,86vw\);/);
   // The Ask threads popover's right:76px sits on the right edge: it is not the rail.
   const rest = css.replace('.ask-pop-threads{top:46px;right:76px;', '');
   assert.doesNotMatch(rest, /\b298\b|\b76px\b/);
@@ -65,13 +65,13 @@ test('hairlines: transparent at rest, --line while the pages run under an edge',
   assert.equal(ruleBody('.sidebar.under-bottom .side-foot'), 'border-top-color:var(--line);');
 });
 
-test('row rhythm: 32px rows a 4px gap apart, 13.5px medium labels, 16px icons at stroke 1.6, 11px section labels', () => {
+test('row rhythm: 32px rows a 4px gap apart, 13px medium labels, 16px icons at stroke 2, 4px corners', () => {
   assert.match(ruleBody('.nav'), /gap:4px;/);
   const row = ruleBody('.nav button');
-  for (const d of ['height:32px;', 'padding:0 8px 0 9px;', 'border-radius:8px;', 'gap:10px;', 'font-size:13.5px;', 'font-weight:500;', 'color:var(--side-ink);']) {
+  for (const d of ['height:32px;', 'padding:0 8px 0 9px;', 'border-radius:var(--r-sm);', 'gap:10px;', 'font-size:var(--fs-body);', 'font-weight:500;', 'color:var(--side-ink);']) {
     assert.ok(row.includes(d), `.nav button has ${d}`);
   }
-  assert.match(ruleBody('.nav button svg'), /width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:1\.6;/);
+  assert.match(ruleBody('.nav button svg'), /width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:2;/);
   assert.match(ruleBody('.nav button > span:not(.nav-count)'), /min-width:0;overflow:hidden;text-overflow:ellipsis;/);
   assert.match(ruleBody('.nav-sect'), /padding:15px 10px 6px;font-size:11px;font-weight:500;/);
   assert.match(ruleBody('.nav-sect'), /color:var\(--side-ink\);/, 'group labels share the rows\' ink: --ink-3 fails 4.5:1 on --side-bg');
@@ -99,11 +99,11 @@ test('New run has no sidebar row (the top bar\'s button opens it): no "+" tile, 
   assert.ok(themeTool.includes("'.topnav-new'"), 'verify:theme hovers New run in the top bar');
 });
 
-test('the Getting started pill keeps the 32px rhythm: a full violet outline and a count pill of its own', () => {
+test('the Getting started pill keeps the 32px rhythm: a full blue outline and a count pill of its own', () => {
   const pill = ruleBody('.nav button.gs-pill');
-  assert.match(pill, /border:1\.5px solid var\(--violet\);padding:0 6\.5px 0 7\.5px;/);
+  assert.match(pill, /border:1\.5px solid var\(--blue\);padding:0 6\.5px 0 7\.5px;/);
   assert.doesNotMatch(pill, /height|border-left/);
-  assert.match(ruleBody('.nav button.gs-pill .gs-pill-count'), /height:18px;padding:0 6px;border-radius:999px;/);
+  assert.match(ruleBody('.nav button.gs-pill .gs-pill-count'), /height:18px;padding:0 6px;border-radius:var\(--r-xs\);/);
 });
 
 test('counts: a plain grey mono number, the amber needs-you count is the one pill, a zero ships hidden, no green', () => {
@@ -112,9 +112,15 @@ test('counts: a plain grey mono number, the amber needs-you count is the one pil
   assert.match(count, /color:var\(--ink-2\);/, 'a count carries information: --ink-2 (--ink-3 is for labels)');
   assert.doesNotMatch(count, /background|border-radius/, 'a number, not a badge');
   assert.equal(ruleBody('.nav-count.n-grey'), 'background:none;color:var(--ink-2);', 'the .n-grey disc utility must not paint a disc here, nor its --ink-3');
-  assert.match(ruleBody('.nav-count.n-amber'), /height:18px;padding:0 6px;border-radius:999px;background:var\(--amber-bg\);color:var\(--amber-ink-strong\);/);
+  // Review A10: icon and number side by side, no tinted box; the number keeps the strong amber ink.
+  assert.match(ruleBody('.nav-count.n-amber'), /display:inline-flex;align-items:center;gap:4px;min-width:0;height:auto;padding:0;background:none;color:var\(--amber-ink-strong\);/);
   assert.equal(ruleBody('.nav-count[hidden]'), 'display:none;');
-  assert.match(ruleBody('.sidebar.collapsed .nav-count'), /position:absolute;top:3px;right:2px;margin:0;font-size:9\.5px;/);
+  assert.match(ruleBody('.sidebar.collapsed .nav-count'), /position:absolute;top:3px;right:2px;margin:0;font-size:var\(--fs-caption\);/);
+  // The needs-you count is the number alone now (no "?" icon), so it sits inside the square's top-right corner like
+  // the other counts: no outer-gutter offset, no superscript nudge that only made sense beside the icon.
+  assert.match(ruleBody('.sidebar.collapsed #nav-needs-count'), /min-width:0;height:auto;padding:0;background:none;/);
+  assert.doesNotMatch(ruleBody('.sidebar.collapsed #nav-needs-count'), /right:-|top:1px/);
+  assert.equal(ruleBody('.sidebar.collapsed #nav-needs-count .nav-count-n'), 'font-size:var(--fs-caption);line-height:1;');
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.n-grey:has(~ .nav-count.n-amber:not([hidden]))'), 'display:none;',
     'on the rail the Schedules grey number steps aside for its unread pill (one corner, one badge)');
   for (const id of ['nav-needs-count', 'nav-running-count', 'nav-schedules-count', 'nav-schedules-unread']) {
@@ -127,9 +133,9 @@ test('counts: a plain grey mono number, the amber needs-you count is the one pil
   }
 });
 
-test('the 60px rail: 40x34 squares 3px apart, section labels as 1px hairlines, child-combinator row rules only', () => {
+test('the 60px rail: 40x32 squares (review A5: on the size scale) 3px apart, section labels as 1px hairlines, child-combinator row rules only', () => {
   assert.equal(ruleBody('.sidebar.collapsed .nav'), 'align-items:center;gap:3px;');
-  assert.match(css, /\.sidebar\.collapsed \.nav > button,\.sidebar\.collapsed \.gs-pill-host > button\{flex:0 0 auto;width:40px;height:34px;padding:0;gap:0;justify-content:center;\}/);
+  assert.match(css, /\.sidebar\.collapsed \.nav > button,\.sidebar\.collapsed \.gs-pill-host > button\{flex:0 0 auto;width:40px;height:32px;padding:0;gap:0;justify-content:center;\}/);
   assert.match(ruleBody('.sidebar.collapsed .nav-sect'), /align-self:stretch;height:1px;margin:10px 6px;padding:0;font-size:0;/);
   assert.match(ruleBody('.sidebar.collapsed .nav-sect'), /background:var\(--line\);/);
   assert.equal(ruleBody('.sidebar.collapsed .nav .gs-pill .gs-pill-count'), 'display:none;');
@@ -221,7 +227,7 @@ test('a grey count paints --ink-2 after the cascade, in the column and on the ra
   assert.equal(cascadedColor(doc.getElementById('nav-needs-count')), 'var(--amber-ink-strong)', 'the pill keeps its own amber ink');
 });
 
-test('Ask Worca names the sidebar\'s Running actions as rows, not the old card', () => {
+test('Chat names the sidebar\'s Running actions as rows, not the old card', () => {
   for (const f of ['src/core/ask/tools.mjs', 'src/core/ask/prompt.mjs']) {
     const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /Running actions card/, f);

@@ -7,12 +7,14 @@ import { syncDefaults, normalizeSyncSettings } from './settings.mjs';
 import { readSyncPrefs } from './config.mjs';
 import { listProjects } from './projects.mjs';
 import { readWorkspace } from './workspaces.mjs';
-import { currentBranch, resolveDefaultBranch } from './worktree.mjs';
+import { currentBranch, unbornBranch, resolveDefaultBranch } from './worktree.mjs';
 import { mapWithCap, fanoutCap } from './fanout.mjs';
+import { gitAvailable, onGitChange } from './git-available.mjs';
 import {
-  syncRepo, remoteInfo, incomingCommits, commitInfo, isSafeBranchName, lastFetchedAt,
+  syncRepo, remoteInfo, incomingCommits, commitInfo, isSafeBranchName, isSafeRemoteName, lastFetchedAt,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
 } from './git-sync.mjs';
+import { branchTips, tipsRelation } from './git-info.mjs';
 
 export const projectSyncEvents = new EventEmitter();
 
@@ -23,10 +25,38 @@ export function effectiveSyncSettings(projectKey) {
   return normalizeSyncSettings(own || {}, syncDefaults());
 }
 
-/** The branch a project's chip describes: HEAD's branch, else the default branch; null if not a branch. */
+/** The remote a run on its source branch (branch.sameAsSource) pushes its source to (POST /api/push): the
+ *  run's recorded sync remote, else the project's sync setting. Validated: the value ends up in git's argv. */
+export function sourcePushRemote(br, projectKey) {
+  return isSafeRemoteName(br?.sync?.remote) ? br.sync.remote : (effectiveSyncSettings(projectKey).remote || 'origin');
+}
+
+/** A run's source branch (br.source) push state from refs only (no network), as publishStatus reads a published
+ *  branch. The remote is the recorded push's (br.pushed), else sourcePushRemote's.
+ *  'pushed' = the remote has every local commit (equal, or only the remote is ahead), 'ahead' = local commits
+ *  not on the remote, 'diverged' = both sides have commits (a plain push is refused), 'unpushed' = no remote
+ *  branch. -> { remote, state } | null (no source, no local branch, or git failed). */
+export async function sourcePushStatus(repoDir, br, projectKey) {
+  if (!repoDir || !isSafeBranchName(br?.source)) return null;
+  const remote = isSafeRemoteName(br.pushed?.remote) ? br.pushed.remote : sourcePushRemote(br, projectKey);
+  const tips = await branchTips(repoDir, br.source, remote);
+  if (!tips?.local) return null;
+  if (!tips.remote) return { remote, state: 'unpushed' };
+  const rel = await tipsRelation(repoDir, tips.local, tips.remote);
+  // null with two different tips: git could not tell, so keep reading it as local commits.
+  const ahead = rel === 'ahead' || (rel === null && tips.local !== tips.remote);
+  return { remote, state: ahead ? 'ahead' : rel === 'diverged' ? 'diverged' : 'pushed' };
+}
+
+async function chipHead(dir) {
+  const head = await currentBranch(dir);
+  const unborn = head ? null : await unbornBranch(dir);
+  const b = head || unborn || (await resolveDefaultBranch(dir));
+  return { base: isSafeBranchName(b) ? b : null, noCommits: !!unborn };
+}
+/** The branch a project's chip describes: HEAD's branch (an unborn one too), else the default branch; null if not a branch. */
 export async function chipBase(dir) {
-  const b = (await currentBranch(dir)) || (await resolveDefaultBranch(dir));
-  return isSafeBranchName(b) ? b : null;
+  return (await chipHead(dir)).base;
 }
 
 /**
@@ -39,19 +69,21 @@ export async function projectSyncBlock({ dir, projectKey = null, base = null, mo
   // An explicit base that is not syncable (a tag, a SHA, 'plus+branch') describes THAT ref as
   // unknown; it is never swapped for HEAD's branch, which would report another branch's state.
   const explicit = base != null && base !== '';
-  const b = explicit ? (isSafeBranchName(base) ? base : null) : await chipBase(dir);
+  const head = explicit ? null : await chipHead(dir);
+  const b = explicit ? (isSafeBranchName(base) ? base : null) : head.base;
+  const nc = head && head.noCommits ? { noCommits: true } : {};   // an unborn repo (Use git, no commit yet)
   const info = await remoteInfo(dir, settings.remote);
   const pub = { beforeRun: settings.beforeRun, onDiverged: settings.onDiverged };
-  if (!info.ok) return { base: explicit ? base : b, remote: null, state: 'unknown', settings: pub };
-  if (explicit && !b) return { base, remote: info.name, remoteLabel: info.label, state: 'unknown', settings: pub };
-  if (!b) return { base: null, remote: info.name, remoteLabel: info.label, state: 'unknown', settings: pub };
+  if (!info.ok) return { base: explicit ? base : b, remote: null, state: 'unknown', settings: pub, ...nc };
+  if (explicit && !b) return { base, remote: info.name, remoteLabel: info.label, state: 'unknown', settings: pub, ...nc };
+  if (!b) return { base: null, remote: info.name, remoteLabel: info.label, state: 'unknown', settings: pub, ...nc };
   const r = await syncRepo(dir, { base: b, remote: info.name, mode, maxAgeMs, timeoutMs });
   const block = {
     base: b, remote: info.name, remoteLabel: info.label, state: r.state || 'unknown',
     ahead: r.ahead || 0, behind: r.behind || 0, dirty: !!r.dirty, dirtyCount: r.dirtyCount || 0,
     checkedOutHere: !!r.checkedOutHere, shallow: !!r.shallow, headSha: r.headSha || null, remoteSha: r.remoteSha || null,
     fetchedAt: r.fetch?.fetchedAt || r.fetchedAt || null, stale: !!r.stale, settings: pub,
-    ...(r.fetchError ? { fetchError: r.fetchError } : {}), ...(r.ff ? { ff: r.ff } : {}),
+    ...(r.fetchError ? { fetchError: r.fetchError } : {}), ...(r.ff ? { ff: r.ff } : {}), ...nc,
   };
   if (details) {
     const [local, remoteTip, incoming] = await Promise.all([
@@ -74,6 +106,9 @@ export async function workspaceSyncBlocks(workspaceId, { mode = 'status', bases 
   // readWorkspace returns `exists[]` aligned with projectPaths: a gone folder runs no git in a dead cwd.
   const blocks = await mapWithCap(members, fanoutCap(), (m) => (ws.exists && ws.exists[m.i] === false
     ? { base: null, remote: null, state: 'unknown', missing: true }
+    // P5: a Folder member (annotated vcs 'none') has no branch and no remote: never git in its folder — nested in a
+    // repository, a fetch / ff there would move THAT repository.
+    : Array.isArray(ws.vcs) && ws.vcs[m.i] === 'none' ? { base: null, remote: null, state: 'unknown', folder: true }
     : projectSyncBlock({ dir: m.dir, projectKey: m.projectKey, base: bases[m.projectKey] || null, mode, ...act })));
   return members.map((m, i) => ({ projectKey: m.projectKey, ...blocks[i] }));
 }
@@ -97,6 +132,8 @@ export function worstChipState(blocks) {
   return (blocks || []).map(chipState).filter(Boolean).sort((a, b) => RANK[b] - RANK[a])[0] || null;
 }
 
+const syncLoopCanRun = () => gitAvailable();
+
 /**
  * Scheduled background fetch (NOT per page load): one project at a time, each only when its
  * FETCH_HEAD is older than its refreshMinutes (0 = never). Emits 'changed' {projectKey} when a
@@ -118,6 +155,7 @@ export function startProjectSyncBackground({ log = (m) => console.warn(m), tickM
     return !at || Date.now() - Date.parse(at) >= s.refreshMinutes * 60_000;
   };
   const runTick = async () => {
+    if (!syncLoopCanRun()) return;
     try {
       for (const p of await listProjectsFn()) {
         if (stopped) return;                       // stop() lands between projects
@@ -143,8 +181,9 @@ export function startProjectSyncBackground({ log = (m) => console.warn(m), tickM
   void tick();
   const timer = setInterval(() => { void tick(); }, tickMs);
   timer.unref?.();
+  const offGit = onGitChange((s) => { if (s.available) void tick(); });
   /** Stop the timer; resolves once a tick already in flight has finished (tests await it). */
-  return async () => { stopped = true; clearInterval(timer); await (busy || null); };
+  return async () => { offGit(); stopped = true; clearInterval(timer); await (busy || null); };
 }
 
 export const _testing = { RANK };

@@ -5,12 +5,14 @@
 import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { listProjects as realListProjects } from '../projects.mjs';
-import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPACE_KEY_RE } from '../workspaces.mjs';
+import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, memberWorkMode as realMemberWorkMode, WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
-import { isWorkspaceScanWorkflow } from '../graph/builtin-workflows.mjs';
-import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
+import { isWorkspaceScanWorkflow, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
+import { sanitizeBranchName } from '../worktree.mjs';
+import { deriveBranchName } from '../naming.mjs';
+import { flagEnabled } from '../flags.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { resolveScheduleSpec } from './schedule-spec.mjs';
@@ -21,8 +23,10 @@ import { resolveProfile as realResolveProfile } from '../source-bindings.mjs';
 import { listProfileIds as realListProfileIds } from '../plugin-config.mjs';
 import { resolveSourceRef as resolveGitSourceRef } from '../git-sync.mjs';
 import { effectiveSyncSettings } from '../project-sync.mjs';
+import { gitAvailable } from '../git-available.mjs';
 import { ENGINE_NAMES, MODEL_ENGINE_NAMES, engineLabel } from '../../shared/engine-switch.mjs';
 import { runsOn } from '../../shared/connections.mjs';
+import { normaliseTags } from '../../shared/run-tags.mjs';
 import { listModels as realListModels, modelCostConfig, modelHasBaseUrlRouting } from '../config.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { cachedPolicyFor } from '../policy/cache.mjs';
@@ -35,10 +39,24 @@ import { listPriceFor } from '../list-prices.mjs';
 
 // What a premium-tier pick is priced against on the card: Opus 5.5, the top tier's flagship (output USD per Mtok).
 const OPUS_LIST_OUTPUT = (listPriceFor('claude-opus-5-5') || {}).output || 20;
+import { resolveShapeRequest, isShapeWorkflowId } from '../shape/run.mjs';
+import { nudgeFor } from '../shape/nudge.mjs';
+import { estimateChoices } from '../shape/estimate.mjs';
+import { DEFAULT_PERSPECTIVES, withProjectFit } from '../../shared/shape/perspectives.mjs';
+import { NO_PROJECT_ERRORS } from '../../shared/no-project.mjs';
+import { ensureHouseBrief } from '../house-brief.mjs';
+import { presetProposalInput, PRESET_PROPOSAL_ERRORS } from './proposal-preset.mjs';
+import { readPreset as readPresetRow } from '../run-presets-store.mjs';
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
   noTarget: 'workspaceId or projectKey is required',
+  // P3 (CONTRACT §3): noProject: true is a third target, never together with another one.
+  tooManyTargets: NO_PROJECT_ERRORS.proposalTarget,
+  noProjectType: 'noProject must be true',
+  noProjectSchedule: NO_PROJECT_ERRORS.schedule,
+  noProjectMemory: NO_PROJECT_ERRORS.memory,
+  noProjectSlices: NO_PROJECT_ERRORS.slices,
   unknownProject: (key) => `unknown projectKey "${key}"`,
   projectPathMissing: (path) => `project path is missing: ${path}`,
   workspaceNotFound: 'workspace not found',
@@ -56,11 +74,14 @@ export const PROPOSAL_ERRORS = Object.freeze({
   briefTooLong: `brief exceeds ${ASK_LIMITS.briefMaxChars} characters`,
   badSource: (v) => `unknown or invalid sourceBranch: ${v}`,
   byKeyUnknown: (k) => `sourceBranchByKey has an unknown project key: ${k}`,
+  byKeyFolder: (k) => `sourceBranchByKey: ${k} is a Folder project and has no branches`,
   byKeyProjectOnly: 'sourceBranchByKey is only valid for a workspace',
   missingSource: (v, remote) => `sourceBranch "${v}" exists neither locally nor on ${remote}`,
+  shapeSlices: 'shape.slices must be "auto" or "off"',
+  shapeScheduled: 'Shaper starts now and waits for the user to approve its plan: drop when / every / after',
   nodesAuto: 'nodes needs a saved workflow — Auto (wf_auto) picks its agents and their models when the run starts',
   nodesDefrag: 'the Memory defragment workflow takes its model from Settings › Memory — omit nodes',
-  // An engine that owns no catalog models (Copilot) runs its own: no pick can ever run on it.
+  // An engine that owns no catalog models runs its own: no pick can ever run on it (every engine has some today).
   nodesEngine: (engine) => `nodes: the ${engineLabel(engine)} engine runs its own models — omit nodes for a run on it`,
   nodeNoModel: (id) => `node ${JSON.stringify(String(id).slice(0, 64))}: a pick needs a model`,
   signedOutPick: (id, model) => `node ${JSON.stringify(String(id).slice(0, 64))}: ${model} needs the Claude Code sign-in, which this install lacks — pick a model routed through an endpoint or provider`,
@@ -141,8 +162,10 @@ function cleanNote(v, max = ASK_LIMITS.proposalNoteMaxChars) {
 
 function safeIds(plugin) { try { return realListProfileIds(plugin); } catch { return []; } }
 
+const given = (v) => v !== undefined && v !== null && v !== '';
+
 /**
- * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function}} [deps]
+ * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function, estimate?:Function|null}} [deps]
  */
 export function createProposalValidator({
   listProjects = realListProjects,
@@ -152,6 +175,9 @@ export function createProposalValidator({
   assertRunnableWorkflow = realAssertRunnableWorkflow,
   readGuardrailSet = realReadGuardrailSet,
   isGitRepo = realIsGitRepo,
+  // P5 (U8): a member's mode now (registered Folder project, or any member while git is missing → 'folder')
+  memberWorkMode = realMemberWorkMode,
+  gitOn = gitAvailable,
   pathExists = existsSync,
   // Plugin task sources (source-spec.mjs): the installed sources with each one's profile roster.
   listTaskSources = () => realListTaskSources().map((s) => (s.type === 'plugin' && s.multiProfile ? { ...s, profiles: safeIds(s.plugin) } : s)),
@@ -163,6 +189,12 @@ export function createProposalValidator({
   // validator built on fake dirs never asks git; the module singleton below binds the real one.
   resolveSourceRef = null,
   remoteName = () => 'origin',
+  // Shape it first: the gate (spec D12), and the nudge's as-is / shaped estimates — null by default, so a
+  // validator built on fake readers never reads run history; the module singleton below binds the real one.
+  estimate = null,
+  // Project fit (slice 3): ({projectKey, projectDir}) → true when the project has a house brief. False by default, so a
+  // validator built on fake readers never scans a repo; the module singleton below binds the real one.
+  hasHouseBrief = async () => false,
   // Per-agent picks (`nodes`, docs/models.md "Per-agent models for one run"): the catalog, the run's engine when the
   // proposal names none (the same cascade POST /api/run and the card's /api/run-defaults use), Claude Code's sign-in,
   // the team policy (cache only) and the entries' own cost. Read ONLY for a proposal that carries `nodes`.
@@ -180,6 +212,9 @@ export function createProposalValidator({
     try { const p = cachedPolicyFor(projectDir || policyProject); return p ? fieldsForRun(p.doc, { workspaceRun: !projectDir }) : {}; } catch { return {}; }
   },
   costOf = modelCostConfig,
+  // Run presets (#712 slice 3): propose_run's presetId. Null by default, so a validator built on fake readers
+  // never reads presets; the module singleton below binds the real one.
+  readPreset = null,
 } = {}) {
   /** propose_run `nodes` → { nodes, errors, warnings }: the run API's check (run-overlay.mjs) on the catalog the run's
    *  engine runs, plus Ask's own: signed out, every agent node needs a model the install can run (auto/runnable.mjs,
@@ -244,8 +279,21 @@ export function createProposalValidator({
    */
   // `claudeAuth`: the sign-in answer the Ask turn handed its MCP child (turn.mjs _onProposal), so the card is checked
   // with the answer the model's own call was checked with.
-  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {}, lookupTask = null, claudeAuth: authAnswer = null } = {}) {
-    const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {}, lookupTask = null, claudeAuth: authAnswer = null, owner = null } = {}) {
+    let inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+    // Run presets (D9): the preset's picks fill the input BEFORE every check below, so its broken items are named by them.
+    // `owner`: the thread's reader on a shared deployment (null = the local install, which sees every preset).
+    let cardPreset = null;
+    if (given(inp.presetId)) {
+      if (!readPreset) return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.off] };
+      if (typeof inp.presetId !== 'string') return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.type] };
+      const preset = await readPreset(inp.presetId.trim(), { owner });
+      if (!preset) return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.unknown(inp.presetId)] };
+      const merged = presetProposalInput(preset, inp);
+      if (merged.errors.length) return { ok: false, errors: merged.errors };
+      inp = merged.input;
+      cardPreset = merged.cardPreset;
+    }
     const errors = [];
     const fail = () => ({ ok: false, errors });
     const str = (v) => (typeof v === 'string' ? v.trim() : '');
@@ -253,11 +301,19 @@ export function createProposalValidator({
     // ── target: exactly one ────────────────────────────────────────────────
     const projectKeyIn = str(inp.projectKey);
     const workspaceIdIn = str(inp.workspaceId);
+    // P3: `noProject: true` = a run in its own empty folder (no project, no git). false / absent = not given.
+    if (inp.noProject !== undefined && inp.noProject !== null && typeof inp.noProject !== 'boolean') { errors.push(PROPOSAL_ERRORS.noProjectType); return fail(); }
+    const none = inp.noProject === true;
+    if (none && (projectKeyIn || workspaceIdIn)) { errors.push(PROPOSAL_ERRORS.tooManyTargets); return fail(); }
     if (projectKeyIn && workspaceIdIn) { errors.push(PROPOSAL_ERRORS.bothTargets); return fail(); }
-    if (!projectKeyIn && !workspaceIdIn) { errors.push(PROPOSAL_ERRORS.noTarget); return fail(); }
+    if (!none && !projectKeyIn && !workspaceIdIn) { errors.push(PROPOSAL_ERRORS.noTarget); return fail(); }
     let target;
     let policyHome = null;   // a workspace's policy home: the member whose team policy governs its runs
-    if (projectKeyIn) {
+    if (none) {
+      // P3-D9: the card key set is unchanged — every project / workspace field is null.
+      target = { target: 'none', projectKey: null, projectName: null, projectDir: null,
+        workspaceId: null, workspaceName: null, members: null };
+    } else if (projectKeyIn) {
       const p = (await listProjects()).find((x) => x.key === projectKeyIn);
       if (!p) { errors.push(PROPOSAL_ERRORS.unknownProject(projectKeyIn)); return fail(); }
       if (!pathExists(p.path)) { errors.push(PROPOSAL_ERRORS.projectPathMissing(p.path)); return fail(); }
@@ -273,17 +329,54 @@ export function createProposalValidator({
       for (let i = 0; i < paths.length; i++) {
         const dir = paths[i];
         if (!pathExists(dir)) { errors.push(PROPOSAL_ERRORS.memberPathMissing); return fail(); }
-        if (!isGitRepo(dir)) { errors.push(PROPOSAL_ERRORS.memberNotGit(dir)); return fail(); }
-        members.push({ projectKey: keys[i], projectDir: dir, projectName: basename(dir) });
+        const workMode = memberWorkMode(dir);
+        if (workMode === 'git' && !isGitRepo(dir)) { errors.push(PROPOSAL_ERRORS.memberNotGit(dir)); return fail(); }
+        members.push({ projectKey: keys[i], projectDir: dir, projectName: basename(dir), ...(workMode === 'folder' ? { workMode } : {}) });
       }
       members.sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0)); // primary first (ui/server.mjs:897)
       policyHome = typeof ws.policyProject === 'string' && paths.includes(ws.policyProject) ? ws.policyProject : null;
       target = { target: 'workspace', projectKey: null, projectName: null, projectDir: null,
         workspaceId: ws.id, workspaceName: ws.name, members };
     }
+    // Project fit is on by default only with a house brief; a failed check is "no brief", never an error.
+    let briefMemo = null;
+    const briefOn = () => (briefMemo ??= (async () => {
+      if (target.target !== 'project') return false;
+      try { return (await hasHouseBrief({ projectKey: target.projectKey, projectDir: target.projectDir })) === true; } catch { return false; }
+    })());
+
+    // ── Shape it first (spec D9): the card proposes wf_shape (wf_shape_ux with UX); the gate refuses it when off ──
+    let shape = null;
+    let shapedWorkflowId = null;
+    if (inp.shape != null || isShapeWorkflowId(str(inp.workflowId))) {   // null = absent, as for the other optional fields
+      let shapeIn = inp.shape;
+      if (shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn)) {
+        const { slices, ...rest } = shapeIn;
+        if (slices !== undefined && slices !== 'auto' && slices !== 'off') errors.push(PROPOSAL_ERRORS.shapeSlices);
+        shapeIn = slices === 'auto' || slices === 'off' ? { ...rest, slices } : rest;
+      }
+      // L14: on a shaped proposal the model's assess.size tells the Planner the task was judged large.
+      const size = inp.assess && ['small', 'medium', 'large'].includes(inp.assess.size) ? inp.assess.size : undefined;
+      if (size && shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn) && shapeIn.size === undefined) shapeIn = { ...shapeIn, size };
+      // The UX variant named with no perspectives (no shape, or shape: {slices}): keep UX, or resolveShapeRequest's
+      // defaults would quietly drop to wf_shape.
+      if (str(inp.workflowId) === SHAPE_UX_WORKFLOW_ID
+        && (shapeIn === undefined || (shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn) && !('perspectives' in shapeIn)))) {
+        shapeIn = { ...(shapeIn || {}), perspectives: [...DEFAULT_PERSPECTIVES, 'ux'] };
+      }
+      const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId });
+      if (!r.ok) errors.push(r.error);
+      else { shape = { ...r.shape, perspectives: withProjectFit(r.shape.perspectives, await briefOn()) }; shapedWorkflowId = r.workflowId; }
+      // L7: a run without a project is never planned in slices (POST /api/run refuses 'auto' the same); its shaped run
+      // runs with slices off (U13: the Shaper itself still runs with No project).
+      if (none && shape) {
+        if (shape.slices === 'auto') errors.push(PROPOSAL_ERRORS.noProjectSlices);
+        else shape = { ...shape, slices: 'off' };
+      }
+    }
 
     // ── workflow ───────────────────────────────────────────────────────────
-    const workflowId = str(inp.workflowId) || 'wf_default';
+    const workflowId = shapedWorkflowId || str(inp.workflowId) || 'wf_default';
     let wf = null;
     try { wf = await assertRunnableWorkflow(workflowId); }
     catch (err) { errors.push(err && err.message ? err.message : PROPOSAL_ERRORS.unknownWorkflow(workflowId)); }
@@ -303,6 +396,7 @@ export function createProposalValidator({
     if (!scopeTypeBad && wf) {
       const reason = validateMemoryScope({ workflowId: wf.id, memoryScope, isWorkspace: target.target === 'workspace' });
       if (reason) errors.push(reason);
+      else if (none && memoryScope === 'project') errors.push(PROPOSAL_ERRORS.noProjectMemory);   // U13 + CONTRACT §3: global memory only, after the shared gate as in POST /api/run
     }
 
     // ── guardrails: default normal, permissive refused (D3) ────────────────
@@ -363,8 +457,9 @@ export function createProposalValidator({
     else if (brief.length > ASK_LIMITS.briefMaxChars) errors.push(PROPOSAL_ERRORS.briefTooLong);
 
     // ── branches (syntactic only) ──────────────────────────────────────────
+    // P3: a run without a project has no branch — its branch fields are ignored, as POST /api/run ignores them.
     let sourceBranch = null;
-    const sourceIn = inp.sourceBranch === undefined || inp.sourceBranch === null ? '' : String(inp.sourceBranch).trim();
+    const sourceIn = none || inp.sourceBranch === undefined || inp.sourceBranch === null ? '' : String(inp.sourceBranch).trim();
     if (sourceIn) {
       if (isSyntacticRef(sourceIn)) sourceBranch = sourceIn;
       else errors.push(PROPOSAL_ERRORS.badSource(sourceIn));
@@ -375,11 +470,14 @@ export function createProposalValidator({
       if (target.target !== 'workspace') errors.push(PROPOSAL_ERRORS.byKeyProjectOnly);
       else if (typeof raw === 'object' && !Array.isArray(raw)) {       // non-objects ignored, like the route
         const memberKeys = new Set(target.members.map((m) => m.projectKey));
+        const folderKeys = new Set(target.members.filter((m) => m.workMode === 'folder').map((m) => m.projectKey));
         const out = {};
         for (const [k, v] of Object.entries(raw)) {
           if (!memberKeys.has(k)) { errors.push(PROPOSAL_ERRORS.byKeyUnknown(k)); continue; }
           const val = typeof v === 'string' ? v.trim() : '';
           if (!val) continue;
+          // git missing: a Git member runs on a copy too (U3) — its branch is ignored, as POST /api/run ignores it; never "a Folder project"
+          if (folderKeys.has(k)) { if (gitOn()) errors.push(PROPOSAL_ERRORS.byKeyFolder(k)); continue; }
           if (!isSyntacticRef(val)) { errors.push(PROPOSAL_ERRORS.badSource(val)); continue; }
           out[k] = val;
         }
@@ -392,19 +490,30 @@ export function createProposalValidator({
       || sanitizeTitle(brief.split(/\r?\n/)[0].slice(0, 80))
       || (runSource ? sanitizeTitle(runSource.title || `${runSource.taskId}`) : '')
       || 'Proposed run';
-    let featureBranch = typeof inp.featureBranch === 'string' ? sanitizeBranchName(inp.featureBranch) : '';
-    if (!featureBranch) {
+    let featureBranch = none ? null : typeof inp.featureBranch === 'string' ? sanitizeBranchName(inp.featureBranch) : '';
+    // Smart run naming: a branch derived here (not given by the model or the person) is marked, so Start can tell the
+    // server it is a suggestion that must stay unique. Only while the flag is on: a flag-off card keeps its shape.
+    let featureBranchDerived = false;
+    if (!none && !featureBranch) {
       const m = typeof cardId === 'string' ? CARD_HEX_RE.exec(cardId) : null;
-      featureBranch = suggestBranchName({ prompt: brief || title, title, pipelineId: m ? m[1] : '' });
+      featureBranch = deriveBranchName({
+        prompt: brief || title, title, pipelineId: m ? m[1] : '',
+        ticket: runSource?.taskId || '', projectDir: target.projectDir || undefined,
+      });
+      featureBranchDerived = flagEnabled('smartRunNaming');
     }
     if (inp.sameAsSource !== undefined && inp.sameAsSource !== null && typeof inp.sameAsSource !== 'boolean') errors.push('sameAsSource must be true or false');
-    const sameAsSource = inp.sameAsSource === true;
+    const sameAsSource = !none && inp.sameAsSource === true;
     if (!sameAsSource && featureBranch && sourceBranch && featureBranch === sourceBranch) {
       errors.push(`featureBranch and sourceBranch are both "${sourceBranch}": to commit onto it, set sameAsSource: true (and drop featureBranch); otherwise name another feature branch`);
     }
 
-    // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
-    const spec = resolveScheduleSpec({ ...inp, projectKey: target.projectKey || '', workspaceId: target.workspaceId || '' }, { nowMs, timeZone, defaults: scheduleDefaults, afterRef });
+    // ── schedule (docs/scheduled-runs.md "Chat"): when | every, read in the user's zone ──
+    // L7: a run without a project cannot be scheduled or chained yet (resume tickets are the server's own).
+    const scheduleAsked = ['when', 'every', 'after'].some((k) => str(inp[k])) || inp.sourceFromPrevious === true;
+    const spec = none && scheduleAsked
+      ? { ok: false, errors: [PROPOSAL_ERRORS.noProjectSchedule] }
+      : resolveScheduleSpec({ ...inp, projectKey: target.projectKey || '', workspaceId: target.workspaceId || '' }, { nowMs, timeZone, defaults: scheduleDefaults, afterRef });
     if (!spec.ok) errors.push(...spec.errors);
     if (spec.ok && spec.schedule && spec.schedule.kind === 'after' && spec.schedule.sourceFromPrevious && (sourceBranch || (sourceBranchByKey && Object.keys(sourceBranchByKey).length))) {
       errors.push('sourceFromPrevious and sourceBranch / sourceBranchByKey cannot both be given');
@@ -424,6 +533,23 @@ export function createProposalValidator({
       }
     }
 
+    // Run tags (#718): the one normaliser; the card carries the clean list. A proposal writes tags: key:value only.
+    const tagCheck = normaliseTags(inp.tags, { strict: true });
+    for (const e of tagCheck.errors) errors.push(`tags: ${e}`);
+    if (shape && spec.schedule) errors.push(PROPOSAL_ERRORS.shapeScheduled);
+    // No nudge on a card without a project: Shape it first offers a plan in slices, which it cannot have yet (L7, P3-D17).
+    const nudgeBase = !none && !shape && !spec.schedule ? nudgeFor(inp.assess) : null;
+    let nudge = null;
+    if (nudgeBase && !errors.length) {
+      let estimates = { asIs: null, shaped: null };
+      // The shaped run would be wf_shape_ux when the nudge picks UX (resolveShapeRequest); it has the manual-test agents.
+      const shapedWf = nudgeBase.perspectives.includes('ux') ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW;
+      if (typeof estimate === 'function') {
+        try { estimates = (await estimate({ asIs: wf, shaped: shapedWf })) || estimates; } catch { /* no history here (MCP child): no numbers */ }
+      }
+      nudge = { ...nudgeBase, perspectives: withProjectFit(nudgeBase.perspectives, await briefOn()), estimates, asIsAuto: wf?.id === AUTO_WORKFLOW_ID };
+    }
+
     if (errors.length) return fail();
     // Signed out (only the answer the Ask turn already holds — its re-validation's `claudeAuth`, the MCP child's
     // WORCA_ASK_CLAUDE_AUTH; never a probe, so without that answer a plain proposal still reads nothing): a plain
@@ -437,9 +563,12 @@ export function createProposalValidator({
       ok: true,
       ...(signedOutNote ? { notes: [PROPOSAL_ERRORS.signedOutPlain] } : {}),
       card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, memoryScope, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
+        ...(featureBranchDerived ? { featureBranchDerived: true } : {}),
         note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments),
         // Only a scheduled proposal carries the key: a plain run card keeps its shape byte for byte.
         ...(spec.schedule ? { schedule: spec.schedule } : {}),
+        // Likewise a proposal that names run tags.
+        ...(tagCheck.tags.length ? { tags: tagCheck.tags } : {}),
         // Likewise a proposal whose task is a plugin task (an issue), not a brief.
         ...(runSource ? { source: runSource } : {}),
         ...(sourceWarning ? { sourceWarning } : {}),
@@ -452,7 +581,12 @@ export function createProposalValidator({
         ...(cardNodes && Object.keys(cardNodes).length ? { nodes: cardNodes } : {}),
         ...(cardWarnings.length ? { warnings: cardWarnings } : {}),
         // Only a card proposing a run on its source branch carries the key (run cards are pinned).
-        ...(sameAsSource ? { sameAsSource: true } : {}) },
+        ...(sameAsSource ? { sameAsSource: true } : {}),
+        // Only a shaped card / a nudged card carries these (run cards are pinned).
+        ...(shape ? { shape } : {}),
+        ...(nudge ? { nudge } : {}),
+        // Only a card proposed from a run preset: what Start adds (applyPresetStart, src/shared/run-presets.mjs).
+        ...(cardPreset ? { preset: cardPreset } : {}) },
     };
   }
   return { validateProposal };
@@ -463,4 +597,7 @@ export const validateProposal = createProposalValidator({
   resolveSourceRef: (dir, name, { projectKey } = {}) =>
     resolveGitSourceRef(dir, name, { remote: effectiveSyncSettings(projectKey).remote }),
   remoteName: (projectKey) => effectiveSyncSettings(projectKey).remote,
+  estimate: (wfs) => estimateChoices(wfs),
+  readPreset: async (id, opts) => readPresetRow(id, opts),
+  hasHouseBrief: async ({ projectKey, projectDir }) => (await ensureHouseBrief({ projectKey, projectDir })).words > 0,
 }).validateProposal;

@@ -123,7 +123,7 @@ test('chat question parity: the card host renders the run page body, a 422 marks
   const panel = host.querySelector('.qpanel');
   await checkRows([
     { name: 'the form mounts with the run page heading', run: async () => {
-      assert.deepEqual(q, { id: ASK.id, kind: 'form', heading: 'Review mockups', step: 'Planner' });
+      assert.deepEqual(q, { id: ASK.id, kind: 'form', heading: 'Review mockups', step: 'Planner', stepCard: false });
       assert.ok(panel.querySelector('.af-form'));
       assert.equal(panel.classList.contains('hidden'), false);
     } },
@@ -140,9 +140,9 @@ test('chat question parity: the card host renders the run page body, a 422 marks
       assert.equal(await controls.answer(ref, ASK.id, { values: { verdict: 'changes', notes: 'x' } }), false);
       const slot = [...panel.querySelectorAll('.af-err')].find((s) => !s.hidden);
       assert.equal(slot.textContent, 'At most 4000 characters.');
-      assert.equal(panel.querySelector('.btn-go').disabled, false);
+      assert.equal(panel.querySelector('.btn-primary').disabled, false);
       assert.equal(await controls.answer(ref, ASK.id, { values: { verdict: 'approve' } }), true);
-      assert.equal(panel.querySelector('.btn-go').disabled, true, 'busy until the run resumes');
+      assert.equal(panel.querySelector('.btn-primary').disabled, true, 'busy until the run resumes');
     } },
     { name: 'question-resolved clears the card panel; the next paint returns null', run: async () => {
       ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: ASK.id });
@@ -196,7 +196,7 @@ test('the registered progress card goes live from frames, shows the run page que
   doc.body.appendChild(built.el);
   const el = built.el;
   assert.ok(el.classList.contains('chat-rc'));
-  assert.equal(el.querySelector('.ask-rc-pill-text').textContent, 'Planner');
+  assert.equal(el.querySelector('.chat-rc-status').dataset.state, 'working');
   assert.ok(el.querySelector('.chat-rc-well .gv-stage'), 'the Workflows graph is mounted');
   assert.equal(el.querySelector('.chat-rc-agent-cycle').textContent, 'cycle 2');
   assert.equal(el.querySelector('.chat-rc-pause').disabled, false);
@@ -208,7 +208,7 @@ test('the registered progress card goes live from frames, shows the run page que
   assert.equal(q.querySelector('.chat-rc-q-head').textContent, 'A question from Planner');
   assert.equal(el.querySelector('.chat-rc-agent.is-waiting .chat-rc-agent-name').textContent, 'Planner');
   q.querySelector('.qopt').click();
-  q.querySelector('.btn-go').click();
+  q.querySelector('.btn-primary').click();
   await ctx.settle();
   const post = ctx.calls.find((c) => c.url === '/api/answer');
   assert.ok(post, 'POST /api/answer');
@@ -277,12 +277,12 @@ test('chat question parity: a card panel mounted while an answer is in flight is
   const pending = controls.answer({ pipelineId: PID }, ASK.id, { values: { verdict: 'approve' } });
   const late = mkHost();
   controls.paintQuestion({ pipelineId: PID }, late);
-  assert.equal(late.querySelector('.btn-go').disabled, true);
+  assert.equal(late.querySelector('.btn-primary').disabled, true);
   for (const r of waits) r({ ok: true, status: 200, json: async () => ({ ok: true }) });
   await pending;
 });
 
-test('the registered card answers a recovery question with the run page\'s decision buttons (R11)', async () => {
+test('the registered card answers a recovery question with the recovery step card\'s own buttons, and names the decision (R11, shaper-cards D4/D5)', async () => {
   const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/answer' ? Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }) : null) });
   helloRun(ctx, { runId: RUN_ID, pipelineId: PID, title: 'Fix login' });
   ctx.dispatch(STATE());
@@ -298,7 +298,8 @@ test('the registered card answers a recovery question with the run page\'s decis
   assert.deepEqual(JSON.parse(ctx.calls.find((c) => c.url === '/api/answer').opts.body).payload, { decision: 'retry' });
   ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: 'rec-1' });
   await ctx.settle();
-  assert.equal(built.el.querySelector('.chat-rc-receipt summary').textContent, 'Answer sent · Planner');
+  assert.equal(ctx.calls.filter((c) => c.url === '/api/answer').length, 1, 'posted once: the card\'s delegate does not double-post');
+  assert.equal(built.el.querySelector('.chat-rc-receipt summary').textContent, 'Retried');
   built.dispose();
 });
 
@@ -492,10 +493,10 @@ test('two cards for one run in one chat (a started proposal and a track_run card
   const qb = B.el.querySelector('.chat-rc-q');
   assert.ok(qa.querySelector('.qopt') && qb.querySelector('.qopt'), 'both cards show the question');
   qa.querySelector('.qopt').click();
-  qa.querySelector('.btn-go').click();
+  qa.querySelector('.btn-primary').click();
   await ctx.settle();
   assert.equal(ctx.calls.filter((c) => c.url === '/api/answer').length, 1);
-  assert.equal(qb.querySelector('.btn-go').disabled, true, 'the other card\'s panel is busy too');
+  assert.equal(qb.querySelector('.btn-primary').disabled, true, 'the other card\'s panel is busy too');
   ctx.dispatch({ type: 'question-resolved', runId: RUN_ID, id: 'q-1' });   // before the 200, as answerRun broadcasts it
   for (const r of waits) r({ ok: true, status: 200, json: async () => ({ ok: true }) });
   await ctx.settle(6);
@@ -507,7 +508,7 @@ test('two cards for one run in one chat (a started proposal and a track_run card
   assert.ok(qa.querySelector('.af-form') && qb.querySelector('.af-form'));
   B.dispose();
   qa.querySelectorAll('.af-choice')[0].dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
-  qa.querySelector('.btn-go').click();
+  qa.querySelector('.btn-primary').click();
   await ctx.settle(6);
   assert.equal([...qa.querySelectorAll('.af-err')].find((s) => !s.hidden).textContent, 'Pick one.', 'disposing B released only B\'s panel');
   A.dispose();
@@ -530,7 +531,7 @@ test('a finished run card painted before the first History load offers Create pu
     { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel: () => {}, openArtifact: () => {}, announce: () => {} });
   doc.body.appendChild(built.el);
   await ctx.settle(6);
-  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Ready to ship');
+  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged');
   assert.equal(built.el.querySelector('.chat-rc-create-pr'), null, 'no PR host known yet');
   release();
   await ctx.settle(10);
@@ -556,12 +557,14 @@ test('a card for a run another process drives (REST only, no live model here) sh
   assert.equal(el.dataset.runStatus, 'running');
   assert.equal(el.querySelector('.chat-rc-foot').hidden, false, 'Pause still says why it cannot');
   // Never a button that does nothing: a press on it would open no modal and post nothing.
-  assert.equal(stop.hidden, true, 'no Stop this server cannot honour');
+  assert.equal(stop.disabled, true, 'no Stop this server cannot honour');
+  assert.equal(stop.title, 'Open the run to stop it');
   helloRun(ctx, { runId: RUN_ID, pipelineId: PID, title: 'Fix login' });
   ctx.dispatch(STATE());
   await ctx.settle();
-  assert.equal(el.querySelector('.ask-rc-pill-text').textContent, 'Planner', 'the card went live');
-  assert.equal(stop.hidden, false, 'this tab holds the run now: Stop is back');
+  assert.equal(el.querySelector('.chat-rc-status').dataset.state, 'working', 'the card went live');
+  assert.equal(stop.hidden, false);
+  assert.equal(stop.disabled, false, 'this tab holds the run now: Stop is back');
   stop.click();
   assert.equal(modal.classList.contains('hidden'), false, 'Stop opens the run page\'s warning');
   assert.equal(modal.dataset.runId, RUN_ID);
@@ -572,4 +575,49 @@ test('a card for a run another process drives (REST only, no live model here) sh
 test('app.js registers the "→ run" composer add-on', async () => {
   await bootApp();
   assert.ok(composerAddons().some((a) => a.id === 'direction'));
+});
+
+test('a Chat card built before the run groups load becomes a group card once they do, and its Stop stops the group (never "Stop this pipeline?")', async () => {
+  const P = ['aaaa0001', 'aaaa0002', 'aaaa0003', 'aaaa0004'];
+  const st = ['done', 'running', 'running', 'stopped'];
+  const member = (i) => ({ position: i + 1, title: `Run ${i + 1}`, pipelineId: P[i], ticketId: null, status: st[i], pr: null, ticket: null, adhoc: true, after: null });
+  const GROUPS = { groups: [{ id: 'g_my', kind: 'user', title: 'My group', projectKey: null, planning: null, members: P.map((_, i) => member(i)), cost: { usd: 0, byPipeline: {} } }] };
+  const json = (b) => Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } }));
+  let release = null;
+  const gated = new Promise((r) => { release = r; });
+  const hist = P.map((id, i) => ({ id, projectKey: 'acme', title: `Run ${i + 1}`, status: st[i], mtime: Date.now() }));
+  const fetchHandler = (url) => (url.startsWith('/api/ask/runs/')
+    ? json({ state: { id: P[3], title: 'Run 4', status: 'stopped', stepper: null, steps: [], active: [] }, extras: null })
+    : url.startsWith('/api/run-groups') ? gated.then(() => json(GROUPS))
+      : url.startsWith('/api/history') ? json({ pipelines: hist }) : null);
+  const ctx = await bootApp({ fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [1, 2].map((i) => ({ runId: `run-${i + 1}`, pipelineId: P[i], title: `Run ${i + 1}`, projectDir: '/tmp/p',
+    status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' })) });
+  for (const i of [1, 2]) ctx.dispatch(STATE({ runId: `run-${i + 1}`, id: P[i], title: `Run ${i + 1}` }));
+  await ctx.settle(8);
+  ctx.go('chat');
+  await ctx.settle(8);
+  const doc = ctx.window.document;
+  const built = chatCardBuilder('progress')({ kind: 'card', id: 'card_stopped', state: 'tracked',
+    card: { type: 'progress', pipelineId: P[3], runId: P[3], projectKey: 'acme', title: 'Run 4' } },
+  { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel: () => {}, openArtifact: () => {}, announce: () => {} });
+  doc.body.appendChild(built.el);
+  await ctx.settle(8);
+  assert.equal(built.el.querySelector('.kind-chip').hidden, true, 'no groups yet');
+  release();
+  await ctx.settle(8);
+  assert.equal(built.el.querySelector('.kind-chip').textContent, 'Group · 4 runs', 'the groups load repaints the card, with no run frame');
+  assert.equal(built.el.querySelector('.kind-chip').hidden, false);
+  // A stale paint hands act() no row: Stop still acts on the run's group.
+  ctx.window.__np.chatRunControls.act({ pipelineId: P[1] }, 'stop', null, null);
+  await ctx.settle(4);
+  assert.match(doc.getElementById('confirm-title').textContent, /Stop 2 runs\?/);
+  doc.getElementById('confirm-cancel').click();
+  await ctx.settle(4);
+  built.el.querySelector('.chat-rc-actions > [data-model-action="stop"]:not([hidden])').click();
+  await ctx.settle(4);
+  assert.ok(doc.getElementById('stop-modal').classList.contains('hidden'), 'never the single run\'s Stop');
+  assert.match(doc.getElementById('confirm-modal').textContent, /Stop 2 runs\?/);
+  built.dispose();
 });

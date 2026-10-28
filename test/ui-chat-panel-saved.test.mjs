@@ -115,11 +115,11 @@ test('slide layout: a panel opened while the Runs page still slides the saved sc
 test('the ⋯ menu works in the panel: it opens, and a click elsewhere closes it', async () => {
   const ctx = await bootSaved();
   const screen = await openPanel(ctx, ROW.id, 8);
-  const menu = screen.querySelector('.hd-menu');
-  click(ctx, screen.querySelector('.hd-more'));
-  assert.equal(menu.hidden, false);
-  click(ctx, ctx.window.document.body);
-  assert.equal(menu.hidden, true);
+  const doc = ctx.window.document;
+  click(ctx, screen.querySelector('.hd-bar-more'));
+  assert.ok(doc.querySelector('body > .wfv-menu'));
+  doc.body.dispatchEvent(new ctx.window.Event('pointerdown', { bubbles: true }));
+  assert.equal(doc.querySelector('body > .wfv-menu'), null);
 });
 
 test('the saved screen changes hosts with the route (History page, panel, History page), one host at a time', async () => {
@@ -266,11 +266,12 @@ test('Open full page on the saved screen goes to its History page on the same ta
 test('a second click on ⋯ in the panel closes the menu', async () => {
   const ctx = await bootSaved();
   const screen = await openPanel(ctx, ROW.id, 8);
-  const more = screen.querySelector('.hd-more');
+  const more = screen.querySelector('.hd-bar-more');
+  const menu = () => ctx.window.document.querySelector('body > .wfv-menu');
   click(ctx, more);
-  assert.equal(screen.querySelector('.hd-menu').hidden, false);
+  assert.ok(menu());
   click(ctx, more);
-  assert.equal(screen.querySelector('.hd-menu').hidden, true);
+  assert.equal(menu(), null);
 });
 
 const okBudget = () => ({ pipelineLimitUsd: 5, totalLimitUsd: 50, resetPeriod: 'monthly', windowStartMs: Date.now() - 3 * 86400000,
@@ -469,4 +470,20 @@ test('Runs page, slide layout: going back to the list empties the saved host aft
   await ctx.settle(8);
   await new Promise((r) => setTimeout(r, 650));
   assert.ok(doc.querySelector('#hist-detail .hd'), 'the re-opened screen survives the earlier clear');
+});
+
+test('s2 (M2): Chat boot, a saved run in the panel: once the schedules answer, the route names its base branch', async () => {
+  // /api/schedules answers only when the test says so: until then the chains are unknown (D2, "The base branch").
+  let answer = null;
+  const late = (url) => (url.split('?')[0].endsWith('/api/schedules')
+    ? new Promise((r) => { answer = () => r({ ok: true, status: 200, json: async () => ({ schedules: [], tickets: [], chains: [], counts: {} }) }); })
+    : null);
+  const ctx = await bootSaved({ arms: late });
+  const screen = await openPanel(ctx, ROW.id, 8);
+  const target = () => [...screen.querySelectorAll('.rd-route .rd-route-row')].at(-1).querySelector('.rd-route-place');
+  assert.ok(answer, 'the panel asked for the schedules');
+  assert.equal(target().textContent, 'The base branch', 'pending: never a guessed branch');
+  answer();
+  await ctx.settle(8);
+  assert.equal(target().textContent, ROW.sourceBranch, 'repainted once the chains are known');
 });

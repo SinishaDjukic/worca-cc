@@ -3,24 +3,30 @@
 // opts in (--use-env-proxy or NODE_USE_ENV_PROXY=1, both read only at startup). On a
 // network whose only way out is a proxy (a corporate LAN), every outbound call then died
 // with "fetch failed" (ENOTFOUND github.com: Copilot sign-in) while curl and git, which
-// honor the variables, worked. Each process entry point (ui/server.mjs, the CLI) calls
-// useEnvProxy() once at boot. A Node with http.setGlobalProxyFromEnv uses it (fetch and
-// the http(s) global agents); every other supported Node (22.x, 24.x LTS today) gets
-// undici's EnvHttpProxyAgent as fetch's global dispatcher, which works from 22.13 on.
+// honor the variables, worked. Each process entry point (ui/server.mjs, the CLI, the
+// plugin connector and chat channel children) calls useEnvProxy() once at boot. A Node
+// with http.setGlobalProxyFromEnv uses it (fetch and the http(s) global agents); every
+// other supported Node (22.x, 24.x LTS today) gets undici's EnvHttpProxyAgent as fetch's
+// global dispatcher, which works from 22.13 on.
 //
 // Loopback always bypasses the proxy: the app calls itself (the model bridge, the UI
 // probe, the broker on this host), and a machine with HTTP_PROXY but no NO_PROXY would
 // otherwise send those calls to the proxy. Nothing here throws: no proxy set or a
 // malformed proxy URL leaves fetch exactly as it was.
+//
+// No worca imports, and node:http loads only once a proxy is set: the plugin children
+// run with no WORCA_HOME (a store import would resolve wrong paths), and every connector
+// op starts one (the plugin-shim and channel-host tests pin their import closures).
 
-import http from 'node:http';
 import { createRequire } from 'node:module';
-import { LOCAL_HOSTNAMES } from './remote-access.mjs';
 
 const require = createRequire(import.meta.url);
 
+/** The loopback names (remote-access.mjs LOCAL_HOSTNAMES), always appended to NO_PROXY. */
+const LOOPBACK = ['localhost', '127.0.0.1', '::1', '[::1]'];
+
 /** undici is CommonJS, so it loads synchronously; null when it can't be loaded. */
-function loadUndici() {
+export function loadUndici() {
   try { return require('undici'); } catch { return null; }
 }
 
@@ -28,9 +34,10 @@ function loadUndici() {
  * Route this process's fetch() through the proxy named by the environment, with loopback
  * always direct.
  * @param {{env?: Record<string, string|undefined>, api?: {setGlobalProxyFromEnv?: Function}, undici?: object|null}} [opts]
+ *   `api` defaults to node:http.
  * @returns {{status: 'off'|'on'|'unsupported'|'invalid', error?: string, restore: () => void}}
  */
-export function useEnvProxy({ env = process.env, api = http, undici } = {}) {
+export function useEnvProxy({ env = process.env, api, undici } = {}) {
   const none = () => {};
   const proxied = env.https_proxy || env.HTTPS_PROXY || env.http_proxy || env.HTTP_PROXY;
   if (!proxied) return { status: 'off', restore: none };
@@ -41,10 +48,11 @@ export function useEnvProxy({ env = process.env, api = http, undici } = {}) {
       if (!listed.includes(h)) listed.push(h);
     }
   }
-  const noProxy = [...listed, ...[...LOCAL_HOSTNAMES].filter((h) => !listed.includes(h))].join(',');
+  const noProxy = [...listed, ...LOOPBACK.filter((h) => !listed.includes(h))].join(',');
+  const http = api === undefined ? require('node:http') : api;
   try {
-    if (typeof api.setGlobalProxyFromEnv === 'function') {
-      const restore = api.setGlobalProxyFromEnv({ ...env, no_proxy: noProxy, NO_PROXY: noProxy });
+    if (typeof http.setGlobalProxyFromEnv === 'function') {
+      const restore = http.setGlobalProxyFromEnv({ ...env, no_proxy: noProxy, NO_PROXY: noProxy });
       return { status: 'on', restore: typeof restore === 'function' ? restore : none };
     }
     const lib = undici === undefined ? loadUndici() : undici;
@@ -64,6 +72,12 @@ export function useEnvProxy({ env = process.env, api = http, undici } = {}) {
       : (err && err.message) || String(err);
     return { status: 'invalid', error, restore: none };
   }
+}
+
+/** D8: the proxy variables changed at runtime: undo the previous install, then install from env again. */
+export function reinstallEnvProxy(prev, opts = {}) {
+  try { prev?.restore?.(); } catch { /* the old dispatcher is gone */ }
+  return useEnvProxy(opts);
 }
 
 /**

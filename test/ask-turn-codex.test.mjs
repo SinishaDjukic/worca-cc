@@ -121,7 +121,7 @@ test('no lockdown on this codex: the turn refuses before any spawn', async () =>
   const { turn, frames, calls } = makeTurn(s, {}, { codexLockdown: () => null, runClaudeImpl: async (o) => reply(o) });
   await turn.run();
   assert.equal(calls.length, 0);
-  assert.match(frames.find((f) => f.type === 'ask-error').message, /Ask on Codex is unavailable/);
+  assert.match(frames.find((f) => f.type === 'ask-error').message, /Chat on Codex is unavailable/);
 });
 
 test('the shipped lockdown lets a Codex turn start', async () => {
@@ -179,6 +179,25 @@ test('the chat title runs on Codex with the Ask slot model, read-only', async ()
   await turn.titlePromise;
   assert.equal(titles[0].engine, 'codex');
   assert.equal(titles[0].model, 'gpt-5.6-luna');
+});
+
+test('a finished Codex reply writes its next-prompt suggestion on Codex, with the small Codex model', async () => {
+  const s = seed();
+  const sugs = [];
+  const engines = [];
+  const { turn } = makeTurn(s, { suggest: true }, {
+    generateSuggestion: async (_i, o) => { sugs.push(o); return 'Open a PR'; },
+    suggestionModel: (e) => { engines.push(e); return e === 'codex' ? 'gpt-5.6-luna' : null; },
+    suggestionsEnabled: () => true,
+    budgetStatus: () => ({ blocked: false }),
+    runClaudeImpl: async (o) => reply(o),
+  });
+  await turn.run();
+  await turn.suggestionPromise;
+  assert.deepEqual(engines, ['codex']);
+  assert.equal(sugs.length, 1);
+  assert.equal(sugs[0].engine, 'codex');
+  assert.equal(sugs[0].model, 'gpt-5.6-luna');
 });
 
 test('a refused first Codex turn starts no codex for its title: the prompt words become the title', async () => {

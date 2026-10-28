@@ -91,11 +91,11 @@ const ROWS = [
   ...['.sync-row', '.sync-pill', '.sync-note', '.sync-commits', '.sync-go', '.rd-sync', '#shipit-base-warn', '.proj-sync', '.sync-checked']
     .map((sel) => [sel, 'ui-branch-sync-model: §6.3 explicit [hidden]']),
   ['.rd-glance', 'ui-running-detail: Details must replace the glance'],
-  ['.hd-report', 'latent: .hd-menu .hd-report outranks .hd-report[hidden] (fixed by the global rule)'],
+  ['.hd-report', 'the ⋯ carrier keeps its [hidden] rule'],
   // More dropped tests that asserted a [hidden] rule:
   ['.rd-night-sec', 'ui-night-mode: the answers sit under the run card'],
   ['.chat-panel', 'worca Chat: the run panel slot keeps its hidden twin'],
-  ...['.hd-resume', '.hd-pause', '.hd-stop', '.hd-resume-split', '.rd-page-branch', '.rd-pr-slot']
+  ...['.hd-resume', '.hd-pause', '.hd-stop', '.hd-resume-split', '.rd-route', '.rd-pr-slot']
     .map((sel) => [sel, 'ui-history-detail-tabs: the saved run bar shares the run page bar\'s rules']),
   ['.hd-sec', 'ui-projects-view: the projects shell is a twin of the History track'], ['.pd-sec', 'ui-projects-view: the projects shell is a twin of the History track'],
   ['.rd-questions', 'ui-running-detail: the question panel rises in'],
@@ -105,6 +105,8 @@ const ROWS = [
   // The top bar's Activity popover and its badge (side-flyout.mjs and activity-menu.mjs toggle `hidden`).
   ...['.activity-pop', '.topnav-badge'].map((sel) => [sel, 'ui-activity-topnav: a closed popover, a zero badge']),
   ['.tsearch-pop', 'ui-topnav-search: the top bar search\'s closed listbox'],
+  // The Perspective checklists' folded met items and earlier cycles (shape/checklist-view.mjs toggles `hidden`).
+  ...['.shape-cl-list', '.shape-cl-earlier'].map((sel) => [sel, 'Shaper checklists: folded items stay folded']),
   // (.log-filters .log-f-exec and the checkbox/radio inputs are type/descendant selectors: the
   //  Step 3 row "every element index.html ships with `hidden` stays hidden" covers them.)
 ];
@@ -129,10 +131,133 @@ test('[hidden] beats the author display rule on every element app.js hides by at
       }
       assert.deepEqual(shown, []);
     } },
-    { name: 'ui-running-detail: the Live two-column layout never outranks [hidden]', run: () => {
+    { name: 'ui-running-detail: the Live view sits beside the card when the pane has room, under it otherwise; the two-column layout never outranks [hidden]', run: () => {
       const live = displays('.rd-glance').filter(({ s }) => subject(s).includes('.rd-glance[data-live="on"]'));
       assert.ok(live.length, 'the wide layout sets display somewhere');
       assert.deepEqual(live.filter(({ s }) => !subject(s).includes(':not([hidden])')).map(({ s }) => s), []);
+      assert.deepEqual(live.filter(({ r }) => !(r.parentRule?.conditionText === 'rd (min-width: 960px)')).map(({ s }) => s), [],
+        'only a wide pane (the rd container) lays the glance out in two columns');
+      const graph = flat.find((r) => r.parentRule?.conditionText === 'rd (min-width: 960px)'
+        && sels(r).some((s) => /^\.rd-glance\[data-live="on"\]\S*\s*>\s*\.rd-live$/.test(s)));
+      assert.equal(graph?.style.getPropertyValue('grid-column'), '2', 'the graph takes the column beside the card');
     } },
   ]);
+});
+
+// The tag field sits on the grey field ground, where the house placeholder grey (ink-3) is 2.58:1 in light — under 4.5:1
+// (CI theme proof). Like the search fields, its "Tags" placeholder uses ink-2.
+test('the tag input placeholder is readable on the grey field (ink-2)', () => {
+  const r = flat.find((x) => sels(x).includes('.tag-input-text::placeholder'));
+  assert.ok(r, 'a .tag-input-text::placeholder rule exists');
+  assert.equal(r.style.getPropertyValue('color').replace(/\s+/g, ''), 'var(--ink-2)');
+});
+
+// Run 3 (D8): the Group row is the facts block's first row. Each fact row is a grid that [hidden] really hides, and an
+// empty facts block takes no room.
+test('the facts block\'s rows (the Group row among them) are grids that [hidden] really hides', () => {
+  const row = flat.find((x) => sels(x).includes('.rd-kv-row'));
+  assert.ok(row, 'a .rd-kv-row rule exists');
+  assert.equal(row.style.getPropertyValue('display'), 'grid');
+  const hid = flat.find((x) => sels(x).includes('.rd-kv-row[hidden]'));
+  assert.ok(hid, 'a .rd-kv-row[hidden] rule exists');
+  assert.equal(hid.style.getPropertyValue('display'), 'none');
+  assert.match(css, /\.rd-kv\{container:rd-kv \/ inline-size;/);
+});
+
+// The chat card's footer buttons sit in .chat-rc-actions (runs redesign slice 4); without a gap of its own they touch.
+test('the chat card footer actions are a wrapping row with a gap between the buttons', () => {
+  const r = flat.find((x) => sels(x).includes('.chat-rc-actions'));
+  assert.ok(r, 'a .chat-rc-actions rule exists');
+  assert.equal(r.style.getPropertyValue('display'), 'flex');
+  assert.equal(r.style.getPropertyValue('gap'), '8px');
+});
+
+test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship card sits under one divider, and the in-card override stays last', () => {
+  const body = (sel) => (flat.find((r) => r.selectorText === sel) || {}).style;
+  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
+  assert.ok(section, 'the section rule exists');
+  assert.equal(section.getPropertyValue('border-top'), '1px solid var(--line)');
+  assert.equal(section.getPropertyValue('padding-top'), '12px');
+  assert.equal(flat.some((r) => /chat-rc-well/.test(r.selectorText) && r.style.getPropertyValue('border-top')), false, 'the graph well is a bordered well, not a divider (#959)');
+  const ship = body('.feature-page .shape-feature > .ask-shipcard');
+  assert.ok(ship, 'the group page Ship card rule exists');
+  assert.equal(ship.getPropertyValue('border-top'), '1px solid var(--line)');
+  assert.equal(ship.getPropertyValue('border-radius'), '0px');
+  assert.match(flat.at(-1).selectorText, /^:is\(\.ask-card,\.chat-rc,\.shape-feature\) :is\(\.qpanel,/, 'the in-card override is the last rule');
+});
+
+test('slice 2: at split layout every Back keeps a display (no rule hides .rd-back, .hd-back or .gpage-back)', () => {
+  document.body.innerHTML = `<div class="runs-shell" data-layout="split"><div class="runs-pane">
+    <div class="run-shell detail-open"><div class="rd"><div class="rd-bar"><button class="btn btn-sm btn-quiet btn-icon rd-back"></button></div></div></div>
+    <div class="hist-shell detail-open"><div class="hd"><div class="hd-bar"><button class="btn btn-sm btn-quiet btn-icon hd-back"></button></div></div></div>
+    <div class="group-shell detail-open"><div class="gpage"><div class="gpage-bar rd-bar"><a class="btn btn-sm btn-quiet btn-icon gpage-back"></a></div></div></div>
+  </div></div>`;
+  for (const cls of ['rd-back', 'hd-back', 'gpage-back']) {
+    const el = document.querySelector(`.${cls}`);
+    // Every top-level rule (no @media / @container arm) that sets display on this element; the cascade's winner.
+    const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue('display'))
+      .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+        .map((s) => ({ r, i, imp: important(r), spec: specificity(s) })));
+    hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+    const win = hits.at(-1);
+    assert.ok(win, `${cls}: some rule gives it a display`);
+    assert.notEqual(win.r.style.getPropertyValue('display'), 'none', `${cls} is hidden at split by "${win.r.selectorText}"`);
+  }
+  document.body.innerHTML = '';
+});
+
+test('slice 2: a disabled danger ⋯ item (the gated Archive) reads disabled, not red', () => {
+  document.body.innerHTML = '<div class="menu wfv-menu"><button class="menu-item wfv-menu-item is-danger" disabled></button></div>';
+  const el = document.querySelector('.is-danger');
+  const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue('color'))
+    .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+      .map((s) => ({ r, i, imp: important(r), spec: specificity(s) })));
+  hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+  assert.equal(hits.at(-1)?.r.style.getPropertyValue('color'), 'var(--ink-3)', `won by "${hits.at(-1)?.r.selectorText}"`);
+  document.body.innerHTML = '';
+});
+
+// The top-level rule that wins `prop` on `el` (importance, specificity, order), and its value.
+function winning(el, prop) {
+  const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue(prop))
+    .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+      .map((s) => ({ r, i, imp: r.style.getPropertyPriority(prop) === 'important', spec: specificity(s) })));
+  hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+  return { value: hits.at(-1)?.r.style.getPropertyValue(prop), by: hits.at(-1)?.r.selectorText };
+}
+
+test('run page bar: every .rd-bar-end button is one height, font size and padding on both bars (weight: the primary 600, the rest 500); ⋯ is a bordered square', () => {
+  const end = (bar) => `<div class="${bar}"><span class="rd-bar-end">
+    <button class="btn ${bar === 'rd-bar' ? 'rd' : 'hd'}-after"></button>
+    <span class="rd-actions"><button class="btn btn-sm btn-primary" data-k="primary"></button><button class="btn btn-sm" data-k="made"></button></span>
+    <div class="btn-split mini"><button class="btn" data-k="split"></button><button class="btn btn-icon btn-split-more"></button></div>
+    <button class="btn btn-danger" data-k="stop"></button>
+    <button class="btn btn-quiet btn-icon ${bar === 'rd-bar' ? 'rd' : 'hd'}-bar-more"></button>
+    <span class="crp-bar-btns"><button class="btn crp-full"></button></span>
+  </span></div>`;
+  document.body.innerHTML = `<div class="crp">${end('rd-bar')}${end('hd-bar')}</div>`;
+  for (const bar of ['rd-bar', 'hd-bar']) {
+    const q = (s) => document.querySelector(`.${bar} ${s}`);
+    const labelled = ['.rd-after,.hd-after', '[data-k="primary"]', '[data-k="made"]', '[data-k="split"]', '[data-k="stop"]'].map(q);
+    const icons = ['.btn-split-more', '.rd-bar-more,.hd-bar-more'].map(q);
+    for (const el of [...labelled, ...icons]) {
+      const tag = `${bar} ${el.className}`;
+      assert.equal(winning(el, 'height').value, '32px', `${tag}: height (by "${winning(el, 'height').by}")`);
+      assert.equal(winning(el, 'font-size').value, 'var(--fs-body)', `${tag}: font-size (by "${winning(el, 'font-size').by}")`);
+      assert.equal(winning(el, 'font-weight').value, el.classList.contains('btn-primary') ? '600' : '500',`${tag}: font-weight (by "${winning(el, 'font-weight').by}")`);
+      // The Resume split's halves join (square inner corners); every standalone button has the .btn radius.
+      if (!el.closest('.btn-split')) assert.equal(winning(el, 'border-radius').value, 'var(--r-sm)', `${tag}: radius`);
+    }
+    for (const el of labelled) assert.equal(winning(el, 'padding-left').value, '12px', `${bar} ${el.className}: padding (by "${winning(el, 'padding-left').by}")`);
+    for (const el of icons) {
+      assert.equal(winning(el, 'width').value, '32px', `${bar} ${el.className}: width`);
+      assert.equal(winning(el, 'padding-left').value, '0px', `${bar} ${el.className}: icon padding (by "${winning(el, 'padding-left').by}")`);
+    }
+    const more = icons[1];
+    assert.equal(winning(more, 'border-color').value, 'var(--line-2)', `${bar} ⋯ border (by "${winning(more, 'border-color').by}")`);
+    assert.equal(winning(more, 'background').value, 'var(--panel)', `${bar} ⋯ background (by "${winning(more, 'background').by}")`);
+    // The chat panel's Open full page / Close keep their own square (padding 0), not the bar's labelled padding.
+    assert.equal(winning(q('.crp-full'), 'padding-left').value, '0px', `${bar} .crp-full padding (by "${winning(q('.crp-full'), 'padding-left').by}")`);
+  }
+  document.body.innerHTML = '';
 });

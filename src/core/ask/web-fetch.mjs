@@ -239,7 +239,7 @@ export function createWebSearcher({ search, key = '', allowedDomains = [], trans
       if (q.length > limits.searchQueryMaxChars) throw new WebAccessError(`query longer than ${limits.searchQueryMaxChars} characters`);
       if (looksLikeData(q)) throw new WebAccessError('the query looks like it carries encoded data — refused');
       const needsKey = !!search.keyHeader || search.url.includes('{key}');
-      if (needsKey && !key) throw new WebAccessError('the search key is not set in worca\'s environment — ask the user to set the variable named in Settings → Ask Worca → Web access');
+      if (needsKey && !key) throw new WebAccessError('the search key is not set in worca\'s environment — ask the user to set the variable named in Settings → Chat → Web access');
       const href = search.url.replace('{query}', encodeURIComponent(q)).replace('{key}', encodeURIComponent(key));
       let url; try { url = new URL(href); } catch { throw new WebAccessError('the search endpoint URL is invalid'); }
       host = url.hostname; entry.url = `https://${host}/…`;

@@ -14,7 +14,7 @@ covers their APIs.
 
 ## Setup
 
-1. Marketplace → Available → `cloudflare-mcp` → **Install…**.
+1. Marketplace → Browse → `cloudflare-mcp` → **Install**.
 2. Cloudflare dashboard → My Profile → API Tokens → Create Token. Grant only what your agents need:
    pipeline agents call `cloudflare` without asking, and it can reach every endpoint the token
    allows. User and account tokens both work; give an account token **Account Resources : Read**

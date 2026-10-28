@@ -3,12 +3,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planClone, parseCloneAllow, cloneAllowed, runClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
+import { BB_GIT_CREDENTIAL_HELPER } from '../src/core/bitbucket-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
+import { withNoGit } from './helpers/git-off.mjs';
 
 const ROOT = mkdtempSync(join(tmpdir(), 'worca-clone-root-'));
 const plan = (req, env = {}) => planClone(req, { projectsRoot: ROOT, env });
@@ -153,6 +155,35 @@ test('a refused Azure clone names Azure DevOps and WORCA_ADO_TOKEN, and removes 
   assert.equal(existsSync(p.dir), false);
 });
 
+test('planClone: a Bitbucket Clone-button URL drops its user; a password is refused naming WORCA_BB_TOKEN', () => {
+  const p = plan({ url: 'https://jdoe@bitbucket.org/acme/bb-plan1.git' });
+  assert.deepEqual([p.url, p.host, p.owner, p.repo], ['https://bitbucket.org/acme/bb-plan1.git', 'bitbucket.org', 'acme', 'bb-plan1']);
+  assert.throws(() => plan({ url: 'https://jdoe:secret@bitbucket.org/acme/x.git' }), /WORCA_BB_TOKEN/);
+  assert.deepEqual([plan({ url: 'https://altssh.bitbucket.org/acme/bb-alt1' }).url, plan({ url: 'https://altssh.bitbucket.org/acme/bb-alt1' }).host], ['https://bitbucket.org/acme/bb-alt1.git', 'bitbucket.org']);
+});
+
+test('runClone: a Bitbucket plan gets the Bitbucket read helper, never a GitHub credential', async () => {
+  const seen = [];
+  const git = fakeGit();
+  const p = plan({ url: 'https://bitbucket.org/acme/bb-clone1' });
+  await withEnv({ WORCA_BB_TOKEN: 'bbtok', WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined, WORCA_BB_EMAIL: undefined, GH_TOKEN: 'ghp_x' },
+    () => runClone(p, { spawnImpl: git, credential: cred(seen) }));
+  assert.deepEqual(seen, [], 'the GitHub credential seam is never asked');
+  const { args, env } = git.calls[0];
+  assert.deepEqual(args, ['clone', '--filter=blob:none', '--', 'https://bitbucket.org/acme/bb-clone1.git', p.dir]);
+  assert.equal(env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(env.WORCA_BB_TOKEN, undefined);
+  assert.equal(env.GH_TOKEN, undefined);
+  assert.ok(Object.values(env).includes(BB_GIT_CREDENTIAL_HELPER));
+});
+
+test('a refused Bitbucket clone names Bitbucket and WORCA_BB_TOKEN, and removes the folder', async () => {
+  const git = fakeGit({ exit: 128, stderr: 'fatal: Authentication failed for \'https://bitbucket.org/acme/bb-clone2.git/\'' });
+  const p = plan({ url: 'https://bitbucket.org/acme/bb-clone2' });
+  await assert.rejects(runClone(p, { spawnImpl: git, credential: cred() }), (e) => e.code === 'auth-failed' && /Bitbucket refused the credential: check WORCA_BB_TOKEN/.test(e.message));
+  assert.equal(existsSync(p.dir), false);
+});
+
 test('runClone: failures map to codes and always remove the folder', async () => {
   const cases = [
     ['fatal: Authentication failed for ...', 'auth-failed'],
@@ -190,4 +221,31 @@ test('cloneProject: a registered name is refused before cloning; a failed regist
     addProject: async () => { throw new Error('this project path is already registered'); } }).catch((e) => e);
   assert.equal(bad.code, 'failed');
   assert.equal(existsSync(join(ROOT, 'regfail')), false);
+});
+
+test('cloneProject: a missing projects root is created before git clone runs (U6: on first use)', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'worca-clone-first-'));
+  const root = join(base, 'projects');
+  try {
+    let seen = null;
+    const run = async (p) => { seen = existsSync(root); mkdirSync(p.dir); return p; };
+    const r = await cloneProject({ url: 'https://github.com/acme/first' }, { projectsRoot: root, listProjects: async () => [], run,
+      addProject: async ({ name, path }) => [{ name, path, key: 'k' }] });
+    assert.equal(seen, true);
+    assert.equal(r.project.path, join(root, 'first'));
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test('cloneProject: with git missing nothing is created, not even the projects root', async (t) => {
+  withNoGit(t);
+  const base = mkdtempSync(join(tmpdir(), 'worca-clone-nogit-'));
+  const root = join(base, 'projects');
+  try {
+    let ran = false;
+    await assert.rejects(cloneProject({ url: 'https://github.com/acme/none' }, { projectsRoot: root, listProjects: async () => [],
+      run: async () => { ran = true; }, addProject: async () => [] }),
+    (e) => e instanceof CloneError && e.code === 'git-missing' && e.message === 'git is not installed on this machine');
+    assert.equal(ran, false);
+    assert.equal(existsSync(root), false);
+  } finally { rmSync(base, { recursive: true, force: true }); }
 });

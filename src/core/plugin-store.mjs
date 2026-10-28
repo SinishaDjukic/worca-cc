@@ -23,10 +23,10 @@ import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
   DIR_NAME_RE,
 } from './plugins-lock.mjs';
-import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir } from './plugin-repo.mjs';
+import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir, removeSnapshotRoot } from './plugin-repo.mjs';
 import {
   importPluginWorkflows, readPluginWorkflows, removePluginWorkflows,
-  referencedPluginAgents, referencedPluginScripts,
+  referencedPluginAgents, referencedPluginScripts, pluginWorkflowPins,
 } from './plugin-workflows.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
@@ -35,11 +35,15 @@ import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs
 import { fileAccepts } from '../shared/forms/answer.mjs';
 import { normalizeScriptMeta, resolvePlatformValue } from '../shared/graph/script-meta.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
+import { pluginSetupState } from './plugin-setup-state.mjs';
+import { pluginLatest } from './plugin-latest.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
 import { assignPluginBases, checkMcpStoreWritable, removePluginServers, applyMcpUpdate, mcpServerDelta, removePluginSkills } from './mcp/plugin-lifecycle.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 import { agentIdentity } from './agent-user.mjs';
+import { gitAvailable } from './git-available.mjs';
+import { withNoGitPath } from './nogit-stub.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -53,6 +57,17 @@ function readManifestAt(dir) {
     return res.ok ? res.manifest : null;
   } catch {
     return null;
+  }
+}
+
+/** The installed manifest plus its normalize warnings, prefixed `<subdir|.>/worca-cc-plugin.json: ` — the words
+ *  discovery gives the same plugin's snapshot notes, never a host path (CONTRACT §1.1 `notes`, SEAMS SM5). */
+function readManifestAndNotes(dir, relDir) {
+  try {
+    const res = normalizeManifest(JSON.parse(readFileSync(join(dir, 'worca-cc-plugin.json'), 'utf8')), { dir: relDir });
+    return res.ok ? { manifest: res.manifest, notes: res.warnings } : { manifest: null, notes: [] };
+  } catch {
+    return { manifest: null, notes: [] };
   }
 }
 
@@ -206,6 +221,15 @@ export function buildInstallInventory(versionDir) {
   return { agents, scripts, taskSources, chatChannels, models, modelSecrets, mcpServers, skills: skills.sort(), workflows, depCount, setupCommands };
 }
 
+/** buildInstallInventory of the installed current/, its path written `<plugin-dir>` as snapshot inventories write it,
+ *  so the two compare (CONTRACT §1.1 latest.access) and the detail route shows no host path (§1.2). */
+export function installedInventory(name) {
+  const cur = pluginCurrentDir(name);
+  const inv = buildInstallInventory(cur);
+  inv.setupCommands = inv.setupCommands.map((c) => String(c).split(cur).join('<plugin-dir>'));
+  return inv;
+}
+
 /**
  * Contributions a plugin SHIPS but worca IGNORED, as `[{ file, reason }]` sorted
  * by file (`agents/<sidecar>.meta.json`, `workflows/<template>.json`). The two
@@ -259,6 +283,10 @@ export function ignoredContributions(name, dir, opts = {}) {
   return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
+// Without git, setup runs with worca's git stub first on PATH on macOS (SEAMS S6): a lockfile with a git dependency
+// makes npm run `git`, and the /usr/bin/git shim opens the install-developer-tools dialog. With git: unchanged.
+const setupEnv = () => (gitAvailable() ? {} : { env: withNoGitPath(process.env) });
+
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
  *  required, scripts ignored); setup.python 'pyproject' -> uv sync. */
 export async function runSetup(versionDir, manifest, { exec = defaultExec } = {}) {
@@ -273,11 +301,11 @@ export async function runSetup(versionDir, manifest, { exec = defaultExec } = {}
     // quote args — a `--prefix C:\…` path would be mangled. With the dir as cwd
     // the only args left are flag literals, safe through the shell.
     await exec('npm', ['ci', '--ignore-scripts', '--omit=dev'],
-      { cwd: versionDir, shell: IS_WINDOWS });
+      { cwd: versionDir, shell: IS_WINDOWS, ...setupEnv() });
     commands.push('npm ci');
   }
   if (manifest?.setup?.python === 'pyproject') {
-    await exec('uv', ['sync'], { cwd: versionDir });
+    await exec('uv', ['sync'], { cwd: versionDir, ...setupEnv() });
     commands.push('uv sync');
   }
   return { commands };
@@ -344,12 +372,12 @@ const rmLink = (path) => {
  *  (EPERM). It CAN create a directory JUNCTION unprivileged, so there we
  *  remove-then-create a junction in place. A junction needs an ABSOLUTE target
  *  (POSIX keeps the relative "versions/<sha7>" so the link survives a moved
- *  plugin dir); rmSync on a junction drops only the link, never the target. */
+ *  plugin dir); unlinking a junction drops only the link, never the target. */
 function swapCurrent(name, target) {
   const current = pluginCurrentDir(name);
   mkdirSync(pluginDir(name), { recursive: true });
   if (IS_WINDOWS) {
-    rmSync(current, { force: true });
+    rmLink(current); // unlink drops the junction only; rmSync without recursive throws EISDIR on it
     symlinkSync(resolve(pluginDir(name), target), current, 'junction');
     return;
   }
@@ -453,18 +481,30 @@ export async function installPlugin({ repoUrl, subdir = '', name, sha, marketpla
   }
 }
 
+/** The refusal of an update whose preview is out of date (CONTRACT §1.4): the route answers it 409. */
+function stalePreview(name, expectSha, candidateSha) {
+  return Object.assign(
+    new Error(`plugin "${name}" moved on since the preview (${String(expectSha).slice(0, 7)} → ${candidateSha.slice(0, 7)}) — review the update again`),
+    { code: 'STALE_PREVIEW', candidateSha },
+  );
+}
+
 /**
  * Update (spec §6.2): fetch candidate; when it differs, export/setup/precheck/
  * swap/lock. Previous version dir kept; GC keeps the last 2 (rollback =
  * re-point the symlink). The confirm preview is fetchCandidate — callers show
- * it BEFORE invoking this.
+ * it BEFORE invoking this. `expectSha` (CONTRACT §1.4) binds the apply to the
+ * commit that preview showed: a tip that moved on since refuses with
+ * STALE_PREVIEW before anything is exported — checked before the up-to-date
+ * shortcut too, so consent on one commit never confirms another.
  */
-export async function updatePlugin(name, { exec = defaultExec } = {}) {
+export async function updatePlugin(name, { exec = defaultExec, expectSha = null } = {}) {
   const lock = readPluginsLock();
   const entry = lock[name];
   if (!entry) throw new Error(`plugin "${name}" is not installed`);
   if (entry.linked) throw new Error(`plugin "${name}" is dev-linked — update the working dir instead`);
   const cand = await fetchCandidate(name, { exec });
+  if (expectSha != null && cand.candidateSha !== expectSha) throw stalePreview(name, expectSha, cand.candidateSha);
   if (cand.candidateSha === entry.pinnedSha) return { ok: true, updated: false, ...cand };
   const { versionDir, warnings } = await exportVersion(name, cand.candidateSha, { exec });
   const prevCurrent = currentTarget(name);
@@ -583,6 +623,47 @@ function mergeReferences(agentRefs, scriptRefs) {
   return [...byId.values()];
 }
 
+/** The references dry run's kind order (CONTRACT §1.3, SEAMS SM11). */
+const REFERENCE_KINDS = ['workflow', 'model-selection', 'active-workflow', 'paused-run'];
+const cmpCodeUnits = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * What still uses this plugin, before Remove is clicked (CONTRACT §1.3, SEAMS
+ * SM11): every uninstall guard's blockers as one flat list — the agent/script
+ * workflow guard, the model-selection guard and the template pins. Read-only and
+ * never throws for a reference; an empty list means Remove will not be refused.
+ * Sorted by kind, then label, then contribution (code-unit order).
+ * @param {string} name
+ * @returns {Array<{kind: 'workflow'|'model-selection'|'active-workflow'|'paused-run',
+ *   contributionKind: 'agents'|'scripts'|'models'|'workflows', contribution: string,
+ *   label: string, count: number, href: string}>}
+ */
+export function pluginReferences(name) {
+  const refs = [];
+  const workflowRows = (contributionKind) => (r) => {
+    for (const key of r.keys) {
+      refs.push({ kind: 'workflow', contributionKind, contribution: key, label: r.name, count: 1,
+        href: `#workflows/${encodeURIComponent(r.workflowId)}` });
+    }
+  };
+  referencedPluginAgents(name).forEach(workflowRows('agents'));
+  referencedPluginScripts(name).forEach(workflowRows('scripts'));
+  for (const m of referencedPluginModels(name)) {
+    refs.push({ kind: 'model-selection', contributionKind: 'models', contribution: m.id, label: m.id,
+      count: m.steps.length + m.nodes.length, href: '#models' });
+  }
+  for (const p of pluginWorkflowPins(name)) {
+    refs.push(p.kind === 'active-workflow'
+      ? { kind: p.kind, contributionKind: 'workflows', contribution: p.workflowName,
+        label: p.projectName || p.projectKey, count: 1, href: '#new' }
+      : { kind: p.kind, contributionKind: 'workflows', contribution: p.workflowName,
+        label: p.pipelineTitle || p.pipelineId, count: 1,
+        href: `#history/${encodeURIComponent(p.projectKey)}/${encodeURIComponent(p.pipelineId)}` });
+  }
+  return refs.sort((a, b) => REFERENCE_KINDS.indexOf(a.kind) - REFERENCE_KINDS.indexOf(b.kind)
+    || cmpCodeUnits(a.label, b.label) || cmpCodeUnits(a.contribution, b.contribution));
+}
+
 /**
  * Uninstall (spec §6.3). Reference guard + imported-workflow removal live in
  * plugin-workflows.mjs: block when a non-plugin workflow still uses this
@@ -645,6 +726,7 @@ export async function uninstallPlugin(name, { purge = false } = {}) {
   // Drop the bare fetch cache only when no other installed plugin shares the repo.
   if (entry.repo && !Object.values(lock).some((e) => e && e.repo === entry.repo)) {
     rmSync(repoCacheDir(entry.repo), { recursive: true, force: true });
+    removeSnapshotRoot(entry.repo); // the snapshots read without git (P6): renamed aside, then removed
   }
   const dataDir = pluginDataDir(name);
   const dataKept = !purge && existsSync(dataDir);
@@ -673,7 +755,7 @@ export function listOrphanPluginData() {
 /** Purge an ORPHAN's leftovers (spec §6.3 tail). Installed plugins purge via
  *  uninstallPlugin({purge:true}) — refusing here keeps one purge path each. */
 export function purgePluginData(name) {
-  if (readPluginsLock()[name]) {
+  if (Object.hasOwn(readPluginsLock(), name)) {   // own keys: "constructor" is a name, not an installed plugin
     throw Object.assign(
       new Error(`plugin "${name}" is still installed — uninstall with purge instead`),
       { code: 'INSTALLED' },
@@ -697,8 +779,9 @@ export function setPluginEnabled(name, enabled) {
   return { ok: true, name, enabled: !!enabled };
 }
 
-/** Lock + current-manifest merge for the Plugins view / CLI list. */
-export function listInstalledPlugins() {
+/** Lock + current-manifest merge for the Plugins view / CLI list. `marketplaces` (readMarketplaces().marketplaces)
+ *  fills each row's `latest`; without it (the CLI) `latest` is null. */
+export function listInstalledPlugins({ marketplaces = null } = {}) {
   const lock = readPluginsLock();
   // ONE registry load for the whole list: it is the only place that knows which
   // sidecars were dropped, and re-scanning per plugin would be N full scans.
@@ -713,8 +796,8 @@ export function listInstalledPlugins() {
   return Object.keys(lock).sort().map((name) => {
     const e = lock[name] || {};
     const cur = pluginCurrentDir(name);
-    const manifest = existsSync(cur) ? readManifestAt(cur) : null; // existsSync follows the symlink
-    const inv = manifest ? buildInstallInventory(cur) : null;
+    const { manifest, notes } = existsSync(cur) ? readManifestAndNotes(cur, e.subdir || '.') : { manifest: null, notes: [] }; // existsSync follows the symlink
+    const inv = manifest ? installedInventory(name) : null;
     // Read from the raw dir, not the manifest: the mismatch is about the DATA
     // the plugin ships, not about whether its manifest normalized. A plugin
     // whose manifest did not normalize is `broken`, which outranks this.
@@ -745,6 +828,11 @@ export function listInstalledPlugins() {
       // A disabled plugin contributes nothing BY CHOICE — its agents are not in the
       // registry, so its templates would misreport V4.
       ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops, scripts, scriptDrops }) : [],
+      setup: manifest ? pluginSetupState(name, manifest) : { ok: true, missing: [], noProfiles: [] },
+      description: manifest?.description || null,
+      ref: e.ref ?? null,
+      notes,
+      latest: pluginLatest(name, e, inv, marketplaces),
     };
   });
 }

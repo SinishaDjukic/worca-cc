@@ -90,7 +90,7 @@ const GH_REMOTES_V = [
  * A fake repo per cwd: `refs` maps a full ref name to its sha; `git push -u <r> <b>` copies
  * refs/heads/<b> to refs/remotes/<r>/<b>. Every call lands in `seen` with its cwd.
  */
-function stubRepo(seen, { remotesV = GH_REMOTES_V, refs = {}, failPush = false, getUrl = null } = {}) {
+function stubRepo(seen, { remotesV = GH_REMOTES_V, refs = {}, failPush = false, getUrl = null, counts = null } = {}) {
   const table = (cwd) => (refs[cwd] ||= {});
   gitInfo.setRunner((cmd, args, opts = {}) => {
     seen.push({ argv: [cmd, ...args], cwd: opts.cwd });
@@ -108,6 +108,8 @@ function stubRepo(seen, { remotesV = GH_REMOTES_V, refs = {}, failPush = false, 
         .map((ref) => (args[1].includes('objectname') ? `${ref} ${t[ref]}` : ref));
       return done(out.length ? `${out.join('\n')}\n` : '');
     }
+    // `counts` maps 'remoteSha...localSha' to rev-list's "<only remote>\t<only local>" answer.
+    if (args[0] === 'rev-list' && counts) return done(`${counts[args[args.length - 1]] ?? ''}\n`);
     if (args[0] === 'push') {
       if (failPush) return Promise.resolve({ ok: false, stdout: '', stderr: '! [rejected] (non-fast-forward)', code: 1 });
       const [remote, branch] = args.slice(-2);
@@ -167,6 +169,23 @@ test('GET publish: unpublished -> published -> moved (Push changes) -> published
   [m] = await read();
   assert.equal(m.state, 'published');
   assert.ok(!seen.some((s) => s.argv[1] === 'push' && s.argv.includes('--force')), 'never forces');
+});
+
+test('GET publish: Push changes only when local is strictly ahead; a remote ahead or diverged offers no push', async () => {
+  const refs = { [repo]: { [`refs/heads/${FEATURE}`]: 'loc', [`refs/remotes/origin/${FEATURE}`]: 'rem' } };
+  const counts = {};
+  stubRepo([], { refs, counts });
+  const read = async () => (await (await status(id, { projectKey: key })).json()).members[0];
+  counts['rem...loc'] = '0\t2';                          // local commits not on the remote
+  assert.equal((await read()).state, 'moved');
+  counts['rem...loc'] = '3\t0';                          // the PR's Update branch, a collaborator push: nothing to push
+  let m = await read();
+  assert.equal(m.state, 'published');
+  assert.equal(m.remote, 'origin');
+  counts['rem...loc'] = '1\t2';                          // both sides moved: a push would be refused
+  m = await read();
+  assert.equal(m.state, 'diverged');
+  assert.equal(m.remote, 'origin');
 });
 
 test('GET publish falls back to branchPushedTo: a branch Ship it already pushed reads as published', async () => {

@@ -56,17 +56,33 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
         seen.push([cmd, ...args]);
         return Promise.resolve({
           ok: true,
-          stdout: JSON.stringify([{ number: 9, state: 'MERGED', url: 'https://gh/x/pull/9' }]),
+          stdout: JSON.stringify([{ number: 9, state: 'MERGED', url: 'https://gh/x/pull/9', isDraft: false, mergeable: 'UNKNOWN' }]),
           stderr: '', code: 0,
         });
       });
       const pr = await findPrForBranch({ projectDir: '/repo', head: 'worca-cc/feat-1' });
-      assert.deepEqual(pr, { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 });
-      // Queries by head, includes merged/closed, scans up to 30 matches.
-      assert.deepEqual(seen[0], [
+      assert.deepEqual(pr, { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
+      // Queries by head, includes merged/closed, scans up to 30 matches; the same call reads
+      // whether each PR is a draft and merges cleanly (the Runs list's PR glyph).
+      assert.deepEqual(seen, [[
         'gh', 'pr', 'list', '--head', 'worca-cc/feat-1',
-        '--state', 'all', '--json', 'number,state,url', '--limit', '30',
-      ]);
+        '--state', 'all', '--json', 'number,state,url,isDraft,mergeable', '--limit', '30',
+      ]]);
+      gitInfo.reset();
+    } },
+    { name: 'findPrForBranch reports a draft and a conflicting PR, normalized, from the same call', run: async () => {
+      let rows = [];
+      gitInfo.setRunner(() => Promise.resolve({ ok: true, stdout: JSON.stringify(rows), stderr: '', code: 0 }));
+      rows = [{ number: 4, state: 'OPEN', url: 'https://gh/x/pull/4', isDraft: true, mergeable: 'CONFLICTING' }];
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b' }),
+        { state: 'OPEN', url: 'https://gh/x/pull/4', number: 4, isDraft: true, mergeable: 'CONFLICTING' });
+      rows = [{ number: 5, state: 'OPEN', url: 'https://gh/x/pull/5', isDraft: false, mergeable: 'MERGEABLE' }];
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b' }),
+        { state: 'OPEN', url: 'https://gh/x/pull/5', number: 5, isDraft: false, mergeable: 'MERGEABLE' });
+      // An older gh (or a stub) that answers without the fields: not a draft, mergeability unknown.
+      rows = [{ number: 6, state: 'OPEN', url: 'https://gh/x/pull/6' }];
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b' }),
+        { state: 'OPEN', url: 'https://gh/x/pull/6', number: 6, isDraft: false, mergeable: 'UNKNOWN' });
       gitInfo.reset();
     } },
     { name: 'findPrForBranch normalizes lowercase state to uppercase', run: async () => {
@@ -87,7 +103,9 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
         stderr: '', code: 0,
       }));
       assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b' }),
-        { state: 'MERGED', url: 'https://gh/x/pull/12', number: 12 });
+        { state: 'MERGED', url: 'https://gh/x/pull/12', number: 12, isDraft: false, mergeable: 'UNKNOWN' });
+      assert.equal((await findPrForBranch({ projectDir: '/r', head: 'b', includeClosed: true })).state, 'MERGED',
+        'a closed PR is only ever the last resort');
 
       gitInfo.setRunner(() => Promise.resolve({
         ok: true,
@@ -108,6 +126,23 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
         stderr: '', code: 0,
       }));
       assert.equal(await findPrForBranch({ projectDir: '/r', head: 'b' }), null);
+      gitInfo.reset();
+    } },
+    { name: 'findPrForBranch includeClosed: the newest closed PR when no open or merged one exists', run: async () => {
+      // The Runs list draws a PR dropped without merging; every other caller keeps null.
+      gitInfo.setRunner(() => Promise.resolve({
+        ok: true,
+        stdout: JSON.stringify([
+          { number: 3, state: 'CLOSED', url: 'https://gh/x/pull/3', isDraft: true },   // newest
+          { number: 1, state: 'CLOSED', url: 'https://gh/x/pull/1' },
+        ]),
+        stderr: '', code: 0,
+      }));
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b', includeClosed: true }),
+        { state: 'CLOSED', url: 'https://gh/x/pull/3', number: 3, isDraft: true, mergeable: 'UNKNOWN' });
+      assert.equal(await findPrForBranch({ projectDir: '/r', head: 'b' }), null, 'off by default');
+      gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'no remote', code: 1 }));
+      assert.equal(await findPrForBranch({ projectDir: '/r', head: 'b', includeClosed: true }), null, 'a failed search finds nothing');
       gitInfo.reset();
     } },
     { name: 'findPrForBranch returns null on no match, gh failure, bad JSON, or missing args', run: async () => {
@@ -157,4 +192,60 @@ test('readPrBody / editPrBody use gh pr view --json body / gh pr edit --body', a
   gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'HTTP 404', code: 1 }));
   assert.deepEqual(await editPrBody({ prUrl: 'https://github.com/o/r/pull/1', body: 'x' }), { ok: false, error: 'HTTP 404' });
   gitInfo.reset();
+});
+
+// ── commitFilesSince (Requirements A7: files changed since a brief's commit) ──────────────
+import { commitFilesSince } from '../src/core/git-info.mjs';
+import { mkdtempSync as mkTmp, rmSync as rmTmp, writeFileSync as wf } from 'node:fs';
+
+test('commitFilesSince parses the log through the runner; bad input → null without a call; failure/timeout → null', async () => {
+  const calls = [];
+  gitInfo.setRunner((cmd, args, o) => { calls.push({ cmd, args, o });
+    return Promise.resolve({ ok: true, stdout: '\x1e' + 'a'.repeat(40) + '\n\nsrc/a.js\nsrc/b.js\n\x1e' + 'b'.repeat(40) + '\n\nREADME.md\n', stderr: '', code: 0 }); });
+  const r = await commitFilesSince('/r', 'abc1234', 'main', { max: 5, timeout: 1234 });
+  assert.deepEqual(r, { commits: [{ sha: 'a'.repeat(40), files: ['src/a.js', 'src/b.js'] }, { sha: 'b'.repeat(40), files: ['README.md'] }] });
+  assert.equal(calls[0].cmd, 'git');
+  assert.deepEqual(calls[0].args, ['-c', 'core.quotePath=false', 'log', '--format=%x1e%H', '--name-only', '--no-renames', '-n', '5', 'abc1234..main', '--']);
+  assert.equal(calls[0].o.timeout, 1234);
+  assert.equal(calls[0].o.cwd, '/r');
+  const n = calls.length;
+  assert.equal(await commitFilesSince('/r', '--oops', 'main'), null);
+  assert.equal(await commitFilesSince('/r', 'zzzzzzz', 'main'), null);
+  assert.equal(await commitFilesSince('/r', 'abc1234', '-x'), null);
+  assert.equal(await commitFilesSince('', 'abc1234', 'main'), null);
+  assert.equal(calls.length, n, 'no git call for invalid input');
+  gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'git timed out after 10 ms', code: -1 }));
+  assert.equal(await commitFilesSince('/r', 'abc1234', 'main'), null);
+  gitInfo.reset();
+});
+
+test('commitFilesSince on a real repository: commits since a sha with their files; a merge commit lists none', async () => {
+  const dir = mkTmp(join(tmpdir(), 'worca-cfs-'));
+  try {
+    const g = (...a) => { const r = spawnSync('git', a, { cwd: dir, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+    g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+    g('commit', '-q', '--allow-empty', '-m', 'base');
+    const base = g('rev-parse', 'HEAD');
+    wf(join(dir, 'a.txt'), 'a\n'); g('add', '-A'); g('commit', '-q', '-m', 'a');
+    g('checkout', '-q', '-b', 'side'); wf(join(dir, 'b.txt'), 'b\n'); g('add', '-A'); g('commit', '-q', '-m', 'b');
+    g('checkout', '-q', 'main'); wf(join(dir, 'c.txt'), 'c\n'); g('add', '-A'); g('commit', '-q', '-m', 'c');
+    g('merge', '-q', '--no-ff', '-m', 'merge', 'side');
+    const r = await commitFilesSince(dir, base, 'main');
+    assert.equal(r.commits.length, 4);
+    const all = r.commits.flatMap((c) => c.files).sort();
+    assert.deepEqual(all, ['a.txt', 'b.txt', 'c.txt']);
+    assert.deepEqual(r.commits[0].files, [], 'the merge commit (newest) lists no files');
+    assert.deepEqual(await commitFilesSince(dir, g('rev-parse', 'HEAD'), 'main'), { commits: [] });
+    assert.equal(await commitFilesSince(dir, 'deadbeef', 'main'), null, 'unknown sha → git fails → null');
+  } finally { rmTmp(dir, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
+test('commitsAhead forwards an additive timeout to the runner (none by default)', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args, o) => { seen.push(o); return Promise.resolve({ ok: true, stdout: '2\n', stderr: '', code: 0 }); });
+  assert.equal(await commitsAhead('/r', 'abc1234', 'main', { timeout: 1234 }), 2);
+  assert.equal(await commitsAhead('/r', 'abc1234', 'main'), 2);
+  gitInfo.reset();
+  assert.equal(seen[0].timeout, 1234);
+  assert.ok(!seen[1].timeout, 'no timeout unless asked');
 });

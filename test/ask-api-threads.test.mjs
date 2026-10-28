@@ -157,7 +157,7 @@ test('PATCH title: renames within 120 chars; empty, unknown and a PATCH naming n
 
 test('#397 scope: PATCH pins/clears, a message inherits the pin per field, and both drop projectSource with the target keys', async () => {
   await checkRows([
-    { name: '#397 PATCH scope: pin project/workspace, Auto clears the target, invalid shapes rejected', run: async () => {
+    { name: '#397 PATCH scope: pin project/workspace, No project clears the target, invalid shapes rejected', run: async () => {
       const { thread } = await (await post('/api/ask/threads', {})).json();
       // pin a project
       let r = await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
@@ -205,7 +205,7 @@ test('#397 scope: PATCH pins/clears, a message inherits the pin per field, and b
       assert.equal(snap.thread.context.view, 'history', 'non-target fields still follow the page');
       assert.equal(snap.thread.context.pipelineId, '4e1f2a9b');
 
-      // an explicit Auto (pinned:false) from a selector-aware client is authoritative
+      // an explicit No project (pinned:false) from a selector-aware client is authoritative
       const { thread: t2 } = await (await post('/api/ask/threads', {})).json();
       await patch(`/api/ask/threads/${t2.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
       const r2 = await post(`/api/ask/threads/${t2.id}/messages`, {
@@ -226,7 +226,8 @@ test('#397 scope: PATCH pins/clears, a message inherits the pin per field, and b
       });
       assert.equal(r.status, 202);
       const stored = (await (await fetch(`${base}/api/ask/threads/${thread.id}`)).json()).thread.context;
-      assert.equal(stored.projectSource, 'fallback', 'Auto stores the tag (card-event turns reuse it)');
+      assert.equal(stored.projectSource, undefined, 'No project stores no page target'); assert.equal(stored.projectDir, undefined);
+      await idle();
       r = await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
       assert.deepEqual((await r.json()).thread.context, { view: 'settings', pinned: true, projectKey: 'demo-00000001' }, 'PATCH scope strips it');
       // a pre-selector tab (no `pinned`) inherits the pin: askApplyPin strips the tag too
@@ -557,6 +558,112 @@ test('attachment download: text/plain + nosniff + inline (an HTML attachment too
   ]);
 });
 
+test('show_files copies on the attachment route: an SVG gets the sandbox CSP; ?as=text is JSON {text} for text kinds only, capped, owner-only', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const url = (t, a, q = '') => `${base}/api/ask/threads/${t}/attachments/${a}${q}`;
+  await checkRows([
+    { name: 'an SVG copy is served as image/svg+xml with the sandbox CSP; a PNG has no CSP', run: async () => {
+      const t = store.createThread();
+      const svg = store.addAttachment(t.id, null, { name: 'logo.svg', kind: 'image', mime: 'image/svg+xml', data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
+      const png = store.addAttachment(t.id, null, { name: 'a.png', kind: 'image', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex') });
+      const r = await fetch(url(t.id, svg.id));
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('content-type'), 'image/svg+xml');
+      assert.equal(r.headers.get('content-security-policy'), "sandbox; default-src 'none'");
+      const rp = await fetch(url(t.id, png.id));
+      assert.equal(rp.status, 200);
+      assert.equal(rp.headers.get('content-security-policy'), null);
+    } },
+    { name: '?as=text: a markdown copy comes back as {text}, never cached; an SVG is 415; a text body over 2 MiB is 413', run: async () => {
+      const t = store.createThread();
+      const md = store.addAttachment(t.id, null, { name: 'r.md', kind: 'text', mime: 'text/markdown', text: '# Report' });
+      const svg = store.addAttachment(t.id, null, { name: 'logo.svg', kind: 'image', mime: 'image/svg+xml', data: Buffer.from('<svg/>') });
+      const big = store.addAttachment(t.id, null, { name: 'big.md', kind: 'text', mime: 'text/markdown', text: 'a'.repeat(2 * 1024 * 1024 + 1) });
+      const r = await fetch(url(t.id, md.id, '?as=text'));
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('cache-control'), 'private, no-store');
+      assert.deepEqual(await r.json(), { text: '# Report' });
+      assert.equal((await fetch(url(t.id, svg.id, '?as=text'))).status, 415);
+      assert.equal((await fetch(url(t.id, big.id, '?as=text'))).status, 413);
+    } },
+    { name: 'shared sign-in: another person gets 404 on ?as=text, the owner gets 200', run: async () => {
+      const prev = process.env.WORCA_IDENTITY_HEADER;
+      process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      try {
+        const t = store.createThread({ createdBy: 'bob@example.com' });
+        const md = store.addAttachment(t.id, null, { name: 'r.md', kind: 'text', mime: 'text/markdown', text: 'mine' });
+        assert.equal((await fetch(url(t.id, md.id, '?as=text'), { headers: { 'x-test-user': 'ada@example.com' } })).status, 404);
+        assert.equal((await fetch(url(t.id, md.id, '?as=text'), { headers: { 'x-test-user': 'bob@example.com' } })).status, 200);
+      } finally {
+        if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev;
+      }
+    } },
+  ]);
+});
+
+test('Show in folder: GET /api/ask/reveal says whether a folder opens here; the POST refuses an upload, a gone original and another person (no launch here)', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const info = await (await fetch(`${base}/api/ask/reveal`)).json();
+  assert.equal(typeof info.available, 'boolean');
+  assert.equal(info.available ? typeof info.label : info.label, info.available ? 'string' : null);
+  const post = (t, a, headers = {}) => fetch(`${base}/api/ask/threads/${t}/attachments/${a}/reveal`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+  await checkRows([
+    { name: 'an upload has no original: 409 NO_SOURCE', run: async () => {
+      const t = store.createThread();
+      const up = store.addAttachment(t.id, null, { name: 'a.md', text: 'a' });
+      const r = await post(t.id, up.id);
+      assert.equal(r.status, 409);
+      assert.equal((await r.json()).code, 'NO_SOURCE');
+    } },
+    { name: 'a copy whose original was deleted: 409 SOURCE_GONE, nothing launched', run: async () => {
+      const t = store.createThread();
+      const c = store.addAttachment(t.id, null, { name: 'gone.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'), sourcePath: join(tmpdir(), 'worca-no-such-dir-zz', 'gone.png') });
+      const r = await post(t.id, c.id);
+      assert.equal(r.status, 409);
+      assert.deepEqual(await r.json(), { error: 'The original file is gone: it was moved or deleted after it was shown.', code: 'SOURCE_GONE' },
+        'an older row (no origin) keeps today\'s text');
+    } },
+    { name: 'a run copy whose worktree is gone and whose project has no copy: 409 SOURCE_GONE says the run folder was cleaned up', run: async () => {
+      const t = store.createThread();
+      const c = store.addAttachment(t.id, null, { name: 'gone.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'),
+        sourcePath: join(tmpdir(), 'worca-no-such-dir-zz', 'gone.png'), sourceOrigin: { runId: 'deadbeef', projectKey: 'no-such-project', rel: 'out/gone.png' } });
+      const r = await post(t.id, c.id);
+      assert.equal(r.status, 409);
+      assert.deepEqual(await r.json(), { error: "The run's folder was cleaned up after the run, so the original file is gone. Download still has the copy.", code: 'SOURCE_GONE' });
+    } },
+    { name: 'an unknown attachment or thread: 404; a malformed id: 400', run: async () => {
+      const t = store.createThread();
+      assert.equal((await post(t.id, 'att_deadbeef')).status, 404);
+      assert.equal((await post('ask_deadbeef', 'att_deadbeef')).status, 404);
+      assert.equal((await post(t.id, 'not-an-id')).status, 400);
+    } },
+    { name: 'shared sign-in: another person gets 404', run: async () => {
+      const prev = process.env.WORCA_IDENTITY_HEADER;
+      process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      try {
+        const t = store.createThread({ createdBy: 'bob@example.com' });
+        const up = store.addAttachment(t.id, null, { name: 'a.md', text: 'a' });
+        assert.equal((await post(t.id, up.id, { 'x-test-user': 'ada@example.com' })).status, 404);
+        assert.equal((await post(t.id, up.id, { 'x-test-user': 'bob@example.com' })).status, 409, 'the owner reaches the route');
+      } finally {
+        if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev;
+      }
+    } },
+  ]);
+});
+
+test('show_files copies (message_id null) are not uploads: the thread GET and the context header leave them out', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const t = store.createThread();
+  const msg = store.appendMessage(t.id, { role: 'user', text: 'x' });
+  const up = store.addAttachment(t.id, msg.id, { name: 'up.md', text: 'mine' });
+  store.addAttachment(t.id, null, { name: 'shot.png', kind: 'image', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex') });
+  const j = await (await fetch(`${base}/api/ask/threads/${t.id}`)).json();
+  assert.deepEqual(j.attachments.map((a) => a.id), [up.id]);
+  const ctx = await mod._testing.resolveAskContext(t.id, {}, []);
+  assert.deepEqual((ctx.attachments || []).map((a) => a.id), [up.id]);
+});
+
 test('GET /api/ask/models and the hello ask array (unknown-thread subscribe is a no-op)', async () => {
   await checkRows([
     { name: 'GET /api/ask/models returns the chat catalog', run: async () => {
@@ -633,4 +740,126 @@ test('PATCH agentMode (#574): a boolean alone is not the title error; GET return
   await r.json();
   assert.equal((await (await fetch(`${base}${url}`)).json()).thread.agentMode, true, 'the message stores it');
   await idle();
+});
+
+test('#948 s2: archive is blocked while the chat is busy; unarchive and pin never are', async () => {
+  const { thread } = await (await post('/api/ask/threads', { title: 'busy-s2' })).json();
+  mod._testing.askJobs.set(thread.id, { turn: { stop: () => {} }, status: 'running', graceTimer: null });
+  try {
+    const r = await patch(`/api/ask/threads/${thread.id}`, { archived: true });
+    assert.equal(r.status, 409);
+    const j = await r.json();
+    assert.equal(j.code, 'CHAT_BUSY');
+    assert.equal(j.reason, 'replying');
+    assert.equal(j.error, "Can't archive while this chat is replying. Wait for the reply or stop it.");
+    assert.equal((await patch(`/api/ask/threads/${thread.id}`, { pinned: true })).status, 200);
+  } finally { mod._testing.askJobs.delete(thread.id); }
+  const orig = mod._testing.askCommands.running;
+  mod._testing.askCommands.running = (id) => (id === thread.id ? 1 : 0);
+  try {
+    assert.equal((await (await patch(`/api/ask/threads/${thread.id}`, { archived: true })).json()).reason, 'command');
+  } finally { mod._testing.askCommands.running = orig; }
+  const ok = await patch(`/api/ask/threads/${thread.id}`, { archived: true });
+  assert.equal(ok.status, 200);
+  assert.ok((await ok.json()).thread.archivedAt);
+  const back = await patch(`/api/ask/threads/${thread.id}`, { archived: false });
+  assert.equal(back.status, 200);
+  assert.equal((await back.json()).thread.archivedAt, null);
+});
+
+test('#948 s2: archive is blocked while the chat follows a live run; a cursor alone pages Show = All', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { thread } = await (await post('/api/ask/threads', { title: 'follow-s2' })).json();
+  const entry = { id: 'uuid-FOLLOW-S2', orch: new EventEmitter(), projectDir: '/tmp/x', title: 't', status: 'running',
+    startedAt: new Date().toISOString(), events: [], pendingQuestion: null, pipelineId: 'dddd4444' };
+  mod.runs.set(entry.id, entry);
+  mod._testing.askFollowers.set(thread.id, new Set([{ runId: entry.id, detached: false, detach() {} }]));
+  try {
+    const r = await patch(`/api/ask/threads/${thread.id}`, { archived: true });
+    assert.equal(r.status, 409);
+    const j = await r.json();
+    assert.equal(j.reason, 'following');
+    assert.equal(j.error, "Can't archive while this chat is following a run that is still going. Wait for the run to finish.");
+  } finally {
+    mod._testing.askFollowers.delete(thread.id);
+    mod.runs.delete(entry.id);
+  }
+  const first = await (await fetch(`${base}/api/ask/threads?show=all&limit=1`)).json();
+  assert.equal(typeof first.cursor, 'string');
+  const next = await (await fetch(`${base}/api/ask/threads?limit=1&cursor=${encodeURIComponent(first.cursor)}`)).json();
+  assert.equal(next.total, first.counts.all, 'a cursor alone is read as show=all');
+  assert.notEqual(next.threads[0].id, first.threads[0].id);
+});
+
+test('#948 s2: PATCH archived / pinned validation, the paged list shapes, Show = Needs you and a message unarchiving', async () => {
+  const { EventEmitter } = await import('node:events');
+  await checkRows([
+    { name: 'a non-boolean or a mixed body is 400; an unknown thread is 404', run: async () => {
+      const { thread } = await (await post('/api/ask/threads', { title: 'val-s2' })).json();
+      let r = await patch(`/api/ask/threads/${thread.id}`, { archived: 'yes' });
+      assert.equal(r.status, 400); await r.json();
+      r = await patch(`/api/ask/threads/${thread.id}`, { archived: true, title: 'x' });
+      assert.equal(r.status, 400); await r.json();
+      r = await patch(`/api/ask/threads/${thread.id}`, { pinned: 1 });
+      assert.equal(r.status, 400); await r.json();
+      r = await patch('/api/ask/threads/ask_fffffff0', { archived: true });
+      assert.equal(r.status, 404); await r.json();
+    } },
+    { name: 'show=all leaves an archived chat out, show=archived lists it, a plain GET keeps the old shape and lists it', run: async () => {
+      const { thread } = await (await post('/api/ask/threads', { title: 'shape-s2' })).json();
+      assert.equal((await patch(`/api/ask/threads/${thread.id}`, { archived: true })).status, 200);
+      const all = await (await fetch(`${base}/api/ask/threads?show=all&limit=200`)).json();
+      assert.ok(!all.threads.some((t) => t.id === thread.id));
+      const arch = await (await fetch(`${base}/api/ask/threads?show=archived&limit=200`)).json();
+      const row = arch.threads.find((t) => t.id === thread.id);
+      assert.equal(row.archived, true);
+      assert.deepEqual(Object.keys(arch.counts).sort(), ['all', 'archived', 'needs']);
+      for (const k of ['all', 'needs', 'archived']) assert.equal(typeof arch.counts[k], 'number');
+      const plain = await (await fetch(`${base}/api/ask/threads?limit=200`)).json();
+      assert.deepEqual(Object.keys(plain).sort(), ['threads', 'total']);
+      assert.ok(plain.threads.some((t) => t.id === thread.id), 'the old list still holds archived chats');
+      for (const t of plain.threads) {
+        assert.equal(typeof t.commands, 'number');
+        assert.equal(typeof t.archived, 'boolean');
+        assert.ok('scope' in t);
+      }
+    } },
+    { name: 'show=all&limit=1 answers a string cursor; a garbage cursor is 400 and the next request is answered', run: async () => {
+      await post('/api/ask/threads', { title: 'cur-s2 a' });
+      await post('/api/ask/threads', { title: 'cur-s2 b' });
+      const first = await (await fetch(`${base}/api/ask/threads?show=all&limit=1`)).json();
+      assert.equal(typeof first.cursor, 'string');
+      const bad = await fetch(`${base}/api/ask/threads?show=all&cursor=garbage`);
+      assert.equal(bad.status, 400);
+      assert.deepEqual(await bad.json(), { error: 'invalid cursor' });
+      assert.equal((await fetch(`${base}/api/ask/threads?show=all`)).status, 200);
+    } },
+    { name: 'show=needs lists only a chat whose followed run waits on a question', run: async () => {
+      const { thread: waiting } = await (await post('/api/ask/threads', { title: 'needs-s2 w' })).json();
+      await post('/api/ask/threads', { title: 'needs-s2 idle' });
+      const entry = { id: 'uuid-NEEDS-S2', orch: new EventEmitter(), projectDir: '/tmp/x', title: 't', status: 'running',
+        startedAt: new Date().toISOString(), events: [], pendingQuestion: { kind: 'clarify' }, pipelineId: 'eeee5555' };
+      mod.runs.set(entry.id, entry);
+      mod._testing.askFollowers.set(waiting.id, new Set([{ runId: entry.id, detached: false, detach() {} }]));
+      try {
+        const j = await (await fetch(`${base}/api/ask/threads?show=needs`)).json();
+        assert.deepEqual(j.threads.map((t) => t.id), [waiting.id]);
+        assert.equal(j.counts.needs, 1);
+        assert.equal(j.total, 1);
+      } finally {
+        mod._testing.askFollowers.delete(waiting.id);
+        mod.runs.delete(entry.id);
+      }
+    } },
+    { name: 'a message posted to an archived chat unarchives it', run: async () => {
+      await idle();
+      const { thread } = await (await post('/api/ask/threads', { title: 'msg-s2' })).json();
+      assert.equal((await patch(`/api/ask/threads/${thread.id}`, { archived: true })).status, 200);
+      const r = await post(`/api/ask/threads/${thread.id}/messages`, { text: 'hi', model: 'claude-opus-5-5', effort: 'high' });
+      assert.equal(r.status, 202, await r.clone().text());
+      await r.json();
+      await idle();
+      assert.equal((await (await fetch(`${base}/api/ask/threads/${thread.id}`)).json()).thread.archivedAt, null);
+    } },
+  ]);
 });

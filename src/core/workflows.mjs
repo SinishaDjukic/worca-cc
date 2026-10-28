@@ -15,7 +15,7 @@ import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
-import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine } from './config.mjs';
+import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine, projectRolesFor } from './config.mjs';
 import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine, MODEL_ENGINES } from './model-env.mjs';
 
 /** Enum guard for one resolveGraph layer: a legal value passes, anything else
@@ -33,10 +33,12 @@ import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
   GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_PR_FIX_WORKFLOW, PR_FIX_WORKFLOW_ID,
+  SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
+export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
+import { resolveRoleModel, roleOf } from './model-roles.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
 /**
@@ -317,7 +319,10 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   // refused by DELETE — the user's pipeline would vanish behind a 201. Refuse
   // the WRITE instead; only the name is wrong, so the caller can rename.
   if (reserved(id)) {
-    const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME : GRAPH_DEFAULT_WORKFLOW.name;
+    const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME
+      : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME
+      : id === SHAPE_WORKFLOW_ID ? SHAPE_WORKFLOW_NAME
+      : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
       new Error(`the name "${which}" is reserved — choose another name`),
       { code: 'RESERVED_NAME' });
@@ -376,6 +381,9 @@ export async function readWorkflow(id, opts = {}) {
   if (id === WORKSPACE_SCAN_WORKFLOW_ID) return GRAPH_WORKSPACE_SCAN_WORKFLOW;
   if (id === WORKSPACE_RESYNTH_WORKFLOW_ID) return GRAPH_WORKSPACE_RESYNTH_WORKFLOW;
   if (id === PR_FIX_WORKFLOW_ID) return GRAPH_PR_FIX_WORKFLOW;
+  // No gate check: resuming a held shaped run must never be stranded.
+  if (id === SHAPE_WORKFLOW_ID) return GRAPH_SHAPE_WORKFLOW;
+  if (id === SHAPE_UX_WORKFLOW_ID) return GRAPH_SHAPE_UX_WORKFLOW;
   return readRaw(id, opts);
 }
 
@@ -541,6 +549,7 @@ export async function deleteWorkflow(id) {
   if (id === AUTO_WORKFLOW_ID) return false;    // never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return false; // constants, never rows
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;
@@ -617,6 +626,21 @@ function ownedPair(sel, engine, projectDir) {
   const effort = own && (engine === 'claude' || effortsForEngine(engine).includes(own)) ? own : (own && model ? (effortOn(own, engine) || undefined) : undefined);
   return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
+/** P3 (U13, S32): whether a graph holds an agent that expects a code repository (`needsRepo` in its sidecar).
+ *  Pure. A template without nodes (wf_auto, a v1 row) is never a hint.
+ *  @param {{nodes?: Array<{kind?: string, key?: string}>}|null} tpl @param {Record<string, object>} registry */
+export function graphNeedsRepo(tpl, registry) {
+  const nodes = Array.isArray(tpl?.nodes) ? tpl.nodes : [];
+  return nodes.some((n) => n?.kind === 'agent' && registry?.[n.key]?.needsRepo === true);
+}
+
+/** P3: `graphNeedsRepo` for a workflow id. Unknown ids and `wf_auto` (its graph is decided per run) answer false (S-E).
+ *  @param {string} workflowId @param {{registry?: Record<string, object>}} [opts] @returns {Promise<boolean>} */
+export async function workflowNeedsRepo(workflowId, { registry = loadAgentRegistry() } = {}) {
+  if (workflowId === AUTO_WORKFLOW_ID) return false;
+  return graphNeedsRepo(await readWorkflow(workflowId), registry);
+}
+
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   if (workflowId === AUTO_WORKFLOW_ID) {
     throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
@@ -656,6 +680,16 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const engine = MODEL_ENGINES.includes(opts.engine) ? opts.engine : 'claude';
   const slotDefaults = ignore ? {} : stepSlotDefaults(engine, { projectDir: projectDir || null, workspace: isWorkspace });
   const owned = (selection) => ownedPair(selection, engine, projectDir);
+  // Model roles (D3, D4): the last layer, for a node no other layer names. A run started with its own model keeps it
+  // for every unset step (D3's per-run pick); an Auto run owns its tuning and skips it, like the user step slots.
+  const runModel = typeof opts.runModel === 'string' && opts.runModel.trim() ? opts.runModel.trim() : null;
+  // D15: the project's team roles join the person's own; a workspace run keeps the person's roles only.
+  const { roles: projectRoleSet } = ignore || runModel ? { roles: undefined } : await projectRolesFor(engine, isWorkspace ? null : projectDir);
+  const roleFor = (authored, meta) => {
+    if (ignore || runModel) return {};
+    const hit = resolveRoleModel(engine, roleOf(`steps.${authored}`, { name: meta?.displayName || '' }), projectRoleSet ? { roles: projectRoleSet } : {});
+    return hit ? owned(hit) : {};
+  };
   // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —
   // named at start, else the global setting. The one layer that beats even the project's own node
   // pick (the setting is global by design: no per-project override), and it carries its own
@@ -718,6 +752,12 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const legacyP = engine === 'claude' ? owned(legacy) : {};
     const cfgP = owned(cfg);
     const team = (selP.model || selP.effort || legacyP.model || legacyP.effort) ? {} : owned(slotDefaults[authored]);
+    const baseModel = firstDefined(selP.model, legacyP.model, team.model, cfgP.model);
+    // An effort only travels with the model that advertises it: an override naming its own model must not
+    // inherit a lower layer's effort — the legacy per-role effort included (a per-run overlay or a node pick
+    // naming a model on wf_default).
+    const baseEffort = selP.model ? selP.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (legacyP.model || team.model) ? undefined : cfgP.effort);
+    const roleP = baseModel === undefined && baseEffort === undefined ? roleFor(authored, meta) : {};
     nodes[node.id] = {
       nodeId: node.id,
       kind: 'agent',
@@ -730,11 +770,8 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
       tools,
       config: { ...cfg },
-      model: pair ? pair.model : firstDefined(selP.model, legacyP.model, team.model, cfgP.model),
-      // An effort only travels with the model that advertises it: an override naming its own model must not
-      // inherit a lower layer's effort — the legacy per-role effort included (a per-run overlay or a node pick
-      // naming a model on wf_default).
-      effort: pair ? pair.effort : (selP.model ? selP.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (legacyP.model || team.model) ? undefined : cfgP.effort)),
+      model: pair ? pair.model : (roleP.model ?? baseModel),
+      effort: pair ? pair.effort : (roleP.model ? roleP.effort : baseEffort),
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut

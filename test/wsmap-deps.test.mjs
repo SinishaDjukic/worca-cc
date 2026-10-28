@@ -24,7 +24,10 @@ test('yaml and smol-toml are exact-pinned runtime dependencies, locked with inte
     // @ricky0123/vad-web + onnxruntime-web: Ask Worca voice mode's in-page Silero VAD (docs/speech.md).
     // undici: fetch() through HTTP(S)_PROXY on Nodes without http.setGlobalProxyFromEnv (src/core/env-proxy.mjs).
     // @xterm/*: the terminal pane, served from node_modules (docs/terminal.md).
-    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@highlightjs/cdn-assets', '@modelcontextprotocol/sdk', '@ricky0123/vad-web', '@xterm/addon-fit', '@xterm/xterm', 'dompurify', 'express', 'htmlparser2', 'marked', 'onnxruntime-web', 'smol-toml', 'undici', 'ws', 'yaml']);
+    // gsap + playwright-core: the promo video kit (assets/promo-kit: the film runtime, real-UI plate capture on a system Chrome).
+    // diff: Folder runs' changes.patch (src/core/folder-copy.mjs, jsdiff createTwoFilesPatch).
+    // tar: GitHub's .tar.gz archives read without git (src/core/git-free/archive.mjs).
+    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@highlightjs/cdn-assets', '@modelcontextprotocol/sdk', '@ricky0123/vad-web', '@xterm/addon-fit', '@xterm/xterm', 'diff', 'dompurify', 'express', 'gsap', 'htmlparser2', 'marked', 'onnxruntime-web', 'playwright-core', 'smol-toml', 'tar', 'undici', 'ws', 'yaml']);
   }
 });
 

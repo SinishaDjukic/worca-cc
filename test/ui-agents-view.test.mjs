@@ -78,7 +78,7 @@ test('the agent sheet shows ONE card: origin badge, typed/void port pills, port-
       assert.equal(cards.length, 1, 'the sheet shows one agent — the Library is the list');
       const planner = cards[0];
       assert.equal(planner.querySelector('.agent-origin').textContent, 'builtin');
-      assert.equal(planner.querySelector('.agent-sub').textContent, 'planner \u00b7 producer \u2014 architecture');
+      assert.equal(planner.querySelector('.agent-sub').textContent, 'planner \u00b7 producer: architecture');
       const inPills = [...planner.querySelectorAll('.agent-chips-in .agent-chip')].map((p) => p.textContent);
       assert.deepEqual(inPills, ['task \u00b7 md', '\u21ba revise \u00b7 md']);
       assert.deepEqual([...planner.querySelectorAll('.agent-chips-out .agent-chip')].map((p) => p.textContent), ['plan \u00b7 md']);
@@ -93,7 +93,7 @@ test('the agent sheet shows ONE card: origin badge, typed/void port pills, port-
       const { window } = await boot();
       await goAgents(window, 'docsWriter');
       const docs = window.document.querySelector('.agent-card');
-      assert.equal(docs.querySelector('.agent-sub').textContent, 'docsWriter \u00b7 verifier \u2014 Reads plan; produces review.');
+      assert.equal(docs.querySelector('.agent-sub').textContent, 'docsWriter \u00b7 verifier: Reads plan; produces review.');
       const out = docs.querySelectorAll('.agent-chips-out .agent-chip');
       assert.equal(out[1].textContent, 'pass \u00b7 void');
       assert.ok(out[1].classList.contains('void'), 'a void port pill is visually distinct');

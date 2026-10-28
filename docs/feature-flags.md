@@ -23,8 +23,31 @@ remote flags.
 
 | Key | Stage | What it gates |
 |---|---|---|
-| `flagsDemo` | experimental, default off | A note in Settings › Experimental that proves the system end to end. |
-| `keepAwake` | experimental, default off | Stops the OS sleeping on its idle timer while a run has agents working; the display may still turn off. A run waiting on a question, paused or ended does not count, and nothing is held on a container or hosted worca. The UI server holds one child tied to its pid: `caffeinate -i -w <pid>` on macOS, `systemd-inhibit --what=idle` wrapping `tail --pid <pid>` on Linux, a PowerShell child holding `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED)` on Windows. A missing tool logs one warning and never affects a run. |
+| `flagsDemo` | experimental, default off | A note in Settings › Labs that proves the system end to end. |
+| `runLabels` | experimental, default off | Free-word labels on runs (`hotfix`, `needs demo`): chips after the title on the Runs list (2, then +N), under the status on run pages, read-only on chat run cards; the Runs list label filter (any of the chosen labels), chosen from the top search ("Runs labelled hotfix", or type `label:hotfix`); the selection bar's Label action. Labels never reach Statistics, Team metrics, CSV or policy. Off, `/api/labels`, `PUT /api/runs/:id/labels` and `POST /api/runs/bulk/labels` answer 404. |
+| `smartRunNaming` | experimental, default off | Smart run naming: one cheap model call reads the task and suggests the run title and a branch name (`feat/…`, `fix/…`) on the New run form, with a Suggested chip, a type select and Suggest again / clear buttons. Off, nothing changes: no model call, no chip, same `worca-cc/words-id` branches, and `/api/naming/*` answers 404. See [Smart run naming](#smart-run-naming). |
+| `commandSummaries` | beta, default on | Command summaries: Settings › Chat › Summarise commands (on by default) turns each chat command into one line saying what it does (the summary the chat gives `run_command`, else the command), with the runs status dot; a click opens the exact command, the folder and the output. Consecutive commands sit in one card under a 'Ran N commands · M failed · time' line; while a command runs the line leads with that command's summary and offers Stop. Rows and groups stay folded, running or failed, until the person opens them, and that choice is kept. An opened command shows the whole command (colour, copy), its folder, Show in terminal and up to ~20 lines of output. Off (the flag or the switch), chat shows full command cards. Command cards take the 760px text column either way. When the chat gives no summary, the Command summaries helper job (Models › Helper jobs) writes one from the command alone, secrets redacted and never its output, and caches repeats; with no ready Claude model the row keeps the command. Turning Summarise commands off also stops the job. Run page › Logs and the step log drawer show a Claude Code Bash call's own description, with a Summaries / Raw switch (remembered per browser). Codex lines stay raw, and the search matches the command and the description. Copy and the CLI always use the commands. Off, the switch is hidden and lines read as before. |
+| `requirements` | experimental, default off | The Requirements page (feature specs through a short interview, Ready and Start in Worca, product briefs), the Requirements interview row on Models › Engines › Claude › Helper jobs, the Requirements tile on Statistics. Off, money already spent on the page stays in Spent and keeps its Requirements row in Group by and the Cost report; every `/api/requirements` route answers 404 and no `requirements-changed` frame is sent ([docs](requirements.md)). |
+| `runTelemetry` | experimental, default off | [Run telemetry](run-telemetry.md): runs record every model call's context size, tokens and timing, tool time, retries, compactions and sub-agent calls, plus Worca's own save, live-update and event-loop figures, to `telemetry.ndjson` in the run folder; the run page's Agents tab shows the figures and a context-over-time chart per agent. Read once when a run starts. Recording only: runs behave the same. Off, nothing is recorded and `GET /api/runs/:id/telemetry` answers 404. |
+
+`corporateProxy` has graduated: an install with it on gets `networkProxy.enabled: true` on first start. The corporate proxy is now a setting, see [Network proxy](network-proxy.md).
+
+`shapeFirst` ([Shaper](shape-it-first.md)), `runPresets` ([Run presets](run-presets.md)) and `runTags` (cost tags, see [Statistics](statistics.md)) have graduated: they are always on. `keepAwake` has graduated into a setting: the account menu's Keep awake switch, see [Keep awake](keep-awake.md).
+
+## Smart run naming
+
+Flag `smartRunNaming`, with a card in Settings › Runs.
+
+- **What the model sees:** the task text only, capped at 2000 characters, plus a title the person already typed. It replies with a title, a branch type, a slug and a short reason.
+- **Pattern:** `{type}/{slug}` by default. Placeholders: `{type}`, `{slug}`, `{ticket}` (the task source id, e.g. `proj-123`) and `{id}` (the short run id). "Add the run id to the branch" appends `-` plus the id only when the pattern has no `{id}`. The form preview omits the id; Worca adds it at start.
+- **Types:** the list the model may pick from (default `feat fix chore docs refactor test`). A type outside the list becomes the first type, the fallback.
+- **Model:** Models › Engines › Helper jobs › Run naming; unset, the cheapest ready Claude model at its lowest effort.
+- **Starts without the form** (chat run cards, `worca run` without `--branch`, presets, task-source runs) never call the model: they use the pattern with the first type.
+- **Collision rule:** a branch Worca derived gets `-` plus the short id when it already exists locally; a branch the person typed is kept verbatim and may reuse an existing branch.
+- **Title rule:** while the flag is on, a title that is given (typed or suggested) is kept; an empty title still gets today's generated title.
+- **Fallback:** when the model is unavailable the title stays empty and the branch shows today's name.
+- **Cost:** recorded as a utility cost and shown in Statistics as "Naming". It is never billed to a run and does not count toward budgets.
+- **Project override:** Project › Settings › Runs can override the pattern and the types.
 
 ## Add a flag
 
@@ -33,7 +56,7 @@ remote flags.
 ```js
 entry({
   key: 'customDashboard',            // camelCase, 3 to 41 letters and digits
-  title: 'Custom dashboard',         // shown in Settings › Experimental
+  title: 'Custom dashboard',         // shown in Settings › Labs
   description: 'Build your own dashboard from charts.',   // one line
   stage: 'experimental',             // experimental | beta | retiring
   default: false,                    // experimental: always false; beta: may be true
@@ -48,7 +71,7 @@ entry({
 
 | Field | Meaning |
 |---|---|
-| `stage` | `experimental`: may change or break, always off by default. `beta`: nearly done, may default **on** (opt-out). `retiring`: about to be removed; forced to its `default`, hidden from Settings, refused by the API. |
+| `stage` | `experimental` (shown as **Labs**): may change or break, always off by default. `beta`: nearly done, may default **on** (opt-out). `retiring`: about to be removed; forced to its `default`, hidden from Settings, refused by the API. |
 | `added` / `reviewBy` | The review window. `reviewBy` is at most 90 days after `added`. Past it, CI fails until the owner decides (see [Lifecycle](#lifecycle)). |
 | `requires` | Flags this one depends on. Turning it on turns them on; turning one of them off turns it off. A flag whose prerequisite is off is reported off, whatever is stored. No cycles. |
 
@@ -61,8 +84,10 @@ off, and shown or hidden live when the flag changes:
 <section class="card" data-flag="customDashboard" data-flag-chip>…</section>
 ```
 
-`data-flag-chip` adds the **Experimental** / **Beta** chip, which links to the flag's row in
-Settings › Experimental.
+`data-flag-chip` adds the **Labs** / **Beta** chip, which links to the flag's row in
+Settings › Labs. A tab (`[role="tab"]`, `.tab`, or a button in `.tabs` / `.seg`) and a sidebar row (a
+button in `.nav`) get the chip inside, after the label, as plain text, never a link. `data-flag-chip="KEY"` names the flag without
+gating the host, so its host shows the chip while the flag is off.
 
 In JS (`ui/public/flags.mjs`):
 
@@ -83,7 +108,7 @@ import { requireFlag, flagEnabled } from '../src/core/flags.mjs';
 
 app.get('/api/dashboard/charts', requireFlag('customDashboard'), handler);   // 404 while off
 if (flagEnabled('customDashboard')) broadcast(frame);                         // WS frames
-if (flagEnabled('customDashboard')) defs.push(tool);                          // Ask Worca tools, in createAskTools
+if (flagEnabled('customDashboard')) defs.push(tool);                          // Chat tools, in createAskTools
 ```
 
 `requireFlag` answers `404 { error: 'not found' }` while the flag is off: a disabled feature
@@ -93,7 +118,7 @@ looks exactly like an absent one. Always write the key as a literal, so the usag
 
 Three ways:
 
-- **Settings › Experimental**, at every interface mode. A switch applies at once, in every open
+- **Settings › Labs**, at every interface mode. A switch applies at once, in every open
   tab. **Reset all** puts every unlocked flag back to its default.
 - **`worca flags`** on the command line:
 

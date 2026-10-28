@@ -234,7 +234,7 @@ export class ActionRegistry extends EventEmitter {
       mkdirSync(dirname(this.stateFile), { recursive: true });
       writeFileSync(`${this.stateFile}.tmp`, JSON.stringify({ ownerPid: process.pid, updatedAt: this.now(), instances: rows }));
       renameSync(`${this.stateFile}.tmp`, this.stateFile);
-    } catch { /* best-effort: only Ask Worca reads it */ }
+    } catch { /* best-effort: only Chat reads it */ }
   }
 
   _writePidFile() {

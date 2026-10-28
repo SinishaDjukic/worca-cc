@@ -1,5 +1,5 @@
 // test/ask-policy-proposal.test.mjs
-// The policy card's validator (src/core/ask/policy-proposal.mjs, docs/team-policy.md "Ask Worca")
+// The policy card's validator (src/core/ask/policy-proposal.mjs, docs/team-policy.md "Chat")
 // over fake readers: every kind's happy path and refusals, the edit ops (kinds, inherited
 // attributes, the workspaceRuns block, unset, title / notes), the before → after lines, and the
 // event / notice text.

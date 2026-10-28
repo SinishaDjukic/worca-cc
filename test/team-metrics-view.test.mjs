@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { aggregate } from '../src/shared/team-metrics/aggregate.mjs';
 import {
-  renderSyncChip, renderTmKpiRow, renderTeamMetricsBody, renderRunsTable } from '../ui/public/team-metrics-view.mjs';
+  renderSyncChip, renderTmKpiRow, renderTeamMetricsBody, renderRunsTable, renderTmViewChips,
+  renderHeatGrid, renderMissingTagsStrip, heatLevel } from '../ui/public/team-metrics-view.mjs';
+import { heatGrid } from '../src/shared/team-metrics/cost-facts.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -60,6 +62,34 @@ test('body: charts, breakdown tables with row filters and sortable headers, run 
   assert.match(body.querySelector('.tm-runs-head').textContent, /2 in range/);
 });
 
+test('every tm-tbl is the shared table in a table-wrap; cells carry their column label (D10)', () => {
+  const agg = aggregate(recs, { range: 'this-month', now: NOW });
+  const body = renderTeamMetricsBody(agg, { doc, now: NOW, scopeKind: 'project', sort: {}, filter: {} });
+  const tables = [...body.querySelectorAll('table.tm-tbl')];
+  assert.ok(tables.length >= 2);
+  for (const t of tables) {
+    assert.ok(t.classList.contains('table'), t.dataset.dim || 'runs');
+    assert.ok(t.parentElement.classList.contains('table-wrap'));
+    const row = t.querySelector('tbody tr');
+    const cells = [...row.cells];
+    if (cells.length > 1) {
+      assert.ok(cells[0].classList.contains('table-main'));
+      const labels = [...t.querySelectorAll('thead th')].map((th) => th.textContent);
+      cells.slice(1).forEach((td, i) => assert.equal(td.dataset.label ?? '', labels[i + 1]));
+    }
+  }
+});
+
+test('every card that draws a chart has a legend, with sans values (D16)', () => {
+  const agg = aggregate(recs, { range: 'this-month', now: NOW });
+  const body = renderTeamMetricsBody(agg, { doc, now: NOW, scopeKind: 'project', sort: {}, filter: {} });
+  const charts = [...body.querySelectorAll('.card')].filter((c) => c.querySelector('svg.chart-svg'));
+  assert.ok(charts.length >= 1);
+  for (const c of charts) assert.ok(c.querySelector('.chart-legend'), c.querySelector('h2')?.textContent);
+  assert.equal(body.querySelectorAll('.chart-legend b.mono').length, 0);
+  assert.equal(body.querySelectorAll('.stat-value.mono').length, 0, 'tile values are sans');
+});
+
 test('run table rows newest first with PR link and result badge', () => {
   const agg = aggregate(recs, { range: 'all', now: NOW });
   const t = renderRunsTable(agg.runs, { doc, total: agg.runs.length });
@@ -90,6 +120,12 @@ test('Group by lives in the Spend per week card head, reflects agg.groupBy, and 
   const ws = renderGroupBySelect('actor', 'workspace', { doc });
   assert.deepEqual([...ws.querySelector('select').options].map((o) => o.value), ['workflow', 'result', 'actor'], 'a workspace scope offers the same three: a run\'s cost is one number, never split by project touched');
   assert.equal(ws.querySelector('select').value, 'actor');
+  // Run tags: one option per tag key in the loaded records, labelled by its dimension when configured.
+  const tagged = renderGroupBySelect('workflow', 'project', { doc, tagKeys: ['client'], dims: [{ key: 'client', label: 'Client' }] }).querySelector('select');
+  assert.deepEqual([...tagged.options].map((o) => o.value), ['workflow', 'result', 'actor', 'tag:client']);
+  assert.equal(tagged.options[3].textContent, 'Client');
+  const tagBody = renderTeamMetricsBody(aggregate(recs, { range: 'this-month', now: NOW }), { doc, now: NOW, tagKeys: ['client'], tagDims: [{ key: 'client', label: 'Client' }] });
+  assert.ok([...tagBody.querySelectorAll('#tm-group option')].some((o) => o.value === 'tag:client' && o.textContent === 'Client'));
   const wsBody = renderTeamMetricsBody(aggregate([makeRecord({ id: 'g2', startedAt: '2026-09-05T10:00:00Z', usd: 2, kind: 'workspace', touched: ['acme/gateway', 'acme/console'] })], { range: 'this-month', now: NOW }), { doc, now: NOW, scopeKind: 'workspace' });
   assert.ok(!wsBody.textContent.includes('split evenly'), 'no "split evenly" hint anywhere');
   const projTbl = wsBody.querySelector('.tm-breakdown table[data-dim="project"]');
@@ -129,4 +165,49 @@ test('KPI row: Saved tile appears only with human hours, prices them at the rate
       assert.equal(tile.parentElement.querySelectorAll('.stat-mult').length, 1, 'only the Saved tile carries the pill');
     } },
   ]);
+});
+
+const VIEW_RECS = [
+  { ...makeRecord({ id: 'v1', startedAt: '2026-09-08T10:00:00Z', usd: 3, actor: 'Ana' }), tags: ['client:acme'] },
+  makeRecord({ id: 'v2', startedAt: '2026-09-09T10:00:00Z', usd: 1 }),
+];
+
+test('renderTeamMetricsBody: no view (flag off) = no chips; By person = the By actor table alone; Cost = the report element', () => {
+  const agg = aggregate(VIEW_RECS, { range: 'this-month', now: NOW });
+  assert.equal(renderTeamMetricsBody(agg, { doc }).querySelector('#tm-view'), null);
+  const person = renderTeamMetricsBody(agg, { doc, view: 'person' });
+  assert.deepEqual([...person.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
+  assert.deepEqual([...person.querySelectorAll('.tm-tbl')].map((t) => t.dataset.dim), ['actor']);
+  const costEl = doc.createElement('div');
+  costEl.className = 'cost-report';
+  const cost = renderTeamMetricsBody(agg, { doc, view: 'cost', costEl });
+  assert.equal(cost.querySelector('#tm-view').nextElementSibling, costEl);
+  assert.equal(cost.querySelector('.tm-tbl'), null);
+  assert.deepEqual([...renderTmViewChips('overview', { doc }).querySelectorAll('button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
+});
+
+test('renderHeatGrid: a row per person, a column per value + Total, amounts in cells, shade steps l0–l4', () => {
+  const f = (id, person, usd, client) => ({ id, person, usd, hours: 0, inCohort: true, status: 'finished', tags: client ? { client } : {}, spend: [], hourBucket: -1 });
+  const grid = heatGrid([f('1', 'Developer A', 6, 'acme'), f('2', 'Developer A', 2, 'globex'), f('3', 'Developer B', 3, 'acme')], { by: 'tag:client' });
+  const card = renderHeatGrid(grid, { doc, byLabel: 'Client' });
+  assert.equal(card.querySelector('h2').textContent, 'Person × Client');
+  const t = card.querySelector('.tm-heat-table');
+  assert.deepEqual([...t.querySelectorAll('thead th')].map((x) => x.textContent), ['Person', 'acme', 'globex', 'Total']);
+  assert.deepEqual([...t.querySelectorAll('tbody tr')].map((r) => [...r.cells].map((c) => c.textContent)),
+    [['Developer A', '$6.00', '$2.00', '$8.00'], ['Developer B', '$3.00', '—', '$3.00']]);
+  assert.ok(t.querySelector('tbody tr td.tm-heat-l4'));
+  assert.ok(t.querySelectorAll('tbody tr')[1].cells[2].classList.contains('tm-heat-l0'));
+  assert.equal(t.querySelector('tbody tr').cells[1].title, 'Developer A · acme: $6.00 · 1 run');
+  assert.deepEqual([heatLevel(0, 6), heatLevel(1, 6), heatLevel(6, 6)], [0, 1, 4]);
+  assert.equal(renderHeatGrid(null, { doc, byLabel: 'Person' }).querySelector('.tm-heat-table'), null);
+});
+
+test('renderMissingTagsStrip: who, how many runs, how much; nothing without required keys', () => {
+  const dims = [{ key: 'client', label: 'Client', required: true }];
+  const card = renderMissingTagsStrip({ keys: ['client'], rows: [{ person: 'Developer A', label: 'Developer A', runs: 3, spentUsd: 4, keys: ['client'] }] }, { doc, dims });
+  assert.equal(card.querySelector('.card-head small').textContent, 'Required: Client');
+  assert.deepEqual([...card.querySelectorAll('.tm-todo-row')].map((li) => li.textContent), ['Developer A3 runs$4.00missing Client']);
+  assert.equal(card.querySelector('button'), null);
+  assert.match(renderMissingTagsStrip({ keys: ['client'], rows: [] }, { doc, dims }).textContent, /Every run in this view carries/);
+  assert.equal(renderMissingTagsStrip({ keys: [], rows: [] }, { doc, dims }), null);
 });

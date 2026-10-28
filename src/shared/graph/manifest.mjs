@@ -155,6 +155,9 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       // alone — the workflow row is never re-read after the run starts.
       cell.subagentModel = over.subagentModel ?? cfg.subagentModel ?? '';
       cell.subagentEffort = over.subagentEffort ?? cfg.subagentEffort ?? '';
+      // Run progress: the stage rides the manifest like color/icon, so a run (and a resume,
+      // which rebuilds the manifest from the registry) never needs the live registry for it.
+      if (meta?.progressStage) cell.progressStage = meta.progressStage;
     }
     if (node.kind === 'script') {
       cell.color = meta?.color || '';
@@ -174,6 +177,8 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       to: { node: w.to.node, port: w.to.port }, loop };
     // maxCycles rides LOOP wires only: overlay > authored > default.
     if (loop) cell.maxCycles = coerceCycles(wireOverlays[w.id]?.maxCycles ?? w.config?.maxCycles);
+    // What a spent loop does (role reviews, spec §3): kept so a resumed run, rebuilt from this manifest, still knows.
+    if (loop && w.config?.onExhausted !== undefined) cell.onExhausted = w.config.onExhausted;
     return cell;
   });
 
@@ -264,6 +269,7 @@ export function manifestTemplate(manifest) {
     wires: (manifest?.graph?.wires || []).map((w) => {
       const wire = { id: w.id, from: { ...w.from }, to: { ...w.to } };
       if (w.loop && w.maxCycles !== undefined) wire.config = { maxCycles: w.maxCycles };
+      if (w.loop && w.onExhausted !== undefined) wire.config = { ...(wire.config || {}), onExhausted: w.onExhausted };
       return wire;
     }),
   };

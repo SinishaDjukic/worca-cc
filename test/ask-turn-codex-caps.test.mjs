@@ -49,7 +49,7 @@ test('askMaxTurns: the call past the cap aborts; stopped with the existing turn-
   const done = frames.find((f) => f.type === 'ask-done');
   assert.equal(done.status, 'stopped');
   assert.equal(done.reason, 'max_turns');
-  assert.ok(getMessage(s.asst.id).blocks.some((b) => b.text === 'Stopped: reached the 2-turn limit (Settings → Ask Worca)'));
+  assert.ok(getMessage(s.asst.id).blocks.some((b) => b.text === 'Stopped: reached the 2-turn limit (Settings → Chat)'));
 });
 
 test('a capped Codex turn books what it spent (the adapter\'s late result) and stays stopped on its limit', async () => {
@@ -97,7 +97,7 @@ test('askMaxBudgetUsd: a reported cost over the cap stops the turn with the budg
   const done = frames.find((f) => f.type === 'ask-done');
   assert.equal(done.reason, 'max_budget');
   assert.equal(done.costUsd, 0.75, 'the spend still books');
-  assert.ok(getMessage(s.asst.id).blocks.some((b) => b.text === 'Stopped: reached the $0.5 per-turn cap (Settings → Ask Worca)'));
+  assert.ok(getMessage(s.asst.id).blocks.some((b) => b.text === 'Stopped: reached the $0.5 per-turn cap (Settings → Chat)'));
 });
 
 test('budget set and an unpriced model: the turn refuses to start, naming the model', async () => {
@@ -106,7 +106,7 @@ test('budget set and an unpriced model: the turn refuses to start, naming the mo
   const { turn, frames } = makeTurn(s, { maxTurns: 400, maxBudgetUsd: 1 }, async () => { spawned = true; return { text: '', exitCode: 0 }; }, { model: 'my-local-codex' });
   await turn.run();
   assert.equal(spawned, false);
-  assert.match(frames.find((f) => f.type === 'ask-error').message, /my-local-codex has no known price on Codex/);
+  assert.match(frames.find((f) => f.type === 'ask-error').message, /worca has no price for my-local-codex, so it cannot keep this turn under it. Set the model's price on the Models page/);
 });
 
 test('a shell command in the stream stops the turn as an error', async () => {

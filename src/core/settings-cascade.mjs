@@ -3,17 +3,17 @@ import { projectKey as keyOfDir } from './store.mjs';
 import {
   readSettings, setProjectLayerReader, nightModeSettings, memoryDefragModel,
   runEngineSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
-  askEngineSetting, askModelsSetting,
-  assertAskWebInput, askWebStoreShape, UTILITY_JOBS,
+  askEngineSetting, askModelsSetting, requirementsInterviewSetting,
+  assertAskWebInput, askWebStoreShape, assertSmartNamingInput, SMART_NAMING_DEFAULTS, UTILITY_JOBS,
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
   DEFAULT_MEMORY_SOFT_BYTES_PER_FILE, DEFAULT_MEMORY_HARD_BYTES_PER_FILE, DEFAULT_MEMORY_MAX_FILES_PER_SCOPE,
   DEFAULT_MEMORY_HOOK_MAX_CHARS, DEFAULT_MEMORY_DEFRAG_WRITES, DEFAULT_MEMORY_DEFRAG_FILES,
-  DEFAULT_MEMORY_DEFRAG_BYTES_PCT, DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES,
+  DEFAULT_MEMORY_DEFRAG_BYTES_PCT, DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES, DEFAULT_MEMORY_TEAM_MAX_FILES,
   DEFAULT_ASK_MAX_TURNS, DEFAULT_ASK_MAX_BUDGET_USD, DEFAULT_HUMAN_RATE_USD,
 } from './settings.mjs';
 import { cachedPolicyForKey } from './policy/cache.mjs';
 import { fieldsForRun } from './policy/effective.mjs';
-import { MODEL_ENGINES, HELPER_ENGINES } from './model-env.mjs';
+import { MODEL_ENGINES, HELPER_ENGINES, ASK_ENGINES } from './model-env.mjs';
 import { NIGHT_FIELDS, NIGHT_DEFAULTS, fieldError as nightFieldError } from './night/config.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
@@ -52,11 +52,16 @@ const SCALARS = [
   scalar({ id: 'askMaxTurns', check: SETTING_CHECKS.askMaxTurns, def: DEFAULT_ASK_MAX_TURNS, teamKey: 'ask.maxTurns', hint: 'must be an integer between 1 and 500' }),
   scalar({ id: 'askMaxBudgetUsd', check: SETTING_CHECKS.askMaxBudgetUsd, def: DEFAULT_ASK_MAX_BUDGET_USD, teamKey: 'ask.maxBudgetUsd', hint: 'must be a valid budget' }),
   scalar({ id: 'askWeb', check: (value) => { try { assertAskWebInput(webIn(value)); return true; } catch { return false; } }, def: OFF_WEB, hint: 'must be web settings', readUser: (ctx) => ctx.settings().askWeb ?? undefined }),
+  scalar({ id: 'smartNaming', check: (value) => { try { assertSmartNamingInput(value); return true; } catch { return false; } }, def: SMART_NAMING_DEFAULTS, hint: 'must be smart run naming settings', readUser: (ctx) => ctx.settings().smartNaming ?? undefined }),
   scalar({ id: 'contextMaxBytesPerFile', check: SETTING_CHECKS.byteCap, def: DEFAULT_CONTEXT_MAX_BYTES_PER_FILE }),
   scalar({ id: 'contextMaxBytesTotal', check: SETTING_CHECKS.byteCap, def: DEFAULT_CONTEXT_MAX_BYTES_TOTAL }),
   scalar({ id: 'skillMount', check: SETTING_CHECKS.skillMount, def: DEFAULT_SKILL_MOUNT }),
+  scalar({ id: 'watchNewPrs', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
+  // Team memory (phase 1a): project-only opt-in — no user layer (readUser off), no team key.
+  scalar({ id: 'memory.team', path: ['memory', 'team'], check: SETTING_CHECKS.teamMemory, def: false, hint: 'must be true, false or "only"', readUser: () => undefined }),
+  scalar({ id: 'memory.teamMaxFiles', path: ['memory', 'teamMaxFiles'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_TEAM_MAX_FILES, hint: 'must be a positive whole number' }),
   scalar({ id: 'memory.maxFilesPerScope', path: ['memory', 'maxFilesPerScope'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_MAX_FILES_PER_SCOPE }),
   scalar({ id: 'memory.hookMaxChars', path: ['memory', 'hookMaxChars'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HOOK_MAX_CHARS }),
   scalar({ id: 'memory.defrag.writes', path: ['memory', 'defrag', 'writes'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_DEFRAG_WRITES }),
@@ -70,9 +75,9 @@ const NIGHT = NIGHT_FIELDS.map((field) => ({
   readUser: () => nightModeSettings()[field], readProject: (ctx) => ctx.nightProject()?.[field], team: (ctx) => ctx.teamValue(`night.${field}`),
 }));
 const STATIC = new Map([...SCALARS, ...NIGHT].map((entry) => [entry.id, entry]));
-const STEP_RE = /^models\.(claude|codex|cursor)\.steps\.([A-Za-z0-9_-]{1,64})$/;
-// UTIL_RE and ASK_MODEL_RE stay (claude|codex): Cursor has no helper or Ask slots.
-const UTIL_RE = /^models\.(claude|codex)\.(?:utility\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$/;
+// From the engine lists: step slots on every model engine, helper slots on the helper engines, Ask slots on the Ask engines.
+const STEP_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.steps\\.([A-Za-z0-9_-]{1,64})$`);
+const UTIL_RE = new RegExp(`^models\\.(${HELPER_ENGINES.join('|')})\\.(?:utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
 const utilityId = (engine, job) => (RUN_JOBS.has(job) ? `models.${engine}.utility.${job}` : `models.${engine}.${job}`);
 
@@ -90,7 +95,7 @@ const CLAUDE_USER = {
   memoryDefrag: () => { const pair = memoryDefragModel(); return pair.model ? { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) } : undefined; },
 };
 function utilEntry(engine, job) {
-  if (!HELPER_ENGINES.includes(engine)) return null;          // Cursor: no utility ids (helper jobs run on Claude)
+  if (!HELPER_ENGINES.includes(engine)) return null;          // the own-sign-in engines: no utility ids (helper jobs run on Claude)
   if (engine === 'claude' && job === 'workspaceScan') return null;
   return { id: utilityId(engine, job), family: 'utility', engine, job, path: ['utilityModels', engine, job], store: 'settings',
     default: undefined, userOnly: job === 'workspaceScan', validate: pairCheck(engine),
@@ -101,15 +106,21 @@ function utilEntry(engine, job) {
 // listed by settingIds(), so the project Settings API and tab are unchanged.
 const ASK_ENGINE = Object.freeze({ id: 'askEngine', path: ['askEngine'], store: 'settings', default: 'claude', userOnly: true, hint: 'must be an engine',
   validate: (value) => SETTING_CHECKS.engine(value), readUser: () => askEngineSetting(), readProject: () => undefined, team: null });
-const ASK_MODEL_RE = /^models\.(claude|codex)\.ask$/;
+const ASK_MODEL_RE = new RegExp(`^models\\.(${ASK_ENGINES.join('|')})\\.ask$`);
 function askModelEntry(engine) {
   return { id: `models.${engine}.ask`, family: 'ask', engine, path: ['askModels', engine], store: 'settings', default: undefined, userOnly: true,
     validate: pairCheck(engine), readUser: () => pickPair(askModelsSetting()[engine]), readProject: () => undefined, team: null };
 }
+// The Requirements interview (A1.1 D1): Claude-only and user-only, found by id like the Ask entries and never listed by
+// settingIds(); not a UTILITY_JOBS entry, so utilityModels.codex.requirementsInterview is an unknown job.
+const REQUIREMENTS_INTERVIEW = Object.freeze({ id: 'models.claude.requirementsInterview', family: 'utility', engine: 'claude', job: 'requirementsInterview',
+  path: ['requirementsInterview'], store: 'settings', default: undefined, userOnly: true, validate: pairCheck('claude'),
+  readUser: () => pickPair(requirementsInterviewSetting()), readProject: () => undefined, team: null });
 export function settingEntry(id) {
   if (typeof id !== 'string') return null;
   if (STATIC.has(id)) return STATIC.get(id);
   if (id === 'askEngine') return ASK_ENGINE;
+  if (id === REQUIREMENTS_INTERVIEW.id) return REQUIREMENTS_INTERVIEW;
   const ask = ASK_MODEL_RE.exec(id);
   if (ask) return askModelEntry(ask[1]);
   let match = STEP_RE.exec(id);
@@ -189,6 +200,10 @@ export function assertProjectSettingsPatch(patch, { roles = null } = {}) {
       try { value = normalizeModelPair(entry.engine, raw, id); } catch (error) { throw badPatch(error.message); }
     } else if (entry.id === 'askWeb') {
       try { value = askWebStoreShape(assertAskWebInput(raw)); } catch (error) { throw badPatch(`askWeb: ${error.message}`); }
+    } else if (entry.id === 'smartNaming') {
+      const extra = isObj(raw) ? Object.keys(raw).filter((k) => k !== 'pattern' && k !== 'types') : [];
+      if (extra.length) throw badPatch(`smartNaming: ${extra[0]} is set per user, not per project (only pattern and types)`);
+      try { value = assertSmartNamingInput(raw); } catch (error) { throw badPatch(`smartNaming: ${error.message}`); }
     } else if (entry.store === 'nightMode') {
       const field = entry.path[0];
       const error = field === 'spendCapUsd' ? 'spendCapUsd is set per user, not per project (it spans all runs)' : nightFieldError(field, raw);
@@ -247,8 +262,6 @@ export function scopeForRunKey(key) {
 /** The slot of `job` on `engine`. An engine without helper slots (Cursor) gets an empty one, never Claude's: the
  *  memory defrag and the workspace scan run ON that engine, and a helper caller passes helperEngineFor(engine). */
 export function utilityModelFor(engine, job, scope = null) {
-  // Copilot has no helper-model slots: its helper jobs run copilot's own default model.
-  if (engine === 'copilot') return { model: null, effort: null, source: 'default' };
   const e = engine || 'claude';
   const entry = HELPER_ENGINES.includes(e) ? settingEntry(utilityId(e, job)) : null;
   if (!entry) return { model: null, effort: null, source: 'default' };

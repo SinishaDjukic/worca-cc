@@ -1,0 +1,96 @@
+// ui/public/run-page-head.mjs — the aligned run and group page head (runs navigation, run 3): the group chip's word,
+// the status model without a second PR mention, the breadcrumb and the facts block. Pure DOM over the host's
+// ownerDocument; app.js and group-page.mjs own the data.
+import { icon } from './icons.mjs';
+
+export const RUN_FACTS = Object.freeze([['project', 'Project'], ['branch', 'Branch'], ['labels', 'Labels'], ['tags', 'Cost tags'], ['group', 'Group']]);
+export const GROUP_FACTS = Object.freeze([['project', 'Project'], ['runs', 'Runs'], ['cost', 'Total cost'], ['labels', 'Labels']]);
+
+/** The group page's kind chip (clarify answer): the group's kind. */
+export function groupKindWord(row) {
+  const k = row && row.groupKind;
+  return k === 'feature' ? 'Feature' : k === 'user' ? 'Group' : 'Chain';
+}
+
+export const groupHrefOf = (row) => `${row.groupKind === 'feature' ? '#feature' : '#group'}/${encodeURIComponent(row.groupId)}`;
+
+/** No second PR mention (D10): the PR bar carries "PR #N", so the page's status line drops " · PR #N". */
+export function pageModel(m) {
+  const n = m && m.pr && m.pr.number;
+  if (n == null || !m.line || !m.line.includes(` · PR #${n}`)) return m;
+  return { ...m, line: m.line.split(` · PR #${n}`).join('') };
+}
+
+/** "Runs › Run tags › Run 2" for a grouped run; [] for a single run (the bar keeps no crumbs then). */
+export function runCrumbs(home) {
+  if (!home || !home.row) return [];
+  const last = home.planning ? 'Planning' : home.position != null ? `Run ${home.position}` : 'Run';
+  return [{ label: 'Runs', href: '#runs' }, { label: home.row.title, href: groupHrefOf(home.row) }, { label: last }];
+}
+
+/** Paint `crumbs` ([{ label, href? }]) into `nav` (idempotent through a signature). Under two crumbs it hides. */
+export function paintCrumbs(nav, crumbs) {
+  if (!nav) return;
+  const sig = JSON.stringify(crumbs);
+  nav.hidden = crumbs.length < 2;
+  if (nav.dataset.sig === sig) return;
+  nav.dataset.sig = sig;
+  const doc = nav.ownerDocument;
+  const kids = [];
+  crumbs.forEach((c, i) => {
+    if (i) {
+      const s = doc.createElement('span');
+      s.className = 'rd-crumb-sep';
+      s.setAttribute('aria-hidden', 'true');
+      s.append(icon(doc, 'chevron', 12));
+      kids.push(s);
+    }
+    const last = i === crumbs.length - 1;
+    const e = doc.createElement(!last && c.href ? 'a' : 'span');
+    e.className = 'rd-crumb';
+    e.textContent = c.label;
+    e.title = c.label;
+    if (last) e.setAttribute('aria-current', 'page'); else if (c.href) e.setAttribute('href', c.href);
+    if (c.href === '#runs') e.dataset.crumb = 'runs';      // app.js routes it through goRunsList (no split restore)
+    kids.push(e);
+  });
+  nav.replaceChildren(...kids);
+}
+
+/** The facts block for a page built in JS (the group page). The run templates carry the same markup statically. */
+export function buildFacts(doc, rows) {
+  const dl = doc.createElement('dl');
+  dl.className = 'rd-kv';
+  for (const [key, label] of rows) {
+    const row = doc.createElement('div');
+    row.className = 'rd-kv-row';
+    row.dataset.fact = key;
+    row.hidden = true;
+    const dt = doc.createElement('dt');
+    dt.className = 'rd-kv-k';
+    dt.textContent = label;
+    const dd = doc.createElement('dd');
+    dd.className = 'rd-kv-v';
+    row.append(dt, dd);
+    dl.append(row);
+  }
+  return dl;
+}
+
+export const factRow = (kv, key) => (kv ? kv.querySelector(`:scope > .rd-kv-row[data-fact="${key}"]`) : null);
+
+/** A plain text value (the group page's rows). `label` renames the row (Feature / Chain / Group). */
+export function setFactText(kv, key, text, label = '') {
+  const row = factRow(kv, key);
+  if (!row) return;
+  if (label) row.querySelector('.rd-kv-k').textContent = label;
+  const v = row.querySelector('.rd-kv-v');
+  if (v.textContent !== text) v.textContent = text;
+}
+
+const filled = (dd) => [...dd.childNodes].some((n) => (n.nodeType === 3 ? n.data.trim() !== '' : n.nodeType === 1 && !n.hidden));
+/** Hide every row whose value holds no text and no shown element (the painters own the values). */
+export function syncFacts(kv) {
+  if (!kv) return;
+  for (const row of kv.querySelectorAll(':scope > .rd-kv-row')) row.hidden = !filled(row.querySelector('.rd-kv-v'));
+}

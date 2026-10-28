@@ -3,9 +3,10 @@
 // composer-ui): className, clipboard serialization, and cycle separators.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   logLineClass, logLineTime, logLineText, serializeLog, cycleSeparatorBefore, newCycleState,
-  projectLogRecord,
+  projectLogRecord, planApprovedLine,
 } from '../ui/public/log-line.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -187,4 +188,21 @@ test('projectLogRecord: keeps attribution axes, omits absent ones, preserves art
       assert.equal(rec.kind, 'deck');
     } },
   ]);
+});
+
+const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8')).plan.roleReviews;
+
+test('planApprovedLine: the plan receipt names the roles reviewed and the open issues accepted', () => {
+  assert.equal(planApprovedLine(RECORDED), 'Plan approved · 5 roles reviewed · 1 open issue accepted');
+  const clean = structuredClone(RECORDED);
+  for (const r of clean.rounds.at(-1).roles) for (const f of r.findings) { f.status = 'fixed'; f.fixedIn = 3; }
+  assert.equal(planApprovedLine(clean), 'Plan approved · 5 roles reviewed');
+  assert.equal(planApprovedLine(null), 'Plan approved');
+});
+
+test('projectLogRecord keeps a Bash description (desc) and leaves it absent otherwise', () => {
+  const rec = projectLogRecord({ source: 'implementer', level: 'debug', text: '→ Bash ls', ts: 't', desc: 'List files' });
+  assert.equal(rec.desc, 'List files');
+  assert.equal('desc' in projectLogRecord({ source: 's', level: 'info', text: 'x', ts: 't' }), false);
+  assert.equal('desc' in projectLogRecord({ source: 's', level: 'info', text: 'x', ts: 't', desc: '' }), false);
 });

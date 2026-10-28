@@ -1,6 +1,8 @@
 {
   "key": "reviewer",
   "metaVersion": 2,
+  "needsRepo": true,
+  "progressStage": "review",
   "mockRole": "reviewer",
   "promptHints": "Review the git diff of what was implemented against the plan.",
   "wantsRequest": true,

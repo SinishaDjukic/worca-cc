@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, openChat } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 
 function fakeVoiceFactory() {
@@ -125,11 +125,7 @@ function handlerFor(ref) {
 }
 
 async function openThread(ctx, index = 0) {
-  await ctx.tick();                                    // the History column has its rows (the first show loaded them)
-  ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[index].click();
-  await ctx.tick();
-  await ctx.tick();
-  ctx.flush();
+  await openChat(ctx, [TID, TID2][index]);
 }
 
 async function openWith(ref, overrides = {}) {
@@ -164,6 +160,7 @@ test('barge-in stops the live turn; the transcript is sent once the turn ends', 
   f.hooks.onTranscript('new question', { autoSend: true });
   await ctx.tick();
   assert.equal(posts(ctx, /\/messages$/).length, 0, 'nothing is sent while the stopped turn is still live');
+  assert.equal(ctx.doc.querySelectorAll('[data-ask-queue-item]').length, 1, 'the utterance waits in the queue');
   ctx.panel.pushServerFrame(done);
   await ctx.tick(); await ctx.tick();
   const sent = posts(ctx, /\/messages$/);

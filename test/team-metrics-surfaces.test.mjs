@@ -51,11 +51,11 @@ test('cell copy, actions and the Include my runs switch', () => {
   assert.ok(mineDel.querySelector('.tm-dot.grey'));
   assert.match(on.textContent, /On · since Sep 3 · 167 runs recorded/);
   const sw = on.querySelector('input.sw-input.tm-record');
-  assert.ok(sw && sw.checked); assert.equal(sw.nextElementSibling.className, 'switch switch-sm');
+  assert.ok(sw && sw.checked); assert.equal(sw.nextElementSibling.className, 'switch');
   assert.equal(on.querySelector('.tm-status').title, 'Disable for the whole team: git push origin --delete worca-metrics');
 
   const off = renderProjectTmCell({ ...base, enabled: false }, { doc });
-  assert.equal(off.querySelector('button.tm-enable').textContent, 'Set up team metrics…', 'the button names what it sets up');
+  assert.equal(off.querySelector('button.tm-enable').textContent, 'Set up metrics…', 'the button names what it sets up');
   assert.match(off.querySelector('.tm-status').textContent, /^Off · runs stay on this machine$/);
   assert.equal(off.querySelector('.tm-record'), null);
 
@@ -142,7 +142,7 @@ test('workspace card: one projects table (project · metrics branch · status), 
     [false, 'acme/billing', 'worca-metrics on acme/gateway', '–', ['✓ Project metrics']],
   ], 'home first (never the word "home" on the row), then members needing attention, routed last');
   assert.ok(!/\bhome\b/i.test(ok.querySelector('tr.ws-member.home').textContent), 'the home row is marked by the icon, not labelled');
-  assert.equal(ok.querySelector('.ws-tbl-actions button.ws-route').textContent, 'Route all to metrics home');
+  assert.equal(ok.querySelector('.ws-tbl-actions button.ws-route').textContent, 'Route all');
   assert.equal(ok.querySelector('.ws-tbl-actions button.ws-home-change').textContent, 'Change metrics home…');
   assert.ok(!ok.querySelector('.ws-home-hint'), 'a healthy home with "Include my runs" on needs no sentence');
 

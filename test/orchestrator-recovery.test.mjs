@@ -11,6 +11,7 @@ import { readPipelineForResume, reconcileStaleRunning } from '../src/core/artifa
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { NETWORK_ACTOR } from '../src/core/network-wait.mjs';
 import { limitResetAt } from '../src/core/recoverable-error.mjs';
 
 useTempHome(after);
@@ -619,3 +620,140 @@ test('a done row has NULL resume_point; crash -> reconcile -> resume continues f
     } },
   ]);
 });
+
+// ── Wait for the network (network-wait.mjs) ─────────────────────────────────
+// Each test injects the probe and a clock and pins the setting with env, so the
+// developer's real settings.json cannot flip it.
+const okProducer = async () => ({ status: 'ok', summary: 'done' });
+function fakeNetClock() {
+  let t = Date.parse('2026-10-17T08:00:00Z');
+  return { now: () => t, sleep: async (ms, signal) => { if (!signal?.aborted) t += ms; } };
+}
+/** A real-time clock with 5 ms sleeps that end early on an abort. */
+const shortClock = () => ({ now: Date.now, sleep: (ms, s) => new Promise((r) => { const t = setTimeout(r, 5); s?.addEventListener('abort', () => { clearTimeout(t); r(); }, { once: true }); }) });
+function withNetEnv(fn) {
+  return async () => {
+    const keep = { a: process.env.WORCA_NETWORK_WAIT, b: process.env.WORCA_NETWORK_WAIT_MAX_MS };
+    process.env.WORCA_NETWORK_WAIT = '1'; process.env.WORCA_NETWORK_WAIT_MAX_MS = '3600000';
+    try { await fn(); } finally {
+      for (const [k, v] of [['WORCA_NETWORK_WAIT', keep.a], ['WORCA_NETWORK_WAIT_MAX_MS', keep.b]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  };
+}
+
+test('auto + network down: waits for the endpoint, then retries and finishes — no pause', withNetEnv(async () => {
+  const dir = gitDir(); let calls = 0; let up = false; const probes = []; const byNode = new Map();
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    networkClock: fakeNetClock(),
+    networkProbe: async (origin) => { probes.push(origin); const r = up; if (probes.length >= 3) up = true; return r; },
+    runners: { producer: async (ctx) => { calls++; byNode.set(ctx.nodeId, (byNode.get(ctx.nodeId) || 0) + 1); if (calls === 1) throw NET_ERR(); return okProducer(ctx); }, verifier: okVerifier } });
+  const logs = []; orch.on('log', (l) => logs.push(l.text));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(Math.max(...byNode.values()), 2, 'one failure, one retry after the network came back');
+  assert.ok(probes.every((o) => o === 'https://api.anthropic.com'), 'the default route probes the Anthropic API origin');
+  assert.ok(logs.some((t) => /waiting for network… api\.anthropic\.com is unreachable/.test(t)));
+  assert.ok(logs.some((t) => /network back — retrying/.test(t)));
+  assert.equal(orch.getState().networkWait, null, 'the banner is gone');
+}));
+
+test('auto + endpoint reachable on the first probe: today\'s bounded retries, then a recoverable pause marked reachable', withNetEnv(async () => {
+  const dir = gitDir(); let calls = 0;
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    networkClock: fakeNetClock(), networkProbe: async () => true,
+    runners: { producer: async () => { calls++; throw NET_ERR(); }, verifier: okVerifier } });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused'); assert.equal(res.reason, 'recoverable');
+  assert.equal(calls, 4, 'unchanged: 1 try + 3 retries');
+  const rp = readPipelineForResume(orch.getState().id).resumePoint;
+  assert.equal(rp.pauseClass, 'network');
+  assert.equal(rp.network.reachable, true);
+  assert.equal(rp.runAuto, true, 'the --yes mode is kept for the watcher');
+}));
+
+test('auto + network never back: past the max wait the run pauses as today (recoverable, unreachable)', withNetEnv(async () => {
+  const dir = gitDir(); let calls = 0;
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    networkClock: fakeNetClock(), networkProbe: async () => false,
+    runners: { producer: async () => { calls++; throw NET_ERR(); }, verifier: okVerifier } });
+  const logs = []; orch.on('log', (l) => logs.push(l.text));
+  const res = await orch.run();
+  assert.equal(res.status, 'paused'); assert.equal(res.reason, 'recoverable');
+  assert.equal(calls, 1, 'no retry while the endpoint never answered');
+  assert.ok(logs.some((t) => /network still down after 1h 0m — pausing/.test(t)));
+  const rp = readPipelineForResume(orch.getState().id).resumePoint;
+  assert.equal(rp.network.reachable, false);
+  assert.equal(typeof rp.network.since, 'string');
+}));
+
+test('auto: a pause during the wait unwinds at once as the user\'s pause', withNetEnv(async () => {
+  const dir = gitDir(); let probes = 0;
+  let orch;
+  orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    networkClock: shortClock(),
+    networkProbe: async () => { if (++probes === 2) setImmediate(() => orch.pause('ada')); return false; },
+    runners: { producer: async () => { throw NET_ERR(); }, verifier: okVerifier } });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused');
+  assert.equal(res.reason ?? null, null, 'a manual pause: no reason, so the watcher never resumes it');
+}));
+
+test('auto: stop during the wait ends the run as stopped', withNetEnv(async () => {
+  const dir = gitDir(); let orch;
+  orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    networkClock: shortClock(),
+    networkProbe: async () => { setImmediate(() => orch.stop()); return false; },
+    runners: { producer: async () => { throw NET_ERR(); }, verifier: okVerifier } });
+  const res = await orch.run();
+  assert.equal(res.status, 'stopped');
+}));
+
+test('interactive + network down: the prompt opens at once with the note and answers Retry itself when the probe passes', withNetEnv(async () => {
+  const dir = gitDir(); let calls = 0; let probes = 0;
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', claude: { mock: true },
+    networkClock: fakeNetClock(), networkProbe: async () => ++probes >= 3,
+    runners: { producer: async (ctx) => { calls++; if (calls === 1) throw NET_ERR(); return okProducer(ctx); }, verifier: okVerifier } });
+  const recoveries = []; const auto = [];
+  orch.on('question', (q) => {
+    if (q.kind === 'recovery') recoveries.push(q);
+    else setImmediate(() => orch.answer(q.id, q.kind === 'gate' ? { decision: 'continue' } : { answers: [] }));
+  });
+  orch.on('recovery-auto', (e) => auto.push(e));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(recoveries.length, 1);
+  assert.equal(recoveries[0].recovery.network.host, 'api.anthropic.com');
+  assert.equal(typeof recoveries[0].recovery.network.until, 'string');
+  assert.deepEqual(auto.map((e) => e.decision), ['retry']);
+  assert.equal(orch.answeredBy(recoveries[0].id), NETWORK_ACTOR);
+}));
+
+test('interactive: the user picking Pause during the wait wins; nothing answers afterwards', withNetEnv(async () => {
+  const dir = gitDir(); const auto = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', claude: { mock: true },
+    networkClock: shortClock(),
+    networkProbe: async () => false,
+    runners: { producer: async () => { throw NET_ERR(); }, verifier: okVerifier } });
+  orch.on('question', (q) => {
+    if (q.kind === 'recovery') setTimeout(() => orch.answer(q.id, { decision: 'pause' }, 'ada'), 30);
+    else setImmediate(() => orch.answer(q.id, q.kind === 'gate' ? { decision: 'continue' } : { answers: [] }));
+  });
+  orch.on('recovery-auto', (e) => auto.push(e));
+  const res = await orch.run();
+  assert.equal(res.status, 'paused'); assert.equal(res.reason, 'error');
+  assert.deepEqual(auto, []);
+}));
+
+test('interactive + endpoint reachable: today\'s prompt, no note, no self-answer', withNetEnv(async () => {
+  const dir = gitDir(); let seen = null;
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', claude: { mock: true },
+    networkClock: fakeNetClock(), networkProbe: async () => true,
+    runners: { producer: async () => { throw NET_ERR(); }, verifier: okVerifier } });
+  orch.on('question', (q) => {
+    if (q.kind === 'recovery') { seen = q; setImmediate(() => orch.answer(q.id, { decision: 'pause' })); }
+    else setImmediate(() => orch.answer(q.id, q.kind === 'gate' ? { decision: 'continue' } : { answers: [] }));
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused');
+  assert.equal(seen.recovery.network, undefined);
+}));

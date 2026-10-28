@@ -17,7 +17,8 @@ import { viewerKindFor, BINARY_KINDS } from '../src/shared/artifact-kinds.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
 import { closeDb } from '../src/core/db.mjs';
 import { addProject } from '../src/core/projects.mjs';
-import { createThread, appendMessage, addAttachment } from '../src/core/ask/store.mjs';
+import { createThread, appendMessage, addAttachment, updateThread } from '../src/core/ask/store.mjs';
+import { scopeRefusalText } from '../src/core/ask/scope.mjs';
 import { GUARDRAIL_PRESETS } from '../src/core/guardrails.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { redactAskText } from '../src/core/ask/redact.mjs';
@@ -367,6 +368,7 @@ const fake = {
   },
   findPipelineRowById: (id) => [ROW_P, ROW_W, ROW_A, ROW_B, ROW_S].find((r) => r.id === id) ?? null,
   totalsFor: (row) => ({ cost: row.total_cost_usd > 0 ? row.total_cost_usd : (row.id === '8c3d12ab' ? 0.33 : null), active: null }),
+  runStatusLine: () => 'Ready to ship',
   readStoreMeta: (key) => (key === 'demo-00000001' ? { name: 'Demo' } : null),
   readDiffPatch: async (row) => diffs.get(row.id) ?? null,
   hasDiffPatch: async (row) => diffs.has(row.id),
@@ -404,6 +406,24 @@ test('list(): forty-five tools with JSON-Schema inputs', () => {
   }
   assert.deepEqual(tools.list().find((d) => d.name === 'get_run').inputSchema.required, ['id']);
   assert.deepEqual(tools.list().find((d) => d.name === 'propose_run').inputSchema.required, ['brief']);
+});
+
+test('Shaper tools: listed only with chatActions and a followed thread; the child\'s refusal is the model\'s result', async () => {
+  const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
+  const seen = [];
+  const shapeTools = (follows, verdict) => ({ follows: () => follows, check: (kind, input) => { seen.push([kind, input]); return verdict; } });
+  const on = { perspectiveKeys: PERSPECTIVE_KEYS, chatActions: {} };
+  const names = (deps) => createAskTools({ ...fake, ...deps }).list().map((d) => d.name).filter((n) => n === 'propose_changes' || n === 'route_message');
+  assert.deepEqual(names({ ...on, shapeTools: shapeTools(true, { ok: true }) }), ['propose_changes', 'route_message']);
+  assert.deepEqual(names({ ...on, shapeTools: shapeTools(false, { ok: true }) }), [], 'a thread that follows nothing');
+  assert.deepEqual(names({ perspectiveKeys: PERSPECTIVE_KEYS, shapeTools: shapeTools(true, { ok: true }) }), [], 'no chatActions bundle');
+  await assert.rejects(createAskTools({ ...fake, ...on }).call('propose_changes', { pipelineId: 'aaaa0001', request: 'x' }), /propose_changes: unavailable/);
+  const ok = await createAskTools({ ...fake, ...on, shapeTools: shapeTools(true, { ok: true }) }).call('propose_changes', { pipelineId: 'aaaa0001', request: 'make it blue' });
+  assert.deepEqual([ok.ok, ok.requested], [true, { kind: 'changes', pipelineId: 'aaaa0001', request: 'make it blue' }]);
+  const no = await createAskTools({ ...fake, ...on, shapeTools: shapeTools(true, { ok: false, error: 'the run is still going' }) })
+    .call('route_message', { featureId: 'f1', text: 'x', guess: 'add', reason: 'r' });
+  assert.deepEqual(no, { ok: false, error: 'the run is still going' });
+  assert.deepEqual(seen.at(-1), ['route', { featureId: 'f1', text: 'x', guess: 'add', reason: 'r' }]);
 });
 
 test('list_projects / list_workflows come from the shared catalog', async () => {
@@ -456,7 +476,7 @@ test('list_runs: scan limit, filters, newest-first, shape per target, limit clam
 test('get_run: scoped and key-less lookups, project and workspace shapes, archived flag', async () => {
   const p = await tools.call('get_run', { id: '4e1f2a9b', projectKey: 'demo-00000001' });
   assert.deepEqual(p, { id: '4e1f2a9b', title: 'Fix login', target: 'project', project: { key: 'demo-00000001', name: 'Demo' }, workspace: null,
-    status: 'done', phase: 'done', startedAt: ROW_P.started_at, updatedAt: ROW_P.updated_at, branch: 'worca-cc/fix-login-4e1f2a9b', sourceBranch: 'main',
+    status: 'done', phase: 'done', statusLine: 'Ready to ship', startedAt: ROW_P.started_at, updatedAt: ROW_P.updated_at, branch: 'worca-cc/fix-login-4e1f2a9b', sourceBranch: 'main',
     guardrailsId: 'normal', prompt: 'Fix the login bug', totalCostUsd: 1.25, hasDiff: true, archived: false, startedBy: null });
   assert.deepEqual(await tools.call('get_run', { id: '4e1f2a9b' }), p, 'key-less lookup finds the same row');
   const w = await tools.call('get_run', { id: '8c3d12ab', workspaceId: 'wks-team-0000abcd' });
@@ -906,6 +926,7 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   const other = createAskTools(defaultToolDeps({ threadId: otherThread.id }));
   await assert.rejects(() => other.call('read_attachment', { id: att.id }), { message: 'read_attachment: attachment not found' }, "another thread's attachment is invisible");
   await assert.rejects(() => other.call('read_attachment', { id: bin.id }), { message: 'read_attachment: attachment not found' }, "another thread's binary attachment is invisible");
+  updateThread(thread.id, { context: { pinned: true, projectKey: project.key } });   // P4: propose_run acts only in the chat's project
   const proposal = await real.call('propose_run', { projectKey: project.key, brief: 'Add a badge' });
   assert.equal(proposal.ok, true);
   assert.equal(proposal.card.projectKey, project.key);
@@ -1121,24 +1142,27 @@ test('#397: an unscoped run id tries the pinned scope first, then falls back eve
   await assert.rejects(t.call('get_run', { id: '4e1f2a9b', projectKey: 'other-00000003' }), /run not found/);
 });
 
-test('#397: propose_run defaults its target from the pin only when both keys are absent; a missing or failing pinnedScope dep means nothing pinned', async () => {
+test('#397/P4: propose_run takes the chat scope only when nothing is named; a target outside it is refused; no reader = no chat, a failing reader = No project', async () => {
   await checkRows([
     { name: '#397: propose_run defaults its target from the pin ONLY when both keys are absent', run: async () => {
       const t = createAskTools({ ...fake, pinnedScope: () => ({ projectKey: 'demo-00000001' }) });
       const r = await t.call('propose_run', { brief: 'x' });
       assert.equal(r.card.echoed.projectKey, 'demo-00000001', 'the pin fills the missing target');
       const r2 = await t.call('propose_run', { brief: 'x', workspaceId: 'wks-team-0000abcd' });
-      assert.equal(r2.card.echoed.projectKey, undefined, 'an explicit target is never overridden');
-      assert.equal(r2.card.echoed.workspaceId, 'wks-team-0000abcd');
+      assert.deepEqual(r2, { ok: false, errors: [scopeRefusalText({ projectKey: 'demo-00000001' }, { workspaceId: 'wks-team-0000abcd' })] });
       const tw = createAskTools({ ...fake, pinnedScope: () => ({ workspaceId: 'wks-team-0000abcd' }) });
       assert.deepEqual((await tw.call('propose_run', { brief: 'x' })).card.echoed.workspaceId, 'wks-team-0000abcd');
     } },
     { name: '#397: a missing or failing pinnedScope dep means "nothing pinned", never an error', run: async () => {
       const noDep = createAskTools(fake);   // the shared `fake` has no pinnedScope at all
-      assert.equal((await noDep.call('propose_run', { brief: 'x' })).card.echoed.projectKey, undefined);
+      const card = (await noDep.call('propose_run', { brief: 'x' })).card;
+      assert.equal(card.echoed.projectKey, undefined);
+      assert.equal(card.echoed.noProject, undefined, 'no chat: nothing filled');
       assert.equal((await noDep.call('get_run', { id: '4e1f2a9b' })).id, '4e1f2a9b');
       const throwing = createAskTools({ ...fake, pinnedScope: () => { throw new Error('db gone'); } });
-      assert.equal((await throwing.call('propose_run', { brief: 'x' })).card.echoed.projectKey, undefined);
+      const thrown = (await throwing.call('propose_run', { brief: 'x' })).card;
+      assert.equal(thrown.echoed.projectKey, undefined);
+      assert.equal(thrown.echoed.noProject, true, 'a failing reader is No project');
       assert.equal((await throwing.call('get_run', { id: '4e1f2a9b' })).id, '4e1f2a9b');
     } },
   ]);
@@ -1196,4 +1220,100 @@ test('isByteArtifact agrees with the shared artifact-kind table', () => {
   }
   assert.equal(isByteArtifact('Makefile'), false, 'no extension is not bytes');
   assert.equal(isByteArtifact('shots/S01.PNG'), true, 'the extension match is case-insensitive');
+});
+
+// ── Shape it first (spec D9, D12): propose_run's shape/assess fields ride the injected gate ──
+
+test('propose_run: shape and assess exist only with the perspective keys', async () => {
+  const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
+  const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
+  const today = schemaOf({});
+  assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'noProject', 'workflowId', 'presetId', 'brief', 'source', 'title', 'guardrailsId', 'tags', 'memoryScope',
+    'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
+    'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
+  assert.deepEqual(today.required, ['brief']);
+  await checkRows([
+    { name: 'empty perspectiveKeys: no shape fields', run: () => {
+      assert.deepEqual(schemaOf({ perspectiveKeys: [] }), today);
+    } },
+    { name: 'with perspectiveKeys: shape and assess, required unchanged', run: () => {
+      const s = schemaOf({ perspectiveKeys: PERSPECTIVE_KEYS });
+      assert.deepEqual(s.required, ['brief']);
+      assert.equal(s.additionalProperties, false);
+      const keys = Object.keys(s.properties);
+      assert.deepEqual(keys.slice(keys.indexOf('commentIds'), keys.indexOf('commentIds') + 3), ['commentIds', 'shape', 'assess'], 'right after commentIds');
+      assert.equal(s.properties.shape.additionalProperties, false);
+      assert.deepEqual(s.properties.shape.properties.perspectives.items.enum, [...PERSPECTIVE_KEYS]);
+      assert.deepEqual(s.properties.shape.properties.slices.enum, ['auto', 'off']);
+      assert.match(s.properties.shape.properties.slices.description, /2–5 sequential slices/);
+      assert.doesNotMatch(s.properties.shape.properties.slices.description, /not available yet/);
+      assert.match(s.properties.assess.description, /on every coding run; on a shaped run only `size` is read/);
+      assert.equal(s.properties.assess.additionalProperties, false);
+      assert.deepEqual(s.properties.assess.required, ['size', 'openDecisions']);
+      assert.deepEqual(s.properties.assess.properties.size.enum, ['small', 'medium', 'large']);
+      assert.equal(s.properties.assess.properties.openDecisions.maxItems, 6);
+      assert.deepEqual(s.properties.assess.properties.perspectives.items.enum, [...PERSPECTIVE_KEYS]);
+    } },
+    { name: 'defaultToolDeps carries the perspective keys', run: () => {
+      const d = defaultToolDeps({ threadId: null });
+      assert.ok(Array.isArray(d.perspectiveKeys) && d.perspectiveKeys.length > 0);
+      assert.deepEqual([...d.perspectiveKeys], [...PERSPECTIVE_KEYS]);
+    } },
+  ]);
+});
+
+test('an Ask chat with a composer bundle lists the drafts and the graph proposal right after its other tools — never the canvas tools', () => {
+  const names = createAskTools({ ...fake, composer: {} }).list().map((d) => d.name);
+  assert.deepEqual(names.slice(names.indexOf('get_task') + 1), ['build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow']);
+  for (const n of ['get_canvas', 'edit_canvas']) assert.equal(names.includes(n), false, n);
+  assert.ok(names.includes('propose_run') && names.includes('propose_workflow'), 'Ask keeps its own proposals');
+});
+
+test('P3: propose_run { noProject: true } never takes the pinned scope', async () => {
+  const t = createAskTools({ ...fake, pinnedScope: () => ({ projectKey: 'demo-00000001' }) });
+  const r = await t.call('propose_run', { noProject: true, brief: 'x' });
+  assert.equal('projectKey' in r.card.echoed, false, 'the pin is not filled');
+  assert.equal('workspaceId' in r.card.echoed, false);
+  assert.equal(r.card.echoed.noProject, true);
+  const tw = createAskTools({ ...fake, pinnedScope: () => ({ workspaceId: 'wks-team-0000abcd' }) });
+  assert.equal('workspaceId' in (await tw.call('propose_run', { noProject: true, brief: 'x' })).card.echoed, false);
+  const schema = t.list().find((d) => d.name === 'propose_run');
+  assert.equal(schema.inputSchema.properties.noProject.type, 'boolean');
+  assert.match(schema.description, /Exactly one of projectKey \/ workspaceId \/ noProject: true \(a run with no project works in its own empty folder: its files are the result; no git, branch or pull request; it cannot be scheduled or chained yet\); omitting all three targets /);   // P4 Task 4 rewrites the rest of the sentence
+});
+
+test('P3: propose_run { noProject: true } refuses known diff comments (they belong to a project); unknown ids stay tolerated', async () => {
+  const t = createAskTools({
+    ...fake,
+    validateProposal: async () => ({ ok: true, card: { target: 'none', projectKey: null, workspaceId: null } }),
+    comments: { get: (id) => (id === 'dc_1a2b3c4d' ? { id, storeKey: 'demo-00000001' } : null) },
+  });
+  assert.deepEqual(await t.call('propose_run', { noProject: true, brief: 'b', commentIds: ['dc_1a2b3c4d', 'dc_deadbeef'] }),
+    { ok: false, errors: ['a run without a project cannot address diff comments: dc_1a2b3c4d — propose it on the project those comments belong to'] });
+  assert.equal((await t.call('propose_run', { noProject: true, brief: 'b', commentIds: ['dc_deadbeef'] })).ok, true);
+});
+
+test('P3: get_run and list_runs name a run without a project target "none", with no project key to copy into propose_run', async () => {
+  const ROW_N = { ...ROW_P, id: 'dddddddd', project_key: 'no-project-00000000', title: 'Q3 deck', branch: JSON.stringify({ workMode: 'none', runRootMode: 'detached' }) };
+  const LITE_N = { ...LITE[1], id: 'dddddddd', title: 'Q3 deck', branch: null, sourceBranch: null, projectKey: 'no-project-00000000', projectName: 'No project', projectDir: '/h/runs/dddddddd/work' };
+  const t = createAskTools({ ...fake, findPipelineRowById: (id) => (id === 'dddddddd' ? ROW_N : fake.findPipelineRowById(id)), listAllPipelines: async () => [LITE_N, ...LITE] });
+  const g = await t.call('get_run', { id: 'dddddddd' });
+  assert.deepEqual([g.target, g.project, g.workspace, g.branch], ['none', null, null, null]);
+  const [l] = await t.call('list_runs', {});
+  assert.deepEqual(l, { id: 'dddddddd', title: 'Q3 deck', target: 'none', status: 'done', startedAt: ROW_P.started_at, updatedAt: '2026-08-20T10:00:00.000Z',
+    branch: null, sourceBranch: null, guardrailsId: 'normal', totalCostUsd: 1.25, startedBy: null });
+  assert.deepEqual((await t.call('list_runs', { projectKey: 'no-project-00000000' })).map((r) => r.id), ['dddddddd'], 'the store key still filters');
+});
+
+test('show_files: gated by deps.showFiles; validates counts; hands rows through resolveRow', async () => {
+  assert.equal(createAskTools(fake).list().some((t) => t.name === 'show_files'), false, 'no bundle, no tool');
+  const calls = [];
+  const t = createAskTools({ ...fake, showFiles: { show: async (req) => { calls.push(req); await req.rowFor('r_missing').catch((e) => calls.push(e.message)); return { ok: true, items: [] }; } } });
+  const def = t.list().find((d) => d.name === 'show_files');
+  assert.ok(def && def.inputSchema.additionalProperties === false && def.description.length > 20);
+  await assert.rejects(t.call('show_files', {}), /at least one/);
+  await assert.rejects(t.call('show_files', { attachmentIds: Array.from({ length: 13 }, (_, i) => `att_${i}`) }), /at most 12/);
+  await t.call('show_files', { files: [{ path: '$WORCA_ASK_OUT/a.png' }], caption: 'Home' });
+  assert.equal(calls[0].caption, 'Home');
+  assert.match(calls[1], /show_files: run not found/);
 });

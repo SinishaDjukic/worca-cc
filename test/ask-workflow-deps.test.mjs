@@ -266,3 +266,10 @@ test('limits: the two propose_workflow caps exist (the task cap equals the class
   assert.equal(ASK_LIMITS.workflowTaskMaxChars, TASK_TEXT_CAP);
   assert.equal(ASK_LIMITS.workflowNoteMaxChars, 200);
 });
+
+test('workflowEventPrompt: a graph card proposed with nothing pinned names no target', () => {
+  assert.equal(workflowEventPrompt({ cardId: 'card_0000aa01', state: 'saved', workflowId: 'wf_g', name: 'G', thenRun: true }),
+    '[worca event] workflow card card_0000aa01 saved as wf_g "G"; thenRun=true; no target');
+  assert.equal(workflowEventPrompt({ cardId: 'card_0000aa01', state: 'declined' }), '[worca event] workflow card card_0000aa01 declined; no target');
+  assert.equal(workflowEventPrompt({ cardId: 'card_0000aa01', state: 'declined', projectKey: 'p-1' }), '[worca event] workflow card card_0000aa01 declined; project=p-1');
+});

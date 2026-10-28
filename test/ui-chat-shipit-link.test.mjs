@@ -102,7 +102,7 @@ test('the pull-request card opens Ship it over the chat; the PR body carries the
   assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body),
     { projectDir: '/tmp/proj', projectKey: KEY, id: A, askThreadId: 'ask_aaaaaaaa', askCardId: 'card_0000aaaa', pushRemote: 'origin', baseRemote: 'origin', baseBranch: 'feat/log-ux' });
   assert.equal(modalOf(ctx.window).classList.contains('hidden'), true);
-  assert.deepEqual(said, ['Pull request opened'], 'the opener resolved {opened:true}');
+  assert.deepEqual(said, ['PR created'], 'the opener resolved {opened:true}');
   assert.equal(el.querySelector('[data-chat-pr-create]').disabled, true);
 });
 
@@ -185,7 +185,7 @@ test('a workspace run from the chat: every member PR carries the ask link; the o
   assert.deepEqual(prPosts(ctx).map((c) => JSON.parse(c.opts.body)).map((b) => [b.memberKey, b.askThreadId, b.askCardId]),
     [[API, 'ask_aaaaaaaa', 'card_0000bbbb'], [WEB, 'ask_aaaaaaaa', 'card_0000bbbb']]);
   assert.equal(modalOf(ctx.window).classList.contains('hidden'), true);
-  assert.deepEqual(said, ['Pull request opened'], 'the opener resolved {opened:true}');
+  assert.deepEqual(said, ['PR created'], 'the opener resolved {opened:true}');
   assert.equal(el.querySelector('[data-chat-pr-create]').disabled, true);
 });
 
@@ -199,7 +199,7 @@ test('Ship it already open (History\'s own): the card says so and offers Create 
   const el = await prCard(ctx.window, B, []);
   click(ctx.window, el.querySelector('[data-chat-pr-create]'));
   await settle(10);
-  assert.equal(el.querySelector('.ask-card-err').textContent, 'The Ship it dialog is already open.');
+  assert.equal(el.querySelector('.ask-card-err').textContent, 'The Create PR dialog is already open.');
   assert.equal(el.querySelector('[data-chat-pr-create]').disabled, false);
 });
 
@@ -269,7 +269,7 @@ test('a lookup still out when the wait ends: the card says "still checking" and 
     assert.equal(modalOf(ctx.window).classList.contains('hidden'), true);
     Date.now = () => realNow() + 20000;                    // past HISTORY_PR_TIMEOUT_MS + 1 s; History's own watchdog (a real timer) has not fired
     await until(() => el.querySelector('.ask-card-err').textContent);
-    assert.equal(el.querySelector('.ask-card-err').textContent, "Still checking this run's pull requests — try again in a moment.");
+    assert.equal(el.querySelector('.ask-card-err').textContent, "Still checking this run's pull requests. Try again in a moment.");
     assert.equal(modalOf(ctx.window).classList.contains('hidden'), true);
     assert.equal(prPosts(ctx).length, 0);
   } finally { Date.now = realNow; }

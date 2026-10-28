@@ -129,6 +129,19 @@ test('measured from the recorded remote tip: 2 behind at start + 1 new upstream 
   assert.equal((await r.json()).members[0].movedBy, 1);
 });
 
+test('a remote-tracking source (origin/dev, as the Ask agent starts runs) is measured as dev on origin', async () => {
+  const w = await world();
+  const start = w.sha('dev');
+  const { id } = await paused(w.a, { source: 'origin/dev', feature: 'worca/f5', baseSha: start });
+  await w.push(2);
+  const r = await resume({ pipelineId: id, baseCheck: true });
+  assert.equal(r.status, 409);
+  const j = await r.json();
+  assert.equal(j.code, 'base-moved');
+  assert.deepEqual([j.members[0].base, j.members[0].movedBy], ['dev', 2]);
+  runs.clear();
+});
+
 test('a memory-defrag run with baseCheck: no fetch, no 409', async () => {
   const w = await world();
   const start = w.sha('dev');

@@ -1,5 +1,5 @@
 // src/shared/graph/validate.mjs
-// THE authority on v2 graph legality (base spec §2, V1-V22; V22 (script config)
+// THE authority on v2 graph legality (base spec §2, V1-V24; V22 (script config)
 // reuses the number the retired single-wire rule freed). Server save (422), plugin import, the composer's
 // live report, the run-time check and the seed drift guard all come through
 // here, so it is pure, never throws on a malformed template, and every lookup
@@ -18,7 +18,8 @@ const AWAIT_PORT_ID = 'await';
  *  would warn on the task node and an agent-only `awaitAll` would pass silently
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
-  agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort']),
+  agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort',
+    'approve', 'maxQuestions', 'promptHints', 'roleReview']),
   script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock', 'paramsPort']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
@@ -26,7 +27,7 @@ const KNOWN_CONFIG = {
   combine: new Set(['arity']),
   end: new Set(),
 };
-const KNOWN_WIRE_CONFIG = new Set(['maxCycles']);
+const KNOWN_WIRE_CONFIG = new Set(['maxCycles', 'onExhausted']);
 
 /** The per-node AGENT tunables (the defaults/overrides vocabulary) — the single
  *  source for every writer that splits tunables from topology keys
@@ -564,6 +565,41 @@ export const RULES = [
         // v4 T3: a timer delay past 2^31-1 ms fires after ONE millisecond — the card would be killed at once.
         add(`script node '${n.id}' timeoutMs must be at most ${MAX_TIMEOUT_MS} ms (24 h) (got ${cfg.timeoutMs})`, { nodeId: n.id });
       }
+    }
+  } },
+
+  // Shape it first (spec D2/D3): the node approval stop and the Clarify cap. `approve` must name an md OUTPUT of
+  // the node (the held file); maxQuestions is 1..8 (the protocol cap); promptHints is a string.
+  { code: 'V23', level: 'E', check({ nodes, metaOf, outputsOf }, add) {
+    for (const n of nodes) {
+      if (n.kind !== 'agent' || !isObject(n.config)) continue;
+      const { approve, maxQuestions, promptHints } = n.config;
+      if (approve !== undefined) {
+        if (!isObject(approve) || approve.kind !== 'plan' || typeof approve.port !== 'string' || !approve.port) {
+          add(`node '${n.id}' config.approve must be { kind: 'plan', port: '<output port>' }`, { nodeId: n.id });
+        } else if (metaOf(n.id) && !outputsOf(n.id).some((p) => p && p.id === approve.port && p.type === 'md')) {
+          add(`node '${n.id}' config.approve.port '${approve.port}' is not an md output of this agent`, { nodeId: n.id });
+        }
+      }
+      if (maxQuestions !== undefined && !(Number.isInteger(maxQuestions) && maxQuestions >= 1 && maxQuestions <= 8)) {
+        add(`node '${n.id}' config.maxQuestions must be an integer from 1 to 8`, { nodeId: n.id });
+      }
+      if (promptHints !== undefined && typeof promptHints !== 'string') {
+        add(`node '${n.id}' config.promptHints must be a string`, { nodeId: n.id });
+      }
+    }
+  } },
+
+  // Role reviews (spec §3): what a spent loop wire does. 'gate' (the default) asks the person; 'clean' sends the
+  // source's clean output on with the open issues. Loop wires only, like maxCycles (V13).
+  { code: 'V24', level: 'E', check({ wires, loopWireIds }, add) {
+    for (const w of wires) {
+      const mode = w?.config?.onExhausted;
+      if (mode === undefined) continue;
+      if (mode !== 'clean' && mode !== 'gate') {
+        add(`wire '${w.id}' onExhausted must be 'clean' or 'gate' (got ${JSON.stringify(mode)})`, { wireId: w.id });
+      }
+      if (!loopWireIds.has(w.id)) add(`wire '${w.id}' carries onExhausted but is not a loop wire`, { wireId: w.id });
     }
   } },
 ];

@@ -25,7 +25,7 @@ export function appendWithPageLinks(doc, el, text, extra = []) {
 /** The project's own Actions tab, where its setup and actions are edited. */
 export const projectActionsHref = (key) => `#projects/${encodeURIComponent(key)}/actions`;
 // `tip`: what the button does, on hover (every command on the Actions surfaces says it).
-const btn = (doc, label, cls, onClick, tip) => { const b = h(doc, 'button', `btn ${cls || 'btn-ghost'} btn-mini`, label); b.type = 'button'; if (tip) b.title = tip; if (onClick) b.addEventListener('click', onClick); return b; };
+const btn = (doc, label, cls, onClick, tip) => { const b = h(doc, 'button', `btn ${cls ? `${cls} ` : ''}btn-sm`, label); b.type = 'button'; if (tip) b.title = tip; if (onClick) b.addEventListener('click', onClick); return b; };
 /** Hover text of a built-in: what it opens, and where. */
 const builtinTip = (key, label, where = 'the checkout') => (key === 'editor' ? `Open ${where} in ${label}`
   : key === 'terminal' ? `Open ${label} in ${where}` : key === 'fileManager' ? `Show ${where} in ${label}` : label);
@@ -126,7 +126,7 @@ function stopButton(doc, label, onClick) {
   return b;
 }
 function copyIconButton(doc, label, onClick) {
-  const b = h(doc, 'button', 'act-copy');
+  const b = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon act-copy');
   b.type = 'button';
   b.setAttribute('aria-label', label);
   b.title = label;
@@ -178,10 +178,12 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
   const copyBtn = () => (m.copyCommand ? btn(doc, 'Copy command', null, () => handlers.onCopy?.(m.copyCommand),
     'Copy the git commands that put this branch in your own clone') : null);
   const discardBtn = () => (m.checkout?.external
-    ? btn(doc, 'Unlink', 'btn-ghost act-discard', () => handlers.onUnlink?.(m.projectKey),
+    ? btn(doc, 'Unlink', 'btn act-discard', () => handlers.onUnlink?.(m.projectKey),
       'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
-    : btn(doc, 'Discard', 'btn-ghost act-discard', () => handlers.onDiscard?.([m.projectKey]),
+    : btn(doc, 'Discard', 'btn act-discard', () => handlers.onDiscard?.([m.projectKey]),
       'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.'));
+  const diffBtn = () => btn(doc, 'Download patch', 'btn act-diff', (e) => handlers.onDiff?.(m.projectKey, e.currentTarget),
+    'Download a patch of the folder\'s uncommitted changes. Read-only: nothing in the folder is staged or changed.');
   // The note under the row names the apps a click opens and where they are changed (Settings › Runs › Actions).
   // An app that is not there is simply not mentioned: no nagging on every run (the Settings card says it).
   // `lead` comes first in the same note (before Check out: what waits for it, which already names the buttons).
@@ -256,6 +258,7 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
       row.append(btn(doc, b.label, null, () => handlers.onBuiltin?.(m.projectKey, b.key), builtinTip(b.key, b.label, m.checkout?.external ? 'your folder' : 'the checkout')));
     }
   } else { const c = copyBtn(); if (c) row.append(c); }
+  if (handlers.onDiff) row.append(diffBtn());
   row.append(discardBtn());
   sec.append(row);
   // The notes under the row sit together as one block (not paragraphs with their own margins).
@@ -355,17 +358,22 @@ export function renderOverviewStrip(model, { doc, handlers = {} } = {}) {
   return row;
 }
 
-/** Ship It "Try it first": Check out, or Open :port / actions / Editor / Stop. Never blocks the dialog. */
-export function renderShipItStrip(model, { doc, handlers = {} } = {}) {
-  if (!model) return null;
+/** What the Create PR dialog's "Try it first" shows: 'checkout' (the footer button), 'strip' (the branch is checked
+ *  out: Open :port, actions, Stop) or null (no branch, or the run is not finished). */
+export function shipItTryState(model) {
+  if (!model || model.finished === false) return null;
   const m = (model.members || []).find((x) => x.branch);
-  if (!m || model.finished === false) return null;
+  if (!m) return null;
+  return m.checkout ? 'strip' : 'checkout';
+}
+
+/** The Create PR dialog's "Try it first" strip once the branch is checked out: Open :port / actions / Editor / Stop.
+ *  Never blocks the dialog. */
+export function renderShipItStrip(model, { doc, handlers = {} } = {}) {
+  if (shipItTryState(model) !== 'strip') return null;
+  const m = model.members.find((x) => x.branch);
   const row = h(doc, 'div', 'act-row act-shipit');
   row.append(h(doc, 'span', 'act-label', 'Try it first'));
-  if (!m.checkout) {
-    row.append(btn(doc, 'Check out', 'btn-primary', () => handlers.onCheckout?.(model.workspace ? undefined : [m.projectKey]), 'Put this run\'s branch in a folder of its own, to try it before you open the PR'));
-    return row;
-  }
   const mine = instancesOf(model, m.projectKey);
   const live = activeService(mine);
   if (live) {
@@ -432,8 +440,27 @@ export function historyActionBadges(p, running) {
   return out;
 }
 
+/**
+ * Discard (Worca's own checkout) or Unlink (a linked folder): the Actions tab's confirm copy and DELETE,
+ * shared with the summary card's Simple checkout row (app.js) so both say and do exactly the same. A Discard whose
+ * snapshot fails asks again before forcing. Resolves the last `api` answer, or null when the person cancelled.
+ */
+export async function releaseCheckout({ api, url, members, external = false, dir = '', confirm }) {
+  if (external) {
+    if (!(await confirm({ title: 'Stop using this folder?', message: ['Running services stop first. ', { strong: dir || 'the folder' }, ' stays exactly as it is.'], confirmLabel: 'Unlink' }))) return null;
+    return api('DELETE', url, { members });
+  }
+  if (!(await confirm({ title: 'Discard the checkout?', message: 'Running services stop first. Uncommitted changes are saved as a patch in the run\'s files.', danger: true, confirmLabel: 'Discard' }))) return null;
+  let r = await api('DELETE', url, { members });
+  if (!r.ok && r.data?.code === 'SNAPSHOT_FAILED') {
+    if (!(await confirm({ title: 'Saving the uncommitted changes failed', message: 'Discard anyway? Uncommitted changes in the checkout will be lost.', danger: true, confirmLabel: 'Discard anyway' }))) return null;
+    r = await api('DELETE', url, { members, force: true });
+  }
+  return r;
+}
+
 /** The live Actions tab: fetches the run model, renders the card, follows action-* frames. */
-export function createActionsController({ runId, scopeQuery, api, ws, host, doc, confirm, navigate, onModel }) {
+export function createActionsController({ runId, scopeQuery, api, ws, host, doc, confirm, navigate, onModel, downloadPatch }) {
   const st = { model: null, dead: false, lastSeq: new Map(), logs: new Map(), queued: new Set(), subscribed: new Set(), notice: null };
   const base = `/api/runs/${encodeURIComponent(runId)}`;
   const q = scopeQuery ? `?${scopeQuery}` : '';
@@ -479,6 +506,9 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
     if (!r.ok) return fail(r);
     st.notice = null; await refresh(); return r;
   };
+  // What a Discard / Unlink did, said in the card (the words the summary card's toast used).
+  const released = (external, r) => ({ kind: 'ok', text: external ? 'Folder unlinked. The folder stays as it was.'
+    : `Checkout discarded. ${(r.data?.patches || []).length ? 'Uncommitted changes were saved as a patch in the run\'s files.' : 'Nothing uncommitted needed saving.'}` });
 
   const handlers = {
     onCheckout: async (members) => after(await api('POST', `${base}/checkout${q}`, members ? { members } : {})),
@@ -495,19 +525,21 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
     },
     onUnlink: async (member) => {
       const m = (st.model?.members || []).find((x) => x.projectKey === member);
-      const dir = m?.checkout?.worktreeDir || 'the folder';
-      if (!(await confirm({ title: 'Stop using this folder?', message: ['Running services stop first. ', { strong: dir }, ' stays exactly as it is.'], confirmLabel: 'Unlink' }))) return;
-      await after(await api('DELETE', `${base}/checkout${q}`, { members: [member] }));
+      const r = await releaseCheckout({ api, url: `${base}/checkout${q}`, members: [member], external: true,
+        dir: m?.checkout?.worktreeDir || 'the folder', confirm });
+      if (r && (await after(r))?.ok) { st.notice = released(true, r); render(); }
     },
     onDiscard: async (members) => {
-      if (!(await confirm({ title: 'Discard the checkout?', message: 'Running services stop first. Uncommitted changes are saved as a patch in the run\'s files.', danger: true, confirmLabel: 'Discard' }))) return;
-      let r = await api('DELETE', `${base}/checkout${q}`, { members });
-      if (!r.ok && r.data?.code === 'SNAPSHOT_FAILED') {
-        if (!(await confirm({ title: 'Saving the uncommitted changes failed', message: 'Discard anyway? Uncommitted changes in the checkout will be lost.', danger: true, confirmLabel: 'Discard anyway' }))) return;
-        r = await api('DELETE', `${base}/checkout${q}`, { members, force: true });
-      }
-      await after(r);
+      const r = await releaseCheckout({ api, url: `${base}/checkout${q}`, members, confirm });
+      if (r && (await after(r))?.ok) { st.notice = released(false, r); render(); }
     },
+    // Download patch: a read-only patch of the checkout's uncommitted changes. The page fetches and saves it.
+    ...(downloadPatch ? { onDiff: async (member, btnEl) => {
+      const m = (st.model?.members || []).find((x) => x.projectKey === member);
+      const qs = new URLSearchParams(scopeQuery || '');
+      if (member) qs.set('member', member);
+      await downloadPatch({ url: `${base}/checkout/diff?${qs}`, branch: m?.branch || runId, btn: btnEl });
+    } } : {}),
     onStart: async (member, actionId) => {
       const r = await api('POST', `${base}/actions/${encodeURIComponent(actionId)}/start${q}`, { member });
       if (!r.ok) return fail(r);

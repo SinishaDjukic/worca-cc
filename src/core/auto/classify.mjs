@@ -7,7 +7,7 @@
 // mode answers from recipes.mjs without spawning.
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
-import { resolveModelEnv, resolveModelCost, modelCostConfig } from '../config.mjs';
+import { resolveModelEnv, resolveModelCost, modelCostConfig, estimateCost } from '../config.mjs';
 import { modelFacts, factsBrief, contextText, MODEL_PICK_POLICY } from '../model-tiers.mjs';
 import { bridgeCostFor, forgetBridgeTag } from '../bridge/telemetry.mjs';
 import { safeParseJson } from '../protocol.mjs';
@@ -297,7 +297,7 @@ export async function classifyTask(input, deps = {}) {
   const {
     taskText = '', extras = [], fingerprint = '', models = [], humanInLoop = true, feedback = [], priorShape = null, registry = {}, domain = null, requireModel = false,
     model, modelEnv, engine, cwd = process.cwd(), bin, mock = false, signal, envScrub, envAllowlist, maxAttempts = 2, repoLook: lookAsked = false, timeoutMs, bridgeTag = null,
-    workspace = null, addDirs = [],
+    workspace = null, addDirs = [], askLockdown = false, rates = null,
   } = input || {};
   // The repo look is Claude's Read/Grep/Glob. On codex the classifier is a read-only spawn with its shell off
   // (codex.mjs CODEX_SHELL_OFF): it looks through worca's own read_file/grep/glob over the checkout instead
@@ -340,7 +340,9 @@ export async function classifyTask(input, deps = {}) {
     try {
       const res = await run({
         cwd, systemPrompt, prompt, model, modelEnv: onClaude ? (modelEnv ?? resolveModelEnv(model, { tag: bridgeTag || undefined })) : undefined,
-        ...(onClaude ? {} : { engine, sandbox: 'read-only', ...(mcpConfigPath ? { mcpConfigPath } : {}) }),
+        // A locked-down chat's classifier (ask/workflow-deps.mjs) runs on that chat's engine through the chat's own
+        // lockdown with no MCP server (askLockdown): text only, no read-only helper mode needed.
+        ...(onClaude ? {} : { engine, sandbox: 'read-only', ...(askLockdown ? { askLockdown: true } : {}), ...(mcpConfigPath ? { mcpConfigPath } : {}) }),
         effort: 'medium', permissionMode: 'acceptEdits',
         // Text-only: no built-in tools at all. Repo look: the three read-only tools, hard-capped
         // by --max-turns (the prompt budget is smaller, so a normal reply lands first).
@@ -348,7 +350,7 @@ export async function classifyTask(input, deps = {}) {
         ...(repoLook ? { maxTurns: REPO_LOOK_MAX_TURNS } : {}),
         // Legacy-mode workspace: the non-primary worktrees (on another engine they are file-tool roots above, never writable dirs).
         ...(repoLook && onClaude && addDirs.length ? { addDirs: [...addDirs] } : {}),
-        signal: ctrl.signal, bin, mock, envScrub, envAllowlist,
+        signal: ctrl.signal, bin, mock, envScrub: askLockdown && !onClaude ? true : envScrub, envAllowlist,
         onEvent: normalizingOnEvent((e) => {
           // ONLY the terminal `result` event is booked: its `usage` is the whole call
           // (per-message usage arrives separately), and it carries the cost — so cost
@@ -362,6 +364,8 @@ export async function classifyTask(input, deps = {}) {
             usage.input_tokens += Number(u.input_tokens) || 0;
             usage.output_tokens += Number(u.output_tokens) || 0;
           }
+          // A locked-down chat's engine that reports no cost: priced from its tokens with the chat's rates (chat-price.mjs).
+          if (e.costUsd == null && rates && u) { const c = estimateCost(u, rates); if (Number.isFinite(c)) costUsd += c; return; }
           if (e.costUsd == null) return;
           const up = bridgeTag ? bridgeCostFor(bridgeTag) : null;   // a bridged model: the upstream's own figure wins
           if (up) forgetBridgeTag(bridgeTag);

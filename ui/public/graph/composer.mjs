@@ -15,6 +15,7 @@ import { renderNodeInspector, renderWireInspector, renderEmptyInspector, stripLe
 import { paramEditorHook } from '../script-forms.mjs';
 import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
 import { withButton, fieldError, clearFieldErrors, cardAlert } from '../feedback.mjs';
+import { guardModal } from '../modal-guard.mjs';
 import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap }
   from '../../../src/shared/graph/geometry.mjs';
 import { hitRoute } from '../../../src/shared/graph/route.mjs';
@@ -35,7 +36,7 @@ export const UNDO_LIMIT = 50;
 export const RESERVED_WORKFLOW_ID = 'wf_default';
 /** Every built-in the server lists and refuses to delete: wf_default + the Memory defragment
  *  workflow. Both open read-only here (Save is Save-a-copy). wf_auto never reaches the composer. */
-export const RESERVED_WORKFLOW_IDS = new Set([RESERVED_WORKFLOW_ID, 'wf_memory_defrag']);
+export const RESERVED_WORKFLOW_IDS = new Set([RESERVED_WORKFLOW_ID, 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']);
 export const isReservedWorkflowId = (id) => RESERVED_WORKFLOW_IDS.has(id);
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -214,6 +215,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       hostEls.saveBtn.title = tip;
     }
     if (hostEls.saveWrap) hostEls.saveWrap.title = tip;
+    if (hostEls.saveReason) {
+      hostEls.saveReason.textContent = tip;
+      hostEls.saveReason.hidden = !tip;
+    }
     if (hostEls.errors) {
       const pristine = isPristine();
       const quiet = !real && todo > 0 && !pristine;
@@ -225,7 +230,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
         ? `${real} error${real === 1 ? '' : 's'}`
         : quiet ? `${todo} port${todo === 1 ? '' : 's'} to wire`
           : warned ? `${warn} warning${warn === 1 ? '' : 's'}` : '';
-      hostEls.errors.setAttribute('aria-label', hostEls.errors.hidden ? '' : `${hostEls.errors.textContent} — show the first one`);
+      hostEls.errors.setAttribute('aria-label', hostEls.errors.hidden ? '' : `${hostEls.errors.textContent}. Show the first one`);
     }
   }
 
@@ -500,13 +505,17 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     // `aria-modal`, not `role="dialog"`: the Ask Worca sheet (ask-panel.mjs:206) is a
     // role="dialog" DOCKED panel that stays open while the canvas is used — it must
     // never own the canvas keyboard. Every app overlay declares aria-modal="true".
-    return Boolean(doc.querySelector('[aria-modal="true"]:not(.hidden):not([hidden])'));
+    // A hidden ANCESTOR counts too: the Marketplace sheet hides its host, not the aria-modal panel inside it.
+    return [...doc.querySelectorAll('[aria-modal="true"]')].some((m) => !m.closest('.hidden, [hidden]'));
   }
 
   function onKeyDown(ev) {
     if (ev.key === 'Tab') { insTab = ev.shiftKey ? -1 : 1; setTimeout(() => { insTab = 0; }, 0); }   // see paintInspector
     if (ev.defaultPrevented) return;              // a menu/popover already handled it
     if (modalUp()) return;                        // a modal owns the keyboard — never the canvas
+    // An Escape something else already used — modal-guard closing the pop-up on top, which it does BEFORE
+    // this listener runs, so modalUp() no longer sees that pop-up — is not the canvas's to act on too.
+    if (ev.key === 'Escape' && ev.defaultPrevented) return;
     if (isTyping(ev.target)) return;              // guard FIRST — before space, before anything
     // ⌘Z / ⇧⌘Z still reach the canvas from a fenced BUTTON (Save, Auto-layout, a Library row, a chat card): a pointer
     // click focuses it, and undo is the one key with no other meaning there. Fields stay theirs (isTyping, above).
@@ -806,7 +815,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       domain: tpl.domain || '', domains: savedDomains,
       title: mode.copy ? 'Save a copy' : 'Save pipeline',
       note: mode.plugin
-        ? `This pipeline belongs to plugin "${mode.plugin}" and is replaced on plugin update — saving creates your own copy.`
+        ? `This pipeline belongs to plugin "${mode.plugin}" and is replaced on plugin update. Saving creates your own copy.`
         : '',
       doc,
     });
@@ -814,9 +823,13 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     dialog.dataset.saveAs = mode.copy ? '1' : '';
     dialog.querySelector('.sd-actions').dataset.cardActions = '';   // a refusal's cardAlert lands above it
     hostEls.dialogHost.replaceChildren(dialog);
-    dialog.querySelector('.sd-cancel').addEventListener('click', () => closeDialog(dialog));
+    // A form: Escape (or the browser's own close request) asks once the name or domain changed, a backdrop
+    // click never closes it, Cancel closes at once. modal-guard's question opens in the top layer above it.
+    const guard = guardModal(dialog, { kind: 'form', close: () => closeDialog(dialog) });
+    dialog.querySelector('.sd-cancel').addEventListener('click', () => guard.cancel());
     dialog.querySelector('.sd-confirm').addEventListener('click', () => { confirmSave(); });
     openDialog(dialog);
+    guard.opened();
     return dialog;
   }
 
@@ -1013,7 +1026,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const r = applyCanvasOps(tpl, ops, { portsFn });
     if (!r.ok) return r;
     const broke = newRealErrors(validateGraph(tpl, portsFn), validateGraph(r.tpl, portsFn));
-    if (broke.length) return { ok: false, error: `that change would now leave the graph invalid — ${broke[0].message}` };
+    if (broke.length) return { ok: false, error: `that change would now leave the graph invalid (${broke[0].message})` };
     commit(label, () => { tpl.nodes = r.tpl.nodes; tpl.wires = r.tpl.wires; });
     if (sel && ((sel.kind === 'node' && !nodeById(sel.id)) || (sel.kind === 'wire' && !wireById(sel.id)))) select(null);
     return { ok: true, depth: undoStack.length, added: r.added, removed: r.removed };

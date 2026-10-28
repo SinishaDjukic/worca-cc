@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
 import {
-  bootChat, liveRun, hello, openPanel, panelOf, screenOf, click, detailLoads, ok, KEY, ROW, DETAIL, TABS_DETAIL, PAUSED_DETAIL,
+  bootChat, liveRun, hello, openPanel, panelOf, screenOf, click, detailLoads, ok, KEY, ROW, DETAIL, TABS_DETAIL, PAUSED_DETAIL, PROJECT_DIR,
 } from './helpers/chat-panel-boot.mjs';
 
 test('a live run that finishes hands off to its saved run inside the panel, on the same tab, in place', async () => {
@@ -46,6 +46,21 @@ test('Resume in the panel stays in Chat: the panel follows the resumed run', asy
   assert.equal(ctx.window.__np.rdOpenRun().runId, 'r2');
   assert.ok(screenOf(ctx) && screenOf(ctx).classList.contains('rd'));
   assert.equal(ctx.window.document.querySelector('#run-detail').children.length, 0);
+});
+
+// #792 / Q4: a resume started elsewhere (the scheduled usage-limit resume, another tab) only reaches this tab as a
+// newer copy of the pipeline. The panel open on the paused run follows it in place, as its own Resume does.
+test('a scheduled resume of the paused run open in the panel moves the panel to the new run, on the same tab', async () => {
+  const ctx = await bootChat();
+  hello(ctx, [liveRun({ status: 'paused' })]);
+  await ctx.settle(6);
+  await openPanel(ctx, 'r1/logs');
+  ctx.dispatch({ type: 'run-created', runId: 'r2', title: 'Add dark mode', projectDir: PROJECT_DIR, kind: 'run', status: 'starting' });
+  ctx.dispatch({ type: 'state', runId: 'r2', id: 'p1', status: 'running' });   // the first state names the pipeline
+  await ctx.settle(8);
+  assert.equal(ctx.window.__np.rdOpenRun().runId, 'r2', 'the panel follows to the resumed run');
+  assert.equal(ctx.window.location.hash, '#chat/new/run/r2/logs', 'still Chat; the panel address follows the new run');
+  assert.equal(screenOf(ctx).querySelector('.rd-tab.active').dataset.sec, 'logs');
 });
 
 test("a resume from the chat run card (P3's navigate:false) never hops, but the open panel still follows the run", async () => {
@@ -598,7 +613,7 @@ test('Stop confirmed from the live panel bar hands focus back to the panel, neve
   const modal = doc.getElementById('stop-modal');
   assert.equal(modal.classList.contains('hidden'), false, 'the Stop dialog asks first');
   const confirm = modal.querySelector('.stop-confirm');
-  assert.equal(doc.activeElement, confirm);
+  assert.equal(doc.activeElement, modal.querySelector('.stop-cancel'), 'run 4 D11: the dialog opens on the safe choice');
   click(ctx, confirm);
   await ctx.settle(8);
   assert.equal(ctx.box.stops.length, 1, 'the stop was posted');

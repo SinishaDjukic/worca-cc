@@ -9,10 +9,12 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS, pickCardAttachments } from '../src/core/ask/proposal.mjs';
+import { GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 
 const dirA = mkdtempSync(join(tmpdir(), 'worca-ask-prop-a-'));
 const dirB = mkdtempSync(join(tmpdir(), 'worca-ask-prop-b-'));
-const existing = new Set([dirA, dirB, '/p/demo']);
+const existing = new Set([dirA, dirB, '/p/demo', '/p/notes']);
+const folders = new Set(['/p/notes']);
 const gitRepos = new Set([dirA, dirB]);
 const deps = {
   listProjects: async () => [
@@ -25,8 +27,11 @@ const deps = {
       ? { id, name: 'Broken', description: '', projectPaths: ['/p/missing'], projectKeys: ['missing-00000003'], exists: [false] }
       : id === 'wks-nogit-0000abcd'
         ? { id, name: 'NoGit', description: '', projectPaths: ['/p/demo'], projectKeys: ['demo-00000001'], exists: [true] }
-        : null),
+        : id === 'wks-mixed-0000abcd'
+          ? { id, name: 'Mixed', description: '', projectPaths: [dirA, '/p/notes'], projectKeys: ['alpha-00000001', 'notes-00000004'], exists: [true, true] }
+          : null),
   readWorkflow: async (id) => (id === 'wf_default' ? { id, name: 'Default' } : id === 'wf_review' ? { id, name: 'Review only' }
+    : id === 'wf_shape' || id === 'wf_shape_ux' ? { id, name: 'Shaper' }
     : id === 'wf_memory_defrag' ? { id: 'wf_memory_defrag', name: 'Memory defragment', version: 2, domain: 'shared', nodes: [], wires: [] } : null),
   // The runnable gate rides the same seam: derive it from the fake reader so the
   // two can never disagree about which ids exist.
@@ -38,6 +43,7 @@ const deps = {
   readGuardrailSet: async (id) => (['permissive', 'normal', 'secure', 'custom1'].includes(id) ? { id } : null),
   isGitRepo: (p) => gitRepos.has(p),
   pathExists: (p) => existing.has(p),
+  memberWorkMode: (p) => (folders.has(p) ? 'folder' : 'git'),
 };
 const { validateProposal } = createProposalValidator(deps);
 const ok = (r) => { assert.equal(r.ok, true, JSON.stringify(r)); return r.card; };
@@ -121,6 +127,18 @@ test('workflow, guardrails, brief, branches: errors accumulate in order', async 
   assert.deepEqual(errs(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', sourceBranchByKey: { 'nope-00000009': 'main', 'alpha-00000001': 'bad..ref' } })),
     ['sourceBranchByKey has an unknown project key: nope-00000009', 'unknown or invalid sourceBranch: bad..ref']);
   assert.equal(ok(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', sourceBranchByKey: 'junk' })).sourceBranchByKey, null, 'non-object ignored like the route');
+});
+
+test('tags (#718): normalised onto the card when given, no key when absent, refused when invalid', async () => {
+  assert.deepEqual(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['Client: Acme'] })).tags, ['client:acme']);
+  assert.equal(Object.hasOwn(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' })), 'tags'), false);
+  assert.equal(Object.hasOwn(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: [] })), 'tags'), false);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['client:'] })), ['tags: "client:" needs a value after the colon']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: 'client:acme' })), ['tags: tags must be a list of strings']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['hello world'] })),
+    ['tags: "hello world": a tag is key:value, for example client:acme']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', tags: ['client'] })),
+    ['tags: "client": a tag is key:value, for example client:acme']);
 });
 
 test('isSyntacticRef: git ref-format rules, no shell-outs', () => {
@@ -246,8 +264,8 @@ test('engine: omitted keeps the card shape, a known engine rides the card, an un
   assert.equal('engine' in ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' })), false);
   assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'Codex ' })).engine, 'codex');
   assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'claude' })).engine, 'claude');
-  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'gemini' })), [PROPOSAL_ERRORS.unknownEngine('gemini')]);
-  assert.match(PROPOSAL_ERRORS.unknownEngine('gemini'), /one of claude, codex, copilot, cursor/);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'gpt' })), [PROPOSAL_ERRORS.unknownEngine('gpt')]);
+  assert.match(PROPOSAL_ERRORS.unknownEngine('gpt'), /one of claude, codex, copilot, cursor, gemini, goose, opencode, qwen/);
 });
 
 test('the same featureBranch and sourceBranch without sameAsSource is an error that names the flag', async () => {
@@ -264,4 +282,154 @@ test('sameAsSource: a card carries it only when true; a non-boolean is an error'
   const bad = await validateProposal({ projectKey: 'demo-00000001', brief: 'x', sameAsSource: 'yes' }, { cardId: 'card_3f2a9c01' });
   assert.equal(bad.ok, false);
   assert.ok(bad.errors.some((e) => /sameAsSource/.test(e)));
+});
+
+// Shape it first (spec D9): `shape` proposes wf_shape (wf_shape_ux with UX); `assess` nudges a plain card.
+test('Shape it first: shape / slices / schedule refusal, and the assess nudge with its estimates', async () => {
+  const on = (extra = {}) => createProposalValidator({ ...deps, ...extra }).validateProposal;
+  const base = { projectKey: 'demo-00000001', brief: 'x' };
+  const large = { size: 'large', openDecisions: [] };
+  await checkRows([
+    { name: 'shape → card shape and wf_shape; ux in perspectives → wf_shape_ux', run: async () => {
+      const card = ok(await on()({ ...base, shape: {} }));
+      assert.equal(card.workflowId, 'wf_shape');
+      assert.deepEqual(card.shape, { perspectives: ['product', 'architect', 'qa'] });
+      const ux = ok(await on()({ ...base, shape: { perspectives: ['product', 'ux'] } }));
+      assert.equal(ux.workflowId, 'wf_shape_ux');
+      assert.ok(ux.shape.perspectives.includes('ux'));
+    } },
+    { name: 'workflowId wf_shape_ux without perspectives keeps the UX variant (no shape, or shape {slices})', run: async () => {
+      for (const extra of [{}, { shape: { slices: 'off' } }]) {
+        const card = ok(await on()({ ...base, workflowId: 'wf_shape_ux', ...extra }));
+        assert.equal(card.workflowId, 'wf_shape_ux', JSON.stringify(extra));
+        assert.ok(card.shape.perspectives.includes('ux'), JSON.stringify(extra));
+      }
+    } },
+    { name: 'slices: "off" / "auto" ride the card; anything else refused', run: async () => {
+      for (const slices of ['off', 'auto']) {
+        const card = ok(await on()({ ...base, shape: { slices } }));
+        assert.equal(card.shape.slices, slices);
+        assert.equal(card.workflowId, 'wf_shape');
+      }
+      assert.deepEqual(errs(await on()({ ...base, shape: { slices: 'yes' } })), [PROPOSAL_ERRORS.shapeSlices]);
+    } },
+    { name: 'a shaped proposal carries assess.size on card.shape; without assess or on a bad size there is none', run: async () => {
+      const card = ok(await on()({ ...base, shape: {}, assess: large }));
+      assert.equal(card.shape.size, 'large');
+      assert.equal('size' in ok(await on()({ ...base, shape: {} })).shape, false);
+      assert.equal('size' in ok(await on()({ ...base, shape: {}, assess: { size: 'huge', openDecisions: [] } })).shape, false);
+      const both = ok(await on()({ ...base, shape: { slices: 'off' }, assess: { size: 'medium', openDecisions: [] } }));
+      assert.deepEqual([both.shape.slices, both.shape.size], ['off', 'medium']);
+    } },
+    { name: 'shape + when is refused: a shaped run waits for the user', run: async () => {
+      assert.deepEqual(errs(await on()({ ...base, shape: {}, when: '+90m' })), [PROPOSAL_ERRORS.shapeScheduled]);
+    } },
+    { name: 'shape + workflowId wf_default is refused', run: async () => {
+      assert.deepEqual(errs(await on()({ ...base, shape: {}, workflowId: 'wf_default' })),
+        ['a shaped run uses the Shaper workflow (wf_shape), not "wf_default"']);
+    } },
+    { name: 'assess large → card nudge with the injected estimates; a throwing estimate → nulls', run: async () => {
+      const est = { asIs: { costUsd: 1, minutes: 5, samples: 3 }, shaped: { costUsd: 2, minutes: 9, samples: 3 } };
+      const card = ok(await on({ estimate: async () => est })({ ...base, assess: large }));
+      assert.equal(card.nudge.reason, 'large');
+      assert.deepEqual(card.nudge.estimates, est);
+      assert.equal(card.nudge.asIsAuto, false);
+      assert.equal('shape' in card, false);
+      const thrown = ok(await on({ estimate: async () => { throw new Error('no history'); } })({ ...base, assess: large }));
+      assert.deepEqual(thrown.nudge.estimates, { asIs: null, shaped: null });
+    } },
+    { name: 'assess.perspectives with ux → the estimate is asked for GRAPH_SHAPE_UX_WORKFLOW; otherwise GRAPH_SHAPE_WORKFLOW', run: async () => {
+      const seen = [];
+      const v = on({ estimate: async (wfs) => { seen.push(wfs); return null; } });
+      ok(await v({ ...base, assess: { ...large, perspectives: ['product', 'ux'] } }));
+      ok(await v({ ...base, assess: large }));
+      assert.equal(seen[0].shaped, GRAPH_SHAPE_UX_WORKFLOW);
+      assert.equal(seen[1].shaped, GRAPH_SHAPE_WORKFLOW);
+      assert.equal(seen[1].asIs.id, 'wf_default');
+    } },
+    { name: 'no nudge for a scheduled card, nor for a failing one', run: async () => {
+      let n = 0;
+      const v = on({ estimate: async () => { n += 1; return null; } });
+      assert.equal('nudge' in ok(await v({ ...base, assess: large, when: '+90m' })), false);
+      errs(await v({ ...base, assess: large, guardrailsId: 'permissive' }));
+      assert.equal(n, 0);
+    } },
+    { name: 'shape: null is absent: a plain run card, no error', run: async () => {
+      const card = ok(await on()({ ...base, shape: null }));
+      assert.equal(card.workflowId, 'wf_default');
+      assert.equal('shape' in card, false);
+    } },
+    { name: 'the pinned key set is unchanged without shape / assess', run: async () => {
+      const card = ok(await on()(base));
+      assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'memoryScope', 'note', 'projectDir', 'projectKey', 'projectName',
+        'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
+    } },
+  ]);
+});
+
+test('P3 noProject: a card with no project keeps the pinned key set; its refusals', async () => {
+  const card = ok(await validateProposal({ noProject: true, brief: 'A deck on Q3 hiring' }, { cardId: 'card_3f2a9c01' }));
+  assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'memoryScope', 'note', 'projectDir', 'projectKey', 'projectName',
+    'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
+  assert.equal(card.target, 'none');
+  assert.deepEqual([card.projectKey, card.projectDir, card.featureBranch, card.sourceBranch], [null, null, null, null]);
+  assert.deepEqual([card.projectName, card.workspaceId, card.workspaceName, card.members, card.sourceBranchByKey], [null, null, null, null, null]);
+  assert.equal(card.workflowId, 'wf_default');
+  const ignored = ok(await validateProposal({ noProject: true, brief: 'x', sourceBranch: 'main', featureBranch: 'feat/x', sameAsSource: true }));
+  assert.deepEqual([ignored.sourceBranch, ignored.featureBranch, 'sameAsSource' in ignored], [null, null, false], 'branch fields are ignored, as POST /api/run does');
+  assert.deepEqual(errs(await validateProposal({ noProject: true, projectKey: 'demo-00000001', brief: 'x' })), ['provide one of projectKey, workspaceId or noProject']);
+  assert.deepEqual(errs(await validateProposal({ noProject: true, workspaceId: 'wks-team-0000abcd', brief: 'x' })), ['provide one of projectKey, workspaceId or noProject']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', workspaceId: 'wks-team-0000abcd', brief: 'x' })), [PROPOSAL_ERRORS.bothTargets], 'key + workspace keeps its text');
+  assert.deepEqual(errs(await validateProposal({ noProject: 'yes', brief: 'x' })), ['noProject must be true']);
+  assert.deepEqual(errs(await validateProposal({ noProject: false, brief: 'x' })), [PROPOSAL_ERRORS.noTarget], 'false is "not given"');
+  for (const extra of [{ when: 'tomorrow 02:00' }, { every: 'day 03:30' }, { after: 'abcd1234' }, { after: 'abcd1234', sourceFromPrevious: true }]) {
+    assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', ...extra })).includes('a run without a project cannot be scheduled yet'), JSON.stringify(extra));
+  }
+  assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'project' })).includes('memoryScope needs a project'));
+  assert.equal(ok(await validateProposal({ noProject: true, brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'global' })).memoryScope, 'global', 'U13: Memory defragment runs on global memory with no project');
+  const plain = ok(await validateProposal({ noProject: true, brief: 'x', shape: {} }));
+  assert.deepEqual([plain.target, plain.workflowId, plain.shape.slices], ['none', 'wf_shape', 'off'], 'U13: with no project a shaped run is never sliced');
+  assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', shape: { slices: 'auto' } })).includes('a run without a project cannot be planned in slices yet'));
+  const shaped = ok(await validateProposal({ noProject: true, brief: 'x', shape: { slices: 'off' } }));
+  assert.deepEqual([shaped.target, shaped.workflowId, shaped.shape.slices], ['none', 'wf_shape', 'off']);
+  assert.equal(ok(await validateProposal({ noProject: true, brief: 'x', assess: { size: 'large', openDecisions: [] } })).nudge, undefined,
+    'no Shape-it-first nudge: its shaped run would be sliced');
+});
+
+test('workspace target: a Folder member is accepted (not a git repo), named folder on the card; a source branch for it is refused', async () => {
+  const card = ok(await validateProposal({ workspaceId: 'wks-mixed-0000abcd', brief: 'x' }));
+  assert.deepEqual(card.members.map((m) => [m.projectKey, m.workMode ?? null]), [['alpha-00000001', null], ['notes-00000004', 'folder']]);
+  assert.deepEqual(errs(await validateProposal({ workspaceId: 'wks-mixed-0000abcd', brief: 'x', sourceBranchByKey: { 'notes-00000004': 'main' } })),
+    ['sourceBranchByKey: notes-00000004 is a Folder project and has no branches']);
+});
+
+test('workspace target with git missing: a Git member runs on a copy — its sourceBranchByKey entry is ignored, never called "a Folder project"', async (t) => {
+  const { withNoGit } = await import('./helpers/git-off.mjs');
+  withNoGit(t);
+  const { validateProposal: v } = createProposalValidator({ ...deps, memberWorkMode: () => 'folder' });   // git missing: every member is a copy (U3)
+  const card = ok(await v({ workspaceId: 'wks-mixed-0000abcd', brief: 'x', sourceBranchByKey: { 'alpha-00000001': 'main' } }));
+  assert.equal(card.sourceBranchByKey, null);
+});
+
+test('smart naming on: a derived branch uses the pattern and the card hex, and is marked; a given branch is not', async () => {
+  const prev = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'smartRunNaming';
+  try {
+    const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'Add a README badge' }, { cardId: 'card_3f2a9c01' }));
+    assert.equal(card.featureBranch, 'feat/add-a-readme-badge');
+    assert.equal(card.featureBranchDerived, true);
+    const given = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'Add a README badge', featureBranch: 'fix/typed' }, { cardId: 'card_3f2a9c01' }));
+    assert.equal(given.featureBranch, 'fix/typed');
+    assert.equal('featureBranchDerived' in given, false);
+  } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+});
+
+test('smart naming off: the card carries no marker and keeps today\'s name', async () => {
+  const prev = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-smartRunNaming';
+  try {
+    const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'Add a README badge' }, { cardId: 'card_3f2a9c01' }));
+    assert.match(card.featureBranch, /^worca-cc\/.+-3f2a9c01$/);
+    assert.equal('featureBranchDerived' in card, false);
+  } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
 });

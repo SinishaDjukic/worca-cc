@@ -205,20 +205,20 @@ test('back/Back button/Escape: side by side keeps the saved run, the slide layou
       // jsdom never fires `transitionend`, so the screen is emptied only by the 600ms
       // fallback timer.
     } },
-    { name: 'the Back button: slide returns to the list; side by side it keeps the saved run', run: async () => {
+    { name: 'the Back button returns to the list in both layouts', run: async () => {
       split(ctx.window);
-      const shell = await openDetail(ctx);
+      let shell = await openDetail(ctx);
       const back = ctx.window.document.querySelector('#hist-detail .hd-back');
       assert.ok(back, 'the detail header carries a Back button');
 
-      // Split: CSS hides the button (the list is in view); a stray click lands on #runs, which
-      // restores this very run, so the glance stays.
+      // Slice 2: split shows Back too; it asks for the list itself (goRunsList), never the remembered run.
       back.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await settle(ctx.window);
-      assert.equal(ctx.window.location.hash.replace(/^#/, ''), detailHash);
-      assert.ok(shell.classList.contains('detail-open'));
+      assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'runs');
+      assert.equal(shell.classList.contains('detail-open'), false);
 
       slide(ctx.window);
+      shell = await openDetail(ctx);
       ctx.window.document.querySelector('#hist-detail .hd-back')
         .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await settle(ctx.window);
@@ -258,6 +258,32 @@ test('Escape is swallowed while a modal owns it', async () => {
   await settle(ctx.window);
   assert.equal(ctx.window.location.hash.replace(/^#/, ''), detailHash, 'the modal owns Escape, not the router');
   assert.ok(shell.classList.contains('detail-open'), 'the detail screen stays open');
+});
+
+test('Escape is swallowed while ANY pop-up is up, not only the ones a list named (interface mode, a schedule sheet)', async () => {
+  await checkRows([
+    { name: 'the interface-mode dialog over the detail screen', run: async () => {
+      const ctx = await boot({ fetchHandler: handler });
+      slide(ctx.window);
+      const shell = await openDetail(ctx);
+      ctx.window.document.querySelector('#mode-modal').classList.remove('hidden');
+      ctx.window.document.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle(ctx.window);
+      assert.equal(ctx.window.location.hash.replace(/^#/, ''), detailHash);
+      assert.ok(shell.classList.contains('detail-open'));
+    } },
+    { name: 'a pop-up built by a module (the schedule sheet\'s .viewer-modal)', run: async () => {
+      const ctx = await boot({ fetchHandler: handler });
+      slide(ctx.window);
+      const shell = await openDetail(ctx);
+      const doc = ctx.window.document;
+      doc.body.append(Object.assign(doc.createElement('div'), { className: 'viewer-modal sched-modal' }));
+      doc.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle(ctx.window);
+      assert.equal(ctx.window.location.hash.replace(/^#/, ''), detailHash);
+      assert.ok(shell.classList.contains('detail-open'));
+    } },
+  ]);
 });
 
 test('unknown id renders the detail error state with a working Back', async () => {
@@ -300,7 +326,7 @@ test('deep-link boot opens the detail directly and upgrades the stub record when
       assert.ok(window.document.querySelector('#hist-shell').classList.contains('detail-open'));
       assert.ok(calls.some((c) => c.url.includes(`/api/history/${KEY}/${ROW.id}`)));
       assert.ok(calls.some((c) => c.url === '/api/history'), 'the list loads behind the detail');
-      assert.ok(window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-pipeline-id="${ROW.id}"]`),
+      assert.ok(window.document.querySelector(`#runs-list .runs-row[data-pipeline-id="${ROW.id}"]`),
         'and its row is in the list beside the pane');
     } },
     { name: 'deep-link boot with BOTH endpoints live still upgrades the record from the stub', run: async () => {

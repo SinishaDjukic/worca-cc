@@ -6,9 +6,10 @@ import { mkdir, rm, cp, readFile, writeFile, stat, rename, unlink, readdir } fro
 import { join } from 'node:path';
 import {
   GLOBAL_SCOPE, projectScope, scopeDir, listMemory, listMemoryDir, hashText,
-  repairMemoryFile, parseMemoryFile, writeMemory, removeMemory, snapshotScope, MemoryError,
+  parseMemoryFile, writeMemory, removeMemory, snapshotScope, MemoryError, TEAM_MARKER_KEY,
 } from './memory-store.mjs';
 import { MEMORY_DEFRAG_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { isNoProjectKey } from '../shared/no-project.mjs';
 
 /**
  * Two copies of the store per run (memory-write-split design, 2026-09-17):
@@ -39,6 +40,19 @@ export function memoryWorkPath(pipelineDir) { return join(pipelineDir, MEMORY_WO
 export const MEMORY_INJECTED_ENTRY = Object.freeze({ path: MEMORY_RULES_REL, kind: 'memory', source: null });
 
 export const baselineKey = (rel, name) => `${rel}/${name}.md`;
+const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+const MARKER_LINE_RE = new RegExp(`^${TEAM_MARKER_KEY}: [0-9a-f]{40}\\r?\\n`, 'm');   // a content hash: a user's own `team:` key stays content
+/** What a run's sync compares: a note's bytes WITHOUT team memory's tracked-copy line (`team: <hash>` in the frontmatter,
+ *  memory-team.mjs). worca writes that line itself — after a push, on a follow — so a marker write in the store is no
+ *  change under a live run: the run's later deletion of the note still mirrors (the store copy is the one it synced),
+ *  and its later edit lands without a "changed in the store" warning. The writable copy's stale line from mount time is
+ *  no change in the mount either. A note without the line hashes as its bytes — exactly as before team memory. */
+export function syncHash(text) {
+  const s = String(text ?? '');
+  const fm = FRONTMATTER_RE.exec(s)?.[0];
+  if (!fm || !MARKER_LINE_RE.test(fm)) return hashText(s);
+  return hashText(fm.replace(MARKER_LINE_RE, '') + s.slice(fm.length));
+}
 const byKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0);
 
 /**
@@ -53,7 +67,7 @@ export function mountDirs({ members = [], isWorkspace = false, memoryScope = nul
     for (const m of [...members].sort(byKey)) {
       out.push({ scope: projectScope(m.projectKey), rel: `projects/${m.projectKey}`, label: `Project ${m.projectName || m.projectKey}` });
     }
-  } else if (members[0]) {
+  } else if (members[0] && !isNoProjectKey(members[0].projectKey)) {
     const m = members[0];
     out.push({ scope: projectScope(m.projectKey), rel: 'project', label: `Project ${m.projectName || m.projectKey}` });
   }
@@ -97,6 +111,8 @@ export function validateMemoryScope({ workflowId, memoryScope, isWorkspace = fal
  * `git status` all skip it. Not a memory file: `listMemoryDir` lists `*.md` only, so sync-back
  * neither syncs it nor reads it as a deletion. The §8.8 `:(exclude)` pathspec stays as defence
  * in depth (a hand-deleted sentinel, an older git).
+ * A dir with `only` (a Set of note names) copies just those notes: a project whose team memory loads team notes only
+ * (memory-team.mjs memoryLoadPlan). The baseline then holds only them, so sync-back never reads a note left out as deleted.
  */
 export async function mountMemory({ root, mount, dirs, onError, gitIgnore = false }) {
   // (Windows: an indexer/AV may hold a handle for a moment.)
@@ -108,7 +124,8 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
   for (const d of dirs) {
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true });
-    for (const e of await listMemory(root, d.scope, { onError })) {
+    for (const e of await listMemory(root, d.scope, { onError, hashOf: syncHash })) {
+      if (d.only && !d.only.has(e.name)) continue;
       await cp(join(scopeDir(root, d.scope), `${e.name}.md`), join(dest, `${e.name}.md`));
       baseline[baselineKey(d.rel, e.name)] = e.hash;
       files++;
@@ -127,6 +144,7 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
  * loads; a file that never landed is simply absent this turn), its temp is unlinked and its name is
  * reported. Returns `{ files, failed }` where `files` is what the mount SHOULD hold (the store
  * entries of the scope set) and `failed` the names that could not be refreshed this call.
+ * `only` on a dir: as in mountMemory — the other notes are not written, and a copy of one already there is unlinked.
  */
 export async function refreshMount({ root, mount, dirs, onError }) {
   let files = 0;
@@ -134,7 +152,7 @@ export async function refreshMount({ root, mount, dirs, onError }) {
   for (const d of dirs) {
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true });
-    const entries = await listMemory(root, d.scope, { onError });
+    const entries = (await listMemory(root, d.scope, { onError })).filter((e) => !d.only || d.only.has(e.name));
     // `keep` is built from what we actually WROTE or deliberately kept — an entry that vanished
     // between the listing and the read is not in it, so its stale mount copy is swept THIS call.
     const keep = new Set();
@@ -218,11 +236,14 @@ export function memoryTotals(changes) {
  *    the key is handed to the deletion pass above. A NEW empty file is simply ignored; this
  *    arm runs BEFORE the scope-full pre-check, so a full scope never turns it into a rejection.
  *  - a mount file that cannot be READ is skipped this sync with its baseline untouched.
+ *  - `prepare(scope, name, text)` (optional, async): the text the store takes for a file it writes — team memory keeps
+ *    its tracked-copy marker its own there, never the writable copy's line from mount time (memory-team.mjs
+ *    teamClientText). The mount copy and the baseline then take the stored bytes, as for any repair.
  * Never throws for one file's sake; a listing error is reported through `onError`.
  */
 export function syncBack(o) { return withStoreLock(o.root, () => syncBackUnlocked(o)); }
 
-async function syncBackUnlocked({ root, mount, dirs, baseline, source, now, caps, onWarn, onError }) {
+async function syncBackUnlocked({ root, mount, dirs, baseline, source, now, caps, onWarn, onError, prepare = null }) {
   const next = { ...baseline };
   const added = [], modified = [], deleted = [], rejected = [];
   const warn = (t) => { if (typeof onWarn === 'function') onWarn(t); };
@@ -234,7 +255,7 @@ async function syncBackUnlocked({ root, mount, dirs, baseline, source, now, caps
     const present = await stat(dir).then((s) => s.isDirectory(), () => false);
     if (!present) { warn(`memory: mount dir ${d.rel} is missing — skipped this sync (nothing deleted)`); continue; }
     const junk = [];
-    const current = await listMemoryDir(dir, { onError: (p, err) => { if (err?.code === 'ENAME') junk.push(p); else onError?.(p, err); } });
+    const current = await listMemoryDir(dir, { hashOf: syncHash, onError: (p, err) => { if (err?.code === 'ENAME') junk.push(p); else onError?.(p, err); } });
     const seen = new Set();
     for (const p of junk) {
       const name = p.split(/[\\/]/).pop().replace(/\.md$/i, '');
@@ -243,7 +264,7 @@ async function syncBackUnlocked({ root, mount, dirs, baseline, source, now, caps
       if (baseline[key] !== REJECTED_INVALID) rejected.push({ scope: d.rel, name, reason: 'invalid name (letters, digits, ".", "_", "-" only; no leading or trailing dot; not a Windows device name)' });
       next[key] = REJECTED_INVALID;
     }
-    const store = new Map((await listMemory(root, d.scope, { onError })).map((e) => [e.name, e.hash]));
+    const store = new Map((await listMemory(root, d.scope, { onError, hashOf: syncHash })).map((e) => [e.name, e.hash]));
     let snapped = false;
     const snapshotOnce = async () => { if (!snapped) { snapped = true; await snapshotScope(root, d.scope, { source, now }); } };
     for (const e of current) {
@@ -278,10 +299,12 @@ async function syncBackUnlocked({ root, mount, dirs, baseline, source, now, caps
         warn(`memory: ${key} changed in the store since this run mounted it — the run's version wins (the store's version is kept in .history)`);
       }
       try {
-        await writeMemory(root, d.scope, e.name, text, { source, now, caps, snapshot: snapshotOnce });
-        const repaired = repairMemoryFile(text, { name: e.name, source, now, hookMaxChars: caps?.hookMaxChars });
-        if (repaired.changed) await writeFile(join(dir, `${e.name}.md`), repaired.text, 'utf8');
-        const h = hashText(repaired.text);
+        // The bytes the store holds now (writeMemory's own repair — it may keep an unchanged over-cap hook): the mount copy
+        // and the baseline take exactly those, so the two never disagree.
+        const stored = prepare ? await prepare(d.scope, e.name, text) : text;
+        const repaired = await writeMemory(root, d.scope, e.name, stored, { source, now, caps, snapshot: snapshotOnce });
+        if (repaired.text !== text) await writeFile(join(dir, `${e.name}.md`), repaired.text, 'utf8');
+        const h = syncHash(repaired.text);
         next[key] = h;
         store.set(e.name, h);
         (inStore ? modified : added).push({ scope: d.rel, name: e.name });

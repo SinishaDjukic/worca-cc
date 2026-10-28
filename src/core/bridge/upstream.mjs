@@ -17,12 +17,14 @@ import { routeBridgedUpstream } from '../broker-routing.mjs';
 import { KeyedSemaphore } from './semaphore.mjs';
 import { recordBridgeCall, recordBridgeError, recordBridgeCost } from './telemetry.mjs';
 import { isOpenRouter, adaptOpenRouterChatBody, OPENROUTER_HEADERS } from './openrouter.mjs';
+import { isGemini, adaptGeminiChatBody, extraContentStore } from './gemini.mjs';
 import { isOpenRouterFree, keyAccount } from '../openrouter-free.mjs';
 import { unsupportedSchemaKeyword, withToolSchemaKeywordsDropped, refusedToolName, withoutTools } from './translate/schema-keywords.mjs';
 
 export const semaphore = new KeyedSemaphore();
 const PING_INTERVAL_MS = 15_000;
 const warned = new Set();
+const keepExtraContent = (id, extra) => extraContentStore.set(id, extra);
 
 // What an upstream model's tool grammar refused (translate/schema-keywords.mjs):
 // schema keywords to drop, and whole tools no drop can fix. Learned per provider
@@ -177,7 +179,10 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
     if (effortDrops.has(entry.id)) outBody = withoutEffort(outBody);
   } else {
     const responses = us.api === 'openai-responses';
-    const t = (responses ? toResponsesRequest : toChatRequest)(body, { upstreamModel: us.model, capabilities: us.capabilities });
+    // A chat upstream's per-call `extra_content` (Gemini's thought signatures) rides back on the calls it came with.
+    const t = responses
+      ? toResponsesRequest(body, { upstreamModel: us.model, capabilities: us.capabilities })
+      : toChatRequest(body, { upstreamModel: us.model, capabilities: us.capabilities, extraContentFor: (id) => extraContentStore.get(id) });
     if (t.error) {
       const e = bridgeErrors.unsupported(t.error.message);
       recordBridgeError({ tag, catalogId: entry.id, provider: us.provider, status: e.status, message: e.body.error.message });
@@ -189,7 +194,7 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
         : `${w} has no ${responses ? 'Responses API' : 'chat/completions'} equivalent — dropped`;
       warnOnce(`${entry.id}:${w}`, `[worca] bridge: model ${JSON.stringify(entry.id)}: ${line}`, log);
     }
-    outBody = !responses && isOpenRouter(us.baseUrl) ? adaptOpenRouterChatBody(t.body, us) : t.body;
+    outBody = responses ? t.body : isOpenRouter(us.baseUrl) ? adaptOpenRouterChatBody(t.body, us) : isGemini(us.baseUrl) ? adaptGeminiChatBody(t.body) : t.body;
   }
   const dropKey = `${us.provider}|${us.baseUrl || ''}|${us.model}`;
   if (us.api !== 'anthropic') outBody = applySchemaDrops(outBody, schemaDrops.get(dropKey));
@@ -304,13 +309,13 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
       if (us.api === 'openai-chat') recordBridgeCost({ tag, costUsd: j && j.usage ? j.usage.cost : undefined });
       return reply.json(200, us.api === 'openai-responses'
         ? toMessagesResponseFromResponses(j, { model: entry.id, upstreamModel: us.model })
-        : toMessagesResponse(j, { model: entry.id }));
+        : toMessagesResponse(j, { model: entry.id, onExtraContent: keepExtraContent }));
     }
 
     reply.status(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
     const translator = us.api === 'openai-responses'
       ? new ResponsesStreamTranslator({ model: entry.id, upstreamModel: us.model })
-      : new ChatStreamTranslator({ model: entry.id });
+      : new ChatStreamTranslator({ model: entry.id, onExtraContent: keepExtraContent });
     // A stream can fail mid-flight (a Responses response.failed / error, a chat
     // stream cut short or ending with no output): book it like an upstream
     // refusal, so the Test button — and a run whose CLI exits without an API

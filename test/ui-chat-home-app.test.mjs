@@ -30,8 +30,15 @@ const WF = { id: 'wf_default', name: 'Default', version: 2, updatedAt: 't',
   wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_impl', port: 'task' } }] };
 const QUESTION = { kind: 'clarify', questions: [{ id: 'q1', text: 'Which?' }] };
 
-function arms({ history = [], threads = [], settings = { chat: { scriptTools: false } }, sources = [], workflows = [] } = {}) {
-  return (url) => {
+const SITE = { key: 'site-00000001', name: 'site', path: '/w/p/site', displayPath: '/w/p/site', exists: true, vcs: 'none' };
+function arms({ history = [], threads = [], settings = { chat: { scriptTools: false } }, sources = [], workflows = [], create = false } = {}) {
+  return (url, opts = {}) => {
+    if (create && url === '/api/projects/create') {
+      const b = JSON.parse(opts.body || '{}');
+      if (b.dryRun) return ok({ ok: true, root: '/w/p', rootDisplay: '/w/p' });
+      const p = { ...SITE, key: `${b.name}-00000001`, name: b.name, path: `/w/p/${b.name}`, displayPath: `/w/p/${b.name}` };
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ project: p, projects: [p], root: '/w/p', rootDisplay: '/w/p' }) });
+    }
     if (url === '/api/history') return ok({ pipelines: history, ghAvailable: false, prHosts: {} });
     if (url.startsWith('/api/ask/threads?limit=')) return ok({ threads, total: threads.length });
     if (url === '/api/settings') return ok(settings);
@@ -64,7 +71,7 @@ test('the home mounts in [data-chat-home]; the intent add-on is registered once 
   const home = doc.querySelector('[data-chat-page] [data-chat-home]');
   assert.ok(home, 'P1 page');
   assert.equal(home.querySelector('.chat-home-title').textContent, 'What should worca do?');
-  assert.equal(home.querySelectorAll('.chat-home-act').length, 8);
+  assert.equal(home.querySelectorAll('.chat-home-act').length, 9, 'the default Shaper pin is in the row');
   assert.equal(composerAddons().filter((a) => a.id === 'intent').length, 1);
   const lead = doc.querySelector('[data-chat-page] [data-chat-composer-lead]');
   assert.ok(lead, 'P1 lead row');
@@ -75,6 +82,7 @@ test('the home mounts in [data-chat-home]; the intent add-on is registered once 
   assert.equal(chip.querySelector('.chat-intent-l').textContent, 'New run');
   assert.equal(doc.querySelector('[data-chat-page] .ask-input').placeholder, 'Describe the task…');
   assert.equal(home.querySelector('.chat-home-act[data-intent="script"]').hidden, true, 'GET /api/settings chat.scriptTools:false');
+  assert.ok(home.querySelector('.chat-home-act[data-intent="shape"]'), 'Shaper pin: always on');
   assert.ok(ctx.calls.some((c) => c.url === '/api/sources'), 'task sources were asked once per visit');
 });
 
@@ -280,12 +288,12 @@ test('an intent riding a send in flight never follows the logo to a new chat: th
   assert.deepEqual(sent, ['Propose a pipeline run for this task.\n\nfix the upload test', 'what time is it']);
 });
 
-test('the History column\'s New chat is a trip to a new chat, as the head\'s is: an intent set on the home is dropped', async () => {
+test('the head\'s New chat + is a trip to a new chat: an intent set on the home is dropped', async () => {
   const ctx = await bootChat();
   const doc = ctx.window.document;
   doc.querySelector('.chat-home-act[data-intent="run"]').click();
   assert.ok(doc.querySelector('[data-chat-page] .chat-intent'), 'armed');
-  doc.querySelector('[data-chat-page] [data-chat-history] [data-ask-new-btn]').click();
+  doc.querySelector('[data-chat-page] .chat-head [data-ask-new-btn]').click();
   await ctx.settle(4);
   assert.equal(doc.querySelector('[data-chat-page] .chat-intent'), null, 'the intent add-on\'s capture listener saw [data-ask-new-btn]');
   assert.equal(ctx.window.location.hash, '#chat');
@@ -390,4 +398,44 @@ test('Running lists the newest run first, as the Running list does', async () =>
   const doc = ctx.window.document;
   assert.equal(selected(doc), 'running');
   assert.deepEqual([...doc.querySelectorAll('.chat-run-tile')].map((t) => t.dataset.tileKey), ['live:m2', 'live:m1', 'live:m0']);
+});
+
+test('Add project: the tile and the scope menu\'s entry open the dialog on New; the created project becomes the chat\'s scope', async () => {
+  const ctx = await bootChat({ create: true });
+  const doc = ctx.window.document;
+  const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
+  doc.querySelector('[data-chat-page] [data-chat-home] .chat-home-act[data-action="project"]').click(); await flush();
+  assert.equal(doc.getElementById('project-add-modal').classList.contains('hidden'), false);
+  assert.equal(doc.getElementById('proj-add-tab-new').getAttribute('aria-selected'), 'true');
+  const name = doc.getElementById('proj-add-name');
+  name.value = 'site'; name.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  doc.getElementById('proj-add-save').click(); await flush();
+  assert.equal(doc.getElementById('project-add-modal').classList.contains('hidden'), true);
+  assert.equal(doc.querySelector('[data-chat-page] [data-ask-scope-btn] .ask-scope-label').textContent, 'site', 'askPanel.setScope (P4b)');
+  ctx.window.__projects.openAddProject(); await flush();        // what the scope menu's Add project… calls
+  assert.equal(doc.getElementById('project-add-modal').classList.contains('hidden'), false);
+  assert.equal(doc.getElementById('proj-add-tab-new').getAttribute('aria-selected'), 'true');
+  name.value = 'docs'; name.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  doc.getElementById('proj-add-save').click(); await flush();
+  assert.equal(doc.querySelector('[data-chat-page] [data-ask-scope-btn] .ask-scope-label').textContent, 'docs', 'the scope menu path scopes the chat too (S-P2-5)');
+});
+
+test('bundle QA 2: a History row in Needs you through its PR is a tile that says why, never "Done"', async () => {
+  const ctx = await bootChat({ history: [
+    HROW({ id: 'gggg0007', title: 'Red CI', pr: { url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } } }),
+    HROW({ id: 'hhhh0008', title: 'Clash', pr: { url: 'https://github.com/o/r/pull/782', number: 782, state: 'OPEN', mergeable: 'CONFLICTING' } }),
+  ] });
+  helloRun(ctx, { runId: 'zz', pipelineId: 'ffff0000', title: 'Old', status: 'done' });
+  await revisit(ctx);
+  const doc = ctx.window.document;
+  assert.equal(selected(doc), 'needs');
+  const tile = (id) => doc.querySelector(`.chat-run-tile[data-tile-key="hist:k1/${id}"]`);
+  for (const [id, word] of [['gggg0007', 'Checks failing'], ['hhhh0008', 'Conflicts']]) {
+    const pill = tile(id).querySelector('.chat-run-tile-pill');
+    assert.equal(pill.querySelector('.chat-run-tile-pt').textContent, word);
+    assert.ok(pill.classList.contains('st-amber'));
+    const dot = pill.querySelector('.status-dot[data-state="needs-you"]');
+    assert.ok(dot && !dot.querySelector('svg.status-sym'), 'a plain amber dot');
+  }
+  assert.equal([...doc.querySelectorAll('.chat-run-tile-pt')].filter((n) => n.textContent === 'Done').length, 0);
 });

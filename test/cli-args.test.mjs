@@ -122,11 +122,50 @@ test('MIN-51: near-miss tokens (plug, metrcs, versoin, hlep) are refused with th
   } })));
 });
 
+// `worca projects list` — the README once listed add/list/remove as "projects (…)", but
+// they are top-level verbs; `projects` near-misses nothing, so it ran a pipeline named
+// "projects list". A group word with at most one more token is refused like a typo.
+test('MIN-51: a group word before a top-level verb (projects list) is refused with the verb, and starts nothing', async () => {
+  await checkRows([
+    ['projects + a real verb suggests that verb', ['projects', 'list'], 'list'],
+    ['singular project works the same', ['project', 'remove'], 'remove'],
+    ['a lone group word suggests list', ['projects'], 'list'],
+    ['projects add <name> (the real form) suggests add', ['projects', 'add', 'myproj'], 'add'],
+    ['singular project remove <name> suggests remove', ['project', 'remove', 'x'], 'remove'],
+  ].map(([name, argv, meant]) => ({ name, run: () => {
+    const repo = freshRepo();
+    const before = pipelineCount();
+    const r = runCli(argv, repo);
+    assert.equal(r.status, 2, `expected the fail() exit code\n${r.stdout}\n${r.stderr}`);
+    assert.equal(
+      r.stderr.trim(),
+      `worca: unknown subcommand "${argv.join(' ')}" — did you mean "${meant}"? `
+        + 'The project commands are top-level: worca add | list | remove (to run a prompt, use --prompt "…")',
+    );
+    assert.equal(pipelineCount(), before, 'no pipeline row');
+    assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
+  } })));
+});
+
+test('MIN-51: a plural of a subcommand (workflows list) is already refused as a near-miss', () => {
+  const repo = freshRepo();
+  const r = runCli(['workflows', 'list'], repo);
+  assert.equal(r.status, 2, `${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: unknown subcommand "workflows" — did you mean "workflow"? (to run a prompt, use --prompt "…")',
+  );
+});
+
 test('MIN-51: a multi-word positional, a non-near-miss single token and --prompt resume are all prompts', async () => {
   await checkRows([
     ['MIN-51: a multi-word bare positional is still a prompt', (repo) => runCli(['fix the login bug', '--yes'], repo), 'fix the login bug'],
     ['MIN-51: a single-token prompt that is NOT a near-miss still runs', (repo) => runCli(['refactor', '--yes'], repo), 'refactor'],
     ['MIN-51: --prompt resume is a prompt, never a subcommand', (repo) => runCli(['--project', repo, '--prompt', 'resume', '--yes']), 'resume'],
+    ['README example: a quoted multi-word bare prompt runs', (repo) => runCli(['Add a /search endpoint', '--yes'], repo), 'Add a /search endpoint'],
+    ['a group word inside a longer prompt is still a prompt', (repo) => runCli(['projects', 'need', 'a', 'cleanup', '--yes'], repo), 'projects need a cleanup'],
+    ['the longest legitimate prompt starting with a group verb is still a prompt', (repo) => runCli(['project', 'add', 'caching', 'to', 'the', 'API', '--yes'], repo), 'project add caching to the API'],
+    ['a 3-token prompt whose second word is not a verb is still a prompt', (repo) => runCli(['projects', 'need', 'cleanup', '--yes'], repo), 'projects need cleanup'],
   ].map(([name, start, prompt]) => ({ name, run: () => {
     const r = start(freshRepo());
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
@@ -242,4 +281,27 @@ test('a CLI defragment run picks up the Settings › Memory pair; --model named 
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   assert.match(r.stdout, /Memory defragment model: claude-opus-5-5 \(named at start\)/);
   assert.deepEqual([nDefrag().model, nDefrag().effort], ['claude-opus-5-5', '']);
+});
+
+// ── #718: --tag (repeatable) is normalised before anything starts, and stored on the run ──
+test('--tag: an invalid tag exits 2 before any pipeline row; valid tags are stored normalised', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const bad = runCli(['--project', repo, '--prompt', 'x', '--tag', 'client:'], repo);
+  assert.equal(bad.status, 2, `${bad.stdout}\n${bad.stderr}`);
+  assert.match(bad.stderr, /--tag: "client:" needs a value/);
+  assert.equal(pipelineCount(), before, 'no pipeline row for the refusal');
+  for (const raw of ['hello world', 'client']) {
+    const r = runCli(['--project', repo, '--prompt', 'x', '--tag', raw], repo);
+    assert.equal(r.status, 2, `${r.stdout}\n${r.stderr}`);
+    assert.ok(r.stderr.includes(`--tag: "${raw}": a tag is key:value, for example client:acme`), r.stderr);
+  }
+  assert.equal(pipelineCount(), before, 'no pipeline row for the refusals');
+  const ok = runCli(['--project', repo, '--prompt', 'x', '--tag', 'Client: Müller & Söhne, GmbH', '--tag=team:core-ui', '--yes'], repo);
+  assert.equal(ok.status, 0, `${ok.stdout}\n${ok.stderr}`);
+  const id = getDb().prepare('SELECT id FROM pipelines ORDER BY rowid DESC LIMIT 1').get().id;
+  const rows = getDb().prepare('SELECT key, value FROM run_tags WHERE pipeline_id = ? ORDER BY key').all(id).map((r) => `${r.key}=${r.value}`);
+  assert.deepEqual(rows, ['client=müller & söhne, gmbh', 'team=core-ui']);
+  const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.match(help.stdout, /--tag <tag>\s+tag the run for cost allocation/);
 });

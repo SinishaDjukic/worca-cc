@@ -5,8 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, openChat, userScroll } from './helpers/ask-panel-harness.mjs';
 import { applyLevel } from '../ui/public/ui-level.mjs';
+import { registerFilesCard } from '../ui/public/chat/files-card.mjs';
+import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { _resetFileRenderers } from '../ui/public/chat/file-renderers.mjs';
 
 const TID = 'ask_00000001';
 
@@ -34,12 +37,7 @@ function handlerFor(snapshot) {
 }
 
 async function openThread(ctx) {
-  ctx.panel.open();
-  await ctx.tick();                                    // the first show loaded the History column (closed at 1024px; rows built)
-  ctx.doc.querySelector('[data-chat-history] .ask-thread-pick').click();
-  await ctx.tick();
-  await ctx.tick();
-  ctx.flush();
+  await openChat(ctx, TID);
 }
 
 const userRow = (id, seq, text, blocks = []) => ({ id, threadId: TID, seq, role: 'user', text, blocks, status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' });
@@ -89,7 +87,7 @@ test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, a
     { name: 'ask-panel-render: activity head — one dot-separated line, the meter beside it; stopped keeps its label', run: async () => {
       const snap = snapBody([
         asstRow('askm_00000001', 1),
-        asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Ask Worca)' }] }),
+        asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Chat)' }] }),
       ]);
       const ctx = makePanel({ fetchHandler: handlerFor(snap) });
       await openThread(ctx);
@@ -193,8 +191,8 @@ test('ask-panel-render: the activity is collapsed by default; its head is a butt
   head.click();
   assert.equal(head.getAttribute('aria-expanded'), 'true');
   assert.equal(body.hidden, false, 'the click opens it');
-  await resync(ctx);                                   // a structural repaint rebuilds every message
-  assert.notEqual(acts()[0], first, 'rebuilt');
+  await resync(ctx);                                   // a structural repaint reconciles every message
+  assert.equal(acts()[0], first, 'kept in place: a repaint reconciles the row (#958)');
   assert.equal(acts()[0].querySelector('.ask-activity-head').getAttribute('aria-expanded'), 'true', 'still open after a repaint');
   assert.equal(acts()[0].querySelector('.ask-activity-body').hidden, false);
   assert.equal(acts()[1].querySelector('.ask-activity-head').tagName, 'DIV', 'the plain turn stays a line with no chevron');
@@ -236,8 +234,7 @@ test('ask-panel-render: opening an activity body while the transcript is pinned 
   ctx.flush();
   assert.equal(t.scrollTop, 1000);
   // Scrolled up, a toggle that moves its own control (the browser anchoring on content below it) scrolls it back.
-  t.scrollTop = 300;
-  t.dispatchEvent(new ctx.window.Event('scroll'));
+  userScroll(ctx, t, 300);
   head.getBoundingClientRect = () => ({ top: 850 + (body.hidden ? 0 : 30) - t.scrollTop, bottom: 0, left: 0, right: 300, width: 300, height: 18 });
   head.click();
   assert.equal(body.hidden, false);
@@ -323,6 +320,58 @@ test('ask-panel-render: markdown answers render once the real pins load; code hi
   assert.ok(answer.querySelector('strong'), 'markdown rendered');
   assert.ok(answer.classList.contains('ask-md'));
   assert.ok(answer.querySelector('code .hljs-keyword'), 'terminal answers get highlighted');
+});
+
+test('ask-panel-render: a finished answer turns its refs into chips with one POST; code stays code; a run chip follows the run store', async () => {
+  const realLoad = async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default });
+  const listeners = new Set();
+  let live = null;
+  const runStore = { get: () => null, byPipeline: (pid) => (pid === '1a2b3c4d' ? live : null), subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
+  const text = 'Merged https://github.com/SinishaDjukic/worca-cc/pull/777 in [the run](#history/worca-cc-ace1a602/1a2b3c4d); `owner/repo#5` stays code.';
+  const snap = snapBody([userRow('askm_00000001', 1, 'see owner/repo#6'), asstRow('askm_00000002', 2, { text })]);
+  const answers = {
+    'gh:SinishaDjukic/worca-cc#777': { ok: true, kind: 'pr', title: 'fix(promo-kit): startApp.stop()', state: 'merged' },
+    'run:1a2b3c4d': { ok: true, kind: 'run', id: '1a2b3c4d', runId: null, title: 'Chips plan', status: 'running', home: 'worca-cc-ace1a602' },
+  };
+  const posts = [];
+  const thread = handlerFor(snap);
+  const ctx = makePanel({ loadMarkdown: realLoad, deps: { runStore }, fetchHandler: (url, opts) => {
+    if (url !== '/api/ask/refs/resolve') return thread(url, opts);
+    const refs = JSON.parse(opts.body).refs;
+    posts.push(refs);
+    return { ok: true, status: 200, json: async () => ({ refs: Object.fromEntries(refs.map((k) => [k, answers[k] || { ok: false }])) }) };
+  } });
+  await openThread(ctx);
+  await ctx.tick();                       // renderer.ensure() resolves: the answers re-render as markdown
+  ctx.flush();
+  await ctx.tick();                       // the batched POSTs answer
+  const answer = ctx.doc.querySelector('.ask-msg-assistant .ask-answer');
+  const [pr, run] = answer.querySelectorAll('a.ask-ref-chip');
+  assert.deepEqual(posts.map((p) => p.sort()), [['run:1a2b3c4d'], ['gh:SinishaDjukic/worca-cc#777']], 'worca refs and forge refs: one request each');
+  assert.equal(pr.getAttribute('href'), 'https://github.com/SinishaDjukic/worca-cc/pull/777');
+  assert.deepEqual([...pr.querySelectorAll('.ask-ref-label, .ask-ref-title, .ask-ref-pill')].map((n) => n.textContent),
+    ['SinishaDjukic/worca-cc#777', 'fix(promo-kit): startApp.stop()', 'Merged']);
+  assert.equal(run.getAttribute('href'), '#history/worca-cc-ace1a602/1a2b3c4d');
+  assert.equal(run.querySelector('.ask-ref-pill').textContent, 'Running');
+  assert.equal(answer.querySelector('code').textContent, 'owner/repo#5', 'inline code is never a chip');
+  assert.equal(ctx.doc.querySelector('.ask-msg-user').querySelectorAll('.ask-ref-chip').length, 0, 'user messages stay plain text');
+  live = { source: 'live', runId: 'run-uuid', pipelineId: '1a2b3c4d', status: 'done', title: 'Chips plan', active: [], terminal: true };
+  for (const fn of listeners) fn('run-uuid', 'done');
+  await ctx.tick();
+  assert.equal(answer.querySelector('a.ask-ref-chip-run .ask-ref-pill').textContent, 'Done', 'the run store repaints the pill');
+  ctx.flush();
+  await ctx.tick();
+  assert.equal(posts.length, 2, 'a structural repaint inside the TTL asks nothing again');
+  ctx.panel.close();
+  live = { ...live, status: 'failed' };
+  for (const fn of listeners) fn('run-uuid', 'state');
+  await ctx.tick();
+  assert.equal(answer.querySelector('a.ask-ref-chip-run .ask-ref-pill').textContent, 'Done', 'a hidden Chat page repaints no chip');
+  ctx.panel.open();
+  await ctx.tick();
+  assert.equal(answer.querySelector('a.ask-ref-chip-run .ask-ref-pill').textContent, 'Failed', 'the next show catches up');
+  ctx.panel.destroy();
+  assert.equal(listeners.size, 0, 'destroy drops the run store subscription');
 });
 
 test('ask-panel-render: error rows show the red line (fallback text); a ~0 s error turn says Stopped, not "Stopped after"', async () => {
@@ -419,7 +468,7 @@ test('ask-panel-render: a classified notice renders the human line (raw detail e
   ]);
 });
 
-test('ask-panel-render: scroll pinning drives the jump pill, reopening re-pins, destroy unbinds resize', async () => {
+test('ask-panel-render: scroll pinning drives the jump pill, reopening restores the place you left, destroy unbinds resize', async () => {
   await checkRows([
     { name: 'ask-panel-render: scroll pinning with instrumented accessors + jump pill', run: async () => {
       const snap = snapBody([asstRow('askm_00000001', 1)]);
@@ -428,8 +477,7 @@ test('ask-panel-render: scroll pinning drives the jump pill, reopening re-pins, 
       const t = ctx.doc.querySelector('.ask-transcript');
       Object.defineProperty(t, 'scrollHeight', { value: 1000, configurable: true });
       Object.defineProperty(t, 'clientHeight', { value: 200, configurable: true });
-      t.scrollTop = 100; // far from the bottom
-      t.dispatchEvent(new ctx.window.Event('scroll'));
+      userScroll(ctx, t, 100); // far from the bottom
       const jump = ctx.doc.querySelector('.ask-jump');
       assert.equal(jump.hidden, false, 'unpinned shows the jump pill');
       jump.click();
@@ -437,24 +485,22 @@ test('ask-panel-render: scroll pinning drives the jump pill, reopening re-pins, 
       assert.equal(t.scrollTop, 1000, 'jump scrolls to the bottom');
       assert.equal(jump.hidden, true);
       // near the bottom counts as pinned (threshold 24)
-      t.scrollTop = 790;
-      t.dispatchEvent(new ctx.window.Event('scroll'));
+      userScroll(ctx, t, 790);
       assert.equal(jump.hidden, true);
     } },
-    { name: 'ask-panel-render: reopening the sheet re-pins', run: async () => {
+    { name: 'ask-panel-render: reopening restores the place you left', run: async () => {
       const snap = snapBody([asstRow('askm_00000001', 1)]);
       const ctx = makePanel({ fetchHandler: handlerFor(snap) });
       await openThread(ctx);
       const t = ctx.doc.querySelector('.ask-transcript');
       Object.defineProperty(t, 'scrollHeight', { value: 1000, configurable: true });
       Object.defineProperty(t, 'clientHeight', { value: 200, configurable: true });
-      t.scrollTop = 0;
-      t.dispatchEvent(new ctx.window.Event('scroll'));
-      assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false);
-      ctx.panel.close();
-      ctx.panel.open();
-      ctx.flush();
-      assert.equal(t.scrollTop, 1000, 're-pinned on open');
+      const jump = ctx.doc.querySelector('.ask-jump');
+      userScroll(ctx, t, 300); assert.equal(jump.hidden, false);
+      ctx.panel.close(); t.scrollTop = 0; ctx.panel.open(); ctx.flush();
+      assert.equal(t.scrollTop, 300, 'back where the reader was'); assert.equal(jump.hidden, false);
+      jump.click(); ctx.panel.close(); t.scrollTop = 0; ctx.panel.open(); ctx.flush();
+      assert.equal(t.scrollTop, 1000, 'following: back at the bottom'); assert.equal(jump.hidden, true);
     } },
     { name: 'ask-panel-render: destroy unbinds the window resize listener', run: async () => {
       const snap = snapBody([asstRow('askm_00000001', 1)]);
@@ -480,4 +526,84 @@ test('ask-panel-render: a 404 thread clears the stored id and renders nothing', 
   await openThread(ctx);
   assert.equal(ctx.doc.querySelector('.ask-msg-user'), null);
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null, 'stored id dropped on 404');
+});
+
+test('ask-panel-render: a stored files card replays on thread open, inline, and a tile click calls chatDeps.openFiles', async () => {
+  registerFilesCard();
+  try {
+    const item = { attId: 'att_00000001', name: 'home.png', kind: 'image', mime: 'image/png', bytes: 2048 };
+    const snap = snapBody([
+      userRow('askm_u0000001', 1, 'screenshot it'),
+      asstRow('askm_00000001', 2, { text: 'Here it is.\n\nLooks right.', blocks: [{ kind: 'card', id: 'card_00000001', state: 'shown', textAt: 'Here it is.'.length, card: { type: 'files', title: 'home.png', items: [item] } }] }),
+    ]);
+    const opened = [];
+    const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { chatDeps: { openFiles: (o) => opened.push(o) } } });
+    await openThread(ctx);
+    const card = ctx.doc.querySelector('.ask-msg-assistant .ask-filescard');
+    assert.ok(card, 'the files card replays');
+    const msg = ctx.doc.querySelector('.ask-msg-assistant');
+    const order = [...msg.children].filter((c) => !c.hidden && (c.classList.contains('ask-answer') || c.classList.contains('ask-filescard')))
+      .map((c) => (c.classList.contains('ask-filescard') ? 'card' : c.textContent.trim()));
+    assert.deepEqual(order, ['Here it is.', 'card', 'Looks right.'], 'inside the answer where it was shown (textAt)');
+    assert.equal(card.querySelectorAll('img').length, 1);
+    card.querySelector('.ask-filescard-thumb').click();
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].threadId, TID);
+    assert.equal(opened[0].index, 0);
+  } finally {
+    _resetChatExtensions();
+    _resetFileRenderers();
+  }
+});
+
+test('#958: a structural flush (a new row, a resync) keeps every row element connected — the column is never emptied', async () => {
+  const snap = snapBody([userRow('askm_u0000001', 1, 'hi'), asstRow('askm_00000001', 2), userRow('askm_u0000002', 3, 'more'), asstRow('askm_00000002', 4)]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  const col = ctx.doc.querySelector('.ask-transcript-col');
+  const before = [...col.children];
+  assert.equal(before.length, 4);
+  const removed = [];
+  const mo = new ctx.window.MutationObserver((rs) => { for (const r of rs) removed.push(...r.removedNodes); });
+  mo.observe(col, { childList: true });
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID,
+    message: { id: 'askm_s0000001', threadId: TID, seq: 5, role: 'system', text: 'note', blocks: [{ kind: 'notice', text: 'note' }], status: null, createdAt: 't' } });
+  ctx.flush();
+  await ctx.tick();
+  before.forEach((n, i) => assert.equal(col.children[i], n, `row ${i} is the same element`));
+  assert.equal(col.children.length, 5, 'the new row is appended');
+  ctx.panel.onHello([]);                             // a resync of the same chat: a fresh model, the same rows
+  await ctx.tick(); await ctx.tick();
+  ctx.flush();
+  await ctx.tick();
+  mo.disconnect();
+  before.forEach((n, i) => assert.equal(col.children[i], n, `row ${i} survived the resync`));
+  assert.deepEqual(removed.filter((n) => before.includes(n)), [], 'no kept row was ever taken out of the column');
+  ctx.panel.destroy();
+});
+
+test('#959 entry rise: a row rises the first time the page shows it — a switch back replays nothing, a new row still rises', async () => {
+  const TID2 = 'ask_00000002';
+  const inB = (row) => ({ ...row, threadId: TID2 });   // userRow/asstRow stamp TID
+  const snaps = {
+    [TID]: snapBody([userRow('askm_u0000001', 1, 'first'), asstRow('askm_00000001', 2)]),
+    [TID2]: snapBody([inB(userRow('askm_u0000002', 1, 'other')), inB(asstRow('askm_00000002', 2))], { thread: { ...snapBody([]).thread, id: TID2, title: 'Other' } }),
+  };
+  const ctx = makePanel({ fetchHandler: (url) => {
+    const m = url.match(/^\/api\/ask\/threads\/(ask_[0-9a-f]{8})(?:$|[?/])/);
+    if (m && snaps[m[1]]) return { ok: true, status: 200, json: async () => snaps[m[1]] };
+    if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => listBody() };
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  const rising = () => [...ctx.doc.querySelectorAll('.ask-msg[data-ask-enter]')].map((m) => m.textContent);
+  await openChat(ctx, TID);
+  assert.equal(rising().length, 2, 'a chat never shown rises in');
+  await openChat(ctx, TID2);
+  assert.equal(rising().length, 2, 'so does another one');
+  await openChat(ctx, TID);
+  assert.deepEqual(rising(), [], 'a switch back replays nothing');
+  snaps[TID] = snapBody([...snaps[TID].messages, userRow('askm_u0000003', 3, 'more')]);
+  await resync(ctx);
+  assert.equal(rising().length, 1, 'a row this chat never showed still rises');
+  assert.match(rising()[0], /more/);
 });

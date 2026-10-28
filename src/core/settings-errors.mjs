@@ -16,6 +16,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   askMaxTurns: 'Turn limit',
   askMaxBudgetUsd: 'Per-turn cost cap',
   askWeb: 'Web access',
+  smartNaming: 'Smart run naming',
   'askWeb.enabled': 'Web access',
   'askWeb.anyHost': 'Web access',
   'askWeb.allowedDomains': 'Allowed domains',
@@ -29,15 +30,27 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   titleModel: 'Title generation model',
   autoWorkflowModel: 'Auto workflow model',
   prDescriptionModel: 'PR description model',
+  autoGeneratePrDescription: 'Draft the PR description automatically',
   memoryDefrag: 'Defragment model',
   'memoryDefrag.model': 'Defragment model',
   'memoryDefrag.effort': 'Effort',
+  agentGenModel: 'Agent generation model',
+  'agentGenModel.model': 'Agent generation model',
+  'agentGenModel.effort': 'Effort',
+  namingModel: 'Run naming model',
+  'namingModel.model': 'Run naming model',
+  'namingModel.effort': 'Effort',
+  commandSummaryModel: 'Command summaries model',
+  'commandSummaryModel.model': 'Command summaries model',
+  'commandSummaryModel.effort': 'Effort',
   workspaceScan: 'Workspace scan models',
   'workspaceScan.scanModel': 'Scan agent',
   'workspaceScan.scanEffort': 'Effort',
   'workspaceScan.agentModel': 'Project agents',
   'workspaceScan.agentEffort': 'Effort',
   schedule: 'Scheduled runs',
+  tagDimensions: 'Tag dimensions',
+  enforceTags: 'Require mandatory tags',
   'schedule.graceMin': 'At most this late',
   'schedule.ifMissed': 'If Worca is not running at that time',
   'schedule.maxFailures': 'Pause a repeating schedule after failures in a row',
@@ -46,6 +59,9 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   'sync.remote': 'Remote',
   'sync.refreshMinutes': 'Check remotes in the background',
   'sync.onDiverged': 'If the source branch has diverged',
+  networkWait: 'Wait for the network',
+  'networkWait.enabled': 'Wait for the network to come back',
+  'networkWait.maxWaitMin': 'Longest wait',
   actions: 'Actions',
   'actions.keep': 'Keep checkouts',
   'actions.portLow': 'Low port',
@@ -58,14 +74,24 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   nightModeToggle: 'Away mode',
   theme: 'Theme',
   uiLevel: 'Interface mode',
-  flags: 'Experimental features',
+  flags: 'Labs features',
   hideBuiltinModels: 'Hide built-in models',
   chat: 'Chat notifications',
   runEngine: 'Default engine',
   stepModels: 'Step models',
+  modelRoles: 'Model roles',
   utilityModels: 'Helper models',
   askEngine: 'Engine for new chats',
   askModels: 'Chat model',
+  requirementsInterview: 'Requirements interview',
+  'requirementsInterview.effort': 'Effort',
+  networkProxy: 'Network proxy',
+  'networkProxy.enabled': 'Use a corporate proxy',
+  'networkProxy.upstream': 'Proxy host',
+  'networkProxy.auth': 'Login',
+  'networkProxy.noProxy': 'Hosts that go direct',
+  'networkProxy.timeouts': 'Network proxy',
+  'networkProxy.fixedPort': 'Local proxy port',
 });
 
 // Stored-key spellings the schedule setter uses in its messages.
@@ -82,6 +108,8 @@ const SPECIAL = [
     (m) => `The model “${m[1]}” is not in the catalog. Pick another one.`],
   [/^utilityModels\.claude: Claude's helper models are /, 'utilityModels.claude',
     'Claude’s helper models are set in Title generation model, Auto workflow model, PR description model and Defragment model.'],
+  [/^utilityModels\.(\w+): unknown job "requirementsInterview"/, 'utilityModels',
+    'The requirements interview runs on Claude: set it on the Claude tab.'],
   [/^path does not exist$/, null, 'That folder does not exist.'],
   [/^path is not a directory$/, null, 'That path is not a folder.'],
   [/^cannot use this folder as the Worca CC root: (.*)$/, null, (m) => `This folder can’t be the Worca root: ${m[1]}`],
@@ -91,7 +119,7 @@ const SPECIAL = [
 
 // An internal key that must never reach the user: camelCase (askMaxTurns) or a dotted path
 // under a settings key (sync.remote). Plain dotted text ("e.g.", "worca.dev") is fine.
-const INTERNAL_KEY = /\b[a-z]+[A-Z][a-z]\w*\b|\b(?:askWeb|memoryDefrag|workspaceScan|nightMode|actions|sync|schedule|criteria|chat|search)\.\w+/;
+export const INTERNAL_KEY = /\b[a-z]+[A-Z][a-z]\w*\b|\b(?:askWeb|smartNaming|memoryDefrag|workspaceScan|nightMode|actions|sync|schedule|criteria|chat|search)\.\w+/;
 const VERB = /^(?:must|is|are|needs?|has|have|holds?|cannot|can’t|can't|should)\b/;
 
 const labelOf = (path) => SETTINGS_FIELD_LABELS[path] || null;
@@ -137,6 +165,16 @@ export function settingsErrorReply(err, ctx) {
     }
   }
   return { error: safe(sentence(raw), ctx, ctx), field: ctx };
+}
+
+const CREDENTIAL_URL = /(\/\/)[^/\s:@]+(?::[^/\s@]*)?@/g;
+/**
+ * A user-facing setup line (A21): credentials stripped from any URL, at most 300 characters, and never an
+ * internal key — a line that names one becomes the label's "has a value Worca can’t use" sentence.
+ */
+export function userLine(text, label = 'This setting') {
+  const t = String(text ?? '').replace(CREDENTIAL_URL, '$1').trim().slice(0, 300);
+  return INTERNAL_KEY.test(t) ? sentence(`${quote(label)} has a value Worca can’t use`) : sentence(t || 'Something went wrong');
 }
 
 /** Run `fn`, tagging any failure (sync or async) with the body key `ctx` it validated. */

@@ -26,7 +26,7 @@ export const HINT_TEXT = 'drag to pan · ⌘/ctrl+scroll to zoom';
 export const NAV_INSET = 54;
 /** The cluster's three buttons: [data-nav, label, glyph]. The glyphs are the
  *  composer's (ui/public/index.html #gv-nav) so both canvases read identically. */
-const NAV_BTNS = [
+export const NAV_BTNS = [
   ['in', 'Zoom in', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"></path></svg>'],
   ['out', 'Zoom out', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14" stroke-linecap="round"></path></svg>'],
   ['center', 'Fit graph to view', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"></rect><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"></circle></svg>'],
@@ -39,11 +39,11 @@ export const FOCUS_PAD = 24;
  *  its radius, so a fit never parks a running step in the mist at the edges. */
 export const FOCUS_CLEAR = 0.6;
 /** Chat P3 `card` host (the chat run card's graph well, U9): the Workflows rendering at a chat zoom. The well width
- *  picks the zoom between CARD_ZOOM_MIN and CARD_ZOOM (CARD_ZOOM_NARROW under CARD_NARROW_W px); a graph wider than
- *  that pans instead of shrinking further. The zoom picks the well height, clamped CARD_MIN_H..CARD_MAX_H on the
- *  wrap's --run-host-h. The camera follows the running nodes unless the user panned or zoomed less than
- *  CARD_FOLLOW_IDLE_MS ago. */
-export const CARD_ZOOM = 0.74, CARD_ZOOM_NARROW = 0.6, CARD_ZOOM_MIN = 0.5, CARD_NARROW_W = 640;
+ *  picks the zoom between CARD_ZOOM_MIN and CARD_ZOOM (CARD_ZOOM_NARROW under CARD_NARROW_W px). #959: the floor is
+ *  the 0.3 every host shares, so the graph is fitted into the well; only a graph wider than that at 0.3× pans. The
+ *  zoom picks the well height, clamped CARD_MIN_H..CARD_MAX_H on the wrap's --run-host-h. The camera follows the
+ *  running nodes unless the user panned or zoomed less than CARD_FOLLOW_IDLE_MS ago. */
+export const CARD_ZOOM = 0.74, CARD_ZOOM_NARROW = 0.6, CARD_ZOOM_MIN = 0.3, CARD_NARROW_W = 640;
 export const CARD_MIN_H = 200, CARD_MAX_H = 480, CARD_PAD = 16, CARD_FOLLOW_IDLE_MS = 5000;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -72,7 +72,8 @@ const nodeSig = (stepper) => manifestNodes(stepper).map((n) => n.id).join(',');
 
 export function mountRunGraph(hostEl, opts = {}) {
   const { mode = 'monitor', doc = hostEl.ownerDocument, raf = null, viewport = null,
-    onRowClick = null, onGateClick = null, onResultClick = null, nodeClicks = false, modelLabel = null, now = () => Date.now() } = opts;
+    onRowClick = null, onGateClick = null, onResultClick = null, nodeClicks = false, modelLabel = null, now = () => Date.now(),
+    fill = false } = opts;
   const wrap = hostEl.closest('.run-flow-wrap') || hostEl.parentElement || hostEl;
   const win = doc.defaultView || globalThis;
   const isStatic = mode === 'static', isFocus = mode === 'focus', isCard = mode === 'card';
@@ -131,12 +132,18 @@ export function mountRunGraph(hostEl, opts = {}) {
   // decides the host height (clamp 360..600 via --run-host-h on the wrap), then
   // both axes fit into (width, hostH). `applyTransform: false` is the height
   // pass alone — a touched view keeps its pan/zoom while a taller card lands.
+  // `fill` (the chat run card's Expand overlay): the wrap's CSS owns the height,
+  // so both axes fit into the box as measured and --run-host-h is never written.
   function fitMonitor(applyTransform) {
     const r = view.readRect();
     if (!(r.width > 0)) return;                 // hidden host (0×0): a 0-width fit would
     const b = view.bounds(24);                  // pin --run-host-h at the 360px floor and
     if (!b) return;                             // zoom to the 0.3 clamp for good.
     const vw = Math.max(1, r.width - NAV_INSET);   // the cluster is opaque and clickable
+    if (fill) {
+      if (applyTransform && r.height > 0) view.setTransform(fitInto(b, vw, r.height, { zoomMin }));
+      return;
+    }
     const zw = clamp(Math.min(vw / b.w, 1), zoomMin, 1);
     const hostH = clamp(Math.round((b.h - 48) * zw + DETAIL_PAD_H), DETAIL_MIN_H, DETAIL_MAX_H);   // b is padded 24 each side
     wrap.style.setProperty('--run-host-h', `${hostH}px`);
@@ -171,7 +178,7 @@ export function mountRunGraph(hostEl, opts = {}) {
     for (const [key, label, glyph] of NAV_BTNS) {
       const b = doc.createElement('button');
       b.type = 'button';
-      b.className = 'gv-nav-btn';
+      b.className = 'btn btn-icon gv-nav-btn';
       b.dataset.nav = key;
       b.setAttribute('aria-label', label);
       b.title = label;

@@ -1,5 +1,5 @@
 // src/core/ask/metrics-deps.mjs
-// The team-metrics dependency bundle of the Ask Worca tools (docs/team-metrics.md "Ask Worca"):
+// The team-metrics dependency bundle of the Ask Worca tools (docs/team-metrics.md "Chat"):
 // the ONE module that touches the metrics core on the tools' behalf. tools.mjs may not import
 // anything, so every reader, the validator and the two writers live here. Two callers:
 //   • the MCP child (mcp-stdio.mjs): deps.metrics.* behind get_team_metrics, list_team_metrics_runs,
@@ -14,7 +14,7 @@ import { readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 import { listScopes, readScope } from '../metrics/read.mjs';
-import { aggregate, resolveRange, GROUP_BYS, FILTER_DIMS, RANGES } from '../../shared/team-metrics/aggregate.mjs';
+import { aggregate, resolveRange, isGroupBy, tagFilterOf, GROUP_BYS, FILTER_DIMS, RANGES } from '../../shared/team-metrics/aggregate.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, routeWorkspaceMembers, flushSlug, flushProject, flushAll, metricsEvents,
 } from '../metrics/sync.mjs';
@@ -27,7 +27,7 @@ export const validateMetricsChange = createMetricsChangeValidator({
   listProjects, readWorkspace, readPrefs: readTeamMetricsPrefs, projectKeyOf: projectKey,
 });
 
-/** Only the filter dims the page knows, string values only. */
+/** Only the filter dims the page knows, string values only; plus `tags` (valid tag queries). */
 function cleanFilter(filter) {
   const out = {};
   if (!filter || typeof filter !== 'object' || Array.isArray(filter)) return out;
@@ -35,6 +35,8 @@ function cleanFilter(filter) {
     const v = filter[dim];
     if (typeof v === 'string' && v) out[dim] = v.slice(0, 200);
   }
+  const tags = tagFilterOf(filter);
+  if (tags.length) out.tags = tags;
   return out;
 }
 
@@ -95,7 +97,7 @@ export function defaultMetricsDeps({ threadId = null } = {}) {   // eslint-disab
        */
       async read(scope, { range = 'this-month', from = null, to = null, groupBy = 'workflow', filter = {}, refresh = false } = {}) {
         resolveRange(range, { from, to });                     // RangeError before any git
-        if (!GROUP_BYS.includes(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}" (expected ${GROUP_BYS.join(' | ')})`);
+        if (!isGroupBy(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}" (expected ${GROUP_BYS.join(' | ')} | tag:KEY)`);
         const read = await readScope(scope, { refresh: refresh === true });
         const agg = aggregate(read.records, { range, from, to, groupBy, filter: cleanFilter(filter) });
         return { read, agg };

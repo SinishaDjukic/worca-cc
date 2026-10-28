@@ -135,7 +135,7 @@ test('helper slots: Claude reads today\'s keys; Codex reads utilityModels.codex'
 test('the registry: curated keys only, user-only keys refused, unknown ids throw', () => {
   const ids = settingIds({ roles: ['planner'] });
   for (const id of ['run.engine', 'pipelineCostLimitUsd', 'humanRateUsdPerHour', 'askMaxTurns', 'askMaxBudgetUsd', 'askWeb',
-    'contextMaxBytesPerFile', 'contextMaxBytesTotal', 'skillMount', 'memory.softBytesPerFile', 'memory.defrag.bytesPct',
+    'contextMaxBytesPerFile', 'contextMaxBytesTotal', 'skillMount', 'watchNewPrs', 'memory.softBytesPerFile', 'memory.defrag.bytesPct',
     'nightMode.strategy', 'models.claude.steps.planner', 'models.codex.steps.planner', 'models.claude.utility.title',
     'models.codex.utility.prDescription', 'models.claude.memoryDefrag', 'models.codex.memoryDefrag', 'models.codex.workspaceScan']) {
     assert.ok(ids.includes(id), id);
@@ -175,4 +175,12 @@ test('Cursor: step slots only, and no helper slot borrowed from Claude', () => {
   assert.deepEqual(utilityModelFor('cursor', 'workspaceScan'), { model: null, effort: null, source: 'default' });
   assert.deepEqual(utilityModelFor('cursor', 'title'), { model: null, effort: null, source: 'default' });
   writeUser({});
+});
+
+test('Gemini CLI and Qwen Code: step slots only, like Cursor', () => {
+  const ids = settingIds({ roles: ['plan'] });
+  for (const e of ['gemini', 'qwen']) {
+    assert.deepEqual(ids.filter((id) => id.startsWith(`models.${e}.`)), [`models.${e}.steps.plan`]);
+    assert.deepEqual(utilityModelFor(e, 'title'), { model: null, effort: null, source: 'default' });
+  }
 });

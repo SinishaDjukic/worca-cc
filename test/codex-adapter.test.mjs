@@ -156,9 +156,10 @@ test('a real fan-out stream (collab-wait.jsonl): the bare wait item still gets a
   const bare = replay('collab-wait.jsonl', { model: 'gpt-5.6-sol' }).events.find((e) => e.type === 'subagent');
   assert.equal(bare.subagentType, undefined);
   assert.equal(bare.model, 'gpt-5.6-sol');
-  // Another collab tool names itself.
-  const msg = createCodexNormalizer().push({ type: 'item.started', item: { id: 'c9', type: 'collab_tool_call', tool: 'send_message', prompt: null } });
-  assert.equal(msg[0].label, 'Codex sub-agents: send message');
+  // Another collab tool names itself (codex-cli 0.163 no longer streams send_message, followup_task,
+  // interrupt_agent or list_agents items; the label does not depend on which tool it is).
+  const msg = createCodexNormalizer().push({ type: 'item.started', item: { id: 'c9', type: 'collab_tool_call', tool: 'spawn_agent', prompt: null } });
+  assert.equal(msg[0].label, 'Codex sub-agents: spawn agent');
 });
 
 test('file_change and mcp_tool_call items become tool + toolResult', () => {
@@ -178,11 +179,13 @@ test('a non-JSON line (banner) is skipped', () => {
 
 // ── cost ──────────────────────────────────────────────────────────────────────
 
-test('estimateCodexCostUsd: cached input at a tenth, reasoning not double-billed, unknown model null', () => {
+test('estimateCodexCostUsd: cached input at a tenth (or the row\'s own rate), reasoning not double-billed, unknown model null', () => {
   const c = estimateCodexCostUsd('gpt-5.5', { input: 1_000_000, cached: 0, output: 0 });
-  assert.equal(c, 1.25);
-  assert.ok(estimateCodexCostUsd('gpt-5.5', { input: 1_000_000, cached: 1_000_000, output: 0 }) < c / 2);
-  assert.equal(estimateCodexCostUsd('gpt-5.5', { input: 0, cached: 0, output: 1_000_000, reasoning: 1_000_000 }), 10);
+  assert.equal(c, 5);
+  assert.equal(estimateCodexCostUsd('gpt-5.5', { input: 1_000_000, cached: 1_000_000, output: 0 }), 0.5);
+  assert.equal(estimateCodexCostUsd('gpt-5.5', { input: 0, cached: 0, output: 1_000_000, reasoning: 1_000_000 }), 30);
+  // gpt-6.1-sol's cached input is $0.10, a twentieth of its $2 input.
+  assert.equal(estimateCodexCostUsd('gpt-6.1-sol', { input: 1_000_000, cached: 1_000_000, output: 0 }), 0.1);
   assert.equal(estimateCodexCostUsd('mystery', { input: 1, cached: 0, output: 1 }), null);
   assert.equal(estimateCodexCostUsd(undefined, { input: 1, cached: 0, output: 1 }), null);
 });

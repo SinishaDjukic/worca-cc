@@ -34,10 +34,10 @@ test('ask-panel: shell — the Chat page, open/close as show/hide, ⌘K/Ctrl+K l
       const newBtn = head.querySelector('button[data-ask-new-btn]');
       assert.ok(newBtn, 'New chat sits in the head');
       assert.equal(newBtn.type, 'button');
-      assert.equal(newBtn.textContent, 'New chat', 'a labelled button, not an icon');
-      assert.equal(newBtn.getAttribute('aria-label'), null, 'the visible label is its name');
+      assert.equal(newBtn.previousElementSibling, head.querySelector('[data-ask-threads-btn]'), 'the + right after the list toggle');
+      assert.match(newBtn.getAttribute('aria-label'), /^New chat /, 'an icon button named New chat, with its key');
       assert.equal(newBtn.querySelector('svg').getAttribute('aria-hidden'), 'true', 'the plus glyph is decoration');
-      assert.ok(newBtn.classList.contains('chat-head-btn') && newBtn.classList.contains('chat-new-btn'));
+      assert.ok(newBtn.classList.contains('chat-head-btn') && newBtn.classList.contains('chat-new-plus'));
       assert.ok(page.querySelector('[data-chat-home] > [data-chat-hero-slot] > .ask-composer > .ask-composer-box > [data-chat-composer-lead]:first-child'));
       assert.ok(page.querySelector('.chat-convo > .ask-transcript[data-ask-scroll]'));
       assert.ok(page.querySelector('.chat-convo > [data-chat-dock]'));
@@ -202,11 +202,10 @@ test('ask-panel: a slower, older thread load cannot overwrite a newer switch', a
   };
   const ctx = makePanel({ fetchHandler });
   ctx.panel.open();
-  await ctx.tick();                                                    // the first show loaded the History column
-  const row = (i) => ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[i];
-  row(0).click();                                                      // A: its GET hangs
   await ctx.tick();
-  row(1).click();                                                      // B: resolves at once
+  ctx.panel.open({ threadId: 'ask_00000001' });                        // A: its GET hangs
+  await ctx.tick();
+  ctx.panel.open({ threadId: 'ask_00000002' });                        // B: resolves at once
   await ctx.tick(); await ctx.tick();
   ctx.flush();
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Fast B');

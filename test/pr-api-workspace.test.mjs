@@ -116,7 +116,7 @@ test('POST /api/pr with memberKey pushes + opens in THAT member repo, records it
   const lines = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(runId).map((x) => x.text);
   // `( by <name>)?`: byActor(actorOf(req)) is '' for 'local', but a developer env with
   // WORCA_IDENTITY_NAME set (identity.mjs:33) yields " by <name>".
-  assert.ok(lines.some((t) => /^Pull request opened in `web`( by [^:]+)?: https:\/\/github\.com\/o\/web\/pull\/2$/.test(t)));
+  assert.ok(lines.some((t) => /^PR created in `web`( by [^:]+)?: https:\/\/github\.com\/o\/web\/pull\/2$/.test(t)));
 });
 
 test('partial failure: one member fails, the other succeeds, the failed one is retryable alone', async () => {

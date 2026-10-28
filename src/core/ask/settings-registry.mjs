@@ -6,25 +6,27 @@
 // (deps.applyUser / deps.applyProject, ui/server.mjs). The MCP child's copy has no writers: it lists and checks.
 // No I/O here — every reader and writer comes in through deps.
 import {
-  assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertCostLimitInputs,
+  assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertAutoGeneratePrDescriptionInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
-  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, normalizeModelPair,
+  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair, normalizeRolePair,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
 import { RUN_ENGINES, MODEL_ENGINES, ASK_ENGINES, EFFORTS, SUBAGENT_MODELS, effortsForEngine } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
+import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { receiptCard } from './receipt.mjs';
 
 /** What the chat never reads or changes, and why (list_settings returns `what`; a refused change names `why`). */
 export const SETTING_EXCLUSIONS = Object.freeze([
   { match: ['root', 'projectsRoot'], what: 'Worca and projects root folders', why: 'folders widen what can be browsed' },
   { match: ['actions'], what: 'Actions (editor, terminal, ports, checkouts)', why: 'they hold commands run as the server user — the actions card changes them' },
-  { match: ['askWeb', 'chat.scriptTools'], what: "Ask Worca web access and the chat's script tools", why: "the chat's own powers are only the user's to grant" },
+  { match: ['askWeb', 'chat.scriptTools'], what: "Chat web access and the chat's script tools", why: "the chat's own powers are only the user's to grant" },
   { match: ['chat.channels'], what: 'Chat channels', why: 'they send messages to another service' },
   { match: ['nightMode', 'nightModeToggle'], what: 'Away mode settings', why: 'Away mode keeps its own card (propose_away_mode_change) and switch (set_away_now)' },
   { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers and plugins', why: 'they hold keys and tokens, or run outside code' },
   { match: ['policy', 'metrics'], what: 'Team policy and team metrics', why: 'they publish to the team' },
+  { match: ['memory.team'], what: 'Team memory sharing', why: 'it publishes to the team' },
   { match: ['guardrails'], what: 'Guardrail sets', why: 'editing a set can loosen it' },
   { match: ['hideBuiltinModels'], what: 'Hide built-in models', why: 'once set it overrides the team default, and a Revert could not bring that back — the Models page sets it' },
 ]);
@@ -60,6 +62,8 @@ const JOBS = Object.freeze({ title: 'Title model', classifier: 'Auto workflow cl
 const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel' });
 const CODEX_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan']);
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
+const AGENT_GEN_ID = 'models.claude.utility.agentGen';
+const NAMING_ID = 'models.claude.utility.naming';
 const SCAN_FIELDS = Object.freeze({
   scanModel: { label: 'Workspace scan: scan agent model', allowed: 'a model id from list_models' },
   scanEffort: { label: 'Workspace scan: scan agent effort', allowed: EFFORTS.map((e) => JSON.stringify(e)).join(' | ') },
@@ -70,8 +74,10 @@ const PROJECT_ONLY = Object.freeze({
   contextMaxBytesPerFile: { label: 'Context size per file', group: 'Runs', fmt: bytes, allowed: 'a whole number of bytes' },
   contextMaxBytesTotal: { label: 'Context size in all', group: 'Runs', fmt: bytes, allowed: 'a whole number of bytes' },
   skillMount: { label: 'Skill mount', group: 'Runs', fmt: MOUNT.fmt, allowed: MOUNT.allowed },
+  watchNewPrs: { label: 'Watch new pull requests', group: 'Runs', fmt: onOff, allowed: 'true | false' },
   'memory.softBytesPerFile': { label: 'Memory: flag files above', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
   'memory.maxBytesPerFile': { label: 'Memory: largest file', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
+  'memory.teamMaxFiles': { label: 'Memory: most team notes loaded', group: 'Memory', fmt: String, allowed: 'a whole number' },
   'memory.maxFilesPerScope': { label: 'Memory: most files', group: 'Memory', fmt: String, allowed: 'a whole number' },
   'memory.hookMaxChars': { label: 'Memory: hook length', group: 'Memory', fmt: (n) => `${n} characters`, allowed: 'a whole number of characters' },
   'memory.defrag.writes': { label: 'Memory defragment due after writes', group: 'Memory', fmt: String, allowed: 'a whole number' },
@@ -85,6 +91,12 @@ const pairAllowed = (engine) => `{"model": a model from list_models that runs on
 const pairCheck = (engine) => async (v, ctx) => {
   const pair = normalizeModelPair(engine, v, ctx.def.id);
   if (pair) await ctx.slot([{ id: ctx.def.id, engine, value: pair }]);
+  return pair;
+};
+/** A model role: the model must exist and run on the harness; its effort is any reasoning level, mapped when used (A7). */
+const roleCheck = (engine) => async (v, ctx) => {
+  const pair = normalizeRolePair(v, ctx.def.id);
+  if (pair) await ctx.slot([{ id: ctx.def.id, engine, value: { model: pair.model } }]);
   return pair;
 };
 
@@ -107,6 +119,12 @@ function buildUserDefs(roles, scanDefaults) {
     userDef({ id: 'debugSpawnEnabled', label: 'Spawn diagnostics', group: 'General', read: (s) => ownKey(s, 'debugSpawnEnabled'),
       body: (unit) => ({ debugSpawnEnabled: unit === true }), dflt: false, fmt: onOff, allowed: 'true | false',
       check: (v) => { if (v == null) return null; assertDebugSpawnInput(v); return v === false ? null : v; } }),
+    userDef({ id: 'updateCheck', label: 'Check for new Worca versions', group: 'General', read: (s) => ownKey(s, 'updateCheck'),
+      body: (unit) => ({ updateCheck: unit !== false }), dflt: true, fmt: onOff, allowed: 'true | false',
+      check: (v) => { if (v == null) return null; assertUpdateCheckInput(v); return v === true ? null : v; } }),
+    userDef({ id: 'autoGeneratePrDescription', label: 'Draft the PR description with AI automatically', group: 'General', read: (s) => ownKey(s, 'autoGeneratePrDescription'),
+      body: (unit) => ({ autoGeneratePrDescription: unit === true }), dflt: false, fmt: onOff, allowed: 'true | false',
+      check: (v) => { if (v == null) return null; assertAutoGeneratePrDescriptionInput(v); return v === false ? null : v; } }),
     userDef({ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cost limit', group: 'Runs', ...topKey('pipelineCostLimitUsd'), fmt: usd('No limit'), allowed: 'a positive amount in USD',
       check: (v) => { assertCostLimitInputs({ pipelineCostLimitUsd: v ?? '' }); return v ?? null; } }),
     userDef({ id: 'totalCostLimitUsd', label: 'Total cost limit', group: 'Runs', ...topKey('totalCostLimitUsd'), fmt: usd('No limit'), allowed: 'a positive amount in USD',
@@ -140,16 +158,16 @@ function buildUserDefs(roles, scanDefaults) {
       read: (s) => !(isObj(s.chat) && isObj(s.chat.notify) && s.chat.notify[ev] === false),
       body: (unit) => ({ chat: { notify: { [ev]: unit !== false } } }),
       check: (v) => (v == null ? true : typeof v === 'boolean' ? v : fail(`chat.notify.${ev} must be true or false`)) })),
-    userDef({ id: 'askEngine', label: 'Engine for new chats', group: 'Ask Worca', read: (s) => ownKey(s, 'askEngine'), body: (unit) => ({ askEngine: unit ?? null }),
+    userDef({ id: 'askEngine', label: 'Engine for new chats', group: 'Chat', read: (s) => ownKey(s, 'askEngine'), body: (unit) => ({ askEngine: unit ?? null }),
       dflt: 'claude', fmt: CHAT_ENGINE.fmt, allowed: CHAT_ENGINE.allowed, check: (v) => assertAskEngineInput(v) }),
-    ...ASK_ENGINES.map((e) => pairDef(`models.${e}.ask`, `Chat model (${engineLabel(e)})`, 'Ask Worca', e,
+    ...ASK_ENGINES.map((e) => pairDef(`models.${e}.ask`, `Chat model (${engineLabel(e)})`, 'Chat', e,
       (s) => (isObj(s.askModels) && isObj(s.askModels[e]) ? s.askModels[e] : null), (unit) => ({ askModels: { [e]: unit ?? null } }))),
-    userDef({ id: 'askMaxTurns', label: 'Turn limit', group: 'Ask Worca', ...topKey('askMaxTurns'), dflt: DEFAULT_ASK_MAX_TURNS, fmt: String, allowed: 'a whole number 1–500',
+    userDef({ id: 'askMaxTurns', label: 'Turn limit', group: 'Chat', ...topKey('askMaxTurns'), dflt: DEFAULT_ASK_MAX_TURNS, fmt: String, allowed: 'a whole number 1–500',
       check: (v) => { assertAskLimitInputs({ askMaxTurns: v ?? '' }); return v ?? null; } }),
     // A STORED null is the Settings page's "No cap" tick: a value that outranks a team default (limits.mjs askLimits),
     // never unset — unit 'none', so a Revert writes the null back instead of clearing the key. The marker never leaves
     // unit / put / get / body: check() returns the model's own value (null), which the child hands the parent.
-    userDef({ id: 'askMaxBudgetUsd', label: 'Per-turn cost cap', group: 'Ask Worca', fmt: usd('No cap'), allowed: 'USD 0.1–100',
+    userDef({ id: 'askMaxBudgetUsd', label: 'Per-turn cost cap', group: 'Chat', fmt: usd('No cap'), allowed: 'USD 0.1–100',
       read: (s) => (Object.prototype.hasOwnProperty.call(s, 'askMaxBudgetUsd') && s.askMaxBudgetUsd === null ? 'none' : ownKey(s, 'askMaxBudgetUsd')),
       get: (unit) => (unit === 'none' ? null : unit),
       put: (unit, v) => (v == null && unit === 'none' ? 'none' : v),
@@ -167,6 +185,10 @@ function buildUserDefs(roles, scanDefaults) {
     ...MODEL_ENGINES.flatMap((e) => roles.map((r) => pairDef(`models.${e}.steps.${r.key}`, `${r.label || r.key} model (${engineLabel(e)})`, 'Models', e,
       (s) => (isObj(s.stepModels) && isObj(s.stepModels[e]) && isObj(s.stepModels[e][r.key]) ? s.stepModels[e][r.key] : null),
       (unit) => ({ stepModels: { [e]: { [r.key]: unit ?? null } } })))),
+    ...ROLE_HARNESSES.flatMap((e) => MODEL_ROLES.map((r) => userDef({ id: `models.${e}.roles.${r}`, label: `${ROLE_LABELS[r]} role (${engineLabel(e)})`, group: 'Models',
+      read: (s) => pickPair(isObj(s.modelRoles) && isObj(s.modelRoles[e]) && isObj(s.modelRoles[e][r]) ? s.modelRoles[e][r] : null),
+      body: (unit) => ({ modelRoles: { [e]: { [r]: unit ?? null } } }),
+      fmt: pairText, allowed: `a model ${engineLabel(e)} can run, with any effort`, check: roleCheck(e) }))),
     ...Object.entries(CLAUDE_HELPER_KEYS).map(([job, key]) => userDef({ id: `models.claude.utility.${job}`, label: `${JOBS[job]} (${engineLabel('claude')})`, group: 'Models',
       fmt: pairText, allowed: '{"model": a Claude model from list_models}',
       read: (s) => (typeof s[key] === 'string' && s[key].trim() ? { model: s[key].trim() } : null),
@@ -178,6 +200,30 @@ function buildUserDefs(roles, scanDefaults) {
         await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);
         return value;
       } })),
+    // The agent wizard's Generate: always Claude and project-less, so user scope only (not a cascade id).
+    userDef({ id: AGENT_GEN_ID, label: 'Agent generation model', group: 'Models', fmt: pairText, allowed: pairAllowed('claude'),
+      read: (s) => (isObj(s.agentGenModel) && typeof s.agentGenModel.model === 'string' && s.agentGenModel.model.trim()
+        ? { model: s.agentGenModel.model.trim(), ...(typeof s.agentGenModel.effort === 'string' && s.agentGenModel.effort ? { effort: s.agentGenModel.effort } : {}) } : null),
+      body: (unit) => ({ agentGenModel: unit && unit.model ? { model: unit.model, effort: unit.effort || '' } : null }),
+      check: async (v, ctx) => {
+        const pair = assertAgentGenModelInput(v, await ctx.models());
+        if (!pair) return null;
+        const value = { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) };
+        await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);   // in the catalog is not enough: it must run on Claude
+        return value;
+      } }),
+    // Smart run naming's one call: always Claude and project-less, so user scope only (not a cascade id).
+    userDef({ id: NAMING_ID, label: 'Run naming model', group: 'Models', fmt: pairText, allowed: pairAllowed('claude'),
+      read: (s) => (isObj(s.namingModel) && typeof s.namingModel.model === 'string' && s.namingModel.model.trim()
+        ? { model: s.namingModel.model.trim(), ...(typeof s.namingModel.effort === 'string' && s.namingModel.effort ? { effort: s.namingModel.effort } : {}) } : null),
+      body: (unit) => ({ namingModel: unit && unit.model ? { model: unit.model, effort: unit.effort || '' } : null }),
+      check: async (v, ctx) => {
+        const pair = assertNamingModelInput(v, await ctx.models());
+        if (!pair) return null;
+        const value = { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) };
+        await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);
+        return value;
+      } }),
     ...CODEX_JOBS.map((job) => pairDef(RUN_JOBS.has(job) ? `models.codex.utility.${job}` : `models.codex.${job}`, `${JOBS[job]} (${engineLabel('codex')})`, 'Models', 'codex',
       (s) => (isObj(s.utilityModels) && isObj(s.utilityModels.codex) && isObj(s.utilityModels.codex[job]) ? s.utilityModels.codex[job] : null),
       (unit) => ({ utilityModels: { codex: { [job]: unit ?? null } } }))),
@@ -185,10 +231,10 @@ function buildUserDefs(roles, scanDefaults) {
   return defs;
 }
 
-const MODEL_ID_RE = /^models\.(claude|codex|cursor)\.(?:steps\.(.+)|utility\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$/;
+const MODEL_ID_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.(?:steps\\.(.+)|utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
 function buildProjectDefs(ids, userDefs, roles) {
   const twins = new Map(userDefs.map((d) => [d.id, d]));
-  return ids.filter((id) => id !== 'askWeb' && !id.startsWith('nightMode.')).map((id) => {
+  return ids.filter((id) => id !== 'askWeb' && id !== 'memory.team' && !id.startsWith('nightMode.')).map((id) => {
     const twin = twins.get(id) || null;
     const own = PROJECT_ONLY[id] || null;
     const m = MODEL_ID_RE.exec(id);
@@ -298,7 +344,7 @@ export function createSettingsRegistry(deps = {}) {
     const def = findDef(sid, scope);
     if (!def) {
       // A model slot id is never an exclusion (the 'models' entry is the catalog): a project-only slot or a typo.
-      const slot = MODEL_ID_RE.test(sid) || /^models\.(claude|codex|cursor)\.ask$/.test(sid);
+      const slot = MODEL_ID_RE.test(sid) || ASK_ENGINES.some((e) => sid === `models.${e}.ask`) || sid === AGENT_GEN_ID || sid === NAMING_ID;
       const ex = slot ? null : exclusionOf(sid);
       if (ex) return { ok: false, error: `${sid} is not changed from the chat: ${ex.why}` };
       const projectOnly = scope === 'user' && findDef(sid, 'project') ? ' (it is set per project: scope "project")' : '';

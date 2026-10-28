@@ -7,6 +7,8 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
+import { backdropClick, pressEscape, discardPrompt, keepEditing, discardChanges } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -239,19 +241,137 @@ async function openModal(ctx) {
 // Opening + the summary line
 // ---------------------------------------------------------------------------
 
-test('detail Create PR opens the ship-it modal with the summary + branch → base', async () => {
+test('detail Create PR opens the Create PR dialog with the base pick in Into', async () => {
   const ctx = await bootShip({ detail: { ...DETAIL, results: RESULTS } });
   const modal = await openModal(ctx);
   assert.equal(modal.classList.contains('hidden'), false);
-  assert.match(modal.textContent, /Ship it\?/);
-  assert.match(modal.textContent, /14 files/);        // filesNew + filesChanged, 'D' rows not double-counted
-  assert.match(modal.textContent, /\+412/);
-  assert.match(modal.textContent, /−188/);            // U+2212 — this is a COUNT
-  assert.match(modal.querySelector('.shipit-branch').textContent, /log-ux/);
-  assert.equal(modal.querySelector('.shipit-base-wrap').hidden, false, 'the base is a pick, in the summary line');
+  const ok = modal.querySelector('.shipit-ok');
+  assert.equal(modal.querySelector('.shipit-title').textContent, 'Create PR');
+  assert.equal(ok.textContent, 'Create PR');
+  assert.equal(ok.firstElementChild.querySelector('svg').innerHTML, ICONS['pr-create'], 'the pr-create glyph leads');
+  assert.equal(modal.querySelector('.shipit-summary'), null, 'the hero summary is gone');
+  assert.equal(modal.querySelector('.shipit-sub'), null);
+  assert.equal(modal.querySelector('.shipit-base-wrap').hidden, false, 'the base is a pick, in the Into zone');
   assert.equal(baseSelOf(modal).value, 'feat/log-ux');
   assert.equal(modal.querySelector('.shipit-base').textContent, '', 'the plain text gives way to the pick');
-  assert.match(modal.querySelector('.shipit-sub').textContent, /Implement Log-UX Review Fixes/);
+  assert.equal(modal.querySelector('#shipit-title-input').value, ROW.title, 'the title field starts from the run title');
+});
+
+const postBody = (ctx) => JSON.parse(prPosts(ctx).at(-1).opts.body);
+
+test('Create PR dialog: zones in order, title equals the confirm, footer Try it first left and Cancel + Create PR right', async () => {
+  for (const remotes of [REMOTES, CHAIN_REMOTES]) {
+    const ctx = await bootShip({ remotes });
+    const modal = await openModal(ctx);
+    assert.equal(modal.classList.contains('hidden'), false, 'the dialog opened (no write to a removed hero element threw)');
+    const zones = [...modal.querySelectorAll('.shipit-zone-label')].filter((z) => !z.closest('[hidden]')).map((z) => z.textContent);
+    assert.deepEqual(zones, ['Into', 'Title and description', 'After it opens']);
+    assert.equal(modal.querySelector('.shipit-title').textContent, 'Create PR');
+    assert.equal(modal.getAttribute('aria-label'), 'Create PR');
+    const ok = modal.querySelector('.shipit-ok');
+    assert.equal(ok.textContent, 'Create PR');
+    assert.ok(ok.firstElementChild.matches('.ic'), 'the PR glyph leads');
+    const kids = [...modal.querySelector('.shipit-actions').children].map((b) => b.className);
+    assert.deepEqual(kids, ['btn shipit-try-btn', 'shipit-cancel btn', 'btn btn-primary shipit-ok']);
+  }
+});
+
+test('Into: one remote shows only the branch; two remotes add the remote select and Push remote; both POST the remotes', async () => {
+  for (const [remotes, many] of [[REMOTES, false], [FORK_REMOTES, true]]) {
+    const ctx = await bootShip({ remotes, arms: prArm(PR_OK) });
+    const modal = await openModal(ctx);
+    assert.equal(modal.querySelector('.shipit-remotes').hidden, false);
+    assert.equal(modal.querySelector('.shipit-base-remote-field').hidden, !many);
+    assert.equal(modal.querySelector('.shipit-push-field').hidden, !many);
+    assert.equal(modal.querySelector('.shipit-into-row').dataset.cols, many ? '2' : '1');
+    click(ctx.window, modal.querySelector('.shipit-ok'));
+    await settle(ctx.window, 4);
+    const body = postBody(ctx);
+    assert.equal(body.pushRemote, remotes.defaults.pushRemote);
+    assert.equal(body.baseRemote, remotes.defaults.baseRemote);
+  }
+});
+
+test('the title field: unchanged sends no title; an edit sends the trimmed title', async () => {
+  const ctx = await bootShip({ arms: prArm(PR_OK) });
+  let modal = await openModal(ctx);
+  click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 4);
+  assert.equal('title' in postBody(ctx), false);
+  const ctx2 = await bootShip({ arms: prArm(PR_OK) });
+  modal = await openModal(ctx2);
+  const t = modal.querySelector('#shipit-title-input');
+  t.value = '  Fix booking timezone  '; t.dispatchEvent(new ctx2.window.Event('input', { bubbles: true }));
+  click(ctx2.window, modal.querySelector('.shipit-ok')); await settle(ctx2.window, 4);
+  assert.equal(postBody(ctx2).title, 'Fix booking timezone');
+});
+
+test('posting shows "Creating…" with the glyph; a failure puts "Create PR" back on the title and the confirm', async () => {
+  let release;
+  const ctx = await bootShip({
+    arms: (url, opts) => (url.endsWith('/api/pr') && opts.method === 'POST'
+      ? new Promise((r) => { release = r; }) : null),
+  });
+  const modal = await openModal(ctx);
+  const ok = modal.querySelector('.shipit-ok');
+  click(ctx.window, ok);
+  await settle(ctx.window, 2);
+  assert.equal(ok.textContent, 'Creating…');
+  assert.ok(ok.firstElementChild.matches('.ic'), 'the PR glyph still leads');
+  assert.equal(ok.disabled, true);
+  release({ ok: false, status: 500, json: async () => ({ error: 'push failed' }) });
+  await settle(ctx.window, 6);
+  assert.equal(cardAlertOf(modal.querySelector('.shipit-card')).title, 'Not shipped');
+  assert.equal(ok.textContent, 'Create PR');
+  assert.equal(modal.querySelector('.shipit-title').textContent, 'Create PR');
+  assert.equal(modal.getAttribute('aria-label'), 'Create PR');
+  assert.equal(ok.disabled, false);
+});
+
+// Try it first drives the checkout (screens 7 / 7a). GET /actions and POST /checkout hit actionsRunUrl:
+// /api/runs/ID/actions?… and /api/runs/ID/checkout?…. Same shape as test/actions-view.test.mjs `model`.
+const tryModel = (checkout) => ({ enabled: true, finished: true, workspace: false, estimate: { lastSetupMs: 42000 }, stacks: [], stackStates: [], instances: [],
+  members: [{ projectKey: 'p-1', projectName: 'p', branch: 'feat/log-ux', checkout, actions: [], builtins: [] }] });
+
+test('Try it first: disabled while the checkout is out, "Not checked out" on failure, then the strip once checked out', async () => {
+  let checkedOut = false; let release = null; const checkouts = [];
+  const ctx = await bootShip({
+    arms: (url, opts) => {
+      if (/\/api\/runs\/[^/]+\/actions\?/.test(url) && (opts.method || 'GET') === 'GET') return ok(tryModel(checkedOut ? { dir: '/x' } : null));
+      if (/\/api\/runs\/[^/]+\/checkout\?/.test(url) && opts.method === 'POST') {
+        checkouts.push(JSON.parse(opts.body));
+        return new Promise((r) => { release = r; });
+      }
+      return null;
+    },
+  });
+  const modal = await openModal(ctx);
+  const card = modal.querySelector('.shipit-card');
+  const tryBtn = modal.querySelector('.shipit-try-btn');
+  assert.equal(tryBtn.hidden, false, 'not checked out: the footer button shows');
+  assert.equal(modal.querySelector('.shipit-try').hidden, true, 'and the strip does not');
+
+  tryBtn.focus();
+  click(ctx.window, tryBtn); await settle(ctx.window, 2);
+  assert.equal(tryBtn.disabled, true, 'disabled while the checkout POST is out');
+  modal.querySelector('.shipit-try').__repaint(); await settle(ctx.window, 4);
+  assert.equal(tryBtn.disabled, true, 'an actions-changed repaint keeps it disabled while the POST is out');
+  assert.deepEqual(checkouts, [{ members: ['p-1'] }]);
+  release(fail(500, { error: 'disk full' })); await settle(ctx.window, 4);
+  assert.deepEqual(cardAlertOf(card), { title: 'Not checked out', detail: 'disk full' });
+  assert.equal(tryBtn.disabled, false);
+  assert.equal(tryBtn.hidden, false);
+  assert.equal(ctx.window.document.activeElement, tryBtn, 'focus stays on Try it first');
+
+  tryBtn.focus();
+  click(ctx.window, tryBtn); await settle(ctx.window, 2);
+  checkedOut = true;
+  release(ok({ ok: true })); await settle(ctx.window, 4);
+  assert.equal(cardAlertOf(card), null, 'a good checkout clears the alert');
+  assert.equal(tryBtn.hidden, true, 'checked out: the footer button hides');
+  assert.equal(modal.querySelector('.shipit-try').hidden, false, 'and the strip shows');
+  assert.equal(modal.querySelector('.shipit-try .act-label').textContent, 'Try it first');
+  assert.equal(ctx.window.document.activeElement, modal.querySelector('.shipit-ok'), 'focus moves to Create PR');
+  assert.equal(checkouts.length, 2);
 });
 
 test('#620: no PR yet, the stored base check shows for the chosen base and hides for another', async () => {
@@ -260,7 +380,7 @@ test('#620: no PR yet, the stored base check shows for the chosen base and hides
   const modal = await openModal(ctx);
   const line = modal.querySelector('.shipit-basecheck');
   assert.equal(line.hidden, false);
-  assert.match(line.textContent, /^Conflicts in 2 files with feat\/log-ux \(checked just now\)\. Resolve them first, or open the PR anyway\.$/);
+  assert.match(line.textContent, /^Conflicts in 2 files with feat\/log-ux \(checked just now\)\. Resolve them first, or create the PR anyway\.$/);
   assert.ok(line.classList.contains('tone-red'));
   const sel = baseSelOf(modal);
   sel.value = 'main';
@@ -394,7 +514,7 @@ test('UNKNOWN mergeability schedules exactly one recheck; a later recheck update
   ]);
 });
 
-test('PR failure shows the error inside the modal and re-enables confirm', async () => {
+test('PR failure shows the error inside the modal and re-enables confirm, Cancel and Escape', async () => {
   const ctx = await bootShip({
     arms: (url, opts) => (url.endsWith('/api/pr') && opts.method === 'POST'
       ? fail(500, { error: 'push failed' }) : null),
@@ -414,25 +534,29 @@ test('PR failure shows the error inside the modal and re-enables confirm', async
   assert.equal(modal.classList.contains('hidden'), false, 'a failure keeps the modal open');
   assert.equal(modal.querySelector('.shipit-ok').disabled, false, 'confirm is retryable');
   assert.equal(hdPrLink(ctx.window).hidden, true, 'no link for a PR that was never opened');
+  // The request is no longer out: the way out works again (it waited while the POST was out).
+  assert.equal(modal.querySelector('.shipit-cancel').disabled, false, 'Cancel is live again');
+  pressEscape(ctx.window);
+  await settle(ctx.window);
+  assert.equal(modal.classList.contains('hidden'), true, 'and Escape closes it');
 });
 
 // ---------------------------------------------------------------------------
 // Closing, and the handler-stacking guards
 // ---------------------------------------------------------------------------
 
-test('cancel / Escape / backdrop close without POSTing', async () => {
+test('cancel and Escape close an untouched Ship it without POSTing; a backdrop click never closes it', async () => {
   const ctx = await bootShip({ arms: prArm(PR_OK) });
   const { window } = ctx;
   const modal = await openModal(ctx);
-  // The slide layout: there, an Escape that leaked past the modal would send the glance
-  // back to the list. Side by side it does nothing, and the check below would be vacuous.
+  // The slide layout: there, an Escape that leaked past the modal would send the glance back to the list.
   window.document.getElementById('runs-shell').dataset.layout = 'slide';
-
+  backdropClick(window, modal);
+  await settle(window);
+  assert.ok(isOpen(window), 'a backdrop click never closes the form');
   const closers = {
     cancel: () => click(window, modal.querySelector('.shipit-cancel')),
-    backdrop: () => click(window, modal),          // e.target === the overlay itself
-    escape: () => window.document.dispatchEvent(
-      new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })),
+    escape: () => pressEscape(window),
   };
   for (const [name, close] of Object.entries(closers)) {
     if (!isOpen(window)) click(window, hdPr(window));      // re-open for the next variant
@@ -441,13 +565,12 @@ test('cancel / Escape / backdrop close without POSTing', async () => {
     await settle(window);
     assert.equal(isOpen(window), false, `${name} closes the modal`);
     assert.equal(prPosts(ctx).length, 0, `${name} never POSTs /api/pr`);
-    // Escape belongs to the modal, not the detail screen: the run stays open.
     assert.ok(window.document.querySelector('#hist-shell').classList.contains('detail-open'),
       `${name} leaves the detail screen open`);
   }
 });
 
-test('one confirm click is one POST: a second open or a cancel mid-POST never stacks a second confirm handler', async () => {
+test('one confirm click is one POST: a second open or a teardown mid-POST never stacks a second confirm handler', async () => {
   await checkRows([
     { name: 'a second open does not stack a second confirm handler', run: async () => {
       const ctx = await bootShip({ arms: prArm(PR_OK) });
@@ -458,10 +581,10 @@ test('one confirm click is one POST: a second open or a cancel mid-POST never st
       await settle(ctx.window, 6);
       assert.equal(prPosts(ctx).length, 1, 'one confirm click === one POST');
     } },
-    { name: 'cancelling while the POST is in flight cannot stack a second confirm handler', run: async () => {
-      // Regression guard: `done()` used to be non-idempotent, so the stale generation
-      // hid the freshly-opened modal, nulled the new generation's teardown handle and
-      // left its keydown listener attached — after which one click fired N POSTs.
+    { name: 'a teardown from outside while the POST is in flight cannot stack a second confirm handler', run: async () => {
+      // Regression guard: `done()` used to be non-idempotent, so the stale generation hid the freshly-opened
+      // modal, nulled the new generation's teardown handle and left its listeners attached. Cancel and Escape
+      // now wait for the POST (the Stop dialog's rule); leaving the detail screen still tears it down mid-flight.
       let release;
       const hanging = new Promise((r) => { release = r; });
       const ctx = await bootShip({
@@ -469,20 +592,21 @@ test('one confirm click is one POST: a second open or a cancel mid-POST never st
       });
       const { window } = ctx;
       const modal = await openModal(ctx);
-
       click(window, modal.querySelector('.shipit-ok'));        // (1) POST hangs
       await settle(window);
-      click(window, modal.querySelector('.shipit-cancel'));    // (2) cancel mid-flight
-      assert.equal(isOpen(window), false, 'cancel closes even while the POST is in flight');
-      assert.equal(hdPr(window).hidden, false, 'record.pr is still unset, so Create PR is still offered');
-
+      assert.equal(modal.querySelector('.shipit-cancel').disabled, true, 'Cancel waits for the answer');
+      pressEscape(window);
+      assert.ok(isOpen(window), 'so does Escape');
+      go(window, 'new');                                       // (2) leave the detail screen mid-flight
+      await settle(window, 6);
+      assert.equal(isOpen(window), false, 'closeHistDetail tears the modal down');
+      await openDetail(ctx);
       click(window, hdPr(window));                             // (3) a NEW generation owns the modal
       assert.ok(isOpen(window), 'the modal re-opens');
-
+      assert.equal(modal.querySelector('.shipit-cancel').disabled, false, 'a fresh open starts with Cancel live');
       release({ ok: true, status: 200, json: async () => PR_OK });   // (4) the stale POST lands
       await settle(window, 6);
       assert.ok(isOpen(window), 'the stale generation must not hide the freshly-opened modal');
-
       click(window, modal.querySelector('.shipit-ok'));        // (5) exactly ONE more POST
       await settle(window, 6);
       assert.equal(prPosts(ctx).length, 2, 'two confirm clicks === two POSTs, never three');
@@ -533,10 +657,10 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
       const OTHER = row({ id: 'aaaa1111', title: 'Another run' });
       const ctx = await bootShip({ rows: [row(), OTHER], arms: prArm(PR_OK) });
       const { window } = ctx;
-      const rowSel = `#runs-list .runs-row[data-slot="group"][data-pipeline-id="${ROW.id}"]`;
+      const rowSel = `#runs-list .runs-row[data-pipeline-id="${ROW.id}"]`;
       const word = () => window.document.querySelector(`${rowSel} .runs-row-sub`).textContent;
       const modal = await openModal(ctx);
-      assert.match(word(), /^Finished\b/, 'no PR yet: the row reads Finished');
+      assert.match(word(), /^Ready to ship\b/, 'no PR yet: the row reads Ready to ship');
       click(window, modal.querySelector('.shipit-ok'));
       await settle(window, 6);
 
@@ -550,7 +674,8 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
       assert.equal(listFetches(), before, 'hopping between saved runs does not refetch /api/history');
 
       assert.ok(window.document.querySelector(rowSel), 'the list row is still there');
-      assert.match(word(), /^In review\b/, 'the row reads the OPEN PR');
+      assert.equal(window.document.querySelector(rowSel).dataset.state, 'in-review', 'the row reads the OPEN PR');
+      assert.ok(window.document.querySelector(`${rowSel} .runs-pr`), 'its PR chip is on the right');
       // Re-entering the run must NOT offer Create PR again: that was the stale-button ->
       // double-POST loop (patchHistoryPr in the ship path + the `if (!record.pr)` gate).
       assert.equal(hdPr(window).hidden, true, 'the Create-PR button was swapped out');
@@ -581,7 +706,8 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
       });
       await settle(window);
       assert.equal(hdPr(window).hidden, true);
-      assert.equal(hdPrLink(window).textContent, 'Merged');
+      assert.equal(hdPrLink(window).textContent, 'View PR');
+      assert.equal(hdPrLink(window).querySelector(':scope > .ic svg').innerHTML, ICONS.merge);
     } },
   ]);
 });
@@ -593,13 +719,17 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
 test('OPEN/MERGED records render links, not the button, even when the merged branch is gone', async () => {
   await checkRows([
     { name: 'OPEN/MERGED records render links, not the button', run: async () => {
-      for (const [state, label] of [['OPEN', 'View PR'], ['MERGED', 'Merged']]) {
+      // PR controls (design system): View PR for an open and a merged PR alike, a secondary .btn led by the state glyph.
+      for (const [state, glyph] of [['OPEN', 'pull-request'], ['MERGED', 'merge']]) {
         const ctx = await bootShip({ rows: [row({ pr: { state, url: 'https://x/pull/5' } })] });
         await openDetail(ctx);
         const link = hdPrLink(ctx.window);
         assert.equal(hdPr(ctx.window).hidden, true, `${state}: no Create-PR button`);
         assert.equal(link.hidden, false, `${state}: the link renders`);
-        assert.equal(link.textContent, label);
+        assert.equal(link.textContent, 'View PR');
+        assert.ok(link.classList.contains('btn') && !link.classList.contains('btn-primary'), `${state}: ${link.className}`);
+        assert.equal(link.querySelector(':scope > .ic svg').innerHTML, ICONS[glyph], state);
+        assert.equal(link.querySelector('.ic').style.width, '16px');
         assert.equal(link.classList.contains('merged'), state === 'MERGED');
       }
     } },
@@ -610,7 +740,7 @@ test('OPEN/MERGED records render links, not the button, even when the merged bra
       });
       await openDetail(ctx);
       assert.equal(hdPrLink(ctx.window).hidden, false);
-      assert.equal(hdPrLink(ctx.window).textContent, 'Merged');
+      assert.equal(hdPrLink(ctx.window).textContent, 'View PR');
     } },
   ]);
 });
@@ -636,7 +766,7 @@ test('Create PR eligibility: never for workspace runs (detail or list, histPrEli
       go(ctx.window, 'runs');                                  // nothing remembered: the bare list
       await settle(ctx.window);
       const listRow = ctx.window.document.querySelector(
-        `#runs-list .runs-row[data-slot="group"][data-project-key="${WKS_KEY}"][data-pipeline-id="${ROW.id}"]`);
+        `#runs-list .runs-row[data-project-key="${WKS_KEY}"][data-pipeline-id="${ROW.id}"]`);
       assert.ok(listRow, 'the workspace row is listed');
       click(ctx.window, listRow);                              // navigate the way the row does
       await settle(ctx.window, 5);
@@ -679,7 +809,7 @@ test('the modal loads project remotes into both selects with server defaults and
       const pushSel = modal.querySelector('.shipit-push-remote');
       const baseSel = modal.querySelector('.shipit-base-remote');
       assert.deepEqual(optionValues(pushSel), ['origin', 'upstream']);
-      assert.deepEqual([...baseSel.options].map((o) => o.textContent), ['origin — me/repo', 'upstream — up/repo']);
+      assert.deepEqual([...baseSel.options].map((o) => o.textContent), ['origin (me/repo)', 'upstream (up/repo)']);
       assert.equal(pushSel.value, 'origin');
       assert.equal(baseSel.value, 'upstream');
       assert.equal(pushSel.disabled, false);
@@ -953,7 +1083,7 @@ test('Generate with AI posts the run + base branch, reads "Generating…" while 
   await settle(ctx.window, 6);
   assert.equal(descOf(modal).value, '## Summary\nRetries fetch.');
   assert.equal(genBtnOf(modal).disabled, false);
-  assert.equal(genBtnOf(modal).textContent, 'Generate with AI');
+  assert.equal(genBtnOf(modal).textContent, 'Generate');
   assert.equal(stopBtnOf(modal).hidden, true);
   assert.equal(isOpen(ctx.window), true, 'nothing is submitted: the text waits for the user');
   assert.equal(prPosts(ctx).length, 0);
@@ -1014,7 +1144,7 @@ test('Stop or closing the modal aborts an in-flight generation; a late response 
       await settle(ctx.window, 6);
       assert.equal(g.signals[0].aborted, true, 'the request is cancelled (AbortController)');
       assert.equal(genBtnOf(modal).disabled, false);
-      assert.equal(genBtnOf(modal).textContent, 'Generate with AI');
+      assert.equal(genBtnOf(modal).textContent, 'Generate');
       assert.equal(stopBtnOf(modal).hidden, true);
       assert.equal(descErrOf(modal).hidden, true, 'a stop is not an error');
       assert.equal(descOf(modal).value, '');
@@ -1031,7 +1161,7 @@ test('Stop or closing the modal aborts an in-flight generation; a late response 
       assert.equal(g.signals[0].aborted, true, 'closing the modal cancels the request');
       click(window, hdPr(window));                        // re-open: a new generation owns the modal
       await settle(window);
-      assert.equal(genBtnOf(modal).textContent, 'Generate with AI', 'the new open starts idle');
+      assert.equal(genBtnOf(modal).textContent, 'Generate', 'the new open starts idle');
       g.release({ ok: true, body: 'stale text' });        // the old response lands anyway
       await settle(window, 6);
       assert.equal(descOf(modal).value, '', 'the stale response must not fill the new modal');
@@ -1046,7 +1176,150 @@ test('Stop or closing the modal aborts an in-flight generation; a late response 
       g.release({ error: 'boom' }, 500);
       await settle(window, 6);
       assert.equal(descErrOf(modal).hidden, true, 'a stale failure paints nothing either');
-      assert.equal(genBtnOf(modal).textContent, 'Generate with AI');
+      assert.equal(genBtnOf(modal).textContent, 'Generate');
+    } },
+  ]);
+});
+
+// The autoGeneratePrDescription setting: the dialog runs Generate with AI itself once the remotes load.
+const appSettingsArm = (settings) => (url) => (url.endsWith('/api/settings') ? ok(settings) : null);
+const withArms = (...arms) => (url, opts, box) => arms.reduce((r, a) => r || a(url, opts, box), null);
+
+test('autoGeneratePrDescription on: opening drafts once with the chosen base, no confirm; the draft alone is not a change', async () => {
+  const g = gatedDescribe();
+  const ctx = await bootShip({ arms: withArms(appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
+  const { window } = ctx;
+  const modal = await openModal(ctx);
+  await settle(window, 6);
+  assert.equal(describeCalls(ctx).length, 1, 'one draft per open');
+  assert.deepEqual(JSON.parse(describeCalls(ctx)[0].opts.body),
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, baseBranch: 'feat/log-ux' });
+  assert.equal(confirmOpen(window), false, 'an empty description is never asked about');
+  assert.equal(genBtnOf(modal).textContent, 'Generating…');
+  assert.equal(stopBtnOf(modal).hidden, false, 'the automatic draft can be stopped');
+  g.release({ ok: true, body: '## Summary\nDrafted.' });
+  await settle(window, 6);
+  assert.equal(descOf(modal).value, '## Summary\nDrafted.');
+  assert.equal(genBtnOf(modal).disabled, false, 'Generate is offered again');
+  assert.equal(describeCalls(ctx).length, 1);
+  pressEscape(window);
+  await settle(window);
+  assert.equal(discardPrompt(window.document), null, 'the automatic draft is not a user edit');
+  assert.equal(isOpen(window), false);
+});
+
+test('autoGeneratePrDescription off or unset: opening sends no draft request', async () => {
+  await checkRows([false, undefined].map((on) => ({ name: `setting ${on}`, run: async () => {
+    const g = gatedDescribe();
+    const ctx = await bootShip({ arms: withArms(appSettingsArm(on === undefined ? {} : { autoGeneratePrDescription: on }), g.arm) });
+    const modal = await openModal(ctx);
+    await settle(ctx.window, 6);
+    assert.equal(describeCalls(ctx).length, 0);
+    assert.equal(genBtnOf(modal).textContent, 'Generate');
+  } })));
+});
+
+test('autoGeneratePrDescription: closing mid-draft aborts it cleanly; words typed before the remotes load skip it', async () => {
+  await checkRows([
+    { name: 'Cancel while the automatic draft is in flight aborts the request', run: async () => {
+      const g = gatedDescribe({ honorAbort: false });
+      const ctx = await bootShip({ arms: withArms(appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
+      const { window } = ctx;
+      const modal = await openModal(ctx);
+      await settle(window, 6);
+      assert.equal(describeCalls(ctx).length, 1);
+      click(window, modal.querySelector('.shipit-cancel'));
+      assert.equal(isOpen(window), false);
+      assert.equal(g.signals[0].aborted, true, 'closing the dialog cancels the draft');
+      g.release({ ok: true, body: 'late text' });
+      await settle(window, 6);
+      assert.equal(descOf(modal).value, '', 'a late answer writes nothing');
+      assert.equal(descErrOf(modal).hidden, true);
+    } },
+    { name: 'a description typed before the remotes answer is kept: no draft, no confirm', run: async () => {
+      const g = gatedDescribe();
+      let releaseRemotes;
+      const held = (url) => (/\/api\/pr\/remotes\?/.test(url)
+        ? new Promise((r) => { releaseRemotes = () => r({ ok: true, status: 200, json: async () => REMOTES }); }) : null);
+      const ctx = await bootShip({ arms: withArms(held, appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
+      const { window } = ctx;
+      const modal = await openModal(ctx);
+      typeInto(window, descOf(modal), 'my own words');
+      releaseRemotes();
+      await settle(window, 8);
+      assert.equal(describeCalls(ctx).length, 0);
+      assert.equal(confirmOpen(window), false);
+      assert.equal(descOf(modal).value, 'my own words');
+    } },
+  ]);
+});
+
+test('Ship it: a written description is a change — Escape asks (Keep editing keeps the words, Discard closes); Cancel closes at once', async () => {
+  const ctx = await bootShip({ arms: prArm(PR_OK) });
+  const { window } = ctx;
+  const doc = window.document;
+  const modal = await openModal(ctx);
+  typeInto(window, descOf(modal), 'my own words');
+  pressEscape(window);
+  assert.ok(discardPrompt(doc), 'asks first');
+  keepEditing(doc);
+  await settle(window);
+  assert.ok(isOpen(window));
+  assert.equal(descOf(modal).value, 'my own words');
+  pressEscape(window);
+  discardChanges(doc);
+  await settle(window);
+  assert.equal(isOpen(window), false);
+  assert.equal(prPosts(ctx).length, 0);
+  click(window, hdPr(window));
+  typeInto(window, descOf(modal), 'again');
+  click(window, modal.querySelector('.shipit-cancel'));
+  assert.equal(isOpen(window), false, 'Cancel never asks');
+  assert.equal(discardPrompt(doc), null);
+});
+
+test('Ship it: the remotes it filled in after opening are not a change — a backdrop click, a select or a tab then Escape closes; a changed pick asks', async () => {
+  const shipIt = async () => {
+    const ctx = await bootShip({ remotes: FORK_REMOTES, arms: prArm(PR_OK) });
+    const modal = await openModal(ctx);
+    assert.equal(modal.querySelector('.shipit-remotes').hidden, false, 'the remotes landed after the dialog opened');
+    return { window: ctx.window, modal };
+  };
+  await checkRows([
+    ...[
+      ['a backdrop click', (w, m) => backdropClick(w, m)],
+      ['a click on the push-remote select that picks nothing', (w, m) => click(w, m.querySelector('.shipit-push-remote'))],
+      ['a press of the Preview tab', (w, m) => click(w, tabOf(m, 'preview'))],
+    ].map(([what, act]) => ({ name: `${what}, then Escape: closes without asking`, run: async () => {
+      const { window, modal } = await shipIt();
+      act(window, modal);
+      await settle(window);
+      pressEscape(window);
+      assert.equal(discardPrompt(window.document), null, 'nothing the user changed');
+      assert.equal(isOpen(window), false);
+    } })),
+    { name: 'a changed pick asks', run: async () => {
+      const { window, modal } = await shipIt();
+      const sel = modal.querySelector('.shipit-base-remote');
+      sel.value = 'origin';                                    // the server's default was upstream
+      sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+      pressEscape(window);
+      assert.ok(discardPrompt(window.document), 'asks first');
+      assert.ok(isOpen(window));
+    } },
+    { name: 'words typed before the remotes landed still ask', run: async () => {
+      let release;
+      const remotesGate = new Promise((r) => { release = r; });
+      const ctx = await bootShip({ arms: (url) => (/\/api\/pr\/remotes\?/.test(url) ? remotesGate : null) });
+      const { window } = ctx;
+      await openDetail(ctx);
+      click(window, hdPr(window));
+      typeInto(window, descOf(modalOf(window)), 'my own words');
+      release({ ok: true, status: 200, json: async () => FORK_REMOTES });
+      await settle(window);
+      assert.equal(modalOf(window).querySelector('.shipit-remotes').hidden, false, 'the remotes landed after the typing');
+      pressEscape(window);
+      assert.ok(discardPrompt(window.document), 'the late fill never hides what was typed');
     } },
   ]);
 });
@@ -1135,14 +1408,22 @@ test('base warning: shown when baseStatus.movedSinceRun > 0 on the chosen base r
 
 const AZ_BASE = { name: 'origin', slug: 'dev.azure.com/acme/Shop/api', owner: 'acme/Shop', forge: 'azure', prHost: 'Azure DevOps', prSupported: true };
 const AZ_FORK = { name: 'fork', slug: 'dev.azure.com/acme/Shop/api-fork', owner: 'acme/Shop', forge: 'azure', prHost: 'Azure DevOps', prSupported: true };
+const BB_BASE = { name: 'origin', slug: 'bitbucket.org/acme/api', owner: 'acme', forge: 'bitbucket', prHost: 'Bitbucket', prSupported: true };
+const BB_FORK = { name: 'fork', slug: 'bitbucket.org/me/api', owner: 'me', forge: 'bitbucket', prHost: 'Bitbucket', prSupported: true };
 const azRemotes = (list, defaults = { pushRemote: 'origin', baseRemote: 'origin' }) => ({ ...REMOTES, remotes: list, defaults });
-const baseLabelOf = (modal) => modal.querySelector('label[for="shipit-base-remote"]').textContent;
+const baseLabelOf = (modal) => modal.querySelector('#shipit-into-label').textContent;
 const hintOf = (modal) => modal.querySelector('.shipit-remotes-hint').textContent;
 
 test('(e) Create PR eligibility reads any PR host: an Azure DevOps token alone offers it, no host hides it', async () => {
   await checkRows([
     { name: 'gh missing, Azure configured', run: async () => {
       const ctx = await bootShip({ gh: false, prHosts: { github: false, azure: true } });
+      await openDetail(ctx);
+      assert.equal(hdPr(ctx.window).hidden, false);
+      assert.equal(ctx.window.__np.histPrEligible(ROW), true);
+    } },
+    { name: 'gh missing, Bitbucket configured', run: async () => {
+      const ctx = await bootShip({ gh: false, prHosts: { github: false, azure: false, bitbucket: true } });
       await openDetail(ctx);
       assert.equal(hdPr(ctx.window).hidden, false);
       assert.equal(ctx.window.__np.histPrEligible(ROW), true);
@@ -1160,12 +1441,17 @@ test('(a)(b)(c)(g) the Ship-it modal names the base remote\'s PR host and says w
   await checkRows([
     { name: '(a) the base label names Azure DevOps', run: async () => {
       const modal = await openModal(await bootShip({ remotes: azRemotes([AZ_BASE]) }));
-      assert.equal(baseLabelOf(modal), 'Open PR in (Azure DevOps)');
+      assert.equal(baseLabelOf(modal), 'Into (Azure DevOps)');
       assert.equal(hintOf(modal), '');
     } },
     { name: '(b) a fork push into an Azure base says forks are not supported, not Cross-repo', run: async () => {
       const modal = await openModal(await bootShip({ remotes: azRemotes([AZ_BASE, AZ_FORK], { pushRemote: 'fork', baseRemote: 'origin' }) }));
-      assert.equal(hintOf(modal), 'Azure DevOps pull requests between repositories (forks) are not supported yet — push to origin.');
+      assert.equal(hintOf(modal), 'Azure DevOps pull requests between repositories (forks) are not supported yet. Push to origin.');
+    } },
+    { name: '(b) a fork push into a Bitbucket base says forks are not supported; the label names Bitbucket', run: async () => {
+      const modal = await openModal(await bootShip({ remotes: azRemotes([BB_BASE, BB_FORK], { pushRemote: 'fork', baseRemote: 'origin' }) }));
+      assert.equal(baseLabelOf(modal), 'Into (Bitbucket)');
+      assert.equal(hintOf(modal), 'Bitbucket pull requests between repositories (forks) are not supported yet. Push to origin.');
     } },
     { name: '(c) a missing credential shows the server\'s reason', run: async () => {
       const prReason = 'Azure DevOps is not configured: set WORCA_ADO_TOKEN (a PAT with Code: Read & Write) where worca runs';
@@ -1176,7 +1462,7 @@ test('(a)(b)(c)(g) the Ship-it modal names the base remote\'s PR host and says w
       const modal = await openModal(await bootShip({
         remotes: azRemotes([{ name: 'origin', slug: 'gitlab.com/g/api', owner: 'g', forge: null, prHost: null, prSupported: true }]),
       }));
-      assert.equal(baseLabelOf(modal), 'Open PR in');
+      assert.equal(baseLabelOf(modal), 'Into');
     } },
   ]);
 });
@@ -1196,6 +1482,7 @@ test('(d) Generate with AI sends forge:azure for an Azure base remote, and no fo
   };
   await checkRows([
     { name: 'Azure base remote', run: async () => assert.equal((await describeBody(azRemotes([AZ_BASE]))).forge, 'azure') },
+    { name: 'Bitbucket base remote', run: async () => assert.equal((await describeBody(azRemotes([BB_BASE]))).forge, 'bitbucket') },
     { name: 'GitHub base remote', run: async () => assert.equal('forge' in (await describeBody(REMOTES)), false) },
   ]);
 });
@@ -1226,7 +1513,7 @@ test('Open as draft: unchecked on every open; ticked sends draft:true, unticked 
       assert.ok(box, 'checkbox present');
       assert.equal(box.type, 'checkbox');
       assert.equal(box.checked, false);
-      assert.match(box.closest('label').textContent, /Open as draft/);
+      assert.match(box.closest('label').textContent, /Draft/);
     } },
     { name: 'ticked and cancelled: unchecked again on the next open (D1)', run: async () => {
       draftBox(modal).checked = true;
@@ -1301,6 +1588,59 @@ test('Watch PR: unchecked on every open; ticked sends watch:true, unticked sends
   assert.ok(!('watch' in JSON.parse(prPosts(ctx)[0].opts.body)));
 });
 
+const settingsArm = (value) => (url) => (url.endsWith(`/api/projects/${KEY}/settings`)
+  ? ok({ own: value === undefined ? {} : { watchNewPrs: value }, effective: value === undefined ? {} : { watchNewPrs: { value, source: 'project' } }, layers: {}, roles: [] })
+  : null);
+const anyArm = (...arms) => (url, opts, box) => { for (const a of arms) { const r = a(url, opts, box); if (r) return r; } return null; };
+
+test('s4 (c): with the project setting on, Ship it opens with Watch PR checked on every open; off or absent, unchecked', async () => {
+  let ctx = await bootShip({ arms: anyArm(settingsArm(true), prArm(PR_OK)) });
+  let modal = await openModal(ctx);
+  await settle(ctx.window, 4);          // the settings read lands after the remotes settle in openModal
+  assert.equal(watchBox(modal).checked, true, 'setting on');
+  watchBox(modal).checked = false;
+  watchBox(modal).dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  click(ctx.window, modal.querySelector('.shipit-cancel')); await settle(ctx.window);
+  modal = await openModal(ctx);
+  await settle(ctx.window, 4);
+  assert.equal(watchBox(modal).checked, true, 'a pick changed in one open does not carry to the next');
+  click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 6);
+  assert.equal(JSON.parse(prPosts(ctx)[0].opts.body).watch, true);
+  for (const value of [false, undefined]) {
+    ctx = await bootShip({ arms: anyArm(settingsArm(value), prArm(PR_OK)) });
+    modal = await openModal(ctx);
+    await settle(ctx.window, 4);        // give a wrong 'on' the same chance to land before asserting off
+    assert.equal(watchBox(modal).checked, false, `setting ${value}`);
+    click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 6);
+    assert.ok(!('watch' in JSON.parse(prPosts(ctx)[0].opts.body)), 'off sends no watch field');
+  }
+});
+
+test('s4: a Watch PR pick made before the project setting answers is kept', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const late = (url) => (url.endsWith(`/api/projects/${KEY}/settings`)
+    ? gate.then(() => ok({ effective: { watchNewPrs: { value: true, source: 'project' } } })) : null);
+  const ctx = await bootShip({ arms: late });
+  const modal = await openModal(ctx);
+  assert.equal(watchBox(modal).checked, false, 'off until the setting answers');
+  for (const v of [true, false]) {       // the user turns it on, then off again
+    watchBox(modal).checked = v;
+    watchBox(modal).dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  }
+  release(); await settle(ctx.window, 4);
+  assert.equal(watchBox(modal).checked, false, 'the user\'s pick wins');
+});
+
+test('s4: Ship it shows the Watch PR help line, named by the switch', async () => {
+  const ctx = await bootShip();
+  const modal = await openModal(ctx);
+  const help = modal.querySelector('#shipit-watch-help');
+  assert.equal(help.textContent, 'Follows checks and reviews');
+  assert.equal(help.hidden, false);
+  assert.equal(watchBox(modal).getAttribute('aria-describedby'), 'shipit-watch-help');
+});
+
 // The Overview tab's PR row (paintHdOvPrs -> paintRdPrStatus): GitHub's verdict, what the watch is doing,
 // and the Watch switch. One GET /api/pr/checks answers all three.
 const ovHash = `${detailHash}/details/overview`;
@@ -1317,7 +1657,7 @@ test('Overview: an open PR row shows GitHub\'s verdict and the watch, words only
     [WATCH({ status: 'fixing', activePipelineId: 'f1' }), 'Fixing', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1', mergingBase: 'dev' }), 'Merging dev in', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1', resolving: true }), 'Resolving conflicts', 'true'],
-    [WATCH({ watching: false, status: 'publishing' }), 'Disabled — finishing', 'false'],
+    [WATCH({ watching: false, status: 'publishing' }), 'Disabled (finishing)', 'false'],
     [WATCH({ status: 'needs-person', reason: 'cap' }), 'Needs a person', 'true'],
     [WATCH({ watching: false, status: null }), '', 'false'],
   ]) {
@@ -1325,8 +1665,10 @@ test('Overview: an open PR row shows GitHub\'s verdict and the watch, words only
     await openDetail(ctx, ovHash); await settle(ctx.window);
     assert.equal(ovStatus(ctx.window).hidden, false);
     assert.match(ovPr(ctx.window).textContent, /^Pull request/);
-    assert.match(ovStatus(ctx.window).textContent, /Ready to merge·All 12 checks passed/);
-    if (label) assert.match(ovStatus(ctx.window).textContent, new RegExp(label));
+    // Two lines: the headline alone, then its notes with no separator in front.
+    assert.equal(ovStatus(ctx.window).querySelector('.rd-prs-sum > .rd-prs-lead').textContent, 'Ready to merge');
+    assert.equal(ovStatus(ctx.window).querySelector('.rd-prs-sum > .rd-prs-notes').firstElementChild.textContent, 'All 12 checks passed');
+    if (label) assert.ok(ovStatus(ctx.window).textContent.includes(label), label);
     else assert.doesNotMatch(ovStatus(ctx.window).textContent, /Watching|Fixing|Needs a person|Disabled/);
     assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), pressed);
     assert.equal(ovSwitch(ctx.window).dataset.minLevel, 'advanced');
@@ -1393,4 +1735,124 @@ test('Overview: pr-watch-changed rereads only the exact PR', async () => {
   send({ projectKey: KEY, pipelineId: ROW.id });
   await settle(ctx.window);
   assert.equal(checksGets(ctx).length, before + 1);
+});
+
+// ---------------------------------------------------------------------------
+// D16/D22: a slice's place in its feature (the History glance line and the Ship it note)
+// ---------------------------------------------------------------------------
+
+const SLICE_URL = `/api/shape/pipelines/${ROW.id}/slice`;
+const SLICE_INFO = { featureId: 'feat_1', title: 'Charts', index: 1, total: 3, sliceTitle: 'Store tags', state: 'done',
+  next: { index: 2, title: 'Slice 2', state: 'planned' } };
+const hello = (ctx) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
+/** A slice endpoint stub; `hold` keeps the answer until `release()`. */
+function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
+  const a = { calls: 0, release: null };
+  a.arm = (url) => {
+    if (!url.endsWith(SLICE_URL)) return null;
+    a.calls += 1;
+    const answer = () => (info ? ok(info) : fail(404, { error: 'not a slice' }));
+    return hold ? new Promise((r) => { a.release = () => r(answer()); }) : answer();
+  };
+  return a;
+}
+
+// Runs redesign slice 4 (D18): a slice's History glance has no group row and no kind chip; its breadcrumb links the group.
+const CHARTS = { groups: [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
+  members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: i === 1 ? ROW.id : null, ticketId: i === 1 ? null : `t${i}`,
+    status: i === 1 ? 'done' : null, pr: null, ticket: i === 1 ? null : { id: `t${i}`, status: 'scheduled', runAt: null, after: true }, adhoc: false, after: i === 1 ? null : i - 1 })) }] };
+const groupsArm = (groups) => (url) => (url.startsWith('/api/run-groups') ? ok(groups) : null);
+
+test('a done slice\'s History page: the breadcrumb links the feature page, no group row, no chip; a repaint keeps it so', async () => {
+  const ctx = await bootShip({ arms: groupsArm(CHARTS) });
+  hello(ctx);
+  await openDetail(ctx);
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]').hidden, true, 'no Feature row');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'), null, 'no kind chip');
+  assert.equal(doc.querySelector('#hist-detail .hd-bar .rd-crumbs a.rd-crumb[href="#feature/feat_1"]').textContent, 'Charts');
+  assert.equal(doc.querySelector('#hist-detail .rd-slice-line'), null, 'no slice line either');
+  await openDetail(ctx);                                 // the same detail again: painted in place
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'), null);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb').length, 3);
+});
+
+test('a plain run (in no group) shows no group link; at Expert it offers "Add to group…"', async () => {
+  const ctx = await bootShip({ arms: groupsArm({ groups: [] }) });
+  hello(ctx);
+  await openDetail(ctx);
+  await settle(ctx.window, 4);
+  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
+  assert.equal(line.querySelector('.rd-group-link'), null);
+  assert.equal(line.querySelector('.rd-group-add').textContent, 'Add to group…');
+});
+
+test('Ship it for a slice with a next slice says to merge this PR first, on the first open; a plain run has no note', async () => {
+  const s = sliceArm({ hold: true });
+  const ctx = await bootShip({ arms: (url, opts) => s.arm(url, opts) });
+  hello(ctx);
+  const modal = await openModal(ctx);
+  const note = modal.querySelector('.shipit-slice-note');
+  s.release?.();
+  await settle(ctx.window, 4);
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, 'Slice 2 builds on this branch: merge this PR first.');
+
+  const plain = await bootShip({ arms: sliceArm({ info: null }).arm });
+  hello(plain);
+  const m2 = await openModal(plain);
+  await settle(plain.window, 4);
+  assert.equal(m2.querySelector('.shipit-slice-note').hidden, true);
+});
+
+test('the Ship it note waits for its own run: an answer that lands after the dialog moved on paints nothing', async () => {
+  const s = sliceArm({ hold: true });
+  const ctx = await bootShip({ arms: (url, opts) => s.arm(url, opts) });
+  hello(ctx);
+  const modal = await openModal(ctx);
+  modal.dataset.pipelineId = 'someone-else';            // what another run's open sets
+  s.release?.();
+  await settle(ctx.window, 4);
+  assert.equal(modal.querySelector('.shipit-slice-note').hidden, true);
+});
+
+// ---------------------------------------------------------------------------
+// Shaper s4: the release row (the same component as the Ship card's)
+// ---------------------------------------------------------------------------
+
+const RELEASE_REMOTES = { ...REMOTES, release: { version: 'v1.12.0', from: 'tag', lastTag: 'v1.11.0', packageVersion: null } };
+
+test('the release row: collapsed it sends nothing; expanded with the remotes hint OK posts release.version', async () => {
+  const ctx = await bootShip({ remotes: RELEASE_REMOTES, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  const row = modal.querySelector('.shipit-release [data-release-row]');
+  assert.ok(row, 'the dialog carries the release row');
+  assert.equal(row.querySelector('.release-row-add').textContent, 'Add a release');
+  assert.ok(row.querySelector('.release-row-add').matches('.btn.btn-sm.btn-quiet'));
+  click(ctx.window, row.querySelector('.release-row-add'));
+  assert.equal(row.querySelector('.release-row-text').textContent + row.querySelector('.release-row-edit').textContent,
+    'Release v1.12.0 · draft after merge · Edit');
+  assert.equal(row.querySelector('.release-row-source').textContent, 'Last tag v1.11.0 + minor');
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 6);
+  assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body),
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin', baseBranch: 'feat/log-ux',
+      release: { version: 'v1.12.0' } });
+});
+
+test('the release row: an invalid typed version posts nothing and leaves OK and the remote picks enabled', async () => {
+  const ctx = await bootShip({ remotes: REMOTES, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  const row = modal.querySelector('.shipit-release [data-release-row]');
+  click(ctx.window, row.querySelector('.release-row-add'));
+  assert.equal(row.querySelector('.release-row-source').textContent, 'No tag or package.json version: type one');
+  row.querySelector('.release-row-input').value = 'later';
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 4);
+  assert.equal(prPosts(ctx).length, 0);
+  assert.equal(row.querySelector('.release-row-err').textContent, 'Use a version like v1.12.0');
+  assert.equal(modal.querySelector('.shipit-ok').disabled, false);
+  assert.equal(modal.querySelector('.shipit-push-remote').disabled, false);
+  assert.equal(modal.querySelector('.shipit-base-remote').disabled, false);
 });

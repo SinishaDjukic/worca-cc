@@ -24,10 +24,10 @@ test('setPanelBusy covers every control while an answer is in flight', async () 
   const ctx = await boot();
   const panel = await openRunPanel(ctx, { runId: RUN_ID, question: CLARIFY });
 
-  click(ctx, panel.querySelector('.btn-go'));
+  click(ctx, panel.querySelector('.btn-primary'));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(answers(ctx).length, 1, 'the answer was posted');
-  assert.equal(panel.querySelector('.btn-go').disabled, true, 'the primary is disabled');
+  assert.equal(panel.querySelector('.btn-primary').disabled, true, 'the primary is disabled');
   assert.equal(panel.querySelector('.qopt').disabled, true, 'options are disabled');
   assert.equal(panel.querySelector('.qfree').disabled, true, 'free text is disabled');
 });
@@ -40,7 +40,7 @@ test('a panel built while an answer is in flight comes up busy, not dead', async
   const ctx = await boot();
   const first = await openRunPanel(ctx, { runId: RUN_ID, question: CLARIFY });
 
-  click(ctx, first.querySelector('.btn-go'));
+  click(ctx, first.querySelector('.btn-primary'));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(answers(ctx).length, 1, 'the first panel posted');
 
@@ -54,7 +54,7 @@ test('a panel built while an answer is in flight comes up busy, not dead', async
   const panel = runPanel(ctx);
   assert.ok(panel, 'the run page rendered a panel');
   assert.notEqual(panel, first, 'a freshly minted panel, not the one that posted');
-  const go = panel.querySelector('.btn-go');
+  const go = panel.querySelector('.btn-primary');
   assert.equal(go.disabled, true, 'the freshly built primary is disabled, not offered');
   assert.equal(go.textContent, 'Resuming…', 'and reads the in-flight affordance');
   assert.equal(panel.querySelector('.qopt').disabled, true, 'its options are disabled too');
@@ -63,4 +63,30 @@ test('a panel built while an answer is in flight comes up busy, not dead', async
   click(ctx, go);
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(answers(ctx).length, 1, 'still exactly one POST');
+});
+
+// setPanelBusy relabels only the answer button it marks (data-qpanel-submit): the plan
+// panel's approve and the recovery panel's Retry are btn-primary too, and keep their text.
+test('a busy recovery panel keeps its Retry label', async () => {
+  const ctx = await boot();
+  const panel = await openRunPanel(ctx, { runId: RUN_ID, question: { id: 'rec-1', kind: 'recovery', recovery: { cls: 'transient', message: 'boom' } } });
+  click(ctx, panel.querySelector('.recovery-pause'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(answers(ctx).length, 1, 'the pause was posted');
+  const retry = panel.querySelector('.recovery-retry');
+  assert.equal(retry.disabled, true, 'busy');
+  assert.equal(retry.textContent, 'Retry', 'Retry is not relabelled');
+});
+
+test('a busy plan panel keeps its approve label and posts once', async () => {
+  const ctx = await boot();
+  const panel = await openRunPanel(ctx, { runId: RUN_ID, question: { id: 'plan-1', kind: 'plan', nodeId: 'plan', plan: { port: 'plan', file: '/x/plans/p.md', round: 1, nodeId: 'plan' } } });
+  const approve = panel.querySelector('.plan-approve');
+  const label = approve.textContent;
+  click(ctx, approve);
+  await new Promise((r) => setTimeout(r, 0));
+  // The plan card is a Shaper step card: it posts to the run's own answer route.
+  assert.equal(ctx.calls.filter((c) => c.url === `/api/runs/${RUN_ID}/answer`).length, 1, 'exactly one POST');
+  assert.equal(approve.disabled, true, 'busy');
+  assert.equal(approve.textContent, label, 'approve is not relabelled');
 });

@@ -36,6 +36,30 @@ test('stdout lines reach onStdoutLine, stderr lines become stderr events', POSIX
   assert.deepEqual(events, [{ type: 'stderr', stream: 'err', text: 'warn' }]);
 });
 
+test('an Error returned from onStdoutLine terminates the child and rejects with that error', POSIX, async () => {
+  // Ignore SIGTERM so this also pins the grace -> SIGKILL escalation used for
+  // a genuinely wedged harness, not only the cooperative shutdown path.
+  const file = script("trap '' TERM; echo fatal; exec sleep 30");
+  const expected = Object.assign(new Error('terminal stream event'), { errorClass: 'usage_limit' });
+  let cleaned = 0;
+  const previousGrace = process.env.WORCA_SIGKILL_GRACE_MS;
+  process.env.WORCA_SIGKILL_GRACE_MS = '50';
+  try {
+    const started = Date.now();
+    const err = await superviseSpawn(base({
+      file, args: [], cleanup: () => { cleaned += 1; },
+      onStdoutLine: (line) => line === 'fatal' ? expected : undefined,
+    })).then(() => null, (e) => e);
+    assert.equal(err, expected);
+    assert.equal(err.errorClass, 'usage_limit');
+    assert.equal(cleaned, 1);
+    assert.ok(Date.now() - started < 2000, 'does not wait for the lingering child');
+  } finally {
+    if (previousGrace === undefined) delete process.env.WORCA_SIGKILL_GRACE_MS;
+    else process.env.WORCA_SIGKILL_GRACE_MS = previousGrace;
+  }
+});
+
 test('non-zero exit with empty stderr keeps the stdout detail and no stream tag', POSIX, async () => {
   const file = script('exit 3');
   const err = await superviseSpawn(base({ file, args: [], stdoutErrorDetail: () => 'Invalid API key', classify: (m) => (/API key/.test(m) ? 'auth' : null) }))
@@ -116,4 +140,47 @@ test('a staged invocation removes its temp dir when the spawn fails', async () =
   assert.ok(err, 'rejects');
   const after = readdirSync(tmpdir()).filter((n) => n.startsWith('worca-claude-') && !before.has(n));
   assert.deepEqual(after, [], 'no staged dir left behind');
+});
+
+test('Claude synthetic usage-limit frame terminates a lingering CLI with a graceful-pause class', POSIX, async () => {
+  const line = "You've hit your session limit · resets 6pm (Europe/Sofia)";
+  const frame = JSON.stringify({
+    type: 'assistant',
+    isApiErrorMessage: true,
+    message: { model: '<synthetic>', content: [{ type: 'text', text: line }] },
+    error: 'rate_limit',
+  });
+  const file = script([
+    `printf '%s\\n' ${JSON.stringify(frame)}`,
+    // Production failure mode: an async tool keeps Claude alive after the limit frame.
+    'exec sleep 30',
+  ].join('\n'));
+  const events = [];
+  const started = Date.now();
+  const err = await runClaudeProcess({
+    cwd: tmpdir(), prompt: 'hi', systemPrompt: '', permissionMode: 'acceptEdits',
+    onEvent: (e) => events.push(e), bin: file,
+  }).then(() => null, (e) => e);
+  assert.equal(err.errorClass, 'usage_limit');
+  assert.match(err.message, /session limit.*resets 6pm/i);
+  assert.ok(Date.now() - started < 2000, 'does not wait for the lingering CLI');
+  assert.ok(events.some((e) => e.raw?.message?.model === '<synthetic>'), 'emits the limit event before termination');
+});
+
+test('Claude model text mentioning a session limit is not terminal', POSIX, async () => {
+  const frame = JSON.stringify({
+    type: 'assistant',
+    message: { model: 'claude-sonnet', content: [{ type: 'text', text: 'The phrase "session limit" appears in this code.' }] },
+  });
+  const file = script([
+    `printf '%s\\n' ${JSON.stringify(frame)}`,
+    `printf '%s\\n' '{"type":"result","result":"done"}'`,
+    'exit 0',
+  ].join('\n'));
+  const out = await runClaudeProcess({
+    cwd: tmpdir(), prompt: 'hi', systemPrompt: '', permissionMode: 'acceptEdits',
+    onEvent: () => {}, bin: file,
+  });
+  assert.equal(out.exitCode, 0);
+  assert.equal(out.text, 'done');
 });

@@ -30,10 +30,9 @@
 // - assumed absent (capability false): a system-prompt flag, an effort flag, a per-spawn tool allowlist, sub-agents,
 //   hooks, a skills folder, a turn or spend cap, and any switch that turns the shell or file tools off — so an Ask
 //   chat (CURSOR_ASK_LOCKDOWN) and a read-only spawn refuse.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync, appendFileSync, chmodSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
-import { execFile, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { join, dirname, isAbsolute, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
@@ -41,6 +40,9 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
+import { ENGINE_PROJECT_FILES, projectFileOwned, writeProjectFiles } from './project-files.mjs';
+import { makeChatDescriptor } from './chat-descriptor.mjs';
+export { excludeLine } from './project-files.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const cursorDefaultBin = () => process.env.WORCA_CURSOR_BIN || 'cursor-agent';
@@ -56,7 +58,8 @@ const CURSOR_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'effort', 'cos
 export const cursorCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !CURSOR_FALSE.has(k)])));
 
 /** Ask Worca on Cursor: the flags that would leave Cursor no shell and no disk tools. null = no such flags are known,
- *  and Ask stays off Cursor (model-env.mjs ASK_ENGINES; ask/models.mjs, ask/turn.mjs). */
+ *  and Ask stays off Cursor (model-env.mjs ASK_ENGINES; ask/models.mjs, ask/turn.mjs). The chat descriptor below is
+ *  wired so that verifying one is the only step left (plans/ask-on-qwen-gemini-spike.md › Cursor). */
 export const CURSOR_ASK_LOCKDOWN = null;
 
 /** What the gate and the run log say about the rules Cursor holds (all of them only in part). */
@@ -66,7 +69,7 @@ export const CURSOR_RULE_TERMS = Object.freeze({
 });
 
 /** The project files Cursor reads from its cwd, relative to it. */
-export const CURSOR_PROJECT_FILES = Object.freeze(['.cursor/cli.json', '.cursor/mcp.json']);
+export const CURSOR_PROJECT_FILES = ENGINE_PROJECT_FILES.cursor;
 
 // ── permission rules ─────────────────────────────────────────────────────────
 
@@ -125,119 +128,12 @@ export function cursorMcpDocument(servers) {
   return { mcpServers };
 }
 
-// ── the run checkout's .cursor files ─────────────────────────────────────────
-
-const git = (cwd, args) => { try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
-const EXCLUDE_NOTE = '# worca: Cursor engine config written into run checkouts (engines/cursor.mjs)';
-/** Whether `dir` or a parent holds a `.git` (so a failed `git rev-parse` is a git failure, not "no repository"). */
-const gitAbove = (dir) => { for (let d = resolve(dir); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (dirname(d) === d) return false; } };
-/** The info/exclude line for `rel` under the cwd's work-tree prefix: anchored, with gitignore glob characters escaped. */
-export const excludeLine = (prefix, rel) => `/${`${prefix}${rel}`.replace(/[\\[\]*?!#]/g, '\\$&')}`;
-
-// ── ownership: worca touches only a .cursor file it wrote ───────────────────
-// "Untracked" is not "worca's": outside git it is every file (the model test's cwd may be $HOME, holding the user's
-// ~/.cursor/mcp.json), and an agent may write .cursor/*.json as the task's deliverable. The ledger maps a file's
-// absolute path to the sha256 of what worca last wrote there. Paths are compared as `resolve()`d strings: the adapter
-// and the harness both join the same run cwd string.
-const sha = (t) => createHash('sha256').update(t).digest('hex');
-const ownedDir = () => join(worcaHome(), 'engines', 'cursor', 'owned');
-const ownedEntry = (abs) => join(ownedDir(), `${sha(resolve(abs)).slice(0, 32)}.json`);
-const LEDGER_PRUNE_AGE_MS = 3_600_000;
+// ── the run checkout's .cursor files (engines/project-files.mjs) ─────────────
 
 /** True when `abs` is absent (nothing to protect) or holds exactly what worca last wrote there. */
-export function cursorOwns(abs) {
-  let text;
-  try { text = readFileSync(abs, 'utf8'); } catch (err) { return err?.code === 'ENOENT'; }
-  try { return JSON.parse(readFileSync(ownedEntry(abs), 'utf8')).sha256 === sha(text); } catch { return false; }
-}
-/** Record `text` as worca's content of `abs` (BEFORE the file is written: a crash in between leaves an absent file,
- *  which is writable, never an unowned one). Entries over an hour old whose file is gone are dropped. */
-function recordOwned(abs, text) {
-  const dir = ownedDir();
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const now = Date.now();
-  for (const f of readdirSync(dir)) {
-    const p = join(dir, f);
-    try { if (now - statSync(p).mtimeMs > LEDGER_PRUNE_AGE_MS && !existsSync(JSON.parse(readFileSync(p, 'utf8')).path)) rmSync(p, { force: true }); }
-    catch { /* a half-written or vanished entry: leave it to the next prune */ }
-  }
-  writeFileSync(ownedEntry(abs), JSON.stringify({ path: resolve(abs), sha256: sha(text) }), { mode: 0o600 });
-}
-const forgetOwned = (abs) => rmSync(ownedEntry(abs), { force: true });
-
-/**
- * Make `cwd`'s Cursor project files (CURSOR_PROJECT_FILES) match `files` ({'.cursor/cli.json': text, …}).
- * - Each file given is written. A path the checkout TRACKS is never written (throws: the file would change in the
- *   deliverable). A path holding a file worca did not write (cursorOwns false) is never overwritten (throws).
- * - Each file not given is removed when worca wrote it (an earlier spawn's rules or servers must not reach a later
- *   node). A file worca did not write is left alone.
- * - Inside a git work tree each written path gets an info/exclude line, so neither an agent's own `git add -A` nor
- *   worca's commit and diffs stage it (run-harness.mjs _engineConfigState also unstages it). The harness's §8.8 entry
- *   (_registerEngineConfig, filtered by cursorOwns in _injectedFor) removes it at teardown.
- * - Mode 0644 (and 0755 for a `.cursor` dir worca creates): the files hold only `${env:…}` refs, never a secret
- *   value, and an agent-user spawn (asAgent) runs under another uid that must read them.
- * - A `.cursor` that is a symlink is never written or removed through: the link may point anywhere, the user's
- *   ~/.cursor included, and every check above would pass on the far side of it (throws when files are given).
- * - Atomic per file, idempotent. A failed write leaves the ledger on the file's previous content and no temp file.
- * The exclude line is `/<cwd's prefix in the work tree><rel>`, from `git rev-parse --show-prefix`: never computed from
- * absolute paths, which differ by realpath on macOS (/var → /private/var).
- */
-export function writeCursorProjectFiles(cwd, files) {
-  const entries = Object.entries(files);
-  let linked = false;
-  try { linked = lstatSync(join(cwd, '.cursor')).isSymbolicLink(); } catch { /* absent */ }
-  const stale = linked ? [] : CURSOR_PROJECT_FILES.filter((rel) => !(rel in files) && existsSync(join(cwd, rel)));
-  for (const rel of stale) {
-    const abs = join(cwd, rel);
-    if (cursorOwns(abs)) { rmSync(abs, { force: true }); forgetOwned(abs); }
-  }
-  if (!entries.length) return;
-  if (linked) throw new Error(`${join(cwd, '.cursor')} is a symlink — worca will not write Cursor's config through it (it may point outside the checkout)`);
-  const inside = git(cwd, ['rev-parse', '--is-inside-work-tree']);
-  if (inside === null && gitAbove(cwd)) throw new Error(`git cannot read the repository around ${cwd} — worca will not write Cursor's config blind`);
-  const inTree = inside === 'true';
-  if (inTree) {
-    const tracked = git(cwd, ['ls-files', '--', ...entries.map(([rel]) => `:(icase)${rel}`)]);
-    if (tracked === null) throw new Error(`cannot tell whether the checkout tracks ${entries.map(([rel]) => rel).join(' or ')} — worca will not write Cursor's config blind`);
-    if (tracked) throw new Error(`the checkout tracks ${tracked.split('\n')[0]} — worca cannot add its Cursor config without changing your file`);
-  }
-  const foreign = entries.map(([rel]) => rel).filter((rel) => !cursorOwns(join(cwd, rel)));
-  if (foreign.length) throw new Error(`${foreign.join(' and ')} already exists in ${cwd} and worca did not write it — worca will not overwrite it (move it away to run this on Cursor)`);
-  if (inTree) {
-    const prefix = git(cwd, ['rev-parse', '--show-prefix']) ?? '';
-    const exclude = git(cwd, ['rev-parse', '--git-path', 'info/exclude']);
-    // The exclude line is what keeps these files out of every `git add -A` (the harness's commit included: it uses no
-    // exclude pathspec for them, because git refuses one that names an ignored path). No line, no write.
-    if (!exclude) throw new Error(`cannot find the repository's info/exclude around ${cwd} — worca will not write Cursor's config where git would stage it`);
-    const path = isAbsolute(exclude) ? exclude : join(cwd, exclude);
-    let cur = '';
-    try { cur = readFileSync(path, 'utf8'); } catch { /* none yet */ }
-    const have = new Set(cur.split('\n'));
-    const want = entries.map(([rel]) => excludeLine(prefix, rel)).filter((l) => !have.has(l));
-    if (want.length) {
-      mkdirSync(dirname(path), { recursive: true });
-      appendFileSync(path, `${cur && !cur.endsWith('\n') ? '\n' : ''}${have.has(EXCLUDE_NOTE) ? '' : `${EXCLUDE_NOTE}\n`}${want.join('\n')}\n`);
-    }
-  }
-  for (const [rel, text] of entries) {
-    const file = join(cwd, rel);
-    let cur = null;
-    try { cur = readFileSync(file, 'utf8'); } catch { /* new */ }
-    if (cur === text) continue;                // owned and unchanged (cursorOwns passed above)
-    if (mkdirSync(dirname(file), { recursive: true })) chmodSync(dirname(file), 0o755);   // only a dir worca created
-    recordOwned(file, text);
-    const tmp = `${file}.worca-${process.pid}-${Date.now().toString(36)}`;
-    try {
-      writeFileSync(tmp, text, { mode: 0o644 });
-      chmodSync(tmp, 0o644);                   // the umask may have narrowed it
-      renameSync(tmp, file);
-    } catch (err) {
-      rmSync(tmp, { force: true });
-      if (cur === null) forgetOwned(file); else recordOwned(file, cur);   // the file still holds worca's old content
-      throw err;
-    }
-  }
-}
+export const cursorOwns = (abs) => projectFileOwned('cursor', abs);
+/** Make `cwd`'s Cursor project files match `files` (engines/project-files.mjs writeProjectFiles). */
+export const writeCursorProjectFiles = (cwd, files, opts) => writeProjectFiles('cursor', cwd, files, opts);
 
 // ── argv ─────────────────────────────────────────────────────────────────────
 
@@ -415,10 +311,10 @@ export const CURSOR_RESUME_NOT_FOUND_RE = /(?:chat|conversation|session)[^.\n]*n
 export async function runCursorProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, onEvent = () => {}, signal,
   bin = cursorDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
-  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules,
+  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  if (askLockdown) throw new Error(`${bin}: Cursor cannot be locked down for a chat (no switch for its shell or file tools) — Ask on Cursor is unavailable`);
+  if (askLockdown) throw new Error(`${bin}: Cursor cannot be locked down for a chat (no switch for its shell or file tools) — Chat on Cursor is unavailable`);
   if (sandbox === 'read-only') throw new Error(`${bin}: Cursor has no read-only mode — a read-only job runs on Claude instead`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   const redactor = secrets.length ? createRedactor(secrets) : null;
@@ -443,7 +339,7 @@ export async function runCursorProcess({
     servers = doc && typeof doc.mcpServers === 'object' && doc.mcpServers && Object.keys(doc.mcpServers).length ? doc.mcpServers : null;
     if (servers) files['.cursor/mcp.json'] = `${JSON.stringify(cursorMcpDocument(servers), null, 2)}\n`;
   }
-  writeCursorProjectFiles(cwd, files);
+  writeCursorProjectFiles(cwd, files, { git: !noGit });
 
   const guardOn = hostGuardEnabled();
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : systemPrompt;
@@ -522,3 +418,22 @@ export async function runCursorProcess({
     if (stagedDir) rmSync(stagedDir, { recursive: true, force: true });
   }
 }
+
+// ── chat ─────────────────────────────────────────────────────────────────────
+
+/** Why the chat self-test cannot run on cursor-agent: it has no option worca knows that points it at another model
+ *  endpoint, and its sign-in is Cursor's own. */
+export const CURSOR_NO_SELF_TEST = 'cursor-agent has no setting worca knows that points it at a local model endpoint, so worca cannot prove a lockdown on it';
+
+/** Cursor's chat descriptor (engines/chat-descriptor.mjs): wired, off. Chat on Cursor needs a lockdown verified on the
+ *  real binary (CURSOR_ASK_LOCKDOWN) and a self-test that can run; neither exists yet, so engine-switch.mjs marks its
+ *  chat `verified: false` and engines/chat.mjs leaves it out of the chat engines. */
+export const cursorChat = makeChatDescriptor({
+  engine: 'cursor',
+  lockdown: () => CURSOR_ASK_LOCKDOWN,
+  noLockdownMessage: 'Chat on Cursor is unavailable: no switch that turns off its shell and file tools has been verified, and a chat must stay inside its own files. Use a Claude chat.',
+  selfTest: async () => ({ refusal: CURSOR_NO_SELF_TEST }),
+  preflight: (_ctx, impl = cursorPreflight) => impl(),
+  resumeNotFound: (err) => CURSOR_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
+  prompt: { cli: "Cursor's CLI agent with Cursor's own sign-in" },
+});

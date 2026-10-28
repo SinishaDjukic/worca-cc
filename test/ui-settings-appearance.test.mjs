@@ -87,7 +87,8 @@ test('GET paints the segmented control and applies the stored mode; an unknown m
       const { $, openSettings, root, on } = await boot({ initialTheme: 'dark' });
       await openSettings();
       assert.ok($('#appearance-card'), 'the card exists');
-      assert.equal($('.settings-pane[data-tab="general"] .card'), $('#appearance-card'), 'first card of General');
+      assert.equal($('.settings-pane[data-tab="general"] .card'), $('#setup-assistant-card'), 'Setup assistant is the first card of General');
+      assert.equal($('#setup-assistant-card').nextElementSibling, $('#appearance-card'), 'Appearance comes right after it');
       assert.equal(root(), 'dark');
       assert.deepEqual(on(), ['dark']);
       assert.equal($('#theme-seg').getAttribute('role'), 'group');

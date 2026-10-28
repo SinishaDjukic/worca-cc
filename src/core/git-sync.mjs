@@ -13,16 +13,18 @@
 // network commands run in their own session instead, so ssh has no tty to prompt on (defaultRun).
 
 import { spawn, spawnSync } from 'node:child_process';
-import { stat, realpath, readFile, readdir } from 'node:fs/promises';
+import { stat, realpath, readFile, readdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
-import { devNull } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { githubEnv } from './github-credentials.mjs';
 import { azureEnv } from './azure-credentials.mjs';
+import { bitbucketEnv, stripBitbucketCredentials } from './bitbucket-credentials.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
 import { worcaHome } from './projects.mjs';
-import { parseRemoteUrl } from './git-info.mjs';
+import { parseRemoteUrl, prBaseBranch } from './git-info.mjs';
 import { forgeOf } from './forge.mjs';
 import { mapWithCap } from './fanout.mjs';
+import { gitAvailable, gitMissingResult } from './git-available.mjs';
 
 export const INTERACTIVE_TTL_MS = 45_000;
 export const INTERACTIVE_TIMEOUT_MS = 8_000;
@@ -56,7 +58,7 @@ const NETWORK_CMDS = new Set(['fetch', 'merge', 'merge-tree']);
  *  can hold no hooks (a directory could be created and filled later); on Windows, a worca-home
  *  folder that does not exist simply has no hooks. The shared .git/config is just as writable, so
  *  a planted core.fsmonitor command (run by `git status`) and http.sslVerify=false are overridden too. */
-function hookFreeArgs() {
+export function hookFreeArgs() {
   let dir = devNull;
   if (process.platform === 'win32') { try { dir = join(worcaHome(), 'no-hooks'); } catch { /* devNull */ } }
   return ['-c', `core.hooksPath=${dir}`, '-c', 'core.fsmonitor=false', '-c', 'http.sslVerify=true'];
@@ -104,7 +106,7 @@ function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}
     child.on('close', (code) => { liveGroups.delete(child.pid); finish({ ok: code === 0, stdout, stderr, code: code ?? -1, timedOut: false }); });
   });
 }
-let _run = defaultRun;
+let _runner = defaultRun; const _run = (args, o) => (gitAvailable() ? _runner(args, o) : Promise.resolve({ ...gitMissingResult(), timedOut: false }));
 const inflight = new Map();   // `${realpath}\0${remote}` -> Promise<fetch result>
 // Negative cache: a failed fetch does not refresh FETCH_HEAD, so without this every
 // interactive caller offline would wait the full timeout again. Only callers that
@@ -266,7 +268,7 @@ async function operationOn(dir, base) {
 }
 
 // ── remote + fetch ───────────────────────────────────────────────────────────
-/** The remote's display label (host/owner/repo, credential-free), its github "owner/name", and whether it is Azure DevOps. */
+/** The remote's display label (host/owner/repo, credential-free), its github "owner/name", and whether it is Azure DevOps or Bitbucket. */
 export async function remoteInfo(dir, remote = 'origin') {
   if (!isSafeRemoteName(remote)) return { ok: false, kind: 'bad-remote', error: 'invalid remote name' };
   const r = await _run(['remote', 'get-url', remote], { cwd: dir });
@@ -275,13 +277,17 @@ export async function remoteInfo(dir, remote = 'origin') {
   const p = parseRemoteUrl(url);
   return { ok: true, name: remote, label: p ? `${p.host}/${p.owner}/${p.repo}` : scrubGitText(url, 200),
     githubRepo: p && p.host === 'github.com' ? `${p.owner}/${p.repo}` : null,
-    azure: forgeOf(p) === 'azure', fetchUrls: fetchHeadUrls(url) };
+    azure: forgeOf(p) === 'azure', bitbucket: forgeOf(p) === 'bitbucket', fetchUrls: fetchHeadUrls(url) };
 }
 
 /** worca's server-side READ credential for the remote's host (App mode mints per call); other hosts: this machine's git. */
 async function readCred(info) {
-  if (info.githubRepo) return githubEnv('read', { repo: info.githubRepo });
-  if (info.azure) return { env: azureEnv('read'), error: null };
+  if (info.githubRepo) {
+    const r = await githubEnv('read', { repo: info.githubRepo });
+    return { ...r, env: stripBitbucketCredentials(r.env) };
+  }
+  if (info.azure) return { env: stripBitbucketCredentials(azureEnv('read')), error: null };
+  if (info.bitbucket) return { env: bitbucketEnv('read'), error: null };
   return { env: stripHostCredentials(process.env), error: null };
 }
 
@@ -458,7 +464,7 @@ export async function fastForward(dir, { base, remote = 'origin' } = {}) {
     // read credential the fetch had (v8), or a private hosted repo fails every fast-forward.
     // Minting can take a network round trip, so HEAD is re-checked after it, right before the merge.
     const info = await remoteInfo(dir, remote);
-    const cred = info.ok && (info.githubRepo || info.azure) ? await readCred(info) : null;
+    const cred = info.ok && (info.githubRepo || info.azure || info.bitbucket) ? await readCred(info) : null;
     const headNow = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: dir });
     if (!(headNow.ok && headNow.stdout.trim() === `refs/heads/${base}`)) return { ok: false, kind: 'in-use', paths: [], status: s };
     r = await _run(['merge', '--ff-only', '--no-stat', '-q', s.remoteSha], { cwd: dir, timeoutMs: FF_TIMEOUT_MS, env: cred ? cred.env : null });
@@ -628,10 +634,10 @@ const MERGE_TREE_TIMEOUT_MS = 120_000;
 const CONFLICT_FILES_CAP = 200;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
-/** The read credential env for `remote` (GitHub/Azure); null = this machine's git (fastForward's rule). */
+/** The read credential env for `remote` (GitHub/Azure/Bitbucket); null = this machine's git (fastForward's rule). */
 async function readEnvFor(dir, remote) {
   const info = isSafeRemoteName(remote) ? await remoteInfo(dir, remote) : { ok: false };
-  return info.ok && (info.githubRepo || info.azure) ? (await readCred(info)).env : null;
+  return info.ok && (info.githubRepo || info.azure || info.bitbucket) ? (await readCred(info)).env : null;
 }
 
 /** Where the base lives: the fetched <remote>/<base> when present, else the local <base> (Q&A base-ref). */
@@ -668,6 +674,8 @@ export async function checkBaseMerge(dir, { base, feature, remote = 'origin', fe
     if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) useRemote = false;
     else if (!f.ok) fetchError = { kind: f.kind, message: f.error };
   }
+  // A run started from `origin/dev` records that name: its base is `dev` on origin (prBaseBranch).
+  if (useRemote) base = await prBaseBranch(dir, base, [r]);
   const headSha = await shaOf(dir, `refs/heads/${feature}`);
   if (!headSha) return { status: 'no-branch', base, feature, files: [], fileCount: 0, at };
   const tip = await baseTip(dir, base, useRemote ? r : null);
@@ -753,6 +761,24 @@ async function unmergedFiles(wt) {
   return r.ok ? nulNames(r.stdout) : [];
 }
 
+/** Shaper s5 (D14): before a feature's next run, merge the base branch into the run's fresh branch when it moved.
+ *  Never writes a conflicted merge: on conflicts the branch is left as is (the clash shows at this run, #620's check
+ *  after it). @returns {{merged: boolean, status: string, behind: number, files: string[], to?: string, error?: string}} */
+export async function mergeBaseBeforeRun(dir, { base, feature, remote = 'origin' }) {
+  const c = await checkBaseMerge(dir, { base, feature, remote });
+  const out = { merged: false, status: c.status, behind: c.behind || 0, files: c.files || [] };
+  if (c.status !== 'clean') return out;
+  const m = await mergeBaseInto(dir, { feature, baseSha: c.baseSha, headSha: c.headSha, baseRef: c.baseRef, tree: c.tree });
+  return m.ok ? { ...out, merged: true, to: m.to } : { ...out, status: 'error', error: m.kind || 'failed' };
+}
+
+/** The audit line feature-log.mjs parseBaseLine reads; null when there is nothing to say. */
+export function baseMovedAudit(base, feature, r) {
+  if (r.merged) return `Base \`${base}\` moved: merged into \`${feature}\` (${r.behind} ${r.behind === 1 ? 'commit' : 'commits'}).`;
+  if (r.status === 'conflicts') return `Base \`${base}\` moved: conflicts in ${r.files.length} ${r.files.length === 1 ? 'file' : 'files'}.`;
+  return null;
+}
+
 /**
  * Resolve in a terminal (#620): start `git merge --no-ff --no-commit <baseSha>` in a run's checkout and leave the
  * conflicts for a person. A merge already in progress is reported as is (idempotent). Never throws.
@@ -774,6 +800,90 @@ export async function startConflictMerge(wt, { feature, baseSha, baseRef, remote
     return { ok: false, kind: 'failed', error: scrubGitText(r.stderr) || `git merge exited ${r.code}` };
   }
   return { ok: true, started: true, files };
+}
+
+// Dangling step commits of the combine check only: a fixed identity, so the check never needs the person's user.name.
+const COMBINE_STEP_IDENTITY = Object.freeze({ GIT_AUTHOR_NAME: 'worca', GIT_AUTHOR_EMAIL: 'worca@localhost',
+  GIT_COMMITTER_NAME: 'worca', GIT_COMMITTER_EMAIL: 'worca@localhost' });
+
+/**
+ * One ship flow (slice 3): would a user group's member branches combine? Folds `git merge-tree --write-tree` over
+ * `branches` in order in `dir` (no checkout, no ref moves): each step after the first merges into a dangling
+ * commit-tree of the previous result, which nothing points at. Never throws.
+ * → { status:'clean', tree, heads, branches, files:[], fileCount:0 }
+ *   | { status:'conflicts', files, fileCount, branch, with }   (branch: the one that clashed with `with`)
+ *   | { status:'no-branch', branch, files:[], fileCount:0 } | { status:'error', kind, error, files:[], fileCount:0 }
+ */
+export async function checkCombine(dir, { branches, remote = 'origin' } = {}) {
+  const fail = (kind, error) => ({ status: 'error', kind, error: scrubGitText(error, 500), files: [], fileCount: 0 });
+  if (!dir) return fail('failed', 'projectDir is required');
+  if (!Array.isArray(branches) || branches.length < 2) return fail('bad-request', 'at least two branches are required');
+  const bad = branches.find((b) => !isSafeBranchName(b));
+  if (bad !== undefined) return fail('bad-branch', `not a branch name: ${String(bad).slice(0, 80)}`);
+  const heads = [];
+  for (const b of branches) {
+    const sha = await shaOf(dir, `refs/heads/${b}`);
+    if (!sha) return { status: 'no-branch', branch: b, files: [], fileCount: 0 };
+    heads.push(sha);
+  }
+  const env = await readEnvFor(dir, remote);            // a blobless clone fetches blobs lazily (NETWORK_CMDS)
+  const stepEnv = { ...stripHostCredentials(process.env), ...COMBINE_STEP_IDENTITY };
+  let acc = heads[0];
+  let tree = null;
+  for (let i = 1; i < heads.length; i++) {
+    const m = await _run(['merge-tree', '--write-tree', '-z', '--name-only', '--no-messages', acc, heads[i]],
+      { cwd: dir, timeoutMs: MERGE_TREE_TIMEOUT_MS, env });
+    const [t, ...rest] = nulNames(m.stdout);
+    // checkBaseMerge's reading: a result counts only with a tree OID (git exits 1 for an unknown object too).
+    if (SHA_RE.test(t || '') && m.code === 1 && rest.length) {
+      return { status: 'conflicts', files: rest.slice(0, CONFLICT_FILES_CAP), fileCount: rest.length,
+        branch: branches[i], with: branches.slice(0, i) };
+    }
+    if (!(SHA_RE.test(t || '') && m.code === 0)) {
+      if (m.code === 129 || /usage: git merge-tree/.test(m.stderr)) {
+        return fail('git-too-old', 'The combine check needs git 2.38 or newer (git merge-tree --write-tree).');
+      }
+      return fail(m.timedOut ? 'timeout' : 'failed', m.stderr || `git merge-tree exited ${m.code}`);
+    }
+    tree = t;
+    if (i < heads.length - 1) {
+      const c = await _run(['commit-tree', t, '-p', acc, '-p', heads[i], '-m', 'worca combine check'], { cwd: dir, env: stepEnv });
+      if (!c.ok || !SHA_RE.test(c.stdout.trim())) return fail('failed', c.stderr || 'git commit-tree failed');
+      acc = c.stdout.trim();
+    }
+  }
+  return { status: 'clean', tree, heads, branches: [...branches], files: [], fileCount: 0 };
+}
+
+/**
+ * One ship flow (slice 3): put a clean checkCombine result on `branch` as ONE merge commit whose parents are every
+ * distinct member head (in order) and whose tree is the result. Create-only: an existing branch whose tip has exactly
+ * these parents is reused (a retried ship); any other existing branch is refused. No checkout moves. Never throws.
+ * → { ok:true, sha, via:'created'|'reused' } | { ok:false, kind:'bad-request'|'exists'|'identity'|'failed', error }
+ */
+export async function writeCombinedBranch(dir, { branch, combine, message }) {
+  if (!isSafeBranchName(branch) || !combine || combine.status !== 'clean' || !SHA_RE.test(combine.tree || '')) {
+    return { ok: false, kind: 'bad-request', error: 'a clean combine check and a branch name are required' };
+  }
+  const parents = [...new Set(combine.heads)];          // commit-tree drops a repeated parent; compare the same list
+  const tip = await shaOf(dir, `refs/heads/${branch}`);
+  if (tip) {
+    const p = await _run(['rev-list', '--parents', '-n', '1', tip], { cwd: dir });
+    const had = p.ok ? p.stdout.trim().split(/\s+/).slice(1) : [];
+    const same = had.length === parents.length && parents.every((h, i) => had[i] === h);
+    return same ? { ok: true, sha: tip, via: 'reused' }
+      : { ok: false, kind: 'exists', error: `${branch} already exists with other commits: delete it, or rename the group` };
+  }
+  const c = await _run(['commit-tree', combine.tree, ...parents.flatMap((h) => ['-p', h]), '-m', message], { cwd: dir });
+  if (!c.ok || !SHA_RE.test(c.stdout.trim())) {
+    const identity = /Author identity unknown|tell me who you are|unable to auto-detect email/i.test(c.stderr);
+    return { ok: false, kind: identity ? 'identity' : 'failed', error: scrubGitText(c.stderr) || 'git commit-tree failed' };
+  }
+  const sha = c.stdout.trim();
+  // An empty old value: the ref must not exist, so a branch made meanwhile is never moved.
+  const u = await _run(['update-ref', '-m', `worca: ${message}`, `refs/heads/${branch}`, sha, ''], { cwd: dir });
+  return u.ok ? { ok: true, sha, via: 'created' }
+    : { ok: false, kind: 'exists', error: scrubGitText(u.stderr) || `${branch} was created meanwhile: try again` };
 }
 
 /** Resolve a user/model-named source: local ref first, then (after a TTL fetch) <remote>/<name>. */
@@ -868,12 +978,74 @@ export function runSyncOptions(input) {
 }
 
 // Test seam: swap the git runner. Mirrors git-info.mjs#_testing.
+/**
+ * D25: write one file on a branch and commit it, whether or not the branch is checked out. Checked out in ONE clean
+ * worktree that is on the branch at its tip: a normal commit there. Not checked out: a temporary index on the tip,
+ * commit-tree and a compare-and-swap update-ref (mergeBaseInto's rule). `update(text)` gets the file's text on the
+ * branch ('' when it has none) and returns the new text; the same text commits nothing. Never throws.
+ * @returns {Promise<{ok:true, sha:string, via:'commit'|'commit-tree'|'unchanged'}|{ok:false, kind:string, error:string}>}
+ */
+export async function commitFileOnBranch(dir, { branch, path, update, message }) {
+  if (!isSafeBranchName(branch) || !path || path.includes('..') || isAbsolute(path)) {
+    return { ok: false, kind: 'bad-request', error: 'invalid branch or path' };
+  }
+  const head = await shaOf(dir, `refs/heads/${branch}`);
+  if (!head) return { ok: false, kind: 'bad-request', error: `no branch ${branch}` };
+  const shown = await _run(['show', `${head}:${path}`], { cwd: dir });
+  const next = update(shown.ok ? shown.stdout : '');
+  if (shown.ok && next === shown.stdout) return { ok: true, sha: head, via: 'unchanged' };   // a retried ship: no empty commit
+  const holders = await checkoutsOf(dir, branch);
+  if (holders === null || holders.length > 1) return { ok: false, kind: 'in-use', error: 'git could not tell where the branch is checked out' };
+  // No identity helper here (mergeBaseInto's rule): a missing user.name/email is git's own error, as kind 'identity'.
+  const commitFail = (stderr) => ({
+    ok: false, kind: /Author identity unknown|tell me who you are|unable to auto-detect email/i.test(stderr || '') ? 'identity' : 'failed',
+    error: scrubGitText(stderr) || 'git commit failed' });
+  if (holders.length === 1) {
+    const wt = holders[0];
+    const on = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: wt });
+    if (!(on.ok && on.stdout.trim() === `refs/heads/${branch}`)) return { ok: false, kind: 'in-use', error: `${wt} is not on ${branch}` };
+    if (await shaOf(wt, 'HEAD') !== head) return { ok: false, kind: 'moved', error: `${branch} moved: try again` };
+    const st = await _run(['status', '--porcelain', '--untracked-files=no'], { cwd: wt });
+    if (!st.ok || st.stdout.trim()) return { ok: false, kind: 'dirty', error: `${wt} has uncommitted changes` };
+    try { await writeFile(join(wt, path), next, 'utf8'); } catch (err) { return { ok: false, kind: 'failed', error: err.message }; }
+    const added = await _run(['add', '--', path], { cwd: wt });
+    // `commit -- path` commits only that path: nothing else staged in the worktree is swept in.
+    const c = added.ok ? await _run(['commit', '-q', '--no-verify', '-m', message, '--', path], { cwd: wt }) : added;
+    if (!c.ok) return commitFail(c.stderr);
+    return { ok: true, sha: await shaOf(wt, 'HEAD'), via: 'commit' };
+  }
+  let tmp = null;
+  try {
+    tmp = await mkdtemp(join(tmpdir(), 'worca-commit-'));
+    // _run's env REPLACES the environment: start from the credential-free one, as defaultRun does.
+    const env = { ...stripHostCredentials(process.env), GIT_INDEX_FILE: join(tmp, 'index') };
+    const blobFile = join(tmp, 'blob');
+    await writeFile(blobFile, next, 'utf8');
+    const blob = await _run(['hash-object', '-w', '--', blobFile], { cwd: dir });
+    if (!blob.ok) return { ok: false, kind: 'failed', error: scrubGitText(blob.stderr) || 'git hash-object failed' };
+    const steps = (await _run(['read-tree', head], { cwd: dir, env })).ok
+      && (await _run(['update-index', '--add', '--cacheinfo', `100644,${blob.stdout.trim()},${path}`], { cwd: dir, env })).ok;
+    const tree = steps ? await _run(['write-tree'], { cwd: dir, env }) : null;
+    if (!tree?.ok || !SHA_RE.test(tree.stdout.trim())) return { ok: false, kind: 'failed', error: 'could not write the tree' };
+    const c = await _run(['commit-tree', tree.stdout.trim(), '-p', head, '-m', message], { cwd: dir });
+    if (!c.ok || !SHA_RE.test(c.stdout.trim())) return commitFail(c.stderr);
+    const sha = c.stdout.trim();
+    // Belt and braces (mergeBaseInto): a checkout that appeared meanwhile must not see its ref move.
+    const again = await checkoutsOf(dir, branch);
+    if (again === null || again.length) return { ok: false, kind: 'in-use', error: `${branch} was checked out meanwhile` };
+    const u = await _run(['update-ref', '-m', `worca: ${message}`, `refs/heads/${branch}`, sha, head], { cwd: dir });
+    return u.ok ? { ok: true, sha, via: 'commit-tree' } : { ok: false, kind: 'moved', error: `${branch} moved while writing: try again` };
+  } catch (err) {
+    return { ok: false, kind: 'failed', error: scrubGitText(err?.message) || 'could not write the file' };
+  } finally { if (tmp) await rm(tmp, { recursive: true, force: true }).catch(() => {}); }
+}
+
 export const _testing = {
   defaultRun,
   QUIET_ENV,
   NETWORK_CMDS,
-  setRunner(fn) { _run = typeof fn === 'function' ? fn : defaultRun; },
-  reset() { _run = defaultRun; inflight.clear(); failed.clear(); ownFetch.clear(); lastGood.clear(); },
+  setRunner(fn) { _runner = typeof fn === 'function' ? fn : defaultRun; },
+  reset() { _runner = defaultRun; inflight.clear(); failed.clear(); ownFetch.clear(); lastGood.clear(); },
   /** Forget this process's fetch memory only (simulates another process; the runner stays). */
   forgetProcess() { inflight.clear(); failed.clear(); ownFetch.clear(); lastGood.clear(); },
 };

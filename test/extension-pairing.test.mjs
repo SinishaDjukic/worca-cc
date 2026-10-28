@@ -45,6 +45,7 @@ test('route kinds: pairing, token allowlist, everything else refused (cards, hea
   assert.equal(extensionRouteKind('GET', '/api/extension/actions/match'), 'token');             // D7: one origin → at most one run
   assert.equal(extensionRouteKind('POST', '/api/extension/actions/match'), null);
   assert.equal(extensionRouteKind('GET', '/api/actions/running'), null);                        // the instance list stays off
+  assert.equal(extensionRouteKind('POST', '/api/ask/refs/resolve'), null);                     // chips run worca's GitHub / Azure lookups: full UI only
 });
 
 test('decide: non-extension origins pass to S1; non-loopback Host passes to S1; remote mode refuses', () => {

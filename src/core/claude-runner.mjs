@@ -65,7 +65,10 @@ export function mockEnabled(opts) {
  *
  * @param {object} o
  * @param {string} o.cwd                 working directory for claude
- * @param {string} [o.systemPrompt]      appended system prompt
+ * @param {string} [o.systemPrompt]      appended system prompt (or the replacing one, see systemPromptMode)
+ * @param {'append'|'replace'} [o.systemPromptMode]  'replace' ⇒ systemPrompt REPLACES Claude Code's own
+ *   (--system-prompt / staged --system-prompt-file; Requirements A1.1). Anything else, absent included ⇒
+ *   today's --append-system-prompt(-file), argv byte-identical. The host-guard preamble heads it either way.
  * @param {string} o.prompt              the user prompt (-p)
  * @param {string[]} [o.allowedTools]    e.g. ["Read","Write","Edit","Bash"]
  * @param {string} [o.permissionMode]    e.g. "acceptEdits"
@@ -111,6 +114,10 @@ export function mockEnabled(opts) {
  *   materializeSkillMount). Absent/empty/non-strings ⇒ nothing emitted.
  * @param {object} [o.extraSettings]  merged into the one --settings payload (skills registry §4.1: Ask's
  *   `disableSkillShellExecution`); never replaces `permissions` / `hooks`. Absent ⇒ unchanged.
+ * @param {string} [o.readGuard] A8: the one file a Requirements read may open (file-read-guard.mjs); absent ⇒ argv unchanged.
+ *   Claude only: any other engine throws rather than run unguarded. The result then carries `readGuardDecisions`.
+ * @param {boolean} [o.noSessionPersistence] A8: true ⇒ --no-session-persistence (Claude Code saves no session
+ *   transcript of the call; Requirements file reads, asks and the brief look). Claude only; absent ⇒ argv unchanged.
  * @param {Record<string,string>} [o.spawnEnv]  run-level spawn env (wsmap D9: runOpts sets
  *   CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY on every fan-out node, and CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
  *   on the scan's two). Merged OVER the guardrail env and UNDER modelEnv (a catalog entry that sets the
@@ -129,6 +136,7 @@ export async function runClaude(o = {}) {
   const {
     cwd = process.cwd(),
     systemPrompt = '',
+    systemPromptMode,
     prompt = '',
     allowedTools,
     permissionMode = 'acceptEdits',
@@ -169,11 +177,20 @@ export async function runClaude(o = {}) {
     agents,
     pluginDirs,
     extraSettings,
+    // Requirements A8: the one file a read may open (file-read-guard.mjs). Claude only, like memoryLoadLog.
+    readGuard,
+    // Requirements A8: no Claude Code session transcript of a file read. Claude only.
+    noSessionPersistence,
+    // Memory usage (memory-usage.mjs): this execution's hook file; set only when the mounted rules hold a note
+    // with `paths:`. Claude only (the InstructionsLoaded hook); other engines ignore it. Never a spawn flag of its own.
+    memoryLoadLog,
     argvInlineLimit,
     // The user's own project folder whose approvals decide the cwd's committed `.mcp.json` servers on Claude
     // (mcpjson-approval.mjs). A pipeline node's cwd is a run checkout, which holds neither the untracked
     // settings.local.json nor Claude Code's answers for the project. Default: the cwd. Never a spawn flag.
     mcpjsonProjectDir,
+    // P1 (S31): a non-git run (runOpts) — approvals are judged and Cursor's files written without git.
+    noGit = false,
     // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
     // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
     asAgent,
@@ -189,6 +206,11 @@ export async function runClaude(o = {}) {
     bin = DEFAULT_BIN,
   } = o;
 
+  // A8: the file-read guard is a Claude Code hook; another engine would run the read unguarded, so it never runs at all.
+  if (readGuard != null && (engineName || 'claude') !== 'claude') {
+    throw new Error(`runClaude: readGuard needs the claude engine, not ${JSON.stringify(engineName)}`);
+  }
+
   if (signal?.aborted) {
     const err = new Error('aborted');
     err.name = 'AbortError';
@@ -202,6 +224,9 @@ export async function runClaude(o = {}) {
     // workspaceWriteTargets is the one option that is mock-ONLY (§8.10) and it must be
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
     // a pass-through; test/spawn-args.test.mjs asserts the forwarding end to end).
+    // systemPromptMode is not named here on purpose: the mock has no Claude Code system
+    // prompt to replace, so it is a real-spawn-only option (the call below carries it). readGuard is not named either:
+    // the mock spawns nothing, so there is no tool call to guard.
     return engine.run({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
   }
 
@@ -212,7 +237,7 @@ export async function runClaude(o = {}) {
   if (engine.name === 'claude' && strictMcpConfig !== true) {
     // Loaded here, not at the top: mcpjson-approval reads run-context, whose imports lead back to this runner.
     const { unapprovedMcpjsonNames } = await import('./mcpjson-approval.mjs');
-    const off = await unapprovedMcpjsonNames(cwd, mcpjsonProjectDir || cwd);
+    const off = await unapprovedMcpjsonNames(cwd, mcpjsonProjectDir || cwd, { git: !noGit });
     if (off.length) {
       const prev = Array.isArray(extraSettings?.disabledMcpjsonServers) ? extraSettings.disabledMcpjsonServers : [];
       settings = { ...(extraSettings || {}), disabledMcpjsonServers: [...new Set([...prev, ...off])] };
@@ -222,8 +247,10 @@ export async function runClaude(o = {}) {
   return engine.run({
     cwd,
     systemPrompt,
+    systemPromptMode,
     prompt,
     allowedTools,
+    noGit,
     permissionMode,
     model,
     effort,
@@ -258,6 +285,9 @@ export async function runClaude(o = {}) {
     agents,
     pluginDirs,
     extraSettings: settings,
+    readGuard,
+    noSessionPersistence,
+    memoryLoadLog,
     argvInlineLimit,
     asAgent,
     billTo,

@@ -16,8 +16,10 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { scrubbedEnv, WIN32_ENV_BASELINE } from '../src/core/plugin-shim.mjs';
 import { lastPathSegment } from '../src/core/chat/command-router.mjs';
+import { checkRows } from './helpers/rows.mjs';
 
 const REPO = fileURLToPath(new URL('../', import.meta.url));
+const PROXY_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy'];
 
 test('DEFAULT_AGENTS_DIR is a filesystem path (fileURLToPath), not a URL pathname', () => {
   assert.equal(DEFAULT_AGENTS_DIR, fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -59,26 +61,57 @@ test('no Node-side module uses `new URL(…, import.meta.url).pathname` as a fil
   assert.deepEqual(offenders.map((f) => f.slice(REPO.length)), [], 'use fileURLToPath(new URL(…, import.meta.url)) instead');
 });
 
-test('scrubbedEnv: PATH+HOME only on POSIX; Windows additionally gets the non-secret system baseline', () => {
-  const saved = { ...process.env };
-  try {
-    process.env.PATH = '/usr/bin';
-    process.env.HOME = '/home/u';
-    process.env.WORCA_HOME = '/home/u/.worca-cc';
-    process.env.SYSTEMROOT = 'C:\\Windows';
-    process.env.USERPROFILE = 'C:\\Users\\u';
-    process.env.SECRET_TOKEN = 'nope';
-    assert.deepEqual(scrubbedEnv('linux'), { PATH: '/usr/bin', HOME: '/home/u' });
-    const win = scrubbedEnv('win32');
-    assert.equal(win.PATH, '/usr/bin');
-    assert.equal(win.SYSTEMROOT, 'C:\\Windows');
-    assert.equal(win.USERPROFILE, 'C:\\Users\\u');
-    assert.ok(!('WORCA_HOME' in win) && !('SECRET_TOKEN' in win), 'never forwards WORCA_* or arbitrary vars');
-    for (const k of Object.keys(win)) assert.ok(['PATH', 'HOME', ...WIN32_ENV_BASELINE].includes(k), `unexpected key ${k}`);
-  } finally {
-    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
-    Object.assign(process.env, saved);
-  }
+test('scrubbedEnv: PATH, HOME, the proxy and CA variables on POSIX; Windows additionally gets the non-secret system baseline', async () => {
+  // A plain object for the host env, never process.env: on Windows that one answers every
+  // casing of a name, so HTTPS_PROXY and https_proxy would both come back.
+  const HOST = {
+    PATH: '/usr/bin', HOME: '/home/u', WORCA_HOME: '/home/u/.worca-cc',
+    SYSTEMROOT: 'C:\\Windows', USERPROFILE: 'C:\\Users\\u', SECRET_TOKEN: 'nope',
+  };
+  const scrub = (platform, vars = {}) => scrubbedEnv(platform, { ...HOST, ...vars });
+  const CA = { NODE_EXTRA_CA_CERTS: '/etc/corp/ca.pem', SSL_CERT_FILE: '/etc/ssl/corp.pem', SSL_CERT_DIR: '/etc/ssl/certs' };
+  await checkRows([
+    { name: 'POSIX with no proxy set: PATH and HOME only', run: () => {
+      assert.deepEqual(scrub('linux'), { PATH: '/usr/bin', HOME: '/home/u' });
+    } },
+    { name: 'POSIX: each proxy variable that is set passes in its own case, unset ones stay absent', run: () => {
+      assert.deepEqual(scrub('linux', { HTTPS_PROXY: 'http://proxy.corp:8080', http_proxy: 'http://proxy.corp:3128', no_proxy: 'corp.example,.internal' }), {
+        PATH: '/usr/bin', HOME: '/home/u',
+        HTTPS_PROXY: 'http://proxy.corp:8080', http_proxy: 'http://proxy.corp:3128', no_proxy: 'corp.example,.internal',
+      });
+    } },
+    { name: 'the CA bundle paths pass on both platforms, a credentialed proxy or not (a proxy that re-signs TLS needs them)', run: () => {
+      assert.deepEqual(scrub('linux', CA), { PATH: '/usr/bin', HOME: '/home/u', ...CA });
+      const win = scrub('win32', { ...CA, HTTPS_PROXY: 'http://user:s3cret@proxy.corp:8080' });
+      for (const [k, v] of Object.entries(CA)) assert.equal(win[k], v, k);
+      assert.ok(!('HTTPS_PROXY' in win));
+    } },
+    { name: 'Windows: the baseline and the proxy variables, never WORCA_* or arbitrary vars', run: () => {
+      const win = scrub('win32', { HTTPS_PROXY: 'http://proxy.corp:8080', NO_PROXY: 'corp.example' });
+      assert.equal(win.PATH, '/usr/bin');
+      assert.equal(win.SYSTEMROOT, 'C:\\Windows');
+      assert.equal(win.USERPROFILE, 'C:\\Users\\u');
+      assert.equal(win.HTTPS_PROXY, 'http://proxy.corp:8080');
+      assert.equal(win.NO_PROXY, 'corp.example');
+      assert.ok(!('WORCA_HOME' in win) && !('SECRET_TOKEN' in win), 'never forwards WORCA_* or arbitrary vars');
+      for (const k of Object.keys(win)) assert.ok(['PATH', 'HOME', ...PROXY_NAMES, ...WIN32_ENV_BASELINE].includes(k), `unexpected key ${k}`);
+    } },
+    { name: 'a proxy URL with credentials (in any form) withholds every proxy URL on both platforms; NO_PROXY still passes', run: () => {
+      for (const withCreds of ['http://user:s3cret@proxy.corp:8080', 'http://TOKEN@proxy.corp:8080', 'user:s3cret@proxy.corp:8080', 'http://user:s3cret@[not-a-host']) {
+        const vars = { https_proxy: withCreds, HTTP_PROXY: 'http://proxy.corp:3128', NO_PROXY: 'corp.example' };
+        assert.deepEqual(scrub('linux', vars), { PATH: '/usr/bin', HOME: '/home/u', NO_PROXY: 'corp.example' }, withCreds);
+        const win = scrub('win32', vars);
+        assert.equal(win.NO_PROXY, 'corp.example', withCreds);
+        assert.ok(!['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'].some((k) => k in win), `${withCreds}: ${Object.keys(win)}`);
+      }
+    } },
+    { name: 'a malformed proxy URL without credentials still passes, so the child can warn about it', run: () => {
+      assert.deepEqual(scrub('linux', { HTTPS_PROXY: 'http://[not-a-host' }), { PATH: '/usr/bin', HOME: '/home/u', HTTPS_PROXY: 'http://[not-a-host' });
+    } },
+    { name: 'with no env given, it reads this process', run: () => {
+      assert.equal(scrubbedEnv('linux').PATH, process.env.PATH);
+    } },
+  ]);
 });
 
 test('lastPathSegment handles POSIX, Windows and trailing separators', () => {

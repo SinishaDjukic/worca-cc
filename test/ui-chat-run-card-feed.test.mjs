@@ -53,19 +53,19 @@ test('controller: a card goes live from the run store, repaints on frames (never
   const ctl = createRunCardController({ controls: { prHost: () => true }, runStore: store, tickMs: 0 });
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
   assert.deepEqual(fetches, [], 'a run in the live map is never fetched');
   assert.equal(typeof built.handle.relayout, 'function');
   assert.equal(built.handle.parts.graph, built.el.querySelector('.chat-rc-well'));
   store.snaps.set('run-uuid-1', liveSnap({ status: 'done', terminal: true, active: [] }, { status: 'done', active: [] }));
   store.poke('run-uuid-1', 'log');
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner', 'a log line repaints nothing');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'a log line repaints nothing');
   store.poke('run-uuid-1', 'done');
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
   assert.deepEqual(fetches, ['/api/ask/runs/abcd1234'], 'the finished run\'s facts, once');
-  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Ready to ship', 'REST facts merged into the live snapshot');
+  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged', 'REST facts merged into the live snapshot');
   assert.equal(built.el.querySelector('.chat-rc-file-path').textContent, 'a.mjs');
   store.poke('run-uuid-1', 'state');
   await settle();
@@ -86,7 +86,7 @@ test('controller: REST hydration for runs this tab gets no frames for — on bui
       doc.body.appendChild(built.el);
       await settle();
       assert.equal(fetches.length, 1);
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Planner', 'painted from REST');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'painted from REST');
       ctl.tick();
       assert.equal(fetches.length, 1, 'not yet due');
       t += PROGRESS_REHYDRATE_MS;
@@ -109,7 +109,7 @@ test('controller: REST hydration for runs this tab gets no frames for — on bui
       const built = ctl.build(BLOCK, ctx);
       doc.body.appendChild(built.el);
       await settle();
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Starting');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'starting');
       assert.equal(built.el.querySelector('.ask-rc-title').textContent, 'Fix login', 'the identity title');
       ctl.destroy();
     } },
@@ -128,7 +128,8 @@ test('controller: a started run proposal learns its pipeline id from the store, 
       store.snaps.set('run-uuid-9', liveSnap({ runId: 'run-uuid-9' }));
       store.poke('run-uuid-9');
       await settle();
-      assert.equal(built.el.querySelector('.ask-rc-sub').textContent, 'proj · #abcd1234');
+      assert.equal(built.el.querySelector('.ask-rc-sub').textContent, 'proj');
+      assert.equal(built.el.querySelector('.chat-rc-where').title, 'Run abcd1234');
       ctl.destroy();
     } },
     { name: 'from the run links after a reload (P1 ctx.runLinkFor), then REST', run: async () => {
@@ -140,7 +141,7 @@ test('controller: a started run proposal learns its pipeline id from the store, 
       doc.body.appendChild(built.el);
       await settle();
       assert.deepEqual(fetches, ['/api/ask/runs/abcd1234']);
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
       ctl.destroy();
     } },
     { name: 'a failed launch', run: async () => {
@@ -149,6 +150,68 @@ test('controller: a started run proposal learns its pipeline id from the store, 
       const built = ctl.build({ kind: 'card', id: 'card_4', state: 'failed', runId: 'run-uuid-4', error: 'Preflight failed', card: { projectKey: 'p' } }, ctx);
       doc.body.appendChild(built.el);
       assert.equal(built.el.querySelector('.ask-rc-reason').textContent, 'Run failed: Preflight failed');
+      ctl.destroy();
+    } },
+  ]);
+});
+
+test('controller: the first load says loading, deleted or unreachable; a painted card keeps its paint (§5a.2)', async () => {
+  const LOADING = 'Loading run…';
+  const DELETED = 'This run was deleted. The chat keeps what was said about it.';
+  const UNREACHABLE = "Could not load this run: Worca's server could not be reached. The card fills in when it is back.";
+  const reasonOf = (built) => { const r = built.el.querySelector('.ask-rc-reason'); return r.hidden ? '' : r.textContent; };
+  const card = (handler, { now } = {}) => {
+    const { doc, ctx } = env(handler);
+    const ctl = createRunCardController({ controls: {}, runStore: fakeStore(), tickMs: 0, ...(now ? { now } : {}) });
+    const built = ctl.build(BLOCK, ctx);
+    doc.body.appendChild(built.el);
+    return { ctl, built };
+  };
+  await checkRows([
+    { name: 'in flight: Loading run…', run: async () => {
+      const { ctl, built } = card(() => new Promise(() => {}));
+      await settle();
+      assert.equal(reasonOf(built), LOADING);
+      ctl.destroy();
+    } },
+    { name: 'a 404: the run was deleted', run: async () => {
+      const { ctl, built } = card(() => ({ ok: false, status: 404, json: async () => ({}) }));
+      await settle();
+      assert.equal(reasonOf(built), DELETED);
+      ctl.destroy();
+    } },
+    { name: 'a network error: unreachable', run: async () => {
+      const { ctl, built } = card(() => Promise.reject(new TypeError('Failed to fetch')));
+      await settle();
+      assert.equal(reasonOf(built), UNREACHABLE);
+      ctl.destroy();
+    } },
+    { name: 'painted, then the server goes: the last paint stays, no reason', run: async () => {
+      let t = 1000;
+      let up = true;
+      const { ctl, built } = card(() => (up ? ok({ state: STATE({ status: 'running' }), live: null, extras: null }) : Promise.reject(new TypeError('Failed to fetch'))), { now: () => t });
+      await settle();
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
+      up = false;
+      t += PROGRESS_REHYDRATE_MS;
+      ctl.tick();
+      await settle();
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working', 'the last paint stays');
+      assert.equal(reasonOf(built), '');
+      ctl.destroy();
+    } },
+    { name: 'unreachable, then the next hydrate answers: the line goes and the card paints', run: async () => {
+      let t = 1000;
+      let up = false;
+      const { ctl, built } = card(() => (up ? ok({ state: STATE({ status: 'running' }), live: null, extras: null }) : Promise.reject(new TypeError('Failed to fetch'))), { now: () => t });
+      await settle();
+      assert.equal(reasonOf(built), UNREACHABLE);
+      up = true;
+      t += PROGRESS_REHYDRATE_MS;
+      ctl.tick();
+      await settle();
+      assert.equal(reasonOf(built), '');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'working');
       ctl.destroy();
     } },
   ]);
@@ -217,7 +280,7 @@ test('controller: a finished run paints from its persisted state once read — t
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-prog').textContent, '2/2 agents');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready', 'the persisted state: a finished run');
   assert.equal(built.el.querySelectorAll('.chat-rc-graph .node.is-skipped').length, 0);
   built.dispose();
 });
@@ -265,7 +328,7 @@ test('controller: the 1 s tick repaints a live card from the store; a 200 for AN
       doc.body.appendChild(built.el);
       await settle();
       assert.equal(built.el.querySelector('.ask-rc-title').textContent, 'Fix login');
-      assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Starting');
+      assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'starting');
       ctl.destroy();
     } },
   ]);
@@ -314,7 +377,7 @@ test('controller: a REST read taken before a resume (interrupted) never paints o
       store.poke(null, 'hello');
       await settle();
       assert.equal(built.el.dataset.runStatus, 'done');
-      assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Ready to ship');
+      assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged');
       assert.equal(fetches.length, 2);
       ctl.destroy();
     } },
@@ -367,7 +430,7 @@ test('controller: a REST read older than the store\'s finished run never repaint
   const built = ctl.build(BLOCK, ctx);
   doc.body.appendChild(built.el);
   await settle();
-  assert.equal(built.el.querySelector('.ask-rc-pill-text').textContent, 'Done');
+  assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
   ctl.destroy();
 });
 
@@ -400,7 +463,7 @@ test('controller: a `done` frame re-reads only the cards of THAT run; the late r
   }
 });
 
-test('S9: the control the user is in, inside the card, keeps the focus (and its value) when ask-panel rebuilds the transcript — Chrome restores the caret with the focus', async () => {
+test('S9: the control the user is in, inside the card, keeps the focus (and its value) when ask-panel repaints the card\'s row — Chrome restores the caret with the focus (#958: the panel\'s one column watcher)', async () => {
   _resetChatExtensions();
   const store = fakeStore();
   const ask = { id: 'q-1', kind: 'questions', nodeId: 'n_plan', questions: [{ id: 'q1', question: 'Which database?', options: [] }] };
@@ -425,11 +488,12 @@ test('S9: the control the user is in, inside the card, keeps the focus (and its 
   const field = card.querySelector('.chat-rc-q .qfree');
   assert.ok(field, 'the question field is in the card');
   let seq = 1;
-  // A new thread row (a follower notice, a direction row): renderTranscript re-appends the cached card in a new row.
+  // #958: a new thread row no longer moves the card (rows reconcile). The card's own message comes again with a fresh
+  // notice: its tail re-renders and re-appends the cached card inside its row, a real move.
   const newRow = async () => {
     seq += 1;
     ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID,
-      message: { id: `askm_0000001${seq}`, threadId: TID, seq, role: 'system', text: `note ${seq}`, blocks: [{ kind: 'notice', text: `note ${seq}` }], status: null, createdAt: 't' } });
+      message: { id: 'askm_00000001', threadId: TID, seq: 1, role: 'assistant', text: '', blocks: [BLOCK, { kind: 'notice', id: `n${seq}`, text: `note ${seq}` }], status: 'done', createdAt: 't' } });
     ctx.flush();
     await ctx.tick();
   };
@@ -439,8 +503,13 @@ test('S9: the control the user is in, inside the card, keeps the focus (and its 
       field.value = 'Postgres 16';
       field.setSelectionRange(3, 5);
       const row = card.parentNode;
+      const removed = [];
+      const mo = new ctx.window.MutationObserver((rs) => { for (const r of rs) removed.push(...r.removedNodes); });
+      mo.observe(row, { childList: true });
       await newRow();
-      assert.notEqual(card.parentNode, row, 'the card was re-appended into a new row');
+      mo.disconnect();
+      assert.ok(removed.includes(card), 'the card really moved: it was taken out of its row');
+      assert.equal(card.parentNode, row, 'and put back into the same row');
       assert.equal(ctx.doc.activeElement, field);
       assert.deepEqual([field.selectionStart, field.selectionEnd], [3, 5]);
       assert.equal(field.value, 'Postgres 16');
@@ -533,18 +602,21 @@ test('S9: the control the user is in, inside the card, keeps the focus (and its 
       assert.equal(ctx.doc.activeElement, field);
       assert.deepEqual(seen, [{ preventScroll: true }]);
     } },
-    { name: 'disposing the card ends the watch', run: async () => {
+    { name: 'destroying the panel ends the watch', run: async () => {
       field.focus();
-      let cut = 0;
-      const proto = ctx.window.MutationObserver.prototype;
-      const disconnect = proto.disconnect;
-      proto.disconnect = function counted() { cut += 1; return disconnect.call(this); };
-      ctl.destroy();
-      proto.disconnect = disconnect;
-      assert.equal(cut, 1);
+      ctx.panel.destroy();
+      ctx.doc.body.appendChild(ctx.panel.root);
+      const r = card.parentNode;
+      r.removeChild(card); r.appendChild(card); await ctx.tick();
+      assert.notEqual(ctx.doc.activeElement, field, 'the watch ended with the panel');
+      field.focus();
+      r.removeChild(card); r.appendChild(card); await ctx.tick();
+      assert.notEqual(ctx.doc.activeElement, field, 'no watcher re-armed');
+      ctx.panel.root.remove();
     } },
   ]);
   ctx.panel.destroy();
+  ctl.destroy();
   _resetChatExtensions();
 });
 
@@ -616,4 +688,72 @@ test('controller: a card\'s own Stop that lands while a read is in flight is rea
   assert.equal(fetches.length, 3, 'the refresh reads again once the in-flight read ends');
   assert.equal(built.el.dataset.runStatus, 'stopped');
   ctl.destroy();
+});
+
+test('controller: a finished run without a project re-reads its facts on the artifact frames its teardown sends after `done`', async () => {
+  const store = fakeStore();
+  const NP = { projectKey: 'no-project-00000000', projectDir: '/h/.worca-cc/runs/abcd1234/work', workMode: 'none', branch: { workMode: 'none', runRootMode: 'detached' } };
+  store.snaps.set('run-uuid-1', liveSnap({ status: 'done', terminal: true, active: [] }, { status: 'done', active: [], ...NP }));
+  let harvested = false;
+  const extras = () => ({ results: null, moreArtifacts: false, pr: null,
+    artifacts: harvested ? [{ kind: 'work', relPath: 'work/deck.html', bytes: 86016, nodeId: null, cycle: null }] : [], artifactsTotal: harvested ? 1 : 0 });
+  const { doc, ctx, fetches } = env((u) => (u === '/api/ask/runs/abcd1234' ? ok({ state: STATE({ status: 'done', active: [], ...NP }), live: null, extras: extras() }) : null));
+  const ctl = createRunCardController({ controls: { prHost: () => true }, runStore: store, tickMs: 0 });
+  const built = ctl.build(BLOCK, ctx);
+  doc.body.appendChild(built.el);
+  store.poke('run-uuid-1', 'done');
+  await settle(6);
+  const n = fetches.length;
+  assert.equal(built.el.querySelector('.chat-rc-arts-list'), null, 'the teardown has not indexed work/ yet');
+  harvested = true;
+  store.poke('run-uuid-1', 'artifact');
+  await settle(6);
+  assert.equal(fetches.length, n + 1, 'the artifact frame re-reads the facts, once');
+  assert.equal(built.el.querySelector('.chat-rc-arts-list .cap').textContent, 'Artifacts · 1');
+  store.snaps.set('run-uuid-1', liveSnap({ status: 'done', terminal: true, active: [] }, { status: 'done', active: [] }));
+  store.poke('run-uuid-1', 'artifact');
+  await settle(6);
+  built.dispose();
+});
+
+test('controller: a fix card\'s outcome patch reaches the same card element (handle.blockChanged), with the pipeline id', async () => {
+  const store = fakeStore();
+  const { doc, ctx } = env();
+  const ctl = createRunCardController({ runStore: store, tickMs: 0 });
+  const FIX = { ...BLOCK, card: { ...BLOCK.card, pipelineId: null, fix: { prUrl: 'https://x/pull/7', triggerLabel: 'Failing checks' } } };
+  const built = ctl.build(FIX, ctx);
+  doc.body.appendChild(built.el);
+  assert.equal(typeof built.handle.blockChanged, 'function');
+  built.handle.blockChanged({ ...FIX, card: { ...FIX.card, pipelineId: 'abcd1234', fix: { ...FIX.card.fix, outcome: { kind: 'failed', reason: 'fix-failed' } } } });
+  assert.equal(built.el.querySelector('.chat-rc-fix-out').textContent, 'Not pushed: the fix run failed');
+  assert.ok(built.el.querySelector('.chat-rc-where').title.includes('abcd1234'), 'the pipeline id from the patch, in the tooltip');
+  assert.ok(!built.el.textContent.includes('#abcd1234'), 'run 4 D20: never in visible text');
+  built.dispose(); ctl.destroy();
+});
+
+test('panel: a PR fix-run card on a system row renders as the chat run card; its outcome frame repaints the same element', async () => {
+  _resetChatExtensions();
+  const store = fakeStore();
+  registerChatRunCard({ runStore: store, tickMs: 0 });
+  const TID = 'ask_00000002';
+  const FIX = { kind: 'card', id: 'card_0000f001', state: 'tracked', card: { type: 'progress', pipelineId: null, runId: 'run-uuid-1', projectKey: 'proj-00000001',
+    workspaceId: null, title: 'Fix PR #7 feedback', label: 'proj', status: 'starting', fix: { prUrl: 'https://x/pull/7', triggerLabel: 'Failing checks' } } };
+  const row = (blocks) => ({ id: 'askm_0000f001', threadId: TID, seq: 2, role: 'system', text: 'PR watch started a fix run on https://x/pull/7: Failing checks', blocks, status: null, createdAt: 't' });
+  const snap = { thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+    messages: [row([FIX])], attachments: [], runLinks: [{ runId: 'run-uuid-1', pipelineId: null, cardId: 'card_0000f001', status: 'starting', phase: null }], worktrees: [], inFlight: null };
+  const ctx = makePanel({ fetchHandler: (url) => ({ ok: true, status: 200, json: async () => (url.startsWith(`/api/ask/threads/${TID}`) ? snap : {}) }) });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  ctx.flush();
+  const card = ctx.doc.querySelector('.ask-msg-system .chat-rc');
+  assert.ok(card, 'the card renders on the system row');
+  assert.equal(card.querySelector('.kind-chip').hidden, true, 'a fix run is a single run: no chip (#959)');
+  assert.deepEqual([...card.querySelector('.chat-rc-fix').children].slice(0, 3).map((n) => n.textContent), ['PR fix run', '·', 'Failing checks']);
+  const settled = { ...FIX, card: { ...FIX.card, pipelineId: 'abcd1234', fix: { ...FIX.card.fix, outcome: { kind: 'pushed', sha: 'abc1234', stopped: null, fixRuns: 1 } } } };
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row([settled]), unread: true });
+  ctx.flush();
+  const again = ctx.doc.querySelector('.ask-msg-system .chat-rc');
+  assert.equal(again, card, 'blockChanged kept the element');
+  assert.equal(again.querySelector('.chat-rc-fix-out').textContent, 'Pushed the fix (abc1234)');
 });

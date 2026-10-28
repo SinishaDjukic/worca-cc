@@ -17,6 +17,9 @@
 
 import { domainError } from '../web-allowlist.mjs';
 import { FIELD_LABELS } from '../../shared/away-mode/labels.mjs';
+import { normaliseDimension, MAX_DIMENSIONS } from '../../shared/tag-dimensions.mjs';
+import { MODEL_ROLES, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
+import { ENGINES } from '../../shared/engine-switch.mjs';
 
 export const POLICY_SCHEMA = 1;
 export const KINDS = Object.freeze(['default', 'soft', 'hard']);
@@ -25,9 +28,13 @@ export const TIERS = Object.freeze(['permissive', 'normal', 'secure']);
 export const WINDOWS = Object.freeze(['weekly', 'monthly']);
 /** Text fields on the document (title, notes, updatedBy, override reasons) are clipped here. */
 export const TEXT_MAX = 200;
+// settings.mjs UI_LEVELS (not importable here: the registry stays a leaf); test/policy-registry.test.mjs pins equality.
+const SETUP_UI_LEVELS = Object.freeze(['simple', 'advanced', 'expert']);
+// `EFFORTS` (below) is the Claude scale; Codex roles use this one.
+const ROLE_CODEX_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high']);
 
 const GROUPS = Object.freeze({
-  cost: 'Cost', ask: 'Ask Worca', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs',
+  cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', setup: 'Setup', plugins: 'Plugins', runs: 'Runs',
   night: 'Away mode',
 });
 
@@ -39,21 +46,31 @@ const GROUPS = Object.freeze({
  */
 export const FIELDS = Object.freeze([
   { key: 'cost.pipelineLimitUsd', group: 'cost', label: 'Per-pipeline cap (USD)', help: 'Pauses one pipeline at this estimated cost. Soft: the tighter of team and local applies; continue past it on resume.', type: 'usd', kinds: ['default', 'soft'], cap: true, attrs: ['onBreach', 'requireReason'], local: 'pipelineCostLimitUsd' },
-  { key: 'cost.totalLimitUsd', group: 'cost', label: 'Total cap per period (USD)', help: 'Per developer, per reset period; pipelines and Ask Worca together.', type: 'usd', kinds: ['default', 'soft'], cap: true, attrs: ['onBreach', 'requireReason'], local: 'totalCostLimitUsd' },
+  { key: 'cost.totalLimitUsd', group: 'cost', label: 'Total cap per period (USD)', help: 'Per developer, per reset period; pipelines and Chat together.', type: 'usd', kinds: ['default', 'soft'], cap: true, attrs: ['onBreach', 'requireReason'], local: 'totalCostLimitUsd' },
   { key: 'cost.resetPeriod', group: 'cost', label: 'Reset period', help: 'The developer\'s own period wins when set.', type: 'enum', values: WINDOWS, kinds: ['default'], local: 'costLimitResetPeriod' },
   { key: 'cost.pooledBudgetUsd', group: 'cost', label: 'Pooled budget (USD)', help: 'Whole team, read from team metrics. Advisory: it never pauses a run.', type: 'usd', kinds: ['soft'], advisory: true, attrs: ['window'] },
   { key: 'cost.humanRateUsd', group: 'cost', label: 'Developer rate (USD/h)', help: 'Prices the estimated human hours behind "Saved". A developer\'s own rate wins when set.', type: 'usd', kinds: ['default'], local: 'humanRateUsdPerHour' },
-  { key: 'ask.maxTurns', group: 'ask', label: 'Turn limit', help: 'Ask Worca agentic turns per chat turn.', type: 'int', min: 1, max: 500, kinds: ['default'], local: 'askMaxTurns' },
-  { key: 'ask.maxBudgetUsd', group: 'ask', label: 'Per-turn cost cap (USD)', help: 'Ask Worca per-turn cap; null means no cap.', type: 'usd-or-null', min: 0.1, max: 100, kinds: ['default'], local: 'askMaxBudgetUsd' },
+  { key: 'ask.maxTurns', group: 'ask', label: 'Turn limit', help: 'Agentic turns per Chat turn.', type: 'int', min: 1, max: 500, kinds: ['default'], local: 'askMaxTurns' },
+  { key: 'ask.maxBudgetUsd', group: 'ask', label: 'Per-turn cost cap (USD)', help: 'Chat per-turn cap; null means no cap.', type: 'usd-or-null', min: 0.1, max: 100, kinds: ['default'], local: 'askMaxBudgetUsd' },
   // The two web fields only ever NARROW, and bind (no "go past it"): web access is opt-in per developer, and the policy
   // branch is writable by whoever can push to the repo — so a policy may switch it off or cap the hosts, never widen.
-  { key: 'ask.webEnabled', group: 'ask', label: 'Web access', help: 'Off switches Ask Worca web access off for chats pinned to this project. A policy can never switch it on — each developer opts in.', type: 'bool', kinds: ['soft'], offOnly: true, local: 'askWeb.enabled' },
+  { key: 'ask.webEnabled', group: 'ask', label: 'Web access', help: 'Off switches Chat web access off for chats pinned to this project. A policy can never switch it on — each developer opts in.', type: 'bool', kinds: ['soft'], offOnly: true, local: 'askWeb.enabled' },
   { key: 'ask.webAllowedDomains', group: 'ask', label: 'Web allowlist', help: 'The most a developer may allow (example.com or *.example.com): hosts outside this list are dropped from their own Ask web allowlist. It never adds a host.', type: 'string[]', kinds: ['soft'], domains: true, local: 'askWeb.allowedDomains' },
   { key: 'guardrails.default', group: 'guardrails', label: 'Default set', help: 'What the New run picker starts on. A built-in id, a user set id, or gp:<name> for a set this policy ships.', type: 'string', kinds: ['default'] },
   { key: 'guardrails.minimum', group: 'guardrails', label: 'Minimum tier', help: 'A run whose set ranks below this warns and is recorded.', type: 'enum', values: TIERS, kinds: ['soft'] },
   { key: 'models.allowed', group: 'models', label: 'Allowed models', help: 'A chosen step model outside this list warns and is recorded. Others still run.', type: 'string[]', kinds: ['soft'] },
   { key: 'models.steps', group: 'models', label: 'Step defaults', help: 'Model and effort per role, applied to roles the project has not configured.', type: 'steps', kinds: ['default'] },
   { key: 'models.hideBuiltins', group: 'models', label: 'Hide built-in models', help: 'Cosmetic; ids still resolve.', type: 'bool', kinds: ['default'], local: 'hideBuiltinModels' },
+  // Team setup (plans/setup-assistant-design.md D12–D15). models.roles applies to the project's runs (effective layer);
+  // the setup.* fields are user-level: the setup assistant offers them on Review, and nothing changes before Apply.
+  // A team setup never carries network settings, model sources, keys or tokens (D12, src/core/setup/team-file.mjs).
+  { key: 'models.roles', group: 'setup', label: 'Model roles', help: 'Deep thinking, Everyday coding and Quick jobs per harness, named by upstream model (claude-opus-5-5). Each machine maps it to one of its own sources. Default: fills the roles a developer has not set. Soft: applies on this project\'s runs over their own roles.', type: 'roles', kinds: ['default', 'soft'], local: 'modelRoles' },
+  { key: 'setup.uiLevel', group: 'setup', label: 'Interface level', help: 'Offered in the setup assistant.', type: 'enum', values: SETUP_UI_LEVELS, kinds: ['default'], local: 'uiLevel' },
+  { key: 'setup.autoPrDescription', group: 'setup', label: 'AI-written PR descriptions', help: 'Offered in the setup assistant.', type: 'bool', kinds: ['default'], local: 'autoGeneratePrDescription' },
+  { key: 'setup.smartNaming', group: 'setup', label: 'Smart run names', help: 'Title and branch suggestions, the branch pattern and its types.', type: 'record', shape: { suggestTitle: 'bool', suggestBranch: 'bool', pattern: 'string', types: 'string[]', trigger: ['debounce', 'manual'], addRunId: 'bool' }, kinds: ['default'], local: 'smartNaming' },
+  { key: 'setup.runEngine', group: 'setup', label: 'Coding agent', help: 'The harness new runs start on.', type: 'enum', values: Object.freeze(Object.keys(ENGINES)), kinds: ['default'], local: 'runEngine' },
+  { key: 'setup.sync', group: 'setup', label: 'Sync before run', help: 'The instance defaults each project inherits.', type: 'record', shape: { beforeRun: 'bool', remote: 'string', refreshMinutes: 'int', onDiverged: ['ask', 'origin', 'fail'] }, kinds: ['default'], local: 'sync' },
+  { key: 'setup.networkWait', group: 'setup', label: 'Wait for the network', help: 'A step that loses the network waits and retries.', type: 'record', shape: { enabled: 'bool', maxWaitMin: 'int' }, kinds: ['default'], local: 'networkWait' },
   { key: 'plugins.marketplaces', group: 'plugins', label: 'Marketplaces', help: 'Added to every teammate once; a local removal is remembered.', type: 'string[]', kinds: ['default'] },
   { key: 'plugins.required', group: 'plugins', label: 'Required plugins', help: 'Missing or below the floor: the setup checklist offers to install, with consent. Never automatic.', type: 'plugins', kinds: ['soft'] },
   // MCP registry spec §11.1. `workspaceRuns: false`: refused in the workspaceRuns block (a workspace run takes only the workspace policy's Team set).
@@ -65,6 +82,8 @@ export const FIELDS = Object.freeze([
   { key: 'run.humanInLoop', group: 'runs', label: 'Human in the loop', help: 'Applies until the project sets its own switch.', type: 'bool', kinds: ['default'] },
   { key: 'metrics.record', group: 'runs', label: 'Record runs to team metrics', help: 'Expected on: the Projects cell hints when "Include my runs" is off.', type: 'bool', kinds: ['soft'] },
   { key: 'worca.minVersion', group: 'runs', label: 'Minimum Worca version', help: 'An older client shows a banner and logs a note.', type: 'semver', kinds: ['soft'] },
+  { key: 'runs.tagDimensions', group: 'runs', label: 'Tag dimensions', help: 'Keys every run is asked for (like a cost centre), with allowed values and a default. Mandatory keys warn; with "Require mandatory tags" on they block a start.', type: 'tagDimensions', kinds: ['soft'] },
+  { key: 'runs.enforceTags', group: 'runs', label: 'Require mandatory tags', help: 'On: a run cannot start while a mandatory tag has no value after pre-fill, or a tag is outside its values.', type: 'bool', kinds: ['soft'] },
   // Away mode (src/core/night/*): `night: true` makes validateValue run the night leaf's own
   // field rules after the base-type check, so the rules live in one place. Labels: src/shared/away-mode/labels.mjs.
   { key: 'night.enabled', group: 'night', label: FIELD_LABELS.enabled.label, help: FIELD_LABELS.enabled.hint || 'On: All runs. Off: Only runs I marked.', type: 'bool', kinds: ['default'], night: true },
@@ -92,12 +111,12 @@ export function groupLabel(id) { return GROUPS[id] || id; }
 export const GROUP_ORDER = Object.freeze(Object.keys(GROUPS));
 
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,199}$/;
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/\-[\]]{0,199}$/;   // `/`: a Goose or OpenCode id is provider/model
 const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Zero-import leaves only: model-env for the bridged-model `upstream` validator every
 // catalog layer shares (model-bridge-design.md §6.3), night/config for the night.* rules.
-import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, MODEL_ENGINES, effortsForEngine } from '../model-env.mjs';
+import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, MODEL_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, modelIdProblem, effortsForEngine } from '../model-env.mjs';
 import { fieldError as nightFieldError, NIGHT_EFFORTS } from '../night/config.mjs';
 // The MCP definition rules (MCP registry spec §4.1, §4.3): pure, shared with manual definitions.
 import { validateMcpDefinition, screenNonSecretValue, SERVER_NAME_RE } from '../mcp/definitions.mjs';
@@ -211,6 +230,19 @@ export function normalizeSkillsRequired(list) {
   });
   return { value, dropped };
 }
+/** Keep the valid `runs.tagDimensions` entries; one "KEY: why" per dropped entry (a bad entry never drops the field). */
+export function normalizeTagDimensions(list) {
+  const value = []; const dropped = [];
+  list.forEach((e, i) => {
+    const { dim, error } = normaliseDimension(e);
+    const why = error
+      || (value.some((x) => x.key === dim.key) ? 'listed twice' : null)
+      || (value.length >= MAX_DIMENSIONS ? `at most ${MAX_DIMENSIONS} tag dimensions` : null);
+    if (why) { dropped.push(`${dim?.key || `entry ${i + 1}`}: ${why}`); return; }
+    value.push(dim);
+  });
+  return { value, dropped };
+}
 /** Did this build read every `skills.required` entry of a doc (the mcpListComplete rule)? An entry it dropped is still
  *  listed by the team: its Team state stays. */
 export function skillsListComplete(warnings = []) {
@@ -282,6 +314,41 @@ function baseError(meta, value) {
     case 'skills':
       if (!Array.isArray(value)) return 'must be a list of { plugin, skill } entries';
       return normalizeSkillsRequired(value).dropped[0] ?? null;
+    case 'tagDimensions':
+      if (!Array.isArray(value)) return 'must be a list of { key, label, values?, required? }';
+      return normalizeTagDimensions(value).dropped[0] ?? null;
+    case 'roles': {
+      if (!isPlainObject(value)) return 'must be an object of harness → { deep, everyday, quick }';
+      for (const [hn, roles] of Object.entries(value)) {
+        if (!ROLE_HARNESSES.includes(hn)) return `harness "${hn}" has no model roles (accepts ${ROLE_HARNESSES.join(' | ')})`;
+        if (!isPlainObject(roles)) return `${hn} must be an object of role → { model, effort }`;
+        for (const [r, sel] of Object.entries(roles)) {
+          if (!MODEL_ROLES.includes(r)) return `${hn}: role "${r}" is not one of ${MODEL_ROLES.join(' | ')}`;
+          if (!isPlainObject(sel) || !(typeof sel.model === 'string' && MODEL_ID_RE.test(sel.model))) return `${hn}.${r}: model must be an upstream model id`;
+          for (const k of Object.keys(sel)) if (k !== 'model' && k !== 'effort') return `${hn}.${r}: unknown field "${k}"`;
+          // Codex takes its own effort scale (team-policy-view.mjs CODEX_EFFORTS: minimal | low | medium | high).
+          const allowed = hn === 'codex' ? ROLE_CODEX_EFFORTS : EFFORTS;
+          if (sel.effort != null && !allowed.includes(sel.effort)) return `${hn}.${r}: effort must be one of ${allowed.join(' | ')}`;
+        }
+      }
+      return null;
+    }
+    case 'record': {
+      if (!isPlainObject(value)) return 'must be an object';
+      const words = { bool: 'true or false', int: 'a whole number', string: 'a non-empty string', 'string[]': 'a list of non-empty strings' };
+      const okText = (x) => typeof x === 'string' && x.trim() && x.length <= TEXT_MAX;
+      for (const [k, v] of Object.entries(value)) {
+        const want = Object.hasOwn(meta.shape, k) ? meta.shape[k] : null;
+        if (!want) return `unknown field "${k}" (accepts ${Object.keys(meta.shape).join(' | ')})`;
+        const good = Array.isArray(want) ? want.includes(v)
+          : want === 'bool' ? typeof v === 'boolean'
+            : want === 'int' ? Number.isInteger(v) && v >= 0
+              : want === 'string' ? okText(v)
+                : Array.isArray(v) && v.every(okText);
+        if (!good) return `${k} must be ${Array.isArray(want) ? `one of ${want.join(' | ')}` : words[want]}`;
+      }
+      return null;
+    }
     default: return 'unknown field type';
   }
 }
@@ -304,8 +371,9 @@ export function normalizeEntry(key, raw) {
     else if (kind === 'hard' && meta.kinds.includes('default')) { warning = `${key}: hard constraints are not enforced by this version — treated as default`; }
     else return { entry: null, warning: `${key}: kind "${kind}" is not allowed (accepts ${meta.kinds.join(' | ')})` };
   }
-  // mcpServers, skills: a per-entry normalizer — bad entries are dropped one warning each, the rest stays.
-  const perEntry = meta.type === 'mcpServers' ? normalizeMcpRequired : meta.type === 'skills' ? normalizeSkillsRequired : null;
+  // mcpServers, skills, tagDimensions: a per-entry normalizer — bad entries are dropped one warning each, the rest stays.
+  const perEntry = meta.type === 'mcpServers' ? normalizeMcpRequired : meta.type === 'skills' ? normalizeSkillsRequired
+    : meta.type === 'tagDimensions' ? normalizeTagDimensions : null;
   const mcp = perEntry && Array.isArray(raw.value) ? perEntry(raw.value) : null;
   const err = mcp ? null : validateValue(meta, raw.value);
   if (err) return { entry: null, warning: `${key}: ${err}` };
@@ -374,11 +442,19 @@ function normalizeModels(raw, warnings) {
     const allowed = engine === 'claude' ? EFFORTS : effortsForEngine(engine);
     const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => allowed.includes(e)) : [];
     entry.efforts = efforts.length ? efforts : (engine === 'claude' ? ['medium', 'high'] : [...allowed]);
-    if (engine === 'cursor') {
-      // A cursor model runs through cursor-agent's own sign-in: no routing env, no upstream.
-      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no env — entry dropped`); continue; }
-      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no upstream — entry dropped`); continue; }
-      entry.engine = 'cursor';
+    if (OWN_SIGNIN_ENGINES.includes(engine)) {
+      // A model of an own-sign-in engine (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) runs through the engine's own sign-in: no routing env, no upstream.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: ${aModelOf(engine)} takes no env — entry dropped`); continue; }
+      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: ${aModelOf(engine)} takes no upstream — entry dropped`); continue; }
+      const idWhy = modelIdProblem(engine, m.id);
+      if (idWhy) { warnings.push(`catalogs.models: ${m.id}: ${idWhy} — entry dropped`); continue; }
+      entry.engine = engine;
+    }
+    if (engine === 'copilot') {
+      // A copilot model runs through the Copilot CLI's own sign-in: no routing env, no upstream.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a copilot model takes no env — entry dropped`); continue; }
+      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a copilot model takes no upstream — entry dropped`); continue; }
+      entry.engine = 'copilot';
     }
     if (codex) {
       // §3.1a: codex ignores routing env. Its upstream (an OpenAI-compatible endpoint) is checked below.

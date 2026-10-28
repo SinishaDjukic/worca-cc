@@ -4,6 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
+import { discardPrompt, discardChanges } from './helpers/popups.mjs';
+import { guardModal } from '../ui/public/modal-guard.mjs';
 import { JSDOM } from 'jsdom';
 // From the HELPER, never from ui-graph-view.test.mjs: importing a *.test.mjs file
 // evaluates it, which re-registers and re-runs all 17 view tests inside THIS
@@ -537,7 +539,14 @@ test('MAJ-19: Backspace aimed at the save dialog or confirm modal never edits th
     { name: 'MAJ-19: the modal guard is not over-broad — closed overlays leave the keyboard live', run: async () => {
       const s = await open();
       appConfirmModal(s, { open: false });                 // .hidden CLASS = closed
-      const sheet = s.doc.createElement('section');        // Ask Worca sheet: hidden ATTRIBUTE
+      // The Marketplace sheet host (marketplace/layers.mjs): hidden on the HOST, aria-modal on the panel inside it.
+      const mkHost = s.doc.createElement('div');
+      mkHost.className = 'viewer-modal mk-layer mk-sheet-host hidden';
+      const mkPanel = s.doc.createElement('section');
+      mkPanel.setAttribute('role', 'dialog'); mkPanel.setAttribute('aria-modal', 'true');
+      mkHost.appendChild(mkPanel);
+      s.doc.body.appendChild(mkHost);
+      const sheet = s.doc.createElement('section');        // Chat sheet: hidden ATTRIBUTE
       sheet.setAttribute('role', 'dialog'); sheet.hidden = true;
       s.doc.body.appendChild(sheet);
       s.c.openSaveDialog();
@@ -550,12 +559,52 @@ test('MAJ-19: Backspace aimed at the save dialog or confirm modal never edits th
       // The Ask Worca sheet is role="dialog" WITHOUT aria-modal and stays open while
       // the canvas is used (ask-panel.mjs:202-207, :522) — it never owns the keyboard.
       const ask = s.doc.createElement('section');
-      ask.className = 'ask-sheet'; ask.setAttribute('role', 'dialog'); ask.setAttribute('aria-label', 'Ask Worca');
+      ask.className = 'ask-sheet'; ask.setAttribute('role', 'dialog'); ask.setAttribute('aria-label', 'Chat');
       ask.hidden = false;
       s.doc.body.appendChild(ask);
       s.c.select({ kind: 'node', id: 'n_task' });
       keyOn(s, s.doc, 'Backspace');
       assert.equal(s.c.template().nodes.some((n) => n.id === 'n_task'), false, 'an open non-modal Ask sheet leaves the keyboard live');
+    } },
+  ]);
+});
+
+test('the Save dialog follows the pop-up rules: the browser\'s close request on a changed name asks first; Cancel closes at once', async () => {
+  await checkRows([
+    { name: 'a changed name: the close request (Escape, a back gesture) is held and asks; Discard closes it', run: async () => {
+      const s = await open();
+      const dlg = s.c.openSaveDialog();
+      const name = dlg.querySelector('.sd-name');
+      name.value = 'Renamed';
+      name.dispatchEvent(new s.win.Event('input', { bubbles: true }));
+      const ev = new s.win.Event('cancel', { cancelable: true });
+      dlg.dispatchEvent(ev);
+      assert.equal(ev.defaultPrevented, true, 'the browser never closes it on its own');
+      assert.ok(dlg.hasAttribute('open'), 'still open');
+      assert.ok(discardPrompt(s.doc), 'it asks first');
+      discardChanges(s.doc);
+      await new Promise((r) => setTimeout(r, 0));
+      assert.equal(dlg.hasAttribute('open'), false, 'Discard closes it');
+    } },
+    { name: 'the Escape that closed an untouched Save dialog is not the canvas\'s: the selection stays', run: async () => {
+      const s = await open();
+      guardModal(s.doc.createElement('div'));      // the app installs modal-guard's document listeners at load…
+      s.c.suspend(); s.c.resume();                 // …and the composer view resumes after them
+      s.c.select({ kind: 'node', id: 'n_agent' });
+      const dlg = s.c.openSaveDialog();
+      key(s, 'Escape');
+      assert.equal(dlg.hasAttribute('open'), false, 'Escape closes the untouched Save dialog');
+      assert.deepEqual(s.c.selection(), { kind: 'node', id: 'n_agent' }, 'and only the dialog');
+    } },
+    { name: 'Cancel on a changed name closes at once, without asking', run: async () => {
+      const s = await open();
+      const dlg = s.c.openSaveDialog();
+      const name = dlg.querySelector('.sd-name');
+      name.value = 'Renamed';
+      name.dispatchEvent(new s.win.Event('input', { bubbles: true }));
+      click(s, dlg.querySelector('.sd-cancel'));
+      assert.equal(dlg.hasAttribute('open'), false);
+      assert.equal(discardPrompt(s.doc), null);
     } },
   ]);
 });
@@ -671,7 +720,7 @@ test('MAJ-4: a plugin-owned row defaults to Save-a-copy with a note; a user row 
       assert.equal(dlg.querySelector('.sd-title').textContent, 'Save a copy');
       assert.equal(dlg.querySelector('.sd-name').value, 'demo-plug example flow copy');
       assert.equal(dlg.querySelector('.sd-note').textContent,
-        'This pipeline belongs to plugin "demo-plug" and is replaced on plugin update — saving creates your own copy.');
+        'This pipeline belongs to plugin "demo-plug" and is replaced on plugin update. Saving creates your own copy.');
       dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(posts[0].id, undefined, 'the plugin row id is never overwritten');
@@ -1132,7 +1181,7 @@ test('applyOps refuses a batch that would NOW add a real error (D12): the user d
   const wires = JSON.stringify(s.c.template().wires);
   const r = s.c.applyOps(chat, 'chat: connect');
   assert.equal(r.ok, false);
-  assert.match(r.error, /^that change would now leave the graph invalid — cycle without a blocking-source edge: n_agent, n_b /);
+  assert.match(r.error, /^that change would now leave the graph invalid \(cycle without a blocking-source edge: n_agent, n_b /);
   assert.equal(s.c.undoDepth(), depth, 'no undo entry');
   assert.equal(JSON.stringify(s.c.template().wires), wires, 'the wires are unchanged');
   assert.equal(s.c.applyOps([{ op: 'move_node', node: 'n_b', x: 420, y: 420 }], 'chat: move').ok, true, 'a clean batch still applies');

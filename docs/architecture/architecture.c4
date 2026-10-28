@@ -190,7 +190,7 @@ model {
     // ── Ways in ──
 
     webui = client 'Web UI' {
-      description 'Runs cockpit, Workflow Composer, Ask Worca, Settings. Talks REST and WebSocket to the server.'
+      description 'Runs cockpit, Workflow Composer, Chat, Settings. Talks REST and WebSocket to the server.'
       technology 'Browser SPA (ui/public)'
     }
     cli = client 'CLI' {
@@ -226,7 +226,7 @@ model {
       technology 'Node.js >= 22.13, ES modules (src/core)'
 
       server = module 'HTTP + WebSocket server' {
-        description 'Express static UI, REST API and a WebSocket bridge. The composition root: it starts runs in-process, ticks scheduled runs, hosts chat channels, serves Ask Worca and the terminal, and creates pull requests. Default port 4317.'
+        description 'Express static UI, REST API and a WebSocket bridge. The composition root: it starts runs in-process, ticks scheduled runs, hosts chat channels, serves Chat and the terminal, and creates pull requests. Default port 4317.'
         technology 'ui/server.mjs'
       }
 
@@ -318,7 +318,7 @@ model {
         technology 'src/core/chat'
       }
 
-      ask = module 'Ask Worca' {
+      ask = module 'Chat' {
         description 'Assistant that answers from Worca\'s own records and reads code in read-only detached worktrees. Runs on Claude Code or Codex. Changes are cards the person confirms. Its tools are served by a separate worca MCP stdio process.'
         technology 'src/core/ask (56 files)'
       }
@@ -334,7 +334,7 @@ model {
       }
 
       memory = module 'Agent memory' {
-        description 'Global and per-project memory files that pipeline agents and Ask Worca both load; mounted into each run and synced back.'
+        description 'Global and per-project memory files that pipeline agents and Chat both load; mounted into each run and synced back.'
         technology 'src/core/memory-store.mjs, memory-sync.mjs'
       }
 

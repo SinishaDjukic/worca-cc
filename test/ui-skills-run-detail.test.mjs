@@ -32,26 +32,26 @@ test('renderRunSkills: names as agents call them, skips with reasons, the person
   assert.deepEqual(texts(card), [
     'SKILLS FROM SETS',
     'billing:deploy-checklist, billing:release-notes, general:graphify',
-    'skipped: billing:quiet (Billing — switched off in the set)',
+    'skipped: billing:quiet (Billing: switched off in the set)',
     '3 set skills in 2 plugins · plus your personal Claude Code skills',
   ]);
   assert.deepEqual(texts(renderRunSkills(BLOCKED, { doc })), [
     'SKILLS FROM SETS',
     `skills from sets not loaded: ${skillLayerText('sideload-disabled')}`,
-    'skipped: billing:quiet (Billing — switched off in the set)',
+    'skipped: billing:quiet (Billing: switched off in the set)',
     'Your personal Claude Code skills still load.',
   ]);
   // Another engine: the names its .agents/skills mount gave them, and no Claude Code note.
   const engine = { ...MOUNT, rel: '.agents/skills', names: ['deploy-checklist', 'billing-release-notes', 'graphify'] };
   assert.deepEqual(texts(renderRunSkills(engine, { doc })).slice(1), [
     'deploy-checklist, billing-release-notes, graphify',
-    'skipped: billing:quiet (Billing — switched off in the set)',
+    'skipped: billing:quiet (Billing: switched off in the set)',
     '3 set skills in .agents/skills · plus your project and personal skills',
   ]);
   const none = { ...MOUNT, base: null, layer: { blocked: 'engine-no-skill-mount', text: skillLayerText('engine-no-skill-mount', 'codex') } };
   assert.deepEqual(texts(renderRunSkills(none, { doc })).slice(1), [
     "skills from sets not loaded: Codex reads skills from the run's .agents/skills mount, and this run has none",
-    'skipped: billing:quiet (Billing — switched off in the set)',
+    'skipped: billing:quiet (Billing: switched off in the set)',
   ]);
 });
 

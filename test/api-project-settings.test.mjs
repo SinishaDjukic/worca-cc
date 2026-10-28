@@ -93,3 +93,38 @@ test('PATCH /api/config keeps accepting nightMode (compatibility)', async () => 
   assert.deepEqual(g.body.effective['nightMode.strategy'], { value: 'weights', source: 'project' });
   await call('PATCH', '/api/config', { projectDir, nightMode: null });
 });
+
+test('smartNaming: a project overrides pattern and types only; null restores the inherited values', async () => {
+  const { smartNaming } = await import('../src/core/settings.mjs');
+  const url = `/api/projects/${key}/settings`;
+  const set = await call('PATCH', url, { smartNaming: { types: ['docs'], pattern: '{type}/{ticket}-{slug}' } });
+  assert.equal(set.status, 200);
+  assert.deepEqual(smartNaming({ projectDir }).types, ['docs']);
+  assert.equal(smartNaming({ projectDir }).pattern, '{type}/{ticket}-{slug}');
+  assert.equal(smartNaming().pattern, '{type}/{slug}', 'the user layer is untouched');
+  const refused = await call('PATCH', url, { smartNaming: { addRunId: true } });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /per user/);
+  assert.equal((await call('PATCH', url, { smartNaming: { pattern: '{type}/x' } })).status, 400);
+  assert.equal((await call('PATCH', url, { smartNaming: null })).status, 200);
+  assert.deepEqual(smartNaming({ projectDir }).types, ['feat', 'fix', 'chore', 'docs', 'refactor', 'test']);
+});
+
+test('watchNewPrs (s4): off by default, a PATCH round-trips on GET, null clears it, a non-boolean writes nothing', async () => {
+  const url = `/api/projects/${key}/settings`;
+  assert.deepEqual((await call('GET', url)).body.effective.watchNewPrs, { value: false, source: 'default' });
+  const set = await call('PATCH', url, { watchNewPrs: true });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  const got = await call('GET', url);
+  assert.equal(got.body.own.watchNewPrs, true);
+  assert.deepEqual(got.body.effective.watchNewPrs, { value: true, source: 'project' });
+  const bad = await call('PATCH', url, { watchNewPrs: 'yes' });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /^watchNewPrs must be true or false$/);
+  assert.equal((await call('GET', url)).body.own.watchNewPrs, true, 'a refused patch writes nothing');
+  const off = await call('PATCH', url, { watchNewPrs: false });
+  assert.deepEqual(off.body.effective.watchNewPrs, { value: false, source: 'project' }, 'false is a stored value, not a clear');
+  const clear = await call('PATCH', url, { watchNewPrs: null });
+  assert.equal('watchNewPrs' in clear.body.own, false);
+  assert.deepEqual(clear.body.effective.watchNewPrs, { value: false, source: 'default' });
+});

@@ -12,7 +12,7 @@
 // import contract; that is why the constant does NOT live next to
 // SPAWN_ENV_BASE in claude-runner.mjs.
 
-import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../shared/engine-switch.mjs';
+import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES } from '../shared/engine-switch.mjs';
 
 /** Reasoning-effort vocabulary. Canonical home is HERE (not config.mjs, which
  *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
@@ -21,21 +21,71 @@ export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 /** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
 export const CURSOR_EFFORTS = [];
+/** Goose's GOOSE_THINKING_EFFORT values (engines/goose.mjs); the provider decides what each one does. */
+export const GOOSE_EFFORTS = ['low', 'medium', 'high', 'max'];
+/** OpenCode's `--variant` values (engines/opencode.mjs): the union of its providers' reasoning variants. */
+export const OPENCODE_EFFORTS = ['minimal', 'low', 'medium', 'high', 'max'];
+/** Qwen Code's `model.reasoningEffort` tiers (engines/qwen.mjs), set in worca's system settings per spawn. */
+export const QWEN_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** Gemini CLI's thinking, set per spawn in its settings' model config overrides (engines/gemini.mjs GEMINI_THINKING): a
+ *  thinking level on Gemini 3, a thinking budget on Gemini 2.5. */
+export const GEMINI_EFFORTS = ['low', 'medium', 'high'];
+/** Copilot's `--reasoning-effort` values (engines/copilot.mjs COPILOT_EFFORTS; kept equal by a test). */
+export const COPILOT_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+/** A Copilot built-in's catalog id is `copilot/<the id copilot --model takes>`: the bare ids clash with Codex's built-ins
+ *  (gpt-5.5) and look like Claude's, and the catalog holds one row per id. A bridge import of the Copilot API uses
+ *  `copilot-<id>` (connections.mjs suggestModelHandle), so the two never meet. */
+export const COPILOT_MODEL_PREFIX = 'copilot/';
+/** The model id copilot's `--model` is given for a catalog id: the prefix off, any other id as it is. */
+export function copilotWireModel(id) {
+  const s = typeof id === 'string' ? id.trim() : '';
+  return s.toLowerCase().startsWith(COPILOT_MODEL_PREFIX) ? s.slice(COPILOT_MODEL_PREFIX.length) : s;
+}
 export const MODEL_ENGINES = [...MODEL_ENGINE_NAMES];
-/** The engines a run's agent nodes can run on (engines/index.mjs). Copilot runs pipelines but owns no catalog
- *  model, so it is not a MODEL_ENGINES member (no step or helper slots, no Ask chats). */
+/** The engines a run's agent nodes can run on (engines/index.mjs). */
 export const RUN_ENGINES = [...ENGINE_NAMES];
 /** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
 export const HELPER_ENGINES = ['claude', 'codex'];
-/** The engine a run's helper jobs run on. A Cursor run hands them to Claude: they read untrusted text, and Cursor's
- *  shell cannot be switched off. Copilot runs its own on its default model (no helper slots). The memory defrag and
+/** The engine a run's helper jobs run on. A run on an own-sign-in engine (OWN_SIGNIN_ENGINES: Cursor, Gemini CLI, Goose,
+ *  OpenCode, Qwen Code) hands them to Claude: they read untrusted text, and those engines' shells cannot be switched off (no verified read-only mode). Copilot runs its own on its default model (no helper slots). The memory defrag and
  *  the workspace scan are agent nodes of the run, not helper jobs. */
 export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && ENGINES[engine].helpers ? engine : 'claude'; }
-/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
- *  and a codex that has every flag in it, ask/turn.mjs). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
-export const ASK_ENGINES = ['claude', 'codex'];
-export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : EFFORTS; }
-export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
+/** Engines whose models connect through the engine's own sign-in (engine-switch.mjs ENGINES `signin`): a catalog entry
+ *  takes no routing env and no upstream, and worca ships none of theirs (cursor-agent's login; gemini's and qwen's own
+ *  sign-in; Goose's providers, `goose configure`; OpenCode's providers, `opencode auth login`). Cursor, Gemini CLI and
+ *  Qwen Code have no effort flag either (effortsForEngine). */
+export const OWN_SIGNIN_ENGINES = [...SIGN_IN_ENGINE_NAMES];
+const OWN_SIGNIN_NOTE = Object.freeze({ cursor: 'cursor-agent connects with its own sign-in', gemini: 'gemini connects with its own sign-in',
+  goose: 'Goose connects through its own providers', opencode: 'OpenCode connects through its own providers', qwen: 'qwen connects with its own sign-in' });
+/** 'a cursor model' / 'an opencode model', for the messages that name an engine's catalog entry. */
+export function aModelOf(engine) { return `${/^[aeiou]/i.test(String(engine)) ? 'an' : 'a'} ${engine} model`; }
+/** How an OWN_SIGNIN_ENGINES model connects, for the messages that refuse its env or upstream. */
+export function ownSignInNote(engine) { return OWN_SIGNIN_NOTE[engine] || ''; }
+/** A Goose or OpenCode model id is `provider/model`: goose's --provider and --model, split at the first `/`; OpenCode's as
+ *  `opencode models` lists it (`-m` takes nothing else). */
+const PROVIDER_MODEL_ID_RE = /^[^/\s]+\/\S+$/;
+const MODEL_ID_HINT = Object.freeze({ goose: 'a goose model id is provider/model (for example google/gemini-2.5-flash)',
+  opencode: 'an opencode model id is provider/model (as `opencode models` lists it)' });
+/** Why `id` cannot be a model of `engine`, or null. */
+export function modelIdProblem(engine, id) {
+  return MODEL_ID_HINT[engine] && !PROVIDER_MODEL_ID_RE.test(String(id ?? '')) ? MODEL_ID_HINT[engine] : null;
+}
+/** Engines an Ask Worca chat may run on (engine-switch.mjs `chat`, the verified ones): Claude, and those whose adapter
+ *  exports a chat descriptor with a lockdown to worca's own MCP server (src/core/engines/chat.mjs, which refuses to load
+ *  when an adapter and this list disagree): Codex (CODEX_ASK_LOCKDOWN), Copilot (--available-tools), Gemini CLI (an
+ *  admin-tier deny-all policy), Goose (no profile, no built-in, a home of its own), OpenCode (a chat agent that denies
+ *  every tool but worca's) and Qwen Code (no core tool, every other built-in excluded) — plans/ask-on-qwen-gemini-spike.md.
+ *  Cursor's descriptor is wired but has none (CURSOR_ASK_LOCKDOWN = null). This module may not import an adapter
+ *  (settings.mjs imports it), hence the flag. */
+export const ASK_ENGINES = [...CHAT_ENGINE_NAMES];
+/** A chat engine that runs locked down: every Ask engine but Claude. Its chat reads through worca's read_file / grep /
+ *  glob and starts no registry MCP server. */
+export const lockedChatEngine = (engine) => engine !== 'claude' && ASK_ENGINES.includes(engine);
+export function effortsForEngine(engine) {
+  return engine === 'codex' ? CODEX_EFFORTS : engine === 'copilot' ? COPILOT_EFFORTS : engine === 'goose' ? GOOSE_EFFORTS : engine === 'opencode' ? OPENCODE_EFFORTS
+    : engine === 'qwen' ? QWEN_EFFORTS : engine === 'gemini' ? GEMINI_EFFORTS : OWN_SIGNIN_ENGINES.includes(engine) ? CURSOR_EFFORTS : EFFORTS;
+}
+export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS, ...COPILOT_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models
 // view Test button). Deliberately BELOW the pipeline list: the CLI accepts
@@ -155,11 +205,13 @@ export function withStreamTimeouts(env) {
 // CLAUDE_CODE_SUBAGENT_MODEL is reserved too: the per-node `subagentModel`
 // prompt policy is the only sanctioned wire for a child's model, and a catalog
 // entry silently flooring every fan-out child would contradict the per-node
-// control the UI shows.
+// control the UI shows. CLAUDE_CODE_FORK_SUBAGENT is worca's own: the Claude adapter sets it to 0 on
+// every spawn (engines/claude.mjs CLAUDE_SPAWN_ENV), and an entry that turned forks back on would
+// bypass the pinned investigator and that same per-node policy.
 export const RESERVED_MODEL_ENV_KEYS = [
   'PATH', 'HOME', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'TERM',
   'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS',
-  'CLAUDECODE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CODE_SUBAGENT_MODEL',
+  'CLAUDECODE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_FORK_SUBAGENT',
 ];
 export const RESERVED_MODEL_ENV_PREFIXES = ['WORCA_'];
 
@@ -486,6 +538,22 @@ export function isOpenRouterBaseUrl(v) {
   if (!isUpstreamBaseUrl(v)) return false;
   const host = new URL(v.trim()).hostname.toLowerCase();
   return host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
+}
+
+/** Google's OpenAI-compatible Gemini endpoint (generativelanguage.googleapis.com/v1beta/openai), the base URL of a
+ *  Gemini model bridged with an AI Studio key. Gemini 3 wants each tool call's thought signature back (bridge/gemini.mjs). */
+export const GEMINI_OPENAI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
+export function isGeminiBaseUrl(v) {
+  if (!isUpstreamBaseUrl(v)) return false;
+  return new URL(v.trim()).hostname.toLowerCase() === 'generativelanguage.googleapis.com';
+}
+
+/** Alibaba Model Studio's OpenAI-compatible Qwen endpoints (DashScope compatible mode): international and mainland China. */
+export const QWEN_OPENAI_BASE_URL = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+export const QWEN_CN_OPENAI_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+export function isQwenBaseUrl(v) {
+  if (!isUpstreamBaseUrl(v)) return false;
+  return /^dashscope(?:-[a-z]+)?\.aliyuncs\.com$/.test(new URL(v.trim()).hostname.toLowerCase());
 }
 
 /** OpenRouter's provider sort orders (provider routing). */

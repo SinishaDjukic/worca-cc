@@ -26,12 +26,13 @@ function applyBody(s, body) {
 function setup({ settings = {}, own = {}, writable = true } = {}) {
   const s = { ...settings };
   const layer = { ...own };
-  const bodies = []; const patches = [];
+  const bodies = []; const patches = []; const slots = [];
   const reg = createSettingsRegistry({
     readSettings: () => s,
     roles: () => [{ key: 'planner', label: 'Planner' }],
     listModels: async () => MODELS,
     assertSlotModels: async (items) => {
+      slots.push(...items);
       for (const it of items) if (!MODELS.some((m) => m.id === it.value.model)) throw new Error(`${it.id}: unknown model "${it.value.model}" — add it to the catalog first`);
     },
     projectSettingIds: (roles) => ['run.engine', 'pipelineCostLimitUsd', 'askMaxTurns', 'askWeb', 'nightMode.enabled', 'skillMount', ...roles.map((r) => `models.claude.steps.${r}`)],
@@ -50,14 +51,14 @@ function setup({ settings = {}, own = {}, writable = true } = {}) {
       applyProject: async (p, patch) => { patches.push([p.key, patch]); for (const [k, v] of Object.entries(patch)) { if (v === null) delete layer[k]; else layer[k] = v; } },
     } : {}),
   });
-  return { reg, s, layer, bodies, patches };
+  return { reg, s, layer, bodies, patches, slots };
 }
 
 test('list_settings rows: user scope lists the Settings page, never a secret, a folder, a command or the chat\'s own powers', async () => {
   const { reg } = setup();
   const out = await reg.list({ scope: 'user' });
   const ids = out.settings.map((r) => r.id);
-  for (const id of ['theme', 'uiLevel', 'pipelineCostLimitUsd', 'sync.beforeRun', 'schedule.graceMin', 'chat.notify.done', 'askMaxTurns', 'models.claude.ask', 'models.claude.memoryDefrag', 'run.engine', 'models.claude.steps.planner', 'workspaceScan.scanEffort']) assert.ok(ids.includes(id), id);
+  for (const id of ['theme', 'uiLevel', 'pipelineCostLimitUsd', 'sync.beforeRun', 'schedule.graceMin', 'chat.notify.done', 'askMaxTurns', 'models.claude.ask', 'models.claude.memoryDefrag', 'run.engine', 'models.claude.steps.planner', 'workspaceScan.scanEffort', 'updateCheck']) assert.ok(ids.includes(id), id);
   for (const id of ids) assert.ok(!/^(root|projectsRoot|actions|askWeb|chat\.scriptTools|chat\.channels|nightMode|providers|speech)(\.|$)/.test(id), `never listed: ${id}`);
   const theme = out.settings.find((r) => r.id === 'theme');
   assert.deepEqual(theme, { id: 'theme', label: 'Theme', group: 'General', value: 'System (default)', stored: null, allowed: '"system" | "light" | "dark" | null (default)' });
@@ -183,6 +184,30 @@ test('every user setting writes exactly one known POST key — never an empty bo
   }
 });
 
+test('updateCheck is a default-on General boolean that writes exactly { updateCheck }', () => {
+  const { reg } = setup();
+  const def = reg.defsFor('user').find((d) => d.id === 'updateCheck');
+  assert.equal(def.group, 'General');
+  assert.equal(def.dflt, true);
+  assert.deepEqual(def.body(false), { updateCheck: false });
+  assert.deepEqual(def.body(null), { updateCheck: true }, 'unset writes the default back');
+  assert.equal(def.read({}), null);
+  assert.equal(def.read({ updateCheck: false }), false);
+});
+
+test('autoGeneratePrDescription is a default-off General boolean that writes exactly { autoGeneratePrDescription }', () => {
+  const { reg } = setup();
+  const def = reg.defsFor('user').find((d) => d.id === 'autoGeneratePrDescription');
+  assert.equal(def.group, 'General');
+  assert.equal(def.dflt, false);
+  assert.deepEqual(def.body(true), { autoGeneratePrDescription: true });
+  assert.deepEqual(def.body(null), { autoGeneratePrDescription: false }, 'unset writes the default back');
+  assert.equal(def.read({}), null);
+  assert.equal(def.read({ autoGeneratePrDescription: true }), true);
+  assert.throws(() => def.check('yes'), /must be true or false/);
+  assert.equal(def.check(false), null, 'the default stores as unset');
+});
+
 test('assertScheduleDefaultsInput is the setter\'s own check (setScheduleDefaults still refuses before any write)', async () => {
   assert.throws(() => assertScheduleDefaultsInput({ graceMin: -1 }), /scheduleGraceMin must be a whole number of minutes from 0 to 10080/);
   assert.throws(() => assertScheduleDefaultsInput({ ifMissed: 'later' }), /scheduleIfMissed must be one of run \| skip/);
@@ -195,6 +220,16 @@ test('receipt helpers: the card shape, its context line, the actor, the same-val
   assert.equal(chatActionSummary(card), 'Run (Fix login): Running → Paused');
   assert.equal(chatActionSummary({ type: 'run-stop', title: 'Fix login' }), 'Stop Fix login');
   assert.equal(chatActionSummary({ type: 'pull-request', title: 'Fix login', result: { url: 'https://x/pull/1' } }), 'Pull request for Fix login: https://x/pull/1');
+  assert.equal(chatActionSummary({ type: 'ship', title: 'Charts' }), 'Ship Charts');
+  assert.equal(chatActionSummary({ type: 'ship', title: 'Charts', result: { mode: 'one' } }), 'Ship Charts: shipped as one PR');
+  // Shaper s5: the round number is the one taken at Start (result.round), never landing.target.round
+  const round = { type: 'changes', landing: { kind: 'round', title: 'Changes to Run 2 · same branch, same PR', target: { round: 2 } } };
+  assert.equal(chatActionSummary(round), 'Changes to Run 2 · same branch, same PR');
+  assert.equal(chatActionSummary({ ...round, result: { round: 3, pr: 41 } }), 'Changes to Run 2 · same branch, same PR: Round 3 started');
+  assert.equal(chatActionSummary({ type: 'changes', landing: { kind: 'next-plan', title: "Changes to Charts · into Run 3's plan" }, result: { index: 3 } }),
+    "Changes to Charts · into Run 3's plan: Added to Run 3's plan");
+  assert.equal(chatActionSummary({ type: 'route', text: 'make the legend smaller' }), 'Where does this go: make the legend smaller');
+  assert.equal(chatActionSummary({ type: 'route', text: 'x', result: { verb: 'save' } }), 'Where does this go: x: Saved for the next checkpoint');
   assert.throws(() => receiptCard({ kind: 'nope' }), /unknown receipt kind/);
   assert.equal(askActorFor('ada@example.com'), 'ada@example.com via worca chat');
   assert.equal(askActorFor('local'), 'worca chat');
@@ -343,6 +378,22 @@ test('refine cycle 3: a project-only setting\'s refusal names what it takes, nev
   assert.equal(ok.ok, true, 'a good value still passes');
 });
 
+test('s4: watchNewPrs is listed as "Watch new pull requests" and refuses a non-boolean', async () => {
+  const { assertProjectSettingsPatch } = await import('../src/core/settings-cascade.mjs');
+  const reg = createSettingsRegistry({
+    projectSettingIds: () => ['watchNewPrs'],
+    resolveSetting: () => ({ value: false, source: 'default', layers: { project: undefined, user: undefined, team: undefined, default: false } }),
+    assertProjectSettingsPatch: (patch, o) => assertProjectSettingsPatch(patch, o),
+    projects: async () => [PROJECT],
+  });
+  const out = await reg.list({ scope: 'project', projectKey: PROJECT.key });
+  assert.deepEqual(out.settings.map((r) => [r.id, r.label, r.value]), [['watchNewPrs', 'Watch new pull requests', 'Off (inherited)']]);
+  const bad = await reg.check({ id: 'watchNewPrs', scope: 'project', projectKey: PROJECT.key, value: 'yes' });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.error, 'watchNewPrs must be true or false');
+  assert.equal((await reg.check({ id: 'watchNewPrs', scope: 'project', projectKey: PROJECT.key, value: true })).ok, true);
+});
+
 test('refine cycle 3: one card applied twice (two tabs pressed Create at once) keeps one link per pull request', () => {
   const card = { type: 'pull-request', pipelineId: 'aaaa0001' };
   const first = prCardResult({ state: 'proposed', card }, { url: 'https://x/pull/7', draft: true, existed: false });
@@ -364,4 +415,83 @@ test('check: a project override set to null previews what the cascade resolves �
   const r = await reg.check({ id: 'askMaxBudgetUsd', scope: 'project', projectKey: PROJECT.key, value: null });
   assert.equal(r.ok, true, r.error);
   assert.deepEqual(r.after, { unit: null, text: 'No cap (inherited)' });
+});
+
+test('models.claude.utility.agentGen: a user-scope Claude pair on agentGenModel, never a project setting', async () => {
+  const { reg, s, bodies, slots } = setup();
+  const row = (await reg.list({ scope: 'user', query: 'agentGen' })).settings;
+  assert.deepEqual(row.map((r) => [r.id, r.label, r.group, r.value, r.stored]),
+    [['models.claude.utility.agentGen', 'Agent generation model', 'Models', 'Default', null]]);
+  assert.match(row[0].allowed, /a model from list_models that runs on Claude, "effort": "medium" \| "high" \| "xhigh" \| "max"/);
+  let r = await reg.apply({ id: 'models.claude.utility.agentGen', scope: 'user', value: { model: 'CLAUDE-OPUS-5-5', effort: 'high' } });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies.at(-1), { agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } }, 'the catalog casing, on the Settings page\'s own key');
+  assert.equal(r.card.after, 'claude-opus-5-5 · high');
+  assert.deepEqual(slots.at(-1), { id: 'models.claude.utility.agentGen', engine: 'claude', value: { model: 'claude-opus-5-5', effort: 'high' } },
+    'the catalog check runs on Claude: a Codex id is refused here, not "applied" and then refused by the server');
+  r = await reg.check({ id: 'models.claude.utility.agentGen', value: { model: 'claude-sonnet-5', effort: 'max' } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /claude-sonnet-5 does not offer effort "max"/);
+  r = await reg.check({ id: 'models.claude.utility.agentGen', value: { model: 'gpt-x' } });
+  assert.match(r.error, /unknown model "gpt-x"/);
+  r = await reg.apply({ id: 'models.claude.utility.agentGen', scope: 'user', value: null });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies.at(-1), { agentGenModel: null });
+  assert.equal('agentGenModel' in s, false);
+  const p = await reg.check({ id: 'models.claude.utility.agentGen', scope: 'project', projectKey: PROJECT.key, value: { model: 'claude-sonnet-5' } });
+  assert.equal(p.ok, false);
+  assert.match(p.error, /^unknown setting "models\.claude\.utility\.agentGen"/, 'user-only: unknown per project, not "keys and tokens"');
+});
+
+test('models.claude.utility.naming: a user-scope Claude pair on namingModel, never a project setting', async () => {
+  const { reg, s, bodies, slots } = setup();
+  const row = (await reg.list({ scope: 'user', query: 'naming' })).settings;
+  assert.deepEqual(row.map((r) => [r.id, r.label, r.group, r.value, r.stored]),
+    [['models.claude.utility.naming', 'Run naming model', 'Models', 'Default', null]]);
+  assert.match(row[0].allowed, /a model from list_models that runs on Claude, "effort": "medium" \| "high" \| "xhigh" \| "max"/);
+  let r = await reg.apply({ id: 'models.claude.utility.naming', scope: 'user', value: { model: 'CLAUDE-OPUS-5-5', effort: 'high' } });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies.at(-1), { namingModel: { model: 'claude-opus-5-5', effort: 'high' } }, 'the catalog casing, on the Settings page\'s own key');
+  assert.equal(r.card.after, 'claude-opus-5-5 · high');
+  assert.deepEqual(slots.at(-1), { id: 'models.claude.utility.naming', engine: 'claude', value: { model: 'claude-opus-5-5', effort: 'high' } },
+    'the catalog check runs on Claude: a Codex id is refused here, not "applied" and then refused by the server');
+  r = await reg.check({ id: 'models.claude.utility.naming', value: { model: 'claude-sonnet-5', effort: 'max' } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /claude-sonnet-5 does not offer effort "max"/);
+  r = await reg.check({ id: 'models.claude.utility.naming', value: { model: 'gpt-x' } });
+  assert.match(r.error, /unknown model "gpt-x"/);
+  r = await reg.apply({ id: 'models.claude.utility.naming', scope: 'user', value: null });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies.at(-1), { namingModel: null });
+  assert.equal('namingModel' in s, false);
+  const p = await reg.check({ id: 'models.claude.utility.naming', scope: 'project', projectKey: PROJECT.key, value: { model: 'claude-sonnet-5' } });
+  assert.equal(p.ok, false);
+  assert.match(p.error, /^unknown setting "models\.claude\.utility\.naming"/, 'user-only: unknown per project, not "keys and tokens"');
+});
+
+test('team memory (1a): the project defs leave out the memory.team opt-in and label memory.teamMaxFiles; a chat change of memory.team is refused', async () => {
+  const { settingIds, assertProjectSettingsPatch } = await import('../src/core/settings-cascade.mjs');
+  const ids = settingIds({ roles: [] });
+  assert.ok(ids.includes('memory.team') && ids.includes('memory.teamMaxFiles'), 'the cascade offers both: only the registry hides the opt-in');
+  const reg = createSettingsRegistry({
+    projectSettingIds: () => ids,
+    resolveSetting: () => ({ value: 50, source: 'default', layers: { project: undefined, user: undefined, team: undefined, default: 50 } }),
+    assertProjectSettingsPatch,
+    projects: async () => [PROJECT],
+  });
+  const defs = reg.defsFor('project');
+  assert.ok(!defs.some((d) => d.id === 'memory.team'), 'the opt-in is not a project def the chat can write');
+  assert.equal(defs.find((d) => d.id === 'memory.teamMaxFiles')?.label, 'Memory: most team notes loaded');
+  const rows = (await reg.list({ scope: 'project', projectKey: PROJECT.key, query: 'memory.team' })).settings;
+  assert.deepEqual(rows.map((x) => [x.id, x.label, x.value]), [['memory.teamMaxFiles', 'Memory: most team notes loaded', '50 (inherited)']]);
+  assert.ok((await reg.list({ scope: 'user' })).excluded.includes('Team memory sharing'), 'the exclusion is told to the model');
+  for (const scope of [{ scope: 'project', projectKey: PROJECT.key }, { scope: 'user' }]) {
+    const refused = await reg.check({ id: 'memory.team', ...scope, value: true });
+    assert.equal(refused.ok, false, scope.scope);
+    assert.match(refused.error, /^memory\.team is not changed from the chat: it publishes to the team/);
+  }
+  const cap = await reg.check({ id: 'memory.teamMaxFiles', scope: 'project', projectKey: PROJECT.key, value: 7 });
+  assert.equal(cap.ok, true, cap.error);
+  // The exclusion matches memory.team and memory.team.* only: the cap beside it is a per-project setting, not "published".
+  assert.match((await reg.check({ id: 'memory.teamMaxFiles', scope: 'user', value: 7 })).error, /^unknown setting "memory\.teamMaxFiles".*\(it is set per project: scope "project"\)$/);
 });

@@ -54,7 +54,7 @@ export function createWorkspaceChangeValidator(r) {
       const byKey = (key) => {
         const p = projects.find((x) => x && x.key === key);
         if (!p) throw new Error(`unknown projectKey "${clip(key, 120)}" — list_projects names the registered projects`);
-        return { key: p.key, name: clip(p.name || basename(p.path), 120), path: p.path };
+        return { key: p.key, name: clip(p.name || basename(p.path), 120), path: p.path, ...(p.vcs === 'none' ? { vcs: 'none' } : {}) };
       };
       const nameOfPath = (path) => {
         const p = projects.find((x) => x && x.path === path);
@@ -151,7 +151,9 @@ export function createWorkspaceChangeValidator(r) {
       if (impact) card.recommendation = { level: impact.level, reason: clip(impact.reason, 400), partialAvailable: !!impact.partialAvailable };
       card.rescan = askedRescan ?? (impact ? impact.level : 'full');
       card.rescanAsked = askedRescan !== null;
-      const removed = { key, name: nameOfPath(path), path };
+      // P5: a registered Folder project's Remove row shows its Folder chip, as the create / add rows do (byKey).
+      const removedRow = projects.find((x) => x && x.path === path);
+      const removed = { key, name: nameOfPath(path), path, ...(removedRow?.vcs === 'none' ? { vcs: 'none' } : {}) };
       card.removed = removed;
       card.summary = `Remove ${removed.name} from ${wsName}`;
       card.effects.push(`The Map tab drops ${removed.name}'s edges and reviews (confirmed, rejected and manual edges that name it)`);

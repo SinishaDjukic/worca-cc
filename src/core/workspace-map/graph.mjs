@@ -214,7 +214,8 @@ export async function enrichMap(map, { members, loader = loadMemberGraph, limits
   };
   const byKey = new Map(out.members.map((m) => [m.key, m]));
   for (const m of sortedMembers(members)) {
-    const g = await loader(m.dir);
+    // P5: a Folder member has no graph (graphify never runs on a copy) and no HEAD to check one against.
+    const g = m.workMode === 'folder' ? null : await loader(m.dir);
     const fresh = await isFresh(g, m.dir);
     let used = 0;
     if (fresh) {
@@ -360,7 +361,7 @@ export async function mergeWorkspaceGraph(map, { members, outPath, limits = LIMI
     // Pass 1 — sizing: which members have a FRESH graph, and how big is the sum.
     const sizes = new Map();
     for (const m of list) {
-      const g = await loader(m.dir);
+      const g = m.workMode === 'folder' ? null : await loader(m.dir);
       if (await isFresh(g, m.dir)) sizes.set(m.key, { nodes: g.nodes.length, bytes: g.bytes });
     }
     if (!sizes.size) return done(none);

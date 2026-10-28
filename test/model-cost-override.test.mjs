@@ -71,7 +71,7 @@ test('estimateCost: per-Mtok rates, missing rates/usage as 0, 1h/5m cache bucket
       // No bucket breakdown → flat cache_creation_input_tokens at cacheWrite.
       assert.equal(estimateCost({ cache_creation_input_tokens: 2_000_000 }, { cacheWrite: 1 }), 2);
     } },
-    { name: 'estimateCost also reads Ask Worca\'s normalized usage shape (same tokens, other spelling)', run: () => {
+    { name: 'estimateCost also reads Chat\'s normalized usage shape (same tokens, other spelling)', run: () => {
       const rates = { input: 1, output: 3, cacheRead: 0.1, cacheWrite: 1.25 };
       const ask = { input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheCreation: 1_000_000, ctx: 4_000_000 };
       assert.equal(estimateCost(ask, rates), estimateCost(USAGE, rates), 'both spellings price identically');

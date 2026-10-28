@@ -115,7 +115,7 @@ test('#settings/memory paints health card, file list and history; with no projec
       assert.deepEqual([...pane.querySelectorAll('.mem-snap')].map((r) => r.dataset.id), ['20260909-100000-user']);
       assert.equal(pane.querySelector('.mem-editor'), null, 'nothing selected yet');
       assert.equal(pane.querySelector('.mem-defrag').disabled, false, 'a registered project hosts the global run');
-      assert.equal(pane.querySelector('.mem-host-hint').textContent, 'Runs on alpha — pick another project on the New run page.');
+      assert.equal(pane.querySelector('.mem-host-hint').textContent, 'Runs on alpha. Pick another project on the New run page.');
       // GET with no body sends no content-type (request shapes stay byte-identical to the other fetches).
       const get = calls.find((c) => c.url.endsWith('/api/memory/global') && c.method === 'GET');
       assert.equal(get.headers, null, 'no content-type on a body-less request');
@@ -128,6 +128,36 @@ test('#settings/memory paints health card, file list and history; with no projec
       assert.equal(pane.querySelector('.mem-host-hint').textContent, 'Register a project on the Projects page to host the global defragment run.');
     } },
   ]);
+});
+
+test('#settings/memory names runs from /api/history: the title links to the run; the link never opens the file', async () => {
+  const RUN_FILE = { ...FILE, source: 'run:cc3b6fce' };
+  const { window } = await boot({ fetchHandler: (u) => {
+    if (u.endsWith('/api/history')) return json({ pipelines: [{ id: 'cc3b6fce', projectKey: 'alpha-00000001', title: 'Fix login redirect', status: 'done', startedAt: '2026-09-09T09:00:00.000Z' }] });
+    if (u.includes('/api/memory/global/history')) return json({ snapshots: [{ id: '20260909-100000-run-cc3b6fce', files: ['testing.md'] }] });
+    if (u.endsWith('/api/memory/global')) return json({ ...REPORT, files: [RUN_FILE] });
+    return null;
+  } });
+  await go(window, 'settings/memory');
+  for (let i = 0; i < 6; i += 1) await tick();
+  const pane = memPane(window);
+  const snapLink = pane.querySelector('.mem-snap-src a');
+  assert.ok(snapLink, 'the History entry names its run');
+  assert.equal(snapLink.textContent, 'Fix login redirect');
+  assert.equal(snapLink.getAttribute('href'), '#history/alpha-00000001/cc3b6fce');
+  assert.equal(pane.querySelector('.mem-snap').dataset.id, '20260909-100000-run-cc3b6fce');
+  const metaLink = pane.querySelector('.mem-row[data-name="testing"] .mem-row-meta a');
+  assert.equal(metaLink.textContent, 'Fix login redirect');
+  assert.doesNotMatch(pane.querySelector('.mem-row-meta').textContent, /run[:-][0-9a-f]{8}/);
+  metaLink.focus();
+  metaLink.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await tick(); await tick();
+  assert.equal(pane.querySelector('.mem-editor'), null, 'Enter on the link does not open the file');
+  click(window, metaLink);
+  window.location.hash = metaLink.getAttribute('href');   // jsdom does not follow a link's href on a synthetic click
+  await tick(); await tick();
+  assert.equal(window.location.hash, '#history/alpha-00000001/cc3b6fce');
+  assert.equal(pane.querySelector('.mem-editor'), null, 'clicking the link does not open the file');
 });
 
 test('#settings/memory/<name> opens the editor; Save PUTs the text; Delete confirms then DELETEs and routes back', async () => {

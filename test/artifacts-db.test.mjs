@@ -445,6 +445,15 @@ test('readPipelineExtras returns clarify + ordered reviews, and empty arrays for
       assert.equal(ex.reviews[0].issues[0].severity, 'major');
       assert.equal(ex.reviews[1].issues.length, 0);
     } },
+    { name: 'readPipelineExtras carries a stored checklist and only then (spec D7)', run: async () => {
+      seedPipelineRow({ id: 'ex000003', projectKey: 'proj-00000001', status: 'done' });
+      const cl = [{ id: 'R-qa-1', perspective: 'qa', text: 't', status: 'met', evidence: 'e' }];
+      await writeReview('ex000003', 'impl', 1, { issues: [], summary: '', checklist: cl });
+      await writeReview('ex000003', 'impl', 2, { issues: [], summary: '' });
+      const ex = readPipelineExtras('ex000003');
+      assert.deepEqual(ex.reviews[0].checklist, cl);
+      assert.deepEqual(Object.keys(ex.reviews[1]), ['kind', 'cycle', 'issues', 'summary']);
+    } },
     { name: 'readPipelineExtras on a bare pipeline returns empty arrays (never null)', run: async () => {
       seedPipelineRow({ id: 'ex000002', projectKey: 'proj-00000001', status: 'done' });
       const ex = readPipelineExtras('ex000002');
@@ -491,6 +500,33 @@ test('rowToState reports `resumable` from the row\'s resume_point, not its statu
 
   getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
     .run(JSON.stringify({ version: 2, snapshot: null }), 'rsm00001');
+  assert.equal((await readPipelineByKey(key, 'rsm00001')).state.resumable, false, 'a live point, but its project is not onboarded');
+  getDb().prepare('INSERT OR IGNORE INTO projects (key, name, path, created_at) VALUES (?, ?, ?, ?)')
+    .run(key, 'rsm project', join(tmpdir(), 'rsm-project'), new Date().toISOString());
   const withPoint = await readPipelineByKey(key, 'rsm00001');
   assert.equal(withPoint.state.resumable, true, 'a live point is resumable');
+});
+
+// Run tags (#718): written once at creation, never touched by writeState (the resume invariant),
+// returned on the detail state and on list entries; project defaults never reach stored runs.
+test('createPipeline stores run tags; writeState, project defaults and lists leave them intact', async () => {
+  const { readRunTags } = await import('../src/core/run-tags-store.mjs');
+  const { listAllPipelines } = await import('../src/core/artifacts.mjs');
+  const { writeProjectDefaultTags, readProjectDefaultTags } = await import('../src/core/config.mjs');
+  const proj = await mkdtemp(join(tmpdir(), 'worca-cc-tags-'));
+  homes.push(proj);
+  const { id, dir } = await createPipeline(proj, { prompt: 'x', tags: ['client:acme'] });
+  assert.equal(getDb().prepare('SELECT count(*) n FROM run_tags WHERE pipeline_id = ?').get(id).n, 1);
+  await writeState(dir, { id, projectKey: projectKey(proj), status: 'running' });
+  assert.deepEqual(readRunTags(id), ['client:acme']);
+  writeProjectDefaultTags(projectKey(proj), ['team:web']);
+  assert.deepEqual(readProjectDefaultTags(projectKey(proj)), ['team:web']);
+  const data = await readPipelineByKey(projectKey(proj), id);
+  assert.deepEqual(data.state.tags, ['client:acme']);
+  const entry = (await listAllPipelines({ lite: true })).find((e) => e.id === id);
+  assert.deepEqual(entry.tags, ['client:acme']);
+  writeProjectDefaultTags(projectKey(proj), []);
+  assert.deepEqual(readProjectDefaultTags(projectKey(proj)), []);
+  const bare = await createPipeline(proj, { prompt: 'y' });
+  assert.deepEqual(readRunTags(bare.id), []);
 });

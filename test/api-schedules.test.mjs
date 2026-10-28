@@ -254,6 +254,25 @@ test('recurring: repeat creates a series, previews, pauses, resumes, skips, runs
   assert.equal((await fetch(`${base}/api/schedules/${made.scheduleId}`)).status, 404);
 });
 
+test('sub-daily: preview, the 15-minute floor, and a timed branch per occurrence', async () => {
+  const rule = { freq: 'weekly', weekdays: ['mo', 'tu', 'we', 'th', 'fr'], step: { minutes: 15, from: '09:00', to: '18:00' }, tz: 'Europe/Berlin' };
+  const pv = await (await post('/api/schedules/preview', { rule, count: 3 })).json();
+  assert.equal(pv.sentence, 'Every 15 minutes, 09:00–18:00, weekdays');
+  assert.equal(pv.next.length, 3);
+  const tooOften = await post('/api/schedules/preview', { rule: { ...rule, step: { minutes: 10 } } });
+  assert.equal(tooOften.status, 400);
+  assert.match((await tooOften.json()).error, /at least 15 minutes apart/);
+
+  const r = await post('/api/run', { projectDir: dir, prompt: 'Poll', title: 'Poll', mock: true, featureBranch: 'poll', repeat: { rule } });
+  assert.equal(r.status, 202);
+  const made = await r.json();
+  const now = await (await post(`/api/schedules/${made.scheduleId}/run-now`)).json();
+  const entry = await untilSettled(now.runId);
+  const row = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(entry.pipelineId);
+  assert.match(JSON.parse(row.branch).feature, /^poll-\d{8}-\d{4}$/, 'two runs a day need two branches');
+  await call('DELETE', `/api/schedules/${made.scheduleId}`);
+});
+
 test('an external task is fetched at start: transient errors retry, permanent ones fail with the reason', async () => {
   // WORCA_MOCK fakes task sources; the shim's test hook makes getTask fail on demand.
   const { setMockSourceResponses } = await import('../src/core/plugin-shim.mjs');
@@ -544,4 +563,18 @@ test('chain: B (sameAsSource + sourceFromPrevious) after a same-branch A commits
   const bb = await until(() => { const x = branchRow(eb.pipelineId); return x && x.mergeBack ? x : null; });
   assert.equal(bb.source, main, 'A merged back, so "A\'s branch" is A\'s source');
   assert.equal(bb.mergeBack.merged, true);
+});
+
+test('GET /api/schedules carries the open "Run after" chains, and drops a chain once all its members are done', async () => {
+  seedPipelineRow({ id: 'ch000001', title: 'Chain root', status: 'running', projectKey: projectKey(dir), startedAt: new Date().toISOString() });
+  const b = await (await post('/api/run', { projectDir: dir, prompt: 'B', title: 'Chain next', mock: true, after: { kind: 'pipeline', id: 'ch000001' } })).json();
+  const open = await get('/api/schedules');
+  assert.ok(Array.isArray(open.chains));
+  const chain = open.chains.find((c) => c.id === 'p:ch000001');
+  assert.ok(chain, 'the open chain is listed');
+  assert.deepEqual(chain.members.map((m) => [m.pipelineId, m.ticketId, m.state]), [['ch000001', null, 'current'], [null, b.runId, 'waiting']]);
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'ch000001'").run();
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id = ?").run(b.runId);
+  const settledChains = await get('/api/schedules');
+  assert.equal(settledChains.chains.some((c) => c.id === 'p:ch000001'), false);
 });

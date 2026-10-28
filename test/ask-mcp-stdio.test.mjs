@@ -5,7 +5,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { addProject } from '../src/core/projects.mjs';
-import { createThread, appendMessage, addAttachment } from '../src/core/ask/store.mjs';
+import { createThread, appendMessage, addAttachment, updateThread, getAttachment, attachmentPath, attachmentSourcePath, askOutDir, attachmentsDir } from '../src/core/ask/store.mjs';
 import { createRpcServer, parseArgv, main } from '../src/core/ask/mcp-stdio.mjs';
 import { scriptBaseEnv } from '../src/core/graph/script-runner.mjs';
 import { Readable, Writable } from 'node:stream';
@@ -117,6 +117,7 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   const seeded = await seedPipeline(projectDir, { title: 'Seeded', status: 'done', prompt: 'seed prompt' });
   await writeFile(join(seeded.dir, 'diff-patch.patch'), 'diff --git a/a.txt b/a.txt\n+++ b/a.txt\n+hello\n', 'utf8');
   const thread = createThread();
+  updateThread(thread.id, { context: { pinned: true, projectKey: project.key } });
   const msg = appendMessage(thread.id, { role: 'user', text: 'x' });
   const att = addAttachment(thread.id, msg.id, { name: 'n.md', text: 'attached text' });
   const other = createThread();
@@ -141,7 +142,7 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   const msgs = r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.deepEqual(msgs.map((m) => m.id), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(msgs[0].result.protocolVersion, '2025-11-25');
-  assert.deepEqual(msgs[1].result.tools.map((t) => t.name), ['list_projects', 'list_branches', 'list_workflows', 'list_runs', 'list_people', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
+  assert.deepEqual(msgs[1].result.tools.map((t) => t.name), ['list_projects', 'list_branches', 'list_workflows', 'list_runs', 'list_people', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'propose_scope_switch', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
     'list_run_artifacts', 'read_run_artifact', 'get_run_progress',
@@ -150,12 +151,14 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     'list_memory', 'read_memory', 'remember', 'forget',
     'list_schedules', 'get_schedule', 'list_schedule_activity', 'preview_schedule', 'propose_schedule_change',
     'pause_schedule', 'resume_schedule', 'skip_next_run', 'mark_schedule_activity_read',
-    'list_task_sources', 'find_tasks', 'get_task',
+    'list_task_sources', 'find_tasks', 'get_task', 'list_presets',
     'list_scripts', 'get_script', 'save_script', 'test_script',
-    'list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change', 'propose_clone_project',
+    'build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow',
+    'list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change',
+    'get_network_proxy', 'test_network_proxy', 'propose_network_proxy_change', 'propose_corporate_proxy_on', 'propose_clone_project', 'propose_project_change',
     'propose_workspace_change',
     'get_project_actions', 'get_workspace_stacks', 'get_run_checkout', 'list_running_actions', 'propose_actions_change',
-    'list_settings', 'change_setting', 'pause_run', 'resume_run', 'propose_stop_run', 'send_direction', 'propose_pull_request']);
+    'show_files', 'list_settings', 'change_setting', 'pause_run', 'resume_run', 'propose_stop_run', 'send_direction', 'propose_pull_request']);
   const projects = JSON.parse(msgs[2].result.content[0].text);
   assert.equal(projects.projects[0].key, project.key);
   const run = JSON.parse(msgs[3].result.content[0].text);
@@ -166,10 +169,8 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   assert.equal(diff.available, true);
   assert.deepEqual(diff.files, [{ path: 'a.txt', added: 1, removed: 0 }]);
   assert.equal(JSON.parse(msgs[5].result.content[0].text).text, 'attached text', 'argv thread wins over the env thread');
-  // The memory bundle really reaches the child: this thread has no pinned scope and no page
-  // context, so `project` is null (I2-#9: pin the value, not just the shape) and the temp home's
-  // global scope is empty.
-  assert.deepEqual(JSON.parse(msgs[10].result.content[0].text), { global: [], project: null });
+  // P4: the chat's project fills list_memory's project scope (I2-#9: pin the value)
+  assert.deepEqual(JSON.parse(msgs[10].result.content[0].text), { global: [], project: { projectKey: project.key, files: [] } });
   const proposal = JSON.parse(msgs[6].result.content[0].text);
   assert.equal(proposal.ok, true);
   assert.equal(proposal.card.projectKey, project.key);
@@ -225,4 +226,29 @@ test('main() drops every MCPSECRET_* (any case) before the relay branch, so test
     delete process.env.MCPSECRET_AAAA1111;
     delete process.env.mcpsecret_bbbb2222;
   }
+});
+
+test('real child: show_files snapshots a $WORCA_ASK_OUT file into this thread\'s attachment store (no message id), and refuses outside paths', async () => {
+  const thread = createThread();
+  const out = askOutDir(thread.id);
+  mkdirSync(out, { recursive: true });
+  const PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.from([0, 0, 0, 4, 0, 0, 0, 3]), Buffer.alloc(16)]);
+  writeFileSync(join(out, 'a.png'), PNG);
+  const r = await runChild(['--home', home, '--thread', thread.id], [
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'show_files', arguments: { files: [{ path: '$WORCA_ASK_OUT/a.png' }, { path: '/etc/hosts' }], caption: 'Home' } } },
+  ], { env: { WORCA_ASK_WEB: '', WORCA_ASK_COMMANDS: '', ASK_COMMAND_TOKEN: '' } });
+  assert.equal(r.code, 0, `exit 0 (stderr: ${r.err})`);
+  const [m] = r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(m.result.isError, undefined, m.result.content[0].text);
+  const res = JSON.parse(m.result.content[0].text);
+  assert.equal(res.ok, true);
+  assert.equal(res.caption, 'Home');
+  assert.deepEqual({ ...res.items[0], attId: 'x' }, { attId: 'x', name: 'a.png', kind: 'image', mime: 'image/png', bytes: PNG.length, width: 4, height: 3, source: true });
+  assert.match(res.refused[0].reason, /not found inside/);
+  const att = getAttachment(thread.id, res.items[0].attId);
+  assert.ok(att, 'the snapshot row exists in the store');
+  assert.equal(att.messageId, null, 'a show_files copy has no message id');
+  assert.equal(attachmentSourcePath(thread.id, att.id), realpathSync(join(out, 'a.png')), 'the copy remembers its original, server-side');
+  const file = attachmentPath(thread.id, att.id);
+  assert.ok(file && realpathSync(file).startsWith(realpathSync(attachmentsDir(thread.id))), file);
 });

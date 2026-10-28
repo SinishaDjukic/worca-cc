@@ -1,0 +1,240 @@
+{
+  "key": "promoWriter",
+  "metaVersion": 2,
+  "mockRole": "generic-producer",
+  "promptHints": "Write the narration script (script.json) and the storyboard with its plate shot list (storyboard.md) against promo-kit/CONTRACT.md in the pipeline directory, copy both under promo/, then ask approve-script. Pipeline directory: {pipelineDir}",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    },
+    {
+      "id": "product",
+      "type": "md"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "as": "answers"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "script",
+      "type": "json",
+      "filename": "promo-script.json",
+      "artifactKind": "promo-script"
+    },
+    {
+      "id": "storyboard",
+      "type": "md",
+      "filename": "promo-storyboard.md",
+      "artifactKind": "promo-storyboard"
+    }
+  ],
+  "domain": "video",
+  "displayName": "Promo: script",
+  "description": "Writes the narration script, sized to the chosen length and pace and matched to the tone, and the storyboard: hook, title, chapters, close, one real component per beat, the plates to capture and the mascot beats. Asks you to approve it or apply your changes.",
+  "color": "amber",
+  "icon": "<path d=\"M6 3h9l4 4v14H6z\" stroke-linejoin=\"round\"/><path d=\"M15 3v4h4\" stroke-linejoin=\"round\"/><path d=\"M9 11h7M9 14h7M9 17h4\" stroke-linecap=\"round\"/>",
+  "agentFile": "worca-cc-promo-writer.md",
+  "requiresAssets": [
+    "promo-kit"
+  ],
+  "runnerType": "producer",
+  "asksQuestions": true,
+  "questionsLocked": false,
+  "questionsDefault": true,
+  "order": 73,
+  "ask": {
+    "forms": {
+      "approve-script": {
+        "version": 1,
+        "title": "Approve the script",
+        "data": {
+          "type": "object",
+          "required": [
+            "headline",
+            "lines"
+          ],
+          "properties": {
+            "headline": {
+              "type": "string",
+              "maxLength": 240
+            },
+            "lines": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 80,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "title"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 16
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 600
+                  },
+                  "meta": {
+                    "type": "string",
+                    "maxLength": 240
+                  }
+                }
+              }
+            },
+            "storyboard": {
+              "type": "file",
+              "accept": [
+                "text/*"
+              ]
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "approve",
+                "changes"
+              ],
+              "default": "approve"
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "verdict"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "enumFrom": "data.lines[].id"
+                  },
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "keep",
+                      "rework",
+                      "cut"
+                    ],
+                    "default": "keep"
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        },
+        "layout": [
+          {
+            "widget": "callout",
+            "title": "Narration script",
+            "bind": "data.headline",
+            "tone": "info"
+          },
+          {
+            "widget": "tabs",
+            "tabs": [
+              {
+                "label": "Lines",
+                "children": [
+                  {
+                    "widget": "review-list",
+                    "bind": "data.lines",
+                    "field": "lines",
+                    "label": "Lines",
+                    "titleKey": "title",
+                    "metaKey": "meta",
+                    "labels": {
+                      "keep": "Keep",
+                      "rework": "Rework",
+                      "cut": "Cut"
+                    },
+                    "tones": {
+                      "keep": "ok",
+                      "rework": "warn",
+                      "cut": "bad"
+                    },
+                    "notePlaceholder": "What should this line say instead?"
+                  }
+                ]
+              },
+              {
+                "label": "Storyboard",
+                "children": [
+                  {
+                    "widget": "markdown",
+                    "bind": "data.storyboard"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "widget": "select",
+            "field": "decision",
+            "label": "Decision",
+            "style": "segmented",
+            "labels": {
+              "approve": "Approve the script",
+              "changes": "Apply my changes"
+            },
+            "tones": {
+              "approve": "ok",
+              "changes": "warn"
+            },
+            "help": "Any edit above counts as a change, whichever you pick."
+          },
+          {
+            "widget": "textarea",
+            "field": "notes",
+            "label": "Notes for the writer",
+            "placeholder": "Anything else to change (optional)",
+            "rows": 3
+          }
+        ],
+        "example": {
+          "headline": "Tidy in 60 seconds — 8 lines · 5 scenes · narrated · Playful",
+          "lines": [
+            {
+              "id": "v01",
+              "title": "Your inbox has 214 unread messages. Again.",
+              "meta": "hook · 3.1 s"
+            },
+            {
+              "id": "v02",
+              "title": "Meet Tidy. It sorts the noise so you can read what matters.",
+              "meta": "title · 4.2 s"
+            },
+            {
+              "id": "v03",
+              "title": "Rules learn from one click: drag a message to Later, and its friends follow.",
+              "meta": "rules · 01 Sort once · 5.6 s"
+            }
+          ],
+          "storyboard": "promo-storyboard.md"
+        }
+      }
+    }
+  }
+}

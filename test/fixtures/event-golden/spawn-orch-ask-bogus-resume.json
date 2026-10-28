@@ -25,6 +25,9 @@
   "key": "0:n1",
   "nodeId": "n1",
   "cycle": 1,
+  "sessionCosts": {
+   "00000000-0000-0000-0000-000000000000": 0
+  },
   "costUsd": 0
  },
  "totalCost": 0

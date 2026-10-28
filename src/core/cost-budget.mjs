@@ -66,6 +66,23 @@ export function recordAskCostDelta({ threadId, messageId = null, amountUsd,
     VALUES (?, ?, ?, ?, ?, ?)`).run(threadId, messageId, amountUsd, tokens, model, tsMs);
 }
 
+/** Append one utility cost event: spend with no run behind it (Smart run naming, kind 'naming'). Never touches
+ *  cost_ledger, so it is not billed to a run and does not count toward a budget. A $0 or unpriced result leaves no row. */
+export function recordUtilityCost(kind, { costUsd, usage = null, model = null, tsMs = Date.now() } = {}) {
+  if (!kind || !Number.isFinite(costUsd) || costUsd <= 0) return;
+  prepare(`INSERT INTO utility_cost_ledger (kind, amount_usd, tokens_in, tokens_out, model, ts)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(kind, costUsd, usage?.input_tokens ?? null, usage?.output_tokens ?? null, model, tsMs);
+}
+
+/** Utility spend per kind in [fromMs, toMs): { naming: { usd, count } }. */
+export function utilityTotals(fromMs, toMs) {
+  const rows = prepare(`SELECT kind, COALESCE(SUM(amount_usd), 0) AS s, COUNT(*) AS n
+    FROM utility_cost_ledger WHERE ts >= ? AND ts < ? GROUP BY kind`).all(fromMs, toMs);
+  const out = { naming: { usd: 0, count: 0 } };
+  for (const r of rows) out[r.kind] = { usd: roundUsd(r.s || 0), count: r.n || 0 };
+  return out;
+}
+
 /** Windowed Ask Worca spend; toMs null = open-ended (budget windows), else ts < toMs. */
 export function askWindowedSpendUsd(fromMs, toMs = null) {
   const row = toMs == null
@@ -74,11 +91,32 @@ export function askWindowedSpendUsd(fromMs, toMs = null) {
   return roundUsd(row?.s || 0);
 }
 
-/** Pipeline + Ask Worca spend since windowStartMs — THE enforcement figure
- *  (count-everywhere, ask-cost-statistics-design.md D3). windowedSpendUsd /
+/** Append one requirements cost event (plans/requirements-design.md D9): an orientation pass or an
+ *  interview round (`featureSeq`, with its `turnId`), or a product brief look (A7: `featureSeq` 0 and the
+ *  brief's `briefId`); A8 adds `attachmentId` for a file's read or ask, under its feature or its brief; A3 adds
+ *  `helperMessageId` for a Feature chat call (no turn). Same no-op gate as the other ledgers ($0 mock calls leave no row). */
+export function recordRequirementsCostDelta({ featureSeq = 0, briefId = null, turnId = null, attachmentId = null, helperMessageId = null, amountUsd,
+  model = null, tsMs = Date.now() }) {
+  if ((!featureSeq && !briefId) || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
+  prepare(`INSERT INTO req_cost_ledger (feature_seq, brief_id, turn_id, attachment_id, helper_message_id, amount_usd, model, ts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(featureSeq || 0, briefId || null, turnId, attachmentId || null, helperMessageId == null ? null : Number(helperMessageId), amountUsd, model, tsMs);
+}
+
+/** Windowed requirements spend; toMs null = open-ended (budget windows), else ts < toMs. */
+export function requirementsWindowedSpendUsd(fromMs, toMs = null) {
+  const row = toMs == null
+    ? prepare('SELECT SUM(amount_usd) AS s FROM req_cost_ledger WHERE ts >= ?').get(fromMs)
+    : prepare('SELECT SUM(amount_usd) AS s FROM req_cost_ledger WHERE ts >= ? AND ts < ?').get(fromMs, toMs);
+  return roundUsd(row?.s || 0);
+}
+
+/** Pipeline + Ask Worca + requirements spend since windowStartMs — THE enforcement figure
+ *  (count-everywhere, ask-cost-statistics-design.md D3; requirements-design.md D9). windowedSpendUsd /
  *  allTimeTotals stay pipeline-only for the Statistics split. */
 export function totalWindowSpendUsd(windowStartMs) {
-  return roundUsd(windowedSpendUsd(windowStartMs) + askWindowedSpendUsd(windowStartMs));
+  return roundUsd(windowedSpendUsd(windowStartMs) + askWindowedSpendUsd(windowStartMs)
+    + requirementsWindowedSpendUsd(windowStartMs));
 }
 
 /** All-time spend + active time over ALL pipelines (archived included),
@@ -124,7 +162,7 @@ export function budgetStatus(now = new Date(), { scope = null } = {}) {
     windowEndMs,
     msUntilReset: windowEndMs - now.getTime(),
     windowSpendUsd,
-    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0)),
+    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0) + requirementsWindowedSpendUsd(0)),
     remainingUsd: totalLimitUsd == null ? null : Math.max(0, roundUsd(totalLimitUsd - windowSpendUsd)),
     blocked,
   };

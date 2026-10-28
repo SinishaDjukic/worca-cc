@@ -3,7 +3,7 @@
 
 const locks = new Map();   // engine -> reason
 const PICKERS = '#engineSelect, .ask-card-engine, .inherit-field[data-setting="run.engine"] select, .inherit-field[data-setting="askEngine"] select';
-const SUFFIX = ' — off while the credential broker is on';
+const SUFFIX = ': off while the credential broker is on';
 
 /** Take GET /api/engines' list; a missing list keeps no locks (offer every engine, the server still decides). */
 export function setEngineLocks(list) {

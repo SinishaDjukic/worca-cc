@@ -92,3 +92,11 @@ test('extensionForAttachment: text -> .txt, sniffed mime -> its extension, unkno
   assert.equal(extensionForAttachment('binary', 'application/pdf'), '.pdf');
   assert.equal(extensionForAttachment('binary', 'application/x-unknown'), '.bin');
 });
+
+test('extensionForAttachment: show_files snapshot mimes get their own extension; uploads still refuse them', () => {
+  assert.equal(extensionForAttachment('image', 'image/svg+xml'), '.svg');
+  assert.equal(extensionForAttachment('binary', 'video/mp4'), '.mp4');
+  assert.equal(extensionForAttachment('binary', 'application/x-thing'), '.bin');
+  assert.equal(classifyExtension('.svg'), null, 'the upload allow-list is unchanged');
+  assert.equal(classifyExtension('.mp4'), null);
+});

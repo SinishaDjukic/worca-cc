@@ -30,10 +30,11 @@ test('defaultTab: Needs you, else Running, else Recent chats, else Workflows —
   assert.equal(defaultTab({ needs: 0, running: 0, chats: 2 }), 'chats');
   assert.equal(defaultTab({ needs: 0, running: 0, chats: 0 }), 'workflows');
   assert.equal(defaultTab(), null);
-  assert.deepEqual([...HOME_TABS], ['needs', 'running', 'chats', 'workflows']);
+  assert.deepEqual([...HOME_TABS], ['needs', 'running', 'chats', 'plans', 'workflows']);
+  assert.equal(defaultTab({ needs: 0, running: 0, chats: 0 }), 'workflows', 'never plans');
 });
 
-test('the tab strip: a tablist with four tabs, one panel, roving focus and arrow keys', () => {
+test('the tab strip: a tablist with five tabs, one panel, roving focus and arrow keys', () => {
   const doc = docOf();
   const picks = [];
   const tabs = createHomeTabs({ doc, onSelect: (t, o) => { picks.push([t, o]); tabs.select(t); } });
@@ -41,7 +42,9 @@ test('the tab strip: a tablist with four tabs, one panel, roving focus and arrow
   const list = tabs.el.querySelector('[role="tablist"]');
   assert.equal(list.getAttribute('aria-label'), 'Runs and chats');
   const btn = (t) => tabs.el.querySelector(`.chat-home-tab[data-tab="${t}"]`);
-  assert.deepEqual([...list.querySelectorAll('[role="tab"]')].map((b) => b.textContent), ['Needs you', 'Running', 'Recent chats', 'Workflows']);
+  assert.deepEqual([...list.querySelectorAll('[role="tab"]')].map((b) => b.textContent), ['Needs you', 'Running', 'Recent chats', 'Plans', 'Workflows']);
+  assert.equal(btn('plans').hidden, false, 'Plans always shows');
+  assert.deepEqual(tabs.visibleTabs(), ['needs', 'running', 'chats', 'plans', 'workflows']);
   assert.equal(tabs.panel.getAttribute('role'), 'tabpanel');
   assert.equal(btn('needs').getAttribute('aria-controls'), tabs.panel.id);
   assert.equal(tabs.selected(), null);
@@ -54,16 +57,24 @@ test('the tab strip: a tablist with four tabs, one panel, roving focus and arrow
   btn('running').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.deepEqual(picks.at(-1), ['chats', { user: true }]);
   assert.equal(doc.activeElement, btn('chats'));
-  btn('chats').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+  btn('chats').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  assert.equal(tabs.selected(), 'plans', 'Plans sits between Recent chats and Workflows');
+  btn('plans').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  assert.equal(tabs.selected(), 'workflows');
+  btn('workflows').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  assert.equal(tabs.selected(), 'plans');
+  btn('plans').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'End', bubbles: true }));
   assert.equal(tabs.selected(), 'workflows');
   btn('workflows').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.equal(tabs.selected(), 'needs', 'wraps');
+  btn('needs').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  assert.equal(tabs.selected(), 'workflows', 'wraps back');
   btn('needs').click();
   assert.deepEqual(picks.at(-1), ['needs', { user: true }]);
   tabs.destroy();
 });
 
-test('the Needs-you count: amber number while > 0, hidden at 0; the underline follows the selection', () => {
+test('the Needs-you count: amber number while > 0, hidden at 0; the selected tab carries aria-selected (the one .tab underline)', () => {
   const doc = docOf();
   const tabs = createHomeTabs({ doc, onSelect: () => {} });
   doc.body.appendChild(tabs.el);
@@ -74,12 +85,12 @@ test('the Needs-you count: amber number while > 0, hidden at 0; the underline fo
   assert.equal(n.textContent, '2');
   tabs.setNeeds(0);
   assert.equal(n.hidden, true);
-  const ink = tabs.el.querySelector('.chat-home-ink');
-  assert.equal(ink.getAttribute('aria-hidden'), 'true');
-  assert.equal(ink.style.opacity, '0');
+  assert.equal(tabs.el.querySelector('.chat-home-ink'), null, 'review B4: no sliding underline element');
+  assert.ok(tabs.el.querySelector('.chat-home-tablist').classList.contains('tabs'));
   tabs.select('chats');
-  assert.equal(ink.style.opacity, '1');
-  assert.match(ink.style.transform, /^translateX\(\d+px\)$/);
+  const sel = tabs.el.querySelector('.chat-home-tab[aria-selected="true"]');
+  assert.equal(sel.dataset.tab, 'chats');
+  assert.ok(sel.classList.contains('tab'));
 });
 
 test('Recent chats: dot by state, title, "ago · topic · $cost", chevron; a click opens the chat', () => {
@@ -141,7 +152,7 @@ test('runWorkflowText and the empty state', () => {
   assert.equal(p.tagName, 'P');
   assert.equal(p.className, 'chat-home-empty');
   assert.equal(p.textContent, 'Nothing needs you');
-  assert.deepEqual({ ...HOME_TAB_EMPTY }, { needs: 'Nothing needs you', running: 'Nothing running', chats: 'No saved chats.', workflows: 'No workflows' });
+  assert.deepEqual({ ...HOME_TAB_EMPTY }, { needs: 'Nothing needs you', running: 'Nothing running', chats: 'No saved chats.', plans: 'No plans yet', workflows: 'No workflows' });
 });
 
 test('a visit that has not chosen a tab yet keeps the strip reachable, even after an earlier selection', () => {
@@ -150,7 +161,7 @@ test('a visit that has not chosen a tab yet keeps the strip reachable, even afte
   doc.body.appendChild(tabs.el);
   tabs.select('chats');
   tabs.select(null);                                                // visit(): no stored pick, the default not known yet
-  assert.deepEqual([...tabs.el.querySelectorAll('.chat-home-tab')].map((b) => b.tabIndex), [0, -1, -1, -1]);
+  assert.deepEqual([...tabs.el.querySelectorAll('.chat-home-tab')].map((b) => b.tabIndex), [0, -1, -1, -1, -1]);
   tabs.destroy();
 });
 
@@ -189,9 +200,7 @@ test('the 1 s re-read never scrolls a strip the user swiped: only a new selectio
   assert.equal(left, 100);
   left = 0;                                                         // the user swipes the strip back to its start
   tabs.setNeeds(2);                                                 // every 1 s re-read
-  tabs.moveInk();                                                   // a resize
   assert.equal(left, 0, 'the strip stays where the user left it');
-  assert.equal(tabs.el.querySelector('.chat-home-ink').style.transform, 'translateX(320px)', 'the underline still follows');
   tabs.select('workflows');
   assert.equal(left, 100, 'a selection brings its tab into view');
   tabs.destroy();

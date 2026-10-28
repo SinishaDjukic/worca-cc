@@ -5,6 +5,9 @@
 
 import { FIELDS, effectiveKind, tierRank, semverAtLeast } from './registry.mjs';
 import { capDomainList } from '../web-allowlist.mjs';
+import { normaliseDimensions, missingRequired } from '../../shared/tag-dimensions.mjs';
+import { ROLE_LABELS } from '../../shared/model-roles.mjs';
+import { engineLabel } from '../../shared/engine-switch.mjs';
 
 /**
  * The team entries that apply to ONE run kind: `workspaceRuns` replaces `fields` for
@@ -74,7 +77,11 @@ export function fmtValue(meta, v) {
     case 'mcpServers': return v.length ? v.map(mcpLine).join(', ') : '(none)';
     case 'skills': return v.length ? v.map((e) => `${e.skill} (${e.plugin})`).join(', ') : '(none)';
     case 'steps': return Object.entries(v).map(([r, s]) => `${r} ${s.model || '·'}${s.effort ? ` / ${s.effort}` : ''}`).join(' · ') || '(none)';
+    case 'roles': return Object.entries(v).flatMap(([hn, rs]) => Object.entries(rs || {}).map(([r, s]) =>
+      `${engineLabel(hn)} ${ROLE_LABELS[r] || r} ${s.model}${s.effort ? ` / ${s.effort}` : ''}`)).join(' · ') || '(none)';
+    case 'record': return Object.entries(v).map(([k, x]) => `${k} ${Array.isArray(x) ? x.join(', ') : x === true ? 'on' : x === false ? 'off' : x}`).join(' · ') || '(none)';
     case 'criteria': return Object.entries(v).map(([k, w]) => `${k} ${w}`).join(' · ') || '(defaults)';
+    case 'tagDimensions': return v.length ? v.map((d) => `${d.label} (${d.key})${d.required ? ' required' : ''}`).join(', ') : '(none)';
     default: return String(v);
   }
 }
@@ -178,6 +185,12 @@ export function deviationsFor(fields, ctx = {}) {
   const rec = fields['metrics.record'];
   if (rec && rec.value === true && ctx.metricsRecord === false) {
     out.push({ code: 'metrics-off', level: 'info', text: 'Your "Include my runs" is off; the team expects runs to be recorded.' });
+  }
+  const tagDims = fields['runs.tagDimensions'];
+  if (tagDims && Array.isArray(ctx.tags)) {
+    for (const d of missingRequired(normaliseDimensions(tagDims.value).dims, ctx.tags)) {
+      out.push({ code: `tag-missing:${d.key}`, level: 'warn', text: `${d.label} (${d.key}) is a required tag and was not set. The run proceeds and is recorded as off-policy.` });
+    }
   }
   return out;
 }

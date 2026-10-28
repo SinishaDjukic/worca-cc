@@ -19,7 +19,7 @@ import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, EFFORTS, effectiveSub
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderDirectionsBlock } from './directions.mjs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { LIMITS } from '../shared/workspace-map/limits.mjs';
 import { QUOTED_TEXT_NOTE, ROLE_QUOTE_LABELS } from '../shared/workspace-map/render.mjs';
 
@@ -299,9 +299,10 @@ function isDetachedWorkspace(ctx) {
   return isDetachedRun(ctx) && wsMembers(ctx).length > 0;
 }
 
-/** Render-only relative checkout path for a member (§5.8: never persisted anywhere). */
+/** Render-only relative checkout path for a member (§5.8: never persisted anywhere). Its dir on disk,
+ *  which can be a shortened projectKey (worktree.mjs boundCheckoutName, #411); the key before it exists. */
 function relRepo(p) {
-  return p && p.projectKey ? `repos/${p.projectKey}` : null;
+  return p && p.projectKey ? `repos/${p.worktreeDir ? basename(p.worktreeDir) : p.projectKey}` : null;
 }
 
 /**
@@ -318,8 +319,9 @@ function relRepo(p) {
  */
 export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false, engine = 'claude' } = {}) {
   if (!fanOut) return '';
-  // Codex and Copilot have their own sub-agent tools; Cursor has none (fan-out never reaches it: _engineNodeOpts), so nothing.
+  // Codex, Copilot and OpenCode have their own sub-agent tools; Cursor has none (fan-out never reaches it: _engineNodeOpts), so nothing.
   if (engine === 'copilot') return copilotFanOutDirective();
+  if (engine === 'opencode') return opencodeFanOutDirective();
   if (engine && engine !== 'claude') return engine === 'codex' ? codexFanOutDirective() : '';
   // Endpoint-routed: the usual "prefer a purpose-built agent" steering would
   // walk the agent straight into frontmatter-pinned definitions whose model the
@@ -391,26 +393,43 @@ export function codexFanOutDirective() {
 }
 
 /**
- * fanOutDirective on Copilot: its own `task` tool, and worca's investigator defined as the custom agent
- * `worca-investigator` (engines/copilot.mjs copilotInvestigatorAgent: read-only instructions and tools, the
- * memory pointers; it runs on the node's model). Skills come from `.agents/skills`, which copilot lists for
- * the agent itself. Pure + exported for testing.
+ * The fan-out directive of an engine whose `task` tool dispatches worca's investigator by name: `field` is the tool's
+ * agent parameter, `defines` what the operator's agent carries.
  */
-export function copilotFanOutDirective() {
+function taskToolFanOutDirective(field, defines) {
   return (
     '## Fan-out ENABLED — parallelize your research\n\n' +
     'You can dispatch sub-agents this run (the `task` tool). For any non-trivial task that spans more than one ' +
     'file or area, DISPATCH parallel read-only research sub-agents NOW — one per distinct area (e.g. UI vs. ' +
     'server vs. store vs. tests) — let them explore concurrently, then synthesize their reports yourself. Do ' +
     'NOT investigate every area serially when the work splits into independent areas.\n\n' +
-    'Dispatch EVERY sub-agent with `agent_type: "worca-investigator"` — the operator defined it for this run ' +
-    '(read-only instructions and tools, and this run\'s memory pointers). Use no other `agent_type`. Give each ' +
+    `Dispatch EVERY sub-agent with \`${field}: "worca-investigator"\` — the operator defined it for this run ` +
+    `(${defines}). Use no other \`${field}\`. Give each ` +
     'one a self-contained task: the area, the question, and the directories to look in.\n\n' +
     'Skills are available too: the skills listed for you (this run\'s `.agents/skills`) — use any that fit ' +
     '(e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
     'trivial, single-file change.\n\n'
   );
+}
+
+/**
+ * OpenCode's fan-out directive: its `task` tool, and worca's investigator defined as the config agent
+ * `worca-investigator` (engines/opencode.mjs: read-only instructions, the memory pointers; it runs on the node's
+ * model). Skills come from `.agents/skills`, which OpenCode lists for the agent itself. Pure + exported for testing.
+ */
+export function opencodeFanOutDirective() {
+  return taskToolFanOutDirective('subagent_type', "read-only instructions and this run's memory pointers");
+}
+
+/**
+ * fanOutDirective on Copilot: its own `task` tool, and worca's investigator defined as the custom agent
+ * `worca-investigator` (engines/copilot.mjs copilotInvestigatorAgent: read-only instructions and tools, the
+ * memory pointers; it runs on the node's model). Skills come from `.agents/skills`, which copilot lists for
+ * the agent itself. Pure + exported for testing.
+ */
+export function copilotFanOutDirective() {
+  return taskToolFanOutDirective('agent_type', "read-only instructions and tools, and this run's memory pointers");
 }
 
 /**
@@ -456,12 +475,26 @@ export function workspaceContextBlock(ws) {
  * `serial` (a node on an engine with no grantable sub-agent tool, e.g. codex) keeps
  * the same per-unit work, order and merge rules but has the agent do each unit
  * itself, one at a time (workspaceSerialDirective).
+ * P5: a workspace with a Folder member (`workMode: 'folder'`) gets FOLDER_FANOUT_RULE after either variant; without
+ * one the bytes are today's.
  * @param {'explore'|'task'|'review'} strategy
- * @param {{projects?:Array<{projectName?:string,projectKey?:string}>}|null|undefined} ws
+ * @param {{projects?:Array<{projectName?:string,projectKey?:string,workMode?:string}>}|null|undefined} ws
  * @param {{relative?:boolean, endpointRouted?:boolean, serial?:boolean}} [opts]
  * @returns {string}
  */
-export function workspaceFanOutDirective(strategy, ws, { relative = false, endpointRouted = false, serial = false } = {}) {
+export function workspaceFanOutDirective(strategy, ws, opts = {}) {
+  const text = fanOutDirectiveText(strategy, ws, opts);
+  // P5: the directive's per-member git routing never applies to a Folder member, and the sub-agents it dispatches
+  // never see the task-header note — the lead must pass the rule on.
+  return text && wsMembers({ workspace: ws }).some((p) => p?.workMode === 'folder') ? text + FOLDER_FANOUT_RULE : text;
+}
+
+const FOLDER_FANOUT_RULE = 'A Folder member (`Folder, no git` under `## Workspace projects`) has no git and no checkpoint: ' +
+  'never run git there, and never let a sub-agent run it there — read that member\'s files and its changes file (named ' +
+  'on its line; missing or empty means no changes yet). Pass this rule on to every sub-agent you dispatch for a Folder member.\n\n';
+
+/** workspaceFanOutDirective's text before the P5 Folder rule ('' when there is no workspace or the strategy is unknown). */
+function fanOutDirectiveText(strategy, ws, { relative = false, endpointRouted = false, serial = false } = {}) {
   if (!ws) return '';
   if (serial) return workspaceSerialDirective(strategy, relative);
   const ANTI_RECURSION =
@@ -790,6 +823,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   // registry layer, so every other spawn is byte-identical.
   const fanEnv = fanOutSpawnEnv(ctx);
   const mcpEnv = ctx.mcpEnv && Object.keys(ctx.mcpEnv).length ? ctx.mcpEnv : null;
+  // P3: in a run without a project, an agent's own git never walks up from work/ into a repository that holds worcaHome.
+  const ceilEnv = ctx.workMode === 'none' && ctx.projectDir ? { GIT_CEILING_DIRECTORIES: dirname(ctx.projectDir) } : null;
   const excluded = bridgedModelInfo(c.model)?.excludeTools;
   return {
     cwd: ctx.projectDir,
@@ -812,6 +847,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     mcpServerGrants: ctx.mcpServerGrants,
     // Whose approvals decide the checkout's committed `.mcp.json` servers on Claude (claude-runner.mjs).
     mcpjsonProjectDir: ctx.mcpjsonProjectDir,
+    // P1 (S31): a non-git run's spawn asks no git (approvals, Cursor's info/exclude). Absent on git runs.
+    ...(ctx.workMode && ctx.workMode !== 'git' ? { noGit: true } : {}),
     // §8.10: offline-mock write targets. [] on legacy runs and on every single-project
     // run, where the mock keeps writing at its cwd exactly as today. Ignored entirely
     // by the real runner (it is never a spawn flag).
@@ -842,7 +879,7 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // tasks off on the scan's two fan-out nodes (so the cap holds there), merged OVER the guardrail env
     // and UNDER modelEnv. undefined for every non-fan-out node ⇒ nothing merged ⇒ that spawn env is
     // byte-identical.
-    spawnEnv: fanEnv || mcpEnv ? { ...fanEnv, ...mcpEnv } : undefined,
+    spawnEnv: fanEnv || mcpEnv || ceilEnv ? { ...ceilEnv, ...fanEnv, ...mcpEnv } : undefined,
     // MCP registry (§5.5.3): every registry secret value is redacted from what the run records.
     redactValues: ctx.mcpRedact?.length ? ctx.mcpRedact : undefined,
     // Model bridge (model-bridge-design.md §5.3): a translated model has no
@@ -860,6 +897,9 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // plugins under <pipeline.dir>/skills; Agent-tool children see them too). undefined without set
     // skills or with a blocked layer ⇒ nothing emitted ⇒ argv byte-identical.
     pluginDirs: ctx.skillPluginDirs?.length ? ctx.skillPluginDirs : undefined,
+    // Memory usage (memory-usage.mjs, U3): the execution's InstructionsLoaded hook file — null unless the run's rules
+    // copy holds a note with `paths:` ⇒ nothing in --settings and the argv stays byte-identical.
+    memoryLoadLog: typeof ctx.memoryLoadLog === 'string' && ctx.memoryLoadLog ? ctx.memoryLoadLog : undefined,
     // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
     // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
     // when the project has no guardrails, so the argv and env stay byte-identical
@@ -880,6 +920,34 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
 }
 
 export const _runOptsForTests = runOpts;
+
+/** P1 (S9): a Folder run's task-prompt note — the copy has no git, even where the role instructions say "run git".
+ *  '' unless ctx.workMode === 'folder' (P3 adds its 'none' note beside it). Exported for testing. */
+export function folderRunNote(ctx) {
+  // P5: a workspace names no single pipeline-dir patch — each Folder member's changes file is on its own line.
+  const ws = wsMembers(ctx);
+  if (ws.length) {
+    if (!ws.some((p) => p?.workMode === 'folder')) return '';
+    return 'Folder members of this run are copies of plain folders, not git repositories. Never run git in a Folder ' +
+      (ws.some((p) => p?.workMode === 'folder' && p.changesPatch)
+        ? 'member, even where your role instructions say so; read the changes file named on its line under Workspace projects.\n\n'
+        : 'member, even where your role instructions say so.\n\n');   // a read-only scan: no changes file
+  }
+  if (ctx?.workMode !== 'folder') return '';
+  return `This run works on a copy of a plain folder, not a git repository. Never run git here (no \`git init\`, ` +
+    `\`git diff\`, \`git status\`, \`git add\` or \`git commit\`), even where your role instructions say so. ` +
+    `The changes so far are in \`${join(ctx.pipelineDir, 'changes.patch')}\` (a unified diff from the folder as it was ` +
+    `to your cwd) and \`${join(ctx.pipelineDir, 'changes.json')}\` (the file list).\n\n`;
+}
+
+/** P3: a no-project run's task-prompt note — its cwd is the run's own work folder, with no git at all.
+ *  '' unless ctx.workMode === 'none'. Exported for testing. */
+export function noProjectRunNote(ctx) {
+  if (ctx?.workMode !== 'none') return '';
+  return 'This run has no project and no git repository: your cwd is the run\'s own working folder. Never run git here ' +
+    '(no `git init`, `git diff`, `git status`, `git add` or `git commit`), even where your role instructions say so. ' +
+    'Every file you make in this folder is kept as this run\'s result.\n\n';
+}
 
 /** A compact task header reused across roles. Exported for testing. */
 export function taskHeader(ctx, title) {
@@ -912,9 +980,9 @@ export function taskHeader(ctx, title) {
   // project + root skills are COPIED into `<cwd>/.claude/skills` for the run (§5.7);
   // legacy delivers neither (skills.mjs copies bundle/plugin entries only), so the
   // legacy sentence stays exactly as today.
-  // Codex lists the .agents/skills mount natively; another non-Claude engine (Cursor) is only told where it is.
+  // Codex and OpenCode list the .agents/skills mount natively; another non-Claude engine (Cursor) is only told where it is.
   const nodeEngine = ctx.node?.engine || 'claude';
-  const skillsHint = nodeEngine === 'codex'
+  const skillsHint = nodeEngine === 'codex' || nodeEngine === 'opencode'
     ? `Project, root, set and your personal skills are mounted at .agents/skills for this run and are listed for ` +
       `you — read a skill's SKILL.md and use any that fit (e.g. design, framework-pattern, or knowledge-graph ` +
       `skills) rather than guessing conventions.\n\n`
@@ -934,6 +1002,8 @@ export function taskHeader(ctx, title) {
     `# Task: ${title}\n\n` +
     locationLine +
     `Pipeline directory (shared artifacts): ${ctx.pipelineDir}\n\n` +
+    folderRunNote(ctx) +
+    noProjectRunNote(ctx) +
     skillsHint +
     workspaceProjectsBlock(ctx.workspace, { relative: wsRun }) +
     requestBlock +
@@ -965,13 +1035,23 @@ function workspaceProjectsBlock(ws, { relative = false } = {}) {
     // The `(pending)` tolerance is kept: before worktrees exist there is no dir, and
     // a member with no projectKey cannot be relativized either.
     const where = (relative && rel) || p.worktreeDir || '(pending)';
+    // P5: a Folder member is a copy with no git — no diff base, no graph; its changes file instead (none on a scan).
+    if (p.workMode === 'folder') {
+      return `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): copy \`${where}\` (Folder, no git)` +
+        (p.changesPatch ? `, changes so far \`${p.changesPatch}\`` : '');
+    }
     const graph = relative && rel && String(p.graphInstruction || '').trim()
       ? `, graph \`${rel}/graphify-out/\`` : '';
     return `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): worktree \`${where}\`` +
       `, diff base \`${p.checkpointRef || '(none)'}\`${graph}`;
   });
+  const folderNote = projects.some((p) => p.workMode === 'folder')
+    ? (projects.some((p) => p.workMode === 'folder' && p.changesPatch)
+      ? ' A Folder member is a plain copy with no git: read the changes file named on its line.'
+      : ' A Folder member is a plain copy with no git.')
+    : '';
   const intro = relative
-    ? `This run spans the member projects below, each checked out INSIDE your cwd. Work in ` +
+    ? `This run spans the member projects below, each checked out INSIDE your cwd.${folderNote} Work in ` +
       `a member in place — edit \`repos/<key>/…\` and run git as \`git -C repos/<key> …\` ` +
       `(never chdir out of the run root) — and diff it against that project's checkpoint:`
     : `This run spans the member projects below. A fan-out sub-agent cwds into the ` +
@@ -994,8 +1074,10 @@ function workspaceProjectsBlock(ws, { relative = false } = {}) {
 export function workspaceDiffInstruction(ctx) {
   if (!isDetachedWorkspace(ctx)) return '';
   return wsMembers(ctx)
-    .map((p) => `- **${p.projectName || p.projectKey}**: \`git -C ${relRepo(p)} diff ` +
-      `${p.checkpointRef || 'HEAD'}\``)
+    .map((p) => (p.workMode === 'folder'
+      ? `- **${p.projectName || p.projectKey}**: Folder, no git — read \`${p.changesPatch}\``
+      : `- **${p.projectName || p.projectKey}**: \`git -C ${relRepo(p)} diff ` +
+        `${p.checkpointRef || 'HEAD'}\``))
     .join('\n');
 }
 
@@ -1115,6 +1197,17 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
  * @returns {string}
  */
 export function diffInstruction(ctx) {
+  // P5: the single-run folder arm names <pipelineDir>/changes.patch — a workspace has none (its consumers render
+  // workspaceDiffInstruction instead, §5.8).
+  if (ctx?.workMode === 'folder' && !wsMembers(ctx).length) {
+    return `Inspect the changes in \`${join(ctx.pipelineDir, 'changes.patch')}\` (the folder as it was when the run ` +
+      `started → your cwd; new and deleted files included) and \`${join(ctx.pipelineDir, 'changes.json')}\` (the list), ` +
+      'then read the changed files in your cwd. There is no git in this run.';
+  }
+  if (ctx?.workMode === 'none') {
+    return 'There is no repository and no diff in this run: every file in your cwd was made by this run. ' +
+      'Review those files directly with Glob, Grep and Read.';
+  }
   const ref = String(ctx?.checkpointRef || '').trim();
   return ref
     ? `Inspect the diff with \`git diff ${ref}\` (the orchestrator's pre-implementation ` +
@@ -1147,7 +1240,9 @@ export function genericIoBlock(inputs = {}, outputs = {}) {
       || (h.kind === 'runroot'
         ? `(the member checkouts under your cwd — inspect each with \`git -C repos/<key> diff <base>\`: ${
             (h.repos || [])
-              .map((r) => `${r.relDir || `repos/${r.projectKey}`} (diff base ${r.checkpointRef || 'HEAD'})`)
+              .map((r) => (r.workMode === 'folder'
+                ? `${r.relDir || `repos/${r.projectKey}`} (Folder: read ${r.changesPatch})`
+                : `${r.relDir || `repos/${r.projectKey}`} (diff base ${r.checkpointRef || 'HEAD'})`))
               .join(', ') || 'no members'})`
         : null);
     if (p) inLines.push(`- ${c}: ${p}`);

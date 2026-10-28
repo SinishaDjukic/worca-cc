@@ -6,7 +6,7 @@
 //
 // Frame classes (spec §6.6 / the P2→P3 contract): job frames carry
 // {threadId, messageId, seq} and are deduped by the per-job monotonic seq;
-// out-of-turn frames (ask-message / ask-title / ask-run-status / ask-worktrees)
+// out-of-turn frames (ask-message / ask-title / ask-run-status / ask-worktrees / ask-suggestion)
 // upsert by their own key. A seq gap is REPORTED ({gap:true}), never healed here — the panel
 // re-fetches the thread over REST and resubscribes (spec §10.8).
 
@@ -21,10 +21,12 @@ export function createThreadModel({ threadId }) {
   let inFlight = null;
   let dirty = newDirty();
   let worktrees = [];   // P4 §10: the chat's open worktrees (snapshot + ask-worktrees frames); the panel mirrors it
+  let suggestion = null;   // {messageId, text}: the newest finished reply's next-prompt (live-only ask-suggestion)
+  let staleReply = null;   // the reply something happened after (a row, its card acted on): its suggestion is spent
 
   function newDirty() {
     // runLinks dirt: the panel's progress cards re-resolve their run identity on it (ask-panel.mjs flushExtra).
-    return { structure: false, messages: new Set(), blocks: new Map(), answer: new Set(), label: false, meters: false, title: false, runLinks: false, worktrees: false };
+    return { structure: false, messages: new Set(), blocks: new Map(), answer: new Set(), label: false, meters: false, title: false, runLinks: false, worktrees: false, suggestion: false };
   }
 
   function rowById(id) {
@@ -41,6 +43,16 @@ export function createThreadModel({ threadId }) {
     let n = 0;
     for (const b of row.blocks) if (b && b.kind === 'agent') n += 1;
     return n;
+  }
+
+  function newestAssistant() {
+    for (let i = rows.length - 1; i >= 0; i -= 1) if (rows[i] && rows[i].role === 'assistant') return rows[i];
+    return null;
+  }
+  function clearSuggestion() {
+    if (!suggestion) return;
+    suggestion = null;
+    dirty.suggestion = true;
   }
 
   function upsertRow(message) {
@@ -145,6 +157,7 @@ export function createThreadModel({ threadId }) {
       live = { messageId: frame.messageId, userMessageId: frame.userMessageId ?? null, label: 'Thinking', startedAt: frame.startedAt ?? null, lastSeq: frame.seq, text: '', usage: null, costUsd: null, estimatedCostUsd: null };
       inFlight = { messageId: frame.messageId };
       dirty.label = true;
+      clearSuggestion();
     } else if (!live && inFlight && frame.messageId === inFlight.messageId) {
       // Adoption: the ring buffer may have evicted the prefix — accept the first
       // frame at whatever seq it carries; ask-done.text heals the missing text.
@@ -216,6 +229,13 @@ export function createThreadModel({ threadId }) {
       case 'ask-message': {
         const m = frame.message;
         if (!m || typeof m.id !== 'string') return { dropped: 'no-live' };
+        // A new row after the reply (Run started, a direction, another tab's message) or a change to the reply
+        // itself (its card approved, declined, scheduled) spends its suggestion — also one still being written.
+        const reply = newestAssistant();
+        if (reply && (m.id === reply.id || !rowById(m.id))) {
+          staleReply = reply.id;
+          clearSuggestion();
+        }
         upsertRow(m);
         noteAttachmentBlocks(m.blocks);
         dirty.messages.add(m.id);
@@ -238,6 +258,17 @@ export function createThreadModel({ threadId }) {
         worktrees = frame.worktrees.slice();
         dirty.worktrees = true;
         return { ok: true };
+      case 'ask-suggestion': {
+        // Live-only and stale-safe: only a reply that finished cleanly, is still the thread's last row and has had
+        // nothing happen to it since, with no turn running.
+        const text = typeof frame.text === 'string' ? frame.text.trim() : '';
+        const last = rows[rows.length - 1];
+        if (!text || live || inFlight || !last || last.id !== frame.messageId || last.role !== 'assistant'
+          || last.status !== 'done' || staleReply === frame.messageId) return { dropped: 'stale' };
+        suggestion = { messageId: frame.messageId, text };
+        dirty.suggestion = true;
+        return { ok: true };
+      }
       default:
         return { dropped: 'no-live' };
     }
@@ -256,6 +287,8 @@ export function createThreadModel({ threadId }) {
       worktrees = Array.isArray(snapshot.worktrees) ? snapshot.worktrees.slice() : [];   // the fresh-thread load carries no key
       live = null;
       inFlight = snapshot.inFlight ?? null;
+      suggestion = null;
+      staleReply = null;
       dirty = newDirty();
       dirty.structure = true;
       dirty.title = true;
@@ -305,6 +338,7 @@ export function createThreadModel({ threadId }) {
       return hit;
     },
     worktrees() { return worktrees; },
+    suggestion() { return suggestion; },
     setWorktrees(list) {   // the panel's heal (refreshWorktrees) feeds the same store the frames do
       worktrees = Array.isArray(list) ? list.slice() : [];
       dirty.worktrees = true;
@@ -322,6 +356,7 @@ export function createThreadModel({ threadId }) {
       // row is the persisted one (seq, store-minted attachment ids); an echo that
       // replaced it would turn an image thumbnail back into a name pill until the
       // next reload. Nothing the echo carries is newer than it, so keep it.
+      clearSuggestion();   // the user sent something: the suggestion for the last reply is spent
       if (rowById(id)) { dirty.messages.add(id); return; }
       const blocks = (Array.isArray(atts) ? atts : []).map((a) => ({ kind: 'attachment', id: a.id ?? null, name: a.name, bytes: a.bytes, attKind: a.attKind ?? 'text', mime: a.mime ?? null }));
       upsertRow({

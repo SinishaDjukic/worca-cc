@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs, planShards, selectFiles } from '../tools/test.mjs';
+import { mergeTimings, parseArgs, planShards, selectFiles } from '../tools/test.mjs';
+import { timingFiles } from '../tools/test-timings-merge.mjs';
 
 const TOOLS = fileURLToPath(new URL('../tools', import.meta.url));
 const rmOpts = { recursive: true, force: true, maxRetries: 10, retryDelay: 50 };
@@ -28,9 +29,15 @@ test('shards are balanced by recorded time (max/min load within one file of each
   assert.ok(Math.max(...loads) - Math.min(...loads) <= 10.5, loads.join(','));
 });
 
-test('unknown files get the median weight and are still placed', () => {
+test('unknown files get the mean weight and are still placed', () => {
   const extra = [...files, 'test/new-file.test.mjs'];
   assert.ok(planShards(extra, timings, 3).flat().includes('test/new-file.test.mjs'));
+  // Mostly-zero timings: the median is 0, the mean 3.2. Priced at the mean (3.7 with the per-file
+  // cost) the new file goes on the 6 s shard ahead of the zeros, which then split across both
+  // shards; priced at the median every zero and the new file would stack behind the 6 s file.
+  const skewed = { 'test/a.test.mjs': 10, 'test/b.test.mjs': 6, 'test/c.test.mjs': 0, 'test/d.test.mjs': 0, 'test/e.test.mjs': 0 };
+  assert.deepEqual(planShards([...Object.keys(skewed), 'test/new.test.mjs'], skewed, 2),
+    [['test/a.test.mjs', 'test/d.test.mjs'], ['test/b.test.mjs', 'test/new.test.mjs', 'test/c.test.mjs', 'test/e.test.mjs']]);
 });
 
 test('tier selection: slow globs and keepFast override', () => {
@@ -54,7 +61,7 @@ test('main() runs when tools/test.mjs is reached through a symlink (else npm tes
 });
 
 test('parseArgs: a flag that needs a value refuses a missing one (a bare --shard once ran the whole suite); the shard env never splits a file list', () => {
-  for (const flag of ['--shard', '--tier', '--concurrency']) {
+  for (const flag of ['--shard', '--tier', '--concurrency', '--timings-out']) {
     assert.throws(() => parseArgs([flag], {}), new RegExp(`${flag} needs a value`));
     assert.throws(() => parseArgs([flag, '--write-timings'], {}), new RegExp(`${flag} needs a value`));
   }
@@ -64,7 +71,7 @@ test('parseArgs: a flag that needs a value refuses a missing one (a bare --shard
   assert.equal(parseArgs(['--shard', '1/3', 'test/a.test.mjs'], {}).shard, '1/3');
 });
 
-test('a file subset runs in its own WORCA_HOME (never the shared .worca-cc-test a full run may be using), ignores WORCA_TEST_SHARD and never inherits CLAUDE_CONFIG_DIR', () => {
+test('a file subset runs in its own WORCA_HOME (never the shared .worca-cc-test a full run may be using), ignores WORCA_TEST_SHARD and never inherits CLAUDE_CONFIG_DIR, exports WORCA_GIT=1 unless set', () => {
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-scope-'));
   try {
     const file = join(dir, 'scope.test.mjs');
@@ -77,13 +84,68 @@ test('a file subset runs in its own WORCA_HOME (never the shared .worca-cc-test 
       "  assert.ok(isAbsolute(h) && !h.endsWith('.worca-cc-test'), h);",
       "  assert.equal(process.env.WORCA_NO_REAL_CLAUDE_LOG, join(h, 'real-claude-spawns.log'));",
       "  assert.equal(process.env.CLAUDE_CONFIG_DIR, undefined, 'a test never reads the developer Claude config');",
+      "  assert.equal(process.env.WORCA_GIT, '1', 'the suite runs with git forced on unless set (P0, S1)');",
       '});',
       '',
     ].join('\n'));
-    const env = { ...process.env, NODE_TEST_CONTEXT: undefined, WORCA_TEST_SHARD: '2/4', CLAUDE_CONFIG_DIR: dir };
+    const env = { ...process.env, NODE_TEST_CONTEXT: undefined, WORCA_TEST_SHARD: '2/4', CLAUDE_CONFIG_DIR: dir, WORCA_GIT: undefined };
     const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), file], { encoding: 'utf8', env });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /pass 1\b/);
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('--timings-out writes the run\'s own per-file seconds, spawn to exit (what a CI shard uploads), and leaves test/timings.json alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-timings-'));
+  try {
+    const file = join(dir, 'timed.test.mjs');
+    // 400 ms of module-level setup outside any test: a shard pays it, so the recorded time must include it.
+    writeFileSync(file, "import { test } from 'node:test';\nawait new Promise((r) => setTimeout(r, 400));\ntest('a', () => {});\ntest('b', () => {});\n");
+    const out = join(dir, 'nested', 'shard-1.json');
+    const before = readFileSync(new URL('./timings.json', import.meta.url), 'utf8');
+    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), '--timings-out', out, file],
+      { encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const measured = JSON.parse(readFileSync(out, 'utf8'));
+    assert.deepEqual(Object.keys(measured), [Object.keys(measured)[0]]);
+    assert.ok(Object.keys(measured)[0].endsWith('/timed.test.mjs'), Object.keys(measured)[0]);
+    assert.ok(Object.values(measured)[0] >= 0.4, `the file's whole run, not just its tests: ${Object.values(measured)[0]}`);
+    assert.equal(readFileSync(new URL('./timings.json', import.meta.url), 'utf8'), before, 'only --write-timings rewrites test/timings.json');
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('a file whose process stays up over 2 s after its last test gets a tail warning; a file that exits at once does not', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-tail-'));
+  try {
+    const held = join(dir, 'held.test.mjs');
+    const clean = join(dir, 'clean.test.mjs');
+    // A ref'd timer armed by the test holds the process 2.5 s after the test passes.
+    writeFileSync(held, "import { test } from 'node:test';\ntest('arms a timer', () => { setTimeout(() => {}, 2500); });\n");
+    writeFileSync(clean, "import { test } from 'node:test';\ntest('arms an unref timer', () => { setTimeout(() => {}, 2500).unref(); });\n");
+    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), held, clean],
+      { encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const warned = r.stderr.split('\n').filter((l) => l.startsWith('warning: '));
+    assert.equal(warned.length, 1, r.stderr);
+    const m = warned[0].match(/\/held\.test\.mjs stayed up (\d+\.\d) s outside its tests/);
+    assert.ok(m && +m[1] >= 2.4, warned[0]);
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('mergeTimings: later measurements win, files that are gone drop out, keys sorted; timingFiles walks dirs for .json only', () => {
+  const live = new Set(['test/a.test.mjs', 'test/b.test.mjs', 'test/c.test.mjs']);
+  assert.deepEqual(
+    Object.entries(mergeTimings({ 'test/b.test.mjs': 9, 'test/gone.test.mjs': 4, 'test/a.test.mjs': 1 },
+      [{ 'test/b.test.mjs': 2 }, { 'test/c.test.mjs': 3, 'test/b.test.mjs': 5 }], (k) => live.has(k))),
+    [['test/a.test.mjs', 1], ['test/b.test.mjs', 5], ['test/c.test.mjs', 3]],
+  );
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-timings-merge-'));
+  try {
+    mkdirSync(join(dir, 'test-timings-fast-2'), { recursive: true });
+    writeFileSync(join(dir, 'test-timings-fast-2', 'fast-2.json'), '{}');
+    writeFileSync(join(dir, 'fast-1.json'), '{}');
+    writeFileSync(join(dir, 'notes.txt'), '');
+    assert.deepEqual(timingFiles([dir]).map((f) => f.slice(dir.length + 1).replace(/\\/g, '/')), ['fast-1.json', 'test-timings-fast-2/fast-2.json']);
   } finally { rmSync(dir, rmOpts); }
 });
 

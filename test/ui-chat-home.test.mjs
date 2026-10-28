@@ -48,7 +48,8 @@ const SHELL = (view) => `<!doctype html><html><body><section class="view" data-v
     </div></div>
     <div class="ask-transcript"></div><div class="chat-dock" data-chat-dock></div></div></div></section></body></html>`;
 
-function setup({ view = 'home', runs = RUNS(), threads = [], workflows = null, flags = null, threadId = null, level = 'expert', holdThreads = false } = {}) {
+function setup({ view = 'home', runs = RUNS(), threads = [], workflows = null, flags = null, threadId = null, level = 'expert', holdThreads = false,
+  pins = undefined, savePins = null } = {}) {
   const dom = trackDom(new JSDOM(SHELL(view), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   const doc = window.document;
@@ -63,7 +64,10 @@ function setup({ view = 'home', runs = RUNS(), threads = [], workflows = null, f
     threadForRun: async (ref) => { calls.push(['threadForRun', ref]); await Promise.resolve(); return threadId; },
     openThread: (id) => calls.push(['openThread', id]),
     openRunPanel: (ref, opts) => calls.push(['openRunPanel', ref, opts]),
-    setIntent: (id) => calls.push(['setIntent', id]),
+    pins: async () => (pins === undefined ? ['wf_shape'] : pins),           // null = the GET failed
+    savePins: async (list) => { calls.push(['savePins', list]); return savePins ? savePins(list) : list; },
+    // a third element only when opts were passed: the two-element assertions elsewhere in this file stay
+    setIntent: (id, opts) => calls.push(opts === undefined ? ['setIntent', id] : ['setIntent', id, opts]),
     prefill: (text) => calls.push(['prefill', text]),
     navigate: (hash) => calls.push(['navigate', hash]),
     level: () => level,
@@ -88,7 +92,7 @@ test('the hero wraps P1\'s hero slot: heading, the slot (composer untouched), th
   assert.equal(s.host.querySelector('.chat-home-aurora, .chat-aurora-orb, [class*="aurora"]'), null, 'a flat page: no aurora behind the hero');
   assert.ok(s.host.querySelector('[data-chat-hero-slot] > .ask-composer'), 'the composer stays where P1 put it');
   const body = s.host.querySelector('.chat-home-body');
-  assert.deepEqual([...body.children].map((c) => c.className.split(' ')[0]), ['chat-home-actions', 'chat-home-tabs', 'chat-home-promos']);
+  assert.deepEqual([...body.children].map((c) => c.className.split(' ')[0]), ['chat-home-actions', 'chat-home-presets', 'chat-home-tabs', 'chat-home-promos']);
   s.home.destroy();
   assert.deepEqual([...s.host.children].map((c) => c.className), ['chat-hero-slot'], 'destroy takes back everything it added');
 });
@@ -271,7 +275,7 @@ test('switches from deps.flags: script tools off hides Write a script', async ()
   const s = setup({ flags: { scripts: false, tasks: false } });
   await settle(s.window);
   assert.equal(s.doc.querySelector('.chat-home-act[data-intent="script"]').hidden, true);
-  assert.equal(s.doc.querySelector('.chat-home-act[data-intent="clone"]').hidden, false);
+  assert.equal(s.doc.querySelector('.chat-home-act[data-action="project"]').hidden, false);
 });
 
 test('update() with no data re-reads the runs, coalesced; armFlip arms only on the home', async () => {
@@ -605,4 +609,28 @@ test('a promo or a workflow card below the fold scrolls the composer it filled b
   slot.getBoundingClientRect = rect(120, 56);                       // already in view: nothing moves
   s.doc.querySelector('.chat-home-promo[data-promo="away"] .chat-home-promo-b').click();
   assert.equal(top, 57);
+});
+
+test('a visit loads the pins with the workflows; a pinned workflow tile arms New run with it', async () => {
+  const s = setup({ pins: ['wf_pay'], workflows: { list: [{ id: 'wf_pay', name: 'Payroll close', version: 2, nodes: [], wires: [] }], portsFn: null } });
+  await settle(s.window);
+  const t = s.host.querySelector('.chat-home-act[data-pin="wf_pay"]');
+  assert.ok(t, 'the pin tile is in the row');
+  t.click();
+  assert.deepEqual(s.calls.filter((c) => c[0] === 'setIntent').at(-1),
+    ['setIntent', 'run', { workflow: { id: 'wf_pay', name: 'Payroll close' } }]);
+});
+
+test('pins that fail to load fall back to the default (Shaper)', async () => {
+  const s = setup({ pins: null });
+  await settle(s.window);
+  assert.ok(s.host.querySelector('.chat-home-act[data-pin="wf_shape"][data-intent="shape"]'));
+});
+
+test('update({ workflows }) hands the new list to the row', async () => {
+  const s = setup({ pins: ['wf_pay'] });
+  await settle(s.window);
+  assert.equal(s.host.querySelector('.chat-home-act[data-pin="wf_pay"]'), null, 'not listed yet');
+  s.home.update({ workflows: { list: [{ id: 'wf_pay', name: 'Payroll close', version: 2, nodes: [], wires: [] }], portsFn: null } });
+  assert.ok(s.host.querySelector('.chat-home-act[data-pin="wf_pay"]'));
 });

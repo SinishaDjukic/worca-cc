@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -174,6 +175,12 @@ test('clicking an artifact row fetches it by pipeline id and mounts the typed vi
       assert.ok(view, 'the diff viewer is mounted');
       assert.ok(view.querySelector('.artifact-diff-line.add'), 'a +line is coloured as an addition');
       assert.ok(view.querySelector('.artifact-diff-line.del'), 'a -line is coloured as a deletion');
+      // Read-only: a selection dragged out of the diff does not close it; a real outside click does.
+      const apv = ctx.window.document.querySelector('.apv');
+      dragOut(ctx.window, view, apv);
+      assert.ok(apv.isConnected, 'a selection dragged out keeps the popup');
+      backdropClick(ctx.window, apv);
+      assert.equal(ctx.window.document.querySelector('.apv'), null, 'a backdrop click closes it');
     } },
     { name: 'the markdown viewer reuses the injected marked+DOMPurify seam', run: async () => {
       const MD = '# Plan\n\nhello';

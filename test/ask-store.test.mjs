@@ -10,13 +10,15 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import {
-  ASK_ID_RE, newAskId, askRoot, attachmentsDir,
+  ASK_ID_RE, newAskId, askRoot, attachmentsDir, askOutDir,
   createThread, getThread, listThreads, updateThread, setThreadTitle, addThreadTotals, addThreadContexts, deleteThread, sweepEmptyThreads,
   countThreads, listThreadIds, countWorktrees, countAttachments,
   appendMessage, getMessage, listMessages, finishMessage, setMessageBlocks, findCard, updateCardBlock, sweepStreamingMessages,
+  findPullRequestCards, findFixRunCards,
   addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
-  attachmentPath,
+  attachmentPath, attachmentSourcePath, attachmentSourceOrigin,
   linkRun, updateRunLink, listRunLinks,
+  listThreadsPage, setArchived, setPinned, THREAD_SORTS,
 } from '../src/core/ask/store.mjs';
 
 const HOME = useTempHome(after);
@@ -39,7 +41,7 @@ test('threads: create/get/update/setThreadTitle; listThreads newest-first with r
       const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
       assert.match(t.id, /^ask_[0-9a-f]{8}$/);
       assert.deepEqual(Object.keys(t).sort(),
-        ['agentMode', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'id', 'mcpOff', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
+        ['agentMode', 'archivedAt', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'groupId', 'id', 'mcpOff', 'model', 'pinnedAt', 'sessionId', 'title', 'totals', 'updatedAt']);
       assert.equal(t.mcpOff, null, 'no MCP picker choices yet (v45)');
       assert.equal(t.agentMode, true, 'agent mode is on by default (v51, #574)');
       assert.equal(t.engine, null, 'no engine until the first turn stores one (v53, #635)');
@@ -311,6 +313,17 @@ test('cards: findCard / updateCardBlock patch only state, runId, error', () => {
   // Run chains: `after` is a patchable key — the scheduled flip carries the predecessor to the card.
   const chained = updateCardBlock(t.id, 'card_00000001', { state: 'scheduled', runId: 'run-9', after: { kind: 'pipeline', id: 'p1', title: 'Refactor' } });
   assert.deepEqual(chained.after, { kind: 'pipeline', id: 'p1', title: 'Refactor' });
+});
+
+test('updateCardBlock: a command card takes a card sub-patch (#911 summary), keeping its other keys', () => {
+  const t = createThread();
+  const card = { kind: 'card', id: 'card_0000c001', state: 'command',
+    card: { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'p', cwd: '/w', warning: null, summary: null } };
+  const m = appendMessage(t.id, { role: 'assistant', status: 'done', blocks: [card] });
+  const b = updateCardBlock(t.id, 'card_0000c001', { card: { summary: 'Running the tests' } });
+  assert.equal(b.card.summary, 'Running the tests');
+  assert.equal(b.card.command, 'npm test');
+  assert.equal(getMessage(m.id).blocks[0].card.summary, 'Running the tests');
 });
 
 test('addThreadTotals: sums every turn (null cost adds 0 but counts), usage.ctx and ctxWindow REPLACE the stored values, garbage leaves them', async () => {
@@ -603,6 +616,23 @@ test('updateCardBlock: workflow/metrics/policy cards shallow-merge a `card` sub-
       const b = updateCardBlock(t.id, 'card_0000bb02', { state: 'applied', card: { result: { ok: true, detail: 'published abc1234 to acme/gateway' } } });
       assert.deepEqual(b.card, { type: 'policy', kind: 'edit', home: 'acme/gateway', summary: 'Edit', changes: [], result: { ok: true, detail: 'published abc1234 to acme/gateway' } });
     } },
+    { name: 'a scope-switch card takes a card sub-patch (choice)', run: () => {
+      const t = createThread();
+      const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'done' });
+      setMessageBlocks(m.id, [{ kind: 'card', id: 'card_0000bb09', state: 'proposed', card: { type: 'scope-switch', reason: 'r', summary: 'S', candidates: [] } }]);
+      const b = updateCardBlock(t.id, 'card_0000bb09', { state: 'answered', card: { choice: 'none' } });
+      assert.equal(b.state, 'answered');
+      assert.deepEqual(b.card, { type: 'scope-switch', reason: 'r', summary: 'S', candidates: [], choice: 'none' });
+    } },
+    { name: 'project card: the shallow `card` sub-patch (the apply result lands there)', run: () => {
+      const t = createThread();
+      const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'done' });
+      setMessageBlocks(m.id, [{ kind: 'card', id: 'card_0000bb03', state: 'proposed', card: { type: 'project', kind: 'create', summary: 'Create site', name: 'site', path: '/p/site', vcs: 'none', change: { kind: 'create', name: 'site', useGit: false } } }]);
+      const result = { ok: true, project: { key: 'site-0000abcd', name: 'site', path: '/p/site', vcs: 'none' }, scope: null };
+      const b = updateCardBlock(t.id, 'card_0000bb03', { state: 'applied', card: { result } });
+      assert.deepEqual(b.card.result, result);
+      assert.equal(b.card.name, 'site', 'the card keeps its fields');
+    } },
   ]);
 });
 
@@ -629,4 +659,150 @@ test('agentMode (#574): on by default; a patch stores false and true (0/1, never
   assert.equal(getDb().prepare('SELECT agent_mode FROM ask_threads WHERE id = ?').get(t.id).agent_mode, 0);
   assert.equal(updateThread(t.id, { agentMode: true }).agentMode, true);
   assert.equal(updateThread(t.id, { title: 'x' }).agentMode, true, 'other patches leave it alone');
+});
+
+test('attachment source (v64): a show_files copy keeps its original path server-side; rows carry only hasSource', () => {
+  const t = createThread({ title: 't' });
+  const copy = addAttachment(t.id, null, { name: 'a.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'), sourcePath: '/w/out/a.png' });
+  const up = addAttachment(t.id, null, { name: 'b.md', text: 'b' });
+  assert.deepEqual([copy.hasSource, up.hasSource], [true, false]);
+  assert.equal(JSON.stringify(listAttachments(t.id)).includes('/w/out'), false, 'the path is never on a row');
+  assert.equal(attachmentSourcePath(t.id, copy.id), '/w/out/a.png');
+  assert.equal(attachmentSourcePath(t.id, up.id), null);
+  assert.equal(attachmentSourcePath(createThread().id, copy.id), null, 'another thread never reads it');
+});
+
+test('attachment source origin (v70): a copy found under a run or project keeps runId, projectKey and the root-relative path server-side', () => {
+  const t = createThread({ title: 't' });
+  const run = addAttachment(t.id, null, { name: 'a.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'),
+    sourcePath: '/runs/r1/repos/app/out/a.png', sourceOrigin: { runId: 'r1', projectKey: 'app', rel: 'out/a.png' } });
+  const proj = addAttachment(t.id, null, { name: 'b.md', text: 'b', sourcePath: '/p/app/b.md', sourceOrigin: { projectKey: 'app', rel: 'b.md' } });
+  const plain = addAttachment(t.id, null, { name: 'c.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'), sourcePath: '/w/out/c.png' });
+  const up = addAttachment(t.id, null, { name: 'd.md', text: 'd' });
+  assert.deepEqual(attachmentSourceOrigin(t.id, run.id), { runId: 'r1', projectKey: 'app', rel: 'out/a.png' });
+  assert.deepEqual(attachmentSourceOrigin(t.id, proj.id), { runId: null, projectKey: 'app', rel: 'b.md' });
+  assert.equal(attachmentSourceOrigin(t.id, plain.id), null, 'a copy from the out folder has no origin');
+  assert.equal(attachmentSourceOrigin(t.id, up.id), null);
+  assert.equal(attachmentSourceOrigin(createThread().id, run.id), null, 'another thread never reads it');
+  assert.equal(JSON.stringify(listAttachments(t.id)).includes('out/a.png'), false, 'the relative path is never on a row');
+  assert.equal(JSON.stringify(getAttachment(t.id, run.id)).includes('r1'), false, 'nor the run id');
+  const half = addAttachment(t.id, null, { name: 'e.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'),
+    sourcePath: '/x/e.png', sourceOrigin: { runId: 'r1', rel: 'e.png' } });
+  assert.equal(attachmentSourceOrigin(t.id, half.id), null, 'no project key: nothing to fall back to, nothing stored');
+});
+
+test('askOutDir: under the thread folder, strict thread id; an svg snapshot round-trips through attachmentPath', () => {
+  const t = createThread({ title: 't' });
+  assert.ok(askOutDir(t.id).endsWith(join('ask', t.id, 'out')));
+  assert.throws(() => askOutDir('../x'), /never minted/);
+  const a = addAttachment(t.id, null, { name: 'chart.svg', kind: 'image', mime: 'image/svg+xml', data: Buffer.from('<svg/>') });
+  assert.equal(a.messageId, null);
+  assert.ok(attachmentPath(t.id, a.id).endsWith('.svg'));
+});
+
+test('findPullRequestCards: an applied card by its url or a workspace member url — never another state, never another PR', () => {
+  const PR1 = 'https://github.com/o/r/pull/1';
+  const card = (state, result, over = {}) => ({ kind: 'card', id: newAskId('card'), state,
+    card: { type: 'pull-request', pipelineId: 'aaaa1111', projectKey: 'shop-00000001', title: 'T', branch: 'feat/x', ...over, ...(result ? { result } : {}) } });
+  const a = createThread(); const b = createThread(); const c = createThread(); const d = createThread();
+  const one = card('applied', { url: PR1, draft: false, existed: false });
+  appendMessage(a.id, { role: 'assistant', text: '', blocks: [one], status: 'done' });
+  const ws = card('applied', { url: 'https://github.com/o/api/pull/5', draft: false, existed: false, members: [
+    { url: 'https://github.com/o/api/pull/5', draft: false, existed: false, memberKey: 'api-11111111' },
+    { url: 'https://github.com/o/web/pull/6', draft: false, existed: false, memberKey: 'web-22222222' }] },
+    { projectKey: 'workspaces/wk1', workspaceId: 'wk1', pipelineId: 'bbbb2222' });
+  appendMessage(b.id, { role: 'assistant', text: '', blocks: [ws], status: 'done' });
+  appendMessage(c.id, { role: 'assistant', text: '', blocks: [card('failed', { url: PR1, error: 'x' })], status: 'done' });   // not applied
+  appendMessage(d.id, { role: 'assistant', text: '', blocks: [card('applied', { url: `${PR1}0`, draft: false, existed: false })], status: 'done' }); // …/pull/10
+
+  assert.deepEqual(findPullRequestCards(PR1),
+    [{ threadId: a.id, cardId: one.id, pipelineId: 'aaaa1111', projectKey: 'shop-00000001', workspaceId: null, memberKey: null }]);
+  assert.deepEqual(findPullRequestCards('https://github.com/o/web/pull/6'),
+    [{ threadId: b.id, cardId: ws.id, pipelineId: 'bbbb2222', projectKey: 'workspaces/wk1', workspaceId: 'wk1', memberKey: 'web-22222222' }]);
+  assert.deepEqual(findPullRequestCards('https://github.com/o/r/pull/99'), []);
+  assert.deepEqual(findPullRequestCards(''), []);
+});
+
+test('findFixRunCards / updateCardBlock: a PR fix-run card is found by its run id and takes a `card` sub-patch; a plain track_run card does not', () => {
+  const t = createThread();
+  const fix = { kind: 'card', id: 'card_0000f001', state: 'tracked', card: { type: 'progress', pipelineId: null, runId: 'run-uuid-9', projectKey: 'p', workspaceId: null,
+    title: 'Fix PR #1 feedback', label: 'p', status: 'starting', fix: { prUrl: 'https://github.com/o/r/pull/1', memberKey: null, trigger: ['checks'], triggerLabel: 'Failing checks', once: false } } };
+  const plain = { kind: 'card', id: 'card_0000f002', state: 'tracked', card: { type: 'progress', pipelineId: 'abcd1234', runId: 'run-uuid-9', projectKey: 'p', workspaceId: null, title: 'x', label: 'p', status: 'done' } };
+  appendMessage(t.id, { role: 'system', text: 'PR watch started a fix run', blocks: [fix] });
+  appendMessage(t.id, { role: 'assistant', text: '', blocks: [plain], status: 'done' });
+  assert.deepEqual(findFixRunCards('run-uuid-9').map((x) => [x.threadId, x.block.id]), [[t.id, 'card_0000f001']]);
+  assert.deepEqual(findFixRunCards('run-uuid-0'), []);
+  const outcome = { kind: 'pushed', sha: 'abc1234', stopped: null, fixRuns: 1 };
+  const b = updateCardBlock(t.id, 'card_0000f001', { card: { pipelineId: 'fix00001', fix: { ...fix.card.fix, outcome } } });
+  assert.deepEqual([b.card.pipelineId, b.card.fix.outcome, b.card.runId, b.state], ['fix00001', outcome, 'run-uuid-9', 'tracked']);
+  assert.equal(updateCardBlock(t.id, 'card_0000f002', { card: { pipelineId: 'zzzz0000' } }).card.pipelineId, 'abcd1234', 'track_run cards stay immutable');
+});
+
+test('#948 s2: archive, pin and the paged list', async () => {
+  await checkRows([
+    { name: 'setArchived hides a thread from show=all and lists it under show=archived; no show lists it as before', run: () => {
+      const t = createThread({ title: 'arch-s2 one' });
+      const before = getThread(t.id).updatedAt;
+      assert.equal(setArchived(t.id, true).archivedAt != null, true);
+      assert.equal(getThread(t.id).updatedAt, before, 'archiving keeps Last activity');
+      const ids = (show) => listThreadsPage({ query: 'arch-s2', show }).threads.map((x) => x.id);
+      assert.ok(!ids('all').includes(t.id));
+      assert.ok(ids('archived').includes(t.id));
+      assert.ok(listThreads({ query: 'arch-s2' }).some((x) => x.id === t.id), 'listThreads is unchanged');
+      assert.equal(setArchived(t.id, false).archivedAt, null);
+      assert.ok(ids('all').includes(t.id));
+    } },
+    { name: 'a second archive keeps the first time; a missing id answers null', run: () => {
+      const t = createThread({ title: 'arch-s2 twice' });
+      const first = setArchived(t.id, true).archivedAt;
+      assert.equal(setArchived(t.id, true).archivedAt, first);
+      assert.equal(setArchived('ask_ffffffff', true), null);
+    } },
+    { name: 'pinned threads come first in every sort', run: () => {
+      const a = createThread({ title: 'pin-s2 a' });
+      const b = createThread({ title: 'pin-s2 b' });
+      setPinned(a.id, true);
+      for (const sort of THREAD_SORTS) assert.equal(listThreadsPage({ query: 'pin-s2', sort }).threads[0].id, a.id, sort);
+      assert.equal(getThread(b.id).pinnedAt, null);
+    } },
+    { name: 'listing returns a cursor after 50 threads, and the pages hold each thread once', run: () => {
+      const made = Array.from({ length: 51 }, (_, i) => createThread({ title: `page-s2 ${i}` }).id);
+      try {
+        const first = listThreadsPage({ query: 'page-s2', limit: 50 });
+        assert.equal(first.threads.length, 50);
+        assert.equal(typeof first.cursor, 'string');
+        const second = listThreadsPage({ query: 'page-s2', limit: 50, cursor: first.cursor });
+        assert.equal(second.threads.length, 1);
+        assert.equal(second.cursor, null);
+        const seen = [...first.threads, ...second.threads].map((x) => x.id);
+        assert.equal(new Set(seen).size, 51);
+        assert.deepEqual([...seen].sort(), [...made].sort());
+      } finally {
+        // The file shares one DB: 51 rows left behind would push other cases' threads off a 50-row listThreads page.
+        for (const id of made) deleteThread(id);
+      }
+    } },
+    { name: 'title and cost sorts page in their own order', run: () => {
+      const z = createThread({ title: 'sort-s2 zebra' });
+      const a = createThread({ title: 'sort-s2 Apple' });
+      addThreadTotals(z.id, { costUsd: 2 });
+      addThreadTotals(a.id, { costUsd: 1 });
+      const ids = (sort) => listThreadsPage({ query: 'sort-s2', sort, limit: 1 });
+      assert.equal(ids('title').threads[0].id, a.id);
+      assert.equal(listThreadsPage({ query: 'sort-s2', sort: 'title', limit: 1, cursor: ids('title').cursor }).threads[0].id, z.id);
+      assert.equal(ids('cost').threads[0].id, z.id);
+    } },
+    { name: 'a cursor of another sort, or garbage, throws BAD_CURSOR', run: () => {
+      createThread({ title: 'bad-s2 1' }); createThread({ title: 'bad-s2 2' });
+      const c = listThreadsPage({ query: 'bad-s2', limit: 1 }).cursor;
+      assert.throws(() => listThreadsPage({ query: 'bad-s2', sort: 'title', cursor: c }), (e) => e.code === 'BAD_CURSOR');
+      assert.throws(() => listThreadsPage({ cursor: 'not-json' }), (e) => e.code === 'BAD_CURSOR');
+    } },
+    { name: 'ids limits the page and the count; an empty ids list is empty', run: () => {
+      const t = createThread({ title: 'ids-s2' });
+      assert.deepEqual(listThreadsPage({ ids: [t.id] }).threads.map((x) => x.id), [t.id]);
+      assert.equal(countThreads({ ids: [t.id], show: 'all' }), 1);
+      assert.deepEqual(listThreadsPage({ ids: [] }).threads, []);
+    } },
+  ]);
 });

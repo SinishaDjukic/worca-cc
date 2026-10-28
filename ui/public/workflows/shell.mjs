@@ -40,7 +40,8 @@ const ICONS = {
  * @param {Document} o.doc
  * @param {object} o.els  {root, stage, canvas, back, wfMenu, name, importFile, libToggle, add, autolayout, zoom, zoomLabel, overlay, inspector}
  * @param {object} o.composer  the createComposer() instance
- * @param {object} o.actions  {back, newCanvas, openLibrary(tab), toggleLibrary, importFile(file), exportCurrent, newAgent, newScript, afterRender?}
+ * @param {object} o.actions  {back, newCanvas, openLibrary(tab), toggleLibrary, importFile(file), exportCurrent, newAgent, newScript, afterRender?,
+ *   pinState?() → {id, pinned}|null, togglePin?}  — the last two: the Chat home pin of the saved canvas
  */
 export function createWorkflowsShell({ doc, els, composer, actions }) {
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -52,6 +53,7 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
   // ── top bar ──────────────────────────────────────────────────────────────
   on(els.back, 'click', () => act('back'));
   on(els.wfMenu, 'click', () => {
+    const pin = act('pinState') || null;       // { id, pinned } for a saved canvas, null for an unsaved one
     toggleMenu({ doc, anchor: els.wfMenu, label: 'Workflows', items: [
       { label: 'New canvas', onSelect: () => act('newCanvas') },
       { label: 'Open…', onSelect: () => act('openLibrary', 'workflows') },
@@ -59,6 +61,8 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
       { label: 'Import…', onSelect: () => { if (els.importFile) { els.importFile.value = ''; els.importFile.click(); } } },
       // Always live: exportCurrent saves an unsaved canvas first, and on a blank one points at the saved list.
       { label: 'Export…', onSelect: () => act('exportCurrent') },
+      { sep: true },
+      { label: pin && pin.pinned ? 'Unpin from Chat home' : 'Pin to Chat home', disabled: !pin, onSelect: () => act('togglePin') },
     ] });
   });
   on(els.importFile, 'change', () => { const f = els.importFile.files && els.importFile.files[0]; if (f) act('importFile', f); });
@@ -151,7 +155,7 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
     for (const [k, v] of Object.entries(patch)) { if (v == null) delete n.config[k]; else n.config[k] = v; }
   });
   const btn = (key, text, { pressed = null, disabled = false, title = '', iconName = '', menu = false } = {}) => {
-    const b = h('button', `wfv-tbb${iconName && !text ? ' wfv-tbi' : ''}`);
+    const b = h('button', `wfv-tbb btn btn-quiet btn-sm${iconName && !text ? ' btn-icon wfv-tbi' : ''}`);
     b.type = 'button';
     b.dataset.tb = key;
     if (iconName) b.appendChild(icon(iconName));
@@ -248,7 +252,7 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
       }
       kids.push(sep());
     } else if (node.kind === 'task') {
-      const b = btn('planStoreSeed', 'Seed the plan store', { pressed: node.config.planStoreSeed === true, title: 'treat an attached plan as the run’s plan' });
+      const b = btn('planStoreSeed', 'Seed plans', { pressed: node.config.planStoreSeed === true, title: 'treat an attached plan as the run’s plan' });
       b.addEventListener('click', () => setCfg(node.id, 'planStoreSeed', { planStoreSeed: node.config.planStoreSeed === true ? null : true }));
       kids.push(b, sep());
     }

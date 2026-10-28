@@ -1,6 +1,6 @@
 // src/core/ask/actions-proposal.mjs
 // The ONE validator behind mcp__worca__propose_actions_change, and the event/notice text of the
-// actions card (docs/actions.md "Ask Worca"). Pure: the stored config and the workspace registry
+// actions card (docs/actions.md "Chat"). Pure: the stored config and the workspace registry
 // are injected (actions-deps.mjs binds the real ones), so the MCP child validates for the model's
 // self-correction and the parent turn re-validates authoritatively and mints the card — the
 // workspace-proposal.mjs split. Nothing here writes and nothing here runs: the card is applied by
@@ -21,7 +21,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const REDACTION_MARK_RE = /<redacted>|\[redacted\]/;
 const deepStrings = (v, fn) => (typeof v === 'string' ? fn(v) : Array.isArray(v) ? v.map((x) => deepStrings(x, fn))
   : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepStrings(x, fn)])) : v);
-const RUNS_AS = 'Commands run on this machine as the user worca runs as, only when a person clicks Start (or Check out, for the setup command). Ask Worca never starts them';
+const RUNS_AS = 'Commands run on this machine as the user worca runs as, only when a person clicks Start (or Check out, for the setup command). Chat never starts them';
 
 /** One action as the card shows it: the command first, word for word, then how it runs. */
 export function describeAction(a) {

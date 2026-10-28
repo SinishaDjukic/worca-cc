@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { addPluginRepo } from '../src/core/plugin-repo.mjs';
@@ -66,4 +66,19 @@ test('inventoryFromCache: depth-2 subdir inventory matches the manifest; throwaw
       assert.match(joined, /<plugin-dir>/);
     } },
   ]);
+});
+
+test('inventory git runs in the C locale, so a failed sync reads the same on every host (G12)', { skip: process.platform === 'win32' && 'a POSIX shell script stands in for git' }, async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'worca-cc-fakegit-'));
+  writeFileSync(join(bin, 'git'), '#!/bin/sh\necho "fatal: LC_ALL=$LC_ALL" >&2\nexit 128\n', { mode: 0o755 });
+  const saved = { PATH: process.env.PATH, LC_ALL: process.env.LC_ALL };
+  process.env.PATH = `${bin}${delimiter}${saved.PATH}`;
+  process.env.LC_ALL = 'de_DE.UTF-8';
+  try {
+    await assert.rejects(inventoryFromCache('https://git.acme.dev/a/b', 'a'.repeat(40), 'plugins/x'), (e) => /^fatal: LC_ALL=C$/m.test(String(e.stderr)));
+  } finally {
+    process.env.PATH = saved.PATH;
+    if (saved.LC_ALL === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = saved.LC_ALL;
+    rmSync(bin, { recursive: true, force: true });
+  }
 });

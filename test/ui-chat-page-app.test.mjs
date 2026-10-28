@@ -161,8 +161,8 @@ test('the Workflows view\'s Back returns to the address Chat swapped to (the log
 test('an entry point with text (openChat) from another page reopens the chat you left and adds the text, unsent', async () => {
   const { window, doc, calls } = await boot();
   await send(doc, 'hello');
-  window.location.hash = '#runs';
-  await settle();
+  window.location.hash = '#workflows';                // Ask worca beside the page (L7): a page with the side column opens it instead
+  await settle(8);
   window.__np.chat.openChat({ text: '[diff comment dc_1 — a.js:3 (new)] "why?"' });
   await settle();
   assert.equal(window.location.hash, `#chat/${TID}`);
@@ -190,8 +190,8 @@ test('the Chat row with the unread dot opens the chat whose reply is unread, not
   await settle();
   assert.equal(window.location.hash, `#chat/${A}`, 'the unread chat (A), not the last one (B)');
   assert.equal(dot.hidden, true, 'read');
-  window.location.hash = '#runs';
-  await settle();
+  window.location.hash = '#workflows';                // L7: from Workflows an entry point still goes to the Chat page
+  await settle(8);
   recv(done(B));
   await settle();
   assert.equal(dot.hidden, false, 'B replied');
@@ -336,7 +336,7 @@ test('Chat shown under the welcome (a first visit from another page) leaves focu
   assert.equal(doc.activeElement, doc.querySelector('[data-chat-page] textarea.ask-input'), 'Skip hands the focus to the composer');
 });
 
-test('openChat with nothing to add while Chat shows puts the caret in the composer (the top bar\'s "Ask Worca" row blurs the search first)', async () => {
+test('openChat with nothing to add while Chat shows puts the caret in the composer (the top bar\'s "Ask in Chat" row blurs the search first)', async () => {
   const { window, doc } = await boot();
   doc.getElementById('tsearch-input').focus();
   doc.activeElement.blur();

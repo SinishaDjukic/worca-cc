@@ -28,27 +28,27 @@ test('targets: pinned project, then every open worktree by creation order (rank 
   ]);
 });
 
-test('targets: a pinned workspace brings its members; Auto follows the page (key or dir) and its workspace; the fallback tag is ignored', async () => {
+test('targets: a pinned workspace brings its members; No project brings none (no page route); a context without pinned names its scope by key, never by projectDir', async () => {
   const r = readers();
   assert.deepEqual(await askTargetsInPlay({ ctx: { pinned: true, workspaceId: WS.id } }, r), [
     { kind: 'workspace', id: WS.id, name: 'checkout', route: 'pinned', rank: 0, members: [{ key: 'billing-00000001', name: 'billing' }, { key: 'shop-00000002', name: 'shop' }] },
   ]);
-  assert.deepEqual(await askTargetsInPlay({ ctx: { pinned: false, projectKey: 'shop-00000002' } }, r), [{ kind: 'project', key: 'shop-00000002', name: 'shop', route: 'page', rank: 0 }]);
-  assert.deepEqual(await askTargetsInPlay({ ctx: { projectDir: '/p/docs' } }, r), [{ kind: 'project', key: 'docs-00000003', name: 'docs', route: 'page', rank: 0 }]);
+  assert.deepEqual(await askTargetsInPlay({ ctx: { pinned: false, projectKey: 'shop-00000002' } }, r), []);
+  assert.deepEqual(await askTargetsInPlay({ ctx: { projectDir: '/p/docs' } }, r), []);
   assert.deepEqual(await askTargetsInPlay({ ctx: { projectDir: '/p/docs', projectSource: 'fallback' } }, r), [], 'the dropdown fallback is not the page\'s project');
-  assert.deepEqual((await askTargetsInPlay({ ctx: { workspaceId: WS.id } }, r)).map((x) => [x.kind, x.route, x.rank]), [['workspace', 'page', 0]]);
+  assert.deepEqual((await askTargetsInPlay({ ctx: { workspaceId: WS.id } }, r)).map((x) => [x.kind, x.route, x.rank]), [['workspace', 'pinned', 0]]);
   assert.deepEqual(await askTargetsInPlay({ ctx: { pinned: true, projectKey: 'gone-00000009' } }, r), [], 'an unregistered project is no target');
   assert.deepEqual(await askTargetsInPlay({ ctx: { pinned: true, workspaceId: 'wks-gone-00000000' } }, r), []);
   assert.deepEqual(await askTargetsInPlay({ ctx: { pinned: true, projectKey: 'shop-00000002', projectDir: '/p/docs' } }, r), [{ kind: 'project', key: 'shop-00000002', name: 'shop', route: 'pinned', rank: 0 }], 'a pin replaces the page');
-  assert.deepEqual(await askTargetsInPlay({ ctx: { projectKey: 'shop-00000002', projectSource: 'fallback' } }, r), [{ kind: 'project', key: 'shop-00000002', name: 'shop', route: 'page', rank: 0 }],
-    'the tag drops only the dropdown projectDir — a page projectKey still counts, as in resolveAskContext and contextProjectKey');
+  assert.deepEqual(await askTargetsInPlay({ ctx: { projectKey: 'shop-00000002', projectSource: 'fallback' } }, r), [{ kind: 'project', key: 'shop-00000002', name: 'shop', route: 'pinned', rank: 0 }],
+    'a named key is the scope; the tag only ever dropped projectDir');
 });
 
 test('targets: every member of a workspace in play is in play — a worktree on one adds no target (D13; §5.1: no member Team set)', async () => {
   const pinned = await askTargetsInPlay({ ctx: { pinned: true, workspaceId: WS.id }, threadId: 'ask_00000001' }, readers([wt('shop-00000002'), wt('docs-00000003')]));
   assert.deepEqual(pinned.map((x) => [x.kind, x.key ?? x.id, x.route, x.rank]), [['workspace', WS.id, 'pinned', 0], ['project', 'docs-00000003', 'worktree', 2]]);
   const page = await askTargetsInPlay({ ctx: { workspaceId: WS.id }, threadId: 'ask_00000001' }, readers([wt('billing-00000001')]));
-  assert.deepEqual(page.map((x) => [x.kind, x.route]), [['workspace', 'page']], 'the page workspace too');
+  assert.deepEqual(page.map((x) => [x.kind, x.route]), [['workspace', 'pinned']], 'a context naming a workspace without pinned is its scope');
 });
 
 const RESULT = () => ({
@@ -96,11 +96,11 @@ const snapDeps = { readMcpStore: async () => STORE, loadCatalog: async () => CAT
 
 test('askMcpPromptInput: target names and routes, project names for keys, skip texts, the no-General line for a project that excludes General', async () => {
   const targets = [{ kind: 'project', key: 'billing-00000001', name: 'billing', route: 'pinned', rank: 0 },
-    { kind: 'workspace', id: WS.id, name: 'checkout', route: 'page', rank: 0, members: [{ key: 'billing-00000001', name: 'billing' }, { key: 'shop-00000002', name: 'shop' }] }];
+    { kind: 'workspace', id: WS.id, name: 'checkout', route: 'worktree', rank: 0, members: [{ key: 'billing-00000001', name: 'billing' }, { key: 'shop-00000002', name: 'shop' }] }];
   const result = RESULT();
   result.copies.push({ name: 'sentry_billing', setId: 'billing', setName: 'Billing', projects: ['billing-00000001'], description: 'Sentry' });
   assert.deepEqual(await askMcpPromptInput({ targets, result }, snapDeps), {
-    targets: [{ name: 'billing', route: 'pinned' }, { name: 'checkout', route: 'page' }],
+    targets: [{ name: 'billing', route: 'pinned' }, { name: 'checkout', route: 'worktree' }],
     copies: [{ name: 'jira', description: 'Jira', setName: 'General', projects: [] }, { name: 'sentry_billing', description: 'Sentry', setName: 'Billing', projects: ['billing'] }],
     skipped: [{ copy: 'jira_billing', setName: 'Billing', reason: 'API token not set' }],
     noGeneral: ['billing'],                    // checkout: shop includes General, so a workspace run does too
@@ -129,4 +129,25 @@ test('askMcpJoinNotice (D17): names the copies a new worktree brings, per projec
   const wsBefore = { targets: [{ kind: 'workspace', id: WS.id, name: 'checkout', route: 'pinned', rank: 0, members: [{ key: 'billing-00000001', name: 'billing' }, { key: 'shop-00000002', name: 'shop' }] }], result: before.result };
   assert.equal(await askMcpJoinNotice({ ...args, before: wsBefore, ctx: { pinned: true, workspaceId: WS.id } }, deps([wt('shop-00000002')])), null,
     'a worktree on a member of the workspace in play joins nothing');
+});
+
+test('mcpForEngine: a locked-down chat keeps the copies its engine attaches; the rest are skipped with the reason', async () => {
+  const { mcpForEngine } = await import('../src/core/ask/mcp.mjs');
+  const { skipReasonText } = await import('../src/core/mcp/registry.mjs');
+  const r = {
+    servers: { local: { type: 'stdio', command: 'node', args: [] }, web: { type: 'http', url: 'https://x.example/mcp' } },
+    env: {}, secretValues: [], grants: ['mcp__local', 'mcp__web'], disallowedTools: ['mcp__web__a_very_long_tool'],
+    copies: [{ name: 'local', copy: 'local', setId: 'general', setName: 'General', serverId: 's1' }, { name: 'web', copy: 'web', setId: 'general', setName: 'General', serverId: 's2' }],
+    skipped: [], skippedTools: [{ name: 'web', tool: 'a_very_long_tool', reason: 'tool-name-too-long:a_very_long_tool' }], sets: [],
+  };
+  assert.equal(mcpForEngine(r, 'claude'), r, 'Claude attaches every copy');
+  assert.equal(mcpForEngine(r, 'gemini'), r, 'Gemini CLI attaches stdio and http servers');
+  const codex = mcpForEngine(r, 'codex');
+  assert.deepEqual(Object.keys(codex.servers), ['local']);
+  assert.deepEqual(codex.copies.map((c) => c.name), ['local']);
+  assert.deepEqual(codex.grants, ['mcp__local']);
+  assert.deepEqual(codex.disallowedTools, []);
+  assert.deepEqual(codex.skippedTools, []);
+  assert.deepEqual(codex.skipped, [{ setId: 'general', setName: 'General', serverId: 's2', copy: 'web', reason: 'engine-remote' }]);
+  assert.match(skipReasonText(codex.skipped[0], []), /attaches local \(stdio\) servers only/);
 });

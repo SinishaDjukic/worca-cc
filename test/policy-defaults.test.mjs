@@ -118,7 +118,7 @@ test('guardrail catalog: gp:<id> reads as a virtual, sanitised set with a policy
   assert.deepEqual(listPolicyGuardrailSets().map((x) => x.id), ['gp:gateway-normal']);
 });
 
-test('Ask Worca limits: team defaults for a pinned governed project, never over a stored value', async () => {
+test('Chat limits: team defaults for a pinned governed project, never over a stored value', async () => {
   assert.deepEqual(askLimits({ projectKey: projectKey(home) }), { maxTurns: 12, maxBudgetUsd: 0.5 });
   const plain = askLimits();
   assert.equal(plain.maxTurns, 400);

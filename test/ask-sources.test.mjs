@@ -1,5 +1,5 @@
 // test/ask-sources.test.mjs
-// Plugin task sources in Ask Worca (docs/scheduled-runs.md "Ask Worca", source-spec.mjs): the
+// Plugin task sources in Ask Worca (docs/scheduled-runs.md "Chat", source-spec.mjs): the
 // propose_run `source` is validated against what is installed (inputs, profiles, bindings), the
 // parent looks the task up once, and list_task_sources / find_tasks / get_task read through the
 // plugin shim with the same two ops the New pipeline pane may drive.
@@ -15,7 +15,8 @@ import { checkRows } from './helpers/rows.mjs';
 const JIRA = {
   type: 'plugin', plugin: 'jira-source', sourceId: 'jira', displayName: 'Jira',
   inputs: [
-    { key: 'writeBack', type: 'select', label: 'Write result back', default: 'yes', options: ['yes', 'no'] },
+    // Options as listTaskSources serves them: normalizeManifest turns every option into {value, label}.
+    { key: 'writeBack', type: 'select', label: 'Write result back', default: 'yes', options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] },
     { key: 'task', type: 'task-browser', label: 'Issue' },
   ],
   multiProfile: true, profiles: ['acme', 'globex'],

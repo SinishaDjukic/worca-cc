@@ -1,6 +1,6 @@
 # Browser extension
 
-The Worca browser extension puts Ask Worca in a sidebar next to the page you are reading, in
+The Worca browser extension puts Chat in a sidebar next to the page you are reading, in
 Chrome, Edge and Firefox. It talks only to the Worca running on your own computer, and only after
 you approve it in Worca.
 
@@ -9,14 +9,15 @@ and the same builds are attached as zips to each GitHub release. See [Install](#
 
 ## What it does
 
-- **Sidebar chat.** The same Ask Worca conversation as the Chat page: pick a chat from the list (or
+- **Sidebar chat.** The same Chat conversation as the Chat page: pick a chat from the list (or
   start one with the **+** New chat button), ask, and watch the answer stream in. A card in an answer
   shows its title and **Open in Worca**, which opens the thread in the full UI, where you act on it.
-- **Composer.** The composer is Ask Worca's own:
+- **Composer.** The composer is Chat's own:
   - **+** attaches files (you can also paste or drag them in), and the camera button captures an
     area of the page (see [Area capture](#area-capture)).
-  - The scope pill sets the chat scope. **Any project** lets Worca pick the project from your
-    message; a project or workspace pins the chat to it. If Worca has no projects yet, the list says
+  - The scope pill sets the chat scope. **No project** (the default) lets Worca answer without a project; when your message is clearly about one of
+    your projects, it puts a switch card in the chat (answer it in Worca). A project or workspace sets the chat's
+    scope. If Worca has no projects yet, the list says
     **No projects in this Worca yet** (with **Open Worca**); if the list cannot be loaded, it says
     so (with **Retry**).
   - The model button picks the model and, in its **Effort** row, the effort.
@@ -34,7 +35,7 @@ and the same builds are attached as zips to each GitHub release. See [Install](#
 - **Running Actions.** When the page is served by a running Worca Action (a run's dev server), a new
   chat is pinned to that run's project, and the page context names the run. A scope you picked
   yourself is never overridden.
-- **Context menu.** Right-click a selection → **Ask Worca about selection** opens the sidebar with
+- **Context menu.** Right-click a selection → **Worca Chat: ask about selection** opens the sidebar with
   the selection quoted.
 
 ## Install
@@ -263,7 +264,7 @@ asks for:
 | `activeTab` | read the current tab's URL, title, selection and text, inject Pinpoint, and capture the visible tab for an area capture, only after you click the toolbar button, use the context menu or press a shortcut |
 | `scripting` | inject the page script into that tab |
 | `storage` | keep the Worca address and the token |
-| `contextMenus` | the **Ask Worca about selection** item |
+| `contextMenus` | the **Worca Chat: ask about selection** item |
 | `sidePanel` (Chrome, Edge) | show the sidebar; Firefox uses `sidebar_action`, which needs no permission |
 
 The manifest also declares the two keyboard shortcuts under `commands`, which is not a permission.
@@ -372,9 +373,9 @@ Firefox**, on the **production** build (`npm run ext:build`, no host permissions
   `optional_host_permissions` for `http://127.0.0.1/*` and `http://localhost/*`, requested on the
   Connect click.
 
-### Simplifications versus Ask Worca
+### Simplifications versus Chat
 
-The sidebar is a smaller Ask Worca:
+The sidebar is a smaller Chat:
 
 - no thinking orb;
 - attached images show as pills, not previews;

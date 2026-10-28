@@ -4,6 +4,8 @@
 // work items built by src/shared/team-metrics/timeline.mjs and returns detached elements; app.js
 // owns fetching, state and the delegated events (every control carries a data-tl-* attribute).
 // Calendar windows are in the viewer's LOCAL time — a PM reads "Thursday", not a UTC day.
+import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { summarizeWindow, groupByPerson } from '../../src/shared/team-metrics/timeline.mjs';
 import { safeHttpUrl } from '../../src/shared/team-metrics/aggregate.mjs';
 import { TM_FMT } from './team-metrics-view.mjs';
@@ -28,7 +30,7 @@ export const TL_STATUS = Object.freeze({
   attention: { label: 'Needs attention', tone: 'red' },
   stopped: { label: 'Stopped', tone: 'slate' },
   closed: { label: 'Closed, not merged', tone: 'slate' },
-  done: { label: 'Done', tone: 'violet' },
+  done: { label: 'Done', tone: 'slate' },
 });
 
 // ---- calendar ------------------------------------------------------------------------------
@@ -136,7 +138,7 @@ function tiles(doc, sum, { filter }) {
     ? [failing && `${failing} failing`, waiting && `${waiting} waiting for review`].filter(Boolean).join(' · ')
     : 'Nothing is blocked';
   row.append(tile({ f: 'attention', tone: 'red', label: 'Needs attention', value: String(sum.attention.length), sub: attSub }));
-  if (sum.prKnown) row.append(tile({ label: 'Median lead time', value: fmtSpan(sum.medianLeadMs), sub: 'First run (or PR opened) to merge' }));
+  if (sum.prKnown) row.append(tile({ label: 'Median lead time', value: fmtSpan(sum.medianLeadMs), sub: 'First run (or PR created) to merge' }));
   row.append(tile({ label: 'Agent spend', value: TM_FMT.usd(sum.spendUsd), sub: 'Runs started in this period' }));
   return row;
 }
@@ -157,7 +159,10 @@ export function prNotice(doc, { status = null, loading = false, prKnown = false 
     if (status.azureError) parts.push(`Azure DevOps did not answer for some pull requests: ${status.azureError}`);
     const cut = Array.isArray(status.azureTruncated) ? status.azureTruncated : [];
     if (cut.length) parts.push(`${cut.join(', ')} ${cut.length === 1 ? 'has' : 'have'} more pull requests than one listing covers; older runs there may show without merge data.`);
-    if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub and Azure DevOps repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
+    if (status.bitbucket === 'missing') parts.push('Merge dates for Bitbucket repositories need a token: set `WORCA_BB_TOKEN` (Pull requests: Read) where worca runs.');
+    if (status.bitbucket === 'unauthenticated') parts.push('Bitbucket refused the token in `WORCA_BB_TOKEN`: check that it has not expired and can read pull requests.');
+    if (status.bitbucketError) parts.push(`Bitbucket did not answer for some pull requests: ${status.bitbucketError}`);
+    if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub, Azure DevOps and Bitbucket repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
   }
   if (!parts.length) return null;
   const n = h(doc, 'div', 'hint tl-note');
@@ -188,15 +193,13 @@ function crumbs(doc, zoom, anchor) {
 function controls(doc, { zoom, anchor, mode, outside, hasOutside }) {
   const bar = h(doc, 'div', 'tl-controls');
   const left = h(doc, 'div', 'tl-nav');
-  const prev = btn(doc, 'btn-ghost btn-mini tl-step', '‹', { tlShift: -1 }); prev.setAttribute('aria-label', `Previous ${zoom}`);
-  const next = btn(doc, 'btn-ghost btn-mini tl-step', '›', { tlShift: 1 }); next.setAttribute('aria-label', `Next ${zoom}`);
-  left.append(prev, next, btn(doc, 'btn-ghost btn-mini tl-today', 'Today', { tlToday: 1 }), crumbs(doc, zoom, anchor));
+  const prev = btn(doc, 'btn btn-sm tl-step', '‹', { tlShift: -1 }); prev.setAttribute('aria-label', `Previous ${zoom}`);
+  const next = btn(doc, 'btn btn-sm tl-step', '›', { tlShift: 1 }); next.setAttribute('aria-label', `Next ${zoom}`);
+  left.append(prev, next, btn(doc, 'btn btn-sm tl-today', 'Today', { tlToday: 1 }), crumbs(doc, zoom, anchor));
   const right = h(doc, 'div', 'tl-opts');
   if (hasOutside) {
-    const lbl = h(doc, 'label', 'tl-toggle');
-    const cb = h(doc, 'input');
-    cb.type = 'checkbox'; cb.id = 'tl-outside'; cb.checked = !!outside; cb.dataset.tlOutside = '1';
-    lbl.append(cb, 'PRs outside Worca');
+    const { row: lbl, input: cb } = makeSwitch(doc, { label: 'PRs outside Worca', checked: !!outside, rowClass: 'tl-toggle', data: { tlOutside: '1' } });
+    cb.id = 'tl-outside';
     lbl.title = 'Show pull requests that have no Worca run behind them';
     right.append(lbl);
   }
@@ -437,7 +440,7 @@ export function renderTimelinePopover(it, { doc = globalThis.document, now = Dat
   pop.setAttribute('role', 'dialog');
   pop.setAttribute('aria-label', it.title);
   const top = h(doc, 'div', 'tl-pop-top');
-  const close = btn(doc, 'tl-pop-x', '×', { tlClose: 1 }); close.setAttribute('aria-label', 'Close');
+  const close = btn(doc, 'btn btn-sm btn-quiet btn-icon tl-pop-x', null, { tlClose: 1 }); close.setAttribute('aria-label', 'Close'); close.append(icon(doc, 'x', 14));
   top.append(h(doc, 'span', 'tl-pill', it.status === 'done' && it.prKnown && !it.prs.length ? 'Done, no PR' : st.label), close);
   pop.append(top);
   const outside = it.kind === 'pr';

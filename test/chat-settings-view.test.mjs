@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle } from '../ui/public/chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -13,7 +14,7 @@ const CHANNELS = [
   { plugin: 'teams-chat', channelId: 'main', displayName: 'Teams', platform: 'teams', state: 'unconfigured', detail: 'missing config: appId' },
 ];
 
-test('chat settings render and round-trip, including the Ask Worca script toggle', async () => {
+test('chat settings render and round-trip, including the Chat script toggle', async () => {
   await checkRows([
     { name: 'chat settings: render from prefs + channels, collect round-trips edits, empty list hint', run: async () => {
       await checkRows([
@@ -56,11 +57,11 @@ test('chat settings render and round-trip, including the Ask Worca script toggle
         } },
       ]);
     } },
-    { name: 'the Ask Worca script toggle: default on, explicit off honored, round-trips, no prose', run: () => {
+    { name: 'the Chat script toggle: default on, explicit off honored, round-trips, no prose', run: () => {
       const on = renderScriptToolsToggle({ prefs: {} }, { doc });
       assert.equal(on.querySelector('input#askScriptTools').checked, true, 'an absent pref is ON (W20)');
       assert.equal(on.textContent.trim(), 'Create and run scripts');
-      assert.equal(on.getAttribute('for'), 'askScriptTools');
+      assert.ok(on.matches('label.switch-row') && on.querySelector('input.sw-input#askScriptTools'), 'a switch row holding the input');
       assert.equal(on.querySelectorAll('p, small, .hint').length, 0, 'labels only — no explanatory prose in the UI');
       assert.deepEqual(collectScriptToolsToggle(on), { scriptTools: true });
       const off = renderScriptToolsToggle({ prefs: { scriptTools: false } }, { doc });
@@ -70,7 +71,45 @@ test('chat settings render and round-trip, including the Ask Worca script toggle
       assert.deepEqual(collectScriptToolsToggle(off), { scriptTools: true });
       assert.deepEqual(collectScriptToolsToggle(doc.createElement('div')), { scriptTools: true }, 'a host with no control means ON');
     } },
+    { name: 'the Chat suggestions toggle: default on, explicit off honored, round-trips', run: () => {
+      const on = renderSuggestionsToggle({ prefs: {} }, { doc });
+      assert.equal(on.querySelector('input#askSuggestions').checked, true, 'an absent pref is ON');
+      assert.equal(on.textContent.trim(), 'Suggest a next prompt after each reply');
+      assert.ok(on.matches('label.switch-row') && on.querySelector('input.sw-input#askSuggestions'), 'a switch row holding the input');
+      assert.deepEqual(collectSuggestionsToggle(on), { suggestions: true });
+      const off = renderSuggestionsToggle({ prefs: { suggestions: false } }, { doc });
+      assert.equal(off.querySelector('input#askSuggestions').checked, false);
+      assert.deepEqual(collectSuggestionsToggle(off), { suggestions: false });
+      off.querySelector('input#askSuggestions').checked = true;
+      assert.deepEqual(collectSuggestionsToggle(off), { suggestions: true });
+      assert.deepEqual(collectSuggestionsToggle(doc.createElement('div')), { suggestions: true }, 'a host with no control means ON');
+    } },
+    { name: 'commands off: the hint names the Installed tab and the plugin\'s Settings', run: () => {
+      const el = renderChatSettings({ prefs: { notify: {}, channels: {} },
+        channels: [{ ...CHANNELS[0], capabilities: { inbound: true, outbound: true }, commands: { allowed: 0, lastRefused: null } }] }, { doc });
+      assert.equal(el.querySelector('.chat-commands-off').textContent,
+        'Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored. Add the chat ID on the Marketplace page: Installed › telegram-chat › Settings.');
+    } },
   ]);
+});
+
+test('chat settings are divided rows: event rows and web fields sit in .drows, the domain list is a wide row', () => {
+  const el = renderChatSettings({ prefs: { notify: {}, channels: {} }, channels: CHANNELS }, { doc });
+  const evRows = [...el.querySelectorAll('.chat-event-row')];
+  assert.equal(evRows.length, 6);
+  for (const r of evRows) {
+    assert.ok(r.classList.contains('drow') && r.closest('.drows'), 'event row is a .drow inside .drows');
+    assert.ok(r.querySelector('.drow-control input.chat-ev'), 'its switch sits in .drow-control');
+  }
+  for (const r of el.querySelectorAll('.chat-channel-row')) assert.ok(r.classList.contains('drow') && r.closest('.drows'));
+  const web = renderAskWebFields({ askWeb: null }, { doc });
+  const fields = [...web.querySelectorAll('.field')];
+  assert.ok(fields.length >= 4);
+  for (const f of fields) {
+    assert.ok(f.classList.contains('drow') && f.closest('.drows'), 'web field is a .drow inside .drows');
+    assert.ok(f.querySelector('.drow-control :is(input, textarea)'), 'its control sits in .drow-control');
+  }
+  assert.ok(web.querySelector('#askWebDomains').closest('.drow').classList.contains('drow-wide'), 'the domain list is a wide row');
 });
 
 // #555: the delegated Test button in the booted app goes through withButton — busy "Sending…",
@@ -129,4 +168,19 @@ test('#555 chat Test: busy → Delivered on the button; a delivery failure is a 
   assert.equal(t.textContent, 'Test', 'a failure skips "Delivered"');
   assert.equal(t.disabled, false);
   bad.close();
+});
+
+test('Summarise commands: on by default, a Beta chip, collects its value (#911)', () => {
+  const doc = new JSDOM('<!doctype html><html><body></body></html>').window.document;
+  applyFlags({ commandSummaries: true }, doc);
+  const host = doc.createElement('div');
+  host.append(renderSummariesToggle({ prefs: {} }, { doc }));
+  const cb = host.querySelector('input.ask-summaries');
+  assert.equal(cb.checked, true);
+  assert.equal(host.querySelector('.switch-label').textContent.startsWith('Summarise commands'), true);
+  assert.equal(host.querySelector('.flag-chip.flag-chip-beta').textContent, 'Beta');
+  cb.checked = false;
+  assert.deepEqual(collectSummariesToggle(host), { summariseCommands: false });
+  host.replaceChildren(renderSummariesToggle({ prefs: { summariseCommands: false } }, { doc }));
+  assert.equal(host.querySelector('input.ask-summaries').checked, false);
 });

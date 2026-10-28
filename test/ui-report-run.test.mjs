@@ -21,6 +21,7 @@ import { previewText, REPORT_PREVIEW_DEBOUNCE_MS } from '../ui/public/report-run
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
+import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -218,11 +219,12 @@ test('the History ⋯ menu carries "Report this run"; it opens the preview modal
   const ctx = await boot({ fetchHandler: arms() });
   await openHistoryDetail(ctx);
   const doc = ctx.window.document;
-  const more = doc.querySelector('#hist-detail .hd-more');
+  // Slice 2: the bar's one ⋯ (runMoreItems) lists it; its item clicks the hidden .hd-report carrier.
+  const more = doc.querySelector('#hist-detail .hd-bar-more');
   const moreHidden = more.hidden;
   click(ctx.window, more);
   await settle(ctx.window);
-  const item = doc.querySelector('#hist-detail .hd-menu .hd-report');
+  const item = [...doc.querySelectorAll('body > .wfv-menu .menu-item')].find((b) => b.textContent.trim() === 'Report this run');
   const btn = doc.querySelector('#hist-detail .hd-report');
   const menu = { itemHidden: item?.hidden, role: item?.getAttribute('role'), text: item?.textContent.trim(),
     posts: reportPosts(ctx).length, btnHidden: btn?.hidden };
@@ -322,9 +324,9 @@ test('the issue link is inert while a rebuild is in flight', async () => {
   assert.equal(link.getAttribute('href'), REPORT.issue.url, 'and it arrives with the payload');
 });
 
-// The report flow is reached from ONE place: History's per-run ⋯ menu. A finished run
-// on Running detail has no report button; its saved page (where the menu is) takes over.
-test('a done, stopped or error run\'s Running header has no report button', async () => {
+// Slice 2: the report flow is reached from the run page's one ⋯ menu, live and saved. A finished run
+// on Running detail has no visible report button; its ⋯ lists Report this run (a hidden carrier).
+test('a done, stopped or error run\'s Running header has no report button; its ⋯ lists Report this run', async () => {
   // A boot per status (the loop's rows).
   await checkRows(['done', 'stopped', 'error'].map((status) => ({
     name: `a ${status} run's Running header has no report button`,
@@ -337,8 +339,9 @@ test('a done, stopped or error run\'s Running header has no report button', asyn
       // the thing that paints the terminal header — is never called at all.
       await armRunning(ctx, { status: 'running' });
       const doc = ctx.window.document;
-      assert.equal(doc.querySelector('#run-detail .rd-report'), null,
-        'the run-detail template carries no report button at all');
+      assert.ok(doc.querySelector('#run-detail .rd-report').closest('.run-menu-carriers[hidden]'),
+        'the run-detail template carries the report carrier, never shown');
+      assert.equal(doc.querySelector('#run-detail .rd-report').hidden, true, 'a running run is not offered it');
 
       ctx.dispatch({ type: 'state', runId: RUN_ID, status });
       await settle(ctx.window, 8);
@@ -347,7 +350,10 @@ test('a done, stopped or error run\'s Running header has no report button', asyn
       assert.equal([...header.querySelectorAll('button, a')].some((b) => /Report this run/.test(b.textContent)),
         false, 'nothing in the header offers to report the run');
       assert.equal(header.querySelector('.rd-history-link'), null, 'no link to click: the saved run opens on its own');
-      assert.equal(doc.querySelector('#run-detail .rd-bar .rd-report'), null, 'nor does the shared bar');
+      assert.ok(doc.querySelector('#run-detail .rd-bar .rd-report').closest('[hidden]'), 'nor does the shared bar show one');
+      doc.querySelector('#run-detail .rd-bar-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+      const items = [...doc.querySelectorAll('body > .wfv-menu .menu-item')].map((b) => b.querySelector('.wfv-menu-l').textContent);
+      assert.ok(items.includes('Report this run'), 'the ⋯ lists Report this run');
     },
   })));
 });
@@ -666,4 +672,56 @@ test('a blocked popup still hands the reporter the created issue', async () => {
   assert.equal(filed.hidden, false, 'the created issue is surfaced in the modal');
   const a = filed.querySelector('a');
   assert.equal(a.getAttribute('href'), FILED_URL, 'as a link the reporter can click');
+});
+
+test('Report this run: Cancel sits before Create GitHub issue; a backdrop click never closes it; a written expectation makes Escape ask', async () => {
+  const ctx = await boot({ fetchHandler: arms() });
+  await openHistoryReport(ctx);
+  const doc = ctx.window.document;
+  const modal = doc.getElementById('report-modal');
+  assert.deepEqual([...doc.querySelectorAll('.report-head-actions button')].map((b) => b.textContent), ['Cancel', 'Create GitHub issue']);
+  assert.ok(doc.querySelector('#report-modal .card.dlg > .report-top.dlg-head'), 'the pinned head of the shared dialog anatomy');
+  backdropClick(ctx.window, modal);
+  assert.equal(modal.classList.contains('hidden'), false, 'never on a backdrop click');
+  const ta = doc.getElementById('report-expectation');
+  ta.value = 'it should have stopped';
+  ta.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  pressEscape(ctx.window);
+  assert.ok(discardPrompt(doc), 'asks first');
+  discardChanges(doc);
+  await settle(ctx.window, 2);
+  assert.equal(modal.classList.contains('hidden'), true);
+});
+
+test('Report this run: while the issue is filing, Cancel and Escape wait; once filed the way out says Close and Escape asks nothing, even over a written expectation', async (t) => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const base = arms();
+  const ctx = await boot({ fetchHandler: (url, opts) => (url.endsWith('/report-issue') ? gate.then(() => jsonRes(200, FILED)) : base(url, opts)) });
+  await openHistoryReport(ctx);
+  const doc = ctx.window.document;
+  const modal = doc.getElementById('report-modal');
+  stubTab(ctx.window);
+  // Written before Create: a change until it is filed, then part of the issue — nothing left to lose.
+  const timers = useAppTimers(t);
+  try {
+    const ta = doc.getElementById('report-expectation');
+    ta.value = 'it should have stopped';
+    ta.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+    await timers.advance(REPORT_PREVIEW_DEBOUNCE_MS + 50);   // the preview rebuilds with it: Create is ready again
+    await timers.settle(8);
+  } finally {
+    t.mock.timers.reset();
+  }
+  click(ctx.window, createBtn(ctx.window));
+  assert.equal(doc.getElementById('report-close').disabled, true, 'Cancel waits while filing');
+  pressEscape(ctx.window);
+  assert.equal(modal.classList.contains('hidden'), false, 'so does Escape');
+  release();
+  await settle(ctx.window, 6);
+  assert.equal(doc.getElementById('report-close').disabled, false);
+  assert.equal(doc.getElementById('report-close').textContent, 'Close');
+  pressEscape(ctx.window);
+  assert.equal(discardPrompt(doc), null, 'filed: nothing left to lose');
+  assert.equal(modal.classList.contains('hidden'), true);
 });

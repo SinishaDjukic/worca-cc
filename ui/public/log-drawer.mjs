@@ -3,6 +3,7 @@
 // stays in view; another click retargets it; × or Esc closes it. The drawer owns its DOM, the
 // close keys, focus return and its height (dragged or arrow keys on the handle, kept per browser).
 // It knows nothing about runs: the caller fills `body` and sets the header.
+import { iconSvg } from './icons.mjs';
 
 export const HEIGHT_KEY = 'worca-cc.logDrawer.height';
 export const MIN_H = 120;
@@ -22,9 +23,10 @@ export function clampHeight(h, viewport) {
 
 /**
  * @param {{doc: Document, win?: {innerHeight?: number}, storage?: object,
- *   onClose?: () => void, onOpenInLogs?: () => void}} o
+ *   onClose?: () => void, onOpenInLogs?: () => void, tools?: Element|null}} o
+ *   `tools`: an optional head control (the run log's Summaries / Raw switch), placed before "Open in Logs".
  */
-export function createLogDrawer({ doc, win = {}, storage = null, onClose = null, onOpenInLogs = null }) {
+export function createLogDrawer({ doc, win = {}, storage = null, onClose = null, onOpenInLogs = null, tools = null }) {
   const el = doc.createElement('section');
   el.className = 'wf-log-drawer';
   el.hidden = true;
@@ -34,10 +36,11 @@ export function createLogDrawer({ doc, win = {}, storage = null, onClose = null,
     '<header class="wf-log-head">' +
       '<span class="wf-log-title"></span><span class="wf-log-live" hidden>live</span>' +
       '<span class="wf-log-spacer"></span>' +
-      '<button type="button" class="btn-ghost btn-mini wf-log-full">Open in Logs</button>' +
-      '<button type="button" class="wf-log-close" aria-label="Close the step log" title="Close (Esc)">×</button>' +
+      '<button type="button" class="btn btn-sm wf-log-full">Open in Logs</button>' +
+      `<button type="button" class="btn btn-sm btn-quiet btn-icon wf-log-close" aria-label="Close the step log" title="Close (Esc)">${iconSvg('x', 14)}</button>` +
     '</header>' +
     '<div class="log wf-log-body" tabindex="0"></div>';
+  if (tools) el.querySelector('.wf-log-head').insertBefore(tools, el.querySelector('.wf-log-full'));
   const title = el.querySelector('.wf-log-title');
   const live = el.querySelector('.wf-log-live');
   const body = el.querySelector('.wf-log-body');

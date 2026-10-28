@@ -1,9 +1,10 @@
 // src/core/title.mjs
 import { runClaude } from './claude-runner.mjs';
 import { normalizingOnEvent } from './engines/claude-events.mjs';
-import { resolveModelEnv, resolveModelCost, catalogHasModel } from './config.mjs';
+import { resolveModelEnv, resolveModelCost, catalogHasModel, estimateCost, isPriceableUsage } from './config.mjs';
 import { titleModel as storedTitleModel } from './settings.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
+import { roleModelFor } from './model-roles.mjs';
 import { withRecoveryRetry } from './recovery-backoff.mjs';
 import { bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
@@ -19,13 +20,25 @@ const CLI_DEFAULT_LABEL = 'the CLI default model';
 // Whether a catalog id can be spawned right now — the Models list's ready/needs-sign-in
 // state (config.mjs composeCatalog): a bridged entry needs its provider signed in, an
 // unbridged one (the unshadowed built-in) is always ready. Never throws.
-function modelReady(id) {
+export function modelReady(id) {
   try {
     const bridged = findBridgedEntry(id);
     return !bridged || providerReadiness(bridged.upstream).ok;
   } catch { return false; }
 }
-const MAX_LEN = 70;
+const MAX_LEN = 60;
+
+/** Cap `text` at `max` chars: cut at the last space at or after max/2, else hard; drop trailing punctuation. The
+ *  window is max+1 so a word ending exactly at the cap survives. */
+export function clipTitle(text, max) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max + 1);
+  const sp = cut.lastIndexOf(' ');
+  return (sp >= Math.floor(max / 2) ? cut.slice(0, sp) : t.slice(0, max)).replace(/[\s,;:–—-]+$/, '').trim();
+}
+
+const roleTitleModel = () => roleModelFor('claude', 'titleModel')?.model || '';
 
 /**
  * Which model writes a title, decided PER CALL (#422) — nothing is captured at
@@ -35,19 +48,20 @@ const MAX_LEN = 70;
  *                                verbatim, no catalog check: an operator escape hatch
  *   3. the stored `titleModel` — only while it is still a catalog member; a stale
  *                                id (plugin removed, entry deleted) is reported and skipped
- *   4. `opts.runModel`         — the model of the run / chat that asked for the title,
+ *   4. the quick model role    — modelRoles.claude.quick (D3), only while it is a catalog member
+ *   5. `opts.runModel`         — the model of the run / chat that asked for the title,
  *                                which is what makes an install with NO first-party
  *                                model produce titles with zero configuration
- *   5. DEFAULT_TITLE_MODEL     — the built-in Haiku, only while it is a catalog member
+ *   6. DEFAULT_TITLE_MODEL     — the built-in Haiku, only while it is a catalog member
  *                                and ready; otherwise model null: NO --model flag, the
  *                                claude CLI's own default (a title never hinges on Haiku)
  * Pure apart from the injectable readers. Exported for tests and for the
  * settings API (describeTitleModel below).
  * @param {{model?:string, runModel?:string}} [opts]
- * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, inCatalog?:(id:string)=>boolean, ready?:(id:string)=>boolean}} [deps]
- * @returns {{model:string|null, source:'explicit'|'env'|'settings'|'run'|'builtin', stale:string|null}}
+ * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, role?:()=>string, inCatalog?:(id:string)=>boolean, ready?:(id:string)=>boolean}} [deps]
+ * @returns {{model:string|null, source:'explicit'|'env'|'settings'|'role'|'run'|'builtin', stale:string|null}}
  */
-export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
+export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, role = roleTitleModel, inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
   const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
   const explicit = str(opts.model);
   if (explicit) return { model: explicit, source: 'explicit', stale: null };
@@ -59,6 +73,8 @@ export function resolveTitleModel(opts = {}, { env = process.env, stored = store
     if (inCatalog(configured)) return { model: configured, source: 'settings', stale: null };
     stale = configured;
   }
+  const fromRole = str(role());
+  if (fromRole && inCatalog(fromRole)) return { model: fromRole, source: 'role', stale };
   const runModel = str(opts.runModel);
   if (runModel) return { model: runModel, source: 'run', stale };
   const builtin = inCatalog(DEFAULT_TITLE_MODEL) && ready(DEFAULT_TITLE_MODEL) ? DEFAULT_TITLE_MODEL : null;
@@ -93,14 +109,8 @@ export function sanitizeTitle(raw) {
   t = t.replace(/^(?:title|task)\s*[:\-]\s*/i, '');                      // strip "Title:"/"Task:" label
   t = t.replace(/^["'“”`]+|["'“”`]+$/g, '').trim();                      // strip wrapping quotes/backticks
   t = t.replace(/\s+/g, ' ').replace(/\.+$/, '').trim();                 // collapse ws, drop trailing dots
-  if (t.length > MAX_LEN) {
-    // Cut at a word boundary instead of mid-word ("…you'd li"). The window is
-    // MAX_LEN+1 so a word ending exactly at the cap survives; a boundary too
-    // close to the start (or none at all — one unbroken run) hard-slices.
-    const cut = t.slice(0, MAX_LEN + 1);
-    const sp = cut.lastIndexOf(' ');
-    t = (sp >= 30 ? cut.slice(0, sp) : t.slice(0, MAX_LEN)).replace(/[\s,;:–—-]+$/, '');
-  }
+  // Cut at a word boundary instead of mid-word ("…you'd li"); one unbroken run hard-slices.
+  t = clipTitle(t, MAX_LEN);
   return t.trim();
 }
 
@@ -170,27 +180,31 @@ export async function generateTitle(prompt, opts = {}, deps) {
 }
 
 /**
- * One title spawn on `model` (undefined → no --model flag). Resolves `{title}`
- * on a usable title, `{aborted:true}` on a stop, `{error}` on an empty reply or
- * a refusal, and `{error, thrown:true}` when the call itself failed. Never
- * throws; every priced result is booked through opts.onCost as `model`. `engine`: null for Claude.
+ * One tool-less helper text call (a run/chat title, an Ask next-prompt suggestion) on `model`
+ * (undefined → no --model flag). Resolves the model's raw text. Throws when the call itself fails
+ * (an AbortError on a stop). Every priced result — a 429 retry spawns again — is booked through
+ * opts.onCost; a bridged call cut before its `result` books its upstream's figure before rethrowing.
+ * `engine`: null for Claude.
+ * @returns {Promise<string>}
  */
-async function titleAttempt(text, model, opts, engine = null) {
+export async function auxTextCall({ systemPrompt, prompt, model, engine = null }, opts = {}) {
   try {
     // A provider 429 (a shared free pool) is retried with the recovery backoff;
     // nothing else is — a title is cosmetic, and an unspawnable CLI (stamped
     // network) would only make the run wait for it.
-    const { text: out } = await withRecoveryRetry(() => (opts.run || runClaude)({
+    const { text } = await withRecoveryRetry(() => (opts.run || runClaude)({
       cwd: opts.cwd || process.cwd(),
-      systemPrompt: SYSTEM,
-      prompt: `Write the title for this task:\n\n${text.slice(0, 4000)}`,
+      systemPrompt,
+      prompt,
       model,
       // Aux calls keep their model choice but still route through the catalog's
       // env (design §4.8) — a global entry matching this id carries its routing
       // env everywhere the id is used.
       modelEnv: engine ? undefined : resolveModelEnv(model, { tag: opts.bridgeTag || undefined }),   // tag: read a bridged model's upstream cost back
-      ...(engine ? { engine, sandbox: 'read-only' } : {}),
-      effort: (engine && typeof opts.effort === 'string' && opts.effort) || AUX_EFFORT,
+      // A chat's helper call (its title, its next-prompt suggestion) runs locked down exactly as the chat does, with no MCP
+      // server at all (askLockdown, no --mcp-config): the engine's own tools are off, so it needs no read-only mode.
+      ...(engine ? { engine, sandbox: 'read-only', ...(opts.askLockdown ? { askLockdown: true, envScrub: true } : {}) } : {}),
+      effort: opts.effortOverride || (engine && typeof opts.effort === 'string' && opts.effort) || AUX_EFFORT,
       permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
       signal: opts.signal,
@@ -219,26 +233,50 @@ async function titleAttempt(text, model, opts, engine = null) {
       mcpConfigPath: opts.mcpConfigPath,
       // Every priced result is real spend (a 429 retry spawns again): hand it to the caller to book.
       onEvent: normalizingOnEvent((e) => {
+        // A locked-down chat's helper call on an engine that reports no cost: priced from its tokens with the chat's
+        // rates (opts.rates, ask/chat-price.mjs), as the chat's own turns are.
+        if (e?.type === 'result' && e.costUsd == null && engine && opts.rates && isPriceableUsage(e.usage)) e = { ...e, costUsd: estimateCost(e.usage, opts.rates) };
         if (e?.type !== 'result' || e.costUsd == null || typeof opts.onCost !== 'function') return;
         const usage = e.usage ?? null;
         const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;   // a bridged model: the upstream's own figure wins
         if (up) forgetBridgeTag(opts.bridgeTag);
         const c = up ? up.costUsd : resolveModelCost(model, Number(e.costUsd), usage);
-        try { opts.onCost({ costUsd: Number.isFinite(c) ? c : Number(e.costUsd), usage, model: model || null }); } catch { /* a sink never fails the title */ }
+        try { opts.onCost({ costUsd: Number.isFinite(c) ? c : Number(e.costUsd), usage, model: model || null }); } catch { /* a sink never fails the call */ }
       }),
     }), { classes: ['rate_limit'], signal: opts.signal });
+    return typeof text === 'string' ? text : '';
+  } catch (err) {
+    // A bridged call cut before its `result` (a stop) was still billed by its upstream: book that figure.
+    const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;
+    if (up && typeof opts.onCost === 'function') {
+      forgetBridgeTag(opts.bridgeTag);
+      try { opts.onCost({ costUsd: up.costUsd, usage: null, model: model || null }); } catch { /* a sink never fails the call */ }
+    }
+    throw err;
+  }
+}
+
+/**
+ * One title spawn on `model` (undefined → no --model flag). Resolves `{title}`
+ * on a usable title, `{aborted:true}` on a stop, `{error}` on an empty reply or
+ * a refusal, and `{error, thrown:true}` when the call itself failed. Never
+ * throws; every priced result is booked through opts.onCost as `model`. `engine`: null for Claude.
+ */
+async function titleAttempt(text, model, opts, engine = null) {
+  try {
+    const out = await auxTextCall({
+      systemPrompt: SYSTEM,
+      prompt: `Write the title for this task:\n\n${text.slice(0, 4000)}`,
+      model, engine,
+    }, opts);
     const title = sanitizeTitle(out);
     // An empty reply or a refusal is the model answering, not the model missing: not `thrown`, never retried.
     if (!title) return { error: new Error('the model returned an empty reply') };
     if (isRefusalTitle(title)) return { error: new Error(`the model did not write a title: ${title.slice(0, 120)}`) };
+    // D35: a mock engine's marker ("[mock] planner-plan: no MOCK_OUT given") is never a title; '' keeps the one the run has.
+    if (/^\[mock\]/i.test(title)) return { error: new Error(`the engine returned a mock marker, not a title: ${title.slice(0, 120)}`) };
     return { title };
   } catch (err) {
-    // A bridged title call cut before its `result` (a stop) was still billed by its upstream: book that figure.
-    const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;
-    if (up && typeof opts.onCost === 'function') {
-      forgetBridgeTag(opts.bridgeTag);
-      try { opts.onCost({ costUsd: up.costUsd, usage: null, model: model || null }); } catch { /* a sink never fails the title */ }
-    }
     if (err && err.name === 'AbortError') return { aborted: true }; // run was stopped — caller keeps provisional
     return { error: err instanceof Error ? err : new Error(String(err)), thrown: true };
   }

@@ -126,6 +126,8 @@ test('glance state and copy for every status', () => {
   assert.equal(glanceCopy({ status: 'paused' }, { pill: { text: 'Paused · usage limit' }, limitNote: 'resets 18:00' }).sub, 'Usage limit · resets 18:00', 'a usage-limit pause names its reset instead of "resume to continue"');
   assert.equal(glanceCopy({ status: 'paused' }, { pill: { text: 'Paused · usage limit' } }).sub, 'Usage limit · resume to continue', 'no note: unchanged');
   assert.equal(glanceCopy({ status: 'pausing' }).title, 'Pausing');
+  assert.equal(glanceCopy({ status: 'paused', resumePending: true }, { pill: { text: 'Resuming…' } }).title, 'Resuming', 'a Resume in flight');
+  assert.equal(glanceCopy({ status: 'interrupted', resumePending: true }).title, 'Resuming', 'an interrupted copy too');
   assert.equal(earlierRows({ stepper, steps: [row('n_plan', 1, 0, 1, 'paused')] }).length, 0, 'a paused step did not complete');
   const failed = glanceCopy({ status: 'error', stepper, pauseDetail: 'ENOENT: no such file\n  at x', steps: [row('n_impl', 1, 0, 1, 'error')] });
   assert.deepEqual([failed.title, failed.sub], ['Failed', 'Step: Implement · ENOENT: no such file'], 'one line of the error');
@@ -134,11 +136,13 @@ test('glance state and copy for every status', () => {
   // A finished run: where the work stands NOW (the pull request outranks the review), one glyph each.
   const fin = (o) => { const c = glanceCopy({ status: 'done' }, o); return [c.title, c.icon]; };
   assert.deepEqual(fin({ pr: 'MERGED' }), ['Merged', 'merged']);
+  assert.equal(glanceCopy({ status: 'done' }, { pr: 'IN_BASE' }).sub, 'Its work is already in the base branch', 'D8: no PR of its own, already in its base');
+  assert.deepEqual(fin({ pr: 'IN_BASE' }), ['Merged', 'merged']);
   assert.deepEqual(fin({ pr: 'OPEN', checks: 3 }), ['In review', 'pr-open']);
   assert.deepEqual(fin({ pr: 'CLOSED' }), ['PR closed', 'pr-closed']);
   assert.deepEqual(fin({ pr: 'NONE', checks: 0, files: 2 }), ['Ready to ship', 'ship']);
   assert.deepEqual(fin({ pr: 'NONE', checks: 2, files: 2 }), ['Ready to review', 'review']);
-  assert.equal(glanceCopy({ status: 'done' }, { checks: 2 }).sub, '2 things to check before you open a pull request');
+  assert.equal(glanceCopy({ status: 'done' }, { checks: 2 }).sub, '2 things to check before you create a PR');
   assert.deepEqual(fin({ files: 0, checks: 0 }), ['Finished', 'finished'], 'nothing changed: nothing to ship');
   assert.equal(glanceCopy({ status: 'done' }, { pr: 'PENDING', checks: 0 }).sub, 'Checking for a pull request…', 'never guesses while the lookup runs');
   assert.deepEqual(fin({ pr: 'UNAVAILABLE', checks: 0, files: 2 }), ['Finished', 'finished'], 'no gh: never "Ready to ship"');
@@ -178,4 +182,35 @@ test('DOM: trail stacks and the orb carries its state class', () => {
   assert.match(orb.getAttribute('class'), /rg-orb-ask/);
   assert.ok(orb.querySelector('path.rg-orb-mark') && orb.querySelector('circle.rg-orb-dot'), 'a drawn hook and dot, not a font glyph');
   assert.equal(orb.querySelector('text'), null);
+});
+
+test('glanceCopy: the progress option replaces the step line while running or waiting (P5)', () => {
+  const progress = { text: 'Build · task 2 of 4' };
+  const run = glanceCopy(loopedBranched, { progress });
+  assert.deepEqual([run.title, run.sub], ['Running', 'Build · task 2 of 4'], 'the P5 line beats "Steps: …"');
+  const ask = glanceCopy({ status: 'running', stepper, steps: [], pendingQuestion: { kind: 'questions', nodeId: 'n_clarify' } }, { progress });
+  assert.deepEqual([ask.state, ask.title, ask.sub], ['ask', 'Waiting for you', 'Build · task 2 of 4']);
+  const wf = glanceCopy({ status: 'running', stepper, steps: [], pendingQuestion: { kind: 'workflow' } }, { progress });
+  assert.equal(wf.sub, 'Build · task 2 of 4');
+  // Nothing runs and the preflight is open: setting up outranks the progress line.
+  const pre = glanceCopy({ status: 'running', stepper, steps: [{ executionId: 'x:preflight:1', status: 'start' }], setupStage: 'worktree' }, { progress });
+  assert.equal(pre.sub, 'Preflight · worktree');
+  // No text, no change; terminal states are untouched.
+  assert.equal(glanceCopy(loopedBranched, { progress: { text: '' } }).sub, 'Steps: Implement and Docs');
+  assert.equal(glanceCopy({ status: 'error', stepper, steps: [] }, { progress }).title, 'Failed');
+  assert.equal(glanceCopy({ status: 'paused' }, { progress, pill: { text: 'Paused' } }).sub, 'Resume to continue where it left off');
+});
+
+test('glanceCopy: role reviews read "Running" over "Plan · role reviews" (spec §4a)', () => {
+  const g = glanceCopy(loopedBranched, { progress: { text: 'Plan · role reviews' } });
+  assert.deepEqual([g.title, g.sub], ['Running', 'Plan · role reviews']);
+});
+
+test('glanceCopy: a stopped or done run ignores the progress option (P5)', () => {
+  const progress = { text: 'Build · task 2 of 4' };
+  for (const status of ['stopped', 'done']) {
+    const without = glanceCopy({ status, stepper, steps: [] });
+    const withProg = glanceCopy({ status, stepper, steps: [] }, { progress });
+    assert.deepEqual([withProg.state, withProg.title, withProg.sub], [without.state, without.title, without.sub], status);
+  }
 });

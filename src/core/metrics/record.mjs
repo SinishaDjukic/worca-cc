@@ -11,10 +11,13 @@ import { readPrState } from '../artifacts.mjs';
 import { RESULTS_FILE } from '../results.mjs';
 import { UI_PHASE } from '../../shared/graph/manifest.mjs';
 import {
-  projectSlug, gitUserName, gitUserEmail, resolveProjectSink, resolveWorkspaceSink, writeOutbox, scheduleFlush as realScheduleFlush,
+  projectSlug, folderProjectSlug, gitUserName, gitUserEmail, resolveProjectSink, resolveWorkspaceSink, writeOutbox, scheduleFlush as realScheduleFlush,
 } from './sync.mjs';
 import { writeRunLedger } from './ledger.mjs';
+import { teamOverHttps, teamRepoState, teamRunDiscover } from '../git-free/team-repo.mjs';
 import { readPolicyState } from '../policy/state.mjs';
+import { readRunTags } from '../run-tags-store.mjs';
+import { normaliseTags, parseTag } from '../../shared/run-tags.mjs';
 
 export const RECORD_VERSION = 1;
 export const TEXT_MAX = 200;
@@ -28,8 +31,9 @@ export const RECORD_FIELDS = Object.freeze([
   'workflow', 'target', 'title', 'source',
   'cost', 'agents', 'steps', 'cycles', 'interventions',
   'pr', 'git', 'actor',
-  // `policy` (team-policy design §10) is an OPTIONAL trailing key: present only on runs that
-  // saw a policy, so policy-less records keep exactly this key list. Readers ignore it.
+  // `tags` (run tags) and `policy` (team-policy design §10) are OPTIONAL trailing keys: `tags` only
+  // on runs with tags, `policy` only on runs that saw a policy, so other records keep exactly this
+  // key list. Readers ignore them.
 ]);
 
 const RESULT_OF = Object.freeze({ done: 'done', error: 'failed', stopped: 'stopped' });
@@ -237,10 +241,19 @@ export function buildRunRecord(snap, { attribution = 'git-user', now = new Date(
     // Additive: a stable, host-neutral key for the person (personKey of the git email), so the
     // Timeline can match a run's actor to the author of a pull request made outside Worca.
     ...(attribution !== 'none' && PERSON_KEY_RE.test(String(snap.actorKey || '')) ? { actorKey: snap.actorKey } : {}),
+    // Present ONLY on runs with tags: tag-less records stay byte-identical to v1. Not gated on
+    // attribution — tags describe the work, not the person (clarify: always include).
+    ...((t) => (t ? { tags: t } : {}))(buildTags(snap.tags)),
     // Present ONLY on runs that saw a policy: records of policy-less runs stay byte-identical to v1.
     ...((p) => (p ? { policy: p } : {}))(buildPolicy(snap.policy, attribution)),
     ...((h) => (h ? { human: h } : {}))(buildHuman(agentSteps, snap.humanHours)),
   };
+}
+
+/** `tags` (run tags, additive): the run's normalised tags at its terminal hook; null when none. */
+function buildTags(list) {
+  const tags = normaliseTags(Array.isArray(list) ? list.filter((t) => typeof t === 'string' && !parseTag(t).error) : []).tags;
+  return tags.length ? tags : null;
 }
 
 const TERMINAL = new Set(['done', 'error', 'stopped']);
@@ -312,7 +325,14 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     ? harness.members
     : [{ projectKey: null, projectDir: harness.projectDir }];
   const slugOf = new Map();
-  for (const m of members) slugOf.set(m.projectKey ?? m.projectDir, (await projectSlug(m.projectDir)).slug);
+  // P5: a workspace's Folder member is named by its folder, never by git (a folder nested in a repository is not it).
+  // P6: unless its team repository is known over HTTPS (a .git/config origin without git, or a typed repo): owner/repo then.
+  const overHttps = (dir) => teamOverHttps(dir) && ['origin', 'typed'].includes(teamRepoState(dir).kind);
+  for (const m of members) {
+    slugOf.set(m.projectKey ?? m.projectDir, m.workMode === 'folder' && !overHttps(m.projectDir) ? folderProjectSlug(m.projectDir) : (await projectSlug(m.projectDir)).slug);
+  }
+  // P5: the actor's git identity comes from a Git checkout — a workspace's Folder primary is no repository of its own.
+  const idDir = harness.isWorkspace ? (members.find((m) => m.workMode !== 'folder')?.projectDir ?? null) : harness.projectDir;
   const results = await readResults(harness.pipeline?.dir);
   const summary = results?.summary || null;
   const branch = st.branch || null; // mirrors the primary member in workspace runs (plan §1)
@@ -360,6 +380,7 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     target,
     title: await settledTitle(harness),
     source: readSource(runId),
+    tags: (() => { try { return readRunTags(runId); } catch { return []; } })(),
     pr: (() => { try { return readPrState(runId); } catch { return null; } })(),
     prBase: branch?.source ?? null,
     git: {
@@ -380,9 +401,9 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
       : harness.pauseReason ? { reason: harness.pauseReason, detail: harness.pauseDetail ?? null } : null,
     // The person who started the run (identity.mjs) when one is known; else, as before, the
     // checkout's git user (a local install, the CLI). attribution:'none' still drops both.
-    actor: actorForRecord(harness.state && harness.state.startedBy) ?? await gitUserName(harness.projectDir),
+    actor: actorForRecord(harness.state && harness.state.startedBy) ?? (idDir ? await gitUserName(idDir) : null),
     // Only for the git user: a person named by startedBy (identity.mjs) has no email here.
-    actorKey: actorForRecord(harness.state && harness.state.startedBy) ? null : personKey(await gitUserEmail(harness.projectDir)),
+    actorKey: actorForRecord(harness.state && harness.state.startedBy) ? null : personKey(idDir ? await gitUserEmail(idDir) : null),
     // The run's policy state (pipelines.policy_state) as the gates and the resume flow left it;
     // `unattended` is the harness's own auto flag, which the record needs even when nothing else
     // was written (a --yes run that stayed under every cap still carries no state row).
@@ -438,7 +459,7 @@ async function recordImpl(harness, { status, error = null, now = new Date() }) {
   // the terminal `done` event must never wait on ls-remote/fetch.
   const sink = harness.isWorkspace
     ? await resolveWorkspaceSink(harness.workspace?.id, { discover: 'if-missing' })
-    : await resolveProjectSink(harness.projectDir, { discover: 'if-missing' });
+    : await resolveProjectSink(harness.projectDir, { discover: teamRunDiscover(harness.workMode || 'git', harness.projectDir) });
   if (!sink.ok) {
     if (sink.reason === 'delegate-invalid' || sink.reason === 'home-stale' || sink.code === 'CONFIG_UNKNOWN') {
       log(harness, 'warn', `team metrics: not recorded — ${sink.detail}`);

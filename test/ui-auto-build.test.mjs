@@ -68,3 +68,19 @@ test('auto build: the trace advances on its timing and stop() cancels; assembly 
     } },
   ]);
 });
+
+test('auto build on a canvas well: the cards land in reading order (handle.order) — a canvas view has no flow layout', () => {
+  const h = renderAutoProposal(proposalFor(), { doc, canvas: true });
+  assert.equal(h.graph.flowLayout(), null, 'precondition: no flow layout to read');
+  const f = fakeWin();
+  const done = []; playAssembly(h, { win: f.win, onDone: () => done.push(1) });
+  const hidden = () => h.order.filter((id) => h.graph.nodeEl(id).classList.contains('is-hid')).length;
+  assert.equal(hidden(), h.order.length, 'everything starts hidden');
+  f.run(0);
+  assert.equal(hidden(), h.order.length - 1);
+  assert.ok(!h.graph.nodeEl(h.order[0]).classList.contains('is-hid'), 'the leftmost card lands first');
+  f.run(h.order.length * 140 + 420);
+  assert.equal(hidden(), 0); assert.deepEqual(done, [1]);
+  assert.equal(h.parts.graph.querySelectorAll('.is-hid').length, 0, 'nothing stays hidden');
+  h.destroy();
+});

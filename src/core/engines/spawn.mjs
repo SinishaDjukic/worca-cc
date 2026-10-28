@@ -15,6 +15,7 @@ import { currentOwner } from '../billing.mjs';
 import { isReservedModelEnvKey } from '../model-env.mjs';
 import { worcaHome } from '../projects.mjs';
 import { isWithin } from '../fs-scope.mjs';
+import { withNoGitPath } from '../nogit-stub.mjs';
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -38,6 +39,8 @@ export function sigkillGraceMs() {
 export const SPAWN_ENV_BASE = [
   'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'TERM',
   'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+  // Worca's corporate-proxy marker (proxy-credentials.mjs CORPORATE_PROXY_VAR; a test pins the value).
+  'WORCA_CORPORATE_PROXY_URL',
   'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
 ];
 
@@ -103,6 +106,7 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   env = stripHostCredentials(env ?? process.env);
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
+  env = withNoGitPath(env);
   return { env, scrubbed: !!scrubbedEnv };
 }
 
@@ -137,23 +141,28 @@ const STDERR_DETAIL_MAX = 2000;
  * @param {string|null} o.stdin                    written then closed when non-null
  * @param {AbortSignal} [o.signal]
  * @param {boolean} [o.asAgent]                    run as WORCA_AGENT_USER when configured
- * @param {string|null} [o.stagedDir]              shared with the agent user before spawn
+ * @param {string|{dir:string, writable?:boolean}|Array|null} [o.stagedDir]  shared with the agent user before spawn
+ *                                                  (agent-user.mjs shareWithAgent)
+ * @param {((id:object) => string)|null} [o.agentHome] the HOME an agent spawn runs with instead of the agent's own
  * @param {() => void} o.cleanup                   called exactly once on every terminal path
  * @param {(e:object) => void} o.onEvent
- * @param {(line:string) => void} o.onStdoutLine   each non-empty trimmed stdout line
+ * @param {(line:string) => void|Error} o.onStdoutLine each non-empty trimmed stdout line; returning an Error
+ *   terminates the process and rejects with that error after the child closes
  * @param {() => string} o.stdoutErrorDetail       the error text the adapter saw on stdout
  * @param {(msg:string) => string|null} o.classify the engine's classifyError
  * @param {((text:string) => string)|null} [o.redactText] the adapter's secret redactor: applied to each
  *   buffered stderr line and to the exit detail before the tail cut, which could leave a piece of a secret
  *   that no value matches
+ * @param {(line:string) => void} [o.onStderrLine] each raw stderr line, before it is classified or streamed (an
+ *   adapter that must stop the child on a line, e.g. Gemini CLI reporting that it ignored worca's policy file)
  * @param {(line:string) => boolean} [o.isBenignStderr] the engine's known-benign stderr notices:
  *   still streamed, but never classified and never the exit detail while other evidence exists
  * @param {(err:Error, prefix:string) => Error} o.spawnError
  * @param {(code:number) => any} o.onDone
  */
 export function superviseSpawn(o) {
-  const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, cleanup, onEvent,
-    onStdoutLine, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
+  const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
+    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
@@ -164,8 +173,10 @@ export function superviseSpawn(o) {
       let exe = file;
       let argv = args;
       if (agentId) {
-        if (stagedDir) shareWithAgent(stagedDir, agentId);
-        ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId));
+        // Every folder the server staged for this spawn, opened to the agent's group up to worca's tmp.
+        // A `{dir, writable}` entry is one the agent also writes into (Copilot's usage file).
+        for (const d of [stagedDir].flat()) if (d) shareWithAgent(typeof d === 'string' ? d : d.dir, agentId, { stopAt: join(worcaHome(), 'tmp'), writable: typeof d === 'object' && d.writable === true });
+        ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
       }
       child = spawn(exe, argv, {
         cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
@@ -187,18 +198,24 @@ export function superviseSpawn(o) {
     // Strongest recovery class seen across ALL stderr lines — classified at
     // receive time, so it survives both the rolling trim and the tail cap.
     let stderrClass = null;
+    let stdoutFatalError = null;
     let settled = false;
+    let killTimer = null;
+    let terminationStarted = false;
 
-    const onAbort = () => {
+    const terminateChild = () => {
+      if (terminationStarted) return;
+      terminationStarted = true;
       try {
         child.kill('SIGTERM');
       } catch {
         /* ignore */
       }
       // Escalate if it ignores SIGTERM.
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         // Only a sudo still running holds the group: after it exits the pid may be reused.
         const stuck = child.exitCode === null && child.signalCode === null;
+        if (!stuck) return;
         try {
           child.kill('SIGKILL');
         } catch {
@@ -207,6 +224,7 @@ export function superviseSpawn(o) {
         if (agentId && stuck) killAgentGroup(child.pid, agentId);
       }, sigkillGraceMs()).unref?.();
     };
+    const onAbort = () => terminateChild();
     if (signal) {
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
@@ -216,6 +234,7 @@ export function superviseSpawn(o) {
       if (settled) return;
       settled = true;
       if (signal) signal.removeEventListener?.('abort', onAbort);
+      if (killTimer) clearTimeout(killTimer);
       cleanup();
       fn(arg);
     };
@@ -223,7 +242,12 @@ export function superviseSpawn(o) {
     const rl = createInterface({ input: child.stdout });
     rl.on('line', (line) => {
       const trimmed = line.trim();
-      if (trimmed) onStdoutLine(trimmed);
+      if (!trimmed || stdoutFatalError) return;
+      const fatal = onStdoutLine(trimmed);
+      if (fatal instanceof Error) {
+        stdoutFatalError = fatal;
+        terminateChild();
+      }
     });
 
     // stderr is a FIRST-CLASS log stream, not just failure evidence. The CLI puts
@@ -239,6 +263,7 @@ export function superviseSpawn(o) {
     // `stream:'err'` tags the origin channel; the orchestrator decides the level.
     const rlErr = createInterface({ input: child.stderr });
     rlErr.on('line', (line) => {
+      if (onStderrLine) onStderrLine(line);
       // Classify BEFORE buffering: the class must see every line ever printed —
       // an early 401 or session-limit notice followed by hundreds of KB of MCP
       // chatter would otherwise scroll past both the trim and the tail cap.
@@ -252,7 +277,7 @@ export function superviseSpawn(o) {
       const text = line.trim();
       // A pause/stop SIGTERMs the child: whatever it writes while dying (and the
       // torn fragment readline flushes at stream end) is not run output.
-      if (text && !signal?.aborted) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
+      if (text && !signal?.aborted && !stdoutFatalError) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
     });
 
     child.on('error', (err) => {
@@ -266,6 +291,10 @@ export function superviseSpawn(o) {
         const err = new Error('aborted');
         err.name = 'AbortError';
         finish(rejectP, err);
+        return;
+      }
+      if (stdoutFatalError) {
+        finish(rejectP, stdoutFatalError);
         return;
       }
       if (code !== 0) {

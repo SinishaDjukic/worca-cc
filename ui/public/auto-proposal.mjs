@@ -1,9 +1,11 @@
 // ui/public/auto-proposal.mjs
 // The ONE renderer of an Auto proposal body (spec §7.4 + the 2026-09-05 mockup, section D "one body, two hosts").
 // Hosts: the run page's question panel (Part A) and the chat card (Part B). Pure DOM: `doc` injected, no fetch,
-// no listeners except the name editor's own; the host owns buttons and I/O. Reads NO agent key (D23) — every
-// label, colour and icon comes from the manifest.
+// no listeners except the name editor's own (and, with `canvas`, the graph well's pan / zoom / nav —
+// graph/proposal-host.mjs); the host owns buttons and I/O. Reads NO agent key (D23) — every label, colour and icon
+// comes from the manifest.
 import { mountStaticGraph } from './graph/view.mjs';
+import { mountProposalGraph } from './graph/proposal-host.mjs';
 import { manifestPortsFn, manifestTemplate, manifestAgents } from './graph/run-decor.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
 
@@ -70,13 +72,20 @@ const agentOrderOf = (proposal) => (Array.isArray(proposal.order) && proposal.or
 /**
  * @param {object} proposal  the `workflow` question payload (buildProposal)
  * @param {{doc?:Document, width?:number, order?:readonly string[], editableName?:boolean, costUsd?:number, rounds?:number,
- *          scale?:number, pick?:boolean, onName?:(name:string)=>void}} [opts]
- * @returns {{el:HTMLElement, parts:Record<string,HTMLElement|null>, graph:object|null, getName():string, setName(v:string):void,
- *            setNodeTunables(id:string, sel:object):void, relayout(width?:number):void, destroy():void}}
+ *          scale?:number, pick?:boolean, onName?:(name:string)=>void, canvas?:boolean, chips?:boolean,
+ *          descriptionOf?:((key:string)=>string)|null, onExpand?:(()=>unknown)|null, raf?:Function|null,
+ *          viewport?:Function|null}} [opts]
+ *   `canvas` (the chat cards): the Workflows rendering in a pannable well (graph/proposal-host.mjs) — `width` and
+ *   `scale` do not apply. `chips: false` drops the chip band (a build card: the canvas card, its model in the label
+ *   row). `descriptionOf` fills the description footers; `onExpand` adds the well's Expand button.
+ * @returns {{el:HTMLElement, parts:Record<string,HTMLElement|null>, graph:object|null, well:object|null, order:string[],
+ *            getName():string, setName(v:string):void, setNodeTunables(id:string, sel:object):void,
+ *            setDescriptions?(of:(key:string)=>string):boolean, relayout(width?:number):void, destroy():void}}
  */
 export function renderAutoProposal(proposal, {
   doc = globalThis.document, width = 0, order = AUTO_PROPOSAL_ORDER_CARD, editableName = true,
   costUsd = null, rounds = null, scale = FLOW_SCALE, pick = false, onName = null,
+  canvas = false, chips = true, descriptionOf = null, onExpand = null, raf = null, viewport = null,
 } = {}) {
   const p = proposal || {};
   const state = { name: String(p.name || ''), nodes: {} };     // nodes: host-applied tunable edits, keyed by node id
@@ -114,23 +123,34 @@ export function renderAutoProposal(proposal, {
   const fpText = fingerprintLine(p);
   if (fpText) { const fp = h(doc, 'div', 'ask-wfcard-fp'); fp.title = `fingerprint ${fpText}`; fp.appendChild(h(doc, 'span', 'k', 'fingerprint')); fp.appendChild(doc.createTextNode(fpText)); parts.fp = fp; } else parts.fp = null;
 
-  // ---- graph: the shared renderer, flow layout, chat scale, chip bands (Tasks 1-3)
+  // ---- graph: the shared renderer with chip bands (unless `chips` is off). The default (the run page's question
+  // panel) is the flow layout at chat scale; `canvas` (the chat cards) is the Workflows rendering in a pannable well.
   const loops = proposalLoops(p.manifest);
   const m = p.manifest || { graph: { nodes: [], wires: [] } };
   const graphHost = h(doc, 'div', 'ask-wfcard-graph');
-  graphHost.setAttribute('role', 'img');
+  graphHost.setAttribute('role', canvas ? 'group' : 'img');   // a well holds buttons (its nav, pickable chips)
   const labelOf = (id) => (m.graph?.nodes || []).find((n) => n.id === id)?.label || id;
   let bands = proposalBands(p, state.nodes, { pick });
+  const band = chips ? (node) => bands[node.id] || null : null;
   let graph = null;
+  let well = null;
   if ((m.graph?.nodes || []).length) {
-    graph = mountStaticGraph(graphHost, manifestTemplate(m), {
-      doc, portsFn: manifestPortsFn(m), agents: manifestAgents(m), width, scale, layout: 'flow',
-      band: (node) => bands[node.id] || null, order: agentOrderOf(p),
-    });
+    if (canvas) {
+      // An Auto proposal was laid out without the footer and the band this well draws: restack (proposal-host.mjs).
+      well = mountProposalGraph(graphHost, manifestTemplate(m), {
+        doc, raf, viewport, portsFn: manifestPortsFn(m), agents: manifestAgents(m), band, restack: chips, descriptionOf, onExpand,
+      });
+      graph = well.view;
+    } else {
+      graph = mountStaticGraph(graphHost, manifestTemplate(m), {
+        doc, portsFn: manifestPortsFn(m), agents: manifestAgents(m), width, scale, layout: 'flow',
+        band, order: agentOrderOf(p),
+      });
+    }
   }
   // Accessibility (mockup F): the label names EVERY card in placement order — gates included — so it is read from
   // the layout the view actually produced; `p.order` is agents-only and would drop the OR valve.
-  const placed = graph ? graph.flowLayout().order : (m.graph?.nodes || []).map((n) => n.id);
+  const placed = well ? well.order : graph ? graph.flowLayout().order : (m.graph?.nodes || []).map((n) => n.id);
   graphHost.setAttribute('aria-label', `Workflow graph: ${placed.map(labelOf).join(' → ')}${loops.length ? `; loops: ${loops.map((l) => `${l.fromLabel} → ${l.toLabel} max ${l.maxCycles}`).join(', ')}` : ''}`);
   parts.graph = graphHost;
 
@@ -145,7 +165,7 @@ export function renderAutoProposal(proposal, {
   function paintMatch() {
     matchText.replaceChildren();
     if (p.match) { matchText.append(doc.createTextNode('Same as your saved workflow '), h(doc, 'b', null, `"${p.match.name}"`)); }
-    else { matchText.append(doc.createTextNode('No saved workflow has this shape — will be saved as '), h(doc, 'b', null, `"${state.name}"`)); }
+    else { matchText.append(doc.createTextNode('No saved workflow has this shape. It will be saved as '), h(doc, 'b', null, `"${state.name}"`)); }
   }
   match.append(icon(doc, p.match ? ICO.check : ICO.search), matchText); paintMatch(); parts.match = match;
   const warnBox = h(doc, 'div', 'ask-wfcard-warnings');
@@ -160,7 +180,7 @@ export function renderAutoProposal(proposal, {
   for (const key of order) if (parts[key]) el.appendChild(parts[key]);
 
   return {
-    el, parts, graph,
+    el, parts, graph, well, order: placed,
     getName: () => state.name,
     setName: (v) => commit(v),
     /** A tunable edit from the host's table: repaint that node's band (no geometry change). */
@@ -169,10 +189,19 @@ export function renderAutoProposal(proposal, {
       bands = proposalBands(p, state.nodes, { pick });
       if (graph) graph.setBands(bands);
     },
+    // A canvas well's description footers: ask-panel relayoutCards hands it the library's text once it loads.
+    ...(well ? { setDescriptions: (of) => (well ? well.setDescriptions(of) : false) } : {}),
     /** Re-measure after the host attached `el` (a detached host has clientWidth 0 ⇒ the 702 default was used).
      *  A host built with an explicit `width` keeps it as the last fallback, so a bare
-     *  relayout() on a still-unattached host cannot snap back to that default. */
-    relayout(w = 0) { if (graph) { const lay = graph.relayout(w || graphHost.clientWidth || width || 0); graphHost.style.height = `${lay.height}px`; } },
-    destroy() { if (graph) { graph.destroy(); graph = null; } },
+     *  relayout() on a still-unattached host cannot snap back to that default. A canvas well never moves a node: it
+     *  places its view again, or keeps a user's pan inside the well. */
+    relayout(w = 0) {
+      if (well) { well.relayout(); return; }
+      if (graph) { const lay = graph.relayout(w || graphHost.clientWidth || width || 0); graphHost.style.height = `${lay.height}px`; }
+    },
+    destroy() {
+      if (well) { well.destroy(); well = null; graph = null; return; }
+      if (graph) { graph.destroy(); graph = null; }
+    },
   };
 }

@@ -11,6 +11,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { pressEscape } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -110,7 +111,7 @@ test('Team policy page: the Plugins tab lists what the policy expects and instal
   const row = doc.querySelector('#tp-sec-plugins tr[data-name="acme-jira"]');
   assert.match(row.textContent, /expected by acme\/gateway · from acme/);
   assert.match(row.textContent, /≥ 1.2.0/);
-  assert.equal(row.querySelector('.badge.amber').textContent, 'not installed');
+  assert.equal(row.querySelector('.badge.grey').textContent, 'not installed');
   assert.equal(row.querySelector('.pl-policy-install').dataset.marketplace, 'acme');
   assert.ok(doc.querySelector('#tp-sec-plugins .pl-policy-setup'), 'Set up… opens the checklist');
   assert.equal(doc.querySelector('#tp-sec-plugins .card-head .pl-policy-all').textContent, 'Install all…', 'the fixture has one missing plugin');
@@ -250,6 +251,25 @@ test('Team policy page: a publish rejection is printed verbatim under the bar', 
   assert.equal(doc.querySelector('#tp-body .tp-head .tp-publish').disabled, false, 'Publish is usable again after a rejection');
 });
 
+test('Team policy page: Publish without git for a home off GitHub shows the Needs git chip on the form\'s message line', async () => {
+  const { window, doc, go, settle } = await boot({
+    fetchHandler: (u, opts) => (u === '/api/policy' && opts.method === 'PUT'
+      ? json({ error: 'git is not installed on this machine', code: 'GIT_MISSING' }, 409) : null),
+  });
+  await go('team-policy');
+  await settle();
+  doc.querySelector('#tp-body .tp-head .tp-edit').click();
+  await settle();
+  const editor = doc.querySelector('#tp-body .tp-editor');
+  editor.querySelector('.tp-title').value = 'Renamed';
+  editor.querySelector('.tp-title').dispatchEvent(new window.Event('input', { bubbles: true }));
+  await settle();
+  doc.querySelector('#tp-body .tp-head .tp-publish').click();
+  await settle(8);
+  const msg = editor.querySelector('.tp-msg');
+  assert.deepEqual([msg.className, msg.querySelector('.pl-needs-git')?.className, msg.textContent], ['form-msg tp-msg', 'badge waiting pl-needs-git', 'Needs git']);
+});
+
 test('Project page: "Set up team policy…" opens the dialog; the follow mode posts the marker body', async () => {
   const posts = [];
   const { doc, go, settle } = await boot({
@@ -279,12 +299,36 @@ test('Project page: "Set up team policy…" opens the dialog; the follow mode po
   follow.dispatchEvent(new window.Event('change', { bubbles: true }));
   await settle();
   assert.equal(modal.querySelector('.tp-follow-target').value, 'acme/gateway');
-  assert.equal(modal.querySelector('.tp-enable-submit').textContent, 'Create marker and follow');
+  assert.equal(modal.querySelector('.tp-enable-submit').textContent, 'Create and follow');
   modal.querySelector('.tp-enable-submit').click();
   await settle(6);
   assert.equal(posts.length, 1);
   assert.match(posts[0].url, /\/api\/projects\/billing-00000002\/policy\/enable$/);
   assert.deepEqual(posts[0].body, { mode: 'follow', delegateTo: 'acme/gateway', change: false });
+});
+
+test('"Set up team policy": while the enable POST is out, Escape and the header Close do nothing; a failure lands in the dialog that stayed open', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { window, doc, go, settle } = await boot({
+    fetchHandler: (u, opts) => (u.includes('/policy/enable') && opts.method === 'POST' ? gate : null),
+  });
+  await go('projects/billing-00000002/team');
+  await settle();
+  doc.querySelector('#proj-detail .pd-team-policy .tp-enable').click();
+  await settle();
+  const modal = doc.getElementById('plugin-modal');
+  modal.querySelector('.tp-enable-submit').click();
+  await settle(2);
+  pressEscape(window);
+  doc.getElementById('plugin-modal-close').click();
+  assert.equal(modal.classList.contains('hidden'), false, 'no way out while the request is out');
+  release({ ok: false, status: 409, json: async () => ({ error: 'push rejected' }) });
+  await settle();
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(modal.querySelector('.tm-enable-err').textContent, 'push rejected');
+  pressEscape(window);
+  assert.equal(modal.classList.contains('hidden'), true, 'once it answered, Escape closes it');
 });
 
 test('Configure…: an installed plugin opens its settings pane with the policy\'s seeds filled into blank fields', async () => {
@@ -321,7 +365,7 @@ test('Configure…: an installed plugin opens its settings pane with the policy\
   assert.equal(inputs.baseUrl.dataset.seeded, '1');
   assert.equal(inputs.projectKey.value, 'OLD', 'a stored value is never overwritten');
   assert.equal(inputs.token.value, '', 'a secret is never seeded');
-  assert.match(modal.querySelector('.pl-seeded-note').textContent, /^baseUrl filled in from the team policy — Save keeps them/);
+  assert.match(modal.querySelector('.pl-seeded-note').textContent, /^baseUrl filled in from the team policy\. Save keeps them/);
 });
 
 test('New pipeline: MCP servers paints under Guardrails; an unticked membership reaches the policy notes and the run body', async () => {
@@ -337,14 +381,20 @@ test('New pipeline: MCP servers paints under Guardrails; an unticked membership 
   const CONFIG = { config: { steps: { planner: { model: 'gw-gpt' } }, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [], plugins: [], marketplaces: [] };
   let previewFails = false;
   const { doc, go, settle, window, fetchCalls } = await boot({ fetchHandler: (u) => (u === '/api/mcp/preview' ? (previewFails ? json({ error: 'boom' }, 500) : json(PREVIEW)) : u.startsWith('/api/config') ? json(CONFIG) : null) });
+  // The preview paints behind a debounce that every late load restarts: wait for the refetch, not a fixed time.
+  const previews = () => fetchCalls.filter((c) => c.url === '/api/mcp/preview').length;
+  const nextPreview = async (n) => {
+    for (let i = 0; i < 250 && previews() === n; i++) await new Promise((r) => setTimeout(r, 20));
+    await settle();
+  };
   await go('new');
   await settle();
   assert.equal(doc.getElementById('mcpRunsField').hidden, true, 'no target yet');
   const sel = doc.getElementById('projectSelect');
   sel.value = PROJECT;
+  const before = previews();
   sel.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 200));
-  await settle();
+  await nextPreview(before);
   assert.equal(doc.getElementById('mcpRunsField').hidden, false);
   assert.equal(doc.getElementById('mcpRunsLabel').textContent, '2 of 2 MCP servers');
   assert.deepEqual(JSON.parse(fetchCalls.findLast((c) => c.url === '/api/mcp/preview').opts.body), { target: { projectKey: 'gateway-00000001' }, models: ['gw-gpt'], engine: 'claude' }, 'the form\'s models set the preview\'s tool-name limit, its engine the set skills\' names');
@@ -359,9 +409,9 @@ test('New pipeline: MCP servers paints under Guardrails; an unticked membership 
   assert.ok(fetchCalls.some((c) => c.url.includes('/api/policy/notes') && new URL(c.url, 'http://x').searchParams.get('mcpOptOut') === 'billing|manual:pg'));
   // A failed preview refetch hides the control but keeps the opt-out (the server drops unknown entries).
   const repaint = async () => {
+    const n = previews();
     sel.dispatchEvent(new window.Event('change', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 200));
-    await settle();
+    await nextPreview(n);
   };
   previewFails = true;
   await repaint();
@@ -398,21 +448,21 @@ test('Running: a cost_pipeline_policy pause shows the blue banner; "Continue pas
   await settle();
   recv({ type: 'done', runId: 'r1', status: 'paused', reason: 'cost_pipeline_policy', detail: 'team cost cap reached ($10.00 >= $10.00, acme/gateway)' });
   await settle();
-  const row = () => doc.querySelector('#runs-list .runs-row[data-slot="group"][data-run-id="r1"]');
-  const word = (a) => a.querySelector('.runs-row-sub').textContent.split(' \u00b7 ')[0];
+  const row = () => doc.querySelector('#runs-list .runs-row[data-run-id="r1"]');
+  const word = (a) => a.querySelector('.runs-row-sub').textContent.split(' \u00b7 ').slice(0, 2).join(' \u00b7 ');
   assert.ok(row(), 'the paused run is listed in its project group');
   assert.equal(row().querySelector('.cost-banner'), null, 'the list row carries no cost banner');
-  const needs = doc.querySelector('#runs-list .runs-needs .runs-row[data-run-id="r1"]');
+  const needs = doc.querySelector('#runs-list .runs-sec[data-section="needs"] .runs-row[data-run-id="r1"]');
   assert.ok(needs, 'Needs you says the run is parked');
-  assert.equal(word(needs), 'Team cap');
+  assert.equal(word(needs), 'Paused · team cap');
   await ctx.go('running/r1');                                  // the banner lives on the run page
   await settle(6);
   const banner = doc.querySelector('#run-detail .cost-banner');
   assert.ok(banner, 'the run page carries the cost banner');
   assert.equal(banner.hidden, false);
   assert.ok(banner.classList.contains('cb-policy'), 'the blue team-cap variant');
-  assert.match(banner.textContent, /Paused — team cost cap reached/);
-  assert.equal(word(row()), 'Team cap', 'the group row names the team cap');
+  assert.match(banner.textContent, /Paused: team cost cap reached/);
+  assert.equal(word(row()), 'Paused · team cap', 'the row names the team cap');
   assert.ok(banner.querySelector('.cb-past-team-cap'));
   assert.equal(banner.querySelector('.cb-override'), null);
   banner.querySelector('.cb-past-team-cap').click();

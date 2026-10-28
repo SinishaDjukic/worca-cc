@@ -159,10 +159,10 @@ Setting a variable redeploys the service. Other settings changes apply on the ne
 
 ## 5. First project
 
-Projects live on the volume under `/data/projects`. Add one from the UI: **Projects → Add project →
-Clone from URL**, with the repository's `https://` URL and, optionally, a branch and a folder name.
+Projects live on the volume under `/data/projects`. Add one from the UI: **Projects → Add project** — **New** for an empty project by name,
+or **Clone from URL** with the repository's `https://` URL and, optionally, a branch and a folder name.
 Worca clones it with the deployment's GitHub read credential (token or App), as the `worca` user,
-into a new folder, and registers it. The same works from Ask Worca ("set up github.com/acme/api"
+into a new folder, and registers it. The same works from Chat ("set up github.com/acme/api"
 proposes a card you apply) and from a shell with `worca add --clone <url>`.
 
 - Only `https://` URLs; a URL with credentials in it is refused (the credential belongs in the
@@ -173,7 +173,7 @@ proposes a card you apply) and from a shell with `worca add --clone <url>`.
   removes its folder. Large repositories are cloned partially (`--filter=blob:none`) and fetch
   file contents as they are needed.
 
-Ask Worca knows it runs hosted. Each turn tells it the projects folder, whether a GitHub credential is
+Chat knows it runs hosted. Each turn tells it the projects folder, whether a GitHub credential is
 set, and who is signed in. It points people here to add a project, never asks for a token in chat,
 and says that pull requests come from the deployment's GitHub account.
 
@@ -220,6 +220,19 @@ push. To make `verify --in-container` test the token too, set `WORCA_ADO_PROBE_O
 organisation's name on the service. PAT scopes, the Boards token, URL shapes and what does not
 work yet: [Azure DevOps](azure-devops.md).
 
+## Bitbucket
+
+For repositories on `bitbucket.org`, set a repository, project or workspace access token on the `worca` service, or
+an Atlassian API token plus `WORCA_BB_EMAIL`. It works next to the GitHub and Azure DevOps credentials; each call uses
+the one for its host.
+
+```bash
+node tools/railway/worca-railway.mjs set mydeploy WORCA_BB_TOKEN --yes    # paste the token (stdin)
+```
+
+Then seal it. A read/write pair (`WORCA_BB_READ_TOKEN`, `WORCA_BB_WRITE_TOKEN`) works as for GitHub. Token scopes, URL
+shapes and what does not work yet: [Bitbucket](bitbucket.md).
+
 ## Operate your deployment
 
 A deployment is a fixed image plus service variables. Pushing to the repository never changes it:
@@ -232,9 +245,9 @@ after a stop (the image's tini reports the server's 143 as 0): Railway keeps a d
 container exited non-zero after a stop marked as running, so a stop would never finish. Keep the
 image's entrypoint; a custom start command for the `worca` service must start with
 `tini -s -e 143 --`. The runs come back
-**paused** ("worca was restarting") and you resume them afterwards, or set `WORCA_AUTO_RESUME=1`
-on the `worca` service to have the new container resume them by itself, as the person who last
-started or resumed each one. A run still busy after the drain timeout comes back `interrupted`,
+**paused** ("worca was restarting") and the new container resumes them by itself, as the person who
+last started or resumed each one. Set `WORCA_AUTO_RESUME=0` on the `worca` service to resume them by
+hand instead, or `WORCA_AUTO_RESUME=1` to also resume runs a crash interrupted. A run still busy after the drain timeout comes back `interrupted`,
 as every run did before. Projects, runs, settings and the database are on `/data` and survive;
 schema migrations run on boot.
 

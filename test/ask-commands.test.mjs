@@ -2,6 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createAskCommands, terminalEventPrompt, plainOutput } from '../src/core/ask/commands.mjs';
 
 function fakeTerminals() {
@@ -41,6 +44,7 @@ function fakeTerminals() {
 }
 const fakeStore = (t) => ({ getBlock: (sid, seq) => t.blocks.get(`${sid}:${seq}`) || null, listRecentBlocks: () => [...t.blocks.values()] });
 const TARGET = { cwd: '/w/p', scope: 'project', label: 'p · main', projectKey: 'p', branch: 'main', runId: null, warning: null };
+const tmp = mkdtempSync(join(tmpdir(), 'worca-ask-cmd-out-'));
 
 function make(over = {}) {
   const terminals = fakeTerminals();
@@ -48,7 +52,7 @@ function make(over = {}) {
   const svc = createAskCommands({ terminals, store: fakeStore(terminals), resolveTarget: async () => TARGET,
     onFinish: (tid, b) => finished.push({ tid, b }), onUpdate: (tid, v) => updates.push({ tid, v }),
     onOpen: (tid, target) => opened.push({ tid, target }), threadTitle: () => 'Fix tests', hostPid: 1, serverPort: () => 4317,
-    home: '/h/.worca-cc', setTimer: (fn, ms) => ({ fn, ms }), clearTimer: () => {}, ...over });
+    home: '/h/.worca-cc', setTimer: (fn, ms) => ({ fn, ms }), clearTimer: () => {}, outDirFor: (t) => join(tmp, t, 'out'), ...over });
   return { svc, terminals, finished, updates, opened };
 }
 
@@ -81,6 +85,15 @@ test('run: at most 3 at once per chat; a finished one frees a slot and its idle 
   const d = await svc.run('ask_0000aaaa', { command: 'ls' });
   assert.equal(d.sessionId, a.sessionId);
   assert.equal(terminals.opened.length, 3);
+});
+
+test('#948 s2: running(threadId) counts the chat\'s running commands, 0 after they end and for another chat', async () => {
+  const { svc, terminals } = make();
+  const a = await svc.run('ask_0000aaaa', { command: 'sleep 1' });
+  assert.equal(svc.running('ask_0000aaaa'), 1);
+  assert.equal(svc.running('ask_0000bbbb'), 0);
+  terminals.finish(a.sessionId, 0);
+  assert.equal(svc.running('ask_0000aaaa'), 0);
 });
 
 test('a shell cd-ed within the project is kept: the check and runCommand use its real folder', async () => {
@@ -350,4 +363,21 @@ test('the card tail and read_output use plainOutput', async () => {
   terminals.finish(a.sessionId, 1, '  1 failing\r\n\\\x1b[1G\x1b[0K%' + ' '.repeat(20) + '\r \r');
   assert.equal(svc.view(a.blockId).tail, '  1 failing\n');
   assert.equal((await svc.read('ask_0000aaaa', { blockId: a.blockId })).text, '  1 failing\n');
+});
+
+test('a session shell gets $WORCA_ASK_OUT (this chat\'s out folder); credentials stay out of its env', async () => {
+  const { svc, terminals } = make({ baseEnv: { PATH: '/usr/bin', HOME: '/Users/me', GH_TOKEN: 'ghp_secret' } });
+  await svc.run('ask_0000aaaa', { command: 'npm test' });
+  assert.equal(terminals.opened[0].baseEnv.WORCA_ASK_OUT, join(tmp, 'ask_0000aaaa', 'out'));
+  assert.equal('GH_TOKEN' in terminals.opened[0].baseEnv, false);
+});
+
+test('run() echoes a cleaned summary: trimmed, one line, at most 120 characters (#911)', async () => {
+  // One fresh fixture per run, so no per-thread or busy-session limit can refuse a later call.
+  const r1 = await make().svc.run('ask_0000aaaa', { command: 'npm test', summary: '  Running\nthe tests  ' });
+  assert.equal(r1.summary, 'Running the tests');
+  const r2 = await make().svc.run('ask_0000aaaa', { command: 'npm test', summary: 'x'.repeat(300) });
+  assert.equal(r2.summary.length, 120);
+  const r3 = await make().svc.run('ask_0000aaaa', { command: 'npm test' });
+  assert.equal(r3.summary, null);
 });

@@ -7,9 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { deletePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
+import { deletePipeline, discardRetainedWorktrees, purgePipeline, restorePipeline } from '../src/core/pipeline-delete.mjs';
 import {
-  recordArtifact, listArtifacts, writeStoreMeta, readPipelineByKey, retainedWorkFor, runDirForRow,
+  recordArtifact, listArtifacts, writeStoreMeta, readPipelineByKey, retainedWorkFor, runDirForRow, listAllPipelines,
 } from '../src/core/artifacts.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
@@ -616,6 +616,28 @@ test('archive keeps a run branch that another live same-branch run committed ont
     assert.ok(report && report.ok);
     assert.ok((await listLocalBranches(repo)).includes('worca-cc/a-feat'), 'B\'s work survives A\'s archive');
     assert.ok(report.warnings.some((w) => /same04/.test(w)), JSON.stringify(report.warnings));
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('purgePipeline: files and local branch go, the row stays anonymised with its cost; feeds skip it; restore refuses it', async () => {
+  const id = 'dddd0001';
+  const prev = process.env.WORCA_HOME;
+  try {
+    const { key, pdir } = await freshStore(await freshRepo(), { id, base: 'purge-me', datePrefix: '01-01-26', status: 'done', title: 'Secret title' });
+    getDb().prepare("UPDATE pipelines SET prompt = 'secret', total_cost_usd = 1.25, started_by = 'ana' WHERE id = ?").run(id);
+    const r = await purgePipeline({ key, id });
+    assert.equal(existsSync(pdir), false, 'the run folder is gone');
+    assert.equal(r.deleted, true);
+    const row = getDb().prepare('SELECT title, prompt, started_by, total_cost_usd, archived_at, deleted_at FROM pipelines WHERE id = ?').get(id);
+    assert.equal(row.title, 'deleted run');
+    assert.equal(row.prompt, null);
+    assert.equal(row.started_by, null);
+    assert.equal(row.total_cost_usd, 1.25, 'the cost stays in Statistics');
+    assert.ok(row.archived_at && row.deleted_at);
+    assert.equal((await listAllPipelines({ archived: true })).some((p) => p.id === id), false, 'not in the Archived feed');
+    await assert.rejects(restorePipeline({ key, id }), /deleted/);
   } finally {
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
   }

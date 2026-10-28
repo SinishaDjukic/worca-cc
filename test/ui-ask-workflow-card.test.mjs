@@ -7,7 +7,6 @@ import { JSDOM } from 'jsdom';
 import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { flowPerRow } from '../src/shared/graph/flow-layout.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -157,7 +156,8 @@ test('building → proposed: the trace renders first; the flip mounts the REAL g
   await openBuilding(ctx);
   const building = ctx.window.document.querySelector('[data-ask-wfcard="building"]');
   assert.ok(building); assert.equal(building.querySelectorAll('.ask-wfcard-step').length, 4);
-  assert.equal(building.querySelector('.ask-wfcard-title').textContent, 'Proposed workflow');
+  assert.equal(building.querySelector('.ask-wfcard-state').textContent, 'Proposed workflow', 'the head says the state as a chip');
+  assert.equal(building.querySelector('.ask-wfcard-title'), null, 'the name is the one headline');
   flip(ctx, 3, { state: 'proposed', card: wfCard() });
   await settle(ctx.window, 6);
   assert.equal(ctx.window.document.querySelector('[data-ask-wfcard="building"]'), null, 'the building element is gone');
@@ -165,9 +165,10 @@ test('building → proposed: the trace renders first; the flip mounts the REAL g
   assert.ok(el);
   const p = proposalFor();
   assert.equal(el.querySelectorAll('.ask-wfcard-graph .node').length, p.manifest.graph.nodes.length, 'the real manifest is mounted');
-  assert.equal(el.__wf.handle.graph.flowLayout().perRow, flowPerRow(702), '702 default width in jsdom (clientWidth 0)');
+  assert.ok(el.querySelector('.ask-wfcard-graph.gv-well .gv-stage.gv-monitor') && !el.querySelector('.ask-wfcard-graph .gv-flow'), 'the Workflows rendering in a pannable well (template x/y, lanes), not the flow rows');
+  assert.equal(el.querySelector('.ask-wfcard-graph > .gv-nav [data-nav="expand"]').getAttribute('aria-label'), 'Open full screen in Workflows', 'app.js hands the chat its openBuild: a NEW proposal has a way in');
   assert.equal(el.querySelector('.ask-wfcard-graph .bchip.model').tagName, 'BUTTON', 'chips are pickable on a NEW-row card');
-  assert.equal(el.querySelector('[data-ask-wf-save]').textContent.trim(), 'Save & propose run');
+  assert.equal(el.querySelector('[data-ask-wf-save]').textContent.trim(), 'Save & propose');
   assert.ok(el.querySelector('[data-ask-wf-decline]'));
   assert.equal(el.querySelector('.ask-wfcard-reason').textContent, p.reasoning, 'the classifier reasoning wins over the note');
   el.querySelector('.ask-wfcard-edit').click();
@@ -218,7 +219,7 @@ test('chip picker: the model chip opens a menu in the conversation column; picki
 
 test('saved workflow card: graph stays with inert chips, footer is Open in Workflows alone (no paid-turn verb, also after ask-done), Open reads the row; declined/failed are stubs', async () => {
   await checkRows([
-    { name: 'saved: head "Saved workflow" + Auto tag + the check line; Open in Workflows navigates to #composer and reads the row; declined/failed are stubs', run: async () => {
+    { name: 'saved: head chip "Saved" + Auto tag, no line repeating them; Open in Workflows navigates to #composer and reads the row; declined/failed are stubs', run: async () => {
       const ctx = await boot();
       await openBuilding(ctx);
       flip(ctx, 3, { state: 'proposed', card: wfCard() });
@@ -227,10 +228,10 @@ test('saved workflow card: graph stays with inert chips, footer is Open in Workf
       await settle(ctx.window, 6);
       assert.equal(ctx.window.document.querySelector('[data-ask-wfcard="proposed"]'), null);
       const el = ctx.window.document.querySelector('[data-ask-wfcard="saved"]');
-      assert.equal(el.querySelector('.ask-wfcard-title').textContent, 'Saved workflow');
+      assert.equal(el.querySelector('.ask-wfcard-state').textContent, 'Saved');
       assert.equal(el.querySelector('.ask-wfcard-tag').textContent, 'Auto');
       assert.equal(el.querySelector('.ask-wfcard-saved span').textContent, 'Rename fix');
-      assert.equal(el.querySelector('.ask-wfcard-savedline').textContent, 'Saved as a new workflow, tagged Auto');
+      assert.equal(el.querySelector('.ask-wfcard-savedline'), null, 'a new workflow: the chip says Saved, the tag says Auto');
       assert.ok(el.querySelector('.ask-wfcard-graph .node'), 'the graph stays'); assert.equal(el.querySelector('.ask-wfcard-graph .bchip.model').tagName, 'SPAN', 'chips inert');
       assert.equal(el.querySelector('.ask-wfcard-match'), null, 'no match line on a saved card');
       assert.equal(el.querySelector('[data-ask-wf-run]'), null, 'no "Run with this": the save already fired the event turn, which proposes (thenRun) or offers (chat) the run');
@@ -240,7 +241,7 @@ test('saved workflow card: graph stays with inert chips, footer is Open in Workf
       assert.ok(ctx.calls.some((c) => /\/api\/workflows\/wf_rename-fix$/.test(c.url.split('?')[0])), 'the row is read for openTemplate');
       flip(ctx, 5, { state: 'declined', card: wfCard({ name: 'Nope' }) });
       await settle(ctx.window, 4);
-      assert.equal(ctx.window.document.querySelector('.ask-card-stub').textContent, 'Declined — Nope');
+      assert.equal(ctx.window.document.querySelector('.ask-card-stub').textContent, 'Declined: Nope');
       flip(ctx, 6, { state: 'failed', error: 'classifier returned an unknown agent "e2e-tester"', card: { type: 'workflow', mode: 'task' } });
       await settle(ctx.window, 4);
       assert.equal(ctx.window.document.querySelector('.ask-card-stub.ask-card-failed').textContent, 'Proposal failed: classifier returned an unknown agent "e2e-tester"');
@@ -293,7 +294,7 @@ test('target line: a muted line under the card head names the workspace (or proj
       assert.equal(targetText('[data-ask-wfcard="saved"]'), 'workspace · Team · 2 projects');
       flip(ctx, 5, { state: 'declined', card: { type: 'workflow', mode: 'task', name: 'Nope', ...WS } });
       await settle(ctx.window, 4);
-      assert.equal(ctx.window.document.querySelector('.ask-card-stub').textContent, 'Declined — Nope', 'the stub text is unchanged');
+      assert.equal(ctx.window.document.querySelector('.ask-card-stub').textContent, 'Declined: Nope', 'the stub text is unchanged');
       assert.equal(ctx.window.document.querySelector('[data-ask-wf-target]').textContent, 'workspace · Team');
       flip(ctx, 6, { state: 'failed', error: 'boom', card: { type: 'workflow', mode: 'task', ...WS } });
       await settle(ctx.window, 4);
@@ -314,7 +315,7 @@ test('target line: a muted line under the card head names the workspace (or proj
       flip(ctx, 5, { state: 'declined', card: { type: 'workflow', mode: 'task', name: 'Old' } });
       await settle(ctx.window, 4);
       assert.equal(ctx.window.document.querySelector('[data-ask-wf-target]'), null);
-      assert.equal(ctx.window.document.querySelector('.ask-card-stub').textContent, 'Declined — Old');
+      assert.equal(ctx.window.document.querySelector('.ask-card-stub').textContent, 'Declined: Old');
       assert.equal(ctx.window.document.querySelector('.ask-wfcard-stubwrap'), null, 'an old stub stays a bare stub');
     } },
   ]);

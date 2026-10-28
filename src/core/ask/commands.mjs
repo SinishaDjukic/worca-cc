@@ -8,15 +8,21 @@
 // inside the target folder is kept, and every command is checked against the folder the shell is really in;
 // a shell outside it is never used. The user's commands there never wake the chat: the next user turn lists
 // them (takePersonCommands), and their typing keeps the session from closing as idle.
+import { mkdirSync } from 'node:fs';
 import { checkAskCommand, askCommandEnv } from './command-policy.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { sameDir, insideDir } from '../terminal/same-dir.mjs';
 import { redactAskText } from './redact.mjs';
+import { askOutDir } from './store.mjs';
 
 const BLOCK_ID_RE = /^(t-[0-9a-f]{10}):(\d{1,9})$/;
 const codeError = (code, message) => Object.assign(new Error(message), { code });
 export const askActor = (threadId) => `ask:${threadId}`;
 export const blockIdOf = (sessionId, seq) => `${sessionId}:${seq}`;
+
+/** This chat's output folder, created on first use: $WORCA_ASK_OUT in every shell the chat opens (show_files shows
+ *  what Ask saves there). A command must name the variable: the policy refuses a spelled-out .worca-cc path. */
+function defaultOutDir(threadId) { const d = askOutDir(threadId); mkdirSync(d, { recursive: true }); return d; }
 
 export function parseBlockId(id) {
   const m = BLOCK_ID_RE.exec(String(id ?? '').trim());
@@ -80,6 +86,13 @@ export function commandView(rec, out, { tailChars = ASK_LIMITS.commandCardTailCh
     tail: text.length > tailChars ? text.slice(-tailChars) : text, truncated: text.length > tailChars || !!rec.truncated };
 }
 
+/** run_command's optional summary (#911): one trimmed line, clipped to `max`; anything else is null. */
+export function cleanCommandSummary(s, max = ASK_LIMITS.commandSummaryMaxChars) {
+  if (typeof s !== 'string') return null;
+  const line = s.replace(/\s+/g, ' ').trim();
+  return line ? line.slice(0, max) : null;
+}
+
 /**
  * @param {object} o
  * @param {import('../terminal/manager.mjs').TerminalManager} o.terminals
@@ -96,7 +109,7 @@ export function commandView(rec, out, { tailChars = ASK_LIMITS.commandCardTailCh
  */
 export function createAskCommands({ terminals, store, resolveTarget, onFinish, onUpdate = () => {}, onOpen = () => {}, threadTitle = () => '',
   hostPid = process.pid, serverPort = null, home = null, baseEnv = process.env, userHome = baseEnv.HOME || null, limits = ASK_LIMITS,
-  setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimer = clearTimeout } = {}) {
+  setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimer = clearTimeout, outDirFor = defaultOutDir } = {}) {
   const pools = new Map();     // threadId → Set<sessionId>
   const owner = new Map();     // sessionId → threadId
   const active = new Map();    // blockId → { threadId, capTimer }
@@ -225,7 +238,7 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
     const s = await terminals.open({ cwd: target.cwd, scope: target.scope, label: `Ask · ${title} · ${target.label}`,
       runId: target.runId ?? null, member: target.member ?? null, projectKey: target.projectKey ?? null, branch: target.branch ?? null,
       workspace: !!target.workspace, runLive: !!target.runLive, actionSnaps: target.actionSnaps || [],
-      by: askActor(threadId), agent: true, baseEnv: askCommandEnv(baseEnv) });
+      by: askActor(threadId), agent: true, baseEnv: { ...askCommandEnv(baseEnv), WORCA_ASK_OUT: outDirFor(threadId) } });
     pool.add(s.id); owner.set(s.id, threadId); roots.set(s.id, target.cwd);
     try { onOpen(threadId, target); } catch { /* audit only */ }
     return s.id;
@@ -247,6 +260,8 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
 
   return {
     seen: (blockId) => seenEnd.has(blockId),
+    /** #948 s2: how many Ask-run commands of this chat are running now (the archive busy check). */
+    running: (threadId) => runningCount(threadId),
 
     async run(threadId, input = {}) {
       if (runningCount(threadId) >= limits.commandsPerThread) {
@@ -271,7 +286,8 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
           throw e;
         }
         const blockId = blockIdOf(sid, seq);       // the slot + cap timer were taken by the block 'running' handler
-        return { ok: true, blockId, sessionId: sid, seq, command: line, cwd, folder: target.label, warning: target.warning || null };
+        return { ok: true, blockId, sessionId: sid, seq, command: line, cwd, folder: target.label, warning: target.warning || null,
+          summary: cleanCommandSummary(input.summary, limits.commandSummaryMaxChars) };
       }
     },
 

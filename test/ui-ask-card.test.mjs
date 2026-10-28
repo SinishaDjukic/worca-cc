@@ -86,7 +86,7 @@ function askArms(url, opts) {
 
 // `workflows` is the LIVE list behind /api/workflows and /api/workflows/:id — a test
 // mutates it between two card renders to model a row saved mid-chat.
-async function boot({ url = 'http://localhost:4317/', runResponse = null, workflows = null } = {}) {
+async function boot({ url = 'http://localhost:4317/', runResponse = null, workflows = null, extra = null } = {}) {
   const wfList = workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }];
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
@@ -105,6 +105,8 @@ async function boot({ url = 'http://localhost:4317/', runResponse = null, workfl
   window.fetch = (u, opts) => {
     const url2 = String(u);
     calls.push({ url: url2, opts: opts || {} });
+    const ex = extra ? extra(url2, opts) : null;
+    if (ex) return Promise.resolve(ex);
     const ask = askArms(url2, opts);
     if (ask) return Promise.resolve(ask);
     const method = ((opts && opts.method) || 'GET').toUpperCase();
@@ -411,7 +413,7 @@ test('ui-ask-card: a proposed workflowId no list serves fails loudly — inline 
   const card = ctx.window.document.querySelector('.ask-card.ask-rp');
   const sel = card.querySelector('.ask-card-workflow');
   const start = card.querySelector('[data-ask-card-start]');
-  assert.equal(card.querySelector('.ask-card-err').textContent, 'Workflow wf_ghost is not available — pick one');
+  assert.equal(card.querySelector('.ask-card-err').textContent, 'Workflow wf_ghost is not available: pick one');
   assert.equal(sel.value, '', 'no other option is silently selected');
   assert.deepEqual([...sel.options].map((o) => o.value), ['wf_default', 'wf_review'], 'the served list is still offered');
   assert.equal(start.disabled, true);
@@ -459,4 +461,125 @@ test('ui-ask-card: by default Start sends the lane edit as THIS run\'s overlay a
     .map((c) => `${c.opts.method.toUpperCase()} ${pathOf(c.url)}`);
   assert.deepEqual(seq, ['POST /api/run']);
   assert.equal(ctx.runBodies[0].overlay.nodes.n_impl.model, 'claude-haiku-4-5');
+});
+
+const DRAFT_CARD = { type: 'agent-draft', sessionId: null, docToken: null, then: null,
+  draft: { key: 'releaseNotes', markdown: '---\nname: releaseNotes\n---\n\nWrite notes.',
+    meta: { metaVersion: 2, key: 'releaseNotes', displayName: 'Release Notes', description: 'Writes notes.', runnerType: 'producer', color: 'blue', domain: 'general',
+      inputs: [{ id: 'plan', type: 'md' }], outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }] } } };
+
+test('ui-ask-card: an agent draft in Ask saves through POST /api/agents (the Workflows chat\'s action) and records saved with its key — no event turn', async () => {
+  const posts = [];
+  const ctx = await boot({ extra: (url, opts) => {
+    const method = ((opts && opts.method) || 'GET').toUpperCase();
+    if (url.split('?')[0].endsWith('/api/agents') && method === 'POST') { posts.push(['agents', JSON.parse(opts.body)]); return { ok: true, status: 201, json: async () => ({ meta: { key: 'releaseNotes' } }) }; }
+    if (/\/cards\/card_00000001$/.test(url) && method === 'POST') { posts.push(['card', JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({ block: { kind: 'card', id: 'card_00000001', state: 'saved' } }) }; }
+    return null;
+  } });
+  await openCard(ctx, DRAFT_CARD);
+  const card = ctx.window.document.querySelector('.ask-ccard [aria-label="New agent"]');
+  assert.ok(card, 'app.js mounts the draft card in the chat');
+  [...card.querySelectorAll('button')].find((b) => b.textContent === 'Save agent').click();
+  await settle(ctx.window, 8);
+  assert.deepEqual(posts.map((p) => p[0]), ['agents', 'card']);
+  assert.equal(posts[0][1].meta.key, 'releaseNotes');
+  assert.equal(posts[0][1].markdown, DRAFT_CARD.draft.markdown);
+  assert.deepEqual(posts[1][1], { state: 'saved', card: { savedKey: 'releaseNotes' } });
+});
+
+function cardsApi(posts, agents) {
+  return (url, opts) => {
+    const method = ((opts && opts.method) || 'GET').toUpperCase();
+    const path = url.split('?')[0];
+    if (path.endsWith('/api/agents') && method === 'POST') { const b = JSON.parse(opts.body); posts.push(['agents', b]); agents.push(b.meta); return { ok: true, status: 201, json: async () => ({ meta: { key: b.meta.key } }) }; }
+    if (path.endsWith('/api/agents') && method === 'GET') return { ok: true, status: 200, json: async () => ({ agents: [...agents], mockWriterRoles: [] }) };
+    if (path.endsWith('/api/scripts') && method === 'POST') { const b = JSON.parse(opts.body); posts.push(['scripts', b]); return { ok: true, status: 201, json: async () => ({ meta: { key: b.meta.key } }) }; }
+    if (/\/api\/scripts\/[^/]+\/cases$/.test(path) && method === 'PUT') { posts.push(['cases', JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({ cases: [] }) }; }
+    const m = /\/cards\/([^/]+)$/.exec(path);
+    if (m && method === 'POST') { posts.push(['card', m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({ block: { kind: 'card', id: m[1], state: 'saved' }, turn: null }) }; }
+    return null;
+  };
+}
+async function openCards(ctx, blocks) {
+  await openSheet(ctx.window);
+  await sendText(ctx.window, 'please help');
+  ctx.recv({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't', threadId: TID, messageId: MID, seq: 1 });
+  blocks.forEach((block, i) => ctx.recv({ type: 'ask-card', block, threadId: TID, messageId: MID, seq: i + 2 }));
+  await settle(ctx.window, 8);
+}
+const pressIn = (w, id, text) => [...w.document.querySelector(`.ask-ccard[data-card-id="${id}"]`).querySelectorAll('button')].find((b) => b.textContent === text).click();
+const BUILD_CARD = { type: 'workflow-build', sessionId: null, docToken: null, name: 'Notes flow', domain: 'coding', reasoning: 'r',
+  workflow: { nodes: WF_DEFAULT_TPL.nodes, wires: WF_DEFAULT_TPL.wires }, counts: { agents: 3, scripts: 0, loops: 1 }, loops: [], drafts: [], todo: 0, warnings: [] };
+
+test('ui-ask-card: Open in Workflows on a graph card saves its draft, then opens the graph as a NEW unsaved workflow — once', async () => {
+  const posts = [];
+  const ctx = await boot({ extra: cardsApi(posts, [...AGENTS]) });
+  const w = ctx.window;
+  await openCards(ctx, [{ kind: 'card', id: 'card_00000001', state: 'proposed', card: DRAFT_CARD },
+    { kind: 'card', id: 'card_00000002', state: 'proposed', card: { ...BUILD_CARD, drafts: ['releaseNotes'] } }]);
+  assert.equal(w.__gv(), null, 'the Workflows view was never mounted');
+  pressIn(w, 'card_00000002', 'Open in Workflows');
+  await settle(w, 24);
+  assert.deepEqual(posts.map((p) => p[0] === 'card' ? `card ${p[1]}` : p[0]), ['agents', 'card card_00000001'], 'the draft first; the graph card is not recorded');
+  assert.equal(w.location.hash, '#workflows');
+  const t = w.__gv().c.template();
+  assert.deepEqual([t.name, t.id, t.nodes.length, t.wires.length, w.__gv().c.isDirty()], ['Notes flow', '', WF_DEFAULT_TPL.nodes.length, WF_DEFAULT_TPL.wires.length, true]);
+  w.location.hash = '#chat'; await settle(w, 8);
+  w.location.hash = '#workflows'; await settle(w, 16);
+  assert.ok(w.document.getElementById('confirm-modal').classList.contains('hidden'), 'a later visit does not open the graph again');
+});
+
+test('ui-ask-card: Open in Workflows over a canvas with unsaved edits asks first — Cancel keeps that canvas', async () => {
+  const posts = [];
+  const ctx = await boot({ extra: cardsApi(posts, [...AGENTS]) });
+  const w = ctx.window;
+  w.location.hash = '#workflows'; await settle(w, 16);
+  w.__gv().c.loadDraft({ name: 'Mine unsaved', domain: 'coding', nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 300, y: 0, config: {} }], wires: [] });
+  await openCards(ctx, [{ kind: 'card', id: 'card_00000003', state: 'proposed', card: BUILD_CARD }]);
+  pressIn(w, 'card_00000003', 'Open in Workflows');
+  await settle(w, 24);
+  assert.equal(w.document.getElementById('confirm-modal').classList.contains('hidden'), false, 'the discard prompt');
+  w.document.getElementById('confirm-cancel').click();
+  await settle(w, 8);
+  assert.equal(w.__gv().c.template().name, 'Mine unsaved');
+});
+
+test('ui-ask-card: a script draft saves through POST /api/scripts and its cases; Edit… opens each draft in its wizard', async () => {
+  const posts = [];
+  const SCRIPT_CARD = { type: 'script-draft', sessionId: null, docToken: null, then: null,
+    draft: { key: 'lintIt', source: 'console.log(1)', cases: [{ id: 'c1', name: 'one', inputs: {} }],
+      meta: { metaVersion: 2, key: 'lintIt', displayName: 'Lint it', runtime: 'node', inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always' }] } } };
+  const ctx = await boot({ extra: cardsApi(posts, [...AGENTS]) });
+  const w = ctx.window;
+  await openCards(ctx, [{ kind: 'card', id: 'card_00000004', state: 'proposed', card: SCRIPT_CARD }, { kind: 'card', id: 'card_00000005', state: 'proposed', card: DRAFT_CARD }]);
+  pressIn(w, 'card_00000004', 'Save script');
+  await settle(w, 10);
+  assert.deepEqual(posts.map((p) => p[0]), ['scripts', 'cases', 'card']);
+  assert.equal(posts[0][1].source, 'console.log(1)');
+  assert.deepEqual(posts[2][2], { state: 'saved', card: { savedKey: 'lintIt' } });
+  pressIn(w, 'card_00000005', 'Edit…');
+  await settle(w, 16);
+  assert.equal(w.location.hash, '#workflows/agents/new');
+  assert.equal(w.document.getElementById('agw-name').value, 'Release Notes');
+  w.location.hash = '#chat'; await settle(w, 8);
+  pressIn(w, 'card_00000004', 'Edit…');
+  await settle(w, 20);
+  assert.equal(w.location.hash, '#workflows/scripts/new/node');
+  assert.deepEqual(w.__scripts.ctl().pendingCases(), SCRIPT_CARD.draft.cases);
+});
+
+test('ui-ask-card: a card from a preset says so, and Start posts presetId with the preset\'s hidden picks', async () => {
+  const preset = { id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', workflowId: 'wf_review',
+    setup: { humanInLoop: false, nightMode: true, overlay: { wires: { w_review: { maxCycles: 2 } } } } };
+  const ctx = await boot();
+  await openCard(ctx, { ...CARD, preset });
+  const doc = ctx.window.document;
+  assert.match(doc.querySelector('.ask-card-preset').textContent, /From preset Quick fix/);
+  doc.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 6);
+  const body = ctx.runBodies.at(-1);
+  assert.equal(body.presetId, 'rp_aaaaaaaaaaaa');
+  assert.equal(body.nightMode, true);
+  assert.equal(body.humanInLoop, false);
+  assert.deepEqual(body.overlay, { wires: { w_review: { maxCycles: 2 } } });
 });

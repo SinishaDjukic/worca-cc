@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findOnPath, detectBuiltins, builtinLaunch, copyCommandText } from '../src/core/actions/builtins.mjs';
+import { findOnPath, detectBuiltins, builtinLaunch, revealLaunch, copyCommandText } from '../src/core/actions/builtins.mjs';
 
 const fsWith = (files) => (p) => files.includes(p);
 
@@ -41,4 +41,19 @@ test('Windows: wt then cmd; code.cmd launches through cmd.exe', () => {
 test('copy command: not pushed vs pushed, two lines, never &&', () => {
   assert.equal(copyCommandText({ projectDir: '/p/app', branch: 'worca-cc/x', pushed: null }), 'cd "/p/app"\ngit switch worca-cc/x');
   assert.equal(copyCommandText({ projectDir: '/p/app', branch: 'worca-cc/x', pushed: { remote: 'upstream' } }), 'git fetch upstream worca-cc/x\ngit switch worca-cc/x');
+});
+
+test('revealLaunch: Finder and Explorer select the file, a Linux file manager opens its folder, none found throws', () => {
+  const mac = detectBuiltins({ platform: 'darwin', env: { PATH: '' }, exists: fsWith([]) });
+  assert.deepEqual(revealLaunch('/w/out/home page.png', '/w/out', mac), { file: 'open', args: ['-R', '/w/out/home page.png'], opts: { detached: true, stdio: 'ignore', windowsHide: false } });
+  const win = detectBuiltins({ platform: 'win32', env: { Path: '' }, exists: fsWith([]) });
+  const w = revealLaunch('C:\\w\\out\\home page.png', 'C:\\w\\out', win);
+  assert.deepEqual([w.file, w.args, w.opts.windowsVerbatimArguments], ['explorer.exe', ['/select,"C:\\w\\out\\home page.png"'], true]);
+  assert.deepEqual(w.okExitCodes, [0, 1], 'Explorer exits 1 even when it opened');
+  const f = builtinLaunch('fileManager', 'C:\\w\\out', win, { platform: 'win32', env: {} });
+  assert.deepEqual([f.file, f.args, f.okExitCodes], ['explorer.exe', ['C:\\w\\out'], [0, 1]]);
+  const lin = detectBuiltins({ platform: 'linux', env: { PATH: '/usr/bin', DISPLAY: ':0' }, exists: fsWith(['/usr/bin/xdg-open']) });
+  assert.deepEqual([revealLaunch('/w/out/a.png', '/w/out', lin).file, revealLaunch('/w/out/a.png', '/w/out', lin).args], ['/usr/bin/xdg-open', ['/w/out']]);
+  const headless = detectBuiltins({ platform: 'linux', env: { PATH: '/usr/bin' }, exists: fsWith(['/usr/bin/xdg-open']) });
+  assert.throws(() => revealLaunch('/w/out/a.png', '/w/out', headless), (e) => e.code === 'NOT_AVAILABLE');
 });

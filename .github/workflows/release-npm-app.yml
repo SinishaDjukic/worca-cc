@@ -163,9 +163,10 @@ jobs:
             test -s "extension/dist/worca-$b-$VERSION.zip" || { echo "::error::extension/dist/worca-$b-$VERSION.zip was not built"; exit 1; }
           done
 
-      # The notes file is prepended to the generated notes (GitHub's generate_release_notes).
-      # With assets, gh creates a draft, uploads, then publishes; a failed upload exits non-zero
-      # and fails this job (docs/RELEASING.md §4.4 covers re-attaching by hand).
+      # The notes are GitHub's generated notes alone, counted from the previous STABLE release
+      # (an RC's too): left to itself GitHub starts at the newest release of any kind, so a stable
+      # cut from an RC listed nothing. With assets, gh creates a draft, uploads, then publishes;
+      # a failed upload exits non-zero and fails this job (docs/RELEASING.md §4.4).
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -177,10 +178,18 @@ jobs:
           if echo "$VERSION" | grep -q -- '-rc\.'; then
             PRERELEASE="--prerelease"
           fi
+          # The highest stable tag below this version's X.Y.Z (1.14.0 and 1.14.0-rc.4 both → 1.13.1).
+          CORE="${VERSION%%-*}"
+          PREV="$(git ls-remote --tags --refs origin 'worca-app-v*' | sed 's#.*refs/tags/##' \
+            | { grep -E '^worca-app-v[0-9]+\.[0-9]+\.[0-9]+$' || true; echo "worca-app-v$CORE"; } \
+            | sort -uV | grep -B1 -x "worca-app-v$CORE" | head -1)"
+          START=()
+          if [ "$PREV" != "worca-app-v$CORE" ]; then START=(--notes-start-tag "$PREV"); fi
+          echo "Release notes since: ${START[1]:-the first release (no earlier stable tag)}"
           gh release create "$TAG_NAME" \
             --title "@worca/app $VERSION" \
-            --notes-file .github/release-notes/browser-extension.md \
             --generate-notes \
+            ${START[@]+"${START[@]}"} \
             $PRERELEASE \
             "extension/dist/worca-chrome-$VERSION.zip" \
             "extension/dist/worca-edge-$VERSION.zip" \

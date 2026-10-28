@@ -3,11 +3,12 @@
 // the no-real-claude PATH guard, tier selection (test/tiers.json) and duration-balanced
 // shards (test/timings.json, longest-processing-time-first), and --related: only the test files a
 // working-tree change can affect (tools/test-related.mjs). Replaces the POSIX-only shell one-liner
-// and node's index-modulo --test-shard.
+// and node's index-modulo --test-shard. --timings-out writes the run's own per-file seconds to a file
+// (each CI shard uploads one; tools/test-timings-merge.mjs folds them into test/timings.json).
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, delimiter } from 'node:path';
+import { dirname, join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { changedFiles, relatedTests } from './test-related.mjs';
 
@@ -27,9 +28,12 @@ export function selectFiles({ all, tier = 'all', tiers = {} }) {
 }
 
 export function planShards(files, timings, n) {
-  const known = Object.values(timings).sort((a, b) => a - b);
-  const median = known.length ? known[Math.floor(known.length / 2)] : 1;
-  const w = (f) => (timings[f] ?? median) + PER_FILE_S;
+  // A file with no recorded time weighs the MEAN, not the median: most files take ~0 s, so the
+  // median (0.2 s) priced a new file far under what new files actually cost (2.3 s on average on
+  // 2026-10-22, when 636 untimed files had piled onto one shard and made it the CI long pole).
+  const known = Object.values(timings);
+  const mean = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+  const w = (f) => (timings[f] ?? mean) + PER_FILE_S;
   // Code-unit tie-break, never localeCompare: every CI shard must compute the same plan.
   const order = [...files].sort((a, b) => w(b) - w(a) || (a < b ? -1 : a > b ? 1 : 0));
   const shards = Array.from({ length: n }, () => ({ load: 0, files: [] }));
@@ -42,8 +46,18 @@ export function planShards(files, timings, n) {
   return shards.map((s) => s.files);
 }
 
+// test/timings.json after a run: the newer measurements win, files that no longer exist drop out,
+// keys sorted so the file diffs cleanly.
+export function mergeTimings(base, measured, exists) {
+  const merged = Object.assign({}, base, ...measured);
+  return Object.fromEntries(Object.keys(merged).filter(exists).sort().map((k) => [k, merged[k]]));
+}
+
+export const writeTimings = (root, timings) =>
+  writeFileSync(join(root, 'test', 'timings.json'), JSON.stringify(timings, null, 1) + '\n');
+
 export function parseArgs(argv, env = process.env) {
-  const o = { tier: 'all', shard: null, writeTimings: false, concurrency: null, related: false, base: null, files: [] };
+  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, concurrency: null, related: false, base: null, files: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -55,6 +69,7 @@ export function parseArgs(argv, env = process.env) {
     else if (a === '--shard') o.shard = value();
     else if (a === '--concurrency') o.concurrency = Number(value());
     else if (a === '--write-timings') o.writeTimings = true;
+    else if (a === '--timings-out') o.timingsOut = value();
     else if (a === '--related') o.related = true;
     else if (a === '--base') o.base = value();
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
@@ -87,7 +102,8 @@ function main() {
     const m = /^(\d+)\/(\d+)$/.exec(o.shard);
     if (!m || +m[1] < 1 || +m[1] > +m[2]) { console.error(`bad shard "${o.shard}" (want i/n)`); process.exit(2); }
     files = planShards(files, timings, +m[2])[+m[1] - 1];
-    console.log(`shard ${o.shard}: ${files.length} files`);
+    const untimed = files.filter((f) => !(f in timings)).length;
+    console.log(`shard ${o.shard}: ${files.length} files${untimed ? ` (${untimed} with no recorded time: npm run test:timings:merge rebalances)` : ''}`);
   } else {
     files = planShards(files, timings, 1)[0];
   }
@@ -102,19 +118,21 @@ function main() {
   if (!scoped) rmSync(testHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   const listFile = join(work, 'files.json');
   const timingsOut = join(work, 'timings.json');
-  writeFileSync(listFile, JSON.stringify({ files, concurrency: o.concurrency, timingsOut: o.writeTimings ? timingsOut : null }));
+  const measure = o.writeTimings || o.timingsOut;
+  writeFileSync(listFile, JSON.stringify({ files, concurrency: o.concurrency, timingsOut: measure ? timingsOut : null }));
 
   const env = { ...process.env, WORCA_HOME: scoped ? testHome : '.worca-cc-test', HOME: home, USERPROFILE: home,
     WORCA_NO_REAL_CLAUDE_LOG: join(testHome, 'real-claude-spawns.log'), // read by the shim and assert-none.mjs
     NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' ') };
   delete env.WORCA_HOST_PID; // a test run is never a worca-hosted child
   delete env.WORCA_FLAGS; // feature flags (docs/feature-flags.md): a developer's shell flags never reach the suite
+  env.WORCA_GIT ??= '1'; // P0 (S1): git forced on (no probe) unless the caller set it; rows that need "missing" use test/helpers/git-off.mjs
   delete env.CLAUDE_CONFIG_DIR; // skillHostFacts reads it (skills registry §4.1): a test never sees the developer's Claude config
   delete env.NODE_TEST_CONTEXT; // set inside a node:test file; run() would then skip every file
-  // A developer's own Azure DevOps / push-as-person settings must not open host-lookup gates in tests
+  // A developer's own Azure DevOps / Bitbucket / push-as-person settings must not open host-lookup gates in tests
   // (D6/D7/D20): tests that need them set them with withEnv.
   for (const k of ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN',
-    'WORCA_ADO_BOARDS_TOKEN', 'WORCA_GH_AS_PERSON', 'WORCA_BROKER_URL']) delete env[k];
+    'WORCA_ADO_BOARDS_TOKEN', 'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER', 'WORCA_GH_AS_PERSON', 'WORCA_BROKER_URL']) delete env[k];
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
   env[pathKey] = join(ROOT, 'test', 'helpers', 'no-real-claude') + delimiter + (env[pathKey] || '');
 
@@ -122,10 +140,14 @@ function main() {
   let code = r.status ?? 1;
   const g = spawnSync(process.execPath, [join(ROOT, 'test', 'helpers', 'no-real-claude', 'assert-none.mjs')], { cwd: ROOT, env, stdio: 'inherit' });
   if (g.status !== 0) code = 1;
-  if (o.writeTimings && existsSync(timingsOut)) {
-    const merged = { ...timings, ...JSON.parse(readFileSync(timingsOut, 'utf8')) };
-    const kept = Object.keys(merged).filter((k) => existsSync(join(ROOT, k))).sort(); // drop deleted test files
-    writeFileSync(join(ROOT, 'test', 'timings.json'), JSON.stringify(Object.fromEntries(kept.map((k) => [k, merged[k]])), null, 1) + '\n');
+  if (measure && existsSync(timingsOut)) {
+    const measured = JSON.parse(readFileSync(timingsOut, 'utf8'));
+    if (o.writeTimings) writeTimings(ROOT, mergeTimings(timings, [measured], (k) => existsSync(join(ROOT, k))));
+    if (o.timingsOut) {
+      const out = resolve(o.timingsOut);
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, JSON.stringify(measured, null, 1) + '\n');
+    }
   }
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });

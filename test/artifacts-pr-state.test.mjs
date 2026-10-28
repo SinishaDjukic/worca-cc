@@ -30,12 +30,14 @@ after(async () => {
 });
 beforeEach(() => gitInfo.reset());
 
-// Fake runner: gh present, branch survives, and a PR (state/url) exists for the head.
-function stubGh({ state = 'OPEN', url = 'https://gh/x/pull/5', number = 5 } = {}) {
+// Fake runner: gh present, branch survives, and a PR (state/url, plus the draft and
+// mergeability fields when given) exists for the head. Every `gh pr …` argv lands in `prCalls`.
+function stubGh({ state = 'OPEN', url = 'https://gh/x/pull/5', number = 5, ...more } = {}, prCalls = []) {
   gitInfo.setRunner((cmd, args) => {
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr') prCalls.push(args);
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list')
-      return Promise.resolve({ ok: true, stdout: JSON.stringify([{ number, state, url }]), stderr: '', code: 0 });
+      return Promise.resolve({ ok: true, stdout: JSON.stringify([{ number, state, url, ...more }]), stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: true, stdout: 'ref\n', stderr: '', code: 0 });
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
@@ -58,7 +60,7 @@ test('withPr: live state when on, absent (no gh) when off, null when gh is missi
       stubGh({ state: 'MERGED', url: 'https://gh/x/pull/5', number: 5 });
       const id = await seed();
       const row = (await listPipelines(repo, { withPr: true })).find((r) => r.id === id);
-      assert.deepEqual(row.pr, { state: 'MERGED', url: 'https://gh/x/pull/5', number: 5 });
+      assert.deepEqual(row.pr, { state: 'MERGED', url: 'https://gh/x/pull/5', number: 5, isDraft: false, mergeable: 'UNKNOWN' });
     } },
     { name: 'withPr defaults off: no pr field, no gh call', run: async () => {
       gitInfo.reset(); // the beforeEach this row had as its own test
@@ -101,10 +103,11 @@ test('withPr: live state when on, absent (no gh) when off, null when gh is missi
 
 test('enrichPipelinesPr batches {projectKey,id,pr} with a final done; one empty batch without gh', async () => {
   await checkRows([
-    { name: 'enrichPipelinesPr emits {projectKey,id,pr} batches; pr has no mergeable; final done=true', run: async () => {
+    { name: 'enrichPipelinesPr emits {projectKey,id,pr} batches; pr says draft and mergeability from the one gh call; final done=true', run: async () => {
       const { enrichPipelinesPr, writeStoreMeta } = await import('../src/core/artifacts.mjs');
       const { projectKey } = await import('../src/core/store.mjs');
-      stubGh({ state: 'OPEN', url: 'https://gh/x/pull/7', number: 7 });
+      const prCalls = [];
+      stubGh({ state: 'OPEN', url: 'https://gh/x/pull/7', number: 7, isDraft: false, mergeable: 'CONFLICTING' }, prCalls);
       const idA = await seed();
       await seed();
       // listAllPipelines derives each row's projectDir from the store_meta row; pin it
@@ -116,9 +119,36 @@ test('enrichPipelinesPr batches {projectKey,id,pr} with a final done; one empty 
       const a = collected.find((x) => x.id === idA);
       assert.ok(a, 'seeded branch row was enriched');
       assert.deepEqual(Object.keys(a).sort(), ['id', 'pr', 'projectKey'], 'only {projectKey,id,pr}');
-      assert.equal(a.pr.state, 'OPEN');
-      assert.ok(!('mergeable' in a.pr), 'no live mergeability field in v1 (clarification B)');
+      assert.deepEqual(a.pr, { state: 'OPEN', url: 'https://gh/x/pull/7', number: 7, isDraft: false, mergeable: 'CONFLICTING' });
+      const lists = prCalls.filter((a) => a[1] === 'list');
+      assert.equal(lists.length, collected.length, 'one lookup per PR: no separate mergeability read');
+      assert.ok(lists.every((args) => args.includes('number,state,url,isDraft,mergeable')));
+      assert.ok(prCalls.filter((a) => a[1] !== 'list').every((a) => a[1] === 'view' && a[4] === 'isDraft,reviewDecision,mergeable,statusCheckRollup'),
+        'the only other call is the OPEN PR’s CI verdict (D31)');
       assert.equal(finalDone, true, 'the final batch flags done=true');
+    } },
+    { name: 'enrichPipelinesPr sends a closed-only PR (the Runs list draws it) but never records it', run: async () => {
+      gitInfo.reset(); // the beforeEach this row had as its own test
+      const { enrichPipelinesPr, readPrState } = await import('../src/core/artifacts.mjs');
+      stubGh({ state: 'CLOSED', url: 'https://gh/x/pull/8', number: 8 });
+      const id = await seed();
+      const collected = [];
+      await enrichPipelinesPr((items) => { collected.push(...items); });
+      const it = collected.find((x) => x.id === id);
+      assert.ok(it, 'the new row was enriched');
+      assert.equal(it.pr.state, 'CLOSED');
+      assert.equal(it.pr.url, 'https://gh/x/pull/8');
+      assert.equal(readPrState(id), null, 'pr_url keeps naming an open or merged PR only');
+    } },
+    { name: 'enrichPipelinesPr records the recorded PR itself closing, so it stops counting as open', run: async () => {
+      gitInfo.reset();
+      const { enrichPipelinesPr, readPrState, persistPrState } = await import('../src/core/artifacts.mjs');
+      const id = await seed();
+      persistPrState(id, { url: 'https://gh/x/pull/9', number: 9, state: 'OPEN' });
+      stubGh({ state: 'CLOSED', url: 'https://gh/x/pull/9', number: 9 });
+      await enrichPipelinesPr(() => {});
+      assert.equal(readPrState(id).state, 'CLOSED');
+      assert.equal(readPrState(id).url, 'https://gh/x/pull/9');
     } },
     { name: 'enrichPipelinesPr with gh unavailable emits exactly one empty final batch', run: async () => {
       gitInfo.reset(); // the beforeEach this row had as its own test

@@ -27,6 +27,11 @@ test('dock = black "+" and the chat root; bottom-right = Auto-layout + zoom', ()
   assert.deepEqual([...doc.querySelectorAll('#wfv-br button')].map((e) => e.id), ['wfv-autolayout', 'wfv-zoom']);
 });
 
+test('the dock "+" is the large icon button (40px, in line with the chat pill), the only .btn-lg in the view', () => {
+  assert.deepEqual([...doc.getElementById('wfv-add').classList], ['btn', 'btn-lg', 'btn-primary', 'btn-icon', 'wfv-plus']);
+  assert.deepEqual([...doc.querySelectorAll('[data-view="workflows"] .btn-lg')].map((e) => e.id), ['wfv-add']);
+});
+
 test('the agent + script editors live in the view\'s sheet with their old ids', () => {
   const sheet = doc.getElementById('wfv-sheet');
   assert.equal(sheet.getAttribute('aria-modal'), 'true');
@@ -46,6 +51,8 @@ test('the canvas-keys fence covers every non-canvas surface', () => {
 
 test('full screen: the sidebar and the top bar are hidden on the view', () => {
   assert.match(css, /body\.view-workflows \.sidebar,body\.view-workflows #topnav\{display:none !important;\}/);
+  assert.match(css, /body\.view-workflows \.main\{padding:0;overflow:hidden;display:flex;flex-direction:column;\}/);
+  assert.match(css, /\.view\[data-view="workflows"\]\{flex:1 1 auto;min-height:0;position:relative;\}/);
 });
 
 test('narrow screens: only Auto-layout goes icon-only (the zoom keeps its %), and the selection toolbar stays on the stage', () => {

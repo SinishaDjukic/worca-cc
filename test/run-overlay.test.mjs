@@ -19,7 +19,7 @@ test('parseRunOverlay: shape only — nodes only, objects keyed by id, typed and
   assert.deepEqual(parseRunOverlay({ nodes: { n_plan: { model: 'claude-opus-5-5', effort: '', subagentModel: '' } } }),
     { overlay: { nodes: { n_plan: { model: 'claude-opus-5-5' } } } }, "'' clears nothing — it is just absent");
   assert.equal(parseRunOverlay([]).error, OVERLAY_ERRORS.shape);
-  assert.match(parseRunOverlay({ nodes: {}, wires: {} }).error, /^overlay takes nodes only \(got "wires"\)$/);
+  assert.match(parseRunOverlay({ nodes: {}, foo: {} }).error, /^overlay takes nodes and wires only \(got "foo"\)$/);
   assert.match(parseRunOverlay({ nodes: [] }).error, /^overlay\.nodes must be an object keyed by node id$/);
   assert.match(parseRunOverlay({ nodes: { n_plan: 'opus' } }).error, /^overlay\.nodes\.n_plan must be an object$/);
   assert.match(parseRunOverlay({ nodes: { n_plan: { model: 'x', reason: 'why' } } }).error, /^overlay\.nodes\.n_plan: unknown key "reason"$/);
@@ -38,7 +38,7 @@ test('parseRunOverlay: shape only — nodes only, objects keyed by id, typed and
 
 test('checkRunOverlay: agent node ids only; checkShapeModels on the catalog; the engine must run the model; canonical output', () => {
   const ok = checkRunOverlay({ n_plan: { model: 'CLAUDE-OPUS-5-5', effort: 'high' }, n_impl: { model: 'claude-haiku-4-5', fanOut: false } }, { workflow: WF, models: MODELS, engine: 'claude' });
-  assert.deepEqual(ok, { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' }, n_impl: { model: 'claude-haiku-4-5', fanOut: false, effort: '' } }, errors: [] },
+  assert.deepEqual(ok, { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' }, n_impl: { model: 'claude-haiku-4-5', fanOut: false, effort: '' } }, wires: {}, errors: [] },
     'the catalog\'s casing; a model always names its effort (\'\' = its default)');
   const bad = checkRunOverlay({ n_ghost: { model: 'claude-opus-5-5' }, n_task: {}, n_plan: { model: 'gone' }, n_impl: { model: 'claude-haiku-4-5', effort: 'max' } }, { workflow: WF, models: MODELS });
   assert.deepEqual(bad.errors, [
@@ -56,7 +56,7 @@ test('checkRunOverlay: agent node ids only; checkShapeModels on the catalog; the
   assert.deepEqual(checkRunOverlay({ n_plan: { model: 'claude-opus-5-5', effort: '' } }, { workflow: WF, models: MODELS }).errors, [], 'a canonical entry checks clean again');
   const proto = parseRunOverlay(JSON.parse('{"nodes":{"__proto__":{"model":"claude-opus-5-5"}}}'));
   assert.deepEqual(checkRunOverlay(proto.overlay.nodes, { workflow: WF, models: MODELS }).errors, ['node "__proto__" is not an agent node of workflow wf_review']);
-  assert.deepEqual(checkRunOverlay(null, {}), { nodes: {}, errors: [] });
+  assert.deepEqual(checkRunOverlay(null, {}), { nodes: {}, wires: {}, errors: [] });
 });
 
 test('overlayWorkflowRefusal: Auto decides at start, the workspace scan pins its own models', () => {
@@ -103,4 +103,19 @@ test('an effort or sub-agent value no model could name is refused with a short e
   assert.match(parseRunOverlay({ nodes: { n_plan: { model: 'claude-opus-5-5', subagentModel: `inherit${BIG}` } } }).error, /^node "n_plan": unknown sub-agent model "inherite{57}…"$/);
   assert.deepEqual(parseRunOverlay({ nodes: { n_plan: { model: 'claude-opus-5-5', effort: ' xhigh ', subagentModel: 'inherit' } } }).overlay,
     { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'xhigh', subagentModel: 'inherit' } } }, 'the vocabulary still parses');
+});
+
+test('parseRunOverlay: wires carry a whole maxCycles of 1..100; other top-level keys are refused', () => {
+  assert.deepEqual(parseRunOverlay({ wires: { w9: { maxCycles: 3 } } }), { overlay: { wires: { w9: { maxCycles: 3 } } } });
+  assert.match(parseRunOverlay({ wires: { w9: { maxCycles: 0 } } }).error, /overlay\.wires\.w9: maxCycles must be a whole number from 1 to 100/);
+  assert.match(parseRunOverlay({ wires: { w9: { maxCycles: 2, gate: 'x' } } }).error, /overlay\.wires\.w9: unknown key "gate"/);
+  assert.match(parseRunOverlay({ nodes: {}, foo: {} }).error, /^overlay takes nodes and wires only/);
+});
+
+test('checkRunOverlay: a wire must be a wire of the workflow', () => {
+  const workflow = { id: 'wf_x', nodes: [{ id: 'n_plan', kind: 'agent', key: 'planner' }], wires: [{ id: 'w9' }] };
+  const ok = checkRunOverlay(null, { workflow, wires: { w9: { maxCycles: 2 } } });
+  assert.deepEqual([ok.errors, ok.wires], [[], { w9: { maxCycles: 2 } }]);
+  const bad = checkRunOverlay(null, { workflow, wires: { w_gone: { maxCycles: 2 } } });
+  assert.deepEqual(bad.errors, ['wire "w_gone" is not a wire of workflow wf_x']);
 });

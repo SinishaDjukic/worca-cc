@@ -15,7 +15,7 @@ import { shapeSources, shapeTask } from './source-spec.mjs';
 
 /** A read op against one source; `profile` resolved by the caller. */
 export function sourceCall({ plugin, sourceId, op, args, profile }) {
-  if (op !== 'listTasks' && op !== 'getTask') throw new Error(`op "${op}" is not allowed from Ask Worca`);
+  if (op !== 'listTasks' && op !== 'getTask') throw new Error(`op "${op}" is not allowed from Chat`);
   return callSource({ plugin, sourceId, op, args, profile: profile || undefined, timeoutMs: 20000, logger: () => {} });
 }
 

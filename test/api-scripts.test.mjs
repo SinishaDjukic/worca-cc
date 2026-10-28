@@ -39,7 +39,7 @@ test('GET /api/scripts lists built-ins + the user layer in order, D16-filtered, 
   const r = await fetch(`${base}/api/scripts`);
   assert.equal(r.status, 200);
   const { scripts } = await r.json();
-  assert.deepEqual(scripts.map((s) => s.key), ['shell', 'js', 'py', 'gitDiff', 'deckPdf', 'deckAudio', 'deckBundle', 'c4Discover', 'c4Check', 'c4Render', 'workspaceMapExtract', 'workspaceMapCatalog', 'workspaceMapJoin', 'workspaceMapRender', 'workspaceMapResynth', 'lint']);
+  assert.deepEqual(scripts.map((s) => s.key), ['shell', 'js', 'py', 'gitDiff', 'deckPdf', 'deckAudio', 'deckBundle', 'c4Discover', 'c4Check', 'c4Render', 'promoVoices', 'promoNarrate', 'promoRender', 'workspaceMapExtract', 'workspaceMapCatalog', 'workspaceMapJoin', 'workspaceMapRender', 'workspaceMapResynth', 'lint']);
   assert.equal(scripts.find((s) => s.key === 'reviewer'), undefined, 'an agent key wins');
   const shell = scripts[0];
   assert.equal(shell.origin, 'builtin');

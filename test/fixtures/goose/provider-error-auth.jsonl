@@ -1,0 +1,2 @@
+{"type":"message","message":{"id":"msg_ecec10d0-28ba-4426-b46d-4f3e29322905","role":"assistant","created":1791675717,"content":[{"type":"text","text":"Ran into this error: Request failed: Bad request (400): API key not valid. Please pass a valid API key..\n\nPlease retry if you think this is a transient or recoverable error."}],"metadata":{"userVisible":true,"agentVisible":true}}}
+{"type":"complete","total_tokens":0,"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_write_input_tokens":0}

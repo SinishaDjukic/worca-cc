@@ -556,7 +556,7 @@ test('a comment whose row is outside the first window attaches when Show more co
 
 test('comments whose anchor cannot render are never lost: past the 500k cap (detached under the truncation note), binary section, path absent from the patch (synthetic row)', async () => {
   await checkRows([
-    { name: 'a comment past the 500k parse cap renders detached, below "(large file — diff truncated)"', run: async () => {
+    { name: 'a comment past the 500k parse cap renders detached, below "(large file, diff truncated)"', run: async () => {
       const ctx = await bootComments({ patch: capPatch(), files: BIG_JS, hooks: SMALL,
         comments: [cmt({ path: 'big.js', line: 59, lineText: 'a line the parser never reached', body: 'past the cap' })] });
       const doc = ctx.window.document;
@@ -604,7 +604,7 @@ test('comments whose anchor cannot render are never lost: past the 500k cap (det
   ]);
 });
 
-test('patchAvailable:false disables the + button but keeps Resolve, Delete and Ask Worca', async () => {
+test('patchAvailable:false disables the + button but keeps Resolve, Delete and Ask in Chat', async () => {
   // The /diff arm still serves a patch, so rows render; only the comments
   // endpoint reports the artifact gone. canCreate() is driven solely by
   // patchAvailable, which is the whole point of the flag.
@@ -616,7 +616,7 @@ test('patchAvailable:false disables the + button but keeps Resolve, Delete and A
   const card = doc.querySelector('[data-comment-id="dc_00000001"]');
   assert.ok(card.querySelector('.hd-cmt-resolve'), 'resolve still works');
   assert.ok(card.querySelector('.hd-cmt-delete'), 'delete still works');
-  assert.ok(card.querySelector('.hd-cmt-ask'), 'Ask Worca still works');
+  assert.ok(card.querySelector('.hd-cmt-ask'), 'Ask in Chat still works');
 });
 
 test('a diff-comments-changed frame for THIS run repaints in place; one for another run is ignored', async () => {
@@ -685,7 +685,7 @@ test('workspace runs POST the member project from the rendered section', async (
   ]);
 });
 
-test('Ask Worca on a card appends the exact reference (and the reply count) and sends nothing', async () => {
+test('Ask in Chat on a card appends the exact reference (and the reply count) and sends nothing', async () => {
   // askPanel is a module-local `let` with no test seam, so this reads the mounted
   // panel's real textarea — the test/ui-ask-integration.test.mjs precedent — rather
   // than spying on appendToComposer, which nothing can reach. One boot: two plain
@@ -700,11 +700,13 @@ test('Ask Worca on a card appends the exact reference (and the reply count) and 
   const { window } = ctx;
   const doc = window.document;
   await checkRows([
-    { name: 'the card\'s Ask Worca button opens Chat with the exact reference and sends nothing', run: async () => {
+    { name: 'the card\'s Ask in Chat button opens the chat beside the diff with the exact reference and sends nothing', run: async () => {
+      const at = window.location.hash;
       click(window, doc.querySelector('[data-comment-id="dc_00000001"] .hd-cmt-ask'));
       await settle(window, 6);
-      assert.equal(window.location.hash, '#chat', 'Ask Worca opens the Chat page');
-      const ta = doc.querySelector('.ask-input');
+      assert.equal(window.location.hash, at, 'Ask worca beside the page (L7): the side column opens, the diff stays');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      const ta = doc.querySelector('#ask-side .ask-input');
       assert.ok(ta, 'the Ask panel is mounted by the app boot');
       assert.equal(ta.value, '[diff comment dc_00000001 — src/a.js:2 (new), run fcec04e8] "please add a test"', 'the run rides along: Chat has no run of its own');
       await openDetail(ctx);                                            // back to the Diff tab for the next comment
@@ -718,7 +720,7 @@ test('Ask Worca on a card appends the exact reference (and the reply count) and 
       assert.equal(ctx.calls.filter((c) => (c.opts.method || 'GET') === 'POST' && c.url.includes('/messages')).length, 0,
         'append never sends');
     } },
-    { name: 'Ask Worca on a thread with replies tells the chat how many, so the model reads them first', run: async () => {
+    { name: 'Ask in Chat on a thread with replies tells the chat how many, so the model reads them first', run: async () => {
       await openDetail(ctx);
       await settle(window, 8);
       click(window, doc.querySelector('[data-comment-id="dc_00000005"] .hd-cmt-ask'));
@@ -1046,4 +1048,31 @@ test('two comments on one context row, or old/new on the same number, keep list 
         'the side is part of the block identity — matching on data-line alone merged them');
     } },
   ]);
+});
+
+const focusIn = (window, node) => { node.focus(); node.dispatchEvent(new window.FocusEvent('focusin', { bubbles: true })); };
+
+test('F-3: keyboard reaches the + — one roving stop, Arrow keys move it, focusin arms the line, the + survives mouse events', async () => {
+  const ctx = await bootComments();
+  const { window } = ctx;
+  const doc = window.document;
+  const cells = [...doc.querySelectorAll('.hd-dl-row')].filter((r) => r.dataset.new || r.dataset.old).map((r) => r.querySelector('.hd-dl-code'));
+  assert.equal(cells.filter((c) => c.tabIndex === 0).length, 1, 'exactly one tab stop in the body');
+  assert.ok(cells.every((c) => c.getAttribute('aria-label')), 'the focusable cell is named');
+  const [first, second] = cells;
+  assert.equal(first.tabIndex, 0);
+  focusIn(window, first);
+  const btn = doc.querySelector('.hd-cmt-add');
+  assert.equal(btn.parentElement, first, 'focusing the line puts the + inside it');
+  assert.equal(btn.tagName, 'BUTTON');
+  keydown(window, first, 'ArrowDown');
+  assert.equal(second.tabIndex, 0);
+  assert.equal(first.tabIndex, -1);
+  btn.focus();
+  const body = doc.querySelector('.hd-diff-body');
+  body.dispatchEvent(new window.MouseEvent('mouseleave'));
+  assert.ok(btn.isConnected, 'mouseleave keeps the + while it holds focus');
+  hover(window, cells[2].closest('.hd-dl-row'));
+  assert.equal(doc.activeElement, btn, 'hovering another row does not steal the focused +');
+  assert.equal(btn.parentElement, second);
 });

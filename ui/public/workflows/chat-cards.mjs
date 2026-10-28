@@ -4,8 +4,9 @@
 // in the page session and on the document it was made for. A built workflow waits for "Apply to canvas" and
 // opens as a NEW unsaved workflow (after the discard prompt). A drafted agent/script waits for Save. The
 // proposal card draws no mini graph: the canvas is the preview.
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const RUNNER_SIDE = { code: 'code — edits the worktree (implementer tool set)', memory: 'memory — edits worca memory only (no Bash)' };
+// The card DOM is workflows/card-views.mjs, shared with Ask Worca.
+import { icon } from '../icons.mjs';
+import { cardKit, plural, draftCardView, buildCardView, okChip } from './card-views.mjs';
 
 export function createCardController({ doc, composer, sessionId, client, actions = {}, blocks = () => [],
   reducedMotion = () => false, onChange = () => {}, occluder = () => null }) {
@@ -13,7 +14,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
   // The undo chord this keyboard has: ⌘Z on a Mac, Ctrl+Z on Windows and Linux (the canvas takes both; the platform
   // check of global-search.mjs shortcutLabel).
   const undoChord = /mac|iphone|ipad|ipod/i.test(String(win.navigator?.userAgentData?.platform || win.navigator?.platform || '')) ? '⌘Z' : 'Ctrl+Z';
-  const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const { h, button } = cardKit(doc, { onChange: () => onChange() });
   const act = (name, ...a) => (typeof actions[name] === 'function' ? actions[name](...a) : undefined);
   const handled = new Set();      // card ids this page acted on (frames repeat after a resync)
   let lastEdit = null;            // {cardId, depth, docToken, after}: the newest applied edit, for its Undo
@@ -31,19 +32,6 @@ export function createCardController({ doc, composer, sessionId, client, actions
   // same depth — the graph must still be exactly what the chat step left, or Undo would revert the user's edit.
   const undoLive = (rec, id) => Boolean(rec) && rec.cardId === id && composer.docToken() === rec.docToken
     && composer.undoDepth() === rec.depth && snap() === rec.after;
-  const button = (text, cls, onClick) => {
-    const b = h('button', cls || 'wfv-btn', text);
-    b.type = 'button';
-    // In flight: aria-disabled + a flag, never `disabled` — Chrome moves the focus of a button that turns disabled to
-    // <body>, where the canvas owns the keys (the next Backspace deletes the selected card, an arrow nudges it).
-    let busy = false;
-    b.addEventListener('click', async () => {
-      if (b.disabled || busy) return;
-      busy = true; b.setAttribute('aria-disabled', 'true');
-      try { await onClick(); } finally { busy = false; b.removeAttribute('aria-disabled'); onChange(); }
-    });
-    return b;
-  };
   const flip = (id, body) => client.postCard(id, body);
 
   /** Apply every new canvas edit of this session, in order. The dock calls it after each flush. */
@@ -61,11 +49,11 @@ export function createCardController({ doc, composer, sessionId, client, actions
       }
       handled.add(b.id);
       if (!onDoc(b.card)) {
-        await flip(b.id, { state: 'failed', error: 'Another workflow was opened before this change arrived — nothing was changed.' });
+        await flip(b.id, { state: 'failed', error: 'Another workflow was opened before this change arrived. Nothing was changed.' });
         continue;
       }
       const r = composer.applyOps(b.card.ops, `chat: ${b.card.summary || 'edit'}`);
-      if (!r.ok) { await flip(b.id, { state: 'failed', error: `The canvas changed — ${r.error}` }); continue; }
+      if (!r.ok) { await flip(b.id, { state: 'failed', error: `The canvas changed: ${r.error}` }); continue; }
       lastEdit = { cardId: b.id, depth: r.depth, docToken: composer.docToken(), after: snap() };
       reveal(r.added);
       // The edit IS on the canvas: a failed POST must not leave the card "Applying…" with no Undo. Retry once.
@@ -115,12 +103,14 @@ export function createCardController({ doc, composer, sessionId, client, actions
     const c = b.card;
     const state = stateOf(b);
     const el = h('div', `wfc-edit is-${state}`);
-    if (state === 'failed') { el.append(h('span', 'wfc-x', '!'), h('span', 'wfc-sum', `Not applied — ${b.error || 'the canvas changed'}`)); return el; }
+    if (state === 'failed') { el.append(h('span', 'wfc-x', '!'), h('span', 'wfc-sum', `Not applied: ${b.error || 'the canvas changed'}`)); return el; }
     if (state === 'proposed') {
-      el.appendChild(h('span', 'wfc-sum', mine(c) ? `Applying: ${c.summary || 'a change'}` : `Not applied — made for an earlier visit: ${c.summary || 'a change'}`));
+      el.appendChild(h('span', 'wfc-sum', mine(c) ? `Applying: ${c.summary || 'a change'}` : `Not applied. Made for an earlier visit: ${c.summary || 'a change'}`));
       return el;
     }
-    el.append(h('span', 'wfc-ok', '✓'), h('span', 'wfc-sum', c.summary || 'Canvas changed'));
+    const ok = h('span', 'wfc-ok');
+    ok.append(icon(doc, 'check', 12));
+    el.append(ok, h('span', 'wfc-sum', c.summary || 'Canvas changed'));
     if (state === 'undone') { el.appendChild(h('span', 'wfc-muted', 'Undone')); return el; }
     if (c.todo) el.appendChild(h('span', 'wfc-muted', `${plural(c.todo, 'port')} to wire`));
     const undo = button('Undo', 'wfc-link', async () => {
@@ -130,7 +120,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
       await flip(b.id, { state: 'undone' });
     });
     // ⌘Z reaches only an edit THIS page applied: another tab's or an earlier visit's edit lives on that canvas.
-    if (!undoLive(lastEdit, b.id)) { undo.disabled = true; undo.title = mine(c) ? `Use ${undoChord} on the canvas` : 'Applied in another tab or visit — undo it there'; }
+    if (!undoLive(lastEdit, b.id)) { undo.disabled = true; undo.title = mine(c) ? `Use ${undoChord} on the canvas` : 'Applied in another tab or visit. Undo it there'; }
     el.appendChild(undo);
     return el;
   }
@@ -177,7 +167,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
     for (const key of c.drafts || []) {
       const d = findDraft(key);
       if (!d || d.state === 'proposed' || d.state === 'saved' || d.state === 'added' || inLibrary(d.card)) continue;
-      act('notify', { tone: 'err', title: `Not applied — this workflow needs "${key}", which was ${d.state === 'declined' ? 'declined' : 'not saved'}.` });
+      act('notify', { tone: 'err', title: `Not applied: this workflow needs "${key}", which was ${d.state === 'declined' ? 'declined' : 'not saved'}.` });
       return;
     }
     if (!(await composer.guardDiscard())) return;                 // clarification "build-target": discard prompt first
@@ -195,130 +185,55 @@ export function createCardController({ doc, composer, sessionId, client, actions
     await flip(b.id, { state: 'applied' });
   }
   function renderBuild(b) {
-    const c = b.card;
-    const el = h('div', `wfc-card wfc-plan is-${b.state}`);
-    el.setAttribute('role', 'group');
-    el.setAttribute('aria-label', 'Proposed workflow');
-    if (b.state === 'declined') { el.appendChild(h('p', 'wfc-muted', `Declined — ${c.name}`)); return el; }
-    if (b.state === 'failed') { el.appendChild(h('p', 'wfc-err', `Proposal failed: ${b.error || 'failed'}`)); return el; }
-    el.appendChild(h('div', 'wfc-card-t', 'Proposed workflow'));
-    el.appendChild(h('div', 'wfc-name', c.name || 'Untitled pipeline'));
-    if (c.reasoning) el.appendChild(h('p', 'wfc-reason', c.reasoning));
-    const titles = new Map((c.workflow.nodes || []).map((n) => [n.id, n.key || n.kind]));
-    if ((c.loops || []).length) {
-      const ul = h('ul', 'wfc-loops');
-      for (const l of c.loops) ul.appendChild(h('li', '', `${titles.get(l.from) || l.from} → ${titles.get(l.to) || l.to} · max ${l.max} cycles`));
-      el.appendChild(ul);
-    }
-    if ((c.drafts || []).length) {
-      el.appendChild(h('div', 'wfc-sub', 'New in your library'));
-      for (const key of c.drafts) el.appendChild(h('div', 'wfc-new mono', key));
-    }
-    const n = c.counts || {};
-    el.appendChild(h('div', 'wfc-meta mono', `${plural(n.agents || 0, 'agent')} · ${plural(n.scripts || 0, 'script')} · ${plural(n.loops || 0, 'loop')}`));
-    if (c.todo) el.appendChild(h('div', 'wfc-muted', `${plural(c.todo, 'port')} still to wire`));
-    const row = h('div', 'wfc-actions');
-    if (b.state === 'proposed') {
-      row.append(button('Decline', 'wfv-btn', () => flip(b.id, { state: 'declined' })), h('span', 'wfc-spacer'),
-        button('Apply to canvas', 'wfv-btn wfv-btn-primary', () => applyBuild(b)));
-    } else if (b.state === 'applied') {
-      row.appendChild(h('span', 'wfc-chip-ok', '✓ Applied to canvas'));
-      const undo = button('Undo', 'wfc-link', async () => {
-        if (!lastBuild || !undoLive(lastBuild, b.id)) return;
-        const p = lastBuild.prev;
-        composer.loadTemplate({ ...p.tpl, origin: p.origin });
-        if (p.dirty) composer.setName(p.tpl.name || '');          // still unsaved, as it was
-        fitAboveDock();
-        lastBuild = null;
-        await flip(b.id, { state: 'undone' });
-      });
-      // loadDraft cleared the undo ring, so ⌘Z cannot bring the previous workflow back once this Undo stands down.
-      if (!undoLive(lastBuild, b.id)) { undo.disabled = true; undo.title = 'The canvas changed since — the previous workflow can’t be restored'; }
-      row.append(undo);
-      // Save only the workflow THIS card opened (an applied card from an earlier visit or another document would
-      // open the save dialog for whatever canvas is showing now).
-      if (lastBuild && lastBuild.cardId === b.id && composer.docToken() === lastBuild.docToken) {
-        row.append(h('span', 'wfc-spacer'), button('Save as workflow', 'wfv-btn', () => { composer.openSaveDialog(); }));
+    return buildCardView(b, { h, actions: (row) => {
+      if (b.state === 'proposed') {
+        row.append(button('Decline', 'btn btn-sm', () => flip(b.id, { state: 'declined' })), h('span', 'wfc-spacer'),
+          button('Apply to canvas', 'btn btn-sm btn-primary', () => applyBuild(b)));
+      } else if (b.state === 'applied') {
+        row.appendChild(okChip(h, 'Applied to canvas'));
+        const undo = button('Undo', 'wfc-link', async () => {
+          if (!lastBuild || !undoLive(lastBuild, b.id)) return;
+          const p = lastBuild.prev;
+          composer.loadTemplate({ ...p.tpl, origin: p.origin });
+          if (p.dirty) composer.setName(p.tpl.name || '');          // still unsaved, as it was
+          fitAboveDock();
+          lastBuild = null;
+          await flip(b.id, { state: 'undone' });
+        });
+        // loadDraft cleared the undo ring, so ⌘Z cannot bring the previous workflow back once this Undo stands down.
+        if (!undoLive(lastBuild, b.id)) { undo.disabled = true; undo.title = 'The canvas changed since, so the previous workflow can’t be restored'; }
+        row.append(undo);
+        // Save only the workflow THIS card opened (an applied card from an earlier visit or another document would
+        // open the save dialog for whatever canvas is showing now).
+        if (lastBuild && lastBuild.cardId === b.id && composer.docToken() === lastBuild.docToken) {
+          row.append(h('span', 'wfc-spacer'), button('Save as workflow', 'btn btn-sm', () => { composer.openSaveDialog(); }));
+        }
+      } else {
+        row.appendChild(h('span', 'wfc-muted', 'Undone'));
       }
-    } else {
-      row.appendChild(h('span', 'wfc-muted', 'Undone'));
-    }
-    el.appendChild(row);
-    return el;
+    } });
   }
 
   // ── drafted agent / script: Save ──────────────────────────────────────────
-  function portList(label, list, script) {
-    const box = h('div', 'wfc-io');
-    box.appendChild(h('div', 'wfc-k', label));
-    for (const p of Array.isArray(list) ? list : []) {
-      const when = p.when === 'blocking' ? (script ? 'on fail' : 'on blocking') : p.when === 'clean' ? (script ? 'on pass' : 'on clean') : '';
-      const bits = [p.id, p.type, p.loop ? 'loop' : '', p.required === false ? 'optional' : '', p.expands ? '⤫N' : '', when].filter(Boolean);
-      box.appendChild(h('div', 'wfc-port mono', bits.join(' · ')));
-    }
-    if (!(Array.isArray(list) && list.length)) box.appendChild(h('div', 'wfc-muted', '—'));
-    return box;
-  }
   function renderDraft(b) {
     const c = b.card;
     const d = c.draft || {};
-    const m = d.meta || {};
     const isAgent = c.type === 'agent-draft';
-    const el = h('div', `wfc-card wfc-draft is-${b.state}`);
-    el.setAttribute('role', 'group');
-    el.setAttribute('aria-label', isAgent ? 'New agent' : 'New script');
-    const head = h('div', 'wfc-card-t', isAgent ? 'New agent' : 'New script');
-    head.appendChild(h('span', 'wfc-chip', b.state === 'saved' || b.state === 'added' ? 'saved' : 'draft'));
-    el.appendChild(head);
-    const id = h('div', 'wfc-ident');
-    id.append(h('span', 'wfc-name', m.displayName || d.key), ...(isAgent ? [] : [h('span', 'wfc-chip mono', m.runtime === 'shell' ? 'Shell' : m.runtime === 'python' ? 'Python' : 'Node.js')]), h('span', 'mono wfc-muted', d.key));
-    el.appendChild(id);
-    if (m.description) el.appendChild(h('p', 'wfc-reason', m.description));
-    if (isAgent) {
-      const chips = h('div', 'wfc-chips');
-      chips.appendChild(h('span', 'wfc-chip mono', m.runnerType || 'producer'));
-      if (m.fanOut) chips.appendChild(h('span', 'wfc-chip', 'Research fan-out'));
-      if (m.asksQuestions) chips.appendChild(h('span', 'wfc-chip', 'Asks questions'));
-      chips.appendChild(h('span', 'wfc-chip', RUNNER_SIDE[m.sideEffect] || 'none — writes only its output ports'));
-      el.appendChild(chips);
-    }
-    const io = h('div', 'wfc-iogrid');
-    io.append(portList('Inputs', m.inputs, !isAgent), portList('Outputs', m.outputs, !isAgent));
-    if (!isAgent && Array.isArray(m.params) && m.params.length) io.appendChild(portList('Params', m.params.map((p) => ({ id: p.id, type: p.type })), true));
-    el.appendChild(io);
-    const det = h('details', 'wfc-src');
-    det.appendChild(h('summary', '', isAgent ? 'System prompt' : `Program${Array.isArray(d.cases) && d.cases.length ? ` · ${plural(d.cases.length, 'test case')}` : ''}`));
-    det.appendChild(h('pre', 'mono', isAgent ? (d.markdown || '') : (d.source || '')));
-    el.appendChild(det);
-    const row = h('div', 'wfc-actions');
-    const name = m.displayName || d.key;
-    if (b.state === 'declined') row.appendChild(h('span', 'wfc-muted', `Declined — ${name}`));
-    else if (b.state === 'failed') row.appendChild(h('span', 'wfc-err', b.error || 'failed'));
-    else if (b.state === 'added') row.appendChild(h('span', 'wfc-chip-ok', '✓ Saved and added'));
-    else if (b.state === 'saved') {
-      if (notAdded.has(b.id)) el.appendChild(h('p', 'wfc-err', `Not added to the canvas — ${notAdded.get(b.id)}`));   // above the actions row
-      row.appendChild(h('span', 'wfc-chip-ok', `✓ Saved to your ${isAgent ? 'agents' : 'scripts'}`));
-      if (c.then && Array.isArray(c.then.ops) && c.then.ops.length && onDoc(c)) {
-        row.append(h('span', 'wfc-spacer'), button('Add to canvas', 'wfv-btn', async () => {
-          await act('reloadRegistry');
-          if (!onDoc(c)) { act('notify', { tone: 'err', title: 'Not added — another workflow was opened meanwhile.' }); return; }
-          const a = composer.applyOps(c.then.ops, `chat: add ${name}`);
-          if (!a.ok) { act('notify', { tone: 'err', title: 'Not added', detail: a.error }); return; }
-          lastEdit = { cardId: b.id, depth: a.depth, docToken: composer.docToken(), after: snap() };
-          await flip(b.id, { state: 'added', card: { added: true } });
-        }));
-      }
-    } else {
-      row.append(
-        button('Edit…', 'wfv-btn', () => act(isAgent ? 'openAgentDraft' : 'openScriptDraft', d)),
-        button('Decline', 'wfv-btn', () => flip(b.id, { state: 'declined' })),
-        h('span', 'wfc-spacer'),
-        button(isAgent ? 'Save agent' : 'Save script', 'wfv-btn', () => saveDraft(b)),
-      );
-      if (c.then && Array.isArray(c.then.ops) && c.then.ops.length && onDoc(c)) row.appendChild(button('Save & add to canvas', 'wfv-btn wfv-btn-primary', () => saveDraft(b, { add: true })));
-    }
-    el.appendChild(row);
-    return el;
+    const name = (d.meta && d.meta.displayName) || d.key;
+    const placeable = Boolean(c.then && Array.isArray(c.then.ops) && c.then.ops.length) && onDoc(c);
+    return draftCardView(b, { h, button, notAdded: notAdded.get(b.id) || '',
+      onEdit: (draft) => act(isAgent ? 'openAgentDraft' : 'openScriptDraft', draft),
+      onDecline: () => flip(b.id, { state: 'declined' }),
+      onSave: () => saveDraft(b),
+      savedExtra: placeable ? (row) => row.append(h('span', 'wfc-spacer'), button('Add to canvas', 'btn btn-sm', async () => {
+        await act('reloadRegistry');
+        if (!onDoc(c)) { act('notify', { tone: 'err', title: 'Not added: another workflow was opened meanwhile.' }); return; }
+        const a = composer.applyOps(c.then.ops, `chat: add ${name}`);
+        if (!a.ok) { act('notify', { tone: 'err', title: 'Not added', detail: a.error }); return; }
+        lastEdit = { cardId: b.id, depth: a.depth, docToken: composer.docToken(), after: snap() };
+        await flip(b.id, { state: 'added', card: { added: true } });
+      })) : null,
+      proposedExtra: placeable ? (row) => row.appendChild(button('Add to canvas', 'btn btn-sm btn-primary', () => saveDraft(b, { add: true }))) : null });
   }
 
   return {

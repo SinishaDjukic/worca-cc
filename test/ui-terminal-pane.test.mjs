@@ -324,7 +324,7 @@ test('an exited shell is not replaced on its own: a dim line, then Enter (only) 
   await tick();
   pane.onFrame({ type: 'term-status', snapshot: { ...SNAP, status: 'exited', exitCode: 0 } });
   await tick();
-  assert.match(xt.writes.join(''), /\x1b\[2m\[shell exited with code 0 — press Enter for a new one\]/);
+  assert.match(xt.writes.join(''), /\x1b\[2m\[shell exited with code 0\. Press Enter for a new one\]/);
   pane.onContextChange();
   await tick();
   assert.equal(posts(calls).length, 0, 'no respawn');
@@ -405,7 +405,7 @@ test('a tab\'s × on a terminal that ran a command asks first; No keeps it, Yes 
   await tick();
   assert.deepEqual(deletes(calls), ['/api/terminal/sessions/t-1']);
   assert.deepEqual(tabTexts(doc), ['New terminal']);
-  assert.match(xt.writes.join(''), /terminal closed — press Enter for a new one/);
+  assert.match(xt.writes.join(''), /terminal closed\. Press Enter for a new one/);
   assert.equal(posts(calls).length, 0, 'no new shell unasked');
 });
 
@@ -620,7 +620,7 @@ test('a server restart forgets the shell and its screen, and starts a new one on
   pane.onHello({ type: 'hello', bootId: 'boot-b' });
   await tick(12);
   assert.doesNotMatch(xt.writes.join(''), /before/);
-  assert.match(xt.writes.join(''), /\[the worca server restarted — press Enter for a new one\]/);
+  assert.match(xt.writes.join(''), /\[the worca server restarted\. Press Enter for a new one\]/);
   assert.deepEqual(tabTexts(doc), ['New terminal'], 'the gone shell\'s tab leaves');
   assert.match(doc.querySelector('.term-context').textContent, /server restarted/);
   assert.equal(posts(calls).length, 0, 'no respawn');
@@ -761,6 +761,20 @@ test('a card click opens the pane on that tab and focuses it, even after the use
   await pane.showSession('t-gone');                         // a session the server no longer has: nothing happens
   await tick();
   assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-a');
+});
+
+test('showSession resolves whether it showed the tab: false for a closed or unknown shell, so the card can say so', async () => {
+  const routes = { 'GET /api/terminal': { ...INFO, sessions: [ASK] } };
+  const { pane } = makePane({ ctx: { view: 'stats' }, routes });
+  assert.equal(await pane.showSession('t-a'), true);
+  assert.equal(await pane.showSession('t-gone'), false);
+  // Ask's idle close: the server's frame and its list both say closed.
+  routes['GET /api/terminal'] = { ...INFO, sessions: [{ ...ASK, status: 'closed' }] };
+  pane.onFrame({ type: 'term-status', snapshot: { ...ASK, status: 'closed' } });
+  assert.equal(await pane.showSession('t-a'), false);
+  // A Worca restart: the server no longer has it at all.
+  routes['GET /api/terminal'] = { ...INFO, sessions: [] };
+  assert.equal(await pane.showSession('t-a'), false);
 });
 
 test('moving to another page after a card click showed Ask\'s tab: that page\'s own shell is attached; Ask\'s tab stays a tab', async () => {

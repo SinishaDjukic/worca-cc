@@ -38,9 +38,12 @@ and a Code PAT is never handed to this plugin unless you type
 
 worca resolves `{"$env":…}` in its own host process when it reads the plugin
 config, and hands the value to the connector in its config. Connector children
-get only `PATH` and `HOME`. `WORCA_ADO_BOARDS_TOKEN` is a strip-only variable:
+get only `PATH`, `HOME` and the proxy and CA variables. `WORCA_ADO_BOARDS_TOKEN` is a strip-only variable:
 worca removes it from the environment of every claude, script and action it
-spawns, and never reads it as its own Azure DevOps credential.
+spawns. worca itself reads it for one thing only: the Chat's work item chips
+read a work item's title, state and type with it (see
+[Azure DevOps](../../docs/azure-devops.md#chat-chips)). It never uses it for
+Code calls.
 
 If you point the field at a variable of your own, pick one of the names worca
 strips (`WORCA_ADO_BOARDS_TOKEN`, or deliberately `WORCA_ADO_TOKEN`); any other

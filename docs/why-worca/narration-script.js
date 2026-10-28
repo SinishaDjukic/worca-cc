@@ -83,8 +83,8 @@ window.__NARRATION = {
 
     // ── 10 · 08 Ask Worca ────────────────────────────────────────────────
     { lines: [
-      "Number eight. Ask Worca: your own agent for your runs, pipelines and results — it was there for all of it.",
-      "Ask Worca is a conversational layer over everything Worca knows: your runs, their logs, their costs, their diffs, and the pipeline definitions themselves.",
+      "Number eight. Chat: your own agent for your runs, pipelines and results — it was there for all of it.",
+      "Chat is a conversational layer over everything Worca knows: your runs, their logs, their costs, their diffs, and the pipeline definitions themselves.",
       "Instead of digging through artifacts, you ask why the review step rejected the plan, and get an answer grounded in the actual run data, with the file and the line it came from.",
       "It turns the audit trail from something you could inspect into something you actually use. That closes the loop between autonomy and understanding."
     ] },

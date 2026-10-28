@@ -11,7 +11,7 @@ import { mapSummary } from '../../src/shared/workspace-map/summary.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CONF_TONE = { exact: 'green', verified: 'blue', heuristic: 'amber', inferred: 'grey' };
-const STATE_TONE = { auto: 'grey', confirmed: 'green', rejected: 'red', manual: 'violet', missing: 'amber', stale: 'amber' };
+const STATE_TONE = { auto: 'grey', confirmed: 'green', rejected: 'red', manual: 'slate', missing: 'amber', stale: 'amber' };
 const ACTIONS = {
   auto: [['wm-confirm', 'Confirm'], ['wm-reject', 'Reject']],
   confirmed: [['wm-reject', 'Reject'], ['wm-clear', 'Clear']],
@@ -35,7 +35,7 @@ function h(doc, tag, cls, text) {
   return n;
 }
 function btn(doc, cls, text) {
-  const b = h(doc, 'button', `btn-ghost btn-mini ${cls}`, text);
+  const b = h(doc, 'button', `btn btn-sm ${cls}`, text);
   b.type = 'button';
   return b;
 }
@@ -375,7 +375,7 @@ function renderAddForm(doc, members) {
     input.setAttribute('aria-label', label);
     form.appendChild(input);
   }
-  const add = h(doc, 'button', 'btn btn-primary btn-mini wm-add', 'Add edge');
+  const add = h(doc, 'button', 'btn btn-primary btn-sm wm-add', 'Add edge');
   add.type = 'button';
   form.appendChild(add);
   const msg = h(doc, 'small', 'hint err wm-add-msg');

@@ -216,7 +216,10 @@ function sniffMarkup(head) {
 /** E9: text has no magic number, so it is probed by CONTENT. A body that is not
  *  clean UTF-8, or whose first non-space byte is '<' without being xml/svg, is
  *  refused — that is §7's "html, xhtml, anything scriptable or unrecognized". */
-function sniffText(buf) {
+/** Strict text: clean UTF-8 with no C0 control but tab / LF / CR, a leading BOM dropped. → the text, or null.
+ *  sniffText's first half, shared with show_files (src/core/ask/show-files.mjs), which keeps markup sniffText refuses
+ *  (an HTML page) as source text. */
+export function decodePlainText(buf) {
   let text;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
@@ -229,7 +232,13 @@ function sniffText(buf) {
     const k = text.charCodeAt(i);
     if (k < 32 && k !== 9 && k !== 10 && k !== 13) return null;
   }
-  const head = (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).trimStart();   // strip a BOM
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+function sniffText(buf) {
+  const text = decodePlainText(buf);
+  if (text == null) return null;
+  const head = text.trimStart();
   if (!head) return null;                             // an empty or blank body is nothing worca can display
   // Markup is decided by its ROOT element, read through the prelude an SVG file may open
   // with (a prolog, comments, an svg DOCTYPE) — see sniffMarkup.

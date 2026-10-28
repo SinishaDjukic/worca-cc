@@ -34,7 +34,7 @@ const STATS_FIXTURE = {
   series: [{ bucketStartMs: Date.now() - 2 * 86400000, spentUsd: 3.5, finished: 2, stopped: 1, failed: 0 }],
 };
 
-async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
+async function boot({ fetchHandler, url = 'http://localhost:4317/', storage = {} } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -65,6 +65,7 @@ async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
+  for (const [k, v] of Object.entries(storage)) window.localStorage.setItem(k, v);
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -115,6 +116,24 @@ test('#team-metrics routes from the sidebar entry (directly below Stats) and ren
       const { window, tick } = await boot({ url: 'http://localhost:4317/#team-metrics', fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }) });
       await tick(); await tick();
       assert.equal(window.document.querySelectorAll('#tm-body .stat-tile').length, 6);
+      assert.equal(window.location.hash, '#team-metrics', 'a fresh load keeps the hash');
+      assert.equal(window.document.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'not Chat');
+      assert.equal(window.document.getElementById('topnav-title').textContent, 'Team metrics');
+    } },
+    { name: 'simple level and a late /api/flags: the hash stays #team-metrics and Team metrics shows', run: async () => {
+      const tm = tmHandler({ scopes: SCOPES_ON, data: TM_DATA });
+      const { window, tick } = await boot({ url: 'http://localhost:4317/#team-metrics', fetchHandler: (u, o) => {
+        if (u.includes('/api/flags')) return new Promise((r) => setTimeout(() => r({ ok: true, status: 200, json: async () => ({ flags: {} }) }), 30));
+        if (u.includes('/api/settings')) return respond({ uiLevel: 'simple' });
+        return tm(u, o);
+      } });
+      await new Promise((r) => setTimeout(r, 60));
+      await tick(); await tick();
+      const doc = window.document;
+      assert.equal(window.location.hash, '#team-metrics');
+      assert.equal(doc.querySelector('[data-view="team-metrics"]').classList.contains('hidden'), false);
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true);
+      assert.equal(doc.getElementById('topnav-title').textContent, 'Team metrics');
     } },
   ]);
 });
@@ -257,4 +276,109 @@ test('switching back to a scope paints its cached payload at once, dimmed, while
   release();
   await until(() => !body.hasAttribute('aria-busy'), 'the project read to land');
   assert.equal(body.classList.contains('is-loading'), false); assert.equal(body.getAttribute('aria-busy'), null);
+});
+
+test('run tags: #tm-tag lists the records\' tags, narrows the page with a removable chip; hidden without tags and on the Timeline tab', async () => {
+  const tagged = { ...TM_DATA, records: [{ ...makeRecord({ id: 'r1', startedAt: nowIso, usd: 3 }), tags: ['client:acme'] }, makeRecord({ id: 'r2', startedAt: nowIso, usd: 1 })] };
+  const { window, tick } = await boot({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: tagged }) });
+  const doc = window.document;
+  window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick(); await tick();
+  const sel = doc.getElementById('tm-tag');
+  assert.ok(sel, '#tm-tag is mounted');
+  assert.equal(sel.hidden, false);
+  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'client:acme']);
+  assert.ok([...doc.querySelectorAll('#tm-group option')].some((o) => o.value === 'tag:client'), 'a tag key in the records stacks too');
+  sel.value = 'client:acme'; sel.dispatchEvent(new window.Event('change', { bubbles: true })); await tick();
+  assert.equal(doc.querySelectorAll('#tm-body .tm-run-tbl tbody tr').length, 1);
+  const chip = doc.querySelector('#tm-filters .tm-filter-chip[data-dim="tag"]');
+  assert.match(chip.textContent, /tag: client:acme/);
+  assert.equal(doc.getElementById('tm-filters').hidden, false);
+  chip.click(); await tick();
+  assert.equal(doc.querySelectorAll('#tm-body .tm-run-tbl tbody tr').length, 2);
+  assert.equal(doc.getElementById('tm-tag').value, '');
+  window.location.hash = 'team-metrics/timeline'; window.dispatchEvent(new window.Event('hashchange')); await tick(); await tick();
+  assert.equal(doc.getElementById('tm-tag').hidden, true, 'hidden on the Timeline tab with #tm-filters');
+});
+
+test('run tags: tag-less records hide #tm-tag and leave the group-by options unchanged', async () => {
+  const { window, tick } = await boot({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }) });
+  const doc = window.document;
+  window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick(); await tick();
+  assert.equal(doc.getElementById('tm-tag').hidden, true);
+  assert.deepEqual([...doc.querySelectorAll('#tm-group option')].map((o) => o.value), ['workflow', 'result', 'actor']);
+});
+
+async function openTm(opts) {
+  const ctx = await boot(opts);
+  ctx.window.location.hash = 'team-metrics'; ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  return ctx;
+}
+
+test('Team metrics chips: By person = the By actor table alone; a stored By tag opens Cost without tags', async () => {
+  const plain = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TM_DATA }), storage: { 'worca.teamMetrics.view': 'tag' } });
+  const doc = plain.window.document;
+  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
+  assert.equal(doc.querySelector('#tm-view [data-tm-view="cost"]').getAttribute('aria-pressed'), 'true');
+  assert.ok(doc.querySelector('#tm-body .cost-report'), 'a stored "tag" without tags renders Cost');
+  doc.querySelector('#tm-view [data-tm-view="person"]').click(); await plain.tick();
+  assert.equal(doc.querySelector('#tm-body .tm-run-tbl'), null);
+  assert.deepEqual([...doc.querySelectorAll('#tm-body .tm-tbl')].map((t) => t.dataset.dim), ['actor']);
+});
+
+const DIMS = { dims: [{ key: 'client', label: 'Client', values: [], required: true }] };
+const withDims = (inner) => (u, o) => (u.includes('/api/tag-dimensions') ? respond(DIMS) : inner(u, o));
+const COSTED = () => {
+  const at = new Date().toISOString();
+  const rec = (id, usd, actor, tags) => ({ ...makeRecord({ id, startedAt: at, usd, actor }), ...(tags ? { tags } : {}) });
+  return { ...TM_DATA, humanRateUsd: 35, records: [
+    rec('a1', 6, 'Developer A', ['client:acme']), rec('a2', 1.5, 'Developer A'), rec('a3', 2, 'Developer A'),
+    rec('a4', 0.5, 'Developer A', ['spike']), rec('b1', 3, 'Developer B', ['client:globex']),
+  ] };
+};
+
+test('Team metrics › Cost: the report table, the heat grid and the to-do strip; a stored By tag opens Cost', async () => {
+  const ctx = await openTm({ fetchHandler: withDims(tmHandler({ scopes: SCOPES_ON, data: COSTED() })), storage: { 'worca.teamMetrics.view': 'tag' } });
+  const doc = ctx.window.document;
+  await ctx.tick();
+  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
+  assert.equal(doc.querySelector('#tm-view [data-tm-view="cost"]').getAttribute('aria-pressed'), 'true');
+  const body = doc.getElementById('tm-body');
+  assert.deepEqual([...body.querySelectorAll('.cr-table tbody tr')].map((r) => r.cells[0].textContent.trim()), ['acme', 'globex', 'Unallocated']);
+  assert.deepEqual([...body.querySelectorAll('.tm-heat-table thead th')].map((t) => t.textContent), ['Person', 'acme', 'globex', 'Unallocated', 'Total']);
+  assert.deepEqual([...body.querySelectorAll('.tm-heat-table tbody tr')].map((r) => r.cells[0].textContent), ['Developer A', 'Developer B']);
+  const row = body.querySelector('.tm-todo .tm-todo-row');
+  assert.deepEqual([...row.children].map((c) => c.textContent), ['Developer A', '3 runs', '$4.00', 'missing Client']);
+  assert.equal(body.querySelector('.cr-runs'), null);
+  assert.equal(doc.getElementById('tm-tag').hidden, true);
+  assert.equal(doc.getElementById('tm-filters').hidden, true);
+  assert.equal(body.querySelector('.alloc-card'), null);
+});
+
+test('Team metrics › Cost: Download CSV names the scope, range and key; chip choice remembered; own report state', async () => {
+  const ctx = await openTm({ fetchHandler: withDims(tmHandler({ scopes: SCOPES_ON, data: COSTED() })) });
+  const { window } = ctx;
+  const doc = window.document;
+  doc.querySelector('#tm-view [data-tm-view="cost"]').click();
+  await ctx.tick();
+  assert.equal(window.localStorage.getItem('worca.teamMetrics.view'), 'cost');
+  // Stub the download as the replaced .alloc-csv test did: Node's URL (app.js's bare URL/Blob are Node globals here),
+  // restored in finally so later tests in the process keep the real createObjectURL.
+  let name = '';
+  const orig = [URL.createObjectURL, URL.revokeObjectURL];
+  URL.createObjectURL = () => 'blob:x';
+  URL.revokeObjectURL = () => {};
+  window.HTMLAnchorElement.prototype.click = function () { name = this.download; };
+  try {
+    doc.querySelector('#tm-body .cr-csv').click();
+  } finally {
+    [URL.createObjectURL, URL.revokeObjectURL] = orig;
+  }
+  assert.equal(name, 'team-metrics-project-billing-api-0123abcd-this-month-cost-client.csv');
+  assert.match(doc.querySelector('#tm-body .cr-chart-card .card-head small').textContent, /^[A-Z][a-z]{2} 1 – [A-Z][a-z]{2} \d{2}$/);   // "Oct 1 – Oct 31"
+  doc.querySelector('#tm-body .cr-metric [data-metric="hours"]').click();
+  assert.ok(window.localStorage.getItem('worca-cc.teamMetrics.cost.v1'));
+  assert.equal(window.localStorage.getItem('worca-cc.stats.cost.v1'), null);
 });

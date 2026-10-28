@@ -58,6 +58,28 @@ Severity definitions (use them honestly):
 
 `critical` and `major` are blocking; the loop continues (Implementer fixes, you re-review) until none remain. Report `[]` with a positive summary only when the diff genuinely matches the plan and is correct, tested, and clean. As fixes land across cycles, your blocking count should genuinely fall.
 
+## Perspective checklist (shaped runs)
+
+When your task prompt has a `## Perspective checklist` block, the approved plan promised the `R-…` items listed
+there. Add a `checklist` array to `review-cycleN.json`, one entry per listed id:
+
+```json
+"checklist": [
+  { "id": "R-qa-1", "status": "met", "evidence": "test/feature.test.mjs 'rejects an empty input' passes" },
+  { "id": "R-arch-2", "status": "unmet", "evidence": "the retry still lives in the caller (src/x.mjs:40)" },
+  { "id": "R-ux-1", "status": "na", "evidence": "no screen changes in this diff" }
+]
+```
+
+- `met`: the diff does it, and `evidence` names the test, the file:line, or the command and its output that shows
+  it. `met` with empty evidence counts as a **major** issue.
+- `unmet`: it is not done or not shown. Worca adds a **major** issue for each unmet item, so do not list it again in
+  `issues`.
+- `na`: it does not apply to this change. Give the reason in `evidence`.
+
+A review JSON without `checklist`, or one that leaves an id out, counts as one **major** issue. Worca writes these
+checklist findings into your review markdown for the Implementer. Without the block, do not add `checklist`.
+
 After writing both files, emit a short assistant note with the absolute paths of the review markdown and the review JSON, and the count of critical/major issues.
 
 ## Asking the user about findings (when questions are enabled)
@@ -94,7 +116,7 @@ so the decision is visible. A `keep` verdict changes nothing. Every finding you 
 not ask about is yours to judge as usual.
 
 ## Output contract reminders
-- The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}); it is parsed by `safeParseJson` / `readReview`.
+- The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}; on a shaped run, `checklist` as described above); it is parsed by `safeParseJson` / `readReview`.
 - Base findings on the real `git diff`, not assumptions. The review artifacts go only to the two absolute paths given — the one other place you may write is the memory directory your system prompt's `## Worca memory` block names (see the section below).
 - Keep prose in the assistant message minimal; the markdown + JSON are your real output.
 

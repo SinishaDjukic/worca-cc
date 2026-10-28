@@ -21,6 +21,7 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+import { vcsAtUpgrade } from './project-kind.mjs';
 import { backfillHumanHours } from './human-backfill.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 import { AGENT_TUNABLES } from '../shared/graph/validate.mjs';
@@ -28,6 +29,8 @@ import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION
   from './graph/presentation-workflow.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
   from './graph/architecture-workflow.mjs';
+import { GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS }
+  from './graph/promo-video-workflow.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -60,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 56;
+export const SCHEMA_VERSION = 79;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -833,6 +836,9 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
+  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
+  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
+  run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -841,7 +847,18 @@ const INCREMENTAL_COLUMNS = {
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
                             policy_state: 'TEXT',     // v32: team-policy run state (JSON: home, sha, overrides, exceeded, deviations, reason)
                             human_hours: 'REAL NOT NULL DEFAULT 0',     // v33: Σ pipeline_steps.human_hours (money-saved design §6)
-                            started_by: 'TEXT' },   // v36: who started the run (identity.mjs; NULL = before attribution)
+                            started_by: 'TEXT',   // v36: who started the run (identity.mjs; NULL = before attribution)
+                            // Shaper D28, no version of their own (-4-slices owns v57); reconcileSchema adds them
+                            shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
+                            run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
+                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
+                            deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
+                            pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a
+                            release_version: 'TEXT',  // v66 (Shaper s4): the Ship it dialog's draft release tag; NULL = none
+                            release_target: 'TEXT',   // v66: the branch the tag points at (the PR's base)
+                            release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
+                            release_url: 'TEXT',      // v66: the draft release's URL
+                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -853,7 +870,11 @@ const INCREMENTAL_COLUMNS = {
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
-                            mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
+                            mime: 'TEXT',                 // v27: sniffed mime; NULL on pre-v27 rows (= text)
+                            source_path: 'TEXT',          // v64: the real path a show_files copy came from (server-only); NULL = an upload
+                            // v70: where a copy found under a run's or project's folder came from, for Show in folder's
+                            // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
+                            source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -863,20 +884,38 @@ const INCREMENTAL_COLUMNS = {
                             agent_mode: 'INTEGER',   // v51 (#574): the chat's Agent mode switch, 0/1; NULL = on
                             engine: 'TEXT',          // v53 (#635): the engine the chat is locked to; NULL = before v53 (read from its model)
                             mode: 'TEXT',            // v54 (Workflows view): 'composer' for the editor's chat; NULL = an Ask Worca chat
-                            composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+                            composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+                            archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
+                            pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
+                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+  shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
+                            ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
+                            shipped_at: 'TEXT',       // v58: when Ship as ran
+                            ship_closed: 'INTEGER',   // v66 (Shaper s4): drafts the one PR closed; NULL = unknown
+                            release_version: 'TEXT',  // v66 (Shaper s4): the draft release's tag chosen at Ship; NULL = none
+                            release_target: 'TEXT',   // v66: the branch the tag points at (the feature's base)
+                            release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
+                            release_url: 'TEXT',      // v66: the draft release's URL
+                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
+  shape_feature_slices:   { draft_pr_url: 'TEXT',      // v58 (D24): the PR openSliceDraft opened as a draft
+                            kind: 'TEXT' },            // v67 (Shaper s5): 'extra' | 'follow-up' (appendFeatureRun); NULL = from the outline
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT',     // v32: team-policy home (member absolute path); NULL = no home
                             map_json: 'TEXT',           // v40: the last scan's { map, synthesis } (workspace map); NULL = none yet
                             map_overrides_json: 'TEXT', // v40: confirm / reject / manual edge overrides; NULL = none
                             description_origin: 'TEXT',     // v40: 'generated' | 'edited'; NULL = before v40
-                            actions_json: 'TEXT' },         // v47: stack actions { stacks:[…] } (issue #529); NULL = none
+                            actions_json: 'TEXT',           // v47: stack actions { stacks:[…] } (issue #529); NULL = none
+                            scan_models_json: 'TEXT' },     // v57: the scan pick captured at creation { scanModel, scanEffort, agentModel, agentEffort }; NULL = none
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
-                            created_by: 'TEXT', updated_by: 'TEXT' },   // v39: who made / last changed it (identity.mjs actor)
+                            created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it (identity.mjs actor)
+                            preset_id: 'TEXT' },   // v63: the run preset the series follows (read at fire time); NULL = none
   scheduled_runs:         { after_kind: 'TEXT', after_id: 'TEXT', after_policy: "TEXT NOT NULL DEFAULT 'done'",
                             source_from_previous: 'INTEGER NOT NULL DEFAULT 0',   // v34: run chains
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it
-                            resume_pipeline_id: 'TEXT' },   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
+                            resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
+                            preset_id: 'TEXT' },   // v63: the run preset this run follows (read at fire time); NULL = none
+  projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1033,6 +1072,324 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 );
 `;
 
+// v68 (labels slice 1): run labels — free words that organise runs. Never read by stats, metrics or policy.
+// Written only by the label routes; survive archive/restore; removed by hand on a hard delete (pipeline-delete.mjs).
+const RUN_LABELS_DDL = `
+CREATE TABLE IF NOT EXISTS run_labels (
+  pipeline_id TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  added_at    TEXT NOT NULL,
+  PRIMARY KEY (pipeline_id, label),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_labels_label ON run_labels (label);
+`;
+
+// v71 (Smart run naming): spend that happens before a run exists (the New run form's name suggestion). Never joins
+// cost_ledger, so it is never billed to a run or counted toward a budget. NO foreign key: it is a permanent fact.
+const UTILITY_COST_LEDGER_DDL = `
+CREATE TABLE IF NOT EXISTS utility_cost_ledger (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL,
+  amount_usd REAL NOT NULL,
+  tokens_in  INTEGER,
+  tokens_out INTEGER,
+  model      TEXT,
+  ts         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_utility_cost_ledger_ts ON utility_cost_ledger (ts);
+`;
+
+// v59 (#718; 57-58 are Shaper's): run tags. One row per (run, key); the plain tag `spike` is value ''. Written at run
+// creation and by the tag-edit route only — writeState never touches them. pipelines rows are never
+// DELETEd (pipeline-delete.mjs), so the CASCADE is convention, and tags survive archive/restore.
+const RUN_TAGS_DDL = `
+CREATE TABLE IF NOT EXISTS run_tags (
+  pipeline_id TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  value       TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (pipeline_id, key),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_tags_key_value ON run_tags (key, value);
+CREATE TABLE IF NOT EXISTS run_tag_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline_id TEXT NOT NULL,
+  ts          TEXT NOT NULL,
+  actor       TEXT,
+  before_tags TEXT NOT NULL,   -- JSON string[] (normalised)
+  after_tags  TEXT NOT NULL,   -- JSON string[] (normalised)
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_tag_events_pipeline ON run_tag_events (pipeline_id, id);
+`;
+
+// v61 (#712): run presets — named New run setups (src/core/run-presets-store.mjs). Names are unique per owner
+// (created_by; NULL on a local install), ignoring case.
+const RUN_PRESETS_DDL = `
+CREATE TABLE IF NOT EXISTS run_presets (
+  id TEXT PRIMARY KEY,                          -- rp_ + 12 hex
+  name TEXT NOT NULL,
+  scope_kind TEXT NOT NULL DEFAULT 'global',    -- global | project | workspace
+  scope_ref TEXT,                               -- project key or workspace id; NULL for global
+  setup TEXT NOT NULL DEFAULT '{}',             -- JSON: src/shared/run-presets.mjs PRESET_SETUP_KEYS
+  created_by TEXT,                              -- identity name on a shared deployment, else NULL
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS run_presets_owner_name ON run_presets (COALESCE(created_by, ''), name COLLATE NOCASE);
+`;
+
+// v65 (runs redesign §3.3): user-created groups and ad-hoc membership — the one new named state the clarify answer
+// allows. group_id names a run_groups.id (grp_…) OR a shape_features.id (feat_…), so it has no FK; src/core/run-groups.mjs
+// checks it. pipeline_id is the primary key: a run is in one group at a time.
+const RUN_GROUPS_DDL = `
+CREATE TABLE IF NOT EXISTS run_groups (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  project_key TEXT,
+  created_by  TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_group_members (
+  pipeline_id TEXT PRIMARY KEY,
+  group_id    TEXT NOT NULL,
+  position    INTEGER NOT NULL,
+  added_by    TEXT,
+  added_at    TEXT NOT NULL,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_run_group_members_group ON run_group_members (group_id, position);
+`;
+
+const SHAPE_SLICES_DDL = `
+CREATE TABLE IF NOT EXISTS shape_features (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  project_dir TEXT NOT NULL,
+  origin_pipeline_id TEXT NOT NULL,
+  source_branch TEXT,
+  outline TEXT NOT NULL,
+  request_base TEXT NOT NULL DEFAULT '{}',
+  perspectives TEXT NOT NULL DEFAULT '[]',
+  workflow_id TEXT NOT NULL,
+  approve_each INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'active',
+  proposed INTEGER,
+  merges INTEGER NOT NULL DEFAULT 0,
+  removals INTEGER NOT NULL DEFAULT 0,
+  replaces TEXT,
+  replaced_by TEXT,
+  replan_ticket_id TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shape_feature_slices (
+  feature_id TEXT NOT NULL,
+  idx INTEGER NOT NULL,
+  slice_id TEXT,
+  title TEXT NOT NULL,
+  ticket_id TEXT,
+  pipeline_id TEXT,
+  PRIMARY KEY (feature_id, idx),
+  FOREIGN KEY (feature_id) REFERENCES shape_features (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_shape_features_origin ON shape_features (origin_pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_slices_pipeline ON shape_feature_slices (pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_slices_ticket ON shape_feature_slices (ticket_id);
+CREATE TABLE IF NOT EXISTS shape_plans (
+  thread_id TEXT NOT NULL,
+  card_id TEXT NOT NULL,
+  title TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (thread_id, card_id)
+);
+`;
+
+export const SHAPE_NOTES_DDL = `
+CREATE TABLE IF NOT EXISTS shape_feature_notes (
+  id TEXT PRIMARY KEY,
+  feature_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('plan', 'idea')),   -- plan: the run's Planner reads it; idea: shown at the checkpoint
+  text TEXT NOT NULL,
+  run_index INTEGER,                                     -- the run it is for; NULL = no run left yet (appendFeatureRun assigns it)
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (feature_id) REFERENCES shape_features (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_notes_feature ON shape_feature_notes (feature_id, run_index);
+`;
+
+// Shaper s5 (D4): the round marker branch.roundOf lives on the round's own pipelines row; this finds a run's rounds.
+// Guarded by json_valid like src/core/artifacts.mjs: an unguarded json_extract index makes every INSERT/UPDATE
+// of a pipelines row whose branch is not valid JSON throw "malformed JSON".
+export const ROUND_OF_EXPR = "json_extract(CASE WHEN json_valid(branch) THEN branch END, '$.roundOf.pipelineId')";
+const ROUND_OF_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_pipelines_round_of ON pipelines (${ROUND_OF_EXPR})`;
+
+// v72 Requirements (plans/requirements-design.md §3): product-owner feature specs (FEAT-<seq>), their append-only
+// interview thread, the shared context per project/workspace, and the spend counted toward the limit (D9).
+// Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const REQUIREMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_features (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  epic_seq INTEGER,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL,
+  spec_json TEXT NOT NULL,
+  orientation_json TEXT,
+  criteria_seq INTEGER NOT NULL DEFAULT 0,
+  assumption_seq INTEGER NOT NULL DEFAULT 0,
+  rounds INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  saved_path TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_features_scope ON req_features(scope_type, scope_key);
+CREATE TABLE IF NOT EXISTS req_turns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  model TEXT,
+  cost_usd REAL,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_turns_feature ON req_turns(feature_seq, id);
+CREATE TABLE IF NOT EXISTS req_contexts (
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  look_at_code INTEGER NOT NULL DEFAULT 1,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
+);
+CREATE TABLE IF NOT EXISTS req_cost_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq INTEGER NOT NULL,
+  turn_id INTEGER,
+  amount_usd REAL NOT NULL,
+  model TEXT,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_cost_ledger_ts ON req_cost_ledger(ts);
+`;
+
+// v73 Requirements A2 (plans/requirements-a2-design.md §3): one row per "Start in Worca" of a feature, with the
+// frozen spec. IF NOT EXISTS + an INCREMENTAL_TABLES entry: reconcile-safe (see v72 above).
+const REQUIREMENTS_STARTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_starts (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq   INTEGER NOT NULL,
+  version       INTEGER NOT NULL,
+  run_id        TEXT NOT NULL UNIQUE,
+  pipeline_id   TEXT,
+  spec_json     TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  ready         INTEGER NOT NULL,
+  failing_json  TEXT NOT NULL DEFAULT '[]',
+  reason        TEXT,
+  workflow_id   TEXT, source_branch TEXT,
+  started_by    TEXT, started_at TEXT NOT NULL,
+  UNIQUE (feature_seq, version)
+);
+CREATE INDEX IF NOT EXISTS req_starts_feature ON req_starts(feature_seq, version);
+CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts(pipeline_id);
+`;
+
+// v74 Requirements A7 (plans/requirements-a7-design.md §3): the optional Product brief, one row per project or
+// workspace. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const REQUIREMENTS_BRIEFS_DDL = `
+CREATE TABLE IF NOT EXISTS req_briefs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope_type    TEXT NOT NULL,
+  scope_key     TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  sections_json TEXT NOT NULL DEFAULT '{}',
+  edited_json   TEXT NOT NULL DEFAULT '{}',
+  sources_json  TEXT NOT NULL DEFAULT '[]',
+  files_json    TEXT NOT NULL DEFAULT '[]',
+  seed_json     TEXT,
+  model         TEXT,
+  cost_usd      REAL NOT NULL DEFAULT 0,
+  error_json    TEXT,
+  made_by TEXT, made_at TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL,
+  UNIQUE (scope_type, scope_key)
+);
+`;
+
+// v76 (#948 s3): the Chats column's topic groups. A chat names its group in ask_threads.group_id (one at most); a
+// group is never empty (the store deletes it with its last chat). name_source: 'suggested' | 'user'.
+const ASK_CHAT_GROUPS_DDL = `
+CREATE TABLE IF NOT EXISTS ask_chat_groups (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  name_source TEXT NOT NULL DEFAULT 'user',
+  created_by  TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);`;
+
+// v77 Requirements A8 (plans/requirements-a8-design.md §3): a feature's files and a made brief's documents. Bodies live
+// on disk (<worcaHome>/requirements/att/<id><ext>); the row holds what Worca took from each. Reconcile-safe: IF NOT
+// EXISTS + INCREMENTAL_TABLES; req_cost_ledger.attachment_id and req_starts.files_json live in INCREMENTAL_COLUMNS.
+const REQUIREMENTS_ATTACHMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_attachments (
+  id             TEXT PRIMARY KEY,
+  owner_type     TEXT NOT NULL,
+  owner_id       INTEGER NOT NULL,
+  name           TEXT NOT NULL,
+  kind           TEXT NOT NULL,
+  mime           TEXT NOT NULL,
+  bytes          INTEGER NOT NULL,
+  sha256         TEXT NOT NULL,
+  status         TEXT NOT NULL,
+  error_json     TEXT,
+  summary        TEXT NOT NULL DEFAULT '',
+  summary_edited INTEGER NOT NULL DEFAULT 0,
+  asks_json      TEXT NOT NULL DEFAULT '[]',
+  history_json   TEXT NOT NULL DEFAULT '[]',
+  send_with_run  INTEGER NOT NULL DEFAULT 0,
+  cost_usd       REAL NOT NULL DEFAULT 0,
+  read_cost_usd  REAL,
+  read_model     TEXT, read_at TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, owner_id);
+CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
+`;
+
+// v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Feature chat of a feature. A product owner's message
+// row is written before its call, Worca's row (text, drafts, proposals, cost, model, or an error) after it. Reconcile-safe:
+// IF NOT EXISTS + INCREMENTAL_TABLES; req_cost_ledger.helper_message_id lives in INCREMENTAL_COLUMNS.
+const REQUIREMENTS_HELPER_DDL = `
+CREATE TABLE IF NOT EXISTS req_helper_messages (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq    INTEGER NOT NULL,
+  role           TEXT NOT NULL,
+  text           TEXT NOT NULL DEFAULT '',
+  focus_json     TEXT,
+  round_turn_id  INTEGER,
+  drafts_json    TEXT NOT NULL DEFAULT '[]',
+  proposals_json TEXT NOT NULL DEFAULT '[]',
+  error_json     TEXT,
+  cost_usd       REAL,
+  model          TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_helper_messages_feature ON req_helper_messages(feature_seq, id);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1056,11 +1413,31 @@ const INCREMENTAL_TABLES = {
   pipeline_member_prs: PIPELINE_MEMBER_PRS_DDL,
   pr_watches: PR_WATCH_DDL,
   pr_watch_runs: PR_WATCH_DDL,
+  shape_features: SHAPE_SLICES_DDL,
+  shape_feature_slices: SHAPE_SLICES_DDL,
+  shape_plans: SHAPE_SLICES_DDL,
+  shape_feature_notes: SHAPE_NOTES_DDL,
+  run_tags:       RUN_TAGS_DDL,
+  run_tag_events: RUN_TAGS_DDL,
+  run_labels:     RUN_LABELS_DDL,
+  utility_cost_ledger: UTILITY_COST_LEDGER_DDL,
+  run_presets:    RUN_PRESETS_DDL,
+  run_groups:        RUN_GROUPS_DDL,
+  run_group_members: RUN_GROUPS_DDL,
+  ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
   terminal_audit:     TERMINAL_DDL,
   terminal_worktrees: TERMINAL_DDL,
+  req_features:      REQUIREMENTS_DDL,
+  req_turns:         REQUIREMENTS_DDL,
+  req_contexts:      REQUIREMENTS_DDL,
+  req_cost_ledger:   REQUIREMENTS_DDL,
+  req_starts:        REQUIREMENTS_STARTS_DDL,
+  req_briefs:        REQUIREMENTS_BRIEFS_DDL,
+  req_attachments:   REQUIREMENTS_ATTACHMENTS_DDL,
+  req_helper_messages: REQUIREMENTS_HELPER_DDL,
 };
 
 /**
@@ -1079,6 +1456,13 @@ const INCREMENTAL_INDEXES = {
   idx_scheduled_runs_after: {
     table: 'scheduled_runs',
     ddl: 'CREATE INDEX IF NOT EXISTS idx_scheduled_runs_after ON scheduled_runs (after_id)',
+  },
+  // An expression index on pipelines.branch: a minimal hand-seeded pipelines(id) has no such column to index.
+  idx_pipelines_round_of: { table: 'pipelines', column: 'branch', ddl: ROUND_OF_INDEX_DDL },
+  // A2: a resumed run finds its start by pipeline id (startByPipelineId); added after req_starts shipped.
+  req_starts_pipeline: {
+    table: 'req_starts',
+    ddl: 'CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts (pipeline_id)',
   },
 };
 
@@ -1103,6 +1487,7 @@ function missingColumns(db) {
   return missing;
 }
 
+const hasColumn = (db, table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
 const hasSqliteObject = (db, type, name) => db.prepare(
   "SELECT count(*) AS n FROM sqlite_master WHERE type=? AND name=?"
 ).get(type, name).n > 0;
@@ -1117,7 +1502,8 @@ function schemaGaps(db) {
   const tables = Object.keys(INCREMENTAL_TABLES)
     .filter((t) => !hasSqliteObject(db, 'table', t));
   const indexes = Object.entries(INCREMENTAL_INDEXES)
-    .filter(([name, { table }]) => hasSqliteObject(db, 'table', table)
+    .filter(([name, { table, column }]) => hasSqliteObject(db, 'table', table)
+                                && (!column || hasColumn(db, table, column))
                                 && !hasSqliteObject(db, 'index', name))
     .map(([name]) => name);
   return { columns: missingColumns(db), tables, indexes };
@@ -1523,6 +1909,11 @@ function applySchemaV55(db) {
   seedShippedWorkflow(db, GRAPH_ARCHITECTURE_WORKFLOW);
 }
 
+/** v60: seed the shipped Promo video workflow — V41's shape for a third shipped graph. */
+function applySchemaV60(db) {
+  seedShippedWorkflow(db, GRAPH_PROMO_VIDEO_WORKFLOW);
+}
+
 /** INSERT OR IGNORE one shipped v2 workflow row (see applySchemaV41). */
 function seedShippedWorkflow(db, t) {
   if (!presentationSeedable(db)) return;
@@ -1561,6 +1952,11 @@ function refreshPresentationSeed(db) {
 /** The Architecture (C4) seed's refresh — the same rules, its own shipped shapes. */
 function refreshArchitectureSeed(db) {
   refreshShippedSeed(db, GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS);
+}
+
+/** The Promo video seed's refresh — the same rules, its own shipped shapes. */
+function refreshPromoVideoSeed(db) {
+  refreshShippedSeed(db, GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS);
 }
 
 function refreshShippedSeed(db, t, fingerprint, shipped) {
@@ -1687,6 +2083,22 @@ function applySchemaV52(db) {
       FROM pipelines
       WHERE target = 'workspace' AND pr_url IS NOT NULL AND project_key IS NOT NULL
     `);
+  } catch { /* never fail the migration on the backfill */ }
+}
+
+/** v69 (Projects, any way — CONTRACT §1): projects.vcs ('git' | 'none') arrives through INCREMENTAL_COLUMNS
+ *  (the hoisted repair); this rung backfills it ONCE (U12): an existing folder without .git is 'none', a .git or
+ *  a path that is gone is 'git'. Stat only — never git — under the ladder's BEGIN IMMEDIATE. `vcs IS NULL` keeps
+ *  it idempotent and the kind is never re-inferred. Gated + fenced like V52: a minimal hand-seeded DB has no
+ *  projects table, and a backfill is never worth rolling the ladder back over. */
+function applySchemaV69(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  if (!hasSqliteTable(db, 'projects')) return;
+  const cols = new Set(db.prepare('PRAGMA table_info(projects)').all().map((c) => c.name));
+  if (!['key', 'path', 'vcs'].every((c) => cols.has(c))) return;
+  try {
+    const set = db.prepare('UPDATE projects SET vcs = ? WHERE key = ? AND vcs IS NULL');
+    for (const r of db.prepare('SELECT key, path FROM projects WHERE vcs IS NULL').all()) set.run(vcsAtUpgrade(r.path), r.key);
   } catch { /* never fail the migration on the backfill */ }
 }
 
@@ -2137,6 +2549,41 @@ export function migrate(db) {
     if (current < 55) applySchemaV55(db);
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
+    if (current < 57) db.exec(SHAPE_SLICES_DDL);     // Shape it first: sliced features + Plans
+    // v58 (D24): shape_features ship columns, shape_feature_slices.draft_pr_url — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 59) db.exec(RUN_TAGS_DDL);         // run tags + tag-edit audit (#718); 57-58 are Shaper's (#708, #730)
+    // The shipped Promo video workflow: one-shot seed at its own rung, refresh on every bump
+    // (the Presentation seed's two halves, above).
+    if (current < 60) applySchemaV60(db);
+    if (current < 61) db.exec(RUN_PRESETS_DDL);      // run presets (#712)
+    if (current < SCHEMA_VERSION) refreshPromoVideoSeed(db);
+    // v62 (#712 slice 2): pipelines.run_setup — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v63 (#712 slice 3): schedules.preset_id, scheduled_runs.preset_id — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v64: ask_attachments.source_path (a show_files copy's original, for Show in folder) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 65) db.exec(RUN_GROUPS_DDL);   // v65 run groups (runs redesign §3.3); pipelines.deleted_at / pr_verdict come from INCREMENTAL_COLUMNS
+    // v66 (Shaper s4): release_* on shape_features and pipelines, ship_closed on shape_features — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 67) {                              // v67 (Shaper s5); slices.kind via INCREMENTAL_COLUMNS
+      db.exec(SHAPE_NOTES_DDL);
+      if (hasColumn(db, 'pipelines', 'branch')) db.exec(ROUND_OF_INDEX_DDL);
+    }
+    if (current < 68) db.exec(RUN_LABELS_DDL);   // v68 run labels
+    if (current < 69) applySchemaV69(db);
+    // v70: ask_attachments.source_run_id / source_project_key / source_rel (Show in folder's fallback) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 71) db.exec(UTILITY_COST_LEDGER_DDL);   // v71 utility spend (Smart run naming)
+    if (current < 72) db.exec(REQUIREMENTS_DDL);     // v72 requirements: features, thread, contexts, spend — reconcile-safe
+    if (current < 73) db.exec(REQUIREMENTS_STARTS_DDL);   // v73 requirements: one row per Start in Worca — reconcile-safe
+    // v74 requirements: the product brief + ledger.brief_id. The repair runs again here: req_cost_ledger is created at
+    // v72, after the hoisted repair, so a DB coming from below 72 gets brief_id only from this call.
+    if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v75 (#948 s2): ask_threads.archived_at / pinned_at — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 76) db.exec(ASK_CHAT_GROUPS_DDL);   // v76 (#948 s3) topic groups; ask_threads.group_id comes from INCREMENTAL_COLUMNS
+    // v77 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
+    // v74: a DB coming from below 72 / 73 creates the ledger and the starts table after the hoisted repair.
+    if (current < 77) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v78 requirements A3: req_helper_messages + ledger.helper_message_id. The repair runs again here, as at v74 and v77: a DB
+    // coming from below 72 creates the ledger after the hoisted repair.
+    if (current < 78) { db.exec(REQUIREMENTS_HELPER_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v79: run_groups.name_source — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

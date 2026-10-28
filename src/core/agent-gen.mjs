@@ -27,6 +27,33 @@ const SYSTEM_PROMPT =
   'for worca, a deterministic multi-agent pipeline. Write files exactly where asked. ' +
   'Metadata must be a single valid JSON object.';
 
+// The runner _runClaude calls. Swappable so a test sees exactly what the one claude call gets
+// (mirrors pr-description.mjs#_testing).
+let runClaudeImpl = runClaude;
+export const _testing = {
+  setRunClaude(fn) { runClaudeImpl = typeof fn === 'function' ? fn : runClaude; },
+  reset() { runClaudeImpl = runClaude; },
+};
+
+/**
+ * Which model (and effort) Generate runs on: the stored Settings pair (settings.mjs#agentGenModel)
+ * while the catalog still carries its model, else nothing — the CLI's default model, as before the
+ * setting existed. An effort the model does not offer is dropped. `stale` names a stored id the
+ * catalog no longer carries.
+ * @param {{model:string|null, effort:string|null}} stored
+ * @param {Array<{id:string, efforts?:string[]}>} models the effective catalog (listModels)
+ * @returns {{model:string|null, effort:string|null, source:'settings'|'default', stale:string|null}}
+ */
+export function resolveAgentGenModel(stored, models) {
+  const model = stored && typeof stored.model === 'string' ? stored.model.trim() : '';
+  if (!model) return { model: null, effort: null, source: 'default', stale: null };
+  const hit = (Array.isArray(models) ? models : [])
+    .find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === model.toLowerCase());
+  if (!hit) return { model: null, effort: null, source: 'default', stale: model };
+  const effort = stored.effort && Array.isArray(hit.efforts) && hit.efforts.includes(stored.effort) ? stored.effort : null;
+  return { model: hit.id, effort, source: 'settings', stale: null };
+}
+
 export function createAgentGen(opts = {}) { return new AgentGen(opts); }
 
 class AgentGen extends EventEmitter {
@@ -123,13 +150,14 @@ class AgentGen extends EventEmitter {
 
   /** The single claude call (seam: tests replace it to pin the read-back gate). */
   async _runClaude(metaOnly) {
-    await runClaude({
+    await runClaudeImpl({
       cwd: this.scratchDir,
       systemPrompt: SYSTEM_PROMPT,
       prompt: metaOnly ? this._metaPrompt() : this._fullPrompt(),
       allowedTools: ['Read', 'Write'],
       permissionMode: this.claude.permissionMode || 'acceptEdits',
       model: this.claude.model,
+      effort: this.claude.effort,
       modelEnv: resolveModelEnv(this.claude.model), // catalog routing env (design §4.8)
       bin: this.claude.bin,
       mock: this.claude.mock,

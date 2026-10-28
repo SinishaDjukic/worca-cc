@@ -195,7 +195,7 @@ test('K4 the lane footer never says "Everything at the workflow default" over th
   assert.equal(lane.querySelector('.ask-rp-foot-text').textContent, "Runs on this project's agent settings");
 });
 
-test('K5 the Ask Worca marker carries a role that allows its aria-label (a generic span may not be named)', async () => {
+test('K5 the Chat marker carries a role that allows its aria-label (a generic span may not be named)', async () => {
   const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', nodes: NODES }, {});
   const lane = await laneOf(ctx);
   const mark = tileOf(lane, 'n_plan').querySelector('.ask-rp-prop');
@@ -203,16 +203,16 @@ test('K5 the Ask Worca marker carries a role that allows its aria-label (a gener
   assert.equal(mark.getAttribute('aria-label'), mark.title);
 });
 
-test('K6 another control edited on a picked row keeps the Ask Worca marker (the model is still the pick)', async () => {
+test('K6 another control edited on a picked row keeps the Chat marker (the model is still the pick)', async () => {
   const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', nodes: NODES }, {});
   let lane = await laneOf(ctx);
   change(ctx, tileOf(lane, 'n_plan').querySelector('[data-ctl="fanOut"]'), true);
   lane = ctx.doc.querySelector('.ask-rp-lane');
   const plan = tileOf(lane, 'n_plan');
   assert.ok(plan.querySelector('.ask-rp-prop'), 'the reason is still on the row');
-  assert.match(plan.querySelector('.ask-rp-name small').textContent, /^Ask Worca · step 1 · project: inherit · edited$/);
+  assert.match(plan.querySelector('.ask-rp-name small').textContent, /^Chat · step 1 · project: inherit · edited$/);
   assert.ok(plan.classList.contains('mod'));
-  assert.match(ctx.doc.querySelector('.ask-rp-summary').textContent, / · 3 picked by Ask Worca$/);
+  assert.match(ctx.doc.querySelector('.ask-rp-summary').textContent, / · 3 picked by Chat$/);
 });
 
 test('K7 the summary counts the fan-out a workspace run forces', async () => {
@@ -296,7 +296,7 @@ test('K12 a lane that could not load names the picks its Start sends (the rows t
   const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', nodes: { n_impl: { model: 'claude-haiku-4-5', effort: 'medium', reason: 'x' }, n_rev: { model: 'claude-opus-5-5', effort: '', subagentModel: 'sonnet', reason: 'y' } } }, rec);
   const lane = await laneOf(ctx);
   assert.deepEqual([...lane.querySelectorAll('.ask-rp-lane-msg')].map((m) => m.textContent), ['Could not load agent settings.',
-    "Start runs Ask Worca's picks as proposed (checked again at Start): n_impl → claude-haiku-4-5 · medium, n_rev → claude-opus-5-5 · sub-agents sonnet"]);
+    "Start runs Chat's picks as proposed (checked again at Start): n_impl → claude-haiku-4-5 · medium, n_rev → claude-opus-5-5 · sub-agents sonnet"]);
   assert.equal(lane.dataset.levelKeep, '1');
   await start(ctx);
   assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { model: 'claude-haiku-4-5', effort: 'medium' }, n_rev: { model: 'claude-opus-5-5', effort: '', subagentModel: 'sonnet' } } });

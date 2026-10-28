@@ -62,7 +62,7 @@ test('a PDF in a Codex chat is refused before any write; a Claude chat still tak
   const t = store.createThread();
   const r = await send('POST', `/api/ask/threads/${t.id}/messages`, { text: 'read this', model: 'gpt-5.5', effort: 'low', attachments: [{ name: 'spec.pdf', dataBase64: PDF }] });
   assert.equal(r.status, 400);
-  assert.equal(r.body.error, 'PDFs need a Claude chat: spec.pdf');
+  assert.equal(r.body.error, 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
   assert.equal(store.listMessages(t.id).length, 0);
 });
 

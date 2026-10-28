@@ -149,6 +149,13 @@ egress overlay, add `dev.azure.com,.visualstudio.com,vssps.dev.azure.com` to
 own token (`WORCA_ADO_BOARDS_TOKEN`), which `compose.yml` does not pass: add it in a
 `compose.override.yml`. Scopes, URL shapes and limits: [Azure DevOps](azure-devops.md).
 
+### Bitbucket
+
+`WORCA_BB_TOKEN=<token>` in `.env` (or a read/write pair, `WORCA_BB_READ_TOKEN` and
+`WORCA_BB_WRITE_TOKEN`; plus `WORCA_BB_EMAIL` for an Atlassian API token) lets Worca clone, fetch, push and
+open pull requests on `bitbucket.org`. `compose.yml` passes these four through. With the egress overlay, add
+`bitbucket.org,api.bitbucket.org` to `WORCA_EGRESS_ALLOW`. Scopes and limits: [Bitbucket](bitbucket.md).
+
 ## Projects, paths and worktrees
 
 Worca isolates every run in a `git worktree`, and git records **absolute paths**
@@ -167,8 +174,8 @@ Two rules:
 - **One home per install.** The container's `/worca` volume and a host
   `~/.worca-cc` are two Worcas with two histories. Never mount the host home into
   the container.
-- The native folder dialog does not exist in the box; **Add project** uses the
-  in-app folder browser, which starts at your projects root.
+- The native folder dialog does not exist in the box. **Add project** opens on **New** (a project by name in your projects root); its **Folder**
+  tab's **Choose folder…** uses the in-app folder browser, which starts at your projects root.
 
 ### Clone-in mode
 
@@ -211,7 +218,13 @@ image relays only to allowed hosts (`WORCA_EGRESS_ALLOW` in `.env`, default:
 Tools that honour `HTTPS_PROXY` reach allowed hosts; a raw socket from
 `node -e` or `python -c` reaches nothing. Combine with the **Strict** guardrail
 set for an untrusted task. Known needs: add your package registry; Playwright's
-browser download needs its CDN or a pre-fetched browser.
+browser download needs its CDN or a pre-fetched browser; plugin task sources and
+chat channels go through the proxy too, so add their hosts: `dev.azure.com` for
+Azure Boards, `api.telegram.org`, `slack.com,.slack.com` (Socket Mode dials a
+`wss-*.slack.com` host), `discord.com,.discord.gg`, and for Teams
+`login.microsoftonline.com,login.botframework.com` plus your bot's service URL host.
+A Jira source drives its own command-line tool: allow `<your-org>.atlassian.net`,
+and it goes through the proxy only if that tool reads the proxy variables.
 
 An entry with a leading dot (`.github.com`) allows every subdomain and the name
 itself. A refused host gets `403 egress denied: <host>`; `docker compose logs
@@ -248,6 +261,7 @@ URL from `docker compose logs teams-tunnel`.
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | | commit identity |
 | `GH_TOKEN` | | GitHub over HTTPS |
 | `WORCA_ADO_TOKEN`, `WORCA_ADO_READ_TOKEN`, `WORCA_ADO_WRITE_TOKEN` | | Azure DevOps over HTTPS ([Azure DevOps](#azure-devops)) |
+| `WORCA_BB_TOKEN`, `WORCA_BB_READ_TOKEN`, `WORCA_BB_WRITE_TOKEN`, `WORCA_BB_EMAIL` | | Bitbucket over HTTPS ([Bitbucket](#bitbucket)) |
 | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` | | see *Logging in* |
 | `WORCA_UID`, `WORCA_GID` | `1000` | Linux Engine: your ids (`id -u`, `id -g`) when not 1000, so the box can write your bind-mounted repos; the volumes work for any uid |
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |
@@ -275,9 +289,15 @@ grace period longer than the drain (`compose.yml` sets `stop_grace_period: 30s`;
 container (or, behind a hosted platform, with `WORCA_HEARTBEAT_TOKEN` as a Bearer token), so a
 platform can drain first and then stop quickly.
 
-Set `WORCA_AUTO_RESUME=1` to have the next start resume those runs by itself, and runs it finds
-interrupted by a crash, each as the person who last started or resumed it. Runs paused by a person,
-by a cost cap or by a usage limit always wait for a person. It is off by default.
+The next start resumes those runs by itself, each as the person who last started or resumed it.
+Set `WORCA_AUTO_RESUME=0` to turn that off, or `WORCA_AUTO_RESUME=1` to also resume runs it finds
+interrupted by a crash. Runs paused by a person, by a cost cap or by a usage limit always wait for a person.
+
+A headless CLI run (`worca --yes`, `worca resume`) handles a stop the same way. On SIGTERM it pauses the
+run with the reason "worca was stopped", waits for the resume point to be saved, and exits 143. A second
+SIGTERM changes nothing. A task source hears `needs-human`, because nothing resumes a CLI run by
+itself: continue it with `worca resume <id>`. If the pause has not landed after
+`WORCA_SIGTERM_GRACE_MS` (20 s), the CLI exits anyway, before the platform's SIGKILL.
 
 **Single-volume hosts** (Railway and other platforms that give a service one volume,
 mounted root-owned): set `WORCA_DATA_DIR=/data`, mount the volume there and start

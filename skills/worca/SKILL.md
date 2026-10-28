@@ -7,14 +7,14 @@ description: Run the node-graph multi-agent orchestrator over a software task in
 
 Drive the current project through the selected pipeline template (default `wf_default`: Plan → Refine ↺ → Implement → Review ↺ → End). Orchestration is performed by a deterministic Node.js script; this skill just launches it. Artifacts (plans, reviews, pipeline audit logs) are written under `ai-artifacts/` in the project.
 
-The orchestrator repo lives wherever it was installed. `<WORCA_REPO>` below is the absolute path of that repo (the directory containing `src/cli/worca-cc.mjs`). If you installed via `tools/install.mjs`, the installer rewrites `<WORCA_REPO>` in this file to the real path automatically; otherwise substitute it yourself (or set an `WORCA_REPO` environment variable and use `"$WORCA_REPO"`).
+The commands below call `worca` from your `PATH` (`npm install -g @worca/app` puts it there). If `command -v worca` prints nothing, run the same command through Node instead: replace `worca` with `node <WORCA_REPO>/src/cli/worca-cc.mjs`. That path is filled in when the skill is installed with `worca --install`; in a copy that was not installed, use the folder that holds `src/cli/worca-cc.mjs`.
 
 ## /worca <prompt> — run the pipeline (default action)
 
 When invoked as `/worca <prompt>`, run the CLI with the user's text as the prompt and the user's current project as the working directory:
 
 ```bash
-node <WORCA_REPO>/src/cli/worca-cc.mjs --project "$PWD" --prompt "<args>"
+worca --project "$PWD" --prompt "<args>"
 ```
 
 - `--project "$PWD"` — operate inside the user's current project (the orchestrator does all file writes here).
@@ -29,12 +29,12 @@ Useful flags (pass through when the user asks):
 - `--model <m>` / `--permission-mode <m>` — Claude model / permission mode (default `acceptEdits`).
 - `--mock` — run the full pipeline offline with canned agents (no Claude spawn, no tokens); great for a dry run. Equivalent to setting `WORCA_MOCK=1`.
 - `--yes` / `--non-interactive` — auto-answer (clarify picks the first option; gates choose "continue"). Use for unattended runs.
-- `--at "<when>"` — schedule the run instead of starting it now (`02:00`, `tomorrow 02:00`, `+90m`, `2026-09-19 02:00`). Add `--wait` to hold the terminal and start it there; otherwise the Worca UI server starts it. `--every "weekdays 02:00"` / `--cron "0 2 * * 1-5"` repeat it. Manage with `worca schedule list | cancel <id>`. `--after <id>` starts it when that run ends (`--after-any` also on failure, `--source-from-previous` on its branch).
+- `--at "<when>"` — schedule the run instead of starting it now (`02:00`, `tomorrow 02:00`, `+90m`, `2026-09-19 02:00`). Add `--wait` to hold the terminal and start it there; otherwise the Worca UI server starts it. `--every "weekdays 02:00"` / `--every "15m 09:00-18:00"` / `--cron "0 2 * * 1-5"` repeat it (runs at least 15 minutes apart). Manage with `worca schedule list | cancel <id>`. `--after <id>` starts it when that run ends (`--after-any` also on failure, `--source-from-previous` on its branch).
 
 Example:
 
 ```bash
-node <WORCA_REPO>/src/cli/worca-cc.mjs \
+worca \
   --project "$PWD" --prompt "Add rate limiting to the public API"
 ```
 
@@ -43,7 +43,7 @@ node <WORCA_REPO>/src/cli/worca-cc.mjs \
 To start the web app (new-pipeline form, live pipeline graph, live log window, question + loop-gate panels, Stop button, run history):
 
 ```bash
-node <WORCA_REPO>/src/cli/worca-cc.mjs --ui
+worca --ui
 ```
 
 This starts `ui/server.mjs` (Express + WebSocket, default port `4317`; set `PORT` to change). Open the printed URL in a browser. In the UI you pick the project folder to operate in, supply a prompt OR a markdown document (plus optional extra files), optionally toggle mock mode, and Start. The UI also has an "Install agents into this folder" button.
@@ -53,13 +53,14 @@ This starts `ui/server.mjs` (Express + WebSocket, default port `4317`; set `PORT
 So a teammate can open Claude Code in their own repo and type `/worca <prompt>`, copy the agents and this skill into that project's `.claude/`:
 
 ```bash
-node <WORCA_REPO>/tools/install.mjs "<targetDir>"
+worca --install "<targetDir>"
 ```
 
 - Copies `agents/*.md` into `<targetDir>/.claude/agents/` and `skills/worca/` into `<targetDir>/.claude/skills/worca/`.
 - Add `--force` to overwrite existing copies.
+- `worca --install ~` installs into `~/.claude/`, which Claude Code loads in every project.
 - Prints a next-step hint. After installing, open Claude Code in `<targetDir>` and run `/worca <prompt>`.
-- You can also trigger this from the CLI (`--install <targetDir>`) or the UI ("Install agents into this folder").
+- The UI does the same ("Install agents into this folder").
 
 ## Notes
 - The orchestrator auto-initializes a git repo in the target project (initial commit) if none exists, so the reviewer can diff the implementation.

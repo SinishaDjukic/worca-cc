@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { cardAlertOf } from './helpers/feedback.mjs';
+import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -72,10 +73,14 @@ const REMOTES = { ok: true, remotes: [remote('origin', 'me'), remote('upstream',
   chain: [], defaultBase: null, branches: {} };
 
 const STATUS_RE = new RegExp(`/api/runs/${ID}/publish\\?`);
-async function bootPublish({ rows = [row()], det = detail(), status, after = null, post = null, hash = `history/${KEY}/${ID}` }) {
-  const box = { status, posted: 0 };
+async function bootPublish({ rows = [row()], det = detail(), status, after = null, post = null, shipped = null, hash = `history/${KEY}/${ID}` }) {
+  const box = { status, posted: 0, shipped: 0 };
   const ctx = await boot({ fetchHandler: (url, opts) => {
-    if (STATUS_RE.test(url)) return ok({ ok: true, members: box.posted && after ? after : box.status });
+    if (STATUS_RE.test(url)) return ok({ ok: true, members: box.shipped && shipped ? shipped : box.posted && after ? after : box.status });
+    if (url.endsWith('/api/pr') && opts.method === 'POST') {             // Ship it: pushes the branch, opens the PR
+      box.shipped += 1;
+      return ok({ ok: true, url: 'https://github.com/up/repo/pull/7', mergeable: 'MERGEABLE', existed: false });
+    }
     if (url.endsWith(`/api/runs/${ID}/publish`) && opts.method === 'POST') {
       box.posted += 1;
       return post ? post(JSON.parse(opts.body)) : ok({ ok: true, remote: 'upstream', branch: FEATURE, sha: 'a', upToDate: false });
@@ -190,4 +195,109 @@ test('workspace: one row per member with a branch; each ticked member is pushed 
   click(w, q(w, '#publish-modal .publish-ok'));
   await settle(w, 12);
   assert.deepEqual(posts(ctx).map((c) => JSON.parse(c.opts.body).memberKey), ['api-1', 'web-2']);
+});
+
+test('the Publish dialog is a form: a backdrop click keeps it and its picks; Escape asks once a pick changed; Cancel closes at once', async () => {
+  const ctx = await bootPublish({
+    rows: [row({ projectKey: WKS_KEY, target: 'workspace', projectDir: null })],
+    det: detail({ target: 'workspace' }),
+    hash: `history/${WKS_KEY}/${ID}`,
+    status: [member({ memberKey: 'api-1', name: 'api', branch: 'worca-cc/a' }), member({ memberKey: 'web-2', name: 'web', branch: 'worca-cc/w' })],
+  });
+  const w = ctx.window;
+  const modal = q(w, '#publish-modal');
+  click(w, q(w, '#hist-detail .hd-publish'));
+  await settle(w);
+  pressEscape(w);
+  assert.equal(discardPrompt(w.document), null, 'untouched (the remotes that loaded are no change): no question');
+  assert.equal(modal.classList.contains('hidden'), true, 'Escape closes an untouched dialog');
+  click(w, q(w, '#hist-detail .hd-publish'));
+  await settle(w);
+  const pick = modal.querySelectorAll('.publish-pick')[1];
+  pick.checked = false;
+  pick.dispatchEvent(new w.Event('change'));
+  backdropClick(w, modal);
+  assert.equal(modal.classList.contains('hidden'), false, 'never on a backdrop click');
+  assert.equal(modal.querySelectorAll('.publish-pick')[1].checked, false, 'the pick is kept');
+  pressEscape(w);
+  assert.ok(discardPrompt(w.document), 'a changed pick: Escape asks');
+  keepEditing(w.document);
+  await settle(w, 2);
+  assert.equal(modal.classList.contains('hidden'), false);
+  click(w, q(w, '#publish-modal .publish-cancel'));
+  assert.equal(modal.classList.contains('hidden'), true, 'Cancel closes at once');
+  assert.equal(discardPrompt(w.document), null, 'Cancel never asks');
+  assert.equal(posts(ctx).length, 0);
+});
+
+test('a branch with a pull request never offers Publish branch, even when its remote-tracking ref is gone', async () => {
+  for (const state of ['OPEN', 'MERGED']) {
+    const pr = { url: 'https://github.com/up/repo/pull/7', number: 7, state };
+    const ctx = await bootPublish({ rows: [row({ pr })], status: [member()] });
+    assert.equal(q(ctx.window, '#hist-detail .hd-publish').hidden, true, state);
+    assert.equal(q(ctx.window, '#hist-detail .hd-published').hidden, true, state);
+  }
+});
+
+test('a pull-request branch with local commits not on the remote still offers Push changes', async () => {
+  const pr = { url: 'https://github.com/up/repo/pull/7', number: 7, state: 'OPEN' };
+  const ctx = await bootPublish({ rows: [row({ pr })], status: [member({ remote: 'upstream', state: 'moved' })] });
+  const btn = q(ctx.window, '#hist-detail .hd-publish');
+  assert.equal(btn.hidden, false);
+  assert.equal(btn.textContent, 'Push changes');
+});
+
+test('Ship it repaints the publish state: Publish branch goes away once the PR pushed the branch', async () => {
+  const ctx = await bootPublish({ status: [member()], shipped: [member({ remote: 'upstream', state: 'published' })] });
+  const w = ctx.window;
+  assert.equal(q(w, '#hist-detail .hd-publish').textContent, 'Publish branch');
+  click(w, q(w, '#hist-detail .hd-pr'));
+  await settle(w, 10);
+  click(w, q(w, '#shipit-modal .shipit-ok'));
+  await settle(w, 12);
+  assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/pr') && c.opts.method === 'POST').length, 1);
+  assert.equal(q(w, '#hist-detail .hd-publish').hidden, true, 'no Publish branch for a branch with a PR');
+  assert.equal(q(w, '#hist-detail .hd-published').textContent, 'Published to upstream/worca-cc/log-ux-fcec04e8');
+});
+
+test('workspace: a member with a pull request drops out of Publish; the others stay', async () => {
+  const pr = { url: 'https://github.com/up/api/pull/3', number: 3, state: 'OPEN' };
+  const members = [
+    { memberKey: 'api-1', name: 'api', branch: 'worca-cc/a', survived: true, pr },
+    { memberKey: 'web-2', name: 'web', branch: 'worca-cc/w', survived: true, pr: null },
+  ];
+  const ctx = await bootPublish({
+    rows: [row({ projectKey: WKS_KEY, target: 'workspace', projectDir: null, members })],
+    det: detail({ target: 'workspace' }),
+    hash: `history/${WKS_KEY}/${ID}`,
+    status: [
+      member({ memberKey: 'api-1', name: 'api', branch: 'worca-cc/a' }),
+      member({ memberKey: 'web-2', name: 'web', branch: 'worca-cc/w' }),
+    ],
+  });
+  const w = ctx.window;
+  assert.equal(q(w, '#hist-detail .hd-publish').textContent, 'Publish branch');
+  click(w, q(w, '#hist-detail .hd-publish'));
+  await settle(w);
+  assert.deepEqual([...q(w, '#publish-modal').querySelectorAll('.publish-repo')].map((r) => r.dataset.memberKey), ['web-2']);
+});
+
+test('a diverged branch (remote and local both moved) offers no push; a workspace keeps it out of the dialog', async () => {
+  let ctx = await bootPublish({ status: [member({ remote: 'origin', state: 'diverged' })] });
+  assert.equal(q(ctx.window, '#hist-detail .hd-publish').hidden, true);
+  assert.equal(q(ctx.window, '#hist-detail .hd-published').textContent, 'Published to origin/worca-cc/log-ux-fcec04e8');
+  ctx = await bootPublish({
+    rows: [row({ projectKey: WKS_KEY, target: 'workspace', projectDir: null })],
+    det: detail({ target: 'workspace' }),
+    hash: `history/${WKS_KEY}/${ID}`,
+    status: [
+      member({ memberKey: 'api-1', name: 'api', branch: 'worca-cc/a', remote: 'origin', state: 'diverged' }),
+      member({ memberKey: 'web-2', name: 'web', branch: 'worca-cc/w', remote: 'origin', state: 'moved' }),
+    ],
+  });
+  const w = ctx.window;
+  assert.equal(q(w, '#hist-detail .hd-publish').textContent, 'Push changes');
+  click(w, q(w, '#hist-detail .hd-publish'));
+  await settle(w);
+  assert.deepEqual([...q(w, '#publish-modal').querySelectorAll('.publish-repo')].map((r) => r.dataset.memberKey), ['web-2']);
 });

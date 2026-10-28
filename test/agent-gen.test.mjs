@@ -4,7 +4,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { createAgentGen } from '../src/core/agent-gen.mjs';
+import { createAgentGen, resolveAgentGenModel, _testing } from '../src/core/agent-gen.mjs';
 
 useTempHome(after);
 
@@ -127,4 +127,41 @@ test('a generated meta that breaks a v2 rule fails with the rules named', async 
   assert.match(out.message, /runnerType "verifier" requires verdict: \{ filename \}/);
   assert.equal(events.filter((e) => e.type === 'agentgen-error').length, 1, 'exactly one terminal event');
   assert.equal(events.filter((e) => e.type === 'agentgen-done').length, 0);
+});
+
+test('the one claude call carries the configured model + effort; with none it names no model', async () => {
+  const seen = [];
+  _testing.setRunClaude(async (opts) => { seen.push(opts); throw new Error('captured'); });
+  try {
+    await checkRows([
+      { name: 'Settings › Agent generation: model and effort reach runClaude', run: async () => {
+        const gen = createAgentGen({ name: 'X', purpose: 'p', claude: { model: 'claude-opus-5-5', effort: 'xhigh' } });
+        await gen.run();
+        assert.equal(seen.at(-1).model, 'claude-opus-5-5');
+        assert.equal(seen.at(-1).effort, 'xhigh');
+      } },
+      { name: 'unset: model and effort stay undefined (the CLI default, as before)', run: async () => {
+        await createAgentGen({ name: 'X', purpose: 'p', claude: {} }).run();
+        assert.equal(seen.at(-1).model, undefined);
+        assert.equal(seen.at(-1).effort, undefined);
+      } },
+    ]);
+  } finally { _testing.reset(); }
+});
+
+test('resolveAgentGenModel: the stored pair while the catalog carries it, else the CLI default (stale named)', async () => {
+  const MODELS = [{ id: 'claude-opus-5-5', efforts: ['medium', 'high', 'xhigh', 'max'] }, { id: 'claude-haiku-4-5', efforts: ['medium', 'high'] }];
+  await checkRows([
+    { name: 'resolveAgentGenModel: unset → no model', run: () => {
+      assert.deepEqual(resolveAgentGenModel({ model: null, effort: null }, MODELS), { model: null, effort: null, source: 'default', stale: null });
+      assert.deepEqual(resolveAgentGenModel(undefined, MODELS), { model: null, effort: null, source: 'default', stale: null });
+    } },
+    { name: 'resolveAgentGenModel: the stored pair in the catalog\'s casing', run: () => {
+      assert.deepEqual(resolveAgentGenModel({ model: 'CLAUDE-OPUS-5-5', effort: 'max' }, MODELS), { model: 'claude-opus-5-5', effort: 'max', source: 'settings', stale: null });
+    } },
+    { name: 'resolveAgentGenModel: a model gone from the catalog → the CLI default, stale named; an unoffered effort is dropped', run: () => {
+      assert.deepEqual(resolveAgentGenModel({ model: 'gone-model', effort: 'high' }, MODELS), { model: null, effort: null, source: 'default', stale: 'gone-model' });
+      assert.deepEqual(resolveAgentGenModel({ model: 'claude-haiku-4-5', effort: 'max' }, MODELS), { model: 'claude-haiku-4-5', effort: null, source: 'settings', stale: null });
+    } },
+  ]);
 });

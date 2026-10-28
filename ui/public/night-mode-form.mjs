@@ -36,12 +36,19 @@ function offBox(doc, wrap, cls, text, checked, inputs) {
 }
 
 function field(doc, label, hint) {
-  const wrap = el(doc, 'div', 'field night-field');
-  const row = el(doc, 'div', 'label-row');
+  const wrap = el(doc, 'div', 'field drow drow-stack night-field');
+  const row = el(doc, 'div', 'label-row drow-label');
   row.append(el(doc, 'label', null, label));
   wrap.append(row);
-  if (hint) wrap.append(el(doc, 'small', 'hint', hint));
+  if (hint) wrap.append(el(doc, 'small', 'hint drow-help', hint));
   return wrap;
+}
+
+/** The field's control box (a divided row's `.drow-control`) holding `kids`. */
+function control(doc, ...kids) {
+  const c = el(doc, 'div', 'drow-control');
+  c.append(...kids);
+  return c;
 }
 
 /** The placeholder of an empty input: the inherited value (project level: "Same as my settings (…)"). */
@@ -55,7 +62,7 @@ function sourceHint(doc, wrap, values, inhSrc, f) {
 
 function numInput(doc, f, level, values, inh, inhSrc = {}) {
   const [min, max] = NUM_LIMITS[f];
-  const inp = el(doc, 'input', 'input input-mini night-num'); inp.type = 'number'; inp.min = String(min); inp.max = String(max); inp.step = '1';
+  const inp = el(doc, 'input', 'input night-num'); inp.type = 'number'; inp.min = String(min); inp.max = String(max); inp.step = '1';
   inp.dataset.field = f; inp.value = values[f] == null ? '' : String(values[f]);
   inp.placeholder = placeholderFor(level, inh[f], inhSrc[f]);
   return inp;
@@ -65,7 +72,7 @@ function numInput(doc, f, level, values, inh, inhSrc = {}) {
 function numField(doc, f, level, values, inh, inhSrc, { suffix = '', prefix = '' } = {}) {
   const w = field(doc, FIELD_LABELS[f].label, FIELD_LABELS[f].hint);
   const inp = numInput(doc, f, level, values, inh, inhSrc);
-  const row = el(doc, 'div', 'away-input-row');
+  const row = el(doc, 'div', 'drow-control away-input-row');
   if (prefix) row.append(doc.createTextNode(prefix));
   row.append(inp);
   if (suffix) row.append(doc.createTextNode(` ${suffix}`));
@@ -151,11 +158,11 @@ function deciderModelField(doc, level, values, inh, inhSrc, models) {
     // failed GET) condemns nothing. Ids match case-insensitively, like the resolver.
     const lc = stored.toLowerCase();
     const gone = Array.isArray(models) && models.length > 0 && !models.some((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === lc);
-    const o = el(doc, 'option', null, gone ? `${stored} — ${DECIDER_WORDS.notInstalled}` : stored);
+    const o = el(doc, 'option', null, gone ? `${stored} (${DECIDER_WORDS.notInstalled})` : stored);
     o.value = stored; o.disabled = gone; sel.append(o);
   }
   sel.value = stored;
-  w.append(sel);
+  w.append(control(doc, sel));
   sourceHint(doc, w, values, inhSrc, 'deciderModel');
   return w;
 }
@@ -170,7 +177,7 @@ function deciderEffortField(doc, level, values, inh, inhSrc) {
   for (const e of DECIDER_EFFORTS) { const o = el(doc, 'option', null, e); o.value = e; sel.append(o); }
   sel.value = DECIDER_EFFORTS.includes(values.deciderEffort) ? values.deciderEffort : '';
   if (level === 'project') dropInheritedTwin(sel, inherited);
-  w.append(sel);
+  w.append(control(doc, sel));
   sourceHint(doc, w, values, inhSrc, 'deciderEffort');
   return w;
 }
@@ -207,14 +214,14 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
 
   // C. When and where worca answers (open).
   const basic = el(doc, 'div', 'away-basic');
-  basic.append(el(doc, 'h3', null, 'When and where worca answers'));
+  basic.append(el(doc, 'h3', 'subsection-title', 'When and where worca answers'));
 
   const win = field(doc, FIELD_LABELS.window.label, FIELD_LABELS.window.hint);
   const [ws, we] = typeof values.window === 'string' ? values.window.split('-') : ['', ''];
   const [iws, iwe] = typeof inh.window === 'string' ? inh.window.split('-') : [null, null];
-  const start = el(doc, 'input', 'input input-mini night-window-start'); start.type = 'time'; start.value = ws || ''; start.placeholder = placeholderFor(level, iws, inhSrc.window);
-  const end = el(doc, 'input', 'input input-mini night-window-end'); end.type = 'time'; end.value = we || ''; end.placeholder = placeholderFor(level, iwe, inhSrc.window);
-  const winRow = el(doc, 'div', 'away-input-row');
+  const start = el(doc, 'input', 'input night-window-start'); start.type = 'time'; start.value = ws || ''; start.placeholder = placeholderFor(level, iws, inhSrc.window);
+  const end = el(doc, 'input', 'input night-window-end'); end.type = 'time'; end.value = we || ''; end.placeholder = placeholderFor(level, iwe, inhSrc.window);
+  const winRow = el(doc, 'div', 'drow-control away-input-row');
   winRow.append(start, doc.createTextNode(' to '), end);
   win.append(winRow);
   sourceHint(doc, win, values, inhSrc, 'window');
@@ -235,7 +242,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
       tzIn.setAttribute('list', list.id); tz.append(list);
     }
   } catch { /* no zone list: plain text */ }
-  tz.append(tzIn);
+  tz.append(control(doc, tzIn));
   sourceHint(doc, tz, values, inhSrc, 'timeZone');
   basic.append(tz);
 
@@ -261,7 +268,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
   }
   stSel.value = values.strategy !== undefined ? values.strategy : '';
   if (level === 'project' && m) dropInheritedTwin(stSel, m.value);
-  method.append(stSel);
+  method.append(control(doc, stSel));
   sourceHint(doc, method, values, inhSrc, 'strategy');
   pick.append(method);
   pick.append(numField(doc, 'minConfidence', level, values, inh, inhSrc, { suffix: '% sure' }).wrap);
@@ -269,7 +276,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
   const cr = field(doc, FIELD_LABELS.criteria.label, FIELD_LABELS.criteria.hint);
   for (const c of CRITERIA) {
     const lab = el(doc, 'label', 'night-crit', `${CRITERIA_LABELS[c]} `);
-    const inp = el(doc, 'input', 'input input-mini night-crit-val'); inp.type = 'number'; inp.min = '0'; inp.max = '10'; inp.step = '0.5';
+    const inp = el(doc, 'input', 'input night-crit-val'); inp.type = 'number'; inp.min = '0'; inp.max = '10'; inp.step = '0.5';
     inp.dataset.crit = c;
     inp.placeholder = String(inh.criteria?.[c] ?? '');
     if (values.criteria && Number.isFinite(values.criteria[c])) inp.value = String(values.criteria[c]);
@@ -286,10 +293,10 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
   limits.append(numField(doc, 'maxExtraCycles', level, values, inh, inhSrc).wrap);
   if (level === 'user') {
     const cap = field(doc, FIELD_LABELS.spendCapUsd.label, FIELD_LABELS.spendCapUsd.hint);
-    const inp = el(doc, 'input', 'input input-mini night-spend-cap'); inp.type = 'number'; inp.min = '0.1'; inp.step = '0.1';
+    const inp = el(doc, 'input', 'input night-spend-cap'); inp.type = 'number'; inp.min = '0.1'; inp.step = '0.1';
     inp.value = values.spendCapUsd == null ? '' : String(values.spendCapUsd);
     inp.placeholder = placeholderFor(level, inh.spendCapUsd, inhSrc.spendCapUsd);
-    const row = el(doc, 'div', 'away-input-row');
+    const row = el(doc, 'div', 'drow-control away-input-row');
     row.append(doc.createTextNode('$'), inp, doc.createTextNode(' spent while away'));
     cap.append(row);
     sourceHint(doc, cap, values, inhSrc, 'spendCapUsd');
@@ -299,7 +306,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
     limits.append(el(doc, 'small', 'hint', 'The spend cap is set once for you, not per project, because it counts spending across every run.'));
   }
   const ov = field(doc, FIELD_LABELS.allowCostCapOverride.label, FIELD_LABELS.allowCostCapOverride.hint);
-  ov.append(triSelect(doc, 'select night-override', 'allowCostCapOverride', level, values, inh.allowCostCapOverride, inhSrc.allowCostCapOverride));
+  ov.append(control(doc, triSelect(doc, 'select night-override', 'allowCostCapOverride', level, values, inh.allowCostCapOverride, inhSrc.allowCostCapOverride)));
   sourceHint(doc, ov, values, inhSrc, 'allowCostCapOverride');
   limits.append(ov);
   body.append(limits);

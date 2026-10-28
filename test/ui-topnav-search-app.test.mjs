@@ -25,8 +25,10 @@ const ARMS = [
 ];
 
 // `down`: path → 'reject' (the network fails) or an HTTP status (the server answers with an error).
-async function boot({ down = {} } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+// `flags`: data-flags on the shell's html element, as the server renders it. `threads`: the /api/ask/threads?q= answer.
+async function boot({ down = {}, flags = '', threads = [] } = {}) {
+  const raw = readFileSync(htmlPath, 'utf8');
+  const dom = trackDom(new JSDOM(flags ? raw.replace('<html lang="en"', `<html lang="en" data-flags="${flags}"`) : raw, { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   let lastWs = null;
@@ -45,7 +47,7 @@ async function boot({ down = {} } = {}) {
     if (down[path]) return Promise.resolve({ ok: false, status: down[path], json: async () => ({ error: 'down' }) });
     const arm = ARMS.find(([p]) => path === p);
     if (arm) return Promise.resolve({ ok: true, status: 200, json: async () => arm[1]() });
-    if (path.startsWith('/api/ask/threads')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ threads: [] }) });
+    if (path.startsWith('/api/ask/threads')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ threads: url.includes('q=') ? threads : [] }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 }) });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -76,30 +78,30 @@ async function boot({ down = {} } = {}) {
     o.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   };
   const count = (path) => calls.filter((u) => u.split('?')[0] === path).length;
-  return { window, doc, input, key, type, titles, click, count, recv };
+  return { window, doc, input, key, type, titles, click, count, recv, calls };
 }
 
 async function settle(window, n = 4) {
   for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0));
 }
 
-test('⌘K opens the top bar search, not Ask Worca; the rows come from the runs, History, projects and the lazy reads', async () => {
+test('⌘K opens the top bar search, not Ask in Chat; the rows come from the runs, History, projects and the lazy reads', async () => {
   const { window, doc, input, key, type, titles, count } = await boot();
   const before = { wf: count('/api/workflows'), sch: count('/api/schedules') };
   const e = key(doc.body, 'k', { metaKey: true });
   assert.equal(e.defaultPrevented, true);
   assert.equal(doc.activeElement, input);
-  assert.deepEqual(titles(), ['Fix login', 'Login page polish', 'Ask Worca'], 'nothing typed: runs only');
+  assert.deepEqual(titles(), ['Fix login', 'Login page polish', 'Ask in Chat'], 'nothing typed: runs only');
   await settle(window, 8);
   type('l');
   type('lo');
   type('login');
   await settle(window, 4);
-  assert.deepEqual(titles(), ['Login page polish', 'Fix login', 'Login smoke', 'Nightly login sweep', 'Ask Worca'], 'prefix before word start');
+  assert.deepEqual(titles(), ['Login page polish', 'Fix login', 'Login smoke', 'Nightly login sweep', 'Ask in Chat'], 'prefix before word start');
   assert.equal(count('/api/workflows') - before.wf, 1, 'workflows: once for this open');
   assert.equal(count('/api/schedules') - before.sch, 1, 'schedules: once for this open');
   type('team');
-  assert.deepEqual(titles(), ['Team', 'Ask Worca'], 'workspaces were loaded for the search');
+  assert.deepEqual(titles(), ['Team', 'Ask in Chat'], 'workspaces were loaded for the search');
   assert.equal(doc.querySelector('#tsearch-pop .tsearch-meta').textContent, 'Workspace · 1 project');
 });
 
@@ -115,9 +117,9 @@ test('workflows and schedules down (a 500, a network failure): the runs, project
     await settle(window, 8);
     type('login');
     await settle(window, 4);
-    assert.deepEqual(titles(), ['Login page polish', 'Fix login', 'Ask Worca']);
+    assert.deepEqual(titles(), ['Login page polish', 'Fix login', 'Ask in Chat']);
     type('proj project');
-    assert.deepEqual(titles(), ['proj', 'Team', 'Ask Worca'], 'the project, then the workspace whose meta matches');
+    assert.deepEqual(titles(), ['proj', 'Team', 'Ask in Chat'], 'the project, then the workspace whose meta matches');
     assert.equal(count('/api/workflows') - before.wf, 1, 'one try per open, no retry loop');
     assert.equal(count('/api/schedules') - before.sch, 1);
     assert.deepEqual(logged, [], 'nothing logged');
@@ -134,19 +136,19 @@ test('one lazy read down: what the other one brought still lists', async () => {
       key(doc.body, 'k', { metaKey: true });
       await settle(window, 8);
       type('login');
-      assert.deepEqual(titles(), ['Login page polish', 'Fix login', 'Nightly login sweep', 'Ask Worca']);
+      assert.deepEqual(titles(), ['Login page polish', 'Fix login', 'Nightly login sweep', 'Ask in Chat']);
     } },
     { name: 'workflows answer 500: the schedules still list', run: async () => {
       const { window, doc, key, type, titles } = await boot({ down: { '/api/workflows': 500 } });
       key(doc.body, 'k', { metaKey: true });
       await settle(window, 8);
       type('login');
-      assert.deepEqual(titles(), ['Login page polish', 'Fix login', 'Login smoke', 'Ask Worca']);
+      assert.deepEqual(titles(), ['Login page polish', 'Fix login', 'Login smoke', 'Ask in Chat']);
     } },
   ]);
 });
 
-test('⌘K from the Ask Worca composer moves to the search; with a confirm open it is left to the confirm', async () => {
+test('⌘K from the Chat composer moves to the search; with a confirm open it is left to the confirm', async () => {
   await checkRows([
     { name: 'the chat composer has focus: the search opens and takes it', run: async () => {
       const { window, doc, input, key } = await boot();
@@ -198,7 +200,7 @@ test('⌘K from the Ask Worca composer moves to the search; with a confirm open 
   ]);
 });
 
-test('each row routes; the Ask Worca row hands what was typed to the chat', async () => {
+test('each row routes; the Ask in Chat row hands what was typed to the chat', async () => {
   await checkRows([
     { name: 'a live run → #running/r1', run: async () => {
       const { window, doc, key, type, click } = await boot();
@@ -235,31 +237,32 @@ test('each row routes; the Ask Worca row hands what was typed to the chat', asyn
       await settle(window);
       assert.equal(window.location.hash, '#schedules/repeating');
     } },
-    { name: 'Ask Worca with text, from another page: Chat opens with it in the composer', run: async () => {
+    // Ask worca beside the page (L7): on another page the row is "Ask worca · with this page" and opens the side column.
+    { name: 'Ask worca with text, from another page: the side column opens with it in the composer, the page stays', run: async () => {
       const { window, doc, key, type, click } = await boot();
       window.location.hash = '#runs';
       await settle(window);
       assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'precondition: another page');
       key(doc.body, 'k', { metaKey: true });
       type('  why did the login run fail ');
-      click('Ask Worca');
+      click('Ask worca');
       await settle(window);
-      assert.equal(window.location.hash, '#chat');
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false);
-      assert.equal(doc.querySelector('textarea.ask-input').value, 'why did the login run fail');
-      assert.equal(doc.activeElement, doc.querySelector('textarea.ask-input'));
+      assert.equal(window.location.hash, '#runs');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      assert.equal(doc.querySelector('#ask-side textarea.ask-input').value, 'why did the login run fail');
+      assert.equal(doc.activeElement, doc.querySelector('#ask-side textarea.ask-input'));
     } },
-    { name: 'Ask Worca with nothing typed, from another page: Chat just opens', run: async () => {
+    { name: 'Ask worca with nothing typed, from another page: the side column just opens', run: async () => {
       const { window, doc, key, click } = await boot();
       window.location.hash = '#runs';
       await settle(window);
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'precondition: another page');
       key(doc.body, 'k', { metaKey: true });
-      click('Ask Worca');
+      click('Ask worca');
       await settle(window);
-      assert.equal(window.location.hash, '#chat');
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false);
-      assert.equal(doc.querySelector('textarea.ask-input').value, '');
+      assert.equal(window.location.hash, '#runs');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      assert.equal(doc.querySelector('#ask-side textarea.ask-input').value, '');
+      assert.equal(doc.activeElement, doc.querySelector('#ask-side textarea.ask-input'));
     } },
   ]);
 });
@@ -281,3 +284,32 @@ test('the Escape that closes the search never steps an open run back to the list
   await settle(window);
   assert.equal(window.location.hash, '#runs', 'with the search shut, Escape is the page’s again');
 });
+
+const CHAT = (i) => ({ id: `ask_0000000${i}`, title: `Login chat ${i}`, updatedAt: AGO(i * 6e4), archivedAt: null, archived: false });
+
+test('#948 s2: a typed chat title lists under Chats, first on #chat and after Runs on #runs, 5 rows at most', async () => {
+  const threads = Array.from({ length: 7 }, (_, i) => CHAT(i + 1));
+  const { window, doc, input, key, type, calls } = await boot({ threads });
+  const labels = () => [...doc.querySelectorAll('#tsearch-pop .tsearch-label')].map((n) => n.textContent);
+  const chatOpts = () => doc.querySelectorAll('#tsearch-pop [role="option"].tsearch-opt-chat').length;
+  window.location.hash = '#chat';
+  await settle(window, 4);
+  assert.equal(input.placeholder, 'Search chats or ask');
+  key(doc.body, 'k', { metaKey: true });
+  type('login');
+  await new Promise((r) => setTimeout(r, 200));   // past the 150ms debounce
+  await settle(window, 4);
+  assert.ok(calls.some((u) => u.startsWith('/api/ask/threads?limit=5&q=login')));
+  assert.equal(labels()[0], 'Chats');
+  assert.equal(chatOpts(), 5);
+  key(input, 'Escape');
+  window.location.hash = '#runs';
+  await settle(window, 4);
+  assert.equal(input.placeholder, 'Search or ask');
+  key(doc.body, 'k', { metaKey: true });
+  type('login');
+  await new Promise((r) => setTimeout(r, 200));
+  await settle(window, 4);
+  assert.deepEqual(labels().slice(0, 2), ['Runs', 'Chats']);
+});
+

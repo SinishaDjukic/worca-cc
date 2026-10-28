@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import {
   ASK_FILE_MIMES, sniffMime, refusePathShape, mimeMatchesAccept, isInside,
-  snapshotAskFiles, readAskFileEntry,
+  snapshotAskFiles, readAskFileEntry, decodePlainText,
 } from '../src/core/ask-files.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -316,4 +316,13 @@ test('snapshotAskFiles: a body with no signature over 1 MiB is refused by SIZE, 
   assert.match(errors[0].message, /1048576/, 'the cap is named');
   assert.match(errors[0].message, /1048577 bytes/, 'so is the size');
   assert.doesNotMatch(errors[0].message, /not a file type/, 'the agent must learn it is the SIZE, so it can pick a smaller file');
+});
+
+test('decodePlainText: clean UTF-8 comes back BOM-less; bad UTF-8 and C0 controls are null; html stays text here', () => {
+  const BOM = String.fromCharCode(0xfeff);
+  assert.equal(decodePlainText(Buffer.from(`${BOM}hi\tthere\r\n`)), 'hi\tthere\r\n');
+  assert.equal(decodePlainText(Buffer.from([0xc3, 0x28])), null);
+  assert.equal(decodePlainText(Buffer.from([0x61, 0x07, 0x62])), null);
+  assert.equal(decodePlainText(Buffer.from('<!doctype html><p>x</p>')), '<!doctype html><p>x</p>');
+  assert.equal(sniffMime(Buffer.from('<!doctype html><p>x</p>')), null, 'sniffMime still refuses html (the run-form table)');
 });

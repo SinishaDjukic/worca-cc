@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   ATTACH_TEXT_EXT, ATTACH_BINARY, ATTACH_MAX_TEXT_BYTES, ATTACH_MAX_BINARY_BYTES, ATTACH_MAX_MESSAGE_BYTES, ATTACH_MAX_FILES,
   ATTACH_ACCEPT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer,
+  REQ_ATTACH, reqLimits, reqTypeMessage,
 } from '../ui/public/attach-files.mjs';
 import { TEXT_EXTENSIONS, BINARY_EXTENSIONS, classifyExtension } from '../src/shared/artifact-kinds.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -29,7 +30,7 @@ test('checkAttachment: Ask\'s checks in Ask\'s order, with its messages; a same-
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 10 }).mime, 'application/pdf');
   assert.equal(checkAttachment({ name: 'evil.exe', size: 1 }).error, 'attachment type not allowed: evil.exe');
   assert.equal(checkAttachment({ name: 'README', size: 1 }).error, 'attachment type not allowed: README');
-  assert.equal(checkAttachment({ name: 'spec.pdf', size: 1 }, { engine: 'codex' }).error, 'PDFs need a Claude chat: spec.pdf');
+  assert.equal(checkAttachment({ name: 'spec.pdf', size: 1 }, { engine: 'codex' }).error, 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
   assert.equal(checkAttachment({ name: 'shot.png', size: 1 }, { engine: 'codex' }).ok, true);
   assert.equal(checkAttachment({ name: 'big.md', size: 100 * 1024 * 1024 + 1 }).error, 'attachment over 104857600 bytes: big.md');
   assert.equal(checkAttachment({ name: 'big.md', size: 100 * 1024 * 1024 }).ok, true);
@@ -77,4 +78,22 @@ test('the Ask panel takes its attachment rules from attach-files.mjs (one copy o
   const src = readFileSync(new URL('../ui/public/ask-panel.mjs', import.meta.url), 'utf8');
   assert.match(src, /\} from '\.\/attach-files\.mjs';/);
   assert.doesNotMatch(src, /ASK_ATTACH_EXT|ASK_ATTACH_BINARY|ASK_MAX_(TEXT|BINARY|MESSAGE)_BYTES|lastPasteStamp|attachRefusal/);
+});
+test("A8: the Requirements page's limits and messages through `limits` and `typeMessage`; Ask's defaults unchanged", () => {
+  const MB = 1024 * 1024;
+  const req = { limits: reqLimits(), typeMessage: reqTypeMessage };
+  assert.deepEqual(checkAttachment({ name: 'big.pdf', size: 25 * MB + 1 }, req), { ok: false, error: 'big.pdf was not added: it is over 25 MB.' });
+  assert.equal(checkAttachment({ name: 'plan.docx', size: 1 }, req).error, 'plan.docx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.');
+  assert.equal(checkAttachment({ name: 'a.zip', size: 1 }, req).error, 'a.zip was not added: Worca reads text, images and PDF.');
+  const ten = Array.from({ length: 10 }, (_, i) => ({ name: `${i}.md`, bytes: 1 }));
+  assert.equal(checkAttachment({ name: 'x.md', size: 1 }, { ...req, pending: ten }).error, 'x.md was not added: a feature takes up to 10 files.');
+  assert.equal(checkAttachment({ name: 'x.md', size: 1 }, { ...req, limits: reqLimits({ owner: 'brief' }), pending: ten }).error, 'x.md was not added: a brief takes up to 10 documents.');
+  assert.equal(checkAttachment({ name: '0.md', size: 1 }, { ...req, pending: ten }).ok, false, 'the feature page counts a same name too: the server names it "0 (2).md"');
+  const ninety = [{ name: 'a.pdf', bytes: 90 * MB }];
+  assert.equal(checkAttachment({ name: 'b.pdf', size: 20 * MB }, { ...req, limits: reqLimits({ create: true }), pending: ninety }).error,
+    "b.pdf was not added: a new feature's files can be up to 100 MB in all; add more on the feature page.");
+  assert.equal(checkAttachment({ name: 'b.pdf', size: 20 * MB }, { ...req, pending: ninety }).ok, true, 'the feature page splits a larger pick into requests');
+  assert.deepEqual([REQ_ATTACH.maxFiles, REQ_ATTACH.maxBytes, REQ_ATTACH.maxRequestBytes, REQ_ATTACH.accept], [10, 25 * MB, 100 * MB, ATTACH_ACCEPT]);
+  assert.equal(checkAttachment({ name: 'a.exe', size: 1 }).error, 'attachment type not allowed: a.exe');
+  assert.equal(checkAttachment({ name: 'a.md', size: ATTACH_MAX_TEXT_BYTES + 1 }).error, `attachment over ${ATTACH_MAX_TEXT_BYTES} bytes: a.md`);
 });

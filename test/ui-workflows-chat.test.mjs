@@ -243,7 +243,7 @@ test('an edit for another document fails without touching the canvas; another se
   await cc.sweep();
   assert.deepEqual(composer.log, []);
   assert.deepEqual(posts, [['card_0000aaaa', 'failed']]);
-  assert.match(cc.render(blocks[1]).textContent, /Not applied — made for an earlier visit/);
+  assert.match(cc.render(blocks[1]).textContent, /Not applied\. Made for an earlier visit/);
 });
 
 test('a built workflow waits for Apply; Apply asks to discard, saves its drafts, opens a NEW unsaved workflow', async () => {
@@ -281,8 +281,8 @@ test('an agent draft: Save posts saved+savedKey; Save & add applies its then-ops
     client: { postCard: async (id, body) => { posts.push(body); return { ok: true }; } },
     actions: { saveAgentDraft: async (d) => ({ ok: true, key: d.key }), reloadRegistry: async () => {} } });
   const el = cc.render(b);
-  assert.deepEqual([...el.querySelectorAll('.wfc-actions button')].map((x) => x.textContent), ['Edit…', 'Decline', 'Save agent', 'Save & add to canvas']);
-  [...el.querySelectorAll('button')].find((x) => x.textContent === 'Save & add to canvas').click();
+  assert.deepEqual([...el.querySelectorAll('.wfc-actions button')].map((x) => x.textContent), ['Edit…', 'Decline', 'Save agent', 'Add to canvas']);
+  [...el.querySelectorAll('button')].find((x) => x.textContent === 'Add to canvas').click();
   await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(composer.log.map((l) => l[0]), ['applyOps']);
   assert.deepEqual(posts.at(-1), { state: 'added', card: { savedKey: 'releaseNotes', added: true } });
@@ -358,7 +358,7 @@ test('a build whose draft was declined is not applied: one toast, no discard que
   assert.deepEqual(composer.log, [], 'loadDraft would place a script no library has');
   assert.deepEqual(posts, []);
   assert.equal(asked, 0);
-  assert.deepEqual(notes, ['Not applied — this workflow needs "lintAll", which was declined.']);
+  assert.deepEqual(notes, ['Not applied: this workflow needs "lintAll", which was declined.']);
 });
 
 test('a canvas edit waits while a popover field has focus and lands once it blurs; after dispose() a waiting edit never lands', async () => {
@@ -497,7 +497,7 @@ test('an applied edit from another tab or visit has no ⌘Z here: its disabled U
   const undoOf = (b) => [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Undo');
   const theirs = undoOf({ kind: 'card', id: 'card_0000bbbb', state: 'applied', card: { type: 'canvas-edit', sessionId: 'cs_zzzzzzzz', docToken: 'd_ab12cd34', summary: 'old', ops: [] } });
   assert.equal(theirs.disabled, true);
-  assert.equal(theirs.title, 'Applied in another tab or visit — undo it there');
+  assert.equal(theirs.title, 'Applied in another tab or visit. Undo it there');
   assert.equal(undoOf(card('card_0000aaaa', 'applied', { type: 'canvas-edit', summary: 'x', ops: [] })).title, 'Use Ctrl+Z on the canvas', 'jsdom names no platform: not a Mac');
   // The title names the chord this keyboard has: ⌘Z on a Mac, Ctrl+Z on Windows and Linux (the platform check of global-search.mjs shortcutLabel).
   for (const [platform, chord] of [['MacIntel', '⌘Z'], ['iPad', '⌘Z'], ['Win32', 'Ctrl+Z'], ['Linux x86_64', 'Ctrl+Z']]) {
@@ -576,7 +576,7 @@ test('a "Save & add" whose add the canvas refuses still saves, and the card says
     const cc = createCardController({ doc: dom.window.document, composer, sessionId: 'cs_ab12cd34', blocks: () => [b],
       client: { postCard: async (id, body) => { posts.push(body); return { ok: true }; } },
       actions: { saveAgentDraft: async (d) => ({ ok: true, key: d.key }), reloadRegistry: async () => {} } });
-    [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Save & add to canvas').click();
+    [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Add to canvas').click();
     await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
     assert.deepEqual(composer.log.map((l) => l[0]), ['applyOps']);
     const el = cc.render({ ...b, state: posts.at(-1).state });
@@ -584,10 +584,10 @@ test('a "Save & add" whose add the canvas refuses still saves, and the card says
   }
   const refused = await run({ ok: false, error: 'x' });
   assert.deepEqual(refused.post, { state: 'saved', card: { savedKey: 'releaseNotes' } }, 'saved all the same');
-  assert.deepEqual(refused.err, ['Not added to the canvas — x']);
-  assert.match(refused.text, /✓ Saved to your agents/);
+  assert.deepEqual(refused.err, ['Not added to the canvas: x']);
+  assert.match(refused.text, /Saved to your agents/);
   assert.equal(refused.why(), 'x', 'the dock\'s live region reads it');
-  assert.deepEqual((await run({ ok: false })).err, ['Not added to the canvas — the canvas refused it'], 'a refusal with no reason still says so');
+  assert.deepEqual((await run({ ok: false })).err, ['Not added to the canvas: the canvas refused it'], 'a refusal with no reason still says so');
   const took = await run({ ok: true, depth: 1 });
   assert.deepEqual([took.post.state, took.err, took.why()], ['added', [], '']);
   const plain = createCardController({ doc: dom.window.document, composer: fakeComposer(), sessionId: 'cs_ab12cd34', client: { postCard: async () => ({ ok: true }) } });
@@ -651,14 +651,16 @@ const fetchWith = (first) => fakeFetch([...first,
   ['POST', /\/api\/ask\/threads$/, () => [201, { thread: THREAD }]],
   ['POST', /\/messages$/, () => [202, { userMessageId: 'msg_0000aaaa' }]]]);
 
-test('collapsed pill: the still orb, one-line input with a rotating example, attach, scope "Auto", send', async () => {
+test('collapsed pill: the still orb, one-line input with a rotating example, attach, scope "No project", send', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   assert.equal(root.querySelector('.wfc-shell').dataset.open, 'false');
   assert.equal(root.querySelector('.wfc-spark canvas.wfc-orb').dataset.phase, 'rest');
   assert.equal(root.querySelector('.wfc-spark svg'), null, 'the orb took the sparkle\'s slot');
   assert.equal(root.querySelector('#wfc-input').placeholder, 'Add a security review after Implementation…');
-  assert.equal(root.querySelector('#wfc-scope').textContent.trim(), 'Auto');
+  assert.equal(root.querySelector('#wfc-scope').textContent.trim(), 'No project');
+  assert.equal(root.querySelector('#wfc-scope').getAttribute('aria-label'), 'Scope: No project');
+  assert.ok(root.querySelector('#wfc-scope svg circle[stroke-dasharray="3 3"]'), 'the No project circle');
   assert.equal(root.querySelector('#wfc-attach').getAttribute('aria-label'), 'Attach files');
   assert.deepEqual([...root.querySelector('.wfc-row').children].map((e) => e.id || e.className),
     ['wfc-spark', 'wfc-input', 'wfc-attach', 'wfc-file-input', 'wfc-scope', 'wfc-stop', 'wfc-send']);
@@ -688,12 +690,17 @@ test('typing expands it upward; Escape collapses; New chat clears the thread', a
   assert.equal(s.dock.client.threadId(), null);
 });
 
-test('Enter sends the text with the canvas; the scope pill pins a project', async () => {
-  const s = await bootDock();
+test('Enter sends the text with the canvas; the scope menu is the chat\'s (No project · Projects · Workspaces); a project or a workspace pins', async () => {
+  const s = await bootDock([], { projects: async () => [{ key: 'worca-1a2b3c4d', name: 'worca', vcs: 'git' }], workspaces: async () => [{ id: 'wks-team-0000abcd', name: 'Team' }] });
   const root = s.g('wfc');
   root.querySelector('#wfc-scope').click();
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual([...s.doc.querySelectorAll('.wfv-menu .wfv-menu-l')].map((x) => x.textContent), ['Auto', 'worca']);
+  const menu = s.doc.querySelector('.wfv-menu');
+  assert.equal(menu.getAttribute('aria-label'), 'Chat scope');
+  assert.deepEqual([...menu.querySelectorAll('.wfv-menu-h')].map((x) => x.textContent), ['Projects', 'Workspaces']);
+  assert.equal(menu.querySelector('.wfv-menu-hint'), null, 'B8: the kind is the one chip, never a text hint');
+  assert.deepEqual([...menu.querySelectorAll('.wfv-menu-item')].map((b) => [b.querySelector('.wfv-menu-l').textContent, b.querySelector('.kind-chip')?.className ?? null, b.getAttribute('role'), b.getAttribute('aria-checked')]),
+    [['No project', null, 'menuitemradio', 'true'], ['worca', 'kind-chip kind-git', 'menuitemradio', 'false'], ['Team', null, 'menuitemradio', 'false']]);
   [...s.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('worca')).click();
   const input = root.querySelector('#wfc-input');
   input.value = 'Add Plan after Task';
@@ -705,6 +712,22 @@ test('Enter sends the text with the canvas; the scope pill pins a project', asyn
   assert.deepEqual(msg.body.context, { view: 'workflows', pinned: true, projectKey: 'worca-1a2b3c4d' });
   assert.equal(msg.body.composer.docToken, s.c.docToken());
   assert.equal(input.value, '');
+  const t = await bootDock([], { projects: async () => [{ name: 'no key' }, { key: 'worca-1a2b3c4d', name: 'worca' }], workspaces: async () => [{ name: 'no id' }, { id: 'wks-team-0000abcd', name: 'Team' }] });
+  t.g('wfc').querySelector('#wfc-scope').click();
+  await settle();
+  assert.deepEqual([...t.doc.querySelectorAll('.wfv-menu .wfv-menu-l')].map((x) => x.textContent), ['No project', 'worca', 'Team'], 'a row without a key or an id is skipped');
+  [...t.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Team')).click();
+  assert.equal(t.g('wfc').querySelector('#wfc-scope').getAttribute('aria-label'), 'Scope: workspace Team');
+  assert.equal(t.g('wfc').querySelectorAll('#wfc-scope svg rect').length, 3, 'a workspace: the grid');
+  const tin = t.g('wfc').querySelector('#wfc-input');
+  tin.value = 'Add Plan'; tin.dispatchEvent(new t.win.Event('input', { bubbles: true }));
+  tin.dispatchEvent(new t.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.deepEqual(t.f.calls.find((c) => /\/messages$/.test(c.url)).body.context, { view: 'workflows', pinned: true, workspaceId: 'wks-team-0000abcd' });
+  t.g('wfc').querySelector('#wfc-scope').click();
+  await settle();
+  assert.deepEqual([...t.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.getAttribute('aria-checked')), ['false', 'false', 'true'], 'the pinned workspace is the checked radio');
+  t.g('wfc').querySelector('#wfc-scope').click();
 });
 test('a streaming frame rewrites only the answer: the card under the pointer stays the same node', async () => {
   const s = await bootDock();
@@ -748,21 +771,117 @@ test('New chat waits for the reply: disabled while a turn runs (it would keep ru
   assert.equal(s.dock.client.threadId(), null);
 });
 
-test('a pinned project that is gone falls back to Auto once the projects load; a live one stays; an unreadable list keeps the pin', async () => {
+test('a pinned project or workspace that is gone falls back to No project once its list loads; a live one stays; an unreadable list keeps the pin', async () => {
   const KEY = 'worca-cc.composer.scope';
-  const pin = (projectKey, label) => { const m = memStore(); m.setItem(KEY, JSON.stringify({ pinned: true, projectKey, label })); return m; };
+  const pin = (o) => { const m = memStore(); m.setItem(KEY, JSON.stringify(o)); return m; };
   const scopeText = (s) => s.g('wfc').querySelector('#wfc-scope').textContent.trim();
-  const gone = pin('gone-0000abcd', 'gone');
+  const gone = pin({ pinned: true, projectKey: 'gone-0000abcd', label: 'gone' });
   const a = await bootDock([], { storage: gone });
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(scopeText(a), 'Auto');
+  assert.equal(scopeText(a), 'No project');
   assert.deepEqual(JSON.parse(gone.getItem(KEY)), { pinned: false });
-  const b = await bootDock([], { storage: pin('worca-1a2b3c4d', 'worca') });
+  const b = await bootDock([], { storage: pin({ pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' }) });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(scopeText(b), 'worca');
-  const c = await bootDock([], { storage: pin('gone-0000abcd', 'gone'), projects: async () => { throw new Error('offline'); } });
+  const c = await bootDock([], { storage: pin({ pinned: true, projectKey: 'gone-0000abcd', label: 'gone' }), projects: async () => { throw new Error('offline'); } });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(scopeText(c), 'gone');
+  c.g('wfc').querySelector('#wfc-scope').click();
+  await settle();
+  assert.equal(scopeText(c), 'gone', 'the menu reads the list again: a rejection there keeps the pin too');
+  c.g('wfc').querySelector('#wfc-scope').click();
+  const teams = async () => [{ id: 'wks-team-0000abcd', name: 'Team' }];
+  const wsGone = pin({ pinned: true, workspaceId: 'wks-gone-0000abcd', label: 'Old' });
+  const d = await bootDock([], { storage: wsGone, workspaces: teams });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(scopeText(d), 'No project');
+  assert.deepEqual(JSON.parse(wsGone.getItem(KEY)), { pinned: false });
+  const e = await bootDock([], { storage: pin({ pinned: true, workspaceId: 'wks-team-0000abcd', label: 'Team' }), workspaces: teams });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(scopeText(e), 'Team');
+});
+
+test('New chat starts in No project (U5): a pinned scope resets, and the reset is stored', async () => {
+  const KEY = 'worca-cc.composer.scope';
+  const storage = memStore();
+  storage.setItem(KEY, JSON.stringify({ pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' }));
+  const s = await bootDock([], { storage });
+  await settle();
+  assert.equal(s.g('wfc').querySelector('#wfc-scope').textContent.trim(), 'worca');
+  s.g('wfc').querySelector('#wfc-new').click();
+  await settle();
+  assert.equal(s.g('wfc').querySelector('#wfc-scope').textContent.trim(), 'No project');
+  assert.deepEqual(JSON.parse(storage.getItem(KEY)), { pinned: false });
+});
+
+test('a chat the client drops by itself starts in No project too (U5): a stored chat that answers 404 or is not a composer chat, Delete all chat history; a message on its way keeps its pin', async () => {
+  const KEY = 'worca-cc.composer.scope';
+  const pinned = () => { const m = memStore(); m.setItem('worca-cc.composer.thread', THREAD.id); m.setItem(KEY, JSON.stringify({ pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' })); return m; };
+  const scopeText = (s) => s.g('wfc').querySelector('#wfc-scope').textContent.trim();
+  const GET_THREAD = /\/api\/ask\/threads\/ask_0000abcd$/;
+  const snap = (mode) => ({ thread: { ...THREAD, mode, context: { view: 'workflows', pinned: true, projectKey: 'worca-1a2b3c4d' } }, messages: [], attachments: [], runLinks: [], inFlight: null });
+  for (const [name, answer] of [['a stored chat deleted elsewhere (404)', () => [404, { error: 'thread not found' }]], ['a stored chat that is not a composer chat', () => [200, snap('ask')]]]) {
+    const storage = pinned();
+    const s = await bootDock([['GET', GET_THREAD, answer]], { storage });
+    await settle();
+    assert.equal(scopeText(s), 'worca', `${name}: nothing loads before the dock opens`);
+    await s.dock.client.open();
+    await settle();
+    assert.equal(s.dock.client.threadId(), null, name);
+    assert.equal(scopeText(s), 'No project', name);
+    assert.deepEqual(JSON.parse(storage.getItem(KEY)), { pinned: false }, name);
+  }
+  const cleared = pinned();
+  const b = await bootDock([['GET', GET_THREAD, () => [200, snap('composer')]]], { storage: cleared });
+  await b.dock.client.open();
+  await settle();
+  assert.equal(scopeText(b), 'worca', 'a stored chat that loads keeps its pin');
+  b.dock.pushFrame({ type: 'ask-history-cleared' });
+  await settle();
+  assert.equal(b.dock.client.threadId(), null);
+  assert.equal(scopeText(b), 'No project', 'Settings › Delete all chat history');
+  assert.deepEqual(JSON.parse(cleared.getItem(KEY)), { pinned: false });
+  // Enter before the stored chat's 404 lands: the message goes out with the pin the pill shows, and the fresh chat keeps it.
+  const racing = pinned();
+  const c = await bootDock([['GET', GET_THREAD, () => [404, { error: 'thread not found' }]]], { storage: racing });
+  const input = c.g('wfc').querySelector('#wfc-input');
+  input.value = 'Add Plan';
+  input.dispatchEvent(new c.win.Event('input', { bubbles: true }));
+  input.dispatchEvent(new c.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.deepEqual(c.f.calls.find((x) => /\/messages$/.test(x.url)).body.context, { view: 'workflows', pinned: true, projectKey: 'worca-1a2b3c4d' });
+  assert.equal(scopeText(c), 'worca', 'the pill still says what the message carried');
+  assert.deepEqual(JSON.parse(racing.getItem(KEY)), { pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' });
+  // A chat this page started (no stored thread at boot), then cleared: it was a chat, so the next one starts in No project.
+  const fresh = memStore();
+  fresh.setItem(KEY, JSON.stringify({ pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' }));
+  const d = await bootDock([], { storage: fresh });
+  const din = d.g('wfc').querySelector('#wfc-input');
+  din.value = 'Add Plan';
+  din.dispatchEvent(new d.win.Event('input', { bubbles: true }));
+  din.dispatchEvent(new d.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(d.dock.client.threadId(), THREAD.id);
+  assert.equal(scopeText(d), 'worca');
+  d.dock.pushFrame({ type: 'ask-history-cleared' });
+  await settle();
+  assert.equal(scopeText(d), 'No project', 'a chat started in this page load, then cleared');
+});
+
+test('a composer thread\'s divider rows are skipped (SEAMS S39): the dock never shows "Switched to …" as a reply', async () => {
+  const storage = memStore();
+  storage.setItem('worca-cc.composer.thread', THREAD.id);
+  const snap = { thread: { ...THREAD, context: { view: 'workflows', pinned: true, projectKey: 'worca-1a2b3c4d' } }, attachments: [], runLinks: [], inFlight: null, messages: [
+    { id: 'msg_0000a001', threadId: THREAD.id, seq: 1, role: 'user', text: 'Add Plan', status: null, blocks: null, createdAt: 't' },
+    { id: 'msg_0000a002', threadId: THREAD.id, seq: 2, role: 'system', text: 'Switched to worca', status: null, blocks: [{ kind: 'divider', text: 'Switched to worca', scope: { pinned: true, projectKey: 'worca-1a2b3c4d' } }], createdAt: 't' },
+    { id: 'msg_0000a003', threadId: THREAD.id, seq: 3, role: 'assistant', text: 'Done.', status: 'done', blocks: [], createdAt: 't' },
+  ] };
+  const s = await bootDock([['GET', /\/api\/ask\/threads\/ask_0000abcd$/, () => [200, snap]]], { storage });
+  await s.dock.client.open();
+  await settle();
+  const msgs = [...s.g('wfc').querySelectorAll('.wfc-msg')];
+  assert.equal(msgs.length, 2, 'the user row and the reply; the divider row adds nothing');
+  assert.ok(!msgs.some((m) => m.textContent.includes('Switched to')));
 });
 
 test('a screen reader hears one line per card change and per finished reply; the rebuilt thread itself stays quiet', async () => {
@@ -901,7 +1020,7 @@ test('the dock\'s textarea opts out of the house textarea box (min-height 120px,
 test('a chat card button in flight (aria-disabled, never `disabled`) looks inactive', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\.wfc :is\(\.wfv-btn,\.wfc-link\)\[aria-disabled="true"\]\{opacity:\.55;cursor:default;\}/);
+  assert.match(css, /\.wfc :is\(\.btn,\.wfc-link\)\[aria-disabled="true"\]\{opacity:\.55;cursor:default;\}/);
 });
 
 test('the dock is the card controller\'s occluder: an edit landing under the open panel fits into the band above it', async () => {
@@ -1014,13 +1133,13 @@ test('a refused "Save & add" is said: the card and the live region tell why the 
   const draft = agentDraft('card_0000dddd', 'releaseNotes', 'Release Notes', 'proposed', { ops: [{ op: 'add_node', id: 'n_abcdefgh', kind: 'agent', key: 'releaseNotes', x: 400, y: 200 }] });
   draft.card.docToken = s.c.docToken();
   await draftTurn(s, [draft], { live: true });
-  [...s.g('wfc').querySelectorAll('button')].find((b) => b.textContent === 'Save & add to canvas').click();
+  [...s.g('wfc').querySelectorAll('button')].find((b) => b.textContent === 'Add to canvas').click();
   for (let i = 0; i < 3; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(s.f.calls.filter((c) => /\/cards\//.test(c.url)).at(-1).body, { state: 'saved', card: { savedKey: 'releaseNotes' } }, 'saved all the same');
   s.dock.pushFrame({ type: 'ask-card', threadId: THREAD.id, messageId: 'msg_0000bbbb', seq: 3, block: { ...draft, state: 'saved' } });   // the server's flip
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(s.g('wfc').querySelector('.wfc-sr').textContent, 'Saved agent: Release Notes — not added to the canvas: it would add an error: Release Notes needs an input');
-  assert.equal(s.g('wfc').querySelector('[data-card-id="card_0000dddd"] .wfc-err').textContent, 'Not added to the canvas — it would add an error: Release Notes needs an input');
+  assert.equal(s.g('wfc').querySelector('.wfc-sr').textContent, 'Saved agent: Release Notes. Not added to the canvas: it would add an error: Release Notes needs an input');
+  assert.equal(s.g('wfc').querySelector('[data-card-id="card_0000dddd"] .wfc-err').textContent, 'Not added to the canvas: it would add an error: Release Notes needs an input');
 });
 
 test('a clicked Send or Stop never keeps the focus on a button the turn hides: Send hands it to Stop, Stop back to Send', async () => {
@@ -1067,7 +1186,7 @@ test('another workflow opened while a draft\'s registry reload runs takes none o
     client: { postCard: async (id, body) => { posts.push(body); return { ok: true }; } },
     actions: { saveAgentDraft: async (d) => ({ ok: true, key: d.key }), notify: (o) => notes.push(o.title),
       reloadRegistry: async () => { composer.setTok('d_other001'); } } });   // the user opened another workflow meanwhile
-  [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Save & add to canvas').click();
+  [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Add to canvas').click();
   for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(composer.log, [], 'the other workflow takes no node');
   assert.deepEqual(posts.at(-1), { state: 'saved', card: { savedKey: 'releaseNotes' } }, 'saved all the same');
@@ -1076,7 +1195,7 @@ test('another workflow opened while a draft\'s registry reload runs takes none o
   [...cc.render({ ...b, state: 'saved' }).querySelectorAll('button')].find((x) => x.textContent === 'Add to canvas').click();
   for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(composer.log, [], 'its reload switched documents again: nothing applied');
-  assert.deepEqual(notes, ['Not added — another workflow was opened meanwhile.']);
+  assert.deepEqual(notes, ['Not added: another workflow was opened meanwhile.']);
   assert.equal(posts.length, 1, 'no "added" flip');
   dom.window.close();
 });
@@ -1290,7 +1409,7 @@ test('Ask\'s early checks and messages in the dock: type, 100 MB text, 8 files; 
   croot.querySelector('#wfc-input').dispatchEvent(new c.win.Event('focus'));
   pickFiles(c, [mkFile(c, 'spec.pdf', '%PDF-1.7', 'application/pdf'), pngFile(c)]);
   await settle();
-  assert.equal(croot.querySelector('.wfc-note').textContent, 'PDFs need a Claude chat: spec.pdf');
+  assert.equal(croot.querySelector('.wfc-note').textContent, 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
   assert.deepEqual(chipNames(croot), ['flow.png'], 'an image still attaches on Codex');
 });
 
@@ -1428,7 +1547,7 @@ test('the attachment UI restates what the house rules would change (focus rings,
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   assert.match(css, /\.wfc-drop\{[^}]*position:absolute;[^}]*pointer-events:none;/);
   assert.match(css, /\.wfc-shell:not\(\[data-open="true"\]\) :is\(\.wfc-files,\.wfc-note\)\{display:none;\}/);
-  assert.match(css, /\.wfc-file-x:focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
+  assert.match(css, /\n\.wfc-file-x\{flex:none;\}/, 'the × is the shared .btn-icon (its ring is .btn\'s); only its flex stays');
   assert.match(css, /\.wfc-file\{[^}]*flex:none;/);
   assert.match(css, /\.wfc-uthumb-link:focus-visible\{outline:2px solid var\(--ink\);outline-offset:2px;\}/);
   // A name pill beside a 110 px thumbnail: the flex default (stretch) draws it as a tall oval with its name cut.
@@ -1663,4 +1782,20 @@ test('a reopened thread: the hint is "Reply", the orb is still, no live line', a
   assert.equal(root.querySelector('.wfc-row .wfc-orb').dataset.phase, 'rest');
   assert.equal(root.querySelector('.wfc-act').hidden, true);
   assert.equal(root.querySelector('#wfc-input').placeholder, 'Reply');
+});
+
+test('card-views: one DOM for both chats — a draft card shows the state its host passes, a build card takes an optional graph', async () => {
+  const { cardKit, draftCardView, buildCardView } = await imp('card-views.mjs');
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const { h, button } = cardKit(dom.window.document);
+  const b = card('card_0000f001', 'proposed', { type: 'agent-draft', draft: { key: 'releaseNotes', meta: { displayName: 'Release Notes', inputs: [{ id: 'plan', type: 'md' }] }, markdown: '# x' } });
+  const shownSaved = draftCardView(b, { h, button, state: 'saved', onEdit: () => {}, onDecline: () => {}, onSave: () => {} });
+  assert.equal(shownSaved.querySelector('.wfc-chip').textContent, 'saved');
+  assert.equal(shownSaved.querySelectorAll('.wfc-actions button').length, 0);
+  assert.match(shownSaved.textContent, /Saved to your agents/);
+  const graph = h('div', 'my-graph');
+  const build = buildCardView(card('card_0000f002', 'proposed', { type: 'workflow-build', name: 'G', workflow: { nodes: [], wires: [] }, counts: {} }),
+    { h, graph, actions: (row) => row.appendChild(h('span', 'x', 'act')) });
+  assert.ok(build.querySelector('.my-graph'));
+  assert.equal(build.querySelector('.wfc-actions').textContent, 'act');
 });

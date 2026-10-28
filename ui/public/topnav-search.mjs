@@ -2,13 +2,17 @@
 // popover and the ⌘K / Ctrl+K chord. Pure DOM over the markup in index.html (.tsearch); the rows
 // come from global-search.mjs over the sources app.js hands in, so this module holds no app state.
 //
-//   const search = createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow });
+//   const search = createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow, onLabel });
 //   getSources()      the current sources (global-search.mjs shape), read on every render
 //   loadLazy()        fetch what is not kept in memory (workflows, schedules); called once per open,
 //                     the popover re-renders when it settles
 //   onAsk(query)      the Ask Worca row ('' when nothing is typed)
+//   askRow()          the Ask row's words, read at render ({ title, meta }; default Ask in Chat · opens a chat)
 //   navigate(href)    a row with a route ('#running/…', '#projects/…', …)
 //   openWorkflow(id)  a workflow row
+//   onLabel(label)    a "Runs labelled hotfix" row: apply the Runs list label filter
+//   searchChats(q)    #948 s2: the Chats group's rows (global-search.mjs chatRows), async; null = none
+//   chatsFirst()      the Chats group leads (the Chat page); else it follows Runs
 //
 // Focus stays in the input while the popover is open: the rows are options it points at with
 // aria-activedescendant. ⌘K / Ctrl+K and a consumed Escape are read in the capture phase on the
@@ -26,7 +30,9 @@ const ICONS = Object.freeze({
     'M15 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2Z'],
   schedule: ['m17 2 4 4-4 4', 'M3 11v-1a4 4 0 0 1 4-4h14', 'm7 22-4-4 4-4', 'M21 13v1a4 4 0 0 1-4 4H3'],
   ticket: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z', 'M12 6v6l4 2'],
+  label: ['M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z', 'M7.5 7.5h.01'],
   ask: ['M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z', 'M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z'],
+  chat: ['M20 12a7.5 7.5 0 0 1-10.9 6.7L4 20l1.4-4.3A7.5 7.5 0 1 1 20 12z'],   // icons.mjs `chat`
 });
 
 function icon(doc, kind) {
@@ -55,7 +61,8 @@ function imeKey(e) {
   return !!(e.isComposing || e.keyCode === 229);
 }
 
-export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow }) {
+export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow, onLabel = () => {},
+  askRow = () => ({ title: 'Ask in Chat', meta: 'opens a chat' }), searchChats = null, chatsFirst = () => false }) {
   const input = root.querySelector('#tsearch-input');
   const pop = root.querySelector('#tsearch-pop');
   const kbd = root.querySelector('.tsearch-kbd');
@@ -63,6 +70,21 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
   const closeBtn = root.querySelector('#tsearch-close');
   const st = { open: false, items: [], active: -1, prev: null, gen: 0 };
   if (kbd) kbd.textContent = shortcutLabel(win);
+  // #948 s2: chats come from the server (title and message text), debounced; the last answer for the current query wins.
+  const chats = { query: '', rows: [], timer: null, gen: 0 };
+  function queueChats(query) {
+    if (chats.timer) win.clearTimeout(chats.timer);
+    if (!searchChats || !query) { chats.query = ''; chats.rows = []; return; }
+    const gen = ++chats.gen;
+    chats.timer = win.setTimeout(() => {
+      Promise.resolve(searchChats(query)).catch(() => []).then((rows) => {
+        if (gen !== chats.gen) return;
+        chats.query = query;
+        chats.rows = Array.isArray(rows) ? rows : [];
+        if (st.open) render({ keep: true });
+      });
+    }, 150);
+  }
 
   function option(id, kind, row, label) {
     const o = doc.createElement('div');
@@ -76,7 +98,13 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
       dot.setAttribute('aria-hidden', 'true');
       o.appendChild(dot);
     } else o.appendChild(icon(doc, kind));
-    o.append(span(doc, 'tsearch-title', row.title), span(doc, 'tsearch-meta', row.meta));
+    // #948 s2: a chat that matched on a message shows the snippet under its title.
+    const title = span(doc, 'tsearch-title', row.title);
+    if (row.sub) {
+      const tx = span(doc, 'tsearch-tx', '');
+      tx.append(title, span(doc, 'tsearch-sub', row.sub));
+      o.append(tx, span(doc, 'tsearch-meta', row.meta));
+    } else o.append(title, span(doc, 'tsearch-meta', row.meta));
     return o;
   }
 
@@ -105,8 +133,12 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     const was = keep && st.items[st.active] ? st.items[st.active].key : '';
     const { runs, other } = searchRows(getSources() || {}, query);
     st.items = [];
+    const chatsRows = chats.query === query ? chats.rows : [];
+    const first = chatsFirst();
     const parts = [];
+    if (chatsRows.length && first) parts.push(group('chats', 'Chats', chatsRows));
     if (runs.length) parts.push(group('runs', 'Runs', runs));
+    if (chatsRows.length && !first) parts.push(group('chats', 'Chats', chatsRows));
     if (other.length) parts.push(group('other', 'Projects, workflows, schedules', other));
     if (query && !parts.length) {
       const none = span(doc, 'tsearch-none', 'No matches');
@@ -119,7 +151,12 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
       sep.setAttribute('aria-hidden', 'true');
       parts.push(sep);
     }
-    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title: 'Ask Worca', meta: 'opens a chat' }, 'Ask Worca, opens a chat');
+    // Ask worca beside the page: on a page with the side column the row names it (app.js askRow).
+    let words = null;
+    try { words = askRow(); } catch { words = null; }
+    const title = words && typeof words.title === 'string' && words.title ? words.title : 'Ask in Chat';
+    const meta = words && typeof words.meta === 'string' ? words.meta : 'opens a chat';
+    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title, meta }, `${title}, ${meta}`);
     st.items.push({ key: 'ask', row: null, el: ask });
     parts.push(ask);
     pop.replaceChildren(...parts);
@@ -188,6 +225,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     input.blur();
     if (!it.row) onAsk(query);
     else if (it.row.kind === 'workflow') openWorkflow(it.row.workflowId);
+    else if (it.row.kind === 'label') onLabel(it.row.label);
     else navigate(it.row.href);
   }
 
@@ -215,7 +253,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
   }
 
   input.addEventListener('focus', (e) => open({ from: e.relatedTarget }));
-  input.addEventListener('input', () => { if (st.open) render(); else open(); });
+  input.addEventListener('input', () => { queueChats(input.value.trim()); if (st.open) render(); else open(); });
   input.addEventListener('keydown', (e) => {
     if (imeKey(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -251,6 +289,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     isOpen: () => st.open,
     render: () => render({ keep: true }),
     destroy() {
+      if (chats.timer) win.clearTimeout(chats.timer);
       close();
       doc.removeEventListener('keydown', onDocKey, true);
       doc.removeEventListener('pointerdown', onDocPointerdown, true);

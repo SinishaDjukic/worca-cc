@@ -20,10 +20,12 @@
 // - cycle: matches String(rec.cycle) — the feedback-loop rewind counter, which is
 //   orthogonal to step (a re-run keeps its stepIndex and bumps its cycle). Same
 //   attribution rule as step: cycle-less lines only show when no cycle is chosen.
-// - search: case-insensitive substring of rec.text. Text only — the source column
+// - search: case-insensitive substring of rec.text, or of rec.desc (a Bash call's
+//   description, #911 slice 3) when present. Text only — the source column
 //   is already a dropdown, so matching it here would make that filter ambiguous.
 
-const SUB_SEP = ' ▸ ';
+// The server's sub-agent separator ('planner ▸ research auth', src/core/agent-log): data to split on, not an icon.
+const SUB_SEP = ` ${String.fromCodePoint(0x25b8)} `;
 
 /** Compile a filter into a predicate. Per-axis normalization (notably the
  *  search term's toLowerCase) happens ONCE here instead of once per record —
@@ -52,7 +54,8 @@ export function compileLogFilter(filter) {
     if (hasNode && (rec.nodeId == null || String(rec.nodeId) !== node)) return false;
     if (hasExec && (rec.executionId == null || String(rec.executionId) !== execution)) return false;
     if (hasCycle && (rec.cycle == null || String(rec.cycle) !== cycle)) return false;
-    if (term && !String(rec.text || '').toLowerCase().includes(term)) return false;
+    if (term && !String(rec.text || '').toLowerCase().includes(term)
+      && !String(rec.desc || '').toLowerCase().includes(term)) return false;
     return true;
   };
 }

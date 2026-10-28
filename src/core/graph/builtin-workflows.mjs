@@ -4,7 +4,9 @@
 // test fixture. `fixtures.mjs` re-exports it as FIXTURE_DEFAULT so the engine
 // tests and the shipping default can never drift apart.
 //
-// Pure data + one pure helper — no IO, no imports, no dependency on the registry.
+// Pure data + one pure helper — no IO, no dependency on the registry. The one import is the pure
+// role-review round cap, a shared shape constant.
+import { ROLE_REVIEW_MAX_ROUNDS } from '../../shared/shape/role-review.mjs';
 
 /** Recursively freeze a value and everything reachable from it, returning the
  *  same reference. A shallow `Object.freeze` is NOT enough here: it passes
@@ -230,11 +232,102 @@ export const GRAPH_PR_FIX_WORKFLOW = deepFreeze({
   ],
 });
 
+/** The Shape it first workflows: wf_default's graph with the Clarify cap (3 questions, a hint to
+ *  recommend an option) and a plan approval hold on Refine's `plan` output. wf_shape_ux adds the
+ *  manual-test stages the UX perspective brings (wf_full-no-decompose's verifier tail). A run picks
+ *  one through POST /api/run's `shape` field (core/shape/run.mjs). Reserved like wf_memory_defrag; the
+ *  ids have an underscore, so only the name "Shape" can slug onto wf_shape and nothing onto wf_shape_ux. */
+export const SHAPE_WORKFLOW_ID = 'wf_shape';
+export const SHAPE_UX_WORKFLOW_ID = 'wf_shape_ux';
+export const SHAPE_WORKFLOW_NAME = 'Shaper';
+export const SHAPE_CLARIFY_HINTS = 'Shaping: ask at most 3 questions — only decisions that change what gets built '
+  + 'and that the repo can\'t answer. Give each question a recommended option.';
+const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS };
+const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
+const SHAPE_ROLES_CONFIG = { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' };   // spec decision 1
+/** Refine waits for the reviewed plan AND its findings, both from n_roles (one publish), so it fires once per round. */
+const SHAPE_REFINE_CONFIG = { ...SHAPE_APPROVE_CONFIG, awaitAll: true };
+/** Spec §3: plan → role reviews → refine, one loop of at most 2 rounds that ends at the plan approval. Default's
+ *  w4/w5 ids are kept (per-project loop budgets are keyed by wire id); w17/w18 are new. */
+const SHAPE_HEAD_WIRES = [
+  { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_clarify', port: 'task' } },
+  { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+  { id: 'w3', from: { node: 'n_clarify', port: 'answers' }, to: { node: 'n_plan', port: 'answers' } },
+  { id: 'w4', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_roles', port: 'plan' } },
+  { id: 'w17', from: { node: 'n_roles', port: 'plan' }, to: { node: 'n_refine', port: 'plan' } },
+  { id: 'w18', from: { node: 'n_roles', port: 'findings' }, to: { node: 'n_refine', port: 'findings' } },
+  { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_roles', port: 'revise' },
+    config: { maxCycles: ROLE_REVIEW_MAX_ROUNDS, onExhausted: 'clean' } },
+];
+const SHAPE_ROLES_NODE = { id: 'n_roles', kind: 'agent', key: 'planReviewer', x: 740, y: 380, config: { ...SHAPE_ROLES_CONFIG } };
+const copyWire = (w) => ({ ...w, from: { ...w.from }, to: { ...w.to }, ...(w.config ? { config: { ...w.config } } : {}) });
+
+export const GRAPH_SHAPE_WORKFLOW = deepFreeze({
+  id: SHAPE_WORKFLOW_ID,
+  name: SHAPE_WORKFLOW_NAME,
+  version: 2,
+  domain: 'coding',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_clarify', kind: 'agent', key: 'clarify', x: 320, y: 200, config: { ...SHAPE_CLARIFY_CONFIG } },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
+    { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 1720, y: 200, config: {} },
+    { ...SHAPE_ROLES_NODE, config: { ...SHAPE_ROLES_CONFIG } },
+  ],
+  wires: [
+    ...SHAPE_HEAD_WIRES.map(copyWire),
+    ...GRAPH_DEFAULT_WORKFLOW.wires.filter((w) => !['w1', 'w2', 'w3', 'w4', 'w5'].includes(w.id)).map(copyWire),
+  ],
+});
+
+/** wf_shape + the manual-test stages (UX picked): wf_full-no-decompose's verifier tail. There is no
+ *  review.pass -> End wire: the clean review hands over to the checklist, and the web UI test lands on End. */
+export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
+  id: SHAPE_UX_WORKFLOW_ID,
+  name: SHAPE_WORKFLOW_NAME,
+  version: 2,
+  domain: 'coding',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_clarify', kind: 'agent', key: 'clarify', x: 320, y: 200, config: { ...SHAPE_CLARIFY_CONFIG } },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
+    { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_check', kind: 'agent', key: 'manualTestsChecklist', x: 1720, y: 200, config: {} },
+    { id: 'n_webui', kind: 'agent', key: 'manualWebUiTesting', x: 2000, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 2280, y: 200, config: {} },
+    { id: 'n_or', kind: 'or', x: 1580, y: 430, config: { arity: 2 } },
+    { ...SHAPE_ROLES_NODE, config: { ...SHAPE_ROLES_CONFIG } },
+  ],
+  wires: [
+    ...SHAPE_HEAD_WIRES.map(copyWire),
+    { id: 'w6', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w7', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w8', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w9', from: { node: 'n_review', port: 'review' }, to: { node: 'n_or', port: 'in1' }, config: { maxCycles: 3 } },
+    { id: 'w11', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_check', port: 'plan' } },
+    { id: 'w12', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_check', port: 'await' } },
+    { id: 'w13', from: { node: 'n_check', port: 'checklist' }, to: { node: 'n_webui', port: 'checklist' } },
+    { id: 'w14', from: { node: 'n_webui', port: 'review' }, to: { node: 'n_or', port: 'in2' }, config: { maxCycles: 3 } },
+    { id: 'w15', from: { node: 'n_webui', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+    { id: 'w16', from: { node: 'n_or', port: 'out' }, to: { node: 'n_impl', port: 'fix' } },
+  ],
+});
+
 /** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
- *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere. Order is NOT
+ *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere;
+ *  wf_shape is listed only while the Shape it first gate is on, and wf_shape_ux is never listed. Order is NOT
  *  significant — GET /api/workflows and the Ask catalog list the graph built-ins in their own
  *  fixed order (Default, then Memory defragment).
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
-export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
+export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
 export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }

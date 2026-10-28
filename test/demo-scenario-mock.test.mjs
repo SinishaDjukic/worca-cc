@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { createTurnReducer } from '../src/core/ask/events.mjs';
 
-const SYS = 'You are Ask Worca.\n\nMOCK_ROLE: ask\n';
+const SYS = 'You are Chat.\n\nMOCK_ROLE: ask\n';
 afterEach(() => { delete process.env.WORCA_DEMO_SCENARIO; });
 
 async function turn(prompt) {

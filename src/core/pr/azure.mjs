@@ -3,7 +3,7 @@
 // on dev.azure.com — git-info.mjs dispatches here by forge. Auth from azure-credentials.mjs.
 //
 /** @typedef {{ ok:true, url:string, number:number|null, existed:boolean } | { ok:false, error:string, kind?:'auth'|'unsupported'|'failed' }} PrCreateResult */
-import { azureAuthHeader, readAzureCredentials } from '../azure-credentials.mjs';
+import { azureAuthHeader, azureWorkItemsAuthHeader, readAzureCredentials } from '../azure-credentials.mjs';
 import { azurePrUrl, parseAzurePrUrl } from '../../shared/azure-remote.mjs';
 import { sameRepo } from '../forge.mjs';
 
@@ -28,9 +28,10 @@ const fail = (kind, message, extra = {}) => Object.assign(new Error(message), { 
 /**
  * One REST call. Throws Error{kind:'auth'|'network'|'timeout'|'failed', status?, body?}. `version` overrides the
  * api-version (preview APIs); `text: true` reads a plain-text body (build logs) into `text` instead of `json`.
+ * `auth` replaces the role's Code PAT header (work item chips: azureWorkItemsAuthHeader); `timeoutMs` bounds the call.
  */
-export async function adoFetch(role, url, { method = 'GET', body, env = process.env, version = API_VERSION, text = false } = {}) {
-  const auth = azureAuthHeader(role, env);
+export async function adoFetch(role, url, { method = 'GET', body, env = process.env, version = API_VERSION, text = false,
+  auth = azureAuthHeader(role, env), timeoutMs = AZURE_TIMEOUT_MS } = {}) {
   if (!auth) throw fail('auth', 'no Azure DevOps credential: set WORCA_ADO_TOKEN (Code: Read & Write) where worca runs');
   let res;
   try {
@@ -38,7 +39,7 @@ export async function adoFetch(role, url, { method = 'GET', body, env = process.
       method,
       headers: { accept: text ? 'text/plain' : 'application/json', 'content-type': 'application/json', 'x-tfs-fedauthredirect': 'Suppress', ...auth },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(AZURE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
     throw fail(e?.name === 'TimeoutError' ? 'timeout' : 'network', `Azure DevOps unreachable: ${e?.message || e}`);
@@ -60,6 +61,7 @@ const toPr = (coords, pr) => ({
   state: STATE[pr?.status] || null,
   url: azurePrUrl(coords, pr.pullRequestId),
   number: Number.isInteger(pr?.pullRequestId) ? pr.pullRequestId : null,
+  isDraft: pr?.isDraft === true,
   mergeable: MERGE[pr?.mergeStatus] || 'UNKNOWN',
 });
 
@@ -119,7 +121,7 @@ export async function createPr({ base, head, title, body = '', baseRepo, pushRep
   }
 }
 
-/** { state: OPEN|MERGED|CLOSED|null, url, number, mergeable } | null — never throws. */
+/** { state: OPEN|MERGED|CLOSED|null, url, number, isDraft, mergeable } | null — never throws. */
 export async function viewPr({ prUrl, env = process.env }) {
   const p = parseAzurePrUrl(prUrl);
   if (!p) return null;
@@ -129,15 +131,53 @@ export async function viewPr({ prUrl, env = process.env }) {
   } catch { return null; }
 }
 
-/** { state: OPEN|MERGED, url, number, mergeable } | null — OPEN first, like the GitHub lookup. Never throws. */
-export async function findPrForBranch({ head, baseRepo, env = process.env }) {
+// ── Chat answer chips (src/core/ask/refs.mjs): a title and a lifecycle, bounded by CHIP_TIMEOUT_MS ─────────────
+export const CHIP_TIMEOUT_MS = 10_000;
+const CHIP_STATE = { active: 'open', completed: 'merged', abandoned: 'closed' };
+
+/** One PR by organization, project and id (the Code PAT's read role): { kind:'pr', title, state:'open'|'draft'|
+ *  'merged'|'closed' } | null. Never throws. */
+export async function prSummary({ org, project, number, env = process.env, timeoutMs = CHIP_TIMEOUT_MS }) {
+  try {
+    const { json } = await adoFetch('read', `https://dev.azure.com/${enc(org)}/${enc(project)}/_apis/git/pullrequests/${Number(number)}`, { env, timeoutMs });
+    const state = CHIP_STATE[json?.status];
+    if (!state || typeof json.title !== 'string') return null;
+    return { kind: 'pr', title: json.title, state: state === 'open' && json.isDraft === true ? 'draft' : state };
+  } catch { return null; }
+}
+
+/** Work items in ONE organization (at most 200 ids, one call), read with azureWorkItemsAuthHeader: Map<id, { kind:
+ *  'workitem', title, state, type }>. An id Azure leaves out (unknown, no access) is not in the map. Never throws. */
+export async function workItemSummaries({ org, ids, env = process.env, timeoutMs = CHIP_TIMEOUT_MS }) {
+  const out = new Map();
+  const list = [...new Set(Array.isArray(ids) ? ids : [])].filter((n) => Number.isSafeInteger(n) && n > 0).slice(0, 200);
+  const auth = azureWorkItemsAuthHeader(env);
+  if (!org || !list.length || !auth) return out;
+  try {
+    const url = `https://dev.azure.com/${enc(org)}/_apis/wit/workitems?ids=${list.join(',')}&fields=System.Title,System.State,System.WorkItemType&errorPolicy=omit`;
+    const { json } = await adoFetch('read', url, { env, auth, timeoutMs });
+    for (const w of Array.isArray(json?.value) ? json.value : []) {
+      const f = w && w.fields;
+      if (!f || !Number.isInteger(w.id) || typeof f['System.Title'] !== 'string' || typeof f['System.State'] !== 'string') continue;
+      out.set(w.id, { kind: 'workitem', title: f['System.Title'], state: f['System.State'], type: typeof f['System.WorkItemType'] === 'string' ? f['System.WorkItemType'] : '' });
+    }
+  } catch { /* no answer: the chips keep their refs */ }
+  return out;
+}
+
+/**
+ * { state: OPEN|MERGED, url, number, isDraft, mergeable } | null — OPEN first, then MERGED, like the GitHub lookup;
+ * `includeClosed` adds the newest abandoned PR (CLOSED) as the last resort. Never throws.
+ */
+export async function findPrForBranch({ head, baseRepo, includeClosed = false, env = process.env }) {
   if (!head || !baseRepo?.org) return null;
   try {
     const q = `searchCriteria.sourceRefName=${enc(`refs/heads/${head}`)}&searchCriteria.status=all&$top=30`;
     const { json } = await adoFetch('read', `${repoApi(baseRepo)}/pullrequests?${q}`, { env });
     const prs = (Array.isArray(json?.value) ? json.value : []).filter((x) => !x?.forkSource)   // a fork's same-named branch is not ours
-      .map((x) => toPr(baseRepo, x)).filter((x) => x.state === 'OPEN' || x.state === 'MERGED');
-    return prs.find((x) => x.state === 'OPEN') || prs[0] || null;
+      .map((x) => toPr(baseRepo, x));
+    const pick = (state) => prs.find((x) => x.state === state);
+    return pick('OPEN') || pick('MERGED') || (includeClosed && pick('CLOSED')) || null;
   } catch { return null; }
 }
 
@@ -444,4 +484,21 @@ export async function prComment({ prUrl, body, env = process.env } = {}) {
       body: { comments: [{ parentCommentId: 0, content: String(body || ''), commentType: 1 }], status: 4 } });
     return { ok: true };
   } catch (e) { return watchFailure(e); }
+}
+
+/** D24: mark a draft PR ready for review. */
+export async function markReady({ prUrl, env = process.env } = {}) {
+  const p = parseAzurePrUrl(prUrl);
+  if (!p) return { ok: false, error: 'invalid Azure DevOps pull request URL' };
+  try { await adoFetch('write', prApi(p), { method: 'PATCH', body: { isDraft: false }, env }); return { ok: true }; }
+  catch (e) { return watchFailure(e); }
+}
+
+/** D24: close a PR (abandoned), after a PR-level comment saying why. */
+export async function closePr({ prUrl, comment = '', env = process.env } = {}) {
+  const p = parseAzurePrUrl(prUrl);
+  if (!p) return { ok: false, error: 'invalid Azure DevOps pull request URL' };
+  if (comment) { const c = await prComment({ prUrl, body: comment, env }); if (!c.ok) return c; }
+  try { await adoFetch('write', prApi(p), { method: 'PATCH', body: { status: 'abandoned' }, env }); return { ok: true }; }
+  catch (e) { return watchFailure(e); }
 }

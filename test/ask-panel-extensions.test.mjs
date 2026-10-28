@@ -31,6 +31,10 @@ function api(rec) {
       rec.cardBodies = [...(rec.cardBodies || []), JSON.parse(opts.body)];
       return rec.cardResponse || { ok: true, status: 200, json: async () => ({ ok: true, echo: JSON.parse(opts.body) }) };
     }
+    if (url === `/api/ask/threads/${TID}/changes` && method === 'POST') {
+      rec.changesBodies = [...(rec.changesBodies || []), JSON.parse(opts.body)];
+      return rec.changesResponse || { ok: true, status: 201, json: async () => ({ message: { id: 'askm_a0000001' } }) };
+    }
     if (url === `/api/ask/threads/${TID}/messages` && method === 'POST') {
       rec.messageBodies = [...(rec.messageBodies || []), JSON.parse(opts.body)];
       return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000009', attachments: [], contexts: [] }) };
@@ -163,6 +167,18 @@ test('ctx.postCard POSTs the card route and resolves its body; a refusal throws 
   rec.cardThrows = true;
   await assert.rejects(c.postCard(block, { state: 'reverted' }),
     (e) => e.status === 0 && e.body === null && e.message === 'network error', 'offline: the same error shape, the built-in cards\' word');
+});
+
+test('s5: ctx.postChanges POSTs the thread\'s changes route with the ref and the text; a refusal throws with status and body', async () => {
+  let c = null;
+  registerChatCard('receipt', (block, cc) => { c = cc; return { el: cc.doc.createElement('div') }; });
+  const rec = {};
+  const ctx = await openThread(rec);
+  push(ctx, [START, { type: 'ask-card', block: card('card_00000006', 'applied', { type: 'receipt' }) }], 1);
+  await c.postChanges({ pipelineId: 'aaaa1111' }, 'make it blue');
+  assert.deepEqual(rec.changesBodies, [{ pipelineId: 'aaaa1111', text: 'make it blue' }]);
+  rec.changesResponse = { ok: false, status: 409, json: async () => ({ error: 'the run is still going' }) };
+  await assert.rejects(c.postChanges({ featureId: 'feat_1' }, 'x'), (e) => e.status === 409 && e.body.error === 'the run is still going');
 });
 
 test('a registered card follows a same-state change of its block: rebuilt (the old one disposed), or handed to handle.blockChanged when the handle has one', async () => {
@@ -306,9 +322,10 @@ test('transformSend runs only for a send that goes ahead: never while a reply st
   input.value = 'fix the flaky upload test';
   ctx.doc.querySelector('.ask-send').click();
   await ctx.tick(); await ctx.tick();
-  assert.equal(n, 0, 'refused under a streaming reply: nothing reworded');
+  assert.equal(n, 0, 'queued under a streaming reply: nothing reworded yet (the reword runs when the queue sends it)');
   assert.ok(!(rec.calls || []).some((x) => x.endsWith('/messages')), 'and nothing sent');
-  assert.equal(input.value, 'fix the flaky upload test', 'the draft stays');
+  assert.equal(input.value, '', 'the draft moved into the queue');
+  assert.deepEqual([...ctx.doc.querySelectorAll('[data-ask-queue-item] .ask-queue-text')].map((b) => b.textContent), ['fix the flaky upload test']);
 });
 
 test('New chat hands the add-ons the empty chat at once (update(null)), before any render', async () => {

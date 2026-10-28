@@ -145,7 +145,7 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
   const home = mkdtempSync(join(tmpdir(), 'worca-cc-chatprefs-'));
   process.env.HOME = home;
   try {
-    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true });
+    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true, suggestions: true, summariseCommands: true });
     await setChatPrefs({ notify: { done: false }, channels: { 'tg-chat/main': { enabled: false } } });
     const p = chatPrefs();
     assert.equal(p.notify.done, false);
@@ -164,6 +164,14 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
     await setChatPrefs({ scriptTools: true });
     assert.equal(chatPrefs().scriptTools, true);
     await assert.rejects(setChatPrefs({ scriptTools: 'yes' }), /chat scriptTools must be true or false/);
+    // Ask Worca's next-prompt suggestions: default on, merged like the script toggle.
+    await setChatPrefs({ suggestions: false });
+    assert.equal(chatPrefs().suggestions, false);
+    await setChatPrefs({ notify: { done: false } });
+    assert.equal(chatPrefs().suggestions, false, 'a notify patch keeps the suggestions switch');
+    await assert.rejects(setChatPrefs({ suggestions: 'no' }), /chat suggestions must be true or false/);
+    await setChatPrefs({ suggestions: true });
+    assert.equal(chatPrefs().suggestions, true);
     await assert.rejects(setChatPrefs('nope'), /must be an object/);
     // chat prefs: "away" is a notify event, on by default
     assert.equal(chatPrefs().notify.away, true);

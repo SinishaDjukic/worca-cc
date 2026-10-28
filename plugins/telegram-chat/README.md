@@ -19,7 +19,7 @@ server and dials out to `api.telegram.org` only.
    worca plugin link plugins/telegram-chat   # dev; or install by repo URL
    ```
 
-   Then in the UI: *Marketplace → telegram-chat → Settings* — paste the **Bot
+   Then in the UI: *Marketplace → Installed → telegram-chat → Settings* — paste the **Bot
    token** (or set `{"$env":"TELEGRAM_BOT_TOKEN"}` and export the var).
 3. **Find your chat ID**: send `/whoami` to the bot from the chat, then read
    the ID from *Settings → Chat notifications* ("Ignored /whoami from chat …").
@@ -53,8 +53,9 @@ server and dials out to `api.telegram.org` only.
 approving gates, stopping/pausing runs, reading run titles and costs.
 
 - `allowedChatIds` is **deny-by-default**: empty means *no* inbound commands.
-- The worker child runs with a scrubbed environment ({PATH, HOME}); the token
-  travels only over stdin and never reaches logs (host-side redaction).
+- The worker child runs with a scrubbed environment ({PATH, HOME}, the proxy and
+  CA variables, never a proxy URL with credentials); the token travels only over
+  stdin and never reaches logs (host-side redaction).
 - Notifications are rate-limited host-side (default 20 msg/min). Command
   replies are not rate-limited by the host — inbound is bounded by the
   allowlist; the worker's retry ladder absorbs platform 429s.
