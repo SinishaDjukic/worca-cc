@@ -390,6 +390,20 @@ test('route apply: add_members then remove_member, rename and create change the 
       const after2 = await readWs(ws.id);
       assert.deepEqual([...after2.projectPaths].sort(), [projects[0].path, projects[2].path].sort());
       assert.equal(after2.projectPaths.includes(projects[3].path), false, 'p3 stays out for the add_members tests below');
+
+      // A partial pick the recommendation no longer allows at Apply (no stored map: partialAvailable false)
+      // falls back to the recommendation — the card applies, it never fails.
+      const back1 = await seedCard({ kind: 'add_members', summary: 'Add p1 back to Card WS', change: { workspaceId: ws.id, projectPaths: [projects[1].path] } });
+      mod._testing.setAutoRescan(false);
+      try {
+        assert.equal((await post(`/api/ask/threads/${back1.threadId}/cards/${back1.cardId}`, { state: 'applied' })).status, 200);
+        const del3 = await seedCard({ kind: 'remove_member', summary: 'Remove p1 from Card WS', rescan: 'partial', rescanAsked: true,
+          change: { workspaceId: ws.id, projectPath: projects[1].path } });
+        j = await (await post(`/api/ask/threads/${del3.threadId}/cards/${del3.cardId}`, { state: 'applied', rescan: 'partial' })).json();
+      } finally { mod._testing.setAutoRescan(true); }
+      assert.equal(j.block.state, 'applied', JSON.stringify(j.block));
+      assert.equal(j.block.card.result.rescan, 'full', 'a stale partial pick falls back to the recommendation');
+      assert.deepEqual([...(await readWs(ws.id)).projectPaths].sort(), [projects[0].path, projects[2].path].sort());
     } },
     { name: 'route: rename and create apply through the registry', run: async () => {
       const ren = await seedCard({ kind: 'rename', summary: 'Rename Card WS to Renamed WS', change: { workspaceId: ws.id, name: 'Renamed WS' } });

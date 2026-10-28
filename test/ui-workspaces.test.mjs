@@ -652,10 +652,21 @@ test('Remove shows worca\'s recommendation and three options (recommended presel
   assert.match(box.querySelector('.status-label').textContent, /^Member removed: map pruned, not re-scanned$/);
   assert.equal(box.querySelector('.spinner'), null);
   assert.ok(box.querySelector('.wd-rescan-mark svg'), 'the pruned box carries the check icon');
+  assert.match(box.querySelector('.status-sub').textContent, /^Its edges and reviews left the map\./, 'no note: the plain pruned text');
   // A box that follows no run ignores another run's end frame.
   ws().deliver({ type: 'workspaces-changed', action: 'description', workspaceId: 'wks-alpha-00000001', runId: 'run_other' });
   await settle(8);
   assert.ok(doc.querySelector('#ws-detail .wd-rescan').classList.contains('is-pruned'), 'still pruned: run_other is not this box\'s run');
+});
+
+test('a pruned box over a map that misses a member leads with the server\'s note', async () => {
+  const { window, doc } = await bootRemove({ impact: ok({ recommendation: IMPACT }),
+    membersBody: { workspace: { ...WS[0] }, clearedHomes: [], rescan: { mode: 'none', note: 'The map still does not cover svc-new.' }, recommendation: IMPACT } });
+  await confirmChoice(window, 'none');
+  await settle(8);
+  const box = doc.querySelector('#ws-detail .wd-rescan');
+  assert.ok(box.classList.contains('is-pruned'));
+  assert.match(box.querySelector('.status-sub').textContent, /^The map still does not cover svc-new\. Its edges and reviews left the map\./);
 });
 
 test('Remove when partial is unavailable: the partial choice is disabled, Full preselected', async () => {

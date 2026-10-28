@@ -676,6 +676,20 @@ test('partial is never left paused: unavailable → recommended full + 400 on re
   stopRunsOf(ws.id);
 });
 
+test('remove with rescan: none over a map that misses a member says so on the pruned notice', async () => {
+  const { ws, a } = await mappedWorkspace('Short');
+  testing.setAutoRescan(false);
+  try { assert.equal((await post(`/api/workspaces/${ws.id}/members`, { add: [await freshRepo()] })).status, 200); }
+  finally { testing.setAutoRescan(true); }                     // the add's scan never ran: the map lacks the new member
+  const body = await (await post(`/api/workspaces/${ws.id}/members`, { remove: a, rescan: 'none' })).json();
+  assert.equal(body.recommendation.level, 'full');
+  assert.equal(body.rescan.mode, 'none', 'the pick stands');
+  assert.match(body.rescan.note, /^The map still does not cover \S+\.$/);
+  const m2 = await mappedWorkspace('Complete');
+  const full = await (await post(`/api/workspaces/${m2.ws.id}/members`, { remove: m2.c, rescan: 'none' })).json();
+  assert.deepEqual(full.rescan, { mode: 'none' }, 'a complete map adds no note');
+});
+
 test('rescan is validated: unknown value, partial without a stored map, a non-full add', async () => {
   const a = await freshRepo(); const b = await freshRepo(); const c = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Validate', projectPaths: [a, b, c] })).json();

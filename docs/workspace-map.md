@@ -208,7 +208,7 @@ The Remove confirm (and Ask Worca's card, and `POST /api/workspaces/:id/members`
 
 | Option | What runs | Cost |
 |---|---|---|
-| No re-scan | Nothing: the pruned map stands. | Instant |
+| No re-scan | Nothing: the pruned map stands. When the map misses a member left, or this change stopped an earlier change's re-scan, the pruned notice says so (`rescan.note`). | Instant |
 | Partial re-scan | `wf_workspace_resynth`: one agent rewrites the overview, missing roles and coordination notes from the stored, pruned map and its reviews. No member is scanned again; the map keeps its scan date. | One agent |
 | Full re-scan | `wf_workspace_scan` over every member left. | Every member |
 

@@ -10921,6 +10921,16 @@ function removeRecommendation(id, projectPath, git) {
   return removeImpactFor(id, projectPath, { pendingRescan, ...(git ? { git } : {}) });
 }
 
+/** A removal re-scanned with 'none' against a 'full' recommendation can leave the map short: a
+ *  member it never covered, or an earlier change's re-scan this one stopped (supersedeRescans).
+ *  The pruned notice says so (rescan.note) — the pick stands. */
+function prunedNote(rec) {
+  const s = (rec && rec.signals) || {};
+  if (s.uncovered && s.uncovered.length) return `The map still does not cover ${s.uncovered.join(', ')}.`;
+  if (s.pendingRescan) return 'The re-scan for an earlier member change was stopped, so the map may be missing what it changed.';
+  return null;
+}
+
 /**
  * After a member change (the members route and Ask's workspace card): discover the added
  * members' metrics / policy branches (so the Team tab and the homes read them at once), stop an
@@ -11001,7 +11011,9 @@ app.post('/api/workspaces/:id/members', async (req, res) => {
     const workspace = adding
       ? await addWorkspaceMembers(id, body.add.map((p) => resolveProjectDir(p)).filter(Boolean))
       : await removeWorkspaceMember(id, body.remove, { git });
-    const rescan = await afterMembersChanged(workspace, workspace.projectPaths.filter((p) => !before.projectPaths.includes(p)), { rescan: mode });
+    let rescan = await afterMembersChanged(workspace, workspace.projectPaths.filter((p) => !before.projectPaths.includes(p)), { rescan: mode });
+    const short = rescan.mode === 'none' ? prunedNote(recommendation) : null;
+    if (short) rescan = { ...rescan, note: short };
     const clearedHomes = [
       ...(before.metricsProject && !workspace.metricsProject ? ['metrics'] : []),
       ...(before.policyProject && !workspace.policyProject ? ['policy'] : []),
@@ -16387,9 +16399,10 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
           // body.rescan is ignored, not a 400 (unlike the members route): the card's own radios are its
           // only sender, and failing the Apply would lose a change the user already confirmed.
           let rescanMode = 'full';
+          let rec = null;
           const git = memoGitProbe();
           if (card.kind === 'remove_member') {
-            const rec = removeRecommendation(wid, card.change && card.change.projectPath, git);
+            rec = removeRecommendation(wid, card.change && card.change.projectPath, git);
             const pick = RESCAN_CHOICES.includes(body.rescan) ? body.rescan
               : card.rescanAsked && RESCAN_CHOICES.includes(card.rescan) ? card.rescan : rec.level;
             rescanMode = pick === 'partial' && !rec.partialAvailable ? rec.level : pick;
@@ -16399,7 +16412,9 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
             // A new or changed member set: discover the new members and re-scan as chosen (adds: always full).
             const ws = await readWorkspace(result.workspaceId);
             if (ws) {
-              const rescan = await afterMembersChanged(ws, ws.projectPaths.filter((p) => !(before?.projectPaths || []).includes(p)), { rescan: rescanMode });
+              let rescan = await afterMembersChanged(ws, ws.projectPaths.filter((p) => !(before?.projectPaths || []).includes(p)), { rescan: rescanMode });
+              const short = rescan.mode === 'none' ? prunedNote(rec) : null;
+              if (short) rescan = { ...rescan, note: short };
               const what = rescan.mode === 'none' ? 'map pruned, not re-scanned'
                 : rescan.runId ? (rescan.mode === 'partial' ? 'partial re-scan (the overview and notes are rewritten)' : 're-scanning the workspace')
                 : `no re-scan (${rescan.skipped})`;
