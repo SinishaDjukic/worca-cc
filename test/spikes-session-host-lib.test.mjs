@@ -11,6 +11,7 @@ import { summarize, strip, runTurn, requestFacts, bigPrompt, toolResult, hostAge
   dryLine, runJsonl, recordingProxy, defaultUpstream, spikeContext, verdict } from '../tools/spikes/session-host/lib.mjs';
 import { main as s1 } from '../tools/spikes/session-host/s1-agents-per-resume.mjs';
 import { main as s2, definitionFacts as s2Facts } from '../tools/spikes/session-host/s2-definition-fields.mjs';
+import { main as s3 } from '../tools/spikes/session-host/s3-child-permissions.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -213,4 +214,16 @@ test('S2 definitionFacts: null without child evidence; a child holding Bash or r
   const bash = [host, msg('m1', { type: 'tool_use', id: 'B1', name: 'Bash', input: {} }),
     { type: 'user', parent_tool_use_id: 'A1', message: { content: [{ type: 'tool_result', tool_use_id: 'B1', content: 's2' }] } }];
   assert.equal(s2Facts(bash).toolsRestrict, false, 'a Bash call that ran');
+});
+
+test('S3 --dry: five turns per CLI; c carries worca\'s deny settings, d the guard env, e the key-logging hook', async () => {
+  const { argv } = await dryRun(s3, { WORCA_HOST_GUARD: '1' });
+  assert.equal(argv.length, 10, argv.join('\n'));
+  const turn = (t) => argv.filter((l) => new RegExp(`^dry \\S+ ${t}: `).test(l));
+  for (const t of ['a', 'b', 'c', 'd', 'e']) assert.equal(turn(t).length, 2, t);
+  for (const l of turn('a')) assert.match(l, /--allowedTools Agent --max-turns/);
+  for (const l of turn('b')) assert.match(l, /--tools Agent --allowedTools Agent,Bash,Write /);
+  for (const l of turn('c')) { assert.ok(l.includes('"deny":["Bash(echo s3-denied*)"]'), l); assert.match(l, /host-guard\.mjs/); }
+  for (const l of turn('d')) { assert.match(l, /WORCA_HOST_GUARD=1 WORCA_HOST_PID=\d+ /); assert.ok(l.includes('"deny":["Bash(echo s3-denied*)"]')); }
+  for (const l of turn('e')) assert.match(l, /S3E_KEYS=\S+s3e\.keys .*--settings .*"matcher":"\*"/);
 });
