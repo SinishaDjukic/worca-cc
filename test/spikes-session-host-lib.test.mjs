@@ -19,6 +19,7 @@ import { sum } from '../tools/spikes/session-host/fixtures/s7-repo/src/sum.mjs';
 import { slug } from '../tools/spikes/session-host/fixtures/s7-repo/src/slug.mjs';
 import { main as s8b } from '../tools/spikes/session-host/s8b-continue-child.mjs';
 import { main as s9 } from '../tools/spikes/session-host/s9-forwarding.mjs';
+import { main as s10 } from '../tools/spikes/session-host/s10-other-engines.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -313,4 +314,20 @@ test('S9 --dry: with and without --forward-subagent-text per CLI; worca\'s sub-a
   for (const l of argv) assert.match(l, /--include-hook-events --settings .*"PostToolUse"/);
   assert.equal(argv.filter((l) => l.includes(' npx -y @anthropic-ai/claude-code@2.1.294 ')).length, 2);
   assert.equal(notes.length, 2, 'flagInHelp is a live-only probe per CLI');
+});
+
+test('S10 --dry: installed engines print their two turns through the adapters\' builders; a missing one a skipped verdict', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 's10-path-'));
+  try {
+    for (const e of ['codex', 'opencode']) writeFileSync(join(bin, e), '#!/bin/sh\nexit 99\n', { mode: 0o755 });   // never run: --dry only looks them up
+    const { argv, verdicts } = await dryRun(s10, { PATH: bin });
+    assert.equal(argv.length, 4, argv.join('\n'));
+    assert.match(argv[0], /^dry codex turn 1: codex exec --json --skip-git-repo-check --ignore-user-config --sandbox workspace-write .*agents\.s10a\.config_file=.*agents\.s10b\.config_file=.* -m \S+ -$/);
+    assert.doesNotMatch(argv[0], /s10c/);
+    assert.match(argv[1], /^dry codex turn 2: codex exec resume <session-1> .*agents\.s10c\.config_file=.* -$/);
+    assert.match(argv[2], /^dry opencode turn 1: OPENCODE_CONFIG_CONTENT=.*"prompt":"\{file:[^"]*s10b\.md\}".* opencode run --format json .*--agent worca-node -m \S+$/);
+    assert.doesNotMatch(argv[2], /s10c/);
+    assert.match(argv[3], /^dry opencode turn 2: .*s10c\.md.* -s <session-1>$/);
+    assert.deepEqual(verdicts.map((v) => [v.spike, v.pass, v.facts.skipped]), [['S10-copilot', null, 'not installed']]);
+  } finally { rmSync(bin, { recursive: true, force: true }); }
 });
