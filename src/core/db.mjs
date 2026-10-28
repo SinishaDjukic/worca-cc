@@ -25,6 +25,7 @@ import { vcsAtUpgrade } from './project-kind.mjs';
 import { backfillHumanHours } from './human-backfill.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 import { AGENT_TUNABLES } from '../shared/graph/validate.mjs';
+import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION_SHIPPED_FINGERPRINTS }
   from './graph/presentation-workflow.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
@@ -1959,6 +1960,26 @@ function refreshPromoVideoSeed(db) {
   refreshShippedSeed(db, GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS);
 }
 
+/** The pure half of refreshShippedSeed: the shipped shape `t` with the user's settings carried over from the
+ *  `stored` row. Carried: the AGENT_TUNABLES and `config.session` on cards that are still agents (membership is
+ *  the user's setting; the fingerprint cannot see config, and a session is never topology the refresh owns), the
+ *  stored viewport VERBATIM, and the other template extras (codeGraph, the session settings). A session the new
+ *  structure leaves with one step, or non-consecutive, is kept on purpose: the composer shows its V26/V27 issue and
+ *  Split, never a silent drop. */
+export function mergeShippedSeed(stored, t) {
+  const storedNodes = new Map((stored?.nodes || []).filter((n) => n && n.id).map((n) => [n.id, n]));
+  const merged = t.nodes.map((n) => {
+    const prev = storedNodes.get(n.id);
+    if (!prev || !prev.config) return n;
+    const carry = (k) => AGENT_TUNABLES.includes(k) || (k === 'session' && n.kind === 'agent');
+    const kept = Object.fromEntries(Object.entries(prev.config).filter(([k]) => carry(k)));
+    return Object.keys(kept).length ? { ...n, config: { ...(n.config || {}), ...kept } } : n;
+  });
+  const extras = pickTemplateExtras(stored, merged);   // drops settings whose sid lost every member
+  delete extras.canvas;                                // the stored viewport is carried as it is, whatever its shape
+  return { nodes: merged, wires: t.wires, ...(stored?.canvas ? { canvas: stored.canvas } : {}), ...extras };
+}
+
 function refreshShippedSeed(db, t, fingerprint, shipped) {
   if (!presentationSeedable(db)) return;
   const graph = JSON.stringify({ nodes: t.nodes, wires: t.wires });
@@ -1995,17 +2016,10 @@ function refreshShippedSeed(db, t, fingerprint, shipped) {
   // precisely what this refresh exists to bring up to date (setWorkflowNodeDefaults
   // draws the same line). Node LAYOUT is left to the shipped shape too — the
   // refresh only fires when the structure changed, and stale positions against a
-  // new node overlap.
-  const storedNodes = new Map((stored.nodes || []).filter((n) => n && n.id).map((n) => [n.id, n]));
-  const merged = t.nodes.map((n) => {
-    const prev = storedNodes.get(n.id);
-    if (!prev || !prev.config) return n;
-    const kept = Object.fromEntries(Object.entries(prev.config).filter(([k]) => AGENT_TUNABLES.includes(k)));
-    return Object.keys(kept).length ? { ...n, config: { ...(n.config || {}), ...kept } } : n;
-  });
-  const carried = JSON.stringify({
-    nodes: merged, wires: t.wires, ...(stored.canvas ? { canvas: stored.canvas } : {}),
-  });
+  // new node overlap. `config.session` is carried too, onto cards that are still
+  // agents (membership is the user's setting), and so are the template extras
+  // (codeGraph, the session settings) — see mergeShippedSeed.
+  const carried = JSON.stringify(mergeShippedSeed(stored, t));
   db.prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?').run(carried, now, t.id);
 }
 
