@@ -156,6 +156,22 @@ test('a key hides it without typing, and input restarts the idle clock', () => {
   s.done();
 });
 
+test('a pointermove without movement (Safari, when the page under a still cursor changes) is not input', () => {
+  const s = setup();
+  const move = (x, y) => s.doc.body.dispatchEvent(new s.win.MouseEvent('pointermove', { bubbles: true, screenX: x, screenY: y }));
+  move(100, 100);
+  s.wait(IDLE_MS);
+  assert.equal(s.ss.isShown(), true);
+  move(100, 100);
+  move(101, 101);
+  assert.equal(s.ss.isShown(), true, 'a still or 1px pointer keeps it on');
+  s.wait(IDLE_MS);
+  assert.equal(s.ss.isShown(), true, 'nor does it restart the idle clock');
+  move(140, 120);
+  assert.equal(s.ss.isShown(), false, 'a real move wakes the window');
+  s.done();
+});
+
 test('a question shows the bubble; chat frames count', () => {
   const s = setup({ runs: {} });
   s.ss.onAskFrame({ type: 'ask-card', threadId: 'ask_1', block: { kind: 'card', id: 'b1', state: 'proposed' } });
