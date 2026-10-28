@@ -11003,7 +11003,7 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 .req-import-check input{margin:3px 0 0;flex:none}
 .req-import-code{flex:none;font-size:var(--fs-meta)}
 .req-import-check{min-width:0;overflow-wrap:anywhere}
-.req-import-aname{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.req-import-aname{flex:0 1 auto;min-width:0;overflow-wrap:anywhere}
 .req-import-check > .hint{flex:none;max-width:45%}
 .req-import-cby{overflow-wrap:anywhere}
 .req-import-ctext{display:flex;flex-direction:column;gap:2px;min-width:0}

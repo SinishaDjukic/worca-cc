@@ -4310,8 +4310,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         .filter(Boolean).join(' · ');
       const hidden = Number(L.redacted) || 0;
       body.replaceChildren(
-        L.linkedTo ? h('p', { class: 'req-import-linked', role: 'alert',
-          text: `${L.key} is linked to ${L.linkedTo.id} · ${L.linkedTo.title}. The new feature can start from it but stays unlinked: one ticket follows one feature.` }) : null,
+        ...(L.linkedTo ? [h('p', { class: 'req-import-linked', role: 'alert',
+          text: `${L.key} is linked to ${L.linkedTo.id} · ${L.linkedTo.title}. The new feature can start from it but stays unlinked: one ticket follows one feature.` })] : []),
         h('p', { class: 'hint req-import-meta', text: meta }),
         h('div', { class: 'req-import-cols' },
           h('div', { class: 'req-import-col' },

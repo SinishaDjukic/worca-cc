@@ -316,6 +316,8 @@ test('board 34: Continue opens Start from SHOP-124: its title focused; the descr
   assert.equal(text(dl.querySelector('#req-ipv-desc')), 'This is what the new feature takes from SHOP-124. Untick what it should not start with. Nothing changes in Jira.');
   assert.deepEqual(m.calls.find((c) => c.url === `${IMP}/preview`).body, { ...CONN, key: 'SHOP-124', formFiles: { count: 0, bytes: 0 } });
   assert.equal(text(dl.querySelector('.req-import-meta')), 'Story · In progress · Medium · acme.atlassian.net (Cloud)');
+  const preBody = dl.querySelector('.req-import-body');
+  assert.ok([...preBody.childNodes].every((n) => n.nodeType === 1), 'an unlinked ticket leaves no stray text (no "null") in the body');
   const desc = dl.querySelector('[aria-label="Description preview"]');
   assert.ok(desc.textContent.includes('<img src=x onerror=alert(1)> stays text'));
   assert.equal(desc.querySelector('img'), null, 'ticket text is never HTML');
@@ -681,7 +683,8 @@ test('CSS (board 36): at 900 px and narrower one column, author and date only, t
   const media = block.indexOf('@media (max-width:900px)');
   assert.ok(media > 0 && block.indexOf('.req-import-showall{display:none}') < media, 'Show all is hidden outside the media query');
   // a long file name, author or criterion shrinks and wraps inside the card instead of widening it; the hint stays inside
-  for (const rule of ['.req-import-aname{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}', '.req-import-check{min-width:0;overflow-wrap:anywhere}',
+  // the name does not grow, so a short name keeps its size hint right after it (board 34)
+  for (const rule of ['.req-import-aname{flex:0 1 auto;min-width:0;overflow-wrap:anywhere}', '.req-import-check{min-width:0;overflow-wrap:anywhere}',
     '.req-import-cby{overflow-wrap:anywhere}', '.req-import-check > .hint{flex:none;max-width:45%}']) assert.ok(css.includes(rule), rule);
   // the two ::after tap areas (13 px each) touch, never overlap: 26 px between rows; the section's 6 px gap + 20 px margin above Show all
   assert.ok(css.includes('.req-import-list{gap:26px}') && block.includes('margin-top:20px'));
