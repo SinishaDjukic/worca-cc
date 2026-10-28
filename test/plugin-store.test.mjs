@@ -869,3 +869,16 @@ test('updatePlugin: swapping an existing `current` link (junction on Windows) le
   assert.equal(existsSync(join(pluginCurrentDir(name), 'worca-cc-plugin.json')), true, 'new current resolves');
   assert.equal(existsSync(oldManifest), true, 'old version files survive the swap (target not deleted through the link)');
 });
+
+test('runSetup: a failed npm ci behind a proxy URL with a login says to turn on the Worca proxy', async (t) => {
+  const dir = join(scratch, 'proxy-login');
+  writeTree(dir, { 'worca-cc-plugin.json': '{}', 'package-lock.json': '{}' });
+  const saved = process.env.HTTPS_PROXY;
+  t.after(() => { if (saved === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = saved; });
+  const exec = async () => { throw new Error('npm ci: ECONNREFUSED'); };
+  process.env.HTTPS_PROXY = 'http://p:3128';
+  await assert.rejects(() => runSetup(dir, { setup: { node: true } }, { exec }), (e) => e.message === 'npm ci: ECONNREFUSED');
+  process.env.HTTPS_PROXY = 'http://jdoe:s3cret@p:3128';
+  await assert.rejects(() => runSetup(dir, { setup: { node: true } }, { exec }),
+    (e) => /^npm ci: ECONNREFUSED \(the proxy URL carries a login.*"Use a corporate proxy"/.test(e.message) && !e.message.includes('s3cret'));
+});

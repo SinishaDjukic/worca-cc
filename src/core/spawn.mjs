@@ -19,7 +19,7 @@ import { isWithin } from './fs-scope.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 import { composeChildEnv } from './child-env.mjs';
 
-export { formatDropped, SPAWN_ENV_BASE, DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs, DEFAULT_LEFTOVER_GRACE_MS, leftoverGraceMs, WIN32_ENV_BASELINE, proxyHasCredentials } from './child-env.mjs';
+export { formatDropped, SPAWN_ENV_BASE, DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs, DEFAULT_LEFTOVER_GRACE_MS, leftoverGraceMs, WIN32_ENV_BASELINE, proxyHasCredentials, PROXY_LOGIN_NOTICE } from './child-env.mjs';
 import { sigkillGraceMs, leftoverGraceMs } from './child-env.mjs';
 
 // The kinds that get no no-git PATH stub: git itself (worca runs it only where git is installed), and plugin children
@@ -33,7 +33,7 @@ const NO_STUB = new Set(['git', 'plugin']);
 export function childEnv(spec = {}) {
   const r = composeChildEnv(spec);
   if (spec.remote || NO_STUB.has(spec.kind)) return r;
-  return { env: withNoGitPath(r.env, spec.platform ? { platform: spec.platform } : {}), dropped: r.dropped };
+  return { ...r, env: withNoGitPath(r.env, spec.platform ? { platform: spec.platform } : {}) };
 }
 
 

@@ -28,22 +28,36 @@ export function leftoverGraceMs() {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_LEFTOVER_GRACE_MS;
 }
 
+// The proxy and CA names: CONNECTIVITY config, not secrets. Without them a scrubbed run behind a TLS-intercepting
+// corporate proxy fails TLS on every spawn (the 2.1.220 binary reads the common ones; git, curl, pip, the AWS CLI, npm,
+// cargo and deno each read their own CA variable). A proxy URL with a login is the exception (proxyHasCredentials).
+// Never NODE_OPTIONS or JAVA_TOOL_OPTIONS: they can load code into the child.
+const PROXY_URL_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy',
+  'npm_config_proxy', 'npm_config_https_proxy', 'NPM_CONFIG_PROXY', 'NPM_CONFIG_HTTPS_PROXY'];
+const PROXY_URL_SET = new Set(PROXY_URL_NAMES);
+const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
+const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE',
+  'PIP_CERT', 'AWS_CA_BUNDLE', 'npm_config_cafile', 'NPM_CONFIG_CAFILE', 'CARGO_HTTP_CAINFO', 'DENO_CERT'];
+// Node 24's switch that makes fetch() and http(s).request honour HTTP(S)_PROXY.
+const PROXY_SWITCH_NAMES = ['NODE_USE_ENV_PROXY'];
+
 // Base env every child needs to function at all; everything else is withheld unless a catalog entry, a sign-in mode,
 // the project allowlist or the caller names it (exact names: an engine's own config and auth are its catalog
-// entry, src/shared/engine-switch.mjs). The proxy / CA vars are CONNECTIVITY config, not secrets: without them a
-// scrubbed run behind a TLS-intercepting corporate proxy fails TLS on every
-// spawn (the 2.1.220 binary reads all of them). Cloud-provider creds
-// (AWS_*/GOOGLE_APPLICATION_CREDENTIALS/AZURE_*) are intentionally NOT here —
+// entry, src/shared/engine-switch.mjs). The npm proxy names are not here: the allowlist kinds add every proxy URL
+// under the login rule (composeChildEnv), and Ask's agent shell (ask/command-policy.mjs) reads this list as it is.
+// Cloud-provider creds (AWS_*/GOOGLE_APPLICATION_CREDENTIALS/AZURE_*) are intentionally NOT here —
 // a Bedrock/Vertex/Foundry deployment allowlists them per-project (documented).
 export const SPAWN_ENV_BASE = [
   'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'TERM',
-  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy', ...NO_PROXY_NAMES,
   // Worca's corporate-proxy marker (proxy-credentials.mjs CORPORATE_PROXY_VAR; a test pins the value).
   'WORCA_CORPORATE_PROXY_URL',
-  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
-  // The single-bundle CA names git, curl and Python Requests read (the container entrypoint sets them).
-  'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE',
+  ...CA_NAMES, ...PROXY_SWITCH_NAMES,
 ];
+
+/** The run-log line when an agent's env withholds the proxy URLs for their login (composeChildEnv `proxyLogin`). */
+export const PROXY_LOGIN_NOTICE = 'proxy: the proxy URL carries a login, which agents and scripts never receive; they go '
+  + 'direct. Turn on "Use a corporate proxy" in Settings so Worca keeps the login and agents use its local proxy';
 
 // ── the child env (plans/core-protection-layer-design.md §4.1) ─────────────────
 
@@ -73,11 +87,6 @@ const BROKER_NAME = /^WORCA_BROKER/;
 export const WIN32_ENV_BASELINE = Object.freeze([
   'USERPROFILE', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA',
 ]);
-const PROXY_URL_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'];
-const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
-/** The CA names SPAWN_ENV_BASE passes too: node reads the first, the tools a connector may run (gh, curl, git) the
- *  other two. */
-const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE'];
 /** URL credentials always need an '@' (user:password@, token@, the scheme-less user:password@host form) and a host
  *  never has one, so any '@' counts, even in a value that is not a valid URL. */
 export function proxyHasCredentials(env = process.env) {
@@ -88,7 +97,7 @@ export function proxyHasCredentials(env = process.env) {
  *  child), only NO_PROXY and the CA paths. */
 function pluginNames(base, platform) {
   const proxy = proxyHasCredentials(base) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
-  return new Set(['PATH', 'HOME', ...proxy, ...CA_NAMES, ...(platform === 'win32' ? WIN32_ENV_BASELINE : [])]);
+  return new Set(['PATH', 'HOME', ...proxy, ...CA_NAMES, ...PROXY_SWITCH_NAMES, ...(platform === 'win32' ? WIN32_ENV_BASELINE : [])]);
 }
 
 // git's location variables beat its cwd: a worca started from a git hook (GIT_DIR set) would otherwise run every git
@@ -108,7 +117,9 @@ const MAY_INHERIT = new Set(['script']);
 // marker, no secret-shaped name (*_TOKEN, *_KEY, *_SECRET, *_PASSWORD, *_CREDENTIALS, and with a suffix:
 // AWS_ACCESS_KEY_ID), no model credential and no engine's credential. A name the overlay sets, or the caller `keep`s
 // (the person's own pane keeps the backend keys), still comes through.
-const INHERIT_WORCA_KEEP = new Set(['WORCA_CORPORATE_PROXY_URL']);
+// WORCA_EGRESS_PROXY_URL is worca's own local proxy (a loopback URL, no login): a `worca run` typed in a run's terminal
+// sees it and reuses that proxy instead of starting a second one (inheritsEgressProxy).
+const INHERIT_WORCA_KEEP = new Set(['WORCA_CORPORATE_PROXY_URL', 'WORCA_EGRESS_PROXY_URL']);
 let engineCredentialSet = null;
 const anyEngineCredential = (k) => (engineCredentialSet ??= new Set([...MODEL_CREDENTIAL_ENV_KEYS,
   ...Object.keys(ENGINES).flatMap((e) => credentialNames(e))])).has(k);
@@ -166,8 +177,9 @@ function ceilingFor(root, existing) {
  *
  * Both set PWD to `cwd`, and with `root` (the run's work root: the worktree, or work/ of a run without a project) set
  * GIT_CEILING_DIRECTORIES to dirname(root), merged with any value the env already has.
- * @returns {{env: Record<string,string>, dropped: string[]}} `dropped`: the names withheld, sorted (the run log
- *   names them once, formatDropped)
+ * @returns {{env: Record<string,string>, dropped: string[], proxyLogin: boolean}} `dropped`: the names withheld, sorted
+ *   (the run log names them once, formatDropped); `proxyLogin`: a local allowlist child lost a proxy URL for its login
+ *   (the run log says so once, PROXY_LOGIN_NOTICE)
  */
 export function composeChildEnv({ kind = 'engine', engine = null, signInMode = null, cwd = null, root = null, runEnv = null, overlay = null,
   declared = [], allowlist = [], remote = false, hostPid = null, base = process.env, inherit = false, strip = [], keep = [],
@@ -180,6 +192,7 @@ export function composeChildEnv({ kind = 'engine', engine = null, signInMode = n
   const declaredSet = new Set([...names(declared), ...Object.keys(runEnv || {}), ...Object.keys(overlay || {})]);
   const pass = new Set();
   let allowed;
+  let proxyLogin = false;
   if (remote && start !== 'allowlist') throw new Error(`childEnv: a ${kind} child has no sandbox env`);
   if (start === 'inherit') {
     const out = new Set(kind === 'git' ? GIT_LOCATION_NAMES : []);
@@ -195,7 +208,11 @@ export function composeChildEnv({ kind = 'engine', engine = null, signInMode = n
     const blocked = (k) => HOST_ONLY.has(k) || hostOnly.has(k) || BROKER_NAME.test(k) || NEVER_REMOTE.test(k) || isBackendSecret(k) || relayOwnedAny(k);
     allowed = (k) => !blocked(k) && (declaredSet.has(k) || SCRIPT_CONTRACT.test(k) || ((COMMON_NAMES.includes(k) || own.has(k)) && !SECRET_NAME.test(k)));
   } else {
-    for (const k of SPAWN_ENV_BASE) pass.add(k);
+    // A proxy URL with a login is a secret (the plugin rule): then no proxy URL passes, one alone would half-route the
+    // child. The run's allowlist can still name one (the person's explicit choice).
+    proxyLogin = proxyHasCredentials(base || {});
+    for (const k of SPAWN_ENV_BASE) if (!(proxyLogin && PROXY_URL_SET.has(k))) pass.add(k);
+    if (!proxyLogin) for (const k of PROXY_URL_NAMES) pass.add(k);
     for (const k of COMMON_NAMES) pass.add(k);
     for (const k of LOCAL_PLATFORM_NAMES) pass.add(k);
     if (entry) {
@@ -239,9 +256,19 @@ export function composeChildEnv({ kind = 'engine', engine = null, signInMode = n
     }
   }
   if (hostPid != null && !remote) env.WORCA_HOST_PID = String(hostPid);
-  // No proxy URL that carries a login (env-proxy.mjs withoutProxyLogin): the corporate proxy is off then, so the
-  // child goes direct rather than get the password.
-  env = stripHostCredentials(withoutProxyLogin(env));
+  // An agent, a run-start check or a script gets no proxy URL that carries a login, whichever tier carried it
+  // (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child goes direct rather than get the
+  // password). The run's allowlist can still name one; terminal and git children keep the person's own.
+  if (KIND_BASE[kind] === 'allowlist') {
+    const before = env;
+    env = withoutProxyLogin(env);
+    if (env !== before) {
+      for (const k of Object.keys(before)) if (!(k in env) && !dropped.includes(k)) dropped.push(k);
+      for (const k of names(allowlist)) if (typeof before[k] === 'string') env[k] = before[k];
+      proxyLogin = true;
+    }
+  }
+  env = stripHostCredentials(env);
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
   for (const k of names(strip)) delete env[k];
@@ -251,7 +278,8 @@ export function composeChildEnv({ kind = 'engine', engine = null, signInMode = n
   if (remote) { for (const k of Object.keys(env)) if (!allowed(k)) delete env[k]; }
   if (typeof cwd === 'string' && cwd && !remote) env.PWD = cwd;
   if (typeof root === 'string' && root && !remote) env.GIT_CEILING_DIRECTORIES = ceilingFor(root, env.GIT_CEILING_DIRECTORIES);
-  return { env, dropped: dropped.filter((k) => !(k in env)).sort() };
+  const out = dropped.filter((k) => !(k in env)).sort();
+  return { env, dropped: out, proxyLogin: proxyLogin && out.some((k) => PROXY_URL_SET.has(k)) };
 }
 
 /** The run-log line for the variables childEnv withheld from `engine`'s child, by name only (never a value), or null. */

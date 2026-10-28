@@ -289,3 +289,64 @@ test('remote: a kept name never brings a backend key back into a sandbox, even d
   assert.equal(env.E2B_API_KEY, undefined);
   assert.equal(env.E2B_API_URL, undefined);
 });
+
+// ── proxy and CA connectivity names (proxy-vs-protection-stack report F3, F4, F8) ────────────────────────────────────
+
+const CONNECTIVITY = { ALL_PROXY: 'socks5://p:1080', all_proxy: 'socks5://p:1080', GIT_SSL_CAINFO: '/ca/git.pem',
+  CURL_CA_BUNDLE: '/ca/curl.pem', REQUESTS_CA_BUNDLE: '/ca/req.pem', PIP_CERT: '/ca/pip.pem', AWS_CA_BUNDLE: '/ca/aws.pem',
+  npm_config_cafile: '/ca/npm.pem', NPM_CONFIG_CAFILE: '/ca/NPM.pem', CARGO_HTTP_CAINFO: '/ca/cargo.pem', DENO_CERT: '/ca/deno.pem',
+  NODE_USE_ENV_PROXY: '1', npm_config_proxy: 'http://p:3128', npm_config_https_proxy: 'http://p:3128' };
+const CODE_LOADERS = { NODE_OPTIONS: '--require /x.js', JAVA_TOOL_OPTIONS: '-javaagent:/x.jar' };
+
+test('engine, script, preflight and plugin children keep every proxy and CA name; never NODE_OPTIONS or JAVA_TOOL_OPTIONS', () => {
+  const base = { PATH: '/bin', HOME: '/h', HTTPS_PROXY: 'http://p:3128', ...CONNECTIVITY, ...CODE_LOADERS };
+  for (const [name, env] of [
+    ['engine', childEnv({ kind: 'engine', engine: 'claude', base }).env],
+    ['script', childEnv({ kind: 'script', base }).env],
+    ['preflight', childEnv({ kind: 'preflight', engine: 'codex', base }).env],
+    ['plugin', childEnv({ kind: 'plugin', base }).env],
+  ]) {
+    for (const [k, v] of Object.entries(CONNECTIVITY)) assert.equal(env[k], v, `${name}: ${k}`);
+    for (const k of Object.keys(CODE_LOADERS)) assert.equal(env[k], undefined, `${name}: ${k} can load code`);
+  }
+});
+
+test('a proxy URL with a login: engine, script and preflight get no proxy URL at all and say so once; terminal and git keep it', () => {
+  const login = 'http://ACME%5Cjdoe:s3cret@proxy.corp:8080';
+  for (const k of ['HTTPS_PROXY', 'ALL_PROXY', 'npm_config_https_proxy']) {
+    const base = { PATH: '/bin', HOME: '/h', HTTP_PROXY: 'http://proxy.corp:8080', [k]: login, NO_PROXY: 'localhost', CURL_CA_BUNDLE: '/ca.pem' };
+    for (const [name, r] of [
+      ['engine', childEnv({ kind: 'engine', engine: 'claude', base })],
+      ['script', childEnv({ kind: 'script', base })],
+      ['preflight', childEnv({ kind: 'preflight', engine: 'claude', base })],
+    ]) {
+      assert.equal(r.env[k], undefined, `${name}: ${k} carries the login`);
+      assert.equal(r.env.HTTP_PROXY, undefined, `${name}: no proxy URL alone (it would half-route the child)`);
+      assert.equal(r.env.NO_PROXY, 'localhost', `${name}: NO_PROXY is no secret`);
+      assert.equal(r.env.CURL_CA_BUNDLE, '/ca.pem', `${name}: the CA paths stay`);
+      assert.equal(r.proxyLogin, true, `${name}: the run log is told`);
+      assert.ok(!JSON.stringify(r.env).includes('s3cret'), `${name}: no password anywhere`);
+    }
+    for (const kind of ['terminal', 'git']) assert.equal(childEnv({ kind, base }).env[k], login, `${kind}: the person's own`);
+  }
+  const plain = childEnv({ kind: 'engine', engine: 'claude', base: { PATH: '/bin', HTTPS_PROXY: 'http://proxy.corp:8080' } });
+  assert.equal(plain.env.HTTPS_PROXY, 'http://proxy.corp:8080');
+  assert.equal(plain.proxyLogin, false, 'no login, no notice');
+  const opted = childEnv({ kind: 'engine', engine: 'claude', allowlist: ['HTTPS_PROXY'], base: { PATH: '/bin', HTTPS_PROXY: login } });
+  assert.equal(opted.env.HTTPS_PROXY, login, 'the run\'s envAllowlist naming it is the person\'s explicit choice');
+  assert.equal(opted.proxyLogin, false);
+  // envScrub off: worca's env as asked, but never a proxy login (#1021: the Worca proxy is off then, so it goes direct).
+  assert.equal(childEnv({ kind: 'script', inherit: true, base: { HTTPS_PROXY: login } }).env.HTTPS_PROXY, undefined, 'envScrub off: no proxy login either');
+});
+
+test('terminal, action and git children keep WORCA_EGRESS_PROXY_URL: a nested worca run reuses the local proxy', () => {
+  const base = { PATH: '/bin', HOME: '/h', WORCA_EGRESS_PROXY_URL: 'http://127.0.0.1:41234', WORCA_EGRESS_MODE: 'policy' };
+  for (const [name, env] of [
+    ['git', childEnv({ kind: 'git', base }).env],
+    ['terminal', childEnv({ kind: 'terminal', base }).env],
+    ['action', actionBaseEnv(base)],
+  ]) {
+    assert.equal(env.WORCA_EGRESS_PROXY_URL, 'http://127.0.0.1:41234', name);
+    assert.equal(env.WORCA_EGRESS_MODE, undefined, `${name}: the rest of worca's config stays out`);
+  }
+});

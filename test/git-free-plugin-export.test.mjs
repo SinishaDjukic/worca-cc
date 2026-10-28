@@ -460,13 +460,15 @@ test('setup commands without git find worca\'s git stub first on PATH (macOS), s
   assert.deepEqual(calls.map(([cmd, o]) => [cmd, o.cwd, o.env.PATH.split(':')[0]]), [['npm', dir, noGitBinDir()], ['uv', dir, noGitBinDir()]]);
 });
 
-test('setup (npm ci, uv sync) runs with the plugin child env: no secret of worca\'s, the cache and index names kept (audit 3.5)', async (t) => {
+test('setup (npm ci, uv sync) runs with the plugin child env: no secret of worca\'s, the cache, index, proxy and CA names kept (audit 3.5)', async (t) => {
   const dir = join(process.env.WORCA_HOME, 'setup-secrets');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'package-lock.json'), '{}');
   const secrets = { GH_TOKEN: 'gh', ANTHROPIC_API_KEY: 'ak', OPENAI_API_KEY: 'ok', E2B_API_KEY: 'e2b', NPM_TOKEN: 'npm',
     WORCA_HEARTBEAT_TOKEN: 'hb', AWS_SECRET_ACCESS_KEY: 'aws', SOME_PROJECT_VAR: 'x', UV_INDEX_URL: 'https://u:tok@pypi.corp/simple' };
-  const kept = { npm_config_cache: '/c/npm', UV_CACHE_DIR: '/c/uv', npm_config_registry: 'https://registry.corp/', HTTPS_PROXY: 'http://p:3128' };
+  const kept = { npm_config_cache: '/c/npm', UV_CACHE_DIR: '/c/uv', npm_config_registry: 'https://registry.corp/', HTTPS_PROXY: 'http://p:3128',
+    npm_config_cafile: '/ca/npm.pem', NPM_CONFIG_CAFILE: '/ca/NPM.pem', npm_config_https_proxy: 'http://p:3128', UV_NATIVE_TLS: '1',
+    REQUESTS_CA_BUNDLE: '/ca/req.pem', SSL_CERT_FILE: '/ca/ssl.pem', ALL_PROXY: 'socks5://p:1080' };
   const saved = Object.fromEntries(Object.keys({ ...secrets, ...kept }).map((k) => [k, process.env[k]]));
   Object.assign(process.env, secrets, kept);
   t.after(() => { for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v; });

@@ -195,6 +195,24 @@ not seen; the fixed keys and hooks have no such window. `http.sslCAInfo` is left
   environment allowlist. No prefix family passes. The run log names each
   variable it did not pass, once per run (names only); add one to the
   allowlist to pass it. Scrub on additionally limits script nodes.
+- **Proxy and CA variables every agent, script and plugin keeps** (connectivity
+  config, not secrets): `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`
+  (and their lower-case forms), `npm_config_proxy` and
+  `npm_config_https_proxy` (either casing), `NODE_USE_ENV_PROXY`,
+  `WORCA_CORPORATE_PROXY_URL`, and the CA paths `NODE_EXTRA_CA_CERTS`,
+  `SSL_CERT_FILE`, `SSL_CERT_DIR`, `GIT_SSL_CAINFO`, `CURL_CA_BUNDLE`,
+  `REQUESTS_CA_BUNDLE`, `PIP_CERT`, `AWS_CA_BUNDLE`, `npm_config_cafile`
+  (either casing), `CARGO_HTTP_CAINFO` and `DENO_CERT`. Plugin setup
+  (`npm ci`, `uv sync`) also keeps `UV_NATIVE_TLS`. `NODE_OPTIONS` and
+  `JAVA_TOOL_OPTIONS` never pass: they can load code into the child.
+- **A proxy URL with a login** (`http://user:password@proxy:8080` in any of the
+  proxy URL variables) is a secret: agents, scripts, run-start checks and
+  plugins then get no proxy URL at all (one alone would half-route the
+  child), only `NO_PROXY` and the CA paths, and the run log says so once.
+  Turn on **Use a corporate proxy** in Settings instead: Worca keeps
+  the login and points every child at its local proxy, which needs none. A
+  run's environment allowlist that names the variable still passes it, as an
+  explicit choice. Your terminal, Actions and git keep the URL.
 - Env scrub failing a pipeline that needed an unlisted var fails visibly
   (tool errors in the transcript) — add the var to the allowlist; there is no
   silent fallback. Common cases: a corporate TLS-intercepting proxy already

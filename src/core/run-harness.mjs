@@ -173,7 +173,7 @@ import { probeTargetForModel, probeReachable, hostOf } from './upstream-probe.mj
 import { waitForNetwork, NETWORK_ACTOR } from './network-wait.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
 import { usageLimitSwitches, engineList, engineLabel, engineEntry, NATIVE_NOTICE, DEFAULT_ENGINE } from '../shared/engine-switch.mjs';
-import { childEnv, formatDropped } from './spawn.mjs';
+import { childEnv, formatDropped, PROXY_LOGIN_NOTICE } from './spawn.mjs';
 import { detectDeployment } from './deployment.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
@@ -3298,8 +3298,11 @@ export class RunHarness extends EventEmitter {
     if (signIn?.warning && !this._signInWarned) { this._signInWarned = true; this._log('orchestrator', 'warn', signIn.warning); }
     // Decision 3: what the allowlist keeps from this engine, named once (never a value).
     if (!this.claude.mock) {
-      const dropped = formatDropped(name, childEnv({ engine: name, signInMode: signIn?.signInMode ?? null, allowlist: this.guardrails?.envAllowlist || [] }).dropped);
+      const composed = childEnv({ engine: name, signInMode: signIn?.signInMode ?? null, allowlist: this.guardrails?.envAllowlist || [] });
+      const dropped = formatDropped(name, composed.dropped);
       if (dropped) lines.push(dropped);
+      // A proxy URL with a login stays out of every agent's env; said once per run, whichever engine meets it first.
+      if (composed.proxyLogin && !this._proxyLoginWarned) { this._proxyLoginWarned = true; lines.push(PROXY_LOGIN_NOTICE); }
     }
     // Decision 4: a local run on this machine is no sandbox, and says so.
     if (!this.claude.mock && !this._execBackend && detectDeployment() === 'local') lines.push(NATIVE_NOTICE);
