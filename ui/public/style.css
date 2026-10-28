@@ -11029,6 +11029,36 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
   .req-import .btn-sm::after{content:"";position:absolute;inset:-9px 0}
   .req-import-results{max-height:none}
 }
+/* A6.1 (board 32): the form a ticket filled: the strip at its top, the criteria, the ticket's files as chips with the key, the Replace
+   question and the create's failure. */
+.req-import-strip{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--field)}
+.req-import-strip[hidden],.req-import-critfield[hidden],.req-import-filesnote[hidden],.req-import-deschint[hidden],.req-import-descclip[hidden],.req-import-ask[hidden]{display:none}
+.req-import-strip-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:var(--fs-body)}
+.req-import-strip-top .hint,.req-import-site{margin:0}
+.req-import-tchip{font-size:var(--fs-caption);padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);color:var(--ink-2);background:var(--field)}
+.req-import-critfield{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+.req-import-critfield .opt{color:var(--ink-3);font-weight:500}
+.req-import-critfield > .hint{margin:0}
+.req-import-critlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:var(--fs-body)}
+.req-import-critlist code{font-size:var(--fs-meta)}
+.req-import-deschint,.req-import-descclip,.req-import-filesnote{margin:4px 0 0}
+.req-import-ask{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+.req-import-ask p{margin:0}
+.req-import-askbtns{display:flex;gap:8px}
+.req-import-fail{display:flex;flex-direction:column;gap:4px}
+.req-import-fail:empty{display:none}
+.req-import-fail p{margin:0}
+@media (max-width:900px){
+  /* Stop using SHOP-124 is a 28 px .req-ico: 28 + 2 × 8. A ticket file's × is also A8's .req-new-chip-x, so A8's phone rule gives it
+     its 44 px, as the form's own file chips */
+  .req-import-x{position:relative}
+  .req-import-x::after{content:"";position:absolute;inset:-8px}
+  /* the form's new controls reach 44 px too (plan review Minor 8): From a ticket… is a 28 px .btn-sm, Change ticket… an 18 px line,
+     Keep mine and Replace 28 px .btn-sm */
+  .req-import-open,.req-import-strip .link-btn,.req-import-askbtns .btn-sm{position:relative}
+  .req-import-open::after,.req-import-askbtns .btn-sm::after{content:"";position:absolute;inset:-8px 0}
+  .req-import-strip .link-btn::after{content:"";position:absolute;inset:-13px 0}
+}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */

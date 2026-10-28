@@ -638,12 +638,116 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // the preview's caps count the files already picked on this form (D9); `onUse` is Use this ticket
     const importCtx = { scope: scopeNow, trigger: fromBtn, formFiles: () => ({ count: picked.length, bytes: picked.reduce((n, p) => n + p.size, 0) }),
       onUse: (t, pick) => useTicket(t, pick) };
-    /** Use this ticket (D1): it only fills the form; nothing is created until Start the interview. */
-    function useTicket(t) {
-      title.value = t.title;
-      desc.value = t.description;
+    // A6.1 (board 32): the ticket the form starts from (Use this ticket) or null, the title and description its fill wrote (Change ticket…
+    // asks before replacing what was edited since), and the pick it came from. Leaving New feature drops all of it: nothing was stored.
+    let imp = null;
+    let filled = null;
+    let lastPick = null;
+    const strip = h('div', { class: 'req-import-strip', hidden: true });
+    const askEl = h('div', { class: 'req-import-ask', role: 'group', 'aria-labelledby': 'req-import-ask-q', hidden: true });
+    const descFrom = h('p', { class: 'hint req-import-deschint', id: 'req-import-descfrom', hidden: true });
+    const descClip = h('p', { class: 'hint req-import-descclip', hidden: true });
+    // not a `.field`: the form's fields stay Title, Describe it, Files and For (it has no control to label); CSS gives it a field's spacing
+    const critField = h('div', { class: 'req-import-critfield', hidden: true });
+    const ticketChips = h('div', { class: 'req-new-chips req-import-chips' });
+    const ticketNote = h('p', { class: 'hint req-import-filesnote', hidden: true });
+    const createFail = h('div', { class: 'req-import-fail', role: 'alert' });   // persistent: board 36 (8)
+    const ticketFiles = () => (imp ? [
+      ...(imp.commentsFile ? [{ key: 'comments', name: imp.commentsFile.name, kind: 'text', bytes: imp.commentsFile.bytes }] : []),
+      ...(imp.descriptionFile ? [{ key: 'description', name: imp.descriptionFile.name, kind: 'text', bytes: imp.descriptionFile.bytes }] : []),
+      ...imp.attachments.map((a) => ({ key: a.id, name: a.name, kind: a.kind, bytes: a.bytes })),
+    ] : []);
+    function renderImport() {
+      const on = !!imp;
+      strip.hidden = !on;
+      descFrom.hidden = !on;
+      descClip.hidden = !on || !imp.clipped;
+      critField.hidden = !on || !imp.criteria.length;
+      ticketNote.hidden = !on || !ticketFiles().length;
+      if (on) desc.setAttribute('aria-describedby', 'req-import-descfrom'); else desc.removeAttribute('aria-describedby');
+      if (!on) { strip.replaceChildren(); critField.replaceChildren(); ticketChips.replaceChildren(); return; }
+      const meta = [imp.meta.type && imp.meta.type.name, imp.meta.status].filter(Boolean).join(' · ');
+      strip.replaceChildren(
+        h('div', { class: 'req-import-strip-top' },
+          h('span', { class: 'hint', text: 'Starting from' }),
+          // the page's one guard for ticket links (A6's webHref, as exportChip): only an http(s) URL is a link (plan review S4)
+          webHref(imp.url) ? h('a', { class: 'chip req-export-chip', 'data-ui': 'import-chip', href: webHref(imp.url), target: '_blank', rel: 'noopener',
+            'aria-label': `${imp.key}, opens the ticket in ${imp.tracker} in a new tab` }, h('span', { text: imp.key }), sharedIcon(document, 'external', 12))
+            : h('span', { class: 'chip', 'data-ui': 'import-chip', text: imp.key }),
+          meta ? h('span', { class: 'hint', text: `· ${meta}` }) : null,
+          h('span', { class: 'req-file-gap' }),
+          h('button', { type: 'button', class: 'link-btn', 'data-ui': 'import-change', 'aria-haspopup': 'dialog', onclick: () => openPick(importCtx, lastPick) }, 'Change ticket…'),
+          icoBtn('remove', `Stop using ${imp.key}`, () => stopUsing(), { cls: 'req-import-x', 'data-ui': 'import-stop' })),
+        h('p', { class: 'hint req-import-site', text: imp.linkedTo ? `${imp.connection} · ${imp.key} follows ${imp.linkedTo.id}, so the new feature stays unlinked.`
+          : `${imp.connection} · The new feature stays linked to ${imp.key}: Export updates it, and a run can report back to it.` }),
+        askEl);
+      descFrom.textContent = imp.description ? `From ${imp.key}'s description. Change it as you like: the interview starts from what is here.`
+        : `${imp.key} has no description. Describe it in a few sentences.`;
+      descClip.textContent = `${imp.key}'s description is longer than 20,000 characters. The form keeps the start; the whole text goes along as ${imp.key} description.md.`;
+      critField.replaceChildren(h('span', { class: 'req-export-fl' }, 'Acceptance criteria ', h('span', { class: 'opt', text: `from ${imp.key}` })),
+        h('ul', { class: 'req-import-critlist' }, ...imp.criteria.map((t, i) => h('li', {}, h('code', { text: `R-po-${i + 1}` }), ' ', h('span', { text: t })))),
+        h('p', { class: 'hint', text: 'They start the spec as your criteria. Edit or remove them on the feature page.' }));
+      ticketChips.replaceChildren(...ticketFiles().map((x) => h('span', { class: 'req-new-chip' },
+        icon(x.kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }), h('span', { class: 'req-new-chip-name', text: x.name }),
+        h('span', { class: 'hint', text: `${KIND_TITLE[x.kind] || 'Text'} · ${sizeText(x.bytes)}` }), h('span', { class: 'req-import-tchip', text: imp.key }),
+        icoBtn('remove', `Remove ${x.name}`, () => removeTicketFile(x.key), { cls: 'req-new-chip-x req-import-chip-x', 'data-ui': `import-x-${x.key}` }))));
+      ticketNote.textContent = `Worca gets the ${imp.key} files from ${imp.tracker} when you start the interview.`;
+    }
+    /** Use this ticket (D1): it fills the form; Change ticket… asks before it replaces a title or description edited since (§7). The
+     *  criteria and the ticket's files are replaced either way. Nothing is created until Start the interview. */
+    function useTicket(t, pick = null) {
+      lastPick = pick;
+      createFail.replaceChildren();
+      const edited = !!imp && !!filled && (title.value !== filled.title || desc.value !== filled.description);
+      const fill = () => { title.value = t.title; desc.value = t.description; filled = { title: t.title, description: t.description }; };
+      imp = t;
+      if (!edited) fill();
+      renderImport();
+      sync();
+      if (!edited) { askEl.hidden = true; fromBtn.focus(); return; }
+      const done = (replace) => { if (replace) fill(); askEl.hidden = true; askEl.replaceChildren(); fromBtn.focus(); };
+      askEl.replaceChildren(h('p', { id: 'req-import-ask-q', text: `Replace the title and description with ${t.key}'s?` }),
+        h('div', { class: 'req-import-askbtns' },
+          h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'import-keep', onclick: () => done(false) }, 'Keep mine'),
+          h('button', { type: 'button', class: 'btn btn-sm btn-primary', 'data-ui': 'import-replace', onclick: () => done(true) }, 'Replace')));
+      askEl.hidden = false;
+      askEl.querySelector('[data-ui="import-replace"]').focus();
+    }
+    /** × "Stop using SHOP-124": what was typed stays; the criteria and the ticket's files go. */
+    function stopUsing() {
+      imp = null; filled = null; lastPick = null;
+      askEl.hidden = true;
+      askEl.replaceChildren();
+      createFail.replaceChildren();
+      renderImport();
+      sync();
       fromBtn.focus();
     }
+    /** × on a ticket file: it goes; the focus moves to the next chip's ×, else the previous one's, else Choose files. */
+    function removeTicketFile(k) {
+      if (!imp) return;
+      const at = ticketFiles().findIndex((x) => x.key === k);
+      imp = k === 'comments' ? { ...imp, comments: [], commentsFile: null } : k === 'description' ? { ...imp, descriptionFile: null }
+        : { ...imp, attachments: imp.attachments.filter((a) => a.id !== k) };
+      renderImport();
+      sync();
+      const xs = ticketChips.querySelectorAll('.req-import-chip-x');
+      (xs[Math.min(at, xs.length - 1)] || choose).focus();
+    }
+    /** The feature page's line for what the second read no longer found (D10). */
+    const notOnTicketLines = (gone) => {
+      if (!gone || !imp) return [];
+      const out = [];
+      for (const id of gone.comments || []) {
+        const c = imp.comments.find((x) => x.id === id);
+        if (c) out.push(`The comment by ${c.author} (${c.when}) was not added: it is no longer on ${gone.key}.`);
+      }
+      for (const a of gone.attachments || []) {
+        const x = imp.attachments.find((y) => y.id === a.id);
+        if (x) out.push(a.reason ? `${x.name} was not added: ${String(a.reason).replace(/^Not offered: /, '')}` : `${x.name} was not added: it is no longer on ${gone.key}.`);
+      }
+      return out;
+    };
     if (select.value) {
       const mine = paintNo;
       api('GET', importUrl(scopeNow())).then((r) => { if (mine === paintNo && r && Array.isArray(r.sources) && r.sources.length) fromBtn.hidden = false; }, () => {});
@@ -690,8 +794,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('span', { class: 'hint', text: `${KIND_TITLE[kind]} · ${sizeText(file.size)}` }),
           icoBtn('remove', `Remove ${file.name}`, () => removePicked(file), { cls: 'req-new-chip-x' }));
       }));
-      note.hidden = !picked.length;
-      cost.files(picked.map((p) => kindOfName(p.name)));
+      note.hidden = !picked.length && !ticketFiles().length;
+      cost.files([...ticketFiles().map((x) => x.kind), ...picked.map((p) => kindOfName(p.name))]);
       if (cost.el && cost.el.parentNode !== actions) actions.prepend(cost.el);   // A2's line appears with the first file
     };
     // A removed chip hands the focus to the next chip's ×, else the previous one's, else Choose files.
@@ -705,7 +809,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const addPicked = (files) => {
       const errors = [];
       for (const file of files) {
-        const c = checkAttachment(file, { pending: picked.map((p) => ({ name: p.name, bytes: p.size })), limits: reqLimits({ create: true }), typeMessage: reqTypeMessage });
+        // the caps count everything the form holds: the ticket's files and the files picked here (D9)
+        const pending = [...ticketFiles().map((x) => ({ name: x.name, bytes: x.bytes })), ...picked.map((p) => ({ name: p.name, bytes: p.size }))];
+        const c = checkAttachment(file, { pending, limits: reqLimits({ create: true }), typeMessage: reqTypeMessage });
         if (!c.ok) { errors.push(c.error); continue; }
         picked = [...picked.filter((p) => p.name !== file.name), file];
       }
@@ -738,18 +844,37 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     zone.addEventListener('paste', (e) => { const files = pastedFiles(e.clipboardData); if (!files) return; e.preventDefault(); addPicked(namer(files)); });
     // One create at a time: reading the files slows the press down, so a second press while it runs does nothing.
     let sending = false;
-    const create = () => (sending ? undefined : act(async () => {
+    const create = () => {
+      if (sending) return undefined;
       sending = true;
-      try {
-        const [scopeType, ...rest] = select.value.split(':');
-        const attachments = picked.length ? await Promise.all(picked.map(encodeFile)) : undefined;
-        const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value, ...(attachments ? { attachments } : {}) });
-        // A file the server could not store is named on the feature page (the feature stays; the create's filesNotStored).
-        const lost = Array.isArray(data.filesNotStored) ? data.filesNotStored : [];
-        if (lost.length) carry = { param: `feature/${data.feature.seq}`, text: lost.map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`).join(' ') };
-        route(`feature/${data.feature.seq}`);
-      } finally { sending = false; }
-    }));
+      say('');
+      createFail.replaceChildren();
+      return (async () => {
+        try {
+          const [scopeType, ...rest] = select.value.split(':');
+          const attachments = picked.length ? await Promise.all(picked.map(encodeFile)) : undefined;
+          const fromTicket = imp ? { ...imp.conn, key: imp.key, criteria: imp.criteria, comments: imp.comments.map((c) => c.id),
+            attachments: imp.attachments.map((a) => a.id), descriptionFile: !!imp.descriptionFile } : undefined;
+          const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value,
+            ...(attachments ? { attachments } : {}), ...(fromTicket ? { fromTicket } : {}) });
+          // A file the server could not store, and what the ticket no longer has, are named on the feature page (the feature stays).
+          const lines = (Array.isArray(data.filesNotStored) ? data.filesNotStored : []).map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`);
+          lines.push(...notOnTicketLines(data.notOnTicket));
+          if (lines.length) carry = { param: `feature/${data.feature.seq}`, text: lines.join(' ') };
+          route(`feature/${data.feature.seq}`);
+        } catch (err) {
+          // board 36 (8): the ticket could not be read; nothing was created and the form keeps everything
+          if (imp && err && (err.status === 502 || (err.data && err.data.gone))) {
+            createFail.replaceChildren(h('p', { class: 'form-msg err', text: importErr(err) }),
+              h('p', { class: 'hint', text: `Nothing was created, and the form keeps what you entered. Try again, or stop using ${imp.key} to start without it.` }));
+          } else if (imp && err && err.status === 400) {
+            // the server refused the form with the ticket (A8's caps on the tracker's sizes, D9: the preview caps only the attachments,
+            // so 10 files plus the comments file get here): its sentence names the file, so × on that file and Start again
+            createFail.replaceChildren(h('p', { class: 'form-msg err', text: importErr(err) }));
+          } else fail(err);
+        } finally { sending = false; }
+      })();
+    };
     actions.append(...[cost.el, h('div', { class: 'req-new-btns' },
       h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
       h('button', { type: 'button', class: 'btn btn-primary', onclick: create }, 'Start the interview'))].filter(Boolean));
@@ -760,15 +885,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('h2', { text: 'New feature' }),
         h('p', { class: 'req-sub', text: 'Describe it the way you would to a colleague. Worca asks the rest, a few questions at a time.' })),
       h('div', { class: 'card req-new' },
+        strip,
         field('req-new-title', ['Title'], title),
         h('div', { class: 'field' },
           h('div', { class: 'req-import-labrow' },
             h('label', { for: 'req-new-desc' }, 'Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })), fromBtn),
-          desc),
+          desc, descFrom, descClip),
+        critField,
         h('div', { class: 'field req-new-files' },
           h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', id: 'req-new-files-opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
-          input, zone, privacyNote(interview, 'req-new-files-privacy'), chips, refused),
+          input, zone, privacyNote(interview, 'req-new-files-privacy'), ticketChips, chips, ticketNote, refused),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
+        createFail,
         actions),
       note));
   }

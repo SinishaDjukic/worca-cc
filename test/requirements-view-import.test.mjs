@@ -690,3 +690,146 @@ test('CSS (board 36): at 900 px and narrower one column, author and date only, t
   assert.ok(css.includes('.req-import-list{gap:26px}') && block.includes('margin-top:20px'));
   assert.ok(!/min-height:44px/.test(block));
 });
+
+const fillFrom = async (m) => { await toPreview(m); q('ipv-use').click(); await settle(); };
+const CREATED = { feature: { seq: 8, id: 'FEAT-8' }, turns: [], filesNotStored: [], notOnTicket: { key: 'SHOP-124', comments: [], attachments: [] } };
+
+test('board 32: Use this ticket fills the strip, the description hint, the criteria and the ticket\'s files; the strip\'s chip opens the ticket', async () => {
+  const m = await openNew();
+  await fillFrom(m);
+  const strip = m.host.querySelector('.req-import-strip');
+  assert.equal(strip.hidden, false);
+  const chip = q('import-chip', m.host);
+  assert.deepEqual([chip.href, chip.target, chip.rel, chip.getAttribute('aria-label')],
+    ['https://acme.test/browse/SHOP-124', '_blank', 'noopener', 'SHOP-124, opens the ticket in Jira in a new tab']);
+  assert.ok(chip.querySelector('svg, .ic'), 'the shared external icon, not a glyph');
+  assert.deepEqual([...strip.querySelector('.req-import-strip-top').children].map(text).filter(Boolean),
+    ['Starting from', 'SHOP-124', '· Story · In progress', 'Change ticket…']);
+  assert.equal(q('import-stop', m.host).getAttribute('aria-label'), 'Stop using SHOP-124');
+  assert.equal(text(strip.querySelector('.req-import-site')),
+    'acme.atlassian.net (Cloud) · The new feature stays linked to SHOP-124: Export updates it, and a run can report back to it.');
+  assert.equal(text(m.host.querySelector('.req-import-deschint')), "From SHOP-124's description. Change it as you like: the interview starts from what is here.");
+  const crit = m.host.querySelector('.req-import-critfield');
+  assert.equal(text(crit.querySelector('.req-export-fl')), 'Acceptance criteria from SHOP-124');
+  assert.deepEqual([...crit.querySelectorAll('li')].map(text), ['R-po-1 A customer can cancel the items not picked up.', 'R-po-2 Shipped items stay on the order.',
+    'R-po-3 The refund covers only the cancelled items.']);
+  assert.equal(text(crit.querySelector('.hint')), 'They start the spec as your criteria. Edit or remove them on the feature page.');
+  const chips = [...m.host.querySelectorAll('.req-import-chips .req-new-chip')]
+    .map((c) => [text(c.querySelector('.req-new-chip-name')), text(c.querySelector('.hint')), text(c.querySelector('.req-import-tchip'))]);
+  assert.deepEqual(chips, [['SHOP-124 comments.md', 'Text · 126 B', 'SHOP-124'], ['packing-slip.png', 'Image · 840 KB', 'SHOP-124'],
+    ['partial-cancel-flow.pdf', 'PDF · 1.2 MB', 'SHOP-124']]);
+  assert.equal(text(m.host.querySelector('.req-import-filesnote')), 'Worca gets the SHOP-124 files from Jira when you start the interview.');
+  m.view.destroy();
+});
+
+test('board 32: × on a ticket file takes it away and moves the focus; Stop using SHOP-124 keeps what was typed and takes the criteria and files away', async () => {
+  const m = await openNew();
+  await fillFrom(m);
+  q('import-x-10041', m.host).click();
+  assert.deepEqual([...m.host.querySelectorAll('.req-import-chips .req-new-chip-name')].map((n) => n.textContent), ['SHOP-124 comments.md', 'partial-cancel-flow.pdf']);
+  assert.equal(document.activeElement, q('import-x-10042', m.host));
+  m.host.querySelector('#req-new-title').value = 'My own title';
+  q('import-stop', m.host).click();
+  assert.deepEqual([m.host.querySelector('.req-import-strip').hidden, m.host.querySelector('.req-import-critfield').hidden,
+    m.host.querySelectorAll('.req-import-chips .req-new-chip').length, m.host.querySelector('#req-new-title').value], [true, true, 0, 'My own title']);
+  assert.equal(document.activeElement, q('import-open', m.host));
+  m.view.destroy();
+});
+
+test('Start the interview sends the ticket with the picks; the page it opens names what the second read no longer found', async () => {
+  const m = await openNew(ROUTES({ 'POST /api/requirements': () => ({ ...CREATED,
+    notOnTicket: { key: 'SHOP-124', comments: ['10236'], attachments: [{ id: '10042', reason: null }] } }) }));
+  await fillFrom(m);
+  [...m.host.querySelectorAll('.req-new-btns .btn-primary')][0].click();
+  await settle();
+  const post = m.calls.find((c) => c.method === 'POST' && c.url === '/api/requirements');
+  assert.deepEqual(post.body.fromTicket, { ...CONN, key: 'SHOP-124', criteria: PREVIEW().criteria.items, comments: ['10231', '10236'], attachments: ['10041', '10042'],
+    descriptionFile: false });
+  assert.deepEqual([post.body.title, post.body.attachments], ['Partial cancel for multi-item orders', undefined]);
+  assert.deepEqual(m.routed, ['feature/8']);
+  // the feature page's fixture has every field A6's view tests' feature() has, so the page paints and the carried line stays
+  fakeApi({ ...BASE, 'GET /api/requirements/8': { feature: { seq: 8, id: 'FEAT-8', scopeType: 'project', scopeKey: 'shop-1', title: 'Partial cancel for multi-item orders',
+    status: 'looking', rounds: 0, costUsd: 0, busy: true, orientation: null, pending: null, lastError: null, state: 'looking',
+    spec: { goal: { text: '', measure: '' }, actors: [], flow: [], edgeCases: [], rules: [], outOfScope: [], criteria: [], assumptions: [], openQuestions: [], edited: {} },
+    readiness: { ok: false, passed: 0, total: 6, checks: [], overridable: false }, starts: [], unaskedRejections: [], changedSinceStart: [], attachments: [],
+    briefDocuments: [], unaskedFiles: [], interview: null, resetPeriod: 'monthly', export: null }, turns: [] } });
+  await m.view.show('feature/8');
+  await settle();
+  assert.equal(m.msgEl.textContent, 'The comment by Bo Example (25 Oct) was not added: it is no longer on SHOP-124. partial-cancel-flow.pdf was not added: it is no longer on SHOP-124.');
+  m.view.destroy();
+});
+
+test("board 36 (8): Start the interview cannot read the ticket: the sentence and what to do, nothing created, the form keeps everything; a second press posts once", async () => {
+  let posts = 0;
+  let answer = null;
+  const m = await openNew(ROUTES({ 'POST /api/requirements': () => { posts += 1; return new Promise((r) => { answer = r; }); } }));
+  await fillFrom(m);
+  const go = [...m.host.querySelectorAll('.req-new-btns .btn-primary')][0];
+  go.click();
+  go.click();
+  await settle();
+  assert.equal(posts, 1, 'no double post');
+  answer({ __status: 502, body: { error: 'Worca could not reach Jira: it did not answer within a minute.', kind: 'timeout' } });
+  await settle();
+  const fail = m.host.querySelector('.req-import-fail');
+  assert.equal(fail.getAttribute('role'), 'alert');
+  assert.deepEqual([...fail.children].map(text), ['Worca could not reach Jira: it did not answer within a minute.',
+    'Nothing was created, and the form keeps what you entered. Try again, or stop using SHOP-124 to start without it.']);
+  assert.deepEqual([m.routed, m.host.querySelector('#req-new-title').value, m.host.querySelector('.req-import-strip').hidden], [[], 'Partial cancel for multi-item orders', false]);
+  m.view.destroy();
+});
+
+test('Change ticket… after an edit asks "Replace the title and description with SHOP-131\'s?"; Keep mine keeps the text, the criteria and files change either way', async () => {
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: (b) => (b.key === 'SHOP-131'
+    ? PREVIEW({ key: 'SHOP-131', title: 'Cancel button hidden on the mobile order page', description: 'The button hides.', url: 'https://acme.test/browse/SHOP-131',
+      criteria: { from: null, name: null, field: null, items: [], picked: [] }, attachments: [] }) : PREVIEW()) }));
+  await fillFrom(m);
+  m.host.querySelector('#req-new-desc').value = 'My words.';
+  q('import-change', m.host).click();
+  await settle();
+  assert.equal(q('pick-SHOP-124').checked, true, 'the pick opens with the current ticket selected');
+  q('pick-SHOP-131').click();
+  q('pick-continue').click();
+  await settle();
+  q('ipv-use').click();
+  await settle();
+  const ask = m.host.querySelector('.req-import-ask');
+  assert.equal(text(ask.querySelector('#req-import-ask-q')), "Replace the title and description with SHOP-131's?");
+  assert.equal(document.activeElement, q('import-replace', m.host));
+  q('import-keep', m.host).click();
+  assert.deepEqual([m.host.querySelector('#req-new-desc').value, q('import-chip', m.host).textContent, m.host.querySelector('.req-import-critfield').hidden, ask.hidden],
+    ['My words.', 'SHOP-131', true, true]);
+  m.view.destroy();
+});
+
+test('D12 and D6 on the form: a ticket another feature follows says the feature stays unlinked; an empty description asks for one', async () => {
+  const m = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => PREVIEW({ key: 'SHOP-123', description: '', linkedTo: { id: 'FEAT-7', title: 'x' } }) }));
+  await toPreview(m);
+  q('ipv-use').click();
+  await settle();
+  assert.equal(text(m.host.querySelector('.req-import-site')), 'acme.atlassian.net (Cloud) · SHOP-123 follows FEAT-7, so the new feature stays unlinked.');
+  assert.equal(text(m.host.querySelector('.req-import-deschint')), 'SHOP-123 has no description. Describe it in a few sentences.');
+  m.view.destroy();
+});
+
+test("a create the server refuses over the files' caps (400) says so in the form's alert; × on that ticket file and Start again posts without it", async () => {
+  const SENT = 'partial-cancel-flow.pdf was not added: a feature takes up to 10 files.';
+  let n = 0;
+  const m = await openNew(ROUTES({ 'POST /api/requirements': () => { n += 1; return n === 1 ? { __status: 400, body: { error: SENT } } : CREATED; } }));
+  await fillFrom(m);
+  const go = () => [...m.host.querySelectorAll('.req-new-btns .btn-primary')][0].click();
+  go();
+  await settle();
+  const fail = m.host.querySelector('.req-import-fail');
+  assert.equal(fail.getAttribute('role'), 'alert');
+  assert.equal(text(fail), SENT, "the server's sentence, in the create's own alert on the form");
+  assert.deepEqual([m.routed, m.msgEl.textContent, m.host.querySelector('.req-import-strip').hidden], [[], '', false]);
+  q('import-x-10042', m.host).click();
+  go();
+  await settle();
+  const posts = m.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements');
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].body.fromTicket.attachments, ['10041']);
+  assert.deepEqual([m.routed, text(fail)], [['feature/8'], '']);
+  m.view.destroy();
+});
