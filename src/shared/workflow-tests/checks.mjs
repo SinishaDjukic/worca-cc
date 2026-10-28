@@ -6,6 +6,7 @@
 export const CHECK_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'file', 'script']);
 /** The kinds that read the main result's text (D25). */
 export const TEXT_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions']);
+export const PROJECT_KINDS = Object.freeze(['command']);   // 3a D57: checks that run in the copy of the project (Task 6 adds the kind)
 export const CHECK_KIND_LABELS = Object.freeze({
   words: 'Length in words',
   sections: 'Has these sections',

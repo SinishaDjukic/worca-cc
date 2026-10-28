@@ -4,13 +4,17 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { getDb, prepare, tx } from '../db.mjs';
 import { canon } from '../../shared/graph/diff-graphs.mjs';
-import { normaliseCheck, normaliseBasics, DEFAULT_BASICS } from '../../shared/workflow-tests/checks.mjs';
+import { normaliseCheck, normaliseBasics, DEFAULT_BASICS, PROJECT_KINDS } from '../../shared/workflow-tests/checks.mjs';
 
 export const OTHERWISE = Object.freeze(['pick', 'fail']);
 export const TRY_COUNTS = Object.freeze([1, 3, 5]);
 export const MAX_TRIES = 10;
 export const FILE_MAX_BYTES = 5 * 1024 * 1024;
 export const FILES_MAX = 8;
+export const PIN_MAX_CHANGES = 5 * 1024 * 1024;
+export const SETUP_MAX = 4000;   // actions/model.mjs MAX_CMD: a project's own setup always fits
+const PROJECT_KEY_RE = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/;   // store.mjs PROJECT_KEY_RE, inlined: this module imports no fs code
+const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 export const FINISHED = Object.freeze(['passed', 'failed']);
 /** D35: a test's tries use stand-ins for the connectors ('pretend', the default) or the real ones. */
 export const CONNECTOR_MODES = Object.freeze(['pretend', 'real']);
@@ -41,7 +45,7 @@ export const useOf = (ref) => parseUse(ref);
  * The editable fields of an example, checked. Missing fields take their defaults; new checks get an id.
  * @returns {{value: object|null, errors: string[]}}
  */
-export function normaliseExample(input = {}) {
+export function normaliseExample(input = {}, { hasProject = false } = {}) {
   const errors = [];
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   if (!name || name.length > NAME_MAX) errors.push(`the name must be 1 to ${NAME_MAX} characters`);
@@ -70,6 +74,10 @@ export function normaliseExample(input = {}) {
   if (!Array.isArray(rawChecks) || rawChecks.length > CHECKS_MAX) errors.push(`at most ${CHECKS_MAX} automatic checks`);
   else {
     for (const raw of rawChecks) {
+      if (raw && PROJECT_KINDS.includes(raw.kind) && !hasProject) {   // 3a D57: it runs in the copy of the project
+        errors.push('the command check needs a project: pick one under Where it starts');
+        break;
+      }
       const { check, error } = normaliseCheck(raw);
       if (error) { errors.push(error); break; }
       checks.push(check.id ? check : { id: `c_${randomBytes(5).toString('hex')}`, ...check });
@@ -86,9 +94,11 @@ export function normaliseExample(input = {}) {
 export function exampleFingerprint(ex) {
   const files = (ex.files || []).map((f) => [f.name, f.sha256]).sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
   const checks = (ex.checks || []).map(({ id: _id, ...c }) => c);
-  return createHash('sha256')
-    .update(canon({ r: ex.request, f: files, a: ex.answers, o: ex.otherwise, b: ex.basics, c: checks }))
-    .digest('hex').slice(0, 16);
+  const body = { r: ex.request, f: files, a: ex.answers, o: ex.otherwise, b: ex.basics, c: checks };
+  // 3a D64: a project example also depends on where it starts and how it is set up; an example without one keeps its
+  // Part 2 fingerprint byte for byte. The start commit already covers the uncommitted changes.
+  if (ex.project) body.p = [ex.project.key, ex.project.startCommit, ex.project.setupCmd || null];
+  return createHash('sha256').update(canon(body)).digest('hex').slice(0, 16);
 }
 
 const EX_COLS = `id, workflow_id, name, request, answers, otherwise, basics, checks, tries, note, from_pipeline, from_use,
@@ -97,6 +107,47 @@ function filesOf(exampleId) {
   return prepare('SELECT name, size, sha256 FROM wf_test_example_files WHERE example_id = ? ORDER BY name').all(exampleId)
     .map((f) => ({ name: f.name, size: Number(f.size), sha256: f.sha256 }));
 }
+const PROJECT_COLS = 'project_key, start_sha, start_ref, start_at, start_commit, changes_sha256, length(changes) AS changes_bytes, setup_cmd';
+function projectOf(exampleId) {
+  const r = prepare(`SELECT ${PROJECT_COLS} FROM wf_test_example_projects WHERE example_id = ?`).get(Number(exampleId));
+  if (!r) return null;
+  return { key: r.project_key, startSha: r.start_sha, startRef: r.start_ref ?? null, startAt: r.start_at, startCommit: r.start_commit,
+    changesSha256: r.changes_sha256 ?? null, changesBytes: Number(r.changes_bytes || 0), setupCmd: r.setup_cmd ?? null };
+}
+
+/** The bytes of an example's uncommitted changes, or null. */
+export function readExampleChanges(exampleId) {
+  getDb();
+  const r = prepare('SELECT changes FROM wf_test_example_projects WHERE example_id = ?').get(Number(exampleId));
+  return r && r.changes ? Buffer.from(r.changes) : null;
+}
+
+/** A pin as written (service.mjs makes it with project-copy.mjs pinStart): checked, or an error. */
+function checkPin(p) {
+  if (!p || typeof p !== 'object') throw testError('a project needs a start point', 'BAD_REQUEST');
+  if (!PROJECT_KEY_RE.test(String(p.key || ''))) throw testError('pick a project', 'BAD_REQUEST');
+  if (!SHA_RE.test(String(p.startSha || '')) || !SHA_RE.test(String(p.startCommit || ''))) throw testError('the start point must be a commit', 'BAD_REQUEST');
+  if (p.startRef != null && (typeof p.startRef !== 'string' || !p.startRef || p.startRef.length > 255 || /[\u0000-\u001f\u007f]/.test(p.startRef))) {
+    throw testError('the start point names a branch Worca cannot read', 'BAD_REQUEST');
+  }
+  if (!Number.isFinite(Date.parse(p.startAt))) throw testError('the start point has no date', 'BAD_REQUEST');
+  const changes = p.changes == null ? null : Buffer.isBuffer(p.changes) ? p.changes : Buffer.from(p.changes);
+  if (changes && changes.length > PIN_MAX_CHANGES) throw testError('your changes that are not committed are larger than 5 MB: commit them first, or leave them out', 'BAD_REQUEST');
+  const setup = typeof p.setupCmd === 'string' && p.setupCmd.trim() ? p.setupCmd.trim() : null;
+  if (setup && (setup.length > SETUP_MAX || /[\r\n]/.test(setup))) throw testError(`the setup command must fit on one line of up to ${SETUP_MAX} characters`, 'BAD_REQUEST');
+  return { ...p, startRef: p.startRef ?? null, changes: changes && changes.length ? changes : null, setupCmd: setup };
+}
+
+function writePin(exampleId, p) {
+  prepare(`INSERT INTO wf_test_example_projects (example_id, project_key, start_sha, start_ref, start_at, start_commit, changes,
+      changes_sha256, setup_cmd, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(example_id) DO UPDATE SET project_key = excluded.project_key, start_sha = excluded.start_sha, start_ref = excluded.start_ref,
+      start_at = excluded.start_at, start_commit = excluded.start_commit, changes = excluded.changes, changes_sha256 = excluded.changes_sha256,
+      setup_cmd = excluded.setup_cmd, updated_at = excluded.updated_at`)
+    .run(Number(exampleId), p.key, p.startSha, p.startRef, p.startAt, p.startCommit, p.changes,
+      p.changes ? createHash('sha256').update(p.changes).digest('hex') : null, p.setupCmd, nowIso());
+}
+
 function exampleOf(r) {
   if (!r) return null;
   const ex = {
@@ -105,24 +156,31 @@ function exampleOf(r) {
     basics: normaliseBasics(parse(r.basics, {})).basics || { ...DEFAULT_BASICS },
     checks: parse(r.checks, []), tries: Number(r.tries), note: r.note ?? null,
     from: r.from_pipeline ? { pipelineId: r.from_pipeline, use: r.from_use ? useOf(r.from_use) : null, verdict: r.from_verdict ?? null } : null,
+    project: projectOf(Number(r.id)),
     files: filesOf(Number(r.id)), createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
   };
   return { ...ex, fingerprint: exampleFingerprint(ex) };
 }
 const invalid = (errors) => testError(errors[0], 'BAD_REQUEST', { errors });
 
-/** @param {{by?: string|null, from?: {pipelineId: string, use: 'draft'|number|null, verdict: 'good'|'not-good'|null}|null}} [opts] */
-export function createExample(workflowId, input, { by = null, from = null } = {}) {
-  const { value, errors } = normaliseExample(input);
+/** @param {{by?: string|null, from?: {pipelineId: string, use: 'draft'|number|null, verdict: 'good'|'not-good'|null}|null, project?: object|null}} [opts] `project` = a pin (checkPin) */
+export function createExample(workflowId, input, { by = null, from = null, project = null } = {}) {
+  const pinned = project ? checkPin(project) : null;
+  const { value, errors } = normaliseExample(input, { hasProject: !!pinned });
   if (!value) throw invalid(errors);
   getDb();
   const at = nowIso();
-  const info = prepare(`INSERT INTO wf_test_examples (workflow_id, name, request, answers, otherwise, basics, checks, tries, note,
-      from_pipeline, from_use, from_verdict, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(workflowId, value.name, value.request, JSON.stringify(value.answers), value.otherwise, JSON.stringify(value.basics),
-      JSON.stringify(value.checks), value.tries, value.note, from ? from.pipelineId : null,
-      from && from.use != null ? useRef(from.use) : null, from ? from.verdict ?? null : null, by, at, at);
-  return readExample(workflowId, Number(info.lastInsertRowid));
+  const id = tx(() => {
+    const info = prepare(`INSERT INTO wf_test_examples (workflow_id, name, request, answers, otherwise, basics, checks, tries, note,
+        from_pipeline, from_use, from_verdict, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(workflowId, value.name, value.request, JSON.stringify(value.answers), value.otherwise, JSON.stringify(value.basics),
+        JSON.stringify(value.checks), value.tries, value.note, from ? from.pipelineId : null,
+        from && from.use != null ? useRef(from.use) : null, from ? from.verdict ?? null : null, by, at, at);
+    const newId = Number(info.lastInsertRowid);
+    if (pinned) writePin(newId, pinned);
+    return newId;
+  });
+  return readExample(workflowId, id);
 }
 
 export function readExample(workflowId, id) {
@@ -141,15 +199,25 @@ function requireExample(workflowId, id) {
   return ex;
 }
 
-/** Fields left out of `input` keep their value. */
-export function updateExample(workflowId, id, input = {}) {
+/** Fields left out of `input` keep their value. `project`: undefined keeps the pin, null removes it, a pin replaces it. */
+export function updateExample(workflowId, id, input = {}, { project } = {}) {
   const was = requireExample(workflowId, id);
-  const { value, errors } = normaliseExample({ ...was, ...input });
+  const pinned = project ? checkPin(project) : null;
+  const hasProject = project === undefined ? !!was.project : !!pinned;
+  const { value, errors } = normaliseExample({ ...was, ...input }, { hasProject });
   if (!value) throw invalid(errors);
-  prepare(`UPDATE wf_test_examples SET name = ?, request = ?, answers = ?, otherwise = ?, basics = ?, checks = ?, tries = ?, note = ?,
-      updated_at = ? WHERE workflow_id = ? AND id = ?`)
-    .run(value.name, value.request, JSON.stringify(value.answers), value.otherwise, JSON.stringify(value.basics),
-      JSON.stringify(value.checks), value.tries, value.note, nowIso(), workflowId, was.id);
+  if (project !== undefined) {
+    const run = runningTestRun(workflowId);
+    if (run && run.exampleIds.includes(was.id)) throw testError('a test is trying this example: stop it first', 'BUSY');
+  }
+  tx(() => {
+    prepare(`UPDATE wf_test_examples SET name = ?, request = ?, answers = ?, otherwise = ?, basics = ?, checks = ?, tries = ?, note = ?,
+        updated_at = ? WHERE workflow_id = ? AND id = ?`)
+      .run(value.name, value.request, JSON.stringify(value.answers), value.otherwise, JSON.stringify(value.basics),
+        JSON.stringify(value.checks), value.tries, value.note, nowIso(), workflowId, was.id);
+    if (project === null) prepare('DELETE FROM wf_test_example_projects WHERE example_id = ?').run(was.id);
+    else if (pinned) writePin(was.id, pinned);
+  });
   return readExample(workflowId, was.id);
 }
 
@@ -159,6 +227,7 @@ export function deleteExample(workflowId, id) {
   if (run && run.exampleIds.includes(ex.id)) throw testError('a test is trying this example: stop it first', 'BUSY');
   tx(() => {
     prepare('DELETE FROM wf_test_example_files WHERE example_id = ?').run(ex.id);
+    prepare('DELETE FROM wf_test_example_projects WHERE example_id = ?').run(ex.id);
     prepare('DELETE FROM wf_test_examples WHERE workflow_id = ? AND id = ?').run(workflowId, ex.id);
   });
   return true;
@@ -258,14 +327,16 @@ export function updateTestRun(id, patch = {}) {
 
 // ── Tries ───────────────────────────────────────────────────────────────────
 const TRY_COLS = `t.id, t.run_id, t.workflow_id, t.example_id, t.use_ref, t.fp, t.example_fp, t.try_no, t.mock, t.connectors, t.status,
-  t.run_key, t.pipeline_id, t.verdict, t.cost_usd, t.started_at, t.finished_at`;
+  t.run_key, t.pipeline_id, t.verdict, t.cost_usd, t.started_at, t.finished_at, t.start_commit, t.disk_bytes, t.setup, t.changes`;
 function tryOf(r) {
   if (!r) return null;
   return {
     id: Number(r.id), runId: Number(r.run_id), workflowId: r.workflow_id, exampleId: Number(r.example_id), use: useOf(r.use_ref),
     fp: r.fp, exampleFp: r.example_fp, tryNo: Number(r.try_no), mock: !!r.mock, connectors: modeOf(r.connectors), status: r.status,
     runKey: r.run_key ?? null, pipelineId: r.pipeline_id ?? null, verdict: parse(r.verdict, null), costUsd: Number(r.cost_usd || 0),
-    startedAt: r.started_at ?? null, finishedAt: r.finished_at ?? null, ...(r.side ? { side: r.side } : {}),
+    startedAt: r.started_at ?? null, finishedAt: r.finished_at ?? null,
+    startCommit: r.start_commit ?? null, diskBytes: r.disk_bytes == null ? null : Number(r.disk_bytes),
+    setup: parse(r.setup, null), changes: parse(r.changes, null), ...(r.side ? { side: r.side } : {}),
   };
 }
 
@@ -283,13 +354,13 @@ export function readTry(id) {
 }
 
 const TRY_PATCH = { status: 'status', runKey: 'run_key', pipelineId: 'pipeline_id', verdict: 'verdict', costUsd: 'cost_usd',
-  startedAt: 'started_at', finishedAt: 'finished_at' };
+  startedAt: 'started_at', finishedAt: 'finished_at', startCommit: 'start_commit', diskBytes: 'disk_bytes', setup: 'setup', changes: 'changes' };
 export function updateTry(id, patch = {}) {
   const sets = []; const vals = [];
   for (const [k, col] of Object.entries(TRY_PATCH)) {
     if (patch[k] === undefined) continue;
     sets.push(`${col} = ?`);
-    vals.push(k === 'verdict' && patch[k] !== null ? JSON.stringify(patch[k]) : patch[k]);
+    vals.push(['verdict', 'setup', 'changes'].includes(k) && patch[k] !== null ? JSON.stringify(patch[k]) : patch[k]);
   }
   if (sets.length) { getDb(); prepare(`UPDATE wf_test_tries SET ${sets.join(', ')} WHERE id = ?`).run(...vals, Number(id)); }
   return readTry(id);
@@ -317,6 +388,23 @@ export function spentOfRun(runId) {
   getDb();
   const r = prepare('SELECT COALESCE(SUM(cost_usd), 0) AS s FROM wf_test_tries WHERE run_id = ?').get(Number(runId));
   return Math.round(Number(r.s || 0) * 1e6) / 1e6;
+}
+
+/** D60: the newest measured checkout size of an example on this start, in bytes (null = never measured). */
+export function lastDiskBytes(exampleId, startCommit) {
+  getDb();
+  const r = prepare(`SELECT disk_bytes AS b FROM wf_test_tries WHERE example_id = ? AND start_commit = ? AND disk_bytes IS NOT NULL
+      ORDER BY id DESC LIMIT 1`).get(Number(exampleId), String(startCommit || ''));
+  return r ? Number(r.b) : null;
+}
+
+/** D60: how long this example's setup took, on average over its last 5 good setups on this start (null = never ran). */
+export function avgSetupMs(exampleId, startCommit) {
+  getDb();
+  const r = prepare(`SELECT AVG(m) AS a, COUNT(*) AS n FROM (SELECT json_extract(setup, '$.ms') AS m FROM wf_test_tries
+      WHERE example_id = ? AND start_commit = ? AND json_valid(setup) AND json_extract(setup, '$.ok') = 1 ORDER BY id DESC LIMIT 5)`)
+    .get(Number(exampleId), String(startCommit || ''));
+  return r && Number(r.n) > 0 && r.a != null ? Math.round(Number(r.a)) : null;
 }
 
 /** D26: finished tries of `use` on one example that a new test may reuse, newest first. The connectors mode is part of the key (D35). */

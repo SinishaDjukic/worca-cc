@@ -16,7 +16,8 @@ const TABLES = {
   wf_test_runs: ['id', 'workflow_id', 'kind', 'a_use', 'b_use', 'a_fp', 'b_fp', 'example_ids', 'tries', 'quick', 'cap_usd',
     'connectors', 'status', 'stop_reason', 'stop_detail', 'started_by', 'created_at', 'finished_at'],
   wf_test_tries: ['id', 'run_id', 'workflow_id', 'example_id', 'use_ref', 'fp', 'example_fp', 'try_no', 'mock', 'connectors', 'status',
-    'run_key', 'pipeline_id', 'verdict', 'cost_usd', 'started_at', 'finished_at'],
+    'run_key', 'pipeline_id', 'verdict', 'cost_usd', 'started_at', 'finished_at',
+    'start_commit', 'disk_bytes', 'setup', 'changes'],   // the last four are v81 (workflow tests 3a)
   wf_test_run_tries: ['run_id', 'try_id', 'side'],
 };
 

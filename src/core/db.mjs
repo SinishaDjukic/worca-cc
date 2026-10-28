@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 80;
+export const SCHEMA_VERSION = 81;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -867,6 +867,8 @@ const INCREMENTAL_COLUMNS = {
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT',
                             live_version_no: 'INTEGER' },   // v79: the named version new runs use (NULL = the row itself)
+  wf_test_tries:          { start_commit: 'TEXT', disk_bytes: 'INTEGER',   // v81 (workflow tests 3a): a project try's start and checkout size
+                            setup: 'TEXT', changes: 'TEXT' },              // v81: its setup run (JSON) and its change list (JSON)
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
@@ -1491,6 +1493,23 @@ CREATE TABLE IF NOT EXISTS wf_test_run_tries (
   PRIMARY KEY (run_id, try_id)
 );`;
 
+// v81 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
+// tables. `changes` = the person's uncommitted changes at save time, as a binary patch (NULL = none); `start_commit` = the
+// commit tries start from (start_sha itself, or Worca's commit of start_sha + changes in its copy of the project).
+const WORKFLOW_TEST_PROJECTS_DDL = `
+CREATE TABLE IF NOT EXISTS wf_test_example_projects (
+  example_id     INTEGER PRIMARY KEY,
+  project_key    TEXT NOT NULL,
+  start_sha      TEXT NOT NULL,
+  start_ref      TEXT,
+  start_at       TEXT NOT NULL,
+  start_commit   TEXT NOT NULL,
+  changes        BLOB,
+  changes_sha256 TEXT,
+  setup_cmd      TEXT,
+  updated_at     TEXT NOT NULL
+);`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1532,6 +1551,7 @@ const INCREMENTAL_TABLES = {
   wf_test_runs:          WORKFLOW_TESTS_DDL,
   wf_test_tries:         WORKFLOW_TESTS_DDL,
   wf_test_run_tries:     WORKFLOW_TESTS_DDL,
+  wf_test_example_projects: WORKFLOW_TEST_PROJECTS_DDL,   // v81 (workflow tests 3a)
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2699,6 +2719,9 @@ export function migrate(db) {
     // the hoisted repairSchemaGaps (current < SCHEMA_VERSION) creates req_attachments, req_helper_messages, ledger.attachment_id /
     // helper_message_id and starts.files_json from INCREMENTAL_TABLES / INCREMENTAL_COLUMNS; the v79 and v80 DDL are IF NOT EXISTS.
     if (current < 80) db.exec(WORKFLOW_TESTS_DDL);   // v80 workflow tests; pipelines.is_test comes from INCREMENTAL_COLUMNS
+    // v81 workflow tests 3a. The repair runs again: wf_test_tries is created at v78, after the hoisted repair, so a DB
+    // coming from below 78 gets its v81 columns only from this call (v74's pattern).
+    if (current < 81) { db.exec(WORKFLOW_TEST_PROJECTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
