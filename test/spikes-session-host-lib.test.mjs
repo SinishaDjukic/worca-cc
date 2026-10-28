@@ -18,6 +18,7 @@ import { main as s7, BRIEF_DIVIDER, replacesDefaultFrom } from '../tools/spikes/
 import { sum } from '../tools/spikes/session-host/fixtures/s7-repo/src/sum.mjs';
 import { slug } from '../tools/spikes/session-host/fixtures/s7-repo/src/slug.mjs';
 import { main as s8b } from '../tools/spikes/session-host/s8b-continue-child.mjs';
+import { main as s9 } from '../tools/spikes/session-host/s9-forwarding.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -303,4 +304,13 @@ test('S8b --dry: two turns; the second resumes and names the first child', async
   assert.doesNotMatch(argv[0], /--resume/);
   assert.match(argv[1], /--resume <session-1> /);
   assert.match(argv[1], /agent id <agent-id>/);
+});
+
+test('S9 --dry: with and without --forward-subagent-text per CLI; worca\'s sub-agent hook settings on all four', async () => {
+  const { argv, notes } = await dryRun(s9);
+  assert.equal(argv.length, 4, argv.join('\n'));
+  assert.deepEqual(argv.map((l) => l.includes('--forward-subagent-text')), [true, false, true, false]);
+  for (const l of argv) assert.match(l, /--include-hook-events --settings .*"PostToolUse"/);
+  assert.equal(argv.filter((l) => l.includes(' npx -y @anthropic-ai/claude-code@2.1.294 ')).length, 2);
+  assert.equal(notes.length, 2, 'flagInHelp is a live-only probe per CLI');
 });
