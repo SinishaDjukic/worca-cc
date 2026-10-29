@@ -4526,6 +4526,53 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-cmp-diff{background:var(--amber-bg);color:var(--amber-ink-strong);}
 @media (max-width:720px){.mem-cmp{grid-template-columns:1fr;}}
 
+/* ---------- Run page: Sessions tab (session groups, Task 58; the mock's Sessions panel) ----------
+   A card per session in the Agents card's skin, a dashed one for the steps outside every session. Member segments are
+   neutral (blue is never a bar, peach is only the working dot); the hand-offs are slate hatching. */
+.rs-list{display:grid;gap:12px;}
+.rs-card{min-width:0;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.rs-card.rs-out{background:transparent;border-style:dashed;}
+.rs-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 12px;}
+.rs-title{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-body);}
+.rs-state{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
+.rs-meta{order:3;flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
+.rs-meta code{padding:1px 5px;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:11px var(--mono);}
+.rs-total{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;font-variant-numeric:tabular-nums;}
+.rs-total-v{font:600 18px/1.25 var(--sans);}
+.rs-total-s{font-size:11px;color:var(--ink-2);}
+.rs-why{margin:6px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
+.rs-bar{display:flex;gap:2px;height:10px;margin:12px 0 6px;overflow:hidden;border-radius:var(--r-xs);background:var(--field);}
+.rs-bar>span{display:block;height:100%;}
+.rs-seg-0{background:var(--ink);}
+.rs-seg-1{background:var(--line-2);}
+.rs-seg-2{background:var(--ink-3);}
+.rs-seg-3{background:var(--seq);}
+/* Neutral fills sit close to the track (--line-2 on --field is 1.2:1): an ink-2 edge keeps every share visible (1.4.11). */
+.rs-bar>.rs-seg,.rs-legend i.rs-seg{box-shadow:inset 0 0 0 1px var(--ink-2);}
+.rs-hand{background:repeating-linear-gradient(135deg,var(--slate-ink) 0 2px,transparent 2px 4px);box-shadow:inset 0 0 0 1px var(--slate-ink);}
+.rs-bar>.rs-hand{min-width:3px;}
+.rs-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--ink-2);}
+.rs-legend i{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:-1px;border-radius:var(--r-xs);}
+.rs-card .table-wrap{margin-top:10px;}
+.rs-turns td,.rs-outside td{font-variant-numeric:tabular-nums;}
+.rs-links{white-space:nowrap;}
+.rs-reconcile{display:flex;flex-direction:column;gap:2px;margin-top:8px;font-size:11px;}
+.rs-ok{color:var(--green-ink);}
+.rs-na{color:var(--ink-2);}
+.rs-bad,.rs-integrity{color:var(--amber-ink);}
+.rs-integrity{margin:6px 0 0;font-size:11px;}
+.rs-history{margin:8px 0 0;padding-left:18px;font-size:11px;color:var(--ink-2);}
+/* Ten columns do not fit under ~900px: the turn table stacks per row there (the house table stacks under 560px). */
+@container dtable (max-width:900px){
+  .rs-turns thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
+  .rs-turns,.rs-turns tbody,.rs-turns tr,.rs-turns td{display:block;width:100%;}
+  .rs-turns tr{padding:8px 0;border-bottom:1px solid var(--line);}
+  .rs-turns td{display:flex;justify-content:space-between;gap:12px;padding:2px 0;border:0;}
+  .rs-turns td[data-label]::before{content:attr(data-label);color:var(--ink-2);font-size:var(--fs-meta);}
+  .rs-turns td.table-main{display:block;font-weight:500;}
+  .rs-turns td.table-main::before{content:none;}
+}
+
 /* ---------- History detail: Agents tab ---------- */
 .hd-ag-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
   overflow:hidden;margin-bottom:18px;}

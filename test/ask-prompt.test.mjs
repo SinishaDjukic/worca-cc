@@ -948,7 +948,7 @@ test('the page on screen validates as ids; bad shapes refuse', () => {
 });
 
 test('every Details tab of a run page is a valid runPage with its own header line (Changes and Actions too)', () => {
-  for (const [part, line] of [['changes', 'Details › Changes tab'], ['actions', 'Details › Actions tab'], ['diff', 'Details › Diff tab']]) {
+  for (const [part, line] of [['changes', 'Details › Changes tab'], ['actions', 'Details › Actions tab'], ['diff', 'Details › Diff tab'], ['sessions', 'Details › Sessions tab']]) {
     assert.deepEqual(validateClientContext({ view: 'running', runPage: part }), { ok: true, context: { view: 'running', runPage: part } }, part);
     assert.match(buildContextHeader({ view: 'running', runPage: part }), new RegExp(`^run page: ${line}$`, 'm'));
   }

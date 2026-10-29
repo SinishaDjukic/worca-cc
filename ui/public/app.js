@@ -83,6 +83,7 @@ const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', 
 
 import { icon } from './icons.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
+import { paintSessionsTab, sessionsTabVisible, sessionsBadge } from './run-sessions-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
@@ -2056,6 +2057,10 @@ function handleServerMessage(msg) {
       break;
     case 'error':
       onError(r, msg);
+      break;
+    case 'sessionHost':
+      // A session trace record was written (session groups): the Sessions tab's report is stale (Task 58).
+      r.sessionSeq = (r.sessionSeq || 0) + 1;
       break;
     default:
       break;
@@ -27023,6 +27028,8 @@ const HD_TAB_ICONS = {
   artifacts: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M3 8v8l9 4 9-4V8" stroke-linejoin="round"/><path d="M12 12v8" stroke-linecap="round"/></svg>',
   actions: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"></path></svg>',
   changes: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/><path d="M12 11v6M9 14h6" stroke-linecap="round"/></svg>',
+  // Sessions (session groups): the tray's own glyph, a terminal prompt in a frame.
+  sessions: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7.5 10l3 2.5-3 2.5M12.5 15.5h4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 
 // Per-screen tab state, keyed by the SCREEN element. The cells + activate() pair
@@ -27207,6 +27214,8 @@ const HD_TABS = [
   { key: 'logs', label: 'Logs', level: 'expert', badge: () => null,
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
     build: (...a) => buildHdLogs(...a) },
+  // Session groups (Task 58): only on a run that has a session (its summaries, or a session in its manifest).
+  { key: 'sessions', label: 'Sessions', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
   { key: 'agents', label: 'Agents', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
     visible: () => true, build: (...a) => buildHdAgents(...a) },
@@ -29279,6 +29288,11 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdLogs(sec, ctx),
   },
   {
+    key: 'sessions', label: 'Sessions', icon: HD_TAB_ICONS.sessions, level: 'advanced',
+    badge: (ctx) => sessionsBadge(ctx.run), visible: (ctx) => sessionsTabVisible(ctx.run),
+    build: (sec, ctx) => buildRdSessions(sec, ctx),
+  },
+  {
     key: 'agents', label: 'Agents', icon: HD_TAB_ICONS.agents, level: 'expert',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.subAgents) ? ctx.run.subAgents.length : 0;
@@ -29741,7 +29755,7 @@ function buildRdQa(sec, ctx) {
 function ensureRdTabs(screen, r) {
   if (!screen || !r) return;
   const mode = workModeOf(r);
-  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}`;   // P5: Folder members learned later rebuild the tabs
+  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}${sessionsTabVisible(r) ? '|sessions' : ''}`;   // P5: Folder members learned later rebuild the tabs; so does a session (its manifest can come after the first paint)
   const built = !!screen.querySelector('.rd-tab');
   if (built && screen.dataset.tabsMode === sig) return;
   if (built) {
@@ -30479,6 +30493,65 @@ function rdAgentsBody(sec, r) {
   hydrateRunArtifacts(r).then((added) => {
     if (added) attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
   });
+}
+
+// ── Sessions tab (session groups, Task 58) ───────────────────────────────────
+// One card per session from GET /api/runs/:id/sessions (the pipeline id); a live run refetches after a sessionHost frame
+// (r.sessionSeq counts them), at most every 2 s. `seq` undefined (History, no frames): every open past 2 s asks again.
+const sessionsTabArgs = (st, runId, live, logLevel, seq, trays) => ({ runId, state: st, live, engine: st && st.runEngine, logLevel,
+  seq, trays, labelOf: st && st.stepper ? nodeLabelLookup(st.stepper) : (id) => id });
+
+/** The tab's buttons, delegated once per section: copy an id, a step's log, its sub-agent (the Agents tab). */
+function wireSessionsClicks(sec, ctxOf) {
+  if (sec.__sessionsWired) return;
+  sec.__sessionsWired = true;
+  sec.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('button[data-copy], button[data-transcript], button[data-log-exec], button[data-subagent]');
+    if (!b || !sec.contains(b)) return;
+    const ctx = ctxOf();
+    if (b.dataset.copy || b.dataset.transcript) {
+      copyText(b.dataset.copy || b.dataset.transcript).then((ok) => flashCopyBtn(b, ok ? 'Copied' : 'Copy failed'));
+    } else if (b.dataset.logExec) {
+      focusLogExecution(ctx, b.dataset.logExec, b.dataset.nodeId || '');
+    } else if (b.dataset.subagent) {
+      openDetailsTab(ctx, 'agents');
+    }
+  });
+}
+
+/** A Details tab of the open run page (Running, or History when `ctx.record`), if the level shows it: its pill's own
+ *  click (the address follows), then the focus on the pill, as a click on it leaves it. */
+function openDetailsTab(ctx, key) {
+  const r = ctx && ctx.run;
+  if (!r) return;
+  const screen = ctx.record ? (histDetailState && histDetailState.screen) : (runDetailState.runId === r.runId ? runDetailState.screen : null);
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const cell = tabs && tabs.cells.get(key);
+  if (!cell || !levelAtLeast(cell.tab.level || 'simple')) return;
+  cell.btn.click();
+  cell.btn.focus({ preventScroll: true });
+}
+
+function buildRdSessions(sec, ctx) {
+  const paint = (c) => {
+    const r = c.run;
+    // No id before the first state frame. The count is 0 before the first sessionHost frame: only a trace record is news,
+    // so a page that opened after the run's first frames (or a run without a host) does not poll on every frame.
+    // The trays are the run page's own decor (memoised per state frame): a card says what its tray says.
+    if (r && r.pipelineId) paintSessionsTab(sec, sessionsTabArgs(r, r.pipelineId, isLive(r), 'advanced', r.sessionSeq || 0, isGraphRun(r) ? runDecorFor(r).sessions : null));
+  };
+  wireSessionsClicks(sec, () => rdCtx(ctx.run));
+  paint(ctx);
+  sec.__update = paint;
+}
+
+function buildHdSessions(sec, record, data) {
+  wireSessionsClicks(sec, () => ({ run: data.state, record: hdCurrentRecord(record) }));
+  // History's Logs tab is Expert and exists only with a saved log. History gets no live frames: the report is the one
+  // fetched when the tab opened (a run still going shows it as live, and reopening the tab asks again).
+  const logs = Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log');
+  const trays = data.state && isGraphManifest(data.state.stepper) ? decorFromState(data.state, { live: false, now: 0 }).sessions : null;   // History's graph decor
+  paintSessionsTab(sec, sessionsTabArgs(data.state, record.id, !isTerminalStatus(data.state && data.state.status), logs ? 'expert' : null, undefined, trays));
 }
 
 function buildRdAgents(sec, ctx) {
@@ -35885,9 +35958,9 @@ function rdSrowValue(text) {
 // previews its content: `values[key]`, else the tab's own badge with a unit.
 const ACTIVITY_GROUPS = [
   ['Results', ['overview', 'diff', 'changes', 'artifacts', 'actions']],
-  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'agents']],
+  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'sessions', 'agents']],
 ];
-const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', agents: 'agent' };
+const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', sessions: 'session', agents: 'agent' };
 function rdActivityGroups(screen, values = {}) {
   const tabs = detailTabsOf(screen);
   if (!tabs) return [];
