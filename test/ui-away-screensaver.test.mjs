@@ -1,5 +1,5 @@
 // test/ui-away-screensaver.test.mjs — the away screensaver easter egg (ui/public/away-screensaver.mjs): it shows only
-// while Away mode, Keep awake, a focused window and 10 idle minutes all hold; the most pressing run or chat state
+// while Away mode, Keep awake, a focused window and 5 idle minutes all hold; the most pressing run or chat state
 // picks its line; and the input that wakes the window never reaches the page.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,9 +10,9 @@ import {
 
 const ON = { away: true, keepAwake: true, focused: true, idleMs: IDLE_MS };
 
-test('the easter egg is on by design, after 10 idle minutes', () => {
+test('the easter egg is on by design, after 5 idle minutes', () => {
   assert.equal(AWAY_SCREENSAVER, true);
-  assert.equal(IDLE_MS, 10 * 60 * 1000);
+  assert.equal(IDLE_MS, 5 * 60 * 1000);
 });
 
 test('shouldShow needs away, keep awake, a focused window and the idle time, all at once', () => {
@@ -85,7 +85,7 @@ function setup(state = {}) {
   };
 }
 
-test('it shows after 10 idle minutes and says what is going on', () => {
+test('it shows after 5 idle minutes and says what is going on', () => {
   const s = setup({ runs: { running: 2, done: 1 } });
   s.wait(IDLE_MS - 1000);
   assert.equal(s.ss.isShown(), false);
@@ -152,7 +152,7 @@ test('a key hides it without typing, and input restarts the idle clock', () => {
   assert.equal(s.ss.isShown(), false);
   s.doc.body.dispatchEvent(new s.win.MouseEvent('pointermove', { bubbles: true }));
   s.wait(IDLE_MS - 1000);
-  assert.equal(s.ss.isShown(), false, 'a mouse move restarts the 10 minutes');
+  assert.equal(s.ss.isShown(), false, 'a mouse move restarts the 5 minutes');
   s.done();
 });
 
