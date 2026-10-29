@@ -59,7 +59,7 @@ after(async () => {
 
 test('the in-process option is checked: a try runs without a project, on the draft or a version', async () => {
   const bad1 = await _testing.invokeStartRun({ projectDir: homeDir, prompt: 'x' }, null, { workflowTest: { use: 'draft' } });
-  assert.deepEqual([bad1.status, bad1.body.error], [400, 'a test try runs without a project']);
+  assert.deepEqual([bad1.status, bad1.body.error], [400, "a test try runs without a project, or in Worca's copy of one"]);
   const bad2 = await _testing.invokeStartRun({ noProject: true, prompt: 'x' }, null, { workflowTest: { use: 'live' } });
   assert.deepEqual([bad2.status, bad2.body.error], [400, 'a test try names the draft or a version number']);
 });

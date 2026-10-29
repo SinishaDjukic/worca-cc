@@ -13,3 +13,5 @@ export const submodulesText = (name) => `${name} holds other projects inside it 
 // P11 (not drawn) and the 5 MB limit (D53).
 export const START_GONE_TEXT = 'The start point of this example is no longer in the project. Pick a new start point.';
 export const CHANGES_TOO_BIG_TEXT = 'Your changes that are not committed are larger than 5 MB: commit them first, or leave them out.';
+// D55, board 35: why a test stopped before any step of a try.
+export const setupFailedText = (cmd) => `The setup step failed: ${cmd} ended with an error.`;

@@ -132,7 +132,9 @@ import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
-import { pretendServers, pretendLayer, noteSeenServers } from './workflow-tests/connectors.mjs';
+import { pretendServers, pretendLayer, noteSeenServers, CONNECTOR_CALLS_FILE } from './workflow-tests/connectors.mjs';
+import { runShellStep, tryShellEnv, writeTrySetup, TRY_SETUP_STAGE } from './workflow-tests/shell-step.mjs';
+import { setupFailedText } from '../shared/workflow-tests/project-text.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
 import { expandMcpDenyRules } from './mcp/deny.mjs';
@@ -1659,6 +1661,8 @@ export class RunHarness extends EventEmitter {
       // site anyway (belt-and-suspenders).
       if (!this.resumeOpts) this._kickoffTitleGeneration();
       this._checkAbort();
+      // Workflow tests 3a (D55): a project try's "Before each try, run", in its checkout, before any step.
+      if (this.opts.trySetup && this.workMode === 'git' && !this.isWorkspace) await this._runTrySetup();
 
       // 3b') Auto workflow (spec §5.3): the run row and the run root exist, so the
       // engine may now DECIDE the graph (classifier call, proposal question, reuse
@@ -2799,6 +2803,29 @@ export class RunHarness extends EventEmitter {
     for (const w of folderWarns) await this._recordRunWarning(w);
     await this._persist();
     this._emit('state', this.getState());
+  }
+
+  /** Workflow tests 3a (D55): "Before each try, run", in the try's checkout, before any step. A failure ends the run as an
+   *  error the runner reads as a setup failure (try-setup.json), never as the workflow's. */
+  async _runTrySetup() {
+    const { cmd, timeoutMs } = this.opts.trySetup;
+    const cwd = this.workDirs.get(this.members[0].projectKey) || this.runCwd || this.workDir;
+    this._setupStage(TRY_SETUP_STAGE);
+    const r = await runShellStep({ command: cmd, cwd, env: tryShellEnv({ logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE) }),
+      timeoutMs, signal: this.abort.signal });
+    if (r.ok) this._trySetupPaths = await this._untrackedDirs(cwd);
+    await writeTrySetup(this.pipeline.dir, { cmd, ok: r.ok, exitCode: r.exitCode, timedOut: r.timedOut, ms: r.ms, tail: r.tail });
+    await appendAudit(this.pipeline.dir, `Setup \`${cmd}\` ${r.ok ? 'finished' : 'failed'} in ${Math.round(r.ms / 1000)} s.`).catch(() => {});
+    if (r.ok) return;
+    this._checkAbort();   // a stop during the setup is a stop, not a setup failure
+    throw markTerminal(Object.assign(new Error(setupFailedText(cmd)), { code: 'TRY_SETUP_FAILED' }));
+  }
+
+  /** What a try's setup made that git would track (untracked, not ignored), folders collapsed, at most 200 paths. */
+  async _untrackedDirs(cwd) {
+    const r = await this._git(['-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '--directory', '-z'], { cwd });
+    if (!r.ok) return [];
+    return r.stdout.split('\0').filter(Boolean).map((p) => p.replace(/\/$/, '')).slice(0, 200);
   }
 
   // ── Folder runs (P1, CONTRACT §2), keyed by member (S23). Single project: the member record is state.branch. ──
@@ -5120,6 +5147,7 @@ export class RunHarness extends EventEmitter {
     this.branchInfos = new Map();                      // guard against a double teardown
     const retainedMembers = [];
     const at = new Date().toISOString();
+    let keptForChecks = false;   // 3a D43
     for (const m of this.members) {                              // the folder arm, per member (S23)
       if (this._memberWorkMode(m.projectKey) !== 'folder') continue;
       const t = await this._teardownFolderMember(m.projectKey);
@@ -5173,6 +5201,13 @@ export class RunHarness extends EventEmitter {
         this.workDirs.delete(key);
         continue;
       }
+      // Workflow tests 3a (D43): a project try keeps its checkout, and so its run root, until its checks have run; the runner
+      // removes both (project-copy.mjs removeTryCheckout). The commit above is on the try's branch in Worca's copy.
+      if (this.opts.keepCheckout === true) {
+        if (branchRecord) branchRecord.worktreeKept = true;
+        keptForChecks = true;
+        continue;
+      }
       // (5) remove the checkout. The branch is kept — except on a read-only Workspace scan
       // (D5), a workspace member this run never changed ("affected only"), and after a merge
       // back (the source now holds the same commit).
@@ -5203,7 +5238,7 @@ export class RunHarness extends EventEmitter {
     // Keep the scalar mirror coherent for late observers (never on a retained member).
     // P5: a pending Folder member (folder-apply) is no reason to leave a Git primary's mirror unstamped; a Folder primary has none.
     const commitRetained = retainedMembers.some((r) => (r.reason ?? RETAIN_REASONS.COMMIT_FAILED) === RETAIN_REASONS.COMMIT_FAILED);
-    if (!commitRetained && this.workMode === 'git' && this._memberWorkMode(this.members[0]?.projectKey) === 'git') this._mirrorPrimaryBranchTeardown();
+    if (!commitRetained && !keptForChecks && this.workMode === 'git' && this._memberWorkMode(this.members[0]?.projectKey) === 'git') this._mirrorPrimaryBranchTeardown();
     this.branchInfo = null;
     this.workDir = this.projectDir;
 
@@ -5257,6 +5292,8 @@ export class RunHarness extends EventEmitter {
       } else if (retainedMembers.length) {
         this._log('worktree', 'info',
           `Run root retained at ${this.runRoot} until ${retainedMembers.length} Folder project(s) are applied or discarded.`);
+      } else if (keptForChecks) {
+        this._log('worktree', 'info', `Run root kept at ${this.runRoot} until the test's checks have run.`);
       } else {
         const removal = await rmGuarded(this.runRoot, {
           worcaHome: worcaHome(), pipelineId: this.pipeline?.id,
@@ -5376,6 +5413,7 @@ export class RunHarness extends EventEmitter {
 
   /** Keep policy (issue #529, D10): re-create the checkout the teardown just removed. */
   async _keepCheckoutByPolicy() {
+    if (this.opts.workflowTest === true) return;   // 3a: a try's checkout belongs to its test, and a try never fetches
     if (this.workMode !== 'git') return;
     if (this._isWorkspaceScan() || this.state.status !== 'done' || !this.state.id) return;
     const { keepAfterRun } = await import('./checkout.mjs');   // lazy: no import cycle, no cost when unused
@@ -5403,6 +5441,7 @@ export class RunHarness extends EventEmitter {
 
   /** #620 (D9): after teardown the branch holds the run's final commit; check it against its fetched base. */
   async _checkBaseAfterRun() {
+    if (this.opts.workflowTest === true) return;   // 3a: a try's checkout belongs to its test, and a try never fetches
     if (this.workMode !== 'git') return;
     if (this._isWorkspaceScan() || !this.state.id || !['done', 'stopped', 'error'].includes(this.state.status)) return;
     const { afterRunBaseCheck } = await import('./base-conflicts.mjs');   // lazy, like checkout.mjs
@@ -7104,10 +7143,12 @@ export class RunHarness extends EventEmitter {
    */
   _excludePathspecs(projectKey) {
     const entries = this.injectedPaths?.[projectKey] ?? [];
-    if (!Array.isArray(entries) || !entries.length) return [];
-    return entries
+    // Workflow tests 3a (D55): what "Before each try, run" made is not the try's work. Absent on every other run.
+    const setup = Array.isArray(this._trySetupPaths) ? this._trySetupPaths.map((p) => `:(exclude)${p}`) : [];
+    if ((!Array.isArray(entries) || !entries.length) && !setup.length) return [];
+    return [...(Array.isArray(entries) ? entries : [])
       .filter((e) => e && e.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig')
-      .map((e) => `:(exclude)${e.path}`);
+      .map((e) => `:(exclude)${e.path}`), ...setup];
   }
 
   /**

@@ -338,6 +338,7 @@ import { CONNECTOR_MODES, recoverInterruptedTestRuns } from '../src/core/workflo
 import { registerWorkflowTestRoutes } from '../src/core/workflow-tests/routes.mjs';
 import { TRY_ANSWERED_BY } from '../src/core/workflow-tests/answers.mjs';
 import { pretendCopies } from '../src/core/workflow-tests/connectors.mjs';
+import { SETUP_TIMEOUT_MS } from '../src/core/workflow-tests/shell-step.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -422,7 +423,7 @@ import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, pr
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
-import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
+import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY, testCopyKeyOf } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
 import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
 import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs';
 import { whereOf } from '../src/shared/ask-where.mjs';
@@ -2505,7 +2506,19 @@ const startRunHandler = async (req, res) => {
     // Workflow tests (plans/workflow-tests-part2-plan.md D20–D23): a test try, set in-process by the test runner through
     // invokeStartRun only, never from HTTP. { use: 'draft' | n, connectors?: 'pretend' | 'real', onOrch?(orch, { runKey }) }.
     const workflowTest = req._workflowTest && typeof req._workflowTest === 'object' ? req._workflowTest : null;
-    if (workflowTest && body.noProject !== true) return badRequest(res, 'a test try runs without a project');
+    // 3a (D42): a project try runs in Worca's copy of the project it names (workflowTest.project.key), never in a person's
+    // folder; the copy is never a registered project, so the key travels in-process with it.
+    const tryProject = workflowTest && workflowTest.project && typeof workflowTest.project === 'object' ? workflowTest.project : null;
+    if (workflowTest && !(body.noProject === true
+      || (tryProject && typeof body.projectDir === 'string' && testCopyKeyOf(body.projectDir) === tryProject.key))) {
+      return badRequest(res, "a test try runs without a project, or in Worca's copy of one");
+    }
+    if (workflowTest && (body.sameAsSource === true || body.scheduledFor != null || body.repeat != null || body.after != null || body.workspaceId)) {
+      return badRequest(res, 'a test try starts now, on a branch of its own');
+    }
+    if (tryProject && tryProject.setupCmd != null && (typeof tryProject.setupCmd !== 'string' || /[\r\n]/.test(tryProject.setupCmd))) {
+      return badRequest(res, 'a test try names its setup command on one line');
+    }
     if (workflowTest && !(workflowTest.use === 'draft' || (Number.isInteger(workflowTest.use) && workflowTest.use > 0))) {
       return badRequest(res, 'a test try names the draft or a version number');
     }
@@ -2863,7 +2876,7 @@ const startRunHandler = async (req, res) => {
       onDiverged: body.syncOnDiverged === 'origin' || body.syncOnDiverged === 'fail' ? body.syncOnDiverged : null,  // schedules
     };
     // Scans are read-only (C10) and memory defrag is a reserved workflow: never sync them.
-    const syncAllowed = !scanTarget && !memoryScope;
+    const syncAllowed = !scanTarget && !memoryScope && !workflowTest;   // 3a: a try never syncs (Worca's copy has no remote)
 
     let orch, entry;
 
@@ -3086,6 +3099,7 @@ const startRunHandler = async (req, res) => {
       // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
       // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
       const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      if (workflowTest && workMode !== 'git') return badRequest(res, 'a project try needs git');
       // #693: a git run in a folder inside a repository it is not the top of would `git init` there (or act on the
       // parent). Refused before the mkdir, a row or a ticket; a missing path counts by its nearest existing ancestor.
       if (workMode === 'git') {
@@ -3181,7 +3195,7 @@ const startRunHandler = async (req, res) => {
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 });
       // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
       // overlay (D4): the checked runOverlay carries effort '' for model-only picks, which a New run save drops.
-      const runSetup = scanTarget || memoryScope ? null
+      const runSetup = scanTarget || memoryScope || workflowTest ? null
         : await runSetupOf({ ...body, workflowId, guardrailsId }, { projectDir });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
@@ -3229,6 +3243,11 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(runSetup ? { runSetup } : {}),
+        // 3a (D21, D43, D55): a project try is a hidden try like Part 2's. It keeps its checkout for its checks and runs its
+        // setup before any step. Its key is the real project's: projectKey() answers it for the copy (D52).
+        ...(workflowTest ? { workflowUse: workflowTest.use, workflowTest: true, noMemory: true, titleLocked: true,
+          testConnectors: workflowTest.connectors === 'real' ? 'real' : 'pretend', keepCheckout: true,
+          ...(tryProject && tryProject.setupCmd ? { trySetup: { cmd: tryProject.setupCmd, timeoutMs: SETUP_TIMEOUT_MS } } : {}) } : {}),
       });
 
       entry = {
@@ -3243,6 +3262,7 @@ const startRunHandler = async (req, res) => {
         tags,
         events: [],
         pendingQuestion: null,
+        ...(workflowTest ? { isTest: true } : {}),
       };
     }
 
