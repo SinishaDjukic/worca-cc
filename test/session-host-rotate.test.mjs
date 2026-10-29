@@ -92,9 +92,13 @@ test('M-2 — a turn cut by --max-budget-usd exits 1 after its result: booked, t
 
 test('REVIEW FOCUS 2 / C30 — degrade after repeated watchdog failures: the next attempt runs as a plain spawn', async () => {
   const plain = [];
-  const { port, hosts, host } = build({}, { degradeAfter: 3 }, { plainRun: async (o) => { plain.push(o); return { text: 'PLAIN', exitCode: 0 }; } });
+  const saved = [];
+  const { port, hosts, host } = build({ saveSnapshot: (sid, snap) => saved.push(snap) }, { degradeAfter: 3 }, { plainRun: async (o) => { plain.push(o); return { text: 'PLAIN', exitCode: 0 }; } });
   mockT.behave = () => 'no-dispatch';
-  for (let i = 0; i < 3; i += 1) await assert.rejects(host.run(mockMember('x:n_a:1'), member('n_a')), (e) => e.code === 'SESSION_HOST_NO_DISPATCH');
+  for (let i = 1; i <= 3; i += 1) {
+    await assert.rejects(host.run(mockMember('x:n_a:1'), member('n_a')), (e) => e.code === 'SESSION_HOST_NO_DISPATCH');
+    if (i < 3) assert.equal(saved.at(-1).consecutiveWatchdog, i, 'the snapshot handed over with the booking counts this turn (a crash degrades on time)');
+  }
   const deg = port.records.find((r) => r.kind === 'degrade');
   assert.deepEqual([deg.from, deg.to, deg.reason], ['subagents', 'separate', 'the main agent did not dispatch']);
   assert.ok(port.audits.some((l) => /runs as separate sessions — the main agent did not dispatch/.test(l)));

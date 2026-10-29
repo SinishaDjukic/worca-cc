@@ -429,10 +429,13 @@ export class SessionHost {
   }
 
   _degrade(reason) {
-    this._bookOpenCut();                                                       // no host turn follows to carry it (C9)
-    this._write('degrade', { from: this.mode, to: 'separate', reason });   // its audit line comes from the port (sessionAuditLine)
+    const from = this.mode;
+    // The mode flips first: the snapshot each estimate booking hands over then already says separate, so a crash that loses
+    // the degrade record never restores the session on the host whose cumulative holds the cut (Task 47's crash seam).
     this.mode = 'separate';
     this.degradeReason = reason;
+    this._bookOpenCut();                                                       // no host turn follows to carry it (C9)
+    this._write('degrade', { from, to: 'separate', reason });              // its audit line comes from the port (sessionAuditLine)
   }
 
   /** The attempt number is taken when the dispatch STARTS, so a cancelled waiter consumes none (C2). */
@@ -654,6 +657,9 @@ export class SessionHost {
       const rc = booking.reconcile || { ok: true, checks: [] };
       this._write('reconcile', { turnId, dispatchId, ok: rc.ok !== false, checks: Array.isArray(rc.checks) ? rc.checks : [] });
     }
+    // C30: the watchdog streak counts this turn before the snapshot is taken, so a crash after it degrades on time.
+    if (outcome === 'watchdog') this.consecutiveWatchdog += 1;
+    else if (outcome === 'accept' || outcome === 'member-error') this.consecutiveWatchdog = 0;
     // C7: the full ref replaces the bind-time one. The snapshot goes first, so the persist after this turn's booking writes it
     // with the rows (Task 47: the trace's appends lag both; a crash then never holds again a cut the rows already carried).
     this._saveSnapshot();
@@ -664,16 +670,13 @@ export class SessionHost {
       // A turn a 'paused' close cut answers with the close's refusal (the pause sentinel), as its waiters do.
       case 'abort': throw cutByClose ? this._refusal() : err?.name === 'AbortError' ? err : abortError();
       case 'accept':
-        this.consecutiveWatchdog = 0;
         if (err) this._log('warn', 'the main agent failed after the step finished; the step is kept', attr);
         emit({ type: 'result', text: done.report, sessionBooked: true });     // the harness logs it and books nothing (Task 42)
         return { text: done.report, exitCode: 0 };
       case 'member-error':
-        this.consecutiveWatchdog = 0;
         // C41: a 529 retries as rate_limit, a usage limit pauses as usage_limit with its reset time, exactly as ungrouped.
         throw Object.assign(new Error(done.errorText || 'the step failed'), { errorClass: classifyError(done.errorText || '') });
       case 'watchdog': {
-        this.consecutiveWatchdog += 1;
         const e = new SessionHostError(verdict.code, WATCHDOG_TEXT[verdict.code] || 'the main agent did not dispatch as told', verdict.detail || {});
         // C30: a main agent that keeps misbehaving degrades its session; this dispatch still fails, its retry runs plain.
         if (this.consecutiveWatchdog >= this.limits.degradeAfter && this.mode !== 'separate') this._degrade('the main agent did not dispatch');

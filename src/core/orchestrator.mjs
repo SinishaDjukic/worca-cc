@@ -897,9 +897,6 @@ export class GraphOrchestrator extends RunHarness {
       ? createSessionHosts({ specs: this._sessionSpecs, decisions: this._sessionDecisions, port: this._sessionPort(),
         plainRun: (o) => (executorTesting.runClaude || runClaude)(o), restore: this._sessionRestore ?? null })
       : null;
-    // C36 + C9 (Task 47): under the kill switch no host will ever carry a cut the last run held, so it is booked now, as an
-    // estimate on the engine it was spent on; the snapshots, without it, ride on in this run's resume points.
-    if (this._sessionsDisabled && this._sessionRestore) this._sessionRestore = this._bookHeldCuts(this._sessionRestore);
 
     const sched = createScheduler({
       template: this._schedulerTemplate(),
@@ -948,6 +945,9 @@ export class GraphOrchestrator extends RunHarness {
       // After the scheduler returned (on Stop or a failure it does not wait for running steps; close() lets a turn in
       // flight settle first) and before a pause builds its resume point, so the snapshot already says 'paused'.
       if (this._sessions) await this._closeSessions(outcome, runErr);
+      // C36 + C9 (Task 47): the kill switch's counterpart of close(): the held cuts ride on in this run's points, and only a
+      // run that ends un-paused books them.
+      else if (this._sessionsDisabled && this._sessionRestore && this._sessionOutcome(outcome, runErr) !== 'paused') this._bookHeldCuts();
     }
 
     if (outcome === 'error') {
@@ -977,20 +977,30 @@ export class GraphOrchestrator extends RunHarness {
     return 'done';
   }
 
-  /** Session groups (Task 47; C36, C9): books each held cut of the restored snapshots as an estimate on its own row (on the
-   *  engine it was spent on) and answers the snapshots without it. Writes no trace and builds no host (the kill switch). */
-  _bookHeldCuts(restore) {
+  /** Session groups (Task 47; C36, C9): under the kill switch no host carries a held cut, so a run that ends un-paused books
+   *  each one as an estimate on its own row (on the engine it was spent on). A paused run keeps them in its points instead: a
+   *  later resume with sessions on resumes the host whose cumulative holds them, and its next Δ carries them. The snapshots
+   *  without the cuts reach the point before the bookings persist the rows, so the two never disagree (the crash seam).
+   *  Writes no trace and builds no host; never throws (it runs in _engineRun's `finally`). */
+  _bookHeldCuts() {
+    const held = [];
     const out = {};
-    for (const [sid, S] of Object.entries(restore)) {
+    for (const [sid, S] of Object.entries(this._sessionRestore)) {
       const c = S && typeof S === 'object' && S.openCut && typeof S.openCut === 'object' ? S.openCut : null;
       for (const p of c ? (Array.isArray(c.parts) ? c.parts : [c]) : []) {
         if (!p || typeof p !== 'object' || !Number.isFinite(p.cutUsd)) continue;
-        this._bookSessionTurn({ sid, hostEpoch: S.hostEpoch ?? null, hostSessionId: S.hostSessionId ?? null, turnId: p.turnId ?? null,
+        held.push({ sid, hostEpoch: S.hostEpoch ?? null, hostSessionId: S.hostSessionId ?? null, turnId: p.turnId ?? null,
           dispatchId: p.dispatchId ?? null, stepKey: p.executionId, nodeId: p.nodeId ?? null, cutEstimateUsd: p.cutUsd, cutEngine: S.engine ?? null });
       }
       out[sid] = c ? { ...S, openCut: null } : S;
     }
-    return out;
+    this._sessionRestore = out;
+    if (this.state.resumePoint) this.state.resumePoint = { ...this.state.resumePoint, sessionHosts: out };
+    for (const b of held) {
+      try { this._bookSessionTurn(b); } catch (err) {
+        this._log('orchestrator', 'warn', `session ${b.sid}: booking ${b.turnId} failed: ${err?.message || err}`, { session: b.sid });
+      }
+    }
   }
 
   /** Session groups (Task 45): close every SessionHost once, with how the run ended. */
@@ -2986,6 +2996,9 @@ export class GraphOrchestrator extends RunHarness {
   async _restoreFromResumePoint(rp) {
     this._resumeSnapshot = rp.snapshot || null;
     this._graphSnapshot = rp.snapshot || null;
+    // Session groups (Task 46): the hosts' snapshots for createSessionHosts' restore (Task 47) and the re-attach rule (C42).
+    // Before any preflight: a re-preflight that pauses again builds its point from these fields (_engineLastPoint).
+    this._sessionRestore = rp.sessionHosts && typeof rp.sessionHosts === 'object' ? rp.sessionHosts : null;
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
     const pr = rp.planRevise;
     this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
@@ -3024,8 +3037,6 @@ export class GraphOrchestrator extends RunHarness {
         .filter((s) => s.status === 'paused' && s.sessionId)
         .map((s) => [s.key, s.sessionId]),
     );
-    // Session groups (Task 46): the hosts' snapshots for createSessionHosts' restore (Task 47) and the re-attach rule (C42).
-    this._sessionRestore = rp.sessionHosts && typeof rp.sessionHosts === 'object' ? rp.sessionHosts : null;
   }
 }
 

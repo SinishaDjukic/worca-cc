@@ -423,16 +423,42 @@ test('v3 — an engine switch resets what the old engine earned: the degrade, th
   assert.deepEqual([sep.host.mode, sep.host.degradeReason], ['separate', 'Codex has no sub-agents here']);
 });
 
-test('v4 — C36 + C9: a kill-switch resume books the held cut as an estimate; its resume point keeps the snapshots, and a later run with sessions continues them', { timeout: 180000 }, async () => {
-  // A priced main agent, so the held cut is a real figure (the mock's default model has no price).
+/** wf_sess_resume with a priced main agent, so a held cut is a real figure (the mock's default model has no price). */
+async function writePricedWorkflow(id) {
   const t = structuredClone(SEED_TEMPLATES.find((x) => x.id === 'wf_quick-fix'));
   for (const n of ['n_plan', 'n_impl', 'n_review']) t.nodes.find((x) => x.id === n).config.session = SID;
   t.sessions = { [SID]: { hostModel: 'claude-haiku-4-5' } };
-  await writeGraphWorkflow({ ...t, id: 'wf_sess_kill_cut', name: 'Sess kill cut' });
+  await writeGraphWorkflow({ ...t, id, name: id });
+}
+/** Every dollar the session's trace booked (member shares, carried shares, estimates and the main agent's overhead). */
+const tracedUsd = (records) => records.filter((r) => r.kind === 'cost').reduce((a, r) => a + (r.memberUsd ?? 0) + (r.hostOverheadUsd ?? 0), 0);
+const spentUsd = () => [...mockT.spent.values()].reduce((a, x) => a + x, 0);
+
+test('a resume that pauses again in its re-preflight keeps every session snapshot; the next resume continues the trace and carries the cut', { timeout: 180000 }, async () => {
+  await writePricedWorkflow('wf_sess_repause');
+  const { orch, id } = await pauseMidTurn({ workflowId: 'wf_sess_repause', nodeId: 'n_impl' });
+  const hostsBefore = readPipelineForResume(id).resumePoint.sessionHosts;
+  const cut = hostsBefore[SID].openCut;
+  assert.ok(cut?.cutUsd > 0, 'the paused turn holds a priced cut');
+  const o2 = createOrchestrator({ projectDir: orch.projectDir, workflowId: 'wf_sess_repause', auto: true, claude: { mock: true }, resume: readPipelineForResume(id) });
+  o2._preflightMediaTools = async () => { throw new Error('ffmpeg is not installed'); };   // removed while the run sat paused
+  assert.equal((await o2.resume()).status, 'paused');
+  assert.deepEqual(readPipelineForResume(id).resumePoint.sessionHosts, hostsBefore, 'the re-pause keeps every snapshot, the held cut too');
+  const o3 = createOrchestrator({ projectDir: orch.projectDir, workflowId: 'wf_sess_repause', auto: true, claude: { mock: true }, resume: readPipelineForResume(id) });
+  assert.equal((await o3.resume()).status, 'done');
+  const { records } = await readTrace(tracePath(o3.getState().pipelineDir, SID));
+  assert.equal(records.filter((r) => r.kind === 'open').length, 1, 'the trace is continued, never opened again');
+  const turns = records.filter((r) => r.kind === 'turn_start').map((r) => r.turnId);
+  assert.equal(new Set(turns).size, turns.length, 'turn ids stay unique (C31)');
+  assert.equal(records.filter((r) => r.kind === 'cost' && r.turnId === cut.turnId && r.carriedBy).length, 1, 'the cut is carried, once (C9)');
+  assert.ok(Math.abs(tracedUsd(records) - spentUsd()) < 1e-9, `every dollar spent is booked once: ${tracedUsd(records)} vs ${spentUsd()}`);
+});
+
+test('v4 — C36 + C9: a kill-switch resume that pauses keeps the held cut in its resume point, and a later run with sessions carries it once', { timeout: 180000 }, async () => {
+  await writePricedWorkflow('wf_sess_kill_cut');
   const { orch, id } = await pauseMidTurn({ workflowId: 'wf_sess_kill_cut', nodeId: 'n_impl' });
   const S = readPipelineForResume(id).resumePoint.sessionHosts[SID];
   assert.ok(S.openCut?.cutUsd > 0, 'the paused turn holds a priced cut');
-  const before = readPipelineForResume(id).steps.find((x) => x.key === 'x:n_impl:1').costUsd || 0;
   process.env.WORCA_SESSIONS_DISABLE = '1';
   const o2 = createOrchestrator({ projectDir: orch.projectDir, workflowId: 'wf_sess_kill_cut', auto: true, claude: { mock: true }, resume: readPipelineForResume(id) });
   const booked = [];
@@ -442,10 +468,8 @@ test('v4 — C36 + C9: a kill-switch resume books the held cut as an estimate; i
   execT.runClaude = async (opts) => { if (!paused) { paused = true; queueMicrotask(() => o2.pause()); } return runClaude(opts); };
   assert.equal((await o2.resume()).status, 'paused');
   execT.runClaude = null;
-  assert.deepEqual(booked.map((b) => [b.stepKey, b.turnId, b.cutEstimateUsd, b.cutEngine]), [['x:n_impl:1', S.openCut.turnId, S.openCut.cutUsd, 'claude']],
-    'no host will carry it: booked once, as an estimate, on its own row');
-  assert.ok((readPipelineForResume(id).steps.find((x) => x.key === 'x:n_impl:1').costUsd || 0) >= before + S.openCut.cutUsd - 1e-9, 'on the cut member\'s row');
-  assert.deepEqual(readPipelineForResume(id).resumePoint.sessionHosts[SID], { ...S, openCut: null }, 'the snapshot rides on without the booked cut');
+  assert.deepEqual(booked, [], 'a paused run books nothing: a later run with sessions resumes the host whose cumulative holds the cut');
+  assert.deepEqual(readPipelineForResume(id).resumePoint.sessionHosts[SID], S, 'the snapshot rides on with the held cut');
   delete process.env.WORCA_SESSIONS_DISABLE;
   const o3 = createOrchestrator({ projectDir: orch.projectDir, workflowId: 'wf_sess_kill_cut', auto: true, claude: { mock: true }, resume: readPipelineForResume(id) });
   assert.equal((await o3.resume()).status, 'done');
@@ -454,7 +478,29 @@ test('v4 — C36 + C9: a kill-switch resume books the held cut as an estimate; i
   assert.ok(records.some((r) => r.kind === 'resume'));
   const turns = records.filter((r) => r.kind === 'turn_start').map((r) => r.turnId);
   assert.equal(new Set(turns).size, turns.length, 'turn ids stay unique (C31)');
-  assert.equal(records.filter((r) => r.kind === 'cost' && r.turnId === S.openCut.turnId).length, 0, 'the booked cut is never carried again');
+  assert.equal(records.filter((r) => r.kind === 'cost' && r.turnId === S.openCut.turnId && r.carriedBy).length, 1, 'the next resumed turn carries the cut, once (C9)');
+  assert.ok(Math.abs(tracedUsd(records) - spentUsd()) < 1e-9, `every dollar spent is booked once: ${tracedUsd(records)} vs ${spentUsd()}`);
+});
+
+test('C36 + C9 — a kill-switch resume that ends books the held cut once, as an estimate on its own row: every dollar spent is booked once', { timeout: 180000 }, async () => {
+  await writePricedWorkflow('wf_sess_kill_end');
+  const { orch, id } = await pauseMidTurn({ workflowId: 'wf_sess_kill_end', nodeId: 'n_impl' });
+  const rp = readPipelineForResume(id);
+  const S = rp.resumePoint.sessionHosts[SID];
+  assert.ok(S.openCut?.cutUsd > 0, 'the paused turn holds a priced cut');
+  const before = rp.steps.find((x) => x.key === 'x:n_impl:1').costUsd || 0;
+  process.env.WORCA_SESSIONS_DISABLE = '1';
+  const o2 = createOrchestrator({ projectDir: orch.projectDir, workflowId: 'wf_sess_kill_end', auto: true, claude: { mock: true }, resume: rp });
+  const booked = [];
+  const book = o2._bookSessionTurn.bind(o2);
+  o2._bookSessionTurn = (b) => { booked.push(b); return book(b); };
+  assert.equal((await o2.resume()).status, 'done');
+  assert.deepEqual(booked.map((b) => [b.stepKey, b.turnId, b.cutEstimateUsd, b.cutEngine]), [['x:n_impl:1', S.openCut.turnId, S.openCut.cutUsd, 'claude']],
+    'no host will carry it: booked once, as an estimate, on its own row');
+  assert.ok((o2.getState().steps.find((x) => x.key === 'x:n_impl:1').costUsd || 0) >= before + S.openCut.cutUsd - 1e-9, 'on the cut member\'s row');
+  const { records } = await readTrace(tracePath(o2.getState().pipelineDir, SID));
+  const estimates = booked.reduce((a, b) => a + b.cutEstimateUsd, 0);
+  assert.ok(Math.abs(tracedUsd(records) + estimates - spentUsd()) < 1e-9, `every dollar spent is booked once: ${tracedUsd(records)} + ${estimates} vs ${spentUsd()}`);
 });
 
 // ── v4: the crash seam's other half — the rows run ahead of the trace, so the snapshot rides with every booking ──
@@ -509,6 +555,36 @@ test('v4 — the crash seam (C9): a cut booked as an estimate (a rotate) is neve
   assert.equal(h2.openCut, null);
   await h2.run(mockMember('x:n_b:1'), member('n_b', 1));
   assert.equal(p2.booked.filter((b) => Number.isFinite(b.cutEstimateUsd)).length, 0, 'the estimate is booked once');
+});
+
+test('C30 + C9 — a runtime degrade hands over a snapshot that already says separate before it books the held cut: a crash that lost the degrade never books the cut twice', async () => {
+  const saved = [];
+  const port = fakePort({ saveSnapshot: (sid, snap) => saved.push({ snap, booked: port.booked.length }) });
+  const limits = { degradeAfter: 1 };
+  const priced = spec(['n_a', 'n_b'], { hostModel: 'claude-haiku-4-5' });                // a priced main agent: the cut is a real figure
+  const host = createSessionHosts({ specs: [priced], decisions: decisions(), port, transport: runMockSession, limits }).hosts.get(SID_V2);
+  await host.run(mockMember('x:n_a:1'), member('n_a', 1));
+  mockT.behave = ({ turn }) => (turn === 2 ? 'two-dispatch' : null);                    // killed by the watchdog: its spend is held as a cut
+  await host.run(mockMember('x:n_b:1'), member('n_b', 1)).catch(() => {});
+  mockT.behave = null;
+  await host.trace.flush();
+  assert.equal(host.mode, 'separate', 'the watchdog degraded the session');
+  const i = port.booked.findIndex((b) => Number.isFinite(b.cutEstimateUsd));
+  const at = saved.filter((x) => x.booked === i).at(-1);                          // the last one before the estimate was booked
+  assert.ok(i >= 0 && port.booked[i].cutEstimateUsd > 0 && at, 'the degrade booked the held cut, and handed a snapshot over first');
+  assert.deepEqual([at.snap.mode, at.snap.degradeReason, at.snap.openCut], ['separate', 'the main agent did not dispatch', null],
+    'the rows that hold the estimate persist with a snapshot that says the session degraded');
+  const recs = readTraceSync(tracePath(port.pipelineDir, SID_V2)).records;
+  assert.ok(recs.findIndex((r) => r.kind === 'cost' && r.cut) < recs.findIndex((r) => r.kind === 'degrade'), 'the trace still books the cut before it says degrade');
+  loseTraceFrom(tracePath(port.pipelineDir, SID_V2), (r) => r.kind === 'cost' && r.cut);   // the crash: the estimate's cost and the degrade lost
+  const plain = [];
+  const p2 = fakePort({ pipelineDir: port.pipelineDir });
+  const h2 = createSessionHosts({ specs: [priced], decisions: decisions(), port: p2, transport: runMockSession, limits,
+    plainRun: async (o) => { plain.push(o); return { text: 'P', exitCode: 0 }; }, restore: { [SID_V2]: { ...at.snap, status: 'running' } } }).hosts.get(SID_V2);
+  assert.deepEqual([h2.mode, h2.degradeReason, h2.openCut], ['separate', 'the main agent did not dispatch', null], 'restored degraded, the cut not held again');
+  assert.equal((await h2.run(mockMember('x:n_b:1'), member('n_b', 1))).text, 'P');
+  assert.equal(plain.length, 1, 'the retry runs plain, never on the host whose cumulative holds the cut');
+  assert.equal(p2.booked.length, 0, 'nothing booked twice');
 });
 
 test('v4 — the crash seam, harness side: a session\'s snapshot joins a resume point that carries sessionHosts, nothing else', () => {
