@@ -299,7 +299,7 @@ test('fix 3: escape-encoded printf / echo -e into a shell, expansion-named forge
     assert.equal(guardDecision(c), null, c);
   }
   // 2. An expansion-named command with a forge verb first, or a data flag / httpie write method with a URL.
-  for (const c of ['"$GH" pr create', '$GH issue create', '$GLAB mr create', '"$GH" release create v1', '$GH api repos/x/y', '"$GH" --repo x/y pr create',
+  for (const c of ['"$GH" pr create', '$GH issue create', '$GLAB mr create', '"$GH" release create v1', '$GH api -X POST repos/x/y', '"$GH" --repo x/y pr create',
     '"$CURL" --data x https://e.x', '"$CURL" --json "{}" https://e.x', '"$CURL" -d a=1 https://e.x', '"$CURL" -F f=@x https://e.x', '$C -T f https://e.x',
     '$H POST https://e.x a=1']) assert.equal(hit(c), 'shell|unreadable', c);
   for (const c of ['"$GH" pr create', '& $env:GH pr create', '& $gh issue comment 1 --body x']) assert.equal(ps(c), 'shell|unreadable', c);
@@ -381,6 +381,82 @@ test('fix 4: more forge verbs for an expansion-named gh / glab', () => {
   for (const c of ['$GH gist create f.txt', '"$GH" gist create f.txt', '$GLAB snippet create f', '$GH secret set X', '$GH variable set X', '$GH workflow run ci.yml',
     '$GH label create bug', '"$GH" --repo x/y gist create f']) assert.equal(guardDecision(c)?.tool, 'unreadable', c);
   for (const c of ['$PY gist.py', '$TOOL labels', '"$NODE" workflow.js']) assert.equal(guardDecision(c), null, c);
+});
+
+test('fix 5: hand-offs into a shell: $( ) / backticks into eval, sh -c, a here-string or the command word; xargs -I and xargs sh -c', () => {
+  const hit = (c) => { const d = guardDecision(c); return d ? `${d.server}|${d.tool}` : null; };
+  const enc = "printf '\\x67\\x69\\x74\\x20\\x70\\x75\\x73\\x68'";   // git push, escape-encoded
+  const HITS = [
+    [`eval "$(${enc})"`, 'git|push'],
+    [`eval $(${enc})`, 'git|push'],
+    [`sh -c "$(${enc})"`, 'git|push'],
+    [`bash -lc "\`${enc}\`"`, 'git|push'],
+    [`sh <<< "$(${enc})"`, 'git|push'],
+    [`$(${enc}) origin main`, 'git|push'],
+    ['$(echo git) push origin', 'git|push'],
+    [`"$(printf 'g\\x68')" pr create`, 'GitHub CLI|pr create'],
+    [`${enc} | xargs sh -c`, 'git|push'],
+    [`${enc} | xargs -I{} sh -c {}`, 'git|push'],
+    ['echo "git push" | xargs sh -c', 'git|push'],
+    ['echo "git push" | xargs -I{} sh -c "{}"', 'git|push'],
+    ['echo "git push" | xargs -I % bash -c %', 'git|push'],
+    ['echo push | xargs -I{} git {}', 'git|push'],
+    ['echo git | xargs -I{} {} push', 'git|push'],
+    ['echo git | xargs -i {} push origin', 'git|push'],
+    ['printf "origin\\n" | xargs -I{} git push {} main', 'git|push'],
+    // escape-encoded text that runs and names nothing is still unreadable
+    [`eval "$(printf '\\x68\\x69')"`, 'shell|unreadable'],
+    [`sh -c "$(printf '\\x68\\x69')"`, 'shell|unreadable'],
+    [`$(printf '\\x68\\x69')`, 'shell|unreadable'],
+    [`sh <<< "$(printf '\\x68\\x69')"`, 'shell|unreadable'],
+    ["printf '\\x68\\x69' | xargs sh -c", 'shell|unreadable'],
+    ['cat cmds.txt | xargs -I{} sh -c "git {}"', 'shell|unreadable'],
+    ['cat words.txt | xargs git', 'shell|unreadable'],
+    ['cat words.txt | xargs -I{} {} push', 'shell|unreadable'],
+  ];
+  for (const [c, want] of HITS) assert.equal(hit(c), want, c);
+  const MISSES = [
+    `RED="$(printf '\\033[31m')"; echo "$RED" done`, `echo "$(${enc})" > notes.txt`, 'eval "$(ssh-agent -s)"', 'sh -c "$(echo npm test)"',
+    'echo "npm test" | xargs sh -c', 'echo a b | xargs -I{} echo {}', 'git ls-files | xargs -I{} git add {}', 'echo hi | xargs sh -c "echo $0"',
+    'cat files.txt | xargs -I{} cp {} out/', 'x=$(git rev-parse HEAD); echo $x', 'echo $(date)', 'cat files.txt | xargs rm -f',
+    'find . -name "*.log" | xargs rm', 'git diff --name-only | xargs git add', 'cat files.txt | xargs -I{} git checkout -- {}',
+  ];
+  for (const c of MISSES) assert.equal(guardDecision(c), null, c);
+});
+
+test('fix 5: forge verbs need the verb first and a forge action (or api with a write); non-forge tools pass', () => {
+  for (const c of ['$GH pr create', '$GH gist create f.txt', '$GLAB mr create', '"$GH" -R x/y issue comment 1', '$GH api -X POST repos/x/y/issues', '$GH api --method=DELETE x',
+    '$GH api repos/x/y/issues -f title=t', '$GH api graphql -F query=@q.graphql', '$GLAB release upload v1 f']) assert.equal(guardDecision(c)?.tool, 'unreadable', c);
+  // `$MAKE release` passes (decision: a bare verb with no forge action names no send).
+  for (const c of ['$MAKE release', '$KUBECTL label pod x a=b', '$HELM repo update', '"$DOCKER" secret ls', '"$PY" -m api', '"$CARGO" workflow', '$GH api repos/x/y',
+    '$GH api -X GET repos/x/y', '$GH pr list', '$GH pr view 1', '$KUBECTL create secret generic x', '$HELM repo add x https://charts.example']) {
+    assert.equal(guardDecision(c), null, c);
+  }
+});
+
+test('fix 5: the token families: forge / CI and publish-only always stripped; install-side kept for the setup only', () => {
+  const forge = ['GH_PAT', 'GITHUB_PAT', 'GL_TOKEN', 'GITEA_TOKEN', 'BITBUCKET_TOKEN', 'BITBUCKET_APP_PASSWORD', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN',
+    'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_RUNTIME_TOKEN', 'gh_pat'];
+  const publish = ['CARGO_REGISTRY_TOKEN', 'TWINE_PASSWORD', 'TWINE_USERNAME', 'UV_PUBLISH_TOKEN', 'UV_PUBLISH_PASSWORD', 'GEM_HOST_API_KEY', 'HELM_REGISTRY_PASSWORD',
+    'DOCKER_AUTH_CONFIG', 'POETRY_PYPI_TOKEN_PYPI', 'poetry_pypi_token_testpypi'];
+  const install = ['NPM_TOKEN', 'YARN_NPM_AUTH_TOKEN', 'YARN_NPM_AUTH_IDENT', 'npm_config_//r.example/:_password', 'npm_config_//r.example/:username',
+    'NPM_CONFIG_USERNAME', 'npm_config_password', 'npm_config__authToken', 'CARGO_REGISTRIES_MYREG_TOKEN', 'POETRY_HTTP_BASIC_MYREPO_PASSWORD'];
+  for (const k of [...forge, ...publish, ...install]) assert.equal(isTryStrippedKey(k), true, `stripped: ${k}`);
+  for (const k of [...forge, ...publish]) assert.equal(isTryStrippedKey(k, { keepRegistryAuth: true }), true, `the setup too: ${k}`);
+  for (const k of install) assert.equal(isTryStrippedKey(k, { keepRegistryAuth: true }), false, `the setup keeps: ${k}`);
+  for (const k of ['GITHUB_ACTIONS', 'CARGO_HOME', 'CARGO_REGISTRIES_MYREG_INDEX', 'POETRY_HTTP_BASIC_MYREPO_USERNAME', 'POETRY_VIRTUALENVS_IN_PROJECT',
+    'npm_config_user_agent', 'NPM_CONFIG_REGISTRY', 'UV_INDEX_URL', 'DOCKER_HOST', 'HELM_REGISTRY_CONFIG', 'TWINE_REPOSITORY_URL']) {
+    assert.equal(isTryStrippedKey(k), false, `kept: ${k}`);
+  }
+  const base = { PATH: '/usr/bin', WSLENV: 'TWINE_PASSWORD:YARN_NPM_AUTH_TOKEN:GL_TOKEN:FOO', TWINE_PASSWORD: 'p', YARN_NPM_AUTH_TOKEN: 'y', GL_TOKEN: 'g',
+    CARGO_REGISTRIES_MYREG_TOKEN: 'c', POETRY_PYPI_TOKEN_PYPI: 'pp' };
+  const setup = withTryGuardEnv(base, { logFile: 'f', keepRegistryAuth: true }, { home, platform: 'win32' });
+  assert.deepEqual([setup.TWINE_PASSWORD, setup.GL_TOKEN, setup.POETRY_PYPI_TOKEN_PYPI, setup.YARN_NPM_AUTH_TOKEN, setup.CARGO_REGISTRIES_MYREG_TOKEN], [undefined, undefined, undefined, 'y', 'c']);
+  assert.deepEqual(setup.WSLENV.split(':').filter((e) => /^(TWINE|YARN|GL_|FOO)/.test(e)), ['YARN_NPM_AUTH_TOKEN', 'FOO']);
+  const agent = withTryGuardEnv(base, { logFile: 'f' }, { home, platform: 'win32' });
+  assert.deepEqual([agent.TWINE_PASSWORD, agent.GL_TOKEN, agent.YARN_NPM_AUTH_TOKEN, agent.CARGO_REGISTRIES_MYREG_TOKEN], [undefined, undefined, undefined, undefined]);
+  assert.deepEqual(agent.WSLENV.split(':').filter((e) => /^(TWINE|YARN|GL_|FOO)/.test(e)), ['FOO']);
+  assert.equal(composeSpawnEnv({ overlay: { TWINE_PASSWORD: 'p' } }).env.TWINE_PASSWORD, 'p', 'a normal spawn keeps them');
 });
 
 test('task 5b: WSL, Git Bash cmd //c and nested re-reads are seen through', () => {

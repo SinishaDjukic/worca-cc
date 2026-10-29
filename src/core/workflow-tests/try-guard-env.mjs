@@ -101,11 +101,18 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * - gh / glab / az found some other way (a script's spawn('gh') skips .cmd on Windows): empty config, so no sign-in.
  * - Windows: WSLENV carries the git settings and the empty sign-in folders into WSL (its own git and gh).
  * - WORCA_TRY_GUARD_JSON=1 only with `tryGuard.structuredDeny` (a CLI at or above TRY_GUARD_MIN_CLAUDE).
- * - No forge or registry token (TRY_STRIPPED_KEYS, npm_config_*_auth*), and none forwarded through WSLENV. The setup
- *   step ("Before each try, run") alone passes `tryGuard.keepRegistryAuth`: it keeps the registry tokens (NPM_TOKEN,
- *   NODE_AUTH_TOKEN, npm_config_*_auth*), never the forge ones. Setup is trusted: it is the person's own command and runs
- *   before the agent changed anything; a setup command that itself publishes is the person's own choice. The agents and
- *   the checks (the command check, Library scripts) get the full strip: by then the agent may have changed scripts.
+ * - Tokens stripped, any spelling, never forwarded through WSLENV (isTryStrippedKey):
+ *   forge / CI: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN, GH_PAT, GITHUB_PAT, GITLAB_TOKEN,
+ *   GLAB_TOKEN, GL_TOKEN, CI_JOB_TOKEN, GITEA_TOKEN, BITBUCKET_TOKEN, BITBUCKET_APP_PASSWORD, AZURE_DEVOPS_EXT_PAT,
+ *   SYSTEM_ACCESSTOKEN, ACTIONS_ID_TOKEN_REQUEST_TOKEN / _URL, ACTIONS_RUNTIME_TOKEN;
+ *   publish-only: CARGO_REGISTRY_TOKEN, TWINE_PASSWORD, TWINE_USERNAME, UV_PUBLISH_TOKEN, UV_PUBLISH_PASSWORD,
+ *   GEM_HOST_API_KEY, HELM_REGISTRY_PASSWORD, DOCKER_AUTH_CONFIG, POETRY_PYPI_TOKEN_*;
+ *   install-side: NPM_TOKEN, NODE_AUTH_TOKEN, YARN_NPM_AUTH_TOKEN, YARN_NPM_AUTH_IDENT, npm_config_*_auth* / *_password /
+ *   *_username, CARGO_REGISTRIES_*_TOKEN, POETRY_HTTP_BASIC_*_PASSWORD.
+ *   The setup step ("Before each try, run") alone passes `tryGuard.keepRegistryAuth`: it keeps the install-side ones,
+ *   never a forge, CI or publish-only one. Setup is trusted: it is the person's own command and runs before the agent
+ *   changed anything; a setup command that itself publishes is the person's own choice. The agents and the checks (the
+ *   command check, Library scripts) get the full strip: by then the agent may have changed scripts.
  * What the guard covers (with the hook, try-guard.mjs): Bash and the CLI's PowerShell tool, nested shells, WSL (wsl,
  * wslg, distro launchers, System32 bash.exe; WSLENV for WSL's git and gh), pipes and here-strings into a shell, and a
  * structured deny with an exit-2 fallback.
@@ -115,7 +122,8 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * ~/.bashrc, /etc/environment); tokens in files (~/.npmrc, ~/.docker/config.json, gh / glab config inside WSL);
  * git http.extraheader / url.insteadOf tokens; image pushes beyond docker / podman / nerdctl push, image / manifest /
  * compose push, build --push, buildah push, skopeo copy to docker://, crane push / copy and helm push (e.g. oras, ko,
- * jib, kaniko); `curl -K` config files; a PowerShell -Method given as a variable; Send-MailMessage and .NET web calls
+ * jib, kaniko, or an image tool run through a package runner: `pnpm dlx <image tool> push`); other credential env vars
+ * than those listed above; `curl -K` config files; a PowerShell -Method given as a variable; Send-MailMessage and .NET web calls
  * other than Upload* / *Async.
  */
 export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = process.platform } = {}) {
@@ -159,21 +167,29 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
   return out;
 }
 
-/** Forge tokens a try's env never carries (any spelling of the name: Windows env names ignore case). The spawn env
- *  already drops the GitHub / Azure ones for agents (host-credentials.mjs); this covers every try path (shell and script
- *  steps too) and the GitLab and CI ones. */
-export const TRY_FORGE_TOKEN_KEYS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN',
-  'CI_JOB_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'SYSTEM_ACCESSTOKEN']);
-/** Package-registry tokens: dropped for the agents and the checks; the setup step keeps them (`keepRegistryAuth`). */
-export const TRY_REGISTRY_TOKEN_KEYS = Object.freeze(['NPM_TOKEN', 'NODE_AUTH_TOKEN']);
-export const TRY_STRIPPED_KEYS = Object.freeze([...TRY_FORGE_TOKEN_KEYS, ...TRY_REGISTRY_TOKEN_KEYS]);
-const FORGE_TOKENS = new Set(TRY_FORGE_TOKEN_KEYS);
-const REGISTRY_TOKENS = new Set(TRY_REGISTRY_TOKEN_KEYS);
-/** npm's own auth settings given as env: npm_config__auth, NPM_CONFIG__AUTHTOKEN, npm_config_//registry…/:_authToken, … */
-const NPM_AUTH_RE = /^npm_config_.*_auth/i;
-const isRegistryAuthKey = (k) => REGISTRY_TOKENS.has(String(k).toUpperCase()) || NPM_AUTH_RE.test(String(k));
-/** Whether a try's env drops `k`: every forge token; a registry token unless `keepRegistryAuth`. */
-export const isTryStrippedKey = (k, { keepRegistryAuth = false } = {}) => FORGE_TOKENS.has(String(k).toUpperCase()) || (!keepRegistryAuth && isRegistryAuthKey(k));
+/** Forge and CI tokens a try's env never carries (any spelling of the name: Windows env names ignore case). The spawn
+ *  env already drops the GitHub / Azure ones for agents (host-credentials.mjs); this covers every try path (shell and
+ *  script steps too) and the others. */
+export const TRY_FORGE_TOKEN_KEYS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_PAT', 'GITHUB_PAT',
+  'GITLAB_TOKEN', 'GLAB_TOKEN', 'GL_TOKEN', 'CI_JOB_TOKEN', 'GITEA_TOKEN', 'BITBUCKET_TOKEN', 'BITBUCKET_APP_PASSWORD', 'AZURE_DEVOPS_EXT_PAT', 'SYSTEM_ACCESSTOKEN',
+  'ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_RUNTIME_TOKEN']);
+/** Publish-only registry credentials: never in a try, the setup step included (installing needs none of them). */
+export const TRY_PUBLISH_TOKEN_KEYS = Object.freeze(['CARGO_REGISTRY_TOKEN', 'TWINE_PASSWORD', 'TWINE_USERNAME', 'UV_PUBLISH_TOKEN', 'UV_PUBLISH_PASSWORD',
+  'GEM_HOST_API_KEY', 'HELM_REGISTRY_PASSWORD', 'DOCKER_AUTH_CONFIG']);
+const PUBLISH_TOKEN_RE = /^POETRY_PYPI_TOKEN_/i;
+/** Install-side registry auth: dropped for the agents and the checks; the setup step keeps it (`keepRegistryAuth`).
+ *  Also by pattern: npm_config_*_auth* / *_password / *_username, CARGO_REGISTRIES_<NAME>_TOKEN and
+ *  POETRY_HTTP_BASIC_<NAME>_PASSWORD (a private registry `cargo fetch` / `poetry install` reads from). */
+export const TRY_REGISTRY_TOKEN_KEYS = Object.freeze(['NPM_TOKEN', 'NODE_AUTH_TOKEN', 'YARN_NPM_AUTH_TOKEN', 'YARN_NPM_AUTH_IDENT']);
+const INSTALL_AUTH_RES = [/^npm_config_(.*[_:])?(auth|password|username)/i, /^CARGO_REGISTRIES_.+_TOKEN$/i, /^POETRY_HTTP_BASIC_.+_PASSWORD$/i];
+export const TRY_STRIPPED_KEYS = Object.freeze([...TRY_FORGE_TOKEN_KEYS, ...TRY_PUBLISH_TOKEN_KEYS, ...TRY_REGISTRY_TOKEN_KEYS]);
+const ALWAYS = new Set([...TRY_FORGE_TOKEN_KEYS, ...TRY_PUBLISH_TOKEN_KEYS]);
+const INSTALL = new Set(TRY_REGISTRY_TOKEN_KEYS);
+const isInstallAuthKey = (k) => INSTALL.has(String(k).toUpperCase()) || INSTALL_AUTH_RES.some((re) => re.test(String(k)));
+/** Whether a try's env drops `k`: every forge, CI and publish-only token; install-side registry auth unless
+ *  `keepRegistryAuth` (the setup step). */
+export const isTryStrippedKey = (k, { keepRegistryAuth = false } = {}) => ALWAYS.has(String(k).toUpperCase()) || PUBLISH_TOKEN_RE.test(String(k))
+  || (!keepRegistryAuth && isInstallAuthKey(k));
 
 /** The PreToolUse hook entry buildSettingsPayload adds for a try, beside the host guard: on Bash, and on the PowerShell
  *  tool Claude Code has on Windows. */

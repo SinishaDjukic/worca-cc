@@ -16,7 +16,8 @@
 // powershell -Command; an -EncodedCommand cannot be read and is denied), WSL (wsl / wsl.exe with its options, wslg, the
 // distro launchers' `run` / -c; WSL's own git and gh sit outside every env layer but WSLENV), eval and { …; } groups,
 // $( ), backticks and <( ), $'…' quoting, NAME=value set earlier in the line, a git alias for push given with -c, curl's
-// run-together short flags, PowerShell's and httpie's web writes. A heredoc's body is data, not commands (only its $( )
+// run-together short flags, PowerShell's and httpie's web writes, a $( ) / backtick that only writes a literal (read
+// where it lands), xargs -I and xargs sh -c. A heredoc's body is data, not commands (only its $( )
 // and backticks run, when its word is unquoted), unless a shell reads it; so is a pipe or a here-string, unless a shell
 // reads it: then a quoted literal is read as commands, and input that cannot be read is denied when it carries a guarded
 // word (always, when WSL reads it). A command nested deeper than MAX_DEPTH, or one whose name is an expansion that carries
@@ -91,10 +92,30 @@ const ACTION_RE = /(^|[^\w-])(push|publish|send-?email|upload)(?=$|[^\w-])|(^|\s
 /** An expansion-named command is unreadable only when its own words push / publish / send mail, or name a method with a URL. */
 /** Fix 3: also a forge verb as its first word (`"$GH" pr create`), or a data flag or an httpie write method with a URL. */
 const FORGE_VERBS = new Set(['pr', 'mr', 'issue', 'release', 'repo', 'api', 'gist', 'snippet', 'secret', 'variable', 'workflow', 'label']);
+/** Fix 5: a forge verb counts only as the first word (after gh / glab's own -R/--repo/--hostname values) and followed by
+ *  a forge action, or `api` with a writing method or a field: `$MAKE release`, `$KUBECTL label pod x`, `$HELM repo
+ *  update` pass. */
+const FORGE_ACTIONS = new Set(['create', 'edit', 'merge', 'comment', 'set', 'run', 'delete', 'upload', 'close', 'reopen', 'review', 'approve']);
+const FORGE_GLOBAL_VALUE = new Set(['-R', '--repo', '--hostname', '-g', '--group']);
+function forgeVerbSends(w) {
+  const pos = [];
+  for (let i = 0; i < w.length; i += 1) {
+    const x = String(w[i]);
+    if (FORGE_GLOBAL_VALUE.has(x)) { i += 1; continue; }
+    if (x.startsWith('-')) continue;
+    pos.push(x);
+  }
+  if (!FORGE_VERBS.has(pos[0] ?? '')) return false;
+  if (pos[0] === 'api') {
+    return w.some((x, k) => (/^(-X|--method)$/.test(x) && isWriteMethod(w[k + 1]))
+      || (/^(-X|--method=)[A-Za-z]+$/.test(x) && isWriteMethod(x.replace(/^(-X|--method=)/, '')))
+      || /^(-f|-F|--field|--raw-field|--input)$/.test(x) || /^(--field|--raw-field|--input)=/.test(x));
+  }
+  return FORGE_ACTIONS.has(pos[1] ?? '');
+}
 const EXPANSION_SENDS = (w) => {
   if (w.some((x) => ['push', 'publish', 'send-email'].includes(x))) return true;
-  // The first word, or the second after an option's value (`"$GH" --repo x/y pr create`).
-  if (w.filter((x) => !String(x).startsWith('-')).slice(0, 2).some((x) => FORGE_VERBS.has(x))) return true;
+  if (forgeVerbSends(w)) return true;
   if (!w.some((x) => /^https?:\/\//i.test(x))) return false;
   return w.some((x) => /^(-X.*|--request(=.*)?|-Method(:.*)?|--method(=.*)?)$/i.test(x)
     || /^(-d.*|--data.*|-F|--form(=.*)?|-T|--upload-file(=.*)?|--json(=.*)?)$/.test(x)
@@ -672,6 +693,7 @@ function wrapperDecision(b, args, depth, ctx) {
       if (v != null) { const d = guardDecision(v, depth + 1); if (d) return d; }
     }
   }
+  if (b === 'xargs') { const d = xargsDecision(args, depth, ctx); if (d) return d; }
   for (let j = 0; j < args.length; j += 1) {
     if (!isGuarded(bin(args[j]))) continue;
     // xargs adds the words it reads to the command: `echo push | xargs git` runs git push.
@@ -680,6 +702,55 @@ function wrapperDecision(b, args, depth, ctx) {
     if (d) return d;
     if (b === 'xargs' && ctx.input && ctx.input.text == null && ACTION_RE.test(ctx.input.raw)) return unreadable('command, which hands xargs words Worca cannot read', args);
   }
+  return null;
+}
+
+const XARGS_VALUE = new Set(['-L', '-n', '-P', '-s', '-d', '-E', '-a', '--arg-file', '--delimiter', '--max-args', '--max-lines', '--max-procs', '--max-chars', '--eof']);
+/** xargs with what it reads: its own options read (`-I R` / `-iR` / `--replace[=R]` replace R in the command with each
+ *  input line, else the input's words are appended), then the command read. `xargs sh -c` (or bash / pwsh -c) with no
+ *  command string of its own runs the piped text as one. Input that cannot be read: escape-encoded, or carrying a
+ *  guarded word or an action, into a shell is unreadable. */
+function xargsDecision(args, depth, ctx) {
+  let repl = null;
+  let start = args.length;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === '--') { start = i + 1; break; }
+    if (a === '-I') { repl = args[i + 1] ?? null; i += 1; continue; }
+    if (/^-I./.test(a)) { repl = a.slice(2); continue; }
+    if (a === '-i' || a === '--replace') { repl = '{}'; continue; }
+    if (/^-i./.test(a)) { repl = a.slice(2); continue; }
+    if (a.startsWith('--replace=')) { repl = a.slice(10); continue; }
+    if (XARGS_VALUE.has(a)) { i += 1; continue; }
+    if (a.startsWith('-')) continue;
+    start = i;
+    break;
+  }
+  const cmd = args.slice(start);
+  const input = ctx.input;
+  if (!cmd.length || !input) return null;
+  const shell = SHELLS.has(bin(cmd[0])) || POWERSHELLS.has(bin(cmd[0]));
+  const c = cmd.findIndex((x) => /^-[A-Za-z]*c[A-Za-z]*$/.test(x) || /^-command$/i.test(x));
+  const shellReadsInput = shell && c > 0 && (repl == null ? cmd.length === c + 1 : cmd.slice(c + 1).some((x) => x.includes(repl)));
+  if (input.text == null) {
+    if (shellReadsInput && (input.decoded || GUARD_CMD_RE.test(input.raw) || ACTION_RE.test(input.raw))) return unreadable('command, which hands a shell (through xargs) input Worca cannot read', [input.raw]);
+    // The words it reads are unknown: read the command with an expansion in their place (`git $X` is unreadable,
+    // `git add $X` and `cp $X out/` are not).
+    const slot = '$XARGS_INPUT';
+    const words = repl != null && repl !== '' ? cmd.map((x) => x.split(repl).join(slot)) : (shellReadsInput ? null : [...cmd, slot]);
+    return words ? reparse(words, depth) : null;
+  }
+  const lines = input.text.split('\n').filter((l) => l.trim());
+  let d = null;
+  if (repl != null && repl !== '') {
+    for (const line of lines) { d = commandDecision(cmd.map((x) => x.split(repl).join(line.trim())), depth + 1, ctx) || null; if (d) return d; }
+  } else if (shellReadsInput) {
+    d = guardDecision(input.text, depth + 1);
+  } else {
+    d = commandDecision([...cmd, ...input.text.split(/\s+/).filter(Boolean)], depth + 1, ctx);
+  }
+  if (d) return d;
+  if (input.encoded && shellReadsInput) return unreadable('command, which hands a shell escape-encoded input', [input.raw]);
   return null;
 }
 
@@ -818,7 +889,10 @@ function encodedLiteral(words) {
 function inputDecision(segs, metas, idx, kind, depth) {
   const m = metas[idx];
   const sources = [];
-  for (const h of m.here) sources.push({ text: /[$`]/.test(h) ? null : h, raw: h, decoded: false });
+  for (const h of m.here) {
+    const x = expandSubs(h);   // sh <<< "$(printf '…')": the substituted text
+    sources.push({ text: /[$`]/.test(x.text) ? null : x.text, raw: h, decoded: false, encoded: x.encoded });
+  }
   for (const p of m.procs) {
     const r = parseShell(p);
     sources.push(chainSource(r.segments, r.meta, 0, r.segments.length));
@@ -852,6 +926,38 @@ function chainSource(segs, metas, from, to) {
   return { text, raw, decoded: text == null && decoded, encoded };
 }
 
+/** The text a $( ) / backtick command writes when the guard can read it: a literal producer (through cat / tee),
+ *  decoded when escape-encoded; null otherwise. */
+function substitutionText(inner) {
+  const r = parseShell(inner);
+  if (!r.segments.length) return null;
+  const src = chainSource(r.segments, r.meta, 0, r.segments.length);
+  return src.text != null ? { text: src.text, encoded: !!src.encoded } : null;
+}
+/** A word with each readable $( ) / backtick replaced by the text it writes (trailing newlines dropped, as the shell
+ *  does). `changed` when one was replaced, `encoded` when that text was escape-encoded. */
+function expandSubs(word) {
+  const s = String(word);
+  if (!/\$\(|`/.test(s)) return { text: s, changed: false, encoded: false };
+  let out = '';
+  let changed = false;
+  let encoded = false;
+  for (let i = 0; i < s.length;) {
+    if ((s[i] === '$' && s[i + 1] === '(' && s[i + 2] !== '(') || s[i] === '`') {
+      const e = enclosed(s, i);
+      if (e) {
+        const lit = substitutionText(e.inner);
+        if (lit) { out += lit.text.replace(/\n+$/, ''); changed = true; encoded = encoded || lit.encoded; } else out += s.slice(i, e.end);
+        i = e.end;
+        continue;
+      }
+    }
+    out += s[i];
+    i += 1;
+  }
+  return { text: out, changed, encoded };
+}
+
 /** NAME=value words set earlier in the line ($NAME and ${NAME} are read with them); `export`/`declare`/… too. */
 function substitute(segments) {
   const vars = new Map();
@@ -883,6 +989,21 @@ export function guardDecision(command, depth = 0) {
     if (meta[s].piped) { let start = s - 1; while (start > 0 && meta[start].piped) start -= 1; input = chainSource(segments, meta, start, s); }
     const d = commandDecision(w, depth, { piped: meta[s].piped, input });
     if (d) return d;
+    // Fix 5: a $( ) / backtick whose command only writes a literal (printf '…', echo …, decoded when escape-encoded) is
+    // read as that text where it lands: the command word, an eval / sh -c argument, any argument. Unquoted, the shell
+    // splits it into words, so both readings are tried. Escape-encoded text that runs (the command word, or the
+    // argument of eval / a shell) and names nothing is still unreadable.
+    const exp = w.map(expandSubs);
+    if (exp.some((x) => x.changed)) {
+      const we = exp.map((x) => x.text);
+      const split = we.flatMap((x, k) => (exp[k].changed ? x.split(/\s+/).filter(Boolean) : [x]));
+      const ctx = { piped: meta[s].piped, input };
+      const de = (we[0] ? commandDecision(we, depth + 1, ctx) : null) || (split.length ? commandDecision(split, depth + 1, ctx) : null);
+      if (de) return de;
+      const runner = bin(split[0] ?? '');
+      const runs = exp[0].encoded || (exp.some((x) => x.encoded) && (['eval', 'iex', 'invoke-expression', 'cmd'].includes(runner) || SHELLS.has(runner) || POWERSHELLS.has(runner) || WSLS.has(runner)));
+      if (runs && !fallback) fallback = unreadable('command, which runs escape-encoded text', w);
+    }
     // A command whose name is an expansion (`$(which git) push`, `"$G" push`): unreadable when its own words push,
     // publish or send mail, or name a method with a URL. A bare `push` / `publish` as a command is what is left of
     // `` `which git` push `` once split: unreadable when a sending command is in the line.
