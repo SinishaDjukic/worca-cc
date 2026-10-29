@@ -42,7 +42,7 @@ async function pausedRun(name, claude, extra = {}) {
   const dir = gitDir(name);
   const seen = { models: [], engines: [] };
   let orch;
-  orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, ...extra, claude: { mock: true, ...claude }, runners: recording(() => orch, seen) });
+  orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, guardrailsId: 'permissive', ...extra, claude: { mock: true, ...claude }, runners: recording(() => orch, seen) });
   const first = await orch.run();
   assert.equal(first.status, 'paused', first.error);
   return { dir, seen, saved: readPipelineForResume(orch.getState().id) };

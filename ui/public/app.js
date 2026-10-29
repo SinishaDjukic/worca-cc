@@ -31,7 +31,8 @@ const state = {
   // CLI's Task tool refuses catalog ids), not a slice of `models`.
   subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
-  guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
+  guardrailsId: null, // the guardrail set the next run applies; null until the list names the install default
+  guardrailsDefault: 'normal', // the install's default set, from GET /api/guardrails (Normal on a fresh install)
   mcpOptOut: [], // New Pipeline › MCP servers: the '<setId>|<serverId>' memberships the next run opts out of
   mcpPreview: null, // POST /api/mcp/preview for the selected target, or null (control hidden)
   memoryScope: 'global', // Memory defragment only: the scope the next run restructures
@@ -137,7 +138,7 @@ import {
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
 import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
-import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
+import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer, parseMcpParam } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
 import { pageChips, pageScopeOf } from './ask-page-chips.mjs';
 import { createAskSide, sideTier } from './ask-side.mjs';
@@ -178,7 +179,7 @@ import {
   renderConfigForm, collectConfigForm, renderConnectResult,
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
-import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
+import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
@@ -285,7 +286,7 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
@@ -302,6 +303,7 @@ import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
+import { createSearchUnlock } from './search-unlock.mjs';
 import { chatRows, CHAT_LIMIT } from './global-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
@@ -1262,17 +1264,42 @@ const sideActionsFlyout = sideActionsTile && sideActionsFly
 // closes it, so a run's detail never steps back on the same key. Runs, projects and workspaces are
 // read from memory on every render; workflows and schedules are fetched when the popover opens —
 // never per keystroke — and kept for the next open.
-const topnavLazy = { workflows: [], schedules: [], tickets: [] };
+const topnavLazy = { workflows: [], schedules: [], tickets: [], plugins: [], catalog: [], connectors: [] };
+// The plugin lists (GET /api/plugins, GET /api/marketplaces — local reads, never the marketplace sync) are read at most
+// once per popover open and only while stale: plugins-changed marks them, the Marketplace page's own reads refill them.
+let topnavPluginsStale = true;
+function setTopnavPlugins(plugins, marketplaces) {
+  if (Array.isArray(plugins)) {
+    topnavLazy.plugins = plugins.filter((p) => p && typeof p.name === 'string' && p.name).map((p) => ({
+      name: p.name, description: typeof p.description === 'string' ? p.description : '', enabled: p.enabled !== false, hasSettings: p.hasSettings === true }));
+  }
+  if (Array.isArray(marketplaces)) {
+    topnavLazy.catalog = marketplaces.filter((m) => m && m.id).flatMap((m) => (Array.isArray(m.plugins) ? m.plugins : [])
+      .filter((p) => p && typeof p.name === 'string' && p.name)
+      .map((p) => ({ name: p.name, description: typeof p.description === 'string' ? p.description : '', marketplace: m.id,
+        marketplaceName: m.name || m.id, installed: p.installed === true })));
+  }
+  if (Array.isArray(plugins) && Array.isArray(marketplaces)) topnavPluginsStale = false;
+}
+const topnavRead = (url) => fetch(url).then((res) => (res.ok ? safeJson(res) : null)).catch(() => null);
 async function loadTopnavLazy() {
-  const [workflows, sched] = await Promise.all([
+  const stale = topnavPluginsStale;
+  const [workflows, sched, , plugins, mkts, mcp] = await Promise.all([
     listWorkflowsApi(),
-    fetch('/api/schedules').then((res) => (res.ok ? safeJson(res) : null)).catch(() => null),
+    topnavRead('/api/schedules'),
     withWorkspaces(),
+    stale ? topnavRead('/api/plugins') : null,
+    stale ? topnavRead('/api/marketplaces') : null,
+    topnavRead('/api/mcp/servers'),
   ]);
   if (workflows) topnavLazy.workflows = workflows.map((w) => ({ id: w.id, name: w.name, builtin: isReservedWorkflowId(w.id) }));
   if (sched) {
     topnavLazy.schedules = Array.isArray(sched.schedules) ? sched.schedules : [];
     topnavLazy.tickets = Array.isArray(sched.tickets) ? sched.tickets : [];
+  }
+  if (stale) setTopnavPlugins(plugins && plugins.plugins, mkts && mkts.marketplaces);
+  if (mcp && Array.isArray(mcp.servers)) {
+    topnavLazy.connectors = mcp.servers.filter((s) => s && s.id && s.base).map((s) => ({ id: s.id, name: s.base, description: typeof s.description === 'string' ? s.description : '' }));
   }
 }
 function topnavSources() {
@@ -1284,9 +1311,31 @@ function topnavSources() {
     workspaces: (state.workspaces || []).map((w) => ({ id: w.id, name: w.name, projectCount: (w.projectPaths || []).length })),
     // D17: the label words in use on listed runs (the items carry [] while runLabels is off).
     labels: [...new Set([...live, ...history].flatMap((r) => r.labels || []))].sort(),
+    level: currentLevel(), flags: currentFlags(),
+    // Add-ons model rows: your own, plugin and team-policy catalogue entries (state.models, from /api/config at boot).
+    models: (state.models || []).filter((m) => m && (m.custom === 'global' || m.custom === 'plugin' || m.custom === 'policy'))
+      .map((m) => ({ id: m.id, label: m.label || m.id, source: m.custom, plugin: m.plugin || '' })),
     ...topnavLazy,
   };
 }
+// A route by hash text. The same hash fires no hashchange, so route it directly (as the Settings tab buttons do).
+function gotoHash(hash) {
+  const target = String(hash).replace(/^#/, '');
+  if (location.hash.slice(1) !== target) { location.hash = target; return; }
+  const i = target.indexOf('/');
+  showView(i < 0 ? target : target.slice(0, i), i < 0 ? '' : target.slice(i + 1));
+}
+// A locked search result: open the place that unlocks it, then take the user on (search-unlock.mjs).
+const searchUnlock = createSearchUnlock({
+  levelOk: (min) => levelAtLeast(min),
+  flagOk: (key) => flagOn(key),
+  openMode: () => levelCtl.open(),
+  closeMode: () => levelCtl.close(),
+  go: gotoHash,
+  labsHash: (key) => `settings/experimental/${key}`,
+});
+document.addEventListener('worca:level', () => searchUnlock.changed());
+document.addEventListener('worca:flags', () => searchUnlock.changed());
 const topnavSearchRoot = $('.topnav-c .tsearch');
 if (topnavSearchRoot) createTopnavSearch({
   doc: document, win: window, root: topnavSearchRoot,
@@ -1298,6 +1347,7 @@ if (topnavSearchRoot) createTopnavSearch({
   askRow: () => (askSide && askSide.available() ? { title: 'Ask worca', meta: 'with this page' } : { title: 'Ask in Chat', meta: 'opens a chat' }),
   navigate: (href) => { location.hash = href; },
   openWorkflow: (id) => { void openWorkflowFromAsk(id); },
+  openSetting: (row) => { if (row.locks && row.locks.length) searchUnlock.arm(row); else gotoHash(row.href); },
   // D17: "Runs labelled hotfix" adds the word to the Runs list label filter and opens the Runs LIST: a bare #runs
   // reopens the remembered run (D6), which may sit outside the filter, so go through goRunsList.
   onLabel: (label) => {
@@ -1888,6 +1938,7 @@ function handleServerMessage(msg) {
   // A plugin or marketplace changed — another tab, the CLI, or this page's own action (CONTRACT §1.7): re-read while
   // the page is open; never a refresh (SM6). Off the page, the next entry loads anyway.
   if (msg.type === 'plugins-changed') {
+    topnavPluginsStale = true;                      // the top bar search reads the lists again on its next open
     if (currentView() === 'marketplace') void marketplacePage.load({ background: true });
     return;
   }
@@ -4318,7 +4369,9 @@ async function listGuardrailsApi() {
   try {
     const res = await fetch('/api/guardrails');
     const data = await safeJson(res);
-    return res.ok && Array.isArray(data.guardrails) ? data.guardrails : null;
+    if (!res.ok || !Array.isArray(data.guardrails)) return null;
+    if (typeof data.default === 'string' && data.default) state.guardrailsDefault = data.default;
+    return data.guardrails;
   } catch { return null; }
 }
 
@@ -4329,7 +4382,7 @@ function updateGuardrailsHint() {
   if (!el.guardrailsHint) return;
   const sel = state.guardrailSets.find((g) => g.id === state.guardrailsId) || null;
   if (!sel || sel.id === 'permissive') {
-    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).';
+    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions.';
     return;
   }
   const members = state.runTarget === 'workspace' ? ' across every workspace member' : '';
@@ -4354,10 +4407,11 @@ async function loadGuardrailsInto(selectId) {
   }
   const list = sets.length ? sets : [{ id: 'permissive', name: 'Permissive', settings: null }];
   state.guardrailSets = list;
-  const want = selectId || state.guardrailsId || 'permissive';
+  const dflt = list.some((g) => g.id === state.guardrailsDefault) ? state.guardrailsDefault : list[0].id;
+  const want = selectId || state.guardrailsId || dflt;
   sel.innerHTML = '';
-  list.forEach((g) => sel.appendChild(option(g.id, g.id === 'permissive' ? 'Permissive (default)' : g.name)));
-  // Fall back to the Permissive default if the wanted id is gone (deleted set) —
+  list.forEach((g) => sel.appendChild(option(g.id, g.id === dflt ? `${g.name} (default)` : g.name)));
+  // Fall back to the install default if the wanted id is gone (deleted set) —
   // and SAY so via the form's message line: a vanished selection must never
   // silently revert while the user believes it is still selected.
   if (state.preset && !list.some((g) => g.id === want)) {
@@ -4368,9 +4422,10 @@ async function loadGuardrailsInto(selectId) {
     o.disabled = true;
     sel.appendChild(o);
   } else {
-    state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
-    if (want !== 'permissive' && state.guardrailsId === 'permissive') {
-      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use Permissive (no restrictions).`, 'err');
+    state.guardrailsId = list.some((g) => g.id === want) ? want : dflt;
+    if (state.guardrailsId !== want) {
+      const name = (list.find((g) => g.id === dflt) || {}).name || dflt;
+      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use ${name}${dflt === 'permissive' ? ' (no restrictions)' : ''}.`, 'err');
     }
   }
   sel.value = state.guardrailsId;
@@ -4522,7 +4577,7 @@ function paintHiddenSettings() {
   const items = [];
   if (!levelAtLeast('advanced')) {
     const gr = (state.guardrailSets || []).find((g) => g.id === state.guardrailsId);
-    if (state.guardrailsId && state.guardrailsId !== 'permissive') items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
+    if (state.guardrailsId && state.guardrailsId !== state.guardrailsDefault) items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
     if (state.preset) items.push(...presetHiddenItems(state.preset.setup));   // the preset's picks, counted once (#712)
     else {
       const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
@@ -15041,12 +15096,10 @@ function buildRunBody() {
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
-    // Omit-when-default: 'permissive' IS the server default, so the key is
-    // absent on default runs — byte-identical legacy request bodies. (The
-    // server normalizes omitted/''/null to 'permissive'; always-sending would
-    // be equivalent but would change every legacy-shaped request for no gain.)
-    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal'
-      : (state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined),
+    // Always the picked set: the server's default for an omitted key is the
+    // install default, which is not Permissive on a fresh install (G13), so an
+    // explicit Permissive pick must be sent. Absent only when the list never loaded.
+    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal' : (state.guardrailsId || undefined),
     // MCP registry (§6.2): absent unless something is opted out, so default bodies stay byte-identical;
     // a memory-defrag run starts no registry servers (§6.1), so it sends none.
     mcpOptOut: state.mcpOptOut.length && !isDefragRun ? [...state.mcpOptOut] : undefined,
@@ -17222,6 +17275,7 @@ marketplacePage = mountMarketplace({ doc: document, win: window, deps: {
 let marketplaceSyncSig = null;
 const marketplacesSyncSig = (ms) => (ms || []).filter((m) => m && m.lastSync).map((m) => `${m.id}@${m.lastSync.sha}`).sort().join('|');
 marketplacePage.onChange((s) => {
+  setTopnavPlugins(s.plugins, s.marketplaces);    // the search lists what the page just read
   pluginsViewMarketplaces = s.marketplaces;
   const sig = marketplacesSyncSig(s.marketplaces);
   const prev = marketplaceSyncSig;
@@ -17233,10 +17287,23 @@ async function loadPluginsView({ refresh = false } = {}) {
   await marketplacePage.load({ refresh });
   paintPluginsPolicy(false);                     // team policy (design board 10): a trusted home's installs, from the scopes load() just read
 }
-// One entry, one load (CONTRACT §4): a tab hop inside the page only selects the tab.
+// One entry, one load (CONTRACT §4): a tab hop inside the page only selects the tab. A top bar search pick
+// (#marketplace/installed/<name>[/settings], #marketplace/browse/<marketplace>/<name>) also opens that plugin's sheet.
 function enterMarketplace(param, prevView) {
   marketplacePage.setTab(tabFromParam(param));
-  if (prevView !== 'marketplace') void loadPluginsView({ refresh: true });
+  const loading = prevView !== 'marketplace' ? loadPluginsView({ refresh: true }) : null;
+  const target = targetFromParam(param);
+  if (target) void openMarketplaceTarget(target, loading);
+}
+// The sheet needs the page's lists: wait for the entry's own read (never a second one) when nothing is loaded yet.
+async function openMarketplaceTarget(target, loading) {
+  const hash = location.hash;
+  try {
+    if (!marketplacePage.state.loaded) await (loading || marketplacePage.load());
+  } catch { return; }
+  if (location.hash !== hash || !marketplacePage.state.loaded) return;   // moved on, or the read failed (its own message shows)
+  if (target.kind === 'manage') marketplacePage.act('openManage', target.name, target.section ? { section: target.section } : {});
+  else marketplacePage.act('openPlugin', { name: target.name, marketplace: target.marketplace });
 }
 
 // #555 D5: the consent dialog closes before the request, so its result is a keyed toast that
@@ -21456,7 +21523,7 @@ async function paintPolicyLine() {
   const scope = currentRunScopeId();
   const seq = ++policyLineSeq;
   if (!scope) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
-  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || 'permissive' });
+  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || state.guardrailsDefault });
   // What the run will actually pick: the Agents accordion's model selects (per workflow node),
   // falling back to the legacy per-role config when the accordion has not painted yet.
   const models = selectedRunModels();
@@ -21467,7 +21534,8 @@ async function paintPolicyLine() {
   if (seq !== policyLineSeq) return;
   if (!data || !data.policy) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
   // The team's default guardrail set preselects the picker until the user picks one themselves.
-  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === 'permissive' && el.guardrailsSelect
+  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === state.guardrailsDefault
+      && data.guardrailsDefault !== state.guardrailsId && el.guardrailsSelect
       && [...el.guardrailsSelect.options].some((o) => o.value === data.guardrailsDefault)) {
     state.guardrailsId = data.guardrailsDefault;
     el.guardrailsSelect.value = data.guardrailsDefault;
@@ -21684,7 +21752,7 @@ async function updateRequiredPlugin(name) {
   // #555 D5: the dialog's own button carries the progress; the result is a toast after it closes.
   if (confirmBtn) confirmBtn.addEventListener('click', async () => {
     const r2 = await withButton(confirmBtn, async () => {
-      const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+      const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true, candidateSha: data.preview.candidateSha });
       return r.ok ? r : { ...r, ok: false };
     }, { busy: 'Updating…', done: 'Updated' });
     if (r2.skipped) return;
@@ -38528,6 +38596,7 @@ const levelCtl = createLevelController({
   },
   // A pick from the account menu's side menu that the server refused: the check went back, say why.
   onError: (error) => notify({ tone: 'err', title: 'Could not save the mode', detail: error, key: 'ui-level-save' }),
+  onClose: () => searchUnlock.modeClosed(),   // the search hand-off forgets a pick when the dialog closes (R-po-21)
 });
 // The lowest mode whose menu lists each page. Pages not named here are simple.
 const VIEW_MIN_LEVEL = Object.freeze({
@@ -38619,9 +38688,10 @@ function parseSettingsParam(param = '') {
   const sub = i === -1 ? '' : param.slice(i + 1);
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
-// The canonical param for a tab: General is plain '#settings', never '#settings/general'.
+// The canonical param for a tab: General is plain '#settings', never '#settings/general'; a link to one of its
+// cards keeps the card ('general/appearance-card', a top bar search pick).
 function settingsParamFor(tab, sub = '') {
-  if (tab === 'general') return '';
+  if (tab === 'general') return sub ? `general/${sub}` : '';
   return sub ? `${tab}/${sub}` : tab;
 }
 // null for a page's own address; otherwise the [view, param] an old one means now.
@@ -38779,6 +38849,7 @@ function showView(name, param = '') {
   // The schedule sheet and the Start menu are body-level overlays of the view that opened them.
   if (prevView !== name) { closeScheduleSheet(); closeStartMenu(); }
   currentShownView = name;
+  searchUnlock.routed(name, param);
   paintLevelBanner();
   // The guide re-derives its hop on a tick, so it is told here — before a view's
   // own loader runs — and never misses a switch because a loader threw.
@@ -38891,14 +38962,17 @@ function showView(name, param = '') {
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
   if (name === 'marketplace') enterMarketplace(param, prevView);
-  if (name === 'connectors') void mcpTab().show(param);
+  if (name === 'connectors') void showConnectors(param);
   if (name === 'models') {
-    // The Engines card (its Helper jobs rows included) is painted from GET /api/settings, so a link
-    // or a reload straight to the page loads it too; '#models/<card>' scrolls to a card ('#models/engine').
+    // The Engines card (its Helper jobs rows included) is painted from GET /api/settings, so a link or a reload
+    // straight to the page loads it too; '#models/<card>' scrolls to a card ('#models/engine'), and
+    // '#models/model/<id>' (a top bar search pick) to a catalogue row.
+    const modelId = modelParamId(param);
+    if (modelId) showAllModels();
     void loadSettings().then(() => focusSettingsCard(views.find((v) => v.dataset.view === 'models'), param));
-    loadModelsView();
+    void loadModelsView().then(() => { if (modelId) revealModelCard(modelId, param); });
   }
-  if (name === 'providers') loadProvidersView();
+  if (name === 'providers') void loadProvidersView().then(() => revealProviderRow(param));
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
     paintNewRunAwayHint();
@@ -38972,13 +39046,63 @@ function showSettingsTab(param = '') {
   if (tab === 'experimental') loadFlagsTab(sub);
 }
 
-// A link to one card ('#settings/runs/actions', '#models/engine'): scroll to the
-// `<sub>-settings-card` inside `scope` and focus its first field. Any other sub is ignored.
+// A link to one card ('#settings/runs/actions', '#models/engine', a top bar search pick '#settings/general/appearance-card'):
+// scroll to `<sub>-settings-card` (else the card whose id IS `sub`) inside `scope`, focus its first field and
+// highlight it for 3 s (A-7). Any other sub is ignored. The Add-ons pages' own links land the same way:
+// '#models/model/<id>' (a catalogue row), '#providers/<row>' (a provider row), '#connectors/servers/<id>' (a server row).
+const foundTimers = new WeakMap();
+/** Scroll `el` into view, focus `focusEl` (when given) and highlight `el` for 3 s (A-7); a repeat pick restarts it. */
+function markFound(el, focusEl = null) {
+  if (!el) return;
+  el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  focusEl?.focus({ preventScroll: true });
+  clearTimeout(foundTimers.get(el));
+  el.classList.remove('is-found');
+  void el.offsetWidth;                                    // restart the fade when the same place is picked again
+  el.classList.add('is-found');
+  foundTimers.set(el, setTimeout(() => el.classList.remove('is-found'), 3000));
+}
 function focusSettingsCard(scope, sub) {
-  const card = sub ? document.getElementById(`${sub}-settings-card`) : null;
+  const card = sub ? (document.getElementById(`${sub}-settings-card`) || document.getElementById(sub)) : null;
   if (!card || !scope || !scope.contains(card)) return;
-  card.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  card.querySelector('input, select, textarea')?.focus({ preventScroll: true });
+  markFound(card, card.querySelector('input, select, textarea'));
+}
+// '#models/model/<id>': the catalogue row a top bar search pick names (settings-index.mjs addonEntriesFrom).
+function modelParamId(param) {
+  if (!param.startsWith('model/') || param.length <= 6) return '';
+  try { return decodeURIComponent(param.slice(6)); } catch { return ''; }
+}
+// The catalogue's own narrowing can hide the row a pick names: clear its search, chip and just-imported filter and
+// unfold the groups that hold your own, plugin and team-policy models.
+function showAllModels() {
+  mvState.query = '';
+  mvState.filter = 'all';
+  mvState.justImported = null;
+  Object.assign(mvState.collapsed, { global: false, plugin: false, policy: false });
+}
+// Still on that address once the catalogue painted: scroll to the row, focus its first button, highlight it.
+function revealModelCard(id, param) {
+  if (currentView() !== 'models' || parseHash()[1] !== param || !el.modelsList) return;
+  const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
+  if (card) markFound(card, card.querySelector('button'));
+}
+// '#providers/<copilot|openai|anthropic|speech>': the provider's row, highlighted, with its sign-in or key field
+// focused (focusProviderRow's choice), else its first control.
+function revealProviderRow(param) {
+  if (!param || currentView() !== 'providers' || parseHash()[1] !== param || !el.providersList) return;
+  const row = [...el.providersList.querySelectorAll('.mv-pv-row[data-provider]')].find((n) => n.dataset.provider === param);
+  if (!row) return;
+  markFound(row.closest('.mv-pv-card') || row,
+    row.querySelector('.mv-cp-signin') || row.querySelector('.mv-pv-key') || row.querySelector('input, select, textarea, button'));
+}
+// '#connectors/servers/<id>': the Servers view, then that server's row highlighted.
+async function showConnectors(param) {
+  await mcpTab().show(param);
+  const { server } = parseMcpParam(param);
+  if (!server || currentView() !== 'connectors' || parseHash()[1] !== param) return;
+  const host = views.find((v) => v.dataset.view === 'connectors');
+  const row = host && [...host.querySelectorAll('.mcp-server-row[data-server]')].find((n) => n.dataset.server === server);
+  if (row) markFound(row, row.querySelector('button'));
 }
 
 // The Connectors page (mcp-view.mjs): one controller, made on first entry; its sub-route

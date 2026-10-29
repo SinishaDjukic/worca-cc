@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { writePluginConfig, writePluginState, readPluginState, createProfile, deleteProfile } from '../src/core/plugin-config.mjs';
-import { callSource, PluginOpError, setMockSourceResponses, _resetWithheldProxyNotice, scrubbedEnv } from '../src/core/plugin-shim.mjs';
+import { callSource, PluginOpError, setMockSourceResponses, _resetWithheldProxyNotice, scrubbedEnv, pluginChildSpawn } from '../src/core/plugin-shim.mjs';
 import { egressChildEnv } from '../src/core/egress-policy.mjs';
 import { startProxyNet, setProxyEnv, assertProxyRouting, NO_PROXY_HOST } from './helpers/proxy-net.mjs';
 import { importClosure } from './helpers/import-closure.mjs';
@@ -374,4 +374,51 @@ test('corporate proxy: the credential-free loopback URL reaches plugins, nothing
     assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1,intranet.example');
     assert.equal(scrubbedEnv('win32').HTTPS_PROXY, 'http://127.0.0.1:41234', 'same on Windows');
   } finally { restore(); }
+});
+
+// G12: every plugin child runs as worca's own user unless the container has a plugin user. There,
+// the child runs as that user with its own HOME, so it cannot open plugins/*/data (owner-only) or
+// worca's settings and database — its secrets arrive on stdin, nowhere else.
+test('pluginChildSpawn: node as worca, or under sudo as the container plugin user with its own HOME', () => {
+  const plain = pluginChildSpawn(['child.mjs'], { env: { PATH: '/bin', HOME: '/home/worca', WORCA_HOME: '/w' }, platform: 'linux' });
+  assert.equal(plain.file, process.execPath);
+  assert.deepEqual(plain.args, ['child.mjs']);
+  assert.deepEqual(plain.options.env, { PATH: '/bin', HOME: '/home/worca' }, 'scrubbed: no WORCA_*');
+  assert.equal(plain.options.detached, undefined);
+  assert.equal(plain.user, null);
+
+  const env = { PATH: '/bin', HOME: '/data/home', WORCA_HOME: '/data/worca', WORCA_PLUGIN_USER: 'worca-plugin',
+    WORCA_PLUGIN_HOME: '/data/plugin-home', WORCA_AGENT_GID: '1001' };
+  const iso = pluginChildSpawn(['child.mjs', '--check'], { env, platform: 'linux' });
+  assert.equal(iso.file, 'sudo');
+  assert.deepEqual(iso.args, ['-n', '-E', '-u', 'worca-plugin', '--', process.execPath, 'child.mjs', '--check']);
+  assert.deepEqual(iso.options.env, { PATH: '/bin', HOME: '/data/plugin-home', USER: 'worca-plugin', LOGNAME: 'worca-plugin' },
+    "the plugin user's HOME, never worca's, and still no WORCA_*");
+  assert.equal(iso.options.detached, true, 'its own process group, so a kill reaches the child behind sudo');
+  assert.equal(iso.user.user, 'worca-plugin');
+
+  assert.equal(pluginChildSpawn(['c'], { env: { ...env, WORCA_PLUGIN_HOME: 'relative' }, platform: 'linux' }).file, process.execPath,
+    'a malformed identity is no identity');
+  assert.equal(pluginChildSpawn(['c'], { env, platform: 'win32' }).file, process.execPath, 'no sudo on Windows');
+});
+
+test('killPluginChild: a live child under the plugin user goes down with its group through sudo; a gone one or worca\'s own does not', async () => {
+  const { killPluginChild } = await import('../src/core/plugin-shim.mjs');
+  const groups = [];
+  const child = (o = {}) => ({ pid: 4242, exitCode: null, signalCode: null, killed: [], kill(sig) { this.killed.push(sig); }, ...o });
+  const user = { user: 'worca-plugin', gid: 1002 };
+  const live = child();
+  killPluginChild(live, user, (pid, u) => groups.push([pid, u.user]));
+  assert.deepEqual([live.killed, groups], [['SIGKILL'], [[4242, 'worca-plugin']]]);
+  groups.length = 0;
+  killPluginChild(child({ exitCode: 0 }), user, (pid, u) => groups.push([pid, u.user]));
+  killPluginChild(child(), null, (pid, u) => groups.push([pid, u.user]));
+  assert.deepEqual(groups, [], 'an exited child or a child running as worca needs no group kill');
+});
+
+test('every plugin child kill in the channel host goes through killPluginChild (a plain SIGKILL misses the node behind sudo)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/core/chat/channel-host.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /\.kill\(\s*['"]SIG/, 'a direct signal to a plugin child');
+  assert.ok((src.match(/killPluginChild\(/g) || []).length >= 2, 'the worker stop and the check timeout');
 });

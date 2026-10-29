@@ -3,7 +3,7 @@
 // built from real fields only, and the ⌘K / Ctrl K chord and label.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { searchRows, shortcutLabel, isSearchCombo, RUN_LIMIT, OTHER_LIMIT, chatRows, CHAT_LIMIT } from '../ui/public/global-search.mjs';
+import { searchRows, shortcutLabel, isSearchCombo, RUN_LIMIT, OTHER_LIMIT, SETTINGS_LIMIT, ADDON_LIMIT, PLUGIN_LIMIT, chatRows, CHAT_LIMIT } from '../ui/public/global-search.mjs';
 
 const NOW = new Date(2026, 9, 9, 15, 0).getTime();            // Fri Oct 9 2026, 15:00 local
 const at = (d, h, m = 0) => new Date(2026, 9, d, h, m).toISOString();
@@ -87,9 +87,9 @@ test('the empty query lists runs only: needs you, then running, then the newest 
   assert.deepEqual(out.other, []);
 });
 
-test('no match: both groups are empty (the popover shows "No matches" and the Ask row)', () => {
+test('no match: every group is empty (the popover shows "No matches" and the Ask row)', () => {
   const out = run({ live: [live('r1')], projects: [{ key: 'k', name: 'proj' }] }, 'zzz');
-  assert.deepEqual(out, { runs: [], other: [] });
+  assert.deepEqual(out, { runs: [], other: [], settings: [], addons: [], plugins: [] });
 });
 
 test('plain matching: regex characters are literal, accents are case-folded only, surrounding spaces are dropped', () => {
@@ -207,6 +207,163 @@ test('labels: "hotfix", "label:hot" and "label:hotfix" offer "Runs labelled hotf
   assert.deepEqual(run(src, 'runs').other, [], 'the row title is not searched: "runs" does not list every label');
   assert.deepEqual(run({}, 'hotfix').other, []);
   assert.deepEqual(run(src, '').other, [], 'an empty query lists runs only');
+});
+
+// ── Settings and Add-ons groups (settings-index.mjs) ─────────────────────────
+const UNLOCKED = { level: 'expert', flags: { runLabels: true } };
+const setRows = (q, over = {}) => run({ ...UNLOCKED, ...over }, q);
+
+test('R-po-1/3/5/14: a tab name finds a Settings row in its own group; an empty query lists neither group', () => {
+  const r = setRows('Guardrails');
+  assert.deepEqual(r.settings.map((x) => x.href), ['#settings/guardrails']);
+  assert.equal(r.settings[0].meta, 'Settings tab');
+  assert.deepEqual([r.runs, r.other, r.addons, r.plugins], [[], [], [], []]);
+  const none = setRows('');
+  assert.deepEqual([none.settings, none.addons], [[], []]);
+});
+
+test('R-po-4: every word must match; a title prefix ranks first', () => {
+  assert.deepEqual(setRows('budget zzz').settings, []);
+  assert.deepEqual(setRows('budget limits').settings.map((x) => x.title), ['Budget & cost limits']);
+  assert.equal(setRows('run').settings[0].title, 'Runs', 'the tab whose name starts with the query leads');
+});
+
+test('R-po-8/17: a setting row names its tab; "dark mode" finds Appearance on General', () => {
+  const r = setRows('dark mode').settings;
+  assert.deepEqual(r.map((x) => x.title), ['Appearance']);
+  assert.equal(r[0].meta, 'Settings · General');
+  assert.equal(r[0].href, '#settings/general/appearance-card');
+  assert.equal(r[0].note, '', 'nothing to unlock');
+});
+
+test('Add-ons rows are the settings inside the four pages, never Settings rows; each names its page', () => {
+  for (const [q, title, href] of [
+    ['openai key', 'OpenAI-compatible', '#providers/openai'],
+    ['copilot', 'GitHub Copilot', '#providers/copilot'],
+    ['openrouter', 'OpenRouter', '#providers/openai'],
+    ['helper model', 'Helper job models', '#models/engine-settings-card'],
+    ['roles', 'Roles', '#models/model-roles-card'],
+    ['installed', 'Installed plugins', '#marketplace/installed'],
+    ['integrations', 'MCP sets', '#connectors'],
+  ]) {
+    const r = setRows(q);
+    const row = r.addons.find((x) => x.title === title);
+    assert.ok(row, `${q} → ${title}`);
+    assert.equal(row.href, href, q);
+    assert.equal(row.meta, { providers: 'Providers', models: 'Models', marketplace: 'Marketplace', connectors: 'Connectors' }[href.slice(1).split('/')[0]], q);
+    assert.ok(!r.settings.some((x) => x.href === href), `${q} is not a Settings row`);
+  }
+  assert.ok(!setRows('connectors').addons.some((x) => x.href === '#connectors' && x.title === 'Connectors'), 'no bare page row any more');
+});
+
+test('dynamic Add-ons rows: a plugin with settings, an MCP server, your own model; a built-in model has none', () => {
+  const src = { plugins: [{ name: 'jira', description: 'Jira task source', hasSettings: true }],
+    connectors: [{ id: 'manual:linear', name: 'linear', description: 'Linear issues' }],
+    models: [{ id: 'my-gpt', label: 'My GPT', source: 'global' }, { id: 'opus', label: 'Opus', source: 'builtin' }] };
+  assert.deepEqual(setRows('jira settings', src).addons.map((x) => [x.title, x.href, x.meta, x.note]),
+    [['jira settings', '#marketplace/installed/jira/settings', 'Marketplace · Plugin settings', '']]);
+  assert.equal(setRows('linear', src).addons[0].href, '#connectors/servers/manual%3Alinear');
+  assert.equal(setRows('my gpt', src).addons[0].href, '#models/model/my-gpt');
+  assert.deepEqual(setRows('opus', src).addons, []);
+});
+
+test('R-po-18/A-5: every name match is listed before an alternative-word-only match; a tab before its settings', () => {
+  // "run": the Presets tab holds it only in an alternative word ("run presets"). It ranks after every name match
+  // (the card "Budget & cost limits" matches through its tab's name, Runs), so the five rows have no room for it.
+  assert.deepEqual(setRows('run').settings.map((x) => x.title),
+    ['Runs', 'Smart run naming', 'Sync before run', 'Scheduled runs', 'Budget & cost limits']);
+  assert.deepEqual(setRows('mode').settings.map((x) => x.title), ['Interface mode', 'Away mode', 'Engine & models', 'Appearance'],
+    'Appearance has "mode" only in "dark mode"');
+  assert.deepEqual(setRows('chat').settings.map((x) => x.title), ['Chat', 'Chat notifications', 'Engine & models', 'Limits & access'],
+    'the Chat tab before the card that also starts with "chat", then the cards found through the tab name');
+});
+
+test('Settings and Add-ons rows match only where a query word starts a word of the title, tab/page title or an alt word', () => {
+  const ar = setRows('ar');
+  assert.deepEqual([ar.settings, ar.addons], [[], []], '"ar" starts no word in the catalogue (Labs, Marketplace, Guardrails, Appearance … hold it mid-word)');
+  assert.ok(setRows('guard').settings.some((x) => x.title === 'Guardrails'), 'guard → Guardrails');
+  assert.ok(setRows('market').addons.some((x) => x.meta === 'Marketplace'), 'market → the Marketplace rows');
+  assert.ok(setRows('early').settings.some((x) => x.title === 'Labs'), 'early → Labs (alt word "early access")');
+  assert.ok(setRows('mode').settings.some((x) => x.title === 'Appearance'), 'mode → Appearance (alt "dark mode")');
+  assert.deepEqual(setRows('dark mo').settings.map((x) => x.title), ['Appearance'], 'a multi-word alt matches word by word');
+  assert.ok(!setRows('ppear').settings.some((x) => x.title === 'Appearance'), 'a mid-word hit stays out');
+  assert.ok(!setRows('rkets').addons.length, 'a mid-word page-name hit stays out');
+  const re = setRows('re').settings.map((x) => x.title);
+  assert.ok(re.indexOf('Memory') < re.indexOf('Sync before run'),
+    '"re" only mid-word in the name ("before") is no name match: Sync before run ranks with the alt-word matches');
+});
+
+test('R-po-10/11: locked rows stay listed with a note naming the mode and the Labs feature', () => {
+  const p = setRows('presets', { level: 'simple', flags: {} }).settings[0];
+  assert.equal(p.href, '#settings/presets');
+  assert.deepEqual(p.locks.map((l) => l.type), ['mode']);
+  assert.equal(p.meta, 'Settings tab');
+  assert.equal(p.note, 'Switch to Advanced mode');
+  assert.equal(setRows('guardrails', { level: 'simple' }).settings[0].note, 'Switch to Advanced mode');
+  const away = setRows('away mode', { level: 'simple' }).settings[0];
+  assert.deepEqual([away.title, away.note], ['Away mode', 'Switch to Advanced mode']);
+  const labels = setRows('labels', { flags: {} }).settings.find((x) => x.title === 'Labels');
+  assert.equal(labels.note, 'Turn on Labs: Run labels');
+  assert.equal(setRows('cost tags', { flags: {} }).settings.find((x) => x.title === 'Cost tags').note, '', 'Cost tags left Labs');
+  assert.deepEqual(setRows('marketplaces', { level: 'simple', flags: {} }).addons[0].locks, [], 'a page-level row never locks (A-9)');
+  const helper = setRows('helper model', { level: 'advanced', flags: {} }).addons[0];
+  assert.deepEqual([helper.title, helper.note], ['Helper job models', 'Switch to Expert mode'], 'a row on an Expert card locks by that card');
+});
+
+test('group limits: Settings ≤ SETTINGS_LIMIT (5), Add-ons ≤ ADDON_LIMIT (5), Plugins ≤ PLUGIN_LIMIT (5)', () => {
+  assert.deepEqual([SETTINGS_LIMIT, ADDON_LIMIT, PLUGIN_LIMIT], [5, 5, 5]);
+  assert.equal(setRows('a').settings.length, SETTINGS_LIMIT, '"a" matches more than five settings');
+  assert.equal(setRows('s').addons.length, ADDON_LIMIT);
+  const catalog = Array.from({ length: 7 }, (_, i) => ({ name: `pack-${i}`, description: '', marketplace: 'm1', marketplaceName: 'Acme' }));
+  assert.equal(run({ catalog }, 'pack').plugins.length, PLUGIN_LIMIT);
+});
+
+// ── Plugins group (installed and available marketplace plugins) ─────────────
+const MKT = 'acme-0001';
+const PSRC = {
+  plugins: [{ name: 'jira', description: 'Jira task source', enabled: true, hasSettings: true },
+    { name: 'old-thing', description: null, enabled: false }],
+  catalog: [
+    { name: 'jira', description: 'Jira task source', marketplace: MKT, marketplaceName: 'Acme' },
+    { name: 'jira-cloud', description: 'Jira Cloud tasks', marketplace: MKT, marketplaceName: 'Acme' },
+    { name: 'slack-chat', description: 'Chat channel that posts Jira alerts', marketplace: MKT, marketplaceName: 'Acme' },
+    { name: 'gone', description: 'x', marketplace: MKT, marketplaceName: 'Acme', installed: true },
+  ],
+};
+
+test('Plugins: name or description matches; a name prefix first, installed before available; one row per installed name', () => {
+  const rows = run(PSRC, 'jira').plugins;
+  assert.deepEqual(rows.map((r) => [r.kind, r.title, r.meta, r.sub, r.href]), [
+    ['plugin', 'jira', 'Installed', 'Jira task source', '#marketplace/installed/jira'],
+    ['plugin', 'jira-cloud', 'Available · Acme', 'Jira Cloud tasks', `#marketplace/browse/${MKT}/jira-cloud`],
+    ['plugin', 'slack-chat', 'Available · Acme', 'Chat channel that posts Jira alerts', `#marketplace/browse/${MKT}/slack-chat`],
+  ]);
+  assert.deepEqual(rows.map((r) => r.id), ['installed:jira', `catalog:${MKT}/jira-cloud`, `catalog:${MKT}/slack-chat`]);
+  assert.ok(rows.every((r) => !r.locks || !r.locks.length), 'plugin rows never lock');
+  assert.deepEqual(run({ plugins: [{ name: 'zeta-jira' }], catalog: [{ name: 'alpha-jira', marketplace: MKT, marketplaceName: 'Acme' }] }, 'jira').plugins.map((r) => r.title),
+    ['zeta-jira', 'alpha-jira'], 'installed first at equal rank, whatever the name');
+});
+
+test('Plugins: a disabled install says so; no description is no sub line; an entry the server marks installed is skipped; the empty query lists none', () => {
+  assert.deepEqual(run(PSRC, 'old').plugins.map((r) => [r.title, r.meta, r.sub]), [['old-thing', 'Installed · off', '']]);
+  assert.deepEqual(run(PSRC, 'gone').plugins, []);
+  assert.deepEqual(run(PSRC, 'task source').plugins.map((r) => r.id), ['installed:jira'], 'an installed plugin is found by its description too');
+  assert.deepEqual(run({ plugins: [{ name: 'jira' }, { name: 'jira', description: 'again' }] }, 'jira').plugins.map((r) => r.id), ['installed:jira'],
+    'a name listed twice is one row');
+  assert.deepEqual(run({ catalog: [{ name: 'lone-jira', description: 'x', marketplaceName: 'Acme' }] }, 'jira').plugins, [],
+    'a catalogue entry with no marketplace id has no address to open');
+  assert.deepEqual(run(PSRC, '').plugins, []);
+  assert.deepEqual(run(PSRC, 'zzz').plugins, []);
+  assert.deepEqual(run(PSRC, 'ira').plugins, [], 'a mid-word hit in a name or description stays out');
+  assert.deepEqual(run(PSRC, 'cloud').plugins.map((r) => r.title), ['jira-cloud'], 'a word after a hyphen starts a word');
+});
+
+test('Plugins: a long description is cut to 120 characters on one line; names are encoded in the address', () => {
+  const long = `Line one\n${'word '.repeat(60)}`;
+  const [r] = run({ catalog: [{ name: 'a b', description: long, marketplace: 'm/1', marketplaceName: 'M' }] }, 'a b').plugins;
+  assert.equal(r.sub.length, 120);
+  assert.ok(r.sub.endsWith('…') && !r.sub.includes('\n'));
+  assert.equal(r.href, '#marketplace/browse/m%2F1/a%20b');
 });
 
 test('#948 s2 chatRows: at most 5 of 7; an archived chat reads "Archived · time"; the snippet is the sub line; #chat/ID', () => {

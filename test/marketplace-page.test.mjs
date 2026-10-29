@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { OFF, ROWS, pageHarness } from './helpers/marketplace-fixtures.mjs';
-import { tabFromParam, tabHash, updatesChip } from '../ui/public/marketplace/page.mjs';
+import { tabFromParam, tabHash, targetFromParam, updatesChip } from '../ui/public/marketplace/page.mjs';
 import { createSheet } from '../ui/public/marketplace/layers.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -349,4 +349,15 @@ test('a re-render whose twin of the focused control comes back disabled moves th
   off = true;
   await page.load({ background: true });
   assert.equal(doc.activeElement, doc.querySelector('#mk-root .mk-head-actions .mk-add-mkt'));
+});
+
+test('targetFromParam: installed/<name>[/settings] opens the manage sheet, browse/<marketplace>/<name> the install sheet; anything else names a tab only', () => {
+  assert.deepEqual(targetFromParam('installed/jira'), { kind: 'manage', name: 'jira', section: null });
+  assert.deepEqual(targetFromParam('installed/a%20b/settings'), { kind: 'manage', name: 'a b', section: 'settings' });
+  assert.deepEqual(targetFromParam('browse/m%2F1/slack-chat'), { kind: 'install', marketplace: 'm/1', name: 'slack-chat' });
+  for (const p of ['', 'installed', 'browse', 'marketplaces', 'installed/jira/health', 'installed/jira/settings/x',
+    'browse/m1', 'browse/m1/x/y', 'installed/%E0%A4%A', 'marketplaces/m1/x']) {
+    assert.equal(targetFromParam(p), null, JSON.stringify(p));
+  }
+  assert.equal(tabFromParam('installed/jira/settings'), 'installed', 'the tab still reads the first segment');
 });

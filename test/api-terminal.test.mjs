@@ -225,24 +225,16 @@ test('open, attach, type, get a block with its author, stop, close', { skip: !BA
   ws.close();
 });
 
-test('a page on another local port can neither open nor drive a terminal (D13)', { skip: !BASH }, async () => {
+test('a page on another local port can neither open nor drive a terminal (D13, G10)', { skip: !BASH }, async () => {
+  // G10: the global Origin check refuses such a page before any terminal gate, sockets included.
   const foreign = { host: `127.0.0.1:${port}`, origin: 'http://127.0.0.1:4401' };
-  const r = await raw('POST', `/api/runs/run-live/terminal?${q()}`, foreign, {});
-  assert.equal(r.status, 403);
-  assert.equal(r.body.code, 'TERMINAL_CROSS_ORIGIN');
-  assert.equal((await raw('GET', '/api/terminal', foreign)).body.enabled, false);
+  assert.equal((await raw('POST', `/api/runs/run-live/terminal?${q()}`, foreign, {})).status, 403);
+  assert.equal((await raw('GET', '/api/terminal', foreign)).status, 403);
 
   const session = await openRunTerminal();
-  const marker = join(wt, 'pwned');
-  const { ws, msgs, opened } = openWs(foreign);
-  await opened;
-  ws.send(JSON.stringify({ type: 'term-attach', sessionId: session.id }));
-  ws.send(JSON.stringify({ type: 'term-input', sessionId: session.id, data: `touch ${marker}\n` }));
-  await new Promise((res) => setTimeout(res, 500));
-  assert.equal(msgs.some((m) => typeof m.type === 'string' && m.type.startsWith('term-')), false);
-  assert.equal(existsSync(marker), false);
+  const { opened } = openWs(foreign);
+  await assert.rejects(opened, /403/);
   assert.equal((await raw('POST', `/api/terminal/sessions/${session.id}/stop`, foreign, {})).status, 403);
-  ws.close();
   await closeSession(session.id);
 });
 
@@ -333,5 +325,4 @@ test('a project terminal has the same gates as the others: raw fields and other 
   assert.equal((await r.json()).code, 'RAW_FIELD');
   const foreign = await raw('POST', `/api/projects/${key}/terminal`, { host: `127.0.0.1:${port}`, origin: 'http://127.0.0.1:4401' }, {});
   assert.equal(foreign.status, 403);
-  assert.equal(foreign.body.code, 'TERMINAL_CROSS_ORIGIN');
 });
