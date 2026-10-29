@@ -758,6 +758,221 @@ test('Simple: Discard on the checkout row uses the Actions tab\'s confirm and DE
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
 });
 
+// ---------------------------------------------------------------------------
+// The head's Try it: progress, then the next step (Start <first service>, Open :port and Stop), a failed setup's error
+// ---------------------------------------------------------------------------
+
+const TRY_MODEL = (instances = []) => ({ enabled: true, finished: true, workspace: false, estimate: { lastSetupMs: null }, stacks: [], stackStates: [],
+  members: [{ projectKey: KEY, projectName: 'Alpha', branch: ROW.branch, checkout: null, setup: 'npm ci', setupQueued: false,
+    actions: [{ id: 'test', label: 'Test', kind: 'task', openUrl: null }, { id: 'web', label: 'Web', kind: 'service', openUrl: 'http://localhost:{PORT}' }],
+    builtins: [] }], instances });
+const WEB_READY = { instanceId: `act:${ROW.id}:${KEY}:web`, runId: ROW.id, member: KEY, actionId: 'web', label: 'Web', kind: 'service',
+  status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417', startedAt: 1, readyError: null };
+const headOf = (doc, id) => doc.querySelector(`#hist-detail .hd-glance .rd-head-acts [data-head="${id}"]`);
+const pathOf = (url) => new URL(url, 'http://localhost:4317').pathname;
+
+test('head Try it: Checking out…, Setting up…, then Start <first service>, then Open :port and Stop', async () => {
+  const posts = [];
+  let releaseCheckout = null;
+  let model = TRY_MODEL();
+  const ctx = await bootDetail({
+    rows: [ROW],
+    arms: (url, opts = {}) => {
+      const path = pathOf(url);
+      if (path === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET') return ok(model);
+      if (path === `/api/runs/${ROW.id}/checkout` && opts.method === 'POST') {
+        posts.push([path, JSON.parse(opts.body)]);
+        return new Promise((r) => { releaseCheckout = r; });
+      }
+      if (path === `/api/runs/${ROW.id}/actions/web/start` && opts.method === 'POST') {
+        posts.push([path, JSON.parse(opts.body)]);
+        model = TRY_MODEL([WEB_READY]);
+        return ok(WEB_READY);
+      }
+      return null;
+    },
+  });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.ok(headOf(doc, 'try'), 'a finished run on its branch offers Try it');
+  click(ctx.window, headOf(doc, 'try'));
+  await settle(ctx.window, 2);
+  const wait = headOf(doc, 'try-wait');
+  assert.equal(wait && wait.textContent, 'Checking out…', 'the button stays, as its progress');
+  assert.equal(wait.getAttribute('aria-disabled'), 'true');
+  assert.equal(headOf(doc, 'try'), null);
+  releaseCheckout(ok({ members: [{ projectKey: KEY, state: 'checked-out', worktreeDir: '/tmp/co', branch: ROW.branch }], warnings: [] }));
+  await settle(ctx.window, 4);
+  assert.equal(headOf(doc, 'try-wait')?.textContent, 'Checking out…', 'until History\'s row shows the checkout (no Try it flash)');
+  await deliverRows(ctx, [checkoutRow({ setup: { status: 'running', at: new Date().toISOString() } })]);
+  assert.equal(headOf(doc, 'try-wait')?.textContent, 'Setting up…');
+  assert.equal(headOf(doc, 'try-wait').title, 'Running setup: npm ci');
+  await deliverRows(ctx, [checkoutRow({ setup: { status: 'ok', exitCode: 0 } })]);
+  const start = headOf(doc, 'try-start');
+  assert.equal(start && start.textContent, 'Start Web', 'the first service, not the first action');
+  click(ctx.window, start);
+  await settle(ctx.window, 6);
+  const open = headOf(doc, 'try-open');
+  assert.equal(open && open.tagName, 'A');
+  assert.equal(open.textContent, 'Open :4417');
+  assert.equal(open.getAttribute('href'), 'http://localhost:4417');
+  assert.equal(open.target, '_blank');
+  assert.ok(headOf(doc, 'try-stop'), 'Stop beside Open');
+  assert.deepEqual(posts, [[`/api/runs/${ROW.id}/checkout`, {}], [`/api/runs/${ROW.id}/actions/web/start`, { member: KEY }]]);
+});
+
+test('head Try it: a refused check out says so and offers Try it again', async () => {
+  const ctx = await bootDetail({
+    rows: [ROW],
+    arms: (url, opts = {}) => (pathOf(url) === `/api/runs/${ROW.id}/checkout` && opts.method === 'POST'
+      ? fail(409, { error: 'Can\'t check out: the branch is already checked out in /Users/ada/app.', code: 'BRANCH_CHECKED_OUT' }) : null),
+  });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  doc.getElementById('toasts').replaceChildren();
+  click(ctx.window, headOf(doc, 'try'));
+  await settle(ctx.window, 6);
+  assert.ok(headOf(doc, 'try'), 'Try it is back');
+  assert.equal(headOf(doc, 'try-wait'), null);
+  assert.equal(lastToast(doc).title, 'Could not check out');
+});
+
+test('head Try it: Stop sends the live service\'s stop, then Start is offered again', async () => {
+  const posts = [];
+  let model = TRY_MODEL([WEB_READY]);
+  const ctx = await bootDetail({
+    rows: [checkoutRow()],
+    arms: (url, opts = {}) => {
+      const path = pathOf(url);
+      if (path === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET') return ok(model);
+      if (path === `/api/runs/${ROW.id}/actions/web/stop` && opts.method === 'POST') {
+        posts.push([path, JSON.parse(opts.body)]);
+        model = TRY_MODEL([{ ...WEB_READY, status: 'stopped' }]);
+        return ok({ ok: true });
+      }
+      return null;
+    },
+  });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  click(ctx.window, headOf(doc, 'try-stop'));
+  await settle(ctx.window, 6);
+  assert.deepEqual(posts, [[`/api/runs/${ROW.id}/actions/web/stop`, { member: KEY }]]);
+  assert.equal(headOf(doc, 'try-start')?.textContent, 'Start Web');
+});
+
+test('head Try it: a checkout discarded right after it landed offers Try it again, not Checking out…', async () => {
+  const ctx = await bootDetail({
+    rows: [ROW],
+    arms: (url, opts = {}) => {
+      const path = pathOf(url);
+      if (path === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET') return ok(TRY_MODEL());
+      if (path === `/api/runs/${ROW.id}/checkout` && opts.method === 'POST') {
+        return ok({ members: [{ projectKey: KEY, state: 'checked-out', worktreeDir: '/tmp/co', branch: ROW.branch }], warnings: [] });
+      }
+      return null;
+    },
+  });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  click(ctx.window, headOf(doc, 'try'));
+  await settle(ctx.window, 4);
+  await deliverRows(ctx, [checkoutRow()]);
+  assert.equal(headOf(doc, 'try-start')?.textContent, 'Start Web');
+  await deliverRows(ctx, [ROW]);
+  assert.ok(headOf(doc, 'try'), 'seeing the checkout ended the Check out wait');
+  assert.equal(headOf(doc, 'try-wait'), null);
+});
+
+// A refused Start or Stop (409 SETUP_FAILED, PORTS_EXHAUSTED, 403 Actions off) says why; the head offers the step again.
+for (const [step, path, model, title, back] of [
+  ['Start', 'start', () => TRY_MODEL(), 'Could not start Web', 'try-start'],
+  ['Stop', 'stop', () => TRY_MODEL([WEB_READY]), 'Could not stop Web', 'try-stop'],
+]) {
+  test(`head Try it: a refused ${step} says why and offers ${step} again`, async () => {
+    const error = `The ${path} was refused: the setup command failed.`;
+    const ctx = await bootDetail({
+      rows: [checkoutRow()],
+      arms: (url, opts = {}) => {
+        const p = pathOf(url);
+        if (p === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET') return ok(model());
+        if (p === `/api/runs/${ROW.id}/actions/web/${path}` && opts.method === 'POST') return fail(409, { error, code: 'SETUP_FAILED' });
+        return null;
+      },
+    });
+    atAdvanced(ctx);
+    await openDetail(ctx, '');
+    await settle(ctx.window, 6);
+    const doc = ctx.window.document;
+    doc.getElementById('toasts').replaceChildren();
+    click(ctx.window, headOf(doc, back));
+    await settle(ctx.window, 6);
+    assert.deepEqual(lastToast(doc), { tone: 'err', title, detail: error, action: '' });
+    assert.ok(headOf(doc, back), `${step} is back`);
+    assert.equal(headOf(doc, 'try-wait'), null);
+  });
+}
+
+test('head Try it: a service started elsewhere shows Open and Stop here once actions-changed lands', async () => {
+  let model = TRY_MODEL();
+  const ctx = await bootDetail({
+    rows: [checkoutRow()],
+    arms: (url, opts = {}) => (pathOf(url) === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET' ? ok(model) : null),
+  });
+  atSimple(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.equal(headOf(doc, 'try-start')?.textContent, 'Start Web', 'Simple gets the same inline Start');
+  // Only the head reads the model here: drop the Overview strip and the Actions tab's controller (each refetches on the
+  // frame too), as on a screen whose Details tabs never opened.
+  for (const el of doc.querySelectorAll('#hist-detail *')) el.__actionsCtl?.destroy();
+  for (const el of doc.querySelectorAll('#hist-detail .act-strip')) el.remove();
+  model = TRY_MODEL([WEB_READY]);
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed' }) });
+  await settle(ctx.window, 6);
+  assert.equal(headOf(doc, 'try-open')?.textContent, 'Open :4417', 'the head is a mounted Actions consumer');
+});
+
+test('head Try it: a failed setup is a visible error; Advanced adds the Actions tab link', async () => {
+  const ctx = await bootDetail({
+    rows: [checkoutRow({ setup: { status: 'failed', exitCode: 1 } })],
+    arms: (url, opts = {}) => (pathOf(url) === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET' ? ok(TRY_MODEL()) : null),
+  });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const note = headOf(doc, 'try-note');
+  assert.equal(note && note.textContent, 'Setup failed (exit 1)');
+  assert.equal(note.getAttribute('role'), 'status');
+  assert.equal(headOf(doc, 'try-start'), null, 'no Start while setup failed');
+  click(ctx.window, headOf(doc, 'try-actions'));
+  await settle(ctx.window, 4);
+  assert.match(ctx.window.location.hash, /\/details\/actions$/);
+});
+
+test('head Try it, Simple: a failed setup is the error alone (no tab link)', async () => {
+  const ctx = await bootDetail({
+    rows: [checkoutRow({ setup: { status: 'failed', exitCode: 1 } })],
+    arms: (url, opts = {}) => (pathOf(url) === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET' ? ok(TRY_MODEL()) : null),
+  });
+  atSimple(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.equal(headOf(doc, 'try-note')?.textContent, 'Setup failed (exit 1)');
+  assert.equal(headOf(doc, 'try-actions'), null);
+});
+
 test('Simple: a linked folder\'s row offers Unlink with its own confirm, and only unlinks', async () => {
   const calls = [];
   const ctx = await bootDetail({

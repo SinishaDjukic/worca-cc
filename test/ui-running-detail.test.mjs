@@ -1937,11 +1937,18 @@ test('run page: Apply to branch clears the kept head, and a later state frame do
 });
 
 // A checkout made "now": whenLabel then reads HH:MM. `level` is set before the glance opens (the activity rows read it).
-async function checkoutGlance(level) {
+// `actions`: the Actions model (a function reads it per request), or 'fail'; `arms(url, opts)` answers other calls first.
+async function checkoutGlance(level, { actions = null, arms = null } = {}) {
   const CO = { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: 'worca-cc/dark-p1', at: new Date().toISOString(), policy: 'on-demand' }] };
   const box = { rows: [{ ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: null, checkout: CO }] };
   const ctx = await boot({
-    fetchHandler: (url) => {
+    fetchHandler: (url, opts) => {
+      const armed = arms && arms(url, opts);
+      if (armed) return armed;
+      if (actions && url.includes('/api/runs/p1/actions?')) {
+        if (actions === 'fail') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
+        return ok(typeof actions === 'function' ? actions() : actions);
+      }
       if (url.endsWith('/api/history/pr')) return ok({ ok: true });
       if (url.endsWith('/api/history')) return ok({ pipelines: box.rows, ghAvailable: true });
       if (url.endsWith('/api/budget')) return ok(okBudget());
@@ -1983,6 +1990,74 @@ test('run page, Simple: a checkout gets a plain row with Discard, gone once the 
   assert.doesNotMatch(doc.querySelector('#run-detail .rd-glance').textContent, /worktree/i);
   await discard();
   assert.equal(row(), null);
+});
+
+const GLANCE_MODEL = { enabled: true, finished: true, workspace: false, stacks: [], stackStates: [], instances: [],
+  members: [{ projectKey: KEY, branch: 'worca-cc/dark-p1', setup: null, setupQueued: false,
+    actions: [{ id: 'test', label: 'Test', kind: 'task' }, { id: 'web', label: 'Web', kind: 'service' }], builtins: [] }] };
+const runHead = (doc, id) => doc.querySelector(`#run-detail .rd-head-acts [data-head="${id}"]`);
+
+test('run page card head, Simple: a checked-out run shows Start <first service>, not an empty head', async () => {
+  const { doc, discard } = await checkoutGlance('simple', { actions: GLANCE_MODEL });
+  assert.equal(runHead(doc, 'try'), null);
+  assert.equal(runHead(doc, 'try-start')?.textContent, 'Start Web');
+  assert.equal(runHead(doc, 'try-actions'), null, 'no tab link at Simple');
+  await discard();
+  assert.ok(runHead(doc, 'try'), 'a checkout discarded elsewhere offers Try it again');
+});
+
+test('run page card head: an Actions model that cannot be read says Checked out and is not asked for on every paint', async () => {
+  const { ctx, doc } = await checkoutGlance('advanced', { actions: 'fail' });
+  for (let i = 0; i < 3; i++) { frame(ctx, { type: 'done', runId: 'r1', status: 'done' }); await settle(ctx.window, 4); }
+  assert.equal(runHead(doc, 'try-note')?.textContent, 'Checked out');
+  const reads = ctx.calls.filter((c) => c.url.includes('/api/runs/p1/actions?')).length;
+  assert.ok(reads >= 1 && reads <= 2, `one read (two with the Overview strip), not one per paint: ${reads}`);
+});
+
+const GLANCE_WEB_READY = { instanceId: `act:p1:${KEY}:web`, runId: 'p1', member: KEY, actionId: 'web', label: 'Web', kind: 'service',
+  status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417', startedAt: 1, readyError: null };
+
+test('run page card head: a project with no service links its Actions tab', async () => {
+  const model = { ...GLANCE_MODEL, members: [{ ...GLANCE_MODEL.members[0], actions: [{ id: 'test', label: 'Test', kind: 'task' }] }] };
+  const { ctx, doc } = await checkoutGlance('advanced', { actions: model });
+  assert.equal(runHead(doc, 'try-start'), null);
+  runHead(doc, 'try-actions').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await settle(ctx.window, 4);
+  assert.match(ctx.window.location.hash, /^#running\/.+\/details\/actions$/);
+});
+
+test('run page card head: Start <first service> starts it, then Open :port and Stop', async () => {
+  const posts = [];
+  let model = GLANCE_MODEL;
+  const { ctx, doc } = await checkoutGlance('advanced', {
+    actions: () => model,
+    arms: (url, opts) => {
+      if (!url.includes('/api/runs/p1/actions/web/start') || opts.method !== 'POST') return null;
+      posts.push(JSON.parse(opts.body));
+      model = { ...GLANCE_MODEL, instances: [GLANCE_WEB_READY] };
+      return ok(GLANCE_WEB_READY);
+    },
+  });
+  runHead(doc, 'try-start').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await settle(ctx.window, 6);
+  assert.deepEqual(posts, [{ member: KEY }]);
+  assert.equal(runHead(doc, 'try-open')?.textContent, 'Open :4417');
+  assert.equal(runHead(doc, 'try-open').getAttribute('href'), 'http://localhost:4417');
+  assert.ok(runHead(doc, 'try-stop'), 'Stop beside Open');
+});
+
+test('run page card head, Simple: a service started elsewhere shows Open here once actions-changed lands', async () => {
+  let model = GLANCE_MODEL;
+  const { ctx, doc } = await checkoutGlance('simple', { actions: () => model });
+  assert.equal(runHead(doc, 'try-start')?.textContent, 'Start Web');
+  // Only the head reads the model here: drop the Overview strip and the Actions tab's controller (each refetches on the
+  // frame too), as on a screen whose Details tabs never opened.
+  for (const el of doc.querySelectorAll('#run-detail *')) el.__actionsCtl?.destroy();
+  for (const el of doc.querySelectorAll('#run-detail .act-strip')) el.remove();
+  model = { ...GLANCE_MODEL, instances: [GLANCE_WEB_READY] };
+  frame(ctx, { type: 'actions-changed' });
+  await settle(ctx.window, 6);
+  assert.equal(runHead(doc, 'try-open')?.textContent, 'Open :4417');
 });
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { headModel, groupHead, routeModel, routeGroupOf, landingOf, prRef, renderRoute, routeOpenWanted, setRouteOpen, ROUTE_OPEN_KEY,
-  renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr, showsFixConflicts, hdPrWatchLabel, ASK_IN_CHAT, verdictWords } from '../ui/public/run-head.mjs';
+  renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr, showsFixConflicts, hdPrWatchLabel, ASK_IN_CHAT, verdictWords,
+  tryStep, tryServiceOf } from '../ui/public/run-head.mjs';
 import { icon } from '../ui/public/icons.mjs';   // the remote icon check
 
 const M = (state, extra = {}) => ({ state, word: state, dot: 'green', line: '', actions: [], pr: null, prNeeds: false, ...extra });
@@ -49,6 +50,86 @@ test('head: every state of the request table gives its key, status line and head
     const primaries = [...h.before, ...h.after].filter((b) => b.primary).length + (h.cta && h.cta.state !== 'view' && h.cta.state !== 'merged' && h.cta.state !== 'none' ? 1 : 0);
     assert.ok(primaries <= 1, `${name}: ${primaries} primaries`);
   }
+});
+
+// Try it (the head's local check-out): Check out, its setup, then the project's first service.
+const CO = (setup = { status: 'ok' }) => ({ members: [{ projectKey: 'app', worktreeDir: '/tmp/co', branch: 'feat/x',
+  at: '2026-10-29T16:01:00Z', policy: 'on-demand', setup }] });
+const WEB = { id: 'web', label: 'Web', kind: 'service', openUrl: 'http://localhost:{PORT}' };
+const AM = ({ actions = [{ id: 'test', label: 'Test', kind: 'task' }, WEB], instances = [], enabled = true, setupQueued = false, setup = 'npm ci' } = {}) => ({
+  enabled, finished: true, workspace: false, members: [{ projectKey: 'app', branch: 'feat/x', setup, setupQueued, actions }], instances });
+const LIVE = (status, extra = {}) => ({ instanceId: 'act:p1:app:web', member: 'app', actionId: 'web', label: 'Web', kind: 'service', status,
+  ports: { PORT: 4417 }, url: 'http://localhost:4417', ...extra });
+const TRY = (tryIt = {}, extra = {}) => F({ canTry: false, ...extra, tryIt: { checkout: CO(), actions: AM(), busy: '', ...tryIt } });
+const labels = (items) => items.map((b) => b.label);
+
+const TRY_TABLE = {
+  'not checked out': [F({ tryIt: { checkout: null, actions: null, busy: '' } }), ['try'], ['Try it']],
+  'not checked out, no tryIt fact (today\'s callers)': [F(), ['try'], ['Try it']],
+  'check out not allowed': [F({ canTry: false }), [], []],
+  'checking out': [F({ tryIt: { checkout: null, actions: null, busy: 'checkout' } }), ['try-wait'], ['Checking out…']],
+  'setup running, model not loaded yet': [TRY({ checkout: CO({ status: 'running' }), actions: null }), ['try-wait'], ['Setting up…']],
+  'setup pending, the server\'s job in flight': [TRY({ checkout: CO({ status: 'pending' }), actions: AM({ setupQueued: true }) }), ['try-wait'], ['Setting up…']],
+  'setup pending alone (a kept checkout): Start queues behind it': [TRY({ checkout: CO({ status: 'pending' }) }), ['try-start'], ['Start Web']],
+  'a settled row beats the model\'s stale setupQueued': [TRY({ actions: AM({ setupQueued: true }) }), ['try-start'], ['Start Web']],
+  'set up, model loading': [TRY({ actions: null }), ['try-note'], ['Checked out']],
+  'set up: the first SERVICE, not the first action': [TRY(), ['try-start'], ['Start Web']],
+  'start in flight': [TRY({ busy: 'start' }), ['try-wait'], ['Starting Web…']],
+  'service starting (ready check pending)': [TRY({ actions: AM({ instances: [LIVE('running')] }) }), ['try-wait', 'try-stop'], ['Starting Web…', 'Stop']],
+  'service ready': [TRY({ actions: AM({ instances: [LIVE('ready')] }) }), ['try-open', 'try-stop'], ['Open :4417', 'Stop']],
+  'ready check timed out: still openable': [TRY({ actions: AM({ instances: [LIVE('running', { readyError: 'The app never listened on port 4417 that Worca gave it (PORT).' })] }) }), ['try-open', 'try-stop'], ['Open :4417', 'Stop']],
+  'no port variable': [TRY({ actions: AM({ instances: [LIVE('ready', { ports: {} })] }) }), ['try-open', 'try-stop'], ['Open', 'Stop']],
+  'an unsafe url gets no link': [TRY({ actions: AM({ instances: [LIVE('ready', { url: 'javascript:alert(1)' })] }) }), ['try-stop'], ['Stop']],
+  'stop in flight': [TRY({ busy: 'stop', actions: AM({ instances: [LIVE('ready')] }) }), ['try-wait'], ['Stopping…']],
+  'an exited service: Start again': [TRY({ actions: AM({ instances: [LIVE('exited', { exitCode: 1 })] }) }), ['try-start'], ['Start Web']],
+  'another service of the member runs': [TRY({ actions: AM({ instances: [LIVE('ready', { actionId: 'api', label: 'API', ports: { PORT: 4420 }, url: 'http://localhost:4420' })] }) }), ['try-open', 'try-stop'], ['Open :4420', 'Stop']],
+  'no service, Advanced: the Actions tab': [TRY({ actions: AM({ actions: [{ id: 'test', label: 'Test', kind: 'task' }] }) }), ['try-actions'], ['Actions']],
+  'no service, Simple: no tab link': [TRY({ actions: AM({ actions: [] }) }, { level: 'simple' }), ['try-note'], ['Checked out']],
+  'Actions off on this machine, Advanced': [TRY({ actions: AM({ enabled: false }) }), ['try-actions'], ['Actions']],
+  'Actions off on this machine, Simple': [TRY({ actions: AM({ enabled: false }) }, { level: 'simple' }), ['try-note'], ['Checked out']],
+  'setup failed, Advanced: the error and the Actions tab': [TRY({ checkout: CO({ status: 'failed', exitCode: 1 }) }), ['try-note', 'try-actions'], ['Setup failed (exit 1)', 'Actions']],
+  'setup failed, no exit code': [TRY({ checkout: CO({ status: 'failed', exitCode: null }) }), ['try-note', 'try-actions'], ['Setup failed', 'Actions']],
+  'setup interrupted, Simple: the error alone': [TRY({ checkout: CO({ status: 'interrupted' }) }, { level: 'simple' }), ['try-note'], ['Setup was interrupted']],
+  'a checkout row without setup (old rows) is settled': [TRY({ checkout: { members: [{ projectKey: 'app', worktreeDir: '/tmp/co' }] } }), ['try-start'], ['Start Web']],
+};
+
+test('Try it step: progress while checking out and setting up, then the first service, never an empty head', () => {
+  for (const [name, [f, want, words]] of Object.entries(TRY_TABLE)) {
+    const items = tryStep(f);
+    assert.deepEqual(items.map((b) => b.id), want, name);
+    assert.deepEqual(labels(items), words, name);
+    assert.ok(!items.some((b) => b.primary), `${name}: the PR control stays the one primary`);
+    for (const b of items.filter((x) => x.id === 'try-wait')) assert.equal(b.busy, true, `${name}: progress is a busy button`);
+  }
+});
+
+test('Try it step: canTry false + checked out is the next step in headModel\'s before, on the ready, push and pr-closed heads', () => {
+  for (const extra of [{}, { push: true }, { pr: { ...OPEN, state: 'CLOSED' } }]) {
+    const h = headModel(TRY({}, extra));
+    assert.deepEqual(h.before.map((b) => b.id), ['try-start'], JSON.stringify(extra));
+    assert.equal(h.before[0].label, 'Start Web');
+  }
+  const failed = headModel(TRY({ checkout: CO({ status: 'failed', exitCode: 2 }) }));
+  assert.equal(failed.key, 'ready', 'the run itself is still ready to ship');
+  assert.deepEqual(failed.before.map((b) => [b.id, b.label, b.tone || '']), [['try-note', 'Setup failed (exit 2)', 'bad'], ['try-actions', 'Actions', '']]);
+});
+
+test('Try it step: titles say what runs and where it opens', () => {
+  assert.equal(tryStep(TRY({ checkout: CO({ status: 'running' }) }))[0].title, 'Running setup: npm ci');
+  assert.equal(tryStep(TRY({ checkout: CO({ status: 'running' }), actions: AM({ setup: null }) }))[0].title, 'Running the setup command');
+  const [open, stop] = tryStep(TRY({ actions: AM({ instances: [LIVE('ready')] }) }));
+  assert.equal(open.href, 'http://localhost:4417');
+  assert.equal(stop.title, 'Stop Web and free its port');
+});
+
+test('tryServiceOf: the checked-out member\'s first service and its live instance; null without a model', () => {
+  assert.equal(tryServiceOf(CO(), null), null);
+  assert.equal(tryServiceOf(null, AM()), null);
+  const s = tryServiceOf(CO(), AM({ instances: [LIVE('ready')] }));
+  assert.equal(s.member.projectKey, 'app');
+  assert.equal(s.action.id, 'web');
+  assert.equal(s.live.status, 'ready');
+  assert.equal(tryServiceOf(CO(), AM({ instances: [LIVE('stopped')] })).live, null, 'a stopped instance is not live');
 });
 
 test('head: Ready on its own branch is Try it, then Create PR as the one primary', () => {
@@ -610,4 +691,62 @@ test('route CSS: 20px circles, an ellipsis on mono names, sentence-case 12px --i
 test('CSS: fact labels never wrap', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   assert.match(css, /^\.rd-kv-k\{[^}]*white-space:nowrap;/m);
+});
+
+test('renderHeadButtons: a busy item is aria-disabled and runs nothing; Open is a new-tab link; a note is status text', () => {
+  const d = doc();
+  const host = d.querySelector('.acts');
+  const clicks = [];
+  renderHeadButtons(host, headModel(TRY({ busy: 'start' })), null, { onHead: (id) => clicks.push(id) });
+  const wait = host.querySelector('[data-head="try-wait"]');
+  assert.equal(wait.tagName, 'BUTTON');
+  assert.equal(wait.getAttribute('aria-disabled'), 'true');
+  assert.equal(wait.disabled, false, 'aria-disabled, never disabled: it keeps the focus');
+  wait.click();
+  assert.deepEqual(clicks, [], 'a busy button runs nothing');
+  renderHeadButtons(host, headModel(TRY({ actions: AM({ instances: [LIVE('ready')] }) })), null, { onHead: (id) => clicks.push(id) });
+  const open = host.querySelector('[data-head="try-open"]');
+  assert.equal(open.tagName, 'A');
+  assert.equal(open.getAttribute('href'), 'http://localhost:4417');
+  assert.equal(open.target, '_blank');
+  assert.equal(open.rel, 'noopener noreferrer');
+  open.dispatchEvent(new d.defaultView.Event('click', { bubbles: true, cancelable: true }));
+  assert.deepEqual(clicks, [], 'the link opens itself; onHead is not called');
+  host.querySelector('[data-head="try-stop"]').click();
+  assert.deepEqual(clicks, ['try-stop']);
+  renderHeadButtons(host, headModel(TRY({ checkout: CO({ status: 'failed', exitCode: 1 }) })), null, {});
+  const note = host.querySelector('[data-head="try-note"]');
+  assert.equal(note.tagName, 'SPAN');
+  assert.equal(note.getAttribute('role'), 'status');
+  assert.ok(note.classList.contains('rd-head-note') && note.classList.contains('is-bad'));
+  assert.equal(note.textContent, 'Setup failed (exit 1)');
+});
+
+test('renderHeadButtons: the focus follows the Try it step from Try it to its progress to Start', () => {
+  const d = doc();
+  const host = d.querySelector('.acts');
+  renderHeadButtons(host, headModel(F({ tryIt: { checkout: null, actions: null, busy: '' } })), null, {});
+  host.querySelector('[data-head="try"]').focus();
+  renderHeadButtons(host, headModel(F({ tryIt: { checkout: null, actions: null, busy: 'checkout' } })), null, {});
+  assert.equal(d.activeElement.dataset.head, 'try-wait', 'the rebuilt step keeps the focus (data-head-group)');
+  renderHeadButtons(host, headModel(TRY()), null, {});
+  assert.equal(d.activeElement.dataset.head, 'try-start');
+});
+
+test('renderHeadButtons: a step that ends as a note alone hands the focus to the head\'s first control, never <body>', () => {
+  const d = doc();
+  const host = d.querySelector('.acts');
+  const slot = d.createElement('div');
+  slot.className = 'rd-pr-slot';
+  const pr = d.createElement('button');
+  pr.className = 'pr-cta';
+  slot.append(pr);
+  renderHeadButtons(host, headModel(TRY({ checkout: CO({ status: 'running' }) }, { level: 'simple' })), slot, {});
+  host.querySelector('[data-head="try-wait"]').focus();
+  renderHeadButtons(host, headModel(TRY({ checkout: CO({ status: 'failed', exitCode: 1 }) }, { level: 'simple' })), slot, {});
+  assert.ok(host.querySelector('[data-head="try-note"]'));
+  assert.equal(d.activeElement, pr, 'Setup failed is a note: the PR control takes the focus');
+  pr.focus();
+  renderHeadButtons(host, headModel(TRY({ checkout: CO({ status: 'running' }) }, { level: 'simple' })), slot, {});
+  assert.equal(d.activeElement, pr, 'a focused control that was not rebuilt keeps the focus');
 });
