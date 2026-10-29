@@ -28,7 +28,7 @@ first fenced JSON block in this file.
 ```json
 { "HOST_TOOLS_MODE": "union", "HOST_MAIN_THREAD_GUARD": false, "HOST_GUARD_CONTEXT_FIELD": null,
   "HOST_BUDGET_IS_CUMULATIVE": true, "HOST_BUDGET_SUBTYPE": "error_max_budget_usd", "HOST_CUT_COST_RESTORED": true,
-  "SUBAGENT_CAP_RE": "(?:sub-?agent|agent)s? (?:per session )?(?:limit|cap) (?:reached|exceeded)", "VANISHED_RE": "No conversation found", "HOST_ROTATE_DISPATCHES": 24, "RECONCILE_EST_REL": 0.15,
+  "SUBAGENT_CAP_RE": "(?<!concurrent (?:sub-?)?)\\b(?:sub-?agent|agent)s? (?:per session )?(?:limit|cap) (?:reached|exceeded)", "VANISHED_RE": "No conversation found", "HOST_ROTATE_DISPATCHES": 24, "RECONCILE_EST_REL": 0.15,
   "CHILD_INHERITS_PARENT": { "model": true, "effort": true }, "MEMBER_BASE_TOOLS": ["TodoWrite"],
   "dropDefinitionFields": [], "S3": { "denyReachesChildren": false, "hostGuardReachesChildren": false },
   "phase0Go": false, "S7b": { "ran": false, "pass": false }, "claudeGo": false,
@@ -37,11 +37,12 @@ first fenced JSON block in this file.
 
 ## Notes for the owner
 
-- `SUBAGENT_CAP_RE` above is Task 6's default, verbatim. It also matches "Concurrent subagent limit reached. You can
-  run 20 subagents at once." (checked with node), so Task 53's `doesNotMatch` assertion fails until S6 records a
-  measured fragment. A candidate that keeps the per-session matches and rejects the concurrent text:
-  `/(?<!concurrent )\b(?:sub-?agent|agent)s? (?:per session )?(?:limit|cap) (?:reached|exceeded)/i`. In this JSON
-  block its source needs the backslash escaped (`\\b`). Task 32 (run 4) pins the demux default from the same pattern.
+- `SUBAGENT_CAP_RE` above is Task 6's default with `(?<!concurrent (?:sub-?)?)\b` in front, pinned by Task 32 (run 4)
+  in `session-demux.mjs`. Task 6's verbatim default also matched "Concurrent subagent limit reached. You can run 20
+  subagents at once.", which Task 53's `doesNotMatch` forbids. In this JSON block the source has its backslash
+  escaped (`\\b`). When S6 records the measured `capRefusalText`, put its escaped stable fragment AFTER that same
+  `(?<!concurrent (?:sub-?)?)\b` prefix: a bare fragment such as `Subagent limit reached` matches the concurrency text
+  under the `i` flag, and Task 53's `doesNotMatch` fails again. Task 53 copies the source into the code.
 - `INVALID_INPUT_RE` (Task 2): add it to the block when S1's `missingDescriptionText` is not null; until then Task 32's
   default `/InputValidationError|Invalid tool parameters|required parameter/i` stands.
 - S3: `denyReachesChildren` / `allowedToolsReachChildren` / `toolsFlagRestrictsChildren` are `null` when the run gave
