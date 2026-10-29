@@ -149,7 +149,7 @@ export function headingsOf(text) {
 
 const int = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
 const cleanText = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
-const cleanPath = (v) => cleanText(v).replace(/\\/g, '/');
+const cleanPath = (v) => (typeof v === 'string' ? v.trim() : String(v ?? '').trim()).replace(/\\/g, '/');
 /** D58: a text check's optional file. {file: null} when none; {error} for a path outside the project. */
 function fileOf(raw) {
   if (raw.file == null || String(raw.file).trim() === '') return { file: null };

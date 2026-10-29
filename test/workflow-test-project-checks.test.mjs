@@ -2,7 +2,7 @@
 // the command check, and text checks that read a file of the project.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
@@ -117,4 +117,37 @@ test('a time limit stops a command; a file outside the checkout is never read', 
   const r = await runCommandCheck({ kind: 'command', cmd: 'node -e "setTimeout(() => {}, 60000)"', timeoutMin: 1 }, { cwd: dir, run: async (o) => ({ ok: false, exitCode: null, timedOut: true, ms: o.timeoutMs, tail: '' }) });
   assert.deepEqual([r.met, r.value], [false, 'Stopped after 1 minute']);
   assert.equal(await readCheckFile(outcome(dir), '../outside.md'), null);
+});
+
+test('a file reached through a linked folder that leads outside the checkout is never read', async () => {
+  const dir = join(home, 'linked');
+  const outside = join(home, 'outside');
+  mkdirSync(join(dir, 'docs'), { recursive: true });
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, 'secret.md'), 'secret');
+  writeFileSync(join(dir, 'docs', 'ok.md'), 'fine');
+  try { symlinkSync(outside, join(dir, 'out'), 'junction'); } catch (e) { return; }   // no link rights here: nothing to test
+  assert.equal(await readCheckFile(outcome(dir), 'out/secret.md'), null);
+  assert.equal(await readCheckFile(outcome(dir), 'docs/ok.md'), 'fine');
+  for (const bad of ['/etc/passwd', 'C:/x.md', 'C:\\x.md']) assert.equal(await readCheckFile(outcome(dir), bad), null, bad);
+});
+
+test('a command that throws is "Ended with an error"; the other checks keep their verdict', async () => {
+  const example = { basics: { noError: true, noHelp: false, maxCostUsd: null, maxSentBack: null }, checks: [
+    { id: 'c_1', ...check({ kind: 'command', cmd: 'node x.mjs' }) }, { id: 'c_2', ...check({ kind: 'mentions', text: 'rounding' }) }] };
+  const v = await checkTry(example, outcome(home), { runCommand: async () => { throw new Error('boom'); } });
+  assert.deepEqual(v.checks.map((c) => [c.met, c.value]), [[false, 'Ended with an error'], [true, 'Met']]);
+});
+
+test('the command gets the try guard env and the checkout as its folder', async () => {
+  let seen;
+  await runCommandCheck({ kind: 'command', cmd: 'x', timeoutMin: 5 }, { cwd: home, logFile: join(home, 'calls.ndjson'),
+    run: async (o) => { seen = o; return { ok: true, exitCode: 0, timedOut: false, ms: 1, tail: 'ℹ pass 1\nℹ fail 0' }; } });
+  assert.equal(seen.cwd, home);
+  assert.equal(seen.timeoutMs, 300000);
+  assert.ok(Object.keys(seen.env).some((k) => /^WORCA_/.test(k) && String(seen.env[k]).includes('calls.ndjson')), 'the guard log reaches the command');
+});
+
+test('a file path keeps its inner spaces', () => {
+  assert.equal(check({ kind: 'mentions', text: 'x', file: ' docs/my  notes.md ' }).file, 'docs/my  notes.md');
 });

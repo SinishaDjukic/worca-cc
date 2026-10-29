@@ -3,7 +3,8 @@
 // the main result the text checks read, the paths of its result folder, and the Library script checks (run on the
 // script bench, on a COPY of that folder, one at a time).
 import { existsSync } from 'node:fs';
-import { mkdtemp, cp, rm, stat, lstat, readFile } from 'node:fs/promises';
+import { sep } from 'node:path';
+import { mkdtemp, cp, rm, stat, lstat, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename, extname } from 'node:path';
 import { findPipelineRowById, readPipelineStateById, listRunArtifacts, resolveIndexedArtifactForRow, runDirForRow } from '../artifacts.mjs';
@@ -102,7 +103,7 @@ export async function readTryOutcome(pipelineId, { help = [], failReason = null,
     help,
     failReason: failReason || (row ? null : 'The try did not start.'),
   };
-  const dir = row ? await runDirForRow(row) : null;
+  const dir = row ? await runDirForRow(row).catch(() => null) : null;   // a Part 2 row may have no run folder on disk
   const projectRun = !!row && isProjectRow(row);
   const main = row ? await mainResult(row.id, { project: projectRun }) : { ...NONE };
   const project = projectRun ? await projectOutcome(row, dir) : null;
@@ -176,7 +177,15 @@ export async function readCheckFile(outcome, rel) {
     const dir = outcome.project.checkoutDir;
     if (!dir) return null;
     const file = join(dir, ...clean.split('/'));
-    try { return (await lstat(file)).isFile() ? clip(await readFile(file, 'utf8')) : null; } catch { return null; }
+    try {
+      if (!(await lstat(file)).isFile()) return null;
+      // A linked folder on the way (a symlink, a Windows junction) must not lead out of the checkout.
+      const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+      const root = fold(await realpath(dir));
+      const real = fold(await realpath(file));
+      if (real !== root && !real.startsWith(root.endsWith(sep) ? root : root + sep)) return null;
+      return clip(await readFile(file, 'utf8'));
+    } catch { return null; }
   }
   const row = outcome.pipelineId ? findPipelineRowById(outcome.pipelineId) : null;
   const hit = row ? await resolveIndexedArtifactForRow(row, `work/${clean}`) : null;
@@ -223,7 +232,8 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
     if (outcome.project && !cwdDir) { not('Not run: the copy of the project is gone'); continue; }
     if (check.kind === 'command') {
       onCommand(check.cmd);
-      const r = await runCommand(check, { cwd: cwdDir, logFile: outcome.logFile });
+      let r;
+      try { r = await runCommand(check, { cwd: cwdDir, logFile: outcome.logFile }); } catch { r = { met: false, value: 'Ended with an error' }; }
       results[i] = { id: check.id, label, met: !!r.met, value: r.value, ...(r.output ? { output: r.output } : {}) };
       continue;
     }
