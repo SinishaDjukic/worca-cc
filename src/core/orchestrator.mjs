@@ -977,6 +977,8 @@ export class GraphOrchestrator extends RunHarness {
   /** Session groups (Task 45): close every SessionHost once, with how the run ended. */
   async _closeSessions(outcome, err = null) {
     await this._sessions.close(this._sessionOutcome(outcome, err));
+    // _pauseForFailure reuses the last snapshot point: it must carry the hosts as they closed (Task 46).
+    if (this.state.resumePoint) this.state.resumePoint = { ...this.state.resumePoint, sessionHosts: this._sessions.snapshot() };
   }
 
   /** How the run ended, for its SessionHosts' close (Task 45). A requested pause is 'paused' even when the scheduler said
@@ -1076,6 +1078,8 @@ export class GraphOrchestrator extends RunHarness {
       toolInstruction: this.toolInstruction ?? '',
       pipelineDir: this.pipeline.dir,
       pausedAt: new Date().toISOString(),
+      // Session groups (C2, C28): each host's snapshot, which the resumed run's SessionHost restores (Task 47).
+      ...(this._sessions ? { sessionHosts: this._sessions.snapshot() } : {}),
     };
   }
 
@@ -1752,6 +1756,8 @@ export class GraphOrchestrator extends RunHarness {
       result = await this._outlineLoop(nc, ctx, result);
       result = await this._applyReviewChecklist(ctx, result);
       result = await this._applyRoleReviewVerdict(ctx, result);
+      // C5: the verdict the routing reads, as counts, on the execution's latest host dispatch (none when it ran plain).
+      this._sessions?.noteVerdict(ctx.executionId, verdictSummary(result?.verdict));
       await this._afterExecution(nc, ctx, result);
       await this._reconcileDirections(ctx);
       return result;
@@ -1890,6 +1896,7 @@ export class GraphOrchestrator extends RunHarness {
     const engineOpts = this._engineNodeOpts(nc);
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
+    const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it
@@ -1982,7 +1989,8 @@ export class GraphOrchestrator extends RunHarness {
         ? { meta: nc.meta, runtime: nc.runtime, file: nc.file, command: nc.command, params: nc.params, paramsPort: nc.paramsPort === true, timeoutMs: nc.timeoutMs, mock: nc.mock }
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
-      resumeSessionId: this._takeResumeSession(executionId),
+      resumeSessionId,
+      ...(coldRedispatch ? { coldRedispatch: true } : {}),
       ...this._sessionCtx(node.id, slice),
       ask: (q) => this._enqueueAsk(() => this._ask(q)).then((payload) => {
         // D28: the legacy Clarify questions ask (the one maxQuestions caps); a form ask has no question list
@@ -2045,6 +2053,28 @@ export class GraphOrchestrator extends RunHarness {
       // from projectKey(projectDir) (a key registered while git worked, P3's NO_PROJECT_KEY). Git runs: unchanged.
       ...(this.workMode !== 'git' && !this.isWorkspace ? { storeKey: this.members[0].projectKey } : {}),
     };
+  }
+
+  /**
+   * C42 (critique M-13): the one-shot re-attach for `_execCtx`, aware of session hosts. A paused row whose session id is a
+   * host transcript (its `step.session.hostSessionId`, or a host id the restored snapshots name: read even under the
+   * kill switch) re-attaches only when its session's host is live in a session mode on this run. Otherwise it starts
+   * fresh and cold (`coldRedispatch` → COLD_REDISPATCH_HEADER), never `--resume <host>` as a plain spawn. A degraded
+   * member's own plain session stays its own (C30: its plain run may resume it). Every other row re-attaches as today.
+   * @returns {{ resumeSessionId: string|undefined, coldRedispatch: boolean }}
+   */
+  _reattachFor(executionId, nodeId) {
+    const resumeSessionId = this._takeResumeSession(executionId);
+    if (!resumeSessionId) return { resumeSessionId, coldRedispatch: false };
+    const row = (this.resumeOpts?.steps || []).find((s) => s.key === executionId) || null;
+    const hostIds = new Set(Object.values(this._sessionRestore || {}).map((h) => h?.hostSessionId).filter(Boolean));
+    const host = this._sessions?.hostFor(nodeId) ?? null;
+    if (row?.session?.hostSessionId !== resumeSessionId && !hostIds.has(resumeSessionId)) {
+      if (host?.mode === 'separate') host.keepPlainSession(resumeSessionId);   // a member that only ran plain has no step.session
+      return { resumeSessionId, coldRedispatch: false };
+    }
+    if (host && (host.mode === 'subagents' || host.mode === 'shared')) return { resumeSessionId, coldRedispatch: false };
+    return { resumeSessionId: undefined, coldRedispatch: true };
   }
 
   /** ONE-SHOT session re-attach: an executionId is consumed the first time it is
@@ -2257,10 +2287,17 @@ export class GraphOrchestrator extends RunHarness {
    *  injected runners as the seam), plus the vanished-session fresh re-run
    *  fallback (a dead `--resume` session must not fail the run). */
   async _runOnce(nc, ctx) {
+    // C29: the fallback re-runs fresh an attempt that --resumed a session that is gone, decided BEFORE it runs: never a hosted
+    // one (a host that degrades during the attempt still owned it), and a degraded session's plain run only when it resumes the
+    // member's own plain session (C30): a host id it was handed is dropped by the plain run, so nothing was resumed.
+    const h = ctx.sessionHost;
+    const resumes = !h || (h.mode === 'separate' && h.resumesPlain?.(ctx.resumeSessionId) === true);
     try {
       return await runExecution(ctx, { runners: this._runners });
     } catch (err) {
-      if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
+      // C29 (critique C-1): never for a hosted execution. The SessionHost owns a vanished host (C20); any other failure of
+      // a re-dispatch goes to _recover like any failure, keeping resumeSessionId (and so the cold header) for its retry.
+      if (ctx.resumeSessionId && resumes && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
         this._log(nc.key || ctx.nodeId, 'warn',
           `session resume failed (${err?.message || err}); re-running the execution fresh`,
           { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal, ...(err?.stream ? { stream: err.stream } : {}) });
@@ -2967,7 +3004,14 @@ export class GraphOrchestrator extends RunHarness {
         .filter((s) => s.status === 'paused' && s.sessionId)
         .map((s) => [s.key, s.sessionId]),
     );
+    // Session groups (Task 46): the hosts' snapshots for createSessionHosts' restore (Task 47) and the re-attach rule (C42).
+    this._sessionRestore = rp.sessionHosts && typeof rp.sessionHosts === 'object' ? rp.sessionHosts : null;
   }
+}
+
+/** C5: a verdict as the session trace keeps it, counts only. A step without a verdict file reads 'none'. */
+export function verdictSummary(v) {
+  return { verdict: v ? (blockingIssues(v).length ? 'blocking' : 'clean') : 'none', issues: Array.isArray(v?.issues) ? v.issues.length : 0 };
 }
 
 /**

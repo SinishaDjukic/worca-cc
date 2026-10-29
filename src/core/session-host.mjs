@@ -212,12 +212,23 @@ export class SessionHost {
     }
   }
 
+  /** C42 / C30: a degraded member's own plain CLI session from before a resume (orchestrator `_reattachFor`): its plain run
+   *  may resume it, as an ungrouped step resumes its own. */
+  keepPlainSession(id) {
+    if (typeof id === 'string' && id) this.plainSessions.add(id);
+  }
+
+  /** C30 / C29: does a degraded session's plain run of these opts `--resume` `id` (the member's own plain session)? */
+  resumesPlain(id) {
+    return typeof id === 'string' && this.plainSessions.has(id);
+  }
+
   /** C30: a degraded session's dispatch is a plain spawn (no record, no turn), never `--resume <host>`: only a CLI session a
    *  plain run started itself is resumed (a follow-up round of a degraded member, as ungrouped). Its host dispatch is
    *  history: a verdict on this plain run (Task 46 calls noteVerdict after it) must not land on that failed turn. */
   _plain(opts, member) {
     this.lastDispatch.delete(String(member.executionId));
-    const own = typeof opts.resumeSessionId === 'string' && this.plainSessions.has(opts.resumeSessionId);
+    const own = this.resumesPlain(opts.resumeSessionId);
     const onEvent = (e) => {
       if (e?.type === 'session' && typeof e.sessionId === 'string' && e.sessionId) this.plainSessions.add(e.sessionId);
       return opts.onEvent?.(e);
@@ -604,6 +615,7 @@ export class SessionHost {
 
   /** C5: the executor's verdict on the execution's latest dispatch (counts only). */
   noteVerdict(executionId, { verdict = 'none', issues = 0 } = {}) {
+    if (this.closed) return;                    // a turn close() waited for ends its execution after `close`: nothing follows it
     const last = this.lastDispatch.get(executionId);
     if (!last) return;
     this._write('verdict', { dispatchId: last.dispatchId, executionId, nodeId: last.nodeId, verdict,
