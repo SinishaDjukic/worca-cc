@@ -449,9 +449,10 @@ export function sessionHostEvent(rec, summary = {}) {
   if (!isObj(rec)) return null;                              // append() gives null when a record could not be written (v5)
   return { sid: summary.sid ?? rec.sid, transition: rec.kind, hostSessionId: summary.hostSessionId ?? rec.hostSessionId ?? null,
     hostEpoch: summary.hostEpoch ?? rec.hostEpoch ?? null, engine: summary.engine ?? null, mode: summary.mode ?? null,
-    transport: summary.transport ?? null, ts: rec.ts, ...pick(rec, EVENT_KEYS), reason: rec.reason ?? rec.code ?? undefined,
+    transport: summary.transport ?? null, ts: rec.ts, ...pick(rec, EVENT_KEYS), reason: rec.reason ?? rec.code ?? rec.after ?? undefined,
     ...(rec.kind === 'cost' ? { costUsd: rec.memberUsd, hostOverheadUsd: rec.hostOverheadUsd } : {}),
-    ...(rec.kind === 'close' ? { costUsd: rec.costUsd, hostOverheadUsd: rec.hostOverheadUsd } : {}) };
+    ...(rec.kind === 'close' ? { costUsd: rec.costUsd, hostOverheadUsd: rec.hostOverheadUsd, turns: rec.turns } : {}),
+    ...(rec.kind === 'watchdog' ? { level: rec.level ?? null } : {}) };   // the CLI prints a failed dispatch, not a warning (Task 55)
 }
 
 const MODE_WORDS = { subagents: 'sub-agents', shared: 'one conversation', separate: 'separate sessions' };
