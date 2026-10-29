@@ -2,9 +2,9 @@
 // One append-only NDJSON file per session, `<pipelineDir>/sessions/<sid>/trace.ndjson`: ids, names, counts, tokens, costs
 // and times only, never a prompt, brief, report or tool I/O (`docs/run-telemetry.md`). Always on, independent of the
 // runTelemetry flag. The live summary (`state.sessionHosts[sid]`) and the one rebuilt from the file are the same fold.
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFile, lstat, mkdir, open, readFile, readdir, realpath } from 'node:fs/promises';
+import { constants as fsc, readFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { SESSION_ID_RE } from '../shared/graph/constants.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 
@@ -324,6 +324,121 @@ export function turnRows(records) {
 export function sessionHistory(records) {
   return (Array.isArray(records) ? records : []).filter((r) => isObj(r) && HISTORY_KINDS.has(r.kind))
     .map((r) => ({ kind: r.kind, ts: r.ts ?? null, reason: r.reason ?? r.after ?? null, hostEpoch: r.hostEpoch ?? null, hostSessionId: r.hostSessionId ?? null }));
+}
+
+/** Every failed check of a trace, the harness figure first (Task 54). A turn check comes from its `reconcile` record; an
+ *  epoch check from `rotate`/`restart` (`epochCheck`) and `close` (`epochChecks`, which repeats them), one per epoch (it
+ *  names its `epoch`). A failure sticks: a close after a resume re-checks a restored epoch from zero (0 vs 0, ok), which
+ *  must not hide the check that failed before it. */
+export function reconcileMismatches(records) {
+  const turns = [];
+  const epochs = new Map();
+  for (const rec of Array.isArray(records) ? records : []) {
+    if (!isObj(rec)) continue;
+    if (rec.kind === 'reconcile' && Array.isArray(rec.checks)) {
+      for (const c of rec.checks) {
+        if (isObj(c) && c.ok === false) turns.push({ turnId: rec.turnId ?? null, method: c.method ?? null, harnessUsd: c.harnessUsd ?? null, otherUsd: c.otherUsd ?? null });
+      }
+    }
+    const checks = rec.kind === 'close' ? (Array.isArray(rec.epochChecks) ? rec.epochChecks : [])
+      : (rec.kind === 'rotate' || rec.kind === 'restart') && isObj(rec.epochCheck) ? [rec.epochCheck] : [];
+    for (const c of checks) {
+      if (!isObj(c)) continue;
+      const epoch = c.epoch ?? rec.hostEpoch ?? null;
+      if (epochs.get(epoch)?.ok !== false) epochs.set(epoch, { ...c, epoch });
+    }
+  }
+  const failed = [...epochs.values()].filter((c) => c.ok === false)
+    .map((c) => ({ turnId: null, method: 'epoch', harnessUsd: c.harnessTotalUsd ?? null, otherUsd: c.bookedUsd ?? null, epoch: c.epoch }));
+  return [...turns, ...failed];
+}
+
+/** One session as the API, the CLI and the Sessions tab show it: the Summary (`turns` is its COUNT), the per-turn rows,
+ *  the history, the failed checks and what the reader skipped. `sid` names it even when no line was valid. With no valid
+ *  record nothing was checked: `reconciled` and `reconcile.ok` are null (never "reconciled"). */
+export function sessionReport({ records = [], torn = 0, invalid = 0, seqGaps = 0 } = {}, sid = records[0]?.sid ?? null) {
+  const mismatches = reconcileMismatches(records);
+  const checked = records.length > 0;
+  // The writer's own word: a close that says `reconciled: false` stands even when the failed record it summed was lost
+  // (a write error leaves a seq gap), so the report never reads "reconciled" where the host said otherwise.
+  const writerNo = records.some((r) => isObj(r) && r.kind === 'close' && r.reconciled === false);
+  const summary = records.reduce(applyTraceRecord, emptySummary({ sid }));
+  return { ...summary, ...(checked ? {} : { reconciled: null }), ...(writerNo ? { reconciled: false } : {}), turnRows: turnRows(records),
+    history: sessionHistory(records),
+    reconcile: { ok: mismatches.length || writerNo ? false : checked ? true : null, mismatches }, integrity: { torn, invalid, seqGaps } };
+}
+
+/** A trace the report reads at most (16 MiB, thousands of turns): the dir is agent-writable and the Sessions tab asks
+ *  every 2 s, so a planted giant file is listed as unreadable, never parsed on the server's event loop. */
+export const TRACE_READ_MAX = 16 * 1024 * 1024;
+
+/** The trace of `sid` opened for reading, or null when there is none at exactly `<runDir>/sessions/<sid>/trace.ndjson`.
+ *  The run dir is agent-writable, so nothing planted there is read or served (P3-D13's rule, folder-copy.mjs
+ *  `openRegular`): never through a link at its name or a linked folder above it (the real path is checked from the run
+ *  dir's own), never through a hard link (the writer's file has one name: a second name is another file planted under
+ *  this one, which macOS lets any user make), never blocking on a FIFO, and the handle is the very file the lstat saw
+ *  (one open; dev + ino). It throws when the file or its folder exists and cannot be read (EACCES), so the report lists
+ *  it unreadable; the caller closes the handle. */
+export async function openTraceFile(runDir, sid) {
+  if (typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) return null;
+  const file = tracePath(runDir, sid);
+  let st;
+  try {
+    const root = await realpath(runDir);
+    if (relative(root, await realpath(dirname(file))) !== join('sessions', sid)) return null;   // a linked folder: not this run's
+    st = await lstat(file);
+    if (!st.isFile() || st.nlink !== 1 || relative(root, await realpath(file)) !== join('sessions', sid, TRACE_FILE)) return null;
+  } catch (err) {
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR' || err.code === 'ELOOP')) return null;   // none (yet), or not a folder
+    throw err;
+  }
+  let fh;
+  try { fh = await open(file, fsc.O_RDONLY | (fsc.O_NOFOLLOW ?? 0) | (fsc.O_NONBLOCK ?? 0)); } catch (err) {
+    if (err && (err.code === 'ELOOP' || err.code === 'EMLINK' || err.code === 'ENOENT')) return null;   // swapped for a link, or gone
+    throw err;
+  }
+  try {
+    const now = await fh.stat();
+    if (now.isFile() && now.nlink === 1 && now.dev === st.dev && now.ino === st.ino) return fh;
+  } catch { /* closed below */ }
+  await fh.close();
+  return null;
+}
+
+/** Every session of a run, from `<runDir>/sessions/<sid>/trace.ndjson` (only dirs named like a session id, only real
+ *  files), in the order they first ran: the sessions that ran a turn by their first turn's start, then the rest by the open
+ *  (every host opens at run start, in the same millisecond), then the sid. A trace that exists but cannot be read (or is over TRACE_READ_MAX) is listed with
+ *  `integrity.unreadable: true`, nothing checked, never a failed report. TRACE_READ_MAX is the budget of the whole report:
+ *  once the traces read add up to it, the rest are listed unreadable (many planted files are one big one). A run without a
+ *  session (or whose `sessions` is a link loop) gives `{ sessions: [] }`. */
+export async function sessionsReport(runDir) {
+  let names = [];
+  try { names = await readdir(join(runDir, 'sessions')); } catch (err) { if (!['ENOENT', 'ENOTDIR', 'ELOOP'].includes(err?.code)) throw err; }
+  const sessions = [];
+  let budget = TRACE_READ_MAX;
+  for (const sid of names.filter((n) => SESSION_ID_RE.test(n))) {
+    let read;
+    try {
+      const fh = await openTraceFile(runDir, sid);
+      if (!fh) continue;                                       // no trace (yet), or not a real file of this run
+      try {
+        const { size } = await fh.stat();
+        if (size > budget) throw new Error('trace too large');
+        budget -= size;
+        read = parseTrace(await fh.readFile('utf8'));
+      } finally { await fh.close(); }
+    } catch {
+      sessions.push({ ...sessionReport(EMPTY(), sid), integrity: { torn: 0, invalid: 0, seqGaps: 0, unreadable: true } });
+      continue;
+    }
+    if (!read.records.length && !read.torn && !read.invalid) continue;   // an empty file is no session
+    sessions.push(sessionReport(read, sid));                   // the dir name is the path-safe id
+  }
+  const unstarted = (x) => (x.startedAt == null ? 1 : 0);      // a trace with no valid open goes last
+  const noTurn = (x) => (x.turnRows[0] && x.turnRows[0].startedAt ? 0 : 1);   // opened, never ran: after the ones that ran
+  const firstRan = (x) => String((x.turnRows[0] && x.turnRows[0].startedAt) ?? x.startedAt ?? '');
+  return { sessions: sessions.sort((a, b) => unstarted(a) - unstarted(b) || noTurn(a) - noTurn(b) || firstRan(a).localeCompare(firstRan(b))
+    || a.sid.localeCompare(b.sid)) };
 }
 
 const EVENT_KEYS = ['turnId', 'dispatchId', 'executionId', 'nodeId', 'attempt', 'memberAgentId', 'costSource'];
