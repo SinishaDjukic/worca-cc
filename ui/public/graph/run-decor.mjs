@@ -12,7 +12,8 @@ import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/man
 import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
 import { fanLines } from '../../../src/shared/graph/geometry.mjs';
 import { stepAux, fmtAuxCalls, floorText } from '../../../src/shared/cost/breakdown.mjs';
-import { engineReportsCost } from '../../../src/shared/engine-switch.mjs';
+import { engineReportsCost, engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../../../src/shared/engine-switch.mjs';
+import { sessionsOf, isMemberDispatch, SESSION_DEFAULT_LABEL } from '../../../src/shared/graph/sessions.mjs';
 
 /** The run-level warning a run that drained without binding End carries. */
 export const QUIESCENCE_WARNING = 'finished at quiescence — End not reached';
@@ -156,10 +157,11 @@ export function statusOf(node, rows, ctx) {
  * (orchestrator `state` events) and frozen (`rowToState` off pipelines +
  * pipeline_steps), so both surfaces call this with no adapter.
  * @param {object} st                 { stepper, status, steps, active, endReached, result, warnings, wireDeliveries, tokens, gate }
- * @param {{live?:boolean, now?:number, subsOf?:(nodeId:string)=>Array, lastLines?:Map, modelLabel?:(id:string)=>string}} opts
+ * @param {{live?:boolean, now?:number, subsOf?:(nodeId:string)=>Array, lastLines?:Map, modelLabel?:(id:string)=>string, sessionVerified?:object}} opts
  *   `modelLabel` names a model id for the Away mode band (the catalog lives in app.js; default: the raw id).
+ *   `sessionVerified`: the sub-agents gate per engine, read only while a session has no summary yet (tests open it).
  */
-export function decorFromState(st, { live = true, now = Date.now(), subsOf = null, lastLines = null, modelLabel = null } = {}) {
+export function decorFromState(st, { live = true, now = Date.now(), subsOf = null, lastLines = null, modelLabel = null, sessionVerified = SESSION_SUBAGENTS_VERIFIED } = {}) {
   const state = st || {};
   const stepper = state.stepper || null;
   const nodes = manifestNodes(stepper);
@@ -230,10 +232,11 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
     footers: {}, totals: {}, liveWireIds: [], loopBadges: {}, gate: null,
     endResult, progress, activeNodes, warnings, quiescent,
     executions: rows.length, loopDeliveries,
-    nodeIds: nodes.map((n) => n.id), wireIds: wires.map((w) => w.id), expanded: null,
+    nodeIds: nodes.map((n) => n.id), wireIds: wires.map((w) => w.id), expanded: null, sessions: {},
   };
   decorateExecutions(decor, { stepper, nodes, wires, grouped, rows, activeList, rowFor, stepByExec, state, now, live, subsOf, lastLines, status,
     modelLabel: typeof modelLabel === 'function' ? modelLabel : (id) => id });
+  decorateSessions(decor, { stepper, nodes, grouped, rowFor, state, runStatus, sessionVerified });
   return decor;
 }
 
@@ -319,7 +322,8 @@ function decorateExecutions(decor, ctx) {
 
   for (const node of nodes) {
     const list = grouped.get(node.id) || [];
-    const subs = typeof subsOf === 'function' ? (subsOf(node.id) || []) : [];
+    // A session member's own dispatch is the member itself, never a research square on its card (05 §6.2, C8).
+    const subs = typeof subsOf === 'function' ? (subsOf(node.id) || []).filter((s) => !isMemberDispatch(s)) : [];
     // executionId -> the model its LAST Away mode review ran on (one execution may raise several asks).
     const reviewModels = new Map();
     for (const s of subs) if (s && s.subagentType === 'night-decider' && s.stepKey && s.runModel) reviewModels.set(s.stepKey, s.runModel);
@@ -416,6 +420,171 @@ function decorateExecutions(decor, ctx) {
   }
 }
 
+// ── sessions (Task 56; 05 §6.1) ─────────────────────────────────────────────
+
+const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const times = (n) => (n === 1 ? 'once' : `${n} times`);
+/** `14:00`: a reset time as a local 24-hour clock ('' when unreadable). */
+function clock(iso) {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+/** Why a session with no summary yet runs as separate sessions ('' when the reason is unknown), or undefined while it is
+ *  undecided: the hosts open before the first step, so a member that ran, or a run that ended, with no summary never had
+ *  a host (the kill switch); before that the Labs flag and the gate the view reads decide (its own paint stays). A run
+ *  paused or interrupted before its first step (preflight, a usage limit, a server stop) has not ended: its resume opens
+ *  the hosts. */
+function noSummaryFallback(spec, engine, sessionVerified, ended, ran) {
+  if (spec.members.length < 2) return 'one step';
+  if (spec.settings.mode !== 'shared' && !sessionSupport(engine, { verified: sessionVerified }).subagents) return `sub-agents are not available on ${engineLabel(engine)} yet`;
+  return ended || ran ? '' : undefined;
+}
+
+/** A session's mode reason in UI words: the flag's key is not copy ("never 'group'"); its Labs title is "One session". */
+export function sessionReasonText(reason) {
+  return String(reason ?? '').replace('the Labs flag sessionGroups is off', 'the One session Labs flag is off');
+}
+
+/**
+ * `decor.sessions[sid]`: the tray header of every session in the manifest, `{}` without one. The status follows the
+ * members' card statuses, first match wins (05 §6.1 as the plan's Task 56 table orders it; row 5, "interrupted", is
+ * checked first because an interrupted run's unfinished member reads `active` live and `stopped` frozen). The summary
+ * (`state.sessionHosts[sid]`) gives the turns, the cost and the mode; a member's rows give the time.
+ */
+function decorateSessions(decor, ctx) {
+  const { stepper, nodes, grouped, rowFor, state, runStatus, sessionVerified } = ctx;
+  if (!nodes.some((n) => n && n.config && n.config.session != null)) return;   // ungrouped: nothing derived, nothing allocated
+  const specs = sessionsOf(manifestTemplate(stepper), manifestPortsFn(stepper));
+  const hosts = state.sessionHosts && typeof state.sessionHosts === 'object' ? state.sessionHosts : {};
+  const engine = state.runEngine || 'claude';
+  const engineText = engineLabel(engine);
+  const unpriced = !engineReportsCost(engine);
+  const labelOf = (id) => { const n = nodeById(stepper, id); return (n && (n.label || n.id)) || id; };
+  // A flow card (task/and/or/combine/end) is never the step a session waits for; a loop wire is followed through flow
+  // cards (an OR valve) to the keyed cards it really joins.
+  const flowCard = (id) => { const n = nodeById(stepper, id); return !!n && !KEYED_KINDS.includes(n.kind); };
+  const wires = manifestWires(stepper);
+  const ends = (id, dir, seen = new Set()) => {
+    if (seen.has(id)) return [];
+    seen.add(id);
+    if (!flowCard(id)) return [id];
+    return wires.filter((w) => (dir === 'out' ? w.from.node : w.to.node) === id).flatMap((w) => ends(dir === 'out' ? w.to.node : w.from.node, dir, seen));
+  };
+  // [from, to] for every loop wire between two different keyed cards: once `to` ran again, the run comes back to `from`.
+  const loopsBack = wires.filter((w) => w.loop && w.from && w.to)
+    .flatMap((w) => ends(w.from.node, 'in').flatMap((f) => ends(w.to.node, 'out').filter((t) => t !== f).map((t) => [f, t])));
+  for (const spec of specs) {
+    const sid = spec.sid;
+    const members = spec.members;
+    const mine = new Set(members);
+    const summary = hosts[sid] && typeof hosts[sid] === 'object' ? hosts[sid] : null;
+    const label = (summary && summary.label) || spec.settings.label || SESSION_DEFAULT_LABEL;
+    const mode = (summary && summary.mode) || spec.settings.mode || 'subagents';
+    const ran = members.some((id) => (grouped.get(id) || []).length > 0);
+    const why = summary ? (summary.mode === 'separate' ? sessionReasonText(summary.modeReason) : null)
+      : noSummaryFallback(spec, engine, sessionVerified, decor.resolved && runStatus !== 'paused' && runStatus !== 'interrupted', ran);
+    const fallback = why === undefined ? null : why !== null;   // null: undecided, the view's own words stay
+    const st = members.map((id) => decor.status[id] || 'pending');
+    const lastRow = (id) => { const list = grouped.get(id) || []; return list[list.length - 1] || null; };
+    const queued = (id) => { const r = lastRow(id); return !!(r && r.queued === true); };
+    // The member running now: the newest active member (activeNodes is newest first) not waiting for its host (C39).
+    const activeMembers = decor.activeNodes.filter((a) => mine.has(a.nodeId));
+    const curEntry = activeMembers.find((a) => !queued(a.nodeId)) || activeMembers[0] || null;
+    const curRow = curEntry ? rowFor(curEntry) : null;
+    const ordinal = curRow ? Number(curRow.ordinal ?? curRow.cycle) || 1 : 1;
+    const current = curEntry ? { nodeId: curEntry.nodeId, label: labelOf(curEntry.nodeId), cycleText: ordinal > 1 ? `cycle ${ordinal}` : '' } : null;
+    const turns = summary && finite(summary.turns) ? summary.turns : 0;   // host turns; with no summary there was no host
+    const shared = mode === 'shared';
+    const gateHere = !!(decor.gate && mine.has(decor.gate.nodeId));
+    // The member's last cycle (a composite's slices carry their parent's), 0 before it ran.
+    const ord = (id) => { const list = grouped.get(id) || []; const r = list[list.length - 1]; return r ? Number(r.ordinal ?? r.cycle) || 1 : 0; };
+    // A fix loop between two members: the loop wire's target ran again after its source last ran (Implementation cycle 2
+    // after Review cycle 1), so the run comes back to the source. Members that ran a different number of times with no
+    // loop between them (Refine's own revise loop, Check after Review's last pass) are not one.
+    const midCycle = loopsBack.some(([f, t]) => mine.has(f) && mine.has(t) && ord(t) > ord(f));
+    const back = gateHere || midCycle;                       // the run will come back to this session
+    const allDone = st.every((x) => x === 'done' || x === 'skipped');
+    const started = st.some((x) => x !== 'pending');
+    const stepsWord = shared ? count(members.length, 'step') : count(members.length, 'sub-agent');
+    let status;
+    let tail;
+    if (runStatus === 'interrupted' && started && (!allDone || back)) {   // the session part-done (or mid-loop) when the server stopped
+      status = 'interrupted'; tail = 'Interrupted · resume continues this session';
+    } else if (current && curRow && curRow.kind === 'task') {
+      status = 'waiting'; tail = `waiting · ${current.label}'s tasks run on their own`;   // ×N slices never go through a host (D2)
+    } else if (current) {
+      status = 'active'; tail = current.cycleText ? `${current.label} · ${current.cycleText}` : current.label;
+    } else if (st.includes('paused') || (runStatus === 'paused' && started && (!allDone || back))) {
+      status = 'paused';
+      const reset = state.pauseReason === 'usage_limit' ? clock(state.limitResetAt) : '';
+      tail = state.pauseReason === 'usage_limit' ? `Paused · usage limit${reset ? ` · resets ${reset}` : ''}` : 'Paused · resumes in this session';
+    } else if (st.includes('error')) {
+      status = 'error'; tail = `Failed in ${labelOf(members[st.indexOf('error')])}`;
+    } else if (st.includes('stopped')) {
+      status = 'stopped'; tail = 'Stopped';
+    } else if (st.every((x) => x === 'skipped')) {
+      status = 'skipped'; tail = 'Skipped';
+    } else if (!decor.resolved && allDone && back) {
+      // Not done while the run can come back to it: a loop gate held on a member's verdict, or a fix loop between its
+      // members (one is a cycle ahead of the other). The hosts stay open until the run ends.
+      status = 'waiting'; tail = gateHere ? 'waiting for an answer' : 'waiting';
+    } else if (allDone) {
+      status = 'done'; tail = `Done · ${shared ? count(st.filter((x) => x === 'done').length, 'step') : count(st.filter((x) => x === 'done').length, 'sub-agent')} · ${count(turns, 'turn')}`;
+    } else if (st.every((x) => x === 'pending')) {
+      status = 'pending'; tail = stepsWord;
+    } else if (!decor.resolved) {
+      const outside = decor.activeNodes.find((a) => !mine.has(a.nodeId) && !flowCard(a.nodeId));
+      status = 'waiting'; tail = gateHere ? 'waiting for an answer' : outside ? `waiting for ${outside.label}` : 'waiting';
+    } else {
+      status = 'stopped'; tail = 'Stopped';               // the run ended with part of the session never run
+    }
+    const text = fallback ? `${label} · ${engineText} · Separate sessions${why ? ` · ${why}` : ''}` : `${label} · ${engineText} · ${tail}`;
+    const durMs = members.reduce((a, id) => a + ((decor.totals[id] && decor.totals[id].durMs) || 0), 0);
+    // The session's cost is its members' totals (05 §6.1: "Σ member totals"), the figures on their cards: a hosted turn
+    // books the member's share and the hand-off on the member's row, and a member that ran plain (a runtime degrade, the
+    // kill switch) books there too, where the trace's own sum never looks. The summary's sum stands in only while no row
+    // has a figure.
+    const priced = members.some((id) => (grouped.get(id) || []).some((r) => finite(r.costUsd)));
+    const costUsd = priced ? round2(members.reduce((a, id) => a + ((decor.totals[id] && decor.totals[id].costUsd) || 0), 0))
+      : (summary && finite(summary.costUsd) ? round2(summary.costUsd) : null);
+    const overheadUsd = summary && finite(summary.hostOverheadUsd) ? round2(summary.hostOverheadUsd) : null;
+    const cost = unpriced || costUsd == null ? '' : fmtUsd(costUsd);
+    const dur = fmtDur(durMs);
+    const restarts = summary && finite(summary.restarts) ? summary.restarts : 0;
+    const rotations = summary && finite(summary.rotations) ? summary.rotations : 0;
+    // Runs per member (a composite's slices are one run of it); host turns are the session's own count (retries add turns).
+    const runsOf = (id) => new Set((grouped.get(id) || []).map((r) => r.parentExecutionId || r.executionId)).size;
+    const perMember = members.map((id) => `${labelOf(id)} ×${runsOf(id)}`).join(', ');
+    const title = [
+      text,                                                 // hosts that show only the dot keep the words in the tooltip
+      fallback ? `Separate ${engineText} sessions${why ? ` · ${why}` : ''}`
+        : shared ? `One ${engineText} conversation` : `One ${engineText} session · main agent ${(summary && summary.hostModel) || 'default model'}`,
+      ran ? `${turns > 0 ? `${count(turns, 'turn')} · ` : ''}runs: ${perMember}` : '',
+      [dur, cost ? `${cost}${overheadUsd != null && !unpriced ? ` incl. ${fmtUsd(overheadUsd)} hand-offs` : ''}` : ''].filter(Boolean).join(' · '),
+      restarts > 0 ? `restarted fresh ${times(restarts)}` : '',
+      rotations > 0 ? `rotated ${times(rotations)}` : '',
+    ].filter(Boolean).join('\n');
+    const phrase = status === 'active' && !fallback
+      ? `running ${current.label}${turns > 0 ? `, turn ${turns}` : ''}`
+      : (fallback ? `Separate sessions${why ? ` · ${why}` : ''}` : tail).replace(/ · /g, ', ').replace(/^./, (ch) => ch.toLowerCase());
+    decor.sessions[sid] = {
+      sid, members: [...members], status, label, engine, fallback, mode, current, turns, restarts,
+      durMs, dur, costUsd, cost, overheadUsd, text,
+      right: [turns > 0 ? `turn ${turns}` : '', dur, cost].filter(Boolean).join(' · '),
+      title, aria: `${label}: ${members.map(labelOf).join(', ')}. ${phrase}`,
+    };
+    // C39: a member waiting for its host says so on its card (the card stays active; its clock is not paused in v1).
+    for (const id of members) {
+      if (!queued(id) || !decor.footers[id]) continue;
+      const busy = current && current.nodeId !== id ? current.label : null;
+      decor.footers[id].queued = true;
+      decor.footers[id].live = busy ? `queued · waiting for ${busy}` : 'queued · waiting for its session';
+    }
+  }
+}
+
 /** One execution's Away mode bands (one 22px line each — "Away mode" itself does not fit a 220px
  *  card line, so the band leads with the Away mode glyph and `title` carries the words). A booked
  *  band shows even at $0.00; a stopped one shows its lower bound (≥$x, "not in total" in its title),
@@ -483,4 +652,12 @@ export function applyDecor(view, decor) {
   }
   for (const wireId of decor.wireIds || []) view.setWireBadge(wireId, full ? (decor.loopBadges[wireId] || null) : null);
   view.setWireLive(decor.liveWireIds || []);
+  // The session trays (Task 56): status, words and the run's own fallback at every level; `turn · dur · cost` is expert
+  // detail, like the node totals (05 §6.2).
+  if (typeof view.setSessionChrome !== 'function') return;
+  for (const [sid, s] of Object.entries(decor.sessions || {})) {
+    const right = full ? s.right : null;
+    if (s.fallback === null) view.setSessionChrome(sid, { status: s.status, right, text: null, title: null, aria: null });   // undecided: the view's words
+    else view.setSessionChrome(sid, { status: s.status, text: s.text, right, title: s.title, aria: s.aria, fallback: s.fallback });
+  }
 }
