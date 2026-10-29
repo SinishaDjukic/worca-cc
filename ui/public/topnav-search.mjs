@@ -11,7 +11,7 @@
 //   navigate(href)    a row with a route ('#running/…', '#projects/…', …)
 //   openWorkflow(id)  a workflow row
 //   onLabel(label)    a "Runs labelled hotfix" row: apply the Runs list label filter
-//   openSetting(row)  a Settings or Add-ons row; a locked one carries row.locks (default: navigate(row.href))
+//   openSetting(row)  a Settings, Add-ons or Plugins row; a locked one carries row.locks (default: navigate(row.href))
 //   searchChats(q)    #948 s2: the Chats group's rows (global-search.mjs chatRows), async; null = none
 //   chatsFirst()      the Chats group leads (the Chat page); else it follows Runs
 //
@@ -35,6 +35,7 @@ const ICONS = Object.freeze({
   setting: ['M21 4h-7', 'M10 4H3', 'M21 12h-9', 'M8 12H3', 'M21 20h-5', 'M12 20H3', 'M14 2v4', 'M8 10v4', 'M16 18v4'],
   addon: ['M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z',
     'M12 22V12', 'm3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7', 'm7.5 4.27 9 5.15'],
+  plugin: ['M9 3v5', 'M15 3v5', 'M6 8h12v3a6 6 0 0 1-12 0V8z', 'M12 17v4'],
   ask: ['M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z', 'M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z'],
   chat: ['M20 12a7.5 7.5 0 0 1-10.9 6.7L4 20l1.4-4.3A7.5 7.5 0 1 1 20 12z'],   // icons.mjs `chat`
 });
@@ -126,7 +127,8 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     g.appendChild(head);
     for (const row of rows) {
       const id = `tsearch-opt-${st.items.length}`;
-      const el = option(id, row.kind, row, [row.title, row.meta, row.note].filter(Boolean).join(', '));
+      const label = [row.title, row.kind === 'plugin' ? row.sub : '', row.meta, row.note].filter(Boolean).join(', ');
+      const el = option(id, row.kind, row, label);
       st.items.push({ key: `${row.kind}:${row.id}`, row, el });
       g.appendChild(el);
     }
@@ -138,7 +140,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     if (!st.open) return;
     const query = input.value.trim();
     const was = keep && st.items[st.active] ? st.items[st.active].key : '';
-    const { runs, other, settings = [], addons = [] } = searchRows(getSources() || {}, query);
+    const { runs, other, settings = [], addons = [], plugins = [] } = searchRows(getSources() || {}, query);
     st.items = [];
     const chatsRows = chats.query === query ? chats.rows : [];
     const first = chatsFirst();
@@ -149,6 +151,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     if (other.length) parts.push(group('other', 'Projects, workflows, schedules', other));
     if (settings.length) parts.push(group('settings', 'Settings', settings));
     if (addons.length) parts.push(group('addons', 'Add-ons', addons));
+    if (plugins.length) parts.push(group('plugins', 'Plugins', plugins));
     if (query && !parts.length) {
       const none = span(doc, 'tsearch-none', 'No matches');
       none.setAttribute('role', 'presentation');
@@ -235,7 +238,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     if (!it.row) onAsk(query);
     else if (it.row.kind === 'workflow') openWorkflow(it.row.workflowId);
     else if (it.row.kind === 'label') onLabel(it.row.label);
-    else if (it.row.kind === 'setting' || it.row.kind === 'addon') openSetting(it.row);
+    else if (it.row.kind === 'setting' || it.row.kind === 'addon' || it.row.kind === 'plugin') openSetting(it.row);
     else navigate(it.row.href);
   }
 

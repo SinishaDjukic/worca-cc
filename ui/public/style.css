@@ -441,6 +441,8 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
   font-size:12px;color:var(--ink-3);}
 .tsearch-tx{display:flex;flex-direction:column;min-width:0;padding:4px 0;}
 .tsearch-sub{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* A plugin's long description must not squeeze its Installed / Available state: the meta keeps its width (55% cap). */
+.tsearch-opt-plugin .tsearch-meta{flex-shrink:0;}
 .tsearch-dot{flex:none;width:8px;height:8px;margin:0 4px;border-radius:50%;background:var(--seq);}
 .tsearch-dot.tone-need{background:var(--amber);}
 .tsearch-dot.tone-run{background:var(--blue);}
@@ -3556,8 +3558,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .settings-card + .settings-card{margin-top:18px;}
 .settings-card[hidden]{display:none;}
 .settings-card.is-found{animation:settingFound 3s ease-out;}
+:is(.view[data-view="models"] > .card, .mv-card, .mv-pv-card, .mcp-server-row).is-found{animation:settingFound 3s ease-out;}
 @keyframes settingFound{0%,60%{background:var(--amber-wash);box-shadow:0 0 0 3px var(--amber-ring);}100%{background:var(--panel);box-shadow:0 0 0 3px transparent;}}
-@media (prefers-reduced-motion:reduce){.settings-card.is-found{animation:none;box-shadow:0 0 0 3px var(--amber-ring);}}
+@media (prefers-reduced-motion:reduce){.settings-card.is-found{animation:none;box-shadow:0 0 0 3px var(--amber-ring);}:is(.view[data-view="models"] > .card, .mv-card, .mv-pv-card, .mcp-server-row).is-found{animation:none;box-shadow:0 0 0 3px var(--amber-ring);}}
 /* The Models page: Title generation, Auto workflow model and PR description model side by side
    above the catalog, so short cards do not push it a screen down; one column once they would squeeze. */
 

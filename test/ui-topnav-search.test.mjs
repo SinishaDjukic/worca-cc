@@ -650,3 +650,29 @@ test('#948 s2: the Chats group comes first or after Runs, shows a query that onl
     } },
   ]);
 });
+
+test('Plugins group after Add-ons: plug icon, description on a sub line, the description in the label; a pick goes to openSetting', () => {
+  const sources = { ...SOURCES, plugins: [{ name: 'jira', description: 'Jira task source', enabled: true, hasSettings: true }],
+    catalog: [{ name: 'jira-cloud', description: 'Jira Cloud tasks', marketplace: 'm1', marketplaceName: 'Acme' }] };
+  const { type, doc, options, calls } = setup({ sources });
+  const heads = () => [...doc.querySelectorAll('.tsearch-label')].map((n) => n.textContent);
+  type('jira');
+  assert.deepEqual(heads(), ['Add-ons', 'Plugins'], 'the plugin settings row in Add-ons, the plugins after it');
+  const rows = options().filter((o) => o.classList.contains('tsearch-opt-plugin'));
+  assert.deepEqual(rows.map((o) => o.querySelector('.tsearch-title').textContent), ['jira', 'jira-cloud']);
+  assert.equal(rows[0].querySelector('.tsearch-sub').textContent, 'Jira task source');
+  assert.equal(rows[0].querySelector('.tsearch-meta').textContent, 'Installed');
+  assert.ok(rows[0].querySelector('svg.tsearch-ic path'), 'the plug icon');
+  assert.equal(rows[0].getAttribute('aria-label'), 'jira, Jira task source, Installed');
+  rows[1].click();
+  assert.equal(calls.setting.at(-1).href, '#marketplace/browse/m1/jira-cloud');
+  assert.deepEqual(calls.navigate, []);
+});
+
+test('a chat row keeps its label without the snippet (only plugin rows read their sub line)', async () => {
+  const { type, doc } = setup({ searchChats: async () => [{ kind: 'chat', id: 'a1', title: 'Fix login', sub: '…login form…', meta: 'Fri', href: '#chat/a1' }] });
+  type('login');
+  await new Promise((r) => setTimeout(r, 200));
+  const chat = doc.querySelector('.tsearch-opt-chat');
+  assert.equal(chat.getAttribute('aria-label'), 'Fix login, Fri');
+});

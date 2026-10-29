@@ -14,20 +14,25 @@
 //     labels:     [string] — the label words in use on the listed runs (the Runs list label filter)
 //     level:      'simple'|'advanced'|'expert' — the interface mode (missing = expert); read only for locks
 //     flags:      { key: bool } — the Labs features that are on (missing = all off); read only for locks
+//     plugins:    GET /api/plugins rows — { name, description, enabled, hasSettings } (installed; Plugins rows + their settings row)
+//     catalog:    GET /api/marketplaces plugins — { name, description, marketplace (id), marketplaceName, installed } (available)
+//     connectors: GET /api/mcp/servers — { id, name (the server's base), description }
+//     models:     state.models — { id, label, source: 'global'|'plugin'|'policy', plugin } (own, plugin and team-policy only)
 //   }
-//   Row = { kind: 'run'|'project'|'workspace'|'workflow'|'schedule'|'ticket'|'label'|'setting'|'addon'|'chat', id, title, meta,
+//   Row = { kind: 'run'|'project'|'workspace'|'workflow'|'schedule'|'ticket'|'label'|'setting'|'addon'|'plugin'|'chat', id, title, meta,
 //           tone?: 'need'|'run'|'fail'|'idle' (runs), href? (every kind but workflow and label), workflowId?, label?,
 //           locks?: [{ type: 'mode', min } | { type: 'flag', key, title }] and note? (setting, addon: what unlocks it),
-//           sub? (chat: the matched message snippet or topic group) }
+//           sub? (chat: the matched message snippet or topic group; plugin: the description) }
 import { liveRow, histRow, rowTime } from './runs-list.mjs';
 import { formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 import { isMac } from './list-keys.mjs';
-import { SETTING_ENTRIES, ADDON_ENTRIES, locksFor, lockNote } from './settings-index.mjs';
+import { SETTING_ENTRIES, ADDON_ENTRIES, addonEntriesFrom, locksFor, lockNote } from './settings-index.mjs';
 
 export const RUN_LIMIT = 5;
 export const OTHER_LIMIT = 6;
 export const SETTINGS_LIMIT = 5;
-export const ADDON_LIMIT = 4;
+export const ADDON_LIMIT = 5;
+export const PLUGIN_LIMIT = 5;
 export const CHAT_LIMIT = 5;
 
 /** #948 s2: GET /api/ask/threads?q= items as Chats rows: title, the message snippet (when the hit was not the title) and
@@ -124,6 +129,42 @@ function otherRows(src, tz) {
   return rows.map((row) => ({ row, hay: (row.kind === 'label' ? `${row.label} label:${row.label}` : `${row.title} ${row.meta}`).toLowerCase() }));
 }
 
+const SUB_MAX = 120;
+/** A plugin's description as one short line: whitespace collapsed, at most SUB_MAX characters ("…" when cut). */
+function shortText(s) {
+  const t = typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '';
+  return t.length > SUB_MAX ? `${t.slice(0, SUB_MAX - 1)}…` : t;
+}
+
+/** Plugins rows: every installed plugin (its manage sheet), then each marketplace entry not installed (its install
+ *  sheet). Found by name or description; the manifest has no display name, keywords or tags. */
+function pluginRows(src) {
+  const list = (v) => (Array.isArray(v) ? v.filter(Boolean) : []);
+  const desc = (v) => (typeof v === 'string' ? v : '');
+  const rows = [];
+  const installed = new Set();
+  for (const p of list(src.plugins)) {
+    if (typeof p.name !== 'string' || !p.name || installed.has(p.name)) continue;
+    installed.add(p.name);
+    rows.push({
+      row: { kind: 'plugin', id: `installed:${p.name}`, title: p.name, sub: shortText(p.description),
+        meta: p.enabled === false ? 'Installed · off' : 'Installed', href: `#marketplace/installed/${encodeURIComponent(p.name)}` },
+      installed: true, hay: `${p.name} ${desc(p.description)}`.toLowerCase(),
+    });
+  }
+  for (const c of list(src.catalog)) {
+    if (typeof c.name !== 'string' || !c.name || typeof c.marketplace !== 'string' || !c.marketplace) continue;
+    if (c.installed === true || installed.has(c.name)) continue;
+    rows.push({
+      row: { kind: 'plugin', id: `catalog:${c.marketplace}/${c.name}`, title: c.name, sub: shortText(c.description),
+        meta: `Available · ${c.marketplaceName || c.marketplace}`,
+        href: `#marketplace/browse/${encodeURIComponent(c.marketplace)}/${encodeURIComponent(c.name)}` },
+      installed: false, hay: `${c.name} ${desc(c.description)}`.toLowerCase(),
+    });
+  }
+  return rows;
+}
+
 /** Does `w` start a word of `t` (at 0, or after a character that is not a letter or digit)? */
 function startsWord(t, w) {
   for (let i = t.indexOf(w); i !== -1; i = t.indexOf(w, i + 1)) {
@@ -142,8 +183,10 @@ function titleRank(title, q, first) {
 const byRun = (a, b) => (a.rank - b.rank) || (a.tier - b.tier) || (b.at - a.at) || a.row.title.localeCompare(b.row.title);
 const byOther = (a, b) => (a.rank - b.rank) || (KIND_ORDER[a.row.kind] - KIND_ORDER[b.row.kind])
   || a.row.title.localeCompare(b.row.title) || (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0);
+const byPlugin = (a, b) => (a.rank - b.rank) || (Number(b.installed) - Number(a.installed))
+  || a.row.title.localeCompare(b.row.title) || (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0);
 
-/** Settings / Add-ons rows (settings-index.mjs): every query word in the name (the title and, for a card, its tab's
+/** Settings / Add-ons rows (settings-index.mjs: the static catalogue plus `addonEntriesFrom(sources)`): every query word in the name (the title and, for a card, its tab's
  *  title) or the alternative words. A name match ranks like any title (0-2); a match that needs an alternative word
  *  ranks 3, after every name match (R-po-18). Ties: catalogue order, where every tab precedes the cards (A-5). */
 function catalogueRows(entries, words, q, ctx, kind, limit) {
@@ -156,14 +199,14 @@ function catalogueRows(entries, words, q, ctx, kind, limit) {
     .slice(0, limit)
     .map(({ e }) => {
       const locks = locksFor(e, ctx);
-      const where = kind === 'addon' ? 'Add-ons page' : e.type === 'tab' ? 'Settings tab' : `Settings · ${e.tabTitle}`;
+      const where = kind === 'addon' ? (e.meta || e.tabTitle) : e.type === 'tab' ? 'Settings tab' : `Settings · ${e.tabTitle}`;
       return { kind, id: e.id, title: e.title, meta: where, note: lockNote(locks), href: e.href, locks };
     });
 }
 
 /**
  * The popover's rows: { runs: Row[] (≤ RUN_LIMIT), other: Row[] (≤ OTHER_LIMIT), settings: Row[] (≤ SETTINGS_LIMIT),
- * addons: Row[] (≤ ADDON_LIMIT) }.
+ * addons: Row[] (≤ ADDON_LIMIT), plugins: Row[] (≤ PLUGIN_LIMIT) }.
  * Every whitespace-separated query word must appear (case-insensitive) in the row's haystack —
  * a run's title, project and state word; anything else's name and meta. Ranked title prefix >
  * a title word starting with the first query word > a match elsewhere; ties: needs you, live,
@@ -175,7 +218,7 @@ export function searchRows(sources = {}, query = '', { now = Date.now(), tz = lo
   const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
   const runs = runRows(src.live, src.history, now);
   if (!words.length) {
-    return { runs: runs.map((r) => ({ ...r, rank: 0 })).sort(byRun).slice(0, RUN_LIMIT).map((r) => r.row), other: [], settings: [], addons: [] };
+    return { runs: runs.map((r) => ({ ...r, rank: 0 })).sort(byRun).slice(0, RUN_LIMIT).map((r) => r.row), other: [], settings: [], addons: [], plugins: [] };
   }
   const q = words.join(' ');
   const pick = (items, cmp, limit) => items
@@ -195,6 +238,7 @@ export function searchRows(sources = {}, query = '', { now = Date.now(), tz = lo
     runs: pick(runs, byRun, RUN_LIMIT),
     other: pick(otherRows(src, tz), byOther, OTHER_LIMIT),
     settings: catalogueRows(SETTING_ENTRIES, words, q, ctx, 'setting', SETTINGS_LIMIT),
-    addons: catalogueRows(ADDON_ENTRIES, words, q, ctx, 'addon', ADDON_LIMIT),
+    addons: catalogueRows([...ADDON_ENTRIES, ...addonEntriesFrom(src)], words, q, ctx, 'addon', ADDON_LIMIT),
+    plugins: pick(pluginRows(src), byPlugin, PLUGIN_LIMIT),
   };
 }

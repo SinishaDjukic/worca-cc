@@ -1,4 +1,5 @@
-// ui/public/settings-index.mjs — what the top bar search can find in Settings and the Add-ons pages.
+// ui/public/settings-index.mjs — what the top bar search can find in Settings and among the settings inside the
+// Add-ons pages (Marketplace, Connectors, Models, Providers).
 // Hand-written (the product team owns the alternative words); test/ui-settings-index.test.mjs pins every
 // tab / card id, its mode and its Labs gate to ui/public/index.html, so a moved or re-gated card fails there.
 import { flagByKey } from '../../src/shared/flags/registry.mjs';
@@ -67,14 +68,61 @@ export const SETTING_ENTRIES = Object.freeze([
   }),
 ]);
 
-const addon = (id, title, alts) => ({ id: `addon:${id}`, type: 'addon', title, tabTitle: '', alts, min: 'simple', flags: [], href: `#${id}` });
-/** The four former Settings tabs. Never locked (A-9): the page itself says when it is above the mode. */
+/** The four Add-ons pages (the former Settings tabs), by their view name. */
+export const ADDON_PAGES = Object.freeze({ marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers' });
+
+const addon = (page, key, title, href, o = {}) => ({
+  id: `addon:${page}/${key}`, type: 'addon', page, title, tabTitle: ADDON_PAGES[page], meta: '', alts: [], min: 'simple', flags: [],
+  href, card: '', ...o,
+});
+/** The settings INSIDE the Add-ons pages (the pages themselves are in the left menu). A row on a static card locks by
+ *  that card's own mode (`card` names it; test/ui-settings-index.test.mjs pins both); every other row is page-level and
+ *  never locks (A-9: the page's own banner says when it is above the mode). */
 export const ADDON_ENTRIES = Object.freeze([
-  addon('marketplace', 'Marketplace', ['plugins', 'extensions', 'store', 'install', 'catalog']),
-  addon('connectors', 'Connectors', ['integrations', 'mcp', 'servers', 'tools', 'skills']),
-  addon('models', 'Models', ['model', 'engines', 'helper jobs', 'llm', 'pricing']),
-  addon('providers', 'Providers', ['provider', 'api keys', 'keys', 'credentials', 'openrouter', 'anthropic']),
+  addon('marketplace', 'browse', 'Browse plugins', '#marketplace', { alts: ['plugins', 'extensions', 'store', 'install', 'catalog', 'add-ons'] }),
+  addon('marketplace', 'installed', 'Installed plugins', '#marketplace/installed', { alts: ['plugins', 'update', 'uninstall', 'remove', 'enable', 'disable'] }),
+  addon('marketplace', 'marketplaces', 'Marketplaces', '#marketplace/marketplaces', { alts: ['plugin sources', 'repositories', 'add marketplace', 'refresh', 'sync'] }),
+  addon('connectors', 'sets', 'MCP sets', '#connectors', { alts: ['mcp', 'integrations', 'tools', 'servers', 'general set'] }),
+  addon('connectors', 'servers', 'MCP servers', '#connectors/servers', { alts: ['mcp', 'integrations', 'tools', 'add server', 'servers'] }),
+  addon('connectors', 'skills', 'Skills', '#connectors/skills', { alts: ['skill', 'skill.md', 'import skill', 'integrations'] }),
+  addon('models', 'catalogue', 'Model catalogue', '#models', { alts: ['models', 'model', 'add model', 'import models', 'llm', 'pricing', 'cost', 'built-in models', 'your models'] }),
+  addon('models', 'roles', 'Roles', '#models/model-roles-card', { card: 'model-roles-card', alts: ['model roles', 'default model', 'fallback model', 'llm'] }),
+  addon('models', 'engines', 'Engines', '#models/engine-settings-card', { card: 'engine-settings-card', min: 'expert', alts: ['engine', 'default engine', 'step models', 'models per engine', 'claude', 'codex'] }),
+  addon('models', 'helper-jobs', 'Helper job models', '#models/engine-settings-card', { card: 'engine-settings-card', min: 'expert',
+    alts: ['helper model', 'helper jobs', 'utility model', 'titles', 'title model', 'classifier', 'auto workflow model', 'pr description', 'memory defragment', 'workspace scan'] }),
+  addon('providers', 'copilot', 'GitHub Copilot', '#providers/copilot', { alts: ['copilot', 'sign in', 'github', 'account', 'quota', 'premium requests'] }),
+  addon('providers', 'openai', 'OpenAI-compatible', '#providers/openai', { alts: ['openai', 'api key', 'key', 'base url', 'endpoint', 'gpt', 'local models', 'ollama', 'lm studio'] }),
+  addon('providers', 'openrouter', 'OpenRouter', '#providers/openai', { alts: ['openrouter', 'api key', 'key', 'free models', 'openai-compatible'] }),
+  addon('providers', 'anthropic', 'Anthropic-compatible', '#providers/anthropic', { alts: ['anthropic', 'claude api', 'api key', 'key', 'base url', 'endpoint', 'gateway'] }),
+  addon('providers', 'speech', 'Speech (Chat voice)', '#providers/speech', { alts: ['speech', 'voice', 'speech to text', 'text to speech', 'stt', 'tts', 'whisper', 'microphone'] }),
 ]);
+
+const MODEL_SOURCE = Object.freeze({ global: 'Your model', plugin: 'From a plugin', policy: 'Team policy' });
+const named = (v) => typeof v === 'string' && v !== '';
+/** Add-ons rows built from data the app already has (global-search.mjs sources): one "<plugin> settings" row per
+ *  installed plugin that has settings (its manage sheet at Settings), one row per MCP server, one per own, plugin or
+ *  team-policy model (built-ins are found through the catalogue and card rows). Page-level: never locked. */
+export function addonEntriesFrom({ plugins = [], connectors = [], models = [] } = {}) {
+  const list = (v) => (Array.isArray(v) ? v.filter(Boolean) : []);
+  const out = [];
+  for (const p of list(plugins)) {
+    if (p.hasSettings !== true || !named(p.name)) continue;
+    out.push(addon('marketplace', `settings:${p.name}`, `${p.name} settings`, `#marketplace/installed/${encodeURIComponent(p.name)}/settings`,
+      { meta: 'Marketplace · Plugin settings', alts: ['plugin settings', 'configure', 'setup', 'token', 'api key', 'secrets'] }));
+  }
+  for (const s of list(connectors)) {
+    if (!named(s.id) || !named(s.name)) continue;
+    out.push(addon('connectors', `server:${s.id}`, s.name, `#connectors/servers/${encodeURIComponent(s.id)}`,
+      { meta: 'Connectors · MCP server', alts: ['mcp', 'server', 'connector', ...(named(s.description) ? [s.description] : [])] }));
+  }
+  for (const m of list(models)) {
+    if (!Object.hasOwn(MODEL_SOURCE, m.source) || !named(m.id)) continue;
+    const from = m.source === 'plugin' && named(m.plugin) ? `From ${m.plugin}` : MODEL_SOURCE[m.source];
+    out.push(addon('models', `model:${m.id}`, named(m.label) ? m.label : m.id, `#models/model/${encodeURIComponent(m.id)}`,
+      { meta: `Models · ${from}`, alts: [m.id, 'model', ...(named(m.plugin) ? [m.plugin] : [])] }));
+  }
+  return out;
+}
 
 /** What still stands between the user and `entry`: a mode lock first, then each Labs flag that is off.
  *  A missing or unknown level reads as Expert (ui-level.mjs normalizeLevel): nothing is mode-locked. */
