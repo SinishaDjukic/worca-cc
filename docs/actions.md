@@ -10,6 +10,8 @@ a ready check and a live log come with them.
 > can never start an action themselves, and the API only ever starts a command by its id from
 > stored config (see [Security](#security)).
 
+![A finished nimbus-crm run's Actions tab: the checked-out branch and folder, the Run, Test, Cursor, Terminal, Finder, Copy command and Discard buttons, and the log of an npm test that passed](screenshots/actions.png)
+
 ## Where it lives
 
 | Place | What it holds |

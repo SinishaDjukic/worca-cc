@@ -4,8 +4,17 @@ Team metrics is a **git-backed, team-wide record of finished runs**. Every teamm
 Worca has a project enabled writes one small JSON file per finished run to an orphan branch
 (`worca-metrics`) on the project's own `origin` remote. There is no separate metrics server:
 the branch itself is the shared store, fetched and pushed like any other git ref. A **Team
-metrics** page (top-level, alongside History and Statistics) reads that branch back and
+metrics** page (sidebar, Expert level, alongside Runs and Statistics) reads that branch back and
 aggregates spend, runs, duration, autonomy and review cycles per project or per workspace.
+
+For one project or workspace and a range (This month, Last month, Quarter, Year, All time or
+Custom), the Overview tab shows Spend, Runs, Cost per run, Duration, Autonomy and Review cycles
+tiles, each with its change against the previous period (plus **Saved** when runs carry
+human-hour estimates, see [Human hours and "Saved"](#human-hours-and-saved)); Spend per week
+(grouped by workflow or another dimension) and Runs per week by outcome; the By workflow, By
+ticket, By actor and By model mix tables; the runs table; and **Export CSV**.
+
+![Team metrics page for the nimbus-crm project on the Overview tab, range Last month and synced just now: Spend, Runs, Cost per run, Duration, Autonomy and Review cycles tiles with their change against the previous month, Spend per week grouped by workflow, Runs per week by outcome, and the By workflow and By ticket tables](screenshots/team-metrics.png)
 
 Nothing about a run's own branch or history changes — `worca-metrics` carries only
 `.worca-metrics/` and is never merged into anything.

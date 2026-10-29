@@ -198,7 +198,8 @@ worca logs these at boot; a run or Ask turn on such a model fails with the reaso
 - Lifetime by kind: auxiliary 10 minutes, Ask turn 2 hours, pipeline phase 24 hours; never
   more than `WORCA_BROKER_TOKEN_MAX_TTL` (48 hours).
 - Revoked when the process exits, and in bulk at start for everything an earlier worca
-  process issued.
+  process issued. `worca broker revoke --person <email>` revokes every live token billed to
+  one person; it opens the store under `WORCA_BROKER_DATA_DIR`, so run it where the broker runs.
 - Every credential refusal is an HTTP **403** whose message starts `worca-broker:`. The
   Claude CLI retries a 401 for minutes but stops at a 403, and worca turns the message into
   a paused run (*Needs credential*, *Budget reached*) rather than a failure.
@@ -398,7 +399,7 @@ can neither charge to a person nor keep from the agent. So with the broker on:
 
 ### People
 
-Each person opens **Settings › My model credentials › Manage keys** (or the key page URL),
+Each person opens **Settings › General › My model credentials › Manage keys** (or the key page URL),
 signs in through Access, and saves their keys; for GitHub Copilot they sign in with GitHub (a
 device code) instead. The broker checks each credential with the provider before storing it.
 Keys are never shown again: the page shows the last four characters, the kind (API key,
@@ -522,7 +523,7 @@ checks the key page and, with `--in-container`, the agent boundary.
 
 ## Costs per person
 
-**Stats** has a *By person* card: each person's model spend, requests and tokens in the
+**Statistics** has a *By person* card: each person's model spend, requests and tokens in the
 selected period, with the providers they used, as the broker metered them. Subscription
 calls count tokens and requests but no dollars.
 
