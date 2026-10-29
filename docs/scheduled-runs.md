@@ -104,8 +104,8 @@ one left.
   a run ending in the UI server nudges an extra tick. The ticket's time becomes the moment
   the gate opened; from there the usual retry rules apply.
 - **Edit.** *Change…* on the card switches between a time and a predecessor. Canceling a
-  predecessor, or archiving its pipeline (History's delete keeps the row but removes its
-  branch), names the runs that wait for it; they are marked missed on the next tick. A run cannot wait for itself, directly or through a chain.
+  predecessor, or archiving its pipeline (**Archive** on Runs or the run's page keeps the row but removes its
+  local branch), names the runs that wait for it; they are marked missed on the next tick. A run cannot wait for itself, directly or through a chain.
 - **Entry points.** **Run after** (*Schedule a run after this*) on a run's page;
   *Schedule next…* on a scheduled run's card; the **After a run** side of the schedule sheet's kind switch.
   All open New pipeline with the pick made (`#new/after/<id>`).
