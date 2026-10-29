@@ -85,21 +85,24 @@ export async function targetFor(workflowId, use, example, { registry = loadAgent
 /**
  * D60: what a test of these examples needs on disk while it runs, and what is free. One try needs the example's last
  * measured checkout, else its start tree (`git ls-tree`, read only) plus its patch. The test needs the 3 largest tries at
- * once, times DISK_MARGIN. null when no example has a project.
+ * once, times DISK_MARGIN. null when no example has a project. `counts` (example id → tries left) replaces tries × sides
+ * for "Finish the rest". `measuredOf`, `treeSize` and `freeDisk` are seams for the tests.
  */
-export async function diskPlanOf(examples, { tries = 3, sides = 1, projects = null } = {}) {
+export async function diskPlanOf(examples, { tries = 3, sides = 1, projects = null, counts = null,
+  measuredOf = store.lastDiskBytes, treeSize = treeBytes, freeDisk = freeDiskBytes } = {}) {
   const list = projects || await listProjects();
   const per = [];
   for (const ex of examples) {
     if (!ex.project) continue;
     const reg = list.find((p) => p.key === ex.project.key);
-    const measured = store.lastDiskBytes(ex.id, ex.project.startCommit);
-    const bytes = measured ?? (reg && reg.exists ? ((await treeBytes({ projectDir: reg.path, sha: ex.project.startSha })) ?? 0) + (ex.project.changesBytes || 0) : 0);
-    for (let k = 0; k < Math.min(tries * sides, TRIES_AT_ONCE); k += 1) per.push(bytes);
+    const measured = measuredOf(ex.id, ex.project.startCommit);
+    const bytes = measured ?? (reg && reg.exists ? ((await treeSize({ projectDir: reg.path, sha: ex.project.startSha })) ?? 0) + (ex.project.changesBytes || 0) : 0);
+    const n = counts && counts[ex.id] != null ? Number(counts[ex.id]) : tries * sides;
+    for (let k = 0; k < Math.min(n, TRIES_AT_ONCE); k += 1) per.push(bytes);
   }
   if (!per.length) return null;
   const needBytes = Math.ceil(DISK_MARGIN * per.sort((x, y) => y - x).slice(0, TRIES_AT_ONCE).reduce((s, n) => s + n, 0));
-  const freeBytes = await freeDiskBytes();
+  const freeBytes = await freeDisk();
   const enough = freeBytes === null || freeBytes >= needBytes;
   return { needBytes, freeBytes, enough, text: enough ? null : diskRefusalText(needBytes, freeBytes), once: enough ? null : diskRefusalOnceText(needBytes, freeBytes) };
 }

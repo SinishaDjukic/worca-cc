@@ -12,6 +12,7 @@ import { fmtUsd } from '../../shared/workflow-tests/checks.mjs';
 import { REASON, REASON_CODES } from '../failure-policy.mjs';
 import { setupFailedText } from '../../shared/workflow-tests/project-text.mjs';
 import { TRY_SETUP_STAGE } from './shell-step.mjs';
+import { WORKTREE_STAGE } from '../run-harness.mjs';
 
 export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a time (result.mjs), inside runBenchOnce's limit of 2.
 export const COST_POLL_MS = 2000;
@@ -73,6 +74,11 @@ const tick = (ms) => {
 };
 const quiet = (p) => { Promise.resolve(p).catch(() => {}); };
 const capError = () => err('the cost limit must be more than $0 and at most $10,000', 'BAD_REQUEST');
+/**
+ * D60: the refusal of a test the disk cannot hold. "Try it once now" (one example, one try, one version) gets the
+ * one-try sentence (board 39); every other test the test sentence (board 34).
+ */
+const diskRefusal = (d, { once }) => err(once && d.once ? d.once : d.text, 'NO_DISK');
 const validCap = (v) => Number.isFinite(v) && v > 0 && v <= 10000;
 
 /** @param {object} deps see the Interfaces of Task 7 */
@@ -139,20 +145,22 @@ export function createTestRunner(deps) {
       const empty = examples.find((ex) => !ex.request.trim());
       if (empty) throw err(`Write the request of "${empty.name}" first.`, 'BAD_REQUEST');
       const sides = [...(a != null ? [['a', a, reuseA]] : []), ['b', b, reuseB]];
+      // The project registry, read once per start: every example and the disk plan see the same list.
+      const projects = deps.listProjects && (deps.targetOf || deps.diskCheck) ? await deps.listProjects() : null;
       // D62 (replaces D20): each example on each side. A version that needs a project tries only examples that have
       // one, and an example whose project cannot be used now is left out; the first such example names the refusal.
       if (deps.targetOf) {
         for (const ex of examples) {
           for (const [, use] of sides) {
-            const t = await deps.targetOf(workflowId, use, ex);
+            const t = await deps.targetOf(workflowId, use, ex, { projects });
             if (t && !t.ready) throw err(t.text, 'NOT_READY');
           }
         }
       }
       // D60: free disk for the largest tries at once, before anything is written.
       if (deps.diskCheck) {
-        const d = await deps.diskCheck({ workflowId, examples, tries, uses: sides.map(([, use]) => use) });
-        if (d && d.enough === false) throw err(d.text, 'NO_DISK');
+        const d = await deps.diskCheck({ workflowId, examples, tries, uses: sides.map(([, use]) => use), projects });
+        if (d && d.enough === false) throw diskRefusal(d, { once: kind === 'once' && examples.length === 1 && tries === 1 });
       }
       const fps = {};
       for (const [side, use] of sides) fps[side] = await deps.fingerprintOf(workflowId, use);   // NOT_FOUND: a version that is gone
@@ -280,8 +288,9 @@ export function createTestRunner(deps) {
   }
 
   async function runTry(run, st, t) {
+    // phase 'preparing' from the start: until its run starts, Worca is getting the try ready (its checks, the copy).
     const rec = { runKey: null, pipelineId: null, help: [], failReason: null, detach: null, outcome: null, project: null,
-      phase: 'waiting', checking: null, startedMs: Date.now() };
+      phase: 'preparing', checking: null, startedMs: Date.now() };
     const detach = () => { const d = rec.detach; rec.detach = null; if (d) d(); };
     st.running.set(t.id, rec);
     store.updateTry(t.id, { status: 'running', startedAt: nowIso() });   // before the first await: the loop sees it at once
@@ -484,9 +493,20 @@ export function createTestRunner(deps) {
         if ((await fingerprintNow(run.workflowId, use)) !== fp) throw err(changedText(use), 'BAD_REQUEST');
       }
       const left = store.triesOfRun(run.id).filter((t) => t.runId === run.id && (t.status === 'stopped' || t.status === 'waiting'));
+      const leftExamples = new Map();
+      const leftCounts = {};
       for (const t of left) {
         const ex = store.readExample(run.workflowId, t.exampleId);
         if (ex && ex.fingerprint !== t.exampleFp) throw err(editedText(ex.name), 'BAD_REQUEST');
+        if (ex) { leftExamples.set(ex.id, ex); leftCounts[ex.id] = (leftCounts[ex.id] || 0) + 1; }
+      }
+      // D60: Finish the rest makes tries again (D55: "Try again" after a setup failure is this), so the disk must hold the
+      // largest of what is left, at once, before anything is written.
+      if (deps.diskCheck && leftExamples.size) {
+        const projects = deps.listProjects ? await deps.listProjects() : null;
+        const d = await deps.diskCheck({ workflowId: run.workflowId, examples: [...leftExamples.values()], tries: run.tries,
+          uses: [run.a, run.b].filter((u) => u != null), counts: leftCounts, projects });
+        if (d && d.enough === false) throw diskRefusal(d, { once: run.kind === 'once' && left.length === 1 });
       }
       if (capUsd !== undefined && capUsd !== null && !validCap(capUsd)) throw capError();
       const cap = capUsd !== undefined && capUsd !== null ? capUsd : run.capUsd;
@@ -522,7 +542,7 @@ export function createTestRunner(deps) {
       const l = deps.liveRun(rec.runKey);
       const stage = l && l.orch && l.orch.state ? l.orch.state.setupStage : null;
       if (stage === TRY_SETUP_STAGE) phase = 'setup';
-      else if (stage === 'Creating the worktree') phase = 'preparing';
+      else if (stage === WORKTREE_STAGE) phase = 'preparing';
     }
     return { phase, checking: rec.checking, startedMs: rec.startedMs };
   }

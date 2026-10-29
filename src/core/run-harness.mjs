@@ -207,6 +207,8 @@ export function findDisabledPluginFor(key, subdir = 'agents') {
  * not raw stderr echoes. Frozen and shared: `_log` only reads from `attr`.
  */
 export const ERR_STREAM = Object.freeze({ stream: 'err' });
+/** The setup stage while a git run makes its worktree (state.setupStage): the workflow-test runner reads it as a phase. */
+export const WORKTREE_STAGE = 'Creating the worktree';
 
 /** The `: <stderr>` suffix for a failed subprocess result, or '' when it said
  *  nothing. runGraphifyUpdate already returns its child's stderr and the log
@@ -1650,7 +1652,7 @@ export class RunHarness extends EventEmitter {
       // claude spawns cwd into this.runCwd (the run root on a detached workspace
       // run, else the primary's worktree); per-member fan-out sub-agents work in
       // this.workDirs. Artifacts route via the workspace store.
-      if (this.workMode === 'git') this._setupStage('Creating the worktree');
+      if (this.workMode === 'git') this._setupStage(WORKTREE_STAGE);
       await this._setupRunRoot();
       // The provisional title (firstMeaningfulLine(prompt) or the dir basename) is
       // shown instantly; kick off the real LLM title without blocking run start, now
@@ -8651,7 +8653,7 @@ export class RunHarness extends EventEmitter {
     //     (it defaults to projectDir and is never falsy).
     const missing = this.members.some((m) => !this.workDirs.get(m.projectKey));
     if (missing) {
-      if (this.workMode === 'git') this._setupStage('Creating the worktree');
+      if (this.workMode === 'git') this._setupStage(WORKTREE_STAGE);
       await this._setupRunRoot({ replay: true });
     }
     // run() kicks the LLM title off once runCwd exists; a run that paused before

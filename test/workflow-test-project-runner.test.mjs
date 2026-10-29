@@ -12,7 +12,9 @@ import * as store from '../src/core/workflow-tests/store.mjs';
 import { createTestRunner } from '../src/core/workflow-tests/runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
 import { exampleReadiness, testTargetOf } from '../src/core/workflow-tests/try-body.mjs';
-import { fmtGb, diskRow, diskRefusalText, diskRefusalOnceText, leftOutText } from '../src/shared/workflow-tests/project-text.mjs';
+import { fmtGb, diskRow, diskRefusalText, diskRefusalOnceText, leftOutText, folderMissingText, folderProjectText } from '../src/shared/workflow-tests/project-text.mjs';
+import { diskPlanOf, projectStateOf, readinessText, DISK_MARGIN } from '../src/core/workflow-tests/service.mjs';
+import { WORKTREE_STAGE } from '../src/core/run-harness.mjs';
 
 const WF = 'wf_prun';
 const homes = [];
@@ -159,4 +161,124 @@ test('a restart stops a paused or interrupted test row, so its run folder is rec
   store.recoverInterruptedTestRuns();
   const st = (id) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status;
   assert.deepEqual([st('feed0002'), st('feed0003'), st('feed0004')], ['stopped', 'stopped', 'paused'], 'never a normal run');
+});
+
+// Review fixes (Task 7 Fix 1).
+const GB = 2 ** 30;
+const waitFor = async (fn) => { for (let i = 0; i < 400; i += 1) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 5)); } throw new Error('timed out'); };
+
+test('Finish the rest checks the disk over the tries left, and refuses with the same sentence (D60, D55)', async () => {
+  const ex = example();
+  const h = harness({ setup: { cmd: 'npm ci', ok: false, exitCode: 1, timedOut: false, ms: 900, tail: 'x' } });
+  const seen = [];
+  let full = false;
+  const d = { enough: false, text: diskRefusalText(1.2 * GB, 0.9 * GB), once: diskRefusalOnceText(0.4 * GB, 0.2 * GB) };
+  const runner = createTestRunner({ ...h.deps, diskCheck: async (a) => { seen.push(a); return full ? d : { enough: true, text: null, once: null }; } });
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 3 });
+  await runner.idle(run.id);
+  assert.equal(store.readTestRun(run.id).stopReason, 'setup', 'a setup failure: "Try again" is Finish the rest');
+  const left = store.triesOfRun(run.id).filter((t) => t.status === 'stopped' || t.status === 'waiting').length;
+  full = true;
+  await assert.rejects(runner.continueRun(run.id), { code: 'NO_DISK', message: d.text }, 'a test of several tries: the test sentence');
+  const last = seen.at(-1);
+  assert.deepEqual([last.examples.map((e) => e.id), last.counts, last.uses, last.tries], [[ex.id], { [ex.id]: left }, [1, 'draft'], 3]);
+  const after = store.readTestRun(run.id);
+  assert.deepEqual([after.status, after.stopReason], ['stopped', 'setup'], 'nothing was written');
+  assert.equal(store.triesOfRun(run.id).filter((t) => t.status === 'stopped' || t.status === 'waiting').length, left);
+  full = false;
+  const again = await runner.continueRun(run.id);
+  assert.equal(again.status, 'running', 'with room on the disk it goes on');
+  await runner.idle(run.id);
+});
+
+test('Try it once now gets the one-try disk sentence; any other test the test sentence (D60, boards 34, 39)', async () => {
+  const d = { enough: false, text: diskRefusalText(1.2 * GB, 0.9 * GB), once: diskRefusalOnceText(0.4 * GB, 0.2 * GB) };
+  const r = createTestRunner({ ...harness().deps, diskCheck: async () => d });
+  await assert.rejects(r.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id], tries: 1 }), { code: 'NO_DISK', message: d.once });
+  await assert.rejects(r.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [example().id], tries: 1 }), { code: 'NO_DISK', message: d.text });
+  await assert.rejects(r.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id], tries: 2 }), { code: 'NO_DISK', message: d.text },
+    'two tries are not "one try"');
+  await assert.rejects(r.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id, example({ name: 'B' }).id], tries: 1 }),
+    { code: 'NO_DISK', message: d.text }, 'two examples are not "one try"');
+  const noOnce = createTestRunner({ ...harness().deps, diskCheck: async () => ({ enough: false, text: d.text, once: null }) });
+  await assert.rejects(noOnce.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id], tries: 1 }), { code: 'NO_DISK', message: d.text },
+    'no one-try sentence: the test sentence');
+});
+
+test('a start reads the project registry once and hands it to every readiness check and the disk plan', async () => {
+  let reads = 0;
+  const list = [{ key: pin.key, name: 'tickets', path: '/p', exists: true, vcs: 'git' }];
+  const got = [];
+  const r = createTestRunner({ ...harness().deps, listProjects: async () => { reads += 1; return list; },
+    targetOf: async (_wf, _use, _e, o) => { got.push(o.projects); return { ready: true, reason: null, text: null }; },
+    diskCheck: async (a) => { got.push(a.projects); return null; } });
+  const run = await r.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [example().id, example({ name: 'B' }).id], tries: 1 });
+  await r.idle(run.id);
+  assert.equal(reads, 1);
+  assert.equal(got.length, 5, '2 examples x 2 versions, then the disk');
+  assert.ok(got.every((x) => x === list));
+});
+
+test('phaseOf never says waiting: a try being prepared is preparing, and so is the harness making its worktree (board 35)', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const h = harness({ hold: true });
+  // The start reads the fingerprint once; the try reads it again (D27) before it prepares the copy: held there.
+  let fpCalls = 0;
+  const runner = createTestRunner({ ...h.deps, fingerprintOf: async (_wf, use) => { fpCalls += 1; if (fpCalls > 1) await gate; return `fp-${store.useRef(use)}`; } });
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id], tries: 1 });
+  const t0 = await waitFor(() => store.triesOfRun(run.id).find((t) => t.status === 'running'));
+  assert.equal(runner.phaseOf(run.id, t0.id).phase, 'preparing');
+  release();
+  const t = await waitFor(() => { const x = store.triesOfRun(run.id)[0]; return x.runKey ? x : null; });
+  h.entries.get(t.runKey).orch.state.setupStage = WORKTREE_STAGE;
+  assert.equal(runner.phaseOf(run.id, t.id).phase, 'preparing');
+  h.entries.get(t.runKey).orch.state.setupStage = null;
+  assert.equal(runner.phaseOf(run.id, t.id).phase, 'working');
+  await runner.stop(run.id);
+});
+
+test('diskPlanOf (D60): the 3 largest tries at once x 1.2, measured before estimated, per example at most min(tries x sides, 3)', async () => {
+  const proj = (key, over = {}) => ({ key, name: key, path: `/${key}`, exists: true, vcs: 'git', ...over });
+  const projects = [proj('a-11111111'), proj('b-22222222'), proj('c-33333333', { exists: false })];
+  const ex = (id, key, over = {}) => ({ id, project: { key, startSha: SHA, startCommit: SHA, changesBytes: 0, ...over } });
+  const sizes = { 1: 101, 2: 200, 3: 300, 4: 50 };
+  const trees = [];
+  const base = { projects, measuredOf: (id) => sizes[id] ?? null, treeSize: async (a) => { trees.push(a); return 1000; }, freeDisk: async () => 10 * GB };
+  // The 3 largest of [101, 200, 300, 50], summed, x DISK_MARGIN, rounded up.
+  const four = [ex(1, 'a-11111111'), ex(2, 'a-11111111'), ex(3, 'b-22222222'), ex(4, 'b-22222222')];
+  let p = await diskPlanOf(four, { ...base, tries: 1 });
+  assert.equal(DISK_MARGIN, 1.2);
+  assert.deepEqual([p.needBytes, p.freeBytes, p.enough, p.text, p.once], [722, 10 * GB, true, null, null], 'ceil(1.2 x 601)');
+  assert.deepEqual(trees, [], 'a measured checkout is never estimated');
+  // One example: its tries x sides, at most 3 at once; `counts` (Finish the rest) replaces tries x sides.
+  assert.equal((await diskPlanOf([ex(1, 'a-11111111')], { ...base, tries: 3, sides: 2 })).needBytes, Math.ceil(1.2 * 303));
+  assert.equal((await diskPlanOf([ex(1, 'a-11111111')], { ...base, tries: 1, sides: 2 })).needBytes, Math.ceil(1.2 * 202));
+  assert.equal((await diskPlanOf([ex(1, 'a-11111111')], { ...base, tries: 3, sides: 2, counts: { 1: 1 } })).needBytes, Math.ceil(1.2 * 101));
+  // Not measured yet: the start tree plus the patch; a project that is not there (missing, not registered) counts 0.
+  p = await diskPlanOf([ex(9, 'b-22222222', { changesBytes: 24 })], { ...base, tries: 1 });
+  assert.deepEqual([p.needBytes, trees], [Math.ceil(1.2 * 1024), [{ projectDir: '/b-22222222', sha: SHA }]]);
+  assert.equal((await diskPlanOf([ex(9, 'c-33333333'), ex(8, 'z-99999999')], { ...base, tries: 1 })).needBytes, 0);
+  // Free disk unknown: never a refusal. Too little: both sentences, from the same numbers.
+  p = await diskPlanOf(four, { ...base, tries: 1, freeDisk: async () => null });
+  assert.deepEqual([p.enough, p.freeBytes, p.text], [true, null, null]);
+  p = await diskPlanOf(four, { ...base, tries: 1, freeDisk: async () => 700 });
+  assert.deepEqual([p.enough, p.text, p.once], [false, diskRefusalText(722, 700), diskRefusalOnceText(722, 700)]);
+  // No example with a project: no plan.
+  assert.equal(await diskPlanOf([{ id: 5, project: null }], base), null);
+});
+
+test('projectStateOf and readinessText for each state (D62, board 39)', async () => {
+  const reg = { key: pin.key, name: 'tickets', path: 'C:/src/tickets', exists: true, vcs: 'git' };
+  const ex = { name: 'Ticket 482', project: pin };
+  const state = async (list) => projectStateOf(pin, { projects: list });
+  assert.deepEqual(await state([reg]), { state: 'ok', reg });
+  assert.deepEqual(await state([{ ...reg, exists: false }]), { state: 'missing', reg: { ...reg, exists: false } });
+  assert.deepEqual(await state([{ ...reg, vcs: 'folder' }]), { state: 'folder', reg: { ...reg, vcs: 'folder' } });
+  assert.deepEqual(await state([{ ...reg, key: 'other-12345678' }]), { state: 'not-registered', reg: null });
+  assert.equal(readinessText(ex, 'missing', { reg }), folderMissingText('tickets', 'C:/src/tickets'));
+  assert.equal(readinessText(ex, 'folder', { reg }), folderProjectText('tickets'));
+  assert.equal(readinessText(ex, 'not-registered', { reg: null }), 'Ticket 482 is left out: pick its project first.');
+  assert.equal(readinessText({ name: 'Ticket 497', project: null }, 'pick-project'), 'Ticket 497 is left out: pick its project first.');
+  assert.equal(readinessText(ex, 'missing'), folderMissingText(pin.key, ''), 'no registry row: the key names it');
 });

@@ -9,6 +9,7 @@ import { createTestRunner } from './runner.mjs';
 import { readTryOutcome, checkTry } from './result.mjs';
 import { useFingerprint } from './uses.mjs';
 import { dirBytes, freeDiskBytes } from './project-copy.mjs';
+import { listProjects } from '../projects.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_TESTABLE: 422, NOT_READY: 422, NO_DISK: 422 });
 const W = '/api/workflows/:id/tests';
@@ -44,8 +45,11 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     judge: (example, outcome, o = {}) => checkTry(example, outcome, { scriptName, onCommand: o.onCommand }),
     fingerprintOf: (workflowId, use) => useFingerprint(workflowId, use),
     // D62 (replaces D20 and review M9): each example on each version.
-    targetOf: (workflowId, use, example) => service.targetFor(workflowId, use, example),
-    diskCheck: ({ examples, tries, uses }) => service.diskPlanOf(examples, { tries, sides: uses.length }),
+    // The runner reads the registry once per start (listProjects) and hands it to both.
+    listProjects: () => listProjects(),
+    targetOf: (workflowId, use, example, o = {}) => service.targetFor(workflowId, use, example, { projects: o.projects || null }),
+    diskCheck: ({ examples, tries, uses, counts = null, projects = null }) =>
+      service.diskPlanOf(examples, { tries, sides: uses.length, counts, projects }),
     prepareProject: (example) => service.prepareProject(example),
     cleanupTry: (outcome) => service.cleanupTry(outcome),
     measureDisk: (dir) => dirBytes(dir),
