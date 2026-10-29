@@ -2,7 +2,7 @@
 name: topnav-search-testing
 description: Testing the top bar "Search or ask" end to end — where app.js wiring is testable, and how to pin a ranking rule against a fixed catalogue
 paths: ui/public/topnav-search.mjs, ui/public/global-search.mjs, test/ui-topnav-search-app.test.mjs, test/ui-global-search.test.mjs
-updated: 2026-10-29T15:27:25.771Z
+updated: 2026-10-29T17:45:45.509Z
 author: Bulibas
 ---
 
@@ -11,7 +11,7 @@ author: Bulibas
 - `test/ui-global-search.test.mjs` "no match" deepEquals the WHOLE `searchRows` result: a new result key reddens it.
 - **Its generic GET body has no `uiLevel`, so mode races are invisible there.** `levelCtl.choose()` paints the mode BEFORE `save()` sends the POST; anything that routes on `worca:level` reaches `loadSettings()` → `levelCtl.confirm(data.uiLevel)` while the POST is still in `persistSettings`, and the GET (sync file read) answers the OLD mode, hiding the target card (FEAT-1 refine cycle 2: four review passes missed it). To reproduce, after `boot()` swap `globalThis.fetch = ctx.window.fetch` for a wrapper that holds the `/api/settings` POST and answers GETs with `{ ...generic, uiLevel: 'simple' }`, then assert `documentElement.dataset.level` before releasing the POST.
 
-**New catalogue words can break exact-title pins in other files.** Matching is a substring test over the title, the tab or page title, and the alt words. Several tests pin the WHOLE row list for a query:
+**New catalogue words can break exact-title pins in other files.** Settings, Add-ons and Plugins rows match only where each query word STARTS a word (`startsWord`: any non-letter/digit is a boundary) of the title, the tab or page title, or an alt word (Plugins: name or description); runs and the "other" rows still match by substring. Several tests pin the WHOLE row list for a query:
 - `test/ui-topnav-search.test.mjs`: `login`, `guardrails`, `fix`, `nightly`, `zzzzqq`, `zzqx`, `theme`.
 - `test/ui-topnav-search-app.test.mjs`: `login`, `team`, `proj project`.
 
