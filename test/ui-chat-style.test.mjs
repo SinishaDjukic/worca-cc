@@ -64,6 +64,10 @@ test('the docked composer keeps its room: the jump pill rides the dock, toasts c
   assert.equal(ruleBody('body.view-chat .toasts'), 'bottom:calc(136px + env(safe-area-inset-bottom,0px));');
   assert.equal(ruleBody('.chat-head-btn'), 'flex:none;');
   assert.match(css, /@media \(max-width:480px\)\{\n {2}\.chat-page \.ask-meter-cost,\.chat-page \.ask-voice-caret,\.chat-page \.ask-model-btn-effort\{display:none;\}\n\}/);
+  // #943: the model button's engine name goes where the effort goes (phones, the squeezed conversation, the extension's
+  // sidebar), else the row at 290px scrolls sideways and the scope label is cut to nothing.
+  assert.match(css, /@media \(max-width:480px\)\{\s*\.chat-page \.ask-model-btn-engine\{display:none;\}\s*\}/);
+  assert.match(css, /@container chat-convo \(max-width:520px\)\{\s*\.chat-page \.ask-model-btn-engine\{display:none;\}\s*\}/);
   assert.equal(ruleBody('.chat-page .ask-composer-row > .ask-scope-btn'), 'flex:0 1 auto;min-width:0;', 'a pinned scope gives way before Send does');
   assert.equal(ruleBody('.chat-page .ask-model-btn'), 'white-space:nowrap;');
   assert.equal(ruleBody('.chat-page .ask-scope-btn > svg'), 'flex:none;', 'the scope caret never squashes to nothing');
