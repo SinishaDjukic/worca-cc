@@ -357,3 +357,19 @@ test('firstInjectionSource: flags a leading-dash value (option injection), else 
   assert.equal(firstInjectionSource({}), null);
   assert.equal(firstInjectionSource(undefined), null);
 });
+
+// Session groups (Task 43): a session's transitions reach the browser live, tagged like every run event.
+test("wireRun forwards 'sessionHost' events verbatim, tagged with the run UUID, status unchanged", () => {
+  const entry = makeEntry({ id: 'uuid-SH1' });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('sessionHost', { sid: 's_aaaaaaaa', transition: 'turn_end', hostEpoch: 1, turnId: 't:s_aaaaaaaa:1' });
+    const buffered = entry.events.filter((e) => e.type === 'sessionHost');
+    assert.equal(buffered.length, 1);
+    assert.deepEqual([buffered[0].runId, buffered[0].sid, buffered[0].transition, buffered[0].turnId], ['uuid-SH1', 's_aaaaaaaa', 'turn_end', 't:s_aaaaaaaa:1']);
+    assert.equal(entry.status, 'running');
+  } finally {
+    runs.delete(entry.id);
+  }
+});

@@ -1472,7 +1472,8 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null
+        || st.session != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1487,7 +1488,9 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
               // Agent turns cut before their `result`: a count and a lower bound, never in the cost.
               ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}),
               // The CLI's last session total per session id: a resumed spawn books only what it adds.
-              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}) })
+              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}),
+              // Session groups (C7): the turn, dispatch and host session a member step ran in — only on member rows.
+              ...(st.session ? { session: st.session } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1994,6 +1997,8 @@ function toPipelineRow(o) {
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
+          // Session groups (C6): each session's summary — only on a run that has one, so other rows are unchanged.
+          ...(o.sessionHosts && typeof o.sessionHosts === 'object' && Object.keys(o.sessionHosts).length ? { sessionHosts: o.sessionHosts } : {}),
         })
       : null,
   };
@@ -2695,6 +2700,7 @@ function stepRowToStep(r) {
     if (em.auxCosts && typeof em.auxCosts === 'object') step.auxCosts = em.auxCosts;
     if (em.stoppedTurns && typeof em.stoppedTurns === 'object') step.stoppedTurns = em.stoppedTurns;
     if (em.sessionCosts && typeof em.sessionCosts === 'object') step.sessionCosts = em.sessionCosts;
+    if (em.session && typeof em.session === 'object') step.session = em.session;
   }
   return step;
 }
@@ -2770,6 +2776,7 @@ function rowToState(row) {
     state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
+    if (outcome.sessionHosts && typeof outcome.sessionHosts === 'object') state.sessionHosts = outcome.sessionHosts;
     state.active = [];        // nothing is in flight in a rehydrated snapshot
     state.gate = null;
   }

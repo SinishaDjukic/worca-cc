@@ -162,6 +162,7 @@ import { waitForNetwork, NETWORK_ACTOR } from './network-wait.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
 import { usageLimitSwitches, engineList, engineLabel, engineReportsCost } from '../shared/engine-switch.mjs';
 import { splitTurnCost, splitCarried, reconcileTurn, usageTokens } from './session-cost.mjs';
+import { sessionHostEvent, sessionAuditLine } from './session-trace.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
@@ -275,6 +276,9 @@ export function errStreamAttr(stderrText, extra = null) {
 export function roundUsd(n) {
   return Math.round((Number(n) || 0) * 1e4) / 1e4;
 }
+
+/** Session records a pause or a crash must find in the row (Task 43; C43: `member_bound` keeps an epoch's first host id). */
+const SESSION_PERSIST_KINDS = new Set(['open', 'degrade', 'member_bound', 'turn_end', 'rotate', 'restart', 'pause', 'close']);
 
 /** A usage of either shape (API, the session demux's {in,out,cr,cw}, Ask's) with the API keys config.mjs resolveModelCost
  *  prices, `cache_creation` buckets kept (session groups, Task 42). */
@@ -7410,6 +7414,8 @@ export class RunHarness extends EventEmitter {
       // stderr (agent CLI, git, graphify). Provenance, not severity — the level
       // says how bad it is, this says where it came from.
       if (attr.stream) evt.stream = attr.stream;
+      // Session groups: the sid of a session's main-agent line (source 'session'), so the log can filter one session.
+      if (typeof attr.session === 'string' && attr.session) evt.session = attr.session;
       // A Bash call's own description (#911 slice 3): the web log's Summaries mode shows it; `text` keeps the command.
       if (typeof attr.desc === 'string' && attr.desc) evt.desc = attr.desc;
     }
@@ -7843,6 +7849,8 @@ export class RunHarness extends EventEmitter {
       startedAt: new Date().toISOString(),
       finishedAt: null,
       subagentType: e.subagentType ?? null,
+      // C8: a session member's own dispatch (session-host.mjs) — the step row and the trace hold its cost, never this record.
+      ...(typeof e.memberOf === 'string' && e.memberOf ? { memberOf: e.memberOf } : {}),
       // In-memory only (no column): lets _recordSubAgentTelemetry price this
       // child. A sub-agent runs on the PARENT node's endpoint, so the parent's
       // model is the right price — UNLESS the Task input names a model that
@@ -8165,6 +8173,54 @@ export class RunHarness extends EventEmitter {
     return fb;
   }
 
+  /** One session record (session-host.mjs, through the port): mirror the summary into state (C6), announce it as a
+   *  `sessionHost` event, audit it (a reconcile mismatch once per session), and persist where a pause or a crash must
+   *  find it — `member_bound` included, so a pause in an epoch's FIRST turn keeps the host id (C43). */
+  _onSessionRecord(sid, rec, summary) {
+    if (typeof sid !== 'string' || !rec || typeof rec !== 'object') return;   // append() gives null when it could not write
+    (this.state.sessionHosts ||= {})[sid] = summary;
+    const ev = sessionHostEvent(rec, summary);
+    if (ev) this._emit('sessionHost', ev);
+    const line = sessionAuditLine(rec, summary);
+    if (line && rec.kind === 'reconcile') {
+      const seen = (this._sessionMismatchAudited ||= new Set());
+      if (!seen.has(sid)) { seen.add(sid); this._sessionAudit(line); }
+    } else if (line) this._sessionAudit(line);
+    if (SESSION_PERSIST_KINDS.has(rec.kind)) this._persist().catch(() => {});
+  }
+
+  _sessionAudit(line) {
+    if (this.pipeline?.dir) appendAudit(this.pipeline.dir, line).catch(() => {});
+  }
+
+  /** C7: the member row's reference into its session (a partial one at bind, the full one after booking). The member's own
+   *  sub_agents record says `memberOf` and carries no price: the step row and the trace hold its cost (C8). */
+  _stampSessionRow(stepKey, ref) {
+    const step = this.state.steps.find((s) => s.key === stepKey);
+    if (!step || !ref || typeof ref !== 'object') return;
+    step.session = { sid: ref.sid ?? null, hostEpoch: ref.hostEpoch ?? null, hostSessionId: ref.hostSessionId ?? null, turnId: ref.turnId ?? null,
+      dispatchId: ref.dispatchId ?? null, attempt: ref.attempt ?? null, memberAgentId: ref.memberAgentId ?? null,
+      memberTranscriptId: ref.memberTranscriptId ?? null, costSource: ref.costSource ?? null };
+    const sub = ref.memberAgentId ? this.state.subAgents.find((s) => s.id === ref.memberAgentId) : null;
+    if (sub) {
+      sub.memberOf = ref.sid ?? null;
+      delete sub.costUsd;
+      delete sub.tokens;
+      this._upsertSubAgent(sub);
+    }
+    this._emit('state', this.getState());
+    this._persist().catch(() => {});
+  }
+
+  /** C39: a member waiting for its session's host says "queued" until it starts or is cancelled. */
+  _onSessionQueue(executionId, queued) {
+    const step = this.state.steps.find((s) => s.key === executionId);
+    if (!step) return;
+    if (queued) step.queued = true;
+    else delete step.queued;
+    this._emit('state', this.getState());
+  }
+
   /** The harness side of a session's SessionHost (session groups, Task 39's port; session-host.mjs). */
   _sessionPort() {
     return {
@@ -8173,13 +8229,12 @@ export class RunHarness extends EventEmitter {
       engine: this.claude.engine || 'claude',
       mock: mockEnabled({ mock: this.claude.mock }),
       bookTurn: (b) => this._bookSessionTurn(b),
-      // Task 43 adds the three record methods; until then they are skipped.
-      onRecord: (sid, rec, summary) => this._onSessionRecord?.(sid, rec, summary),
-      stampRow: (stepKey, ref) => this._stampSessionRow?.(stepKey, ref),
+      onRecord: (sid, rec, summary) => this._onSessionRecord(sid, rec, summary),
+      stampRow: (stepKey, ref) => this._stampSessionRow(stepKey, ref),
       remainingBudgetUsd: (q) => this._remainingPipelineBudgetUsd(q),
       checkCostLimits: () => this._checkCostLimits(),
       seedBaseline: (hostSessionId, usd) => this.seedSessionBaseline(hostSessionId, usd),
-      onQueue: (executionId, queued) => this._onSessionQueue?.(executionId, queued),
+      onQueue: (executionId, queued) => this._onSessionQueue(executionId, queued),
       log: (level, text, attr) => this._log('session', level, text, attr),
     };
   }
