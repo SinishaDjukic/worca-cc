@@ -5136,6 +5136,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .status-dot.has-sym > svg{display:block;}
 .status-dot.has-ic{width:14px;height:14px;background:none;color:var(--ink-2);}
 .status-dot.has-ic > svg{display:block;}
+.status-dot.has-ic.is-peach{color:var(--peach-ink);}   /* Following a run: the run icon keeps the Following colour */
 .status-sym > g{stroke:var(--on-signal);}
 .status-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){.status-dot.is-pulse{animation:none;}}
