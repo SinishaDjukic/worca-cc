@@ -2,7 +2,7 @@
 name: topnav-search-testing
 description: Testing the top bar "Search or ask" end to end — where app.js wiring is testable, and how to pin a ranking rule against a fixed catalogue
 paths: ui/public/topnav-search.mjs, ui/public/global-search.mjs, test/ui-topnav-search-app.test.mjs, test/ui-global-search.test.mjs
-updated: 2026-10-29T14:31:45.816Z
+updated: 2026-10-29T15:09:40.664Z
 author: Bulibas
 ---
 
@@ -18,5 +18,15 @@ author: Bulibas
 A new static Settings or Add-ons entry whose title or alts contain one of those words reddens those tests. Grep the new block before adding it.
 - **Rows from lazy reads arrive late.** `searchPick` types right after ⌘K, before `loadTopnavLazy` settles. Rows from the lazy reads (workflows, schedules, and since the plugins plan also plugins, marketplaces and MCP servers) are missing at that point. Settle about 8 ticks after ⌘K before typing.
 - **Plugin manifests have no `displayName`, `keywords` or `tags`.** `KNOWN_TOP` in `plugin-manifest.mjs` has only description. So a plugin search can match name and description only.
+
+**Landing helpers' guards go untested by default.** A pick that routes to a page and then flashes a row (`reveal*`,
+`open*Target`, `showConnectors`) carries two kinds of guard that stayed green when removed, even though every mutant
+the plan listed was killed (plugins plan cycle 1, 2026-10-29, 18 of 44 survived):
+- the `parseHash()[1] !== param` / `currentView()` / `location.hash !== hash` bail after the async load;
+- each field a "clear the page's own filters" helper resets (`mvState.filter`, `collapsed`, `justImported`), where the
+  test only narrowed one of them.
+
+Pin the bail by holding the arm's answer in a deferred promise, navigating away, then releasing it. Pin each reset
+with its own row. Pin the cache's failed-read path with `boot({ down: { '/api/marketplaces': 500 } })`.
 
 **Ranking pins over a hand-written catalogue can be vacuous.** "Name match before alt-word match" looked pinned by "tags", but the card matched through its TAB's name, so deleting the rank branch stayed green. Brute-force it: for every word in the catalogue, compare `searchRows` output between the real module and a `sed` mutant copied to a `.tmp.mjs` beside it; only the queries whose output differs can pin the rule (FEAT-1: just "run").
