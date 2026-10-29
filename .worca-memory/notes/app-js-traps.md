@@ -2,7 +2,7 @@
 name: app-js-traps
 description: Read before editing ui/public/app.js or src/shared — imported helpers, makeRun's fixed fields, capture-phase Escape arms, the purity test's word scans.
 paths: ui/public/app.js, ui/public/*.mjs, ui/public/*.js, src/shared/**, test/ui-*.test.mjs, test/helpers/feedback.mjs, test/shared-graph-purity.test.mjs
-updated: 2026-10-29T17:04:35.278Z
+updated: 2026-10-29T17:45:58.260Z
 author: Bulibas
 ---
 
@@ -50,6 +50,12 @@ deletes the `actionsModelCache` entry of every run that has no mounted `.act-str
 Overview tab's, and it is Advanced only. So a new reader of the cache (the run head's Try it step, 2026-10-29 plan) must
 add its run to that `mounted` map, and must repaint from `paintActionsStrips`. If it does not, its model disappears on
 the first frame.
+
+Trap for testing that: the detail screens also mount the Actions tab's controller (`mountActionsController`, even at
+Simple in jsdom), and on `actions-changed` its `onModel` also refetches and calls `paintActionsStrips`. So a jsdom test of
+"the head follows actions-changed" stays green with the head's own refetch path deleted (Try it review, 2026-10-29:
+`openTryHeadScopes` + `tryModelAsked.clear()` removed together, still green). Mutation-check a new cache reader's refresh
+path, and pin it on a screen without that controller, or accept that the controller covers it.
 
 A checkout's setup state is fresher on History's row (`checkout.members[i].setup`, followed by `pipelines-changed`) than
 in the model. The server writes `ok`/`failed` after the setup instance's last `actions-changed`, so a model refetched on
