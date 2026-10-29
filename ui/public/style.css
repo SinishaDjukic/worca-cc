@@ -7476,8 +7476,10 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .gv-edit .gv-sess:not(.bad) .gv-sess-head:hover{background:var(--row-selected);}   /* --red-ink-strong is 4.39:1 on it */
 .gv-edit .gv-sess-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .gv-static .gv-sess-head{pointer-events:none;}
-/* The monitor's strip takes the click Task 57 wires to onSessionClick (its cursor comes with that handler). */
+/* The monitor's strip takes the click Task 57 wires to onSessionClick; the host that has the handler shows it. */
 .gv-monitor .gv-sess-head{pointer-events:auto;}
+.gv-sess-links .gv-sess-head[tabindex="0"]{cursor:pointer;}
+.gv-sess-links .gv-sess-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .gv-world .gv-sess-head .sdot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;}
 .gv-world .gv-sess.is-active .sdot{background:var(--peach);color:var(--peach);animation:dotpulse 1.3s ease-in-out infinite;}
 .gv-world .gv-sess.warn .sdot,.gv-world .gv-sess.is-paused .sdot{background:var(--amber);}

@@ -2942,7 +2942,8 @@ function onState(r, msg) {
   r.subAgents = msg.subAgents || r.subAgents;
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
   // roleReviews: the role-review rounds runModel's live role rows read (review A12).
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews']) {
+  // sessionHosts: each session's summary (session groups), read by the tray decor and the Sessions tab.
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -4030,6 +4031,7 @@ if (typeof window !== 'undefined') {
     applyRunLogFilter,
     focusLogExecution,
     openStepLog,
+    openSessionLog,
     paintLogFilters,
     readLogFilterFrom,
     repaintFilteredLog,
@@ -23654,7 +23656,9 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   // column painter, as a thunk.
   paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
     decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id), modelLabel: graphModelLabel }),
-    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, st.steps);
+    // `logs`: the run saved a log (HD_TABS' Logs tab shows), so a tray header has a log to open; its cards link the same way.
+    { run: st, runId: parsed.id, mode: 'monitor', record: rec, logs: Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log') })
+    : null, st.steps);
   if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
@@ -31979,6 +31983,8 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
       modelLabel: graphModelLabel,
+      // History without a saved log has nothing to open: its header stays inert like its cards (wireHdGraphLogLinks).
+      onSessionClick: decor.record && !decor.logs ? null : (sid) => openSessionLog(host, slot.ctx, sid),
     });
     GRAPH_MOUNTS.set(host, slot);
   }
@@ -32127,6 +32133,23 @@ function openStepLog(host, ctx, executionId, nodeId) {
   if (!sec || !sec.__drawer) { focusLogExecution(ctx, executionId, nodeId); return; }
   r.logDrawer = { node: nodeId || '', execution: executionId || '' };
   rdPaintLogDrawer(sec, r, logTargetCard(sec, r.logDrawer));
+}
+
+/** A session tray's header (Task 57): the log of the member running now (its newest execution), else of the member
+ *  execution that ran last, in ledger order (null when none ran). A ×N member's newest row is one of its slices: it
+ *  opens the member's node-wide log, every slice (as a History card opens `{ node }`). Task 60 turns this into the
+ *  drawer filtered to the whole session. */
+function openSessionLog(host, ctx, sid) {
+  const s = ctx && ctx.sessions && ctx.sessions[sid];
+  if (!s) return null;
+  const mine = new Set(s.members);
+  const ledger = (ctx.run && Array.isArray(ctx.run.steps) ? ctx.run.steps : []).filter((x) => x && x.executionId && mine.has(x.nodeId));
+  const own = s.current ? ledger.filter((x) => x.nodeId === s.current.nodeId) : [];
+  const row = (own.length ? own : ledger).at(-1);
+  if (!row) return null;
+  const executionId = row.kind === 'task' || row.parentExecutionId ? '' : row.executionId;   // a slice: the whole member
+  openStepLog(host, ctx, executionId, row.nodeId);
+  return { executionId: executionId || null, nodeId: row.nodeId };
 }
 
 // History: the saved NDJSON log, fetched once per screen and shared by every drawer target.

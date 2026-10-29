@@ -89,13 +89,15 @@ const nodeSig = (stepper) => manifestNodes(stepper).map((n) => n.id).join(',');
 export function mountRunGraph(hostEl, opts = {}) {
   const { mode = 'monitor', doc = hostEl.ownerDocument, raf = null, viewport = null,
     onRowClick = null, onGateClick = null, onResultClick = null, nodeClicks = false, modelLabel = null, now = () => Date.now(),
-    fill = false } = opts;
+    fill = false, onSessionClick = null, sessionVerified = undefined, sessionsOn = undefined } = opts;
   const wrap = hostEl.closest('.run-flow-wrap') || hostEl.parentElement || hostEl;
   const win = doc.defaultView || globalThis;
   const isStatic = mode === 'static', isFocus = mode === 'focus', isCard = mode === 'card';
   const isMonitor = !isStatic && !isFocus && !isCard;
   const zoomMin = 0.3, zoomMax = isMonitor ? 1.6 : isCard ? CARD_ZOOM : 1;
   const cardLinks = nodeClicks && isMonitor && !!onRowClick;   // only a monitor host takes clicks
+  // A session tray's header opens that session (Task 57): monitor hosts that were handed the callback only.
+  const sessionLinks = isMonitor && typeof onSessionClick === 'function';
 
   let view = null, stepper = null, decor = null, runId = null, expanded = null, ro = null, lastFit = null, bound = false, nav = null;
   let focus = [];   // focus + card hosts: the node ids the camera frames (focusNodeIds)
@@ -292,6 +294,20 @@ export function mountRunGraph(hostEl, opts = {}) {
     // A card binds no footer accordion or result link (the panel is where you drill in): the strips applyDecor builds
     // are no tab stops there, or a keyboard walk through the chat stops at every run node of every graph.
     if (isCard) for (const n of hostEl.querySelectorAll('.xtoggle, .xresult a')) n.setAttribute('tabindex', '-1');
+    // A tray header that opens its session is a tab stop (Enter / Space, like a linked card) once a member ran: one that
+    // never ran stays inert, as linkCards keeps a card that never ran. The host carries the class only while it has a
+    // tray (a run without a session keeps its DOM); the pointer goes with the tab stop.
+    if (sessionLinks) {
+      const heads = hostEl.querySelectorAll('.gv-sess-head');
+      hostEl.classList.toggle('gv-sess-links', heads.length > 0);
+      const ran = (sid) => { const s = decor && decor.sessions && decor.sessions[sid];
+        return !!s && s.members.some((id) => ((decor.footers[id] || {}).rows || []).length > 0); };
+      for (const h of heads) {
+        const on = ran(h.dataset.sessionId);
+        if (on === (h.getAttribute('tabindex') === '0')) continue;
+        if (on) h.setAttribute('tabindex', '0'); else h.removeAttribute('tabindex');
+      }
+    }
   }
 
   function mount() {
@@ -307,7 +323,10 @@ export function mountRunGraph(hostEl, opts = {}) {
       // The label row names the model the step RAN with: the manifest cell's resolved `model`
       // (project node pick > team default > authored), not the template's authored config.model.
       modelOf: (node) => (manifestNodes(stepper).find((n) => n.id === node.id) || {}).model || (node.config && node.config.model) || '',
-      modelLabel });
+      modelLabel,
+      // The trays name the run's engine; until a decor says otherwise they follow the gate and the Labs flag (Task 57).
+      engine: (decor && decor.run && decor.run.runEngine) || Object.values((decor && decor.sessions) || {}).map((s) => s.engine).find(Boolean) || undefined,
+      sessionVerified, sessionsOn });
     // The view never auto-binds a nav: monitor hosts ask for one. There is no
     // engagement state any more — a plain wheel is always the page's (D2) — and
     // onTransform is how a wheel zoom or a drag repaints the cluster.
@@ -407,6 +426,8 @@ export function mountRunGraph(hostEl, opts = {}) {
       paintNav();
       // (the wheel + drag gestures live in the view's nav — see mount() above)
       on(hostEl, 'click', (e) => {
+        const head = e.target.closest && e.target.closest('.gv-sess-head');
+        if (head) { if (sessionLinks && head.getAttribute('tabindex') === '0') onSessionClick(head.dataset.sessionId); return; }
         const toggle = e.target.closest && e.target.closest('.xtoggle');
         if (toggle) { expanded = expanded === toggle.dataset.nodeId ? null : toggle.dataset.nodeId; paint(); refit(); return; }
         const link = e.target.closest && e.target.closest('.xresult a');
@@ -424,6 +445,14 @@ export function mountRunGraph(hostEl, opts = {}) {
           if (e.key !== 'Enter' && e.key !== ' ') return;
           if (!e.target.matches || !e.target.matches('.node[data-node-id][role="link"]')) return;
           if (openCard(e)) e.preventDefault();   // Space would scroll the page too
+        });
+      }
+      if (sessionLinks) {
+        on(hostEl, 'keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          if (!e.target.matches || !e.target.matches('.gv-sess-head[data-session-id][tabindex="0"]')) return;
+          e.preventDefault();
+          onSessionClick(e.target.dataset.sessionId);
         });
       }
     }
@@ -461,7 +490,7 @@ export function mountRunGraph(hostEl, opts = {}) {
     if (hint) hint.remove();
     if (nav) { nav.remove(); nav = null; }
     if (view) { view.destroy(); view = null; }   // view.destroy() tears every nav down
-    hostEl.classList.remove('gv-host');
+    hostEl.classList.remove('gv-host', 'gv-sess-links');
     wrap.classList.remove('gv-wrap', 'gv-wrap-static', 'gv-wrap-monitor', 'gv-wrap-focus', 'gv-wrap-card');
     touchedAt = 0;
     followPending = false;
