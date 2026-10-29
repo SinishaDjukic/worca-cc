@@ -88,6 +88,10 @@ test('a try names its folder: without a project, or Worca\'s copy of the project
   assert.deepEqual([noKey.status, noKey.body.error], [400, TEXT]);
   const otherKey = await _testing.invokeStartRun(await tryBody(), null, { workflowTest: { use: 'draft', project: { key: 'other-1234abcd', setupCmd: null } } });
   assert.deepEqual([otherKey.status, otherKey.body.error], [400, TEXT], 'the copy of the project it names');
+  for (const bad of [null, undefined, '', 'Not A Key']) {
+    const r = await _testing.invokeStartRun({ ...(await tryBody()), projectDir: real }, null, { workflowTest: { use: 'draft', project: { key: bad, setupCmd: null } } });
+    assert.deepEqual([r.status, r.body.error], [400, TEXT], `a project key ${JSON.stringify(bad)} never lets the person's folder through`);
+  }
   const same = await _testing.invokeStartRun(await tryBody({ sameAsSource: true }), null, { workflowTest: { use: 'draft', project: { key, setupCmd: null } } });
   assert.deepEqual([same.status, same.body.error], [400, 'a test try starts now, on a branch of its own']);
   const twoLines = await _testing.invokeStartRun(await tryBody(), null, { workflowTest: { use: 'draft', project: { key, setupCmd: 'npm ci\nrm -rf /' } } });
@@ -171,7 +175,85 @@ test('_excludePathspecs: unchanged without a setup, the setup\'s paths added aft
   o.injectedPaths = { pk: [{ path: '.claude/rules/worca', kind: 'memory' }, { path: 'CLAUDE.md', kind: 'claudeMdSection' }] };
   assert.deepEqual(o._excludePathspecs('pk'), [':(exclude).claude/rules/worca']);
   o._trySetupPaths = ['setup-out', 'dist'];
-  assert.deepEqual(o._excludePathspecs('pk'), [':(exclude).claude/rules/worca', ':(exclude)setup-out', ':(exclude)dist']);
+  assert.deepEqual(o._excludePathspecs('pk'), [':(exclude).claude/rules/worca', ':(exclude,literal)setup-out', ':(exclude,literal)dist']);
   o.injectedPaths = {};
-  assert.deepEqual(o._excludePathspecs('pk'), [':(exclude)setup-out', ':(exclude)dist']);
+  assert.deepEqual(o._excludePathspecs('pk'), [':(exclude,literal)setup-out', ':(exclude,literal)dist']);
+  o._trySetupPaths = ['a*b', 'c?[d]'];
+  assert.deepEqual(o._excludePathspecs('pk'), [':(exclude,literal)a*b', ':(exclude,literal)c?[d]'], 'never a pattern');
+});
+
+test('_untrackedDirs: a git failure and a list cut at 200 are logged', async () => {
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const o = createOrchestrator({ projectDir: join(tmpdir(), 'wftptry-unit2'), claude: { mock: true } });
+  const logged = [];
+  o._log = (scope, level, msg) => logged.push([scope, level, msg]);
+  o._git = async () => ({ ok: false, code: 128, stdout: '', stderr: 'fatal: boom' });
+  assert.deepEqual(await o._untrackedDirs('x'), []);
+  assert.ok(logged.some(([, level, msg]) => level === 'warn' && /git ls-files failed: fatal: boom/.test(msg)), JSON.stringify(logged));
+  logged.length = 0;
+  const many = Array.from({ length: 205 }, (_, i) => `d${i}/`);
+  o._git = async () => ({ ok: true, code: 0, stdout: `${many.join('\0')}\0`, stderr: '' });
+  const got = await o._untrackedDirs('x');
+  assert.equal(got.length, 200);
+  assert.equal(got[0], 'd0');
+  assert.ok(logged.some(([, level, msg]) => level === 'warn' && /205 new paths; only the first 200/.test(msg)), JSON.stringify(logged));
+  logged.length = 0;
+  o._git = async () => ({ ok: true, code: 0, stdout: 'setup-out/\0', stderr: '' });
+  assert.deepEqual(await o._untrackedDirs('x'), ['setup-out']);
+  assert.deepEqual(logged, [], 'nothing to say');
+});
+
+test('a stop during the setup ends the try stopped, not as a setup failure', { timeout: 240000 }, async () => {
+  const cmd = 'node -e "setTimeout(() => {}, 120000)"';
+  const out = await _testing.invokeStartRun(await tryBody({ title: 'Test: Ticket 482 · try 3' }), null,
+    { workflowTest: { use: 'draft', project: { key, setupCmd: cmd } } });
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  const { TRY_SETUP_STAGE, readTrySetup } = await import('../src/core/workflow-tests/shell-step.mjs');
+  const t0 = Date.now();
+  let entry = runs.get(out.body.runId);
+  while (entry.orch.state.setupStage !== TRY_SETUP_STAGE) {
+    assert.ok(!entry.settled && Date.now() - t0 < 120000, `the setup never started: ${entry.orch.state.setupStage}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const stoppedAt = Date.now();
+  entry.orch.stop();
+  entry = await settled(out.body.runId);
+  assert.ok(Date.now() - stoppedAt < 60000, 'the setup command was stopped, not waited out');
+  const row = artifacts.findPipelineRowById(entry.pipelineId);
+  assert.equal(row.status, 'stopped');
+  const { setupFailedText } = await import('../src/shared/workflow-tests/project-text.mjs');
+  assert.ok(!entry.events.some((e) => e.type === 'error' && e.message === setupFailedText(cmd)), 'not a setup failure');
+  assert.equal(await readTrySetup(entry.orch.pipeline.dir), null, 'no setup record: the setup did not fail, it was stopped');
+  assert.ok(existsSync(JSON.parse(row.branch).worktreeDir), 'kept: the runner removes it');
+});
+
+test('run-root mode legacy: a try still keeps its checkout under its run root; a normal run keeps legacy', { timeout: 300000 }, async () => {
+  const prev = process.env.WORCA_RUN_ROOT;
+  process.env.WORCA_RUN_ROOT = 'legacy';
+  try {
+    const out = await _testing.invokeStartRun(await tryBody({ title: 'Test: Ticket 482 · try 4' }), null,
+      { workflowTest: { use: 'draft', project: { key, setupCmd: null } } });
+    assert.equal(out.status, 200, JSON.stringify(out.body));
+    const entry = await settled(out.body.runId);
+    const row = artifacts.findPipelineRowById(entry.pipelineId);
+    assert.equal(row.status, 'done');
+    const br = JSON.parse(row.branch);
+    assert.equal(br.runRootMode, 'detached', 'the legacy setting is ignored for a try');
+    assert.equal(br.worktreeKept, true);
+    assert.ok(String(br.worktreeDir).toLowerCase().startsWith(join(wh, 'runs', entry.pipelineId).toLowerCase()), br.worktreeDir);
+    assert.ok(existsSync(br.worktreeDir), 'kept for the checks');
+
+    const other = templateRepo('wftplegacy', { branch: 'main', user: true, files: { 'README.md': '# l\n' } });
+    extra.push(other);
+    const n = await _testing.invokeStartRun({ projectDir: other, prompt: 'Add a feature', title: 'Legacy run', workflowId: 'wf_ptry' }, null, {});
+    assert.equal(n.status, 200, JSON.stringify(n.body));
+    const ne = await settled(n.body.runId);
+    const nbr = JSON.parse(artifacts.findPipelineRowById(ne.pipelineId).branch);
+    assert.equal(nbr.runRootMode, 'legacy', 'a normal run keeps the legacy mode');
+    assert.equal(nbr.worktreeKept, undefined);
+    assert.equal(existsSync(nbr.worktreeDir), false, 'its checkout went at teardown');
+    assert.equal(existsSync(join(wh, 'runs', ne.pipelineId)), false, 'no run root');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_RUN_ROOT; else process.env.WORCA_RUN_ROOT = prev;
+  }
 });

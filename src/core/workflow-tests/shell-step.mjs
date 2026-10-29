@@ -20,7 +20,7 @@ export function tryShellEnv({ logFile = null } = {}) {
 }
 
 /** @returns {Promise<{ok: boolean, exitCode: number|null, timedOut: boolean, ms: number, tail: string}>} never throws */
-export async function runShellStep({ command, cwd, env, timeoutMs, signal = null, spawnImpl = null } = {}) {
+export async function runShellStep({ command, cwd, env, timeoutMs = SETUP_TIMEOUT_MS, signal = null, spawnImpl = null } = {}) {
   const t0 = Date.now();
   const lines = [];
   let bytes = 0;

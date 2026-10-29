@@ -2510,7 +2510,8 @@ const startRunHandler = async (req, res) => {
     // folder; the copy is never a registered project, so the key travels in-process with it.
     const tryProject = workflowTest && workflowTest.project && typeof workflowTest.project === 'object' ? workflowTest.project : null;
     if (workflowTest && !(body.noProject === true
-      || (tryProject && typeof body.projectDir === 'string' && testCopyKeyOf(body.projectDir) === tryProject.key))) {
+      || (tryProject && typeof tryProject.key === 'string' && PROJECT_KEY_RE.test(tryProject.key)
+        && typeof body.projectDir === 'string' && testCopyKeyOf(body.projectDir) === tryProject.key))) {
       return badRequest(res, "a test try runs without a project, or in Worca's copy of one");
     }
     if (workflowTest && (body.sameAsSource === true || body.scheduledFor != null || body.repeat != null || body.after != null || body.workspaceId)) {

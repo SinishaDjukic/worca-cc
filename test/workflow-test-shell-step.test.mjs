@@ -27,6 +27,12 @@ test('an exit code, a time limit and an abort are not ok', async () => {
   assert.equal((await p).ok, false);
 });
 
+test('no time limit given: the setup limit, not an instant one', async () => {
+  const r = await runShellStep({ command: node("console.log('fine')"), cwd, env: tryShellEnv() });
+  assert.deepEqual([r.ok, r.exitCode, r.timedOut], [true, 0, false]);
+  assert.match(r.tail, /fine/);
+});
+
 test('the tail keeps the last 40 lines', async () => {
   const r = await runShellStep({ command: node('for (let i = 1; i <= 100; i++) console.log(\'line \' + i)'), cwd, env: tryShellEnv(), timeoutMs: 30000 });
   const lines = r.tail.split('\n');

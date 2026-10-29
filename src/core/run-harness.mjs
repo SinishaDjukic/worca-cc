@@ -2558,6 +2558,11 @@ export class RunHarness extends EventEmitter {
       this._log('worktree', 'info', 'folder run: the copy lives in the run root (run-root mode legacy ignored)');
       this.runRootMode = 'detached';
     }
+    // Workflow tests 3a (D43): a try's checkout lives in its run root, and only the detached teardown keeps it for the checks.
+    if (this.opts.workflowTest === true && this.runRootMode !== 'detached') {
+      this._log('worktree', 'info', 'test try: the checkout lives in the run root (run-root mode legacy ignored)');
+      this.runRootMode = 'detached';
+    }
     this.state.runRootMode = this.runRootMode;            // top-level pin → workspace_meta (artifacts.mjs)
     const detached = this.runRootMode === 'detached';
     this.runRoot = detached ? join(worcaHome(), 'runs', this.pipeline.id) : null;
@@ -2813,19 +2818,25 @@ export class RunHarness extends EventEmitter {
     this._setupStage(TRY_SETUP_STAGE);
     const r = await runShellStep({ command: cmd, cwd, env: tryShellEnv({ logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE) }),
       timeoutMs, signal: this.abort.signal });
+    // A stop during the setup is a stop, not a setup failure: it throws here, before any setup record is written.
+    if (!r.ok) this._checkAbort();
     if (r.ok) this._trySetupPaths = await this._untrackedDirs(cwd);
     await writeTrySetup(this.pipeline.dir, { cmd, ok: r.ok, exitCode: r.exitCode, timedOut: r.timedOut, ms: r.ms, tail: r.tail });
     await appendAudit(this.pipeline.dir, `Setup \`${cmd}\` ${r.ok ? 'finished' : 'failed'} in ${Math.round(r.ms / 1000)} s.`).catch(() => {});
     if (r.ok) return;
-    this._checkAbort();   // a stop during the setup is a stop, not a setup failure
     throw markTerminal(Object.assign(new Error(setupFailedText(cmd)), { code: 'TRY_SETUP_FAILED' }));
   }
 
   /** What a try's setup made that git would track (untracked, not ignored), folders collapsed, at most 200 paths. */
   async _untrackedDirs(cwd) {
     const r = await this._git(['-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '--directory', '-z'], { cwd });
-    if (!r.ok) return [];
-    return r.stdout.split('\0').filter(Boolean).map((p) => p.replace(/\/$/, '')).slice(0, 200);
+    if (!r.ok) {
+      this._log('worktree', 'warn', `setup output not listed (git ls-files failed: ${(r.stderr || '').trim() || 'unknown error'}); it may show in the try's changes`);
+      return [];
+    }
+    const all = r.stdout.split('\0').filter(Boolean).map((p) => p.replace(/\/$/, ''));
+    if (all.length > 200) this._log('worktree', 'warn', `the setup made ${all.length} new paths; only the first 200 are kept out of the try's changes`);
+    return all.slice(0, 200);
   }
 
   // ── Folder runs (P1, CONTRACT §2), keyed by member (S23). Single project: the member record is state.branch. ──
@@ -7144,7 +7155,8 @@ export class RunHarness extends EventEmitter {
   _excludePathspecs(projectKey) {
     const entries = this.injectedPaths?.[projectKey] ?? [];
     // Workflow tests 3a (D55): what "Before each try, run" made is not the try's work. Absent on every other run.
-    const setup = Array.isArray(this._trySetupPaths) ? this._trySetupPaths.map((p) => `:(exclude)${p}`) : [];
+    // `literal`: a `*`, `?` or `[` in a path the setup made is that character, never a pattern.
+    const setup = Array.isArray(this._trySetupPaths) ? this._trySetupPaths.map((p) => `:(exclude,literal)${p}`) : [];
     if ((!Array.isArray(entries) || !entries.length) && !setup.length) return [];
     return [...(Array.isArray(entries) ? entries : [])
       .filter((e) => e && e.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig')
