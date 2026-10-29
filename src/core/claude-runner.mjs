@@ -175,6 +175,10 @@ export async function runClaude(o = {}) {
     askLockdown,
     images,
     agents,
+    // Session host spawn only (session groups): absent on every other spawn, so its argv stays byte-identical.
+    forwardSubagentText,
+    agentsViaFile,
+    mainThreadGuard,
     pluginDirs,
     extraSettings,
     // Requirements A8: the one file a read may open (file-read-guard.mjs). Claude only, like memoryLoadLog.
@@ -283,6 +287,9 @@ export async function runClaude(o = {}) {
     askLockdown,
     images,
     agents,
+    forwardSubagentText,
+    agentsViaFile,
+    mainThreadGuard,
     pluginDirs,
     extraSettings: settings,
     readGuard,
