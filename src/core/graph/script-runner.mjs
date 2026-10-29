@@ -20,6 +20,7 @@ import { AWAIT_PORT, PARAMS_PORT } from '../../shared/graph/constants.mjs';
 import { DEFAULT_EXIT_CODES, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, SCRIPT_RUNTIMES, pythonMissingSentence, overlayWiredParams } from '../../shared/graph/script-meta.mjs';
 import { probePython } from './python-probe.mjs';
 import { stripHostCredentials } from '../host-credentials.mjs';
+import { withoutProxyLogin } from '../env-proxy.mjs';
 import { agentIdentity, agentSpawn, killAgentGroupSync } from '../agent-user.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
@@ -187,8 +188,9 @@ export function envForShell(envelope, baseEnv = process.env) {
  *  environment than the agents beside it. Scrub off: the server's env (D11). */
 export function scriptBaseEnv(claudeOpts, platform = process.platform) {
   const scrubbed = buildSpawnEnv(claudeOpts?.envScrub, claudeOpts?.envAllowlist);
-  // Never a GitHub or Azure DevOps credential, like the agents (src/core/host-credentials.mjs).
-  return withNoGitPath(stripHostCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env), { platform });
+  // Never a GitHub or Azure DevOps credential, nor a proxy URL with a login, like the agents
+  // (src/core/host-credentials.mjs, env-proxy.mjs withoutProxyLogin).
+  return withNoGitPath(withoutProxyLogin(stripHostCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env)), { platform });
 }
 
 export function parseFrame(text) {

@@ -16,6 +16,26 @@ The local proxy accepts connections from this machine only, like Px and CNTLM. I
 token, so any local process can use your corporate login through it. On a shared multi-user host,
 every local user can do that too.
 
+### A login in `HTTPS_PROXY`
+
+When `HTTPS_PROXY` or `HTTP_PROXY` carries a user name and password
+(`http://ACME%5Cjdoe:password@proxy.acme.example:8080`) and `networkProxy.enabled` is not set, Worca
+starts the local proxy anyway, with that URL as the corporate proxy (an `upstream` left in `settings.json`
+is not used then). Without this, every agent,
+script, terminal and git process would get the password, and plugins and chat channels would get no
+proxy at all. The boot line says `started because HTTP(S)_PROXY carries a login`.
+
+With the proxy started this way and `networkProxy.auth` unset, the login is sent as NTLMv2 when the
+corporate proxy offers it. Otherwise it is sent as Digest, else Basic, the way the programs that read
+`HTTPS_PROXY` sent it before. A proxy you turned on yourself never falls back like this (see `auth`
+below).
+
+Set `networkProxy.enabled` to `false` to keep the proxy off. Agents, scripts, plugins and chat channels
+then get no proxy URL and go direct, so none of them gets the password. Terminals, git and actions
+keep your `HTTPS_PROXY` unchanged. Worca prints a warning at start. Remove `enabled` again and the
+proxy starts within a few seconds, without a restart. With the proxy off, any proxy variable that
+carries a login (`ALL_PROXY` and the tool-specific ones too) is withheld from agents and scripts.
+
 ## Set it up
 
 1. Open Settings › Runs › Network proxy and turn on **Use a corporate proxy**.

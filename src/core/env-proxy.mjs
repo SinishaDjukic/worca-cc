@@ -124,3 +124,31 @@ export function proxyNotice(result) {
     default: return null;
   }
 }
+
+/** The proxy URL variables. A login in any of them is a password a child must never get. */
+export const PROXY_URL_NAMES = Object.freeze(['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']);
+
+/** URL credentials always need an '@' (user:password@, token@, the scheme-less
+ *  user:password@host form) and a host never has one, so any '@' counts, even
+ *  in a value that is not a valid URL. */
+export function proxyUrlHasLogin(env = process.env) {
+  return PROXY_URL_NAMES.some((k) => String(env[k] || '').includes('@'));
+}
+
+/** A variable named like a proxy setting (ALL_PROXY, FTP_PROXY, npm_config_https_proxy,
+ *  GLOBAL_AGENT_HTTP_PROXY, ...) whose value carries a login. */
+const loginBearingProxyVar = (k, v) => /proxy/i.test(k) && !/^no_proxy$/i.test(k) && String(v ?? '').includes('@');
+
+/** `env` without proxy URLs that carry a login (a copy; `env` itself when there is none). Every
+ *  proxy-named variable with a login goes (ALL_PROXY and the tool-specific ones too). When one of
+ *  HTTP(S)_PROXY carries one, all four go, because one left alone would half-route the child.
+ *  NO_PROXY and the CA paths stay. With the corporate proxy on, egress-policy.mjs has already swapped
+ *  every login-bearing URL for the local proxy, so this only acts when it is off. */
+export function withoutProxyLogin(env) {
+  const drop = Object.keys(env).filter((k) => loginBearingProxyVar(k, env[k]));
+  if (!drop.length) return env;
+  const out = { ...env };
+  for (const k of drop) delete out[k];
+  if (proxyUrlHasLogin(env)) for (const k of PROXY_URL_NAMES) delete out[k];
+  return out;
+}
