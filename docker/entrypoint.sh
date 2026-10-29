@@ -13,6 +13,18 @@ set -euo pipefail
 
 log() { printf 'worca-entrypoint: %s\n' "$*" >&2; }
 
+# An agent user's ~/.gitconfig: the agent works in repositories worca owns and writes objects both
+# users share. Root never writes through a path the agent controls (audit 1.2): `>` and `chown` as
+# root would follow a link the agent left at ~/.gitconfig to any file on the image (say /usr/bin/id,
+# which the next boot runs as root) and hand it to the agent. The old name goes (rm removes a link,
+# never its target; a folder there goes too, or the boot would stop), and the agent user itself
+# writes the new file.
+agent_gitconfig() { # <user> <home>
+  rm -rf -- "$2/.gitconfig"
+  setpriv --reuid="$1" --regid=worca-share --clear-groups -- \
+    sh -c 'umask 022; printf "[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n" > "$1/.gitconfig"' sh "$2"
+}
+
 # The credential broker (`worca broker`, docs/credential-broker.md) is its own container
 # from this same image. It needs none of the worca preparation below: only, on a host
 # that gives it one root-owned volume (Railway), that volume made writable by `worca`
@@ -53,7 +65,10 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
       chown worca:worca-share "$wh/store" "$wh/runs" "$data/projects"
       chown worca-agent:worca-share "$ah"
       chmod 0711 "$data" "$data/worca" "$wh"
-      chmod 2770 "$wh/store" "$wh/runs" "$data/projects"
+      # store/ and runs/ are sticky too: an agent cannot rename or delete another run's folder.
+      # Each run's own folder gets its owner's pool group (agent-pool.mjs claimRunDir).
+      chmod 2770 "$data/projects"
+      chmod 3770 "$wh/store" "$wh/runs"
       chmod 0700 "$ah"
       # Once per volume: existing files join the boundary (new ones get it from umask + setgid).
       if [ ! -e "$wh/.agent-isolation" ]; then
@@ -80,10 +95,17 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
         chmod -R g-w,g+rX "${p}versions" && chgrp -R worca-share "${p}versions"
         if [ -d "${p}data" ] && [ ! -L "${p}data" ]; then chmod -R go-rwx "${p}data"; fi
       done
-      # The agent works in repositories worca owns, and writes objects both users share.
-      printf '[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n' > "$ah/.gitconfig"
-      chown worca-agent:worca-share "$ah/.gitconfig"
+      agent_gitconfig worca-agent "$ah"
       export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="$ah"
+      # Plugin connectors and chat workers run as worca-plugin (plugin-shim.mjs pluginChildSpawn):
+      # plugin code through the shared group, its own HOME, and never plugins/<p>/data or worca's home.
+      if id worca-plugin >/dev/null 2>&1; then
+        ph="$data/plugin-home"
+        mkdir -p "$ph"
+        chown worca-plugin:worca-share "$ph"
+        chmod 0700 "$ph"
+        export WORCA_PLUGIN_USER=worca-plugin WORCA_PLUGIN_HOME="$ph"
+      fi
       # One agent user per signed-in person (the pool, worca-agent-01..): their agents
       # can't read each other's processes. Each gets its own HOME (Claude Code's sessions).
       # Ask Worca runs as the person's agent user too, so its folders join the shared group.
@@ -93,17 +115,23 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
         mkdir -p "$homes" "$wh/ask" "$wh/tmp/ask"
         chown worca:worca-share "$homes"
         chmod 0711 "$homes"
-        pool=""
+        pool=""; rungids=""
         for u in $(getent passwd | cut -d: -f1 | grep -E '^worca-agent-[0-9]{2}$' | sort); do
           mkdir -p "$homes/$u"
           chown "$u:worca-share" "$homes/$u"
           chmod 0700 "$homes/$u"
-          printf '[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n' > "$homes/$u/.gitconfig"
-          chown "$u:worca-share" "$homes/$u/.gitconfig"
+          agent_gitconfig "$u" "$homes/$u"
           pool="$pool${pool:+,}$u"
+          # The user's own group (Dockerfile): a run's folders get it, worca and $u only.
+          g="$(getent group "$u" | cut -d: -f3 || true)"
+          if [ -n "$g" ]; then rungids="$rungids${rungids:+,}$u:$g"; fi
         done
         chown worca:worca-share "$wh/ask" "$wh/tmp" "$wh/tmp/ask"
-        chmod 2770 "$wh/ask" "$wh/tmp/ask"
+        # Sticky: an agent user (or worca-plugin) in worca-share may add files here but never
+        # remove or replace one it does not own, such as another turn's relay MCP config (V10)
+        # or another person's chat folder (1.4: each ask/<thread> gets its owner's pool group,
+        # ask/store.mjs claimThreadDir; ask/memory is never group-writable, ask/memory-deps.mjs).
+        chmod 3770 "$wh/ask" "$wh/tmp/ask"
         chmod 0751 "$wh/tmp"
         if [ ! -e "$wh/.agent-pool" ]; then
           chgrp -R worca-share "$wh/ask" "$wh/tmp/ask"
@@ -112,7 +140,7 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
           touch "$wh/.agent-pool"
           chown worca:worca "$wh/.agent-pool"
         fi
-        if [ -n "$pool" ]; then export WORCA_AGENT_POOL="$pool" WORCA_AGENT_HOMES="$homes"; else unset WORCA_AGENT_POOL; fi
+        if [ -n "$pool" ]; then export WORCA_AGENT_POOL="$pool" WORCA_AGENT_HOMES="$homes" WORCA_AGENT_RUN_GIDS="$rungids"; else unset WORCA_AGENT_POOL; fi
         # Without CAP_FSETID the kernel drops the setgid bit silently: new files then get worca's
         # own group and agent users can't read them (Ask's tool config, run checkouts).
         if [ ! -g "$wh/tmp/ask" ] || [ ! -g "$wh/runs" ]; then
@@ -140,6 +168,14 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
     git config --global core.sharedRepository group
     if sudo -n -u "$WORCA_AGENT_USER" -- true 2>/dev/null; then
       log "agents run as $WORCA_AGENT_USER; they cannot read worca's settings, database or environment"
+      if [ -n "${WORCA_PLUGIN_USER:-}" ]; then
+        if sudo -n -u "$WORCA_PLUGIN_USER" -- true 2>/dev/null; then
+          log "plugin connectors and chat workers run as $WORCA_PLUGIN_USER; they cannot read plugin secrets on disk"
+        else
+          log "cannot start commands as $WORCA_PLUGIN_USER (sudo refused); plugin connectors run as worca"
+          unset WORCA_PLUGIN_USER WORCA_PLUGIN_HOME
+        fi
+      fi
       if [ -n "${WORCA_AGENT_POOL:-}" ]; then
         first="${WORCA_AGENT_POOL%%,*}"
         if sudo -n -u "$first" -- true 2>/dev/null; then
@@ -155,7 +191,7 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
       exit 78   # EX_CONFIG
     else
       log "cannot start commands as $WORCA_AGENT_USER (sudo refused); agents run as worca instead"
-      unset WORCA_AGENT_USER WORCA_AGENT_HOME WORCA_AGENT_GID WORCA_AGENT_POOL WORCA_AGENT_HOMES
+      unset WORCA_AGENT_USER WORCA_AGENT_HOME WORCA_AGENT_GID WORCA_AGENT_POOL WORCA_AGENT_HOMES WORCA_PLUGIN_USER WORCA_PLUGIN_HOME
     fi
   fi
 fi
@@ -169,6 +205,25 @@ for d in "${WORCA_HOME:-/worca}" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; do
   fi
 done
 mkdir -p "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
+# 1b. A corporate CA (compose.ca.yml mounts it and sets WORCA_CA_CERT_FILE): Node reads it
+# through NODE_EXTRA_CA_CERTS; git, curl, gh and Python read one bundle file, so build the
+# system bundle plus the CA in a fresh mktemp dir (only this uid can write it; the agent
+# users can read it) and point their variables at it. The system trust store itself needs
+# root, which the box does not have.
+if [ -n "${WORCA_CA_CERT_FILE:-}" ]; then
+  if [ -r "$WORCA_CA_CERT_FILE" ] && grep -q 'BEGIN CERTIFICATE' "$WORCA_CA_CERT_FILE"; then
+    cadir="$(mktemp -d /tmp/worca-ca.XXXXXX)"
+    cat /etc/ssl/certs/ca-certificates.crt "$WORCA_CA_CERT_FILE" > "$cadir/bundle.pem"
+    chmod 0755 "$cadir"
+    chmod 0644 "$cadir/bundle.pem"
+    export SSL_CERT_FILE="$cadir/bundle.pem" GIT_SSL_CAINFO="$cadir/bundle.pem" \
+      CURL_CA_BUNDLE="$cadir/bundle.pem" REQUESTS_CA_BUNDLE="$cadir/bundle.pem"
+    log "corporate CA: trusted from $WORCA_CA_CERT_FILE"
+  else
+    log "corporate CA: $WORCA_CA_CERT_FILE is not a readable PEM certificate; TLS through a re-signing proxy will fail"
+  fi
+fi
 
 # 2. GitHub over HTTPS. No global credential helper: worca passes the token for each
 # git/gh call's role in that call's env only (src/core/github-credentials.mjs), and
@@ -189,6 +244,11 @@ if [ -n "${WORCA_ADO_READ_TOKEN:-}${WORCA_ADO_WRITE_TOKEN:-}" ]; then
   log "Azure DevOps: split read/write tokens, per call"
 elif [ -n "${WORCA_ADO_TOKEN:-}${AZURE_DEVOPS_EXT_PAT:-}" ]; then
   log "Azure DevOps: one token for clone, push and PRs, per call"
+fi
+if [ -n "${WORCA_BB_READ_TOKEN:-}${WORCA_BB_WRITE_TOKEN:-}" ]; then
+  log "Bitbucket: split read/write tokens, per call"
+elif [ -n "${WORCA_BB_TOKEN:-}" ]; then
+  log "Bitbucket: one token for clone, push and PRs, per call"
 fi
 if [ -z "${GIT_AUTHOR_NAME:-}" ] && ! git config --global user.name >/dev/null 2>&1; then
   log "no git identity: set GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL in .env or agents cannot commit"

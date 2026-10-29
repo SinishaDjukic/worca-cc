@@ -1,7 +1,7 @@
 // test/ui-shape-app-wiring.test.mjs — Shape it first, slice 4: app.js's wiring of the outline ask and the feature
 // view. The `plan` renderer branches on `plan.outline` (run page + askHeading), `mountShapeFeature` paints a host from
 // GET /api/shape/features/:id (idempotent while a fetch is pending or failed, F41), `shape-feature` and
-// `schedules-changed` frames repaint the hosts (F40), a hello brings back a view emptied while the gate was off.
+// `schedules-changed` frames repaint the hosts (F40).
 // Harness: the REAL app.js under jsdom (test/helpers/run-page-boot.mjs); the mount functions are read off
 // window.__shapeFeature, the test seam app.js exposes beside its other window.__* hooks.
 import { test } from 'node:test';
@@ -11,7 +11,6 @@ import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
 import { namedAnswer } from '../ui/public/shape/step-receipt.mjs';
 import { chatCardBuilder } from '../ui/public/chat/extensions.mjs';
 
-const GATE = { flags: { shapeFirst: true } };
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
 const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 
@@ -38,11 +37,11 @@ function recorder(answer = () => res(200, { ok: true })) {
   return { posts, fetchHandler };
 }
 
-async function openOutline({ gate = true, answer } = {}) {
+async function openOutline({ answer } = {}) {
   const r = recorder(answer);
   const ctx = await bootApp({ fetchHandler: r.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
+  ctx.dispatch({ type: 'hello', runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
     startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null }, pendingQuestion: OUTLINE_Q }] });
   ctx.go(`running/${RUN_ID}`);
   await ctx.settle();
@@ -58,9 +57,11 @@ test('a pending outline ask renders the outline body; its head names the decisio
   assert.equal(ctx.window.document.querySelector('#run-detail .rd-ask-head').textContent, '');
 });
 
-test('gate on: Approve 3 runs posts the gated answer route, with the named receipt noted before the POST', async () => {
+test('Approve 3 runs posts the run\'s answer route, with the named receipt noted before the POST', async () => {
   const { ctx, panel, posts } = await openOutline();
+  assert.equal(panel.querySelector('.outline-merge'), null);
   assert.equal(panel.querySelector('.outline-approve').textContent, 'Approve 3 runs');
+  assert.equal(panel.querySelectorAll('.outline-row-more').length, 3);
   click(ctx, panel.querySelector('.outline-approve'));
   await ctx.settle();
   assert.equal(posts.length, 1);
@@ -96,19 +97,6 @@ test('a 409 with { error } keeps the typed feedback, says "Not sent: …" and fo
   assert.equal(panel.querySelector('.plan-err').hidden, false);
   assert.equal(panel.querySelector('.plan-err').textContent, 'Not sent: this question is no longer pending');
   assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id), null);
-});
-
-test('gate off: Approve 3 runs posts /api/answer, and the same card is drawn', async () => {
-  const { ctx, panel, posts } = await openOutline({ gate: false });
-  assert.equal(panel.querySelector('.outline-merge'), null);
-  assert.equal(panel.querySelector('.outline-approve').textContent, 'Approve 3 runs');
-  assert.equal(panel.querySelectorAll('.outline-row-more').length, 3);
-  click(ctx, panel.querySelector('.outline-approve'));
-  await ctx.settle();
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].url, '/api/answer');
-  assert.equal(posts[0].body.runId, RUN_ID);
-  assert.equal(posts[0].body.payload.decision, 'approve');
 });
 
 // ---- the feature view's mount --------------------------------------------------------------------------------------
@@ -147,10 +135,10 @@ function featureServer() {
   return s;
 }
 
-async function bootFeature({ gate = true, server = featureServer() } = {}) {
+async function bootFeature({ server = featureServer() } = {}) {
   const ctx = await bootApp({ fetchHandler: server.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [] });
+  ctx.dispatch({ type: 'hello', runs: [] });
   await ctx.settle();
   const seam = ctx.window.__shapeFeature;
   const host = () => { const h = ctx.window.document.createElement('div'); ctx.window.document.body.appendChild(h); return h; };
@@ -189,7 +177,7 @@ test('no refetch loop (F41): five mounts with the fetch pending issue one GET; a
   assert.ok(h.querySelector('.shape-feature'));
 });
 
-test('a shape-feature frame repaints only the hosts of that id; schedules-changed and hello repaint all', async () => {
+test('a shape-feature frame repaints only the hosts of that id; schedules-changed repaints all', async () => {
   const server = featureServer(); server.features.set('A', FEATURE('A')); server.features.set('B', FEATURE('B'));
   const { ctx, seam, host } = await bootFeature({ server });
   seam.mount(host(), 'A'); seam.mount(host(), 'B');
@@ -200,10 +188,6 @@ test('a shape-feature frame repaints only the hosts of that id; schedules-change
   assert.deepEqual(server.gets, ['B']);
   server.gets.length = 0;
   ctx.dispatch({ type: 'schedules-changed' });
-  await ctx.settle(5);
-  assert.deepEqual(server.gets.sort(), ['A', 'B']);
-  server.gets.length = 0;
-  ctx.dispatch({ type: 'hello', ...GATE, runs: [] });
   await ctx.settle(5);
   assert.deepEqual(server.gets.sort(), ['A', 'B']);
 });
@@ -274,35 +258,6 @@ test('a failed action leaves its error text visible after the repaint that follo
   assert.equal(err.textContent, 'Slice 2 is still going…');
 });
 
-test('turning the gate off while a fetch is in flight leaves the host empty', async () => {
-  const server = featureServer();
-  let release; server.getHandler = () => new Promise((r) => { release = () => r(res(200, FEATURE())); });
-  const { ctx, seam, host } = await bootFeature({ server });
-  const h = host();
-  seam.mount(h, 'feat-1');
-  await ctx.settle(2);
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
-  await ctx.settle(3);
-  release();
-  await ctx.settle(5);
-  assert.equal(h.querySelector('.shape-feature'), null);
-  assert.equal(h.dataset.painted, '');
-});
-
-test('a hello with the gate back repaints a view emptied while it was off', async () => {
-  const server = featureServer(); server.features.set('feat-1', FEATURE());
-  const { ctx, seam, host } = await bootFeature({ server });
-  const h = host();
-  seam.mount(h, 'feat-1');
-  await ctx.settle(5);
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
-  await ctx.settle(5);
-  assert.equal(h.querySelector('.shape-feature'), null, 'emptied with the gate off');
-  ctx.dispatch({ type: 'hello', ...GATE, runs: [] });
-  await ctx.settle(5);
-  assert.ok(h.querySelector('.shape-feature'), 'back with the gate');
-});
-
 test('focus (F39): after a click on a control that blurs when disabled, the new control with the same data-act has it', async () => {
   const server = featureServer(); server.features.set('feat-1', FEATURE('feat-1', { halted: { index: 2, state: 'stopped', waiting: [3] } }));
   const { ctx, seam, host } = await bootFeature({ server });
@@ -341,7 +296,7 @@ const PLAN_Q = { id: 'plan-n_plan-1', kind: 'plan', nodeId: 'n_plan',
 async function openFeaturePage({ server = featureServer(), runs = [] } = {}) {
   const ctx = await bootApp({ fetchHandler: server.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...GATE, runs });
+  ctx.dispatch({ type: 'hello', runs });
   await ctx.settle();
   ctx.go('feature/feat_1/overview');                // the group page's Overview hosts the Shaper view (slice 4, D14)
   await ctx.settle(6);
@@ -386,21 +341,6 @@ test('#feature for an unknown id says the feature no longer exists', async () =>
   const { page } = await openFeaturePage();
   // §5a.2: the gone text offers a way back to the Runs list.
   assert.equal(page.querySelector('.feature-page-gone').textContent, 'This feature no longer exists. Open the Runs list');
-});
-
-test('#feature with the gate off still renders the group page, without Overview (slice 4, D16)', async () => {
-  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
-  const ctx = await bootApp({ fetchHandler: server.fetchHandler });
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
-  await ctx.settle();
-  ctx.go('feature/feat_1');
-  await ctx.settle(4);
-  assert.deepEqual(server.gets, [], 'no Shaper read with the flag off');
-  assert.equal(ctx.window.document.querySelector('[data-view="runs"]').classList.contains('hidden'), false);
-  const view = ctx.window.document.querySelector('#group-detail');
-  assert.ok(view.querySelector('.gpage'));
-  assert.equal(view.querySelector('.gpage .rd-tab[data-tab="overview"]').hidden, true);
 });
 
 test('the page\'s ask host survives a repaint; a state frame repaints the line without a fetch', async () => {
@@ -512,7 +452,7 @@ test('s2: threadForRun reads the slice route\'s threadId; shaperCard GETs once, 
   };
   const ctx = await bootApp({ fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...GATE, runs: [{ runId: 'run-p2', pipelineId: 'p2', title: 'Run 2', projectDir: '/tmp/p', status: 'running', kind: 'run',
+  ctx.dispatch({ type: 'hello', runs: [{ runId: 'run-p2', pipelineId: 'p2', title: 'Run 2', projectDir: '/tmp/p', status: 'running', kind: 'run',
     startedAt: '2026-01-01T00:00:00Z' }] });
   await ctx.settle();
   const seam = ctx.window.__shapeFeature;
@@ -548,7 +488,7 @@ for (const workspaceId of [null, 'ws1']) {
     const posts = [];
     const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
     ctx.wsBox.ws.dispatch('open', {});
-    ctx.dispatch({ type: 'hello', ...GATE, runs: [rrRun(workspaceId ? { workspaceId } : {})] });
+    ctx.dispatch({ type: 'hello', runs: [rrRun(workspaceId ? { workspaceId } : {})] });
     ctx.go('running/run-rr');
     await ctx.settle();
     const panel = runPanel(ctx);
@@ -567,7 +507,7 @@ test('Chat run card: the plan gate is approvable and the receipt names the roles
   const posts = [];
   const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...GATE, runs: [rrRun()] });
+  ctx.dispatch({ type: 'hello', runs: [rrRun()] });
   await ctx.settle();
   const doc = ctx.window.document;
   const built = chatCardBuilder('progress')(
@@ -711,21 +651,6 @@ test('one ship flow: a partly failed stacked ship leaves the dialog reading Crea
   modal.querySelector('.shipit-cancel').click(); await ctx.settle(2);
 });
 
-test('one ship flow, gate off: a feature group\'s Create PR reads no Shaper route and never shows the Pull requests zone', async () => {
-  const server = featureServer(); server.groups = doneGroup();
-  const ctx = await bootApp({ fetchHandler: server.fetchHandler });
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
-  await ctx.settle();
-  ctx.go('feature/feat_1');
-  await ctx.settle(4);
-  const btn = ctx.window.document.querySelector('#group-detail .gpage-card .rd-pr-slot button');
-  if (btn) { btn.click(); await ctx.settle(4); }
-  assert.deepEqual(server.gets, [], 'no Shaper read with the flag off');
-  assert.equal(server.posts.length, 0);
-  assert.equal(ctx.window.document.querySelector('#shipit-modal .shipit-prs').hidden, true);
-});
-
 test('one ship flow: a chain\'s Create PR defaults to stacked, has no Release row and posts to the chain route', async () => {
   const chainMember = (k, o = {}) => ({ ticketId: k > 1 ? `t${k}` : null, pipelineId: `r${k}`, title: `R${k}`, state: 'done', prUrl: null,
     historyKey: 'pk', projectKey: 'pk', workspaceId: null, projectDir: '/tmp/pk', after: k > 1 ? k - 1 : null, ...o });
@@ -740,7 +665,7 @@ test('one ship flow: a chain\'s Create PR defaults to stacked, has no Release ro
   };
   const ctx = await bootApp({ fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
+  ctx.dispatch({ type: 'hello', runs: [] });
   await ctx.settle();
   ctx.go(`group/${encodeURIComponent('p:r1')}`);
   await ctx.settle(6);
@@ -794,7 +719,7 @@ test('one ship flow: after a chain ship focus is on the repainted View PR contro
   };
   const ctx = await bootApp({ fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
+  ctx.dispatch({ type: 'hello', runs: [] });
   await ctx.settle();
   ctx.go(`group/${encodeURIComponent('p:r1')}`);
   await ctx.settle(6);

@@ -14,6 +14,7 @@
 import { EventEmitter } from 'node:events';
 import { join, dirname, resolve as pathResolve } from 'node:path';
 import { mkdir, writeFile, unlink, rm, readdir, lstat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 
 import { runClaude } from '../claude-runner.mjs';
 import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
@@ -44,6 +45,11 @@ import { validateWorkspaceChange } from './workspace-deps.mjs';
 import { validateActionsChange } from './actions-deps.mjs';
 import { actionsProposalInput } from './actions-proposal.mjs';
 import { validateProxyChange, validateProxyFlagOn } from './proxy-deps.mjs';
+import { scriptApprovalCard } from './script-approval.mjs';
+import { defaultScriptDeps } from './script-deps.mjs';
+import { claimFileForAgent } from '../agent-user.mjs';
+import { agentIdentityFor } from '../agent-pool.mjs';
+import { currentOwner } from '../billing.mjs';
 import { createWebValidator } from './web-proposal.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
@@ -63,7 +69,7 @@ import { resolveSetting } from '../settings-cascade.mjs';
 import { withRole } from '../model-roles.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE, claimThreadDir,
 } from './store.mjs';
 import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
 import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
@@ -255,6 +261,10 @@ class AskTurn extends EventEmitter {
       validateWorkspaceChange: deps.validateWorkspaceChange ?? validateWorkspaceChange,
       validateActionsChange: deps.validateActionsChange ?? validateActionsChange,
       // The web card's authoritative check runs against THIS turn's resolved access (allowlist + team cap).
+      claimAgentFile: deps.claimAgentFile ?? ((file) => claimFileForAgent(file, agentIdentityFor(currentOwner()))),
+      // 1.4: the thread's folder goes to this turn's agent user's own group (store.mjs); throws on a planted one.
+      claimThreadDir: deps.claimThreadDir ?? ((threadId) => claimThreadDir(threadId)),
+      readScript: deps.readScript ?? ((key) => defaultScriptDeps({ threadId: this.threadId }).scripts.read(key)),
       validateWebProposal: deps.validateWebProposal ?? ((input) => createWebValidator({
         allowed: () => (this.web ? this.web.allowedDomains : []), teamCap: () => (this.web ? this.web.teamCap ?? null : null) })(input)),
       // P4: the scope card's parent re-check (SEAMS S22/S45: the card shows P1a's display path; listProjects rows carry none).
@@ -724,6 +734,21 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** G6: save_script / a draft test_script answered pending in the child (nothing written, nothing run): the card that
+   *  shows the user the program, minted from the tool INPUT. The card route runs or saves it behind their click. */
+  async _onScriptApproval(name, input) {
+    // A run by key: the card shows the saved script as the parent reads it, never what the child said.
+    const key = input && typeof input === 'object' && typeof input.key === 'string' ? input.key.trim() : '';
+    let saved = null;
+    if (name === 'test_script' && !(input && input.draft) && key) {
+      try { saved = await this.deps.readScript(key); } catch { saved = null; }
+    }
+    const r = scriptApprovalCard(name, input, { pin: this.pinnedScope, saved });
+    this.reducer.addBlock(r.ok ? { kind: 'card', id: this.deps.newAskId('card'), state: 'proposed', card: r.card }
+      : { kind: 'notice', text: `Script card not shown: ${r.error}` });
+    this._persistBlocks();
+  }
+
   /** propose_web_access RESULT: the clone card's split — a child {ok:false} already reached the model as text. */
   async _onWebProposal(input, text, isError) {
     if (isError || !this.web) return;
@@ -968,6 +993,7 @@ class AskTurn extends EventEmitter {
       onProxyProposal: ({ input, text, isError }) => this._onProxyProposal('propose_network_proxy_change', input, text, isError),
       onProxyFlagProposal: ({ input, text, isError }) => this._onProxyProposal('propose_corporate_proxy_on', input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
+      onScriptApproval: ({ name, input }) => this._onScriptApproval(name, input),
       onScopeSwitch: this.composer ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
       onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
@@ -1010,9 +1036,10 @@ class AskTurn extends EventEmitter {
       if (!ASK_ID_RE.test(String(this.threadId)) || !ASK_ID_RE.test(String(this.assistantMessageId))) throw new Error('not a store id');
       const threadDir = join(d.worcaHome(), 'ask', this.threadId);
       const parent = join(threadDir, 'skills');
-      // Hosted mode: ask/ is group-writable for every pool user (docker/entrypoint.sh: setgid 2770, no sticky bit), so
-      // another person's agent could put a symlink where ask/<thread>/ or its skills/ folder stands — the sweep and the
-      // mount below would then delete and write wherever it points, as the server. Each is a real folder or not there yet.
+      // Hosted mode: ask/ is group-writable for every pool user (docker/entrypoint.sh: setgid + sticky 3770), so another
+      // person's agent could make ask/<thread>/ first, as a symlink — the sweep and the mount below would then delete and
+      // write wherever it points, as the server. The turn's claim (claimThreadDir) already refuses that; kept as a second
+      // check here, and for skills/. Each is a real folder or not there yet.
       for (const p of [threadDir, parent]) {
         const st = await lstat(p).catch((err) => { if (err?.code === 'ENOENT') return null; throw err; });
         if (st && !st.isDirectory()) throw new Error(`${p} is not a real folder`);
@@ -1349,6 +1376,8 @@ class AskTurn extends EventEmitter {
       const scratchDir = join(d.worcaHome(), 'tmp', 'ask');
       this.scratchDir = scratchDir;
       await d.fs.mkdir(scratchDir, { recursive: true });
+      // 1.4: before anything is mounted in the thread's folder (skills, the chat's worktree) or read from it.
+      d.claimThreadDir(this.threadId);
       // D13 title runs CONCURRENTLY with the turn from here — the haiku call
       // cwd's into scratchDir, so not a line earlier. Idempotent: the call after
       // _attempts below is the backstop for a mkdir/write failure, so "fires
@@ -1387,11 +1416,15 @@ class AskTurn extends EventEmitter {
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
         JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
-        // the person's agent user (agent-pool.mjs), which reads this file through its group: the
-        // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
-        // else. It carries this turn's relay token, which that agent must present anyway.
-        { encoding: 'utf8', mode: this.relay ? 0o640 : 0o600 },
+        // the person's agent user (agent-pool.mjs), which reads this file through its group. It
+        // carries this turn's relay token: with a pool the file goes to that user's own group (worca
+        // and that user only), so another person's agent or plugin code in worca-share cannot read
+        // it (V10); the scratch dir is sticky (docker/entrypoint.sh), so nobody else replaces it. Sticky does not stop
+        // another agent making the name FIRST (the message id shows under ask/<thread>/skills/): created here or
+        // refused, never written through a link or into a file someone else made (1.3).
+        { encoding: 'utf8', mode: this.relay ? 0o640 : 0o600, flag: fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW },
       );
+      if (this.relay) d.claimAgentFile(mcpConfigPath);
       // One 30-minute budget for the whole turn, retry included. The timedOut
       // flag and abort() run in ONE synchronous callback, so R-C always reads
       // the flag set (the awaiting continuation resumes a microtask later);

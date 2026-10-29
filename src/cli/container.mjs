@@ -17,11 +17,19 @@ import process from 'node:process';
 
 import { worcaHome, listProjects } from '../core/projects.mjs';
 import { gitAvailable } from '../core/git-available.mjs';
+import { readSettings } from '../core/settings.mjs';
+import { readProxyLogin } from '../core/proxy-credentials.mjs';
+import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
 export const COMPOSE_SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docker');
 export const OVERLAYS = Object.freeze(['egress', 'ssh', 'teams', 'clonein']);
 const STATE_FILE = '.worca-container.json';
+/** The proxy variables compose.yml interpolates into the box (case-sensitive: compose reads these names only). */
+const PROXY_KEYS = ['HTTPS_PROXY', 'HTTP_PROXY'];
+/** compose.yml's own NO_PROXY default. */
+const DEFAULT_NO_PROXY = '127.0.0.1,localhost';
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
 
 export const CONTAINER_HELP = `worca container — run Worca in a container (docs/docker.md)
 
@@ -39,6 +47,10 @@ export const CONTAINER_HELP = `worca container — run Worca in a container (doc
                                                  e.g. worca container run -- --project /path/to/repo --prompt "…"
   worca container where                          Print the container dir (compose files, .env)
   worca container help
+
+A corporate CA (PEM) is mounted into the box when WORCA_CA_CERT is set in .env,
+else from the shell's NODE_EXTRA_CA_CERTS or SSL_CERT_FILE. A proxy on this
+machine's loopback (Worca's own local proxy) is never passed in; see docs/docker.md.
 
 Options:
   --dir <d>        Container dir (default: <worcaHome>/container)
@@ -162,11 +174,91 @@ export async function initDir(dir, { projects, exec, srcDir = COMPOSE_SRC_DIR, e
   return { dir, envCreated };
 }
 
+/** `raw` as compose's .env reads it, for checks only (whitespace-led `#` starts a comment
+ *  in an unquoted value; quotes wrap a value). Never handed to compose: a value from .env
+ *  reaches the box by leaving the shell variable unset, so compose reads the file itself. */
+export function dotenvValue(raw) {
+  const s = String(raw ?? '').trim();
+  const q = /^(["'])(.*?)\1/.exec(s);
+  return q ? q[2] : s.replace(/\s+#.*$/, '').trim();
+}
+
 function readEnvValue(dir, key) {
   try {
-    const m = new RegExp(`^${key}=(.*)$`, 'm').exec(readFileSync(join(dir, '.env'), 'utf8'));
-    return m ? m[1].trim() : '';
+    const m = new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=(.*)$`, 'm').exec(readFileSync(join(dir, '.env'), 'utf8'));
+    return m ? dotenvValue(m[1]) : '';
   } catch { return ''; }
+}
+
+/** True when `value` is a proxy URL whose host is loopback: inside the box that is the box itself. */
+export function isLoopbackProxy(value) {
+  const s = String(value ?? '').trim();
+  if (!s) return false;
+  try { return LOOPBACK_HOSTS.has(new URL(s.includes('://') ? s : `http://${s}`).hostname.toLowerCase()); } catch { return false; }
+}
+
+/**
+ * The proxy variables for compose's interpolation. Compose takes a variable from the shell
+ * before .env, so a shell that carries Worca's local proxy (http://127.0.0.1:<port>, set in
+ * every terminal and child Worca starts with the corporate proxy on) would hand the box a
+ * proxy that points at the box itself. Then, in order: the .env value wins; else the corporate
+ * upstream from settings.json networkProxy.upstream, when it needs no login; else no proxy
+ * and a notice (a login lives in the box's own Worca: its own settings and `worca proxy login`).
+ * @returns {{set: Record<string, string|undefined>, notice: string}}  `set` overrides the shell env;
+ *   undefined unsets a variable so compose takes .env's own value (never re-parsed here)
+ */
+export function boxProxyEnv({ env = process.env, envFile = () => '', settings = readSettings, login = readProxyLogin } = {}) {
+  const set = {};
+  let notice = '';
+  const fileHas = (k) => !!envFile(k);
+  for (const k of PROXY_KEYS) {
+    if (fileHas(k) && isLoopbackProxy(envFile(k))) {
+      notice = `.env sets ${k} to a loopback address, which inside the box is the box itself; set it to the corporate proxy`;
+    }
+  }
+  const shellLoopback = PROXY_KEYS.filter((k) => isLoopbackProxy(env[k]));
+  if (!shellLoopback.length) return { set, notice };
+  if (PROXY_KEYS.some((k) => fileHas(k) && !isLoopbackProxy(envFile(k)))) {
+    for (const k of PROXY_KEYS) set[k] = undefined;
+    // The local proxy's NO_PROXY (loopback, the direct list, or '*') is not the box's.
+    if (fileHas('NO_PROXY')) set.NO_PROXY = undefined;
+    else if (env.NO_PROXY !== undefined) set.NO_PROXY = DEFAULT_NO_PROXY;
+    return { set, notice };
+  }
+  for (const k of PROXY_KEYS) set[k] = '';
+  let np = {};
+  try { const v = settings()?.networkProxy; if (v && typeof v === 'object') np = v; } catch { /* no settings */ }
+  let saved = null;
+  try { saved = login(); } catch { /* unreadable: treated as none */ }
+  const off = np.enabled === false;               // a proxy the user turned off is never passed in
+  const up = !off && typeof np.upstream === 'string' && np.upstream.trim() ? resolveUpstream({ env: {}, settings: np, login: saved }) : null;
+  const needsLogin = up && !up.error && (up.auth !== 'none' || (up.requestedAuth && up.requestedAuth !== 'none'));
+  if (up && !up.error && !needsLogin) {
+    const url = `http://${upstreamLabel(up.host, up.port)}`;
+    for (const k of PROXY_KEYS) set[k] = url;
+    const direct = Array.isArray(np.noProxy) ? np.noProxy.join(',') : (typeof np.noProxy === 'string' ? np.noProxy : '');
+    if (fileHas('NO_PROXY')) set.NO_PROXY = undefined;
+    else if (direct) set.NO_PROXY = `${DEFAULT_NO_PROXY},${direct}`;
+    else if (env.NO_PROXY !== undefined) set.NO_PROXY = DEFAULT_NO_PROXY;
+    return { set, notice: `the box uses the corporate proxy ${upstreamLabel(up.host, up.port)} (this shell's ${shellLoopback[0]} is Worca's local proxy, which the box cannot reach)` };
+  }
+  if (fileHas('NO_PROXY')) set.NO_PROXY = undefined;
+  else if (env.NO_PROXY !== undefined) set.NO_PROXY = DEFAULT_NO_PROXY;
+  const why = needsLogin ? `the corporate proxy ${upstreamLabel(up.host, up.port)} needs a login`
+    : off ? 'the network proxy is off in settings.json' : 'no corporate proxy is configured in settings.json';
+  return { set, notice: `the box gets no proxy: this shell's ${shellLoopback[0]} is Worca's local proxy, which the box cannot reach, and ${why}. `
+    + 'Set HTTPS_PROXY in the container .env, or configure the proxy in the box\'s own Worca (its Settings › Network proxy, then `worca container run -- proxy login`)' };
+}
+
+/** The corporate CA file to mount into the box: WORCA_CA_CERT (.env, then shell), else the
+ *  shell's NODE_EXTRA_CA_CERTS or SSL_CERT_FILE. `{ file, source }`, `{ missing, source }`, or null.
+ *  A relative .env path is relative to the container dir, as compose resolves it. */
+export function boxCaCert({ env = process.env, envFile = () => '', dir = '.', exists = existsSync } = {}) {
+  const pick = [['.env WORCA_CA_CERT', envFile('WORCA_CA_CERT')], ['WORCA_CA_CERT', env.WORCA_CA_CERT],
+    ['NODE_EXTRA_CA_CERTS', env.NODE_EXTRA_CA_CERTS], ['SSL_CERT_FILE', env.SSL_CERT_FILE]].find(([, v]) => v && String(v).trim());
+  if (!pick) return null;
+  const file = pick[0].startsWith('.env') ? resolve(dir, String(pick[1]).trim()) : resolve(String(pick[1]).trim());
+  return exists(file) ? { file, source: pick[0] } : { missing: file, source: pick[0] };
 }
 
 /**
@@ -174,7 +266,8 @@ function readEnvValue(dir, key) {
  * @param {string[]} argv          tokens after `container`
  * @param {object} io              { out, c, fail } from the CLI; `exec` and `dir` are injectable for tests
  */
-export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir: dirOverride = null } = {}) {
+export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir: dirOverride = null, env: hostEnv = process.env,
+  settings = readSettings, login = readProxyLogin } = {}) {
   const a = parse(argv);
   if (a.verb === 'help' || a.verb === '--help' || a.verb === '-h') { out(CONTAINER_HELP.trimEnd()); return 0; }
   const dir = resolve(a.dir || dirOverride || join(worcaHome(), 'container'));
@@ -184,7 +277,24 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   if (rt.error) { fail(rt.error); return 1; }
   const state = readState(dir);
   let overlays = Array.isArray(state.with) ? state.with : [];
-  const compose = (args, opts = {}) => exec(rt.bin, ['compose', ...composeFileArgs(overlays), ...args], { cwd: dir, ...opts }).status;
+  // Every compose call interpolates the same env (shell before .env), so the proxy and CA
+  // fixes apply to up, run, login and shell alike. Resolved after init so a fresh .env counts.
+  let composeEnv;
+  let extra = [];
+  const prepare = () => {
+    const envFile = (k) => readEnvValue(dir, k);
+    const proxy = boxProxyEnv({ env: hostEnv, envFile, settings, login });
+    if (proxy.notice) out(`${c('yellow', 'proxy')}  ${proxy.notice}`);
+    const ca = boxCaCert({ env: hostEnv, envFile, dir });
+    const caEnv = {};
+    // From .env: unset the shell's, so compose reads the file's own value.
+    if (ca?.file) { extra = ['ca']; caEnv.WORCA_CA_CERT = ca.source.startsWith('.env') ? undefined : ca.file; }
+    else if (ca?.missing) out(`${c('yellow', 'ca')}  ${ca.source} names ${ca.missing}, which does not exist; the box gets no corporate CA`);
+    composeEnv = Object.fromEntries(Object.entries({ ...hostEnv, ...proxy.set, ...caEnv }).filter(([, v]) => v !== undefined));
+    if (a.tag) composeEnv.WORCA_TAG = a.tag;
+  };
+  const files = () => composeFileArgs([...overlays, ...extra]);
+  const compose = (args, opts = {}) => exec(rt.bin, ['compose', ...files(), ...args], { cwd: dir, env: composeEnv, ...opts }).status;
 
   if (a.verb === 'init' || a.verb === 'up') {
     const r = await initDir(dir, { projects: a.projects, exec });
@@ -192,6 +302,7 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
     if (a.verb === 'init') return 0;
   }
   if (!existsSync(join(dir, 'compose.yml'))) { fail(`no compose files in ${dir}; run: worca container init`); return 1; }
+  if (!['down', 'status', 'logs', 'pull'].includes(a.verb)) prepare();
 
   switch (a.verb) {
     case 'up': {
@@ -201,11 +312,11 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
         overlays = parsed;
         writeState(dir, { ...state, with: overlays });
       }
-      const env = a.tag ? { ...process.env, WORCA_TAG: a.tag } : undefined;
       const port = readEnvValue(dir, 'WORCA_PORT') || '4317';
-      const code = exec(rt.bin, ['compose', ...composeFileArgs(overlays), 'up', '-d'], { cwd: dir, env }).status;
+      const code = compose(['up', '-d']);
       if (code !== 0) return code;
-      out(`${c('bold', 'Worca')}  http://localhost:${port}${overlays.length ? `   overlays: ${overlays.join(', ')}` : ''}`);
+      const shown = [...overlays, ...extra];
+      out(`${c('bold', 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
       out(`  Log in once:  ${c('bold', 'worca container login')}`);
       out(`  Stop:         ${c('bold', 'worca container down')}`);
       return 0;

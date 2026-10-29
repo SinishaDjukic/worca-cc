@@ -23,8 +23,8 @@ export function createHomePresets({ doc, onUse, onMore }) {
   const row = h('div', 'chat-home-preset-row');
   row.setAttribute('role', 'group');
   el.append(hd, row);
-  function render({ on, presets, target, workflowNames = null }) {
-    const { shown, more } = on ? homePresets(presets, target) : { shown: [], more: 0 };
+  function render({ presets, target, workflowNames = null }) {
+    const { shown, more } = homePresets(presets, target);
     row.replaceChildren();
     el.hidden = shown.length === 0;
     for (const p of shown) {

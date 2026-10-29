@@ -186,16 +186,59 @@ started with.
   described the old order); coordination notes stay until the next scan. A description the scan wrote is re-rendered without it; a hand-edited one is left
   alone. Removing the member that is the metrics or policy home clears that home.
 - An added member has no edges until the next scan.
-- Every change starts a Workspace scan run of the new set (graphs, map and description, saved
-  when it ends done); the Projects card follows it — a paused one you resume included — and
-  shows how it ended until you next leave the page. A newer member change stops the one it
-  started and scans again. A scan you started yourself (paused ones included) — or any other
-  active run of the workspace, including one the CLI or another UI runs — blocks a member change
-  until it ends (409); a crashed run's record blocks nothing. The scan launch
-  guard follows each workspace's current members, not its id: a first scan of the set a
-  workspace once spanned is not refused as "already running". A scan that finishes after the members changed
-  saves nothing (`SET_CHANGED`). A member the scan cannot read (not the top of its own
-  repository, or no commit) still joins; the page says why no scan ran.
+- A removed member also leaves the merged cross-project graph (`workspace-graph.json` in the
+  workspace's store): its nodes, its links and every bridge that names it. A graph worca cannot
+  rewrite — or one a scan replaced while the member was being removed — is dropped, and with it
+  the description's "Cross-project graph" line, until the next scan.
+- **Adding** members starts a full Workspace scan run of the new set (graphs, map and description,
+  saved when it ends done). **Removing** one re-scans as you choose (below). The Projects card
+  follows the run — a paused one you resume included — and shows how it ended until you next leave
+  the page. A newer member change stops the automatic re-scan an earlier one started. A scan you
+  started yourself (paused ones included) — or any other active run of the workspace, including one
+  the CLI or another UI runs — blocks a member change until it ends (409); a crashed run's record
+  blocks nothing. The scan launch guard follows each workspace's current members, not its id: a
+  first scan of the set a workspace once spanned is not refused as "already running". A scan that
+  finishes after the members changed saves nothing (`SET_CHANGED`). A member the scan cannot read
+  (not the top of its own repository, or no commit) still joins; the page says why no scan ran.
+
+### Removing a member: no, partial or full re-scan
+
+The Remove confirm (and Ask Worca's card, and `POST /api/workspaces/:id/members` with
+`{ "remove": path, "rescan": "none" | "partial" | "full" }`) offers three re-scans:
+
+| Option | What runs | Cost |
+|---|---|---|
+| No re-scan | Nothing: the pruned map stands. When the map misses a member left, or this change stopped an earlier change's re-scan, the pruned notice says so (`rescan.note`). | Instant |
+| Partial re-scan | `wf_workspace_resynth`: one agent rewrites the overview, missing roles and coordination notes from the stored, pruned map and its reviews. No member is scanned again; the map keeps its scan date. | One agent |
+| Full re-scan | `wf_workspace_scan` over every member left. | Every member |
+
+worca recommends one, worked out in code from the stored map before the removal (no model call;
+`GET /api/workspaces/:id/members/remove-impact?path=` returns it), and explains it in a sentence or
+two. With no `rescan`, the server applies its recommendation. The rules, in order:
+
+1. An automatic re-scan for an earlier member change is still running: at least that one (this change replaces it).
+2. No stored map: full. Partial is not available.
+3. The map does not describe exactly the members left (an add whose scan never finished): full.
+   Partial is not available — it re-writes notes for the map as stored.
+4. The member joined after the last scan: none.
+5. Full when the member shared a name with a member left (members tied at the strongest claim share
+   the name and it names none of them — without it, those uses can now resolve to the other one),
+   was in a dependency cycle (a use that matched more than one member was left out or tie-broken;
+   without it, it can match differently), was a hub (8 or more live edges, or edges with 3 or more
+   members), or provided something to 2 or more members (their uses may now match another member's
+   weaker claim, which the map does not keep).
+6. Full when it had edges and the map is more than 30 days old.
+7. Partial when it had live edges, or the overview or coordination notes mention it.
+8. Otherwise none.
+
+Live edges are the scanned edges plus confirmed and manual ones, minus rejected ones. Reviews that
+name the removed member are dropped whichever option runs. A re-scan can still find relations the
+stored map never recorded (a weaker claim, a match that was ambiguous); pick Full when in doubt.
+
+A partial re-scan saves exactly like a full one: a member change while it runs makes it save nothing
+(`SET_CHANGED`). If the stored map no longer covers the members when it is about to start, worca runs
+a full re-scan instead and says so; a partial run that still cannot read a matching map ends as
+failed (never paused), so Re-scan stays available.
 
 ## Cross-project graph
 

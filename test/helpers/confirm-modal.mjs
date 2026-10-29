@@ -44,6 +44,22 @@ export async function cancelDialog(window) {
   await tick();
 }
 
+// The radio choices of a confirm that offers them (confirmModal opts.choices): [{value, checked, disabled, title}].
+export function dialogChoices(window) {
+  return [...window.document.querySelectorAll('#confirm-fields .confirm-choices input[type="radio"]')].map((i) => ({
+    value: i.value, checked: i.checked, disabled: i.disabled, title: i.closest('label').querySelector('b').textContent,
+  }));
+}
+
+// Pick one choice, then OK (confirmDialog's own wait, open-check and OK click).
+export async function confirmChoice(window, value, values = {}) {
+  await tick(10);
+  const input = window.document.querySelector(`#confirm-fields .confirm-choices input[type="radio"][value="${value}"]`);
+  assert.ok(input, `the dialog has no choice "${value}"`);
+  input.checked = true;
+  return confirmDialog(window, values);
+}
+
 // The message the dialog is currently showing, for tests that assert the copy.
 export function dialogText(window) {
   const doc = window.document;

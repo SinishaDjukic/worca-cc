@@ -339,6 +339,10 @@ export async function joinMap({ catalog, usage, runId = null, now = () => new Da
   return map;
 }
 
+/** The stored map a partial re-scan (wf_workspace_resynth) froze into its run folder: the run harness
+ *  writes it, the workspaceMapResynth card reads it. */
+export const STORED_MAP_FILE = 'stored-map.json';
+
 /** synth-brief.md FIRST LINES exactly:
  *    # Workspace synthesis brief
  *    <!-- worca:map=<abs workspace-map.json> -->

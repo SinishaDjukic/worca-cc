@@ -475,7 +475,6 @@ const states = [
     async () => { await ev(`document.querySelector('#hist-detail .hd-bar-more').click()`); }],
   ['history-detail-cost-tags', async () => {
     const json = { 'content-type': 'application/json' };
-    await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: true }) });
     await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: ['client:northwind', 'team:docs'] }) });
     await go(`history/${projectKey}/${pipelineId}`);
     await until(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
@@ -515,7 +514,6 @@ const states = [
   }, async () => {
     const json = { 'content-type': 'application/json' };
     await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: [] }) });
-    await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: null }) });
   }],
   ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
   ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
@@ -657,10 +655,7 @@ const states = [
   // Budget, Scheduled runs and Chat notifications, and the Ask Worca card, left General for tabs of
   // their own; each is audited where it now lives.
   ['settings-runs', async () => { await go('settings/runs'); await until(`document.querySelector('.settings-pane[data-tab="runs"]:not(.hidden) #budget-settings-card')`, 'runs pane'); }],
-  // The Tags tab exists only while the runTags flag is on (app.js SETTINGS_TABS): switch it on for this state alone.
-  ['settings-tags', async () => { await api('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runTags: true }) });
-    await go('settings/tags'); await until(`document.querySelector('.settings-pane[data-tab="tags"]:not(.hidden)')`, 'the tags pane'); },
-  async () => { await api('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runTags: null }) }); }],
+  ['settings-tags', async () => { await go('settings/tags'); await until(`document.querySelector('.settings-pane[data-tab="tags"]:not(.hidden)')`, 'the tags pane'); }],
   ['settings-presets', async () => { await go('settings/presets'); await until(`document.querySelector('.settings-pane[data-tab="presets"]:not(.hidden)')`, 'the presets pane'); }],
   ['settings-experimental', async () => { await go('settings/experimental'); }],
   ['settings-ask', async () => { await go('settings/ask'); await until(`document.querySelector('.settings-pane[data-tab="ask"]:not(.hidden) #ask-web-host .ask-web')`, 'ask pane'); }],

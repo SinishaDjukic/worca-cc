@@ -10,6 +10,7 @@ import { checkBaseMerge, mergeBaseInto, startConflictMerge, mergeBaseBeforeRun, 
 import { buildDecisionLog } from '../src/shared/shape/feature-log.mjs';
 import { leftoverMarkers, _testing as gitInfo } from '../src/core/git-info.mjs';
 import { g, GITCONFIG, world as makeWorld, teammatePush, commitOnFeat } from './helpers/base-world.mjs';
+import { withEnv } from './helpers/with-env.mjs';
 
 let root; const saved = {};
 before(async () => {
@@ -57,6 +58,25 @@ test('exit 1 without a tree OID is an error, not a conflict (git exits 1 for an 
   const c = await checkBaseMerge(w.a, { base: 'dev', feature: 'feat' });
   assert.equal(c.status, 'error'); assert.equal(c.kind, 'failed');
   assert.match(c.error, /not something we can merge/);
+});
+
+test('a Bitbucket base: the merge-tree check reads with the Bitbucket read helper (Resolve on Bitbucket)', async () => {
+  const w = world();
+  commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'g.txt', 'u\n');
+  const real = _testing.defaultRun;
+  let mergeTreeEnv;
+  _testing.setRunner((args, opts) => {
+    if (args[0] === 'remote' && args[1] === 'get-url') {
+      return Promise.resolve({ ok: true, stdout: 'https://bitbucket.org/acme/api.git\n', stderr: '', code: 0, timedOut: false });
+    }
+    if (args[0] === 'merge-tree') mergeTreeEnv = opts.env;
+    return real(args, opts);
+  });
+  const c = await withEnv({ WORCA_BB_TOKEN: 'bbtok', WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined, WORCA_BB_EMAIL: undefined },
+    () => checkBaseMerge(w.a, { base: 'dev', feature: 'feat' }));
+  assert.equal(c.status, 'clean', JSON.stringify(c));
+  assert.equal(mergeTreeEnv?.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(mergeTreeEnv?.WORCA_BB_TOKEN, undefined);
 });
 
 test('conflicts: lists the files, moves no ref and touches no checkout', async () => {

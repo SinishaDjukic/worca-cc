@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { prepare } from '../src/core/db.mjs';
-import { getBrief, setBriefSections, beginBrief, setContext } from '../src/core/requirements/store.mjs';
+import { getBrief, setBriefSections, beginBrief, setContext, insertAttachment, mintAttachmentId, updateAttachment } from '../src/core/requirements/store.mjs';
+import { REQUIREMENTS_READ_DENY_RULES } from '../src/core/ask/deny-rules.mjs';
 import { recordRequirementsCostDelta } from '../src/core/cost-budget.mjs';
 import { REPO_LOOK_TOOLS } from '../src/core/auto/classify.mjs';
 import { commitOf, defaultBranchRef } from '../src/core/worktree.mjs';
@@ -221,6 +222,7 @@ test('a look reads the default branch, not the checked-out one: the call, sectio
   // A1.1's call path (design §9): replace mode and the hermetic flags (runClaude puts the host-guard preamble first)
   assert.equal(call.systemPromptMode, 'replace');
   assert.deepEqual(call.settingSources, ['project']);
+  assert.equal(call.noSessionPersistence, true, 'A8 D15: the look reads the documents\' summaries, so no session transcript');
   assert.equal(call.disableSlashCommands, true);
   assert.equal(call.strictMcpConfig, true);
   assert.equal(call.cwd, lk.lookDir);
@@ -865,4 +867,43 @@ test('staleness: the memo keeps the commits, not the areas; edits and added area
   const s = await briefStaleness({ ...brief, sections: { ...brief.sections, areas: [renamed, ACCOUNTS, added] } }, counting);
   assert.deepEqual(s.areas, ['Order history', 'Orders: Gift']);
   assert.equal(n, 1, 'the git part came from the memo every time');
+});
+
+test('A8: the brief look carries Ask\'s deny rules (its documents are third-party material)', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir)]);
+  const k = key();
+  await (await makeBrief('project', k, {}, deps({ runner, lk, projects: [project(k, r.dir)] }))).job;
+  assert.deepEqual(runner.calls[0].permissionRules, { deny: [...REQUIREMENTS_READ_DENY_RULES] });
+  assert.equal('readGuard' in runner.calls[0], false, 'a look reads its checkout: no one-file guard');
+});
+
+test('A8 D6: a refresh hands the brief\'s documents to the look as <brief_documents>; a first look has none', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir), goodReply(lk.lookDir)]);
+  const k = key();
+  const d = deps({ runner, lk, projects: [project(k, r.dir)] });
+  await (await makeBrief('project', k, {}, d)).job;
+  const doc = insertAttachment({ id: mintAttachmentId(), ownerType: 'brief', ownerId: getBrief('project', k).id, name: 'tone.md', kind: 'text',
+    mime: 'text/markdown', bytes: 3, sha256: 'tone1' });
+  updateAttachment(doc.id, { status: 'done', summary: 'Friendly and short.' });
+  await (await makeBrief('project', k, {}, d)).job;
+  assert.equal(runner.calls[0].prompt.includes('<brief_documents>'), false);
+  assert.match(runner.calls[1].prompt, /<brief_documents>\ntone\.md: Friendly and short\.\n<\/brief_documents>\n\nThese documents are the product owner's material/);
+});
+
+test('A8 D13: a brief item the reply gives a document as its source keeps it, with the listed spelling', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir), goodReply(lk.lookDir, { users: [{ name: 'Shopper', can: 'orders.', source: 'TONE.md' }] })]);
+  const k = key();
+  const d = deps({ runner, lk, projects: [project(k, r.dir)] });
+  await (await makeBrief('project', k, {}, d)).job;
+  const doc = insertAttachment({ id: mintAttachmentId(), ownerType: 'brief', ownerId: getBrief('project', k).id, name: 'tone.md', kind: 'text',
+    mime: 'text/markdown', bytes: 3, sha256: 'tone2' });
+  updateAttachment(doc.id, { status: 'done', summary: 'Friendly.' });
+  await (await makeBrief('project', k, {}, d)).job;
+  assert.equal(getBrief('project', k).sections.users[0].source, 'tone.md');
 });

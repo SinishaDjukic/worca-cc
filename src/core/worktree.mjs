@@ -28,6 +28,8 @@ import {
   removeInjectedPaths,
 } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv, guardedWorktreeAdd } from './git-guard.mjs';
+import { stripHostCredentials } from './host-credentials.mjs';
 import { ownWorkDir } from './no-project-work.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
@@ -53,18 +55,28 @@ const BRANCH_STOPWORDS = new Set([
 // 30 s on large repos — give them a longer leash before the SIGKILL deadline.
 const SLOW_GIT_TIMEOUT_MS = 120_000;
 
+/** `git worktree add` through git-guard's guardedWorktreeAdd (G2), with git()'s result shape. */
+export function worktreeAdd(projectDir, dir, commitish, { branch, detach = false, signal } = {}) {
+  if (!gitAvailable()) return Promise.resolve(gitMissingResult());
+  return guardedWorktreeAdd(projectDir, dir, commitish, { branch, detach, signal, timeout: SLOW_GIT_TIMEOUT_MS });
+}
+
 /** Run git and resolve to { ok, stdout, stderr, code }. Never throws.
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
- *  credential helper need PATH/HOME. Only the Ask Worca callers pass it. */
-function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0 } = {}) {
-  if (!gitAvailable()) return Promise.resolve(gitMissingResult());
+ *  credential helper need PATH/HOME. Only the Ask Worca callers pass it.
+ *  Repository-local hooks and config commands never run (git-guard.mjs, security G2); `hooks: true`
+ *  (Apply to branch's commit) keeps the project's hooks, with every host credential stripped. */
+async function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0, hooks = false } = {}) {
+  if (!gitAvailable()) return gitMissingResult();
+  let fullEnv;
+  // `timeout` bounds the guard's config listing too, so a slow git gives up within the caller's budget.
+  try {
+    fullEnv = await guardedGitEnv(cwd, { hooks, timeout, env: { ...(hooks ? stripHostCredentials(process.env) : process.env), ...env } });
+  } catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1 }; }
   return new Promise((res) => {
     let child;
     try {
-      child = spawn('git', args, {
-        cwd, stdio: ['ignore', 'pipe', 'pipe'], signal,
-        ...(env ? { env: { ...process.env, ...env } } : {}),
-      });
+      child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], signal, env: fullEnv });
     } catch (err) {
       res({ ok: false, stdout: '', stderr: err.message, code: -1 });
       return;
@@ -359,7 +371,7 @@ export async function createWorktree({
   const branches = await listLocalBranches(projectDir);
   const reusedExisting = branches.includes(branch);
 
-  let args;
+  let add;
   if (reusedExisting) {
     // M2: git forbids checking out one branch in two worktrees at once. Reap
     // stale registrations first; if a *live* worktree still holds it, fail with
@@ -369,7 +381,7 @@ export async function createWorktree({
     if (inUse && resolve(inUse) !== resolve(worktreeDir)) {
       throw new Error(`branch "${branch}" is already checked out in worktree ${inUse}`);
     }
-    args = ['worktree', 'add', '--', worktreeDir, branch];
+    add = { commitish: branch };
   } else {
     // M1: validate the source resolves to a real commit (rejects leading-dash
     // option injection and unknown refs); '--' stops git parsing the trailing
@@ -377,9 +389,9 @@ export async function createWorktree({
     if (!(await isValidSourceRef(projectDir, sourceBranch))) {
       throw new Error(`sourceBranch is not a valid ref: ${JSON.stringify(sourceBranch)}`);
     }
-    args = ['worktree', 'add', '-b', branch, '--', worktreeDir, sourceBranch];
+    add = { commitish: sourceBranch, branch };
   }
-  const r = await git(projectDir, args, { signal, timeout: SLOW_GIT_TIMEOUT_MS });
+  const r = await worktreeAdd(projectDir, worktreeDir, add.commitish, { branch: add.branch, signal });
   if (!r.ok) {
     const err = new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
     // The ONE abort path that surfaced as a PLAIN error: on signal abort Node
@@ -483,15 +495,33 @@ export async function createDetachedWorktree({ projectDir, worktreeDir, ref, sig
     throw new Error(`ref is not a valid commit-ish: ${JSON.stringify(ref ?? null)}`);
   }
   await git(projectDir, ['worktree', 'prune']);
-  const r = await git(projectDir, ['worktree', 'add', '--detach', '--', worktreeDir, ref],
-    { signal, timeout: SLOW_GIT_TIMEOUT_MS });
+  // Never spawn with an already-aborted signal: Node kills the child only on the next tick,
+  // and a fast git can register the worktree first — a checkout no caller knows to remove.
+  if (signal?.aborted) throw abortError('git worktree add --detach aborted before it started');
+  const existed = existsSync(worktreeDir);
+  const r = await worktreeAdd(projectDir, worktreeDir, ref, { detach: true, signal });
   if (!r.ok) {
-    const err = new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
-    if (signal?.aborted) err.name = 'AbortError';
-    throw err;
+    if (signal?.aborted) {
+      // Killed mid-way: git may already have registered (or even finished) the checkout.
+      // Undo it only when this add created the dir — a dir that existed before may be
+      // someone's worktree with uncommitted work — then prune any registration left dangling.
+      if (!existed) {
+        await git(projectDir, ['worktree', 'remove', '--force', '--', worktreeDir]);
+        await rm(worktreeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+      }
+      await git(projectDir, ['worktree', 'prune']);
+      throw abortError(`git worktree add --detach aborted: ${r.stderr.trim() || `exit ${r.code}`}`);
+    }
+    throw new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
   }
   const head = await git(worktreeDir, ['rev-parse', 'HEAD']);
   return { worktreeDir, commit: head.ok ? head.stdout.trim() : null };
+}
+
+function abortError(message) {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
 }
 
 /** HEAD commit sha of any checkout (worktree or repo), or null. */
@@ -580,11 +610,11 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
  *                  |{ok:false, step:'status'|'branch'|'add'|'commit', message:string}>}
  */
 export async function commitStagedWork(worktreeDir, { message, exclude = [], bypassHooks = false, branch = null } = {}) {
-  const run = (args) => git(worktreeDir, args, { timeout: SLOW_GIT_TIMEOUT_MS });
+  const run = (args, o = {}) => git(worktreeDir, args, { timeout: SLOW_GIT_TIMEOUT_MS, ...o });
   const msgOf = (r) => r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
-  const indexWrite = async (args) => {
-    let r = await run(args);
-    if (!r.ok && (await clearStaleGitLocks(worktreeDir)).length) r = await run(args);
+  const indexWrite = async (args, o) => {
+    let r = await run(args, o);
+    if (!r.ok && (await clearStaleGitLocks(worktreeDir)).length) r = await run(args, o);
     return r;
   };
   const status = await run(['status', '--porcelain']);
@@ -612,8 +642,9 @@ export async function commitStagedWork(worktreeDir, { message, exclude = [], byp
   const staged = await run(['diff', '--cached', '--quiet']);
   if (staged.ok) return { ok: true, committed: false, sha: null, hooksBypassed: false };   // exit 0 = nothing staged
   const local = ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator'];
-  let commit = await indexWrite(['commit', '-m', message]);
-  if (!commit.ok) commit = await run([...local, 'commit', '-m', message]);
+  // As at teardown, the project's own commit hooks run (git-guard.mjs: never under agent isolation).
+  let commit = await indexWrite(['commit', '-m', message], { hooks: true });
+  if (!commit.ok) commit = await run([...local, 'commit', '-m', message], { hooks: true });
   let hooksBypassed = false;
   if (!commit.ok && bypassHooks) {
     commit = await run(['-c', 'core.hooksPath=', ...local, 'commit', '-m', message]);
@@ -664,7 +695,7 @@ export async function snapshotWorktreePatch(worktreeDir, outFile) {
     return done({ ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}`, fromStderr: !!add.stderr.trim() });
   }
   const part = `${outFile}.part`;
-  const diff = await git(worktreeDir, ['diff', '--binary', `--output=${part}`, 'HEAD', '--'],
+  const diff = await git(worktreeDir, ['diff', '--binary', '--no-ext-diff', `--output=${part}`, 'HEAD', '--'],
     { timeout: SLOW_GIT_TIMEOUT_MS });
   if (!diff.ok) {
     await rm(part, { force: true }).catch(() => {});

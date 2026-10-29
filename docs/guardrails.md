@@ -15,20 +15,41 @@ The New Pipeline form has a **Guardrails** picker next to the workflow picker:
 the selected set is the run's entire policy, applied uniformly to every agent
 the run spawns — and, for a workspace run, uniformly to every member project.
 
-**Guardrails apply per run; runs without a selection run unguarded
-(Permissive).** The picker defaults to Permissive — no restrictions,
-byte-identical to runs before guardrails existed — so protection is an
-explicit per-run choice, not a persistent project property. (This is a
-deliberate tradeoff of the per-run model: there is no per-project default to
-fall back on, and one set applies to all workspace members. If you want a
-stricter habitual posture, pick Normal/Strict — or your org set — when you
-start the run.)
+**Guardrails apply per run; a run that names no set gets the install's
+default.** A new install defaults to **Normal**. An install that existed
+before this default changed keeps **Permissive** (no restrictions), so its
+runs behave exactly as they did; pick Normal or Strict in the picker to
+change a run. The default applies to the New Pipeline picker's preselection,
+to a CLI run without `--guardrails` and to `POST /api/run` without a `guardrailsId`.
+On the CLI, `--guardrails <id>` picks the set (`permissive`, `normal`, `secure`
+for Strict, or a saved set's id); an unknown id exits before the run starts.
+A resumed run keeps the set it started with, so `worca resume` has no such flag.
+Only Claude holds all of Normal's rules: on a new install a run on any other
+engine is refused unless you start it with `--guardrails permissive` or accept
+the gap with `--allow-unguarded-engine`.
+A team policy's default set preselects the picker over it. Protection stays a
+per-run choice, not a persistent project property: there is no per-project
+default, and one set applies to all workspace members.
+
+**Guardrails are not a sandbox.** In native mode (Worca running on your
+machine) agents run as your user, with your files, your `HOME` and your
+network. A run's git worktree isolates its *changes* from your checkout and
+from other runs; it does not isolate the agent from the host. Normal and
+Strict restrict which *tools* an agent may call (Claude Code permission
+rules), not what the filesystem lets it reach: an agent with Bash can still
+read or write anything your user can, through an interpreter or a shell
+wrapper (see [Honest limitations](#honest-limitations)). For work you do not
+trust — a task built from an outside issue, a repository you did not write —
+run Worca in a container ([docker.md](docker.md)): the box holds no host
+credentials, mounts only the projects you name, can run agents as their own
+user apart from Worca's settings and database, and the egress overlay limits
+the network.
 
 ## The built-in tiers
 
-- **Permissive** (default) — no restrictions; byte-identical behavior to a
-  run with no selection.
-- **Normal** — protects credential files (`.env*`, `*.pem`, `*.key`, SSH keys,
+- **Permissive** — no restrictions; the default on installs from before
+  Normal became the default.
+- **Normal** (the default on a new install) — protects credential files (`.env*`, `*.pem`, `*.key`, SSH keys,
   cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
   and blocks publication commands
   (`git push`, `npm/yarn/pnpm publish`). It also protects Worca's own state
@@ -100,6 +121,42 @@ are never lifted — that would widen capability and bypass Claude Code's
 workspace-trust gate; hooks and statusline still don't apply off-worktree and
 stay warned). A paused run re-reads its selected set by id on resume, so it
 enforces the set's latest definition.
+
+## Worca's own git calls
+
+An agent can write the project's `.git`: run checkouts share its hooks and config, and in a
+container agents and server share the projects group. Worca's own git calls (status, staging,
+the end-of-run commit, push, fetch, fast-forward, diffs, metrics, PR flows) run as worca, with
+its tokens, so they never let the repository's local config choose a command
+(`src/core/git-guard.mjs`):
+
+- Hooks are off, and the commands git would take from `.git/config`, `config.worktree` or a file
+  they include are replaced by the user's and system values or a neutral one: `core.fsmonitor`,
+  `core.sshCommand`, `core.askPass`, editors, `diff.external`, `core.alternateRefsCommand`, gpg
+  programs, credential helpers, `sslVerify` and `curloptResolve`, filter, diff and merge drivers,
+  trailer commands; submodule recursion is off and the `ext::` transport is refused.
+- A proxy the repository sets (`http.proxy`, `http.<url>.proxy`, `remote.<name>.proxy`) is
+  replaced by your own value, or else by the `HTTPS_PROXY` worca runs with. Worca's git calls
+  keep going through the corporate proxy or Worca's local proxy.
+- Two safe local shapes stay: a per-repo `core.sshCommand` that only picks a key
+  (`ssh -i <path>`), and `git lfs install --local`'s exact filter commands. Any other per-repo
+  `core.sshCommand`, such as one with `ProxyCommand`, `ProxyJump` or `-F`, becomes plain `ssh`,
+  because those options run a command. Put a proxy for ssh git in `~/.ssh/config` or
+  `GIT_SSH_COMMAND`. Both still apply.
+- A repository whose local config sets `remote.<name>.uploadpack`, `remote.<name>.receivepack` or
+  `core.gitProxy` is refused: git reads those first-wins, so no override can replace them. Remove
+  the key to continue.
+- **The end-of-run commit and Apply to branch still run the project's commit hooks** (husky,
+  lint-staged), as before, with worca's tokens stripped from their environment, because they are
+  part of how a project commits. With agents under their own user (`WORCA_AGENT_USER`, the
+  container) they never run: there a hook is the agent's code and would run as worca. On a local
+  install the agent runs as you already, but a commit hook it plants runs outside its guardrails
+  (Bash denies do not apply to it).
+
+Limits: names that come from a driver or URL (`filter.<x>.clean`, `http.<url>.proxy`), and
+`diff.external`, which no value turns off, are read just before each call (worca's own patch
+diffs also pass `--no-ext-diff`), so a config rewritten in the instant between that read and the call is
+not seen; the fixed keys and hooks have no such window. `http.sslCAInfo` is left as configured.
 
 ## Honest limitations
 
@@ -291,17 +348,39 @@ enforces the set's latest definition.
   tools: `list_scripts` and `get_script` read the registry, `save_script`
   changes one of the user's own scripts that already exists
   (`~/.worca-cc/scripts`; a NEW script is always a `draft_script` card the user
-  saves) and `test_script` runs one in worca's test bench — both **without a
-  confirmation card**, by an explicit user decision on 2026-09-18. A script is a
-  child process with worca's privileges and **no sandbox**, so a successful
-  prompt injection in anything the chat reads (a repository file, a diff
-  comment, an attachment, a run's output) becomes code execution on this
-  machine. None of what follows blocks that; these are the limits that remain.
+  saves) and `test_script` runs one in worca's test bench. A script is a child
+  process with **no sandbox**: on a local install it runs as the user who runs
+  worca, and with agent isolation on (`WORCA_AGENT_USER`) as the agent user, like
+  every script spawn. So the calls that would put code the user did not write to
+  work need the user's click (G6; this replaces the 2026-09-18 decision to run
+  them without a card): `test_script` with an unsaved `draft`; `test_script` by
+  key when the call sets a `command` or `code` param (the built-in `shell`, `js`
+  and `py` scripts take their whole program as one) or the script is not one the
+  user saved (a built-in or a plugin's); and every `save_script` (it only ever
+  replaces a script that exists, scheduled ones included). None acts in the tool:
+  the tool checks the request — `save_script` runs the store's full validation as
+  a dry run — and answers "pending", and the chat shows an approval card with
+  every value that decides what runs (the program, each `command`/`code` param
+  as the run resolves it from the meta's default and the call, and the meta's
+  `command`), the folder and the time limit. A run by key re-reads the script at
+  the click and runs nothing if it changed since the card was shown. **Run** / **Save** runs the draft in the bench or replaces the
+  script on the server, re-checked at the click (the switch, and the pinned
+  project for a project run), and the result goes back to the model as a
+  `[worca event]` turn, the bench output marked as untrusted data; **Don't run** /
+  **Don't save** writes and runs nothing and tells the model so. A sub-agent's
+  call ends at "pending" and makes no card. Running the user's own saved script
+  by its key (`test_script` without `draft`, or a saved case) with no
+  `command`/`code` param set runs at once, as it does on the Scripts page. The Ask panel and the Workflows chat show
+  the card; no chat channel (Slack, Discord, Teams) and no CLI command reaches
+  the chat's script tools, so there is no surface where these calls run without
+  it. A prompt injection can still ask for a card, and the user's own saved script
+  can still be run with the string, number, enum and input values the model
+  picks, never with its program; the card is the line.
   The system prompt states that only the user's own messages are a reason to
   save or run a script and that everything read through a tool is data. A script
-  the chat changes with `save_script` is stamped `updatedBy: ask:<threadId>`; a
-  drafted script the user saves from its card is stamped as the user's own save
-  (`ui`). `save_script` refuses a key no script holds and needs an explicit
+  the chat changes through its card is stamped `updatedBy: ask:<threadId>`; a
+  drafted script the user saves from its draft card is stamped as the user's own
+  save (`ui`). `save_script` refuses a key no script holds and needs an explicit
   `overwrite: true`; built-in and plugin scripts are never written over, and
   there is no delete tool. A bench run uses a scratch folder unless the user
   pinned a project for the chat, and never another project's checkout — a saved
@@ -346,12 +425,26 @@ enforces the set's latest definition.
     from it — only allowlist hosts you trust with that.
   - **SSRF:** a host that resolves to any loopback, private, link-local
     (cloud metadata), CGNAT, ULA or other reserved address is refused; the check
-    runs on the address actually dialled. Pages are capped at 2 MiB and 100 000
+    runs on the address actually dialled (direct connections; see the proxy
+    rule below). Pages are capped at 2 MiB and 100 000
     characters of text, 15 s per call; only text types are read. The text reaches
     the chat in pages of 20 000 characters, 30 000 at most (Claude Code moves a
-    larger tool result into a file the chat cannot read). Node's `https`
-    ignores `HTTPS_PROXY`, so a proxy-only network cannot use web access in v1.
-    On a worca with no route to the internet (`compose.egress.yml` puts it on an
+    larger tool result into a file the chat cannot read).
+  - **Behind a proxy.** When `HTTPS_PROXY` (else `HTTP_PROXY`) is set and
+    `NO_PROXY` does not list the host (loopback never goes through it), each
+    fetch and search opens a `CONNECT` tunnel to `host:443` through the proxy
+    and verifies the site's certificate inside it, so the proxy sees the host
+    name but not the page or the request (unless it intercepts TLS with a CA
+    this machine trusts). The allowlist and data-in-URL rules run first, as
+    above. The proxy resolves the host, so the SSRF check can no longer run on
+    the address actually dialled: worca resolves the host itself first and
+    refuses it when any answer is non-public, but when worca cannot resolve it
+    (a proxy-only network) the request goes ahead and the proxy's DNS decides.
+    Behind a proxy, the allowlist (and the proxy's own rules) is the guard
+    against reaching internal hosts: an allowlisted name the proxy resolves to
+    an intranet address is reached. List only hosts you trust, and put internal
+    domains in `NO_PROXY` so the full direct check applies to them.
+  - On a worca with no route to the internet (`compose.egress.yml` puts it on an
     internal network) every fetch fails; when the host name does not resolve, or
     the connection is refused or times out before the host answers, the error
     says this worca may not have internet access instead of only the network

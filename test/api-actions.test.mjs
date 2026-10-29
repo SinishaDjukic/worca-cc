@@ -161,22 +161,22 @@ test('agent isolation: a loopback caller cannot start actions or set the actions
   try {
     const r = await post(`/api/runs/${id}/actions/run/start?projectKey=${key}`, {});
     assert.equal(r.status, 403);
-    assert.equal((await r.json()).code, 'ACTIONS_AGENT_BLOCKED');
+    assert.equal((await r.json()).code, 'AGENT_CALLER_BLOCKED');
     const p = await put(`/api/projects/${key}/actions`, { setup: 'true', actions: [] });
     assert.equal(p.status, 403);
-    assert.equal((await p.json()).code, 'ACTIONS_AGENT_BLOCKED');
+    assert.equal((await p.json()).code, 'AGENT_CALLER_BLOCKED');
     const s = await post('/api/settings', { actions: { editor: '/tmp/x.sh' } });
     assert.equal(s.status, 403);
-    assert.equal((await s.json()).code, 'ACTIONS_AGENT_BLOCKED');
-    assert.equal((await getJson('/api/settings')).actions.editor, '');
-    // the gate is keyed on `actions` only
-    assert.equal((await post('/api/settings', { schedule: {} })).status, 200);
+    assert.equal((await s.json()).code, 'AGENT_CALLER_BLOCKED');
+    // G1: no part of the API answers a possible agent, other settings included
+    assert.equal((await post('/api/settings', { schedule: {} })).status, 403);
     const t = await post('/api/actions/launchers/try', { kind: 'editor', line: 'true' });
     assert.equal(t.status, 403, 'Try runs a command line: the same guard as saving one');
-    assert.equal((await t.json()).code, 'ACTIONS_AGENT_BLOCKED');
+    assert.equal((await t.json()).code, 'AGENT_CALLER_BLOCKED');
   } finally {
     delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME;
   }
+  assert.equal((await getJson('/api/settings')).actions.editor, '');
   assert.equal((await getJson(`/api/projects/${key}/actions`)).config.actions[0].id, 'run');
 });
 

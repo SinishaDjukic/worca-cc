@@ -5,7 +5,7 @@
 // back to the product owner. Spend is checked before every call and booked after it (D9).
 import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, listModels } from '../config.mjs';
@@ -20,15 +20,17 @@ import { utilityModelFor } from '../settings-cascade.mjs';
 import { withRole } from '../model-roles.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
-import { unaskedRejections } from './ready.mjs';
+import { unaskedRejections, unaskedFiles } from './ready.mjs';
 import {
-  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures, usableBrief,
+  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures, usableBrief, listAttachments,
 } from './store.mjs';
 import { renderBriefForPrompt } from './brief.mjs';
 import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
+import { readsSettled, queueUnread, promptFiles, isReading, filesPending } from './attachment-job.mjs';
+import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const ROUND_TIMEOUT_MS = 180_000;
 const DEFAULTS = Object.freeze({
@@ -93,15 +95,45 @@ function userSignInLogged() {
 export const MAX_JOBS = 4;
 const jobs = new Map();
 export const isBusy = (seq) => jobs.has(Number(seq));
-/** Throws BUSY when MAX_JOBS jobs are running: checked before anything is written for a new job. */
+/** A8 D2: the longest round 1 waits for the reads of a new feature's files. */
+export const ROUND1_WAIT_MS = 360_000;
+const waitingReads = new Set();   // features whose create job waits for its reads: not counted against MAX_JOBS
+let heldSlots = 0;   // A3 D11: slots held by Feature chat calls (helper.mjs), which never make their feature busy
+const activeJobs = () => jobs.size - waitingReads.size + heldSlots;
+let slotWaiters = [];   // resolvers woken whenever a slot may have come free: a job ended or started waiting
+function slotFreed() { const w = slotWaiters; slotWaiters = []; for (const r of w) r(); }
+/** A waiting job leaves the waiting set once a slot is free, checked again (synchronously) at every slotFreed. */
+async function takeSlot(seq) {
+  await null;   // startJob has registered the job (and its waiting mark) by now
+  while (activeJobs() >= MAX_JOBS) await new Promise((r) => { slotWaiters.push(r); });
+  waitingReads.delete(seq);
+}
+/** `p`, or nothing once `ms` have passed. */
+const within = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { t = setTimeout(r, ms); })]).finally(() => clearTimeout(t)); };
+/** Throws BUSY when MAX_JOBS jobs are running (a create waiting for its files' reads does not count): checked before
+ *  anything is written for a new job. */
 export function assertCapacity() {
-  if (jobs.size >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
+  if (activeJobs() >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
+}
+/** A3 D11: one of the MAX_JOBS slots for a Feature chat call, which does not make its feature busy. Throws BUSY when every slot
+ *  is taken (assertCapacity's message). Returns the release: it frees the slot once (a second call does nothing) and wakes
+ *  the creates waiting for a slot. */
+export function holdSlot() {
+  assertCapacity();
+  heldSlots += 1;
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    heldSlots -= 1;
+    slotFreed();
+  };
 }
 /** Resolves when the feature's current job (if any) has finished. Tests and the routes' callers await it. */
 export const settled = (seq) => jobs.get(Number(seq)) || Promise.resolve();
 
 const message = (err) => (err && err.message ? err.message : String(err));
-const scratchDir = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
+export const scratchDir = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
 
 /** D8: the first plain (not [1m]) Opus in the catalog, which lists the newest first. */
 export async function requirementsModel(list = listModels) {
@@ -137,8 +169,9 @@ export async function interviewModel(deps = {}) {
   return { model: model ?? null, effort: effort || null, source: stored || slot.effort ? 'settings' : 'default' };
 }
 
-/** `job.kind` says what is running ('look' or 'round'): an error turn records it so retry re-runs the right thing. */
-function startJob(seq, d, fn, by, kind = 'round') {
+/** `job.kind` says what is running ('look' or 'round'): an error turn records it so retry re-runs the right thing.
+ *  `waiting` (A8 D2): the job starts outside MAX_JOBS and takes a slot itself (takeSlot) before it calls a model. */
+function startJob(seq, d, fn, by, kind = 'round', { waiting = false } = {}) {
   seq = Number(seq);
   if (jobs.has(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
   assertCapacity();
@@ -150,10 +183,16 @@ function startJob(seq, d, fn, by, kind = 'round') {
       catch (e) { console.error('requirements: could not record the failure:', message(e)); }
     } finally {
       jobs.delete(seq);
+      waitingReads.delete(seq);
+      slotFreed();
+      // A8 D8: a job that kept Worca's own follow-up from starting (a look or a round while a read ended) lets it start now.
+      // No loop: a round that carried every file leaves none unasked, and a follow-up never starts while a read is pending.
+      if (!filesPending({ type: 'feature', id: seq })) maybeFollowUpFiles(seq, d);
       notify(d, seq);
     }
   })();
   jobs.set(seq, p);
+  if (waiting) waitingReads.add(seq);
   return p;
 }
 
@@ -177,7 +216,7 @@ function setStatus(seq, status, by, extra = {}) {
   updateFeature(seq, { ...extra, status: now && now.status === 'archived' ? 'archived' : status }, { by });
 }
 
-function assertBudget(d) {
+export function assertBudget(d) {
   const b = d.budget();
   if (b && b.blocked) {
     throw new RequirementsError('BUDGET', `The spending limit${b.totalLimitUsd != null ? ` of $${b.totalLimitUsd}` : ''} is reached for this period. The interview continues when the limit resets or is raised.`);
@@ -193,15 +232,34 @@ function charge(seq, turnId, costUsd, model) {
   });
 }
 
+/** A3 D13: Worca's reply row (`writeRow()`, which returns it), the call's cost on the feature ("$X so far") and its ledger row
+ *  (`helper_message_id` = the row's id, no turn), all in one transaction, so the reply never stands without what it cost and the
+ *  cost counts toward the spending limit like every requirements call. A call that cost nothing writes the row only. */
+export function chargeHelper(seq, costUsd, model, writeRow) {
+  return tx(() => {
+    const row = writeRow();
+    if (costUsd > 0) {
+      addFeatureCost(seq, costUsd);
+      recordRequirementsCostDelta({ featureSeq: seq, helperMessageId: row.id, amountUsd: costUsd, model: model || null });
+    }
+    return row;
+  });
+}
+
 const CALL_KINDS = Object.freeze({
   look: () => ({ systemPrompt: ORIENTATION_SYSTEM_PROMPT, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS }),
   round: () => ({ systemPrompt: ROUND_SYSTEM_PROMPT, tools: [], maxTurns: null }),
 });
-const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'maxTurns', 'effort']);
+const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'allowedTools', 'maxTurns', 'effort', 'permissionRules', 'readGuard', 'noSessionPersistence']);
 
 /**
  * The runClaude options of one interview call, without `signal` / `onEvent` (design §9, the lane contract).
- * `kind` is 'look' or 'round'; systemPrompt, tools, maxTurns and effort override that kind's defaults.
+ * `kind` is 'look' or 'round'; systemPrompt, tools, allowedTools, maxTurns and effort override that kind's defaults.
+ * Two overrides of their own, emitted only when given (A8, plans/requirements-a8-design.md D3): `permissionRules`
+ * (a file read's and the brief look's deny rules) and `readGuard` (the one file a read may open, file-read-guard.mjs),
+ * which when present at all must be an absolute path: an empty or relative value throws instead of meaning "no guard".
+ * A third, `noSessionPersistence: true` (D15: file reads, asks and the brief look), asks Claude Code to keep no session
+ * transcript of the call; any other value emits nothing, so the other calls' options stay as they were.
  * Every call, whatever the overrides, replaces Claude Code's system prompt with Worca's and turns slash
  * commands off; it also loads only the project's setting sources (no user plugins, hooks or skills,
  * A1.1 D6) unless `keepUserSettings` (the user settings carry sign-in: `userClaudeSignIn`).
@@ -210,41 +268,63 @@ const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'm
 export function interviewCallOptions(kind, args = {}, { keepUserSettings = false } = {}) {
   if (!Object.hasOwn(CALL_KINDS, kind)) throw new TypeError(`interviewCallOptions: unknown kind ${JSON.stringify(kind)}`);
   for (const k of Object.keys(args)) if (!CALL_KEYS.has(k)) throw new TypeError(`interviewCallOptions: unknown option "${k}"`);
+  const guarded = Object.hasOwn(args, 'readGuard');
+  if (guarded && (typeof args.readGuard !== 'string' || !isAbsolute(args.readGuard))) {
+    throw new TypeError('interviewCallOptions: readGuard must be the absolute path of the one file the call may read');
+  }
   const def = CALL_KINDS[kind]();
   const { cwd, prompt, model } = args;
   const pick = (k) => (args[k] !== undefined ? args[k] : def[k]);
   const tools = pick('tools');
   if (!Array.isArray(tools)) throw new TypeError('interviewCallOptions: tools must be an array');
+  // A8 §9: a file read allows one Read rule naming its copy; without the override the allow list is the tools, as before.
+  const allowed = args.allowedTools !== undefined ? args.allowedTools : tools;
+  if (!Array.isArray(allowed)) throw new TypeError('interviewCallOptions: allowedTools must be an array');
   const maxTurns = pick('maxTurns');
   return {
     cwd, systemPrompt: pick('systemPrompt'), systemPromptMode: 'replace', prompt, model, modelEnv: resolveModelEnv(model),
-    allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
+    allowedTools: [...allowed], tools: [...tools], strictMcpConfig: true,
     ...(keepUserSettings ? {} : { settingSources: ['project'] }), disableSlashCommands: true,
     ...(maxTurns ? { maxTurns } : {}),
-    ...(args.effort ? { effort: args.effort } : {}), permissionMode: 'acceptEdits',
+    ...(args.effort ? { effort: args.effort } : {}),
+    ...(args.permissionRules ? { permissionRules: args.permissionRules } : {}), ...(guarded ? { readGuard: args.readGuard } : {}),
+    ...(args.noSessionPersistence === true ? { noSessionPersistence: true } : {}),
+    permissionMode: 'acceptEdits',
     spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
   };
 }
 
-export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides }) {
+/**
+ * One interview call (A1.1 §9): the built options plus a timeout, the caller's `signal` (A8: a removed file stops its
+ * read) and the cost of every `result`. Resolves to `{ text, costUsd, events }`, plus `readGuardDecisions` when the
+ * runner returned them (a guarded read, file-read-guard.mjs). `events` are the call's normalized events, one shape
+ * only (engines/claude-events.mjs), so a read can check that the guard decided every tool call the stream shows.
+ * A failed call throws with the money already spent on it as `costUsd`.
+ */
+export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, signal = null, ...overrides }) {
   // Read per call, so a changed user settings file applies without a restart (D6).
   const keepUserSettings = !!(d.userSignIn || DEFAULTS.userSignIn)();
   const options = interviewCallOptions(kind, { cwd, prompt, model, ...overrides }, { keepUserSettings });
   const ctrl = new AbortController();
+  // A8: the read job stops a read whose file was removed; the caller's signal aborts this call's own controller.
+  const onAbort = () => ctrl.abort();
+  if (signal) { if (signal.aborted) ctrl.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
   let costUsd = 0;
+  const events = [];
   try {
     const res = await d.runClaudeImpl({
       ...options, signal: ctrl.signal,
       onEvent: normalizingOnEvent((e) => {
+        events.push(e);
         if (e.type !== 'result' || e.costUsd == null) return;
         const c = resolveModelCost(model, Number(e.costUsd), e.usage ?? null);
         if (Number.isFinite(c)) costUsd += c;
         else if (Number.isFinite(Number(e.costUsd))) costUsd += Number(e.costUsd);
       }),
     });
-    return { text: res?.text || '', costUsd };
+    return { text: res?.text || '', costUsd, events, ...(Array.isArray(res?.readGuardDecisions) ? { readGuardDecisions: res.readGuardDecisions } : {}) };
   } catch (err) {
     // Money may already be spent when a call fails: the error carries it so the caller books it.
     const out = timedOut
@@ -252,7 +332,10 @@ export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...ove
       : (err instanceof Error ? err : new Error(String(err)));
     out.costUsd = costUsd;
     throw out;
-  } finally { clearTimeout(timer); }
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 async function openLookFor(f, d, signal) {
@@ -265,8 +348,9 @@ async function openLookFor(f, d, signal) {
   return ws && ws.members.length ? d.openWorkspaceLook(ws.members, base, { signal }) : null;
 }
 
-/** A7 D10: the scope's usable brief as the prompts carry it (provenance line first), or null. */
-function briefFor(f) {
+/** A7 D10: the scope's usable brief as the prompts carry it (provenance line first), or null. A8 D6: `documents`, the
+ *  scope's documents as renderDocumentsForPrompt writes them, follow its sections. */
+export function briefFor(f, documents = '') {
   const b = usableBrief(f.scopeType, f.scopeKey);
   if (!b) return null;
   const day = String(b.madeAt).slice(0, 10);
@@ -274,7 +358,7 @@ function briefFor(f) {
   const provenance = f.scopeType === 'workspace'
     ? `Made from ${(b.sources || []).length} project${(b.sources || []).length === 1 ? '' : 's'} on ${day}.`
     : `Made from ${(src && src.branch) || 'HEAD'}${src && src.sha ? ` @ ${String(src.sha).slice(0, 7)}` : ''} on ${day}.`;
-  return { id: b.id, madeAt: b.madeAt, text: renderBriefForPrompt(b.sections, { provenance }) };
+  return { id: b.id, madeAt: b.madeAt, text: renderBriefForPrompt(b.sections, { provenance, documents }) };
 }
 
 // Less time than this left after the checkout: the look fails as a timeout rather than starting a call it cannot finish.
@@ -322,7 +406,7 @@ async function orient(f, d, brief = null) {
 
 async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   const f0 = requireFeature(seq);
-  const brief = briefFor(f0);
+  const brief = briefFor(f0, promptFiles(f0).documents);   // A8 D6: the closer look reads the brief's documents too
   // A7 D11: every stored look names the scope it was made for and the brief it was made against (null: none yet).
   // The scope cannot change while the look runs (header edits wait for the job), so it is read here.
   const stamp = { scopeType: f0.scopeType, scopeKey: f0.scopeKey, briefId: brief ? brief.id : null };
@@ -345,26 +429,33 @@ async function runOrientation(seq, d, by, { useBrief = false } = {}) {
     at: new Date().toISOString() } }, { by });
 }
 
-async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
+/** `followUpFiles` (A8 D8): the ids of the files a follow-up asks about; one removed since is left out (none left: an
+ *  ordinary round). */
+async function runRound(seq, d, by, { final = false, followUp = null, followUpFiles = null } = {}) {
   if (isArchived(seq)) return;
+  queueUnread(seq, d);   // A8 D5: files a spending limit stopped are read again once it allows
   setStatus(seq, 'thinking', by);
   notify(d, seq);
   const f = requireFeature(seq);
   const found = followUp ? f.spec.assumptions.filter((a) => followUp.includes(a.id) && a.status === 'rejected').map((a) => ({ id: a.id, text: a.text })) : [];
   const followItems = found.length ? found : null;   // none left rejected: an ordinary round
-  const isFinal = final || (!followItems && f.rounds + 1 >= MAX_ROUNDS);
   const turns = listTurns(seq);
-  const brief = briefFor(f);   // A7 D10: every round reads the scope's usable brief and records which one
-  const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns) };
+  const files = promptFiles(f);   // A8 D6: the feature's files and the scope's documents, as the prompts carry them
+  const askFiles = Array.isArray(followUpFiles) ? files.rows.filter((r) => followUpFiles.includes(r.id)) : [];
+  const fileNames = askFiles.length ? askFiles.map((r) => r.name) : null;   // removed since: an ordinary round
+  const isFinal = final || (!followItems && !fileNames && f.rounds + 1 >= MAX_ROUNDS);
+  const brief = briefFor(f, files.documents);   // A7 D10: every round reads the scope's usable brief and records which one
+  const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns), sources: files.sources };
   let applied = null;
   let model = null;
   let cost = 0;
   let lastErr = null;
   if (mockEnabled({})) {
-    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems }), seqs);
+    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems, followUpFiles: fileNames, sources: files.sources }), seqs);
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
-    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text });
+    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text,
+      attachments: files.attachments, followUpFiles: fileNames });
     const im = await interviewModel(d);
     model = im.model || undefined;
     const effort = im.effort || undefined;
@@ -390,8 +481,10 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
     failTurn(seq, { code: 'BAD_REPLY', message: `Worca's reply could not be read (${lastErr.message}). Try again.`, job: 'round', costUsd: cost, model }, by, 'your_turn');
     return;
   }
-  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal, ...(followItems ? { followUp: followItems.map((a) => a.id) } : {}),
-    ...(brief ? { brief: { id: brief.id, madeAt: brief.madeAt } } : {}) },
+  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal,
+    ...(followItems || fileNames ? { followUp: (followItems || []).map((a) => a.id) } : {}), ...(fileNames ? { followUpFiles: askFiles.map((r) => r.id) } : {}),
+    ...(brief ? { brief: { id: brief.id, madeAt: brief.madeAt } } : {}),
+    ...(files.carried.length ? { files: files.carried } : {}) },   // A8 D8: the files this round asked about (absent without any)
     model: model || null, costUsd: cost || null }, { by });
   charge(seq, turnId, cost, model);
   setStatus(seq, applied.done ? 'done' : 'your_turn', by, {
@@ -415,24 +508,65 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   if (!thenRound && !getContext(f.scopeType, f.scopeKey).lookAtCode && usableBrief(f.scopeType, f.scopeKey)) {
     throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${f.scopeType === 'workspace' ? 'workspace' : 'project'}.`);
   }
+  // A8 D2: round 1 waits for the reads of the files the feature was created with, at most ROUND1_WAIT_MS; then it runs
+  // and lists a file still being read by name only. The waiting job does not count against MAX_JOBS (the feature is
+  // busy meanwhile, as during any job: its status stays `looking` and the page says "Reading N files…"). The look before
+  // it and round 1 after it each take a job slot only when one is free, so MAX_JOBS still bounds the model calls. Such a
+  // job is outside MAX_JOBS from its start, so several creates in a row are all taken while their reads run.
+  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id));
   return startJob(seq, d, async (job) => {
+    if (waits) await takeSlot(f.seq);
     await runOrientation(seq, d, by, { useBrief: thenRound });
-    if (thenRound) { job.kind = 'round'; await runRound(seq, d, by); }
-    else setStatus(seq, restingStatus(seq), by);
-  }, by, 'look');
+    if (thenRound) {
+      if (waits) {
+        waitingReads.add(f.seq);
+        slotFreed();
+        try {
+          await within(readsSettled({ type: 'feature', id: f.seq }), d.round1WaitMs ?? ROUND1_WAIT_MS);
+          await takeSlot(f.seq);
+        } finally { waitingReads.delete(f.seq); }
+      }
+      job.kind = 'round';
+      await runRound(seq, d, by);
+    } else setStatus(seq, restingStatus(seq), by);
+  }, by, 'look', { waiting: waits });
 }
 
-/** Ask about the assumptions the product owner rejected since the last round: one extra round, past the round cap. */
-export function followUp(seq, { by = null } = {}, deps = {}) {
+/** Ask about the assumptions the product owner rejected and the files added or replaced since the interview finished
+ *  (A2-D4, A8 D8): one extra round, past the round cap. `filesOnly`: Worca's own follow-up after the reads (D8). */
+export function followUp(seq, { by = null, filesOnly = false } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
   const turns = listTurns(seq);
   // The round waiting for answers comes first: its answers start the next round, which sees the rejection.
   if (f.status === 'your_turn' && pendingRound(turns)) throw new RequirementsError('CONFLICT', 'answer the questions waiting first');
-  const ids = unaskedRejections(f.spec, turns);
-  if (!ids.length) throw new RequirementsError('CONFLICT', 'no rejected assumption is waiting for a follow-up');
-  appendTurn(seq, { kind: 'followup', payload: { assumptions: ids } }, { by });
-  return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids }), by);
+  if (isStarting(seq)) throw new RequirementsError('BUSY', STARTING_MESSAGE);   // the run gets the spec as it is now
+  const ids = filesOnly ? [] : unaskedRejections(f.spec, turns);
+  // Only files whose text the prompt carries: one still being read (by name only) stays unasked for the follow-up after its read.
+  const unasked = unaskedFiles(listAttachments('feature', f.seq), turns);
+  const carried = unasked.length ? promptFiles(f).carried : [];
+  const files = unasked.filter((id) => carried.includes(id));
+  if (!ids.length && !files.length) {
+    throw new RequirementsError('CONFLICT', unasked.length ? 'Worca is reading this file.' : 'nothing is waiting for a follow-up');
+  }
+  appendTurn(seq, { kind: 'followup', payload: { assumptions: ids, ...(files.length ? { files } : {}) } }, { by });
+  return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids, followUpFiles: files.length ? files : null }), by);
+}
+
+/** A8 D8: once a feature has nothing left to read or answer, files added or replaced after its interview finished get one
+ *  short follow-up round, started by Worca when it can start (not busy, not archived, under MAX_JOBS, within the budget);
+ *  otherwise the Decide panel offers it. Never throws. */
+export function maybeFollowUpFiles(seq, deps = {}) {
+  try {
+    const d = { ...DEFAULTS, ...deps };
+    const f = getFeature(seq);
+    if (!f || f.status !== 'done' || isBusy(seq) || isStarting(seq) || activeJobs() >= MAX_JOBS) return false;
+    if (!unaskedFiles(listAttachments('feature', f.seq), listTurns(seq)).length) return false;
+    const b = d.budget();
+    if (b && b.blocked) return false;
+    followUp(seq, { by: null, filesOnly: true }, deps);
+    return true;
+  } catch { return false; }
 }
 
 /** Where a feature rests between jobs: done when its latest round said so, else the product owner's turn. */
@@ -477,11 +611,15 @@ export function finishInterview(seq, { by = null } = {}, deps = {}) {
 export function retry(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
-  if (listTurns(seq).at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
-  const lastReal = listTurns(seq).filter((t) => t.kind !== 'error').at(-1);
+  // A8 / A6: a file's or an export's turns never hide the error Try again answers
+  const turns = listTurns(seq).filter((t) => t.kind !== 'file' && t.kind !== 'export');
+  if (turns.at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
+  const lastReal = turns.filter((t) => t.kind !== 'error').at(-1);
   if (!f.orientation) return startOrientation(seq, { by }, deps);
-  if (listTurns(seq).at(-1).payload.job === 'look') return startOrientation(seq, { by, thenRound: false }, deps);
-  if (lastReal?.kind === 'followup') return startJob(seq, d, () => runRound(seq, d, by, { followUp: lastReal.payload.assumptions }), by);
+  if (turns.at(-1).payload.job === 'look') return startOrientation(seq, { by, thenRound: false }, deps);
+  if (lastReal?.kind === 'followup') {
+    return startJob(seq, d, () => runRound(seq, d, by, { followUp: lastReal.payload.assumptions, followUpFiles: lastReal.payload.files || null }), by);
+  }
   return startJob(seq, d, () => runRound(seq, d, by, { final: lastReal?.kind === 'finish' }), by);
 }
 

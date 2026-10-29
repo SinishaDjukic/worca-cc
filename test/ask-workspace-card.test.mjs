@@ -177,6 +177,38 @@ test('remove_member clears a home it removes and warns about schedules; rename k
   ]);
 });
 
+test('remove_member carries worca\'s re-scan recommendation once (no duplicate effects line), preselects it, takes the user\'s choice', async () => {
+  const REC = { level: 'full', reason: 'api had 9 edges with 1 member (web). A full re-scan is recommended so the map and its notes are rebuilt around the members left.', partialAvailable: true, signals: {} };
+  const seen = [];
+  const { v } = validator({ removeImpact: async (id, path, opts) => { seen.push([id, path, opts]); return REC; } });
+  let r = await v({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'ka' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.card.recommendation, { level: 'full', reason: REC.reason, partialAvailable: true });
+  assert.equal(r.card.rescan, 'full');
+  assert.equal(r.card.rescanAsked, false);
+  assert.deepEqual(seen[0], [WS.id, '/r/api', { pendingRescan: null }]);
+  assert.equal(r.card.effects.some((e) => e.includes(REC.reason)), false, 'the reason is shown once, in the card\'s re-scan box');
+  assert.equal(r.card.effects.some((e) => /starts a Workspace scan run of the new set/.test(e)), false, 'no "always a full scan" line on a removal');
+  assert.ok(r.card.effects.some((e) => /re-scans as chosen on the card/.test(e)));
+  assert.ok(r.card.effects.some((e) => /Map tab drops api's edges and reviews/.test(e)), 'the existing effect stays');
+
+  r = await v({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'ka', rescan: 'none' });
+  assert.equal(r.card.rescan, 'none', 'the user asked for none');
+  assert.equal(r.card.rescanAsked, true);
+  r = await v({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'ka', rescan: 'sometimes' });
+  assert.deepEqual(r, { ok: false, errors: ['rescan must be one of none, partial, full'] });
+  const { v: v2 } = validator({ removeImpact: async () => ({ ...REC, partialAvailable: false }) });
+  r = await v2({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'ka', rescan: 'partial' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors[0], /partial re-scan is not available/);
+  const { v: v3 } = validator({ liveRun: async () => 'scan', removeImpact: async (id, path, opts) => { seen.push(opts); return REC; } });
+  await v3({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'ka' });
+  assert.deepEqual(seen.at(-1), { pendingRescan: 'full' }, 'a live scan raises the recommendation');
+  const add = await validator({ removeImpact: async () => REC }).v({ kind: 'add_members', workspaceId: WS.id, projectKeys: ['kc'] });
+  assert.equal(add.card.recommendation, undefined, 'an add carries no recommendation');
+  assert.ok(add.card.effects.some((e) => /starts a Workspace scan run of the new set/.test(e)), 'an add keeps its full-scan effect');
+});
+
 test('event and notice text: applied lists the follow-ups; failed carries the error; context tags are defused', () => {
   const card = { summary: 'Add docs to Shop', followUps: ['metrics_route_members', 'policy_workspace_home'] };
   assert.equal(workspaceEventPrompt({ cardId: 'card_1', state: 'declined', card }), '[worca event] workspace card card_1 declined; "Add docs to Shop"');
@@ -325,7 +357,7 @@ test('route apply: add_members then remove_member, rename and create change the 
       assert.ok(mod.runs.get(j.block.card.result.rescanRunId)?.autoRescan, 'the card started the workspace re-scan');
       await stopAndSettle(mod.runs, (e) => e.autoRescan);
 
-      const del = await seedCard({ kind: 'remove_member', summary: 'Remove p0 from Card WS', change: { workspaceId: ws.id, projectPath: projects[0].path } });
+      const del = await seedCard({ kind: 'remove_member', summary: 'Remove p0 from Card WS', rescan: 'full', rescanAsked: true, change: { workspaceId: ws.id, projectPath: projects[0].path } });
       mod._testing.setAutoRescan(false);
       try {
         r = await post(`/api/ask/threads/${del.threadId}/cards/${del.cardId}`, { state: 'applied' });
@@ -337,6 +369,41 @@ test('route apply: add_members then remove_member, rename and create change the 
       const now = await readWs(ws.id);
       assert.equal(now.id, ws.id);
       assert.equal(now.projectPaths.includes(projects[0].path), false);
+
+      // Re-add p0 (removed just above) so a second removal leaves two members. Never p3: the tests
+      // below validate adding projects[3] to Card WS and need it to stay a non-member.
+      const back0 = await seedCard({ kind: 'add_members', summary: 'Add p0 back to Card WS', change: { workspaceId: ws.id, projectPaths: [projects[0].path] } });
+      mod._testing.setAutoRescan(false);
+      try { assert.equal((await post(`/api/ask/threads/${back0.threadId}/cards/${back0.cardId}`, { state: 'applied' })).status, 200); }
+      finally { mod._testing.setAutoRescan(true); }
+      assert.equal((await readWs(ws.id)).projectPaths.length, 3);
+      // A user's pick on the card (body.rescan) wins over the proposal; none starts no run and says so on the card.
+      const del2 = await seedCard({ kind: 'remove_member', summary: 'Remove p1 from Card WS', rescan: 'full', rescanAsked: false,
+        change: { workspaceId: ws.id, projectPath: projects[1].path } });
+      r = await post(`/api/ask/threads/${del2.threadId}/cards/${del2.cardId}`, { state: 'applied', rescan: 'none' });
+      j = await r.json();
+      assert.equal(j.block.state, 'applied', JSON.stringify(j.block));
+      assert.equal(j.block.card.result.rescan, 'none', 'the user\'s pick on the card wins over the proposal');
+      assert.equal(j.block.card.result.rescanRunId, undefined);
+      assert.match(j.block.card.result.detail, /map pruned, not re-scanned/);
+      assert.equal([...mod.runs.values()].some((e) => e.workspaceId === ws.id && e.autoRescan && !['done', 'stopped', 'error'].includes(String(e.status).toLowerCase())), false);
+      const after2 = await readWs(ws.id);
+      assert.deepEqual([...after2.projectPaths].sort(), [projects[0].path, projects[2].path].sort());
+      assert.equal(after2.projectPaths.includes(projects[3].path), false, 'p3 stays out for the add_members tests below');
+
+      // A partial pick the recommendation no longer allows at Apply (no stored map: partialAvailable false)
+      // falls back to the recommendation — the card applies, it never fails.
+      const back1 = await seedCard({ kind: 'add_members', summary: 'Add p1 back to Card WS', change: { workspaceId: ws.id, projectPaths: [projects[1].path] } });
+      mod._testing.setAutoRescan(false);
+      try {
+        assert.equal((await post(`/api/ask/threads/${back1.threadId}/cards/${back1.cardId}`, { state: 'applied' })).status, 200);
+        const del3 = await seedCard({ kind: 'remove_member', summary: 'Remove p1 from Card WS', rescan: 'partial', rescanAsked: true,
+          change: { workspaceId: ws.id, projectPath: projects[1].path } });
+        j = await (await post(`/api/ask/threads/${del3.threadId}/cards/${del3.cardId}`, { state: 'applied', rescan: 'partial' })).json();
+      } finally { mod._testing.setAutoRescan(true); }
+      assert.equal(j.block.state, 'applied', JSON.stringify(j.block));
+      assert.equal(j.block.card.result.rescan, 'full', 'a stale partial pick falls back to the recommendation');
+      assert.deepEqual([...(await readWs(ws.id)).projectPaths].sort(), [projects[0].path, projects[2].path].sort());
     } },
     { name: 'route: rename and create apply through the registry', run: async () => {
       const ren = await seedCard({ kind: 'rename', summary: 'Rename Card WS to Renamed WS', change: { workspaceId: ws.id, name: 'Renamed WS' } });

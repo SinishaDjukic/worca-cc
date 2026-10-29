@@ -59,7 +59,6 @@ before(async () => {
   base = `http://127.0.0.1:${srv.address().port}`;
   repo = gitDir('run-tags');
   await addProject({ name: 'run-tags', path: repo });
-  await post('/api/settings', { flags: { runTags: true } });   // experimental, off by default: these tests are about it on
 });
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
@@ -142,6 +141,7 @@ test('PUT /api/runs/:id/tags retags, writes one audit row with the actor, and ch
   // resolveIdentity reads the env at request time; restore it so later tests keep the default identity.
   const prev = process.env.WORCA_IDENTITY_HEADER;
   process.env.WORCA_IDENTITY_HEADER = 'X-Forwarded-Email';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   t.after(() => { if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev; });
   const a = await startTagged({ tags: ['client:acme'] });
   const b = await startTagged({ prompt: 'y', tags: ['client:acme'] });
@@ -242,8 +242,7 @@ test('GET /api/tag-dimensions: none by default, the Settings list after a POST, 
 
 // ── Enforced tags (slice 4A): pre-fill, then refuse a missing mandatory tag or an off-list value ──
 const CCD = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
-// runTags is experimental (off by default): enforcement only applies with it on.
-const enforce = (dims, on = true) => post('/api/settings', { tagDimensions: dims, enforceTags: on, flags: { runTags: true } });
+const enforce = (dims, on = true) => post('/api/settings', { tagDimensions: dims, enforceTags: on });
 // The default identity is a real person here, so a cc run in one test would pre-fill the next one
 // (last value used): clearing drops the stored cc tags too.
 const clear = async () => {
@@ -253,6 +252,7 @@ const clear = async () => {
 const withIdentity = (t) => {
   const prev = process.env.WORCA_IDENTITY_HEADER;
   process.env.WORCA_IDENTITY_HEADER = 'X-Forwarded-Email';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   t.after(() => { if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev; });
 };
 const postAs = (body, email) => fetch(`${base}/api/run`, { method: 'POST', headers: { ...JSONH, 'x-forwarded-email': email },
@@ -377,13 +377,6 @@ test('enforced: Run after with no tags of its own still inherits the parent tags
 test('enforcement off: required only warns — the run starts untagged (today)', async () => {
   await enforce([CCD], false);
   try { const e = await startTagged({}); assert.deepEqual(readRunTags(e.pipelineId), []); } finally { await clear(); }
-});
-
-test('runTags flag off: enforcement is ignored entirely', async () => {
-  await enforce([CCD]);
-  await post('/api/settings', { flags: { runTags: false } });
-  try { const e = await startTagged({}); assert.ok(e.pipelineId); }
-  finally { await post('/api/settings', { flags: { runTags: true } }); await clear(); }
 });
 
 test('enforced: a memory defrag start is exempt (system start)', async () => {

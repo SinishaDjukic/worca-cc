@@ -279,18 +279,14 @@ export function schedRow(t, now = Date.now()) {
   }, t.after ? { at: now, time: '' } : { at: t.runAt }, now);   // an after-ticket's runAt is a far-future sentinel
 }
 
-/** "Group by" Date sections, top to bottom. Live rows are happening now (Today); a scheduled run is
- *  Upcoming; a History row files under its last activity (finish time, else start). The
- *  boundaries are local midnights, stepped with setDate so a DST day is still one day. */
-export const DATE_BUCKETS = Object.freeze([
-  ['upcoming', 'Upcoming'], ['today', 'Today'], ['yesterday', 'Yesterday'],
-  ['week', 'Previous 7 days'], ['older', 'Older'],
+/** The day sections both lists share (Runs and Chats Group by Date), top to bottom: Today, Yesterday, 2–7 days ago,
+ *  8–30 days ago, then the rest. The boundaries are local midnights, stepped with setDate so a DST day is still one day. */
+export const DAY_BUCKETS = Object.freeze([
+  ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older'],
 ]);
-export function dateBucket(row, now = Date.now()) {
-  if (row.kind === 'sched') return 'upcoming';
-  // Groups include finished features and user groups (D10): an ended group files under its latest member's time.
-  const endedGroup = row.kind === 'chain' && row.model && ENDED_STATES.has(row.model.state) && Number.isFinite(row.activityMs);
-  const t = row.kind === 'live' || (row.kind === 'chain' && !endedGroup) ? now : row.activityMs;
+/** The View menu's Date segment title, for both lists. */
+export const DATE_GROUP_TITLE = DAY_BUCKETS.map(([, name]) => name).join(' · ');
+export function dayBucket(t, now = Date.now()) {
   if (!Number.isFinite(t)) return 'older';
   const day = new Date(now);
   day.setHours(0, 0, 0, 0);
@@ -298,7 +294,26 @@ export function dateBucket(row, now = Date.now()) {
   day.setDate(day.getDate() - 1);
   if (t >= day.getTime()) return 'yesterday';
   day.setDate(day.getDate() - 6);
-  return t >= day.getTime() ? 'week' : 'older';
+  if (t >= day.getTime()) return 'week';
+  day.setDate(day.getDate() - 23);
+  return t >= day.getTime() ? 'month' : 'older';
+}
+/** Older starts folded in both lists. `collapsed` (the person's record) holds the sections whose fold differs from
+ *  their default, so a fold read or set goes through these two. */
+const FOLDED_FIRST = new Set(['date:older']);
+export const isFolded = (collapsed, id) => FOLDED_FIRST.has(id) !== collapsed.has(id);
+export function setFolded(collapsed, id, fold) {
+  if (fold !== FOLDED_FIRST.has(id)) collapsed.add(id); else collapsed.delete(id);
+}
+
+/** Runs "Group by" Date sections: Upcoming, then the shared day sections. Live rows are happening now (Today); a
+ *  scheduled run is Upcoming; a History row files under its last activity (finish time, else start). */
+export const DATE_BUCKETS = Object.freeze([['upcoming', 'Upcoming'], ...DAY_BUCKETS]);
+export function dateBucket(row, now = Date.now()) {
+  if (row.kind === 'sched') return 'upcoming';
+  // Groups include finished features and user groups (D10): an ended group files under its latest member's time.
+  const endedGroup = row.kind === 'chain' && row.model && ENDED_STATES.has(row.model.state) && Number.isFinite(row.activityMs);
+  return dayBucket(row.kind === 'live' || (row.kind === 'chain' && !endedGroup) ? now : row.activityMs, now);
 }
 const NEEDS_RANK = Object.freeze({ ask: 0, paused: 1, fail: 2 });
 // D12: dispatch time, newest first, is the default order. A row's `dispatchMs` when it has one (a one-off ticket's
@@ -307,13 +322,16 @@ export const dispatchOf = (r) => (Number.isFinite(r.dispatchMs) ? r.dispatchMs :
 const byDispatch = (a, b) => dispatchOf(b) - dispatchOf(a);
 export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.needsIcon || a.icon] ?? 3) - (NEEDS_RANK[b.needsIcon || b.icon] ?? 3)) || byDispatch(a, b);
 
-export const RUNS_SHOW = Object.freeze(['all', 'needs', 'running', 'waiting', 'finished', 'archived']);
+export const RUNS_SHOW = Object.freeze(['all', 'needs', 'running', 'waiting', 'finished', 'ready', 'archived']);
 /** D10: a run that has not started (clarify: one-off only): an after-ticket, a one-off timed ticket, or a group whose
  *  next member is one. A series occurrence and a missed ticket stay in Recent. */
 const isWaiting = (r) => r.model.state === 'waiting' && !(r.kind === 'sched' && (r.scheduleId || r.status === 'missed'));
 export const RUNS_GROUP_BY = Object.freeze(['none', 'project', 'date']);
 export const RECENT_PAGE = 20;
 const ENDED_STATES = new Set(['failed', 'stopped', 'ready', 'in-review', 'merged']);
+// Ready to ship: a finished git run (or group) with no open PR. A Folder or no-project run is 'ready' too, but its word
+// is Finished / Applied / Discarded (run-model.mjs finishedWords): nothing to ship, so it stays out.
+const isReadyToShip = (r) => r.model.state === 'ready' && r.model.word === 'Ready';
 const RUNNING_STATES = new Set(['starting', 'working', 'paused', 'needs-you']);
 const LIVE_MEMBER = new Set(['starting', 'working', 'needs-you', 'paused', 'failed']);
 const STAGED = (m) => (m && m.progress && m.progress.mode === 'stages' ? m.progress.label : '');
@@ -337,6 +355,7 @@ export function rowShow(row, show) {
   // A run raised to Needs you by its PR (D31, model.prNeeds) is finished: it lists under Finished, not Running.
   if (show === 'running') return !ENDED_STATES.has(row.model.state) && !row.model.prNeeds && !isWaiting(row);
   if (show === 'finished') return ENDED_STATES.has(row.model.state) || !!row.model.prNeeds;
+  if (show === 'ready') return isReadyToShip(row);
   return true;
 }
 
@@ -503,6 +522,7 @@ export function buildRunsModel({
   const counts = {
     all: top.filter((r) => !r.archived).length, needs: top.filter((r) => rowShow(r, 'needs')).length,
     running: top.filter((r) => rowShow(r, 'running')).length, waiting: top.filter((r) => rowShow(r, 'waiting')).length, finished: top.filter((r) => rowShow(r, 'finished')).length,
+    ready: top.filter((r) => rowShow(r, 'ready')).length,
     archived: archivedCount,
   };
   const shown = top.filter((r) => rowShow(r, view.show));
@@ -510,7 +530,7 @@ export function buildRunsModel({
   const sections = [];
   const push = (id, title, rows, extra = {}) => { if (rows.length) sections.push({ id, title, rows, count: rows.length, ...extra }); };
   if (view.show !== 'all') {
-    const titles = { needs: 'Needs you', running: 'Running', waiting: 'Waiting', finished: 'Finished', archived: 'Archived' };
+    const titles = { needs: 'Needs you', running: 'Running', waiting: 'Waiting', finished: 'Finished', ready: 'Ready to ship', archived: 'Archived' };
     const id = ['needs', 'running', 'waiting'].includes(view.show) ? view.show : 'recent';
     push(id, titles[view.show], view.show === 'needs' ? shown.sort(cmpNeeds) : shown.sort(byDispatch));
   } else {
@@ -538,12 +558,12 @@ export function buildRunsModel({
     } else {
       for (const [b, name] of DATE_BUCKETS) {
         const id = `date:${b}`;
-        push(id, name, rest.filter((r) => dateBucket(r, now) === b).sort(byDispatch), { bucket: b, collapsed: collapsed.has(id) });
+        push(id, name, rest.filter((r) => dateBucket(r, now) === b).sort(byDispatch), { bucket: b, collapsed: isFolded(collapsed, id) });
       }
     }
   }
   // D29: a group is open while it is not finished (any section, any flag), closed once it has ended; the person's
-  // ⌄ toggle for this session wins. No shapeFirst check: a plain Run-after chain behaves like a feature.
+  // ⌄ toggle for this session wins. A plain Run-after chain behaves like a feature.
   for (const s of sections) for (const r of s.rows) {
     if (r.kind === 'chain') r.open = toggled.has(r.key) ? !!toggled.get(r.key) : !ENDED_STATES.has(r.model.state);
   }
@@ -648,15 +668,22 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (spansProjects && level === 'top' && r.groupName) line = and(line, r.groupName);
   // #955: a member is one line: no state word its dot says, no project its group names, no label chips.
   if (level === 'member') line = dropLead(memberLine(r.model, line), r.kind === 'chat' ? parentWhere : '');
+  // #1012: a staged member draws the four-section block, whose marks name its stage, so its line drops that word.
+  // A working one names no step either ("Refine Plan"): only a state its dot does not say (needs you, paused) stays.
+  // A member dispatched but not started yet (Starting) has no progress to show: no block, no line.
+  const unstarted = level === 'member' && r.model.state === 'starting';
+  const staged = level === 'member' && !unstarted && r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed'
+    && !r.model.prNeeds && r.model.progress && r.model.progress.mode === 'stages';
+  if (staged) line = DOT_SAYS.has(r.model.state) ? '' : dropLead(line, r.model.progress.label);
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
   const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
   a.append(...[title, lab, right, textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
-  } else if (r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
+  } else if (r.kind !== 'chain' && !unstarted && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
     // A run in Needs you only through its PR (conflicts, failing checks) has finished: no progress bar to draw.
-    if (level === 'member') {
-      // #955: a one-line member keeps the list's 3px line; paintRunsProgress (app.js) moves it in place.
+    if (level === 'member' && !staged) {
+      // #955: a one-line member without stages keeps the list's 3px line; paintRunsProgress (app.js) moves it in place.
       a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
     } else {
       const stage = doc.createElement('div');
@@ -694,7 +721,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   return item;
 }
 
-const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No running runs.', waiting: 'Nothing is waiting.', finished: 'No finished runs yet.', archived: 'No archived runs.' });
+const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No running runs.', waiting: 'Nothing is waiting.', finished: 'No finished runs yet.', ready: 'Nothing is ready to ship.', archived: 'No archived runs.' });
 
 /** The list's children: one section element each, then the empty note and the error note. */
 /** §5a.2: the empty list's note before History has answered, and while the server is unreachable. */

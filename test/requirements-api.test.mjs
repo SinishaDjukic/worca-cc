@@ -104,7 +104,8 @@ test('the whole flow in mock mode, with frames', async () => {
 // The route table is the one list both the registration and this test use, so a new route cannot be
 // added without the flag-off check covering it.
 const fill = (path) => path.replace(':scopeType/:scopeKey', `project/${projKey}`).replace(':seq', '1')
-  .replace('/criteria/:id', '/criteria/R-po-1').replace('/assumptions/:id', '/assumptions/A-1').replace(':section', 'actors');
+  .replace('/criteria/:id', '/criteria/R-po-1').replace('/assumptions/:id', '/assumptions/A-1').replace(':section', 'actors')
+  .replace(':attId', 'ratt_000000000000').replace(':msgId', '1').replace('/proposals/:n', '/proposals/1');
 
 test('the route table is exactly what gets registered', async () => {
   const { REQUIREMENTS_ROUTES, registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
@@ -124,6 +125,15 @@ test('the route table is exactly what gets registered', async () => {
     .map(([m, p]) => at(m, `/brief/:scopeType/:scopeKey${p}`));
   for (const i of brief) assert.ok(i >= 0 && i < at('GET', ''), `the brief routes precede GET /api/requirements: ${brief}`);
   assert.equal(at('POST', '/:seq/brief-addition'), at('POST', '/:seq/follow-up') + 1);
+  const { REQUIREMENTS_UPLOAD_ROUTES } = await import('../src/core/requirements/routes.mjs');
+  for (const p of REQUIREMENTS_UPLOAD_ROUTES) assert.ok(REQUIREMENTS_ROUTES.some((r) => r.method === 'POST' && r.path === p), p);
+  assert.deepEqual(REQUIREMENTS_UPLOAD_ROUTES, ['/api/requirements', '/api/requirements/:seq/attachments', '/api/requirements/:seq/attachments/:attId/replace',
+    '/api/requirements/brief/:scopeType/:scopeKey/documents', '/api/requirements/brief/:scopeType/:scopeKey/documents/:attId/replace']);
+  for (const [m, p] of [['POST', '/documents'], ['GET', '/documents/:attId'], ['PATCH', '/documents/:attId'], ['DELETE', '/documents/:attId'],
+    ['POST', '/documents/:attId/replace'], ['POST', '/documents/:attId/ask'], ['POST', '/documents/:attId/read-again']]) {
+    const i = at(m, `/brief/:scopeType/:scopeKey${p}`);
+    assert.ok(i >= 0 && i < at('GET', ''), `${m} ${p} precedes GET /api/requirements`);
+  }
 });
 
 test("flag off: every route in the table answers the flag gate's 404", async () => {

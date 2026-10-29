@@ -20,7 +20,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, basename, dirname, resolve, sep, relative } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { readFile, writeFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
+import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
@@ -77,7 +77,7 @@ import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
-import { readGuardrailSet } from './guardrail-store.mjs';
+import { readGuardrailSet, defaultGuardrailSetId } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs, pluginAssetDirs } from './skills.mjs';
 import { isBrowsableKind, BULK_ARTIFACT_THRESHOLD } from '../shared/artifact-kinds.mjs';
@@ -106,6 +106,7 @@ import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
+import { claimRunDir } from './agent-pool.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
@@ -128,7 +129,7 @@ import { readSettings as readRawSettings, userTagDimensions } from './settings.m
 import { readRunTags } from './run-tags-store.mjs';
 import { missingRequired } from '../shared/tag-dimensions.mjs';
 import { byActor } from './identity.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { isWorkspaceScanWorkflow, WORKSPACE_RESYNTH_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
@@ -144,8 +145,9 @@ import { skillMdFields } from './skills-registry/inspect.mjs';
 // without it (no Team-skill deviations until P5 lands).
 import * as policyEffective from './policy/effective.mjs';
 import { createRedactor } from './redact.mjs';
-import { finalizeWorkspaceScan } from './workspace-scan-run.mjs';
-import { readWorkspaceMap } from './workspaces.mjs';
+import { finalizeWorkspaceScan, WORKSPACE_GRAPH_FILE } from './workspace-scan-run.mjs';
+import { readWorkspaceMap, resynthBlocker } from './workspaces.mjs';
+import { STORED_MAP_FILE } from './workspace-map/join.mjs';
 import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 // Night mode (src/core/night/*): a decider answers the open question while the user is away.
 import { effectiveNightConfig } from './night/effective.mjs';
@@ -165,6 +167,8 @@ import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv } from './git-guard.mjs';
+import { stripHostCredentials } from './host-credentials.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -921,14 +925,14 @@ export class RunHarness extends EventEmitter {
     this.workflowId = this.opts.workflowId || 'wf_default';
     // The Workspace scan reads, compares and saves a WORKSPACE: refuse it on any other target
     // (the CLI's --workflow, an Ask card) before a pipeline exists.
-    if (this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !this.isWorkspace) {
-      throw new Error('the Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
+    if (isWorkspaceScanWorkflow(this.workflowId) && !this.isWorkspace) {
+      throw new Error('a Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
     }
     // Which guardrail set governs this run (guardrails are selected PER RUN;
-    // there is no per-project guardrails dimension). 'permissive' = the empty
-    // policy = byte-identical legacy spawn, so callers that never pass the
-    // option (CLI, tests, pre-picker API bodies) keep today's behavior exactly.
-    this.guardrailsId = this.opts.guardrailsId || 'permissive';
+    // there is no per-project guardrails dimension). Callers that never pass the
+    // option (the CLI, API bodies without one) get the install's default: Normal
+    // on a fresh install, Permissive (the empty policy) on one from before v81.
+    this.guardrailsId = this.opts.guardrailsId || defaultGuardrailSetId();
     // MCP registry (design §6.2, D16): the run's per-membership opt-out ('<setId>|<serverId>'),
     // validated by POST /api/run; rides the resume point, restored beside guardrailsId.
     this.mcpOptOut = Array.isArray(this.opts.mcpOptOut) ? this.opts.mcpOptOut : [];
@@ -1536,13 +1540,18 @@ export class RunHarness extends EventEmitter {
         this.opts.titleLocked = true;
         this.state.title = ticketTitle;
       }
+      // A6 D15 (Report back): a run started from an exported feature carries its ticket. Its task stays the spec; only the
+      // row says plugin, with the same source_ref a run started from that ticket would have, so write-back reports to it.
+      const reportTo = source.type !== 'plugin' && this.opts.reportTo && typeof this.opts.reportTo === 'object' ? this.opts.reportTo : null;
+      const reportMeta = reportTo ? { plugin: reportTo.plugin, sourceId: reportTo.sourceId, taskId: reportTo.taskId, profile: reportTo.profile || null,
+        inputs: reportTo.inputs && typeof reportTo.inputs === 'object' ? reportTo.inputs : null, url: reportTo.url ?? null, title: reportTo.title ?? null } : null;
       this.pipeline = await createPipeline(this.projectDir, {
         promptText: input.promptText,
         // ?? keeps the legacy both-set corner byte-identical: inline prompt wins the
         // text, but a passed promptFile is STILL copied verbatim into prompt.md.
         promptFile: input.promptFile ?? this.opts.promptFile,
-        sourceType: source.type,
-        sourceMeta: input.sourceMeta || null,
+        sourceType: reportMeta ? 'plugin' : source.type,
+        sourceMeta: input.sourceMeta || reportMeta,
         extras: this.opts.extras,
         title: this.opts.title,
         guardrailsId: this.guardrailsId,
@@ -1606,6 +1615,10 @@ export class RunHarness extends EventEmitter {
         }));
         this.state.checkpointRefs = {};
         this.state.branches = {};
+        // wf_workspace_resynth: freeze the stored map now — AFTER the workspace fields above, so a terminal
+        // refusal persists a row that still names its workspace (toPipelineRow writes workspace_meta only
+        // when state.target === 'workspace', and the upsert overwrites it).
+        await this._freezeStoredMap();
       }
       if (!this.state.title) this.state.title = basename(this.pipeline.dir);
       // The title set above (firstMeaningfulLine(prompt) or the dir basename) is
@@ -1757,7 +1770,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: null });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
-      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
+      await this._finalizeWorkspaceScan();   // Workspace scan workflows only (wf_workspace_scan, wf_workspace_resynth): create/update the workspace (D6)
 
       // 9) Done.
       this._setStatus('done');
@@ -1977,9 +1990,10 @@ export class RunHarness extends EventEmitter {
       this._recordAction('resume', this.opts.resumedBy || null);
       // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
       // LATEST saved set definition (missing set -> warn + Permissive, inside
-      // _resolveGuardrails). Legacy resume points without the field fall back to
-      // the constructor default ('permissive'). Keep state in sync for re-persist.
-      this.guardrailsId = rp.guardrailsId || this.guardrailsId;
+      // _resolveGuardrails). Legacy resume points without the field were written
+      // before the per-run picker, when every run was Permissive: they stay so,
+      // whatever the install default is now. Keep state in sync for re-persist.
+      this.guardrailsId = rp.guardrailsId || 'permissive';
       this.state.guardrailsId = this.guardrailsId;
       this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
       await this._resolveGuardrails();
@@ -1995,6 +2009,10 @@ export class RunHarness extends EventEmitter {
 
       /** The persisted manifest, read once on a detached resume (re-assembly below). */
       let resumeManifest = await this._reattachCheckouts(row, rehydrated);
+      // wf_workspace_resynth paused BEFORE its start-time freeze (a user pause during setup keeps even a
+      // terminal setup error as a pause — run()'s catch): freeze now, or end the run (terminal). A no-op
+      // once stored-map.json exists, so an ordinary resume reuses the frozen copy.
+      await this._freezeStoredMap();
 
       // ── prompts/registry (cheap, local) ──
       this.registry = loadAgentRegistry(this.agentsDir);
@@ -2080,7 +2098,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
-      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
+      await this._finalizeWorkspaceScan();   // Workspace scan workflows only (wf_workspace_scan, wf_workspace_resynth): create/update the workspace (D6)
 
       this._setStatus('done');
       this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
@@ -2555,7 +2573,11 @@ export class RunHarness extends EventEmitter {
     const detached = this.runRootMode === 'detached';
     this.runRoot = detached ? join(worcaHome(), 'runs', this.pipeline.id) : null;
     const reposBase = detached ? join(this.runRoot, 'repos') : null;
-    if (detached) await mkdir(reposBase, { recursive: true });
+    if (detached) {
+      await mkdir(this.runRoot, { recursive: true });
+      claimRunDir(this.runRoot);                          // G19: this run's owner's agent only
+      await mkdir(reposBase, { recursive: true });
+    }
 
     this._log('worktree', 'info', `Resolving source/feature branches for ${this.members.length} member(s)…`);
     // Settle EVERY member before propagating any failure — carried VERBATIM from
@@ -2850,6 +2872,8 @@ export class RunHarness extends EventEmitter {
     this.state.runRootMode = 'detached';
     this.runRoot = join(worcaHome(), 'runs', this.pipeline.id);
     const work = join(this.runRoot, WORK_DIR_NAME);
+    await mkdir(this.runRoot, { recursive: true });
+    claimRunDir(this.runRoot);                            // G19: this run's owner's agent only
     await mkdir(work, { recursive: true });
     this.workDirs.set(NO_PROJECT_KEY, work);
     this.workDir = work;
@@ -2871,6 +2895,8 @@ export class RunHarness extends EventEmitter {
     this.runRootMode = 'detached';
     this.state.runRootMode = 'detached';
     this.runRoot = join(worcaHome(), 'runs', this.pipeline.id);
+    await mkdir(this.runRoot, { recursive: true });
+    claimRunDir(this.runRoot);                            // G19: this run's owner's agent only
     for (const m of this.members) {
       if (this._memberWorkMode(m.projectKey) !== 'folder') continue;
       const copyDir = join(this.runRoot, 'repos', m.projectKey);
@@ -3248,15 +3274,18 @@ export class RunHarness extends EventEmitter {
     // signs in with its own, which the broker can neither bill nor revoke.
     const brokerRefusal = brokerEngineRefusal(name);
     if (brokerRefusal) return brokerRefusal;
+    // The CLI's wording, like "pass --allow-unguarded-engine" (engineRefusalFor rewords both for the UI and chat). A resume
+    // keeps the set its run pinned, so `worca resume` has no --guardrails to name.
+    const permissive = this.resumeOpts ? 'run it with the Permissive set' : 'run it with --guardrails permissive';
     if (caps.permissionRules === false && hasPermissionRules(rules) && !allowed) {
-      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
+      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — ${permissive}, or pass --allow-unguarded-engine to run it without them`;
     }
     if (caps.permissionRules === false && hasPermissionRules(projectRules) && !allowed) {
       return `the project's .claude/settings.json denies ${ruleList(projectRules)}, which this engine cannot enforce — pass --allow-unguarded-engine to run it without them`;
     }
     const gSkip = caps.permissionRules === false ? [] : this._engineUnenforced(rules);
     if (gSkip.length && !allowed) {
-      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce (${ruleNames(gSkip)}) — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
+      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce (${ruleNames(gSkip)}) — ${permissive}, or pass --allow-unguarded-engine to run it without them`;
     }
     const pSkip = caps.permissionRules === false ? [] : this._engineUnenforced(projectRules);
     if (pSkip.length && !allowed) {
@@ -3266,7 +3295,7 @@ export class RunHarness extends EventEmitter {
     // a choice, like running without a rule.
     const gPart = caps.permissionRules === false ? [] : this._enginePartial(rules);
     if (gPart.length && !allowed) {
-      return `guardrail set "${guardrailsId}" has ${this._enginePartialKind()} this engine holds only in part (${ruleNames(gPart)}): ${this._engineRuleReach()} — run it with the Permissive set, or pass --allow-unguarded-engine to run it with them as a partial guard`;
+      return `guardrail set "${guardrailsId}" has ${this._enginePartialKind()} this engine holds only in part (${ruleNames(gPart)}): ${this._engineRuleReach()} — ${permissive}, or pass --allow-unguarded-engine to run it with them as a partial guard`;
     }
     const pPart = caps.permissionRules === false ? [] : this._enginePartial(projectRules);
     if (pPart.length && !allowed) {
@@ -3334,7 +3363,7 @@ export class RunHarness extends EventEmitter {
   async _engineResumeGate(rp) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude') return [];
-    const { id, rules, projectRules } = await this._engineSetRules(rp.guardrailsId || this.guardrailsId);
+    const { id, rules, projectRules } = await this._engineSetRules(rp.guardrailsId || 'permissive');
     const nodes = await this._engineGateNodes(rp);
     const why = this._engineRefusal({ rules, guardrailsId: id, projectRules, nodes });
     if (why) throw engineRefusal(name, why);
@@ -3385,7 +3414,7 @@ export class RunHarness extends EventEmitter {
     const rp = this.resumeOpts?.resumePoint;
     if (!rp) return null;
     this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
-    return this._engineEarlyRefusal(rp.guardrailsId || this.guardrailsId, () => this._engineGateNodes(rp));
+    return this._engineEarlyRefusal(rp.guardrailsId || 'permissive', () => this._engineGateNodes(rp));
   }
 
   /** This run target's Team set input from the policy cache (mcp/registry.mjs cachedTeamFor); null when none or unreadable. */
@@ -5380,7 +5409,33 @@ export class RunHarness extends EventEmitter {
    *  committed and every member's run branch is deleted at teardown. Read live, never cached:
    *  resume() restores this.workflowId from the resume point AFTER construction. */
   _isWorkspaceScan() {
-    return this.isWorkspace && this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID;
+    return this.isWorkspace && isWorkspaceScanWorkflow(this.workflowId);
+  }
+
+  /** wf_workspace_resynth (a partial re-scan after a member removal): freeze the stored, already
+   *  pruned map — and a copy of its merged graph, under the bare name finalize's adoptGraphFile
+   *  adopts — into the run folder ONCE. The seed card reads it from there (a script child never
+   *  opens the worca DB). Called at start (_run, after the overrides freeze) and at resume (_resume,
+   *  after _reattachCheckouts): a run a user pause parked during setup, before its first freeze,
+   *  freezes on resume. Once the frozen copy exists every later call is a no-op.
+   *  No stored map, or one of another member set: TERMINAL, not a pause (setup failures pause by
+   *  default) — a resume would read the same map and replay into the same pause, and a paused
+   *  re-synthesis owns the workspace (server ownsWorkspaceTarget), which would refuse Re-scan. The
+   *  server checks the same before launching (afterMembersChanged); this is the race-proof re-check. */
+  async _freezeStoredMap() {
+    if (!this.isWorkspace || this.workflowId !== WORKSPACE_RESYNTH_WORKFLOW_ID || !this.pipeline?.dir) return;
+    const dest = join(this.pipeline.dir, STORED_MAP_FILE);
+    if (existsSync(dest)) return;
+    const wsId = this.workspace.id || this.workspaceKey;
+    const stored = await readWorkspaceMap(wsId);
+    const why = resynthBlocker(stored && stored.map, this.members.map((m) => m.projectKey));
+    if (why) throw markTerminal(new Error(`partial re-scan: ${why} — use Re-scan for a full one`));
+    let map = stored.map;
+    if (map.graph && map.graph.file) {
+      const copied = await copyFile(join(workspaceStorePath(wsId), WORKSPACE_GRAPH_FILE), join(this.pipeline.dir, WORKSPACE_GRAPH_FILE)).then(() => true, () => false);
+      map = { ...map, graph: copied ? { ...map.graph, file: WORKSPACE_GRAPH_FILE } : { mode: 'none', file: null, nodes: 0, bridges: 0 } };
+    }
+    await writeFile(dest, JSON.stringify({ map }), 'utf8');
   }
 
   /**
@@ -5544,11 +5599,12 @@ export class RunHarness extends EventEmitter {
     // Plain commit first (uses the repo's configured identity); fall back to a
     // local identity so a repo with no user.name/email still commits — mirrors
     // _ensureGitCheckpoint's belt-and-braces.
-    let commit = await this._gitIndexWrite(['commit', '-m', msg], gitOpts);
+    // The one place worca runs the project's own commit hooks (git-guard.mjs: never under agent isolation).
+    let commit = await this._gitIndexWrite(['commit', '-m', msg], { ...gitOpts, hooks: true });
     if (!commit.ok) {
       commit = await this._git(
         ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator', 'commit', '-m', msg],
-        gitOpts,
+        { ...gitOpts, hooks: true },
       );
     }
     if (!commit.ok && this.runRootMode === 'detached') {
@@ -7103,14 +7159,21 @@ export class RunHarness extends EventEmitter {
    * the stop/teardown path (which deliberately ignores the abort signal) held
    * the whole process, and under `npm test` the runner, until the CI job's
    * 30-minute limit killed it.
+   * Repository-local hooks and config commands never run (git-guard.mjs, security G2), except the
+   * project's hooks for `hooks: true` (the end-of-run commit), with every host credential stripped.
    */
-  _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS } = {}) {
-    if (!gitAvailable()) return Promise.resolve(gitMissingResult());
+  async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false } = {}) {
+    if (!gitAvailable()) return gitMissingResult();
+    let env;
+    try {
+      env = await guardedGitEnv(cwd || this.projectDir, hooks ? { hooks, env: stripHostCredentials(process.env) } : {});
+    } catch (err) { return { ok: false, code: -1, stdout: '', stderr: err.message }; }
     return new Promise((resolveP) => {
       let child;
       try {
         child = spawn('git', args, {
           cwd: cwd || this.projectDir,
+          env,
           stdio: ['ignore', 'pipe', 'pipe'],
           // ignoreAbort: teardown commits run AFTER the run is aborted (stop/error);
           // binding the aborted signal here would kill them instantly and leave the

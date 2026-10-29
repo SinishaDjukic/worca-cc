@@ -32,7 +32,8 @@ test('the page fills the content column: .main gives up its gutter and scroll, t
   assert.equal(ruleBody('body.view-chat .main'), 'display:flex;flex-direction:column;overflow:hidden;padding:0;');
   assert.equal(ruleBody('.view[data-view="chat"]'), 'flex:1 1 auto;min-height:0;position:relative;');
   assert.match(ruleBody('.chat-page'), /^position:absolute;inset:0;display:flex;/);
-  assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;--chat-card-max:1040px;/);
+  assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;$/, 'one chat width: the text column');
+  assert.doesNotMatch(ruleBody('.chat-page'), /--chat-card-max/);
 });
 
 test('the conversation column carries the cap tokens (a 760px text column) for the transcript, the composer box and the jump pill', () => {
@@ -147,6 +148,10 @@ test('summary rows: one line, a group is one card under a quiet head, the raw co
   assert.match(ruleBody('.ask-cmd-gfail'), /color:var\(--red-ink\)/);
   assert.match(ruleBody('.ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum'), /border-top:1px solid var\(--line\)/);
   assert.doesNotMatch(bare, /\.ask-cmd\.in-group/, 'no more stacked cards');
+  // A lone command is a line like the group head: no card, no dot, muted words.
+  assert.match(ruleBody('.ask-card.ask-cmd.is-sum:not(.ask-cmd-gbody > *)'), /border:0;border-radius:0;background:none;/);
+  assert.match(ruleBody('.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn > .status-dot'), /display:none;/);
+  assert.match(ruleBody('.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-row'), /color:var\(--ink-2\);font-size:13px;/);
   assert.match(ruleBody('.ask-cmd-outbox .ask-cmd-out'), /max-height:min\(400px,50vh\);/);
   assert.match(ruleBody('.ask-cmd-code'), /font-size:12px;line-height:1\.6;/);
   assert.equal(ruleBody('.chat-convo .ask-msg > .ask-cmd-group'), null, 'a group fills the text column like every card (#959)');

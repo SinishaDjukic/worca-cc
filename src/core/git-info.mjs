@@ -16,11 +16,21 @@ import { redactSecrets } from './redact.mjs';
 import * as azurePr from './pr/azure.mjs';
 import { readAzureCredentials } from './azure-credentials.mjs';
 import { parseAzurePrUrl } from '../shared/azure-remote.mjs';
+import * as bitbucketPr from './pr/bitbucket.mjs';
+import { readBitbucketCredentials } from './bitbucket-credentials.mjs';
+import { parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv } from './git-guard.mjs';
 export { parseRemoteUrl, remoteRepoSlug, sameRepo } from './forge.mjs';
 
-/** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }. */
-function defaultRun(cmd, args, { cwd, timeout = 0, env = null } = {}) {
+/** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }.
+ *  git, and gh in a checkout (it runs `git status`, `git push` there), get git-guard's env: no
+ *  repository-local hook or config command runs (security G2). */
+async function defaultRun(cmd, args, { cwd, timeout = 0, env = null } = {}) {
+  if (cwd && (cmd === 'git' || cmd === 'gh')) {
+    try { env = await guardedGitEnv(cwd, { env: env || process.env }); }
+    catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1 }; }
+  }
   return new Promise((resolve) => {
     let child;
     try {
@@ -914,22 +924,30 @@ export async function ghItemSummaries({ repo, numbers, timeout = GH_CHIP_TIMEOUT
 }
 
 // ── PR providers (dispatch by forge) ────────────────────────────────────────
-// The GitHub provider is the gh code above (so _testing.setRunner keeps intercepting it);
-// Azure DevOps goes to pr/azure.mjs. Only Azure diverts — GHE and unknown hosts keep gh (D4).
+// The GitHub provider is the gh code above (so _testing.setRunner keeps intercepting it); Azure DevOps goes to
+// pr/azure.mjs and Bitbucket Cloud to pr/bitbucket.mjs, which export the same names. Only those two divert — GHE and
+// unknown hosts keep gh (D4).
+const REST = {
+  azure: { pr: azurePr, parse: parseAzurePrUrl, configured: () => readAzureCredentials().mode !== 'none' },
+  bitbucket: { pr: bitbucketPr, parse: parseBitbucketPrUrl, configured: () => readBitbucketCredentials().mode !== 'none' },
+};
+const restFor = (forge) => (typeof forge === 'string' && Object.hasOwn(REST, forge) ? REST[forge] : null);
+const restCredential = () => Object.values(REST).some((r) => r.configured());
 
 const PROVIDERS = {
   github: { forge: 'github', label: FORGE_LABEL.github,
     available: async () => ((await hasGh()) ? { ok: true } : { ok: false, reason: 'GitHub CLI (gh) is not available' }) },
   azure: { forge: 'azure', label: FORGE_LABEL.azure, available: () => azurePr.available() },
+  bitbucket: { forge: 'bitbucket', label: FORGE_LABEL.bitbucket, available: () => bitbucketPr.available() },
 };
-/** The PR provider for a base remote (a listRemotes entry). Only Azure diverts; every other host keeps gh (D4). */
-export const prProviderFor = (remote) => PROVIDERS[forgeOf(remote) === 'azure' ? 'azure' : 'github'];
+/** The PR provider for a base remote (a listRemotes entry). Azure DevOps and Bitbucket divert; every other host keeps gh (D4). */
+export const prProviderFor = (remote) => PROVIDERS[restFor(forgeOf(remote)) ? forgeOf(remote) : 'github'];
 
 /** Which PR hosts worca can talk to right now (no network). */
 export async function prHostsAvailable() {
-  return { github: await hasGh(), azure: readAzureCredentials().mode !== 'none' };
+  return { github: await hasGh(), azure: REST.azure.configured(), bitbucket: REST.bitbucket.configured() };
 }
-export async function anyPrHost() { const h = await prHostsAvailable(); return h.github || h.azure; }
+export async function anyPrHost() { const h = await prHostsAvailable(); return h.github || h.azure || h.bitbucket; }
 
 /** The remote a project's PRs target with no stored PR URL: upstream, else origin, else the first (gh's own guess). */
 async function prBaseRemote(projectDir) {
@@ -937,40 +955,40 @@ async function prBaseRemote(projectDir) {
   if (!rl.ok || !rl.remotes.length) return null;
   return rl.remotes.find((r) => r.name === 'upstream') || rl.remotes.find((r) => r.name === 'origin') || rl.remotes[0];
 }
-/** The project's base remote when it is on Azure DevOps — only looked up when an Azure credential exists (D6). */
-async function azureBaseRemote(projectDir) {
-  if (!projectDir || readAzureCredentials().mode === 'none') return null;
+/** The project's base remote when it is on Azure DevOps or Bitbucket — only looked up when such a credential exists (D6). */
+async function restBaseRemote(projectDir) {
+  if (!projectDir || !restCredential()) return null;
   const r = await prBaseRemote(projectDir);
-  return forgeOf(r) === 'azure' ? r : null;
+  return restFor(forgeOf(r)) ? r : null;
 }
 
 /**
- * anyPrHost() lets an Azure-only machine (no gh) into these paths for every project. A GitHub/other project there
- * must not spawn a doomed `gh` per row: skip gh when it is missing. Checked only when an Azure credential is
- * configured, so gh-only setups (and the runner-scripted tests, whose setRunner resets the hasGh memo) see
- * exactly today's calls.
+ * anyPrHost() lets an Azure- or Bitbucket-only machine (no gh) into these paths for every project. A GitHub/other
+ * project there must not spawn a doomed `gh` per row: skip gh when it is missing. Checked only when such a credential
+ * is configured, so gh-only setups (and the runner-scripted tests, whose setRunner resets the hasGh memo) see exactly
+ * today's calls.
  */
 async function ghUsable() {
-  return readAzureCredentials().mode === 'none' || hasGh();
+  return !restCredential() || hasGh();
 }
 
 /**
  * Open a PR on the base remote's forge. `baseRemote` / `pushRemote` (listRemotes entries) pick the provider;
- * without an Azure base remote this is gh's createPr (see ghCreatePr). @returns {Promise<import('./pr/azure.mjs').PrCreateResult>}
+ * without an Azure or Bitbucket base remote this is gh's createPr (see ghCreatePr). @returns {Promise<import('./pr/azure.mjs').PrCreateResult>}
  */
 export async function createPr(opts) {
-  if (forgeOf(opts.baseRemote) === 'azure') {
-    return azurePr.createPr({ ...opts, baseRepo: opts.baseRemote, pushRepo: opts.pushRemote || null });
-  }
+  const rest = restFor(forgeOf(opts.baseRemote));
+  if (rest) return rest.pr.createPr({ ...opts, baseRepo: opts.baseRemote, pushRepo: opts.pushRemote || null });
   return ghCreatePr(opts);
 }
 
 /** MERGEABLE | CONFLICTING | UNKNOWN, by the PR URL's forge, else the base remote's (see ghPrMergeable). */
 export async function prMergeable(opts = {}) {
-  if (forgeOfPrUrl(opts.prUrl) === 'azure') return (await azurePr.viewPr({ prUrl: opts.prUrl }))?.mergeable || 'UNKNOWN';
+  const byUrl = restFor(forgeOfPrUrl(opts.prUrl));
+  if (byUrl) return (await byUrl.pr.viewPr({ prUrl: opts.prUrl, withMergeable: true }))?.mergeable || 'UNKNOWN';
   if (!opts.prUrl) {
-    const az = forgeOf(opts.baseRemote) === 'azure' ? opts.baseRemote : await azureBaseRemote(opts.projectDir);
-    if (az) return (await azurePr.findPrForBranch({ head: opts.head, baseRepo: az }))?.mergeable || 'UNKNOWN';
+    const r = restFor(forgeOf(opts.baseRemote)) ? opts.baseRemote : await restBaseRemote(opts.projectDir);
+    if (r) return (await restFor(forgeOf(r)).pr.findPrForBranch({ head: opts.head, baseRepo: r, withMergeable: true }))?.mergeable || 'UNKNOWN';
   }
   if (!(await ghUsable())) return 'UNKNOWN';
   return ghPrMergeable(opts);
@@ -978,23 +996,24 @@ export async function prMergeable(opts = {}) {
 
 /**
  * { state: OPEN|MERGED, url, number, isDraft, mergeable } | null for `head`, by forge (see ghFindPrForBranch). Never throws.
- * `includeClosed` adds a CLOSED (Azure: abandoned) PR as the last resort.
+ * `includeClosed` adds a CLOSED (Azure: abandoned; Bitbucket: declined) PR as the last resort.
  * `withVerdict` (GitHub only): an OPEN PR also carries `verdict` (prVerdictOf), for the Runs list's PR chip (D31).
  */
 export async function findPrForBranch({ projectDir, head, prUrl = null, withVerdict = false, includeClosed = false } = {}) {
   if (!projectDir || !head) return null;
   const strip = (pr) => (pr ? { state: pr.state, url: pr.url, number: pr.number, isDraft: pr.isDraft === true, mergeable: pr.mergeable || 'UNKNOWN' } : null);
-  if (forgeOfPrUrl(prUrl) === 'azure') {
-    const pr = await azurePr.viewPr({ prUrl });
+  const byUrl = restFor(forgeOfPrUrl(prUrl));
+  if (byUrl) {
+    const pr = await byUrl.pr.viewPr({ prUrl, withMergeable: true });
     if (pr && (pr.state === 'OPEN' || pr.state === 'MERGED')) return strip(pr);
     // CLOSED: search the branch; the closed PR behind the URL stays the last resort.
-    const found = await azurePr.findPrForBranch({ head, baseRepo: parseAzurePrUrl(prUrl), includeClosed });
+    const found = await byUrl.pr.findPrForBranch({ head, baseRepo: byUrl.parse(prUrl), includeClosed });
     if (found && found.state !== 'CLOSED') return strip(found);
     if (!includeClosed) return null;
     return strip(pr?.state === 'CLOSED' ? pr : found);
   }
-  const az = prUrl ? null : await azureBaseRemote(projectDir);
-  if (az) return strip(await azurePr.findPrForBranch({ head, baseRepo: az, includeClosed }));
+  const r = prUrl ? null : await restBaseRemote(projectDir);
+  if (r) return strip(await restFor(forgeOf(r)).pr.findPrForBranch({ head, baseRepo: r, includeClosed, withMergeable: true }));
   if (!(await ghUsable())) return null;
   return ghFindPrForBranch({ projectDir, head, prUrl, withVerdict, includeClosed });
 }
@@ -1002,7 +1021,8 @@ export async function findPrForBranch({ projectDir, head, prUrl = null, withVerd
 /** OPEN | MERGED | CLOSED | null for a persisted PR URL, by its forge (see ghPrLifecycleState). */
 export async function prLifecycleState({ projectDir, prUrl }) {
   if (!projectDir || !prUrl) return null;
-  if (forgeOfPrUrl(prUrl) === 'azure') return (await azurePr.viewPr({ prUrl }))?.state || null;
+  const byUrl = restFor(forgeOfPrUrl(prUrl));
+  if (byUrl) return (await byUrl.pr.viewPr({ prUrl }))?.state || null;
   if (!(await ghUsable())) return null;
   return ghPrLifecycleState({ projectDir, prUrl });
 }
@@ -1252,25 +1272,31 @@ export async function ghPrComment({ projectDir, prUrl, body } = {}) {
   const r = await _run('gh', ['pr', 'comment', String(p.number), '--repo', repo, '--body', String(body || '')], { cwd: projectDir, env: cred.env });
   return r.ok ? { ok: true } : { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
 }
-// The Watch PR adapter by the PR URL's forge: Azure DevOps goes to pr/azure.mjs, github.com to gh above.
-const azureWatch = (prUrl) => forgeOfPrUrl(prUrl) === 'azure';
+// The Watch PR adapter by the PR URL's forge: Azure DevOps and Bitbucket go to their REST modules, github.com to gh above.
+const restWatch = (prUrl) => restFor(forgeOfPrUrl(prUrl))?.pr || null;
 export function prWatchSnapshot(opts = {}) {
-  return azureWatch(opts.prUrl) ? azurePr.prWatchSnapshot(opts) : ghPrWatchSnapshot(opts);
+  const rest = restWatch(opts.prUrl);
+  return rest ? rest.prWatchSnapshot(opts) : ghPrWatchSnapshot(opts);
 }
 export async function prWatchJobLog(opts = {}) {
-  if (!azureWatch(opts.prUrl)) return ghFailedJobLog(opts);
-  const r = await azurePr.failedBuildLog(opts);
+  const rest = restWatch(opts.prUrl);
+  if (!rest) return ghFailedJobLog(opts);
+  const r = await rest.failedBuildLog(opts);
   return r.ok ? { ok: true, text: tailBytes(redactSecrets(r.text), PR_WATCH_LOG_BYTES) } : r;
 }
-/** One more try of a failed check: a workflow run's failed jobs on GitHub, a build policy's re-queue on Azure DevOps. */
+/** One more try of a failed check: a workflow run's failed jobs on GitHub, a build policy's re-queue on Azure DevOps
+ *  (Bitbucket checks carry no runId, so the watcher never asks). */
 export function prWatchRerun(opts = {}) {
-  return azureWatch(opts.prUrl) ? azurePr.requeueEvaluation(opts) : ghRerunFailedJobs(opts);
+  const rest = restWatch(opts.prUrl);
+  return rest ? rest.requeueEvaluation(opts) : ghRerunFailedJobs(opts);
 }
 export function prWatchReply(opts = {}) {
-  return azureWatch(opts.prUrl) ? azurePr.replyToThread(opts) : ghReplyToThread(opts);
+  const rest = restWatch(opts.prUrl);
+  return rest ? rest.replyToThread(opts) : ghReplyToThread(opts);
 }
 export function prWatchComment(opts = {}) {
-  return azureWatch(opts.prUrl) ? azurePr.prComment(opts) : ghPrComment(opts);
+  const rest = restWatch(opts.prUrl);
+  return rest ? rest.prComment(opts) : ghPrComment(opts);
 }
 async function ghMarkPrReady({ projectDir = null, prUrl } = {}) {
   const cred = await githubEnv('write', { repo: ownerRepoOfPrUrl(prUrl) });
@@ -1288,17 +1314,18 @@ async function ghClosePr({ projectDir = null, prUrl, comment = '' } = {}) {
 /** D24: mark a draft PR ready for review, by the URL's forge. */
 export function markPrReady(opts = {}) {
   if (!opts.prUrl) return Promise.resolve({ ok: false, error: 'prUrl is required' });
-  return azureWatch(opts.prUrl) ? azurePr.markReady(opts) : ghMarkPrReady(opts);
+  return restWatch(opts.prUrl) ? restWatch(opts.prUrl).markReady(opts) : ghMarkPrReady(opts);
 }
-/** D24: close a PR with a comment, by the URL's forge (Azure: abandoned). */
+/** D24: close a PR with a comment, by the URL's forge (Azure: abandoned; Bitbucket: declined). */
 export function closePr(opts = {}) {
   if (!opts.prUrl) return Promise.resolve({ ok: false, error: 'prUrl is required' });
-  return azureWatch(opts.prUrl) ? azurePr.closePr(opts) : ghClosePr(opts);
+  return restWatch(opts.prUrl) ? restWatch(opts.prUrl).closePr(opts) : ghClosePr(opts);
 }
 /** The PR card's checks rollup, mergeability and merge verdict, by forge (see ghPrChecks). null on any failure. */
 export async function prChecks({ projectDir, prUrl } = {}) {
-  if (!azureWatch(prUrl)) return ghPrChecks({ projectDir, prUrl });
-  const f = await azurePr.prCheckFacts({ prUrl });
+  const rest = restWatch(prUrl);
+  if (!rest) return ghPrChecks({ projectDir, prUrl });
+  const f = await rest.prCheckFacts({ prUrl });
   if (!f) return null;
   const checks = rollupChecks(f.items, { baseFailing: f.baseFailing });
   return { checks, mergeable: f.mergeable, base: f.base,

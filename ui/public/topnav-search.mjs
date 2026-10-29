@@ -7,6 +7,7 @@
 //   loadLazy()        fetch what is not kept in memory (workflows, schedules); called once per open,
 //                     the popover re-renders when it settles
 //   onAsk(query)      the Ask Worca row ('' when nothing is typed)
+//   askRow()          the Ask row's words, read at render ({ title, meta }; default Ask in Chat · opens a chat)
 //   navigate(href)    a row with a route ('#running/…', '#projects/…', …)
 //   openWorkflow(id)  a workflow row
 //   onLabel(label)    a "Runs labelled hotfix" row: apply the Runs list label filter
@@ -61,7 +62,7 @@ function imeKey(e) {
 }
 
 export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow, onLabel = () => {},
-  searchChats = null, chatsFirst = () => false }) {
+  askRow = () => ({ title: 'Ask in Chat', meta: 'opens a chat' }), searchChats = null, chatsFirst = () => false }) {
   const input = root.querySelector('#tsearch-input');
   const pop = root.querySelector('#tsearch-pop');
   const kbd = root.querySelector('.tsearch-kbd');
@@ -150,7 +151,12 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
       sep.setAttribute('aria-hidden', 'true');
       parts.push(sep);
     }
-    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title: 'Ask in Chat', meta: 'opens a chat' }, 'Ask in Chat, opens a chat');
+    // Ask worca beside the page: on a page with the side column the row names it (app.js askRow).
+    let words = null;
+    try { words = askRow(); } catch { words = null; }
+    const title = words && typeof words.title === 'string' && words.title ? words.title : 'Ask in Chat';
+    const meta = words && typeof words.meta === 'string' ? words.meta : 'opens a chat';
+    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title, meta }, `${title}, ${meta}`);
     st.items.push({ key: 'ask', row: null, el: ask });
     parts.push(ask);
     pop.replaceChildren(...parts);

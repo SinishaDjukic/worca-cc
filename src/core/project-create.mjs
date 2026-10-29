@@ -18,6 +18,7 @@ import { gitAvailable as realGitAvailable, GIT_MISSING } from './git-available.m
 import { isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { isAzureHost } from '../shared/azure-remote.mjs';
+import { isBitbucketHost } from '../shared/bitbucket-remote.mjs';
 
 /** A refusal or failure of New / add-a-folder / probe. `code` picks the HTTP status (PROJECT_ADD_STATUS). */
 export class ProjectAddError extends Error {
@@ -54,7 +55,7 @@ export function checkRemoteUrl(raw) {
   let u;
   try { u = new URL(url); } catch { throw invalid(BAD_REMOTE); }
   if (u.protocol !== 'https:' && u.protocol !== 'ssh:') throw invalid('only https:// and ssh remote URLs are supported');
-  if (u.password || (u.protocol === 'https:' && u.username && !isAzureHost(u.hostname))) throw invalid(REMOTE_CREDS);
+  if (u.password || (u.protocol === 'https:' && u.username && !isAzureHost(u.hostname) && !isBitbucketHost(u.hostname))) throw invalid(REMOTE_CREDS);
   if (u.search || u.hash) throw invalid('the URL must not have a query or fragment');
   if (!u.hostname || !u.pathname.split('/').some(Boolean)) throw invalid('the URL must name a repository path');
   return url;

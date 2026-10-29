@@ -1,5 +1,5 @@
 // test/ui-chat-home-presets.test.mjs — Chat home preset chips (ui/public/chat/home-presets.mjs, home.mjs): the scoped
-// list (this target's pinned presets, then Any project, at most 6), the More chip, the flag, and a click → usePreset.
+// list (this target's pinned presets, then Any project, at most 6), the More chip, and a click → usePreset.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -26,17 +26,15 @@ test('at most 6 chips; the rest is counted for the More chip', () => {
   assert.equal(r.more, 3);
 });
 
-test('the section: hidden with the flag off or 0 matches; chips call onUse with the id; More calls onMore; names are text', () => {
+test('the section: hidden with 0 matches; chips call onUse with the id; More calls onMore; names are text', () => {
   const { document } = trackDom(new JSDOM('')).window;
   const used = [];
   let more = 0;
   const ui = createHomePresets({ doc: document, onUse: (id) => used.push(id), onMore: () => { more += 1; } });
-  ui.render({ on: false, presets: [P('g1')], target: null });
-  assert.equal(ui.el.hidden, true);
-  ui.render({ on: true, presets: [], target: null });
+  ui.render({ presets: [], target: null });
   assert.equal(ui.el.hidden, true);
   const evil = { ...P('x'), name: '<img src=x onerror=alert(1)>' };
-  ui.render({ on: true, presets: [evil, ...Array.from({ length: 7 }, (_, i) => P(`g${i}`))], target: null });
+  ui.render({ presets: [evil, ...Array.from({ length: 7 }, (_, i) => P(`g${i}`))], target: null });
   assert.equal(ui.el.hidden, false);
   const chips = ui.el.querySelectorAll('.chat-home-preset');
   assert.equal(chips.length, 6);
@@ -54,7 +52,7 @@ const SHELL = `<!doctype html><html><body><section class="view" data-view="chat"
     <div class="ask-composer"><div class="ask-composer-box"><textarea class="ask-input"></textarea></div></div>
   </div></div></div></div></section></body></html>`;
 
-test('createChatHome: with the flag on, a visit lists the presets and a chip click calls deps.usePreset', async () => {
+test('createChatHome: a visit lists the presets and a chip click calls deps.usePreset', async () => {
   const { window } = trackDom(new JSDOM(SHELL, { url: 'http://localhost:4317/' }));
   const doc = window.document;
   const used = [];
@@ -62,7 +60,7 @@ test('createChatHome: with the flag on, a visit lists the presets and a chip cli
     runs: () => ({ needs: [], running: [], finished: [], project: null }),
     threads: async () => [],
     workflows: async () => ({ list: [], portsFn: null }),
-    flags: async () => ({ scripts: true, tasks: false, runPresets: true }),
+    flags: async () => ({ scripts: true, tasks: false }),
     presets: async () => ({ presets: [P('g1')], target: null }),
     usePreset: (id) => used.push(id),
     threadForRun: async () => null, openThread: () => {}, openRunPanel: () => {}, setIntent: () => {}, prefill: () => {},
@@ -81,7 +79,7 @@ test('a chip\'s tooltip is the scope, the workflow name and the engine label, ne
   const { document } = trackDom(new JSDOM('')).window;
   const ui = createHomePresets({ doc: document, onUse: () => {}, onMore: () => {} });
   const p = (id, setup, kind = 'global', ref = null) => ({ id, name: id, scope: { kind, ref }, setup });
-  ui.render({ on: true, target: { kind: 'project', ref: 'api-1' }, workflowNames: { wf_default: 'Default' }, presets: [
+  ui.render({ target: { kind: 'project', ref: 'api-1' }, workflowNames: { wf_default: 'Default' }, presets: [
     p('a', { workflowId: 'wf_auto', engine: 'codex' }, 'project', 'api-1'), p('b', { workflowId: 'wf_gone99' })] });
   assert.deepEqual([...ui.el.querySelectorAll('.chat-home-preset')].map((b) => b.title),
     ['Only this project · Auto workflow · Codex', 'Any project · Workflow removed · Claude']);
@@ -94,7 +92,7 @@ for (const [level, want] of [['simple', '#new'], ['advanced', '#settings/presets
     const went = [];
     const deps = {
       runs: () => ({ needs: [], running: [], finished: [], project: null }), threads: async () => [],
-      workflows: async () => ({ list: [], portsFn: null }), flags: async () => ({ scripts: true, tasks: false, runPresets: true }),
+      workflows: async () => ({ list: [], portsFn: null }), flags: async () => ({ scripts: true, tasks: false }),
       presets: async () => ({ presets: Array.from({ length: 7 }, (_, i) => P(`g${i}`)), target: null, workflowNames: {} }),
       usePreset: () => {}, threadForRun: async () => null, openThread: () => {}, openRunPanel: () => {}, setIntent: () => {}, prefill: () => {},
       navigate: (h) => went.push(h), level: () => level,

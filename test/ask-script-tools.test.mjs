@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAskTools } from '../src/core/ask/tools.mjs';
+import { savedRunNeedsCard } from '../src/core/ask/script-approval.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { redactAskText } from '../src/core/ask/redact.mjs';
 
@@ -32,6 +33,8 @@ function fakeTools({ enabled = true, scripts = true, pin = null, over = {} } = {
       cases: [{ id: 'c1', name: 'red', inputs: { plan: { text: `plan ${SECRET}` } } }], userCases: [{ id: 'u1', name: 'mine', inputs: { plan: { text: `mine ${SECRET}` } } }],
     } : null),
     save: async (input) => { saves.push(input); return { ok: true, key: input.key, created: true, path: '/h/.worca-cc/scripts/runTests.sh', link: `#scripts/${input.key}` }; },
+    // The real bundle's rule (script-approval.mjs savedRunNeedsCard) over this fake's read().
+    async runNeedsCard(key, params) { return savedRunNeedsCard(await this.read(key), params); },
     test: async (input) => { tests.push(input); return { ok: true, result: RESULT }; },
     ...over,
   } : null;
@@ -85,12 +88,13 @@ test('list_scripts / get_script: shapes, the #scripts link, paging and redaction
   await assert.rejects(() => tools.call('get_script', { key: 'ghost' }), { name: 'AskToolError', message: 'get_script: no script "ghost" — use list_scripts' });
 });
 
-test('save_script: the input reaches the bundle unredacted; the toggle and a missing bundle refuse', async () => {
+test('save_script: the input reaches the bundle unredacted (a dry run: the card saves it); the toggle and a missing bundle refuse', async () => {
   const { tools, saves } = fakeTools();
   const meta = { displayName: 'Run tests', description: 'Runs the suite.', runtime: 'shell', inputs: [], outputs: [] };
   const out = await tools.call('save_script', { key: 'runTests', meta, source: `echo ${SECRET}\n`, overwrite: true, cases: [{ id: 'c1', name: 'red' }] });
-  assert.deepEqual(out, { ok: true, key: 'runTests', created: true, path: '/h/.worca-cc/scripts/runTests.sh', link: '#scripts/runTests' });
-  assert.deepEqual(saves[0], { key: 'runTests', meta, source: `echo ${SECRET}\n`, sourceWin32: null, cases: [{ id: 'c1', name: 'red' }], overwrite: true },
+  assert.equal(out.ok, true);
+  assert.equal(out.pending, true, 'G6: nothing is written until the user presses Save on the card');
+  assert.deepEqual(saves[0], { key: 'runTests', meta, source: `echo ${SECRET}\n`, sourceWin32: null, cases: [{ id: 'c1', name: 'red' }], overwrite: true, dryRun: true },
     'the model\'s own text is never redacted on the way in');
   const off = fakeTools({ enabled: false }).tools;
   await assert.rejects(() => off.call('save_script', { key: 'x', meta: {}, source: 'x' }),

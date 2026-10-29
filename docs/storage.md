@@ -12,6 +12,15 @@ project's working tree, so nothing is ever committed to your repo.
 <worcaHome>/                            default ~/.worca-cc
   settings.json                         { root } only — the bootstrap that locates the DB
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
+                                        (the Requirements Feature chat: req_helper_messages (v78), one row per
+                                        message, kept until Clear chat; its spend is in req_cost_ledger with
+                                        helper_message_id, which Clear chat keeps)
+                                        Requirements export (v80): req_export_setups (one row per project or
+                                        workspace: the connection — plugin, source, profile, never a token —, the
+                                        tracker project, issue type, labels, priority, where criteria go, the done
+                                        status) and req_export_links (one row per feature: its current ticket, the
+                                        spec and fields as last sent, the tracker's fingerprint of the description,
+                                        a pending create's marker). Every export is also an `export` turn.
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -32,7 +41,7 @@ project's working tree, so nothing is ever committed to your repo.
       skipped/           the run's version of files Apply to folder skipped
       skills/            the run's set skills (docs/skills.md): one generated plugin per set, passed
                          with --plugin-dir; rebuilt on resume, never inside a checkout
-      extras/            any optional extra files you attached
+      extras/            any optional extra files you attached (a Requirements start's switched-on files too)
                          Internal, line-anchored review comments on that diff are DB
                          rows (diff_comments), never files; ask_card_comments carries
                          a proposal's comment ids from propose_run through to launch.
@@ -68,6 +77,15 @@ project's working tree, so nothing is ever committed to your repo.
                                         removed with the thread, reconciled at boot)
   ask/<threadId>/skills/<messageId>/    an Ask turn's set skills, one generated plugin per set;
                                         written before the turn's spawn, removed when the turn ends
+  requirements/att/<id>.<ext>           Requirements files and brief documents — .txt for text kinds, the real
+                                        extension for images and PDF; the name is the store's id (ratt_<12 hex>),
+                                        never the file's. Rows: req_attachments (v77). Folder 0700, files 0600.
+                                        Removed with the file, or with the brief for its documents; an archived
+                                        feature keeps its files. A replace writes <id>.<ext>.tmp-<8 hex> and renames
+                                        it over the body; one a crash left, older than an hour, is swept at boot
+  tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
+                                        redacted text), mode 0700 / 0600, removed when the read ends (a restart's
+                                        leftovers older than an hour are swept at boot)
   tmp/ask/                              the Chat assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search
@@ -160,6 +178,11 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
   `src/core/run-groups.mjs` checks it. A feature's own slices are not rows here: they come from `shape_feature_slices`.
   Removing the last member of a user group deletes the group. Shipping a user group as one PR writes a branch named
   after the group (`worca-cc/` + slug + group id) and records the PR on every member's `pr_url`; no new column.
+- `run_groups.name_source` (v79) is `'suggested'` or `'user'`, as `ask_chat_groups.name_source`: whether Smart naming
+  named the group. Add to group takes several runs; a run already in another user group moves (the group it leaves is
+  deleted once empty), and a Shaper slice is skipped. Its Undo is an in-memory one-shot token
+  (`src/core/undo-tokens.mjs`, 10 minutes, per actor): it puts each run back, recreating a group the move deleted with
+  its id, title and source. Nothing about Undo is stored; a restart drops the tokens.
 - `pipelines.deleted_at` marks a run deleted from the Runs list. Delete keeps an anonymised row (title "deleted run",
   no prompt, no starter, no tags, no group) so its cost stays in Statistics; every feed skips it.
 - `pipelines.pr_verdict` is the last CI, mergeability, draft and review verdict the PR refresh read for an open GitHub

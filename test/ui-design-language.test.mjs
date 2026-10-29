@@ -705,6 +705,10 @@ test('#955 Runs list: rows inside a group are one 26px line (40px on touch); a g
   assert.match(bodyOf('.runs-members .runs-row-title'), /font-weight:400/);
   assert.match(bodyOf('.runs-members .runs-row-sub'), /text-overflow:ellipsis/);
   assert.match(bodyOf('.runs-members .runs-row-sub'), /flex:0 1000 auto/, 'the status gives way before the title');
+  // #1012: a staged live member's four-section block wraps under its line, indented with its title.
+  assert.match(bodyOf('.runs-members .runs-row:has(> .runs-stage)'), /flex-wrap:wrap/);
+  assert.match(bodyOf('.runs-members .runs-row > .runs-stage'), /margin:4px 0 2px 16px/);
+  assert.match(bodyOf('.runs-members .runs-stage > .run-prog-track'), /height:2px/, 'one step below the group row\'s 3px line');
   assert.match(bodyOf('.runs-members .runs-pick'), /height:26px/);
   assert.match(bodyOf('.runs-members .runs-row-tail'), /height:26px/);
   assert.match(css, /@media \(pointer: coarse\)\{\.runs-members \.runs-pick,\.runs-members \.runs-row-tail\{height:40px;\}/);
@@ -907,6 +911,14 @@ test('slice 3 (D18): the run page tiles read in the stat face, 22px sans with ta
   assert.match(tile, /padding:var\(--pad-tile\) 8px/);
 });
 
+test('list section head (Runs and Chats): a 12px/600 --ink-2 meta label; its count is an 11px caption', () => {
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
+  assert.match(body('.runs-sec-head'), /font:600 var\(--fs-meta\)\/var\(--lh-body\)/);
+  assert.match(body('.runs-sec-head'), /color:var\(--ink-2\)/);
+  assert.match(body('.runs-count'), /var\(--fs-caption\)/);
+  assert.doesNotMatch(body('.runs-sec-head .runs-count'), /font-size/, 'the head count keeps the caption size');
+});
+
 test('card head: the state word is a 15px/600 headline that never truncates; the detail is 12px --ink-2, 2 lines', () => {
   const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
   const word = body('.run-status-word');
@@ -923,19 +935,23 @@ test('card head: the state word is a 15px/600 headline that never truncates; the
   assert.match(body('.chat-rc-status .run-status-word'), /font-size:var\(--fs-body\)/, 'beside a card title the state is 13px');
 });
 
-// #959: chat cards follow one width rule. The column caps every card; no card kind sets a width in the conversation;
-// only the graph well rule reads --chat-card-max.
+// #959: chat cards follow one width rule. The column caps every card; no card kind sets a width in the conversation,
+// and no part of a card leaves the column: a graph well is as wide as its card, like the card's other content.
 const CHAT_SCOPE = /\.chat-(?:convo|page)\b/;
 const CHAT_PART = /\.(?:ask-(?:card|card-stub|ccard|rp|cmd|rc|mcard|wfcard)|chat-rc)(?![\w])/;      // a card root or its family's parts
 const CARD_ROOT = /\.(?:ask-card|ask-card-stub|ask-ccard)(?![\w-])/;                                // in the last compound: the card itself (also inside :is(…))
 const cardLast = (s) => s.trim().split(/\s*[\s>+~]\s*/).at(-1);
 const isCardRoot = (s) => CARD_ROOT.test(cardLast(s));
-test('chat cards: one width rule — no card kind sets a width in the conversation; only the graph well widens (#959)', () => {
+test('chat cards: one width rule — no card kind sets a width in the conversation; no part of a card leaves the column (#959)', () => {
   const sized = ALL.filter((r) => splitTop(r.sel).some((s) => CHAT_SCOPE.test(s) && isCardRoot(s)))
     .flatMap((r) => decls(r.body, '(?:min-|max-)?width|margin-(?:left|right|inline)').map(([p, v]) => where(r, `${p}:${v}`)));
   assert.deepEqual(sized, []);
-  const wide = ALL.filter((r) => /var\(--chat-card-max\)/.test(r.body)).map((r) => r.sel);
-  assert.deepEqual(wide, ['.chat-convo .ask-msg .gv-well'], 'one breakout rule, for graph wells only');
+  // A card part sized off the transcript (cqi, vw) or pulled out by a negative or computed margin would break out.
+  const out = ALL.filter((r) => splitTop(r.sel).some((s) => /\.chat-convo\b|\.ask-msg\b/.test(s)))
+    .flatMap((r) => decls(r.body, '(?:min-)?width|margin(?:-(?:left|right|inline(?:-start|-end)?))?')
+      .filter(([, v]) => /cqi|cqw|vw|--chat-card-max|calc\(|(?:^|\s)-/.test(v)).map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(out, [], 'no breakout rule: a graph well is as wide as its card');
+  assert.ok(!/--chat-card-max/.test(css), 'one chat width: --chat-text-max');
 });
 
 // #959: a chat graph well that clips its graph (overflow:hidden) is fitted by its host, so no node is cut at an edge.
@@ -949,7 +965,7 @@ test('chat graph wells: every well that clips its graph is fitted by its host (#
     .flatMap((r) => [...r.sel.matchAll(/\.((?:chat|ask)-[\w-]*-well|ask-wfcard-graph)(?![\w-])/g)].map((m) => m[1])));
   assert.deepEqual([...clipped].filter((c) => !WELL_HOSTS[c]), [], 'a new clipped well names its host here');
   for (const [cls, [file, re]] of Object.entries(WELL_HOSTS)) assert.match(readFileSync(join(ROOT, file), 'utf8'), re, `${cls}: ${file}`);
-  assert.match(readFileSync(join(ROOT, 'ui/public/chat/run-card.mjs'), 'utf8'), /'run-flow-wrap chat-rc-well gv-well'/, 'the run card well takes the shared breakout');
+  assert.match(readFileSync(join(ROOT, 'ui/public/chat/run-card.mjs'), 'utf8'), /'run-flow-wrap chat-rc-well gv-well'/, 'the run card well is the shared .gv-well');
 });
 
 // #959: tight radii in chat cards (design-system › Corners): no pill, no corner past the card's own 8px anywhere in a
