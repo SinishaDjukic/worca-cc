@@ -153,10 +153,15 @@ export async function runMockSession(hostOpts = {}) {
     }
     // The member's own frames: a frame without a parent is the member's, so it gets the bound call's id; a frame that
     // already has one (an investigator's, emitMockSubAgents) keeps it. The member's session and result never reach the host stream.
+    const investigators = [];            // the member's own Agent/Task calls (emitMockSubAgents): the 'hooks' row prices one
     const wrap = (e) => {
       if (!e || typeof e !== 'object' || e.type === 'session' || e.type === 'result') return;
-      if (e.raw && typeof e.raw === 'object') emit({ ...e, raw: { ...e.raw, parent_tool_use_id: e.raw.parent_tool_use_id ?? callId } });
-      else emit(e);
+      if (e.raw && typeof e.raw === 'object') {
+        if (e.raw.type === 'assistant' && e.raw.parent_tool_use_id == null) {
+          for (const c of e.raw.message?.content || []) if (c?.type === 'tool_use' && (c.name === 'Agent' || c.name === 'Task')) investigators.push(c.id);
+        }
+        emit({ ...e, raw: { ...e.raw, parent_tool_use_id: e.raw.parent_tool_use_id ?? callId } });
+      } else emit(e);
     };
     const out = await runMock({ cwd, systemPrompt, prompt: briefPrompt, signal, workspaceWriteTargets, permissionMode, onEvent: wrap });
     check();
@@ -168,7 +173,8 @@ export async function runMockSession(hostOpts = {}) {
       const hook = (toolUseId, usd) => emit({ type: 'hook-event', raw: { type: 'system', subtype: 'hook_response', hook_event: 'PostToolUse',
         stdout: JSON.stringify({ tool_use_id: toolUseId, tool_response: { usage: { cost_usd: usd } } }) } });
       if (Number.isFinite(h.member)) hook(callId, h.member);
-      if (Number.isFinite(h.investigator)) hook(`mock_i${++ids.call}`, h.investigator);
+      // The member's first investigator when it has one (a fan-out role), so the harness finds its record (Task 48).
+      if (Number.isFinite(h.investigator)) hook(investigators[0] ?? `mock_i${++ids.call}`, h.investigator);
     }
     if (behaviour === 'stray-after-done') {
       hostMessage([{ type: 'tool_use', id: `mock_t${++ids.call}`, name: 'TodoWrite', input: { todos: [] } }], false);
