@@ -19,7 +19,7 @@ Pull requests (add each number when it opens):
 - Requirements: files (#975)
 - Requirements: Feature chat (#989)
 - Requirements: export to a tracker (#1010)
-- Requirements: start from a ticket
+- Requirements: start from a ticket (#1041)
 
 ## Shaper, Run presets and Cost tags leave Labs
 
