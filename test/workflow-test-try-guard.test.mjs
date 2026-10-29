@@ -9,8 +9,8 @@ import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync, readdirSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
-import { guardDecision, guardEntry, guardReason, psToolDecision, MAX_DEPTH, NOT_SENT_TEXT, TRY_GUARD_LOG_ENV, windowsArgv } from '../src/core/workflow-tests/try-guard.mjs';
-import { TRY_GUARD_PATH, TRY_DENY, standInDir, withTryGuardEnv, withTryDeny, tryGuardHookEntry, ensureStandIns, standInFiles } from '../src/core/workflow-tests/try-guard-env.mjs';
+import { answerDeny, guardDecision, guardEntry, guardReason, psToolDecision, MAX_DEPTH, NOT_SENT_TEXT, TRY_GUARD_JSON_ENV, TRY_GUARD_LOG_ENV, windowsArgv } from '../src/core/workflow-tests/try-guard.mjs';
+import { TRY_GUARD_PATH, TRY_DENY, TRY_GUARD_MIN_CLAUDE, claudeReadsStructuredDeny, standInDir, withTryGuardEnv, withTryDeny, tryGuardHookEntry, ensureStandIns, standInFiles } from '../src/core/workflow-tests/try-guard-env.mjs';
 import { guardCall } from '../src/core/workflow-tests/guard-calls.mjs';
 import { NOT_SENT } from '../src/core/mcp/mock-connector.mjs';
 import { shellArgv } from '../src/core/actions/spawn.mjs';
@@ -133,8 +133,17 @@ test('what the hook stops, and what it lets through', () => {
 
 test('the hook CLI denies and records; anything else passes; a malformed payload passes', () => {
   const log = join(home, 'calls-hook.ndjson');
-  const env = { ...process.env, [TRY_GUARD_LOG_ENV]: log };
-  const run = (payload) => spawnSync(process.execPath, [TRY_GUARD_PATH], { input: payload, env, encoding: 'utf8' });
+  const plainEnv = { ...process.env, [TRY_GUARD_LOG_ENV]: log };
+  delete plainEnv[TRY_GUARD_JSON_ENV];
+  const env = { ...plainEnv, [TRY_GUARD_JSON_ENV]: '1' };
+  const run = (payload, e = env) => spawnSync(process.execPath, [TRY_GUARD_PATH], { input: payload, env: e, encoding: 'utf8' });
+  // Fix 2: without WORCA_TRY_GUARD_JSON=1 (a CLI below TRY_GUARD_MIN_CLAUDE, unknown, or never probed) the hook blocks the
+  // way every Claude Code reads: the reason on stderr, exit 2, nothing on stdout.
+  const old = run(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin fix-482' } }), plainEnv);
+  assert.deepEqual([old.status, old.stdout], [2, '']);
+  assert.equal(old.stderr.trim(), guardReason(guardDecision('git push origin fix-482')));
+  assert.equal(readLog(log).length, 1, 'recorded either way');
+  rmSync(log, { force: true });
   // Task 5b: a structured PreToolUse deny on stdout, exit 0: the agent reads the reason, not "hook error" and paths.
   const denied = run(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin fix-482' } }));
   assert.equal(denied.status, 0, denied.stderr);
@@ -157,6 +166,114 @@ test('the hook CLI denies and records; anything else passes; a malformed payload
   assert.equal(JSON.parse(ps.stdout).hookSpecificOutput.permissionDecision, 'deny');
   assert.deepEqual([readLog(log).length, readLog(log)[1].tool], [2, 'push']);
   assert.equal(run(JSON.stringify({ tool_name: 'PowerShell', tool_input: { command: 'Get-ChildItem' } })).stdout, '');
+});
+
+test('fix 2: a structured answer that cannot be written becomes stderr + exit 2, never an allow', () => {
+  const d = guardDecision('git push origin main');
+  const sink = () => { const chunks = []; return { chunks, write: (t, cb) => { chunks.push(t); cb?.(); return true; } }; };
+  const run = (out, json = true) => {
+    const err = sink();
+    const codes = [];
+    answerDeny(d, { json, out, err, exit: (c) => codes.push(c) });
+    return { codes, err: err.chunks.join('') };
+  };
+  const ok = sink();
+  assert.deepEqual(run(ok).codes, [0]);
+  assert.equal(JSON.parse(ok.chunks[0]).hookSpecificOutput.permissionDecision, 'deny');
+  // The write reports an error (EPIPE: the reader is gone).
+  const failed = run({ write: (_t, cb) => { cb(new Error('EPIPE')); return false; } });
+  assert.deepEqual(failed.codes, [2]);
+  assert.equal(failed.err.trim(), guardReason(d));
+  // The write throws.
+  assert.deepEqual(run({ write: () => { throw new Error('EBADF'); } }).codes, [2]);
+  // The stream emits 'error' (and the callback errors too): one exit, 2.
+  const handlers = {};
+  const emitting = { once: (ev, f) => { handlers[ev] = f; }, write: (_t, cb) => { handlers.error?.(new Error('EPIPE')); cb(new Error('EPIPE')); return false; } };
+  assert.deepEqual(run(emitting).codes, [2]);
+  // No JSON wanted: stderr + exit 2, stdout untouched.
+  const untouched = sink();
+  const r = run(untouched, false);
+  assert.deepEqual([r.codes, untouched.chunks, r.err.trim()], [[2], [], guardReason(d)]);
+});
+
+test('fix 2: the CLI floor for the structured deny; the flag only with structuredDeny; PowerShell deny rules', () => {
+  assert.equal(TRY_GUARD_MIN_CLAUDE, '2.1.304');
+  for (const [v, want] of [['2.1.304', true], ['2.1.305', true], ['2.2.0', true], ['3.0.0', true], ['2.1.303', false], ['2.0.999', false], ['1.9.9', false],
+    [null, false], ['', false], ['unknown', false], ['2.1', false], ['2.1.304-beta', true]]) assert.equal(claudeReadsStructuredDeny(v), want, String(v));
+  const off = withTryGuardEnv({ PATH: '/usr/bin', [TRY_GUARD_JSON_ENV]: '1' }, { logFile: 'f' }, { home, platform: 'linux' });
+  assert.equal(off[TRY_GUARD_JSON_ENV], undefined, 'a flag the parent env carries is not trusted');
+  assert.equal(withTryGuardEnv({ PATH: '/usr/bin' }, { logFile: 'f', structuredDeny: true }, { home, platform: 'linux' })[TRY_GUARD_JSON_ENV], '1');
+  assert.equal(composeSpawnEnv({}).env[TRY_GUARD_JSON_ENV], process.env[TRY_GUARD_JSON_ENV], 'a normal spawn is untouched');
+  // The CLI's PowerShell tool gets the same deny rules as Bash (2.1.304 refuses `PowerShell(git push:*)`).
+  const bash = TRY_DENY.filter((r) => r.startsWith('Bash('));
+  assert.equal(bash.length, 18);
+  assert.deepEqual(TRY_DENY.filter((r) => r.startsWith('PowerShell(')), bash.map((r) => r.replace(/^Bash\(/, 'PowerShell(')));
+  assert.equal(TRY_DENY.length, 36);
+});
+
+test('fix 2: wsl ~, Start-Process argument lists, versioned and corepack publishers, dry runs, image pushes', () => {
+  const hit = (c) => { const d = guardDecision(c); return d ? `${d.server}|${d.tool}` : null; };
+  const HITS = [
+    ['wsl ~ git push', 'git|push'],
+    ['wsl ~ -e git push', 'git|push'],
+    ['wsl.exe ~ -- git push', 'git|push'],
+    ['wsl -d Ubuntu ~ gh pr create', 'GitHub CLI|pr create'],
+    ['echo "git push" | wsl ~', 'git|push'],
+    ['Start-Process git -ArgumentList "-C . push"', 'git|push'],
+    ["Start-Process git -ArgumentList '-C','.','push'", 'git|push'],
+    ['Start-Process powershell -ArgumentList "-c git push"', 'git|push'],
+    ['Start-Process -FilePath git -ArgumentList "push origin main" -Wait -NoNewWindow', 'git|push'],
+    ['Start-Process -Wait -WorkingDirectory C:/x -FilePath gh -ArgumentList "pr create"', 'GitHub CLI|pr create'],
+    ['saps git "push"', 'git|push'],
+    ['npx npm@10 publish', 'npm|publish'],
+    ['npx -p npm@10.2.0 npm publish', 'npm|publish'],
+    ['corepack pnpm publish', 'pnpm|publish'],
+    ['corepack pnpm@9.1.0 publish', 'pnpm|publish'],
+    ['corepack yarn npm publish', 'yarn|publish'],
+    ['pnpm dlx npm publish', 'pnpm|publish'],
+    ['yarn dlx npm publish', 'yarn|publish'],
+    ['bunx npm publish', 'npm|publish'],
+    ['git push --dry-run=false origin main', 'git|push'],
+    ['npm publish --dry-run=false', 'npm|publish'],
+    ['docker push x/y', 'docker|push'],
+    ['docker --context prod push x/y', 'docker|push'],
+    ['docker image push x/y', 'docker|push'],
+    ['docker manifest push x/y', 'docker|push'],
+    ['docker compose push', 'docker|push'],
+    ['docker compose -f deploy.yml push web', 'docker|push'],
+    ['docker buildx build --push -t x/y .', 'docker|push'],
+    ['docker buildx build -t x/y --output type=registry .', 'docker|push'],
+    ['docker buildx bake --push', 'docker|push'],
+    ['docker build --push -t x/y .', 'docker|push'],
+    ['podman push x/y', 'podman|push'],
+    ['sudo docker push x/y', 'docker|push'],
+  ];
+  for (const [c, want] of HITS) assert.equal(hit(c), want, c);
+  const MISSES = [
+    'wsl ~', 'wsl ~ ls', 'wsl ~ -e ls', 'Start-Process notepad -ArgumentList "-x readme.txt"', 'Start-Process git -ArgumentList "-C . status"',
+    // --dry-run sends nothing
+    'git push --dry-run origin main', 'git push -n origin main', 'npm publish --dry-run', 'pnpm publish --dry-run', 'yarn publish --dry-run',
+    'cargo publish --dry-run', 'uv publish --dry-run', 'npx npm@10 publish --dry-run',
+    // images that stay local
+    'docker build -t x/y .', 'docker buildx build -t x/y --load .', 'docker compose up', 'docker compose run web push', 'docker pull x/y', 'docker run alpine echo push',
+    'podman build -t x .', 'docker images',
+  ];
+  for (const c of MISSES) assert.equal(guardDecision(c), null, c);
+});
+
+test('fix 2: an expansion-named command is unreadable only for push / publish / send-email, or a method with a URL', () => {
+  const hit = (c) => { const d = guardDecision(c); return d ? `${d.server}|${d.tool}` : null; };
+  for (const c of ['$(which git) push origin', '"$G" push', '$T publish', '$G send-email x.patch', '"$CURL" -X POST https://x.example', '$C --request=PUT https://x.example']) {
+    assert.equal(hit(c), 'shell|unreadable', c);
+  }
+  const MISSES = [
+    '$PYTHON manage.py migrate --database x', '"$PY" -m pytest --json-report', '"$NODE" scripts/report.js --json', '$CC -o post post.c',
+    './node_modules/.bin/$T --data-dir x', '"$BIN" delete x', '"$BIN" -X POST', '$TOOL --method fast', '$(npm bin)/eslint --format json .',
+  ];
+  for (const c of MISSES) assert.equal(guardDecision(c), null, c);
+  // A URL is no sending command; echo / printf alone do not make a piped line unreadable.
+  for (const c of ['echo "$BASE/https://example.com" | sh', 'echo "$CMD" | sh', 'printf "%d\\n" 3 | sh', 'echo -e "a\\tb" | sh']) assert.equal(guardDecision(c), null, c);
+  for (const c of ['echo "$CMD git" | sh', 'echo -e "\\x67it push" | sh']) assert.equal(hit(c), 'shell|unreadable', c);
 });
 
 test('task 5b: WSL, Git Bash cmd //c and nested re-reads are seen through', () => {
@@ -302,7 +419,7 @@ test('task 5b: PowerShell and httpie web writes; wrappers find -exec, watch, flo
     ['bun publish', 'bun|publish'],
     ['cargo publish', 'cargo|publish'],
     ['twine upload dist/*', 'twine|publish'],
-    ['docker push x/y', 'docker|publish'],
+    ['docker push x/y', 'docker|push'],
     ['dotnet nuget push x.nupkg', 'dotnet|publish'],
   ];
   for (const [c, want] of HITS) assert.equal(hit(c), want, c);
@@ -471,8 +588,11 @@ test('withTryGuardEnv: null returns the env itself; on Windows PATH goes to the 
     'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'].join(':'));
   const kept = withTryGuardEnv({ Path: 'C:\\a', WslEnv: 'FOO/u:GH_CONFIG_DIR', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c' }, { logFile: 'f' }, { home, platform: 'win32' });
   assert.equal(kept.WSLENV, undefined, 'the env\'s own spelling');
-  assert.equal(kept.WslEnv, ['FOO/u', 'GH_CONFIG_DIR', 'GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p',
+  // Fix 2: other entries kept; an entry for one of the guard's names is replaced, so GH_CONFIG_DIR always goes with /p.
+  assert.equal(kept.WslEnv, ['FOO/u', 'GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p',
     'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1'].join(':'), 'kept, then every git config pair');
+  assert.equal(withTryGuardEnv({ Path: 'C:\\a', WSLENV: 'GH_CONFIG_DIR/u:GIT_SSH_COMMAND/l' }, { logFile: 'f' }, { home, platform: 'win32' }).WSLENV.split(':').filter((e) => /^(GH_CONFIG_DIR|GIT_SSH_COMMAND)/.test(e)).join(':'),
+    'GIT_SSH_COMMAND:GH_CONFIG_DIR/p', 'a flag on the guard\'s own names is replaced');
   assert.equal(withTryGuardEnv({ PATH: '/usr/bin' }, { logFile: 'f' }, { home, platform: 'linux' }).WSLENV, undefined, 'no WSLENV off Windows');
 });
 
@@ -492,6 +612,7 @@ test('board 37: wouldHaveSent lists a guard entry through guardCall (a push name
     assert.deepEqual([r.tool, r.noun, r.cap, r.full], ['run a command Worca could not read', 'command', 'Not sent · stopped by Worca', c], c);
   }
   for (const c of ['cargo publish', 'twine upload dist/x.whl', 'bun publish']) assert.equal(rowOf(c).tool, 'publish a package', c);
+  for (const c of ['docker push x/y', 'podman push x/y', 'docker buildx build --push .']) assert.deepEqual([rowOf(c).tool, rowOf(c).noun], ['push an image', 'image'], c);
   // Review fix 1 (7): a ref names its branch; a subtree or LFS push is a push.
   const branchOf = (argv) => guardCall({ server: 'git', tool: 'push', arguments: { command: 'git push', argv }, guard: true }).preview;
   assert.equal(branchOf(['origin', 'HEAD:refs/heads/fix-1']), 'Send the changes to the branch fix-1');

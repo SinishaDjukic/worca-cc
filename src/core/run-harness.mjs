@@ -134,6 +134,7 @@ import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTe
 import { loadCatalog } from './mcp/catalog.mjs';
 import { pretendServers, pretendLayer, noteSeenServers, CONNECTOR_CALLS_FILE } from './workflow-tests/connectors.mjs';
 import { runShellStep, tryShellEnv, writeTrySetup, TRY_SETUP_STAGE } from './workflow-tests/shell-step.mjs';
+import { claudeReadsStructuredDeny } from './workflow-tests/try-guard-env.mjs';
 import { setupFailedText } from '../shared/workflow-tests/project-text.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
@@ -3887,7 +3888,9 @@ export class RunHarness extends EventEmitter {
   /** Workflow tests 3a (D56): every try's outward guard writes to its connector-calls.ndjson; null for every other run. */
   _tryGuard() {
     if (this.opts.workflowTest !== true || !this.pipeline?.dir) return null;
-    return { logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE) };
+    // structuredDeny only once the probe saw a CLI that reads it (_recordCapabilities); until then, and for any other
+    // version, the hook blocks with stderr + exit 2.
+    return { logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE), ...(this._tryGuardStructured === true ? { structuredDeny: true } : {}) };
   }
 
   /**
@@ -4796,6 +4799,8 @@ export class RunHarness extends EventEmitter {
       return;
     }
     const caps = await this._claudeCaps();
+    // Workflow tests 3a (D56): a try's hook answers with a structured deny only on a CLI known to read it.
+    if (this.opts.workflowTest === true) this._tryGuardStructured = claudeReadsStructuredDeny(caps.version);
     if (caps.version === null) {
       // No `claude --version` at all. The first node fails loudly anyway; when the
       // cause is the Windows npm shim, record the actionable reason NOW so the

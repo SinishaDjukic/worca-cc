@@ -3,8 +3,9 @@
 //   - guardDecision(command): whether a shell command would push, open a pull request or an issue, change a remote,
 //     publish a package or send a web request that writes; pure;
 //   - the PreToolUse hook every try's agents carry on Bash and PowerShell (engines/claude.mjs buildSettingsPayload): a hit
-//     is written to the try's connector-calls.ndjson (WORCA_TRY_GUARD_LOG) and denied with a structured PreToolUse
-//     answer (permissionDecision "deny", exit 0), so the agent reads only the reason;
+//     is written to the try's connector-calls.ndjson (WORCA_TRY_GUARD_LOG) and denied: with a structured PreToolUse
+//     answer (permissionDecision "deny", exit 0) when the harness confirmed the CLI reads one (WORCA_TRY_GUARD_JSON=1), so
+//     the agent reads only the reason; else, and whenever that answer cannot be written, stderr and exit 2;
 //   - the CLI behind the gh / glab / az stand-ins on a try's PATH (try-guard-env.mjs): it writes the call down and answers
 //     "Not sent: this is a test." with exit 1.
 // Only node: built-ins: the hook runs on every Bash call of every try.
@@ -27,6 +28,8 @@ import { pathToFileURL } from 'node:url';
 
 export const NOT_SENT_TEXT = 'Not sent: this is a test.';   // = mcp/mock-connector.mjs NOT_SENT (the test pins them equal)
 export const TRY_GUARD_LOG_ENV = 'WORCA_TRY_GUARD_LOG';
+/** '1' when the CLI reads a structured PreToolUse deny (try-guard-env.mjs TRY_GUARD_MIN_CLAUDE); else stderr + exit 2. */
+export const TRY_GUARD_JSON_ENV = 'WORCA_TRY_GUARD_JSON';
 export const FORGE_CLIS = Object.freeze({ gh: 'GitHub CLI', glab: 'GitLab CLI', az: 'Azure CLI' });
 /** The agent tools the hook reads: Claude Code's Bash, and its PowerShell tool on Windows. */
 export const SHELL_TOOLS = Object.freeze(['Bash', 'PowerShell']);
@@ -36,7 +39,7 @@ const KEYWORDS = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', 
 /** Commands that run the command among their arguments, after options of their own. */
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'time', 'nohup', 'timeout', 'nice', 'ionice', 'stdbuf', 'xargs', 'setsid', 'chrt', 'taskset',
   'find', 'watch', 'flock', 'parallel', 'script', 'su', 'npx', 'pnpx', 'bunx', 'start-process', 'saps', 'start',
-  'invoke-command', 'icm', 'start-job', 'sajb', 'start-threadjob', 'foreach-object', '%', 'measure-command']);
+  'invoke-command', 'icm', 'start-job', 'sajb', 'start-threadjob', 'foreach-object', '%', 'measure-command', 'corepack']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'fish', 'csh', 'tcsh']);
 const POWERSHELLS = new Set(['powershell', 'pwsh']);
 const WSLS = new Set(['wsl', 'wslg']);
@@ -52,13 +55,17 @@ const PUBLISH_OTHER = {
   cargo: (n) => n.includes('publish'), twine: (n) => n.includes('upload'), gem: (n) => n[0] === 'push',
   poetry: (n) => n.includes('publish'), uv: (n) => n[0] === 'publish', hatch: (n) => n[0] === 'publish', flit: (n) => n[0] === 'publish',
   deno: (n) => n[0] === 'publish', dotnet: (n) => n[0] === 'nuget' && n[1] === 'push',
-  docker: (n) => n[0] === 'push' || (n[0] === 'image' && n[1] === 'push'), podman: (n) => n[0] === 'push' || (n[0] === 'image' && n[1] === 'push'),
 };
+/** `--dry-run` sends nothing (git push, npm / pnpm / yarn / bun publish, cargo, uv and poetry publish). */
+const DRY_RUN_OK = new Set([...NPM_LIKE, 'cargo', 'uv', 'poetry']);
+const dryRun = (args) => args.some((a) => /^--dry-run(=true)?$/.test(a));
 /** Every server name guardDecision gives a publish (guard-calls.mjs lists them as "publish a package"). */
 export const PUBLISH_SERVERS = Object.freeze([...NPM_LIKE, ...Object.keys(PUBLISH_OTHER)]);
+/** Container tools whose push sends an image to a registry (guard-calls.mjs: "push an image"). */
+export const IMAGE_SERVERS = Object.freeze(['docker', 'podman']);
 /** Every first word guardDecision acts on: a wrapper's arguments are searched for these. */
 const GUARDED = new Set(['git', 'curl', 'wget', 'eval', 'iex', 'invoke-expression', 'cmd', ...Object.keys(FORGE_CLIS), ...SHELLS, ...POWERSHELLS, ...WSLS, ...PS_WEB, ...HTTPIE,
-  ...PUBLISH_SERVERS, ...WRAPPERS]);
+  ...PUBLISH_SERVERS, ...IMAGE_SERVERS, ...WRAPPERS]);
 const isGuarded = (b) => GUARDED.has(b) || LAUNCHER_RE.test(b);
 const GIT_OPT_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--exec-path']);
 const SPLIT = new Set([';', '&', '|', '(', ')']);
@@ -72,14 +79,18 @@ const CURL_VALUE_SHORT = new Set('AbcCDeEHKmoPQrtuUwxyYz'.split(''));
 /** Inside double quotes a backslash escapes only these (bash); elsewhere it stays, as in "C:\Program Files". */
 const DQ_ESCAPES = new Set(['$', '`', '"', '\\', '\n']);
 /** A command that can send (in a text we cannot read as commands). */
-const GUARD_CMD_RE = /(^|[^\w.-])(git|gh|glab|az|curl|wget|npm|yarn|pnpm|bun|npx|cargo|twine|gem|poetry|docker|http|https|xh|iwr|irm|invoke-webrequest|invoke-restmethod|wsl)(\.exe)?(?=$|[^\w-])/i;
+// Not in a URL (`https://…`, `git://…`): the word must not run on into ':' or '/'.
+const GUARD_CMD_RE = /(^|[^\w.:/-])(git|gh|glab|az|curl|wget|npm|yarn|pnpm|bun|npx|corepack|cargo|twine|gem|poetry|docker|podman|http|https|xh|iwr|irm|invoke-webrequest|invoke-restmethod|wsl)(\.exe)?(?=$|[^\w:/-])/i;
 /** What a sending command does (push, publish, a pull request, a web write). */
-const ACTION_RE = /(^|[^\w-])(push|publish|send-?email|upload)(?=$|[^\w-])|(^|\s)(pr|mr|issue|api|release)\s+[\w-]|(^|[^\w-])(post|put|patch|delete)(?=$|[^\w-])|--data|--form|--json|--method|(^|\s)-X\s*[A-Za-z]/i;
+const ACTION_RE = /(^|[^\w-])(push|publish|send-?email|upload)(?=$|[^\w-])|(^|\s)(pr|mr|issue|api|release)\s+[\w-]|(^|[^\w-])(post|put|patch|delete)(?=$|[^\w-])|--data(-binary|-raw|-urlencode|-ascii)?(?![\w-])|--form(?![\w-])|--json(?![\w-])|--method(?![\w-])|(^|\s)-X\s*[A-Za-z]/i;
+/** An expansion-named command is unreadable only when its own words push / publish / send mail, or name a method with a URL. */
+const EXPANSION_SENDS = (w) => w.some((x) => ['push', 'publish', 'send-email'].includes(x))
+  || (w.some((x) => /^(-X.*|--request(=.*)?|-Method(:.*)?|--method(=.*)?)$/i.test(x)) && w.some((x) => /^https?:\/\//i.test(x)));
 /** Words a command written as an expansion leaves behind as a command of its own (`` `which git` push ``). */
 const ACTION_WORDS = new Set(['push', 'publish', 'send-email', 'upload']);
 /** Commands that turn their input into other text: what they hand a shell cannot be read here. */
 const DECODERS = new Set(['base64', 'base32', 'basenc', 'xxd', 'od', 'openssl', 'uudecode', 'gunzip', 'zcat', 'gzip', 'bzip2', 'bunzip2', 'bzcat', 'xz', 'unxz', 'xzcat',
-  'zstd', 'unzstd', 'rev', 'tr', 'sed', 'awk', 'gawk', 'perl', 'python', 'python3', 'py', 'node', 'ruby', 'php', 'iconv', 'certutil', 'echo', 'printf']);
+  'zstd', 'unzstd', 'rev', 'tr', 'sed', 'awk', 'gawk', 'perl', 'python', 'python3', 'py', 'node', 'ruby', 'php', 'iconv', 'certutil']);
 /** .NET calls that send a body from PowerShell. */
 const PS_DOTNET_WRITE_RE = /\.(Upload(String|Data|File|Values)(Async|TaskAsync)?|(Post|Put|Patch|Delete|Send)Async)\s*\(/i;
 
@@ -286,7 +297,8 @@ export function parseShell(command) {
 /** The words of each command in a shell line (parseShell's segments). */
 export const shellSegments = (command) => parseShell(command).segments;
 
-const bin = (w) => String(w).split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
+/** A command word's program name: no folder, no .exe/.cmd/.bat/.ps1, no @version (`npx npm@10 publish`). */
+const bin = (w) => String(w).split(/[\\/]/).pop().toLowerCase().replace(/(?<=.)@[^@]*$/, '').replace(/\.(exe|cmd|bat|ps1)$/, '');
 const nonOptions = (args) => args.filter((a) => !String(a).startsWith('-'));
 /** "pr create", "issue comment", "repos pr", …: a forge CLI's first two words. */
 export const cliTool = (args) => nonOptions(args).slice(0, 2).join(' ');
@@ -331,7 +343,8 @@ function gitDecision(args) {
   }
   const sub = args[i];
   if (sub == null) return null;
-  if (sub === 'push') return { server: 'git', tool: 'push', argv: args.slice(i + 1) };
+  // `git push --dry-run` / `-n` sends nothing.
+  if (sub === 'push') return dryRun(args.slice(i + 1)) || args.slice(i + 1).includes('-n') ? null : { server: 'git', tool: 'push', argv: args.slice(i + 1) };
   if ((sub === 'subtree' || sub === 'lfs') && args[i + 1] === 'push') return { server: 'git', tool: `${sub} push`, argv: args.slice(i + 2) };
   if (sub === 'send-email') return { server: 'git', tool: 'send-email', argv: args.slice(i + 1) };
   if (sub === 'remote' && (args[i + 1] === 'add' || args[i + 1] === 'set-url')) return { server: 'git', tool: `remote ${args[i + 1]}`, argv: args.slice(i + 2) };
@@ -434,6 +447,7 @@ function httpieWrites(args, piped) {
 function wslCommand(args) {
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
+    if (a === '~') continue;   // `wsl ~ …`: start in the home folder; options and the command still follow
     if (a === '--') return { words: args.slice(i + 1), exec: false };
     if (a === '-e' || a === '--exec') return { words: args.slice(i + 1), exec: true };
     if (['-d', '--distribution', '-u', '--user', '--cd', '--shell-type', '--distribution-id'].includes(a)) { i += 1; continue; }
@@ -442,6 +456,55 @@ function wslCommand(args) {
     return { words: args.slice(i), exec: false };
   }
   return { words: [], exec: false };   // a bare wsl: a shell that reads its input
+}
+
+const DOCKER_GLOBAL_VALUE = new Set(['--context', '-c', '--host', '-H', '--config', '--log-level', '-l', '--tlscacert', '--tlscert', '--tlskey', '--url', '--connection', '--root', '--runroot']);
+const COMPOSE_VALUE = new Set(['-f', '--file', '-p', '--project-name', '--env-file', '--profile', '--project-directory', '--ansi', '--progress', '--parallel']);
+/** docker / podman: `push`, `image push`, `manifest push`, `compose push`, `build` / `buildx build|bake` with `--push`
+ *  or a registry output. Each sends an image to a registry. */
+function imagePush(args) {
+  let i = 0;
+  while (i < args.length && args[i].startsWith('-')) i += DOCKER_GLOBAL_VALUE.has(args[i]) ? 2 : 1;
+  const sub = args[i];
+  const rest = args.slice(i + 1);
+  if (sub === 'push') return !dryRun(rest);
+  if ((sub === 'image' || sub === 'manifest') && rest[0] === 'push') return true;
+  if (sub === 'compose') {
+    let k = 0;
+    while (k < rest.length && rest[k].startsWith('-')) k += COMPOSE_VALUE.has(rest[k]) ? 2 : 1;
+    return rest[k] === 'push' && !dryRun(rest);
+  }
+  const builds = sub === 'build' || (sub === 'buildx' && ['build', 'bake'].includes(rest[0]));
+  return builds && rest.some((a, k) => a === '--push' || /^--push=(true|1)$/.test(a) || /(^|,)(type=registry|push=true)(,|$)/.test(a.replace(/^--output=/, ''))
+    || ((a === '--output' || a === '-o') && /(^|,)(type=registry|push=true)(,|$)/.test(rest[k + 1] || '')));
+}
+
+/** Start-Process's own parameters (any unambiguous abbreviation): switches, and those that take a value. */
+const SP_SWITCHES = ['wait', 'nonewwindow', 'passthru', 'usenewenvironment', 'loaduserprofile'];
+const SP_VALUED = ['verb', 'workingdirectory', 'windowstyle', 'redirectstandardinput', 'redirectstandardoutput', 'redirectstandarderror', 'credential', 'environment'];
+/** Start-Process / saps / start: the program (-FilePath or the first word) and its -ArgumentList (or the second word),
+ *  each item split at commas ('-C','.','push') and at spaces ("-C . push"). Only Start-Process's own parameter names are
+ *  dropped, never a value that starts with '-'. */
+function startProcessWords(args) {
+  const named = (o, list) => o.length >= 2 && list.filter((n) => n.startsWith(o)).length === 1 && list.find((n) => n.startsWith(o));
+  let file = null;
+  const list = [];
+  const pos = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = String(args[i]);
+    const o = /^-[A-Za-z]/.test(a) ? a.slice(1).split(':')[0].toLowerCase() : null;
+    const inline = o != null && a.includes(':') ? a.slice(a.indexOf(':') + 1) : null;
+    const take = () => (inline != null ? inline : args[++i]);
+    if (o != null && (['path', 'pspath', 'lp'].includes(o) || (o.length >= 2 && 'filepath'.startsWith(o)))) { file = take(); continue; }
+    if (o != null && (o === 'args' || (o.length >= 2 && 'argumentlist'.startsWith(o)))) { const v = take(); if (v != null) list.push(v); continue; }
+    if (o != null && named(o, SP_SWITCHES)) continue;
+    if (o != null && named(o, SP_VALUED)) { take(); continue; }
+    pos.push(a);
+  }
+  if (file == null) file = pos.shift() ?? null;
+  if (!list.length && pos.length) list.push(...pos);
+  if (file == null) return [];
+  return [file, ...list.flatMap((x) => String(x).split(',')).flatMap((x) => x.trim().split(/\s+/)).filter(Boolean)];
 }
 
 /** The value of option `names` (-c x, --command x, --command=x), or null. */
@@ -484,9 +547,12 @@ function commandDecision(w, depth, ctx = {}) {
     for (let k = 0; k < args.length; k += 1) { const d = reparse(args.slice(k), depth); if (d) return d; }
   }
   if (b === 'start-process' || b === 'saps' || b === 'start') {
-    // Start-Process git -ArgumentList "push origin main": the program and its argument list are one command line.
-    const d = reparse(args.filter((a) => psOption(a) == null || !/^-/.test(a)), depth);
-    if (d) return d;
+    // Start-Process git -ArgumentList "-C . push" / '-C','.','push': the program and its argument list are one command.
+    const words = startProcessWords(args);
+    if (words.length) {
+      const d = commandDecision(words, depth + 1) || reparse(words, depth, { win: true });
+      if (d) return d;
+    }
   }
   if (WRAPPERS.has(b)) return wrapperDecision(b, args, depth, ctx);
   if (SHELLS.has(b)) {
@@ -536,10 +602,11 @@ function commandDecision(w, depth, ctx = {}) {
     // `publish` anywhere among the words (npm --registry x publish, yarn npm publish, pnpm -r publish), unless the
     // command is `npm run …`: that runs the project's own script, whatever its name.
     const n = nonOptions(args);
-    if (n.includes('publish') && !RUN_SCRIPT.has(n[0])) return { server: b, tool: 'publish', argv: args, readOnly: false };
+    if (n.includes('publish') && !RUN_SCRIPT.has(n[0]) && !dryRun(args)) return { server: b, tool: 'publish', argv: args, readOnly: false };
     return null;
   }
-  if (PUBLISH_OTHER[b] && PUBLISH_OTHER[b](nonOptions(args))) return { server: b, tool: 'publish', argv: args, readOnly: false };
+  if (PUBLISH_OTHER[b] && PUBLISH_OTHER[b](nonOptions(args)) && !(DRY_RUN_OK.has(b) && dryRun(args))) return { server: b, tool: 'publish', argv: args, readOnly: false };
+  if (IMAGE_SERVERS.includes(b) && imagePush(args)) return { server: b, tool: 'push', argv: args, readOnly: false };
   const web = (b === 'curl' && (curlWrites(args) || psWebWrites(args, 3)))
     || (b === 'wget' && (wgetWrites(args) || psWebWrites(args, 3)))
     || (PS_WEB.has(b) && psWebWrites(args))
@@ -733,12 +800,12 @@ export function guardDecision(command, depth = 0) {
     if (meta[s].piped) { let start = s - 1; while (start > 0 && meta[start].piped) start -= 1; input = chainSource(segments, meta, start, s); }
     const d = commandDecision(w, depth, { piped: meta[s].piped, input });
     if (d) return d;
-    // A command whose name is an expansion (`$(which git) push`, `"$G" push`): a push, publish or web write in it, or a
-    // sending command and an action in the line, is unreadable. A bare `push` / `publish` as a command is what is left
-    // of `` `which git` push `` once split: unreadable when a sending command is in the line.
+    // A command whose name is an expansion (`$(which git) push`, `"$G" push`): unreadable when its own words push,
+    // publish or send mail, or name a method with a URL. A bare `push` / `publish` as a command is what is left of
+    // `` `which git` push `` once split: unreadable when a sending command is in the line.
     // Kept as a fallback: a command later in the line that can be read names what it does better.
     if (/[$`]/.test(w[0])) {
-      if (!fallback && (ACTION_RE.test(w.join(' ')) || (GUARD_CMD_RE.test(text) && ACTION_RE.test(text)))) fallback = unreadable('command, whose name Worca cannot read', w);
+      if (!fallback && EXPANSION_SENDS(w.slice(1))) fallback = unreadable('command, whose name Worca cannot read', w);
     } else if (!fallback && ACTION_WORDS.has(w[0]) && GUARD_CMD_RE.test(text)) fallback = unreadable('command, whose name Worca cannot read', w);
     const kind = stdinReader(words);
     if (kind && (meta[s].piped || meta[s].here.length || meta[s].procs.length)) {
@@ -806,6 +873,26 @@ export function argsFromFile(file) {
   return a >= 0 && b > a ? windowsArgv(text.slice(a + 1, b)) : [];
 }
 
+/**
+ * The hook's deny. With WORCA_TRY_GUARD_JSON=1 (set by the harness only for a Claude Code at or above
+ * TRY_GUARD_MIN_CLAUDE, try-guard-env.mjs) a structured PreToolUse answer on stdout and exit 0: the agent reads the reason
+ * alone. Otherwise, and whenever that write fails, the reason on stderr and exit 2, which every Claude Code reads as a
+ * block. A write is waited for before the exit (a pipe write on Windows is asynchronous).
+ */
+export function answerDeny(d, { json = process.env[TRY_GUARD_JSON_ENV] === '1', out = process.stdout, err = process.stderr, exit = (c) => process.exit(c) } = {}) {
+  let done = false;
+  const finish = (code) => { if (!done) { done = true; exit(code); } };
+  const block = () => {
+    if (done) return;
+    try { err.write(`${guardReason(d)}\n`, () => finish(2)); } catch { finish(2); }
+  };
+  if (!json) { block(); return; }
+  try {
+    out.once?.('error', block);
+    out.write(`${JSON.stringify(hookDenyOutput(d))}\n`, (e) => (e ? block() : finish(0)));
+  } catch { block(); }
+}
+
 function record(entry) {
   const file = process.env[TRY_GUARD_LOG_ENV];
   if (!file) return;
@@ -840,9 +927,9 @@ if (isMain) {
     try { d = tool === 'PowerShell' ? psToolDecision(command) : guardDecision(command); }
     catch { d = { server: 'shell', tool: 'unreadable', argv: [], readOnly: false, label: 'command, which Worca could not read' }; }   // a guard that fails denies
     if (!d) process.exit(0);
+    // From here on nothing may end in an allow: a crash (exit 1) is a non-blocking hook error to Claude Code.
+    process.on('uncaughtException', () => { try { process.stderr.write(`${guardReason(d)}\n`); } finally { process.exit(2); } });
     record(guardEntry(d, command));
-    // A structured deny (checked with Claude Code 2.1.304): the agent reads the reason alone, not a "hook error" with this
-    // hook's command line. Written in full before the exit: a pipe write on Windows is asynchronous.
-    process.stdout.write(`${JSON.stringify(hookDenyOutput(d))}\n`, () => process.exit(0));
+    answerDeny(d);
   });
 }

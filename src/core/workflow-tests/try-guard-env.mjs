@@ -5,17 +5,27 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync }
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { worcaHome } from '../projects.mjs';
-import { TRY_GUARD_LOG_ENV } from './try-guard.mjs';
+import { TRY_GUARD_JSON_ENV, TRY_GUARD_LOG_ENV } from './try-guard.mjs';
 
 export const TRY_GUARD_PATH = fileURLToPath(new URL('./try-guard.mjs', import.meta.url));
+/** The lowest Claude Code seen to honour the hook's structured deny (hookSpecificOutput.permissionDecision "deny"):
+ *  the free proof ran 2.1.304. Older or unknown: the hook answers with stderr + exit 2, which every version blocks on. */
+export const TRY_GUARD_MIN_CLAUDE = '2.1.304';
+/** Whether a `claude --version` (as probeClaudeCapabilities reads it) is at or above TRY_GUARD_MIN_CLAUDE; null, unknown
+ *  or unreadable is no. Pure. */
+export function claudeReadsStructuredDeny(version, min = TRY_GUARD_MIN_CLAUDE) {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? '').trim());
+  if (!m) return false;
+  const want = min.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) { const v = Number(m[i + 1]); if (v !== want[i]) return v > want[i]; }
+  return true;
+}
 export const STAND_INS = Object.freeze(['gh', 'glab', 'az']);
-/** D56: the permission rules a try adds (guardrails.mjs NORMAL_DENY's push and publish pairs, plus the forge CLIs). */
-export const TRY_DENY = Object.freeze([
-  'Bash(git push)', 'Bash(git push:*)', 'Bash(git remote add:*)', 'Bash(git remote set-url:*)',
-  'Bash(gh)', 'Bash(gh:*)', 'Bash(glab)', 'Bash(glab:*)', 'Bash(az)', 'Bash(az:*)',
-  'Bash(npm publish)', 'Bash(npm publish:*)', 'Bash(yarn publish)', 'Bash(yarn publish:*)', 'Bash(pnpm publish)', 'Bash(pnpm publish:*)',
-  'Bash(yarn npm publish)', 'Bash(yarn npm publish:*)',
-]);
+const DENIED_COMMANDS = ['git push', 'git push:*', 'git remote add:*', 'git remote set-url:*', 'gh', 'gh:*', 'glab', 'glab:*', 'az', 'az:*',
+  'npm publish', 'npm publish:*', 'yarn publish', 'yarn publish:*', 'pnpm publish', 'pnpm publish:*', 'yarn npm publish', 'yarn npm publish:*'];
+/** D56: the permission rules a try adds (guardrails.mjs NORMAL_DENY's push and publish pairs, plus the forge CLIs), for
+ *  Bash and for the CLI's PowerShell tool (the free proof saw 2.1.304 refuse `PowerShell(git push:*)`). */
+export const TRY_DENY = Object.freeze([...DENIED_COMMANDS.map((c) => `Bash(${c})`), ...DENIED_COMMANDS.map((c) => `PowerShell(${c})`)]);
 // Forward slashes, as host-guard.mjs:38-47 does: JSON would double each backslash, and both shells accept them.
 const fwd = (s) => String(s).replaceAll('\\', '/');
 export const standInDir = (home = worcaHome()) => join(home, 'workflow-tests', 'bin');
@@ -90,7 +100,16 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * - git: no terminal prompt, Git Credential Manager never interactive, ssh fails at once, every credential helper reset.
  * - gh / glab / az found some other way (a script's spawn('gh') skips .cmd on Windows): empty config, so no sign-in.
  * - Windows: WSLENV carries the git settings and the empty sign-in folders into WSL (its own git and gh).
- * Stated limit: a web call with a token typed into the command can still go out (no network block yet).
+ * - WORCA_TRY_GUARD_JSON=1 only with `tryGuard.structuredDeny` (a CLI at or above TRY_GUARD_MIN_CLAUDE).
+ * What the guard covers (with the hook, try-guard.mjs): Bash and the CLI's PowerShell tool, nested shells, WSL (wsl,
+ * wslg, distro launchers, System32 bash.exe; WSLENV for WSL's git and gh), pipes and here-strings into a shell, and a
+ * structured deny with an exit-2 fallback.
+ * Stated limits (not covered, no network block yet): a web call with a token typed into the command; `npm publish` run
+ * from inside a script (npm run …, make, a test); web calls from `node -e` / `python -c` / any program; shell aliases,
+ * Set-Alias or a git alias configured in an earlier, separate command; tokens a WSL profile sets (GH_TOKEN in
+ * ~/.bashrc, /etc/environment); git http.extraheader / url.insteadOf tokens; docker push forms beyond push, image /
+ * manifest / compose push and build --push; `curl -K` config files; a PowerShell -Method given as a variable;
+ * Send-MailMessage and .NET web calls other than Upload* / *Async.
  */
 export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = process.platform } = {}) {
   if (!tryGuard) return env;
@@ -112,15 +131,19 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
   out[`GIT_CONFIG_KEY_${n}`] = 'credential.helper';
   out[`GIT_CONFIG_VALUE_${n}`] = '';
   out.GIT_CONFIG_COUNT = String(n + 1);
+  // The hook's structured deny only for a CLI known to read it (the harness probed it); else the hook uses exit 2.
+  for (const k of Object.keys(out)) if (k.toUpperCase() === TRY_GUARD_JSON_ENV) delete out[k];
+  if (tryGuard.structuredDeny === true) out[TRY_GUARD_JSON_ENV] = '1';
   if (platform === 'win32') {
     // WSL's own git and gh (wsl git push, bash.exe -c "gh pr create") see none of the above unless WSLENV names it: the
-    // git settings as they are, the sign-in folders as WSL paths (/p). Entries already there are kept.
+    // git settings as they are, the sign-in folders as WSL paths (/p). Other entries are kept; an entry for one of these
+    // names is replaced, so its flags are always the guard's (GH_CONFIG_DIR/p, never a bare Windows path).
     const wk = Object.keys(out).find((k) => k.toUpperCase() === 'WSLENV') || 'WSLENV';
-    const prev = String(out[wk] || '').split(':').filter(Boolean);
-    const named = new Set(prev.map((e) => e.split('/')[0].toUpperCase()));
     const add = ['GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p', 'GIT_CONFIG_COUNT',
       ...Array.from({ length: n + 1 }, (_, i) => [`GIT_CONFIG_KEY_${i}`, `GIT_CONFIG_VALUE_${i}`]).flat()];
-    out[wk] = [...prev, ...add.filter((e) => !named.has(e.split('/')[0].toUpperCase()))].join(':');
+    const ours = new Set(add.map((e) => e.split('/')[0].toUpperCase()));
+    const prev = String(out[wk] || '').split(':').filter((e) => e && !ours.has(e.split('/')[0].toUpperCase()));
+    out[wk] = [...prev, ...add].join(':');
   }
   return out;
 }
