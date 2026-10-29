@@ -3,7 +3,7 @@
 // text and the command itself. `forgeOf(remote)` names the forge of the real project's remote (P9), or null.
 const VALUE_OPTS = new Set(['--title', '-t', '--body', '-b', '--base', '-B', '--head', '-H', '--repo', '-R', '--label', '-l',
   '--assignee', '-a', '--reviewer', '-r', '--milestone', '-m', '--body-file', '-F', '--description', '-d', '--target-branch',
-  '--source-branch', '--push-option', '-o']);
+  '--source-branch', '--push-option', '-o', '--prefix', '-P']);
 const clip = (s, n) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
 function opt(argv, ...names) {
   for (let i = 0; i < argv.length; i += 1) {
@@ -32,9 +32,9 @@ export function guardCall(e, { forgeOf = () => null } = {}) {
   const tool = String((e && e.tool) || '');
   const row = (fields) => ({ guard: true, server, cmd, to: null, ...fields });
   const pos = positional(argv);
-  if (server === 'git' && tool === 'push') {
+  if (server === 'git' && /(^| )push$/.test(tool)) {
     const remote = pos[0] || null;
-    const branch = pos.length > 1 ? pos[pos.length - 1].replace(/^\+/, '').split(':').pop() : null;
+    const branch = pos.length > 1 ? pos[pos.length - 1].replace(/^\+/, '').split(':').pop().replace(/^refs\/heads\//, '') || null : null;
     const forge = remote ? forgeOf(remote) : null;
     const where = branch ? `the branch ${branch}` : 'its branch';
     return row({ tool: 'push', noun: 'push', preview: `Send the changes to ${where}`, cap: STOPPED,

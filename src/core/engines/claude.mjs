@@ -93,6 +93,7 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
   if (tg) {
     settings.hooks = settings.hooks ?? {};
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), tg];
+    settings.disableAllHooks = false;   // as the A8 read guard: the user's settings cannot switch the try's hook off
   }
   if (usage) {
     settings.hooks = settings.hooks ?? {};

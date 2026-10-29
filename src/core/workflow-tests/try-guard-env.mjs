@@ -1,7 +1,7 @@
 // src/core/workflow-tests/try-guard-env.mjs — a test try's outward guard in its environment and settings (D56): the gh /
 // glab / az stand-ins first on PATH, git that cannot sign in, forge CLIs with no sign-in of their own, the PreToolUse hook
 // and the deny list. Every function returns its input unchanged without a guard, so every other spawn is byte-identical.
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { worcaHome } from '../projects.mjs';
@@ -14,24 +14,56 @@ export const TRY_DENY = Object.freeze([
   'Bash(git push)', 'Bash(git push:*)', 'Bash(git remote add:*)', 'Bash(git remote set-url:*)',
   'Bash(gh)', 'Bash(gh:*)', 'Bash(glab)', 'Bash(glab:*)', 'Bash(az)', 'Bash(az:*)',
   'Bash(npm publish)', 'Bash(npm publish:*)', 'Bash(yarn publish)', 'Bash(yarn publish:*)', 'Bash(pnpm publish)', 'Bash(pnpm publish:*)',
+  'Bash(yarn npm publish)', 'Bash(yarn npm publish:*)',
 ]);
 // Forward slashes, as host-guard.mjs:38-47 does: JSON would double each backslash, and both shells accept them.
 const fwd = (s) => String(s).replaceAll('\\', '/');
 export const standInDir = (home = worcaHome()) => join(home, 'workflow-tests', 'bin');
 const noAuthDir = (home, name) => join(home, 'workflow-tests', 'no-auth', name);
 
-/** A stand-in for Git Bash and sh (no extension) and its cmd.exe twin (.cmd, CRLF). */
+/**
+ * A stand-in for Git Bash and sh (no extension) and its cmd.exe twin (.cmd, CRLF).
+ * The twin never puts %* on a line cmd parses again: `node … %*` would run `echo hi` from `gh x^&echo hi`. It echoes
+ * `rem #%*#` into a temp file instead (rem's text is not parsed, so & | < > ) and quotes are written as they came) and the
+ * CLI reads the arguments from that file (try-guard.mjs --args-file). What cmd itself already did to the line before the
+ * stand-in started (its own & split, %VAR% expansion, ^ removal) cannot be undone here. The answer is exit 1 either way.
+ */
 export function standInFiles(name, { node = process.execPath, script = TRY_GUARD_PATH } = {}) {
-  return {
-    sh: `#!/bin/sh\nexec "${fwd(node)}" "${fwd(script)}" --stand-in ${name} "$@"\n`,
-    cmd: `@echo off\r\n"${node}" "${script}" --stand-in ${name} %*\r\nexit /b %ERRORLEVEL%\r\n`,
-  };
+  const cmd = [
+    '@echo off',
+    'setlocal DisableDelayedExpansion',
+    'if not defined TEMP set "TEMP=%~dp0."',
+    'set "WORCA_STAND_IN_ARGS=%TEMP%\\worca-stand-in-%RANDOM%-%RANDOM%.txt"',
+    'set "prompt=$_"',
+    '> "%WORCA_STAND_IN_ARGS%" (',
+    '  echo on',
+    '  for %%a in (1) do (',
+    'rem #%*#',
+    ')',
+    ')',
+    '@echo off',
+    `"${node}" "${script}" --stand-in ${name} --args-file "%WORCA_STAND_IN_ARGS%"`,
+    'del "%WORCA_STAND_IN_ARGS%" >nul 2>nul',
+    'exit /b 1',
+    '',
+  ].join('\r\n');
+  return { sh: `#!/bin/sh\nexec "${fwd(node)}" "${fwd(script)}" --stand-in ${name} "$@"\n`, cmd };
 }
 
+/** Writes `text` only when the file differs, through a temp file in the same folder and a rename: a try starting while
+ *  another refreshes the folder never runs a half-written stand-in. */
 function writeIfChanged(file, text, mode = null) {
   let same = false;
   try { same = readFileSync(file, 'utf8') === text; } catch { /* missing: write it */ }
-  if (!same) writeFileSync(file, text);
+  if (!same) {
+    const tmp = `${file}.${process.pid}-${Math.random().toString(36).slice(2, 8)}.tmp`;
+    try {
+      writeFileSync(tmp, text);
+      if (mode != null) { try { chmodSync(tmp, mode); } catch { /* Windows has no exec bit */ } }
+      renameSync(tmp, file);
+    } catch { /* in use (a running .cmd on Windows) or unwritable: the old file stays, the other layers hold */ }
+    finally { try { rmSync(tmp, { force: true }); } catch { /* renamed away */ } }
+  }
   if (mode != null) { try { chmodSync(file, mode); } catch { /* Windows has no exec bit */ } }
 }
 

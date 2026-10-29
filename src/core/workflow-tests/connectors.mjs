@@ -247,7 +247,8 @@ export async function wouldHaveSent(pipelineId, { forgeOf } = {}) {
   const sent = [];
   const reads = new Map();
   for (const e of await readConnectorCalls(pipelineId)) {
-    if (e.readOnly === true) { const s = String(e.server || ''); reads.set(s, (reads.get(s) || 0) + 1); continue; }
+    // A call the outward guard stopped is an attempt even when it only reads (gh pr view): it never reached the forge.
+    if (e.readOnly === true && e.guard !== true) { const s = String(e.server || ''); reads.set(s, (reads.get(s) || 0) + 1); continue; }
     sent.push(sentCall(e, { forgeOf }));
   }
   return { sent, reads: [...reads].map(([server, n]) => ({ server, n })) };

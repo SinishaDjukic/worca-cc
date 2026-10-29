@@ -755,7 +755,7 @@ export async function runCodexProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model: namedModel, effort, onEvent = () => {}, signal,
   bin = CODEX_DEFAULT_BIN, resumeSessionId, addDirs, writableDirs, sandbox, envScrub, envAllowlist, asAgent, usageDir = defaultUsageDir(),
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, images, askLockdown,
-  permissionRules, allowedTools, agents, appendSubagentSystemPrompt,
+  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, tryGuard = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   const model = namedModel || CODEX_DEFAULT_MODEL;
@@ -832,7 +832,8 @@ export async function runCodexProcess({
     ? codexInvestigatorRole({ agents, subagentSystemPrompt: appendSubagentSystemPrompt, inheritModel: !!endpoint }) : null;
   const normalizer = createCodexNormalizer({ model, priorUsage: thread ? loadUsage(usageDir, thread) : null, unpriced: !!endpoint,
     subagent: role ? { type: CODEX_INVESTIGATOR_ROLE, model: role.model } : null });
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(ownEnv).length ? { runEnv: ownEnv } : {}) });
+  // Workflow tests 3a (D56): a try's outward guard (stand-ins first on PATH, git with no sign-in); absent ⇒ unchanged.
+  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(ownEnv).length ? { runEnv: ownEnv } : {}), ...(tryGuard ? { tryGuard } : {}) });
   // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
   // of a run without a project is no secret and must reach the agent's own git.
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;

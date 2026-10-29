@@ -379,7 +379,7 @@ export async function runGooseProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = gooseDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, scratchBase = null, platform = process.platform, probe = null,
-  chatHome = null,
+  chatHome = null, tryGuard = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   const ask = !!askLockdown;
@@ -460,7 +460,8 @@ export async function runGooseProcess({
   if (sys && Buffer.byteLength(sys, 'utf8') > GOOSE_ARGV_LIMIT) { stdin = `=== SYSTEM ===\n${sys}\n=== END SYSTEM ===\n\n${stdin}`; sys = ''; }
 
   // GOOSE_ vars survive scrub; a provider key does only when allowlisted. The MCP servers' env values ride the run env.
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(mcpEnv).length ? { runEnv: mcpEnv } : {}) });
+  // Workflow tests 3a (D56): a try's outward guard (stand-ins first on PATH, git with no sign-in); absent ⇒ unchanged.
+  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(mcpEnv).length ? { runEnv: mcpEnv } : {}), ...(tryGuard ? { tryGuard } : {}) });
   // Headless: approve / smart_approve would wait for a TTY. PWD follows the cwd (an inherited one names worca's folder).
   Object.assign(env, { PWD: cwd, GOOSE_MODE: 'auto' });
   if (ask) {

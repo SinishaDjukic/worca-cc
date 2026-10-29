@@ -5,17 +5,18 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawnSync, execFile, execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
-import { guardDecision, NOT_SENT_TEXT, TRY_GUARD_LOG_ENV } from '../src/core/workflow-tests/try-guard.mjs';
-import { TRY_GUARD_PATH, TRY_DENY, standInDir, withTryGuardEnv, withTryDeny, tryGuardHookEntry } from '../src/core/workflow-tests/try-guard-env.mjs';
+import { guardDecision, NOT_SENT_TEXT, TRY_GUARD_LOG_ENV, windowsArgv } from '../src/core/workflow-tests/try-guard.mjs';
+import { TRY_GUARD_PATH, TRY_DENY, standInDir, withTryGuardEnv, withTryDeny, tryGuardHookEntry, ensureStandIns, standInFiles } from '../src/core/workflow-tests/try-guard-env.mjs';
 import { guardCall } from '../src/core/workflow-tests/guard-calls.mjs';
 import { NOT_SENT } from '../src/core/mcp/mock-connector.mjs';
 import { shellArgv } from '../src/core/actions/spawn.mjs';
 import { buildSettingsPayload, buildClaudeArgs } from '../src/core/engines/claude.mjs';
-import { sentCall } from '../src/core/workflow-tests/connectors.mjs';
+import { sentCall, wouldHaveSent, CONNECTOR_CALLS_FILE } from '../src/core/workflow-tests/connectors.mjs';
+import { createPipeline } from '../src/core/artifacts.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
 import { _runOptsForTests as runOpts } from '../src/core/phases.mjs';
 import { envForShell, buildEnvelope } from '../src/core/graph/script-runner.mjs';
@@ -46,6 +47,88 @@ test('what the hook stops, and what it lets through', () => {
     assert.equal(guardDecision(ok), null, ok);
   }
   assert.equal(NOT_SENT_TEXT, NOT_SENT, 'the same words as the connector stand-ins');
+  // Review fix 1: the ways around a word list. Each is stopped, with what it would have done.
+  const HITS = [
+    // curl / wget: short flags run together, a method with a space, the long forms
+    ['curl -sX POST https://api.example.com/x', 'web|request|false'],
+    ['curl -sXPUT https://api.example.com/x', 'web|request|false'],
+    ['curl -sd a=1 https://api.example.com/x', 'web|request|false'],
+    ['curl -sSfF f=@x https://api.example.com/x', 'web|request|false'],
+    ['curl -fsT file https://api.example.com/x', 'web|request|false'],
+    ['curl --data-binary @x https://api.example.com/x', 'web|request|false'],
+    ['curl --json {} https://api.example.com/x', 'web|request|false'],
+    ['curl --form a=1 https://api.example.com/x', 'web|request|false'],
+    ['curl --upload-file x https://api.example.com/x', 'web|request|false'],
+    ['curl --request=DELETE https://api.example.com/x', 'web|request|false'],
+    ['wget --method POST https://example.com', 'web|request|false'],
+    ['wget --method=PUT https://example.com', 'web|request|false'],
+    ['wget --body-data x https://example.com', 'web|request|false'],
+    // shells: -c among other flags, cmd /c, PowerShell -Command, an encoded command
+    ['bash -lc "git push origin main"', 'git|push|false'],
+    ['sh -ec \'git push\'', 'git|push|false'],
+    ['zsh -o pipefail -c "gh pr create"', 'GitHub CLI|pr create|false'],
+    ['cmd /c git push', 'git|push|false'],
+    ['cmd.exe /d /s /c "git status & git push"', 'git|push|false'],
+    ['C:/Windows/System32/cmd.exe /C npm publish', 'npm|publish|false'],
+    ['powershell -NoProfile -Command "git push origin main"', 'git|push|false'],
+    ['pwsh -c "gh pr create --title x"', 'GitHub CLI|pr create|false'],
+    ['powershell.exe -ExecutionPolicy Bypass "git push"', 'git|push|false'],
+    ['powershell -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==', 'PowerShell|shell|false'],
+    ['pwsh -enc ZwBpAHQAIABwAHUAcwBoAA==', 'PowerShell|shell|false'],
+    ['pwsh -ec ZwBpAHQAIABwAHUAcwBoAA==', 'PowerShell|shell|false'],
+    // wrappers with their own options
+    ['timeout 30 git push', 'git|push|false'],
+    ['timeout -s KILL -k 5 30s git push', 'git|push|false'],
+    ['nice -n 10 git push', 'git|push|false'],
+    ['nice -5 git push', 'git|push|false'],
+    ['nohup git push &', 'git|push|false'],
+    ['time git push', 'git|push|false'],
+    ['exec git push', 'git|push|false'],
+    ['sudo -u deploy git push', 'git|push|false'],
+    ['sudo -E -H git push', 'git|push|false'],
+    ['env -i -u HOME A=1 B=2 git push', 'git|push|false'],
+    ['env -S "git push origin main"', 'git|push|false'],
+    ['echo main | xargs -n1 -I{} git push origin {}', 'git|push|false'],
+    ['stdbuf -oL -eL git push', 'git|push|false'],
+    ['ionice -c2 -n7 git push', 'git|push|false'],
+    ['command git push', 'git|push|false'],
+    ['sudo nice -n 5 env A=1 git push', 'git|push|false'],
+    // groups, eval, substitutions inside double quotes
+    ['{ git push; }', 'git|push|false'],
+    ['if true; then { npm publish; }; fi', 'npm|publish|false'],
+    ['eval "git push origin main"', 'git|push|false'],
+    ['eval git push', 'git|push|false'],
+    ['echo "result: $(git push)"', 'git|push|false'],
+    ['echo "`git push`"', 'git|push|false'],
+    // git: an alias given with -c, subtree and lfs pushes
+    ['git -c alias.ship=push ship origin main', 'git|push|false'],
+    ['git -c "alias.x=!git push" x', 'git|push|false'],
+    ['git subtree push --prefix dist origin gh-pages', 'git|subtree push|false'],
+    ['git lfs push origin main', 'git|lfs push|false'],
+    // publishers: publish anywhere among the words
+    ['npm --registry https://r.example.com publish', 'npm|publish|false'],
+    ['yarn npm publish', 'yarn|publish|false'],
+    ['pnpm -r publish --access public', 'pnpm|publish|false'],
+    // a shell that reads a heredoc runs its body; an unquoted heredoc's $( ) runs
+    ['bash <<EOF\ngit push\nEOF', 'git|push|false'],
+    ['cat <<EOF\n$(git push)\nEOF', 'git|push|false'],
+    // a `<<` that is no heredoc (no end word) hides nothing
+    ['echo $((1<<2))\ngit push', 'git|push|false'],
+  ];
+  for (const [c, want] of HITS) assert.equal(hit(c), want, c);
+  const MISSES = [
+    'git commit -m "push"', 'git commit -m push', 'echo publish', 'echo git push', 'npm run build', 'npm publish-docs',
+    'git log --grep=push', 'git pull', 'git fetch origin', 'gitk', 'curl -sSfL https://example.com', 'curl -H "X-d: 1" https://example.com',
+    'curl -o out.json https://example.com', 'wget https://example.com', 'wget --method GET https://example.com',
+    'bash -l script.sh', 'cmd /c dir', 'powershell -Command Get-ChildItem', 'pwsh -File build.ps1',
+    'timeout 30 npm test', 'env A=1 node x.mjs', 'xargs echo', "echo '$(git push)'", '# git push',
+    'echo ok # ; git push',
+    // heredoc bodies are data: unquoted and quoted
+    'cat <<EOF > notes.md\ngit push origin main\nnpm publish\nEOF',
+    "cat <<'EOF' > notes.md\ngit push origin main\n$(git push)\nEOF",
+    'cat <<-EOF > notes.md\n\tgh pr create\n\tEOF\necho done',
+  ];
+  for (const c of MISSES) assert.equal(guardDecision(c), null, c);
 });
 
 test('the hook CLI denies and records; anything else passes; a malformed payload passes', () => {
@@ -193,4 +276,77 @@ test('board 37: wouldHaveSent lists a guard entry through guardCall (a push name
   assert.equal(row.full, 'This try tried to send its changes to the branch fix-482 on GitHub.');
   assert.deepEqual(sentCall(e, { forgeOf: () => 'GitHub' }), row);
   assert.equal(sentCall({ server: 's', tool: 'send_message', arguments: { text: 'hi' } }).guard, undefined, 'a connector call is unchanged');
+  // Review fix 1 (7): a ref names its branch; a subtree or LFS push is a push.
+  const branchOf = (argv) => guardCall({ server: 'git', tool: 'push', arguments: { command: 'git push', argv }, guard: true }).preview;
+  assert.equal(branchOf(['origin', 'HEAD:refs/heads/fix-1']), 'Send the changes to the branch fix-1');
+  assert.equal(branchOf(['origin', 'refs/heads/fix-2']), 'Send the changes to the branch fix-2');
+  assert.equal(branchOf(['origin', '+HEAD:refs/heads/fix-3']), 'Send the changes to the branch fix-3');
+  assert.equal(branchOf(['origin']), 'Send the changes to its branch');
+  const sub = guardCall({ server: 'git', tool: 'subtree push', arguments: { command: 'git subtree push --prefix dist origin gh-pages', argv: ['--prefix', 'dist', 'origin', 'gh-pages'] }, guard: true },
+    { forgeOf: (r) => (r === 'origin' ? 'GitHub' : null) });
+  assert.deepEqual([sub.tool, sub.preview, sub.full], ['push', 'Send the changes to the branch gh-pages', 'This try tried to send its changes to the branch gh-pages on GitHub.']);
 });
+
+test('review fix 1 (3): the try hook cannot be switched off by the user settings; without tryGuard nothing is added', () => {
+  const p = buildSettingsPayload({ deny: ['Read(.env*)'] }, { hostGuard: true, tryGuard: { logFile: join(home, 'c.ndjson') } });
+  assert.equal(p.settings.disableAllHooks, false);
+  assert.equal('disableAllHooks' in buildSettingsPayload({ deny: ['Read(.env*)'] }, { hostGuard: true }).settings, false);
+  // A user's own extra settings cannot turn it back on either: the runner's keys win.
+  const q = buildSettingsPayload(null, { tryGuard: { logFile: 'x' }, extraSettings: { disableAllHooks: true } });
+  assert.equal(q.settings.disableAllHooks, false);
+});
+
+test('review fix 1 (4): a stopped read (gh pr view) is listed as an attempt, a stand-in read is still a read', async () => {
+  const { id, dir } = await createPipeline(join(home, 'proj-sent'), { prompt: 'p', title: 't', isTest: true });
+  writeFileSync(join(dir, CONNECTOR_CALLS_FILE), [
+    JSON.stringify({ ts: 't', server: 'GitHub CLI', tool: 'pr view', arguments: { command: 'gh pr view 12', argv: ['pr', 'view', '12'] }, readOnly: true, guard: true }),
+    JSON.stringify({ ts: 't', server: 'jira', tool: 'search_issues', arguments: { q: 'x' }, readOnly: true }),
+  ].join('\n'));
+  const w = await wouldHaveSent(id);
+  assert.deepEqual(w.sent.map((s) => [s.guard, s.server, s.tool]), [[true, 'GitHub CLI', 'pr view']]);
+  assert.deepEqual(w.reads, [{ server: 'jira', n: 1 }]);
+});
+
+test('review fix 1 (6): the stand-ins are refreshed whole (temp file + rename), with nothing left behind', () => {
+  const h = mkdtempSync(join(home, 'stand-ins-'));
+  const dir = ensureStandIns(h);
+  writeFileSync(join(dir, 'gh.cmd'), 'half-writ');
+  writeFileSync(join(dir, 'glab'), '');
+  ensureStandIns(h);
+  assert.equal(readFileSync(join(dir, 'gh.cmd'), 'utf8'), standInFiles('gh').cmd);
+  assert.equal(readFileSync(join(dir, 'glab'), 'utf8'), standInFiles('glab').sh);
+  assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+  assert.deepEqual(readdirSync(dir).sort(), ['az', 'az.cmd', 'gh', 'gh.cmd', 'glab', 'glab.cmd']);
+});
+
+test('review fix 1 (8): windowsArgv reads a command line the way a Windows program does', () => {
+  assert.deepEqual(windowsArgv('pr create --title "a & b" --body x&echo hi'), ['pr', 'create', '--title', 'a & b', '--body', 'x&echo', 'hi']);
+  assert.deepEqual(windowsArgv('"a\\" b" c'), ['a" b', 'c']);
+  assert.deepEqual(windowsArgv('"\\\\srv\\share\\\\" x'), ['\\\\srv\\share\\', 'x']);
+  assert.deepEqual(windowsArgv('"" a  b'), ['', 'a', 'b']);
+  assert.deepEqual(windowsArgv('"say ""hi"""'), ['say "hi"']);
+});
+
+test('review fix 1 (8): the .cmd stand-in does not run what its arguments hold, and still answers "Not sent" and records',
+  { skip: process.platform !== 'win32' ? 'the .cmd twin is cmd.exe only (the sh stand-in passes "$@" untouched)' : false }, () => {
+    const log = join(home, 'calls-cmd.ndjson');
+    const env = withTryGuardEnv({ ...process.env }, { logFile: log }, { home });
+    const marker = join(home, 'INJECTED.txt');
+    const run = (line) => spawnSync(env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], { env, encoding: 'utf8', windowsVerbatimArguments: true });
+    // cmd itself reads ^& as a plain &; a stand-in that put %* on a line again would run `echo x > marker`.
+    const r = run(`gh pr create --title "a & b" --body x^&echo x^>"${marker}" ) y`);
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Not sent: this is a test\./);
+    assert.equal(existsSync(marker), false, 'nothing from the arguments ran');
+    const [e] = readLog(log);
+    assert.deepEqual([e.server, e.tool, e.guard], ['GitHub CLI', 'pr create', true]);
+    assert.deepEqual(e.arguments.argv, ['pr', 'create', '--title', 'a & b', '--body', `x&echo`, `x>${marker}`, ')', 'y']);
+    assert.equal(run('glab').status, 1, 'no arguments: still "Not sent"');
+    // No TEMP in the env (a scrubbed spawn): the argument file goes beside the stand-in, and the answer is the same.
+    const noTemp = Object.fromEntries(Object.entries(env).filter(([k]) => !['TEMP', 'TMP'].includes(k.toUpperCase())));
+    const r2 = spawnSync(env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', '"gh pr view 12"'], { env: noTemp, encoding: 'utf8', windowsVerbatimArguments: true });
+    assert.equal(r2.status, 1, r2.stderr);
+    assert.deepEqual(readLog(log).at(-1).arguments.argv, ['pr', 'view', '12']);
+    assert.deepEqual(readdirSync(standInDir(home)).filter((f) => f.startsWith('worca-stand-in-')), []);
+    assert.deepEqual(readdirSync(env.TEMP || env.TMP || tmpdir()).filter((f) => f.startsWith('worca-stand-in-')), [], 'its temp file is gone');
+  });
