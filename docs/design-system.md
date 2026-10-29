@@ -354,7 +354,8 @@ and hand the focus back to the opener.
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
 - Day sections (Group by Date, Runs and Chats alike, `runs-list.mjs` `DAY_BUCKETS`): Today · Yesterday · Previous 7
   days · Previous 30 days · Older, by last activity, split at local midnights. Runs puts Upcoming above them, Chats puts
-  Pinned. Every day section folds by hand; Older starts folded. Both View menus list Group by in one order (Date ·
+  Pinned. Every day section folds by hand; Older starts folded. A section head in either list is a meta label:
+  12px / 600 / `--ink-2`, its count an 11px caption at the line's right end. Both View menus list Group by in one order (Date ·
   Project · Topic (Chats only) · None) with the day sections as Date's title, and the view chip names filters and a
   non-default sort, never the grouping.
 - Chats list: the Runs list anatomy in the Chat page's column; the open chat's figures sit once in the conversation

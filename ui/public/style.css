@@ -4911,8 +4911,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    stays a caption), and a gap above each later section keeps one section's last row from running into the next head.
    The text sits 12px in from both ends; the line under it still spans the list. */
 .runs-sec + .runs-sec{margin-top:8px;}
-.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font-size:var(--fs-section);font-weight:300;color:var(--ink);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
-.runs-sec-head .runs-count{margin-left:auto;font-size:var(--fs-body);font-weight:400;}
+/* The list section head (Runs and Chats: Needs you, projects, topics, days) is a meta label, quieter than its rows. */
+.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font:600 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+.runs-sec-head .runs-count{margin-left:auto;font-weight:400;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .runs-older{margin:8px 0;}

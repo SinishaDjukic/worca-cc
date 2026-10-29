@@ -911,6 +911,14 @@ test('slice 3 (D18): the run page tiles read in the stat face, 22px sans with ta
   assert.match(tile, /padding:var\(--pad-tile\) 8px/);
 });
 
+test('list section head (Runs and Chats): a 12px/600 --ink-2 meta label; its count is an 11px caption', () => {
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
+  assert.match(body('.runs-sec-head'), /font:600 var\(--fs-meta\)\/var\(--lh-body\)/);
+  assert.match(body('.runs-sec-head'), /color:var\(--ink-2\)/);
+  assert.match(body('.runs-count'), /var\(--fs-caption\)/);
+  assert.doesNotMatch(body('.runs-sec-head .runs-count'), /font-size/, 'the head count keeps the caption size');
+});
+
 test('card head: the state word is a 15px/600 headline that never truncates; the detail is 12px --ink-2, 2 lines', () => {
   const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
   const word = body('.run-status-word');
