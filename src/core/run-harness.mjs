@@ -108,6 +108,7 @@ import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
+import { DEFAULT_BIN as CLAUDE_DEFAULT_BIN } from './engines/claude.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
 import { syncPluginSlots } from './plugin-broker-slots.mjs';
 import { recoveryDelayMs, sleepAbortable } from './recovery-backoff.mjs';
@@ -3940,8 +3941,13 @@ export class RunHarness extends EventEmitter {
     try { return skillHostFacts(); } catch { return { installedPluginNames: [], sideloadDisabled: false }; }
   }
 
+  /** The claude binary this run's agent spawns use: the run's own, else claude-runner's default (WORCA_CLAUDE_BIN /
+   *  ORCH_CLAUDE_BIN / `claude`). The capability probe asks this one, so what it learns (the try guard's structured
+   *  deny, --mcp-config, --plugin-dir) is about the CLI that actually runs, never another `claude` on PATH. */
+  _claudeBin() { return this.claude?.bin || CLAUDE_DEFAULT_BIN; }
+
   /** `claude --help` / `--version`, parsed once per run (§8.18 V5; skills §4.1 reads `pluginDir`). */
-  _claudeCaps() { return (this._capsProbe ||= probeClaudeCapabilities(this.claude.bin)); }
+  _claudeCaps() { return (this._capsProbe ||= probeClaudeCapabilities(this._claudeBin())); }
 
   /** Skills registry §4.1: does this run's `claude` advertise --plugin-dir? A mock run spawns none: yes. Asked on
    *  Claude runs only: another engine mounts set skills in `.agents/skills` (_planSkills). */
@@ -4805,7 +4811,7 @@ export class RunHarness extends EventEmitter {
       // No `claude --version` at all. The first node fails loudly anyway; when the
       // cause is the Windows npm shim, record the actionable reason NOW so the
       // run's warnings carry it instead of only a spawn ENOENT at the first node.
-      const hint = explainUnspawnableClaude(this.claude.bin);
+      const hint = explainUnspawnableClaude(this._claudeBin());
       if (hint) await this._recordRunWarning(hint);
     }
     if (!caps.mcpConfig && this.mcpConfigPath) {
