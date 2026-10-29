@@ -161,6 +161,44 @@ export const GRAPH_WORKSPACE_SCAN_WORKFLOW = deepFreeze({
   ],
 });
 
+/** The partial re-scan after a member REMOVAL (server afterMembersChanged, rescan: 'partial'):
+ *  seed (script: the stored, pruned map the run froze → workspace-map.json + the synth brief)
+ *  -> synth (workspaceSynthesizer) -> render -> End. No investigator, no graphify build
+ *  (codeGraph: false): one agent rewrites the overview, the missing roles and the coordination
+ *  notes. A scan in every other respect (isWorkspaceScanWorkflow): read-only, overrides frozen, saved
+ *  by finalizeWorkspaceScan on `done` behind the same SET_CHANGED guard. Reserved, never listed. */
+export const WORKSPACE_RESYNTH_WORKFLOW_ID = 'wf_workspace_resynth';
+export const WORKSPACE_RESYNTH_WORKFLOW_NAME = 'Workspace re-synthesis';
+export const GRAPH_WORKSPACE_RESYNTH_WORKFLOW = deepFreeze({
+  id: WORKSPACE_RESYNTH_WORKFLOW_ID,
+  name: WORKSPACE_RESYNTH_WORKFLOW_NAME,
+  version: 2,
+  domain: 'shared',
+  codeGraph: false,
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_seed', kind: 'script', key: 'workspaceMapResynth', x: 280, y: 200, config: {} },
+    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 520, y: 80, config: {
+      model: WORKSPACE_SCAN_DEFAULT_MODELS.scanModel,
+      effort: WORKSPACE_SCAN_DEFAULT_MODELS.scanEffort,
+    } },
+    { id: 'n_render', kind: 'script', key: 'workspaceMapRender', x: 760, y: 200, config: { awaitAll: true } },
+    { id: 'n_end', kind: 'end', x: 1000, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_seed', port: 'task' } },
+    { id: 'w2', from: { node: 'n_seed', port: 'brief' }, to: { node: 'n_synth', port: 'brief' } },
+    { id: 'w3', from: { node: 'n_seed', port: 'map' }, to: { node: 'n_render', port: 'map' } },
+    { id: 'w4', from: { node: 'n_synth', port: 'synthesis' }, to: { node: 'n_render', port: 'synthesis' } },
+    { id: 'w5', from: { node: 'n_render', port: 'workspace' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+/** Workflows that ARE a Workspace scan (read-only run, finalize saves the map on done). */
+export const WORKSPACE_SCAN_WORKFLOW_IDS = Object.freeze([WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
+export function isWorkspaceScanWorkflow(id) { return WORKSPACE_SCAN_WORKFLOW_IDS.includes(id); }
+
 /** The PR fix workflow every Watch PR fix run and #620's Resolve in a pipeline start (pr-watch.mjs
  *  FIX_WORKFLOW_ID): Implementation
  *  -> Review Implementation, the blocking review looping back into the implementer. There is no
@@ -291,5 +329,5 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
  *  fixed order (Default, then Memory defragment).
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
-export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID]);
+export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
 export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }

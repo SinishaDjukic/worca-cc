@@ -305,7 +305,7 @@ inside the view.
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
 | Project page Actions tab | A |
-| Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, description, re-scan, delete) | A |
+| Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, the Remove confirm's re-scan choice and recommendation, description, re-scan, delete) | A |
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
 | Workspace page Actions tab | A |

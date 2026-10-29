@@ -9,7 +9,7 @@
 // unchanged.
 import { attachRefusal } from './ask-engine.mjs';
 
-export const ATTACH_TEXT_EXT = Object.freeze(['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm']);
+export const ATTACH_TEXT_EXT = Object.freeze(['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm', '.xml']);
 export const ATTACH_BINARY = Object.freeze({
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',

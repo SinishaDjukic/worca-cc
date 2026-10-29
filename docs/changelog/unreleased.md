@@ -194,3 +194,13 @@ Pull requests (add each number when it opens):
 Pull requests (add each number when it opens):
 
 - Plugins: update works on Windows when the current version is a junction (#987)
+
+## Worca in a container behind a corporate proxy
+
+`worca container` started from a Worca terminal no longer gives the box Worca's own local proxy (`127.0.0.1`), which inside the container pointed at the container and failed every request. The box gets the corporate proxy from Settings › Network proxy when that proxy needs no login. Otherwise it gets no proxy, and one line says how to set the proxy up in the box. For a proxy that re-signs TLS, `WORCA_CA_CERT` in the container `.env` mounts the corporate CA. Worca, Claude Code, git, curl, `gh` and Python in the box then trust it.
+
+Read it: [Corporate proxy and CA](../docker.md#corporate-proxy-and-ca)
+
+Pull requests (add each number when it opens):
+
+- Container: a reachable proxy and the corporate CA (#1015)

@@ -245,6 +245,9 @@ const freePort = () => new Promise((r) => { const s = createServer().listen(0, '
 
 test('the UI server says it at boot, before any plugin spawn could spend it unseen', async () => {
   const home = mkdtempSync(join(tmpdir(), 'worca-proxy-boot-'));
+  // The corporate proxy turned off by hand: otherwise the login in HTTPS_PROXY starts it (egress-policy.mjs).
+  mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ networkProxy: { enabled: false } }));
   const child = spawn(process.execPath, [SERVER], {
     // No egress policy: it would replace the proxy variables before the line is printed.
     env: { ...process.env, WORCA_MOCK: '1', WORCA_HOME: home, HOME: home, USERPROFILE: home, PORT: String(await freePort()),
@@ -259,7 +262,7 @@ test('the UI server says it at boot, before any plugin spawn could spend it unse
   await new Promise((r) => child.on('exit', r));
   clearTimeout(timer);
   rmSync(home, { recursive: true, force: true, maxRetries: 5 });
-  assert.match(out, /^\[worca-ui\] proxy: HTTP\(S\)_PROXY carries credentials, which plugin code never receives; .* go direct$/m, out);
+  assert.match(out, /^\[worca-ui\] proxy: HTTP\(S\)_PROXY carries credentials, which plugin code never receives, .* go direct$/m, out);
   assert.doesNotMatch(out, /s3cret/);
 });
 

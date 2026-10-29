@@ -206,6 +206,51 @@ loopback. A dev server an agent starts inside the box is not published; add a
 your git host, package registries, and the chat platforms (Telegram, Slack,
 Discord all dial out).
 
+### Corporate proxy and CA
+
+Set the corporate proxy in `.env` (`HTTPS_PROXY=http://proxy.corp:3128`,
+`NO_PROXY`). Compose takes a variable from the shell before `.env`, so an
+exported `HTTPS_PROXY` wins over the file. When `worca container` prefers a
+`.env` value, it unsets the shell variable and compose reads the file itself.
+
+Never give the box a `127.0.0.1` proxy: inside the container that address is
+the container itself. A terminal Worca opens with the
+[network proxy](network-proxy.md) on carries exactly such a proxy (Worca's
+local one). `worca container up`, `run`, `login` and `shell` never pass it in:
+
+1. a non-loopback `HTTPS_PROXY` in `.env` wins;
+2. else the box gets `networkProxy.upstream` from this machine's
+   `settings.json`, host and port only, when that proxy needs no login and
+   `networkProxy.enabled` is not `false`;
+3. else the box gets no proxy, and one line says so. A proxy that needs a login
+   is set up in the box's own Worca: its Settings › Network proxy, then
+   `worca container run -- proxy login`.
+
+A `.env` proxy on loopback gets the same warning.
+
+A proxy that re-signs TLS needs its CA inside the box. Put the CA, as a PEM
+file, in `.env`:
+
+```bash
+WORCA_CA_CERT=/Users/me/certs/corporate-ca.pem
+```
+
+`worca container` then adds `compose.ca.yml` by itself. Without `WORCA_CA_CERT`
+it uses the shell's `NODE_EXTRA_CA_CERTS`, then `SSL_CERT_FILE`. With raw
+compose, add `-f compose.ca.yml`. The overlay mounts the file read-only at
+`/etc/worca/corporate-ca.pem` and sets `NODE_EXTRA_CA_CERTS` for Worca, Claude
+Code and npm. The entrypoint writes the system bundle plus your CA to a new
+directory under `/tmp` that only the box's own user can write. It points
+`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `CURL_CA_BUNDLE` and `REQUESTS_CA_BUNDLE`
+at that bundle, so git, curl, `gh` and Python trust the CA too. The box runs
+without root, so the system trust store (`update-ca-certificates`) is left
+alone. Docker Desktop mounts only shared folders (`/Users`, `/tmp` and
+`/private` by default), so keep the PEM there. `docker compose logs worca`
+says `corporate CA: trusted from …`.
+
+Agents and plugins keep these variables under every guardrail set, including
+one that scrubs the agent environment.
+
 ### Egress allowlist
 
 ```bash
@@ -265,7 +310,8 @@ URL from `docker compose logs teams-tunnel`.
 | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` | | see *Logging in* |
 | `WORCA_UID`, `WORCA_GID` | `1000` | Linux Engine: your ids (`id -u`, `id -g`) when not 1000, so the box can write your bind-mounted repos; the volumes work for any uid |
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |
-| `HTTPS_PROXY`, `NO_PROXY` | | corporate proxy |
+| `HTTPS_PROXY`, `NO_PROXY` | | corporate proxy, never on loopback (see [Corporate proxy and CA](#corporate-proxy-and-ca)) |
+| `WORCA_CA_CERT` | | the corporate CA (PEM) for a proxy that re-signs TLS; `compose.ca.yml` |
 | `WORCA_EGRESS_ALLOW` | see above | egress overlay allowlist |
 | `WORCA_EGRESS_MODE`, `WORCA_EGRESS_DENY` | | a hosting platform's outbound network policy (see [Egress allowlist](#egress-allowlist)); leave unset with the overlay |
 | `WORCA_SSH_SOCK` | Docker Desktop's | ssh overlay, Linux |

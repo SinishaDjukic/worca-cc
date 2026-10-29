@@ -2060,7 +2060,7 @@ div.ws-members:empty{display:none;}
 .wd-rescan-lead{flex:0 0 auto;padding-top:1px;}
 .wd-rescan-spinner{width:22px;height:22px;border-width:2.5px;}
 .wd-rescan-mark{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:var(--r-sm);font-size:12px;font-weight:700;}
-.wd-rescan.is-done .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
+.wd-rescan.is-done .wd-rescan-mark,.wd-rescan.is-pruned .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
 .wd-rescan.is-failed .wd-rescan-mark{color:var(--red-ink);background:var(--red-bg);}
 .wd-rescan-body{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto;}
 .wd-rescan .status-label{font-size:13px;}
@@ -4872,6 +4872,12 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-members .runs-pr-word{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .runs-members .runs-row:has(> .runs-row-prog){position:relative;padding-bottom:11px;}
 .runs-members .runs-row > .runs-row-prog{position:absolute;left:16px;right:0;bottom:4px;margin:0;}
+/* #1012: a staged live member draws the four-section block (bar and Plan / Build / Review / Ready) under its line. */
+.runs-members .runs-row:has(> .runs-stage){flex-wrap:wrap;}
+.runs-members .runs-row > .runs-stage{order:3;flex:1 0 calc(100% - 16px);margin:4px 0 2px 16px;}
+/* One step below the group row's 3px line: a 2px bar, the 11px marks closer under it. */
+.runs-members .runs-stage > .run-prog-track{height:2px;}
+.runs-members .runs-stage > .run-prog-marks{margin-top:3px;}
 .runs-members .runs-pick,.runs-members .runs-row-tail{height:26px;}
 @media (pointer: coarse){.runs-members .runs-pick,.runs-members .runs-row-tail{height:40px;}.runs-members .runs-row{min-height:40px;}}
 /* A group row heads its runs. */
@@ -4905,8 +4911,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    stays a caption), and a gap above each later section keeps one section's last row from running into the next head.
    The text sits 12px in from both ends; the line under it still spans the list. */
 .runs-sec + .runs-sec{margin-top:8px;}
-.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font-size:var(--fs-section);font-weight:300;color:var(--ink);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
-.runs-sec-head .runs-count{margin-left:auto;font-size:var(--fs-body);font-weight:400;}
+/* The list section head (Runs and Chats: Needs you, projects, topics, days) is a meta label, quieter than its rows. */
+.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font:600 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+.runs-sec-head .runs-count{margin-left:auto;font-weight:400;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .runs-older{margin:8px 0;}
@@ -6281,6 +6288,10 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* model card (buildModelCard; docs/models.md "Chat"): the policy card's change list + what will still block the model */
 .ask-modcard-warn,.ask-wscard-warn{color:var(--amber-ink);}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
+/* workspace removal card (buildWorkspaceCard): worca's recommended re-scan, its reason, and the three options */
+.ask-wscard-rescan{border:0;margin:10px 0 0;padding:0;min-width:0;}
+.ask-wscard-rescan-reason{font-size:12px;color:var(--ink-2);margin-bottom:2px;}
+.ask-wscard-rescan .radio-card{margin-top:6px;}
 
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
@@ -6719,6 +6730,18 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-gbody[hidden]{display:none;}
 .ask-cmd-gbody > .ask-card.ask-cmd.is-sum{margin:0;border:0;border-radius:0;background:none;animation:none;}
 .ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum{border-top:1px solid var(--line);}
+/* A lone command (#911) is a line like the group head (no card, no dot): its summary · time ›; opening it shows the detail. */
+.ask-card.ask-cmd.is-sum:not(.ask-cmd-gbody > *){border:0;border-radius:0;background:none;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-row{display:inline-flex;align-self:flex-start;gap:6px;max-width:100%;padding:0 8px 0 0;
+  border-radius:var(--r-sm);color:var(--ink-2);font-size:13px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn{flex:0 1 auto;gap:0;color:var(--ink-2);}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn > .status-dot{display:none;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-sum{font-weight:400;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-meta{font-size:13px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-meta:not(:empty)::before{content:"\00a0·\00a0";color:var(--ink-2);}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-stop{order:1;margin-left:2px;}   /* after the chevron, as beside a group head */
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-detail{padding:6px 0 4px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-warning{margin:6px 0 0;}
 .ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}
@@ -6866,6 +6889,8 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
 .confirm-field > label{display:block;font-weight:600;font-size:var(--fs-body);margin-bottom:6px;}
 .confirm-field .input{font-size:var(--fs-body);}
 .confirm-field .hint.err{color:var(--red-ink);}
+.confirm-choices{display:flex;flex-direction:column;margin-top:2px;}
+.confirm-choices .radio-card{margin-top:8px;}
 .confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
   background:var(--field);border-radius:var(--r-sm);font-size:var(--fs-body);color:var(--ink-2);
   cursor:pointer;line-height:1.45;}
@@ -11591,6 +11616,32 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 #network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
 #network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
 
+
+/* The away screensaver (away-screensaver.mjs), an easter egg: the wordmark drifts over a faint network while Away
+   mode and Keep awake are on and the window sits idle. Under the session-expired notice (10000). */
+.ss{position:fixed;inset:0;z-index:9999;overflow:hidden;background:var(--bg);color:var(--ink);cursor:none;}
+.ss-net{position:absolute;inset:0;}
+.ss-block{position:absolute;top:0;left:0;width:max-content;max-width:calc(100vw - 32px);will-change:transform;}
+.ss.is-still .ss-block{top:50%;left:50%;transform:translate(-50%,-50%);}
+.ss-bubble{display:flex;align-items:center;gap:8px;width:max-content;margin:0 0 12px;padding:4px 12px;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);font-size:var(--fs-meta);visibility:hidden;}
+.ss-bubble.is-on{visibility:visible;}
+.ss-logo{width:200px;aspect-ratio:512/190;background:var(--ink);
+  -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+.ss-logo.is-squash-x{animation:ss-squash-x .35s ease-out;}
+.ss-logo.is-squash-y{animation:ss-squash-y .35s ease-out;}
+.ss-head{margin:16px 0 8px;font-size:var(--fs-section);font-weight:500;line-height:var(--lh-title);}
+.ss-caret{display:inline-block;width:6px;height:1em;margin-left:4px;vertical-align:-2px;background:var(--ink-2);animation:ss-blink 1s steps(1) infinite;}
+.ss-items{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0;list-style:none;color:var(--ink-2);font-size:var(--fs-body);}
+.ss-items li{display:flex;align-items:center;gap:8px;}
+.ss-hint{position:absolute;right:24px;bottom:16px;margin:0;color:var(--ink-2);font-size:var(--fs-caption);}
+.ss-spark{position:absolute;top:0;left:0;width:10px;height:10px;background:var(--ink-2);pointer-events:none;
+  clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);animation:ss-spark .9s ease-out forwards;}
+@keyframes ss-squash-x{30%{scale:.88 1.06;}}
+@keyframes ss-squash-y{30%{scale:1.06 .88;}}
+@keyframes ss-blink{50%{opacity:0;}}
+@keyframes ss-spark{from{opacity:.8;scale:1;}to{opacity:0;scale:.3;}}
+@media (prefers-reduced-motion: reduce){.ss-caret{animation:none;}}
 
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */

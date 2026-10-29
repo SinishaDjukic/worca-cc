@@ -3,8 +3,6 @@
 // resolution, the /p/<slot>/… proxy, key verification, and the /internal API the
 // worca server calls. Both HTTP listeners (main.mjs) hand requests here; the key
 // page (ui-server.mjs) uses the credential methods.
-import http from 'node:http';
-import https from 'node:https';
 import { seal, open, suffixOf, keyId } from './vault.mjs';
 import { isAllowedPath, pathIssue, validatePluginSlots } from './slots.mjs';
 import { resolveToken, tokenFromHeaders, parseMintRequest, mintToken, safeEqual, normalizeBillTo } from './tokens.mjs';
@@ -12,6 +10,7 @@ import { createUsageTap, priceUsage } from './usage.mjs';
 import { scrubText } from './scrub.mjs';
 import { createLimits } from './limits.mjs';
 import { createCopilotExchange, parseGithubSecret, refreshGithubToken } from './copilot.mjs';
+import { fetchUpstream } from './upstream-request.mjs';
 
 export const MAX_REQUEST_BYTES = 32 << 20;
 const MAX_ERROR_BODY = 64 << 10;
@@ -97,6 +96,7 @@ export function mergeBetas(...lists) {
 /**
  * @param {{config:object, slots:object[], store:object, log?:(line:string)=>void, now?:()=>number,
  *          requestImpl?:(url:URL, opts:object)=>import('node:http').ClientRequest}} o
+ *   requestImpl defaults to fetchUpstream: fetch, so HTTP(S)_PROXY applies on every Node (env-proxy.mjs).
  */
 export function createBrokerService({ config, slots: baseSlots, store, log = () => {}, now = Date.now, requestImpl, fetchImpl = globalThis.fetch }) {
   // The built-in and operator slots, then the plugin slots worca registers
@@ -113,7 +113,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
   useSlots(storedPluginSlots);
   const limits = createLimits({ store, config, now });
   const credCache = new Map();
-  const doRequest = requestImpl || ((url, opts) => (url.protocol === 'https:' ? https : http).request(url, opts));
+  const doRequest = requestImpl || fetchUpstream;
   const exchanges = new Map();
   /** The Copilot token exchange for a slot (one per slot: its fallback host and exchange URL). */
   const copilotFor = (slot) => {

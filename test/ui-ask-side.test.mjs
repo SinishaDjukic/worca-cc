@@ -38,12 +38,12 @@ function shell({ stored = {}, reduce = false, innerWidth = 1440 } = {}) {
 }
 
 test('clampWidth, sideTier and railForced', () => {
-  assert.deepEqual([SIDE_MIN, SIDE_MAX, SIDE_DEFAULT, SIDE_MS], [360, 560, 440, 320]);
+  assert.deepEqual([SIDE_MIN, SIDE_MAX, SIDE_DEFAULT, SIDE_MS], [360, 680, 440, 320]);
   assert.equal(clampWidth('x'), 440);
   assert.equal(clampWidth(null), 440, 'nothing stored: the default');
   assert.equal(clampWidth(''), 440);
   assert.equal(clampWidth(100), 360);
-  assert.equal(clampWidth(900), 560);
+  assert.equal(clampWidth(900), 680);
   assert.equal(clampWidth(451.6), 452);
   assert.equal(clampWidth('500'), 500);
   assert.deepEqual([1440, 1081, 1080, 761, 760, 390].map(sideTier), ['push', 'push', 'over', 'over', 'full', 'full']);
@@ -91,34 +91,34 @@ test('show and hide are remembered; availability hides without forgetting', () =
   again.destroy();
 });
 
-test('the grip resizes within 360-560, live and stored on release; arrows step 20px and store', () => {
+test('the grip resizes within 360-680, live and stored on release; arrows step 20px and store', () => {
   const s = shell({ stored: { [WIDTH_KEY]: '9999' } });
   const side = s.make();
-  assert.equal(side.width(), 560, 'a stored width is clamped');
+  assert.equal(side.width(), 680, 'a stored width is clamped');
   side.setAvailable(true);
   side.show();
-  s.aside.getBoundingClientRect = () => ({ right: 1440, left: 880, top: 0, bottom: 900, width: 560, height: 900 });
+  s.aside.getBoundingClientRect = () => ({ right: 1440, left: 760, top: 0, bottom: 900, width: 680, height: 900 });
   const grip = s.aside.querySelector('.ask-side-grip');
   assert.deepEqual(['role', 'aria-orientation', 'aria-label', 'aria-valuemin', 'aria-valuemax'].map((a) => grip.getAttribute(a)),
-    ['separator', 'vertical', 'Resize the chat', '360', '560']);
+    ['separator', 'vertical', 'Resize the chat', '360', '680']);
   assert.equal(grip.tabIndex, 0);
-  grip.dispatchEvent(pointer(s.window, 'pointerdown', { clientX: 880 }));
+  grip.dispatchEvent(pointer(s.window, 'pointerdown', { clientX: 760 }));
   assert.ok(s.aside.classList.contains('is-resizing'));
   grip.dispatchEvent(pointer(s.window, 'pointermove', { clientX: 940 }));
   assert.equal(s.doc.body.style.getPropertyValue('--ask-side-w'), '500px', 'live');
   assert.equal(s.map.get(WIDTH_KEY), '9999', 'not stored while dragging');
   s.doc.dispatchEvent(pointer(s.window, 'pointermove', { clientX: 100 }));
-  assert.equal(side.width(), 560, 'clamped, and the drag follows outside the grip');
+  assert.equal(side.width(), 680, 'clamped, and the drag follows outside the grip');
   s.doc.dispatchEvent(pointer(s.window, 'pointerup', {}));
-  assert.equal(s.map.get(WIDTH_KEY), '560');
+  assert.equal(s.map.get(WIDTH_KEY), '680');
   assert.equal(s.aside.classList.contains('is-resizing'), false);
-  assert.equal(grip.getAttribute('aria-valuenow'), '560');
+  assert.equal(grip.getAttribute('aria-valuenow'), '680');
   const before = s.calls.filter((c) => c[0] === 'layout').length;
   grip.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
-  assert.equal(side.width(), 540);
-  assert.equal(s.map.get(WIDTH_KEY), '540');
+  assert.equal(side.width(), 660);
+  assert.equal(s.map.get(WIDTH_KEY), '660');
   grip.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
-  assert.equal(side.width(), 560);
+  assert.equal(side.width(), 680);
   assert.ok(s.calls.filter((c) => c[0] === 'layout').length >= before + 2, 'every width change re-lays out');
   side.destroy();
 });

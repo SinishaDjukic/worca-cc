@@ -20,7 +20,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, basename, dirname, resolve, sep, relative } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { readFile, writeFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
+import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
@@ -128,7 +128,7 @@ import { readSettings as readRawSettings, userTagDimensions } from './settings.m
 import { readRunTags } from './run-tags-store.mjs';
 import { missingRequired } from '../shared/tag-dimensions.mjs';
 import { byActor } from './identity.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { isWorkspaceScanWorkflow, WORKSPACE_RESYNTH_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
@@ -144,8 +144,9 @@ import { skillMdFields } from './skills-registry/inspect.mjs';
 // without it (no Team-skill deviations until P5 lands).
 import * as policyEffective from './policy/effective.mjs';
 import { createRedactor } from './redact.mjs';
-import { finalizeWorkspaceScan } from './workspace-scan-run.mjs';
-import { readWorkspaceMap } from './workspaces.mjs';
+import { finalizeWorkspaceScan, WORKSPACE_GRAPH_FILE } from './workspace-scan-run.mjs';
+import { readWorkspaceMap, resynthBlocker } from './workspaces.mjs';
+import { STORED_MAP_FILE } from './workspace-map/join.mjs';
 import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 // Night mode (src/core/night/*): a decider answers the open question while the user is away.
 import { effectiveNightConfig } from './night/effective.mjs';
@@ -921,8 +922,8 @@ export class RunHarness extends EventEmitter {
     this.workflowId = this.opts.workflowId || 'wf_default';
     // The Workspace scan reads, compares and saves a WORKSPACE: refuse it on any other target
     // (the CLI's --workflow, an Ask card) before a pipeline exists.
-    if (this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !this.isWorkspace) {
-      throw new Error('the Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
+    if (isWorkspaceScanWorkflow(this.workflowId) && !this.isWorkspace) {
+      throw new Error('a Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
     }
     // Which guardrail set governs this run (guardrails are selected PER RUN;
     // there is no per-project guardrails dimension). 'permissive' = the empty
@@ -1611,6 +1612,10 @@ export class RunHarness extends EventEmitter {
         }));
         this.state.checkpointRefs = {};
         this.state.branches = {};
+        // wf_workspace_resynth: freeze the stored map now — AFTER the workspace fields above, so a terminal
+        // refusal persists a row that still names its workspace (toPipelineRow writes workspace_meta only
+        // when state.target === 'workspace', and the upsert overwrites it).
+        await this._freezeStoredMap();
       }
       if (!this.state.title) this.state.title = basename(this.pipeline.dir);
       // The title set above (firstMeaningfulLine(prompt) or the dir basename) is
@@ -1762,7 +1767,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: null });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
-      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
+      await this._finalizeWorkspaceScan();   // Workspace scan workflows only (wf_workspace_scan, wf_workspace_resynth): create/update the workspace (D6)
 
       // 9) Done.
       this._setStatus('done');
@@ -2000,6 +2005,10 @@ export class RunHarness extends EventEmitter {
 
       /** The persisted manifest, read once on a detached resume (re-assembly below). */
       let resumeManifest = await this._reattachCheckouts(row, rehydrated);
+      // wf_workspace_resynth paused BEFORE its start-time freeze (a user pause during setup keeps even a
+      // terminal setup error as a pause — run()'s catch): freeze now, or end the run (terminal). A no-op
+      // once stored-map.json exists, so an ordinary resume reuses the frozen copy.
+      await this._freezeStoredMap();
 
       // ── prompts/registry (cheap, local) ──
       this.registry = loadAgentRegistry(this.agentsDir);
@@ -2085,7 +2094,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
-      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
+      await this._finalizeWorkspaceScan();   // Workspace scan workflows only (wf_workspace_scan, wf_workspace_resynth): create/update the workspace (D6)
 
       this._setStatus('done');
       this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
@@ -5385,7 +5394,33 @@ export class RunHarness extends EventEmitter {
    *  committed and every member's run branch is deleted at teardown. Read live, never cached:
    *  resume() restores this.workflowId from the resume point AFTER construction. */
   _isWorkspaceScan() {
-    return this.isWorkspace && this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID;
+    return this.isWorkspace && isWorkspaceScanWorkflow(this.workflowId);
+  }
+
+  /** wf_workspace_resynth (a partial re-scan after a member removal): freeze the stored, already
+   *  pruned map — and a copy of its merged graph, under the bare name finalize's adoptGraphFile
+   *  adopts — into the run folder ONCE. The seed card reads it from there (a script child never
+   *  opens the worca DB). Called at start (_run, after the overrides freeze) and at resume (_resume,
+   *  after _reattachCheckouts): a run a user pause parked during setup, before its first freeze,
+   *  freezes on resume. Once the frozen copy exists every later call is a no-op.
+   *  No stored map, or one of another member set: TERMINAL, not a pause (setup failures pause by
+   *  default) — a resume would read the same map and replay into the same pause, and a paused
+   *  re-synthesis owns the workspace (server ownsWorkspaceTarget), which would refuse Re-scan. The
+   *  server checks the same before launching (afterMembersChanged); this is the race-proof re-check. */
+  async _freezeStoredMap() {
+    if (!this.isWorkspace || this.workflowId !== WORKSPACE_RESYNTH_WORKFLOW_ID || !this.pipeline?.dir) return;
+    const dest = join(this.pipeline.dir, STORED_MAP_FILE);
+    if (existsSync(dest)) return;
+    const wsId = this.workspace.id || this.workspaceKey;
+    const stored = await readWorkspaceMap(wsId);
+    const why = resynthBlocker(stored && stored.map, this.members.map((m) => m.projectKey));
+    if (why) throw markTerminal(new Error(`partial re-scan: ${why} — use Re-scan for a full one`));
+    let map = stored.map;
+    if (map.graph && map.graph.file) {
+      const copied = await copyFile(join(workspaceStorePath(wsId), WORKSPACE_GRAPH_FILE), join(this.pipeline.dir, WORKSPACE_GRAPH_FILE)).then(() => true, () => false);
+      map = { ...map, graph: copied ? { ...map.graph, file: WORKSPACE_GRAPH_FILE } : { mode: 'none', file: null, nodes: 0, bridges: 0 } };
+    }
+    await writeFile(dest, JSON.stringify({ map }), 'utf8');
   }
 
   /**

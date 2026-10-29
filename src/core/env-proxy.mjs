@@ -30,6 +30,44 @@ export function loadUndici() {
   try { return require('undici'); } catch { return null; }
 }
 
+/** no_proxy and NO_PROXY merged (Node and undici read no_proxy first), loopback appended. */
+function noProxyList(env) {
+  const listed = [];
+  for (const v of [env.no_proxy, env.NO_PROXY]) {
+    for (const h of String(v || '').split(',').map((s) => s.trim()).filter(Boolean)) {
+      if (!listed.includes(h)) listed.push(h);
+    }
+  }
+  return [...listed, ...LOOPBACK.filter((h) => !listed.includes(h))];
+}
+
+/**
+ * The proxy URL an https request to host:port goes through, or null for direct: no proxy is
+ * set, or NO_PROXY (with loopback appended) lists the host. HTTPS_PROXY first, else
+ * HTTP_PROXY, as undici's EnvHttpProxyAgent does. A NO_PROXY entry is `*`, a host, or a
+ * domain (`example.com`, `.example.com` and `*.example.com` all cover its subdomains), each
+ * with an optional `:port`. For the callers that cannot use fetch or a global agent
+ * (Ask's web_fetch dials its own pinned sockets).
+ * @param {string} host
+ * @param {{env?: Record<string, string|undefined>, port?: number}} [opts]
+ * @returns {string|null}
+ */
+export function httpsProxyFor(host, { env = process.env, port = 443 } = {}) {
+  const proxy = env.https_proxy || env.HTTPS_PROXY || env.http_proxy || env.HTTP_PROXY;
+  if (!proxy) return null;
+  // A trailing dot names the same host (docs.example.com. = docs.example.com, as the allowlist reads it).
+  const h = String(host).toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  for (const raw of noProxyList(env)) {
+    const e = raw.toLowerCase();
+    if (e === '*') return null;
+    const m = /^\[([^\]]+)\](?::(\d+))?$/.exec(e) || (e.split(':').length === 2 ? /^([^:]+):(\d+)$/.exec(e) : null);
+    const name = (m ? m[1] : e).replace(/^\*?\./, '').replace(/\.$/, '');
+    if (m?.[2] && Number(m[2]) !== port) continue;
+    if (name && (h === name || h.endsWith(`.${name}`))) return null;
+  }
+  return proxy;
+}
+
 /**
  * Route this process's fetch() through the proxy named by the environment, with loopback
  * always direct.
@@ -41,14 +79,7 @@ export function useEnvProxy({ env = process.env, api, undici } = {}) {
   const none = () => {};
   const proxied = env.https_proxy || env.HTTPS_PROXY || env.http_proxy || env.HTTP_PROXY;
   if (!proxied) return { status: 'off', restore: none };
-  // Node and undici read no_proxy before NO_PROXY; merge both and set both so the list wins.
-  const listed = [];
-  for (const v of [env.no_proxy, env.NO_PROXY]) {
-    for (const h of String(v || '').split(',').map((s) => s.trim()).filter(Boolean)) {
-      if (!listed.includes(h)) listed.push(h);
-    }
-  }
-  const noProxy = [...listed, ...LOOPBACK.filter((h) => !listed.includes(h))].join(',');
+  const noProxy = noProxyList(env).join(',');
   const http = api === undefined ? require('node:http') : api;
   try {
     if (typeof http.setGlobalProxyFromEnv === 'function') {
@@ -92,4 +123,32 @@ export function proxyNotice(result) {
     case 'unsupported': return { level: 'warn', text: `proxy: HTTP(S)_PROXY is set, but Node ${process.version} cannot apply it to fetch; outbound requests go direct` };
     default: return null;
   }
+}
+
+/** The proxy URL variables. A login in any of them is a password a child must never get. */
+export const PROXY_URL_NAMES = Object.freeze(['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']);
+
+/** URL credentials always need an '@' (user:password@, token@, the scheme-less
+ *  user:password@host form) and a host never has one, so any '@' counts, even
+ *  in a value that is not a valid URL. */
+export function proxyUrlHasLogin(env = process.env) {
+  return PROXY_URL_NAMES.some((k) => String(env[k] || '').includes('@'));
+}
+
+/** A variable named like a proxy setting (ALL_PROXY, FTP_PROXY, npm_config_https_proxy,
+ *  GLOBAL_AGENT_HTTP_PROXY, ...) whose value carries a login. */
+const loginBearingProxyVar = (k, v) => /proxy/i.test(k) && !/^no_proxy$/i.test(k) && String(v ?? '').includes('@');
+
+/** `env` without proxy URLs that carry a login (a copy; `env` itself when there is none). Every
+ *  proxy-named variable with a login goes (ALL_PROXY and the tool-specific ones too). When one of
+ *  HTTP(S)_PROXY carries one, all four go, because one left alone would half-route the child.
+ *  NO_PROXY and the CA paths stay. With the corporate proxy on, egress-policy.mjs has already swapped
+ *  every login-bearing URL for the local proxy, so this only acts when it is off. */
+export function withoutProxyLogin(env) {
+  const drop = Object.keys(env).filter((k) => loginBearingProxyVar(k, env[k]));
+  if (!drop.length) return env;
+  const out = { ...env };
+  for (const k of drop) delete out[k];
+  if (proxyUrlHasLogin(env)) for (const k of PROXY_URL_NAMES) delete out[k];
+  return out;
 }
