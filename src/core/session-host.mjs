@@ -37,6 +37,9 @@ export const HOST_BUDGET_IS_CUMULATIVE = true;
  *  only a sub-agent's call carries; HOST_GUARD_CONTEXT_FIELD names it. Off until then: the watchdog stops such a call after the fact. */
 export const HOST_MAIN_THREAD_GUARD = false;
 export const HOST_GUARD_CONTEXT_FIELD = null;
+/** Is there a `shared` ("one conversation") runtime? Not before Task 65, which builds it (its `_turn` path) and turns this
+ *  on: until then the run-start gate runs a `shared` session separate, never as sub-agents behind the closed gate (C18). */
+export const SESSION_SHARED_RUNTIME = false;
 /** C30: this many consecutive watchdog failures in one session degrade it to `separate` for the rest of the run. */
 export const HOST_DEGRADE_AFTER = RECOVERY_MAX_AUTO_ATTEMPTS;
 /** `--max-budget-usd` never goes below a cent (C10). */

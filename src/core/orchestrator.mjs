@@ -876,8 +876,12 @@ export class GraphOrchestrator extends RunHarness {
     // An Auto run that paused BEFORE deciding was re-decided by resume() (before the
     // setup replay, so the skills gate saw the adopted agents); its point holds the
     // bootstrap manifest and no snapshot, so it starts from scratch like a fresh run.
+    const resuming = resume != null;
     if (resume?.manifest?.auto?.status === 'deciding') resume = null;
     if (resume) await this._restoreFromResumePoint(resume);   // Task 6 (hook-4 companion)
+    // Session groups (C19): a resumed run resolves its sessions here, once its graph is back (the resume site's engine
+    // gate runs before the restore); a fresh run did it beside the engine gate. Either way, once.
+    if (resuming) for (const line of await this._sessionGate()) await appendAudit(this.pipeline.dir, line);
     const { ports, loops } = this.resolved;
     this.extrasFiles = await this._collectExtras();
     // The task document is pre-rendered ONCE: the Task card publishes it and

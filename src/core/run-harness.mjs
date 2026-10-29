@@ -74,7 +74,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, listCostRates, estimateCost } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, listCostRates, estimateCost, resolveModelEnv } from './config.mjs';
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
@@ -160,9 +160,13 @@ import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPer
 import { probeTargetForModel, probeReachable, hostOf } from './upstream-probe.mjs';
 import { waitForNetwork, NETWORK_ACTOR } from './network-wait.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
-import { usageLimitSwitches, engineList, engineLabel, engineReportsCost } from '../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineList, engineLabel, engineReportsCost, SESSION_SUBAGENTS_VERIFIED } from '../shared/engine-switch.mjs';
 import { splitTurnCost, splitCarried, reconcileTurn, usageTokens } from './session-cost.mjs';
 import { sessionHostEvent, sessionAuditLine } from './session-trace.mjs';
+import { resolveSessions } from '../shared/graph/sessions.mjs';
+import { chooseSessionMode, CLAUDE_AGENTS_FILE_MIN } from './session-mode.mjs';
+import { HOST_TOOLS_MODE, CHILD_INHERITS_PARENT } from './engines/session-dispatch.mjs';
+import { HOST_MAIN_THREAD_GUARD, HOST_GUARD_CONTEXT_FIELD, SESSION_SHARED_RUNTIME } from './session-host.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
@@ -1517,6 +1521,7 @@ export class RunHarness extends EventEmitter {
       this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false, { guardrails: this.guardrails });
       await this._engineMcpGate();
       this._pendingAudits.push(...this._engineGate());
+      this._pendingAudits.push(...await this._sessionGate());
       this._log(
         'preflight',
         'info',
@@ -1677,6 +1682,9 @@ export class RunHarness extends EventEmitter {
       // audit line), so the adopted graph is what they see.
       const decided = await this._decideTopology();
       if (decided) topology = decided;
+      // Session groups (C19): an Auto run adopts its graph only now, so its gate beside the engine gate saw the bootstrap
+      // (no session): the adopted workflow's sessions are resolved here, still once (the pending audits are flushed above).
+      if (decided) for (const line of await this._sessionGate()) await appendAudit(this.pipeline.dir, line);
       this._checkAbort();
 
       // 3c) Build the knowledge graph INSIDE each worktree so agents can query it.
@@ -3245,6 +3253,85 @@ export class RunHarness extends EventEmitter {
           : `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model`);
     }
     for (const l of lines) this._log('orchestrator', 'warn', l);
+    return lines;
+  }
+
+  /**
+   * Session gate (session groups, Task 44; spec §5.1; C13, C19, C26, C34, C36, C40): resolves the run's sessions ONCE,
+   * from the resolved template, and decides how each one runs (chooseSessionMode). A fresh run calls it beside the
+   * engine gate; a resume calls it from _engineRun right after the graph is restored (the resume site's engine gate
+   * runs before that). Stores `_sessionSpecs`, `_sessionDecisions` (sid → { mode, requested, reason, firstMemberModel })
+   * and `_sessionsDisabled`, which _engineRun consumes (Task 45). Probes the CLI only on a real Claude run with a
+   * session. `_sessionVerifiedForTest` (tests only) stands in for the verified map, and `_sessionConstsForTest` (tests only:
+   * `{ toolsMode, mainThreadGuard, guardField, inherits }`) for the spike-gated constants Task 53 sets, so both sides of
+   * each line are testable today.
+   * @returns {Promise<string[]>} the run-log lines, which are also the audit trail's copy
+   */
+  async _sessionGate() {
+    this._sessionSpecs = [];
+    this._sessionDecisions = new Map();
+    this._sessionsDisabled = false;
+    const r = this.resolved;
+    const specs = r?.template ? resolveSessions(r.template, r.ports, { loops: r.loops }) : [];
+    this._sessionSpecs = specs;
+    if (!specs.length) return [];
+    const lines = [];
+    if (process.env.WORCA_SESSIONS_DISABLE === '1') {        // C36: a hard bypass: no decision, no host, no trace
+      this._sessionsDisabled = true;
+      lines.push('Sessions disabled by WORCA_SESSIONS_DISABLE=1: every session runs as separate sessions.');
+    } else {
+      const engine = this.claude.engine || 'claude';
+      const mock = mockEnabled(this.claude);                 // an env-only WORCA_MOCK run counts (critique minor 8)
+      const caps = { ...getEngine(engine).capabilities };
+      let cliVersion = null;
+      if (engine === 'claude') {
+        if (mock) cliVersion = CLAUDE_AGENTS_FILE_MIN;
+        else {
+          let probe = null;
+          try { probe = await this._claudeCaps(); } catch { probe = null; }
+          cliVersion = probe?.version ?? null;
+          caps.forwardSubagentText = probe?.forwardSubagentText === true;   // M-11: no flag in --help, no session
+        }
+      }
+      const verified = this._sessionVerifiedForTest || (mock ? { [engine]: true } : SESSION_SUBAGENTS_VERIFIED);   // C13
+      const k = { toolsMode: HOST_TOOLS_MODE, mainThreadGuard: HOST_MAIN_THREAD_GUARD, guardField: HOST_GUARD_CONTEXT_FIELD,
+        inherits: CHILD_INHERITS_PARENT, sharedRuntime: SESSION_SHARED_RUNTIME, ...this._sessionConstsForTest };
+      const flagOn = flagEnabled('sessionGroups');
+      const nodeOf = (id) => r.nodeCtx?.[id] || null;
+      const labelOf = (id) => nodeOf(id)?.meta?.displayName || id;
+      const pairOf = (id) => { try { return nodeOf(id) ? this._nodeModelPair(nodeOf(id)) : {}; } catch { return {}; } };
+      // C34: endpoints compare by the UNTAGGED env (resolveModelEnv's `tag` would make every member differ).
+      const envOf = (model) => { try { return JSON.stringify(resolveModelEnv(model) ?? null); } catch { return 'null'; } };
+      for (const spec of specs) {
+        const { sid, members } = spec;
+        const settings = spec.settings || {};
+        const firstMemberModel = pairOf(members[0]).model || null;
+        const hostModel = settings.hostModel || null;
+        const modelEnvs = [...members.map((id) => envOf(pairOf(id).model)), envOf(hostModel || firstMemberModel)];
+        let d = chooseSessionMode({ spec, engine, caps, flagOn, env: process.env, cliVersion, verified, modelEnvs });
+        // `shared` skips the sub-agent gate (it needs none), but its runtime is Task 65's: until then it runs separate, never
+        // as hosted sub-agents behind the closed gate (C18; the validator lets the mode in through the API, imports and chat ops).
+        if (d.mode === 'shared' && !k.sharedRuntime) d = { mode: 'separate', requested: 'shared', reason: 'one conversation is not available yet' };
+        this._sessionDecisions.set(sid, { mode: d.mode, requested: d.requested ?? null, reason: d.reason ?? null, firstMemberModel });
+        const Engine = engineLabel(engine);
+        const steps = `${members.length} steps: ${members.map(labelOf).join(', ')}`;
+        if (d.mode === 'shared') { lines.push(`session ${sid}: one conversation on ${Engine} (${steps})`); continue; }
+        if (d.mode !== 'subagents') { lines.push(`session ${sid}: separate sessions — ${d.reason}`); continue; }
+        lines.push(`session ${sid}: sub-agents on ${Engine} (${steps}; main agent ${hostModel || 'the first step\'s model'})`);
+        if (k.toolsMode === 'union') {
+          lines.push(`session ${sid}: the main agent holds the union of its steps' tool grants`);
+          // C40: refused only when the host-only guard is on AND has a proven context field (session-host.mjs _mainThreadGuard).
+          if (!(k.mainThreadGuard && k.guardField)) lines.push(`session ${sid}: the main agent's own tool calls are stopped after the fact, not refused`);
+        }
+        // C26: only an explicit host model / effort reaches a member that has none (without one, the CLI default, as ungrouped).
+        for (const id of members) {
+          const own = pairOf(id);
+          if (hostModel && !own.model && k.inherits.model) lines.push(`session ${sid}: ${labelOf(id)} has no model of its own, so it runs on the main agent's model (${hostModel})`);
+          if (settings.hostEffort && !own.effort && k.inherits.effort) lines.push(`session ${sid}: ${labelOf(id)} has no effort of its own, so it runs at the main agent's effort (${settings.hostEffort})`);
+        }
+      }
+    }
+    for (const l of lines) this._log('orchestrator', 'info', l);
     return lines;
   }
 
