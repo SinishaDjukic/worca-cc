@@ -282,3 +282,53 @@ test('v5 — seqGaps: the first record follows seq 0; a forged line never become
   writeFileSync(p, `${L(1)}\n${L(9, { report: 'x' })}\n`);
   assert.equal(createSessionTrace({ pipelineDir: d, sid: SID }).lastSeq(), 9, 'the master\'s rule: after the last PARSEABLE line, even a forged one (the reader still counts it invalid)');
 });
+
+// ── impl review, cycle 1: hostile shapes in the agent-writable pipeline dir ──
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+
+test('review 1 — a deeply nested line is invalid, not a crash: both readers skip it, and the cap sits at 32 levels for arrays and objects', async () => {
+  const line = (seq, usage) => `{"v":1,"ts":"2026-10-28T10:00:00.000Z","seq":${seq},"kind":"turn_end","runId":"p1","sid":"${SID}","hostEpoch":1,"hostSessionId":"H","hostUsage":${usage}}`;
+  const arrays = (n) => `${'['.repeat(n)}${']'.repeat(n)}`;
+  const objects = (n) => `${'{"a":'.repeat(n)}0${'}'.repeat(n)}`;
+  const d = dir();
+  const p = tracePath(d, SID);
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, `${line(1, '{"in":1}')}\n${line(2, arrays(5000))}\n${line(3, '{"in":2}')}\n`);
+  const sync = readTraceSync(p);
+  assert.deepEqual([sync.records.map((r) => r.seq), sync.torn, sync.invalid, sync.seqGaps], [[1, 3], 0, 1, 1]);
+  const async = await readTrace(p);
+  assert.deepEqual([async.records.map((r) => r.seq), async.torn, async.invalid, async.seqGaps], [[1, 3], 0, 1, 1]);
+  assert.deepEqual(traceRecordProblems(JSON.parse(line(2, arrays(5000)))), ['nested over 32 levels']);
+  assert.deepEqual(traceRecordProblems(JSON.parse(line(2, objects(5000)))), ['nested over 32 levels']);
+  assert.deepEqual(traceRecordProblems(JSON.parse(line(2, arrays(32)))), [], '32 levels of arrays are fine');
+  assert.deepEqual(traceRecordProblems(JSON.parse(line(2, arrays(33)))), ['nested over 32 levels']);
+  assert.deepEqual(traceRecordProblems(JSON.parse(line(2, objects(32)))), [], '32 levels of objects are fine (a number at the bottom is no level)');
+  assert.deepEqual(traceRecordProblems(JSON.parse(line(2, objects(33)))), ['nested over 32 levels']);
+});
+
+test('review 2 — a write that lands a fragment and then fails sets the torn tail: the next record starts on a line of its own', async () => {
+  const fsp = createRequire(import.meta.url)('node:fs/promises');
+  const real = fsp.appendFile;
+  let calls = 0;
+  fsp.appendFile = async (file, data, enc) => {
+    calls += 1;
+    if (calls !== 2) return real(file, data, enc);
+    await real(file, data.slice(0, 40), enc);                     // ENOSPC after part of the line landed
+    throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+  };
+  syncBuiltinESMExports();
+  try {
+    const t = createSessionTrace({ pipelineDir: dir(), sid: SID, runId: 'p1' });
+    t.append('open', { hostEpoch: 1, hostSessionId: 'H' });
+    t.append('turn_start', { hostEpoch: 1, hostSessionId: 'H', turnId: 't' });
+    t.append('dispatch', { hostEpoch: 1, hostSessionId: 'H', turnId: 't', dispatchId: 'd' });
+    t.append('turn_end', { hostEpoch: 1, hostSessionId: 'H', turnId: 't' });
+    await t.flush();
+    assert.equal(t.writeErrors(), 1);
+    const { records, torn, invalid, seqGaps } = readTraceSync(t.path);
+    assert.deepEqual([records.map((r) => `${r.seq}:${r.kind}`), torn, invalid, seqGaps], [['1:open', '3:dispatch', '4:turn_end'], 1, 0, 1]);
+  } finally {
+    fsp.appendFile = real;
+    syncBuiltinESMExports();
+  }
+});

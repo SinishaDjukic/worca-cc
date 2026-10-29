@@ -36,6 +36,7 @@ const COMMON = ['v', 'ts', 'seq', 'kind', 'runId', 'sid', 'hostEpoch', 'hostSess
 /** Never in a trace, at any depth (the privacy rule). */
 const FORBIDDEN = new Set(['prompt', 'brief', 'text', 'report', 'input', 'output', 'content', 'message', 'systemPrompt', 'result']);
 const STRING_MAX = 200;
+const DEPTH_MAX = 32;                                       // no writer nests more than about 3; a deeper line is forged
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const EMPTY = () => ({ records: [], torn: 0, invalid: 0, seqGaps: 0 });
@@ -46,17 +47,20 @@ export function tracePath(pipelineDir, sid) {
   return join(pipelineDir, 'sessions', sid, TRACE_FILE);
 }
 
-function deepProblems(v, out) {
+/** `depth` is the nesting level of `v`'s container; past DEPTH_MAX the walk stops, so a hostile line cannot blow the stack. */
+function deepProblems(v, out, depth = 1) {
   if (typeof v === 'string') { if (v.length > STRING_MAX) out.push(`string over ${STRING_MAX} characters`); return; }
-  if (Array.isArray(v)) { for (const x of v) deepProblems(x, out); return; }
-  if (!isObj(v)) return;
+  if (!v || typeof v !== 'object') return;
+  if (depth > DEPTH_MAX) { out.push(`nested over ${DEPTH_MAX} levels`); return; }
+  if (Array.isArray(v)) { for (const x of v) deepProblems(x, out, depth + 1); return; }
   for (const [k, x] of Object.entries(v)) {
     if (FORBIDDEN.has(k)) out.push(`forbidden key ${k}`);
-    else deepProblems(x, out);
+    else deepProblems(x, out, depth + 1);
   }
 }
 
-/** Every problem of one parsed line: kind, version, seq, ts, top-level keys, forbidden keys at any depth, long strings. */
+/** Every problem of one parsed line: kind, version, seq, ts, top-level keys, forbidden keys at any depth, long strings,
+ *  nesting over 32 levels. */
 export function traceRecordProblems(rec) {
   if (!isObj(rec)) return ['not an object'];
   const out = [];
@@ -160,7 +164,7 @@ export function createSessionTrace({ pipelineDir, sid, runId, now = () => new Da
         if (!dirReady) { await mkdir(dirname(path), { recursive: true }); dirReady = true; }
         await appendFile(path, `${tornTail ? '\n' : ''}${line}\n`, 'utf8');
         tornTail = false;                                     // only a write that landed ends the torn line (v4)
-      }).catch(() => { writeErrors += 1; });
+      }).catch(() => { writeErrors += 1; tornTail = true; });  // it may have landed a fragment; at worst one blank line
       return written;
     } catch {
       return null;
