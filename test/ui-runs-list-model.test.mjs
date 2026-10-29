@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -150,11 +150,28 @@ test('dateBucket: local midnights, the finish time for History, now for live, Up
   assert.equal(b(t(29, 0)), 'yesterday');
   assert.equal(b(t(28, 23)), 'week');
   assert.equal(b(t(23, 0)), 'week', 'Previous 7 days: yesterday plus the six before it');
-  assert.equal(b(t(22, 23)), 'older');
+  assert.equal(b(t(22, 23)), 'month');
+  assert.equal(b(new Date(2026, 7, 31, 0, 0).getTime()), 'month', 'Previous 30 days: 8 to 30 days ago');
+  assert.equal(b(new Date(2026, 7, 30, 23, 0).getTime()), 'older');
   assert.equal(b(NaN), 'older', 'an unknown time files under Older, not Today');
   assert.equal(dateBucket({ kind: 'live' }, NOW), 'today');
   assert.equal(dateBucket({ kind: 'sched' }, NOW), 'upcoming');
-  assert.deepEqual(DATE_BUCKETS.map(([id]) => id), ['upcoming', 'today', 'yesterday', 'week', 'older']);
+  assert.deepEqual(DATE_BUCKETS.map(([id]) => id), ['upcoming', 'today', 'yesterday', 'week', 'month', 'older']);
+  assert.deepEqual(DATE_BUCKETS.slice(1), [...DAY_BUCKETS], 'Runs adds Upcoming to the day sections Chats uses');
+  assert.equal(dayBucket(t(28, 23), NOW), 'week');
+});
+
+test('Group by Date: Older starts folded; the person\'s fold record flips it either way', () => {
+  const history = [histIt('a', { mtime: NOW - 60000 }), histIt('b', { mtime: new Date(2026, 6, 1).getTime() })];
+  const sec = (collapsed) => buildRunsModel({ history, groupBy: 'date', collapsed, now: NOW }).sections;
+  assert.deepEqual(sec(new Set()).map((s) => [s.id, s.collapsed]), [['date:today', false], ['date:older', true]]);
+  const c = new Set();
+  setFolded(c, 'date:older', false);
+  assert.ok(c.has('date:older') && !isFolded(c, 'date:older'), 'opening Older records the difference from its default');
+  assert.equal(sec(c).find((s) => s.id === 'date:older').collapsed, false);
+  setFolded(c, 'date:older', true);
+  setFolded(c, 'date:today', true);
+  assert.deepEqual([...c], ['date:today'], 'folding back to the default drops the record; Today folds like before');
 });
 
 test('dateBucket: a DST day is still one day', () => {
@@ -345,7 +362,7 @@ test('dateBucket: an ended group files under its latest member\'s time, a workin
     history: [histIt('m1', { mtime: tenDays }), histIt('m2', { mtime: tenDays - 3600000 }), histIt('r1', { mtime: NOW - 60000 })],
     groups: [feature, working, ready], groupBy: 'date', now: NOW });
   const where = (key) => m.sections.find((s) => s.rows.some((r) => r.key === key)).id;
-  assert.equal(where('chain:feat_m'), 'date:older');
+  assert.equal(where('chain:feat_m'), 'date:month');
   assert.equal(where('chain:p:w1'), 'date:today');
   const host = doc.createElement('div');
   host.append(...renderRunsList(doc, buildRunsModel({ history: [histIt('r1', { mtime: NOW - 60000 })], groups: [ready], now: NOW })));

@@ -352,10 +352,14 @@ and hand the focus back to the opener.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
+- Day sections (Group by Date, Runs and Chats alike, `runs-list.mjs` `DAY_BUCKETS`): Today · Yesterday · Previous 7
+  days · Previous 30 days · Older, by last activity, split at local midnights. Runs puts Upcoming above them, Chats puts
+  Pinned. Every day section folds by hand; Older starts folded. Both View menus list Group by in one order (Date ·
+  Project · Topic (Chats only) · None) with the day sections as Date's title, and the view chip names filters and a
+  non-default sort, never the grouping.
 - Chats list: the Runs list anatomy in the Chat page's column; the open chat's figures sit once in the conversation
   head as a readout control (`button.chat-head-meter`, 11px mono, like the cost breakdown's `.cost-bd-btn`), not a
-  §1.2 button; sections Pinned · Today · Recent
-  (the 10 latest before today) · Older (folded); Archive is disabled while a chat replies, runs a command or follows a
+  §1.2 button; sections Pinned, then the day sections; Archive is disabled while a chat replies, runs a command or follows a
   live run; an archived chat reads Restore, as a run does; New chat is the one + after the list toggle; a topic group is
   a Runs group row (count, ⌄, members indented 16px, no dividers) placed by its newest chat; its sub line names its
   project or `N projects`; Group by Project files a group spanning projects under Several projects, never No project;
