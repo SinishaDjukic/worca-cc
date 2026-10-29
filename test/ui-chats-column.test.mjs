@@ -10,7 +10,8 @@ const DAY = 86400e3;
 const T = (id, o = {}) => ({ id, title: `Chat ${id}`, createdAt: iso(30 * DAY), updatedAt: iso(3600e3), totals: { costUsd: 0.4 },
   scope: null, inFlight: false, waiting: false, tracking: false, trackingRuns: 0, commands: 0, archived: false, ...o });
 const LIST = [T('ask_0000000a', { pinnedAt: iso(20 * DAY), updatedAt: iso(20 * DAY) }), T('ask_00000001', { inFlight: true }), T('ask_00000002'),
-  ...Array.from({ length: 14 }, (_, i) => T(`ask_1000000${i.toString(16)}`, { updatedAt: iso((i + 1) * DAY) }))];
+  // 1–10 days ago fill Yesterday, Previous 7 days and Previous 30 days; the last 4 (40+ days) are Older.
+  ...Array.from({ length: 14 }, (_, i) => T(`ask_1000000${i.toString(16)}`, { updatedAt: iso((i < 10 ? i + 1 : i + 30) * DAY) }))];
 // The message row shape of test/ask-panel-page.test.mjs:13.
 const msg = (threadId) => ({ id: 'askm_u0000001', threadId, seq: 1, role: 'user', text: 'hi', blocks: [], status: null, reason: null,
   model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: iso(0) });
@@ -66,11 +67,12 @@ const key = (doc, target, init) => target.dispatchEvent(new doc.defaultView.Keyb
 const toastTitles = (doc) => [...doc.querySelectorAll('.toast .tt')].map((n) => n.textContent);
 const listGets = (rec) => rec.calls.filter((c) => c.startsWith('GET /api/ask/threads?'));
 
-test('head is Chats + View; Pinned · Today · Recent · Older; Recent holds 10; no search, labelled New chat or trash', async () => {
+test('head is Chats + View; Pinned, then the Runs day sections; no search, labelled New chat or trash', async () => {
   const { col } = await bootOn();
   assert.deepEqual([...col.querySelector('.runs-head').children].map((n) => n.textContent.trim()), ['Chats', 'View']);
-  assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent), ['Pinned', 'Today', 'Recent', 'Older']);
-  assert.equal(col.querySelectorAll('[data-section="recent"] .runs-item').length, 10);
+  assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent),
+    ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Previous 30 days', 'Older']);
+  assert.deepEqual(['today', 'yesterday', 'week', 'month'].map((id) => col.querySelectorAll(`[data-section="${id}"] .runs-item`).length), [2, 1, 6, 3]);
   assert.equal(col.querySelector('[data-section="older"] .runs-sec-head').getAttribute('aria-expanded'), 'false');
   assert.equal(col.querySelectorAll('.chat-history-search-input, .chat-history-new, .ask-thread-trash').length, 0);
 });
@@ -145,7 +147,7 @@ test('a busy chat: ⋯ › Archive is disabled with the reason; E toasts it; bul
 test('E on an idle row archives with Undo; Undo restores; the focus lands on the row that took its place', async () => {
   const list = LIST.filter((t) => t.id !== 'ask_00000001');
   const { doc, col, rec, ctx } = await bootOn({ list });
-  const rows = () => [...col.querySelectorAll('a.runs-row')];
+  const rows = () => [...col.querySelectorAll('[data-section="week"] a.runs-row')];   // inside one section: heads take focus too
   const second = rows()[1];
   const gone = second.dataset.rowKey.slice('chat:'.length);
   const third = rows()[2].dataset.rowKey;
@@ -215,7 +217,7 @@ test('Chat page keys: ⌥⌘N starts a new chat through the +, ⌘\\ hides the l
 
 test('J moves to the next row and Enter opens it; exactly one Tab stop, inner controls out of the Tab order', async () => {
   const { ctx, doc, col } = await bootOn();
-  const rows = [...col.querySelectorAll('a.runs-row')];
+  const rows = [...col.querySelectorAll('[data-section="week"] a.runs-row')];   // inside one section: heads take focus too
   assert.equal([...col.querySelectorAll('a.runs-row, button.runs-sec-head')].filter((n) => n.tabIndex === 0).length, 1);
   for (const b of col.querySelectorAll('.runs-more, .runs-check')) assert.equal(b.tabIndex, -1);
   rows[0].focus();

@@ -428,11 +428,15 @@ test('a typed login is checked like apply checks it: a bad field is 400, Basic a
 
 test('GET /api/proxy/detect answers what the system detection found, uncached', async () => {
   const found = { found: true, source: 'manual', host: 'proxy.example.com', port: 8080, noProxy: ['*.corp.example.com'], also: [], line: 'From your macOS proxy settings.' };
-  testing.setSystemProxyDetect(async () => found);
+  let opts;
+  testing.setSystemProxyDetect(async (o) => { opts = o; return found; });
   try {
     const r = await call('GET', '/api/proxy/detect');
     assert.equal(r.status, 200, r.text);
     assert.deepEqual(r.body, found);
+    // The Linux env fallback gets the variables Worca started with, never its own local proxy's.
+    assert.equal(typeof opts?.env, 'object');
+    assert.equal(opts.env.WORCA_EGRESS_PROXY_URL, undefined);
   } finally { testing.setSystemProxyDetect(null); }
 });
 

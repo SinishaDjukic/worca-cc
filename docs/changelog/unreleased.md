@@ -7,9 +7,9 @@ them into the next page and empties this file.
 
 **Define a feature with Worca before anything is built.**
 
-A product owner describes a feature in a few sentences and Worca interviews them, a few questions at a time, into a testable spec: goal, actors, flow, edge cases, rules, acceptance criteria and assumptions. Six checks say when it is Ready, and **Start in Worca** starts a normal run with the spec as its task. A product brief, made once per project or workspace from its default branch, lets every interview there start from what the product already does; edits to the spec or the brief are kept. A feature can come with files (emails, tickets, a spec, screenshots): Worca reads each once, the interview uses what it took from them, and the files you switch on go to the run. **Feature chat** beside a feature answers from what Worca already knows about it, drafts answers to the open questions and proposes spec changes as cards; nothing changes until you submit or accept, and each message shows what it cost.
+A product owner describes a feature in a few sentences and Worca interviews them, a few questions at a time, into a testable spec: goal, actors, flow, edge cases, rules, acceptance criteria and assumptions. Six checks say when it is Ready, and **Start in Worca** starts a normal run with the spec as its task. A product brief, made once per project or workspace from its default branch, lets every interview there start from what the product already does; edits to the spec or the brief are kept. A feature can come with files (emails, tickets, a spec, screenshots): Worca reads each once, the interview uses what it took from them, and the files you switch on go to the run. **Feature chat** beside a feature answers from what Worca already knows about it, drafts answers to the open questions and proposes spec changes as cards; nothing changes until you submit or accept, and each message shows what it cost. A feature can be exported to the team's tracker (Jira first) as a ticket: a preview shows exactly what is sent, **Export again** updates the ticket or comments on it, and a run started from the feature reports back to the ticket.
 
-Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · files · Feature chat · experimental: turn it on in Settings › Labs
+Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · files · Feature chat · export to Jira · experimental: turn it on in Settings › Labs
 
 Read it: [Requirements](../requirements.md)
 
@@ -18,6 +18,7 @@ Pull requests (add each number when it opens):
 - Requirements (#882)
 - Requirements: files (#975)
 - Requirements: Feature chat (#989)
+- Requirements: export to a tracker (#1010)
 
 ## Shaper, Run presets and Cost tags leave Labs
 
@@ -192,6 +193,16 @@ Pull requests (add each number when it opens):
 Pull requests (add each number when it opens):
 
 - Plugins: update works on Windows when the current version is a junction (#987)
+
+## Worca in a container behind a corporate proxy
+
+`worca container` started from a Worca terminal no longer gives the box Worca's own local proxy (`127.0.0.1`), which inside the container pointed at the container and failed every request. The box gets the corporate proxy from Settings › Network proxy when that proxy needs no login. Otherwise it gets no proxy, and one line says how to set the proxy up in the box. For a proxy that re-signs TLS, `WORCA_CA_CERT` in the container `.env` mounts the corporate CA. Worca, Claude Code, git, curl, `gh` and Python in the box then trust it.
+
+Read it: [Corporate proxy and CA](../docker.md#corporate-proxy-and-ca)
+
+Pull requests (add each number when it opens):
+
+- Container: a reachable proxy and the corporate CA (#1015)
 
 ## Plugin answers survive a crash on exit
 

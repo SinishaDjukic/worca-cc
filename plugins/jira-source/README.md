@@ -124,3 +124,28 @@ a closing line saying what happened:
 If Jira refuses the transition itself (for example a required field on the
 transition screen), the write-back fails before anything is posted, so a retry
 from the results view posts the comment once.
+
+## Export
+
+Worca's Requirements page can send a feature's spec to Jira as an issue (**Export ▾ › Export to Jira…**), through the
+same connection (profile) as above; the token never leaves the plugin. The plugin answers `capabilities()` with
+`export: true` and implements the optional export ops:
+
+- **exportOptions** — the projects, the project's issue types (not sub-tasks), the priorities and the multi-line text
+  fields that can hold acceptance criteria, from create metadata (`/rest/api/2/issue/createmeta/<project>/issuetypes`,
+  Jira Cloud and Data Center 8.4 or later; an older Data Center cannot be set up for export). `doneStatus` is
+  **Transition on completion**.
+- **createTicket** — a v2 issue with the description in wiki markup, the labels Worca sends, the priority and the
+  criteria field, and Worca's marker as the hidden issue property `worca.export` (in the create body, or set right after
+  it where a site refuses that). Worca uses the marker and the label `worca-FEAT-<n>` to find an issue whose create
+  answer was lost, instead of making a second one.
+- **updateTicket** — rewrites summary, description, issue type, priority and the criteria field; labels are only added,
+  so labels the team set in Jira stay. The field has to be on the edit screen.
+- **commentTicket** — adds the comment Worca previewed.
+- **ticketState** / **findTicket** — read an issue's description back. Each create and update returns a fingerprint of
+  the stored description (line endings and trailing spaces do not count), so Worca can tell when the description was
+  edited in Jira since the last export.
+
+A field Jira refuses comes back as Jira's message naming it ("Jira needs a value for “Team” in SHOP."), and a deleted
+issue as gone; nothing is created then. Run results of a run started with **Report back** are written back as described
+above.

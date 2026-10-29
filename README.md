@@ -595,6 +595,10 @@ level and has no **Diff**, **Changes** or **Actions**.
   A note above it reads like "5 answers while you were away — 2 to check". A
   short notice says when away hours start and end, and a violet dot sits on your avatar while you
   are away; turning **Away** off in the account menu ends it.
+- **A small easter egg** — while you are away with **Keep awake** on, leave the Worca window in front and untouched
+  for 5 minutes and a screensaver takes over: the wordmark drifts across the window with one line on how your runs
+  and chats are doing. Moving the mouse or pressing a key brings the page back. `AWAY_SCREENSAVER` in
+  `ui/public/away-screensaver.mjs` turns it off.
 
 ### Scheduled runs
 

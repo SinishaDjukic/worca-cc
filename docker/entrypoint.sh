@@ -170,6 +170,25 @@ for d in "${WORCA_HOME:-/worca}" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; do
 done
 mkdir -p "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
+# 1b. A corporate CA (compose.ca.yml mounts it and sets WORCA_CA_CERT_FILE): Node reads it
+# through NODE_EXTRA_CA_CERTS; git, curl, gh and Python read one bundle file, so build the
+# system bundle plus the CA in a fresh mktemp dir (only this uid can write it; the agent
+# users can read it) and point their variables at it. The system trust store itself needs
+# root, which the box does not have.
+if [ -n "${WORCA_CA_CERT_FILE:-}" ]; then
+  if [ -r "$WORCA_CA_CERT_FILE" ] && grep -q 'BEGIN CERTIFICATE' "$WORCA_CA_CERT_FILE"; then
+    cadir="$(mktemp -d /tmp/worca-ca.XXXXXX)"
+    cat /etc/ssl/certs/ca-certificates.crt "$WORCA_CA_CERT_FILE" > "$cadir/bundle.pem"
+    chmod 0755 "$cadir"
+    chmod 0644 "$cadir/bundle.pem"
+    export SSL_CERT_FILE="$cadir/bundle.pem" GIT_SSL_CAINFO="$cadir/bundle.pem" \
+      CURL_CA_BUNDLE="$cadir/bundle.pem" REQUESTS_CA_BUNDLE="$cadir/bundle.pem"
+    log "corporate CA: trusted from $WORCA_CA_CERT_FILE"
+  else
+    log "corporate CA: $WORCA_CA_CERT_FILE is not a readable PEM certificate; TLS through a re-signing proxy will fail"
+  fi
+fi
+
 # 2. GitHub over HTTPS. No global credential helper: worca passes the token for each
 # git/gh call's role in that call's env only (src/core/github-credentials.mjs), and
 # agents never get one. A helper an older image wrote to a persistent HOME is removed.
