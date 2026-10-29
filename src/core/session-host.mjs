@@ -109,6 +109,8 @@ export class SessionHost {
     this.inflight = null;                      // the turn in flight: close() lets it settle first
     this.closed = false;
     this.closing = null;                       // the one close() promise
+    this.closedAs = null;                      // the outcome close() was given: its refusal follows it (Task 45)
+    this.closeKill = new AbortController();    // a 'paused' close cuts the turn in flight, as a pause cuts an ungrouped step
     this.openedAt = Date.now();
     this.summary = emptySummary({ sid: this.sid, label: this.label, members: this.members });
     this.trace = createSessionTrace({ pipelineDir: port.pipelineDir, sid: this.sid, runId: port.runId ?? null });
@@ -346,7 +348,7 @@ export class SessionHost {
 
     const started = Date.now();
     const turnAbort = new AbortController();
-    const signal = opts.signal ? AbortSignal.any([opts.signal, turnAbort.signal]) : turnAbort.signal;
+    const signal = AbortSignal.any([...(opts.signal ? [opts.signal] : []), turnAbort.signal, this.closeKill.signal]);
     const emit = (e) => emitTo(opts.onEvent, e);
     const memberUsage = new Map();              // the member's own usage per message id: a cut turn's price before its tool_result
     let memberMsgModel = null;                  // the model the member's own messages name (one that pins none, C26)
@@ -408,7 +410,8 @@ export class SessionHost {
     // The outcome; the first matching rule wins (C10, C11, C12, C20, C41).
     let outcome;
     let verdict = null;
-    if (opts.signal?.aborted) outcome = 'abort';                                                   // Stop / pause: the turn is cut
+    const cutByClose = this.closeKill.signal.aborted && !opts.signal?.aborted;                     // a 'paused' close cut it (Task 45)
+    if (opts.signal?.aborted || cutByClose) outcome = 'abort';                                     // Stop / pause: the turn is cut
     else if (done && !done.isError) outcome = 'accept';                                             // C12: the step finished
     else if (r?.subtype === HOST_BUDGET_SUBTYPE) outcome = 'budget';                                 // C10: exit 1 after its result
     else if (r?.subtype === 'error_max_turns') {                                                    // the host looped instead of dispatching
@@ -515,7 +518,8 @@ export class SessionHost {
       memberAgentId: boundId, memberTranscriptId: done?.agentId ?? null, costSource: booking?.costSource ?? null });
 
     switch (outcome) {
-      case 'abort': throw err?.name === 'AbortError' ? err : abortError();
+      // A turn a 'paused' close cut answers with the close's refusal (the pause sentinel), as its waiters do.
+      case 'abort': throw cutByClose ? this._refusal() : err?.name === 'AbortError' ? err : abortError();
       case 'accept':
         this.consecutiveWatchdog = 0;
         if (err) this._log('warn', 'the main agent failed after the step finished; the step is kept', attr);
@@ -621,7 +625,8 @@ export class SessionHost {
    *  outcome first books a pending cut as an estimate (verify major 1: a host that died after the LAST member's
    *  tool_result, or a Stop never resumed, would drop that member's dollars), then writes `close`. Once. A run that ends
    *  on Stop or a failure does not wait for its running steps (graph/scheduler.mjs `finish`), so close refuses the
-   *  waiters and lets the turn in flight settle first: its records and its cut come before `pause`/`close`. */
+   *  waiters and lets the turn in flight settle first: its records and its cut come before `pause`/`close`. A 'paused'
+   *  close cuts that turn first (the run pauses; nothing will keep the rest of the turn). */
   close(outcome) {
     this.closing ??= this._close(outcome);                                    // once; a second caller waits for the first
     return this.closing;
@@ -630,18 +635,27 @@ export class SessionHost {
   /** What a closed host tells a waiter it refuses (and a dispatch that would start after close): a TERMINAL AbortError,
    *  so the member's flow site enacts it and never re-decides it as a pause with the detail 'aborted' (orchestrator.mjs
    *  `_execute`; the slice prompt guard does the same). A real pause has no waiters left to refuse (each one's signal
-   *  carries the pause, and the scheduler waits for it), and a pause settles any AbortError as paused before the mark. */
+   *  carries the pause, and the scheduler waits for it), and a pause settles any AbortError as paused before the mark.
+   *  A close for a pause the run reaches WITHOUT a pause request (a non-terminal failure the base catch ends paused, Task
+   *  45) can still have waiters: they get the pause sentinel, so `_execute` keeps their rows non-terminal for the resume
+   *  instead of recording a terminal error that would end the run stopped. */
   _refusal() {
+    if (this.closedAs === 'paused') return Object.assign(new Error('paused'), { name: 'PauseError' });   // run-harness pauseErr()
     return markTerminal(abortError());
   }
 
   async _close(outcome) {
     this.closed = true;
+    this.closedAs = outcome;
     for (const entry of this.queue.splice(0)) {
       if (entry.onAbort) entry.opts.signal.removeEventListener('abort', entry.onAbort);
       if (entry.waited) this._queued(entry.member.executionId, false);
       entry.reject(this._refusal());
     }
+    // A run that ends paused without a pause request (a non-terminal failure; the scheduler did not wait for its running
+    // steps) cuts the turn in flight now, as the pause that follows cuts every ungrouped step: its cut is held for the
+    // resumed turn, and the run does not wait for the member to finish a turn nobody will keep.
+    if (outcome === 'paused') this.closeKill.abort();
     await this.inflight;
     if (outcome === 'paused') {
       const c = this.openCut;

@@ -669,6 +669,16 @@ async function prepare(ctx) {
 /** Test seam: `runClaude` stands in for the runner on every agent spawn (the sideload safety net's tests). */
 export const _testing = { runClaude: null };
 
+/** The member a SessionHost dispatches (session groups, Task 45): its ids, the label its definition and dispatch line
+ *  carry, and its own model and effort (`_nodeModelPair`, through claudeOpts: `null` when the node pins none — C26). */
+export function memberInfo(full) {
+  const f = full || {};
+  const ordinal = f.ordinal ?? 1;
+  const name = f.meta?.displayName || f.node?.key || f.nodeId || 'Agent';
+  return { nodeId: f.nodeId ?? f.node?.id ?? null, executionId: f.executionId, ordinal, label: `${name} · cycle ${ordinal}`,
+    model: f.claudeOpts?.model || null, effort: f.claudeOpts?.effort || null, fanOut: ctxFanOut(f) };
+}
+
 /**
  * Spawn through `runOpts` and capture the session id off the `session` event —
  * `runClaude` resolves `{ text, exitCode }` only. The wrapper forwards every event to
@@ -693,7 +703,8 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
     if (e?.type === 'log' && typeof e.text === 'string' && said.length < 20) said.push(e.text.slice(0, 500));
     if (typeof inner === 'function') inner(e);
   };
-  const run = _testing.runClaude || runClaude;
+  // The seam (Task 45): a session member's unchanged runOpts go to its SessionHost, which runs them as one host turn.
+  const run = full.sessionHost ? (o) => full.sessionHost.run(o, memberInfo(full)) : (_testing.runClaude || runClaude);
   try {
     const { text } = await run(opts);
     return { text, sessionId };

@@ -245,7 +245,7 @@ test('v3 — a waiter aborted as it leaves the queue (before its turn starts) ta
 
 // ── v4: a closed host's refusal is terminal unless paused; close as a waiter leaves the queue; no "queued" flash; one close ──
 
-test('v4 — close(\'error\') refuses a waiter with a TERMINAL AbortError (the flow site must not turn the failed run into a pause); v5: close(\'paused\') too', async () => {
+test('v4 — close(\'error\') refuses a waiter with a TERMINAL AbortError (the flow site must not turn the failed run into a pause); run 7: close(\'paused\') with the pause sentinel', async () => {
   const { g, hosts, host } = make();
   const p1 = host.run(memberOpts(), member('n_a'));
   const p2 = host.run(memberOpts(), member('n_b'));
@@ -259,8 +259,18 @@ test('v4 — close(\'error\') refuses a waiter with a TERMINAL AbortError (the f
   const q2 = paused.host.run(memberOpts(), member('n_b'));
   await tick();
   const pc = paused.hosts.close('paused');
-  await assert.rejects(q2, (e) => e.name === 'AbortError' && isTerminal(e), 'v5: a real pause leaves no waiter to refuse (each one\'s signal carries it), so any waiter a close refuses has no pause to settle as');
-  paused.g.ok(0); await q1; await pc;
+  // Run 7 (Task 45): a run that ends paused WITHOUT a pause request (a non-terminal failure) closes 'paused' with waiters
+  // still queued; a terminal refusal would record a terminal error and end that run stopped, so they get the pause sentinel.
+  await assert.rejects(q2, (e) => e.name === 'PauseError' && !isTerminal(e), 'a waiter a pause-close refuses settles as paused');
+  // v4 (Task 45): the turn in flight is cut by that close at once (as the pause that follows cuts an ungrouped step), and
+  // answers with the same sentinel; the run never waits for a turn nobody will keep.
+  assert.equal(paused.g.calls[0].hostOpts.signal.aborted, true, 'the close killed the turn in flight');
+  paused.g.fail(0, Object.assign(new Error('aborted'), { name: 'AbortError' }));   // the killed process exits
+  await assert.rejects(q1, (e) => e.name === 'PauseError' && !isTerminal(e), 'the turn in flight is cut and settles as paused');
+  await pc;
+  assert.equal(paused.g.calls.length, 1, 'the waiter never spawned');
+  assert.equal(paused.port.records.at(-1).kind, 'pause');
+  await assert.rejects(paused.host.run(memberOpts(), member('n_a')), (e) => e.name === 'PauseError', 'a run after close(\'paused\') too');
 });
 
 test('v4 — close landing as a waiter leaves the queue: the waiter never starts and nothing is written after close', async () => {

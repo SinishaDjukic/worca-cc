@@ -29,7 +29,8 @@ import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
 import { probePython } from './graph/python-probe.mjs';
 import { mediaToolProblems } from './graph/media-preflight.mjs';
-import { mockEnabled } from './claude-runner.mjs';
+import { mockEnabled, runClaude } from './claude-runner.mjs';
+import { createSessionHosts } from './session-host.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
@@ -42,7 +43,7 @@ import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
 import { rolesForRound, roleTaskId, roleItems, roleRecord, findingsMarkdown, refinerVerdict, applyAddressed } from '../shared/shape/role-review.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
-import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS } from './graph/executor.mjs';
+import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
 import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
@@ -891,6 +892,11 @@ export class GraphOrchestrator extends RunHarness {
     // A Memory defragment run appends the scope's health (run-harness.mjs _defragBrief — '' on
     // every other run, so their document stays byte-identical).
     this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) + await this._defragBrief() };
+    // Session groups (Task 45): one SessionHost per session the gate resolved; the kill switch builds nothing (C36).
+    this._sessions = !this._sessionsDisabled && this._sessionSpecs?.length
+      ? createSessionHosts({ specs: this._sessionSpecs, decisions: this._sessionDecisions, port: this._sessionPort(),
+        plainRun: (o) => (executorTesting.runClaude || runClaude)(o), restore: this._sessionRestore ?? null })
+      : null;
 
     const sched = createScheduler({
       template: this._schedulerTemplate(),
@@ -926,12 +932,19 @@ export class GraphOrchestrator extends RunHarness {
     }
 
     let outcome;
+    let runErr = null;
     try {
       outcome = await sched.run();
+    } catch (err) {
+      runErr = err;
+      throw err;
     } finally {
       this._scheduler = null;
       this.state.active = [];
       this._syncSchedulerState(sched);
+      // After the scheduler returned (on Stop or a failure it does not wait for running steps; close() lets a turn in
+      // flight settle first) and before a pause builds its resume point, so the snapshot already says 'paused'.
+      if (this._sessions) await this._closeSessions(outcome, runErr);
     }
 
     if (outcome === 'error') {
@@ -959,6 +972,21 @@ export class GraphOrchestrator extends RunHarness {
       await appendAudit(this.pipeline.dir, `Run **${QUIESCENCE_WARNING}**.`).catch(() => {});
     }
     return 'done';
+  }
+
+  /** Session groups (Task 45): close every SessionHost once, with how the run ended. */
+  async _closeSessions(outcome, err = null) {
+    await this._sessions.close(this._sessionOutcome(outcome, err));
+  }
+
+  /** How the run ended, for its SessionHosts' close (Task 45). A requested pause is 'paused' even when the scheduler said
+   *  'done' (D17); Stop is 'stopped'; only a terminal failure is 'error': any other failure is 'paused' too, because the
+   *  base catch ends that run paused (_pauseForFailure), and its held cut must wait for the resumed turn (C9). */
+  _sessionOutcome(outcome, err = null) {
+    if (this.abort.signal.aborted) return 'stopped';
+    if (outcome === 'paused' || this.pauseRequested) return 'paused';
+    if (outcome === 'done') return 'done';
+    return isTerminal(err || this._graphError) ? 'error' : 'paused';
   }
 
   /** Stamp the CURRENT decision state on the row as the setup-incomplete point every Auto
@@ -1153,10 +1181,13 @@ export class GraphOrchestrator extends RunHarness {
         });
       }
     }
+    // Session groups (Task 45): a member's events name its session; a ×N slice (kind 'task') runs outside it (D2).
+    const sid = this._sessions && payload.kind !== 'task' ? this._sessions.sidOf(payload.nodeId) : null;
     this._emit('exec', {
       ...payload, costUsd: step ? (step.costUsd || 0) : 0,
       ...(step && step.runtime != null ? { runtime: step.runtime } : {}),
       ...(step && step.exitCode != null ? { exitCode: step.exitCode } : {}),
+      ...(sid ? { sid, sessionMode: this._sessions.modeOf(payload.nodeId) } : {}),
     });
   }
 
@@ -1952,6 +1983,7 @@ export class GraphOrchestrator extends RunHarness {
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId: this._takeResumeSession(executionId),
+      ...this._sessionCtx(node.id, slice),
       ask: (q) => this._enqueueAsk(() => this._ask(q)).then((payload) => {
         // D28: the legacy Clarify questions ask (the one maxQuestions caps); a form ask has no question list
         if (this._shapeRec && q?.kind === 'clarify') {
@@ -1981,6 +2013,14 @@ export class GraphOrchestrator extends RunHarness {
         mock: this.claude.mock,
       },
     };
+  }
+
+  /** Session groups (Task 45): a member's host and its mode for `_execCtx`, on a run that has sessions only (an ungrouped
+   *  ctx is unchanged). A ×N slice and a role-review slice never go through a host (D2). */
+  _sessionCtx(nodeId, slice) {
+    if (!this._sessions) return {};
+    const sessionHost = this._sessions.hostFor(nodeId, { slice, role: slice?.role ?? null }) ?? null;
+    return { sessionHost, sessionMode: sessionHost?.mode ?? null };
   }
 
   /** The allocation context of one execution. `_execCtx` and `_finishRoleReview` share it, so a role reviewer's
