@@ -107,11 +107,11 @@ function filesOf(exampleId) {
   return prepare('SELECT name, size, sha256 FROM wf_test_example_files WHERE example_id = ? ORDER BY name').all(exampleId)
     .map((f) => ({ name: f.name, size: Number(f.size), sha256: f.sha256 }));
 }
-const PROJECT_COLS = 'project_key, start_sha, start_ref, start_at, start_commit, changes_sha256, length(changes) AS changes_bytes, setup_cmd';
+const PROJECT_COLS = 'project_key, project_name, start_sha, start_ref, start_at, start_commit, changes_sha256, length(changes) AS changes_bytes, setup_cmd';
 function projectOf(exampleId) {
   const r = prepare(`SELECT ${PROJECT_COLS} FROM wf_test_example_projects WHERE example_id = ?`).get(Number(exampleId));
   if (!r) return null;
-  return { key: r.project_key, startSha: r.start_sha, startRef: r.start_ref ?? null, startAt: r.start_at, startCommit: r.start_commit,
+  return { key: r.project_key, name: r.project_name ?? null, startSha: r.start_sha, startRef: r.start_ref ?? null, startAt: r.start_at, startCommit: r.start_commit,
     changesSha256: r.changes_sha256 ?? null, changesBytes: Number(r.changes_bytes || 0), setupCmd: r.setup_cmd ?? null };
 }
 
@@ -134,18 +134,20 @@ function checkPin(p) {
   const changes = p.changes == null ? null : Buffer.isBuffer(p.changes) ? p.changes : Buffer.from(p.changes);
   if (changes && changes.length > PIN_MAX_CHANGES) throw testError('your changes that are not committed are larger than 5 MB: commit them first, or leave them out', 'BAD_REQUEST');
   const setup = typeof p.setupCmd === 'string' && p.setupCmd.trim() ? p.setupCmd.trim() : null;
+  // The project's name when pinned (shown if it is unregistered later); a name Worca cannot show is simply not kept.
+  const name = typeof p.name === 'string' && p.name.trim() && p.name.length <= 200 && !/[\u0000-\u001f\u007f]/.test(p.name) ? p.name.trim() : null;
   if (setup && (setup.length > SETUP_MAX || /[\r\n]/.test(setup))) throw testError(`the setup command must fit on one line of up to ${SETUP_MAX} characters`, 'BAD_REQUEST');
-  return { ...p, startRef: p.startRef ?? null, changes: changes && changes.length ? changes : null, setupCmd: setup };
+  return { ...p, name, startRef: p.startRef ?? null, changes: changes && changes.length ? changes : null, setupCmd: setup };
 }
 
 function writePin(exampleId, p) {
   prepare(`INSERT INTO wf_test_example_projects (example_id, project_key, start_sha, start_ref, start_at, start_commit, changes,
-      changes_sha256, setup_cmd, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      changes_sha256, setup_cmd, updated_at, project_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(example_id) DO UPDATE SET project_key = excluded.project_key, start_sha = excluded.start_sha, start_ref = excluded.start_ref,
       start_at = excluded.start_at, start_commit = excluded.start_commit, changes = excluded.changes, changes_sha256 = excluded.changes_sha256,
-      setup_cmd = excluded.setup_cmd, updated_at = excluded.updated_at`)
+      setup_cmd = excluded.setup_cmd, updated_at = excluded.updated_at, project_name = excluded.project_name`)
     .run(Number(exampleId), p.key, p.startSha, p.startRef, p.startAt, p.startCommit, p.changes,
-      p.changes ? createHash('sha256').update(p.changes).digest('hex') : null, p.setupCmd, nowIso());
+      p.changes ? createHash('sha256').update(p.changes).digest('hex') : null, p.setupCmd, nowIso(), p.name);
 }
 
 function exampleOf(r) {

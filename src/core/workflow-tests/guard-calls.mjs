@@ -25,6 +25,13 @@ function positional(argv) {
 }
 const STOPPED = 'Not sent · stopped by Worca';
 
+/** The remote a guarded `git push` named (P9: its forge is looked up by this name), else null. */
+export function pushRemoteOf(e) {
+  if (!e || e.guard !== true || String(e.server || '') !== 'git' || !/(^| )push$/.test(String(e.tool || ''))) return null;
+  const argv = Array.isArray(e.arguments && e.arguments.argv) ? e.arguments.argv.map(String) : [];
+  return positional(argv)[0] || null;
+}
+
 export function guardCall(e, { forgeOf = () => null } = {}) {
   const argv = Array.isArray(e && e.arguments && e.arguments.argv) ? e.arguments.argv.map(String) : [];
   const cmd = String((e && e.arguments && e.arguments.command) || '');
@@ -33,7 +40,7 @@ export function guardCall(e, { forgeOf = () => null } = {}) {
   const row = (fields) => ({ guard: true, server, cmd, to: null, ...fields });
   const pos = positional(argv);
   if (server === 'git' && /(^| )push$/.test(tool)) {
-    const remote = pos[0] || null;
+    const remote = pushRemoteOf(e);
     const branch = pos.length > 1 ? pos[pos.length - 1].replace(/^\+/, '').split(':').pop().replace(/^refs\/heads\//, '') || null : null;
     const forge = remote ? forgeOf(remote) : null;
     const where = branch ? `the branch ${branch}` : 'its branch';

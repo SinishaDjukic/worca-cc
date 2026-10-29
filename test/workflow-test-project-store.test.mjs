@@ -32,9 +32,11 @@ test('a Part 2 example keeps its fingerprint byte for byte (D64)', () => {
 
 test('an example with a project: stored, read back, and part of its fingerprint', () => {
   const ex = store.createExample('wf_p', { name: 'Ticket 482', request: 'Fix it.' }, { project: pin() });
-  assert.deepEqual(ex.project, { key: 'worca-cc-1a2b3c4d', startSha: SHA, startRef: 'main', startAt: '2026-10-28T09:00:00.000Z',
+  assert.deepEqual(ex.project, { key: 'worca-cc-1a2b3c4d', name: null, startSha: SHA, startRef: 'main', startAt: '2026-10-28T09:00:00.000Z',
     startCommit: SHA, changesSha256: null, changesBytes: 0, setupCmd: 'npm ci' });
   const fp = ex.fingerprint;
+  const named = store.updateExample('wf_p', ex.id, {}, { project: pin({ name: 'worca-cc' }) });
+  assert.deepEqual([named.project.name, named.fingerprint], ['worca-cc', fp], 'the name is kept with the pin, outside the fingerprint');
   assert.notEqual(store.updateExample('wf_p', ex.id, {}, { project: pin({ setupCmd: 'npm install' }) }).fingerprint, fp, 'the setup counts');
   assert.notEqual(store.updateExample('wf_p', ex.id, {}, { project: pin({ startCommit: SHA2, startSha: SHA2 }) }).fingerprint, fp, 'the start counts');
   assert.equal(store.updateExample('wf_p', ex.id, {}, { project: pin() }).fingerprint, fp, 'the same pin, the same fingerprint');

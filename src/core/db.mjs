@@ -919,6 +919,7 @@ const INCREMENTAL_COLUMNS = {
                             resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
                             preset_id: 'TEXT' },   // v63: the run preset this run follows (read at fire time); NULL = none
   projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
+  wf_test_example_projects: { project_name: 'TEXT' },   // v81 (3a): the pinned project's name, for a project no longer registered
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1496,6 +1497,8 @@ CREATE TABLE IF NOT EXISTS wf_test_run_tries (
 // v81 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
 // tables. `changes` = the person's uncommitted changes at save time, as a binary patch (NULL = none); `start_commit` = the
 // commit tries start from (start_sha itself, or Worca's commit of start_sha + changes in its copy of the project).
+// `project_name` = the project's name when the start was pinned: shown when the project is no longer registered, never the
+// key (3a Task 8 review). Added after v81 was first cut, so INCREMENTAL_COLUMNS repairs a table made without it.
 const WORKFLOW_TEST_PROJECTS_DDL = `
 CREATE TABLE IF NOT EXISTS wf_test_example_projects (
   example_id     INTEGER PRIMARY KEY,
@@ -1507,7 +1510,8 @@ CREATE TABLE IF NOT EXISTS wf_test_example_projects (
   changes        BLOB,
   changes_sha256 TEXT,
   setup_cmd      TEXT,
-  updated_at     TEXT NOT NULL
+  updated_at     TEXT NOT NULL,
+  project_name   TEXT
 );`;
 
 const INCREMENTAL_TABLES = {

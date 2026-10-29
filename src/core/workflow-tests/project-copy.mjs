@@ -2,8 +2,8 @@
 // Worca's own copy of a project (plans/workflow-tests-part3a-plan.md D42, D53, D54, D60, D61). One clone per project key at
 // <worcaHome>/workflow-tests/repos/<key>, with no remote. Examples pin a start commit in it; every try is a worktree of it.
 // The person's repository is only ever read: clone and fetch use it as their source, everything else is rev-parse,
-// rev-list, ls-tree, cat-file, show, grep <tree>, for-each-ref and symbolic-ref, and uncommitted changes are read with
-// uncommittedPatch's scratch objects.
+// rev-list, ls-tree, cat-file, show, grep <tree>, for-each-ref, symbolic-ref and remote get-url, and uncommitted changes
+// are read with uncommittedPatch's scratch objects.
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, statfs, writeFile } from 'node:fs/promises';
@@ -236,7 +236,7 @@ export async function pinStart({ key, name = key, projectDir, ref = null, sha = 
     const startCommit = changes ? await commitChanges(dir, commit, changes, startAt) : commit;
     await pinRef(dir, commit);   // D53: both are pinned, the start SHA and (with changes) Worca's start commit on top
     if (startCommit !== commit) await pinRef(dir, startCommit);
-    return { key, startSha: commit, startRef, startAt, startCommit, changes, setupCmd: null };
+    return { key, name, startSha: commit, startRef, startAt, startCommit, changes, setupCmd: null };
   });
 }
 
@@ -412,6 +412,13 @@ const isSha = (sha) => typeof sha === 'string' && /^[0-9a-f]{7,64}$/i.test(sha);
 /** Whether the repository has this commit (P4: a project added again keeps an example's start point). Read only. */
 export async function commitExists(projectDir, sha) {
   return isSha(sha) && (await git(projectDir, ['cat-file', '-e', `${sha}^{commit}`])).ok;
+}
+
+/** One remote's URL (P9: the forge a guarded push named), or null. Read only (`git remote get-url`). */
+export async function remoteUrl(projectDir, name) {
+  if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(name)) return null;   // never an option
+  const r = await git(projectDir, ['remote', 'get-url', name]);
+  return r.ok ? r.stdout.trim().split(/\r?\n/)[0] || null : null;
 }
 
 /** A commit's committer date as ISO, or null. Read only. */

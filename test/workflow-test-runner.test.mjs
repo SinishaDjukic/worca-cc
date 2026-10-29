@@ -619,3 +619,36 @@ test('a test left running with nothing driving it: Stop testing ends it at once 
   await runner.idle(next.id);
   assert.equal(store.readTestRun(next.id).status, 'done');
 });
+
+test('a start that answers without its pipeline id: the try row gets the id from liveRun after the settle (3a Task 8)', async () => {
+  const h = harness();
+  const startRun = h.deps.startRun;
+  const runner = createTestRunner({ ...h.deps, startRun: async (...a) => { const out = await startRun(...a); return { ...out, body: { runId: out.body.runId } }; } });
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(run.id);
+  const [t] = store.triesOfRun(run.id);
+  assert.equal(t.status, 'passed');
+  assert.equal(t.pipelineId, h.entries.get(t.runKey).pipelineId, 'the id liveRun carries');
+});
+
+test('the try row gets its pipeline id as soon as the run\'s state names it, while the try still runs (3a Task 8)', async () => {
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.1, hold: true }) });
+  const startRun = h.deps.startRun;
+  const runner = createTestRunner({ ...h.deps, startRun: async (...a) => { const out = await startRun(...a); return { ...out, body: { runId: out.body.runId } }; },
+    liveRun: (k) => { const e = h.entries.get(k); return e ? { ...e, pipelineId: e.announced ? e.pipelineId : null } : null; } });
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => store.triesOfRun(run.id)[0].runKey);
+  const [t0] = store.triesOfRun(run.id);
+  const e = h.entries.get(t0.runKey);
+  assert.equal(t0.pipelineId, null, 'not known yet');
+  e.announced = true;
+  e.orch.emit('state', { id: e.pipelineId, status: 'running' });
+  await until(() => store.triesOfRun(run.id)[0].pipelineId === e.pipelineId);
+  assert.equal(store.triesOfRun(run.id)[0].status, 'running', 'written while the try runs: a crash now keeps it');
+  e.end('done');
+  await runner.idle(run.id);
+  const [t] = store.triesOfRun(run.id);
+  assert.deepEqual([t.status, t.pipelineId], ['passed', e.pipelineId], 'never overwritten');
+});

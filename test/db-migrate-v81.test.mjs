@@ -8,7 +8,7 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 const stamp = (db) => db.prepare('PRAGMA user_version').get().user_version;
 const PROJECTS = ['example_id', 'project_key', 'start_sha', 'start_ref', 'start_at', 'start_commit', 'changes', 'changes_sha256',
-  'setup_cmd', 'updated_at'];
+  'setup_cmd', 'updated_at', 'project_name'];
 const TRY_NEW = ['start_commit', 'disk_bytes', 'setup', 'changes'];
 
 test('fresh DB: the example projects table and the try columns exist', () => {
@@ -29,6 +29,15 @@ test('a DB stamped 80 without them gets them and is stamped current', () => {
   assert.equal(stamp(db), SCHEMA_VERSION);
   assert.deepEqual(cols(db, 'wf_test_example_projects'), PROJECTS);
   for (const c of TRY_NEW) assert.ok(cols(db, 'wf_test_tries').includes(c), c);
+});
+
+test('a DB stamped 81 whose example projects table has no project_name gets it (3a Task 8 review)', () => {
+  const db = new DatabaseSync(':memory:');
+  migrate(db);
+  db.exec(`ALTER TABLE wf_test_example_projects DROP COLUMN project_name; PRAGMA user_version = 81`);
+  assert.ok(!cols(db, 'wf_test_example_projects').includes('project_name'));
+  migrate(db);
+  assert.deepEqual(cols(db, 'wf_test_example_projects'), PROJECTS);
 });
 
 test('a DB from before the tests tables (stamped 77) gets the try columns too', () => {

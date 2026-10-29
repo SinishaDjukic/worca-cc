@@ -292,6 +292,12 @@ export function createTestRunner(deps) {
     const rec = { runKey: null, pipelineId: null, help: [], failReason: null, detach: null, outcome: null, project: null,
       phase: 'preparing', checking: null, startedMs: Date.now() };
     const detach = () => { const d = rec.detach; rec.detach = null; if (d) d(); };
+    // The try row's pipeline id: written once, the first time it is known (never overwritten with null).
+    const notePipelineId = (id) => {
+      if (typeof id !== 'string' || !id || rec.pipelineId) return;
+      rec.pipelineId = id;
+      store.updateTry(t.id, { pipelineId: id });
+    };
     st.running.set(t.id, rec);
     store.updateTry(t.id, { status: 'running', startedAt: nowIso() });   // before the first await: the loop sees it at once
     const t0 = Date.now();
@@ -334,21 +340,27 @@ export function createTestRunner(deps) {
           ...(example.project ? { project: { key: example.project.key, setupCmd: example.project.setupCmd } } : {}),
           onOrch: (orch, { runKey }) => {
             rec.runKey = runKey;
-            rec.detach = attachAnswerer(orch, example, { answer: (id, payload) => deps.answer(runKey, id, payload), onHelp: (x) => rec.help.push(x), onFail: fail });
+            const off = attachAnswerer(orch, example, { answer: (id, payload) => deps.answer(runKey, id, payload), onHelp: (x) => rec.help.push(x), onFail: fail });
+            // The pipeline id goes on the row as soon as the run has one (its state names it), so a crash mid-try still
+            // leaves it there for the boot recovery and the cleanup sweep (3a Task 8 review).
+            const onState = (p) => notePipelineId((p && typeof p.id === 'string' && p.id) || (deps.liveRun(runKey) || {}).pipelineId || null);
+            if (typeof orch.on === 'function') orch.on('state', onState);
+            rec.detach = () => { off(); if (typeof orch.off === 'function') orch.off('state', onState); };
           },
         },
       });
       const s = await settleRun(st, rec, out, 'the try did not start',
-        (runKey, pipelineId) => { rec.pipelineId = pipelineId; store.updateTry(t.id, { runKey, pipelineId }); });
+        (runKey, pipelineId) => { store.updateTry(t.id, { runKey }); notePipelineId(pipelineId); });
       if (s.refused) {
         detach();
         rec.runKey = null;
         store.updateTry(t.id, { status: 'waiting', startedAt: null });   // never tried: it stays for "Finish the rest"
         return;
       }
-      // A project try's start answers without its pipeline id (the run makes its worktree first): the id the launch gave
-      // it goes on the row now, so the side by side, its diff and what the guard stopped can be read (3a Task 8).
-      if (s.pipelineId && !rec.pipelineId) { rec.pipelineId = s.pipelineId; store.updateTry(t.id, { pipelineId: s.pipelineId }); }
+      // A project try's start answers without its pipeline id (the run makes its worktree first). The state listener
+      // above records it as soon as it exists; after the settle, the id the launch gave it is the fallback, so the side by
+      // side, its diff and what the guard stopped can always be read (3a Task 8).
+      notePipelineId(s.pipelineId);
       // A step error is a finished, failed try; any other pause leaves it unfinished (pauseVerdict).
       if (s.pause && s.pause.fail && !rec.failReason) rec.failReason = sentence(s.pause.detail);
       const unfinished = !!(s.pause && s.pause.stop);

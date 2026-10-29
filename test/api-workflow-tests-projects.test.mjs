@@ -100,6 +100,26 @@ test('an example with a project: the overview says where it starts; drift; Start
   assert.notEqual(latest.body.example.fingerprint, ex.fingerprint, 'a new start point: older results stop being reused (D48)');
   const kept = await call('PUT', `${WF}/examples/${ex.id}`, { note: 'n', project: { key } });
   assert.equal(kept.body.example.project.startSha, latest.body.example.project.startSha, 'same project, no repin: the start stays');
+  writeFileSync(join(real, 'README.md'), '# t3\n');
+  git(real, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-am', 'later again');
+  const nullRef = await call('PUT', `${WF}/examples/${ex.id}`, { project: { key, ref: null } });
+  assert.equal(nullRef.status, 200, JSON.stringify(nullRef.body));
+  assert.equal(nullRef.body.example.project.startSha, latest.body.example.project.startSha, 'ref: null is "no change", not "the newest commit"');
+  assert.equal(nullRef.body.example.fingerprint, kept.body.example.fingerprint);
+  const repinned = await call('PUT', `${WF}/examples/${ex.id}`, { project: { key, ref: null, repin: true } });
+  assert.equal(repinned.body.example.project.startSha, git(real, 'rev-parse', 'HEAD'), 'repin is the explicit "change the start" action');
+  // Review fix 3: the name is stored with the pin and shown when the project is no longer registered, never the key.
+  assert.equal(repinned.body.example.project.name, 'tickets');
+  const service = await import('../src/core/workflow-tests/service.mjs');
+  const gone = await service.projectView(repinned.body.example.project, { projects: [] });
+  assert.deepEqual([gone.state, gone.name, gone.behind], ['not-registered', 'tickets', null]);
+  // Review fix 2: one drift count per start point in one page read.
+  const memo = new Map();
+  const [x1, x2] = await Promise.all([1, 2].map(() => service.projectView(repinned.body.example.project, { behindMemo: memo })));
+  assert.deepEqual([x1.behind, x2.behind, memo.size], [0, 0, 1]);
+  const listed = await service.projectsForTests();
+  const ps = (await import('../src/core/projects.mjs'));
+  assert.deepEqual(listed.projects.map((x) => x.key), (await ps.listProjects()).map((x) => x.key), 'read 4 at a time, in the registry\'s order');
 });
 
 test('uncommitted changes are kept with the example; a Folder project and a missing folder are refused with board 39\'s words', async () => {
@@ -150,6 +170,12 @@ test('a whole project test: the plan\'s disk, the progress phases, then what cha
   assert.equal(s.start.ref, 'main');
   const ch = await call('GET', `${WF}/runs/${runId}/tries/${v.tryId}/changes`);
   assert.match(ch.body.patch, /src\/feature\.mjs/);
+  assert.equal(ch.body.cut, false);
+  const service = await import('../src/core/workflow-tests/service.mjs');
+  const small = await service.tryChanges('wf_pt', runId, v.tryId, { maxBytes: 60 });
+  assert.equal(small.cut, true);
+  assert.ok(Buffer.byteLength(small.patch) <= 60 && ch.body.patch.startsWith(small.patch) && (small.patch === '' || small.patch.endsWith('\n')),
+    'at most the limit, cut at a whole line');
   const t = (await import('../src/core/workflow-tests/store.mjs')).readTry(v.tryId);
   const { existsSync } = await import('node:fs');
   // worcaHome() is <WORCA_HOME>/.worca-cc (src/core/projects.mjs)
@@ -172,6 +198,12 @@ test('a past project run: it starts where the run started; a Folder run is refus
   assert.deepEqual([made.body.example.project.startSha, made.body.example.project.changesBytes, made.body.example.project.setupCmd],
     [past.project.startSha, 0, 'npm ci']);
   const { getDb } = await import('../src/core/db.mjs');
+  const branchWas = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pipelineId).branch;
+  getDb().prepare("UPDATE pipelines SET branch = json_remove(branch, '$.baseSha', '$.diffBase') WHERE id = ?").run(pipelineId);
+  const noStart = (await call('GET', WF)).body.pastRuns.find((x) => x.pipelineId === pipelineId);
+  assert.deepEqual([noStart.refusal, noStart.refusalText], ['no-start', 'Worca did not record where this run started.'], 'not selectable');
+  assert.equal((await call('GET', `/api/workflow-tests/past-run/${pipelineId}`)).body.reason, 'no-start');
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(branchWas, pipelineId);
   getDb().prepare("UPDATE pipelines SET branch = json_set(branch, '$.workMode', 'folder') WHERE id = ?").run(pipelineId);
   const folderRun = (await call('GET', `/api/workflow-tests/past-run/${pipelineId}`)).body;
   assert.deepEqual([folderRun.testable, folderRun.reason, folderRun.reasonText],
@@ -205,4 +237,26 @@ test('progress (board 35): a running project try shows its phase; an example wit
   store.updateTestRun(none.id, { status: 'stopped', finishedAt: new Date().toISOString() });
   assert.equal(service.progressOf('wf_pt', none.id).project, null, 'Part 2: no project block');
   assert.equal(await service.progressDisk('wf_pt', none), null);
+});
+
+test('review fixes: the disk need is worked out once per running test; the forge of a guarded push\'s remote is read with remote get-url', async () => {
+  const store = await import('../src/core/workflow-tests/store.mjs');
+  const service = await import('../src/core/workflow-tests/service.mjs');
+  const ex = (await call('POST', `${WF}/examples`, { name: 'Ticket 700', request: 'r', project: { key } })).body.example;
+  const run = store.createTestRun({ workflowId: 'wf_pt', kind: 'once', b: 'draft', bFp: 'fp', exampleIds: [ex.id], tries: 1 });
+  let plans = 0;
+  let frees = 0;
+  const seams = { planOf: async () => { plans += 1; return { needBytes: 1000, freeBytes: 9000 }; }, freeDisk: async () => { frees += 1; return 8500; },
+    diskOf: () => ({ freeAtStart: 9000 }) };
+  const first = await service.progressDisk('wf_pt', run, seams);
+  const second = await service.progressDisk('wf_pt', run, seams);
+  assert.deepEqual([first, second, plans, frees], [{ inUseBytes: 0, needBytes: 1000, freeBytes: 9000 },
+    { inUseBytes: 500, needBytes: 1000, freeBytes: 8500 }, 1, 1], 'polls re-read free space only');
+  const done = store.updateTestRun(run.id, { status: 'stopped', finishedAt: new Date().toISOString() });
+  await service.progressDisk('wf_pt', done, seams);
+  assert.equal(plans, 2, 'a finished test is worked out again');
+  git(real, 'remote', 'add', 'origin', 'https://github.com/acme/tickets.git');
+  const forge = await service.forgeNamer(key, ['origin', 'nope', '--upload-pack=touch x']);
+  assert.deepEqual([forge('origin'), forge('nope'), forge('--upload-pack=touch x'), forge('other')], ['GitHub', null, null, null]);
+  git(real, 'remote', 'remove', 'origin');
 });
