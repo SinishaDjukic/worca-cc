@@ -335,6 +335,7 @@ import {
 } from '../src/core/requirements/routes.mjs';
 import { registerWorkflowVersionRoutes } from '../src/core/workflow-versions-routes.mjs';
 import { CONNECTOR_MODES, recoverInterruptedTestRuns } from '../src/core/workflow-tests/store.mjs';
+import { sweepTestCopies } from '../src/core/workflow-tests/project-copy.mjs';
 import { registerWorkflowTestRoutes } from '../src/core/workflow-tests/routes.mjs';
 import { TRY_ANSWERED_BY } from '../src/core/workflow-tests/answers.mjs';
 import { pretendCopies } from '../src/core/workflow-tests/connectors.mjs';
@@ -18683,12 +18684,12 @@ app.use((err, _req, res, next) => {
  * everything up to the first `await` — including the reconcile — still runs before
  * `server.listen`, exactly as it did when this was an inline block.
  *
- * @param {{log?: (scope:'run-root'|'legacy'|'ask-worktrees'|'repo-look', level:string, msg:string) => void}} [args]
+ * @param {{log?: (scope:'run-root'|'workflow-tests'|'legacy'|'ask-worktrees'|'repo-look', level:string, msg:string) => void}} [args]
  *        optional sink for the per-candidate lines both sweeps emit; omitted, each
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, testCopies: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -18757,6 +18758,13 @@ export async function bootMaintenance({ log } = {}) {
     }
   } catch (err) {
     console.error(`[worca-ui] run-root sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Workflow tests 3a (D61): every copy of a project prunes the worktrees the sweep above removed and loses its leftover
+  // try branches. Nothing tries at boot.
+  try {
+    summary.testCopies = await sweepTestCopies({ log: sink('workflow-tests') });
+  } catch (err) {
+    console.error(`[worca-ui] workflow tests copy sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   // The one-time legacy sweep (§6 Phase 7). A TOTAL no-op while the effective mode is

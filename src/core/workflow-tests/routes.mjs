@@ -7,11 +7,10 @@ import * as store from './store.mjs';
 import * as service from './service.mjs';
 import { createTestRunner } from './runner.mjs';
 import { readTryOutcome, checkTry } from './result.mjs';
-import { useFingerprint, useGraph } from './uses.mjs';
-import { testTargetOf } from './try-body.mjs';
-import { loadAgentRegistry } from '../agent-registry.mjs';
+import { useFingerprint } from './uses.mjs';
+import { dirBytes, freeDiskBytes } from './project-copy.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_TESTABLE: 422 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_TESTABLE: 422, NOT_READY: 422, NO_DISK: 422 });
 const W = '/api/workflows/:id/tests';
 /** Every route, in registration order: the flag-off test walks it, so no route can skip the gate unnoticed. */
 export const WORKFLOW_TEST_ROUTES = Object.freeze([
@@ -42,13 +41,15 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   const runner = createTestRunner({
     ...deps,
     outcomeOf: (pipelineId, o) => readTryOutcome(pipelineId, o),
-    judge: (example, outcome) => checkTry(example, outcome, { scriptName }),
+    judge: (example, outcome, o = {}) => checkTry(example, outcome, { scriptName, onCommand: o.onCommand }),
     fingerprintOf: (workflowId, use) => useFingerprint(workflowId, use),
-    // Review M9 (D20): a saved version on either side may need a project, even when the draft does not.
-    targetOf: async (workflowId, use) => {
-      const g = await useGraph(workflowId, use);
-      return g ? testTargetOf(g, loadAgentRegistry()) : { testable: true, reason: null };
-    },
+    // D62 (replaces D20 and review M9): each example on each version.
+    targetOf: (workflowId, use, example) => service.targetFor(workflowId, use, example),
+    diskCheck: ({ examples, tries, uses }) => service.diskPlanOf(examples, { tries, sides: uses.length }),
+    prepareProject: (example) => service.prepareProject(example),
+    cleanupTry: (outcome) => service.cleanupTry(outcome),
+    measureDisk: (dir) => dirBytes(dir),
+    freeDisk: () => freeDiskBytes(),
     notify: (frame) => {
       if (!flagEnabled('workflowTests')) return;   // D33: silent while the flag is off
       broadcast(frame.finished ? { ...frame, title: service.finishedText(frame.workflowId, frame.testRunId) } : frame);

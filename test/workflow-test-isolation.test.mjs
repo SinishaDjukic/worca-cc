@@ -97,10 +97,10 @@ test('the network watch never resumes a test try', async () => {
   assert.deepEqual(listNetworkWaitRuns().map((r) => r.id), [n]);
 });
 
-test('try-body: a workflow that needs a project cannot be tested yet; the run body of one try', () => {
+test('try-body: every workflow can be tested (3a D62); the run body of one try', () => {
   const graph = { nodes: [{ id: 'n1', kind: 'agent', key: 'coder' }] };
-  assert.deepEqual(testTargetOf(graph, { coder: { needsRepo: true } }), { testable: false, reason: 'needs-project' });
-  assert.deepEqual(testTargetOf(graph, { coder: {} }), { testable: true, reason: null });
+  assert.deepEqual(testTargetOf(graph, { coder: { needsRepo: true } }), { testable: true, reason: null, needsProject: true });
+  assert.deepEqual(testTargetOf(graph, { coder: {} }), { testable: true, reason: null, needsProject: false });
   const ex = { name: 'Bulk invoice export', request: 'Write the brief.' };
   assert.equal(tryTitle(ex, 2), 'Test: Bulk invoice export · try 2');
   assert.deepEqual(tryRunBody(ex, [{ name: 'notes.md', data: Buffer.from('hi') }], { workflowId: 'wf_b', tryNo: 2 }), {

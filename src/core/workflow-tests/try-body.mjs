@@ -4,9 +4,19 @@
 // project (D42).
 import { graphNeedsRepo } from '../workflows.mjs';
 
-/** @returns {{testable: boolean, reason: null|'needs-project'}} */
+/** 3a (D62, replaces D20): every workflow can be tested; whether it needs a project decides what its examples need. */
 export function testTargetOf(graph, registry) {
-  return graphNeedsRepo(graph, registry) ? { testable: false, reason: 'needs-project' } : { testable: true, reason: null };
+  return { testable: true, reason: null, needsProject: graphNeedsRepo(graph, registry) };
+}
+
+/**
+ * 3a (D62): whether one example can be tried on a version. `state` is its project's state now (service.projectStateOf),
+ * null for an example without a project.
+ * @returns {{ready: boolean, reason: null|'pick-project'|'missing'|'folder'|'not-registered'}}
+ */
+export function exampleReadiness({ needsProject, example, state }) {
+  if (!example || !example.project) return needsProject ? { ready: false, reason: 'pick-project' } : { ready: true, reason: null };
+  return state === 'ok' ? { ready: true, reason: null } : { ready: false, reason: state || 'not-registered' };
 }
 
 /** A fixed title (smart naming never runs for a try, correction 6). */

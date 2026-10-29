@@ -446,6 +446,9 @@ export function recoverInterruptedTestRuns(now = nowIso()) {
     out.runs = Number(prepare("UPDATE wf_test_runs SET status = 'stopped', stop_reason = 'restart', finished_at = ? WHERE status = 'running'")
       .run(now).changes);
     prepare("UPDATE pipelines SET resume_point = NULL WHERE is_test = 1 AND status IN ('paused', 'interrupted') AND resume_point IS NOT NULL").run();
+    // 3a D61: nothing resumes a try, so a paused or interrupted one is stopped; the run-root sweep that follows in
+    // bootMaintenance then reclaims its folder (it keeps an interrupted run's root).
+    prepare("UPDATE pipelines SET status = 'stopped' WHERE is_test = 1 AND status IN ('paused', 'interrupted')").run();
   });
   return out;
 }

@@ -142,7 +142,7 @@ test('examples, a past run as an example, a test of v1 against the draft, reuse,
   assert.equal(o.running, null);
 });
 
-test('errors: unknown workflow, a bad example, an unknown example; a workflow that needs a project is not testable', async () => {
+test('errors: unknown workflow, a bad example, an unknown example; a workflow that needs a project is testable (3a D62)', async () => {
   assert.equal((await call('GET', '/api/workflows/wf_nope/tests')).status, 404);
   const bad = await call('POST', `${WF}/examples`, { name: '', request: 'x' });
   assert.deepEqual([bad.status, bad.body.error], [400, 'the name must be 1 to 120 characters']);
@@ -151,7 +151,7 @@ test('errors: unknown workflow, a bad example, an unknown example; a workflow th
   const mode = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [9999], tries: 1, connectors: 'maybe' });
   assert.deepEqual([mode.status, mode.body.error], [400, 'connectors must be "pretend" or "real"']);
   const o = await service.testsOverview('wf_api_t', { registry: { planner: { needsRepo: true } } });
-  assert.deepEqual([o.testable, o.reason], [false, 'needs-project']);
+  assert.deepEqual([o.testable, o.reason], [true, null]);
 });
 
 test("the server's liveRun carries a paused try's reason: a drain-paused try stops the test as a drain", async () => {

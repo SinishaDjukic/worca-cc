@@ -10,6 +10,8 @@ import { attachAnswerer } from './answers.mjs';
 import { tryRunBody } from './try-body.mjs';
 import { fmtUsd } from '../../shared/workflow-tests/checks.mjs';
 import { REASON, REASON_CODES } from '../failure-policy.mjs';
+import { setupFailedText } from '../../shared/workflow-tests/project-text.mjs';
+import { TRY_SETUP_STAGE } from './shell-step.mjs';
 
 export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a time (result.mjs), inside runBenchOnce's limit of 2.
 export const COST_POLL_MS = 2000;
@@ -137,12 +139,20 @@ export function createTestRunner(deps) {
       const empty = examples.find((ex) => !ex.request.trim());
       if (empty) throw err(`Write the request of "${empty.name}" first.`, 'BAD_REQUEST');
       const sides = [...(a != null ? [['a', a, reuseA]] : []), ['b', b, reuseB]];
-      // Review M9 (D20): each side is checked, not only the draft: a saved version may still need a project.
+      // D62 (replaces D20): each example on each side. A version that needs a project tries only examples that have
+      // one, and an example whose project cannot be used now is left out; the first such example names the refusal.
       if (deps.targetOf) {
-        for (const [, use] of sides) {
-          const t = await deps.targetOf(workflowId, use);
-          if (t && !t.testable) throw err(`${use === 'draft' ? 'Your draft' : `v${use}`} works on a project, and tests work for workflows without a project for now.`, 'NOT_TESTABLE');
+        for (const ex of examples) {
+          for (const [, use] of sides) {
+            const t = await deps.targetOf(workflowId, use, ex);
+            if (t && !t.ready) throw err(t.text, 'NOT_READY');
+          }
         }
+      }
+      // D60: free disk for the largest tries at once, before anything is written.
+      if (deps.diskCheck) {
+        const d = await deps.diskCheck({ workflowId, examples, tries, uses: sides.map(([, use]) => use) });
+        if (d && d.enough === false) throw err(d.text, 'NO_DISK');
       }
       const fps = {};
       for (const [side, use] of sides) fps[side] = await deps.fingerprintOf(workflowId, use);   // NOT_FOUND: a version that is gone
@@ -177,6 +187,8 @@ export function createTestRunner(deps) {
   function drive(runId) {
     const st = { stopping: null, detail: null, running: new Map(), done: null };
     live.set(runId, st);
+    st.freeAtStart = null;   // D60, board 35's "Disk in use": free disk now minus free disk later
+    if (deps.freeDisk) Promise.resolve().then(() => deps.freeDisk()).then((n) => { st.freeAtStart = n; }, () => {});
     st.done = loop(runId, st)
       .catch((e) => { st.stopping = st.stopping || 'error'; st.detail = st.detail || msgOf(e); })
       .finally(() => {
@@ -268,7 +280,8 @@ export function createTestRunner(deps) {
   }
 
   async function runTry(run, st, t) {
-    const rec = { runKey: null, help: [], failReason: null, detach: null, outcome: null };
+    const rec = { runKey: null, pipelineId: null, help: [], failReason: null, detach: null, outcome: null, project: null,
+      phase: 'waiting', checking: null, startedMs: Date.now() };
     const detach = () => { const d = rec.detach; rec.detach = null; if (d) d(); };
     st.running.set(t.id, rec);
     store.updateTry(t.id, { status: 'running', startedAt: nowIso() });   // before the first await: the loop sees it at once
@@ -293,13 +306,23 @@ export function createTestRunner(deps) {
         rec.failReason = reason;
         if (rec.runKey) stopQuietly(rec.runKey);
       };
+      // 3a (D42): a project example's try runs in Worca's copy of the project, from the example's start commit.
+      if (example.project) {
+        rec.phase = 'preparing';
+        rec.project = await deps.prepareProject(example);   // NOT_READY: the catch stops the test as refused
+        if (st.stopping) { store.updateTry(t.id, { status: 'waiting', startedAt: null }); return; }
+      }
+      rec.phase = 'working';
+      rec.startedMs = Date.now();
       // Never an auto (--yes) run: canned answers need the question to wait (tryRunBody sets no `yes`).
-      const body = tryRunBody(example, store.readExampleFiles(example.id), { workflowId: run.workflowId, tryNo: t.tryNo, mock: t.mock });
+      const body = tryRunBody(example, store.readExampleFiles(example.id), { workflowId: run.workflowId, tryNo: t.tryNo, mock: t.mock,
+        ...(rec.project ? { project: rec.project } : {}) });
       const out = await deps.startRun(body, {
         startedBy: run.startedBy,
         workflowTest: {
           use: t.use,
           connectors: t.connectors,   // D35
+          ...(example.project ? { project: { key: example.project.key, setupCmd: example.project.setupCmd } } : {}),
           onOrch: (orch, { runKey }) => {
             rec.runKey = runKey;
             rec.detach = attachAnswerer(orch, example, { answer: (id, payload) => deps.answer(runKey, id, payload), onHelp: (x) => rec.help.push(x), onFail: fail });
@@ -307,7 +330,7 @@ export function createTestRunner(deps) {
         },
       });
       const s = await settleRun(st, rec, out, 'the try did not start',
-        (runKey, pipelineId) => store.updateTry(t.id, { runKey, pipelineId }));
+        (runKey, pipelineId) => { rec.pipelineId = pipelineId; store.updateTry(t.id, { runKey, pipelineId }); });
       if (s.refused) {
         detach();
         rec.runKey = null;
@@ -320,12 +343,25 @@ export function createTestRunner(deps) {
       detach();
       rec.outcome = await deps.outcomeOf(s.pipelineId, { help: rec.help, failReason: rec.failReason, durationMs: Date.now() - t0 });
       const outcome = rec.outcome;
-      if ((unfinished || st.stopping) && !rec.failReason && outcome.facts.status !== 'done') {
-        store.updateTry(t.id, { status: 'stopped', costUsd: outcome.facts.costUsd, finishedAt: nowIso() });
+      const facts = outcome.project ? projectFacts(rec, outcome) : {};
+      // D55: a setup that failed is the test's problem, not the workflow's: the test stops and this try is not judged.
+      // Only try-setup.json's ok:false is one: a run that ended in error without it is judged as the workflow's.
+      if (outcome.setup && outcome.setup.ok === false) {
+        store.updateTry(t.id, { status: 'stopped', costUsd: outcome.facts.costUsd, finishedAt: nowIso(), ...facts });
+        requestStop(st, 'setup', setupFailedText(outcome.setup.cmd));
         return;
       }
-      const verdict = await deps.judge(example, outcome);
-      store.updateTry(t.id, { status: verdict.passed ? 'passed' : 'failed', verdict, costUsd: outcome.facts.costUsd, finishedAt: nowIso() });
+      if ((unfinished || st.stopping) && !rec.failReason && outcome.facts.status !== 'done') {
+        store.updateTry(t.id, { status: 'stopped', costUsd: outcome.facts.costUsd, finishedAt: nowIso(), ...facts });
+        return;
+      }
+      rec.phase = 'checking';
+      const verdict = await deps.judge(example, outcome, { onCommand: (cmd) => { rec.checking = cmd; } });
+      // D60: the checkout's size after its setup, measured once per example and start.
+      const diskBytes = outcome.project && outcome.project.checkoutDir && deps.measureDisk && facts.startCommit
+        && store.lastDiskBytes(example.id, facts.startCommit) === null ? await deps.measureDisk(outcome.project.checkoutDir) : null;
+      store.updateTry(t.id, { status: verdict.passed ? 'passed' : 'failed', verdict, costUsd: outcome.facts.costUsd, finishedAt: nowIso(),
+        ...facts, ...(diskBytes != null ? { diskBytes } : {}) });
     } catch (e) {
       // Never leave a try 'running' behind: one that never started waits again, one that ran is stopped with its cost.
       if (rec.runKey) {
@@ -335,12 +371,30 @@ export function createTestRunner(deps) {
       } else {
         store.updateTry(t.id, { status: 'waiting', startedAt: null });
       }
-      requestStop(st, 'error', msgOf(e));
+      requestStop(st, e && e.code === 'NOT_READY' ? 'refused' : 'error', msgOf(e));
     } finally {
       detach();
+      if (rec.project) await cleanUp(rec);   // D61: however it ended
       st.running.delete(t.id);
       notify(run);
     }
+  }
+
+  /** What a project try stores on its row (D67): its start, its change list without the paths, its setup run. */
+  function projectFacts(rec, outcome) {
+    const { files, total, counts, added, removed } = outcome.project;
+    return { startCommit: rec.project ? rec.project.startCommit : null, changes: { files, total, counts, added, removed },
+      ...(outcome.setup ? { setup: outcome.setup } : {}) };
+  }
+
+  /** D61: a project try's checkout, branch and run folder go once its run has settled. Never throws: the boot sweep
+   *  takes whatever a failure leaves. */
+  async function cleanUp(rec) {
+    try {
+      if (rec.runKey) { const l = deps.liveRun(rec.runKey); if (l && l.launch) await Promise.resolve(l.launch).catch(() => {}); }
+      const o = rec.outcome || (rec.pipelineId ? await deps.outcomeOf(rec.pipelineId, {}) : null);
+      if (o && o.project && deps.cleanupTry) await deps.cleanupTry(o);
+    } catch { /* boot sweep */ }
   }
 
   /** The free quick check: one mock try of the first example per version still to try ("every step is connected"). */
@@ -351,15 +405,20 @@ export function createTestRunner(deps) {
       .map((t) => [store.useRef(t.use), t.use])).values()];
     for (const use of uses) {
       if (st.stopping) return { status: 'waiting' };
-      const rec = { runKey: null, failReason: null, detach: null };
+      const rec = { runKey: null, pipelineId: null, failReason: null, detach: null, outcome: null, project: null };
       const key = `quick:${store.useRef(use)}`;
       st.running.set(key, rec);
       try {
-        const out = await deps.startRun(tryRunBody(example, store.readExampleFiles(example.id), { workflowId: run.workflowId, tryNo: 0, quick: true }), {
+        const project = example.project ? await deps.prepareProject(example) : null;   // 3a: the quick check runs in the copy too
+        rec.project = project;
+        const out = await deps.startRun(tryRunBody(example, store.readExampleFiles(example.id), { workflowId: run.workflowId, tryNo: 0, quick: true,
+          ...(project ? { project } : {}) }), {
           startedBy: run.startedBy,
           workflowTest: {
             use,
             connectors: 'pretend',   // a mock run sends nothing either way
+            // No setup: a mock run needs no installed dependencies.
+            ...(example.project ? { project: { key: example.project.key, setupCmd: null } } : {}),
             onOrch: (orch, { runKey }) => {
               rec.runKey = runKey;
               rec.detach = attachAnswerer(orch, { ...example, otherwise: 'pick' }, {
@@ -370,19 +429,21 @@ export function createTestRunner(deps) {
           },
         });
         // A refused start or a pause that is not a step error says nothing about the workflow: the check still waits.
-        const s = await settleRun(st, rec, out, 'the quick check did not start');
+        const s = await settleRun(st, rec, out, 'the quick check did not start', (runKey, pipelineId) => { rec.pipelineId = pipelineId; });
         if (s.refused || (s.pause && s.pause.stop)) return { status: 'waiting' };
         if (s.pause && s.pause.fail) return { status: 'failed', detail: s.pause.detail };
         if (rec.detach) { rec.detach(); rec.detach = null; }
         const o = await deps.outcomeOf(s.pipelineId, { failReason: rec.failReason });
+        rec.outcome = o;
         if (st.stopping) return { status: 'waiting' };
         if (o.facts.status !== 'done' || o.facts.failReason) return { status: 'failed', detail: o.facts.failReason || `the quick check ended as ${o.facts.status}` };
       } catch (e) {
         if (rec.runKey) stopQuietly(rec.runKey);
-        requestStop(st, 'error', msgOf(e));
+        requestStop(st, e && e.code === 'NOT_READY' ? 'refused' : 'error', msgOf(e));
         return { status: 'waiting' };
       } finally {
         if (rec.detach) rec.detach();
+        if (rec.project) await cleanUp(rec);
         st.running.delete(key);
       }
     }
@@ -451,5 +512,23 @@ export function createTestRunner(deps) {
 
   function idle(runId) { const st = live.get(Number(runId)); return st ? st.done : Promise.resolve(); }
 
-  return { start, stop, continueRun, recover, idle, costOf };
+  /** Board 35: what a running try is doing now. The harness's setup stage tells setup and the worktree apart. */
+  function phaseOf(runId, tryId) {
+    const st = live.get(Number(runId));
+    const rec = st ? st.running.get(Number(tryId)) : null;
+    if (!rec) return null;
+    let phase = rec.phase;
+    if (phase === 'working' && rec.runKey) {
+      const l = deps.liveRun(rec.runKey);
+      const stage = l && l.orch && l.orch.state ? l.orch.state.setupStage : null;
+      if (stage === TRY_SETUP_STAGE) phase = 'setup';
+      else if (stage === 'Creating the worktree') phase = 'preparing';
+    }
+    return { phase, checking: rec.checking, startedMs: rec.startedMs };
+  }
+
+  /** D60: what was free when the test started, for board 35's "Disk in use". */
+  function diskOf(runId) { const st = live.get(Number(runId)); return st ? { freeAtStart: st.freeAtStart ?? null } : null; }
+
+  return { start, stop, continueRun, recover, idle, costOf, phaseOf, diskOf };
 }

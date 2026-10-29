@@ -58,7 +58,7 @@ async function projectOutcome(row, dir) {
   const br = parseJson(row.branch) || {};
   const results = dir ? parseJson(await readFile(join(dir, RESULTS_FILE), 'utf8').catch(() => 'null')) : null;
   const wt = typeof br.worktreeDir === 'string' && br.worktreeDir && existsSync(br.worktreeDir) ? br.worktreeDir : null;
-  return { base: br.baseSha || null, branch: br.feature || null, ...projectChanges(results),
+  return { key: row.project_key, base: br.baseSha || null, branch: br.feature || null, ...projectChanges(results),
     patchFile: dir && existsSync(join(dir, DIFF_PATCH_FILE)) ? join(dir, DIFF_PATCH_FILE) : null,
     checkoutDir: wt, runRoot: join(worcaHome(), 'runs', row.id) };
 }

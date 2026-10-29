@@ -10,14 +10,17 @@ import { isReservedWorkflowId } from '../graph/builtin-workflows.mjs';
 import { isVersionableRow, liveVersionNo, latestVersion } from '../workflow-revisions.mjs';
 import { loadAgentRegistry } from '../agent-registry.mjs';
 import { findPipelineRowById, readStepQuestions, readClarifyRow, runDirForRow } from '../artifacts.mjs';
-import { NO_PROJECT_KEY, isNoProjectKey } from '../store.mjs';
+import { NO_PROJECT_KEY, isNoProjectKey, testCopyDirFor } from '../store.mjs';
+import { listProjects } from '../projects.mjs';
 import { diffGraphs } from '../../shared/graph/diff-graphs.mjs';
 import { basicsList } from '../../shared/workflow-tests/checks.mjs';
 import { useLabel, testTitle, latestTitle, compareModel, TRIES_AT_ONCE } from '../../shared/workflow-tests/compare.mjs';
 import { loadScriptRegistry } from '../script-registry.mjs';
 import * as store from './store.mjs';
 import { useGraph, useFingerprint } from './uses.mjs';
-import { testTargetOf } from './try-body.mjs';
+import { testTargetOf, exampleReadiness } from './try-body.mjs';
+import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout } from './project-copy.mjs';
+import { leftOutText, folderMissingText, folderProjectText, diskRefusalText, diskRefusalOnceText } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult } from './result.mjs';
 import { connectorNotes, userScopeServerNames, seenClaudeAiServers, wouldHaveSent, stepEngines, scriptSteps } from './connectors.mjs';
 
@@ -46,10 +49,73 @@ export function workflowRowOf(workflowId) {
   return { ...row, graph: parse(row.graph, {}) };
 }
 
-/** D20: whether Part 2 can test this workflow (try-body.mjs decides). */
+/** D62 (replaces D20): every saved user workflow can be tested; `needsProject` says what its examples need. */
 export function testTarget(workflowId, { registry = loadAgentRegistry() } = {}) {
   const row = workflowRowOf(workflowId);
   return { row, ...testTargetOf(row.graph, registry) };
+}
+
+export const DISK_MARGIN = 1.2;
+
+/** The project an example names, as the registry knows it now (D62). */
+export async function projectStateOf(project, { projects = null } = {}) {
+  const list = projects || await listProjects();
+  const reg = list.find((p) => p.key === project.key) || null;
+  const state = !reg ? 'not-registered' : !reg.exists ? 'missing' : reg.vcs !== 'git' ? 'folder' : 'ok';
+  return { state, reg };
+}
+
+/** The sentence for an example a test cannot try (board 39's cards; board 34's left-out hint). */
+export function readinessText(example, reason, { reg = null } = {}) {
+  const name = reg ? reg.name : example.project ? example.project.key : '';
+  if (reason === 'missing') return folderMissingText(name, reg ? reg.path : '');
+  if (reason === 'folder') return folderProjectText(name);
+  return leftOutText([example.name]);   // pick-project, not-registered
+}
+
+/** The runner's targetOf (D62): one example on one version. */
+export async function targetFor(workflowId, use, example, { registry = loadAgentRegistry(), projects = null } = {}) {
+  const g = await useGraph(workflowId, use);
+  const needsProject = g ? testTargetOf(g, registry).needsProject : false;
+  const { state, reg } = example.project ? await projectStateOf(example.project, { projects }) : { state: null, reg: null };
+  const r = exampleReadiness({ needsProject, example, state });
+  return { ...r, text: r.ready ? null : readinessText(example, r.reason, { reg }) };
+}
+
+/**
+ * D60: what a test of these examples needs on disk while it runs, and what is free. One try needs the example's last
+ * measured checkout, else its start tree (`git ls-tree`, read only) plus its patch. The test needs the 3 largest tries at
+ * once, times DISK_MARGIN. null when no example has a project.
+ */
+export async function diskPlanOf(examples, { tries = 3, sides = 1, projects = null } = {}) {
+  const list = projects || await listProjects();
+  const per = [];
+  for (const ex of examples) {
+    if (!ex.project) continue;
+    const reg = list.find((p) => p.key === ex.project.key);
+    const measured = store.lastDiskBytes(ex.id, ex.project.startCommit);
+    const bytes = measured ?? (reg && reg.exists ? ((await treeBytes({ projectDir: reg.path, sha: ex.project.startSha })) ?? 0) + (ex.project.changesBytes || 0) : 0);
+    for (let k = 0; k < Math.min(tries * sides, TRIES_AT_ONCE); k += 1) per.push(bytes);
+  }
+  if (!per.length) return null;
+  const needBytes = Math.ceil(DISK_MARGIN * per.sort((x, y) => y - x).slice(0, TRIES_AT_ONCE).reduce((s, n) => s + n, 0));
+  const freeBytes = await freeDiskBytes();
+  const enough = freeBytes === null || freeBytes >= needBytes;
+  return { needBytes, freeBytes, enough, text: enough ? null : diskRefusalText(needBytes, freeBytes), once: enough ? null : diskRefusalOnceText(needBytes, freeBytes) };
+}
+
+/** Before a try (D42): the example's start commit in Worca's copy of its project. */
+export async function prepareProject(example) {
+  const { state, reg } = await projectStateOf(example.project);
+  if (state !== 'ok') throw err(readinessText(example, state, { reg }), 'NOT_READY');
+  return ensureStartCommit({ key: example.project.key, projectDir: reg.path, project: example.project, changes: store.readExampleChanges(example.id) });
+}
+
+/** D61: a project try's checkout, its branch in the copy and its run folder, once its run has settled. */
+export async function cleanupTry(outcome) {
+  const p = outcome && outcome.project;
+  if (!p || !p.key) return { removed: true, error: null };
+  return removeTryCheckout({ copyDir: testCopyDirFor(p.key), worktreeDir: p.checkoutDir, branch: p.branch, runRoot: p.runRoot, pipelineId: outcome.pipelineId });
 }
 
 export function labelCtx(workflowId) {

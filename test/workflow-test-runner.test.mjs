@@ -256,9 +256,10 @@ test('bad starts are refused before anything runs; a restart stops what was runn
   await assert.rejects(runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [999], tries: 3 }), { code: 'NOT_FOUND' });
   const empty = example({ name: 'Empty', request: '' });
   await assert.rejects(runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [empty.id], tries: 3 }), { message: 'Write the request of "Empty" first.' });
-  const guarded = createTestRunner({ ...harness().deps, targetOf: async (_wf, use) => (use === 1 ? { testable: false, reason: 'needs-project' } : { testable: true, reason: null }) });
+  const guarded = createTestRunner({ ...harness().deps, targetOf: async (_wf, use, e) => (use === 1
+    ? { ready: false, reason: 'pick-project', text: `${e.name} is left out: pick its project first.` } : { ready: true, reason: null, text: null }) });
   await assert.rejects(guarded.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 }),
-    { code: 'NOT_TESTABLE', message: 'v1 works on a project, and tests work for workflows without a project for now.' }, 'review M9: side A is checked too');
+    { code: 'NOT_READY', message: `${ex.name} is left out: pick its project first.` }, 'review M9: side A is checked too');
   await assert.rejects(runner.start({ workflowId: WF, kind: 'both', a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 }),
     { code: 'BAD_REQUEST', message: 'kind must be "compare" or "once"' });
   await assert.rejects(runner.start({ workflowId: WF, a: 0, b: 'draft', exampleIds: [ex.id], tries: 1 }),
