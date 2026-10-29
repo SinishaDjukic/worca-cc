@@ -210,4 +210,4 @@ On Windows with Node 24, a plugin call that made one web request (such as Jira's
 
 Pull requests (add each number when it opens):
 
-- Plugins: keep a plugin's answer when its process crashes on exit
+- Plugins: keep a plugin's answer when its process crashes on exit (#1051)
