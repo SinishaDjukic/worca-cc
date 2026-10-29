@@ -339,6 +339,7 @@ import { registerWorkflowTestRoutes } from '../src/core/workflow-tests/routes.mj
 import { TRY_ANSWERED_BY } from '../src/core/workflow-tests/answers.mjs';
 import { pretendCopies } from '../src/core/workflow-tests/connectors.mjs';
 import { SETUP_TIMEOUT_MS } from '../src/core/workflow-tests/shell-step.mjs';
+import { TRY_NEVER_SHIPS_TEXT } from '../src/shared/workflow-tests/project-text.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -9044,6 +9045,8 @@ async function resolvePrPipeline(src, res) {
     return null;
   }
   if (!state) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  // Workflow tests 3a (D45): a test try never leaves Worca. Every push, pull request and publish route comes through here.
+  if (isTestPipeline(state.id || id)) { res.status(409).json({ error: TRY_NEVER_SHIPS_TEXT }); return null; }
   return { id, state };
 }
 
@@ -9186,6 +9189,7 @@ async function openMemberPr(pipelineId, { actor = null } = {}) {
  */
 async function createRunPr({ id, state, target, base, memberKey = null, remotes: chosen = {}, description = '',
   draft = false, actor = null, title = null, preamble = true }) {
+  if (isTestPipeline(id)) return { ok: false, status: 409, error: TRY_NEVER_SHIPS_TEXT };   // 3a D45: also from the ship flows
   const { repoDir, feature, source } = target;
   if (!repoDir || !feature || !source) return { ok: false, status: 400, error: 'pipeline has no branch info to create a PR' };
   const picked = await pickPrRemotes(chosen, repoDir);
@@ -18448,6 +18452,7 @@ app.post('/api/pipelines/:id/report', async (req, res) => {
 // link so the modal can degrade to today's copy-and-paste flow in one round trip.
 app.post('/api/pipelines/:id/report-issue', async (req, res) => {
   try {
+    if (isTestPipeline(String(req.params.id || ''))) return res.status(409).json({ error: TRY_NEVER_SHIPS_TEXT });   // 3a D45
     const payload = await reportPayloadOr(res, req);
     if (!payload) return;
     const filed = await createIssue({

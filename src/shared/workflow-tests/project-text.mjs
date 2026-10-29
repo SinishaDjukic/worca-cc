@@ -15,3 +15,5 @@ export const START_GONE_TEXT = 'The start point of this example is no longer in 
 export const CHANGES_TOO_BIG_TEXT = 'Your changes that are not committed are larger than 5 MB: commit them first, or leave them out.';
 // D55, board 35: why a test stopped before any step of a try.
 export const setupFailedText = (cmd) => `The setup step failed: ${cmd} ended with an error.`;
+// D45: the push, pull request, publish and issue routes' answer for a test try (409).
+export const TRY_NEVER_SHIPS_TEXT = 'A test try stays in Worca: it is never pushed and gets no pull request or issue.';

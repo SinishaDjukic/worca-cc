@@ -4,6 +4,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnActionProcess, stopProcess, actionBaseEnv } from '../actions/spawn.mjs';
+import { withTryGuardEnv } from './try-guard-env.mjs';
 
 export const TAIL_LINES = 40;
 export const TAIL_BYTES = 8 * 1024;
@@ -12,11 +13,10 @@ export const TRY_SETUP_FILE = 'try-setup.json';
 /** The harness's setup stage while a try's setup runs (state.setupStage): the runner reads it as the "Running setup" phase. */
 export const TRY_SETUP_STAGE = 'Running setup';
 
-/** What a project try's setup and command checks start from: the action env (no host credential, no Worca home) and
- *  WORCA_TEST=1. Task 5 adds the outward guard. */
+/** What a project try's setup and command checks start from: the action env (no host credential, no Worca home),
+ *  WORCA_TEST=1, and the outward guard writing to the try's connector-calls.ndjson (D56). */
 export function tryShellEnv({ logFile = null } = {}) {
-  void logFile;
-  return { ...actionBaseEnv(), WORCA_TEST: '1' };
+  return withTryGuardEnv({ ...actionBaseEnv(), WORCA_TEST: '1' }, logFile ? { logFile } : null);
 }
 
 /** @returns {Promise<{ok: boolean, exitCode: number|null, timedOut: boolean, ms: number, tail: string}>} never throws */

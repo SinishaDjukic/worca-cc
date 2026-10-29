@@ -3882,6 +3882,12 @@ export class RunHarness extends EventEmitter {
     return this.opts.testConnectors === 'real' ? 'real' : 'pretend';
   }
 
+  /** Workflow tests 3a (D56): every try's outward guard writes to its connector-calls.ndjson; null for every other run. */
+  _tryGuard() {
+    if (this.opts.workflowTest !== true || !this.pipeline?.dir) return null;
+    return { logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE) };
+  }
+
   /**
    * The MCP registry layer for this run (design §6.1): the resolver over the run's target, its
    * Team set from the resolved policy, the opt-out and the tool-name limit of every model the run

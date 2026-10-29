@@ -16,6 +16,7 @@ import { isReservedModelEnvKey } from '../model-env.mjs';
 import { worcaHome } from '../projects.mjs';
 import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
+import { withTryGuardEnv } from '../workflow-tests/try-guard-env.mjs';
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -97,7 +98,7 @@ export function cleanRunEnv(env) {
  * no run env and no overlay the env is byte-identical to the scrub result.
  * @returns {{env: Record<string,string>, scrubbed: boolean}}
  */
-export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid } = {}) {
+export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid, tryGuard = null } = {}) {
   const scrubbedEnv = buildSpawnEnv(envScrub, envAllowlist, prefixes);
   let env = scrubbedEnv;
   if (runEnv) env = { ...(env ?? process.env), ...runEnv };
@@ -106,6 +107,8 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   env = stripHostCredentials(env ?? process.env);
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
+  // Workflow tests 3a (D56): a try's outward guard (PATH stand-ins, git that cannot sign in). Absent: byte-identical.
+  if (tryGuard) env = withTryGuardEnv(env, tryGuard);
   env = withNoGitPath(env);
   return { env, scrubbed: !!scrubbedEnv };
 }

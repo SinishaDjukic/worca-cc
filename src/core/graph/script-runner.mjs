@@ -25,6 +25,7 @@ import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { gitAvailable } from '../git-available.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
+import { withTryGuardEnv } from '../workflow-tests/try-guard-env.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./script-child.mjs', import.meta.url));
 /** The `python` harness (workbench spec §7), spawned as `<python> -u worca_script.py <program.py>`. */
@@ -144,7 +145,8 @@ export function buildEnvelope(ctx) {
       // a comment") can stay quiet under test. Additive — apiVersion stays 1.
       bench: Boolean(ctx.bench),
       // Workflow tests (D35): set on a test try's script step only (additive — apiVersion stays 1).
-      ...(ctx.testConnectors === 'pretend' || ctx.testConnectors === 'real' ? { test: { connectors: ctx.testConnectors } } : {}),
+      ...(ctx.testConnectors === 'pretend' || ctx.testConnectors === 'real'
+        ? { test: { connectors: ctx.testConnectors, ...(ctx.tryGuard ? { guard: ctx.tryGuard } : {}) } } : {}),
     },
   };
 }
@@ -184,7 +186,8 @@ export function envForShell(envelope, baseEnv = process.env) {
     env.WORCA_TEST = '1';
     env.WORCA_TEST_CONNECTORS = c.test.connectors;
   } else { delete env.WORCA_TEST; delete env.WORCA_TEST_CONNECTORS; }
-  return env;
+  // Workflow tests 3a (D56): a try's script step gets the outward guard too (stand-ins first on PATH, git with no sign-in).
+  return c.test && c.test.guard ? withTryGuardEnv(env, c.test.guard) : env;
 }
 
 /** The env a script child STARTS from (P11). With the run's env-scrub guardrail on it is

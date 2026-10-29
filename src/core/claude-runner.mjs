@@ -98,6 +98,7 @@ export function mockEnabled(opts) {
  * @param {string[]} [o.tools]              --tools <list>: the built-in tool allowlist ([] ⇒ `--tools ""`,
  *   no built-ins at all; MCP tools are unaffected). Absent ⇒ flag omitted (claude defaults).
  * @param {boolean} [o.strictMcpConfig]     --strict-mcp-config: only --mcp-config servers load
+ * @param {{logFile: string}} [o.tryGuard]  workflow tests 3a: a try's outward guard
  * @param {string[]} [o.settingSources]     --setting-sources <list> (e.g. ['project'] drops user hooks/plugins/skills)
  * @param {boolean} [o.disableSlashCommands] --disable-slash-commands
  * @param {boolean} [o.includePartialMessages] --include-partial-messages (stream_event text deltas)
@@ -159,6 +160,7 @@ export async function runClaude(o = {}) {
     // undefined here ⇒ nothing emitted ⇒ every legacy argv stays byte-identical.
     tools,
     strictMcpConfig,
+    tryGuard,
     settingSources,
     disableSlashCommands,
     includePartialMessages,
@@ -271,6 +273,7 @@ export async function runClaude(o = {}) {
     disallowedTools,
     tools,
     strictMcpConfig,
+    tryGuard,
     settingSources,
     disableSlashCommands,
     includePartialMessages,

@@ -11,6 +11,7 @@ import { explainUnspawnableClaude, resolveClaudeBin } from '../preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
+import { tryGuardHookEntry, withTryDeny } from '../workflow-tests/try-guard-env.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -58,13 +59,18 @@ function extraSettingsOf(extraSettings) {
  *  harness only when the mounted rules hold a note with `paths:`) adds the `InstructionsLoaded` counting hook the
  *  same way — never into the user's settings files. `readGuard` (Requirements A8: the one file a read may open) adds
  *  the file-read guard (file-read-guard.mjs) on every tool, with `disableAllHooks: false`, logging each decision to
- *  `readGuardLog` (stageClaudeInvocation names it); absent (null/undefined), nothing changes. */
-export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null } = {}) {
+ *  `readGuardLog` (stageClaudeInvocation names it); absent (null/undefined), nothing changes. `tryGuard` (workflow tests 3a
+ *  D56: a test try's `{ logFile }`) adds the try guard's PreToolUse Bash hook beside the host guard and its deny rules
+ *  (workflow-tests/try-guard-env.mjs); absent, nothing changes. */
+export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null } = {}) {
   const hook = buildHookSettings();
   const extra = extraSettingsOf(extraSettings);
   const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
   const usage = typeof memoryLoadLog === 'string' && memoryLoadLog ? memoryUsageHookEntry(memoryLoadLog) : null;
-  const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
+  // Workflow tests 3a (D56): a try's outward guard: its PreToolUse hook beside the host guard, and its deny rules.
+  const tg = tryGuard ? tryGuardHookEntry() : null;
+  const rules = tg ? withTryDeny(permissionRules) : permissionRules;
+  const hasRules = !!rules && Object.values(rules).some((a) => Array.isArray(a) && a.length);
   // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
   // truthy while hasRules stays false, so the whole policy would drop out of
   // argv silently. Say it once, then take the same no-rules path (fail-open,
@@ -77,12 +83,16 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
   // A8: a Requirements file read's guard (file-read-guard.mjs): every tool, fail-closed; the user settings cannot turn it off.
   // Any value but null/undefined goes to readGuardHookEntry, which throws unless it is an absolute path: never a silent no-guard.
   const read = readGuard != null ? readGuardHookEntry(readGuard, { log: readGuardLog }) : null;
-  if (!hook && !hasRules && !guard && !extra && !usage && !read) return null;
+  if (!hook && !hasRules && !guard && !extra && !usage && !read && !tg) return null;
   const settings = { ...(extra ?? {}) };
   if (hook) settings.hooks = { ...hook.hooks };
   if (guard) {
     settings.hooks = settings.hooks ?? {};
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), guard];
+  }
+  if (tg) {
+    settings.hooks = settings.hooks ?? {};
+    settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), tg];
   }
   if (usage) {
     settings.hooks = settings.hooks ?? {};
@@ -93,7 +103,7 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), read];
     settings.disableAllHooks = false;
   }
-  if (hasRules) settings.permissions = permissionRules;
+  if (hasRules) settings.permissions = rules;
   return { hook: !!hook, settings };
 }
 
@@ -289,11 +299,11 @@ export function isHookEvent(evt) {
  * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
  * @param {{hostGuard?:boolean, extraSettings?:object|null, readGuard?:string|null, readGuardLog?:string|null}} [opts]
  *   host-process guard (runClaudeProcess sets it; see buildSettingsPayload), extra settings merged into the same payload
- *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log
+ *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log, a workflow-test try's guard
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null } = {}) {
-  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog });
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard });
   if (!payload) return [];
   const args = [];
   if (payload.hook) args.push('--include-hook-events');
@@ -338,6 +348,8 @@ export function buildClaudeArgs({
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
   maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
   pluginDirs, extraSettings, memoryLoadLog, readGuard, readGuardLog,
+  // Workflow tests 3a (D56): a test try's outward guard ({ logFile }): its hook and deny rules in --settings. Absent ⇒ nothing.
+  tryGuard,
   // Requirements A1.1: 'replace' swaps Claude Code's own system prompt for ours
   // (--system-prompt / --system-prompt-file). Anything else, absent included, is
   // today's --append-system-prompt(-file), so every other argv stays byte-identical.
@@ -368,7 +380,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog })) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -458,7 +470,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     files.push({ path: systemPromptFile, content: opts.systemPrompt });
   }
   let settingsFile = null;
-  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog });
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog, tryGuard: opts.tryGuard });
   if (payload) {
     settingsFile = join(dir, 'settings.json');
     files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
@@ -488,7 +500,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir, ...(o.readGuardLog ? { readGuardLog: o.readGuardLog } : {}) };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
   const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
@@ -580,7 +592,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
-        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode, readGuard, noSessionPersistence,
+        pluginDirs, extraSettings, memoryLoadLog, tryGuard, systemPromptMode, readGuard, noSessionPersistence,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -606,6 +618,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     const { env: composedEnv, scrubbed } = composeSpawnEnv({
       envScrub, envAllowlist, prefixes: ['ANTHROPIC_', 'CLAUDE_'],
       runEnv: cleanRunEnv(runSpawnEnv), overlay: safeModelEnv, hostPid: guardOn ? process.pid : null,
+      tryGuard: tryGuard || null,
     });
     let spawnEnv = composedEnv;
     // With the broker on, no ambient model credential reaches the agent either (the

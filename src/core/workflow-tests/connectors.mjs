@@ -15,6 +15,7 @@ import { resolveRunEngine } from '../settings-cascade.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { CLAUDE_AI_RE, plainName, serverName } from '../../shared/workflow-tests/connector-name.mjs';
 import { selectRunEngine } from '../engines/index.mjs';
+import { guardCall } from './guard-calls.mjs';
 
 export { CONNECTOR_MODES } from './store.mjs';
 export const CONNECTOR_CALLS_FILE = 'connector-calls.ndjson';
@@ -212,7 +213,8 @@ const keyed = (args) => new Map(Object.entries(args && typeof args === 'object' 
 const firstString = (map, keys) => { for (const k of keys) { const v = map.get(k); if (typeof v === 'string' && v.trim()) return v; } return null; };
 
 /** One call as board 31 lists it. `preview` = the first 80 characters of its main text; `full` = all of it. */
-export function sentCall(e) {
+export function sentCall(e, { forgeOf } = {}) {
+  if (e && e.guard === true) return guardCall(e, { forgeOf });   // 3a D68: what the outward guard stopped
   const args = e && e.arguments;
   const map = keyed(args);
   const longest = [...map.values()].filter((v) => typeof v === 'string' && v.trim()).sort((x, y) => y.length - x.length)[0] ?? null;
@@ -241,12 +243,12 @@ export async function readConnectorCalls(pipelineId) {
 }
 
 /** Board 31: what one pretend try would have sent, and the reads its stand-ins answered (N3). */
-export async function wouldHaveSent(pipelineId) {
+export async function wouldHaveSent(pipelineId, { forgeOf } = {}) {
   const sent = [];
   const reads = new Map();
   for (const e of await readConnectorCalls(pipelineId)) {
     if (e.readOnly === true) { const s = String(e.server || ''); reads.set(s, (reads.get(s) || 0) + 1); continue; }
-    sent.push(sentCall(e));
+    sent.push(sentCall(e, { forgeOf }));
   }
   return { sent, reads: [...reads].map(([server, n]) => ({ server, n })) };
 }

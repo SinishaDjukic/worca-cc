@@ -852,6 +852,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // Workflow tests (D35): a pretend try loads ONLY its mcp.json (the stand-ins): no claude.ai connector, no
     // ~/.claude.json server, no plugin server. Absent on every other spawn, so its argv stays byte-identical.
     ...(ctx.mcpStrict === true ? { strictMcpConfig: true } : {}),
+    // Workflow tests 3a (D56): a try's outward guard. Absent on every other spawn, so its argv and env stay byte-identical.
+    ...(ctx.tryGuard ? { tryGuard: ctx.tryGuard } : {}),
     // Whose approvals decide the checkout's committed `.mcp.json` servers on Claude (claude-runner.mjs).
     mcpjsonProjectDir: ctx.mcpjsonProjectDir,
     // P1 (S31): a non-git run's spawn asks no git (approvals, Cursor's info/exclude). Absent on git runs.
