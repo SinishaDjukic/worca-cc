@@ -14,6 +14,7 @@
 // per-op responses so smoke/tests run offline with zero plugins installed.
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,15 +49,24 @@ export class PluginOpError extends Error {
 
 let _mockResponses = null; // op -> value | (args) => value; null = defaults only
 
-/** Tests: override/extend the canned per-op responses. Pass null to reset. */
+/** Tests: override/extend the canned per-op responses. Pass null to reset (A6: the mock ticket numbers restart at 123). */
 export function setMockSourceResponses(map) {
   _mockResponses = map && typeof map === 'object' ? map : null;
+  if (!_mockResponses) resetMockTickets();
 }
 
 const MOCK_TASKS = [
   { id: 'MOCK-1', title: 'Fix the login redirect', url: 'https://mock.test/MOCK-1', state: 'open', labels: ['bug'], updatedAt: '2026-07-12T00:00:00.000Z' },
   { id: 'MOCK-2', title: 'Add CSV export to reports', url: 'https://mock.test/MOCK-2', state: 'open', labels: ['feature'], updatedAt: '2026-07-12T00:00:00.000Z' },
 ];
+// A6 (plans/requirements-a6-design.md §4, D19): the export ops' canned answers, so the Requirements browser proof runs
+// offline. Tickets are numbered <project>-123, -124, … in one sequence; the fingerprint is the description's sha256 and
+// ticketState returns the last one written.
+let mockTicketNo = 123;
+const mockFingerprints = new Map();
+function resetMockTickets() { mockTicketNo = 123; mockFingerprints.clear(); }
+const mockFingerprint = (text) => createHash('sha256').update(String(text ?? '')).digest('hex');
+const mockUrl = (key) => `https://mock.test/browse/${key}`;
 const MOCK_DEFAULTS = {
   listTasks: () => ({ tasks: MOCK_TASKS.map((t) => ({ ...t })) }),
   getTask: (args) => ({
@@ -67,6 +77,30 @@ const MOCK_DEFAULTS = {
   }),
   reportResult: () => ({ ok: true }),
   validateConfig: () => ({ ok: true }),
+  // Write-back stays on (what a missing capabilities op defaulted to before A6), and the mock source can export.
+  capabilities: () => ({ writeBack: true, export: true }),
+  exportOptions: (args = {}) => ({
+    projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }],
+    ...(args.project ? { issueTypes: [{ value: '10001', label: 'Story' }, { value: '10002', label: 'Task' }, { value: '10003', label: 'Bug' }] } : {}),
+    ...(args.project && args.issueType ? {
+      priorities: [{ value: '1', label: 'Highest' }, { value: '2', label: 'High' }, { value: '3', label: 'Medium' }, { value: '4', label: 'Low' }],
+      criteriaFields: [{ value: 'customfield_10070', label: 'Acceptance Criteria' }, { value: 'customfield_10071', label: 'Definition of Done' }],
+    } : {}),
+    doneStatus: 'Done',
+  }),
+  createTicket: (args = {}) => {
+    const t = args.ticket || {};
+    const key = `${t.project || 'MOCK'}-${mockTicketNo++}`;
+    mockFingerprints.set(key, mockFingerprint(t.description));
+    return { key, url: mockUrl(key), fingerprint: mockFingerprints.get(key) };
+  },
+  updateTicket: (args = {}) => {
+    mockFingerprints.set(args.key, mockFingerprint(args.ticket && args.ticket.description));
+    return { key: args.key, url: mockUrl(args.key), fingerprint: mockFingerprints.get(args.key) };
+  },
+  commentTicket: () => ({ ok: true }),
+  ticketState: (args = {}) => ({ exists: true, url: mockUrl(args.key), fingerprint: mockFingerprints.get(args.key) ?? null }),
+  findTicket: () => null,
 };
 
 /** Same env-flag semantics as claude-runner.mjs#mockEnabled — one shared rule. */

@@ -280,3 +280,45 @@ anything.
   changed.
 - Once a run has started, the feature's project or workspace can no longer be changed.
 - Rejecting an assumption and **Done, ask about A-n** still work on a started feature, as before the start.
+
+## Export to a tracker
+
+**Export ▾ › Export to Jira…** sends the feature's spec to your team's tracker as a ticket. The item names your tracker
+(Jira today; other trackers add the same steps in their own plugins). Without one connected it reads **Connect a
+tracker…**: trackers are connected on the Marketplace page (**Installed › Jira**, Advanced mode), or by whoever set up
+Worca. Exporting costs nothing: no model is called.
+
+- **Setup.** The first export from a project or workspace asks once: the connection, the Jira project, the issue type
+  (Story by default), labels (`worca` by default), an optional priority, and where the acceptance criteria go (a section
+  of the description, or a Jira multi-line text field). Change it later in **Export ▾ › Export setup…**. The setup names
+  a connection only; the token stays in the plugin. If the saved connection was removed, the list starts with **Choose a
+  connection**.
+- **Preview.** Every export shows the ticket as Jira will show it: the fields and the description (goal and its measure,
+  actors, main flow, business rules, edge cases, out of scope, acceptance criteria, confirmed assumptions, the names of
+  the files the spec mentions, and the footer "From Worca FEAT-7 · exported 26 Oct 2026"). You can change the issue
+  type, labels and priority for that export. Only what the preview shows is sent; if the spec changes in the meantime,
+  Worca asks you to look at the preview again. The label `worca-FEAT-7` is always added: Worca uses it to find the ticket
+  again.
+- **Not Ready yet.** A feature that is not Ready can be exported with a reason. The reason is recorded on the feature and
+  put at the top of the description: "Exported before Ready: …".
+- **After the export.** The header shows the ticket (**SHOP-123**, opening it in a new tab), and the **History** card lists
+  every export.
+- **Export again.** For a feature with a ticket you choose each time: **Update SHOP-123** (summary, description and
+  fields are rewritten; labels are only added), **Add a comment** (what changed since the last export, shown before it is
+  sent; the description stays) or **Create a new ticket** (the chip then follows the new one). If the description was
+  edited in Jira since your last export, Worca warns before replacing it. If the ticket was deleted, choose **Forget the
+  link** or **New ticket**. A ticket linked from another connection or project needs one **Update** before a comment:
+  that gives Worca a starting point to compare against.
+- **Report back.** Once a feature has a ticket, **Start in Worca** has **Report back to SHOP-123**, on by default: when the
+  run ends, Worca comments on the ticket with the result and the pull request link, and moves it to the status named in
+  the Jira connection (**Transition on completion**), if any.
+- If Jira cannot be reached or refuses a field, nothing is recorded and the preview stays open.
+- If the answer to a create was lost (Jira took too long, the network dropped, or Worca stopped) after Jira made the
+  ticket, the next export finds that ticket instead of making a second one. Usually it then updates the ticket with what
+  the preview shows, and the History card lists "Linked SHOP-123, which an earlier export made" and "Updated SHOP-123 in
+  Jira". If the export setup changed since, or the preview was for another ticket, Worca only links the ticket and says
+  "Linked SHOP-123, which an earlier export made. Nothing was sent." For up to two minutes after a lost answer, an export
+  may ask you to try again in a moment while Worca checks whether Jira made the ticket.
+- On a phone or a narrow window (900 px and narrower) the export dialogs open as full-screen sheets, with **← FEAT-7** to
+  go back and the description folded behind **Show all**.
+- Not in this version: epics and "is blocked by" links, reading changes back from Jira, attachments in Jira.

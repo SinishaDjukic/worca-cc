@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 79;
+export const SCHEMA_VERSION = 80;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1390,6 +1390,39 @@ CREATE TABLE IF NOT EXISTS req_helper_messages (
 CREATE INDEX IF NOT EXISTS req_helper_messages_feature ON req_helper_messages(feature_seq, id);
 `;
 
+// v80 Requirements A6 (plans/requirements-a6-design.md §3): export to a tracker. The setup per project or workspace names
+// a connection (plugin, source id, profile; never a config value) and the tracker project, issue type, labels, priority and
+// where the criteria go; the link per feature is its current ticket, the spec and fields as last sent, the plugin's
+// fingerprint of the stored description, and a pending create's marker (D10). Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const REQUIREMENTS_EXPORT_DDL = `
+CREATE TABLE IF NOT EXISTS req_export_setups (
+  scope_type      TEXT NOT NULL,
+  scope_key       TEXT NOT NULL,
+  plugin          TEXT NOT NULL, source_id TEXT NOT NULL, profile TEXT,
+  tracker_project TEXT NOT NULL, tracker_project_name TEXT NOT NULL,
+  issue_type      TEXT NOT NULL, issue_type_name TEXT NOT NULL,
+  labels_json     TEXT NOT NULL DEFAULT '["worca"]',
+  priority        TEXT, priority_name TEXT,
+  criteria_json   TEXT NOT NULL DEFAULT '{"target":"description"}',
+  done_status     TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
+);
+CREATE TABLE IF NOT EXISTS req_export_links (
+  feature_seq     INTEGER PRIMARY KEY,
+  plugin          TEXT NOT NULL, source_id TEXT NOT NULL, profile TEXT,
+  tracker_project TEXT NOT NULL,
+  ticket_key      TEXT, ticket_url TEXT,
+  created_at      TEXT,
+  exported_at     TEXT,
+  spec_json       TEXT,
+  fields_json     TEXT,
+  fingerprint     TEXT,
+  pending_marker  TEXT, pending_at TEXT,
+  updated_by TEXT, updated_at TEXT NOT NULL
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1438,6 +1471,8 @@ const INCREMENTAL_TABLES = {
   req_briefs:        REQUIREMENTS_BRIEFS_DDL,
   req_attachments:   REQUIREMENTS_ATTACHMENTS_DDL,
   req_helper_messages: REQUIREMENTS_HELPER_DDL,
+  req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
+  req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
 };
 
 /**
@@ -2584,6 +2619,9 @@ export function migrate(db) {
     // coming from below 72 creates the ledger after the hoisted repair.
     if (current < 78) { db.exec(REQUIREMENTS_HELPER_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     // v79: run_groups.name_source — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v80 requirements A6: req_export_setups + req_export_links (first written as v79; dev took 79). New tables only, so no repair call:
+    // INCREMENTAL_TABLES creates them for a DB stamped past this rung without them.
+    if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -11,11 +11,12 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
 import {
   createFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, getFeature, setContext, createStart,
-  beginBrief, saveBriefResult, deleteBrief, listAttachments, updateAttachment, getAttachment,
+  beginBrief, saveBriefResult, deleteBrief, listAttachments, updateAttachment, getAttachment, saveExportLink,
 } from '../src/core/requirements/store.mjs';
 import { addAttachments, readsSettled, replaceAttachment, removeAttachment, attachmentFile } from '../src/core/requirements/attachment-job.mjs';
 import { startOrientation, settled, isBusy } from '../src/core/requirements/interview.mjs';
 import { startFeature, startView } from '../src/core/requirements/start.mjs';
+import { markExporting, unmarkExporting } from '../src/core/requirements/starting.mjs';
 import { registerRequirementsRoutes } from '../src/core/requirements/routes.mjs';
 import { buildRoundPrompt } from '../src/core/requirements/round.mjs';
 
@@ -617,4 +618,45 @@ test('Start again with v2 sends the files switched on now and records them', asy
   assert.deepEqual(calls.map((c) => c.opts.extrasFiles.map((x) => x.name)), [['a.md'], ['b.md']]);
   assert.deepEqual(r.json.feature.starts.map((s) => [s.version, s.files.map((x) => x.name)]), [[2, ['b.md']], [1, ['a.md']]]);
   assert.deepEqual(r.json.feature.changedSinceStart, [], 'compared with the newest start');
+});
+
+// ---- A6 D15: Report back ----
+const linkTicket = (seq) => saveExportLink(seq, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', trackerProject: 'SHOP', key: 'SHOP-123',
+  url: 'https://acme.test/browse/SHOP-123', createdAt: '2026-10-26T10:42:00.000Z', exportedAt: '2026-10-26T10:42:00.000Z', spec: readySpec(), fingerprint: 'f' });
+
+test('A6 D15: a feature with a ticket reports back by default: reportTo names the link\'s own connection and turns write-back on', async () => {
+  reset();
+  const f = readyFeature({ title: 'Report me' });
+  linkTicket(f.seq);
+  const r = await call('POST', `/api/requirements/${f.seq}/start`, {});
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  assert.deepEqual(calls[0].opts.reportTo, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', taskId: 'SHOP-123',
+    url: 'https://acme.test/browse/SHOP-123', title: 'Report me', inputs: { writeBack: 'yes' } });
+  assert.equal(calls[0].body.promptMarkdown.includes('# FEAT-'), true, 'the task is still the spec');
+});
+
+test('A6 D15: reportBack false sends no reportTo; no ticket sends none; a non-boolean is 400', async () => {
+  reset();
+  const f = readyFeature({ title: 'Quiet' });
+  linkTicket(f.seq);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { reportBack: false })).status, 201);
+  assert.equal('reportTo' in calls[0].opts, false);
+  reset();
+  const g = readyFeature({ title: 'No ticket' });
+  assert.equal((await call('POST', `/api/requirements/${g.seq}/start`, { reportBack: true })).status, 201);
+  assert.equal('reportTo' in calls[0].opts, false);
+  reset();
+  const h = readyFeature({ title: 'Bad flag' });
+  const bad = await call('POST', `/api/requirements/${h.seq}/start`, { reportBack: 'yes' });
+  assert.deepEqual([bad.status, bad.json.error, calls.length], [400, 'reportBack must be true or false', 0]);
+});
+
+test('A6 D13: Start is refused while the feature is being exported', async () => {
+  reset();
+  const f = readyFeature({ title: 'Exporting' });
+  markExporting(f.seq);
+  try {
+    const r = await call('POST', `/api/requirements/${f.seq}/start`, {});
+    assert.deepEqual([r.status, r.json.error, calls.length], [409, 'Worca is exporting this feature. Try again in a moment.', 0]);
+  } finally { unmarkExporting(f.seq); }
 });
