@@ -259,6 +259,17 @@ A login kept in `HTTPS_PROXY` has no saved stop. Correct the URL, then restart W
 Not supported (Negotiate works only with the NTLM login inside it). Run [Px](https://github.com/genotrance/px) with your Windows session, point
 `HTTPS_PROXY` at it, and leave the corporate proxy off.
 
+## Worca in a container
+
+The box from `worca container` cannot use this machine's local proxy, because
+`127.0.0.1` inside the box is the box itself. `worca container` gives the box
+your `networkProxy.upstream` (host and port only) when that proxy needs no
+login. It never passes the local proxy in. Otherwise the box gets no proxy,
+and you set the proxy up in the box's own Worca: its Settings › Network proxy,
+then `worca container run -- proxy login`. For a proxy that re-signs TLS, set
+`WORCA_CA_CERT` in the container `.env` to the CA's PEM file. See
+[docker.md → Corporate proxy and CA](docker.md#corporate-proxy-and-ca).
+
 ## Troubleshooting
 
 - **The proxy offers only Basic.** NTLMv2 (`auto`) never falls back to Basic. Set

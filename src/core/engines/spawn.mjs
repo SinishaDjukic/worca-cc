@@ -42,6 +42,8 @@ export const SPAWN_ENV_BASE = [
   // Worca's corporate-proxy marker (proxy-credentials.mjs CORPORATE_PROXY_VAR; a test pins the value).
   'WORCA_CORPORATE_PROXY_URL',
   'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+  // The single-bundle CA names git, curl and Python Requests read (the container entrypoint sets them).
+  'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE',
 ];
 
 /**
