@@ -4,14 +4,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { memberViewState, renderActionsCard, renderOverviewStrip, renderRunPill, renderShipItStrip, shipItTryState,
-  renderRunningActionRows, historyActionBadges, formatUptime, isSafeHref, createActionsController, releaseCheckout } from '../ui/public/actions-view.mjs';
+  renderRunningActionRows, historyActionBadges, formatUptime, isSafeHref, createActionsController, releaseCheckout,
+  isChangedMember, defaultPicks, DEFAULT_PICK_LIMIT } from '../ui/public/actions-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const member = (over = {}) => ({ projectKey: 'app-0cea65fb', projectName: 'app', branch: 'worca-cc/x', worktreeDir: '/h/runs/ab/repos/app-0cea65fb',
   checkout: null, copyCommand: 'cd "/p"\ngit switch worca-cc/x', setup: 'npm ci',
+  state: 'not-checked-out', affected: true, files: 3, added: 40, removed: 2, workMode: 'git',
   actions: [{ id: 'run', label: 'Run', kind: 'service' }, { id: 'test', label: 'Test', kind: 'task' }],
   builtins: [{ key: 'editor', label: 'VS Code' }, { key: 'terminal', label: 'Terminal' }, { key: 'fileManager', label: 'Finder' }, { key: 'copyCommand', label: 'Copy command' }], ...over });
 const model = (m, instances = []) => ({ enabled: true, finished: true, workspace: false, estimate: { lastSetupMs: 42000 }, members: [m], stacks: [], stackStates: [], instances });
+const wsModel = (members, over = {}) => ({ ...model(members[0]), workspace: true, members, stacks: [], stackStates: [],
+  totals: { members: members.length, changed: members.filter((m) => m.affected !== false).length,
+    files: 0, added: 0, removed: 0 }, ...over });
+const rows = (el) => [...el.querySelectorAll('.act-table tbody tr')];
+const footBtn = (el) => [...el.querySelectorAll('.act-co-foot button')][0];
 // A button's accessible name (aria-label when it has one: the stop button reads "Stop Run"); icon-only copy buttons are left out.
 const labelsOf = (el) => [...el.querySelectorAll('button:not(.act-copy)')].map((b) => b.getAttribute('aria-label') || b.textContent);
 
@@ -42,10 +49,6 @@ test('not checked out: folder to come, estimate, Check out + Copy command, the o
   const el2 = renderActionsCard(model(member()), { doc, handlers: { onOpenBeforeCheckout: (...a) => seen.push(a) } });
   [...el2.querySelectorAll('button')].find((b) => b.textContent === 'Terminal').click();
   assert.deepEqual(seen, [['app-0cea65fb', 'terminal', 'Terminal']]);
-  const ws = model(member()); ws.workspace = true;
-  const wsEl = renderActionsCard(ws, { doc, handlers: {} });
-  assert.ok([...wsEl.querySelectorAll('button')].filter((b) => b.textContent === 'Terminal').every((b) => b.disabled && b.title === 'Available after Check out'),
-    'a workspace run checks out from its checklist');
 });
 
 test('running: Stop Run, Test, built-ins, open link, Discard', () => {
@@ -115,20 +118,221 @@ test('handlers receive the member and action ids', () => {
     ['copy', 'cd "/p"\ngit switch worca-cc/x'], ['discard', ['app-0cea65fb']]]);
 });
 
-test('workspace: member checkboxes, "Check out selected", stack rows', () => {
+test('workspace: the checkout table posts only the ticked members, and a stack row still stops', () => {
   const api = member({ projectKey: 'api-1a2b3c4d', projectName: 'api' });
   const web = member({ projectKey: 'web-5e6f7a8b', projectName: 'web' });
-  const m = { ...model(api), workspace: true, members: [api, web], stacks: [{ id: 'dev', label: 'Dev stack', kind: 'service' }],
+  const m = { ...wsModel([api, web]), stacks: [{ id: 'dev', label: 'Dev stack', kind: 'service' }],
     stackStates: [{ runId: 'ab', stackId: 'dev', status: 'running' }] };
   const got = [];
-  const el = renderActionsCard(m, { doc, handlers: { onCheckout: (ms) => got.push(ms), onStack: (id, op) => got.push([id, op]) } });
-  assert.equal(el.querySelectorAll('.act-members input[type="checkbox"]').length, 2);
-  el.querySelectorAll('.act-members input[type="checkbox"]')[1].checked = false;
-  [...el.querySelectorAll('button')].find((b) => b.textContent === 'Check out selected').click();
+  const el = renderActionsCard(m, { doc, picked: new Set(['api-1a2b3c4d']),
+    handlers: { onCheckout: (ms) => got.push(ms), onStack: (id, op) => got.push([id, op]) } });
+  assert.deepEqual(rows(el).map((r) => r.dataset.member), ['api-1a2b3c4d', 'web-5e6f7a8b']);
+  footBtn(el).click();
   [...el.querySelectorAll('button')].find((b) => b.textContent === 'Stop stack').click();
   assert.deepEqual(got, [['api-1a2b3c4d'], ['dev', 'stop']]);
-  assert.equal(el.querySelectorAll('section.act-card').length, 2);
+  assert.equal(el.querySelectorAll('section.act-card').length, 0, 'no per-member cards on a workspace run');
   assert.equal(labelsOf(el).filter((t) => t === 'Check out').length, 0);
+});
+
+test('workspace: only changed members get a row; the rest fold into one line', () => {
+  const api = member({ projectKey: 'api-1', projectName: 'api', branch: 'b/api' });
+  const web = member({ projectKey: 'web-2', projectName: 'web', branch: 'b/web', affected: false, files: 0, added: 0, removed: 0 });
+  const none = member({ projectKey: 'lib-3', projectName: 'lib', branch: null, state: 'no-branch', affected: false });
+  const el = renderActionsCard(wsModel([api, web, none]), { doc });
+  assert.deepEqual(rows(el).map((r) => r.dataset.member), ['api-1'], 'one row, the changed member');
+  assert.equal(el.querySelectorAll('.act-members').length, 0, 'the old checkbox strip is gone');
+  assert.equal(el.querySelectorAll('section.act-card').length, 0, 'no per-member cards on a workspace run');
+  const fold = el.querySelector('.act-fold');
+  assert.match(fold.querySelector('summary').textContent, /^2 projects had no changes$/);
+  const names = [...fold.querySelectorAll('.act-fold-names span')].map((s) => s.textContent);
+  assert.deepEqual(names, ['web', '+1 with no branch'], 'a no-branch member is counted, not named');
+  assert.equal(fold.querySelectorAll('button, a, input').length, 0, 'nothing inside the fold is clickable');
+});
+
+test('workspace: select-all counts only changed members, and the footer button tracks the selection', () => {
+  const ms = [member({ projectKey: 'a', projectName: 'a', branch: 'b/a' }), member({ projectKey: 'b', projectName: 'b', branch: 'b/b' }),
+    member({ projectKey: 'c', projectName: 'c', branch: 'b/c', affected: false })];
+  let picked = defaultPicks(ms.filter(isChangedMember));
+  const draw = () => renderActionsCard(wsModel(ms), { doc, picked, onPick: (n) => { picked = n; } });
+  let el = draw();
+  assert.equal(el.querySelectorAll('.act-table tbody .act-cb').length, 2, 'no checkbox for the unchanged member');
+  assert.equal(footBtn(el).textContent, 'Check out 2 projects');
+  const all = el.querySelector('thead .act-cb');
+  assert.equal(all.checked, true);
+  all.checked = false; all.dispatchEvent(new doc.defaultView.Event('change'));
+  assert.equal(picked.size, 0);
+  el = draw();
+  assert.equal(footBtn(el).textContent, 'Check out');
+  assert.equal(footBtn(el).disabled, true);
+  const one = el.querySelector('.act-table tbody .act-cb');
+  one.checked = true; one.dispatchEvent(new doc.defaultView.Event('change'));
+  assert.equal(draw().querySelector('.act-co-foot button').textContent, 'Check out 1 project');
+});
+
+test('workspace: exactly one changed member has no checkbox column; the button names it', () => {
+  const ms = [member({ projectKey: 'a', projectName: 'alpha', branch: 'b/a' }), member({ projectKey: 'b', affected: false })];
+  const el = renderActionsCard(wsModel(ms), { doc, picked: new Set(['a']) });
+  assert.equal(el.querySelectorAll('.act-cb').length, 0, 'no checkboxes and no select-all');
+  assert.equal(footBtn(el).textContent, 'Check out alpha');
+});
+
+test('legacy rows (affected absent or null) still render as changed', () => {
+  const ms = [member({ projectKey: 'a', branch: 'b/a', affected: null, files: null, added: null, removed: null }),
+    member({ projectKey: 'b', branch: 'b/b', affected: undefined })];
+  const el = renderActionsCard(wsModel(ms), { doc, picked: new Set(['a', 'b']) });
+  assert.equal(rows(el).length, 2);
+  assert.equal(el.querySelector('.act-fold'), null, 'nothing folds away');
+  const cells = [...rows(el)[0].querySelectorAll('td')].map((td) => td.textContent.trim());
+  assert.ok(cells.includes('—'), 'an unknown count shows as an em dash, not 0');
+});
+
+test('a run still in progress shows the table with its checkboxes disabled', () => {
+  const ms = [member({ projectKey: 'a', branch: 'b/a' }), member({ projectKey: 'b', branch: 'b/b' })];
+  const el = renderActionsCard(wsModel(ms, { finished: false, runStatus: 'running' }), { doc, picked: new Set(['a']) });
+  assert.equal(rows(el).length, 2, 'the table still shows');
+  assert.ok([...el.querySelectorAll('.act-cb')].every((c) => c.disabled));
+  assert.equal(el.querySelector('.act-co-foot').textContent, 'Check out is available once the run has finished.');
+  assert.equal(el.querySelector('.act-co-foot button'), null);
+});
+
+test('open-in buttons appear only on a row that is checked out; Discard is never the loud button', () => {
+  const pend = member({ projectKey: 'a', projectName: 'a', branch: 'b/a' });
+  const done = member({ projectKey: 'b', projectName: 'b', branch: 'b/b', checkout: { worktreeDir: '/w/b', setup: { status: 'ok' } } });
+  const el = renderActionsCard(wsModel([pend, done]), { doc, picked: new Set(['a']), handlers: { onDiff: () => {} } });
+  const row = el.querySelector('.act-wt-row[data-member="b"]');
+  assert.deepEqual([...row.querySelectorAll('.act-wt-acts button:not(.act-copy)')].map((b) => b.textContent),
+    ['Run', 'Test', 'VS Code', 'Terminal', 'Finder', 'Download patch', 'Discard']);
+  assert.ok(row.querySelector('.act-discard').classList.contains('btn-quiet'), 'Discard is quiet');
+  assert.ok(row.querySelector('.act-path'), 'the checked-out row shows its folder');
+  // the pending row offers none of them
+  assert.equal(el.querySelector('.act-table tbody tr[data-member="a"] button:not(.act-copy)'), null);
+});
+
+test('an unchanged member that is checked out keeps its row, and the fold never claims it', () => {
+  // Reachable without a stale page: Ship It's "Try it first" posts `{}`, which is exempt from the 409 guard
+  // and checks out every member, and a stack step checks its own member out.
+  const cold = member({ projectKey: 'b', projectName: 'b', branch: 'b/b', affected: false, files: 0, added: 0, removed: 0,
+    checkout: { worktreeDir: '/w/b', setup: { status: 'ok' } } });
+  const hot = member({ projectKey: 'a', projectName: 'a', branch: 'b/a' });
+  const el = renderActionsCard(wsModel([hot, cold]), { doc, picked: new Set(['a']), handlers: { onDiff: () => {} } });
+  const row = el.querySelector('.act-wt-row[data-member="b"]');
+  assert.ok(row, 'the checkout has a row even though the run did not change it');
+  assert.deepEqual([...row.querySelectorAll('.act-wt-acts button:not(.act-copy)')].map((b) => b.textContent),
+    ['Run', 'Test', 'VS Code', 'Terminal', 'Finder', 'Download patch', 'Discard'], 'Discard reaches the folder');
+  assert.equal(el.querySelector('.act-fold'), null, 'it is not also listed as "had no changes"');
+  assert.equal(rows(el).some((r) => r.dataset.member === 'b'), false, 'and it is not offered for checkout again');
+  // Even when the run changed nothing at all, the checkout is not swallowed by the empty state.
+  const solo = renderActionsCard(wsModel([cold]), { doc });
+  assert.ok(solo.querySelector('.act-wt-row[data-member="b"]'));
+  assert.equal(solo.querySelector('.act-co-empty'), null);
+});
+
+test('single-project, unchanged: the open-in buttons are gone, not a dialog that leads nowhere', () => {
+  const seen = [];
+  const el = renderActionsCard(model(member({ affected: false, files: 0, added: 0, removed: 0 })),
+    { doc, handlers: { onOpenBeforeCheckout: (...a) => seen.push(a), onBuiltin: (...a) => seen.push(a) } });
+  assert.deepEqual(labelsOf(el), ['Copy command'], 'Copy command is the only button left');
+  assert.doesNotMatch(el.textContent, /Check out takes/, 'and no estimate for a checkout that cannot happen');
+  assert.deepEqual(seen, [], 'nothing was wired to a checkout the server refuses');
+});
+
+test('the footer never offers a checkout the server would refuse, and never ignores a checkbox', () => {
+  // The one row is held in a folder of your own: a plain checkout of it is 409 BRANCH_CHECKED_OUT, which the
+  // client refreshes away quietly — so there must be no primary button at all, only the row's own offer.
+  const held = member({ projectKey: 'a', projectName: 'alpha', branch: 'b/a', heldBy: '/Users/ada/dev/a' });
+  const one = renderActionsCard(wsModel([held]), { doc, picked: defaultPicks([held]) });
+  assert.deepEqual([...one.querySelectorAll('.act-co-foot button')].map((b) => b.textContent), ['Copy git commands'],
+    'no "Check out alpha" that would do nothing');
+  assert.match(one.querySelector('tr[data-member="a"]').textContent, /Use that folder/);
+  // A Folder member next to one real row: no checkbox column, and the button names that row.
+  const git = member({ projectKey: 'g', projectName: 'g', branch: 'b/g' });
+  const copy = member({ projectKey: 'f', projectName: 'f', branch: null, state: 'no-branch', workMode: 'folder', affected: true, files: 2 });
+  const got = [];
+  const el = renderActionsCard(wsModel([git, copy]), { doc, picked: new Set(), handlers: { onCheckout: (ms) => got.push(ms) } });
+  assert.equal(el.querySelectorAll('.act-cb').length, 0, 'one pickable row needs no checkbox');
+  assert.equal(footBtn(el).textContent, 'Check out g');
+  footBtn(el).click();
+  assert.deepEqual(got, [['g']]);
+  // Two pickable rows and a Folder member: the button posts the ticked ones, never the unticked one.
+  const g2 = member({ projectKey: 'g2', projectName: 'g2', branch: 'b/g2' });
+  const sent = [];
+  const el2 = renderActionsCard(wsModel([git, g2, copy]), { doc, picked: new Set(['g2']), handlers: { onCheckout: (ms) => sent.push(ms) } });
+  assert.equal(el2.querySelectorAll('.act-table tbody .act-cb').length, 2, 'no checkbox for the Folder member');
+  footBtn(el2).click();
+  assert.deepEqual(sent, [['g2']]);
+});
+
+test('a long card collapses its checked-out rows to one line, and Show opens one again', () => {
+  const svc = { instanceId: 'i', member: 'c1', actionId: 'run', kind: 'service', status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417', startedAt: 0 };
+  const ms = Array.from({ length: 10 }, (_, i) => member({ projectKey: `p${i}`, projectName: `p${i}`, branch: `b/${i}` }));
+  ms[0] = member({ projectKey: 'c0', projectName: 'c0', branch: 'b/c0', checkout: { worktreeDir: '/w/c0', setup: { status: 'ok' } } });
+  ms[1] = member({ projectKey: 'c1', projectName: 'c1', branch: 'b/c1', checkout: { worktreeDir: '/w/c1', setup: { status: 'ok' } } });
+  let expanded = new Set();
+  const draw = () => renderActionsCard(wsModel(ms, { instances: [svc] }), { doc, picked: new Set(),
+    expanded, onExpand: (k) => { expanded = new Set(expanded).add(k); }, handlers: { onDiff: () => {} } });
+  let el = draw();
+  const ready = el.querySelector('.act-wt-row[data-member="c0"]');
+  const running = el.querySelector('.act-wt-row[data-member="c1"]');
+  assert.equal(ready.querySelector('.act-wt-acts'), null, 'an idle row collapses to its one line');
+  assert.ok(running.querySelector('.act-wt-acts'), 'a running service stays open');
+  assert.equal(running.querySelector('.act-wt-toggle'), null, 'and has nothing to toggle');
+  const show = ready.querySelector('.act-wt-toggle');
+  assert.equal(show.textContent, 'Show');
+  assert.equal(show.getAttribute('aria-expanded'), 'false');
+  show.click();
+  const open = draw().querySelector('.act-wt-row[data-member="c0"]');
+  assert.deepEqual([...open.querySelectorAll('.act-wt-acts button:not(.act-copy)')].map((b) => b.textContent),
+    ['Run', 'Test', 'VS Code', 'Terminal', 'Finder', 'Download patch', 'Discard'], 'everything is reachable again');
+  assert.equal(open.querySelector('.act-wt-toggle').textContent, 'Hide');
+});
+
+test('a held branch is unticked by default and offers its folder; a Folder member never offers checkout', () => {
+  const held = member({ projectKey: 'a', projectName: 'a', branch: 'b/a', heldBy: '/Users/ada/dev/a' });
+  const copy = member({ projectKey: 'b', projectName: 'b', branch: null, state: 'no-branch', workMode: 'folder', affected: true, files: 2 });
+  const changed = [held, copy].filter(isChangedMember);
+  assert.deepEqual([...defaultPicks(changed)], [], 'neither is ticked by default');
+  const el = renderActionsCard(wsModel([held, copy]), { doc, picked: defaultPicks(changed) });
+  assert.deepEqual(rows(el).map((r) => r.dataset.member), ['a', 'b']);
+  assert.match(el.querySelector('tr[data-member="a"]').textContent, /In your folder/);
+  assert.match(el.querySelector('tr[data-member="a"]').textContent, /Use that folder/);
+  assert.match(el.querySelector('tr[data-member="b"]').textContent, /On a copy/);
+  assert.equal(el.querySelector('tr[data-member="b"] .act-cb'), null, 'a Folder member has no checkbox');
+});
+
+test('defaultPicks ticks at most five, and a stack row names the unchanged projects it uses', () => {
+  const many = Array.from({ length: 7 }, (_, i) => member({ projectKey: `p${i}`, projectName: `p${i}`, branch: `b/${i}` }));
+  assert.equal(defaultPicks(many).size, DEFAULT_PICK_LIMIT);
+  assert.equal(defaultPicks(many.slice(0, 4)).size, 4, 'five or fewer: all ticked');
+  const cold = member({ projectKey: 'cold', projectName: 'cold', branch: 'b/cold', affected: false });
+  const m = wsModel([many[0], cold], { stacks: [{ id: 'dev', label: 'Dev stack', kind: 'service', steps: [{ member: 'p0', action: 'run' }, { member: 'cold', action: 'run' }] }] });
+  const el = renderActionsCard(m, { doc, picked: new Set(['p0']) });
+  assert.match(el.querySelector('.act-stack').textContent, /also uses 1 unchanged project/);
+});
+
+test('a workspace run that changed nothing says so and still folds the rest', () => {
+  const ms = [member({ projectKey: 'a', affected: false }), member({ projectKey: 'b', affected: false })];
+  const el = renderActionsCard(wsModel(ms), { doc });
+  assert.match(el.querySelector('.act-co-empty').textContent, /No project changed in this run\./);
+  assert.equal(el.querySelector('.act-table'), null);
+  assert.equal(el.querySelector('.act-co-foot'), null);
+  assert.match(el.querySelector('.act-fold summary').textContent, /2 projects had no changes/);
+});
+
+test('single-project: an unchanged run says so and offers no Check out', () => {
+  const el = renderActionsCard(model(member({ affected: false, files: 0, added: 0, removed: 0 })), { doc });
+  assert.match(el.textContent, /No changes in this project\./);
+  assert.equal([...el.querySelectorAll('button')].find((b) => b.textContent === 'Check out'), undefined);
+  assert.ok([...el.querySelectorAll('button')].find((b) => b.textContent === 'Copy command'), 'Copy command stays');
+});
+
+test('the client and the server agree on which members count as changed', () => {
+  // ui/server.mjs's actions route uses the same predicate inline for totals.changed; this pins them together.
+  const ms = [member({ projectKey: 'a', affected: true }), member({ projectKey: 'b', affected: false }),
+    member({ projectKey: 'c', affected: null }), member({ projectKey: 'd', branch: null, state: 'no-branch', affected: false }),
+    member({ projectKey: 'e', branch: null, state: 'no-branch', workMode: 'folder', affected: true })];
+  const m = wsModel(ms);
+  assert.equal(ms.filter(isChangedMember).length, m.totals.changed);
+  assert.deepEqual(ms.filter(isChangedMember).map((x) => x.projectKey), ['a', 'c', 'e']);
 });
 
 test('shipItTryState: checkout before the branch is checked out, strip after, null when unfinished or branchless', () => {
@@ -146,14 +350,14 @@ test('overview strip: Check out, then open link + Stop while a service runs; nul
   const calls = [];
   const handlers = { onCheckout: () => calls.push('checkout'), onStop: (m, a) => calls.push(['stop', m, a]), onOpenTab: () => calls.push('tab') };
   const a = renderOverviewStrip(model(member()), { doc, handlers });
-  assert.deepEqual(labelsOf(a), ['Check out', 'Open tab ›']);
-  a.querySelector('button').click();
+  assert.deepEqual(labelsOf(a), ['Check out 1 changed project', 'Open tab ›']);
+  a.querySelector('button').click();   // the strip links to the Actions tab now; it never checks out on the spot
   const run = { instanceId: 'i', member: 'app-0cea65fb', actionId: 'run', label: 'Run', kind: 'service', status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417' };
   const b = renderOverviewStrip(model(member({ checkout: { setup: { status: 'ok' } } }), [run]), { doc, handlers });
   assert.equal(b.querySelector('a.act-open').textContent, 'Open :4417');
   [...b.querySelectorAll('button')].find((x) => x.textContent === 'Stop').click();
   [...b.querySelectorAll('button')].find((x) => x.textContent === 'Open tab ›').click();
-  assert.deepEqual(calls, ['checkout', ['stop', 'app-0cea65fb', 'run'], 'tab']);
+  assert.deepEqual(calls, ['tab', ['stop', 'app-0cea65fb', 'run'], 'tab']);
   assert.equal(renderOverviewStrip(model(member({ branch: null })), { doc, handlers }), null);
 });
 
@@ -505,5 +709,25 @@ test('controller: a Discard that succeeds says so in the card', async () => {
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
   assert.match(host.textContent, /Checkout discarded\. Uncommitted changes were saved as a patch in the run's files\./);
+  ctl.destroy();
+});
+
+test('controller: the selection survives a re-render, and a NOT_AFFECTED refusal refreshes with no red error', async () => {
+  const a = member({ projectKey: 'a', projectName: 'a', branch: 'b/a' });
+  const b = member({ projectKey: 'b', projectName: 'b', branch: 'b/b' });
+  const m = { ...model(a), workspace: true, members: [a, b], totals: { members: 2, changed: 2, files: 0, added: 0, removed: 0 } };
+  const { api, calls } = fakeApi((method) => (method === 'GET' ? { ok: true, status: 200, data: m }
+    : { ok: false, status: 409, data: { error: 'No changes in this project', code: 'NOT_AFFECTED', members: ['b'] } }));
+  const host = doc.createElement('div');
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'workspaceId=w', api, ws: { send: () => {} }, host, doc,
+    confirm: async () => true, navigate: () => {} });
+  await ctl.refresh();
+  const cb = host.querySelectorAll('.act-table tbody .act-cb')[1];
+  cb.checked = false; cb.dispatchEvent(new doc.defaultView.Event('change'));
+  assert.equal(host.querySelector('.act-co-foot button').textContent, 'Check out 1 project', 'the untick survived the re-render');
+  host.querySelector('.act-co-foot button').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(host.querySelector('.act-notice'), null, 'a stale page refreshes quietly');
+  assert.ok(calls.filter((c) => c[0] === 'GET').length >= 2, 'it refetched the model');
   ctl.destroy();
 });

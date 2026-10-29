@@ -8534,6 +8534,68 @@ button.act-srow-name{cursor:pointer}
 .badge.act-kept{background:var(--blue-bg);color:var(--blue-ink)}
 .shipit-try{display:flex;gap:8px;align-items:center;margin:10px 0}
 .shipit-try[hidden]{display:none}
+/* ---------- Actions: the workspace checkout card (one table, changed projects only) ---------- */
+.act-co{display:grid;gap:0;padding:0;overflow:hidden}
+.act-co-head{display:grid;gap:2px;padding:16px 20px 12px}
+.act-co-title{margin:0;font-size:var(--fs-section)}
+.act-co-sub{margin:0;font-size:var(--fs-body);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.act-co-empty{display:grid;gap:4px;padding:8px 20px 20px}
+.act-co-empty p{margin:0}
+
+/* The table itself is `.table` (:779); these are the card's deltas only. */
+.act-table{font-size:var(--fs-body)}
+.act-table :is(th,td){padding-left:12px}
+.act-table :is(th,td):first-child{padding-left:20px}
+.act-table :is(th,td).act-c-end{text-align:right;padding-right:20px}
+.act-table th{background:var(--field);border-bottom:1px solid var(--line)}
+.act-table td{vertical-align:middle}
+.act-table tr.act-picked td{background:var(--row-open)}
+.act-table :is(th,td).act-c-cb{width:36px;padding-right:0}
+.act-table .act-branch{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink-2)}
+.act-table .act-c-end .btn{margin-left:8px}
+.act-cb{width:16px;height:16px;margin:0;cursor:pointer}
+.act-cb:disabled{cursor:not-allowed;opacity:.45}
+
+/* A checked-out project: the row grows its folder and its actions. */
+.act-wt{display:grid}
+.act-wt-row{display:grid;gap:10px;padding:14px 20px;border-top:1px solid var(--line)}
+.act-wt-top{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.act-wt-name{font-weight:500}
+.act-wt-lines{font-family:var(--mono);font-size:var(--fs-meta);font-variant-numeric:tabular-nums}
+.act-wt-meta{display:flex;align-items:center;gap:4px;min-width:0}
+.act-wt-chip{margin-left:auto}
+/* Show / Hide on a collapsed row: after the chip, which the margin above has already pushed right. */
+.act-wt-toggle{flex:none}
+.act-wt-acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.act-wt-svc{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:var(--fs-meta);color:var(--ink-2)}
+
+/* One footer line: the primary button, then everything the card says once. */
+.act-co-foot{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding:14px 20px;border-top:1px solid var(--line)}
+.act-co-foot .act-apps,.act-co-foot .hint{margin:0;margin-left:auto;text-align:right}
+
+/* Everything the run did not change, behind one line. */
+.act-fold{border-top:1px solid var(--line)}
+.act-fold>summary{display:flex;align-items:center;gap:8px;padding:12px 20px;cursor:pointer;list-style:none;
+  font-size:var(--fs-body);color:var(--ink-2)}
+.act-fold>summary::-webkit-details-marker{display:none}
+.act-fold>summary::before{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;
+  border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s}
+.act-fold[open]>summary::before{transform:rotate(45deg)}
+.act-fold>summary:hover{color:var(--ink)}
+.act-fold>summary:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.act-fold-body{display:grid;gap:10px;padding:0 20px 16px 36px}
+.act-fold-names{display:flex;flex-wrap:wrap;gap:6px}
+.act-fold-names span{padding:2px 8px;border-radius:var(--r-xs);background:var(--field);
+  font-size:var(--fs-meta);color:var(--ink-2)}
+.act-stack-uses{margin-left:4px}
+
+/* Chips the rows add to the shared .badge contract (:798). */
+.badge.act-busy{background:var(--blue-bg);color:var(--blue-ink-strong);gap:5px}
+.act-spin{width:9px;height:9px;flex:none;border-radius:50%;border:2px solid currentColor;
+  border-right-color:transparent;animation:ws-spin .8s linear infinite}
+
+@media (prefers-reduced-motion:reduce){.act-fold>summary::before{transition:none}.act-spin{animation:none}}
+
 .act-port-range .drow-control .input{width:110px}
 .inherit-field .label-row{gap:8px;align-items:center}
 .inherit-badge{font-size:11px;font-weight:600;padding:1px 6px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink)}

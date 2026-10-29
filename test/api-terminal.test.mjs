@@ -139,12 +139,58 @@ test('a non-string branch on DELETE worktrees answers 400, not a crash', async (
   assert.equal(r2.enabled, true, 'the server is still up');
 });
 
+// run-done is a raw row with no store meta, so its member has no project dir: the start's own checkout
+// reports no-branch and the refusal stands (its wording now says so instead of "check out this run first").
 test('a finished run without a checkout answers 409', async () => {
   const r = await post(`/api/runs/run-done/terminal?${q()}`, {});
   assert.equal(r.status, 409);
   assert.equal((await r.json()).code, 'NOT_CHECKED_OUT');
   const t = await getJson(`/api/runs/run-done/terminal?${q()}`);
   assert.equal(t.members[0].state, 'needs-checkout');
+});
+
+// terminalTargets offers EVERY finished git member and never consults `affected`, while POST /checkout
+// refuses a member the run did not change (409 NOT_AFFECTED). So the start must make its own checkout,
+// or such a member has no terminal left by any route.
+test('a finished run the project did not change: the start checks it out itself and opens a shell there',
+  { skip: !BASH }, async () => {
+    const { seedPipeline } = await import('./helpers/db-seed.mjs');
+    spawnSync('git', ['branch', 'worca/cold'], { cwd: repo, encoding: 'utf8' });   // a branch with no commits of its own
+    const cold = await seedPipeline(repo, { title: 'cold', status: 'done',
+      branch: { source: 'main', feature: 'worca/cold', runRootMode: 'detached', worktreeRemoved: true, branchKept: true } });
+    const refused = await post(`/api/runs/${cold.id}/checkout?${q()}`, { members: [key] });
+    assert.equal(refused.status, 409);
+    assert.equal((await refused.json()).code, 'NOT_AFFECTED', 'the checkout route is a dead end for it');
+
+    const r = await post(`/api/runs/${cold.id}/terminal?${q()}`, {});
+    assert.equal(r.status, 201);
+    const { session } = await r.json();
+    assert.equal(session.runId, cold.id);
+    assert.ok(existsSync(session.cwd), `the shell opened in a checkout the start made: ${session.cwd}`);
+    const t = await getJson(`/api/runs/${cold.id}/terminal?${q()}`);
+    assert.equal(t.members[0].state, 'checkout');
+    await closeSession(session.id);
+    const del = await fetch(`${base}/api/runs/${cold.id}/checkout?${q()}`, { method: 'DELETE',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }) });
+    await del.json();
+  });
+
+// The start's own checkout can fail, and the terminal's error map knows none of the checkout codes:
+// each one has to come back as itself, not as a 500.
+test('a start whose checkout cannot be made answers with that checkout error, not a 500', async () => {
+  const { seedPipeline } = await import('./helpers/db-seed.mjs');
+  spawnSync('git', ['switch', '-q', '-c', 'worca/held'], { cwd: repo, encoding: 'utf8' });   // the person's own folder has it
+  try {
+    const held = await seedPipeline(repo, { title: 'held', status: 'done',
+      branch: { source: 'main', feature: 'worca/held', runRootMode: 'detached', worktreeRemoved: true, branchKept: true } });
+    const r = await post(`/api/runs/${held.id}/terminal?${q()}`, {});
+    assert.equal(r.status, 409);
+    const body = await r.json();
+    assert.equal(body.code, 'BRANCH_CHECKED_OUT');
+    assert.equal(await realpath(body.holder), repo);
+  } finally {
+    spawnSync('git', ['switch', '-q', 'main'], { cwd: repo, encoding: 'utf8' });
+  }
 });
 
 test('open, attach, type, get a block with its author, stop, close', { skip: !BASH }, async () => {

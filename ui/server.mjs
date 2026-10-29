@@ -43,7 +43,7 @@ import {
   folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
-  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
+  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, memberChangeFacts,
 } from '../src/core/artifacts.mjs';
 import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
 import { releaseFolderMember } from '../src/core/folder-members.mjs';
@@ -8253,7 +8253,10 @@ async function askCommandTarget(threadId, { runId = null, member = null, project
     if (!m) throw new Error(member ? 'that project is not part of this run' : 'this run has several projects: pass member');
     if (!m.cwd) {
       throw new Error(m.state === 'needs-checkout'
-        ? 'this finished run has no checkout yet: ask the user to check it out (Actions), then try again'
+        // No folder ever comes from the model, so this waits for the person — and it names a way they can
+        // always take: the Actions tab offers no checkout for a project the run did not change, but opening
+        // a terminal on the run makes one for any member.
+        ? 'this finished run has no checkout yet: ask the user to open a terminal on it (or check it out in Actions), then try again'
         : (m.reason || 'this run has no folder'));
     }
     return { cwd: m.cwd, scope: 'run', label: `${row.title || row.id} · ${m.projectName}`, runId: row.id, member: m.projectKey,
@@ -8366,13 +8369,31 @@ app.post('/api/runs/:id/terminal', async (req, res) => {
     const row = runRowForScope(req, res); if (!row) return;
     const t = terminalTargets(row, { isLive: isLiveRun });
     const want = typeof req.body?.member === 'string' ? req.body.member : null;
-    const m = want ? t.members.find((x) => x.projectKey === want) : (t.members.length === 1 ? t.members[0] : null);
+    let m = want ? t.members.find((x) => x.projectKey === want) : (t.members.length === 1 ? t.members[0] : null);
     if (!m) return res.status(400).json({ error: want ? 'That project is not part of this run.' : 'Pick a project: this run has more than one.', code: 'MEMBER_REQUIRED' });
-    if (!m.cwd) {
-      const code = m.state === 'needs-checkout' ? 'NOT_CHECKED_OUT' : 'NO_FOLDER';
-      return res.status(409).json({ error: code === 'NOT_CHECKED_OUT' ? 'Check out this run first.' : (m.reason || 'This run has no folder.'), code });
-    }
     const by = actorOf(req);
+    // A finished run with no checkout: make one here, the way a stack step does (resolveStep). The pane
+    // used to POST /checkout first, but that route refuses a member the run did not change (NOT_AFFECTED)
+    // while terminalTargets offers EVERY finished git member — so asking for a shell was answered with a
+    // diff fact and that member had no terminal left by any route. The core carries no such guard and
+    // checkoutRun is idempotent, so this is the only place that decides. The checkout cap is left to the
+    // next normal checkout and the keep sweep, as resolve-terminal's own checkout is.
+    if (!m.cwd && m.state === 'needs-checkout') {
+      let co = null;
+      try {
+        co = await checkoutRun({ id: row.id, members: [m.projectKey], by, isLive: isLiveRun, isFinishing: isFinishingRun });
+      } catch (e) { return sendCheckoutError(res, e); }   // terminalError knows none of the checkout codes
+      for (const x of co.members.filter((y) => y.state === 'checked-out' && !y.external)) ensureSetup(row.id, x.projectKey, { enabled: actionsEnabledHere(req) });
+      emitChanged('pipelines-changed', 'updated');
+      emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
+      // The row in hand still says needs-checkout: terminalTargets reads the branch records (resolve-terminal does the same).
+      m = terminalTargets(findPipelineRowById(row.id), { isLive: isLiveRun }).members.find((x) => x.projectKey === m.projectKey) || m;
+    }
+    if (!m.cwd) {
+      // NOT_CHECKED_OUT is only reachable with a checkout just attempted: the member has no branch of this run.
+      const code = m.state === 'needs-checkout' ? 'NOT_CHECKED_OUT' : 'NO_FOLDER';
+      return res.status(409).json({ error: code === 'NOT_CHECKED_OUT' ? 'This run has no branch in this project to open.' : (m.reason || 'This run has no folder.'), code });
+    }
     const session = await terminals.open({ cwd: m.cwd, scope: 'run', label: `${row.title || row.id} · ${m.projectName}`, runId: row.id,
       member: m.projectKey, projectKey: m.projectKey, branch: m.branch, workspace: t.workspace, runLive: t.live, by,
       cols: req.body?.cols, rows: req.body?.rows, actionSnaps: activeActionSnaps(row.id) });
@@ -8526,9 +8547,18 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
   return job;
 }
 
+/** The run's frozen results.json, or null. The same read askPrCardFacts (:11797) and askRunCardExtras
+ *  (:14290) each still do inline. */
+async function readRunResults(row) {
+  try {
+    const dir = await runDirForRow(row);
+    return dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
+  } catch { return null; }
+}
+
 function sendCheckoutError(res, e) {
   const map = { NOT_FOUND: 404, BAD_REQUEST: 400, NOT_FINISHED: 409, RETAINED: 409, BRANCH_MISSING: 409,
-    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409 };
+    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, NOT_AFFECTED: 409 };
   res.status(map[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
@@ -8536,10 +8566,22 @@ function sendCheckoutError(res, e) {
 app.post('/api/runs/:id/checkout', async (req, res) => {
   const row = runRowForScope(req, res); if (!row) return;
   const members = Array.isArray(req.body?.members) ? req.body.members.filter((x) => typeof x === 'string') : null;
+  const useExisting = req.body?.useExisting === true;
+  // The tab only offers members the run changed, so an explicitly named unchanged member means the
+  // page is stale: refuse rather than make an empty worktree and run its setup. Guarded in the route and
+  // not in checkout.mjs on purpose — the server's own callers of the core must keep working, and one of
+  // them NEEDS an unchanged member: stack start checks a step's member out itself (resolveStep, the
+  // `/stacks/:stackId/start` route), as do resolve-terminal and Try it.
+  // `members: null` (check out everything, which Ship It sends) and useExisting are exempt too.
+  if (members?.length && !useExisting) {
+    const facts = await memberChangeFacts(row, membersOfRow(row), await readRunResults(row), { live: true });
+    const stale = members.filter((k) => facts.get(k)?.affected === false);
+    if (stale.length) return res.status(409).json({ error: 'No changes in this project', code: 'NOT_AFFECTED', members: stale });
+  }
   try {
     // useExisting: the branch is already checked out in the person's own folder; link it (checkout.mjs).
     const r = await checkoutRun({ id: row.id, members, by: actorOf(req), isLive: isLiveRun, isFinishing: isFinishingRun,
-      useExisting: req.body?.useExisting === true });
+      useExisting });
     const enabled = actionsEnabledHere(req);
     for (const m of r.members.filter((x) => x.state === 'checked-out')) ensureSetup(row.id, m.projectKey, { enabled });   // not awaited: frames stream
     const { maxCheckouts } = actionsSettings();
@@ -8674,13 +8716,35 @@ app.post('/api/runs/:id/stacks/:stackId/start', async (req, res) => {
   const members = membersOfRow(row);
   const aliases = memberAliases(members.map((m) => ({ projectKey: m.projectKey, name: m.projectName || path.basename(m.projectDir || '') })));
   const nameOf = Object.fromEntries(members.map((m) => [m.projectKey, m.projectName || m.projectKey]));
+  // Read while the request is still live: resolveStep runs after the response, so req.socket is gone by then
+  // (the same hazard ensureSetup's doc comment names).
+  const by = actorOf(req);
   // D29: a step whose member has not run setup yet (kept by policy → `pending`, or `interrupted`, or a
   // setup still running from Check out) runs/awaits that setup first, like a single start does (D25).
   // Resolved lazily, step by step, so the setup state is read when the step is reached.
   const resolveStep = async (st) => {
     const action = readProjectActions(st.member).actions.find((a) => a.id === st.action) || null;
     let rec = checkoutRecOf(row.id, st.member);
-    if (!rec) return { action, worktreeDir: null, error: `${nameOf[st.member]} is not checked out` };
+    // A stack can legitimately name a member the run did not change (a database, a worker): the Actions tab
+    // offers no checkout for one and POST /checkout refuses it (NOT_AFFECTED), so the step checks it out
+    // itself. The core carries no such guard, and checkoutRun is idempotent, so this is the only place that
+    // decides. The fresh stamp is setup `pending`, which the branch below then runs.
+    if (!rec) {
+      try {
+        const co = await checkoutRun({ id: row.id, members: [st.member], by, isLive: isLiveRun, isFinishing: isFinishingRun });
+        if (co.members.some((x) => x.projectKey === st.member && x.state === 'no-branch')) {
+          return { action, worktreeDir: null, error: `${nameOf[st.member]} has no branch from this run to check out` };
+        }
+        emitChanged('pipelines-changed', 'updated');
+        emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
+      } catch (e) {
+        // A throw here would reach runStack as a rejection, which it reports as "no longer has the action":
+        // hand it the real reason instead (the branch is in the person's own folder, the run is not finished).
+        return { action, worktreeDir: null, error: `${nameOf[st.member]} could not be checked out: ${e?.message || String(e)}` };
+      }
+      rec = checkoutRecOf(row.id, st.member);
+      if (!rec) return { action, worktreeDir: null, error: `${nameOf[st.member]} is not checked out` };
+    }
     const setup = rec.setup?.status;
     if (setup === 'failed') return { action, worktreeDir: null, error: `the setup command of ${nameOf[st.member]} failed; run setup again` };
     if (!['ok', 'none', 'skipped'].includes(setup) || setupJobs.has(`${row.id}:${st.member}`)) {
@@ -8779,29 +8843,45 @@ app.post('/api/actions/launchers/try', async (req, res) => {
 app.get('/api/runs/:id/actions', async (req, res) => {
   const row = runRowForScope(req, res); if (!row) return;
   try {
+    const all = membersOfRow(row);
+    const finished = ['done', 'stopped', 'error'].includes(row.status);
+    // Change facts, so the tab can offer only what the run touched. The frozen results.json answers
+    // for a finished run with no git at all; `live:false` keeps a run still going from spawning
+    // rev-list per member (its counts are about to move anyway — it reports affected:null).
+    const facts = await memberChangeFacts(row, all, await readRunResults(row), { live: finished });
+    const totals = { members: all.length, changed: 0, files: 0, added: 0, removed: 0 };
+    const members = await Promise.all(all.map(async (m) => {
+      const cfg = readProjectActions(m.projectKey);
+      const rec = checkoutRecordsFor(row)?.members.find((x) => x.projectKey === m.projectKey) || null;
+      const pushed = m.br?.feature && m.projectDir ? await branchPushedTo(m.projectDir, m.br.feature) : null;
+      // Not checked out, but the branch is in another folder (the person's own clone): Check out would be refused,
+      // so the card offers that folder instead ("Use that folder", checkout useExisting).
+      const held = !rec && m.br?.feature && m.projectDir ? await worktreePathForBranch(m.projectDir, m.br.feature).catch(() => null) : null;
+      // Coarse, server-side: 'no-branch' | 'not-checked-out' | 'checked-out'. The card's finer view state
+      // (setting-up / setup-failed / ready / running / task-result) is memberViewState() in the browser.
+      const state = !m.br?.feature ? 'no-branch' : rec ? 'checked-out' : 'not-checked-out';
+      const f = facts.get(m.projectKey) || { affected: null, files: null, added: null, removed: null, workMode: 'git' };
+      // Offered for checkout = the run changed it. Unknown (null) counts as changed, so a legacy row
+      // keeps working. Mirrors isChangedMember() in ui/public/actions-view.mjs — keep the two in step.
+      if (f.affected !== false && (state !== 'no-branch' || f.workMode === 'folder')) {
+        totals.changed += 1;
+        totals.files += f.files | 0; totals.added += f.added | 0; totals.removed += f.removed | 0;
+      }
+      return { projectKey: m.projectKey, projectName: m.projectName, projectDir: m.projectDir, state, branch: m.br?.feature || null,
+        ...(held ? { heldBy: held } : {}),
+        affected: f.affected, files: f.files, added: f.added, removed: f.removed, workMode: f.workMode,
+        worktreeDir: m.projectDir ? checkoutPathFor(row, m) : null, checkout: rec, pushed,
+        setupQueued: setupJobs.has(`${row.id}:${m.projectKey}`),
+        copyCommand: m.br?.feature && m.projectDir ? copyCommandText({ projectDir: m.projectDir, branch: m.br.feature, pushed }) : null,
+        setup: cfg.setup, actions: cfg.actions.map(({ id, label, kind, openUrl }) => ({ id, label, kind, openUrl })),
+        builtins: Object.entries(builtins()).filter(([k, v]) => v && cfg.builtins[k] !== false).map(([k, v]) => ({ key: k, label: v.label })) };
+    }));
     res.json({
-      enabled: actionsEnabledHere(req), runStatus: row.status, finished: ['done', 'stopped', 'error'].includes(row.status),
+      enabled: actionsEnabledHere(req), runStatus: row.status, finished,
       workspace: row.target === 'workspace',
       // A workspace row can have an empty projects list (old or partial rows): never index [0] blindly.
-      estimate: { lastSetupMs: (() => { const pk = membersOfRow(row)[0]?.projectKey; return pk ? readActionsMeta(pk).lastSetupMs || null : null; })() },
-      members: await Promise.all(membersOfRow(row).map(async (m) => {
-        const cfg = readProjectActions(m.projectKey);
-        const rec = checkoutRecordsFor(row)?.members.find((x) => x.projectKey === m.projectKey) || null;
-        const pushed = m.br?.feature && m.projectDir ? await branchPushedTo(m.projectDir, m.br.feature) : null;
-        // Not checked out, but the branch is in another folder (the person's own clone): Check out would be refused,
-        // so the card offers that folder instead ("Use that folder", checkout useExisting).
-        const held = !rec && m.br?.feature && m.projectDir ? await worktreePathForBranch(m.projectDir, m.br.feature).catch(() => null) : null;
-        // Coarse, server-side: 'no-branch' | 'not-checked-out' | 'checked-out'. The card's finer view state
-        // (setting-up / setup-failed / ready / running / task-result) is memberViewState() in the browser.
-        const state = !m.br?.feature ? 'no-branch' : rec ? 'checked-out' : 'not-checked-out';
-        return { projectKey: m.projectKey, projectName: m.projectName, projectDir: m.projectDir, state, branch: m.br?.feature || null,
-          ...(held ? { heldBy: held } : {}),
-          worktreeDir: m.projectDir ? checkoutPathFor(row, m) : null, checkout: rec, pushed,
-          setupQueued: setupJobs.has(`${row.id}:${m.projectKey}`),
-          copyCommand: m.br?.feature && m.projectDir ? copyCommandText({ projectDir: m.projectDir, branch: m.br.feature, pushed }) : null,
-          setup: cfg.setup, actions: cfg.actions.map(({ id, label, kind, openUrl }) => ({ id, label, kind, openUrl })),
-          builtins: Object.entries(builtins()).filter(([k, v]) => v && cfg.builtins[k] !== false).map(([k, v]) => ({ key: k, label: v.label })) };
-      })),
+      estimate: { lastSetupMs: (() => { const pk = all[0]?.projectKey; return pk ? readActionsMeta(pk).lastSetupMs || null : null; })() },
+      members, totals,
       stacks: row.target === 'workspace' ? readWorkspaceStacks(bareWorkspaceKey(row)) : [],
       stackStates: [...stackStates.values()].filter((s) => s.runId === row.id),
       instances: actions.listFor(row.id),
