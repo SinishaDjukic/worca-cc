@@ -15,7 +15,7 @@
 
 # The base image is pinned by its multi-arch index digest, so a re-pushed tag cannot change what
 # the build starts from. A literal FROM (no build arg) so Dependabot can propose the bumps.
-FROM node:22-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
+FROM node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370
 
 ARG WORCA_TARBALL
 ARG CLAUDE_CODE_VERSION
