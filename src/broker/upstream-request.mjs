@@ -32,12 +32,13 @@ export function fetchUpstream(url, { method = 'GET', headers = {}, timeout = 0 }
     if (destroyed) return req;
     destroyed = true;
     clearTimeout(timer);
-    ac.abort();
     // Like ClientRequest, an abort with no reason still errors whoever is waiting: the
     // response stream once it exists, else the request. service.mjs books and releases
     // the concurrency slot from those 'error' handlers (an agent hanging up mid-stream).
+    // The response goes first: on Node 24 the abort errors it with its own AbortError.
     const e = err || Object.assign(new Error(res ? 'aborted' : 'socket hang up'), { code: 'ECONNRESET' });
     if (res && !res.readableEnded) res.destroy(e);
+    ac.abort();
     if (err || !res) process.nextTick(() => req.emit('error', e));
     return req;
   };
