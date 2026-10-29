@@ -12,6 +12,7 @@ import { mountDirs, withStoreLock, refreshMount } from '../memory-sync.mjs';
 import { memoryCaps } from '../settings.mjs';
 import { listProjects, worcaHome } from '../projects.mjs';
 import { PROJECT_KEY_RE } from '../store.mjs';
+import { readOnlyForAgents } from '../agent-user.mjs';
 import { mountTeamLayer, refreshTeamLayerSoon, teamListing, readTeamNote, teamMemoryLoadOf, memoryLoadPlan, memoryLoadPlans, loadFilteredDirs } from '../memory-team.mjs';
 
 /** {key, name, path} for a registered project key, or null. */
@@ -81,6 +82,9 @@ export function defaultMemoryDeps({ threadId }) {
   };
 }
 
+/** The Ask memory mount's modes: readable by the agents' group, never writable by it (1.4). */
+const MOUNT_MODES = { dirMode: 0o750, fileMode: 0o640 };
+
 /** `<home>/ask/memory/<projectKey|global>` — the --add-dir base of one scope set. Never the cwd (one
  *  Claude Code project slug for every thread) and never under tmp/ (Read-denied there). `global` is a
  *  safe sentinel: a registry key is `<slug>-<8 hex>` (PROJECT_KEY_RE), so it can never be that word. */
@@ -107,6 +111,10 @@ export async function refreshAskMemoryMount({ projectKey = null, projectName = n
   const base = askMemoryMountBase(projectKey);
   const dirs = mountDirs({ members: projectKey ? [{ projectKey, projectName }] : [], isWorkspace: false });
   return withStoreLock(memoryRoot(), async () => {
+    // 1.4: every pool user's agent reads ask/memory, so none may write it: what one person's agent changed there would
+    // load as rules into another person's chat. Existing folders and files lose group write first (no folder can be
+    // swapped while it is filled), and what this refresh makes is made without it.
+    readOnlyForAgents(join(worcaHome(), 'ask', 'memory'));
     // Two different failures reach ONE callback: a junk name / unreadable file in the STORE (the
     // listing, `listMemoryDir` → ENAME) and a mount target that could not be written (the rename).
     // Only the second has a "previous copy"; reporting a store name that way would promise a copy
@@ -118,13 +126,13 @@ export async function refreshAskMemoryMount({ projectKey = null, projectName = n
     // What the project loads (team-memory-load-choice.md): every local note, or — team notes only — the ones that are
     // team notes. One plan for both halves of the mount.
     const plans = await memoryLoadPlans(dirs);
-    const { files } = await refreshMount({ root: memoryRoot(), mount: rules, dirs: loadFilteredDirs(dirs, plans), onError });
+    const { files } = await refreshMount({ root: memoryRoot(), mount: rules, dirs: loadFilteredDirs(dirs, plans), onError, ...MOUNT_MODES });
     // Team memory (phase 1a): the project's team folder (rules/team/), shadowed by same-named local notes; an opted-out
     // project's folder is emptied. The fetch runs in the background — a turn never waits on the network. A team-layer
     // failure never costs the turn its local memory: thrown from here, the turn's catch would drop the whole mount.
     if (projectKey) refreshTeamLayerSoon(projectKey);
     let team = 0;
-    try { team = (await mountTeamLayer({ rules, dirs, plans })).reduce((n, t) => n + t.count, 0); }
+    try { team = (await mountTeamLayer({ rules, dirs, plans, modes: MOUNT_MODES })).reduce((n, t) => n + t.count, 0); }
     catch (err) { console.warn(`[worca-ask] team memory: team notes not mounted (${err?.message || err}); local memory is served this turn`); }
     return files + team ? base : null;
   });

@@ -162,7 +162,7 @@ test('worker: identity via /users/@me; bot/self/off-list messages filtered; empt
     { id: 'm5', channel_id: 'C1', content: '', author: { id: 'U1' } },
   ]) s.frame({ op: 0, t: 'MESSAGE_CREATE', s: 2, d: m });
   assert.deepEqual(events.inbound.map((m) => m.text), ['/status', '']);
-  assert.deepEqual(events.inbound[0].meta, { platform: 'discord', messageId: 'm1', guildId: 'G1', username: 'sam' });
+  assert.deepEqual(events.inbound[0].meta, { platform: 'discord', messageId: 'm1', guildId: 'G1', username: 'sam', isGroup: true });
   assert.ok(events.logs.some((l) => /MESSAGE CONTENT INTENT/.test(l)), 'empty-content hint logged once');
   await w.stop();
 });
@@ -345,4 +345,13 @@ test('gateway: close 4007 (invalid seq) drops the session and re-IDENTIFIES', as
   await waitFor(() => s2.sent.find((f) => f.op === 2));
   assert.equal(s2.sent.find((f) => f.op === 6), undefined, 'no RESUME with a dead session');
   client.stop();
+});
+
+test('V20: the README never promises DMs while the gateway lacks the DIRECT_MESSAGES intent', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const readme = await readFile(new URL('../plugins/discord-chat/README.md', import.meta.url), 'utf8');
+  const DIRECT_MESSAGES = 1 << 12;
+  assert.equal(INTENTS & DIRECT_MESSAGES, 0);
+  assert.doesNotMatch(readme, /direct\s+message to the bot always works/);
+  assert.match(readme, /DIRECT_MESSAGES intent/);
 });

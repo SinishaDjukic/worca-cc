@@ -632,3 +632,36 @@ test('start(): a {plugin, channelId} filter spawns only that channel; no filter 
     } },
   ]);
 });
+
+// G12: on a container with a plugin user, chat workers and the --check child run as that user
+// (sudo -u worca-plugin, its own HOME, own process group), never as worca.
+test('workers and --check spawn as the container plugin user when there is one', async () => {
+  installFixture();
+  const calls = [];
+  const saved = { ...process.env };
+  Object.assign(process.env, { WORCA_PLUGIN_USER: 'worca-plugin', WORCA_PLUGIN_HOME: '/data/plugin-home', WORCA_AGENT_GID: '1001' });
+  try {
+    const host = createChannelHost({
+      logger: () => {}, _backoffMs: [10_000],
+      _spawn: (file, args, opts) => { calls.push({ file, args, opts }); return makeFakeProc(); },
+    });
+    host.start();
+    const check = host.checkChannel(NAME, 'main', { timeoutMs: 50 }).catch(() => null);
+    await check;
+    assert.equal(calls.length, 2, 'one worker, one --check');
+    for (const c of calls) {
+      assert.equal(c.file, 'sudo');
+      assert.deepEqual(c.args.slice(0, 5), ['-n', '-E', '-u', 'worca-plugin', '--']);
+      assert.equal(c.opts.env.HOME, '/data/plugin-home');
+      assert.ok(!Object.keys(c.opts.env).some((k) => k.startsWith('WORCA_')), 'still scrubbed');
+      assert.equal(c.opts.detached, true);
+    }
+    assert.ok(calls[1].args.includes('--check'));
+    calls[0].emit?.('exit', 0, null);
+    await host.stop();
+  } finally {
+    for (const k of ['WORCA_PLUGIN_USER', 'WORCA_PLUGIN_HOME', 'WORCA_AGENT_GID']) {
+      if (k in saved) process.env[k] = saved[k]; else delete process.env[k];
+    }
+  }
+});

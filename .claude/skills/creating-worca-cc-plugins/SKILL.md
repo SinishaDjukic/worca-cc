@@ -105,6 +105,14 @@ and an agent's `ask.forms` (see [Ask forms](#ask-forms-api-4)).
 `configSchema[]` supports only `text` and `select`; `secret: true` renders `type=password` and is
 never sent back to the browser (arrives redacted as `{set: true}`).
 
+Secrets are stored in the plugin's `data/secrets.json` (mode 0600) under Worca's home and reach your
+connector or chat worker on stdin, never in its env. That is not isolation between plugins: on a
+native install every plugin child runs as Worca's own user and could open any plugin's
+`secrets.json`. Only the container with single-volume isolation runs connectors and chat workers
+as a separate `worca-plugin` user, with its own `HOME` and no access to `data/` or Worca's home
+(docs/docker.md). Don't promise users more, and on that container don't write into your own
+install folder (it is read-only to that user): keep caches under `HOME`.
+
 **`remote-select` + `optionsFrom` is the extensibility hatch.** Naming an op there is also what
 allowlists it for the browser — undeclared ops are rejected with 400 at `/api/sources/call`.
 The data, filtering, and pagination semantics behind every widget are entirely yours.

@@ -5,10 +5,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, chmod, readFile, mkdir, stat } from 'node:fs/promises';
+import { chmodSync, statSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import {
-  agentIdentity, resolveOnPath, agentSpawn, killAgentGroup, killAgentGroupSync, shareWithAgent,
+  agentIdentity, resolveOnPath, agentSpawn, killAgentGroup, killAgentGroupSync, shareWithAgent, assertOwnFolders,
 } from '../src/core/agent-user.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { runOpts } from '../src/core/phases.mjs';
@@ -80,6 +81,46 @@ test('shareWithAgent: the whole staged folder for the group (sub-folders travers
   assert.equal(await mode(join(root, 'other')), 0o710, 'without stopAt: its direct parent only');
   assert.equal(await mode(root), (await stat(root)).mode & 0o7777);
   shareWithAgent(lone, { ...id, gid: null });   // no shared group: nothing to do, never a throw
+});
+
+test('V10: shareWithAgent gives staged files to the agent user\'s own group; a non-sticky parent gets traverse only, a sticky one keeps its bits', POSIX, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'worca-share-'));
+  const tmpBase = join(root, 'tmp');
+  const staged = join(tmpBase, 'copilot', 'spawn-1');
+  await mkdir(staged, { recursive: true });
+  await chmod(join(tmpBase, 'copilot'), 0o770);   // what umask 0007 leaves on a folder the server made
+  await writeFile(join(staged, 'mcp-config.json'), '{"env":{"WORCA_ASK_RELAY_TOKEN":"t"}}', { mode: 0o600 });
+  const chowns = [];
+  const fsOps = { chownSync: (p, _u, g) => chowns.push([p, g]), chmodSync, statSync, readdirSync };
+  const id = { ...ID, gid: 1001, runGid: 1101 };
+  shareWithAgent(staged, id, { stopAt: tmpBase, writable: true, fsOps });
+  const gidOf = (p) => chowns.find(([q]) => q === p)?.[1];
+  assert.equal(gidOf(join(staged, 'mcp-config.json')), 1101, 'the token file: that agent user\'s own group, never the shared one');
+  assert.equal(gidOf(staged), 1101);
+  assert.equal(gidOf(join(tmpBase, 'copilot')), 1001, 'the parent: the shared group, for traverse');
+  assert.equal(await mode(join(tmpBase, 'copilot')), 0o710, 'never list, never write: no other agent replaces what is inside');
+  assert.equal(await mode(join(staged, 'mcp-config.json')), 0o640);
+  // A sticky parent (tmp/ask, 3770 in the image) keeps write and sticky.
+  const sticky = join(root, 'tmp2'); const ask = join(sticky, 'ask'); const g = join(ask, 'gemini', 't1', '.gemini');
+  await mkdir(g, { recursive: true }); await chmod(ask, 0o1770);
+  shareWithAgent(g, id, { stopAt: sticky, fsOps });
+  assert.equal(await mode(ask), 0o1770);
+  // Without a pool group, the shared group as before.
+  chowns.length = 0;
+  shareWithAgent(staged, { ...ID, gid: 1001 }, { stopAt: tmpBase, fsOps });
+  assert.equal(gidOf(join(staged, 'mcp-config.json')), 1001);
+});
+
+test('V10: assertOwnFolders refuses a link, or a folder another user made, between the shared base and the chat folder', POSIX, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'worca-own-'));
+  const ask = join(root, 'ask');
+  await mkdir(join(ask, 'gemini', 't1'), { recursive: true });
+  assert.doesNotThrow(() => assertOwnFolders(join(ask, 'gemini', 't1', '.gemini'), ask), 'worca\'s own folders, and one not made yet');
+  assert.throws(() => assertOwnFolders(join(ask, 'gemini', 't1'), ask, { uid: process.getuid() + 1 }), /another user/);
+  const elsewhere = join(root, 'elsewhere'); await mkdir(elsewhere);
+  symlinkSync(elsewhere, join(ask, 'qwen'));
+  assert.throws(() => assertOwnFolders(join(ask, 'qwen', 't1'), ask), /a link/);
+  assert.doesNotThrow(() => assertOwnFolders(join(ask, 'gemini'), ask, { uid: null }), 'no uids: nothing to check');
 });
 
 test('killAgentGroup(Sync): kills the whole group as the agent, never pid 1 or a bad pid', () => {

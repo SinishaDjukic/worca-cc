@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { join, dirname, isAbsolute, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { gitAvailable } from '../git-available.mjs';
+import { guardedGitEnvSync } from '../git-guard.mjs';
 
 /** Per engine: the dir its files sit in, the files (relative to the cwd), and its display name. */
 const ENGINES = Object.freeze({
@@ -30,7 +31,7 @@ const engineOf = (name) => {
 /** The engine whose project file `rel` is, or null. */
 const engineOfFile = (rel) => Object.keys(ENGINES).find((k) => ENGINES[k].files.includes(rel)) ?? null;
 
-const git = (cwd, args) => { if (!gitAvailable()) return null; try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
+const git = (cwd, args) => { if (!gitAvailable()) return null; try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: guardedGitEnvSync(cwd) }).trim(); } catch { return null; } };
 const excludeNote = (engine) => `# worca: ${engineOf(engine).label} engine config written into run checkouts (engines/project-files.mjs)`;
 /** Whether `dir` or a parent holds a `.git` (so a failed `git rev-parse` is a git failure, not "no repository"). */
 const gitAbove = (dir) => { for (let d = resolve(dir); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (dirname(d) === d) return false; } };
@@ -151,4 +152,25 @@ export function writeProjectFiles(engine, cwd, files, { git: useGit = true } = {
       throw err;
     }
   }
+}
+
+/**
+ * After a spawn: put back each of `files` (`engine`'s project files) that no longer holds worca's text (G14). The
+ * engine reads them from the checkout the agent writes, so an agent can loosen the rules they carry, and what it
+ * changed must not reach the next spawn or a resume: a changed file, or one replaced by a symlink or a folder, is
+ * unlinked (never followed) and written again; a deleted one is written again. Returns the paths it put back. An
+ * engine dir that became a symlink is not written through: it throws, and the next spawn refuses.
+ */
+export function restoreProjectFiles(engine, cwd, files, opts) {
+  const { dir, label } = engineOf(engine);
+  const changed = Object.entries(files).filter(([rel, text]) => {
+    try { return !lstatSync(join(cwd, rel)).isFile() || readFileSync(join(cwd, rel), 'utf8') !== text; } catch { return true; }
+  }).map(([rel]) => rel);
+  if (!changed.length) return changed;
+  let linked = false;
+  try { linked = lstatSync(join(cwd, dir)).isSymbolicLink(); } catch { /* absent: written again below */ }
+  if (linked) throw new Error(`${join(cwd, dir)} became a symlink — worca will not restore ${label}'s config through it`);
+  for (const rel of changed) { const abs = join(cwd, rel); rmSync(abs, { recursive: true, force: true }); forgetOwned(engine, abs); }
+  writeProjectFiles(engine, cwd, files, opts);
+  return changed;
 }

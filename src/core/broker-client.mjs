@@ -7,7 +7,7 @@
 //   WORCA_BROKER_URL          the broker's INTERNAL address (http://broker:8080). Unset = off.
 //   WORCA_BROKER_SECRET(_FILE) the shared secret for the broker's /internal API
 //   WORCA_BROKER_SYSTEM_BILL_TO who pays for work no signed-in person caused
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 /** This server process's identity towards the broker: tokens issued under an older one are revoked at boot. */
@@ -48,12 +48,57 @@ export function brokerConfig(env = process.env, readFile = readFileSync) {
   return { url, secret, error };
 }
 
+// The shared secret, once sealBrokerSecret moved it out of process.env; and, when it came from
+// WORCA_BROKER_SECRET_FILE, why that file could not be read and the file's mode.
+let _secret = null;
+let _secretFileError = null;
+let _secretFileMode = null;
+
+/**
+ * Move the broker secret out of process.env into this module: WORCA_BROKER_SECRET, or the contents of
+ * WORCA_BROKER_SECRET_FILE (read once, here), and both variables deleted. Every child worca starts from
+ * process.env (a script tool with env scrub off, an MCP server, a terminal, a git hook) would otherwise
+ * inherit the secret, or the file's path, which an agent user reads when the file's mode allows (X2).
+ * ui/server.mjs calls this before anything can spawn; the first broker call does too (the CLI). A value set
+ * again later replaces the sealed one. /proc/<pid>/environ still shows the environment the process started
+ * with: only another uid keeps an agent out of that (docs/credential-broker.md, agent users).
+ */
+export function sealBrokerSecret({ readFile = readFileSync, stat = statSync } = {}) {
+  const file = String(process.env.WORCA_BROKER_SECRET_FILE || '').trim();
+  if (file) {
+    _secretFileError = null; _secretFileMode = null;
+    try {
+      _secret = String(readFile(file, 'utf8')).trim() || null;
+      try { _secretFileMode = stat(file).mode & 0o777; } catch { _secretFileMode = null; }
+    } catch (err) { _secret = null; _secretFileError = `WORCA_BROKER_SECRET_FILE cannot be read: ${err.code || err.message}`; }
+    delete process.env.WORCA_BROKER_SECRET_FILE;
+    delete process.env.WORCA_BROKER_SECRET;
+    _cfg = null;
+    return;
+  }
+  if (typeof process.env.WORCA_BROKER_SECRET !== 'string') return;
+  _secret = process.env.WORCA_BROKER_SECRET;
+  _secretFileError = null; _secretFileMode = null;
+  delete process.env.WORCA_BROKER_SECRET;
+}
+
+/** The mode (& 0o777) of the WORCA_BROKER_SECRET_FILE the sealed secret came from, or null. */
+export function sealedSecretFileMode() { return _secretFileMode; }
+
 let _cfg = null;
-function cfg() {
-  if (!_cfg) _cfg = brokerConfig();
+/** This process's broker config (null when off), with the sealed secret. */
+export function currentBrokerConfig() {
+  if (!_cfg) {
+    sealBrokerSecret();
+    const env = { ...process.env };
+    if (_secret !== null) env.WORCA_BROKER_SECRET = _secret;
+    _cfg = brokerConfig(env);
+    if (_cfg && _secretFileError) _cfg = { ..._cfg, error: _secretFileError };
+  }
   return _cfg;
 }
-/** Test seam: forget cached config and info. */
+const cfg = currentBrokerConfig;
+/** Test seam: forget cached config and info (not the sealed secret). */
 export function resetBrokerClient() { _cfg = null; _info = null; }
 
 async function call(method, path, body, { timeoutMs = CALL_TIMEOUT_MS, fetchImpl = fetch } = {}) {
