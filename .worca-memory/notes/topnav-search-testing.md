@@ -2,7 +2,7 @@
 name: topnav-search-testing
 description: Testing the top bar "Search or ask" end to end — where app.js wiring is testable, and how to pin a ranking rule against a fixed catalogue
 paths: ui/public/topnav-search.mjs, ui/public/global-search.mjs, test/ui-topnav-search-app.test.mjs, test/ui-global-search.test.mjs
-updated: 2026-10-29T15:09:40.664Z
+updated: 2026-10-29T15:27:25.771Z
 author: Bulibas
 ---
 
@@ -28,5 +28,11 @@ the plan listed was killed (plugins plan cycle 1, 2026-10-29, 18 of 44 survived)
 
 Pin the bail by holding the arm's answer in a deferred promise, navigating away, then releasing it. Pin each reset
 with its own row. Pin the cache's failed-read path with `boot({ down: { '/api/marketplaces': 500 } })`.
+`boot()` takes `holds` (path → promise) and both `holds` and `down` stay mutable after boot: add the hold AFTER the
+search's own lazy read, just before the click, or the search list never fills. A `currentView() !== X` check and a
+`parseHash()[1] !== param` check each need their own move: a same-view hash with another tail (`#models`) kills only
+the param check, and only a hash on ANOTHER view with the SAME tail (`#providers/model/my-gpt`, `#models/openai`)
+kills the view check. "Just imported" is reachable only through the Copilot import dialog (`#model-import-btn`, tick
+`.mvi-cb`, `#mimp-go`, arm `/api/providers/copilot/import-models`). All 16 such guards killed this way (2026-10-29).
 
 **Ranking pins over a hand-written catalogue can be vacuous.** "Name match before alt-word match" looked pinned by "tags", but the card matched through its TAB's name, so deleting the rank branch stayed green. Brute-force it: for every word in the catalogue, compare `searchRows` output between the real module and a `sed` mutant copied to a `.tmp.mjs` beside it; only the queries whose output differs can pin the rule (FEAT-1: just "run").
