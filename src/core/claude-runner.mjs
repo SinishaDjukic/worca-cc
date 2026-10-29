@@ -75,7 +75,10 @@ export function mockEnabled(opts) {
  * @param {string} [o.model]             optional model id
  * @param {string} [o.effort]            optional reasoning effort
  * @param {(e:{type:string})=>void} [o.onEvent]  receives the normalized event vocabulary
- *   (src/core/engines/events.mjs), never raw stream-json envelopes
+ *   (src/core/engines/events.mjs), never raw stream-json envelopes — unless `rawEvents`
+ * @param {boolean} [o.rawEvents]  true ⇒ onEvent gets the Claude runner's raw envelopes (`{type, raw, costUsd?}`,
+ *   `{type:'session'}`, `{type:'hook-event', raw}`, `{type:'log'}`, `{type:'stderr'}`) instead. A session host turn only
+ *   (session-host.mjs): its demux routes them. Absent on every other spawn, so their events are unchanged.
  * @param {AbortSignal} [o.signal]
  * @param {string} [o.resumeSessionId]   resume a previous claude session (--resume)
  * @param {string} [o.bin]               claude binary (default "claude")
@@ -179,6 +182,7 @@ export async function runClaude(o = {}) {
     forwardSubagentText,
     agentsViaFile,
     mainThreadGuard,
+    rawEvents,
     pluginDirs,
     extraSettings,
     // Requirements A8: the one file a read may open (file-read-guard.mjs). Claude only, like memoryLoadLog.
@@ -290,6 +294,7 @@ export async function runClaude(o = {}) {
     forwardSubagentText,
     agentsViaFile,
     mainThreadGuard,
+    rawEvents,
     pluginDirs,
     extraSettings: settings,
     readGuard,

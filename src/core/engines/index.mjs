@@ -25,7 +25,9 @@ export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS, describeUnattachableMcp } from '
 const normalized = (run) => (opts) => {
   const onEvent = typeof opts.onEvent === 'function' ? opts.onEvent : () => {};
   // One throwing listener call must not swallow the rest of that frame's events.
-  return run({ ...opts, onEvent: normalizingOnEvent((e) => { try { onEvent(e); } catch { /* listener errors never break the stream */ } }) });
+  const safe = (e) => { try { onEvent(e); } catch { /* listener errors never break the stream */ } };
+  // A session host turn (session groups, Task 39) reads the RAW envelopes: its demux routes them itself.
+  return run({ ...opts, onEvent: opts.rawEvents === true ? safe : normalizingOnEvent(safe) });
 };
 
 /** Stored session ids of other engines are engine-qualified (`codex:<thread>`);
