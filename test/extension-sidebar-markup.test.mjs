@@ -62,12 +62,16 @@ test('the quote chip has the Ask panel quote chip skeleton', async () => {
   assert.deepEqual(skeleton(buildQuoteChip(h.doc, { text: 'token bucket', src: 'docs.example.com' }, () => {})), skeleton(ref));
 });
 
-test('the head\'s New chat button is the Chat head\'s (ask-panel.mjs newChatButton): classes, label, glyph', async () => {
+test('the head\'s New chat button is the Chat head\'s + (ask-panel.mjs newChatPlus): classes, glyph; named New chat', async () => {
   const h = await loaded();
   const ref = h.doc.querySelector('.chat-head [data-ask-new-btn]');
   assert.ok(ref, 'the Ask panel rendered its New chat button');
   const mine = buildNewChatButton(h.doc, 'chat-head-btn', () => {});
-  const attrs = (b) => ({ cls: b.className, title: b.title, label: b.getAttribute('aria-label'), type: b.type, skel: skeleton(b), text: b.textContent,
+  // The panel's title adds its ⌥⌘N hint; the sidebar has no such key, so its name is just "New chat".
+  assert.equal(mine.title, 'New chat');
+  assert.equal(mine.getAttribute('aria-label'), 'New chat');
+  assert.match(ref.title, /^New chat /);
+  const attrs = (b) => ({ cls: b.className, type: b.type, skel: skeleton(b), text: b.textContent,
     attrs: [...b.attributes].map((a) => a.name).sort(),
     svg: [...b.querySelector('svg').attributes].map((a) => `${a.name}=${a.value}`).sort(), d: [...b.querySelectorAll('path')].map((p) => p.getAttribute('d')) });
   assert.deepEqual(attrs(mine), attrs(ref));
@@ -79,7 +83,8 @@ test('the composer box keeps the Ask order: lead, chips, input, message, row; se
   const refBox = h.doc.querySelector('.ask-composer-box');
   const mine = buildComposer(h.doc, { placeholder: 'x', onInput() {}, onSend() {}, onStop() {} });
   const top = (box) => [...box.children].map((c) => [...c.classList].sort().join(' '));
-  assert.deepEqual(top(mine.el.querySelector('.ask-composer-box')), top(refBox));
+  // Ask worca beside the page: the page chips are the web app's (the page on screen); the extension's page is its own context.
+  assert.deepEqual(top(mine.el.querySelector('.ask-composer-box')), top(refBox).filter((c) => c !== 'ask-page-chips'));
   const askPanelSrc = readFileSync('ui/public/ask-panel.mjs', 'utf8');
   assert.equal(/\bsend: '([^']+)'/.exec(askPanelSrc)[1], SEND_ICON_PATH);
   for (const cls of ['ask-send', 'ask-stop']) assert.ok(refBox.querySelector(`.${cls}`) && mine.el.querySelector(`.${cls}`), cls);

@@ -7,7 +7,7 @@ import { basename, dirname, join } from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 
 import { writeFile as fsWriteFile } from 'node:fs/promises';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { posix } from './helpers/posix-path.mjs';
 
 import {
@@ -436,6 +436,60 @@ test('createDetachedWorktree: unknown ref and option-injection are rejected befo
   assert.equal(existsSync(join(base, 'w1')), false, 'nothing was created');
 });
 
+// A `git` on PATH that runs the real `worktree add` to completion, drops a marker, then hangs:
+// the abort below lands only AFTER git registered the checkout — the loaded-runner race, forced.
+async function withHangingWorktreeAdd(fn) {
+  const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
+  const bin = await mkdtemp(join(tmpdir(), 'worca-cc-hang-git-'));
+  created.push(bin);
+  const marker = join(bin, 'added');
+  writeFileSync(join(bin, 'git'), `#!/bin/sh
+if [ "$1" = worktree ] && [ "$2" = add ]; then
+  "${realGit}" "$@" || exit $?
+  : > "${marker}"
+  exec sleep 30
+fi
+exec "${realGit}" "$@"
+`, { mode: 0o755 });
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}:${prevPath}`;
+  try { return await fn(marker); } finally { process.env.PATH = prevPath; }
+}
+
+const POSIX = { skip: process.platform === 'win32' ? 'the fake git is a POSIX shell script' : false };
+const registeredIn = (repo, name) => String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).stdout).includes(name);
+
+test('createDetachedWorktree: an already-aborted signal throws AbortError before spawning worktree add', async () => {
+  const repo = await freshRepo();
+  const base = await mkdtemp(join(tmpdir(), 'worca-cc-dwt-pre-'));
+  created.push(base);
+  const dir = join(base, 'wt_pre');
+  const ctrl = new AbortController(); ctrl.abort();
+  await assert.rejects(() => createDetachedWorktree({ projectDir: repo, worktreeDir: dir, ref: 'main', signal: ctrl.signal }),
+    { name: 'AbortError', message: /before it started/ });
+  assert.equal(existsSync(dir), false);
+  assert.equal(registeredIn(repo, 'wt_pre'), false);
+});
+
+test('createDetachedWorktree: an add aborted after git registered the checkout leaves no registration or dir', POSIX, async () => {
+  const repo = await freshRepo();
+  const base = await mkdtemp(join(tmpdir(), 'worca-cc-dwt-mid-'));
+  created.push(base);
+  const dir = join(base, 'wt_mid');
+  const ctrl = new AbortController();
+  await withHangingWorktreeAdd(async (marker) => {
+    const pending = createDetachedWorktree({ projectDir: repo, worktreeDir: dir, ref: 'main', signal: ctrl.signal });
+    let settled = false;
+    pending.then(() => {}, () => {}).finally(() => { settled = true; });
+    while (!existsSync(marker) && !settled) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(registeredIn(repo, 'wt_mid'), true, 'git registered the checkout before the abort');
+    ctrl.abort();
+    await assert.rejects(pending, { name: 'AbortError' });
+  });
+  assert.equal(existsSync(dir), false, 'the checkout dir is gone');
+  assert.equal(registeredIn(repo, 'wt_mid'), false, 'the registration is gone');
+});
+
 test('runGitCapture: plain capture, never throws, ASK_GIT_ENV hardening applied', async () => {
   const repo = await freshRepo();
   const ok = await runGitCapture(repo, ['rev-parse', 'HEAD']);
@@ -555,4 +609,87 @@ test('reusedBranchBase / isAncestor / commitOf: fork point vs <remote>/<source> 
       assert.equal(await isAncestor(repo, 'nope', 'main'), false);
     } },
   ]);
+});
+
+// ── defaultBranchRef (Requirements A7, design D8/Q-B) ────────────────────────────────────
+import { defaultBranchRef } from '../src/core/worktree.mjs';
+import { mkdtempSync as _mk, rmSync as _rm } from 'node:fs';
+import { tmpdir as _tmp } from 'node:os';
+
+const _dbrDirs = [];
+after(() => { for (const d of _dbrDirs) { try { _rm(d, { recursive: true, force: true, maxRetries: 3 }); } catch { /* best effort */ } } });
+const _dbrRepo = (branch = 'main') => {
+  const dir = _mk(join(_tmp(), 'worca-dbr-')); _dbrDirs.push(dir);
+  const g = (...a) => { const r = spawnSync('git', a, { cwd: dir, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+  g('init', '-q', '-b', branch); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+  g('commit', '-q', '--allow-empty', '-m', 'init');
+  return { dir, g };
+};
+
+test('defaultBranchRef: origin/HEAD with the local branch present → refs/heads/<b>', async () => {
+  const { dir, g } = _dbrRepo('main');
+  g('update-ref', 'refs/remotes/origin/main', 'HEAD'); g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  g('checkout', '-q', '-b', 'feature');
+  assert.deepEqual(await defaultBranchRef(dir), { branch: 'main', ref: 'refs/heads/main' });
+});
+
+test('defaultBranchRef: origin/HEAD with only the remote branch → refs/remotes/origin/<b>', async () => {
+  const { dir, g } = _dbrRepo('main');
+  g('update-ref', 'refs/remotes/origin/main', 'HEAD'); g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  g('checkout', '-q', '-b', 'feature'); g('branch', '-D', 'main');
+  assert.deepEqual(await defaultBranchRef(dir), { branch: 'main', ref: 'refs/remotes/origin/main' });
+});
+
+test('defaultBranchRef: no origin/HEAD → init.defaultBranch when it exists locally, else the current branch, else null', async () => {
+  const { dir, g } = _dbrRepo('trunk');
+  g('checkout', '-q', '-b', 'work');
+  g('config', 'init.defaultBranch', 'trunk');
+  assert.deepEqual(await defaultBranchRef(dir), { branch: 'trunk', ref: 'refs/heads/trunk' });
+  g('config', 'init.defaultBranch', 'ghost');                       // configured but absent → current branch
+  assert.deepEqual(await defaultBranchRef(dir), { branch: 'work', ref: 'refs/heads/work' });
+  g('checkout', '-q', '--detach');                                   // detached HEAD, no usable default → null
+  g('config', '--unset', 'init.defaultBranch');
+  assert.equal(await defaultBranchRef(dir), null);
+  assert.equal(await defaultBranchRef(_mk(join(_tmp(), 'worca-dbr-nogit-'))), null);
+  assert.equal(await defaultBranchRef(''), null);
+});
+
+test('createDetachedWorktree returns the commit of the ref it checked out (not the live HEAD branch)', async () => {
+  const { dir, g } = _dbrRepo('main');
+  const main = g('rev-parse', 'HEAD');
+  g('checkout', '-q', '-b', 'other'); g('commit', '-q', '--allow-empty', '-m', 'o');
+  const wtDir = `${dir}-wt`; _dbrDirs.push(wtDir);
+  const r = await createDetachedWorktree({ projectDir: dir, worktreeDir: wtDir, ref: 'main' });
+  assert.equal(r.commit, main);
+});
+
+test('commitOf / isAncestor / defaultBranchRef take an additive timeout (the brief page bounds its git calls)', async () => {
+  const { dir, g } = _dbrRepo('main');
+  const head = g('rev-parse', 'HEAD');
+  assert.equal(await commitOf(dir, 'refs/heads/main', { timeout: 10_000 }), head);
+  assert.equal(await isAncestor(dir, head, 'refs/heads/main', { timeout: 10_000 }), true);
+  assert.deepEqual(await defaultBranchRef(dir, { timeout: 10_000 }), { branch: 'main', ref: 'refs/heads/main' });
+});
+
+// A slow git (a PATH shim that waits 3 s, then runs the real one) proves the budget is used: with 200 ms the calls give
+// up long before git answers, where git()'s 30 s default would wait and return the commit. Racing a real git against
+// a 1 ms budget flaked on fast CI runners. POSIX only: on Windows spawn('git') finds git.exe, not a script shim.
+test('commitOf / isAncestor / defaultBranchRef give up when git is slower than the timeout', { skip: process.platform === 'win32' }, async () => {
+  const { dir, g } = _dbrRepo('main');
+  const head = g('rev-parse', 'HEAD');
+  const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
+  const shimDir = _mk(join(_tmp(), 'worca-slow-git-')); _dbrDirs.push(shimDir);
+  // sleep off the pipes: the timeout kills the shell, not its sleep, which would hold git's stdout open 3 s after the test.
+  writeFileSync(join(shimDir, 'git'), `#!/bin/sh\nsleep 3 </dev/null >/dev/null 2>&1\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  const PATH = process.env.PATH;
+  process.env.PATH = `${shimDir}:${PATH}`;
+  try {
+    const t0 = Date.now();
+    assert.equal(await commitOf(dir, 'refs/heads/main', { timeout: 200 }), null);
+    assert.equal(await isAncestor(dir, head, 'refs/heads/main', { timeout: 200 }), false);
+    assert.equal(await defaultBranchRef(dir, { timeout: 200 }), null);
+    assert.ok(Date.now() - t0 < 2_500, `the calls gave up within their budgets (${Date.now() - t0} ms)`);
+  } finally {
+    process.env.PATH = PATH;
+  }
 });

@@ -10,6 +10,7 @@
 import { icon } from './icons.mjs';
 import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
+import { SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -483,6 +484,12 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
 
 /** The OpenRouter preset (docs/models.md "OpenRouter"); mirrors provider-ops OPENROUTER_BASE_URL. */
 export const OPENROUTER_PRESET = Object.freeze({ baseUrl: 'https://openrouter.ai/api/v1', keyRef: '${OPENROUTER_KEY}' });
+/** The Import dialog's hosted-API presets: an endpoint with a key of its own, stored on each imported entry
+ *  (src/core/model-env.mjs GEMINI_OPENAI_BASE_URL / QWEN_OPENAI_BASE_URL; docs/models.md › Gemini and Qwen models). */
+export const ENDPOINT_PRESETS = Object.freeze({
+  gemini: Object.freeze({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', keyRef: '${GEMINI_API_KEY}' }),
+  qwen: Object.freeze({ baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', keyRef: '${DASHSCOPE_API_KEY}' }),
+});
 
 /**
  * Apply a preset to a provider row's fields — the base URL always, the key only when the row has
@@ -532,24 +539,62 @@ export function collectSpeechRow(rootEl) {
 }
 
 /** The device-flow block: the code in large type, copy, the link, a live status line, cancel (§8.1). */
+export const COPY_DONE_MS = 2000;
+/** The pre-Clipboard-API copy: browsers hide navigator.clipboard on plain http away from localhost (a LAN address). */
+function copyByCommand(doc, text) {
+  const ta = doc.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+  doc.body.append(ta); ta.select();
+  let ok = false;
+  try { ok = doc.execCommand?.('copy') === true; } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+/** Copy code: the app's copy-button pattern (copy icon, a green tick and "Copied" once done, as the branch copy
+ *  buttons). It copies by itself, so the box works wherever it is mounted (Providers, the setup assistant). */
+function copyCodeButton(doc, code) {
+  const b = h(doc, 'button', 'btn mv-cp-copy');
+  b.type = 'button'; b.dataset.code = code;
+  const label = h(doc, 'span', 'mv-cp-copy-label', 'Copy code');
+  b.append(icon(doc, 'copy', 14, 'ic ico-copy'), icon(doc, 'check', 14, 'ic ico-check'), label);
+  let timer = null;
+  b.addEventListener('click', async () => {
+    const win = doc.defaultView;
+    let ok = false;
+    try { await win.navigator.clipboard.writeText(code); ok = true; } catch { ok = copyByCommand(doc, code); }   // no API: plain http on another host
+    b.classList.toggle('copied', ok);
+    label.textContent = ok ? 'Copied' : 'Copy failed: select the code';
+    win.clearTimeout(timer);
+    timer = win.setTimeout(() => { b.classList.remove('copied'); label.textContent = 'Copy code'; }, COPY_DONE_MS);
+  });
+  return b;
+}
+
+// In the order it is used: the code and Copy as one group, then Open (the primary step); below, the wait (a spinner
+// while it lasts) with Cancel on the same line. Every control is the same 32px tall, the code included.
 export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
   const box = h(doc, 'div', 'mv-cp-signin-box');
-  box.appendChild(h(doc, 'small', 'hint', 'Enter this code on github.com to connect your Copilot account:'));
+  box.appendChild(h(doc, 'small', 'hint', 'Copy this code, then enter it on GitHub to connect your Copilot account.'));
   const codeRow = h(doc, 'div', 'mv-cp-code-row');
-  codeRow.appendChild(h(doc, 'code', 'mv-cp-code', flow.userCode || ''));
-  const copy = h(doc, 'button', 'btn mv-cp-copy', 'Copy code');
-  copy.type = 'button'; copy.dataset.code = flow.userCode || '';
-  codeRow.appendChild(copy);
-  const link = h(doc, 'a', 'btn mv-cp-open', 'Open github.com/login/device');
+  const group = h(doc, 'div', 'mv-cp-code-group');
+  group.appendChild(h(doc, 'code', 'mv-cp-code', flow.userCode || ''));
+  group.appendChild(copyCodeButton(doc, flow.userCode || ''));
+  codeRow.appendChild(group);
+  const link = h(doc, 'a', 'btn btn-primary mv-cp-open', 'Open github.com/login/device');
   link.href = flow.verificationUri || 'https://github.com/login/device';
   link.target = '_blank'; link.rel = 'noopener';
   codeRow.appendChild(link);
   box.appendChild(codeRow);
+  const foot = h(doc, 'div', 'mv-cp-foot');
+  const wait = h(doc, 'div', 'mv-cp-wait');
+  if (!flow.error) { const spin = h(doc, 'span', 'mk-phase-spin'); spin.setAttribute('aria-hidden', 'true'); wait.appendChild(spin); }
   const status = h(doc, 'small', `hint mv-cp-status${flow.error ? ' err' : ''}`, flow.error || flow.status || 'Waiting for approval…');
-  box.appendChild(status);
-  const cancel = h(doc, 'button', 'btn mv-cp-cancel', flow.error ? 'Dismiss' : 'Cancel');
+  status.setAttribute('role', 'status');
+  wait.appendChild(status);
+  const cancel = h(doc, 'button', 'btn btn-quiet mv-cp-cancel', flow.error ? 'Dismiss' : 'Cancel');
   cancel.type = 'button';
-  box.appendChild(cancel);
+  foot.append(wait, cancel);
+  box.appendChild(foot);
   return box;
 }
 
@@ -643,7 +688,9 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
   root.appendChild(h(doc, 'h3', 'mv-editor-title', `Import from ${p.serverLabel || 'this endpoint'}`));
   root.appendChild(h(doc, 'small', 'hint', hosted
     ? `${p.baseUrl || ''}: these run through the translation layer (no web tools). Worca reads each model's window, output cap, tool and reasoning support and its listed price, and pins them on the entry.`
-    : `${p.baseUrl || ''}: these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
+    : p.server === 'gemini' || p.server === 'qwen'
+      ? `${p.baseUrl || ''}: these run through the translation layer (no web tools) and bill to your ${p.serverLabel || 'provider'} account. Worca pins the windows the endpoint lists; set a price on each to see its cost.`
+      : `${p.baseUrl || ''}: these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
   for (const w of Array.isArray(p.warnings) ? p.warnings : []) root.appendChild(h(doc, 'small', 'hint mvi-warn', w));
   // A hosted catalog lists hundreds of models: beside the dialog's text filter, narrow by what a
   // pipeline decides on. The controls only mark the view — endpointRowMatches reads them — so, like
@@ -805,11 +852,11 @@ function collectOpenRouter(conn) {
 }
 
 /** Each connection mode's title and hint. A new entry offers all three (the sign-in picks its harness below); an entry
- *  being edited keeps its engine, so a Codex one has no env mode (codex ignores routing env) and a Cursor one only its own
- *  sign-in (no env, no endpoint). A mode with no text is hidden. */
+ *  being edited keeps its engine, so a Codex one has no env mode (codex ignores routing env) and an own-sign-in engine's one (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) only its
+ *  own sign-in (no env, no endpoint). A mode with no text is hidden. */
 const MODE_TEXT = {
   claude: {
-    direct: ["A harness's own sign-in", "The subscription you are signed in with: Claude Code's login, Codex's ChatGPT sign-in, Cursor's or the Copilot CLI's. It runs only in that harness."],
+    direct: ["A harness's own sign-in", "The subscription you are signed in with: Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's, Gemini CLI's, Qwen Code's, or Goose's or OpenCode's providers. It runs only in that harness."],
     env: ['Custom endpoint via env (Claude Code)', 'For endpoints that already speak the Anthropic API (LiteLLM, Bedrock, Vertex, a gateway). Set the routing env below.'],
     provider: ['Through a provider', "GitHub Copilot, an OpenAI-compatible or an Anthropic-compatible endpoint. Claude Code reaches each through worca's bridge; Codex reaches an OpenAI Responses endpoint itself."],
   },
@@ -822,6 +869,18 @@ const MODE_TEXT = {
   },
   copilot: {
     direct: ['Copilot default', "the Copilot CLI's own sign-in (`copilot login`, or COPILOT_GITHUB_TOKEN) reaches GitHub Copilot."],
+  },
+  gemini: {
+    direct: ['Gemini CLI default', "gemini's own sign-in (GEMINI_API_KEY, Vertex AI, or the sign-in you chose in `gemini`) reaches Google."],
+  },
+  qwen: {
+    direct: ['Qwen Code default', "qwen's own sign-in (the auth type you chose in `qwen`, or a provider's env such as OPENAI_API_KEY, OPENAI_BASE_URL and OPENAI_MODEL)."],
+  },
+  goose: {
+    direct: ['Goose providers', "Goose's own providers (`goose configure`, or a provider key in worca's environment) reach the model the id names."],
+  },
+  opencode: {
+    direct: ['OpenCode providers', "OpenCode's own providers (`opencode auth login`, or a provider key in worca's environment) reach the model the id names."],
   },
 };
 
@@ -1000,13 +1059,13 @@ export function applyConnectionMode(connEl) {
   if (!conn) return;
   // A Codex model (conn.dataset.engine, set by models-view setModelEngine): no env mode, the OpenAI-compatible
   // provider only, the Responses API only, and none of the bridge's capability pins.
-  // A Cursor model: its own sign-in only (MODE_TEXT.cursor), so the provider body never shows.
+  // An own-sign-in engine's model (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code): its own sign-in only (MODE_TEXT), so the provider body never shows.
   // A new entry is on no engine until its connection says so (src/shared/connections.mjs): the sign-in mode asks which
   // harness, env and provider make it Claude Code's. Only an entry being edited is held to the engine it was added under.
   const eng = conn.dataset.engine || 'claude';
   const held = conn.dataset.editing === '1' ? eng : 'claude';
   const codex = held === 'codex';
-  const cursor = held === 'cursor' || held === 'copilot';   // a sign-in only: no endpoint fields
+  const ownSignIn = SIGN_IN_ENGINE_NAMES.includes(held) || held === 'copilot';   // a sign-in only: no endpoint fields
   for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
     const rb = lab.querySelector('.mv-conn-mode-rb');
     const text = (MODE_TEXT[held] || MODE_TEXT.claude)[rb.value];
@@ -1026,7 +1085,7 @@ export function applyConnectionMode(connEl) {
     runs.textContent = runsOnText(connection);
   }
   const body = conn.querySelector('.mv-conn-body');
-  if (body) body.hidden = cursor || mode !== 'provider';
+  if (body) body.hidden = ownSignIn || mode !== 'provider';
   const provSel = conn.querySelector('.mv-conn-provider');
   if (provSel) {
     for (const o of provSel.options) o.hidden = o.disabled = codex && o.value !== 'openai';
@@ -1042,9 +1101,9 @@ export function applyConnectionMode(connEl) {
   const adv = conn.querySelector('.mv-conn-adv');
   if (adv) adv.hidden = provider === 'copilot';
   const orBox = conn.querySelector('.mv-conn-or');
-  if (orBox) orBox.hidden = codex || cursor || !openRouterApplies(conn);
+  if (orBox) orBox.hidden = codex || ownSignIn || !openRouterApplies(conn);
   const capsBox = conn.querySelector('.mv-conn-caps');
-  if (capsBox) capsBox.hidden = codex || cursor;
+  if (capsBox) capsBox.hidden = codex || ownSignIn;
   const hint = conn.querySelector('.mv-conn-provider-hint');
   const p = conn._providers;
   if (hint) {

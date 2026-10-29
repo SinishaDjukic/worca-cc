@@ -264,7 +264,7 @@ test('mutation killers (refine audit): resume re-checks the run; every revert re
     { name: 'pull request: facts with no feature branch are a notice (a workspace row the child cannot check)', run: async () => {
       const { h, row } = setup({ prCardFacts: async (r) => ({ pipelineId: r.id, projectKey: 'workspaces/wks-a', title: r.title, branch: null }) });
       row('cccc0004', 'done', { target: 'workspace', branch: null });
-      assert.deepEqual(await h.apply({ kind: 'pull-request', runId: 'cccc0004' }, A), { ok: false, notice: 'Fix login has no feature branch to open a pull request from' });
+      assert.deepEqual(await h.apply({ kind: 'pull-request', runId: 'cccc0004' }, A), { ok: false, notice: 'Fix login has no feature branch to create a PR from' });
     } },
     { name: 'per-run Away: no change, no receipt', run: async () => {
       const { h, live } = setup();

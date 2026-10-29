@@ -163,9 +163,9 @@ export async function listLocalBranches(projectDir) {
   return r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
 
-/** The branch HEAD currently points to in `projectDir`, or null. */
-export async function currentBranch(projectDir) {
-  const r = await git(projectDir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+/** The branch HEAD currently points to in `projectDir`, or null. `timeout` (ms) overrides git()'s 30 s default. */
+export async function currentBranch(projectDir, { timeout } = {}) {
+  const r = await git(projectDir, ['rev-parse', '--abbrev-ref', 'HEAD'], { timeout });
   if (!r.ok) return null;
   const name = r.stdout.trim();
   return name && name !== 'HEAD' ? name : null;
@@ -177,6 +177,35 @@ export async function unbornBranch(projectDir) {
   const r = await git(projectDir, ['symbolic-ref', '--short', '-q', 'HEAD']);
   const name = r.ok ? r.stdout.trim() : '';
   return name || null;
+}
+
+/**
+ * The product's default branch and the ref to READ it at (Requirements A7, design D8 / Q-B).
+ * Differs from resolveDefaultBranch on purpose: that one answers "which branch is this work
+ * based on" and starts from the CHECKED-OUT branch; a product brief must describe the repository's
+ * default branch whatever the operator happens to have checked out, so the order is
+ * origin/HEAD, then init.defaultBranch (if it exists locally), and the checked-out branch last.
+ * `timeout` (ms) bounds each git call (default: git()'s 30 s); a call that times out counts as "not there".
+ * @returns {Promise<{branch:string, ref:string}|null>} never throws; null = no usable branch
+ */
+export async function defaultBranchRef(projectDir, { timeout } = {}) {
+  try {
+    if (!projectDir) return null;
+    const o = { timeout };
+    const oh = await git(projectDir, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], o);
+    const m = oh.ok ? /^refs\/remotes\/origin\/(.+)$/.exec(oh.stdout.trim()) : null;
+    if (m) {
+      const b = m[1];
+      if (await commitOf(projectDir, `refs/heads/${b}`, o)) return { branch: b, ref: `refs/heads/${b}` };
+      if (await commitOf(projectDir, `refs/remotes/origin/${b}`, o)) return { branch: b, ref: `refs/remotes/origin/${b}` };
+    }
+    const cfg = await git(projectDir, ['config', '--get', 'init.defaultBranch'], o);
+    const c = cfg.ok ? cfg.stdout.trim() : '';
+    if (c && await commitOf(projectDir, `refs/heads/${c}`, o)) return { branch: c, ref: `refs/heads/${c}` };
+    const cur = await currentBranch(projectDir, o);
+    if (cur && await commitOf(projectDir, `refs/heads/${cur}`, o)) return { branch: cur, ref: `refs/heads/${cur}` };
+    return null;
+  } catch { return null; }
 }
 
 /**
@@ -454,15 +483,34 @@ export async function createDetachedWorktree({ projectDir, worktreeDir, ref, sig
     throw new Error(`ref is not a valid commit-ish: ${JSON.stringify(ref ?? null)}`);
   }
   await git(projectDir, ['worktree', 'prune']);
+  // Never spawn with an already-aborted signal: Node kills the child only on the next tick,
+  // and a fast git can register the worktree first — a checkout no caller knows to remove.
+  if (signal?.aborted) throw abortError('git worktree add --detach aborted before it started');
+  const existed = existsSync(worktreeDir);
   const r = await git(projectDir, ['worktree', 'add', '--detach', '--', worktreeDir, ref],
     { signal, timeout: SLOW_GIT_TIMEOUT_MS });
   if (!r.ok) {
-    const err = new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
-    if (signal?.aborted) err.name = 'AbortError';
-    throw err;
+    if (signal?.aborted) {
+      // Killed mid-way: git may already have registered (or even finished) the checkout.
+      // Undo it only when this add created the dir — a dir that existed before may be
+      // someone's worktree with uncommitted work — then prune any registration left dangling.
+      if (!existed) {
+        await git(projectDir, ['worktree', 'remove', '--force', '--', worktreeDir]);
+        await rm(worktreeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+      }
+      await git(projectDir, ['worktree', 'prune']);
+      throw abortError(`git worktree add --detach aborted: ${r.stderr.trim() || `exit ${r.code}`}`);
+    }
+    throw new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
   }
   const head = await git(worktreeDir, ['rev-parse', 'HEAD']);
   return { worktreeDir, commit: head.ok ? head.stdout.trim() : null };
+}
+
+function abortError(message) {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
 }
 
 /** HEAD commit sha of any checkout (worktree or repo), or null. */
@@ -472,17 +520,17 @@ export async function worktreeHead(dir) {
 }
 
 /** Full SHA of `ref^{commit}` in `dir`, or null. Rejects a leading '-' (a git option). */
-export async function commitOf(dir, ref) {
+export async function commitOf(dir, ref, { timeout } = {}) {
   if (typeof ref !== 'string' || !ref || /^-/.test(ref)) return null;
-  const r = await git(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  const r = await git(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { timeout });
   return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
 }
 
-/** True iff commit `a` is an ancestor of (or equal to) `b` in `dir`. False on any failure. */
-export async function isAncestor(dir, a, b) {
-  const [x, y] = await Promise.all([commitOf(dir, a), commitOf(dir, b)]);
+/** True iff commit `a` is an ancestor of (or equal to) `b` in `dir`. False on any failure (a timeout included). */
+export async function isAncestor(dir, a, b, { timeout } = {}) {
+  const [x, y] = await Promise.all([commitOf(dir, a, { timeout }), commitOf(dir, b, { timeout })]);
   if (!x || !y) return false;
-  return (await git(dir, ['merge-base', '--is-ancestor', x, y])).ok;
+  return (await git(dir, ['merge-base', '--is-ancestor', x, y], { timeout })).ok;
 }
 
 /**

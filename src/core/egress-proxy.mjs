@@ -49,6 +49,14 @@ export function normalizeHost(host) {
   return h.replace(/\.+$/, '');
 }
 
+/** The client's headers minus the hop-by-hop proxy ones, for a direct route behind a connector. */
+function withoutProxyHeaders(headers) {
+  const out = { ...headers };
+  delete out['proxy-authorization'];
+  delete out['proxy-connection'];
+  return out;
+}
+
 /** "host", "host:443", "[::1]:443" -> { host, port } (port null when absent). */
 export function splitHostPort(target) {
   const s = String(target ?? '').trim();
@@ -164,11 +172,40 @@ const HOST_RE = /^(?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_
 /**
  * Build (not start) the proxy server. `log` receives one line per decision.
  * @param {{allow?: string[], policy?: {mode: string, allow: string[], deny: string[]},
- *   log?: (line: string) => void, limits?: Partial<typeof PROXY_LIMITS>}} opts
+ *   log?: (line: string) => void, limits?: Partial<typeof PROXY_LIMITS>,
+ *   connector?: null | {route: (host: string) => 'direct'|'upstream', directAgent?: import('node:http').Agent,
+ *     tunnel: (t: {host: string, port: number}) => Promise<{socket: import('node:net').Socket, rest?: Buffer}>,
+ *     forward: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, t: {host: string, port: number, url: URL}) => void}}} opts
  *   `policy` (a platform mode) or `allow` (the overlay's list, legacy matching).
+ *   `connector` (src/core/upstream-proxy.mjs, networkProxy.enabled): hosts it routes to the
+ *   upstream go through it; the policy still decides first. null: everything direct, as before.
+ *   server.useConnector(next, limits) swaps it for new connections (D7); server.connector() reads it.
  */
-export function createProxy({ allow, policy = null, log = () => {}, limits = {} }) {
-  const L = { ...PROXY_LIMITS, ...limits };
+export function createProxy({ allow, policy = null, log = () => {}, limits = {}, connector: first = null }) {
+  const BASE = { ...PROXY_LIMITS, ...limits };
+  const L = BASE;   // server-level limits keep their boot values
+  let current = { connector: first, L: BASE };   // swapped whole by useConnector (D7)
+  /** Open connections per connector; a retired one closes when its count reaches 0. */
+  const uses = new Map();
+  const retired = new Set();
+  const take = (c) => { if (c) uses.set(c, (uses.get(c) || 0) + 1); };
+  const drop = (c) => {
+    if (!c) return;
+    const n = (uses.get(c) || 1) - 1;
+    if (n > 0) { uses.set(c, n); return; }
+    uses.delete(c);
+    if (retired.delete(c)) { try { c.close(); } catch { /* already gone */ } }
+  };
+  /** Pin `cur` to this connection's lifetime: released once, on the first close. */
+  const pin = (cur, ...emitters) => {
+    // An emitter already closed would never fire 'close': do not count it (a retired connector would leak).
+    if (emitters.some((e) => e.destroyed || e.closed)) return () => {};
+    take(cur.connector);
+    let done = false;
+    const release = () => { if (!done) { done = true; drop(cur.connector); } };
+    for (const e of emitters) e.once('close', release);
+    return release;
+  };
   const permits = policy ? (host) => decide(host, policy).ok : (host) => isAllowed(host, allow);
   const say = (line) => { try { log(line); } catch { /* a logger must not take the proxy down */ } };
   const verdict = (ok, method, target) => say(`${new Date().toISOString()} ${ok ? 'ALLOW' : 'DENY'} ${method} ${target}`);
@@ -181,13 +218,46 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
     try { if (socket.writable) socket.end(`HTTP/1.1 ${status}\r\n${lines}connection: close\r\n\r\n${body}`); } catch { /* gone */ }
     socket.destroy?.();
   };
-  // The proxy relaying to itself would loop; nothing legitimate asks for that.
+  // A tunnel through the corporate proxy: the connector logs in on the upstream socket, then the
+  // two sockets are piped exactly like a direct tunnel. Its refusals keep their status (407
+  // "proxy needs login", 502, 504) and say why in plain text.
+  function upstreamTunnel(cur, clientSocket, head, host, port) {
+    let up = null;
+    clientSocket.on('close', () => { if (up) up.destroy(); });
+    cur.connector.tunnel({ host, port }).then(({ socket, rest }) => {
+      up = socket;
+      if (clientSocket.destroyed) { socket.destroy(); return; }
+      socket.setTimeout(cur.L.idleTimeoutMs, () => { socket.destroy(); clientSocket.destroy(); });
+      socket.on('error', () => clientSocket.destroy());
+      socket.on('close', () => clientSocket.destroy());
+      try {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (rest && rest.length) clientSocket.write(rest);
+        if (head && head.length) socket.write(head);
+      } catch { socket.destroy(); clientSocket.destroy(); return; }
+      socket.pipe(clientSocket);
+      clientSocket.pipe(socket);
+    }, (err) => {
+      const status = Number(err && err.status) || 502;
+      const body = `Worca: ${err && err.message ? err.message : 'the corporate proxy failed'}\n`;
+      rawReply(clientSocket, `${status} ${http.STATUS_CODES[status] || 'Bad Gateway'}`, {
+        'content-type': 'text/plain; charset=utf-8', 'content-length': Buffer.byteLength(body),
+        ...(err && err.needsLogin ? { 'x-worca-proxy': 'needs-login' } : {}),
+      }, body);
+    });
+  }
+  // The proxy relaying to itself would loop; nothing legitimate asks for that. Its own ports: the one it listens on,
+  // plus any a later listener hands sockets from (egress-policy.mjs listenAlso, via server.addSelfPort).
+  const selfPorts = new Set();
   const isSelf = (host, port) => {
     const a = server.address();
-    return !!a && port === a.port && LOOPBACK_NAMES.has(host);
+    return LOOPBACK_NAMES.has(host) && ((!!a && port === a.port) || selfPorts.has(port));
   };
 
   function onRequest(req, res) {
+    const cur = current;
+    pin(cur, res);
+    const { connector, L } = cur;
     req.socket.setTimeout(L.idleTimeoutMs);   // the head is in: from now on, only idleness counts
     req.on('error', () => res.destroy());
     let url;
@@ -198,7 +268,8 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
     }
     const host = normalizeHost(url.hostname);
     const port = url.port ? Number(url.port) : 80;
-    if (isSelf(host, port)) { res.writeHead(400).end(); return; }
+    // The header tells another Worca that this port is a Worca local proxy (fixed port, D12).
+    if (isSelf(host, port)) { res.writeHead(400, { 'x-worca-proxy': 'local' }).end(); return; }
     if (!permits(host)) {
       verdict(false, req.method, url.host);
       const r = refusal(host);
@@ -206,7 +277,10 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
       return;
     }
     verdict(true, req.method, url.host);
-    const up = http.request({ host, port, method: req.method, path: url.pathname + url.search, headers: req.headers, timeout: L.connectTimeoutMs });
+    if (connector && connector.route(host) === 'upstream') { connector.forward(req, res, { host, port, url }); return; }
+    const up = http.request({ host, port, method: req.method, path: url.pathname + url.search,
+      headers: connector ? withoutProxyHeaders(req.headers) : req.headers, timeout: L.connectTimeoutMs,
+      ...(connector && connector.directAgent ? { agent: connector.directAgent } : {}) });
     up.on('timeout', () => up.destroy(new Error('upstream timeout')));
     up.on('error', () => {
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' }).end(`bad gateway: ${host} did not answer\n`);
@@ -223,6 +297,8 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
   }
 
   function onConnect(req, clientSocket, head) {
+    const cur = current;
+    const { connector, L } = cur;
     clientSocket.on('error', () => clientSocket.destroy());
     clientSocket.setTimeout(L.idleTimeoutMs, () => clientSocket.destroy());
     // CONNECT always names host:port (RFC 9110 §9.3.6); anything else is refused, not guessed.
@@ -240,6 +316,8 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
       return;
     }
     verdict(true, 'CONNECT', req.url);
+    pin(cur, clientSocket);
+    if (connector && connector.route(host) === 'upstream') { upstreamTunnel(cur, clientSocket, head, host, port); return; }
     let connected = false;
     const up = net.connect({ port, host });
     up.setTimeout(L.connectTimeoutMs, () => up.destroy(new Error('upstream timeout')));
@@ -271,6 +349,7 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
     try { onRequest(req, res); } catch { try { res.destroy(); } catch { /* gone */ } }
   });
   server.maxConnections = L.maxConnections;
+  server.addSelfPort = (p) => { selfPorts.add(p); };
   server.setTimeout(L.idleTimeoutMs);   // no 'timeout' listener: an idle socket is destroyed
   // A new connection gets headersTimeout to send its first head (slow loris), enforced on the socket
   // itself: Node's own headersTimeout check did not drop a half-sent first head. onRequest and
@@ -288,6 +367,20 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
   server.on('connect', (req, clientSocket, head) => {
     try { onConnect(req, clientSocket, head); } catch { clientSocket.destroy(); }
   });
+
+  /** D7: swap the upstream. New connections use `next`; open ones finish on the old connector,
+   *  which closes once idle. null = everything direct. @returns the replaced connector */
+  server.useConnector = (next = null, nextLimits = {}) => {
+    const prev = current.connector;
+    current = { connector: next, L: { ...BASE, ...nextLimits } };
+    if (next) retired.delete(next);   // swapped back in before its tunnels ended: never close it under new traffic
+    if (prev && prev !== next) {
+      if (uses.get(prev)) retired.add(prev);
+      else { try { prev.close(); } catch { /* already gone */ } }
+    }
+    return prev;
+  };
+  server.connector = () => current.connector;
 
   return server;
 }

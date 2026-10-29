@@ -396,12 +396,13 @@ export function ownsProjectFolder(project) {
 
 /**
  * Unregister a project by name (case-insensitive; absent name is a no-op): its row and its team-policy cache, then
- * its metrics worktrees, waiting up to `pruneWaitMs`. Never touches the project's folder.
+ * its metrics worktrees and its team-memory state, waiting up to `pruneWaitMs`. Never touches the project's folder.
  * @returns {Promise<{removed:{key:string,name:string,path:string,vcs:'git'|'none'}|null, projects:object[]}>}
  */
 async function unregisterProject(name, { pruneWaitMs }) {
   const key = (typeof name === 'string' ? name : '').trim();
   let removed = null;
+  let teamKey = null;
   if (key) {
     tx(() => {
       const row = prepare('SELECT key, name, path, vcs FROM projects WHERE name = ? COLLATE NOCASE').get(key);
@@ -414,15 +415,28 @@ async function unregisterProject(name, { pruneWaitMs }) {
       // among its members), so the home it carries is still followed and its Team set must not grey.
       const inWorkspace = !!row && prepare('SELECT project_key AS path FROM workspace_projects').all()
         .some((w) => { try { return projectKey(w.path) === row.key; } catch { return false; } });
-      const pc = row && !inWorkspace ? prepare('SELECT extra FROM project_config WHERE project_key = ?').get(row.key) : null;
+      const pc = row ? prepare('SELECT extra FROM project_config WHERE project_key = ?').get(row.key) : null;
       let extra = null;
       try { extra = pc ? JSON.parse(pc.extra) : null; } catch { /* not JSON: left as it is */ }
-      if (extra && typeof extra === 'object' && Object.hasOwn(extra, 'teamPolicy')) {
+      let dirty = false;
+      if (!inWorkspace && extra && typeof extra === 'object' && Object.hasOwn(extra, 'teamPolicy')) {
         // The total-cap acknowledgements stay (policy/state.mjs): a project added again is not asked twice in one window.
         const acks = extra.teamPolicy?.acks;
         if (acks && typeof acks === 'object') extra.teamPolicy = { acks }; else delete extra.teamPolicy;
-        prepare('UPDATE project_config SET extra = ? WHERE project_key = ?').run(JSON.stringify(extra), row.key);
+        dirty = true;
       }
+      // Team memory is opt-in per project (team-memory 1a): a project added again starts OFF, like a new one. Also when a
+      // workspace still has the repo as a member — nothing could switch it off then (the project routes and
+      // `worca memory team off` need a registered project), and its workspace runs would keep sharing.
+      const mem = extra && typeof extra === 'object' && extra.settings && typeof extra.settings === 'object' ? extra.settings.memory : null;
+      if (mem && typeof mem === 'object' && Object.hasOwn(mem, 'team')) {
+        delete mem.team;
+        if (!Object.keys(mem).length) delete extra.settings.memory;
+        if (!Object.keys(extra.settings).length) delete extra.settings;
+        teamKey = row.key;
+        dirty = true;
+      }
+      if (dirty) prepare('UPDATE project_config SET extra = ? WHERE project_key = ?').run(JSON.stringify(extra), row.key);
     });
   }
   if (removed) {
@@ -434,6 +448,14 @@ async function unregisterProject(name, { pruneWaitMs }) {
       const prune = pruneMetricsWorktreesFor(removed.path).catch(() => []);
       await Promise.race([prune, new Promise((r) => setTimeout(r, pruneWaitMs).unref?.())]);
     } catch { /* best-effort: a leftover worktree is harmless and re-pruned by git */ }
+  }
+  if (teamKey) {
+    // Dynamic import: memory-team.mjs imports this module (worcaHome, listProjects). Bounded like the metrics prune.
+    try {
+      const { discardTeamState } = await import('./memory-team.mjs');
+      const drop = discardTeamState(teamKey, { projectDir: removed?.path ?? null }).catch(() => false);
+      await Promise.race([drop, new Promise((r) => setTimeout(r, pruneWaitMs).unref?.())]);
+    } catch { /* best-effort: the background tick drops what is left */ }
   }
   return { removed, projects: await listProjects() };
 }
@@ -472,4 +494,5 @@ export async function removeProjectAndFolder(name, { pruneWaitMs = pruneWaitMsFr
   } catch (err) {
     return { projects, removed, folder: { path: removed.path, deleted: false, error: err && err.message ? err.message : String(err) } };
   }
+
 }

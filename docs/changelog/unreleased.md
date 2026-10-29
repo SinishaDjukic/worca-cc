@@ -3,6 +3,36 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Requirements (experimental)
+
+**Define a feature with Worca before anything is built.**
+
+A product owner describes a feature in a few sentences and Worca interviews them, a few questions at a time, into a testable spec: goal, actors, flow, edge cases, rules, acceptance criteria and assumptions. Six checks say when it is Ready, and **Start in Worca** starts a normal run with the spec as its task. A product brief, made once per project or workspace from its default branch, lets every interview there start from what the product already does; edits to the spec or the brief are kept. A feature can come with files (emails, tickets, a spec, screenshots): Worca reads each once, the interview uses what it took from them, and the files you switch on go to the run. **Feature chat** beside a feature answers from what Worca already knows about it, drafts answers to the open questions and proposes spec changes as cards; nothing changes until you submit or accept, and each message shows what it cost.
+
+Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · files · Feature chat · experimental: turn it on in Settings › Labs
+
+Read it: [Requirements](../requirements.md)
+
+Pull requests (add each number when it opens):
+
+- Requirements (#882)
+- Requirements: files (#975)
+- Requirements: Feature chat (#989)
+
+## Shaper, Run presets and Cost tags leave Labs
+
+**Three Labs features are now simply part of Worca.**
+
+Shaper, Run presets and Cost tags are always on, with no switch in Settings › Labs. Keep awake leaves Labs too: it stays on by default, and its switch in the account menu is now an ordinary setting. If you had turned Keep awake off, it stays off.
+
+Chips: Shaper · Run presets · Cost tags · Keep awake · out of Labs
+
+Read it: [Keep awake](../keep-awake.md)
+
+Pull requests (add each number when it opens):
+
+- Graduate Shaper, Run presets, Cost tags and Keep awake
+
 ## See when a newer Worca is out
 
 **Settings › About says whether you run the latest stable Worca.**
@@ -14,15 +44,23 @@ opens the card. Worca checks the npm registry's `latest` tag at most every 12 ho
 tab asks again when it regains focus (a release candidate never counts as newer). Run from a git
 checkout, the card says **Source build** and npm is never asked. Offline, nothing shows. Turn it
 off with **Check for new Worca versions** in the same card; turning it back on checks afresh.
-Nothing is installed or restarted from the app.
+**Update to X.Y.Z** on the same card installs the latest stable and restarts Worca: running runs
+pause and continue after the restart (when auto-resume is on), and the page reconnects by itself.
+**Choose version…** picks a release candidate or rolls back; a version older than 1.14.0 installs
+and then has to be started by hand with `worca ui`. This works when Worca was started with
+`worca ui` from an `npm install -g` install whose global folder you can write to; otherwise the card
+says why and shows the command to run. Shared and hosted installs keep the buttons off. A failed
+install starts the previous version again and shows npm's reason on the card. Nothing updates
+automatically.
 
-Chips: About · version · release notes
+Chips: About · version · release notes · update
 
 Read it: [Getting started](../getting-started.md)
 
 Pull requests (add each number when it opens):
 
 - See when a newer Worca is out (#841)
+- Update Worca from the About card (#841)
 
 ## Plugins work behind a proxy
 
@@ -50,15 +88,13 @@ Pull requests (add each number when it opens):
 
 - Re-scans run on the model you chose
 
-## Shape it first (beta)
+## Shape it first
 
 **Plan it before it builds.**
 
 Worca now shapes a thin or large task first: at most 3 questions, a plan written for the perspectives you pick, your approval, and then the run only builds. A task too big for one change is cut into slices, each with its own run, branch and pull request, stacked one on the next.
 
-Shaper is now in beta and on by default; turn it off in Settings › Labs or with `worca flags off shapeFirst`.
-
-Chips: Shaper · the plan card · checklists in review · plan in slices · beta: on by default, turn it off in Settings › Labs
+Chips: Shaper · the plan card · checklists in review · plan in slices
 
 Read it: [Shape it first](../shape-it-first.md)
 
@@ -148,3 +184,11 @@ Pull requests (add each number when it opens):
 - Runs redesign: the Runs list
 - Runs redesign: cards and pages
 - Runs redesign: upgrade safety, states, alerts, What's new
+
+## Plugin updates work on Windows
+
+`worca plugin update` no longer fails on Windows with `Path is a directory: true`. The installed version's link is replaced cleanly, and the previous version's files stay untouched until cleanup.
+
+Pull requests (add each number when it opens):
+
+- Plugins: update works on Windows when the current version is a junction (#987)

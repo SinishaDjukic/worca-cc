@@ -6,6 +6,7 @@
 // (to stamp stream deltas).
 import { isNormalized } from './events.mjs';
 import { extractResultCost, isHookEvent } from './claude.mjs';
+import { flagEnabled } from '../flags.mjs';
 
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
 const str = (v) => (typeof v === 'string' ? v : undefined);
@@ -149,6 +150,14 @@ export function createClaudeNormalizer() {
           return [defined({ type: 'retry', parentId, attempt: num(raw.attempt), maxRetries: num(raw.max_retries),
             delayMs: num(raw.retry_delay_ms), httpStatus: Number.isFinite(raw.error_status) ? raw.error_status : null,
             reason: str(raw.error) || 'unknown', waitedMs: num(raw.no_response?.waited_ms) })];
+        }
+        // The CLI compacted the conversation: the context starts again from a summary. Its text (if any)
+        // stays a log line. `compact` exists for Run telemetry only, so it is emitted only while that Labs
+        // flag is on (read here, on this rare frame); off, the output is what it always was.
+        // compact_metadata: {trigger, pre_tokens}.
+        if (raw.subtype === 'compact_boundary' && flagEnabled('runTelemetry')) {
+          const m = raw.compact_metadata && typeof raw.compact_metadata === 'object' ? raw.compact_metadata : {};
+          return [...otherText(), defined({ type: 'compact', parentId, trigger: str(m.trigger), preTokens: num(m.pre_tokens) })];
         }
         return otherText();
       case 'assistant': return assistant(raw, parentId, e);

@@ -667,7 +667,7 @@ test('collapsed pill: the still orb, one-line input with a rotating example, att
   const file = root.querySelector('input[type="file"]');
   assert.equal(file.multiple, true);
   assert.equal(file.hidden, true);
-  assert.equal(file.accept, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
+  assert.equal(file.accept, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.xml,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
   assert.equal(root.querySelector('.wfc-files').hidden, true, 'no chips until a file is picked');
   assert.equal(root.querySelector('#wfc-send').getAttribute('aria-disabled'), 'true');
 });
@@ -1409,7 +1409,7 @@ test('Ask\'s early checks and messages in the dock: type, 100 MB text, 8 files; 
   croot.querySelector('#wfc-input').dispatchEvent(new c.win.Event('focus'));
   pickFiles(c, [mkFile(c, 'spec.pdf', '%PDF-1.7', 'application/pdf'), pngFile(c)]);
   await settle();
-  assert.equal(croot.querySelector('.wfc-note').textContent, 'PDFs need a Claude chat: spec.pdf');
+  assert.equal(croot.querySelector('.wfc-note').textContent, 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
   assert.deepEqual(chipNames(croot), ['flow.png'], 'an image still attaches on Codex');
 });
 

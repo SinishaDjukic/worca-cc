@@ -801,7 +801,8 @@ test('WORCA_DEBUG_SPAWN on: ONE stderr event with bin + argv + routing env; NO s
 // ── GitHub credentials never reach claude (src/core/github-credentials.mjs) ──
 
 test('no GitHub or Azure DevOps credential reaches claude: scrub off, scrub on with it allowlisted, or set by a model env', POSIX_SHIM, async () => {
-  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN'];
+  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN',
+    'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER'];
   const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'WORCA_GH_READ_TOKEN', 'WORCA_GH_WRITE_TOKEN', ...ADO_KEYS];
   const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) process.env[k] = `secret-${k}`;
@@ -907,4 +908,27 @@ test('runClaude FORWARDS pluginDirs and extraSettings to runReal (both reach the
   assert.deepEqual(argv.filter((a, i) => argv[i - 1] === '--plugin-dir'), plugins);
   assert.deepEqual(JSON.parse(argv[argv.indexOf('--settings') + 1]),
     { disableSkillShellExecution: true, permissions: { deny: ['Read(.env*)'] } });
+});
+
+test('runClaude FORWARDS systemPromptMode to runReal (--system-prompt reaches the spawn; absent keeps the append flag)', POSIX_SHIM, async () => {
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;                       // must reach runReal, not runMock
+  const spawnArgv = async (extra) => {
+    const dir = await tmp();
+    const out = join(dir, 'argv.txt');
+    const bin = await fakeBin(dir, out);
+    await runClaude({ cwd: dir, bin, prompt: 'p', systemPrompt: 'SYS', ...extra });
+    return (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  };
+  try {
+    const replaced = await spawnArgv({ systemPromptMode: 'replace' });
+    assert.equal(replaced[replaced.indexOf('--system-prompt') + 1], 'SYS', JSON.stringify(replaced));
+    assert.ok(!replaced.includes('--append-system-prompt'));
+    const appended = await spawnArgv({});
+    assert.equal(appended[appended.indexOf('--append-system-prompt') + 1], 'SYS');
+    assert.ok(!appended.includes('--system-prompt'));
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK;
+    else process.env.WORCA_MOCK = prevMock;
+  }
 });

@@ -46,6 +46,7 @@ test('a tile: title, project · workflow, the Running list pill, the stats line 
   assert.equal(el.tagName, 'ARTICLE');
   assert.equal(el.dataset.tileKey, 'live:r1');
   assert.equal(el.querySelector('button.chat-run-tile-open').textContent, 'Fix the upload test');
+  assert.equal(el.querySelector('button.chat-run-tile-open > .chat-run-tile-name').textContent, 'Fix the upload test');
   assert.equal(el.querySelector('.chat-run-tile-sub').textContent, 'worca-cc · T');
   const pill = el.querySelector('.chat-run-tile-pill');
   assert.ok(pill.classList.contains('st-peach'));
@@ -159,6 +160,8 @@ test('the deciding line uses the run page\'s words: waiting on its proposal, par
   tile.update(snap());
   assert.equal(tile.el.querySelector('.chat-run-tile-well').getAttribute('aria-label'), 'Workflow graph', 'decided: the graph again');
   assert.equal(decidingText({ status: 'interrupted' }), 'Paused before deciding');
+  assert.equal(decidingText({ status: 'paused', resumePending: true }), 'Resuming…', 'a Resume in flight');
+  assert.equal(decidingText(null), DECIDING_TEXT, 'no snapshot yet');
   assert.equal(decidingText({ status: 'stopped' }), 'Auto did not decide a workflow');
   assert.equal(decidingText({ status: 'done' }), 'Auto did not decide a workflow');
   assert.equal(decidingText({ status: 'running' }), DECIDING_TEXT);

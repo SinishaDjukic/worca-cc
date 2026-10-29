@@ -15,8 +15,8 @@
           "help": "The name in https://dev.azure.com/<organization>" },
         { "key": "token", "type": "text", "secret": true, "required": true, "label": "Personal access token",
           "help": "A PAT with Work Items (Read & Write) and Project and Team (Read), or {\"$env\":\"WORCA_ADO_BOARDS_TOKEN\"}. Kept separate from worca's Code token on purpose." },
-        { "key": "closeOnComplete", "type": "select", "label": "Close work item on completion", "default": "no", "options": ["yes", "no"],
-          "help": "yes = move the work item to its type's Completed state when a pipeline finishes successfully" }
+        { "key": "closeOnComplete", "type": "select", "label": "Close work item on completion", "default": "no", "options": [{ "value": "yes", "label": "Yes" }, { "value": "no", "label": "No" }],
+          "help": "Yes moves the work item to its type's Completed state when a pipeline finishes successfully" }
       ],
       "inputs": [
         { "key": "project", "type": "remote-select", "label": "Project", "optionsFrom": "listProjects" },

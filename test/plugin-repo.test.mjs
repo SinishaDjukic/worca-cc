@@ -17,6 +17,7 @@ import {
   emptyManifestDelta, manifestVersion,
 } from '../src/core/plugin-repo.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
+import { BB_GIT_CREDENTIAL_HELPER } from '../src/core/bitbucket-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { writePluginsLock } from '../src/core/plugins-lock.mjs';
 
@@ -389,6 +390,15 @@ test('plugin repo git calls carry worca\'s GitHub read env plus the host-scoped 
     AZURE_DEVOPS_EXT_PAT: undefined }, () => pluginGitEnv());
   assert.equal(none.WORCA_ADO_GIT_TOKEN, undefined);
   assert.equal(Object.values(none).includes(ADO_GIT_CREDENTIAL_HELPER), false);
+});
+
+test('plugin repo git calls carry the host-scoped Bitbucket helper too (a git-backed Bitbucket marketplace, D11)', async () => {
+  const NO_APP = { WORCA_GH_APP_ID: undefined, WORCA_GH_APP_KEY_FILE: undefined, WORCA_GH_APP_KEY_B64: undefined };
+  const env = await withEnv({ ...NO_APP, WORCA_BB_TOKEN: 'bbtok', WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined,
+    WORCA_BB_EMAIL: undefined }, () => pluginGitEnv());
+  assert.equal(env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(env.WORCA_BB_TOKEN, undefined, 'the raw token variable is stripped');
+  assert.ok(Object.values(env).includes(BB_GIT_CREDENTIAL_HELPER));
 });
 
 test('discoverAtCommit: discovery at a given commit of a checkout — index authoritative, version read from that commit', async () => {

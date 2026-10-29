@@ -21,6 +21,7 @@ import { teamCapsForTarget } from '../src/core/policy/gate.mjs';
 import { teamRunDiscover } from '../src/core/git-free/team-repo.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 import { withEnv } from './helpers/with-env.mjs';
+import { BITBUCKET_NEEDS_GIT } from '../src/core/git-available.mjs';
 
 useTempHome(after);
 const gh = await fakeGithub();
@@ -119,6 +120,12 @@ test('status without git: another host → needsGit; a plain folder → repoInpu
   assert.deepEqual([byKey.get(projectKey(gl)).needsGit, byKey.get(projectKey(plain)).repoInput], [true, true]);
   await assert.rejects(enableTeamPolicy(gl, { mode: 'here' }), { code: 'GIT_MISSING' });
   await assert.rejects(enableTeamPolicy(plain, { mode: 'here' }), { code: 'REPO_REQUIRED' });
+});
+
+test('enable without git on a Bitbucket origin names Bitbucket', async (t) => {
+  const bb = await project('acme/bbpol', 'https://bitbucket.org/acme/bbpol.git');
+  withNoGit(t);
+  await assert.rejects(enableTeamPolicy(bb, { mode: 'here' }), { code: 'GIT_MISSING', message: BITBUCKET_NEEDS_GIT });
 });
 
 test('policy status of a folder without git or a typed repo: hasOrigin stays null, the repository is asked for', async (t) => {

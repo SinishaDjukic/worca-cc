@@ -1,4 +1,4 @@
-// test/shape-server-slices.test.mjs — Shape it first, plan in slices, on the server (spec §3.8, L9–L11): the gated
+// test/shape-server-slices.test.mjs — Shape it first, plan in slices, on the server (spec §3.8, L9–L11): the
 // /api/shape/… routes, the live overlay, the shape-feature broadcasts, the Chat card's REST strip and the answer
 // route's outline fields. Boot = the server-mock-mode recipe of test/api-shape-first.test.mjs.
 import { test, before, after } from 'node:test';
@@ -27,13 +27,7 @@ const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const get = (p) => fetch(`${base}${p}`);
 const savedMock = process.env.WORCA_MOCK;
-const savedFlags = process.env.WORCA_FLAGS;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function withGate(on, fn) {
-  process.env.WORCA_FLAGS = on ? 'shapeFirst' : '-shapeFirst';   // WORCA_FLAGS locks it over settings.json
-  try { return await fn(); } finally { process.env.WORCA_FLAGS = '-shapeFirst'; }
-}
 
 before(async () => {
   process.env.WORCA_MOCK = '1';
@@ -60,7 +54,6 @@ after(async () => {
       new Promise((r) => { const t = setTimeout(r, 500); t.unref?.(); }),
     ]);
   }
-  if (savedFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = savedFlags;
   if (savedMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = savedMock;
   rmSync(project, { recursive: true, force: true });
 });
@@ -106,59 +99,36 @@ async function collector() {
   return { frames: (type) => got.filter((m) => m.type === type), close: () => ws.close(), got };
 }
 
-// ── the gate ─────────────────────────────────────────────────────────────────
-test('gate off: every /api/shape/ route is 404 and POST /api/run with shape.slice says shape is not available', () => withGate(false, async () => {
-  for (const p of ['/api/shape/features/x', '/api/shape/plans']) assert.equal((await get(p)).status, 404, p);
-  for (const a of ['cancel', 'resume', 'replan', 'approve-each']) {
-    assert.equal((await post(`/api/shape/features/x/${a}`, { on: true })).status, 404, a);
-  }
-  const r = await post('/api/run', { prompt: 'x', projectDir: project, shape: { slice: { feature: 'f', index: 2 } } });
-  assert.equal(r.status, 400);
-  assert.match((await r.json()).error, /shape is not available on this server/);
-}));
-
-test('gate on, not internal: POST /api/run with shape.slice is refused as an unknown field', () => withGate(true, async () => {
+// ── the internal-only slice field ──────────────────────────────────────────────
+test('not internal: POST /api/run with shape.slice is refused as an unknown field', async () => {
   const r = await post('/api/run', { prompt: 'x', projectDir: project, shape: { slice: { feature: 'f', index: 2 } } });
   assert.equal(r.status, 400);
   assert.match((await r.json()).error, /shape has unknown field\(s\): slice/);
-}));
-
-// ── GET /api/shape/features/:id ──────────────────────────────────────────────
-test('GET /api/schedules: a chain whose first run is a slice carries its feature; with the gate off it does not (D17)', async () => {
-  const { id, pid } = mk(3, 'running');
-  const chainOf = async () => (await (await get('/api/schedules')).json()).chains.find((c) => c.members[0].pipelineId === pid);
-  await withGate(true, async () => {
-    const c = await chainOf();
-    assert.ok(c, 'the chain is listed');
-    assert.equal(c.feature.id, id);
-    assert.equal(c.feature.title, 'Charts');
-    assert.deepEqual(c.feature.slices.map((x) => x.index), [1, 2, 3]);
-  });
-  await withGate(false, async () => {
-    const c = await chainOf();
-    assert.ok(c);
-    assert.equal('feature' in c, false);
-  });
 });
 
-test('GET /api/shape/pipelines/:pid/slice: the slice\'s place in its feature; 404 for a plain run; the gate refuses when off', async () => {
+// ── GET /api/shape/features/:id ──────────────────────────────────────────────
+test('GET /api/schedules: a chain whose first run is a slice carries its feature (D17)', async () => {
+  const { id, pid } = mk(3, 'running');
+  const c = (await (await get('/api/schedules')).json()).chains.find((x) => x.members[0].pipelineId === pid);
+  assert.ok(c, 'the chain is listed');
+  assert.equal(c.feature.id, id);
+  assert.equal(c.feature.title, 'Charts');
+  assert.deepEqual(c.feature.slices.map((x) => x.index), [1, 2, 3]);
+});
+
+test('GET /api/shape/pipelines/:pid/slice: the slice\'s place in its feature; 404 for a plain run', async () => {
   const f = mk(3, 'done');
   const p2 = pipe('running');
   getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, f.id);
-  await withGate(true, async () => {
-    const r = await get(`/api/shape/pipelines/${p2}/slice`);
-    assert.equal(r.status, 200);
-    const body = await r.json();
-    assert.deepEqual({ ...body, state: undefined }, { featureId: f.id, title: 'Charts', index: 2, total: 3, sliceTitle: 'Slice 2',
-      state: undefined, next: { index: 3, title: 'Slice 3', state: 'planned' }, threadId: null });
-    assert.equal((await get('/api/shape/pipelines/p-plain-zz/slice')).status, 404);
-  });
-  await withGate(false, async () => {
-    assert.equal((await get(`/api/shape/pipelines/${p2}/slice`)).status, 404);
-  });
+  const r = await get(`/api/shape/pipelines/${p2}/slice`);
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.deepEqual({ ...body, state: undefined }, { featureId: f.id, title: 'Charts', index: 2, total: 3, sliceTitle: 'Slice 2',
+    state: undefined, next: { index: 3, title: 'Slice 3', state: 'planned' }, threadId: null });
+  assert.equal((await get('/api/shape/pipelines/p-plain-zz/slice')).status, 404);
 });
 
-test('GET feature: the view, 404 for an unknown id, and the re-plan successor with replanOf', () => withGate(true, async () => {
+test('GET feature: the view, 404 for an unknown id, and the re-plan successor with replanOf', async () => {
   const a = mk(2);
   const v = await view(a.id);
   assert.equal(v.id, a.id);
@@ -173,9 +143,9 @@ test('GET feature: the view, 404 for an unknown id, and the re-plan successor wi
   assert.equal(viaA.id, b.id);
   assert.equal(viaA.replanOf, a.id);
   assert.equal((await view(b.id)).replanOf, null);
-}));
+});
 
-test('GET feature: a settled entry is ignored (the pipelines row decides), a paused or plan-asking one is shown (F26)', () => withGate(true, async () => {
+test('GET feature: a settled entry is ignored (the pipelines row decides), a paused or plan-asking one is shown (F26)', async () => {
   const f = mk(2, 'stopped');
   const settled = liveEntry(f.pid, { status: 'stopped' });
   try {
@@ -203,10 +173,10 @@ test('GET feature: a settled entry is ignored (the pipelines row decides), a pau
     assert.equal((await view(k.id)).slices[0].state, 'running');
   } finally { dropEntry(ask); }
   for (const x of [f, g, h, k]) getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(x.id);
-}));
+});
 
 // ── actions ──────────────────────────────────────────────────────────────────
-test('cancel cancels the open tickets, answers the view and broadcasts shape-feature', () => withGate(true, async () => {
+test('cancel cancels the open tickets, answers the view and broadcasts shape-feature', async () => {
   const f = mk(3);
   const c = await collector();
   try {
@@ -220,9 +190,9 @@ test('cancel cancels the open tickets, answers the view and broadcasts shape-fea
     assert.equal((await post(`/api/shape/features/${f.id}/cancel`, {})).status, 409, 'a canceled feature refuses a second cancel');
     assert.equal((await post('/api/shape/features/feat_nope/cancel', {})).status, 404);
   } finally { c.close(); }
-}));
+});
 
-test('approve-each validates its body, stores the switch and 404s an unknown feature', () => withGate(true, async () => {
+test('approve-each validates its body, stores the switch and 404s an unknown feature', async () => {
   const f = mk(2);
   let r = await post(`/api/shape/features/${f.id}/approve-each`, { on: 'yes' });
   assert.equal(r.status, 400);
@@ -233,9 +203,9 @@ test('approve-each validates its body, stores the switch and 404s an unknown fea
   assert.deepEqual(await r.json(), { ok: true, approveEach: false });
   assert.equal((await view(f.id)).approveEach, false);
   assert.equal((await post('/api/shape/features/feat_nope/approve-each', { on: true })).status, 404);
-}));
+});
 
-test('resume: nothing stopped is a 409, a stopped slice restarts as a new ticket', () => withGate(true, async () => {
+test('resume: nothing stopped is a 409, a stopped slice restarts as a new ticket', async () => {
   const quiet = mk(2, 'running');
   let r = await post(`/api/shape/features/${quiet.id}/resume`, {});
   assert.equal(r.status, 409);
@@ -248,9 +218,9 @@ test('resume: nothing stopped is a 409, a stopped slice restarts as a new ticket
   assert.equal(body.action, 'restart');
   assert.ok(body.ticketId);
   assert.equal((await post('/api/shape/features/feat_nope/resume', {})).status, 404);
-}));
+});
 
-test('replan answers the ticket as runId and a second replan is a 409', () => withGate(true, async () => {
+test('replan answers the ticket as runId and a second replan is a 409', async () => {
   const f = mk(2, 'stopped');
   let r = await post(`/api/shape/features/${f.id}/replan`, {});
   const body = await r.json();
@@ -259,10 +229,10 @@ test('replan answers the ticket as runId and a second replan is a 409', () => wi
   r = await post(`/api/shape/features/${f.id}/replan`, {});
   assert.equal(r.status, 409);
   assert.match((await r.json()).error, /replanning/);
-}));
+});
 
 // ── plans ────────────────────────────────────────────────────────────────────
-test('GET /api/shape/plans lists the plans newest first, with a paused row as paused and the feature view attached', () => withGate(true, async () => {
+test('GET /api/shape/plans lists the plans newest first, with a paused row as paused and the feature view attached', async () => {
   const old = createThread();
   const fresh = createThread();
   recordShapePlan({ threadId: old.id, cardId: 'card_00000001', title: 'Older plan', now: Date.now() - 60000 });
@@ -278,9 +248,9 @@ test('GET /api/shape/plans lists the plans newest first, with a paused row as pa
     assert.equal(ours[0].feature.id, f.id);
     assert.equal(ours[1].feature, null);
   } finally { dropEntry(e); }
-}));
+});
 
-test('GET /api/shape/plans: a plan whose slice 1 is a replanned feature carries the successor view (F47)', () => withGate(true, async () => {
+test('GET /api/shape/plans: a plan whose slice 1 is a replanned feature carries the successor view (F47)', async () => {
   const t = createThread();
   recordShapePlan({ threadId: t.id, cardId: 'card_00000003', title: 'Plan' });
   const a = mk(2, 'done');
@@ -291,33 +261,27 @@ test('GET /api/shape/plans: a plan whose slice 1 is a replanned feature carries 
   const row = plans.find((p) => p.threadId === t.id);
   assert.equal(row.feature.id, b.id);
   getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id IN (?, ?))").run(a.id, b.id);
-}));
+});
 
 // ── the Chat card's REST strip (F46, F48) ────────────────────────────────────
-test('GET /api/ask/runs/:id carries shaping.feature for slice 1 only, and only while the gate is on', async () => {
+test('GET /api/ask/runs/:id carries shaping.feature for slice 1 only', async () => {
   const f = mk(2, 'done');
   const slice2 = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2').get(f.id).ticket_id;
   const p2 = pipe('running');
   getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(p2, slice2);
   const lone = pipe('done');
   try {
-    await withGate(true, async () => {
-      const one = await (await get(`/api/ask/runs/${f.pid}`)).json();
-      assert.deepEqual(one.state.shaping, { feature: { id: f.id, index: 1 } });
-      const two = await (await get(`/api/ask/runs/${p2}`)).json();
-      assert.ok(!two.state.shaping, 'a slice-2 pipeline gets no strip');
-      const none = await (await get(`/api/ask/runs/${lone}`)).json();
-      assert.ok(!none.state.shaping, 'a run with no feature gets no strip');
-    });
-    await withGate(false, async () => {
-      const off = await (await get(`/api/ask/runs/${f.pid}`)).json();
-      assert.ok(!off.state.shaping, 'the gate off gives no strip');
-    });
+    const one = await (await get(`/api/ask/runs/${f.pid}`)).json();
+    assert.deepEqual(one.state.shaping, { feature: { id: f.id, index: 1 } });
+    const two = await (await get(`/api/ask/runs/${p2}`)).json();
+    assert.ok(!two.state.shaping, 'a slice-2 pipeline gets no strip');
+    const none = await (await get(`/api/ask/runs/${lone}`)).json();
+    assert.ok(!none.state.shaping, 'a run with no feature gets no strip');
   } finally { retireFeaturesOf(f.pid); }
 });
 
 // ── the answer route forwards the outline fields ─────────────────────────────
-test('POST /api/runs/:id/answer forwards edits and approveEach to the run', () => withGate(true, async () => {
+test('POST /api/runs/:id/answer forwards edits and approveEach to the run', async () => {
   const calls = [];
   runs.set('shape-outline-run', { id: 'shape-outline-run', kind: 'run', status: 'running', events: [],
     orch: { answer: (qid, payload, by) => { calls.push({ qid, payload, by }); return true; } },
@@ -328,7 +292,7 @@ test('POST /api/runs/:id/answer forwards edits and approveEach to the run', () =
     assert.equal(r.status, 200, await r.text());
     assert.deepEqual(calls[0].payload, { decision: 'approve', edits, approveEach: false });
   } finally { runs.delete('shape-outline-run'); }
-}));
+});
 
 // ── the wireRun hook (F42, F49) ──────────────────────────────────────────────
 /** A wired fake slice orchestrator for pipeline `pid`; emit through `orch`. */
@@ -340,7 +304,7 @@ function wireSlice(pid) {
   return { orch, entry };
 }
 
-test('wireRun: a slice run broadcasts its feature when status, ask kind or approval changes, and not on token frames (F49)', () => withGate(true, async () => {
+test('wireRun: a slice run broadcasts its feature when status, ask kind or approval changes, and not on token frames (F49)', async () => {
   const f = mk(2, 'running');
   const { orch, entry } = wireSlice(f.pid);
   const c = await collector();
@@ -366,20 +330,9 @@ test('wireRun: a slice run broadcasts its feature when status, ask kind or appro
     runs.delete(entry.id);
     getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(f.id);
   }
-}));
+});
 
-test('wireRun: with the gate off a slice run sends no shape-feature frame', () => withGate(false, async () => {
-  const f = mk(2, 'running');
-  const { orch, entry } = wireSlice(f.pid);
-  const c = await collector();
-  try {
-    orch.emit('question', { id: 'plan-n-1', kind: 'plan' });
-    await sleep(80);
-    assert.equal(c.frames('shape-feature').length, 0);
-  } finally { c.close(); runs.delete(entry.id); }
-}));
-
-test('wireRun: a shape-feature event on the orchestrator is broadcast and kept out of the replay', () => withGate(true, async () => {
+test('wireRun: a shape-feature event on the orchestrator is broadcast and kept out of the replay', async () => {
   const { orch, entry } = wireSlice(pipe('running'));
   const c = await collector();
   try {
@@ -388,10 +341,10 @@ test('wireRun: a shape-feature event on the orchestrator is broadcast and kept o
     assert.equal(c.frames('shape-feature').filter((m) => m.id === 'feat_x').length, 1);
     assert.ok(!entry.events.some((e) => e.type === 'shape-feature'));
   } finally { c.close(); runs.delete(entry.id); }
-}));
+});
 
 // ── errors never escape (F29, F42): LAST in the file, they break the shared temp DB ──────────────────────────
-test('errors never escape: with shape_feature_slices gone resume answers 500, the run frame still lands and the server lives', () => withGate(true, async () => {
+test('errors never escape: with shape_feature_slices gone resume answers 500, the run frame still lands and the server lives', async () => {
   const f = mk(2, 'stopped');
   const { orch, entry } = wireSlice(f.pid);
   const c = await collector();
@@ -415,9 +368,9 @@ test('errors never escape: with shape_feature_slices gone resume answers 500, th
     c.close();
     runs.delete(entry.id);
   }
-}));
+});
 
-// ── D24: a finished slice opens a draft PR (openSliceDraft, from afterRunSettled) ──────────────────────────────
+// ── One ship flow: a member's own PR (openMemberPr); a settled slice opens none (afterRunSettled) ───────────────
 /** gh present, one origin; every argv lands in `seen`. `create(args)` answers gh pr create (a URL, or a failure). */
 function stubGh(seen, { create = () => okRun('https://github.com/me/repo/pull/7\n') } = {}) {
   gitInfo.setRunner((cmd, args) => {
@@ -446,62 +399,47 @@ function stackedFeature() {
 }
 const draftOf = (fid, idx) => getDb().prepare('SELECT draft_pr_url FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(fid, idx).draft_pr_url;
 
-test('openSliceDraft: a draft PR on the chain root for slice 1, stacked on slice 1\'s branch for slice 2; once only', () => withGate(true, () => withEnvVars(NO_ADO, async () => {
+test('openMemberPr: a ready PR on the chain root for slice 1, stacked on slice 1\'s branch for slice 2; no draft', () => withEnvVars(NO_ADO, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
-  const { readPrState } = await import('../src/core/artifacts.mjs');
   try {
     const { f, p1, p2 } = stackedFeature();
     const seen = [];
     stubGh(seen);
-    await testing.openSliceDraft(p1);
-    const c1 = creates(seen)[0];
-    assert.ok(c1.includes('--draft'));
-    assert.equal(argOf(c1, '--base'), 'main');
-    assert.deepEqual(readPrState(p1), { url: 'https://github.com/me/repo/pull/7', number: 7, state: 'OPEN' }, 'a draft is OPEN (P18)');
-    assert.equal(draftOf(f.id, 1), 'https://github.com/me/repo/pull/7');
+    assert.equal((await testing.openMemberPr(p1)).ok, true);
     stubGh(seen, { create: () => okRun('https://github.com/me/repo/pull/8\n') });
-    await testing.openSliceDraft(p2);
-    const c2 = creates(seen)[1];
+    assert.equal((await testing.openMemberPr(p2)).ok, true);
+    const [c1, c2] = creates(seen);
+    assert.equal(argOf(c1, '--base'), 'main');
     assert.equal(argOf(c2, '--base'), `feat/${p1}`);
-    assert.equal(draftOf(f.id, 2), 'https://github.com/me/repo/pull/8');
-    await testing.openSliceDraft(p2);
-    assert.equal(creates(seen).length, 2, 'a PR is recorded: nothing more');
+    assert.ok(!c1.includes('--draft') && !c2.includes('--draft'));
+    assert.equal(draftOf(f.id, 1), null, 'no draft_pr_url is written');
   } finally { gitInfo.reset(); }
-})));
+}));
 
-test('openSliceDraft: a forge that refuses drafts gets the PR opened ready; no draft label', () => withGate(true, () => withEnvVars(NO_ADO, async () => {
+test('openMemberPr: a run that already has a live PR opens no second one', () => withEnvVars(NO_ADO, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
   try {
-    const { f, p1 } = stackedFeature();
+    const { p1 } = stackedFeature();
     const seen = [];
-    stubGh(seen, { create: (args) => (args.includes('--draft') ? failRun('Draft pull requests are not supported in this repository') : okRun('https://github.com/me/repo/pull/9\n')) });
-    const out = await testing.openSliceDraft(p1);
-    assert.equal(out.ok, true);
-    assert.equal(creates(seen).length, 2);
-    assert.ok(!creates(seen)[1].includes('--draft'));
-    assert.equal(draftOf(f.id, 1), null);
+    stubGh(seen);
+    assert.equal((await testing.openMemberPr(p1)).ok, true);
+    const again = await testing.openMemberPr(p1);
+    assert.deepEqual([again.ok, again.existed], [true, true]);
+    assert.equal(creates(seen).length, 1, 'once only');
   } finally { gitInfo.reset(); }
-})));
+}));
 
-test('afterRunSettled: a done slice opens its draft (no merge back needed); stopped, unsliced or gate off do not', () => withEnvVars(NO_ADO, async () => {
+test('afterRunSettled: a done slice opens no PR (one ship flow); it still offers the Ship card', () => withEnvVars(NO_ADO, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
   try {
     const seen = [];
     stubGh(seen);
     const orch = (pid, status, slice = { feature: 'f', index: 1 }) => ({ runShape: slice ? { slice } : null, getState: () => ({ status, id: pid }) });
-    await withGate(true, async () => {
-      const a = stackedFeature();
-      await testing.afterRunSettled(orch(a.p1, 'stopped'));
-      await testing.afterRunSettled(orch(a.p1, 'done', null));
-      assert.equal(creates(seen).length, 0);
-      await testing.afterRunSettled(orch(a.p1, 'done'));
-      assert.equal(creates(seen).length, 1);
-    });
-    await withGate(false, async () => {
-      const b = stackedFeature();
-      await testing.afterRunSettled(orch(b.p1, 'done'));
-      assert.equal(creates(seen).length, 1, 'gate off: nothing runs');
-    });
+    const a = stackedFeature();
+    await testing.afterRunSettled(orch(a.p1, 'done'));
+    await testing.afterRunSettled(orch(a.p2, 'done'));
+    assert.equal(creates(seen).length, 0, 'no draft PR per slice');
+    assert.equal(draftOf(a.f.id, 1), null);
   } finally { gitInfo.reset(); }
 }));
 
@@ -509,10 +447,10 @@ test('afterRunSettled: a done slice opens its draft (no merge back needed); stop
 const { shipWorld, cleanup: shipCleanup } = shipKit({ nextId, outlineOf });
 after(shipCleanup);
 const ship = (id, mode) => post(`/api/shape/features/${id}/ship`, { mode });
-const shipT = (name, fn) => test(name, () => withGate(true, () => withEnvVars(NO_ADO, async () => {
+const shipT = (name, fn) => test(name, () => withEnvVars(NO_ADO, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
   try { await fn(); } finally { gitInfo.reset(); }
-})));
+}));
 
 shipT('Ship as: a bad mode is 400, a feature not yet done is 409, an unknown one 404', async () => {
   const seen = []; stubShip(seen);
@@ -561,9 +499,8 @@ shipT('one PR: gh pr create on the chain root (no draft, no "Part of"), then the
   assert.equal(closes.length, 3);
   for (const x of closes) assert.equal(argOf(x, '--comment'), 'Shipped as one pull request: https://github.com/me/repo/pull/9');
   const { readPrState } = await import('../src/core/artifacts.mjs');
-  assert.equal(readPrState(w.pids[0]).state, 'CLOSED');
-  assert.equal(readPrState(w.pids[2]).url, 'https://github.com/me/repo/pull/9', 'the last row holds the one PR');
-  assert.equal(readPrState(w.pids[2]).state, 'OPEN');
+  // The one PR is every slice's PR (as a chain shipped as One): the group reads In review · 1 PR, not Ready to ship.
+  for (const pid of w.pids) assert.deepEqual([readPrState(pid).url, readPrState(pid).state], ['https://github.com/me/repo/pull/9', 'OPEN'], pid);
   const v = await view(w.f.id);
   assert.deepEqual([v.ship.mode, v.ship.prUrl], ['one', 'https://github.com/me/repo/pull/9']);
   assert.equal(v.ship.result.closed, 3, 'slice 3\'s draft counts though its row now holds the one PR');
@@ -580,19 +517,105 @@ shipT('one PR when gh reports the last slice\'s draft already exists: it is made
   assert.equal((await view(w.f.id)).ship.result.closed, 2);
 });
 
-shipT('a done slice with no PR gets one first; when that fails the answer is 409 and nothing else ran', async () => {
-  const seen = []; stubShip(seen, { create: () => failRun('boom') });
-  const w = shipWorld();
-  getDb().prepare('UPDATE pipelines SET pr_url = NULL, pr_state = NULL WHERE id = ?').run(w.pids[1]);
+shipT('stacked with no slice PRs: each slice gets a ready PR on its stacked base in merge order, then 3 gh pr ready', async () => {
+  let n = 0;
+  const seen = []; stubShip(seen, { create: () => okRun(`https://github.com/me/repo/pull/${++n}\n`) });
+  const w = shipWorld({ prs: false });
   const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  const c = ghCalls(seen, 'create');
+  assert.deepEqual(c.map((a) => argOf(a, '--base')), ['main', `feat/${w.pids[0]}`, `feat/${w.pids[1]}`]);
+  assert.ok(c.every((a) => !a.includes('--draft')));
+  assert.deepEqual(ghCalls(seen, 'ready').map((a) => a[3]), [1, 2, 3].map((k) => `https://github.com/me/repo/pull/${k}`));
+});
+
+shipT('One with no slice PRs: 1 PR into the chain root, nothing closed', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ prs: false });
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  const c = ghCalls(seen, 'create');
+  assert.equal(c.length, 1);
+  assert.equal(argOf(c[0], '--base'), 'main');
+  assert.equal(ghCalls(seen, 'close').length, 0);
+});
+
+shipT('in-flight drafts still ship stacked: 0 creates, 3 gh pr ready in slice order', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();                                   // each slice's PR recorded as its draft (recordSliceDraft)
+  assert.ok((await view(w.f.id)).slices.every((s) => s.pr && s.pr.draft === true), 'every slice reads as a draft');
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(ghCalls(seen, 'create').length, 0);
+  assert.deepEqual(ghCalls(seen, 'ready').map((a) => a[3]), [1, 2, 3].map((k) => `https://github.com/me/repo/pull/${k}`));
+});
+
+shipT('after a ship the slices\' stored PRs read ready, not draft, and pipelines-changed reloads the pages (one ship flow)', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  for (const pid of w.pids) getDb().prepare('UPDATE pipelines SET pr_verdict = ? WHERE id = ?').run(JSON.stringify({ draft: true, mergeable: 'MERGEABLE' }), pid);
+  const ws = await collector();
+  try {
+    const r = await ship(w.f.id, 'stacked');
+    assert.equal(r.status, 200, await r.clone().text());
+    const { readPrState } = await import('../src/core/artifacts.mjs');
+    for (const pid of w.pids) assert.deepEqual([readPrState(pid).draft, readPrState(pid).mergeable], [false, 'MERGEABLE'], pid);
+    const t0 = Date.now();
+    while (!ws.frames('pipelines-changed').length && Date.now() - t0 < 3000) await sleep(10);
+    assert.ok(ws.frames('pipelines-changed').length, 'the Runs list and the group page reload History and run groups');
+  } finally { ws.close(); }
+});
+
+shipT('One over legacy drafts: the group of the feature reads In review · 1 PR, not Ready to ship', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  for (const pid of w.pids) getDb().prepare('UPDATE pipelines SET pr_verdict = ? WHERE id = ?').run(JSON.stringify({ draft: true }), pid);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  const { listRunGroups } = await import('../src/core/run-groups.mjs');
+  const { groupModel } = await import('../src/shared/run-model.mjs');
+  const g = listRunGroups().find((x) => x.id === w.f.id);
+  const m = groupModel({ kind: 'feature', title: g.title, members: g.members.map((x) => ({ status: x.status, pr: x.pr })) });
+  assert.deepEqual([m.state, m.line, m.prCount], ['in-review', 'In review · 1 PR', 1]);
+});
+
+shipT('One refuses a ready slice PR (409), closing and creating nothing', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ drafts: false });                  // ready slice PRs, as openMemberPr leaves them
+  const r = await ship(w.f.id, 'one');
   assert.equal(r.status, 409);
-  assert.equal((await r.json()).error, 'slice 2 has no pull request yet');
-  assert.equal(ghCalls(seen, 'ready').length, 0);
-  assert.equal(spawnSync('git', ['show', `${w.last}:CHANGELOG.md`], { cwd: w.dir }).status === 0, false, 'no changelog');
-  stubShip(seen);
+  assert.match((await r.json()).error, /already has a PR/);
+  assert.equal(ghCalls(seen, 'close').length, 0);
+  assert.equal(ghCalls(seen, 'create').length, 0);
+});
+
+shipT('a stacked failure mid-loop says how to continue; run 1\'s PR stays and a retry makes the other 2', async () => {
+  let n = 0;
+  const seen = []; stubShip(seen, { create: () => (++n === 2 ? failRun('boom') : okRun(`https://github.com/me/repo/pull/${n}\n`)) });
+  const w = shipWorld({ prs: false });
+  const r = await ship(w.f.id, 'stacked');
+  assert.ok(r.status >= 409, String(r.status));
+  const j = await r.json();
+  assert.match(j.error, /run 2's PR.*Create PR again to continue/);
+  assert.deepEqual(j.prs, ['https://github.com/me/repo/pull/1']);
+  const { readPrState } = await import('../src/core/artifacts.mjs');
+  assert.equal(readPrState(w.pids[0]).url, 'https://github.com/me/repo/pull/1');
+  const before = ghCalls(seen, 'create').length;
   const ok = await ship(w.f.id, 'stacked');
   assert.equal(ok.status, 200, await ok.clone().text());
-  assert.ok(ghCalls(seen, 'create').some((a) => argOf(a, '--head') === `feat/${w.pids[1]}`), 'slice 2\'s PR opened first');
+  assert.equal(ghCalls(seen, 'create').length - before, 2);
+});
+
+shipT('watch: true turns Watch on for each slice PR', async () => {
+  let n = 0;
+  const seen = []; stubShip(seen, { create: () => okRun(`https://github.com/me/repo/pull/${++n}\n`) });
+  const w = shipWorld({ prs: false });
+  const r = await post(`/api/shape/features/${w.f.id}/ship`, { mode: 'stacked', watch: true });
+  assert.equal(r.status, 200, await r.clone().text());
+  const { getWatch } = await import('../src/core/pr-watch.mjs');
+  const rows = [1, 2, 3].map((k) => getWatch(`https://github.com/me/repo/pull/${k}`));
+  assert.deepEqual(rows.map((x) => [x && x.enabled, x && x.pipelineId]), w.pids.map((pid) => [true, pid]));
+  assert.equal((await post(`/api/shape/features/${w.f.id}/ship`, { mode: 'stacked', watch: 'yes' })).status, 400);
 });
 
 shipT('a failed ready then a retry: CHANGELOG.md keeps one ### Charts entry; two concurrent ships: one wins', async () => {
@@ -609,15 +632,11 @@ shipT('a failed ready then a retry: CHANGELOG.md keeps one ### Charts entry; two
   assert.deepEqual([a.status, b.status].sort(), [200, 409]);
 });
 
-test('Ship as with the gate off answers the gate\'s refusal', () => withGate(false, async () => {
-  assert.equal((await post('/api/shape/features/feat_x/ship', { mode: 'one' })).status, 404);
-}));
-
 // ── Shaper s2: the Chat feature card route, the slice route's thread ─────────────
 const fire = (featureId, idx, pid) => getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?")
   .run(pid, getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(featureId, idx).ticket_id);
 
-test('GET /api/shape/pipelines/:pid/card: 404 gate off, unknown or plain run; a shaped run\'s log; the feature with its ask', () => withGate(true, async () => {
+test('GET /api/shape/pipelines/:pid/card: 404 for an unknown or plain run; a shaped run\'s log; the feature with its ask', async () => {
   assert.equal((await get('/api/shape/pipelines/p-nope-zz/card')).status, 404);
   const plain = pipe('running');
   const ePlain = liveEntry(plain);                                   // orch.state.shaping = {} is truthy: give it none
@@ -640,14 +659,13 @@ test('GET /api/shape/pipelines/:pid/card: 404 gate off, unknown or plain run; a 
     const body = await r.json();
     assert.equal(body.pipelineId, p1);
     assert.deepEqual(body.feature.ask, { index: 2, runId: e2.id, pipelineId: p2, id: 'plan-n_refine-1', kind: 'plan' });
-    await withGate(false, async () => assert.equal((await get(`/api/shape/pipelines/${p1}/card`)).status, 404));
   } finally {
     dropEntry(e2);
     getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(fid);
   }
-}));
+});
 
-test('GET /api/shape/pipelines/:pid/slice carries the feature thread', () => withGate(true, async () => {
+test('GET /api/shape/pipelines/:pid/slice carries the feature thread', async () => {
   const { id: fid, pid: p1 } = mk(2, 'done');
   const p2 = pipe('running');
   fire(fid, 2, p2);
@@ -659,9 +677,9 @@ test('GET /api/shape/pipelines/:pid/slice carries the feature thread', () => wit
   } finally {
     getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?)").run(fid);
   }
-}));
+});
 
-test('re-plan from the card: the re-plan run\'s Split ask is the feature\'s ask, and the old URL still resolves', () => withGate(true, async () => {
+test('re-plan from the card: the re-plan run\'s Split ask is the feature\'s ask, and the old URL still resolves', async () => {
   const f = mk(3, 'stopped');
   const r = await post(`/api/shape/features/${f.id}/replan`, {});
   assert.equal(r.status, 200);
@@ -681,7 +699,7 @@ test('re-plan from the card: the re-plan run\'s Split ask is the feature\'s ask,
     assert.equal(body.id, next.id);
     assert.equal(body.replanOf, f.id);
   } finally { dropEntry(e); }
-}));
+});
 
 // ── Shaper s4: the release on Ship as, the Ship card synced from the route, the release hints, POST /api/pr's release ──
 shipT('Ship as with a bad release is 400; a ship from the route flips the thread\'s Ship card to applied and stores the release', async () => {

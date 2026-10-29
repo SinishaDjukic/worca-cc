@@ -307,17 +307,29 @@ export const dispatchOf = (r) => (Number.isFinite(r.dispatchMs) ? r.dispatchMs :
 const byDispatch = (a, b) => dispatchOf(b) - dispatchOf(a);
 export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.needsIcon || a.icon] ?? 3) - (NEEDS_RANK[b.needsIcon || b.icon] ?? 3)) || byDispatch(a, b);
 
-export const RUNS_SHOW = Object.freeze(['all', 'needs', 'running', 'waiting', 'finished', 'archived']);
+export const RUNS_SHOW = Object.freeze(['all', 'needs', 'running', 'waiting', 'finished', 'ready', 'archived']);
 /** D10: a run that has not started (clarify: one-off only): an after-ticket, a one-off timed ticket, or a group whose
  *  next member is one. A series occurrence and a missed ticket stay in Recent. */
 const isWaiting = (r) => r.model.state === 'waiting' && !(r.kind === 'sched' && (r.scheduleId || r.status === 'missed'));
 export const RUNS_GROUP_BY = Object.freeze(['none', 'project', 'date']);
 export const RECENT_PAGE = 20;
 const ENDED_STATES = new Set(['failed', 'stopped', 'ready', 'in-review', 'merged']);
+// Ready to ship: a finished git run (or group) with no open PR. A Folder or no-project run is 'ready' too, but its word
+// is Finished / Applied / Discarded (run-model.mjs finishedWords): nothing to ship, so it stays out.
+const isReadyToShip = (r) => r.model.state === 'ready' && r.model.word === 'Ready';
 const RUNNING_STATES = new Set(['starting', 'working', 'paused', 'needs-you']);
 const LIVE_MEMBER = new Set(['starting', 'working', 'needs-you', 'paused', 'failed']);
 const STAGED = (m) => (m && m.progress && m.progress.mode === 'stages' ? m.progress.label : '');
 const and = (...p) => p.filter(Boolean).join(' · ');
+// #955: inside a group the dot already says Working / Starting, so a member's line drops that word ("Running" is a
+// round's Working word, run-model.mjs roundLine). Failed, Paused, Stopped, Needs you and Waiting keep theirs.
+const DOT_SAYS = new Set(['working', 'starting']);
+export function memberLine(m, line) {
+  const s = String(line || '');
+  return m && DOT_SAYS.has(m.state) ? s.replace(/^(?:Working|Starting|Running)(?: · |$)/, '') : s;
+}
+// #955 (D8): a chat inside a topic group that names its one project does not repeat it.
+const dropLead = (line, lead) => (!lead ? line : line === lead ? '' : line.startsWith(`${lead} · `) ? line.slice(lead.length + 3) : line);
 
 /** A row's place in a Show filter (D4). */
 export function rowShow(row, show) {
@@ -328,6 +340,7 @@ export function rowShow(row, show) {
   // A run raised to Needs you by its PR (D31, model.prNeeds) is finished: it lists under Finished, not Running.
   if (show === 'running') return !ENDED_STATES.has(row.model.state) && !row.model.prNeeds && !isWaiting(row);
   if (show === 'finished') return ENDED_STATES.has(row.model.state) || !!row.model.prNeeds;
+  if (show === 'ready') return isReadyToShip(row);
   return true;
 }
 
@@ -353,6 +366,7 @@ function needsWhy(row) {
 /** §3.1 "say each thing once": the row's one status line. `section`: 'needs' | 'running' | '' (mixed). */
 export function listLine(row, { section = '', time = '' } = {}) {
   const m = row.model;
+  if (row.kind === 'chat' || row.kind === 'chat-group') return m.line;   // #948: Chats column rows bring their whole sub line (chats-list.mjs)
   if (row.archived) return and('Archived', time);
   if (row.kind === 'chain') {
     const p = posOf(m);
@@ -411,7 +425,7 @@ export function memberCostUsd(...xs) {
 
 /** The row's hover text (spec §2.4). `cost` null: the engine reports none (engineReportsCost). */
 export function costTitle(r) {
-  if (r.kind === 'chain') return `Group total ${fmtUsd(r.costUsd || 0)}`;
+  if (r.kind === 'chain' || r.kind === 'chat-group') return `Group total ${fmtUsd(r.costUsd || 0)}`;
   return r.cost == null ? 'Cost unknown' : `Cost ${fmtUsd(r.cost)}`;
 }
 
@@ -493,6 +507,7 @@ export function buildRunsModel({
   const counts = {
     all: top.filter((r) => !r.archived).length, needs: top.filter((r) => rowShow(r, 'needs')).length,
     running: top.filter((r) => rowShow(r, 'running')).length, waiting: top.filter((r) => rowShow(r, 'waiting')).length, finished: top.filter((r) => rowShow(r, 'finished')).length,
+    ready: top.filter((r) => rowShow(r, 'ready')).length,
     archived: archivedCount,
   };
   const shown = top.filter((r) => rowShow(r, view.show));
@@ -500,7 +515,7 @@ export function buildRunsModel({
   const sections = [];
   const push = (id, title, rows, extra = {}) => { if (rows.length) sections.push({ id, title, rows, count: rows.length, ...extra }); };
   if (view.show !== 'all') {
-    const titles = { needs: 'Needs you', running: 'Running', waiting: 'Waiting', finished: 'Finished', archived: 'Archived' };
+    const titles = { needs: 'Needs you', running: 'Running', waiting: 'Waiting', finished: 'Finished', ready: 'Ready to ship', archived: 'Archived' };
     const id = ['needs', 'running', 'waiting'].includes(view.show) ? view.show : 'recent';
     push(id, titles[view.show], view.show === 'needs' ? shown.sort(cmpNeeds) : shown.sort(byDispatch));
   } else {
@@ -533,7 +548,7 @@ export function buildRunsModel({
     }
   }
   // D29: a group is open while it is not finished (any section, any flag), closed once it has ended; the person's
-  // ⌄ toggle for this session wins. No shapeFirst check: a plain Run-after chain behaves like a feature.
+  // ⌄ toggle for this session wins. A plain Run-after chain behaves like a feature.
   for (const s of sections) for (const r of s.rows) {
     if (r.kind === 'chain') r.open = toggled.has(r.key) ? !!toggled.get(r.key) : !ENDED_STATES.has(r.model.state);
   }
@@ -601,7 +616,7 @@ export function rowLabels(doc, labels) {
   return box;
 }
 
-function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', now = Date.now() } = {}) {
+function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', parentWhere = '', now = Date.now() } = {}) {
   const item = doc.createElement('div');
   item.className = `runs-item${checked.has(r.key) ? ' is-checked' : ''}${r.needs && level === 'top' ? ' is-needs' : ''}`;
   item.dataset.rowKey = r.key;
@@ -624,10 +639,11 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (r.runId) a.dataset.runId = r.runId;   // this exact line: test/ui-guide-hops.test.mjs reads it as the guide hop's painter
   a.dataset.line = r.model.line;      // slice 4 (D3): the canonical status line, compared across list, card and page
   if (r.memberKeys) a.dataset.memberKeys = [...r.memberKeys].join(' ');   // paintRunsSelection rebuilds the set from it
+  // #948 s3: a Chats column topic group draws as a Runs group row (count, ⌄, indented members), with no stage line.
+  const grouped = r.kind === 'chain' || r.kind === 'chat-group';
   const right = doc.createElement('span');
   right.className = 'runs-row-right';
-  if (r.kind === 'chain') right.append(textEl(doc, 'span', 'runs-count', r.count));
-  if (r.adhoc) right.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
+  if (grouped) right.append(textEl(doc, 'span', 'runs-count', r.count));
   if (r.model.pr && !r.model.pr.pending) right.append(prChip(doc, r.model.pr));
   // Rows carry no clock: the model's `now` keeps it deterministic. Group rows ('chain') carry their latest member's
   // activityMs, so "Ready to ship · Fri" and a group-PR row's "Fri" get their time too.
@@ -635,22 +651,38 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   // QA 3: a PR-driven member keeps the list's own line, so the model's reason line never sits next to its own chip.
   let line = level === 'member' && LIVE_MEMBER.has(r.model.state) && !r.model.prNeeds ? r.model.line : listLine(r, { section, time });
   if (spansProjects && level === 'top' && r.groupName) line = and(line, r.groupName);
+  // #955: a member is one line: no state word its dot says, no project its group names, no label chips.
+  if (level === 'member') line = dropLead(memberLine(r.model, line), r.kind === 'chat' ? parentWhere : '');
+  // #1012: a staged member draws the four-section block, whose marks name its stage, so its line drops that word.
+  // A working one names no step either ("Refine Plan"): only a state its dot does not say (needs you, paused) stays.
+  // A member dispatched but not started yet (Starting) has no progress to show: no block, no line.
+  const unstarted = level === 'member' && r.model.state === 'starting';
+  const staged = level === 'member' && !unstarted && r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed'
+    && !r.model.prNeeds && r.model.progress && r.model.progress.mode === 'stages';
+  if (staged) line = DOT_SAYS.has(r.model.state) ? '' : dropLead(line, r.model.progress.label);
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
-  const lab = rowLabels(doc, r.labels);
+  const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
   a.append(...[title, lab, right, textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
-  } else if (r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
+  } else if (r.kind !== 'chain' && !unstarted && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
     // A run in Needs you only through its PR (conflicts, failing checks) has finished: no progress bar to draw.
-    const stage = doc.createElement('div');
-    stage.className = 'run-prog runs-stage';
-    paintProgressBar(stage, r.model.progress, { pulse: r.model.pulse });
-    a.append(stage);
+    if (level === 'member' && !staged) {
+      // #955: a one-line member without stages keeps the list's 3px line; paintRunsProgress (app.js) moves it in place.
+      a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
+    } else {
+      const stage = doc.createElement('div');
+      stage.className = 'run-prog runs-stage';
+      paintProgressBar(stage, r.model.progress, { pulse: r.model.pulse });
+      a.append(stage);
+    }
   }
   const tail = doc.createElement('span');
   tail.className = 'runs-row-tail';
-  if (r.kind === 'chain') {
-    const t = iconButton(doc, 'runs-expand', 'chevron-down', `${r.open ? 'Hide' : 'Show'} the ${r.members.length} runs in ${r.title}`);
+  if (grouped) {
+    // A chat group names the server's count (its chats not all paged in yet); a chain row carries no memberCount.
+    const n = r.memberCount ?? r.members.length;
+    const t = iconButton(doc, 'runs-expand', 'chevron-down', `${r.open ? 'Hide' : 'Show'} the ${n} ${r.memberNoun || 'runs'} in ${r.title}`);
     t.dataset.chainKey = r.key;
     t.setAttribute('aria-expanded', r.open ? 'true' : 'false');
     tail.append(t);
@@ -660,20 +692,21 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   more.setAttribute('aria-haspopup', 'menu');
   tail.append(more);
   item.append(pick, a, tail);
-  if (r.kind === 'chain' && r.open) {
+  if (grouped && r.open) {
     const list = doc.createElement('div');   // member rows are div.runs-item, so a list of them is a div with role=list
     list.className = 'runs-members';
     list.setAttribute('role', 'list');
     for (const mb of r.members) {
       list.append(renderItem(doc, { ...mb, href: mb.href || '#runs', title: mb.title || '(untitled)' },
-        { level: 'member', checked, selecting, lineFrom, now, position: r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
+        { level: 'member', checked, selecting, lineFrom, now, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
+          position: r.kind !== 'chain' || r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
     }
     item.append(list);
   }
   return item;
 }
 
-const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No running runs.', waiting: 'Nothing is waiting.', finished: 'No finished runs yet.', archived: 'No archived runs.' });
+const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No running runs.', waiting: 'Nothing is waiting.', finished: 'No finished runs yet.', ready: 'Nothing is ready to ship.', archived: 'No archived runs.' });
 
 /** The list's children: one section element each, then the empty note and the error note. */
 /** §5a.2: the empty list's note before History has answered, and while the server is unreachable. */
@@ -681,7 +714,8 @@ export const RUNS_LOADING = 'Loading runs…';
 export const RUNS_OFFLINE = "The runs show here once Worca's server is reachable again.";
 
 export function renderRunsList(doc, model, { checked = new Set(), selecting = false, lineFrom = null, emptyText = 'No runs yet.', note = '',
-  loading = false, offline = false, retry = false } = {}) {
+  loading = false, offline = false, retry = false, emptyByShow = SHOW_EMPTY, loadingText = RUNS_LOADING,
+  offlineText = RUNS_OFFLINE } = {}) {
   const out = [];
   for (const s of model.sections) {
     const sec = doc.createElement('section');
@@ -689,37 +723,46 @@ export function renderRunsList(doc, model, { checked = new Set(), selecting = fa
     sec.dataset.section = s.id;
     sec.setAttribute('aria-label', s.title);
     const collapsible = s.collapsed !== undefined;   // project and date sections fold, as today's group heads
-    const head = doc.createElement(collapsible ? 'button' : 'div');
-    head.className = 'runs-sec-head';
-    if (collapsible) { head.type = 'button'; head.dataset.sectionKey = s.id; head.setAttribute('aria-expanded', s.collapsed ? 'false' : 'true'); }
-    head.append(textEl(doc, 'span', 'runs-sec-title', s.title), ...(s.kind ? [kindChip(doc, s.kind)].filter(Boolean) : []), textEl(doc, 'span', 'runs-count', String(s.count)));
+    // A bare section (#948 s2: the Chats column's flat lists) draws no head: the view chip names the list.
+    const head = s.bare ? null : doc.createElement(collapsible ? 'button' : 'div');
+    if (head) {
+      head.className = 'runs-sec-head';
+      if (collapsible) { head.type = 'button'; head.dataset.sectionKey = s.id; head.setAttribute('aria-expanded', s.collapsed ? 'false' : 'true'); }
+      head.append(textEl(doc, 'span', 'runs-sec-title', s.title), ...(s.kind ? [kindChip(doc, s.kind)].filter(Boolean) : []), textEl(doc, 'span', 'runs-count', String(s.count)));
+    }
     const rows = doc.createElement('div');
     rows.className = 'runs-sec-rows';
     rows.hidden = !!s.collapsed;
     const sectionWord = s.id === 'needs' || s.id === 'running' ? s.id : '';
     if (!s.collapsed) for (const r of s.rows) rows.append(renderItem(doc, r, { section: sectionWord, checked, selecting, spansProjects: model.spansProjects, lineFrom, now: model.now }));
-    sec.append(head, rows);
+    sec.append(...(head ? [head] : []), rows);
     if (s.more) {
-      const b = textEl(doc, 'button', 'btn btn-sm btn-quiet runs-older', 'Show older');
+      // #948 s2: "Show more" under the Chats column's project and flat lists; Runs keeps "Show older".
+      const b = textEl(doc, 'button', 'btn btn-sm btn-quiet runs-older', s.moreLabel || 'Show older');
       b.type = 'button';
       sec.append(b);
     }
     out.push(sec);
   }
+  const retryBtn = () => {
+    const b = textEl(doc, 'button', 'btn btn-sm btn-secondary runs-retry', 'Try again');
+    b.type = 'button';
+    b.dataset.runsRetry = '1';
+    return b;
+  };
   if (!model.shown) {
     // Only a list with nothing at all says loading or offline: a Show-filtered empty view keeps its own note.
-    if (loading && !model.total) out.push(textEl(doc, 'p', 'runs-note runs-loading', RUNS_LOADING));
-    else if (offline && !model.total) out.push(textEl(doc, 'p', 'runs-note runs-offline', RUNS_OFFLINE));
-    else out.push(textEl(doc, 'p', 'runs-note', SHOW_EMPTY[model.view.show] || emptyText));
+    if (loading && !model.total) out.push(textEl(doc, 'p', 'runs-note runs-loading', loadingText));
+    else if (offline && !model.total) {
+      const p = textEl(doc, 'p', 'runs-note runs-offline', offlineText);
+      // #948 s2: a retry with no error note sits on the offline note (Runs always sends retry with a note).
+      if (retry && !note) p.append(' ', retryBtn());
+      out.push(p);
+    } else out.push(textEl(doc, 'p', 'runs-note', emptyByShow[model.view.show] || emptyText));
   }
   if (note) {
     const p = textEl(doc, 'p', 'runs-note runs-note-err', note);
-    if (retry) {
-      const b = textEl(doc, 'button', 'btn btn-sm btn-secondary runs-retry', 'Try again');
-      b.type = 'button';
-      b.dataset.runsRetry = '1';
-      p.append(' ', b);
-    }
+    if (retry) p.append(' ', retryBtn());
     out.push(p);
   }
   return out;

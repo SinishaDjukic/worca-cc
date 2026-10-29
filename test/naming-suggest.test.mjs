@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { suggestNames, resolveNamingModel } from '../src/core/naming.mjs';
+import { suggestNames, resolveNamingModel, groupNamePrompt, parseGroupName, suggestGroupName } from '../src/core/naming.mjs';
 import { SMART_NAMING_DEFAULTS } from '../src/core/settings.mjs';
 
 const reply = (o) => async () => ({ text: typeof o === 'string' ? o : JSON.stringify(o) });
@@ -48,4 +48,32 @@ test('the model comes from deps.pickModel (resolveNamingModel), never a leftover
   assert.deepEqual([seen.model, seen.effort], ['claude-opus-5-5', 'high'], 'the Run naming setting wins');
   await suggestNames(base, deps(run, { settings, pickModel: () => resolveNamingModel({ model: null, effort: null }, rows, () => null) }));
   assert.deepEqual([seen.model, seen.effort], ['claude-haiku-5-5', 'minimal'], 'unset: the cheapest ready Claude model at its lowest effort');
+});
+
+test('groupNamePrompt: titles and first messages only, 300 characters, at most 20 chats', () => {
+  const p = groupNamePrompt([{ title: 'Fix the login', firstMessage: 'Safari loops after SSO' }, { title: '', firstMessage: 'x'.repeat(400) }]);
+  assert.match(p, /1\. Title: Fix the login\n {3}First message: Safari loops after SSO/);
+  assert.match(p, /2\. Title: \(none\)/);
+  assert.ok(!p.includes('x'.repeat(301)));
+  assert.equal(groupNamePrompt(Array.from({ length: 25 }, (_, i) => ({ title: `t${i}` }))).split('\n').filter((l) => /^\d+\./.test(l)).length, 20);
+});
+
+test('suggestGroupName: one call on the picked model; a usable name, else a fallback', async () => {
+  let seen = null;
+  const run = async (o) => { seen = o; return { text: '{"name":"Login and SSO"}' }; };
+  const r = await suggestGroupName({ chats: [{ title: 'Fix the login', firstMessage: 'Safari loops' }] },
+    { run, pickModel: () => ({ model: 'claude-haiku-5-5', effort: null }) });
+  assert.deepEqual(r, { source: 'model', name: 'Login and SSO', model: 'claude-haiku-5-5' });
+  assert.equal(seen.model, 'claude-haiku-5-5');
+  assert.match(seen.prompt, /Fix the login/);
+  assert.equal((await suggestGroupName({ chats: [{ title: 'a' }] }, { run: async () => ({ text: 'no json' }) })).source, 'fallback');
+  assert.equal((await suggestGroupName({ chats: [] }, { run })).source, 'fallback');
+  assert.equal(parseGroupName('{"name":"Release prep."}'), 'Release prep');
+});
+
+test('groupNamePrompt for runs: "Runs:" and each run\'s prompt as "Prompt"', () => {
+  const p = groupNamePrompt([{ title: 'Fix', firstMessage: 'Do x' }], { of: 'runs' });
+  assert.ok(p.startsWith('Runs:'));
+  assert.match(p, /Prompt: Do x/);
+  assert.doesNotMatch(p, /First message/);
 });

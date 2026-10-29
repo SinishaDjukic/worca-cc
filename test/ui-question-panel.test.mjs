@@ -85,7 +85,8 @@ test('a busy plan panel keeps its approve label and posts once', async () => {
   const label = approve.textContent;
   click(ctx, approve);
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(answers(ctx).length, 1, 'exactly one POST');
+  // The plan card is a Shaper step card: it posts to the run's own answer route.
+  assert.equal(ctx.calls.filter((c) => c.url === `/api/runs/${RUN_ID}/answer`).length, 1, 'exactly one POST');
   assert.equal(approve.disabled, true, 'busy');
   assert.equal(approve.textContent, label, 'approve is not relabelled');
 });

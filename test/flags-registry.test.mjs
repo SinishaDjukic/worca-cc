@@ -23,12 +23,8 @@ test('the real registry has no problems today, is frozen and every docs page exi
     if (f.docs) assert.ok(existsSync(fileURLToPath(new URL(`../${f.docs}`, import.meta.url))), `${f.key}: ${f.docs} exists`);
   }
   assert.equal(flagByKey('nope'), null);
-  // UI/UX review F: Keep awake is beta and on by default (a switch in Settings › Runs too).
-  const ka = flagByKey('keepAwake');
-  assert.deepEqual([ka.stage, ka.default], ['beta', true]);
-  // Shaper graduated from Labs to beta, on by default (opt-out in Settings › Labs).
-  const sf = flagByKey('shapeFirst');
-  assert.deepEqual([sf.stage, sf.default, sf.extendedOn], ['beta', true, '2026-10-22']);
+  // Graduated: these features are always on (Keep awake is a setting now), so their flags are gone.
+  for (const key of ['shapeFirst', 'runPresets', 'runTags', 'keepAwake']) assert.equal(flagByKey(key), null, key);
 });
 
 test('registryProblems flags every rule', async () => {
@@ -65,4 +61,11 @@ test('registryProblems flags every rule', async () => {
     } },
     { name: 'docs must be a docs/*.md path', run: () => assert.match(probs([{ ...ok, docs: 'http://x' }]), /docs must be a docs\/\*\.md path/) },
   ]);
+});
+
+test('commandSummaries is a beta flag, on by default (#911)', () => {
+  const f = FLAGS.find((x) => x.key === 'commandSummaries');
+  assert.ok(f, 'commandSummaries is registered');
+  assert.deepEqual([f.stage, f.default], ['beta', true]);
+  assert.equal(f.docs, 'docs/feature-flags.md');
 });

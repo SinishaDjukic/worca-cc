@@ -7,10 +7,13 @@
 //   loadLazy()        fetch what is not kept in memory (workflows, schedules); called once per open,
 //                     the popover re-renders when it settles
 //   onAsk(query)      the Ask Worca row ('' when nothing is typed)
+//   askRow()          the Ask row's words, read at render ({ title, meta }; default Ask in Chat · opens a chat)
 //   navigate(href)    a row with a route ('#running/…', '#projects/…', …)
 //   openWorkflow(id)  a workflow row
 //   onLabel(label)    a "Runs labelled hotfix" row: apply the Runs list label filter
 //   openSetting(row)  a Settings or Add-ons row; a locked one carries row.locks (default: navigate(row.href))
+//   searchChats(q)    #948 s2: the Chats group's rows (global-search.mjs chatRows), async; null = none
+//   chatsFirst()      the Chats group leads (the Chat page); else it follows Runs
 //
 // Focus stays in the input while the popover is open: the rows are options it points at with
 // aria-activedescendant. ⌘K / Ctrl+K and a consumed Escape are read in the capture phase on the
@@ -33,6 +36,7 @@ const ICONS = Object.freeze({
   addon: ['M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z',
     'M12 22V12', 'm3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7', 'm7.5 4.27 9 5.15'],
   ask: ['M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z', 'M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z'],
+  chat: ['M20 12a7.5 7.5 0 0 1-10.9 6.7L4 20l1.4-4.3A7.5 7.5 0 1 1 20 12z'],   // icons.mjs `chat`
 });
 
 function icon(doc, kind) {
@@ -61,7 +65,9 @@ function imeKey(e) {
   return !!(e.isComposing || e.keyCode === 229);
 }
 
-export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow, onLabel = () => {}, openSetting = (row) => navigate(row.href) }) {
+export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow, onLabel = () => {},
+  openSetting = (row) => navigate(row.href), askRow = () => ({ title: 'Ask in Chat', meta: 'opens a chat' }), searchChats = null,
+  chatsFirst = () => false }) {
   const input = root.querySelector('#tsearch-input');
   const pop = root.querySelector('#tsearch-pop');
   const kbd = root.querySelector('.tsearch-kbd');
@@ -69,6 +75,21 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
   const closeBtn = root.querySelector('#tsearch-close');
   const st = { open: false, items: [], active: -1, prev: null, gen: 0 };
   if (kbd) kbd.textContent = shortcutLabel(win);
+  // #948 s2: chats come from the server (title and message text), debounced; the last answer for the current query wins.
+  const chats = { query: '', rows: [], timer: null, gen: 0 };
+  function queueChats(query) {
+    if (chats.timer) win.clearTimeout(chats.timer);
+    if (!searchChats || !query) { chats.query = ''; chats.rows = []; return; }
+    const gen = ++chats.gen;
+    chats.timer = win.setTimeout(() => {
+      Promise.resolve(searchChats(query)).catch(() => []).then((rows) => {
+        if (gen !== chats.gen) return;
+        chats.query = query;
+        chats.rows = Array.isArray(rows) ? rows : [];
+        if (st.open) render({ keep: true });
+      });
+    }, 150);
+  }
 
   function option(id, kind, row, label) {
     const o = doc.createElement('div');
@@ -82,7 +103,13 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
       dot.setAttribute('aria-hidden', 'true');
       o.appendChild(dot);
     } else o.appendChild(icon(doc, kind));
-    o.append(span(doc, 'tsearch-title', row.title), span(doc, 'tsearch-meta', row.meta));
+    // #948 s2: a chat that matched on a message shows the snippet under its title.
+    const title = span(doc, 'tsearch-title', row.title);
+    if (row.sub) {
+      const tx = span(doc, 'tsearch-tx', '');
+      tx.append(title, span(doc, 'tsearch-sub', row.sub));
+      o.append(tx, span(doc, 'tsearch-meta', row.meta));
+    } else o.append(title, span(doc, 'tsearch-meta', row.meta));
     // A locked Settings row: what unlocks it, on a line of its own so the meta's ellipsis never cuts it.
     if (row.note) { o.classList.add('is-locked'); o.appendChild(span(doc, 'tsearch-note', row.note)); }
     return o;
@@ -113,8 +140,12 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     const was = keep && st.items[st.active] ? st.items[st.active].key : '';
     const { runs, other, settings = [], addons = [] } = searchRows(getSources() || {}, query);
     st.items = [];
+    const chatsRows = chats.query === query ? chats.rows : [];
+    const first = chatsFirst();
     const parts = [];
+    if (chatsRows.length && first) parts.push(group('chats', 'Chats', chatsRows));
     if (runs.length) parts.push(group('runs', 'Runs', runs));
+    if (chatsRows.length && !first) parts.push(group('chats', 'Chats', chatsRows));
     if (other.length) parts.push(group('other', 'Projects, workflows, schedules', other));
     if (settings.length) parts.push(group('settings', 'Settings', settings));
     if (addons.length) parts.push(group('addons', 'Add-ons', addons));
@@ -129,7 +160,12 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
       sep.setAttribute('aria-hidden', 'true');
       parts.push(sep);
     }
-    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title: 'Ask in Chat', meta: 'opens a chat' }, 'Ask in Chat, opens a chat');
+    // Ask worca beside the page: on a page with the side column the row names it (app.js askRow).
+    let words = null;
+    try { words = askRow(); } catch { words = null; }
+    const title = words && typeof words.title === 'string' && words.title ? words.title : 'Ask in Chat';
+    const meta = words && typeof words.meta === 'string' ? words.meta : 'opens a chat';
+    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title, meta }, `${title}, ${meta}`);
     st.items.push({ key: 'ask', row: null, el: ask });
     parts.push(ask);
     pop.replaceChildren(...parts);
@@ -227,7 +263,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
   }
 
   input.addEventListener('focus', (e) => open({ from: e.relatedTarget }));
-  input.addEventListener('input', () => { if (st.open) render(); else open(); });
+  input.addEventListener('input', () => { queueChats(input.value.trim()); if (st.open) render(); else open(); });
   input.addEventListener('keydown', (e) => {
     if (imeKey(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -263,6 +299,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     isOpen: () => st.open,
     render: () => render({ keep: true }),
     destroy() {
+      if (chats.timer) win.clearTimeout(chats.timer);
       close();
       doc.removeEventListener('keydown', onDocKey, true);
       doc.removeEventListener('pointerdown', onDocPointerdown, true);

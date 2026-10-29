@@ -31,8 +31,7 @@ test('a saved run without a project opens Details on Artifacts, at Simple level,
   assert.equal(doc.querySelector('#hist-detail .hd-tab.active').dataset.sec, 'artifacts');
   assert.equal(doc.querySelector('#hist-detail .rd-page-meta .kind-chip.kind-none').textContent, 'No project');
   assert.doesNotMatch(doc.querySelector('#hist-detail .rd-page-meta').firstChild.data, /work/);
-  const branch = doc.querySelector('#hist-detail .rd-page-branch');
-  assert.ok(!branch || branch.hidden);
+  assert.equal(doc.querySelector('#hist-detail .rd-route .rd-route-copy'), null, 'no project, no git chrome: no branch to copy');
   const after = doc.querySelector('#hist-detail .hd-after');
   assert.equal(after.hidden, true, 'no Run after: a run without a project cannot be chained');
   assert.equal(after.onclick, null);
@@ -49,7 +48,7 @@ test('a finished run without a project: its Overview never says it did not compl
   assert.ok(sec && sec.querySelector('.hd-ov-grid'), 'the Overview painted');
   assert.equal(sec.querySelector('.hd-ov-verdict'), null, 'no results.json: its files are the result, no verdict line');
   assert.doesNotMatch(sec.textContent, /did not complete/);
-  assert.equal(doc.querySelector('#hist-detail .rd-sheet .run-status .run-status-text').textContent, 'Finished', 'never Ready to ship');
+  assert.equal(doc.querySelector('#hist-detail .rd-sheet .run-status').dataset.text, 'Finished', 'never Ready to ship');
   assert.equal(doc.querySelectorAll('#hist-detail [data-model-action="ship"]').length, 0, 'no Ship it');
   click(ctx.window, doc.querySelector('#hist-detail .hd-archive'));
   await settle(ctx.window, 4);

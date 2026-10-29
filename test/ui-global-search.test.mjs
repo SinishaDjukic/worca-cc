@@ -3,7 +3,7 @@
 // built from real fields only, and the ⌘K / Ctrl K chord and label.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { searchRows, shortcutLabel, isSearchCombo, RUN_LIMIT, OTHER_LIMIT, SETTINGS_LIMIT, ADDON_LIMIT } from '../ui/public/global-search.mjs';
+import { searchRows, shortcutLabel, isSearchCombo, RUN_LIMIT, OTHER_LIMIT, SETTINGS_LIMIT, ADDON_LIMIT, chatRows, CHAT_LIMIT } from '../ui/public/global-search.mjs';
 
 const NOW = new Date(2026, 9, 9, 15, 0).getTime();            // Fri Oct 9 2026, 15:00 local
 const at = (d, h, m = 0) => new Date(2026, 9, d, h, m).toISOString();
@@ -210,7 +210,7 @@ test('labels: "hotfix", "label:hot" and "label:hotfix" offer "Runs labelled hotf
 });
 
 // ── Settings and Add-ons groups (settings-index.mjs) ─────────────────────────
-const UNLOCKED = { level: 'expert', flags: { runTags: true, runPresets: true, runLabels: true } };
+const UNLOCKED = { level: 'expert', flags: { runLabels: true } };
 const setRows = (q, over = {}) => run({ ...UNLOCKED, ...over }, q);
 
 test('R-po-1/3/5/14: a tab name finds a Settings row in its own group; an empty query lists neither group', () => {
@@ -258,14 +258,15 @@ test('R-po-18/A-5: every name match is listed before an alternative-word-only ma
 test('R-po-10/11: locked rows stay listed with a note naming the mode and the Labs feature', () => {
   const p = setRows('presets', { level: 'simple', flags: {} }).settings[0];
   assert.equal(p.href, '#settings/presets');
-  assert.deepEqual(p.locks.map((l) => l.type), ['mode', 'flag']);
+  assert.deepEqual(p.locks.map((l) => l.type), ['mode']);
   assert.equal(p.meta, 'Settings tab');
-  assert.equal(p.note, 'Switch to Advanced mode · Turn on Labs: Run presets');
+  assert.equal(p.note, 'Switch to Advanced mode');
   assert.equal(setRows('guardrails', { level: 'simple' }).settings[0].note, 'Switch to Advanced mode');
   const away = setRows('away mode', { level: 'simple' }).settings[0];
   assert.deepEqual([away.title, away.note], ['Away mode', 'Switch to Advanced mode']);
-  const cost = setRows('cost tags', { flags: {} }).settings.find((x) => x.title === 'Cost tags');
-  assert.equal(cost.note, 'Turn on Labs: Cost tags');
+  const labels = setRows('labels', { flags: {} }).settings.find((x) => x.title === 'Labels');
+  assert.equal(labels.note, 'Turn on Labs: Run labels');
+  assert.equal(setRows('cost tags', { flags: {} }).settings.find((x) => x.title === 'Cost tags').note, '', 'Cost tags left Labs');
   assert.deepEqual(setRows('marketplace', { level: 'simple', flags: {} }).addons[0].locks, [], 'A-9: add-ons never lock');
 });
 
@@ -273,4 +274,26 @@ test('group limits: Settings ≤ SETTINGS_LIMIT (5), Add-ons ≤ ADDON_LIMIT (4)
   assert.deepEqual([SETTINGS_LIMIT, ADDON_LIMIT], [5, 4]);
   assert.equal(setRows('a').settings.length, SETTINGS_LIMIT, '"a" matches more than five settings');
   assert.equal(setRows('s').addons.length, ADDON_LIMIT);
+});
+
+test('#948 s2 chatRows: at most 5 of 7; an archived chat reads "Archived · time"; the snippet is the sub line; #chat/ID', () => {
+  const now = new Date(2026, 9, 25, 12, 0, 0).getTime();
+  const at = (d) => new Date(now - d * 864e5).toISOString();
+  const threads = Array.from({ length: 7 }, (_, i) => ({ id: `ask_0000000${i}`, title: `Chat ${i}`, updatedAt: at(i + 1), archived: false }));
+  threads[0] = { ...threads[0], archived: true, archivedAt: at(1) };
+  threads[1] = { ...threads[1], match: { snippet: '…a login form…' } };
+  threads[2] = { ...threads[2], title: null };
+  const rows = chatRows(threads, { now });
+  assert.equal(CHAT_LIMIT, 5);
+  assert.equal(rows.length, 5);
+  assert.match(rows[0].meta, /^Archived · /);
+  assert.equal(rows[1].sub, '…a login form…');
+  assert.equal(rows[1].meta, 'Fri');
+  assert.equal(rows[2].title, 'New chat');
+  assert.deepEqual([rows[3].kind, rows[3].href, rows[3].sub], ['chat', '#chat/ask_00000003', '']);
+});
+
+test('chatRows: a chat found by its group name reads "Group · NAME"', () => {
+  const [r] = chatRows([{ id: 'ask_00000001', title: 'Fix the login', updatedAt: new Date().toISOString(), match: { group: 'Release prep' } }]);
+  assert.equal(r.sub, 'Group · Release prep');
 });

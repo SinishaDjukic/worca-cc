@@ -209,6 +209,10 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'get_run_checkout': return input?.id ? `Checking the checkout of ${String(input.id).slice(0, 40)}` : 'Checking a run checkout';
     case 'list_running_actions': return 'Looking at running actions';
     case 'propose_actions_change': return 'Proposing an actions change';
+    case 'get_network_proxy': return 'Reading the corporate proxy';
+    case 'test_network_proxy': return 'Testing the corporate proxy';
+    case 'propose_network_proxy_change': return 'Proposing a proxy change';
+    case 'propose_corporate_proxy_on': return 'Proposing to turn the corporate proxy on';
     case 'list_settings': return 'Reading settings';
     case 'change_setting': return input?.id ? `Changing ${String(input.id).slice(0, 40)}` : 'Changing a setting';
     case 'pause_run': return 'Pausing a run';
@@ -307,9 +311,12 @@ export function createTurnReducer({
   onAwaySwitch = null,           // set_away_now / set_run_away_mode RESULT (the parent applies the switch)
   onChatAction = null,           // worca Chat P2: a CHAT_ACTION_TOOLS RESULT (the parent applies it and posts its card)
   onAwayProposal = null,         // propose_away_mode_change RESULT (Away mode card; the parent re-validates the input)
+  onProxyProposal = null,        // propose_network_proxy_change RESULT (proxy card; the parent re-validates the input)
+  onProxyFlagProposal = null,    // propose_corporate_proxy_on RESULT (proxy flag card; same split)
   onCommentMutation = null,
   onWorktreeMutation = null,
   onMemoryMutation = null,
+  onMemoryRead = null,           // read_memory RESULT → { scope, projectKey, name, layer } (memory usage counts; never the body)
   onScriptMutation = null,        // save_script RESULT { ok: true, key, created } → { key, action }
   onComposerResult = null,     // Workflows chat: edit_canvas / build_workflow / draft_* RESULT → a composer card (turn.mjs)
   estimateLiveCost = null,
@@ -618,8 +625,20 @@ export function createTurnReducer({
     try {
       const parsed = JSON.parse(text);
       const scope = typeof parsed?.scopeKey === 'string' ? parsed.scopeKey : null;
-      if (scope) onMemoryMutation({ scope, tool: short(name) });
+      // The note's name rides the same result (team memory 1a queues it); the server sink re-validates both.
+      const note = typeof parsed?.name === 'string' ? parsed.name : null;
+      if (scope) onMemoryMutation({ scope, tool: short(name), ...(note ? { name: note } : {}) });
     } catch { /* unparseable result — no poke; the next open refetches anyway */ }
+  }
+
+  // And for memory usage (memory-usage.mjs): a successful read_memory is a `read` of that note. Only the note's address
+  // leaves the result — never its description or body.
+  function pokeMemoryRead(name, text, isError) {
+    if (isError || name !== 'mcp__worca__read_memory' || typeof onMemoryRead !== 'function') return;
+    try {
+      const p = JSON.parse(text);
+      if (p && typeof p.name === 'string') onMemoryRead({ scope: p.scope, projectKey: p.projectKey ?? null, name: p.name, layer: p.layer ?? null });
+    } catch { /* unparseable result — nothing counted */ }
   }
 
   // And for scripts: save_script REFUSES by returning { ok: false, errors } with no is_error
@@ -655,6 +674,7 @@ export function createTurnReducer({
         pokeCommentWrite(ct.name, text, c.is_error);
         pokeWorktreeMutation(ct.name, ct.input, c.is_error);
         pokeMemoryWrite(ct.name, text, c.is_error);
+        pokeMemoryRead(ct.name, text, c.is_error);
         pokeScriptWrite(ct.name, text, c.is_error);
         pokeScheduleWrite(ct.name, c.is_error);
         if (CHAT_ACTION_TOOLS.has(ct.name) && !c.is_error && typeof onChatAction === 'function') {
@@ -776,6 +796,19 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
+      if (b.name === 'mcp__worca__propose_network_proxy_change' && typeof onProxyProposal === 'function') {
+        // The parent re-validates the INPUT against the flag and the stored settings (proxy-proposal.mjs).
+        try {
+          const ret = onProxyProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_corporate_proxy_on' && typeof onProxyFlagProposal === 'function') {
+        try {
+          const ret = onProxyFlagProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
       if (b.name === 'mcp__worca__track_run' && typeof onTrackRun === 'function') {
         // The parent owns the runs Map, the link rows and the followers: it re-resolves the id itself (D4).
         try {
@@ -813,6 +846,7 @@ export function createTurnReducer({
       pokeCommentWrite(b.name, text, c.is_error);
       pokeWorktreeMutation(b.name, fullInputs.get(b.id), c.is_error);
       pokeMemoryWrite(b.name, text, c.is_error);
+      pokeMemoryRead(b.name, text, c.is_error);
       pokeScriptWrite(b.name, text, c.is_error);
       pokeScheduleWrite(b.name, c.is_error);
     }
@@ -830,6 +864,7 @@ export function createTurnReducer({
   function handle(evt) {
     if (!evt || typeof evt !== 'object') return;
     if (!isNormalized(evt)) { for (const n of normalize(evt)) handle(n); return; }
+    if (evt.type === 'compact') return;                                   // Run telemetry's, never a chat's
     if (!labels.length) label('Thinking');
     const isMain = (evt.parentId ?? null) === null;
     switch (evt.type) {

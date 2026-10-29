@@ -26,7 +26,7 @@ const require = createRequire(import.meta.url);
 const LOOPBACK = ['localhost', '127.0.0.1', '::1', '[::1]'];
 
 /** undici is CommonJS, so it loads synchronously; null when it can't be loaded. */
-function loadUndici() {
+export function loadUndici() {
   try { return require('undici'); } catch { return null; }
 }
 
@@ -72,6 +72,12 @@ export function useEnvProxy({ env = process.env, api, undici } = {}) {
       : (err && err.message) || String(err);
     return { status: 'invalid', error, restore: none };
   }
+}
+
+/** D8: the proxy variables changed at runtime: undo the previous install, then install from env again. */
+export function reinstallEnvProxy(prev, opts = {}) {
+  try { prev?.restore?.(); } catch { /* the old dispatcher is gone */ }
+  return useEnvProxy(opts);
 }
 
 /**

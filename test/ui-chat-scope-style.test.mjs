@@ -66,13 +66,15 @@ test('the amber scope warning is gone with scopeMismatch (U16)', () => {
 
 test('the Workflows menu keeps the kind chip on the right (B8)', () => {
   assert.equal(ruleBody('.wfv-menu-item > .kind-chip'), 'margin-left:auto;');
-  assert.equal(ruleBody('.wfv-menu-item:has(> .kind-chip)::after'), 'margin-left:0;', 'one auto margin (the chip\'s): the ✓ slot sits a fixed gap after it');
+  assert.equal(ruleBody('.wfv-menu .wfv-menu-item[role="menuitemradio"] > :is(.wfv-menu-hint,.kind-chip)'), 'grid-column:3;justify-self:end;margin-left:0;');
+  assert.equal(ruleBody('.wfv-menu-item:has(> .kind-chip)::after'), null, 'no trailing ✓ slot to share the row with');
 });
 
-test('every openMenu radio item reserves the 12px ✓ slot; only the picked one paints it', () => {
-  const slot = ruleBody('.wfv-menu [role="menuitemradio"]::after');
-  assert.match(slot, /^content:"";flex:none;width:12px;height:12px;margin-left:auto;background:transparent; ?mask:url\(/);
-  assert.equal(ruleBody('.wfv-menu [role="menuitemradio"][aria-checked="true"]::after'), 'background:currentColor;');
+test('every openMenu radio row is one grid: the 12px ✓ slot first, painted only when picked', () => {
+  assert.equal(ruleBody('.wfv-menu .wfv-menu-item[role="menuitemradio"]'), 'display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;');
+  assert.match(ruleBody('.wfv-menu .wfv-menu-item[role="menuitemradio"]::before'), /^content:"";grid-column:1;width:12px;height:12px;background:transparent; ?mask:url\(/);
+  assert.equal(ruleBody('.wfv-menu .wfv-menu-item[role="menuitemradio"][aria-checked="true"]::before'), 'background:currentColor;');
+  assert.equal(ruleBody('.wfv-menu [role="menuitemradio"]::after'), null);
 });
 
 test('B10: the chip sits between the name and the branch words', () => {

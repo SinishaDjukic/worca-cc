@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import {
   readSettings, pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod, humanRateUsdPerHour, askMaxTurns, askMaxBudgetUsd, hideBuiltinModels, askWeb,
+  modelRolesSetting,
 } from '../settings.mjs';
 import { hasProjectSetting } from '../settings-cascade.mjs';
 import { readConfigRow, readTeamMetricsPrefs } from '../config.mjs';
@@ -50,6 +51,14 @@ export function localSnapshot(projectDir = null) {
     'ask.webEnabled': { value: web.enabled, set: typeof raw.askWeb?.enabled === 'boolean' || proj('askWeb') },
     'ask.webAllowedDomains': { value: web.allowedDomains, set: web.allowedDomains.length > 0 },
     'models.hideBuiltins': { value: hideBuiltinModels(), set: has('hideBuiltinModels') || raw.hideBuiltinModelsChosen === true },
+    // The Setup group (T22): what the developer stored, so the effective table shows team versus local per field.
+    'models.roles': { value: modelRolesSetting(), set: Object.keys(modelRolesSetting()).length > 0 },
+    'setup.uiLevel': { value: raw.uiLevel ?? null, set: has('uiLevel') },
+    'setup.autoPrDescription': { value: raw.autoGeneratePrDescription ?? null, set: typeof raw.autoGeneratePrDescription === 'boolean' },
+    'setup.smartNaming': { value: raw.smartNaming ?? null, set: has('smartNaming') },
+    'setup.runEngine': { value: raw.runEngine ?? null, set: has('runEngine') },
+    'setup.sync': { value: raw.sync ?? null, set: has('sync') },
+    'setup.networkWait': { value: raw.networkWait ?? null, set: has('networkWait') },
     'plugins.marketplaces': { value: Object.values(readMarketplaces().marketplaces).map((m) => m.url), set: true },
     'plugins.required': { value: Object.entries(readPluginsLock()).map(([name, e]) => ({ name, version: e?.version ?? null, enabled: e?.enabled !== false })), set: true },
   };

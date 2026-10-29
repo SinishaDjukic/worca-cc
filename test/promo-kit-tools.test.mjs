@@ -50,10 +50,42 @@ test('every kit Chrome launch keeps off the macOS keychain: mock keychain flags 
   const files = ['capture/lib.mjs', ...readdirSync(join(kit, 'tools')).filter((f) => f.endsWith('.mjs')).map((f) => `tools/${f}`)];
   for (const f of files) {
     const src = readFileSync(join(kit, f), 'utf8');
-    if (/chromium\.launch\(/.test(src)) assert.match(src, /chromium\.launch\(\{[^)]*env: chromeEnv\(\)[^)]*CHROME_SAFE_ARGS/, f);
+    if (/chromium\.launch\(/.test(src)) {
+      assert.match(src, /chromium\.launch\(launchOptions\(exe\)\)/, f);
+      assert.match(src, /export function launchOptions\([^)]*\)\s*\{[\s\S]*?env: chromeEnv\(env\)[\s\S]*?CHROME_SAFE_ARGS/, f);
+    }
     if (f !== 'tools/cdp.mjs' && f !== 'tools/find-tools.mjs' && f !== 'capture/lib.mjs') assert.doesNotMatch(src, /\bspawn\([^)]*(chrome|exe)\b/i, `${f} starts Chrome itself`);
   }
   assert.match(readFileSync(join(kit, 'tools', 'cdp.mjs'), 'utf8'), /spawn\(exe, \[[^\]]*\][^)]*env: chromeEnv\(\)/);
+});
+
+test('browser proxy: flag on -> proxy.server is the local proxy URL; flag off -> no proxy option', async (t) => {
+  const { chromeProxy, chromeArgs } = await import('../assets/promo-kit/tools/cdp.mjs');
+  const { launchOptions } = await import('../assets/promo-kit/capture/lib.mjs');
+  const { startEgressPolicy } = await import('../src/core/egress-policy.mjs');
+  const { startFakeUpstream } = await import('./helpers/fake-upstream-proxy.mjs');
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: 9 });
+  t.after(() => fake.close());
+
+  const on = { HTTPS_PROXY: fake.url(), NO_PROXY: 'intranet.acme.example' };
+  const r = await startEgressPolicy({ env: on, proxyOn: () => true, settings: () => ({}), login: () => null });
+  t.after(() => r.close());
+  assert.equal(launchOptions('/x/chrome', on).proxy.server, r.url);
+  assert.equal(chromeProxy(on).server, r.url);
+  assert.equal(chromeProxy(on).bypass, 'intranet.acme.example');
+  const argv = chromeArgs({ dir: '/tmp/x', platform: 'linux', env: on });
+  assert.ok(argv.includes(`--proxy-server=${r.url}`));
+  assert.ok(argv.includes('--proxy-bypass-list=intranet.acme.example'));
+
+  // Flag off, even with the user's own loopback proxy in HTTPS_PROXY: launches stay exactly as today.
+  const off = { HTTPS_PROXY: 'http://127.0.0.1:3128' };
+  await startEgressPolicy({ env: off, proxyOn: () => false });
+  assert.equal('proxy' in launchOptions('/x/chrome', off), false);
+  assert.equal(chromeProxy(off), null);
+  assert.ok(!chromeArgs({ dir: '/tmp/x', platform: 'linux', env: off }).some((a) => a.startsWith('--proxy-')));
+  assert.equal(chromeProxy({ WORCA_CORPORATE_PROXY_URL: 'http://u:p@127.0.0.1:1' }), null, 'never a URL with credentials');
+  assert.equal(chromeProxy({ WORCA_CORPORATE_PROXY_URL: 'http://corp.example:8080' }), null, 'only a loopback URL');
+  assert.equal(chromeProxy({ WORCA_CORPORATE_PROXY_URL: 'http://127.0.0.1:5', NO_PROXY: '*' }), null, 'NO_PROXY=* means everything goes direct');
 });
 
 test('kit.js F.SFX and tools/sfx.mjs list the same sound names', () => {

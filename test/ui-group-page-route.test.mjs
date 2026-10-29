@@ -1,10 +1,9 @@
 // test/ui-group-page-route.test.mjs — runs redesign slice 4 (D16): #feature/:id and #group/:id render the group page
-// (ui/public/group-page.mjs) into the feature page's section, with the Shaper flag on or off, for features, user
+// (ui/public/group-page.mjs) into the feature page's section, for features, user
 // groups and Run-after chains; its Decisions tab (D15) and its Ship for a user group (D6).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp } from './helpers/run-page-boot.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
 import { REPLAY_FRAMES } from './helpers/run-states.mjs';
 
 const member = (i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null });
@@ -21,9 +20,8 @@ const handler = (url) => (url.startsWith('/api/run-groups') ? json(GROUPS)
 
 async function boot(fetchHandler = handler) {
   const ctx = await bootApp({ fetchHandler });
-  applyFlags({ shapeFirst: true }, ctx.window.document);   // a fresh document per boot: nothing to reset
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  ctx.dispatch({ type: 'hello', runs: [] });
   await ctx.settle();
   return ctx;
 }
@@ -132,18 +130,6 @@ test('#group/:chainId deep link loads the chains first; never "no longer exists"
   assert.equal(gp.querySelector('.kind-chip').textContent, 'Chain');
 });
 
-test('#feature/:id renders the group page with the Shaper flag off, without Overview', async () => {
-  const ctx = await bootApp({ fetchHandler: handler });          // no applyFlags: shapeFirst stays off
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', runs: [] });
-  await ctx.settle();
-  ctx.go('feature/feat_1');
-  await ctx.settle(6);
-  const gp = pageOf(ctx).querySelector('.gpage');
-  assert.ok(gp, 'a feature group still has its page');
-  assert.equal(gp.querySelector('.rd-tab[data-tab="overview"]').hidden, true);
-});
-
 test('a finished member\'s row goes to its History page, not back to the group page', async () => {
   const hist = [{ id: 'p1', projectKey: 'acme', title: 'Slice 1', status: 'done', mtime: Date.now() }];
   const h = (url, o) => (url.startsWith('/api/history') ? json({ pipelines: hist }) : handler(url, o));
@@ -158,19 +144,59 @@ test('a finished member\'s row goes to its History page, not back to the group p
   assert.equal(ctx.window.location.hash, '#history/acme/p1', 'clicking the row\'s link opens the run');
 });
 
-test('Ship on a ready user group opens Ship it for its first ready run; the page\'s address stays', async () => {
+test('slice 3: Create PR on a ready user group opens the group dialog; the combine check paints One off with its reason; separate posts once', async () => {
   const hist = [3, 4].map((i) => ({ id: `p${i}`, projectKey: 'acme', title: `Slice ${i}`, status: 'done', mtime: Date.now() }));
-  const ctx = await boot((url, o) => (url.startsWith('/api/history') ? json({ pipelines: hist }) : handler(url, o)));
+  const posts = [];
+  const combines = [];
+  const ctx = await boot((url, o = {}) => {
+    if (url.startsWith('/api/history')) return json({ pipelines: hist });
+    if (url.startsWith('/api/run-groups/g_1/combine')) { combines.push(url); return json({ n: 2, oneOff: 'The runs conflict in f.txt', line: '', base: 'dev', files: ['f.txt'] }); }
+    if (url.startsWith('/api/run-groups/g_1/ship')) { posts.push({ url, body: JSON.parse(o.body) }); return json({ ok: true, mode: 'separate', prs: ['u3', 'u4'] }); }
+    return handler(url, o);
+  });
   await ctx.settle(4);
-  const shipped = [];
-  ctx.window.__np.chatRunControls.openShipIt = (ref) => { shipped.push(ref.pipelineId); return Promise.resolve({ opened: true }); };
   ctx.go('group/g_1');
   await ctx.settle(6);
   const hash = ctx.window.location.hash;
-  pageOf(ctx).querySelector('.gpage-actions [data-model-action="ship"]').click();
+  const page = pageOf(ctx);
+  assert.equal(page.querySelector('.gpage-actions [data-model-action="ship"]:not([hidden])'), null, 'no Create PR in the bar (D10)');
+  page.querySelector('.gpage-card .rd-pr-slot button').click();
   await ctx.settle(4);
-  assert.deepEqual(shipped, ['p3']);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(combines.length, 1);
+  assert.equal(modal.querySelector('.shipit-title').textContent, 'Create 2 PRs');
+  assert.equal(modal.querySelector('.shipit-prs-stacked-label').textContent, '2 separate');
+  assert.equal(modal.querySelector('.shipit-base').textContent, "Each run's own base branch");
+  assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true);
+  assert.equal(modal.querySelector('.shipit-prs-one-why').textContent, 'The runs conflict in f.txt');
+  modal.querySelector('.shipit-ok').click();
+  await ctx.settle(4);
+  // No project settings answer in this stub, so Watch PR defaults off and the payload is the mode alone.
+  assert.deepEqual(posts, [{ url: '/api/run-groups/g_1/ship', body: { mode: 'separate' } }]);
   assert.equal(ctx.window.location.hash, hash);
+});
+
+test('slice 3: a combine check that fails (500) keeps One off with "Could not check…"; separate stays checked', async () => {
+  const hist = [3, 4].map((i) => ({ id: `p${i}`, projectKey: 'acme', title: `Slice ${i}`, status: 'done', mtime: Date.now() }));
+  const ctx = await boot((url, o = {}) => {
+    if (url.startsWith('/api/history')) return json({ pipelines: hist });
+    if (url.startsWith('/api/run-groups/g_1/combine')) return json({ error: 'git exploded' }, 500);
+    return handler(url, o);
+  });
+  await ctx.settle(4);
+  ctx.go('group/g_1');
+  await ctx.settle(6);
+  pageOf(ctx).querySelector('.gpage-card .rd-pr-slot button').click();
+  await ctx.settle(4);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  const why = modal.querySelector('.shipit-prs-one-why');
+  assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true);
+  assert.equal(why.hidden, false);
+  assert.ok(why.textContent.startsWith('Could not check whether the runs combine'), why.textContent);
+  assert.match(why.textContent, /git exploded/);
+  assert.equal(modal.querySelector('.shipit-prs input[value="stacked"]').checked, true);
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 2 PRs');
 });
 
 test('Decisions: one section per member with a decision or a receipt; a live member\'s receipts come from its run', async () => {
@@ -183,10 +209,28 @@ test('Decisions: one section per member with a decision or a receipt; a live mem
   assert.equal(pageOf(ctx).querySelectorAll('.gpage-decision').length, 1, 'p1\'s away-mode decision');
   // p2 goes live with the recorded run's last frame: its plan and review receipts, with no decision fetched for it.
   const last = REPLAY_FRAMES[REPLAY_FRAMES.length - 1];
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Slice 2', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' }] });
+  ctx.dispatch({ type: 'hello', runs: [{ runId: 'r2', pipelineId: 'p2', title: 'Slice 2', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' }] });
   ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'running', stepper: last.stepper, steps: last.steps, active: [], progressFacts: last.progressFacts });
   await ctx.settle(8);
   const secs = [...pageOf(ctx).querySelectorAll('.gpage-decision')];
   assert.equal(secs.length, 2);
   assert.ok([...secs[1].querySelectorAll('li.gpage-receipt')].some((li) => li.textContent === 'Plan accepted'));
+});
+
+test('slice 3: a failed /api/run-groups reload keeps the page (same .gpage node, no error, no rebuild)', async () => {
+  for (const fail of [() => json({ error: 'busy' }, 500), () => Promise.reject(new TypeError('Failed to fetch'))]) {
+    let down = false;
+    const ctx = await boot((url) => (down && url.startsWith('/api/run-groups') ? fail() : handler(url)));
+    ctx.go('feature/feat_1');
+    await ctx.settle(6);
+    const gp = pageOf(ctx).querySelector('.gpage');
+    assert.ok(gp, 'the page rendered');
+    const before = ctx.calls.filter((c) => c.url.startsWith('/api/run-groups')).length;
+    down = true;
+    ctx.dispatch({ type: 'run-groups-changed' });
+    await ctx.settle(6);
+    assert.ok(ctx.calls.filter((c) => c.url.startsWith('/api/run-groups')).length > before, 'the failed reload was really requested');
+    assert.equal(pageOf(ctx).querySelector('.gpage'), gp, 'the same page node');
+    assert.equal(pageOf(ctx).querySelector('.feature-page-error'), null, 'no "could not load" swap');
+  }
 });

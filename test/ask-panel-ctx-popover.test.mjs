@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fmtShare, ctxBreakdown, groupContexts } from '../ui/public/ask-panel.mjs';
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, openChat } from './helpers/ask-panel-harness.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 test('pure: groupContexts, fmtShare and ctxBreakdown', async () => {
@@ -55,11 +55,8 @@ function handler(state) {
   };
 }
 async function openThread(ctx) {
-  ctx.panel.open();
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  await ctx.tick(); await ctx.tick(); await ctx.tick();
-  ctx.doc.querySelector('.ask-thread-pick').click();
-  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  await openChat(ctx, TID);
+  await ctx.tick();
 }
 
 const arc = (btn) => btn.querySelector('.ask-ctx-ring-arc').getAttribute('stroke-dasharray');

@@ -40,18 +40,20 @@ test('every catalogued card sits on its form tab with the same mode, flag and he
 
 test('locks: a mode lock below the effective mode, a flag lock per Labs feature that is off; the note names both', () => {
   const presets = SETTING_ENTRIES.find((e) => e.id === 'tab:presets');
-  assert.deepEqual(locksFor(presets, { level: 'simple', flags: {} }).map((l) => l.type), ['mode', 'flag']);
-  assert.deepEqual(locksFor(presets, { level: 'advanced', flags: { runPresets: true } }), []);
+  assert.deepEqual(locksFor(presets, { level: 'simple', flags: {} }).map((l) => l.type), ['mode']);
+  assert.deepEqual(locksFor(presets, { level: 'advanced', flags: {} }), []);
   const budget = SETTING_ENTRIES.find((e) => e.id === 'card:budget-settings-card');
   assert.deepEqual(locksFor(budget, { level: 'simple', flags: {} }), []);
   const chat = SETTING_ENTRIES.find((e) => e.id === 'card:ask-settings-card');   // a Simple card on an Advanced tab
   assert.equal(locksFor(chat, { level: 'simple', flags: {} })[0].min, 'advanced');
-  assert.equal(lockNote(locksFor(presets, { level: 'simple', flags: {} })), 'Switch to Advanced mode · Turn on Labs: Run presets');
-  assert.deepEqual(locksFor(presets, {}).map((l) => l.type), ['flag'], 'no level given = Expert, nothing mode-locked');
-  const labels = SETTING_ENTRIES.find((e) => e.id === 'card:labels-settings-card');   // its tab needs runTags too
-  assert.deepEqual(locksFor(labels, { level: 'simple', flags: {} }).map((l) => l.key), ['runTags', 'runLabels']);
-  assert.deepEqual(locksFor(labels, { level: 'simple', flags: { runTags: true } }).map((l) => l.key), ['runLabels']);
-  assert.equal(lockNote(locksFor(labels, { level: 'simple', flags: {} })), 'Turn on Labs: Cost tags, Run labels');
+  assert.equal(lockNote(locksFor(presets, { level: 'simple', flags: {} })), 'Switch to Advanced mode');
+  assert.deepEqual(locksFor(presets, {}), [], 'no level given = Expert, nothing mode-locked');
+  const labels = SETTING_ENTRIES.find((e) => e.id === 'card:labels-settings-card');
+  assert.deepEqual(locksFor(labels, { level: 'simple', flags: {} }).map((l) => l.key), ['runLabels']);
+  assert.deepEqual(locksFor(labels, { level: 'simple', flags: { runLabels: true } }), []);
+  assert.equal(lockNote(locksFor(labels, { level: 'simple', flags: {} })), 'Turn on Labs: Run labels');
+  assert.equal(lockNote([{ type: 'mode', min: 'advanced' }, { type: 'flag', key: 'runLabels', title: 'Run labels' }]),
+    'Switch to Advanced mode · Turn on Labs: Run labels');
   const debug = SETTING_ENTRIES.find((e) => e.id === 'card:debug-spawn-settings-card');
   assert.equal(lockNote(locksFor(debug, { level: 'advanced', flags: {} })), 'Switch to Expert mode');
 });

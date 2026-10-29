@@ -24,17 +24,14 @@ export function featureHeadline(f) {
 export const featureModelOf = (f, snapOf) => featureCardModel({ card: { pipelineId: f.originPipelineId || null, feature: f, log: f.log || [] }, snapOf: snapOf || (() => null) });
 
 /** s4: the Ship card (ship-card.mjs) in place of the old Ship as block: the waiting line while runs go on, the ready
- *  card without Not now, the applied card once shipped; nothing for a canceled or re-planned feature. A failure comes
- *  back through deps.error (the foot shows it). */
-function shipBlock(doc, f, deps) {
+ *  card without Not now, the applied card once shipped; nothing for a canceled or re-planned feature. */
+function shipBlock(doc, f) {
   const s = f.ship || {};
   const phase = s.mode ? 'applied' : s.ready ? 'ready' : f.status === 'active' ? 'waiting' : null;
   if (!phase) return doc.createDocumentFragment();
-  const card = renderShipCard(doc, { phase, title: f.title, runs: f.total, files: s.files, added: s.linesAdded, deleted: s.linesRemoved,
-    suggested: s.suggested, hint: s.hint || null, result: s.result || null }, {
-    // The host repaints with deps.error on a failure (the foot shows it), as before.
-    onShip: (mode, release) => Promise.resolve(deps.act('ship', { mode, ...(release ? { release } : {}) }, { focus: `ship-${mode}` })),
-  });
+  // One ship flow: the ready card's Create PR opens the shared dialog (setShipDialogOpener); nothing is posted here.
+  const card = renderShipCard(doc, { phase, featureId: f.id, title: f.title, runs: f.total, files: s.files, added: s.linesAdded,
+    deleted: s.linesRemoved, suggested: s.suggested, result: s.result || null });
   card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
   return card;
 }
@@ -63,7 +60,7 @@ export function renderFeature(doc, f, deps) {
     order.dataset.needsGit = '';
     el.appendChild(order);
   }
-  el.appendChild(shipBlock(doc, f, deps));
+  el.appendChild(shipBlock(doc, f));
   const foot = h('div', 'shape-feature-actions');
   el.appendChild(foot);
   paintFeatureActions(doc, foot, m.controls, deps, { omit: deps.omit || [], menu: !deps.inGroup });

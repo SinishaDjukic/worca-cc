@@ -475,7 +475,6 @@ const states = [
     async () => { await ev(`document.querySelector('#hist-detail .hd-bar-more').click()`); }],
   ['history-detail-cost-tags', async () => {
     const json = { 'content-type': 'application/json' };
-    await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: true }) });
     await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: ['client:northwind', 'team:docs'] }) });
     await go(`history/${projectKey}/${pipelineId}`);
     await until(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
@@ -515,7 +514,6 @@ const states = [
   }, async () => {
     const json = { 'content-type': 'application/json' };
     await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: [] }) });
-    await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: null }) });
   }],
   ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
   ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
@@ -657,10 +655,7 @@ const states = [
   // Budget, Scheduled runs and Chat notifications, and the Ask Worca card, left General for tabs of
   // their own; each is audited where it now lives.
   ['settings-runs', async () => { await go('settings/runs'); await until(`document.querySelector('.settings-pane[data-tab="runs"]:not(.hidden) #budget-settings-card')`, 'runs pane'); }],
-  // The Tags tab exists only while the runTags flag is on (app.js SETTINGS_TABS): switch it on for this state alone.
-  ['settings-tags', async () => { await api('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runTags: true }) });
-    await go('settings/tags'); await until(`document.querySelector('.settings-pane[data-tab="tags"]:not(.hidden)')`, 'the tags pane'); },
-  async () => { await api('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runTags: null }) }); }],
+  ['settings-tags', async () => { await go('settings/tags'); await until(`document.querySelector('.settings-pane[data-tab="tags"]:not(.hidden)')`, 'the tags pane'); }],
   ['settings-presets', async () => { await go('settings/presets'); await until(`document.querySelector('.settings-pane[data-tab="presets"]:not(.hidden)')`, 'the presets pane'); }],
   ['settings-experimental', async () => { await go('settings/experimental'); }],
   ['settings-ask', async () => { await go('settings/ask'); await until(`document.querySelector('.settings-pane[data-tab="ask"]:not(.hidden) #ask-web-host .ask-web')`, 'ask pane'); }],
@@ -706,6 +701,26 @@ const states = [
         return { pad, hs }; })()`);
       designChecks.push({ what: `dialog: #${id} pads its card 24px and its actions are 32px`,
         ok: !!d.pad && d.pad.every((p) => p === '24px') && d.hs.every(([, h]) => h === 32), got: d });
+      if (id === 'shipit-modal') {
+        // The shared dialog anatomy (dialog-layout.mjs): on a short window the title stays pinned.
+        await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 600, deviceScaleFactor: 1, mobile: false });
+        await settle('dialog-pin resize');
+        const pin = await ev(`(async () => { const m = document.getElementById('shipit-modal');
+          const card = m.querySelector('.card.dlg'); const body = m.querySelector('.dlg-body');
+          if (!card || !body) return { missing: true };
+          const probe = document.createElement('div'); probe.style.height = '1600px'; body.append(probe);
+          const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          await frame();
+          const top = () => m.querySelector('.dlg-head h2').getBoundingClientRect().top;
+          const t0 = top(); body.scrollTop = 400; body.dispatchEvent(new Event('scroll')); await frame();
+          const r = { dy: Math.round(top() - t0), scrolled: body.scrollTop, under: card.hasAttribute('data-under-head'),
+            bodyH: Math.round(body.clientHeight) };
+          probe.remove(); body.scrollTop = 0; return r; })()`);
+        designChecks.push({ what: 'dialog: #shipit-modal at 1280x600 keeps its title pinned while the body scrolls',
+          ok: !pin.missing && pin.dy === 0 && pin.scrolled >= 400 && pin.under && pin.bodyH >= 120, got: pin });
+        await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+        await settle('dialog-pin restore');
+      }
       // ux-2-1: the stray audit covers every index.html dialog, not only the 5 modal states in STRAY_ROOTS.
       for (const v of await ev(STRAY_AUDIT(`#${id}`), 90000)) strayReport.push({ state: `dialog-sizes #${id}`, theme: 'light', ...v });
       if (id === 'model-editor-modal') await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`);

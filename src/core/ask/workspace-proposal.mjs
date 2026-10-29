@@ -16,6 +16,8 @@ const clip = (v, n) => String(v ?? '').replace(BREAKS_RE, ' ').slice(0, n);
 const basename = (p) => String(p).split('/').filter(Boolean).pop() || String(p);
 const list = (names) => names.join(', ');
 const RESCAN_EFFECT = 'Once applied, worca starts a Workspace scan run of the new set — fresh graphify graphs per member, the map and a new description, saved when the run ends (follow it under Running)';
+const RESCAN_CHOICES = Object.freeze(['none', 'partial', 'full']);   // workspaces.mjs RESCAN_CHOICES (this module stays registry-free)
+const REMOVE_RESCAN_EFFECT = 'Once applied, worca prunes the map at once, then re-scans as chosen on the card: none keeps the pruned map; partial has one agent rewrite the overview and coordination notes from it; full re-scans every member left';
 
 /** The follow-up a card offers once applied, in the words of the event prompt. */
 const FOLLOW_UP_TEXT = {
@@ -37,6 +39,8 @@ const FOLLOW_UP_TEXT = {
  *        the workspace's open schedules and scheduled runs
  * @param {(ws:object, next:string[]) => Promise<{metrics:{home,members:Array<{path,ok}>}|null, policy:{home,members:Array<{path,ok}>}|null}>} r.homeStatus
  *        each member of the NEW set against the workspace's metrics / policy home (null: no home)
+ * @param {(id:string, path:string, opts:{pendingRescan:('full'|null)}) => Promise<{level,reason,partialAvailable}>} [r.removeImpact]
+ *        the re-scan worca recommends after removing that member (none | partial | full)
  */
 export function createWorkspaceChangeValidator(r) {
   /** @returns {Promise<{ok:true, card:object}|{ok:false, errors:string[]}>} */
@@ -136,6 +140,17 @@ export function createWorkspaceChangeValidator(r) {
       if (!key || i < 0) return { ok: false, errors: [`${key ? `"${clip(key, 120)}" is` : 'projectKey is required: name'} not a member of ${wsName}`] };
       const path = ws.projectPaths[i];
       const plan = r.plan.remove(ws.id, path);
+      const askedRescan = inp.rescan === undefined || inp.rescan === null || inp.rescan === '' ? null : str(inp.rescan);
+      if (askedRescan !== null && !RESCAN_CHOICES.includes(askedRescan)) return { ok: false, errors: [`rescan must be one of ${RESCAN_CHOICES.join(', ')}`] };
+      const impact = r.removeImpact ? await r.removeImpact(ws.id, path, { pendingRescan: live === 'scan' ? 'full' : null }) : null;
+      if (askedRescan === 'partial' && impact && !impact.partialAvailable) {
+        return { ok: false, errors: [`a partial re-scan is not available: ${clip(impact.reason, 300)} Propose none or full.`] };
+      }
+      card.effects = card.effects.map((e) => (e === RESCAN_EFFECT ? REMOVE_RESCAN_EFFECT : e));
+      // The reason is shown ONCE, in the card's re-scan box (ask-panel buildWorkspaceCard) — never as an effects line.
+      if (impact) card.recommendation = { level: impact.level, reason: clip(impact.reason, 400), partialAvailable: !!impact.partialAvailable };
+      card.rescan = askedRescan ?? (impact ? impact.level : 'full');
+      card.rescanAsked = askedRescan !== null;
       // P5: a registered Folder project's Remove row shows its Folder chip, as the create / add rows do (byKey).
       const removedRow = projects.find((x) => x && x.path === path);
       const removed = { key, name: nameOfPath(path), path, ...(removedRow?.vcs === 'none' ? { vcs: 'none' } : {}) };

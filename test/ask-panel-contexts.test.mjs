@@ -2,7 +2,7 @@
 // close the sheet and route) and the History popover rows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, openChat } from './helpers/ask-panel-harness.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const TID = 'ask_0000c0de';
@@ -36,11 +36,8 @@ function handler(state) {
 }
 
 async function openThread(ctx) {
-  ctx.panel.open();
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  await ctx.tick(); await ctx.tick(); await ctx.tick();
-  ctx.doc.querySelector('.ask-thread-pick').click();
-  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  await openChat(ctx, TID);
+  await ctx.tick();
 }
 
 const openCtx = (ctx) => { ctx.doc.querySelector('[data-ask-ctx-btn]').click(); return ctx.doc.querySelector('.ask-pop-ctx'); };

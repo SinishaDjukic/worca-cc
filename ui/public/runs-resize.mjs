@@ -22,20 +22,22 @@ export const defaultListWidth = (shellW) => Math.max(MIN_W, Math.min(DEFAULT_W, 
 
 /**
  * Mount the handle into `shell`'s `.runs-list-pane`. `storage` is app.js's guarded localStorage, `win` the window.
- * Returns { width() → the current px width, reset() }.
+ * Returns { width() → the current px width, reset(), paint(), destroy() }. `key`, `cssVar`, `paneSel` and `label` default to the
+ * Runs list's; the Chats column (#948 s2) passes its own.
  */
-export function mountRunsResize(shell, { storage, win }) {
+export function mountRunsResize(shell, { storage, win, key = LIST_W_KEY, cssVar = '--runs-list-w', paneSel = '.runs-list-pane',
+  label = 'Resize the runs list' }) {
   const doc = shell.ownerDocument;
-  const pane = shell.querySelector('.runs-list-pane') || shell;
+  const pane = shell.querySelector(paneSel) || shell;
   const handle = doc.createElement('div');
   handle.className = 'runs-resize';
   handle.setAttribute('role', 'separator');
   handle.setAttribute('aria-orientation', 'vertical');
-  handle.setAttribute('aria-label', 'Resize the runs list');
+  handle.setAttribute('aria-label', label);
   handle.setAttribute('aria-valuemin', String(MIN_W));
   handle.tabIndex = 0;
   pane.append(handle);
-  const stored = Number.parseInt(readStore(storage, LIST_W_KEY) || '', 10);
+  const stored = Number.parseInt(readStore(storage, key) || '', 10);
   let chosen = Number.isFinite(stored) ? stored : null;      // the person's width; null = the default
   // The width the list has right now. With no chosen width it is the CSS default as rendered: measured live, because
   // app.js mounts this at boot while the Runs view is usually hidden (0 wide). The formula covers jsdom and hidden.
@@ -46,16 +48,16 @@ export function mountRunsResize(shell, { storage, win }) {
   };
   const paint = () => {
     handle.setAttribute('aria-valuemax', String(maxListWidth(win.innerWidth)));
-    if (chosen == null) shell.style.removeProperty('--runs-list-w');
-    else shell.style.setProperty('--runs-list-w', `${width()}px`);
+    if (chosen == null) shell.style.removeProperty(cssVar);
+    else shell.style.setProperty(cssVar, `${width()}px`);
     handle.setAttribute('aria-valuenow', String(width()));
   };
   const set = (w, { persist = false } = {}) => {
     chosen = clampListWidth(w, win.innerWidth);
     paint();
-    if (persist) writeStore(storage, LIST_W_KEY, String(chosen));
+    if (persist) writeStore(storage, key, String(chosen));
   };
-  const reset = () => { chosen = null; dropStore(storage, LIST_W_KEY); paint(); };
+  const reset = () => { chosen = null; dropStore(storage, key); paint(); };
   handle.addEventListener('focus', paint);                  // aria-valuenow is current when a screen reader lands here
   handle.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -77,7 +79,7 @@ export function mountRunsResize(shell, { storage, win }) {
       doc.removeEventListener('pointerup', end);
       doc.removeEventListener('pointercancel', end);
       shell.classList.remove('is-resizing');
-      if (chosen != null) writeStore(storage, LIST_W_KEY, String(chosen));
+      if (chosen != null) writeStore(storage, key, String(chosen));
     };
     doc.addEventListener('pointermove', move);
     doc.addEventListener('pointerup', end);
@@ -85,5 +87,6 @@ export function mountRunsResize(shell, { storage, win }) {
   });
   win.addEventListener('resize', paint);
   paint();
-  return { width, reset, paint };
+  const destroy = () => { win.removeEventListener('resize', paint); handle.remove(); };
+  return { width, reset, paint, destroy };
 }

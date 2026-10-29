@@ -1,4 +1,4 @@
-// tools/runs-layout-audit.mjs — the Runs list layout rules (runs redesign §3.3a, Known bugs 5, 8, 9) as one function
+// tools/runs-layout-audit.mjs — the Runs list layout rules (runs redesign §3.3a, Known bugs 5, 8, 9; #955 member rows) as one function
 // that runs in a real page (tools/verify-runs-list-cdp.mjs, env = null) and in jsdom with injected rects
 // (test/runs-layout-audit.test.mjs). Self-contained: the CDP script injects its source text, so no imports.
 export function auditRunsLayout(root, env, doc = root.ownerDocument) {
@@ -33,6 +33,14 @@ export function auditRunsLayout(root, env, doc = root.ownerDocument) {
       const rr = rect(rowEl);
       const rt = rightEl ? rect(rightEl) : null;
       if (rt && rt.width > 0 && rt.top < t.bottom - 1 && t.width < rr.width / 2 - 1) out.push({ rule: 'title-share', got: `${t.width} of ${rr.width}`, text: titleEl.textContent });
+    }
+    // #955: a row inside a group is one line, 26px (40px on a coarse pointer), unless it draws its live 3px line
+    // or (#1012) its stage block.
+    if (item.dataset.level === 'member' && rowEl && !rowEl.querySelector(':scope > .runs-row-prog, :scope > .runs-stage')) {
+      const coarse = env && 'coarse' in env ? !!env.coarse : !!(win.matchMedia && win.matchMedia('(pointer: coarse)').matches);
+      const want = coarse ? 40 : 26;
+      const h = rect(item).height;
+      if (h > 0 && Math.abs(h - want) > 0.5) out.push({ rule: 'member-height', got: `${h} not ${want}`, text: titleEl ? titleEl.textContent : '' });
     }
   }
   if (ends.length) {

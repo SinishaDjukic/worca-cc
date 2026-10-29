@@ -1,7 +1,7 @@
 // test/ui-shape-app-wiring.test.mjs — Shape it first, slice 4: app.js's wiring of the outline ask and the feature
 // view. The `plan` renderer branches on `plan.outline` (run page + askHeading), `mountShapeFeature` paints a host from
 // GET /api/shape/features/:id (idempotent while a fetch is pending or failed, F41), `shape-feature` and
-// `schedules-changed` frames repaint the hosts (F40), a hello brings back a view emptied while the gate was off.
+// `schedules-changed` frames repaint the hosts (F40).
 // Harness: the REAL app.js under jsdom (test/helpers/run-page-boot.mjs); the mount functions are read off
 // window.__shapeFeature, the test seam app.js exposes beside its other window.__* hooks.
 import { test } from 'node:test';
@@ -11,7 +11,6 @@ import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
 import { namedAnswer } from '../ui/public/shape/step-receipt.mjs';
 import { chatCardBuilder } from '../ui/public/chat/extensions.mjs';
 
-const GATE = { flags: { shapeFirst: true } };
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
 const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 
@@ -38,11 +37,11 @@ function recorder(answer = () => res(200, { ok: true })) {
   return { posts, fetchHandler };
 }
 
-async function openOutline({ gate = true, answer } = {}) {
+async function openOutline({ answer } = {}) {
   const r = recorder(answer);
   const ctx = await bootApp({ fetchHandler: r.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
+  ctx.dispatch({ type: 'hello', runs: [{ runId: RUN_ID, title: 'Outline demo', projectDir: '/tmp/p', status: 'running', kind: 'run',
     startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null }, pendingQuestion: OUTLINE_Q }] });
   ctx.go(`running/${RUN_ID}`);
   await ctx.settle();
@@ -58,9 +57,11 @@ test('a pending outline ask renders the outline body; its head names the decisio
   assert.equal(ctx.window.document.querySelector('#run-detail .rd-ask-head').textContent, '');
 });
 
-test('gate on: Approve 3 runs posts the gated answer route, with the named receipt noted before the POST', async () => {
+test('Approve 3 runs posts the run\'s answer route, with the named receipt noted before the POST', async () => {
   const { ctx, panel, posts } = await openOutline();
+  assert.equal(panel.querySelector('.outline-merge'), null);
   assert.equal(panel.querySelector('.outline-approve').textContent, 'Approve 3 runs');
+  assert.equal(panel.querySelectorAll('.outline-row-more').length, 3);
   click(ctx, panel.querySelector('.outline-approve'));
   await ctx.settle();
   assert.equal(posts.length, 1);
@@ -98,19 +99,6 @@ test('a 409 with { error } keeps the typed feedback, says "Not sent: …" and fo
   assert.equal(namedAnswer(RUN_ID, OUTLINE_Q.id), null);
 });
 
-test('gate off: Approve 3 runs posts /api/answer, and the same card is drawn', async () => {
-  const { ctx, panel, posts } = await openOutline({ gate: false });
-  assert.equal(panel.querySelector('.outline-merge'), null);
-  assert.equal(panel.querySelector('.outline-approve').textContent, 'Approve 3 runs');
-  assert.equal(panel.querySelectorAll('.outline-row-more').length, 3);
-  click(ctx, panel.querySelector('.outline-approve'));
-  await ctx.settle();
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].url, '/api/answer');
-  assert.equal(posts[0].body.runId, RUN_ID);
-  assert.equal(posts[0].body.payload.decision, 'approve');
-});
-
 // ---- the feature view's mount --------------------------------------------------------------------------------------
 
 const FEATURE = (id = 'feat-1', o = {}) => ({ id, title: 'Big change', status: 'active', projectKey: 'proj', done: 1, total: 3, open: true,
@@ -125,10 +113,13 @@ const groupMember = (position, pipelineId, status = 'done') => ({ position, titl
 /** A server stub: features by id, per-id GET handlers, recorded GETs/POSTs. It lists `feat_1` as a feature group
  *  (GET /api/run-groups), so #feature/feat_1 renders the group page (runs redesign slice 4, D16). */
 function featureServer() {
-  const s = { features: new Map(), gets: [], posts: [], getHandler: null, postHandler: null,
+  const s = { features: new Map(), gets: [], posts: [], fetchLog: [], getHandler: null, postHandler: null,
     groups: [{ id: 'feat_1', kind: 'feature', title: 'Big change', projectKey: null, planning: null, members: [groupMember(1, 'p1')], cost: { usd: 0, byPipeline: {} } }] };
   s.fetchHandler = (url, opts) => {
+    s.fetchLog.push(url);
     if (url.startsWith('/api/run-groups')) return res(200, { groups: s.groups });
+    // One ship flow (D19): the group dialog's Into reads the chain root here.
+    if (url.startsWith('/api/pr/remotes')) return res(200, { ok: true, chain: ['dev'], remotes: [], defaults: {} });
     const m = /^\/api\/shape\/features\/([^/]+)(?:\/([a-z-]+))?$/.exec(url);
     if (!m) return null;
     const id = decodeURIComponent(m[1]);
@@ -144,10 +135,10 @@ function featureServer() {
   return s;
 }
 
-async function bootFeature({ gate = true, server = featureServer() } = {}) {
+async function bootFeature({ server = featureServer() } = {}) {
   const ctx = await bootApp({ fetchHandler: server.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [] });
+  ctx.dispatch({ type: 'hello', runs: [] });
   await ctx.settle();
   const seam = ctx.window.__shapeFeature;
   const host = () => { const h = ctx.window.document.createElement('div'); ctx.window.document.body.appendChild(h); return h; };
@@ -186,7 +177,7 @@ test('no refetch loop (F41): five mounts with the fetch pending issue one GET; a
   assert.ok(h.querySelector('.shape-feature'));
 });
 
-test('a shape-feature frame repaints only the hosts of that id; schedules-changed and hello repaint all', async () => {
+test('a shape-feature frame repaints only the hosts of that id; schedules-changed repaints all', async () => {
   const server = featureServer(); server.features.set('A', FEATURE('A')); server.features.set('B', FEATURE('B'));
   const { ctx, seam, host } = await bootFeature({ server });
   seam.mount(host(), 'A'); seam.mount(host(), 'B');
@@ -197,10 +188,6 @@ test('a shape-feature frame repaints only the hosts of that id; schedules-change
   assert.deepEqual(server.gets, ['B']);
   server.gets.length = 0;
   ctx.dispatch({ type: 'schedules-changed' });
-  await ctx.settle(5);
-  assert.deepEqual(server.gets.sort(), ['A', 'B']);
-  server.gets.length = 0;
-  ctx.dispatch({ type: 'hello', ...GATE, runs: [] });
   await ctx.settle(5);
   assert.deepEqual(server.gets.sort(), ['A', 'B']);
 });
@@ -271,35 +258,6 @@ test('a failed action leaves its error text visible after the repaint that follo
   assert.equal(err.textContent, 'Slice 2 is still going…');
 });
 
-test('turning the gate off while a fetch is in flight leaves the host empty', async () => {
-  const server = featureServer();
-  let release; server.getHandler = () => new Promise((r) => { release = () => r(res(200, FEATURE())); });
-  const { ctx, seam, host } = await bootFeature({ server });
-  const h = host();
-  seam.mount(h, 'feat-1');
-  await ctx.settle(2);
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
-  await ctx.settle(3);
-  release();
-  await ctx.settle(5);
-  assert.equal(h.querySelector('.shape-feature'), null);
-  assert.equal(h.dataset.painted, '');
-});
-
-test('a hello with the gate back repaints a view emptied while it was off', async () => {
-  const server = featureServer(); server.features.set('feat-1', FEATURE());
-  const { ctx, seam, host } = await bootFeature({ server });
-  const h = host();
-  seam.mount(h, 'feat-1');
-  await ctx.settle(5);
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
-  await ctx.settle(5);
-  assert.equal(h.querySelector('.shape-feature'), null, 'emptied with the gate off');
-  ctx.dispatch({ type: 'hello', ...GATE, runs: [] });
-  await ctx.settle(5);
-  assert.ok(h.querySelector('.shape-feature'), 'back with the gate');
-});
-
 test('focus (F39): after a click on a control that blurs when disabled, the new control with the same data-act has it', async () => {
   const server = featureServer(); server.features.set('feat-1', FEATURE('feat-1', { halted: { index: 2, state: 'stopped', waiting: [3] } }));
   const { ctx, seam, host } = await bootFeature({ server });
@@ -338,7 +296,7 @@ const PLAN_Q = { id: 'plan-n_plan-1', kind: 'plan', nodeId: 'n_plan',
 async function openFeaturePage({ server = featureServer(), runs = [] } = {}) {
   const ctx = await bootApp({ fetchHandler: server.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...GATE, runs });
+  ctx.dispatch({ type: 'hello', runs });
   await ctx.settle();
   ctx.go('feature/feat_1/overview');                // the group page's Overview hosts the Shaper view (slice 4, D14)
   await ctx.settle(6);
@@ -351,7 +309,7 @@ test('#feature/feat_1 fetches the feature and renders the page view', async () =
   const { page } = await openFeaturePage({ server });
   assert.deepEqual(server.gets, ['feat_1', 'feat_1'], 'the replaced-id lookup (F47), then the Shaper view');
   assert.ok(page.querySelector('.gpage .gpage-overview .shape-feature'));
-  assert.equal(page.querySelectorAll('.gpage-card .run-status-text').length, 1, 'one status line: the group model\'s');
+  assert.equal(page.querySelectorAll('.gpage-card .run-status-word').length, 1, 'one status line: the group model\'s');
   assert.equal(page.querySelector('.shape-feature-head'), null, 'the Shaper view draws no head');
 });
 
@@ -385,21 +343,6 @@ test('#feature for an unknown id says the feature no longer exists', async () =>
   assert.equal(page.querySelector('.feature-page-gone').textContent, 'This feature no longer exists. Open the Runs list');
 });
 
-test('#feature with the gate off still renders the group page, without Overview (slice 4, D16)', async () => {
-  const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
-  const ctx = await bootApp({ fetchHandler: server.fetchHandler });
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [] });
-  await ctx.settle();
-  ctx.go('feature/feat_1');
-  await ctx.settle(4);
-  assert.deepEqual(server.gets, [], 'no Shaper read with the flag off');
-  assert.equal(ctx.window.document.querySelector('[data-view="runs"]').classList.contains('hidden'), false);
-  const view = ctx.window.document.querySelector('#group-detail');
-  assert.ok(view.querySelector('.gpage'));
-  assert.equal(view.querySelector('.gpage .rd-tab[data-tab="overview"]').hidden, true);
-});
-
 test('the page\'s ask host survives a repaint; a state frame repaints the line without a fetch', async () => {
   const server = featureServer(); server.features.set('feat_1', PAGE_FEATURE());
   server.groups[0].members = [groupMember(1, 'p1'), groupMember(2, 'p2', 'running'), groupMember(3, null, null)];
@@ -414,11 +357,11 @@ test('the page\'s ask host survives a repaint; a state frame repaints the line w
   await ctx.settle(6);
   assert.equal(server.gets.length, 3, 'the replaced-id lookup, the first view, the repaint');
   assert.equal(page.querySelector('.gpage-card .gpage-question .qpanel'), qp, 'the same panel: a typed answer survives');
-  const line = page.querySelector('.gpage-card .run-status-text');
+  const line = page.querySelector('.gpage-card .run-status-word');
   line.textContent = 'stale';
   ctx.dispatch({ type: 'state', runId: 'r2', status: 'running' });
   await ctx.settle(4);
-  assert.notEqual(page.querySelector('.gpage-card .run-status-text').textContent, 'stale',
+  assert.notEqual(page.querySelector('.gpage-card .run-status-word').textContent, 'stale',
     'the state frame repainted the group model\'s line (scheduleGroupPagePaint)');
   assert.equal(server.gets.length, 3, 'a state frame does not refetch the feature');
 });
@@ -448,6 +391,9 @@ test('group page: a ⋯ pick of Ask before each run posts approve-each {on:false
   assert.equal(page.querySelector('[data-act="feature-more"]'), null, 'run 4 D17: the Overview draws no ⋯ of its own');
   assert.equal(page.querySelector('.shape-feature-order'), null, 'run 4 D17: the merge order stays on the Runs tab');
   assert.equal(item().getAttribute('aria-checked'), 'true');
+  const labels = [...doc.querySelectorAll('.wfv-menu-item .wfv-menu-l')].map((l) => l.textContent);
+  assert.ok(labels.includes('Stop') && labels.includes('Archive'), labels.join(', '));
+  assert.equal(doc.querySelectorAll('.wfv-menu .wfv-menu-hint').length, 0, 'issue #948: the list keys do not act here, so no key hints');
   click(ctx, item());
   await ctx.settle(8);
   assert.deepEqual(server.posts, [{ id: 'feat_1', action: 'approve-each', body: { on: false } }]);
@@ -506,7 +452,7 @@ test('s2: threadForRun reads the slice route\'s threadId; shaperCard GETs once, 
   };
   const ctx = await bootApp({ fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...GATE, runs: [{ runId: 'run-p2', pipelineId: 'p2', title: 'Run 2', projectDir: '/tmp/p', status: 'running', kind: 'run',
+  ctx.dispatch({ type: 'hello', runs: [{ runId: 'run-p2', pipelineId: 'p2', title: 'Run 2', projectDir: '/tmp/p', status: 'running', kind: 'run',
     startedAt: '2026-01-01T00:00:00Z' }] });
   await ctx.settle();
   const seam = ctx.window.__shapeFeature;
@@ -542,7 +488,7 @@ for (const workspaceId of [null, 'ws1']) {
     const posts = [];
     const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
     ctx.wsBox.ws.dispatch('open', {});
-    ctx.dispatch({ type: 'hello', ...GATE, runs: [rrRun(workspaceId ? { workspaceId } : {})] });
+    ctx.dispatch({ type: 'hello', runs: [rrRun(workspaceId ? { workspaceId } : {})] });
     ctx.go('running/run-rr');
     await ctx.settle();
     const panel = runPanel(ctx);
@@ -561,7 +507,7 @@ test('Chat run card: the plan gate is approvable and the receipt names the roles
   const posts = [];
   const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', ...GATE, runs: [rrRun()] });
+  ctx.dispatch({ type: 'hello', runs: [rrRun()] });
   await ctx.settle();
   const doc = ctx.window.document;
   const built = chatCardBuilder('progress')(
@@ -594,4 +540,202 @@ test('feature (group) page: the plan gate with 1 open issue is approvable', asyn
   await ctx.settle();
   assert.equal(posts.length, 1);
   assert.equal(posts[0].decision, 'approve');
+});
+
+// ---- one ship flow (slice 2): the group page's Create PR opens the shared dialog ----------------------------------
+
+const doneGroup = () => [{ id: 'feat_1', kind: 'feature', title: 'Big change', projectKey: 'pk', planning: null,
+  members: [groupMember(1, 'p1'), groupMember(2, 'p2'), groupMember(3, 'p3')], cost: { usd: 0, byPipeline: {} } }];
+const SHIP_FEATURE = () => FEATURE('feat_1', { projectKey: 'pk', slices: [1, 2, 3].map((index) => ({ index, title: `S${index}`,
+  state: 'done', pipelineId: `p${index}`, runId: null, pr: null })), ship: { suggested: 'one', linesAdded: 840, hint: null } });
+const change = (ctx, input) => { input.checked = true; input.dispatchEvent(new ctx.window.Event('change')); };
+
+test('one ship flow: the feature page\'s Create PR opens the dialog (Into from /api/pr/remotes) and posts the pick', async () => {
+  const server = featureServer(); server.groups = doneGroup(); server.features.set('feat_1', SHIP_FEATURE());
+  const { ctx, page } = await openFeaturePage({ server });
+  const doc = ctx.window.document;
+  const slot = page.querySelector('.gpage-card .rd-pr-slot');
+  assert.equal(page.querySelectorAll('.gpage-bar [data-model-action="ship"]:not([hidden])').length, 0);
+  slot.querySelector('button').click();
+  assert.equal(slot.dataset.state, 'pending', 'the control waits while the dialog loads');
+  await ctx.settle(4);
+  const modal = doc.getElementById('shipit-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.ok(server.fetchLog.some((u) => u.startsWith('/api/pr/remotes?') && u.includes('id=p3')));
+  assert.equal(modal.querySelector('.shipit-base').textContent, 'dev');
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create PR');
+  assert.equal(doc.activeElement, modal.querySelector('.shipit-prs input[value="one"]'));
+  change(ctx, modal.querySelector('.shipit-prs input[value="stacked"]'));
+  assert.equal(modal.querySelector('.shipit-base').textContent, "dev, then each run's branch");
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 3 PRs');
+  assert.ok(!modal.querySelector('.shipit-release').hidden, 'a feature offers the Release row');
+  modal.querySelector('.shipit-ok').click();
+  await ctx.settle(4);
+  assert.deepEqual(server.posts.at(-1), { id: 'feat_1', action: 'ship', body: { mode: 'stacked' } });
+  assert.equal(modal.classList.contains('hidden'), true);
+  assert.equal(modal.querySelector('.shipit-prs').hidden, true, 'closing hides the zone again');
+});
+
+test('one ship flow: a failed ship keeps the dialog open with the error and the primary focused', async () => {
+  const server = featureServer(); server.groups = doneGroup(); server.features.set('feat_1', SHIP_FEATURE());
+  server.postHandler = () => res(409, { error: 'slice 2 has no pull request yet' });
+  const { ctx, page } = await openFeaturePage({ server });
+  page.querySelector('.gpage-card .rd-pr-slot button').click();
+  await ctx.settle(4);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  modal.querySelector('.shipit-ok').click();
+  await ctx.settle(4);
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.match(modal.textContent, /slice 2 has no pull request yet/);
+  assert.equal(modal.querySelector('.shipit-ok').disabled, false);
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create PR');
+  assert.equal(ctx.window.document.activeElement, modal.querySelector('.shipit-ok'));
+  modal.querySelector('.shipit-cancel').click(); await ctx.settle(2);
+});
+
+test('one ship flow: after a ship focus is on the repainted View PRs control; after Cancel on the Create PR that opened it', async () => {
+  const server = featureServer(); server.groups = doneGroup(); server.features.set('feat_1', SHIP_FEATURE());
+  const pr = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  server.postHandler = () => {                             // the ship lands: every member now carries its PR
+    server.groups = [{ ...doneGroup()[0], members: [1, 2, 3].map((k) => ({ ...groupMember(k, `p${k}`), pr: pr(k) })) }];
+    return res(200, { ok: true, mode: 'stacked' });
+  };
+  const { ctx, page } = await openFeaturePage({ server });
+  const doc = ctx.window.document;
+  const modal = doc.getElementById('shipit-modal');
+  page.querySelector('.gpage-card .rd-pr-slot button').click(); await ctx.settle(4);
+  modal.querySelector('.shipit-cancel').click(); await ctx.settle(2);
+  assert.equal(modal.classList.contains('hidden'), true);
+  assert.equal(doc.activeElement, page.querySelector('.gpage-card .rd-pr-slot button'), 'Cancel: back on Create PR');
+  page.querySelector('.gpage-card .rd-pr-slot button').click(); await ctx.settle(4);
+  modal.querySelector('.shipit-ok').click(); await ctx.settle(6);
+  const slot = page.querySelector('.gpage-card .rd-pr-slot');
+  assert.equal(slot.dataset.state, 'view');
+  assert.ok(slot.contains(doc.activeElement) && doc.activeElement.matches('button, a'), 'focus is on View PRs, not <body>');
+});
+
+test('one ship flow: a late repaint that swaps View PRs for View PR (One over old drafts) keeps focus in the slot', async () => {
+  const server = featureServer(); server.groups = doneGroup(); server.features.set('feat_1', SHIP_FEATURE());
+  const pr = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const withPrs = (prOf) => [{ ...doneGroup()[0], members: [1, 2, 3].map((k) => ({ ...groupMember(k, `p${k}`), pr: prOf(k) })) }];
+  server.postHandler = () => {                             // the reload right after the ship still sees the 3 drafts
+    server.groups = withPrs(pr);
+    return res(200, { ok: true, mode: 'one' });
+  };
+  const { ctx, page } = await openFeaturePage({ server });
+  const doc = ctx.window.document;
+  const modal = doc.getElementById('shipit-modal');
+  page.querySelector('.gpage-card .rd-pr-slot button').click(); await ctx.settle(4);
+  modal.querySelector('.shipit-ok').click(); await ctx.settle(6);
+  const slot = page.querySelector('.gpage-card .rd-pr-slot');
+  assert.ok(slot.contains(doc.activeElement), 'focus is on the (stale) View PRs');
+  const before = slot.dataset.sig;
+  server.groups = withPrs(() => pr(3));                    // the drafts close: slice 3's PR is the one PR
+  ctx.dispatch({ type: 'run-groups-changed' });
+  await ctx.settle(6);
+  assert.notEqual(slot.dataset.sig, before, 'the slot was rebuilt');
+  assert.ok(slot.contains(doc.activeElement) && doc.activeElement.matches('button, a'), 'focus is on View PR, not <body>');
+});
+
+test('one ship flow: a partly failed stacked ship leaves the dialog reading Create 2 PRs with One disabled', async () => {
+  const server = featureServer(); server.groups = doneGroup(); server.features.set('feat_1', SHIP_FEATURE());
+  server.postHandler = () => res(502, { error: "could not create run 2's PR: boom. Create PR again to continue.", prs: ['https://github.com/o/r/pull/1'] });
+  const { ctx, page } = await openFeaturePage({ server });
+  page.querySelector('.gpage-card .rd-pr-slot button').click(); await ctx.settle(4);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  change(ctx, modal.querySelector('.shipit-prs input[value="stacked"]'));
+  modal.querySelector('.shipit-ok').click(); await ctx.settle(4);
+  assert.match(modal.textContent, /Create PR again to continue/);
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 2 PRs');
+  assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true);
+  modal.querySelector('.shipit-cancel').click(); await ctx.settle(2);
+});
+
+test('one ship flow: a chain\'s Create PR defaults to stacked, has no Release row and posts to the chain route', async () => {
+  const chainMember = (k, o = {}) => ({ ticketId: k > 1 ? `t${k}` : null, pipelineId: `r${k}`, title: `R${k}`, state: 'done', prUrl: null,
+    historyKey: 'pk', projectKey: 'pk', workspaceId: null, projectDir: '/tmp/pk', after: k > 1 ? k - 1 : null, ...o });
+  let chains = [{ id: 'p:r1', title: 'R1', members: [chainMember(1), chainMember(2)] }];
+  const posts = [];
+  const server = featureServer(); server.groups = [];
+  const base = server.fetchHandler;
+  const fetchHandler = (url, opts) => {
+    if (url.startsWith('/api/schedules')) return res(200, { schedules: [], tickets: [], chains, counts: {} });
+    if (url.startsWith('/api/chains/')) { posts.push({ url, body: JSON.parse(opts.body) }); return res(200, { ok: true, mode: 'stacked', prs: [] }); }
+    return base(url, opts);
+  };
+  const ctx = await bootApp({ fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [] });
+  await ctx.settle();
+  ctx.go(`group/${encodeURIComponent('p:r1')}`);
+  await ctx.settle(6);
+  const doc = ctx.window.document;
+  const page = doc.querySelector('#group-detail');
+  page.querySelector('.gpage-card .rd-pr-slot button').click();
+  await ctx.settle(4);
+  const modal = doc.getElementById('shipit-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.ok(server.fetchLog.some((u) => u.startsWith('/api/pr/remotes?') && u.includes('id=r2') && u.includes('projectKey=pk')));
+  assert.equal(modal.querySelector('.shipit-prs input[value="stacked"]').checked, true, 'a chain defaults to stacked');
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 2 PRs');
+  assert.equal(modal.querySelector('.shipit-base').textContent, "dev, then each run's branch");
+  assert.equal(modal.querySelector('.shipit-release').hidden, true, 'no Release row for a chain');
+  modal.querySelector('.shipit-ok').click();
+  await ctx.settle(4);
+  assert.deepEqual(posts, [{ url: '/api/chains/p%3Ar1/ship', body: { mode: 'stacked' } }]);
+  // A partly shipped chain: View PR ▾ on the status line and a Create PR head button, busy while the dialog loads.
+  chains = [{ id: 'p:r1', title: 'R1', members: [chainMember(1, { prUrl: 'https://github.com/o/r/pull/1' }), chainMember(2)] }];
+  ctx.dispatch({ type: 'schedules-changed' });
+  await ctx.settle(6);
+  const head = page.querySelector('.gpage-card .rd-head-acts [data-head="ship"]');
+  assert.ok(head, 'Create PR stays as a head button');
+  assert.equal(page.querySelector('.gpage-card .rd-pr-slot').dataset.state, 'view');
+  head.click();
+  assert.deepEqual([head.disabled, head.getAttribute('aria-busy')], [true, 'true']);
+  await ctx.settle(4);
+  assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true);
+  assert.equal(modal.querySelector('.shipit-prs-stacked-label').textContent, '1 more');
+  modal.querySelector('.shipit-cancel').click(); await ctx.settle(2);
+  assert.equal(doc.activeElement, head, 'Cancel: back on the head button');
+});
+
+test('one ship flow: after a chain ship focus is on the repainted View PR control even while its History rows carry no PR yet', async () => {
+  const chainMember = (k, o = {}) => ({ ticketId: k > 1 ? `t${k}` : null, pipelineId: `r${k}`, title: `R${k}`, state: 'done', prUrl: null,
+    historyKey: 'pk', projectKey: 'pk', workspaceId: null, projectDir: '/tmp/pk', after: k > 1 ? k - 1 : null, ...o });
+  const PR = 'https://github.com/o/r/pull/9';
+  let chains = [{ id: 'p:r1', title: 'R1', members: [chainMember(1), chainMember(2)] }];
+  // The History rows exist but lag behind the ship: their reload has not answered with the PR yet.
+  const hist = [1, 2].map((k) => ({ id: `r${k}`, projectKey: 'pk', status: 'done', title: `R${k}`, pr: null }));
+  const server = featureServer(); server.groups = [];
+  const base = server.fetchHandler;
+  const fetchHandler = (url, opts) => {
+    if (url.startsWith('/api/history')) return res(200, { pipelines: hist, ghAvailable: true });
+    if (url.startsWith('/api/schedules')) return res(200, { schedules: [], tickets: [], chains, counts: {} });
+    if (url.startsWith('/api/chains/')) {
+      chains = [{ id: 'p:r1', title: 'R1', members: [chainMember(1, { prUrl: PR }), chainMember(2, { prUrl: PR })] }];
+      return res(200, { ok: true, mode: 'one', prs: [PR] });
+    }
+    return base(url, opts);
+  };
+  const ctx = await bootApp({ fetchHandler });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [] });
+  await ctx.settle();
+  ctx.go(`group/${encodeURIComponent('p:r1')}`);
+  await ctx.settle(6);
+  const doc = ctx.window.document;
+  const page = doc.querySelector('#group-detail');
+  page.querySelector('.gpage-card .rd-pr-slot button').click();
+  await ctx.settle(4);
+  const modal = doc.getElementById('shipit-modal');
+  change(ctx, modal.querySelector('.shipit-prs input[value="one"]'));
+  modal.querySelector('.shipit-ok').click();
+  await ctx.settle(6);
+  const slot = page.querySelector('.gpage-card .rd-pr-slot');
+  assert.equal(slot.dataset.state, 'view', 'the chain\'s stored PR shows, not Ready to ship');
+  assert.ok(slot.contains(doc.activeElement) && doc.activeElement.matches('button, a'), 'focus is on View PR, not <body>');
+  ctx.dispatch({ type: 'pipelines-changed' });           // the late History reload repaints the page
+  await ctx.settle(6);
+  assert.equal(page.querySelector('.gpage-card .rd-pr-slot').dataset.state, 'view');
+  assert.ok(page.querySelector('.gpage-card .rd-pr-slot').contains(doc.activeElement), 'focus survives the late repaint');
 });

@@ -109,10 +109,11 @@ async function stopPaused(row, { json, out, c }) {
     const { byActor } = await import('../core/identity.mjs');
     cancelResumeTicketsFor(row.id, { by: 'local', reason: `the run was stopped${byActor('local')}` });
   } catch { /* best-effort: a ticket that fires on a stopped run skips it */ }
-  try {
-    const { drainFlushes } = await import('../core/metrics/sync.mjs');
-    await drainFlushes({ timeoutMs: 30_000 });
-  } catch { /* metrics never block the CLI exit */ }
+  // Metrics records and team-memory notes drain at once (30 s at most); neither ever blocks the CLI exit.
+  await Promise.all([
+    import('../core/metrics/sync.mjs').then((m) => m.drainFlushes({ timeoutMs: 30_000 })).catch(() => { /* metrics never block the CLI exit */ }),
+    import('../core/memory-team.mjs').then((m) => m.drainTeamMemoryFlushes({ timeoutMs: 30_000 })).catch(() => { /* never blocks the exit */ }),
+  ]);
   // The live path's JSON keys, so scripts read one shape: no command was mailed, so none was consumed.
   if (json) out(JSON.stringify({ id: row.id, title, action: 'stop', commandId: null, outcome: 'stop', status: 'stopped', consumed: null }, null, 2));
   else out(`${c('green', 'Stopped')} ${c('bold', title)}`);

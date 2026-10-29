@@ -10,7 +10,6 @@ import {
 } from './helpers/history-detail-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { setShapeFirst } from './helpers/shape-gate.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 
@@ -562,7 +561,7 @@ test('a failed log fetch re-arms the Logs tab for a retry', async () => {
 // from the card accordion onto this screen).
 // ---------------------------------------------------------------------------
 
-// Slice 3 (D13): kept work's Discard is a card head button; the recovery patch is the tracker's Download patch.
+// Slice 3 (D13): kept work's Discard is a card head button; the recovery patch is the route's Download patch.
 const DISCARD_KEPT = '#hist-detail .hd-glance .rd-head-acts [data-head="discard-kept"]';
 const keptLine = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.line;
 
@@ -597,13 +596,13 @@ test('discard confirms honestly, POSTs the keyed route and shows/links the saved
       assert.match(doc.querySelector('#viewer').textContent, /retained-work\.patch/,
         'the saved patch path is surfaced, not swallowed');
     } },
-    { name: 'the tracker links the recovery patch honestly (retained-work name)', run: async () => {
+    { name: 'the route\'s branch row links the recovery patch honestly (retained-work name)', run: async () => {
       const ctx = await bootDetail({
         rows: [retainedRow()],
         detail: { ...DETAIL, artifacts: [{ kind: 'retained-work-patch', relPath: 'retained-work.patch' }] },
       });
       await openDetail(ctx);
-      const link = [...ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-track a.rd-track-link')]
+      const link = [...ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-route .rd-route-row:first-child .rd-route-second a.rd-fact-link')]
         .find((a) => a.textContent === 'Download patch');
       assert.ok(link, 'the alternate-recovery link renders for a retained-work-patch artifact');
       assert.equal(link.download, `retained-work-${ROW.id}.patch`, 'download name matches what the route prefers');
@@ -1022,7 +1021,7 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
   // Runs redesign slice 4: the one status block names the state, and its line says the state word once.
   const st = hd.querySelector('.hd-glance .rd-sheet .run-status');
   assert.ok(st.dataset.state, 'the status block names the state');
-  assert.ok(st.querySelector('.run-status-text').textContent.toLowerCase().includes(st.dataset.word.toLowerCase()), 'the state word is in the status line');
+  assert.ok(st.dataset.text.toLowerCase().includes(st.dataset.word.toLowerCase()), 'the state word is in the status line');
   assert.equal(hd.querySelector('.rd-trail-btn'), null, 'no trail of dots');
   assert.equal(hd.querySelectorAll('.rd-facts .rd-stats > div').length, 3, 'time · cost · changes');
   assert.deepEqual([...hd.querySelectorAll('.rd-facts .rd-stats > div > span')].map((s) => s.textContent).slice(0, 2), ['time', 'cost']);
@@ -1136,8 +1135,11 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   assert.equal(stop.hidden, false, 'a live run can be stopped');
   assert.equal(end.querySelector('.hd-resume-split').hidden, true, 'nothing to resume while it runs');
   assert.equal(end.querySelector('.hd-after').title, 'Schedule a run after this');
+  const sic = doc.querySelector('#hist-detail .hd-sic');
+  assert.equal(sic.title, 'Running', 'the header pip reads the live run');
   click(ctx.window, pause);
   await settle(ctx.window);
+  assert.equal(sic.title, 'Pausing…', 'the header pip says Pausing… at the click, before the server status');
   const pauses = ctx.calls.filter((c) => c.url.endsWith('/api/pause'));
   assert.equal(pauses.length, 1);
   assert.deepEqual(JSON.parse(pauses[0].opts.body), { runId: 'r-live' });
@@ -1145,6 +1147,7 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'running', ...STEPPING });
   await settle(ctx.window, 4);
   assert.equal(pause.disabled, true, 'the pause request still owns the button');
+  assert.equal(sic.title, 'Pausing…', 'a running frame sent before the pause keeps it');
   click(ctx.window, pause);
   await settle(ctx.window);
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/pause')).length, 1, 'no second POST');
@@ -1168,6 +1171,7 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   assert.equal(end.querySelector('.hd-resume-split').hidden, false, 'a paused run can be resumed');
   assert.equal(end.querySelector('.hd-resume').hidden, false);
   assert.equal(stop.hidden, false);
+  assert.equal(sic.title, 'Paused');
   // It ends: neither control is left.
   frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'stopped' });
   await settle(ctx.window, 6);
@@ -1266,6 +1270,35 @@ test('History bar of a resumed pipeline: Pause/Stop and the Resume split follow 
       assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'running/r-9');
     } },
   ]);
+});
+
+// The header pip follows the parked copy's Resume as it follows Pause (paintHdLive reads hdPipelineRun).
+test('History detail header: Resume shows Resuming… on the pip until the server answers, and a failure puts Paused back', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const ctx = await bootDetail({
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } }, rows: [{ ...ROW, status: 'running' }],
+    arms: (url) => (url === '/api/resume' ? held : null),
+  });
+  const frame = (msg) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify(msg) });
+  frame({ type: 'hello', runs: [{ runId: 'r-live', title: ROW.title, projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: ROW.id }] });
+  frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'running', ...STEPPING });
+  await settle(ctx.window, 4);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  frame({ type: 'done', runId: 'r-live', status: 'paused' });
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const sic = doc.querySelector('#hist-detail .hd-sic');
+  assert.equal(sic.title, 'Paused');
+  click(ctx.window, doc.querySelector('#hist-detail .hd-resume'));
+  await settle(ctx.window, 3);
+  assert.equal(sic.title, 'Resuming…', 'the header pip says Resuming… at the click');
+  assert.equal(sic.getAttribute('aria-label'), 'Resuming…');
+  release(fail(500, { error: 'boom' }));
+  await settle(ctx.window, 6);
+  assert.equal(sic.title, 'Paused', 'the failure puts Paused back');
+  assert.equal(sic.getAttribute('aria-label'), 'Paused');
 });
 
 // The run page logs a failed pause into the run's log, which this page does not show: the
@@ -1625,8 +1658,8 @@ test('History bar: a live pause after load (error cause named / total-budget pau
 });
 
 // Slice 3: the card head holds the PR control at every level: Create PR beside Try it when eligible, View PR │ ▾ for an
-// open or merged PR (its words on the tracker), and a closed PR is a struck tracker step with Create PR again.
-test('History glance: the card head\'s Create PR (every level), View PR │ ▾, and a closed PR on the tracker', async () => {
+// open or merged PR (its words on the route), and a closed PR is a closed route row with Create PR again.
+test('History glance: the card head\'s Create PR (every level), View PR │ ▾, and a closed PR on the route', async () => {
   const rows = [];
   const url = 'https://github.com/o/r/pull/7';
   for (const [label, pr, level] of [
@@ -1641,15 +1674,17 @@ test('History glance: the card head\'s Create PR (every level), View PR │ ▾,
         arms: (u) => (u.endsWith('/api/history') ? ok({ pipelines: [row], ghAvailable: true }) : null),
       });
       if (level) ctx.window.document.documentElement.dataset.level = level;
+      ctx.window.localStorage.setItem('worca-cc.run.showRoute', '1');   // an end state's rows, not its fold
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
+      ctx.window.localStorage.removeItem('worca-cc.run.showRoute');
       const glance = ctx.window.document.querySelector('#hist-detail .hd-glance');
       const slot = glance.querySelector('.rd-pr-slot');
       assert.equal(slot.closest('.hd-result'), null, 'outside the result host paintHdGlance rebuilds');
       assert.equal(slot.parentElement, glance.querySelector('.rd-sheet > .rd-sheet-head > .rd-head-acts'), 'the control sits in the head');
       assert.equal(glance.querySelector('.rd-pr-box'), null, 'no PR bar');
       assert.equal(glance.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
-      const steps = [...glance.querySelectorAll('.rd-track .rd-track-step')];
+      const steps = [...glance.querySelectorAll('.rd-route .rd-route-row')];
       assert.equal(steps.length, 3);
       if (!pr || pr.state === 'CLOSED') {
         assert.equal(slot.hidden, false);
@@ -1663,7 +1698,8 @@ test('History glance: the card head\'s Create PR (every level), View PR │ ▾,
         if (pr) {
           assert.equal(glance.querySelector('.run-status').dataset.line, 'Ready to ship · the PR was closed');
           assert.ok(steps[1].classList.contains('is-closed'));
-          assert.equal(glance.querySelector('.runs-pr'), null, 'a closed PR is no chip');
+          assert.equal(steps[1].querySelector('.rd-route-place a.rd-fact-link').textContent, 'o/r#7');
+          assert.equal(steps[1].querySelector('.rd-route-second').textContent, 'Closed without merging', 'the route says it was closed');
         }
         return;
       }
@@ -1674,8 +1710,10 @@ test('History glance: the card head\'s Create PR (every level), View PR │ ▾,
       assert.equal(main.classList.contains('btn-primary'), false);
       assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS[pr.state === 'MERGED' ? 'merge' : 'pull-request']);
       assert.ok(slot.querySelector('.rd-pr-split > button.rd-pr-more[aria-haspopup="menu"]'));
-      assert.equal(steps[1].querySelector('a.rd-track-pr').textContent, '#7');
-      assert.ok(steps[pr.state === 'MERGED' ? 2 : 1].classList.contains(pr.state === 'MERGED' ? 'is-merged' : 'is-ready'));
+      const link = steps[1].querySelector('.rd-route-place a.rd-fact-link');
+      assert.equal(link.textContent, 'o/r#7');
+      assert.equal(link.getAttribute('href'), url);
+      assert.ok(steps[pr.state === 'MERGED' ? 2 : 1].classList.contains(pr.state === 'MERGED' ? 'is-merged' : 'is-review'));
     } });
   }
   await checkRows(rows);
@@ -1716,7 +1754,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       const wait = slot.querySelector('.rd-pr-wait');
       assert.equal(wait.textContent, 'Create PR', 'the placeholder holds the button\'s own words, so it is the button\'s width');
       assert.equal(wait.getAttribute('aria-hidden'), 'true');
-      assert.equal(slot.getAttribute('aria-label'), 'Checking the pull request…');
+      assert.equal(slot.getAttribute('aria-label'), 'Checking the PR…');
       assert.equal(slot.querySelector('button, a, [data-rd-cta]'), null, 'not clickable');
       const url = 'https://github.com/o/r/pull/7';
       const timers = useAppTimers(t);
@@ -1752,48 +1790,44 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
   ]);
 });
 
-// Run 3 (D8): the chip is the facts block's Branch row; the Project row's value keeps paintPageHead's text.
-test('History glance facts: a feature-branch chip that copies it, none without a branch', async () => {
+// s2: the route's branch row copies the branch (D15); the Project row's value keeps paintPageHead's text.
+test('History glance: the route\'s branch row copies the branch, none without a branch', async () => {
   await checkRows([
-    { name: 'History glance: the Branch row carries the feature branch as a chip that copies it', run: async () => {
+    { name: 'History glance: the route\'s branch row carries the feature branch and one copy button', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       const { window } = ctx;
       const meta = window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="project"] .rd-page-meta');
-      const branchRow = window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="branch"]');
-      const chip = branchRow.querySelector('.rd-page-branch');
-      assert.ok(chip, 'the chip is in the Branch row');
-      assert.equal(chip.hidden, false);
-      assert.equal(branchRow.hidden, false);
-      assert.equal(chip.dataset.minLevel, 'advanced', 'the Details branch button\'s level');
-      assert.equal(chip.querySelector('.rd-page-branch-name').textContent, ROW.branch);
-      assert.equal(chip.title, ROW.branch, 'the full name in the tooltip');
+      const route = window.document.querySelector('#hist-detail .hd-glance .rd-route');
+      const copies = route.querySelectorAll('button.rd-route-copy');
+      assert.equal(copies.length, 1, 'exactly one copy button');
+      const copy = copies[0];
+      assert.equal(route.querySelector('.rd-route-name').title, ROW.branch, 'the full name in the tooltip');
+      assert.equal(copy.title, ROW.branch);
       assert.equal(meta.firstChild.nodeType, 3, 'paintPageHead\'s text stays the line\'s first node');
       assert.match(meta.firstChild.data, /^proj · /);
       const writes = [];
       Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => { writes.push(t); } } });
-      click(window, chip);
+      click(window, copy);
       await settle(window, 2);
       assert.deepEqual(writes, [ROW.branch]);
-      assert.ok(chip.classList.contains('copied'), 'the copied tick, as in Details');
-      // The row repaints the header (refreshHdFromRow): the same chip, bound once.
+      assert.ok(copy.classList.contains('copied'), 'the copied tick, as in Details');
+      // The row repaints the header (refreshHdFromRow): still one copy button, one copy per click.
       await deliverRows(ctx, [{ ...ROW }]);
-      assert.equal(branchRow.querySelectorAll('.rd-page-branch').length, 1);
-      assert.equal(branchRow.querySelector('.rd-page-branch'), chip);
-      click(window, chip);
+      assert.equal(route.querySelectorAll('button.rd-route-copy').length, 1);
+      click(window, route.querySelector('button.rd-route-copy'));
       await settle(window, 2);
       assert.deepEqual(writes, [ROW.branch, ROW.branch], 'one copy per click');
     } },
-    { name: 'History glance: a run without a feature branch shows no chip', run: async () => {
+    { name: 'History glance: a run without a feature branch shows no copy button', run: async () => {
       const ctx = await bootDetail({
         rows: [{ ...ROW, branch: undefined }],
         detail: { ...DETAIL, state: { ...DETAIL.state, branch: null } },
       });
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
-      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-page-branch').hidden, true);
-      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="branch"]').hidden, true);
+      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-route .rd-route-copy'), null);
     } },
   ]);
 });
@@ -2198,22 +2232,13 @@ test('Running actions: a row whose run loses its saved row keeps keyboard focus 
   assert.ok(doc.activeElement.classList.contains('act-stop'), 'on its Stop, so Enter cannot open another run');
 });
 
-test('History › Overview: the Perspective checklists group follows the Shape it first gate (spec D7)', async () => {
+test('History › Overview: the Perspective checklists group is on the saved run\'s Overview (spec D7)', async () => {
   const reviews = [{ kind: 'impl', cycle: 1, issues: [], summary: '',
     checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes' }] }];
-  const groupOf = async (features) => {
-    const ctx = await bootDetail({ detail: { ...DETAIL, reviews } });
-    ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', ...(features ? { flags: features } : {}), runs: [] }) });
-    await openDetail(ctx, 'details/overview');
-    return secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
-  };
-  try {
-    setShapeFirst(false);
-    assert.equal(await groupOf(null), null, 'gate off: no group');
-    const on = await groupOf({ shapeFirst: true });
-    assert.ok(on, 'gate on: the group is on the saved run\'s Overview');
-    assert.match(on.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
-  } finally {
-    setShapeFirst(false);
-  }
+  const ctx = await bootDetail({ detail: { ...DETAIL, reviews } });
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
+  await openDetail(ctx, 'details/overview');
+  const group = secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
+  assert.ok(group, 'the group is on the saved run\'s Overview');
+  assert.match(group.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
 });

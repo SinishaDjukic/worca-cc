@@ -57,9 +57,11 @@ export function newMessageId() { return `msg_bridge_${randomBytes(12).toString('
 export function newToolUseId() { return `toolu_bridge_${randomBytes(12).toString('hex')}`; }
 
 export class ChatStreamTranslator {
-  /** @param {{model:string}} opts  the model name the CLI expects back (catalog id) */
-  constructor({ model } = {}) {
+  /** @param {{model:string, onExtraContent?:(id:string, extra:object)=>void}} opts  the model name the CLI expects back
+   *  (catalog id); onExtraContent gets each tool call's `extra_content` (a Gemini thought signature) under the id the CLI sees */
+  constructor({ model, onExtraContent = null } = {}) {
     this.model = model || 'bridge';
+    this.onExtraContent = onExtraContent;
     this.id = newMessageId();
     this.started = false;
     this.nextIndex = 0;
@@ -189,6 +191,10 @@ export class ChatStreamTranslator {
         const fn = tc.function || {};
         if (typeof fn.name === 'string' && fn.name) t.name = t.name ? t.name : fn.name;
         if (typeof fn.arguments === 'string') t.args += fn.arguments;
+        if (this.onExtraContent && tc.extra_content && typeof tc.extra_content === 'object') {
+          t.extra = { ...t.extra, ...tc.extra_content };
+          this.onExtraContent(t.id, t.extra);
+        }
       }
     }
 

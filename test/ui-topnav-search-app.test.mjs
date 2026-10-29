@@ -25,8 +25,10 @@ const ARMS = [
 ];
 
 // `down`: path → 'reject' (the network fails) or an HTTP status (the server answers with an error).
-async function boot({ down = {} } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+// `flags`: data-flags on the shell's html element, as the server renders it. `threads`: the /api/ask/threads?q= answer.
+async function boot({ down = {}, flags = '', threads = [] } = {}) {
+  const raw = readFileSync(htmlPath, 'utf8');
+  const dom = trackDom(new JSDOM(flags ? raw.replace('<html lang="en"', `<html lang="en" data-flags="${flags}"`) : raw, { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   let lastWs = null;
@@ -45,7 +47,7 @@ async function boot({ down = {} } = {}) {
     if (down[path]) return Promise.resolve({ ok: false, status: down[path], json: async () => ({ error: 'down' }) });
     const arm = ARMS.find(([p]) => path === p);
     if (arm) return Promise.resolve({ ok: true, status: 200, json: async () => arm[1]() });
-    if (path.startsWith('/api/ask/threads')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ threads: [] }) });
+    if (path.startsWith('/api/ask/threads')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ threads: url.includes('q=') ? threads : [] }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 }) });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -76,7 +78,7 @@ async function boot({ down = {} } = {}) {
     o.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   };
   const count = (path) => calls.filter((u) => u.split('?')[0] === path).length;
-  return { window, doc, input, key, type, titles, click, count, recv };
+  return { window, doc, input, key, type, titles, click, count, recv, calls };
 }
 
 async function settle(window, n = 4) {
@@ -235,31 +237,32 @@ test('each row routes; the Ask in Chat row hands what was typed to the chat', as
       await settle(window);
       assert.equal(window.location.hash, '#schedules/repeating');
     } },
-    { name: 'Ask in Chat with text, from another page: Chat opens with it in the composer', run: async () => {
+    // Ask worca beside the page (L7): on another page the row is "Ask worca · with this page" and opens the side column.
+    { name: 'Ask worca with text, from another page: the side column opens with it in the composer, the page stays', run: async () => {
       const { window, doc, key, type, click } = await boot();
       window.location.hash = '#runs';
       await settle(window);
       assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'precondition: another page');
       key(doc.body, 'k', { metaKey: true });
       type('  why did the login run fail ');
-      click('Ask in Chat');
+      click('Ask worca');
       await settle(window);
-      assert.equal(window.location.hash, '#chat');
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false);
-      assert.equal(doc.querySelector('textarea.ask-input').value, 'why did the login run fail');
-      assert.equal(doc.activeElement, doc.querySelector('textarea.ask-input'));
+      assert.equal(window.location.hash, '#runs');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      assert.equal(doc.querySelector('#ask-side textarea.ask-input').value, 'why did the login run fail');
+      assert.equal(doc.activeElement, doc.querySelector('#ask-side textarea.ask-input'));
     } },
-    { name: 'Ask in Chat with nothing typed, from another page: Chat just opens', run: async () => {
+    { name: 'Ask worca with nothing typed, from another page: the side column just opens', run: async () => {
       const { window, doc, key, click } = await boot();
       window.location.hash = '#runs';
       await settle(window);
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'precondition: another page');
       key(doc.body, 'k', { metaKey: true });
-      click('Ask in Chat');
+      click('Ask worca');
       await settle(window);
-      assert.equal(window.location.hash, '#chat');
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false);
-      assert.equal(doc.querySelector('textarea.ask-input').value, '');
+      assert.equal(window.location.hash, '#runs');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      assert.equal(doc.querySelector('#ask-side textarea.ask-input').value, '');
+      assert.equal(doc.activeElement, doc.querySelector('#ask-side textarea.ask-input'));
     } },
   ]);
 });
@@ -389,34 +392,58 @@ test('a mode-locked pick opens the mode dialog; the mode that unlocks it takes t
 
 test('a Labs-locked pick opens its row in Labs; turning it on takes the user on; leaving Labs forgets (R-po-15/19/21)', async () => {
   await checkRows([
-    { name: 'Cost tags → #settings/experimental/runTags; runTags on → the card, highlighted', run: async () => {
-      const ctx = await boot();
-      await searchPick(ctx, 'cost tags', 'Cost tags');
-      assert.equal(ctx.window.location.hash, '#settings/experimental/runTags');
-      ctx.recv({ type: 'flags', flags: { runTags: true } });
-      await settle(ctx.window, 8);
-      assert.equal(ctx.window.location.hash, '#settings/tags/tag-dims-settings-card');
-      assert.ok(found(ctx.doc, 'tag-dims-settings-card'));
-    } },
-    { name: 'Labels needs Cost tags and Run labels: each row in turn, then the card', run: async () => {
+    { name: 'Labels → #settings/experimental/runLabels; runLabels on → the card, highlighted', run: async () => {
       const ctx = await boot();
       await searchPick(ctx, 'labels', 'Labels');
-      assert.equal(ctx.window.location.hash, '#settings/experimental/runTags');
-      ctx.recv({ type: 'flags', flags: { runTags: true } });
-      await settle(ctx.window, 8);
       assert.equal(ctx.window.location.hash, '#settings/experimental/runLabels');
       ctx.recv({ type: 'flags', flags: { runLabels: true } });
       await settle(ctx.window, 8);
       assert.equal(ctx.window.location.hash, '#settings/tags/labels-settings-card');
+      assert.ok(found(ctx.doc, 'labels-settings-card'));
+    } },
+    { name: 'Cost tags left Labs: its pick goes straight to the card', run: async () => {
+      const ctx = await boot();
+      await searchPick(ctx, 'cost tags', 'Cost tags');
+      assert.equal(ctx.window.location.hash, '#settings/tags/tag-dims-settings-card');
+      assert.ok(found(ctx.doc, 'tag-dims-settings-card'));
     } },
     { name: 'leaving Labs, then turning the flag on elsewhere: nothing moves', run: async () => {
       const ctx = await boot();
-      await searchPick(ctx, 'cost tags', 'Cost tags');
+      await searchPick(ctx, 'labels', 'Labels');
       ctx.window.location.hash = '#runs';
       await settle(ctx.window, 8);
-      ctx.recv({ type: 'flags', flags: { runTags: true } });
+      ctx.recv({ type: 'flags', flags: { runLabels: true } });
       await settle(ctx.window, 8);
       assert.equal(ctx.window.location.hash, '#runs');
     } },
   ]);
 });
+
+const CHAT = (i) => ({ id: `ask_0000000${i}`, title: `Login chat ${i}`, updatedAt: AGO(i * 6e4), archivedAt: null, archived: false });
+
+test('#948 s2: a typed chat title lists under Chats, first on #chat and after Runs on #runs, 5 rows at most', async () => {
+  const threads = Array.from({ length: 7 }, (_, i) => CHAT(i + 1));
+  const { window, doc, input, key, type, calls } = await boot({ threads });
+  const labels = () => [...doc.querySelectorAll('#tsearch-pop .tsearch-label')].map((n) => n.textContent);
+  const chatOpts = () => doc.querySelectorAll('#tsearch-pop [role="option"].tsearch-opt-chat').length;
+  window.location.hash = '#chat';
+  await settle(window, 4);
+  assert.equal(input.placeholder, 'Search chats or ask');
+  key(doc.body, 'k', { metaKey: true });
+  type('login');
+  await new Promise((r) => setTimeout(r, 200));   // past the 150ms debounce
+  await settle(window, 4);
+  assert.ok(calls.some((u) => u.startsWith('/api/ask/threads?limit=5&q=login')));
+  assert.equal(labels()[0], 'Chats');
+  assert.equal(chatOpts(), 5);
+  key(input, 'Escape');
+  window.location.hash = '#runs';
+  await settle(window, 4);
+  assert.equal(input.placeholder, 'Search or ask');
+  key(doc.body, 'k', { metaKey: true });
+  type('login');
+  await new Promise((r) => setTimeout(r, 200));
+  await settle(window, 4);
+  assert.deepEqual(labels().slice(0, 2), ['Runs', 'Chats']);
+});
+

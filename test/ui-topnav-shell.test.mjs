@@ -115,8 +115,10 @@ test('the shell: .app holds the sidebar and .main-col; .main-col stacks #topnav 
   const col = doc.querySelector('.app > .main-col');
   assert.ok(col, '.main-col is a child of .app');
   assert.ok(col.previousElementSibling.matches('aside.sidebar#side-rail'), 'right after the sidebar');
-  assert.deepEqual([...col.children].map((n) => `${n.tagName.toLowerCase()}.${n.className}`), ['header.topnav', 'main.main'],
-    'the top bar, then the one scroll container');
+  assert.deepEqual([...col.children].map((n) => `${n.tagName.toLowerCase()}.${n.className}`), ['header.topnav', 'div.main-row'],
+    'the top bar, then the row');
+  // Ask worca beside the page: the row holds the one scroll container and the side column beside it.
+  assert.deepEqual([...col.querySelector(':scope > .main-row').children].map((n) => `${n.tagName.toLowerCase()}.${n.className}`), ['main.main', 'aside.ask-side']);
   assert.equal(col.firstElementChild.id, 'topnav');
   assert.deepEqual([...doc.querySelector('#topnav').children].map((n) => n.className), ['topnav-l', 'topnav-c', 'topnav-r']);
   const title = doc.getElementById('topnav-title');
@@ -261,10 +263,10 @@ test('New run opens #new from any page, a started run\'s page included, and is n
   } })));
 });
 
-test('the sidebar has no New run row: 13 pages, Chat first; New run is the top bar\'s button', () => {
+test('the sidebar has no New run row: 14 pages, Chat first; New run is the top bar\'s button', () => {
   const doc = new JSDOM(html).window.document;
   assert.equal(doc.querySelector('.nav [data-nav="new"]'), null);
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 13);
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14);
   assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'chat');
 });
 

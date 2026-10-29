@@ -14,6 +14,8 @@ import { loadCatalog } from '../mcp/catalog.mjs';
 import { MCP_STARTUP_MS } from '../mcp/timeouts.mjs';
 import { resolveSkillRegistry, cachedSkillTeamFor, SKILL_CAP } from '../skills-registry/resolve.mjs';
 import { skillSkipReasonText, skillSkipMessage, skillLayerText, SKILL_PROBLEM_REASONS } from '../skills-registry/texts.mjs';
+import { lockedChatEngine } from '../model-env.mjs';
+import { getEngine } from '../engines/index.mjs';
 
 export const ASK_MCP_COPY_CAP = 12;
 // Skills registry §4.4: Ask mounts at most 12 set skills per turn (SKILL_CAP.ask).
@@ -76,9 +78,30 @@ export async function askTargetsInPlay({ ctx = {}, threadId = null } = {}, deps 
   return targets;
 }
 
+/** A resolve's copies minus those `engine` cannot attach (its adapter's `unattachableMcp`: Codex and Goose take stdio
+ *  servers only, Copilot needs a plain name), each moved to `skipped` with its reason (`engine-remote`, …), so the turn,
+ *  its prompt section and the picker agree on what a locked-down chat starts. Claude attaches every copy. */
+export function mcpForEngine(result, engine = 'claude') {
+  const fn = lockedChatEngine(engine) ? getEngine(engine)?.unattachableMcp : null;
+  const problems = typeof fn === 'function' ? fn(result.servers || {}) : [];
+  if (!problems.length) return result;
+  const drop = new Map(problems.map((p) => [p.name, p.reason]));
+  const kept = result.copies.filter((c) => !drop.has(c.name));
+  return {
+    ...result,
+    servers: Object.fromEntries(Object.entries(result.servers).filter(([n]) => !drop.has(n))),
+    grants: result.grants.filter((g) => !drop.has(g.slice('mcp__'.length))),
+    disallowedTools: result.disallowedTools.filter((t) => kept.some((c) => t.startsWith(`mcp__${c.name}__`))),
+    copies: kept,
+    skipped: [...result.skipped, ...result.copies.filter((c) => drop.has(c.name)).map((c) => ({ setId: c.setId, setName: c.setName, serverId: c.serverId, copy: c.copy, reason: `engine-${drop.get(c.name)}` }))],
+    skippedTools: result.skippedTools.filter((x) => kept.some((c) => c.name === x.name)),
+  };
+}
+
 /** §9.2 — one resolve for an Ask turn or preview: General ∪ the targets' sets, minus the chat's choices. Teams come
- *  from the policy cache only (no git, no network). Never throws: a failure reads as no MCP servers. */
-export async function resolveAskMcp({ ctx = {}, threadId = null, off = null, model = null } = {}, deps = {}) {
+ *  from the policy cache only (no git, no network). On a locked-down chat's engine, minus the copies it cannot attach
+ *  (mcpForEngine). Never throws: a failure reads as no MCP servers. */
+export async function resolveAskMcp({ ctx = {}, threadId = null, off = null, model = null, engine = 'claude' } = {}, deps = {}) {
   const d = { ...DEFAULT_DEPS, ...deps };
   try {
     const targets = await askTargetsInPlay({ ctx, threadId }, d);
@@ -91,7 +114,7 @@ export async function resolveAskMcp({ ctx = {}, threadId = null, off = null, mod
       surface: 'ask', targets, teams, off: off || { sets: [], members: [] },
       toolNameLimit: toolNameLimitFor(model ? [model] : []), copyCap: ASK_MCP_COPY_CAP, taken: [], mcpTimeoutMs: MCP_STARTUP_MS.ask,
     });
-    return { targets, result };
+    return { targets, result: mcpForEngine(result, engine) };
   } catch (err) {
     console.warn(`[worca-ask] MCP registry resolve failed (${err?.message || err}) — no MCP servers this turn`);
     return { targets: [], result: EMPTY_RESULT() };
@@ -174,7 +197,7 @@ function pickerSets(mcpSets, skillSets, blocked) {
 function skillsPreview(r, engine = 'claude') {
   // A Codex chat (#635): the names it loads them by (codexSkillNames) replace `<plugin>:<skill>`, and Claude Code's
   // --plugin-dir block does not apply — codex reads the skills through read_file.
-  const codex = engine === 'codex' || engine === 'copilot';   // a Copilot chat too: it reads its skills through read_file
+  const codex = lockedChatEngine(engine);   // every locked-down chat: it reads its skills through read_file
   const names = codex ? codexSkillNames(r.mounted) : null;
   const blocked = codex ? null : r.blocked ?? null;
   return {
@@ -194,23 +217,18 @@ function skillsPreview(r, engine = 'claude') {
  *  Never the servers, the env or a secret value. Skills registry §4.4: plus the turn's skills and the per-set counts. */
 export async function askMcpPreview({ ctx, threadId = null, off = null, model = null, engine = 'claude' }, deps = {}) {
   const d = { ...DEFAULT_DEPS, ...deps };
-  const { result } = await resolveAskMcp({ ctx, threadId, off, model }, d);
+  const { result } = await resolveAskMcp({ ctx, threadId, off, model, engine }, d);
   const { result: sk } = await resolveAskSkills({ ctx, threadId, off }, d);
-  // §4.6: a Codex chat starts no registry copy, only the set skills (#635). Its set rows count skills only, and
-  // `codexServers` says how many servers wait for a Claude chat, so the picker can say so.
-  // A Copilot chat is the same (its lockdown attaches worca's own server only); `codexServers` keeps its name.
-  if (engine === 'codex' || engine === 'copilot') {
-    const sets = pickerSets(result.sets, sk.sets, false).map((x) => ({ ...x, members: 0, started: 0 }));
-    return { sets, copies: [], started: 0, skipped: [], skippedTools: [], newer: result.newer === true,
-      codexServers: result.copies.length + result.skipped.length, skills: skillsPreview(sk, engine) };
-  }
+  // Every chat starts the sets' MCP servers its engine can attach (mcpForEngine) and their skills; a locked-down chat
+  // mounts no skill through Claude Code, so the --plugin-dir block never applies to it (#635).
+  const locked = lockedChatEngine(engine);
   const { catalog } = result.skipped.length ? await storeAndCatalog(d) : { catalog: [] };
   return {
-    sets: pickerSets(result.sets, sk.sets, !!sk.blocked), copies: result.copies, started: result.copies.length,
+    sets: pickerSets(result.sets, sk.sets, !locked && !!sk.blocked), copies: result.copies, started: result.copies.length,
     skipped: result.skipped.map((x) => ({ ...x, copy: x.copy ?? x.serverId, why: skipReasonText(x, catalog) })),
     // §5.6: tools withheld from a copy that still starts; §4.5: registry files from a newer worca (nothing resolves).
     skippedTools: result.skippedTools, newer: result.newer === true,
-    skills: skillsPreview(sk),
+    skills: locked ? skillsPreview(sk, engine) : skillsPreview(sk),
   };
 }
 
@@ -218,8 +236,8 @@ export async function askMcpPreview({ ctx, threadId = null, off = null, model = 
  *  that join from the next message. null when no worktree target joined or it brings no copy. Skills registry §4.4:
  *  with `before.skills` (the turn's skills result) the skills that join are named too. */
 export async function askMcpJoinNotice({ before, ctx, threadId, off = null, model = null, engine = 'claude' }, deps = {}) {
-  const codex = engine === 'codex' || engine === 'copilot';   // #635: a Codex (or Copilot) chat gains skills only, named as it loads them (codexSkillNames)
-  const next = await resolveAskMcp({ ctx, threadId, off, model }, deps);
+  const codex = lockedChatEngine(engine);   // #635: a locked-down chat gains skills only, named as it loads them (codexSkillNames)
+  const next = await resolveAskMcp({ ctx, threadId, off, model, engine }, deps);
   const nextSkills = before.skills ? (await resolveAskSkills({ ctx, threadId, off }, deps)).result : null;
   const had = new Set(before.targets.filter((t) => t.kind === 'project').map((t) => t.key));
   const old = new Set(before.result.copies.map((c) => c.name));
@@ -228,7 +246,7 @@ export async function askMcpJoinNotice({ before, ctx, threadId, off = null, mode
   const parts = [];
   for (const t of next.targets) {
     if (t.kind !== 'project' || t.route !== 'worktree' || had.has(t.key)) continue;   // §9.1: only an open worktree joins mid-turn
-    const joined = codex ? [] : next.result.copies.filter((c) => !old.has(c.name) && c.projects.includes(t.key)).map((c) => c.name);
+    const joined = next.result.copies.filter((c) => !old.has(c.name) && c.projects.includes(t.key)).map((c) => c.name);
     const skills = nextSkills && (codex || !nextSkills.blocked)
       ? nextSkills.mounted.filter((m) => !oldSkills.has(m.qualifiedName) && m.projects.includes(t.key)).map(nameOf) : [];
     if (joined.length && skills.length) parts.push(`${t.name}'s MCP servers (${joined.join(', ')}) and skills (${skills.join(', ')}) join from the next message`);

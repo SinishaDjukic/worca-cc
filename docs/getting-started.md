@@ -55,6 +55,13 @@ page after each interaction, so the guide can never desync. Labels are outcomes,
 never settings; the arc runs prerequisite → first object → see the loop → talk to
 it → know the workflows → real work → scale.
 
+## First start
+
+On a fresh install (the welcome not seen, no project and no run: `fresh` in `GET /api/onboarding`, derived and
+never stored), the setup assistant (`docs/setup-assistant.md`) opens before the welcome. **Set up later** closes
+it at once and goes straight to the welcome; finishing it ends on the welcome's three doors too. Settings ›
+General › Setup assistant › **Run setup** reopens it later with the saved values.
+
 ## Surfaces
 
 - **Page** (`#getting-started` view, `#getting-started-host`, painted by
@@ -82,8 +89,18 @@ it → know the workflows → real work → scale.
   [docs.worca.dev/changelog](https://docs.worca.dev/changelog/). When an update is available, a small
   **Update available** marker also appears at the bottom of the sidebar; it opens the About card.
   Worca only looks (at most every 12 hours, at the npm registry's `latest` tag for `@worca/app`, and
-  again when an open tab regains focus); it never installs or restarts anything. Run from a git
-  checkout instead of an npm install, the card says **Source build** and npm is never asked. Turn
+  again when an open tab regains focus). **Update to X.Y.Z** installs the latest stable and restarts
+  Worca. Running runs pause and continue after the restart (when auto-resume is on), and the page
+  reconnects by itself. **Choose version…** picks a release candidate or rolls back (older versions
+  sit behind **Show older versions**; a version older than 1.14.0 installs and then has to be started
+  by hand with `worca ui`, plus `--port <n>` off the default port). The update only works when Worca
+  was started with `worca ui` from an `npm install -g` install whose global folder you can write to.
+  Otherwise the card shows why and the command to run
+  (`npm install -g @worca/app@<v> && worca ui restart`). On a shared or hosted install the buttons
+  are off: whoever runs that Worca updates it. A failed install starts the previous version again and
+  shows npm's reason on the card. Nothing updates automatically. Run from a git checkout instead of
+  an npm install, the card says **Source build** (update with `git pull`, then `worca ui restart`)
+  and npm is never asked. Turn
   **Check for new Worca versions** off in the same card to stop the check (turning it back on checks
   afresh); offline, the card simply shows no status. Behind the Docker egress overlay the check
   needs `registry.npmjs.org`, which the default allowlist already includes.

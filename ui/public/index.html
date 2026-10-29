@@ -69,6 +69,10 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
               <span>Workflows</span>
             </button>
+            <button type="button" data-nav="requirements" data-min-level="simple" data-flag="requirements" data-flag-chip>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8l3 3v13H5V4h3"></path><path d="M9 11h6M9 15h4"></path><path d="M9 4v2h6V4"></path></svg>
+              <span>Requirements</span>
+            </button>
 
             <!-- Add-ons: four Settings tabs that became pages of their own (Plugins → Marketplace,
                  Sets → Connectors, Models, Providers). Old #settings/<tab> addresses land here
@@ -121,7 +125,7 @@
             </div>
           </div>
           <!-- Update available (issue #841): shown only while GET /api/app/version says outdated.
-               Opens Settings › General › About; no toast, no modal, nothing installs from here. -->
+               Opens Settings › General › About; no toast, no modal. Updating is a click on that card, never from here. -->
           <a class="side-update" id="side-update" href="#settings" hidden
              aria-label="Update available" title="Update available"><span class="side-update-dot" aria-hidden="true"></span><span class="side-update-label">Update available</span></a>
           <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
@@ -149,6 +153,9 @@
             <small class="id-via"></small>
           </div>
           <div class="msect" role="group">
+            <button type="button" class="mi menu-item" id="acct-team-setup" role="menuitem" data-min-level="simple" hidden>
+              <span class="mi-ic" aria-hidden="true">●</span><span class="mi-lbl">Your team updated the recommended setup</span><span class="mi-val">Review</span>
+            </button>
             <button type="button" class="mi menu-item" id="acct-lvl" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="lvl-menu">
               <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h9M17 7.5h3M4 16.5h3M11 16.5h9"></path><circle cx="15" cy="7.5" r="2"></circle><circle cx="9" cy="16.5" r="2"></circle></svg>
               <span class="mi-lbl">Interface mode</span><span class="mi-val">Expert</span>
@@ -161,8 +168,8 @@
           </div>
           <!-- The switches (Away, Keep awake): each whole row is the control, a menuitemcheckbox whose
                aria-checked says on or off; the .switch at its right edge only shows it (aria-hidden).
-               Away: app.js#paintAwayMenuRow (on = away). Keep awake: the keepAwake flag, bound by
-               flags-view.mjs#bindFlagSwitch, one source with Settings › Labs. A toggle leaves the menu open. -->
+               Away: app.js#paintAwayMenuRow (on = away). Keep awake: the keepAwake setting, app.js#paintKeepAwakeRow.
+               A toggle leaves the menu open. -->
           <div class="msect sw-sect" role="group" aria-label="Switches">
             <button type="button" class="mi menu-item away-item sw-item" id="acct-away" role="menuitemcheckbox" aria-checked="false" data-state="here" data-min-level="simple"
                     title="worca answers waiting run questions for you while you're away." aria-description="worca answers waiting run questions for you while you're away.">
@@ -171,7 +178,7 @@
               <span class="mi-hint"></span>
               <span class="switch" aria-hidden="true"></span>
             </button>
-            <button type="button" class="mi menu-item sw-item" id="acct-keepawake" role="menuitemcheckbox" aria-checked="false" data-min-level="simple"
+            <button type="button" class="mi menu-item sw-item on" id="acct-keepawake" role="menuitemcheckbox" aria-checked="true" data-min-level="simple"
                     title="Keeps the computer awake while runs are working. The display may still turn off." aria-description="Keeps the computer awake while runs are working. The display may still turn off.">
               <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"></path><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16"></path><path d="M9 3.5v2.5M12.5 3.5v2.5"></path></svg>
               <span class="mi-lbl">Keep awake</span>
@@ -250,6 +257,13 @@
             </div>
           </div>
           <div class="topnav-r">
+            <!-- Ask worca beside the page (ask-side.mjs, app.js syncAskSide): docks the Chat beside the page, on every
+                 page with this bar but Chat; hidden until a route shows it. The dot mirrors the Chat row's new-reply dot. -->
+            <button type="button" class="btn btn-quiet topnav-ask" id="topnav-ask" data-min-level="simple" aria-expanded="false" aria-controls="ask-side" aria-label="Ask worca" title="Ask worca" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4H6.5A2.5 2.5 0 0 0 4 6.5V20l3.6-2.7h9.9a2.5 2.5 0 0 0 2.5-2.5V12"></path><path d="M18 3v6M15 6h6"></path></svg>
+              <span class="topnav-ask-label">Ask worca</span>
+              <span class="topnav-ask-dot" id="topnav-ask-dot" hidden></span>
+            </button>
             <!-- Activity (activity-menu.mjs): what needs you, what is running and what is scheduled,
                  a list with no actions. One badge: the amber Needs-you count (the Runs badge's own
                  number), else the running count. The dialog hangs under the button (side-flyout.mjs). -->
@@ -268,6 +282,9 @@
             </button>
           </div>
         </header>
+      <!-- Ask worca beside the page: the row lays main.main and the side column side by side under the bar; the column
+           pushes the page above 1080px and covers the main column below (style.css "Ask worca beside the page"). -->
+      <div class="main-row" id="main-row">
       <main class="main">
         <!-- Runs redesign §5a.2: the one "server unreachable" banner (connection-state.mjs) for every view. -->
         <div id="conn-banner" class="conn-banner" hidden></div>
@@ -297,7 +314,7 @@
                 <!-- Run presets (#712, docs/run-presets.md): a named setup, applied for THIS run only. -->
                 <!-- One compact "Preset ▾" button (plans/mocks/new-run-preset-button.png): its menu lists the presets and
                      holds Save as preset, Rename, Delete and Manage. The select stays as the hidden value holder. -->
-                <div id="preset-row" class="preset-row" data-flag="runPresets">
+                <div id="preset-row" class="preset-row">
                   <span id="preset-summary" class="preset-summary" hidden></span>
                   <span id="preset-chip" class="chip" hidden></span>
                   <button type="button" id="preset-update" class="btn btn-sm" hidden>Update preset</button>
@@ -389,7 +406,7 @@
                   <small class="hint" id="titleHint">Leave empty and Worca will propose one.</small>
                 </div>
                 <!-- Run tags (#718): who the work is for, so its cost can be allocated. Chips from tag-input.mjs. -->
-                <div class="field field-compact run-tags-field" data-flag="runTags" data-flag-chip>
+                <div class="field field-compact run-tags-field">
                   <label>Cost tags <span class="opt">(optional)</span></label>
                   <div id="runTagDimsField" hidden></div>
                   <small class="hint tag-dims-warn" id="runTagDimsWarn" aria-live="polite" hidden></small>
@@ -425,6 +442,10 @@
                         <option value="codex">Codex</option>
                         <option value="copilot">Copilot</option>
                         <option value="cursor">Cursor</option>
+                        <option value="gemini">Gemini CLI</option>
+                        <option value="goose">Goose</option>
+                        <option value="opencode">OpenCode</option>
+                        <option value="qwen">Qwen Code</option>
                       </select>
                     </div>
                   </div>
@@ -471,7 +492,7 @@
                       <span id="mdFileName" class="state hint"></span>
                       <input id="mdFile" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden />
                     </div>
-                    <p class="shape-chat-link" id="shapeChatLink" data-min-level="advanced" hidden>Not sure what to build yet? <button type="button" class="link-btn" id="shapeChatLinkBtn">Try Shaper</button></p>
+                    <p class="shape-chat-link" id="shapeChatLink" data-min-level="advanced">Not sure what to build yet? <button type="button" class="link-btn" id="shapeChatLinkBtn">Try Shaper</button></p>
                   </div>
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
                   <!-- #687: a started run takes its task with it; this puts it back (app.js#clearTask). -->
@@ -737,6 +758,7 @@
               <div class="runs-bulk" id="runs-bulk" role="toolbar" aria-label="Selected runs" hidden>
                 <span class="runs-bulk-n" id="runs-bulk-n">0 selected</span>
                 <button type="button" class="btn btn-sm" data-bulk="label" data-flag="runLabels" aria-haspopup="dialog">Label</button>
+                <button type="button" class="btn btn-sm" data-bulk="group" data-min-level="advanced" aria-haspopup="dialog">Group <span class="runs-bulk-c">0</span></button>
                 <button type="button" class="btn btn-sm" data-bulk="stop">Stop <span class="runs-bulk-c">0</span></button>
                 <button type="button" class="btn btn-sm" data-bulk="archive">Archive <span class="runs-bulk-c">0</span></button>
                 <button type="button" class="btn btn-sm btn-danger" data-bulk="delete" data-min-level="advanced">Delete <span class="runs-bulk-c">0</span></button>
@@ -762,8 +784,9 @@
           </div>
 
           <!-- The live-log bar (filters + auto-scroll switch), cloned by the run page's Logs tab and by History. -->
+          <!-- Its Summaries / Raw switch (#911 slice 3, flag commandSummaries): wired by a delegated click in app.js (log-view.mjs). -->
           <template id="log-bar-tpl">
-            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec btn btn-sm" hidden title="Showing one execution. Click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy btn btn-sm btn-quiet" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec btn btn-sm" hidden title="Showing one execution. Click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button><span class="seg seg-sm log-view-seg" role="group" aria-label="Show commands as" data-flag="commandSummaries"><button type="button" data-log-view="summary" aria-pressed="true" class="on" title="Show what each command does">Summaries</button><button type="button" data-log-view="raw" aria-pressed="false" title="Show the commands as run">Raw</button></span><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy btn btn-sm btn-quiet" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
           </template>
 
           <!-- clone target for the live run in the pane (#running/<runId>) -->
@@ -834,7 +857,7 @@
                   </button>
                   <!-- Slice 2: the live ⋯'s run-scope actions, hidden carriers as on the saved bar (paintRdMenuCarriers offers them). -->
                   <span class="run-menu-carriers" hidden>
-                    <button type="button" class="btn rd-save-preset" data-flag="runPresets" title="Save this run's setup as a run preset" hidden><span class="hd-btn-label">Save as preset</span></button>
+                    <button type="button" class="btn rd-save-preset" title="Save this run's setup as a run preset" hidden><span class="hd-btn-label">Save as preset</span></button>
                     <button type="button" class="btn rd-report" hidden><span class="hd-btn-label">Report this run</span></button>
                     <button type="button" class="btn rd-archive" hidden><span class="hd-btn-label">Archive</span></button>
                   </span>
@@ -846,10 +869,10 @@
 
               <section class="rd-glance" aria-label="Run status">
                 <div class="rd-now">
-                  <!-- The run's name is the page title; the bar shows it only once this scrolls away. Its kind
-                       chip says where the run sits ("Run 2 of 3", run 3 D7); every other fact is in the card. -->
+                  <!-- The run's name is the page title, one line cut with "…" (its title attribute holds it whole);
+                       the bar shows it only once this scrolls away. Every other fact is in the card. -->
                   <header class="rd-page-head">
-                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1></div>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -870,16 +893,15 @@
                     <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
                     <span class="rd-pr-feed" hidden></span>
                   </div>
-                  <!-- Slice 3: the read-only tracker (run-head.mjs renderTracker), under the status line at every level. -->
-                  <div class="rd-track" role="group" aria-label="Where the work is" hidden></div>
+                  <!-- s2: where the work is (run-head.mjs renderRoute): the run's places in order, at every level. -->
+                  <div class="rd-route" hidden></div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
-                       old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
+                       old meta line (paintPageHead owns its first text node). -->
                   <dl class="rd-kv" aria-label="Run facts">
-                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                     <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
-                    <div class="rd-kv-row" data-fact="branch" data-min-level="advanced" data-needs-git hidden><dt class="rd-kv-k">Branch</dt><dd class="rd-kv-v"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></dd></div>
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                   </dl>
                   <div class="rd-banners"></div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
@@ -963,7 +985,7 @@
                      rules): Run after, the Resume split, Pause, Stop. History's own class names, so
                      setupHdActions, paintHdAfter, paintHdLive and resumePipeline's busy label reach them. -->
                 <span class="rd-bar-end">
-                  <button type="button" class="btn hd-save-preset" data-flag="runPresets" title="Save this run's setup as a run preset" aria-label="Save as preset" hidden>
+                  <button type="button" class="btn hd-save-preset" title="Save this run's setup as a run preset" aria-label="Save as preset" hidden>
                     <span class="hd-btn-label">Save as preset</span>
                   </button>
                   <button type="button" class="btn hd-after" data-min-level="advanced" title="Schedule a run after this" aria-label="Schedule a run after this" hidden>
@@ -1023,7 +1045,7 @@
               <section class="rd-glance hd-glance" aria-label="Run status">
                 <div class="rd-now">
                   <header class="rd-page-head">
-                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1></div>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -1034,16 +1056,15 @@
                     <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
                     <span class="rd-pr-feed" hidden></span>
                   </div>
-                  <!-- Slice 3: the read-only tracker (run-head.mjs renderTracker), under the status line at every level. -->
-                  <div class="rd-track" role="group" aria-label="Where the work is" hidden></div>
+                  <!-- s2: where the work is (run-head.mjs renderRoute): the run's places in order, at every level. -->
+                  <div class="rd-route" hidden></div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
-                       old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
+                       old meta line (paintPageHead owns its first text node). -->
                   <dl class="rd-kv" aria-label="Run facts">
-                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                     <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
-                    <div class="rd-kv-row" data-fact="branch" data-min-level="advanced" data-needs-git hidden><dt class="rd-kv-k">Branch</dt><dd class="rd-kv-v"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></dd></div>
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                   </dl>
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners"></div>
@@ -1118,6 +1139,16 @@
         </section>
         <!-- /view runs -->
 
+        <!-- ===== VIEW: REQUIREMENTS (behind the requirements flag; requirements-view.mjs paints #requirements-host) ===== -->
+        <section class="view hidden" data-view="requirements">
+          <div class="topbar">
+            <div>
+              <div class="sub" id="requirements-sub">Define a feature with Worca before anything is built. Nothing runs until you start it.</div>
+            </div>
+          </div>
+          <p id="requirements-msg" class="form-msg" aria-live="polite"></p>
+          <div id="requirements-host"></div>
+        </section>
         <!-- ===== VIEW: FEATURE (Shaper, D16) ===== -->
 
         <!-- ===== VIEW: STATISTICS ===== -->
@@ -1169,14 +1200,13 @@
             </span>
           </div>
           <div class="stats-filter stats-scope">
-            <span class="stats-tags" id="stats-tags" data-flag="runTags"></span>
+            <span class="stats-tags" id="stats-tags"></span>
             <div class="select-wrap"><select id="stats-person" class="select" aria-label="Filter by person"><option value="">Everyone</option></select></div>
-            <div class="seg seg-sm" id="stats-view" role="group" aria-label="View" data-flag="runTags">
+            <div class="seg seg-sm" id="stats-view" role="group" aria-label="View">
               <button type="button" data-stats-view="overview" class="on" aria-pressed="true">Overview</button>
               <button type="button" data-stats-view="person" aria-pressed="false">By person</button>
               <button type="button" data-stats-view="cost" aria-pressed="false">Cost</button>
             </div>
-            <div class="select-wrap" id="stats-group-wrap"><select id="stats-group" class="select" aria-label="Group by"><option value="">No grouping</option><option value="person">Group by person</option></select></div>
             <small class="hint" id="stats-filter-note" hidden>Filtered: Chat spend is not included.</small>
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
@@ -1647,8 +1677,8 @@
             <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
                  strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="tab on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
-            <button type="button" class="tab" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Labels &amp; cost tags</button>
-            <button type="button" class="tab" data-tab="presets" data-min-level="advanced" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
+            <button type="button" class="tab" data-tab="tags" data-min-level="simple" aria-pressed="false">Labels &amp; cost tags</button>
+            <button type="button" class="tab" data-tab="presets" data-min-level="advanced" aria-pressed="false">Presets</button>
             <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <!-- Labs (docs/feature-flags.md) shows at every level: flags are not levels. -->
             <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Labs</button>
@@ -1664,6 +1694,16 @@
                 <div class="sub">Machine-wide Worca CC preferences</div>
               </div>
             </div>
+
+            <!-- Setup assistant: Run setup reopens the seven-step dialog with the saved values
+                 (ui/public/setup-assistant.mjs). No info-tip and no static .hint (the row explains itself). -->
+            <section class="card settings-card" id="setup-assistant-card" data-min-level="simple">
+              <div class="label-row"><h2>Setup assistant</h2></div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">Configure your Worca installation.</p>
+                <button type="button" id="setupRunAgain" class="btn btn-sm">Run setup</button>
+              </div>
+            </section>
 
             <section class="card settings-card" id="appearance-card" data-min-level="simple">
               <div class="card-head">
@@ -1839,7 +1879,9 @@
               <small class="hint" id="gsSettingsMsg"></small>
             </section>
 
-            <!-- About: no info-tip and no .hint. Links are anchors (target=_blank rel=noopener noreferrer); the only controls are the update-check switch and Check now (ui-settings-about.test.mjs pins this). -->
+            <!-- About: no info-tip and no .hint. Links are anchors (target=_blank rel=noopener noreferrer). Controls: the update-check
+                 switch and Check now, plus the manual update row (Update to / Choose version… / Copy / Dismiss, issue #841).
+                 ui-settings-about.test.mjs pins this list. -->
             <section class="card settings-card" id="about-card" data-min-level="simple">
               <div class="label-row">
                 <h2>About</h2>
@@ -1853,6 +1895,33 @@
                 <!-- GET /api/app/version (#841): "Latest" | "Update available: X.Y.Z" | "Source build" (a git checkout);
                      hidden when unknown or ahead. -->
                 <span class="about-update" id="aboutUpdateState" hidden></span>
+              </div>
+              <!-- Manual update (#841): painted by update-view.mjs from GET /api/app/update. -->
+              <div class="about-row" id="aboutUpdateRow" hidden>
+                <span class="about-key">Update</span>
+                <div class="about-val about-update-body">
+                  <div class="about-update-actions">
+                    <button type="button" class="btn btn-sm btn-primary" id="aboutUpdateGo" hidden>Update</button>
+                    <button type="button" class="btn btn-sm btn-quiet" id="aboutUpdateChoose">Choose version…</button>
+                  </div>
+                  <p class="about-note" id="aboutUpdateNote" hidden></p>
+                  <div class="about-cmd" id="aboutUpdateCmdRow" hidden>
+                    <code class="about-cmd-text" id="aboutUpdateCmd"></code>
+                    <button type="button" class="btn btn-sm" id="aboutUpdateCopy">Copy</button>
+                  </div>
+                  <div class="about-result about-result-failed" id="aboutUpdateFailed" role="status" hidden>
+                    <strong id="aboutUpdateFailedTitle"></strong>
+                    <span id="aboutUpdateFailedReason"></span>
+                    <p class="about-note">Update from a terminal instead:</p>
+                    <div class="about-cmd"><code class="about-cmd-text" id="aboutUpdateFailedCmd"></code>
+                      <button type="button" class="btn btn-sm" id="aboutUpdateFailedCopy">Copy</button></div>
+                    <details id="aboutUpdateOutputWrap"><summary>npm output</summary><pre class="about-output" id="aboutUpdateOutput"></pre></details>
+                    <button type="button" class="btn btn-sm btn-quiet" id="aboutUpdateDismiss">Dismiss</button>
+                  </div>
+                  <div class="about-result about-result-back" id="aboutUpdateBack" role="status" hidden>
+                    <span id="aboutUpdateBackText"></span>
+                  </div>
+                </div>
               </div>
               <!-- Only while outdated: the new release's changelog page and the GitHub compare view. -->
               <div class="about-row" id="aboutUpdateLinks" hidden>
@@ -1899,10 +1968,9 @@
           <!-- /pane general -->
 
           <!-- ===== TAB: TAGS — run tag rules (Settings › Tags): tag rows and "Require mandatory tags".
-               Every level while runTags is on. The pane has no data-flag (a deep link would show a blank
-               page); the chip and the card carry it, and parseSettingsParam sends #settings/tags to General. ===== -->
+               Every level. ===== -->
           <section class="settings-pane hidden" data-tab="tags">
-            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="simple" data-flag="runTags">
+            <section class="card settings-card" id="tag-dims-settings-card" data-min-level="simple">
               <div class="card-head"><div class="label-row"><h2>Cost tags</h2></div></div>
               <p class="hint" id="tagsTeamNote" hidden></p>
               <div class="drows">
@@ -1929,7 +1997,7 @@
           </section><!-- /pane tags -->
 
           <section class="settings-pane hidden" data-tab="presets">
-            <section class="card settings-card" id="presets-settings-card" data-min-level="advanced" data-flag="runPresets">
+            <section class="card settings-card" id="presets-settings-card" data-min-level="advanced">
               <div class="card-head"><div class="label-row"><h2>Presets</h2></div></div>
               <p class="hint">Named New run setups. Pick one in New run, type a prompt and start: its choices apply to that run only.</p>
               <div id="presets-list"></div>
@@ -2226,6 +2294,21 @@
               </div>
             </section>
 
+            <!-- Network proxy (docs/network-proxy.md, networkProxy.enabled): the corporate proxy Worca's local
+                 proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
+                 settings-network-proxy.mjs; timeouts and the local port fold under "More". -->
+            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Network proxy</h2>
+                  <button type="button" class="info-tip" aria-label="About the network proxy">i<span class="tip-content hidden">
+                    Worca logs in to your corporate proxy (NTLMv2) for every agent, tool and plugin. It saves your domain, user name and the NT hash of your password, never the password itself, in a file only you can read. A wrong password stops all logins at once, so your account is not locked.
+                  </span></button>
+                </div>
+              </div>
+              <div id="networkProxyBody"></div>
+            </section>
+
             <!-- Actions (issue #529): keep policy for finished-run checkouts, the port range for
                  automatic port variables, editor/terminal overrides and the checkout cap. -->
             <section class="card settings-card" id="actions-settings-card" data-min-level="advanced" data-needs-git>
@@ -2274,7 +2357,7 @@
               <div class="drows">
               <label class="field drow switch-drow" for="prAutoDescribe">
                 <span class="drow-label">Draft the PR description with AI automatically
-                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate with AI. You can stop it, edit the draft or generate again.</span></button>
+                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate. You can stop it, edit the draft or generate again.</span></button>
                 </span>
                 <span class="drow-control"><input id="prAutoDescribe" data-setting="autoGeneratePrDescription" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
               </label>
@@ -2406,6 +2489,8 @@
               <!-- Scripts workbench W20: the chat's save_script / test_script switch. Body
                    rendered by chat-settings-view.mjs; saved with this card's Save button. -->
               <div class="field drow drow-stack" id="ask-script-tools-host"></div>
+              <!-- Summarise commands (#911, flag commandSummaries): rendered by chat-settings-view.mjs; saved with this card's Save. -->
+              <div class="field drow drow-stack" id="ask-summaries-host" data-flag="commandSummaries"></div>
               <!-- Ask next-prompt suggestions (ghost text after each reply): rendered by chat-settings-view.mjs; saved with
                    this card's Save button. -->
               <div class="field drow drow-stack" id="ask-suggestions-host"></div>
@@ -2499,6 +2584,14 @@
                 </button>
               </div>
             </div>
+            <!-- Models › Roles (setup-assistant-design.md D1): the model each kind of work falls back to. -->
+            <section class="card" id="model-roles-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Roles</h2></div></div>
+              <small class="hint">Every job without a model of its own uses its role's model.</small>
+              <small class="hint err" id="modelRolesCatalogMsg" hidden>Could not load the model list. Reload the page to try again.</small>
+              <div id="model-roles-root" class="drows"></div>
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="modelRolesMsg"></small><button type="button" id="modelRolesSave" class="btn btn-primary btn-sm">Save</button></div>
+            </section>
             <section class="card" id="engine-settings-card" data-min-level="expert">
               <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
               <div id="engine-settings-root" class="drows"></div>
@@ -2524,6 +2617,8 @@
         </section>
         <!-- /view providers -->
       </main>
+      <aside class="ask-side" id="ask-side" aria-label="Ask worca" hidden><div class="ask-side-in" data-ask-side-host></div></aside>
+      </div><!-- /.main-row -->
       </div><!-- /.main-col -->
     </div>
 
@@ -2553,7 +2648,16 @@
               <input id="mimp-base" class="input" type="text" placeholder="http://127.0.0.1:11434/v1" />
               <button type="button" id="mimp-list" class="btn">List models</button>
             </span>
-            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway, on this machine or your network.</small>
+            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway, on this machine or your network — or a hosted API:</small>
+            <span class="mimp-presets">
+              <button type="button" class="btn btn-sm btn-quiet mimp-preset" data-preset="gemini">Gemini</button>
+              <button type="button" class="btn btn-sm btn-quiet mimp-preset" data-preset="qwen">Qwen</button>
+            </span>
+          </label>
+          <label class="mv-field mimp-key-field">
+            <span class="mv-field-label">API key (optional)</span>
+            <input id="mimp-key" class="input" type="text" autocomplete="off" spellcheck="false" placeholder="${GEMINI_API_KEY}" />
+            <small class="hint">For an endpoint that is not the OpenAI-compatible provider's: stored on each imported model. A <code>${VAR}</code> keeps the key itself out of settings.json. The provider's own key is only ever sent to its own host.</small>
           </label>
         </div>
         <p id="mimp-msg" class="form-msg" aria-live="polite"></p>
@@ -2569,15 +2673,19 @@
 
     <!-- ===== Saved-markdown viewer (modal) ===== -->
     <div id="viewer-card" class="viewer-modal hidden">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="viewer-title">Saved pipeline</h2>
-          <span class="viewer-actions">
-            <button type="button" id="viewer-full" class="btn" aria-pressed="false" hidden>Full screen</button>
-            <button type="button" id="viewer-close" class="btn">Close</button>
-          </span>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="viewer-title">Saved pipeline</h2>
+            <span class="viewer-actions">
+              <button type="button" id="viewer-full" class="btn" aria-pressed="false" hidden>Full screen</button>
+              <button type="button" id="viewer-close" class="btn">Close</button>
+            </span>
+          </div>
         </div>
-        <pre id="viewer" class="viewer"></pre>
+        <div class="dlg-body">
+          <pre id="viewer" class="viewer"></pre>
+        </div>
       </div>
     </div>
 
@@ -2612,36 +2720,98 @@
          Choosing a card applies at once, so the app re-lays out behind the dialog as the preview.
          ui-level.mjs owns the cards, focus and keys. -->
     <div id="mode-modal" class="viewer-modal mode-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mode-title" aria-describedby="mode-sub">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="mode-title">Interface mode</h2>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="mode-title">Interface mode</h2>
+          </div>
+          <p class="mode-sub" id="mode-sub">Choose how much of Worca is on screen. Nothing is switched off, only tidied away, and you can change this at any time.</p>
         </div>
-        <p class="mode-sub" id="mode-sub">Choose how much of Worca is on screen. Nothing is switched off, only tidied away, and you can change this at any time.</p>
-        <div class="lv-cards" id="mode-cards" role="radiogroup" aria-labelledby="mode-title"></div>
-        <small class="hint" id="mode-msg" aria-live="polite"></small>
-        <div class="mode-foot">
-          <span class="hint">Applies at once. Runs and saved settings are not affected.</span>
-          <button type="button" id="mode-done" class="btn btn-primary">Done</button>
+        <div class="dlg-body">
+          <div class="lv-cards" id="mode-cards" role="radiogroup" aria-labelledby="mode-title"></div>
+        </div>
+        <div class="dlg-foot">
+          <small class="hint" id="mode-msg" aria-live="polite"></small>
+          <div class="mode-foot">
+            <span class="hint">Applies at once. Runs and saved settings are not affected.</span>
+            <button type="button" id="mode-done" class="btn btn-primary">Done</button>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- ===== Reusable confirmation modal ===== -->
     <div id="confirm-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="confirm-title">Confirm</h2>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="confirm-title">Confirm</h2>
+          </div>
         </div>
-        <p id="confirm-message" class="confirm-message"></p>
-        <!-- promptModal fills this with .confirm-field rows; empty for a plain confirm -->
-        <div id="confirm-fields"></div>
-        <label id="confirm-checkbox-wrap" class="confirm-checkbox hidden">
-          <input type="checkbox" id="confirm-checkbox" />
-          <span id="confirm-checkbox-label"></span>
-        </label>
-        <div class="confirm-actions">
-          <button type="button" id="confirm-cancel" class="btn">Cancel</button>
-          <button type="button" id="confirm-ok" class="btn btn-primary">Confirm</button>
+        <div class="dlg-body">
+          <p id="confirm-message" class="confirm-message"></p>
+          <!-- promptModal fills this with .confirm-field rows; empty for a plain confirm -->
+          <div id="confirm-fields"></div>
+          <label id="confirm-checkbox-wrap" class="confirm-checkbox hidden">
+            <input type="checkbox" id="confirm-checkbox" />
+            <span id="confirm-checkbox-label"></span>
+          </label>
+        </div>
+        <div class="dlg-foot">
+          <div class="confirm-actions">
+            <button type="button" id="confirm-cancel" class="btn">Cancel</button>
+            <button type="button" id="confirm-ok" class="btn btn-primary">Confirm</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Update Worca (issue #841): version picker + confirm, then the updating overlay ===== -->
+    <div id="update-modal" class="viewer-modal confirm-modal update-modal hidden" role="dialog" aria-modal="true" aria-labelledby="updatePickTitle">
+      <div class="card">
+        <div data-pane="pick">
+          <div class="card-head"><h2 id="updatePickTitle">Choose a Worca version</h2></div>
+          <p class="confirm-message" id="updatePickSub">Versions come from the npm registry.</p>
+          <div class="seg" aria-label="Channel">
+            <button type="button" data-channel="stable" aria-pressed="true">Stable</button>
+            <button type="button" data-channel="rc" aria-pressed="false">Release candidates</button>
+          </div>
+          <div class="update-versions" id="updateVersionList" role="radiogroup" aria-label="Versions"></div>
+          <label class="switch-row update-older"><input type="checkbox" id="updateShowOlder" class="sw-input" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Show older versions (roll back)</span></label>
+          <p class="update-callout" id="updatePickNote" hidden></p>
+          <div class="confirm-actions update-actions">
+            <a class="update-notes-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
+            <button type="button" class="btn" id="updatePickCancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="updatePickGo" disabled>Pick a version</button>
+          </div>
+        </div>
+        <div data-pane="confirm" hidden>
+          <div class="card-head"><h2 id="updateConfirmTitle">Update Worca?</h2></div>
+          <p class="confirm-message" id="updateConfirmMsg"></p>
+          <p class="update-callout" id="updateConfirmRuns"></p>
+          <p class="update-callout" id="updateConfirmSched" hidden></p>
+          <div class="update-callout" id="updateConfirmManual" data-tone="warn" hidden>
+            Start it by hand once it is installed:
+            <div class="about-cmd"><code class="about-cmd-text" id="updateConfirmStartCmd">worca ui</code>
+              <button type="button" class="btn" id="updateConfirmCopy">Copy</button></div>
+          </div>
+          <div class="confirm-actions update-actions">
+            <a class="update-notes-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
+            <button type="button" class="btn" id="updateConfirmBack">Cancel</button>
+            <button type="button" class="btn btn-primary" id="updateConfirmGo" disabled>Update &amp; restart</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="update-overlay" class="viewer-modal confirm-modal update-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="updateOverlayTitle">
+      <div class="card">
+        <div class="card-head"><h2 id="updateOverlayTitle">Updating Worca</h2></div>
+        <p class="confirm-message"><span class="spinner" aria-hidden="true"></span> <span id="updateOverlayStep"></span></p>
+        <p class="about-note">Keep the terminal running <code>worca ui</code> open: it does the install while the server is down. This page reloads when Worca is back.</p>
+        <div class="update-callout" id="updateOverlayManual" data-tone="warn" hidden>
+          This version cannot start itself. Start it with:
+          <div class="about-cmd"><code class="about-cmd-text" id="updateOverlayStartCmd">worca ui</code>
+            <button type="button" class="btn" id="updateOverlayCopy">Copy</button></div>
         </div>
       </div>
     </div>
@@ -2653,32 +2823,38 @@
          create wizard's Models column: the four picks are painted by paintScanModelPickers into
          the sm- ids, and the API accepts exactly what readScanModelPickers reads back. -->
     <div id="scan-model-modal" class="viewer-modal confirm-modal scan-model-modal hidden" role="dialog" aria-modal="true" aria-labelledby="scan-model-title">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="scan-model-title">Choose a scan model</h2>
-        </div>
-        <p id="scan-model-message" class="confirm-message"></p>
-        <div class="scan-model-fields">
-          <div class="field">
-            <div class="label-row"><label for="sm-scan-model">Scan agent</label></div>
-            <div class="wiz-model-pair">
-              <select id="sm-scan-model" class="select" aria-label="Scan agent model"></select>
-              <select id="sm-scan-effort" class="select" aria-label="Scan agent effort"></select>
-            </div>
-          </div>
-          <div class="field">
-            <div class="label-row"><label for="sm-agent-model">Project agents</label></div>
-            <div class="wiz-model-pair">
-              <select id="sm-agent-model" class="select" aria-label="Project agents model"></select>
-              <select id="sm-agent-effort" class="select" aria-label="Project agents effort"></select>
-            </div>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="scan-model-title">Choose a scan model</h2>
           </div>
         </div>
-        <div class="confirm-actions">
-          <button type="button" id="scan-model-clear" class="btn hidden">Clear saved model</button>
-          <span class="pd-spacer"></span>
-          <button type="button" id="scan-model-cancel" class="btn">Cancel</button>
-          <button type="button" id="scan-model-ok" class="btn btn-primary">Save</button>
+        <div class="dlg-body">
+          <p id="scan-model-message" class="confirm-message"></p>
+          <div class="scan-model-fields">
+            <div class="field">
+              <div class="label-row"><label for="sm-scan-model">Scan agent</label></div>
+              <div class="wiz-model-pair">
+                <select id="sm-scan-model" class="select" aria-label="Scan agent model"></select>
+                <select id="sm-scan-effort" class="select" aria-label="Scan agent effort"></select>
+              </div>
+            </div>
+            <div class="field">
+              <div class="label-row"><label for="sm-agent-model">Project agents</label></div>
+              <div class="wiz-model-pair">
+                <select id="sm-agent-model" class="select" aria-label="Project agents model"></select>
+                <select id="sm-agent-effort" class="select" aria-label="Project agents effort"></select>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dlg-foot">
+          <div class="confirm-actions">
+            <button type="button" id="scan-model-clear" class="btn hidden">Clear saved model</button>
+            <span class="pd-spacer"></span>
+            <button type="button" id="scan-model-cancel" class="btn">Cancel</button>
+            <button type="button" id="scan-model-ok" class="btn btn-primary">Save</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2691,12 +2867,12 @@
          .viewer-modal or <dialog> (modal-guard.mjs dialogOpen), so a new overlay needs
          only that class and a guardModal() — there is no list to extend. -->
     <div id="report-modal" class="viewer-modal report-modal hidden" role="dialog" aria-modal="true" aria-labelledby="report-title">
-      <div class="card">
-        <!-- Sticky header: title, Cancel, and every action. The card is the scroll
-             container (.viewer-modal .card{overflow:auto}), so the actions stay
-             reachable while the reporter is reading the JSON preview, and an error
-             or a filed-issue link lands where they are already looking. -->
-        <div class="report-top">
+      <div class="card dlg">
+        <!-- Pinned head (dialog-layout.mjs): title, Cancel, and every action. Only the
+             .dlg-body scrolls, so the actions stay reachable while the reporter is
+             reading the JSON preview, and an error or a filed-issue link lands where
+             they are already looking. -->
+        <div class="report-top dlg-head">
           <div class="card-head">
             <h2 id="report-title">Report this run</h2>
             <div class="report-head-actions">
@@ -2708,239 +2884,249 @@
           <div class="report-error" hidden></div>
           <p id="report-filed" class="report-filed" hidden></p>
         </div>
-        <div class="report-field">
-          <label for="report-reason">What went wrong?</label>
-          <select id="report-reason" class="select"></select>
+        <div class="dlg-body">
+          <div class="report-field">
+            <label for="report-reason">What went wrong?</label>
+            <select id="report-reason" class="select"></select>
+          </div>
+          <div class="report-field">
+            <label for="report-expectation">What did you expect? (optional)</label>
+            <textarea id="report-expectation" class="textarea" rows="3" placeholder="What should have happened instead?"></textarea>
+          </div>
+          <div id="report-optins"></div>
+          <div class="report-field">
+            <label for="report-preview">This is exactly what will be sent</label>
+            <pre id="report-preview" class="viewer"></pre>
+          </div>
         </div>
-        <div class="report-field">
-          <label for="report-expectation">What did you expect? (optional)</label>
-          <textarea id="report-expectation" class="textarea" rows="3" placeholder="What should have happened instead?"></textarea>
-        </div>
-        <div id="report-optins"></div>
-        <div class="report-field">
-          <label for="report-preview">This is exactly what will be sent</label>
-          <pre id="report-preview" class="viewer"></pre>
-        </div>
-        <div class="confirm-actions">
-          <button type="button" id="report-copy" class="btn">Copy JSON</button>
-          <button type="button" id="report-download" class="btn">Download JSON</button>
-          <!-- The FALLBACK, hidden until the server says it could not file the issue
-               itself. An <a>, not a button: a real anchor gives the browser a genuine
-               user-gesture new tab. app.js strips the href while a rebuild is in
-               flight, so the link can never fire with a payload that disagrees with
-               the preview. Its prefilled body can only ASK for the JSON to be pasted
-               — a URL dies at ~8 KB and half of all runs serialize larger. -->
-          <a id="report-issue" class="btn" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
+        <div class="dlg-foot">
+          <div class="confirm-actions">
+            <button type="button" id="report-copy" class="btn">Copy JSON</button>
+            <button type="button" id="report-download" class="btn">Download JSON</button>
+            <!-- The FALLBACK, hidden until the server says it could not file the issue
+                 itself. An <a>, not a button: a real anchor gives the browser a genuine
+                 user-gesture new tab. app.js strips the href while a rebuild is in
+                 flight, so the link can never fire with a payload that disagrees with
+                 the preview. Its prefilled body can only ASK for the JSON to be pasted
+                 — a URL dies at ~8 KB and half of all runs serialize larger. -->
+            <a id="report-issue" class="btn" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- ===== Export workflow → Claude Code skill modal ===== -->
     <div id="export-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="export-title">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="export-title">Export pipeline</h2>
-        </div>
-        <p id="export-subtitle" class="confirm-message"></p>
-        <!-- The form; swapped for #export-done after a successful export. -->
-        <div id="export-form">
-        <!-- ONE Export… entry point per row; the dialog asks for the format first.
-             json = the saved graph as a file another Worca user imports (#421);
-             skill = a runnable Claude Code skill under .claude/ (#403);
-             plugin = a Worca plugin folder bundling agents + skills (#421). -->
-        <div class="export-field">
-          <span class="export-label">Format</span>
-          <div id="export-format" class="seg" role="group" aria-label="Export format">
-            <button type="button" class="seg-btn on" data-format="json">JSON file</button>
-            <button type="button" class="seg-btn" data-format="skill" data-min-level="expert">Claude Code skill</button>
-            <button type="button" class="seg-btn" data-format="plugin" data-min-level="expert">Worca plugin</button>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="export-title">Export pipeline</h2>
           </div>
-          <span id="export-format-hint" class="hint"></span>
+          <p id="export-subtitle" class="confirm-message"></p>
         </div>
-        <div id="export-dest-field" class="export-field hidden">
-          <span class="export-label">Location</span>
-          <div id="export-dest" class="seg" role="group" aria-label="Skill location">
-            <button type="button" class="seg-btn on" data-dest="global">Global (~/.claude)</button>
-            <button type="button" class="seg-btn" data-dest="project">Project folder</button>
+        <div class="dlg-body">
+          <!-- The form; swapped for #export-done after a successful export. -->
+          <div id="export-form">
+          <!-- ONE Export… entry point per row; the dialog asks for the format first.
+               json = the saved graph as a file another Worca user imports (#421);
+               skill = a runnable Claude Code skill under .claude/ (#403);
+               plugin = a Worca plugin folder bundling agents + skills (#421). -->
+          <div class="export-field">
+            <span class="export-label">Format</span>
+            <div id="export-format" class="seg" role="group" aria-label="Export format">
+              <button type="button" class="seg-btn on" data-format="json">JSON file</button>
+              <button type="button" class="seg-btn" data-format="skill" data-min-level="expert">Claude Code skill</button>
+              <button type="button" class="seg-btn" data-format="plugin" data-min-level="expert">Worca plugin</button>
+            </div>
+            <span id="export-format-hint" class="hint"></span>
           </div>
-        </div>
-        <!-- Worca plugin destination (#717): a local folder (as before) or a registered marketplace,
-             which gets ONE pull request on worca/plugin/<name>; nothing is pushed to its own branch. -->
-        <div id="export-plugin-dest-field" class="export-field hidden">
-          <span class="export-label">Destination</span>
-          <div id="export-plugin-dest" class="seg" role="group" aria-label="Plugin destination">
-            <button type="button" class="seg-btn on" data-pdest="folder">Local folder</button>
-            <button type="button" class="seg-btn" data-pdest="marketplace" data-needs-git>Marketplace</button>
+          <div id="export-dest-field" class="export-field hidden">
+            <span class="export-label">Location</span>
+            <div id="export-dest" class="seg" role="group" aria-label="Skill location">
+              <button type="button" class="seg-btn on" data-dest="global">Global (~/.claude)</button>
+              <button type="button" class="seg-btn" data-dest="project">Project folder</button>
+            </div>
           </div>
-        </div>
-        <div id="export-marketplace-field" class="export-field hidden" data-needs-git>
-          <label class="export-label" for="export-marketplace">Marketplace</label>
-          <span class="select-wrap"><select id="export-marketplace" class="select" aria-label="Marketplace"></select></span>
-          <span class="hint">The pull request targets the branch the marketplace tracks, else its default branch. Without push access it comes from your fork.</span>
-          <!-- Only when no marketplace can take a pull request: the registered ones that were left out, with why. -->
-          <span id="export-marketplace-skipped" class="hint hidden"></span>
-          <!-- Draft is opt-in per export (unchecked on every open), like Create PR (#597). -->
-          <label class="switch-row" for="export-draft"><input id="export-draft" class="sw-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Open as draft</span></label>
-        </div>
-        <div id="export-folder-field" class="export-field hidden">
-          <span class="export-label" id="export-folder-label">Folder</span>
-          <div class="export-folder-row">
-            <input type="text" id="export-folder" class="input" placeholder="/path/to/repo" />
-            <button type="button" id="export-browse" class="btn btn-sm">Browse…</button>
+          <!-- Worca plugin destination (#717): a local folder (as before) or a registered marketplace,
+               which gets ONE pull request on worca/plugin/<name>; nothing is pushed to its own branch. -->
+          <div id="export-plugin-dest-field" class="export-field hidden">
+            <span class="export-label">Destination</span>
+            <div id="export-plugin-dest" class="seg" role="group" aria-label="Plugin destination">
+              <button type="button" class="seg-btn on" data-pdest="folder">Local folder</button>
+              <button type="button" class="seg-btn" data-pdest="marketplace" data-needs-git>Marketplace</button>
+            </div>
           </div>
-        </div>
-        <div id="export-plugin-field" class="export-field hidden">
-          <span class="export-label">Plugin name</span>
-          <input type="text" id="export-plugin-name" class="input" placeholder="(defaults to the folder name)" />
-          <!-- Live: what the manifest will actually be called — kebab-case, derived
-               from the typed name or, when blank, from the folder's basename. -->
-          <span id="export-plugin-name-preview" class="hint"></span>
-          <!-- Re-export only: a changed export into an existing plugin folder bumps
-               the manifest's patch version (0.1.0 → 0.1.1) so the recipient's
-               `worca plugin update` sees it. A first export is always 0.1.0. -->
-          <label class="switch-row" id="export-keep-version-row">
-            <input type="checkbox" id="export-keep-version" class="sw-input" role="switch" />
+          <div id="export-marketplace-field" class="export-field hidden" data-needs-git>
+            <label class="export-label" for="export-marketplace">Marketplace</label>
+            <span class="select-wrap"><select id="export-marketplace" class="select" aria-label="Marketplace"></select></span>
+            <span class="hint">The pull request targets the branch the marketplace tracks, else its default branch. Without push access it comes from your fork.</span>
+            <!-- Only when no marketplace can take a pull request: the registered ones that were left out, with why. -->
+            <span id="export-marketplace-skipped" class="hint hidden"></span>
+            <!-- Draft is opt-in per export (unchecked on every open), like Create PR (#597). -->
+            <label class="switch-row" for="export-draft"><input id="export-draft" class="sw-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Open as draft</span></label>
+          </div>
+          <div id="export-folder-field" class="export-field hidden">
+            <span class="export-label" id="export-folder-label">Folder</span>
+            <div class="export-folder-row">
+              <input type="text" id="export-folder" class="input" placeholder="/path/to/repo" />
+              <button type="button" id="export-browse" class="btn btn-sm">Browse…</button>
+            </div>
+          </div>
+          <div id="export-plugin-field" class="export-field hidden">
+            <span class="export-label">Plugin name</span>
+            <input type="text" id="export-plugin-name" class="input" placeholder="(defaults to the folder name)" />
+            <!-- Live: what the manifest will actually be called — kebab-case, derived
+                 from the typed name or, when blank, from the folder's basename. -->
+            <span id="export-plugin-name-preview" class="hint"></span>
+            <!-- Re-export only: a changed export into an existing plugin folder bumps
+                 the manifest's patch version (0.1.0 → 0.1.1) so the recipient's
+                 `worca plugin update` sees it. A first export is always 0.1.0. -->
+            <label class="switch-row" id="export-keep-version-row">
+              <input type="checkbox" id="export-keep-version" class="sw-input" role="switch" />
+              <span class="switch" aria-hidden="true"></span>
+              <span class="switch-label">Don't bump the plugin version when updating an existing plugin folder<br><span class="hint">A changed re-export normally goes 0.1.0 → 0.1.1 so recipients see an update. A first export is always 0.1.0.</span></span>
+            </label>
+          </div>
+          <div class="export-field" id="export-slug-field">
+            <span class="export-label">Slug</span>
+            <input type="text" id="export-slug" class="input" placeholder="(defaults to the workflow name)" />
+            <span id="export-slug-preview" class="hint"></span>
+          </div>
+          <label class="switch-row" id="export-agents-field">
+            <input type="checkbox" id="export-include-agents" class="sw-input" role="switch" checked />
             <span class="switch" aria-hidden="true"></span>
-            <span class="switch-label">Don't bump the plugin version when updating an existing plugin folder<br><span class="hint">A changed re-export normally goes 0.1.0 → 0.1.1 so recipients see an update. A first export is always 0.1.0.</span></span>
+            <span class="switch-label">Include referenced agents (recommended)</span>
           </label>
-        </div>
-        <div class="export-field" id="export-slug-field">
-          <span class="export-label">Slug</span>
-          <input type="text" id="export-slug" class="input" placeholder="(defaults to the workflow name)" />
-          <span id="export-slug-preview" class="hint"></span>
-        </div>
-        <label class="switch-row" id="export-agents-field">
-          <input type="checkbox" id="export-include-agents" class="sw-input" role="switch" checked />
-          <span class="switch" aria-hidden="true"></span>
-          <span class="switch-label">Include referenced agents (recommended)</span>
-        </label>
-        <div id="export-plan" class="export-plan hidden"></div>
-        <p id="export-msg" class="confirm-message"></p>
-        </div>
-        <!-- Result view: what was written, where, and the next step for the format.
-             Replaces the form (not a second dialog) once an export succeeded. -->
-        <div id="export-done" class="export-done hidden" role="status" aria-live="polite">
-          <div class="export-done-head">
-            <span class="export-done-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>
-            <b id="export-done-title"></b>
+          <div id="export-plan" class="export-plan hidden"></div>
+          <p id="export-msg" class="confirm-message"></p>
           </div>
-          <dl id="export-done-lines" class="export-done-lines"></dl>
-          <p id="export-done-next" class="export-done-next"></p>
+          <!-- Result view: what was written, where, and the next step for the format.
+               Replaces the form (not a second dialog) once an export succeeded. -->
+          <div id="export-done" class="export-done hidden" role="status" aria-live="polite">
+            <div class="export-done-head">
+              <span class="export-done-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>
+              <b id="export-done-title"></b>
+            </div>
+            <dl id="export-done-lines" class="export-done-lines"></dl>
+            <p id="export-done-next" class="export-done-next"></p>
+          </div>
         </div>
-        <div class="confirm-actions">
-          <button type="button" id="export-cancel" class="btn">Cancel</button>
-          <!-- Preview = dry run (optional). Export runs the dry run itself and writes
-               unless it hits a conflict, which it then shows for per-file resolution. -->
-          <button type="button" id="export-plan-btn" class="btn">Preview</button>
-          <button type="button" id="export-apply-btn" class="btn btn-primary">Export</button>
-          <button type="button" id="export-done-close" class="btn btn-primary hidden">Done</button>
+        <div class="dlg-foot">
+          <div class="confirm-actions">
+            <button type="button" id="export-cancel" class="btn">Cancel</button>
+            <!-- Preview = dry run (optional). Export runs the dry run itself and writes
+                 unless it hits a conflict, which it then shows for per-file resolution. -->
+            <button type="button" id="export-plan-btn" class="btn">Preview</button>
+            <button type="button" id="export-apply-btn" class="btn btn-primary">Export</button>
+            <button type="button" id="export-done-close" class="btn btn-primary hidden">Done</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- ===== "Create pull request" confirm modal (History detail) ===== -->
+    <!-- ===== "Create PR" confirm modal (History detail) ===== -->
     <!-- No z-index of its own: #confirm-modal.viewer-modal{z-index:60} (style.css:781)
          exists because #confirm-modal precedes #plugin-modal in the DOM, and this
          dialog never coexists with another overlay — the Escape guard and the
          double-open guard keep them mutually exclusive. -->
-    <div id="shipit-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Create pull request">
-      <div class="card shipit-card">
-        <div class="shipit-ico-wrap">
-          <div class="shipit-spark"></div>
-          <div class="shipit-ico">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.4"></circle><circle cx="6.5" cy="18" r="2.4"></circle><circle cx="17.5" cy="12" r="2.4"></circle><path d="M6.5 8.4v7.2M8.9 17c4.1 0 6-1.8 6.2-3.6M8.9 7c4.1 0 6 1.8 6.2 3.6"></path></svg>
-          </div>
+    <div id="shipit-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Create PR">
+      <div class="card shipit-card dlg">
+        <div class="dlg-head">
+          <h2 class="shipit-title">Create PR</h2>
         </div>
-        <h2>Create pull request</h2>
-        <p class="shipit-sub"></p>
-        <div class="shipit-summary mono">
-          <span class="shipit-files"></span>
-          <!-- spec §5.10 writes the summary as "N files · +A −R"; the middot is markup
-               so the CSS can drop it when the file count is absent. -->
-          <span class="shipit-dot">·</span>
-          <span class="diff-add shipit-add"></span>
-          <span class="diff-del shipit-del"></span>
-          <span class="shipit-break"></span>
-          <b class="shipit-branch"></b>
-          <span class="shipit-arrow">→</span>
-          <span class="shipit-base"></span>
-          <!-- The base-branch pick, in place of the plain base name once GET
-               /api/pr/remotes names the choices: the run chain (root first, the
-               default) and the base remote's branches. While it is hidden the
-               plain `.shipit-base` text stands and the POST omits baseBranch. -->
-          <span class="select-wrap shipit-base-wrap" hidden>
-            <select id="shipit-base-branch" class="select shipit-base-branch" aria-label="Base branch"></select>
-          </span>
-        </div>
-        <!-- Sync before run (#527): the base moved on the remote since this run started. -->
-        <small class="hint warn" id="shipit-base-warn" hidden></small>
-        <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
-        <small class="hint shipit-basecheck" hidden></small>
-        <!-- Fork support: where the branch is pushed and which repo the PR opens in
-             (GitHub's "compare across forks"; Azure DevOps opens PRs within one repository). Filled from GET /api/pr/remotes on
-             open; hidden until the list arrives and stays hidden when it cannot be
-             loaded (the server then applies its own defaults). -->
-        <div class="shipit-remotes" hidden>
-          <div class="shipit-remote-field">
-            <label for="shipit-push-remote">Push branch to</label>
-            <div class="select-wrap">
-              <select id="shipit-push-remote" class="select shipit-push-remote" aria-label="Push remote"></select>
+        <div class="dlg-body">
+          <!-- Zone 2, Into: base remote and base branch on one row; with one remote only the branch (D5).
+               `.shipit-remotes` is filled from GET /api/pr/remotes on open; hidden until the list arrives and stays
+               hidden when it cannot be loaded (the server then applies its own defaults). The base-branch pick
+               replaces the plain `.shipit-base` name once the choices are known; while it is hidden the POST omits
+               baseBranch. -->
+          <section class="shipit-zone shipit-into" aria-labelledby="shipit-into-label">
+            <span class="shipit-zone-label" id="shipit-into-label">Into</span>
+            <div class="shipit-into-row" data-cols="1">
+              <div class="shipit-remotes" hidden>
+                <div class="select-wrap shipit-base-remote-field" hidden>
+                  <select id="shipit-base-remote" class="select shipit-base-remote" aria-label="Base repository"></select>
+                </div>
+                <div class="shipit-push-field" hidden>
+                  <label for="shipit-push-remote">Push remote</label>
+                  <div class="select-wrap">
+                    <select id="shipit-push-remote" class="select shipit-push-remote" aria-label="Push remote"></select>
+                  </div>
+                </div>
+              </div>
+              <span class="shipit-base mono"></span>
+              <span class="select-wrap shipit-base-wrap" hidden>
+                <select id="shipit-base-branch" class="select shipit-base-branch" aria-label="Base branch"></select>
+              </span>
             </div>
-          </div>
-          <div class="shipit-remote-field">
-            <label for="shipit-base-remote">Open PR in</label>
-            <div class="select-wrap">
-              <select id="shipit-base-remote" class="select shipit-base-remote" aria-label="Base repository"></select>
+            <small class="shipit-remotes-hint hint"></small>
+            <!-- Sync before run (#527): the base moved on the remote since this run started. -->
+            <small class="hint warn" id="shipit-base-warn" hidden></small>
+            <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
+            <small class="hint shipit-basecheck" hidden></small>
+          </section>
+          <!-- One ship flow (slice 2): a feature's or a chain's PRs, One or N stacked, with the suggestion under it.
+               Painted by ship-group-dialog.mjs; hidden for a single run and a workspace run. -->
+          <section class="shipit-zone shipit-prs" aria-labelledby="shipit-prs-label" hidden>
+            <span class="shipit-zone-label" id="shipit-prs-label">Pull requests</span>
+            <div class="shipit-prs-opts" role="radiogroup" aria-labelledby="shipit-prs-label" aria-describedby="shipit-prs-hint">
+              <label class="opt-row"><input type="radio" name="shipit-prs" value="one" aria-describedby="shipit-prs-one-why" /><span>One</span></label>
+              <label class="opt-row"><input type="radio" name="shipit-prs" value="stacked" /><span class="shipit-prs-stacked-label">2 stacked</span></label>
             </div>
-          </div>
-          <small class="shipit-remotes-hint hint"></small>
-        </div>
-        <!-- Workspace runs: one row per affected member repo (tick box, branch → base,
-             push/base remotes, per-repo status). Built by openShipItWsModal. -->
-        <div id="shipit-repos" class="shipit-repos" hidden></div>
-        <!-- The PR description (optional): free-form markdown with Write / Preview tabs,
-             or drafted by Generate with AI (POST /api/pr/describe) for the user to edit.
-             Reset to empty on every open; empty = the PR body is the title, as before.
-             Its own error line keeps a failed draft off "Could not open PR". -->
-        <div class="shipit-desc">
-          <div class="shipit-desc-head">
-            <label for="shipit-desc-input">PR description</label>
-            <div class="md-tabs tabs" role="tablist" aria-label="PR description editor">
-              <button type="button" class="md-tab tab shipit-desc-tab" role="tab" data-mode="text" aria-selected="true">Write</button>
-              <button type="button" class="md-tab tab shipit-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
+            <small class="hint shipit-prs-one-why" id="shipit-prs-one-why" hidden></small>
+            <small class="hint shipit-prs-hint" id="shipit-prs-hint" hidden></small>
+          </section>
+          <!-- Workspace runs: one row per affected member repo (tick box, branch → base,
+               push/base remotes, per-repo status). Built by openShipItWsModal. -->
+          <div id="shipit-repos" class="shipit-repos" hidden></div>
+          <!-- Zone 3, the PR itself: title, description (Write / Preview / Generate), Draft. The description is
+               optional and reset to empty on every open; empty = the PR body is the title, as before. Its own error
+               line keeps a failed draft off "Not shipped". Draft is opt-in per PR (off on every open); the
+               "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
+          <section class="shipit-zone shipit-desc" aria-labelledby="shipit-pr-label">
+            <span class="shipit-zone-label" id="shipit-pr-label">Title and description</span>
+            <input id="shipit-title-input" class="input shipit-title-input" type="text" maxlength="256" aria-label="PR title" />
+            <div class="shipit-desc-head">
+              <div class="md-tabs tabs" role="tablist" aria-label="Description editor">
+                <button type="button" class="md-tab tab shipit-desc-tab" role="tab" data-mode="text" aria-selected="true">Write</button>
+                <button type="button" class="md-tab tab shipit-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
+              </div>
+              <button type="button" class="shipit-generate-stop btn btn-sm" hidden>Stop</button>
+              <button type="button" class="shipit-generate btn btn-sm btn-quiet">Generate</button>
             </div>
-            <button type="button" class="shipit-generate-stop btn btn-sm" hidden>Stop</button>
-            <button type="button" class="shipit-generate btn btn-sm">Generate with AI</button>
-          </div>
-          <!-- The editor and its preview share one box so the Generate-with-AI veil can
-               lie over whichever is showing: a shimmer sweep that also swallows clicks
-               while the textarea is read-only. `.is-generating` + aria-busy toggle it
-               (setShipItGenerating); the veil itself is decoration. -->
-          <div class="shipit-desc-field" aria-busy="false">
-            <textarea id="shipit-desc-input" class="shipit-desc-input textarea" rows="7" placeholder="Describe this change, or use Generate with AI"></textarea>
-            <div class="shipit-desc-preview md-preview viewer" hidden></div>
-            <div class="shipit-desc-busy" aria-hidden="true"><span class="shipit-desc-busy-label">Drafting with AI…</span></div>
-          </div>
-          <div class="shipit-desc-err hint err" hidden></div>
+            <!-- The editor and its preview share one box so the Generate veil can lie over whichever is showing: a
+                 shimmer sweep that also swallows clicks while the textarea is read-only. `.is-generating` +
+                 aria-busy toggle it (setShipItGenerating); the veil itself is decoration. -->
+            <div class="shipit-desc-field" aria-busy="false">
+              <textarea id="shipit-desc-input" class="shipit-desc-input textarea" rows="5" aria-label="Description" placeholder="Describe this change, or use Generate"></textarea>
+              <div class="shipit-desc-preview md-preview viewer" hidden></div>
+              <div class="shipit-desc-busy" aria-hidden="true"><span class="shipit-desc-busy-label">Drafting with AI…</span></div>
+            </div>
+            <div class="shipit-desc-err hint err" hidden></div>
+            <div class="shipit-draft">
+              <label class="switch-row" for="shipit-draft-input"><input id="shipit-draft-input" class="sw-input shipit-draft-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Draft</span></label>
+              <small class="shipit-closes hint" hidden></small>
+            </div>
+          </section>
+          <!-- The per-run note stands in for the hidden Title and description zone (ship-group-dialog.mjs). -->
+          <p class="shipit-slice-note" hidden></p>
+          <!-- Zone 4, After it opens: Watch PR (starts from the project's Watch new pull requests setting, s4), and
+               the Shaper s4 release row (shape/release-row.mjs), collapsed on every open; the workspace dialog hides
+               it. No data-min-level: the controls show wherever the modal does (docs/ui-levels.md, History). -->
+          <section class="shipit-zone shipit-after" aria-labelledby="shipit-after-label">
+            <span class="shipit-zone-label" id="shipit-after-label">After it opens</span>
+            <label class="switch-row" for="shipit-watch-input"><input id="shipit-watch-input" class="sw-input shipit-watch-input" type="checkbox" role="switch" aria-describedby="shipit-watch-help" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Watch PR</span></label>
+            <small id="shipit-watch-help" class="hint shipit-watch-help">Follows checks and reviews</small>
+            <div class="shipit-release" aria-label="Release"></div>
+          </section>
+          <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>
         </div>
-        <!-- Draft is opt-in per ship (unchecked on every open); Watch PR starts from the project's Watch new
-             pull requests setting (s4). No data-min-level: the
-             controls show wherever the modal does (docs/ui-levels.md, History). The
-             "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
-        <div class="shipit-draft">
-          <label class="switch-row" for="shipit-draft-input"><input id="shipit-draft-input" class="sw-input shipit-draft-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Open as draft</span></label>
-          <label class="switch-row" for="shipit-watch-input"><input id="shipit-watch-input" class="sw-input shipit-watch-input" type="checkbox" role="switch" aria-describedby="shipit-watch-help" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Watch PR</span></label>
-          <small id="shipit-watch-help" class="hint shipit-watch-help">Start a fix run when checks fail or a reviewer asks for changes</small>
-          <small class="shipit-closes hint" hidden></small>
-        </div>
-        <!-- Shaper s4: the release row (shape/release-row.mjs), collapsed on every open like the draft box; the
-             workspace dialog hides it. -->
-        <div class="shipit-release" aria-label="Release"></div>
-        <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>
-        <p class="shipit-slice-note" hidden></p>
-        <div class="shipit-actions" data-card-actions>
-          <button type="button" class="shipit-cancel btn">Cancel</button>
-          <button type="button" class="btn btn-primary shipit-ok">Create pull request</button>
+        <div class="dlg-foot">
+          <div class="shipit-actions" data-card-actions>
+            <button type="button" class="btn shipit-try-btn" hidden data-min-level="advanced">Try it first</button>
+            <button type="button" class="shipit-cancel btn">Cancel</button>
+            <button type="button" class="btn btn-primary shipit-ok">Create PR</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2949,13 +3135,19 @@
     <!-- One row per repo whose branch is here (a workspace run: per member, each with a tick);
          the push remote is the Ship-it dialog's default (GET /api/pr/remotes). No PR opens. -->
     <div id="publish-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Publish branch">
-      <div class="card publish-card">
-        <h2>Publish branch</h2>
-        <p class="publish-sub hint">Pushes the branch so it can be pulled and tested.<br>No pull request is opened.</p>
-        <div class="publish-repos"></div>
-        <div class="publish-actions" data-card-actions>
-          <button type="button" class="publish-cancel btn">Cancel</button>
-          <button type="button" class="publish-ok btn btn-primary">Publish</button>
+      <div class="card publish-card dlg">
+        <div class="dlg-head">
+          <h2>Publish branch</h2>
+          <p class="publish-sub hint">Pushes the branch so it can be pulled and tested.<br>No PR is created.</p>
+        </div>
+        <div class="dlg-body">
+          <div class="publish-repos"></div>
+        </div>
+        <div class="dlg-foot">
+          <div class="publish-actions" data-card-actions>
+            <button type="button" class="publish-cancel btn">Cancel</button>
+            <button type="button" class="publish-ok btn btn-primary">Publish</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2974,40 +3166,46 @@
          pipeline, until a door or Skip marks it seen. Three doors in cognitive-load
          order; each hands its step id to the matching guide. -->
     <div id="welcome-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
-      <div class="card ob-welcome">
-        <p class="ob-eyebrow">Welcome to Worca</p>
-        <h2 id="welcome-title" class="ob-headline">Your pipelines, <em>on autopilot.</em></h2>
-        <svg class="ob-hero" viewBox="0 0 560 104" role="img" aria-label="A task becomes a chain of agents (plan, refine, implement, review) that loops until the work clears its gates">
-          <circle class="gs-pop gs-node" style="--d:.1s" cx="40" cy="44" r="9"></circle>
-          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:.5s;--t:1.1s" d="M52 44 C 90 44, 110 44, 150 44"></path>
-          <circle class="gs-pop gs-node" style="--d:1.2s" cx="162" cy="44" r="9"></circle>
-          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:1.5s;--t:1s" d="M174 44 C 210 44, 230 44, 270 44"></path>
-          <circle class="gs-pop gs-node" style="--d:2.2s" cx="282" cy="44" r="9"></circle>
-          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:2.5s;--t:1s" d="M294 44 C 330 44, 350 44, 390 44"></path>
-          <circle class="gs-pop gs-node" style="--d:3.2s" cx="402" cy="44" r="9"></circle>
-          <path class="gs-draw gs-wire ob-loop" pathLength="1" style="--d:3.6s;--t:1.2s" d="M402 55 C 402 92, 282 92, 282 55"></path>
-          <path class="gs-draw gs-wire ob-thread gs-accent" pathLength="1" style="--d:4.4s;--t:.9s" d="M414 44 C 450 44, 470 44, 505 44"></path>
-          <circle class="gs-pop gs-ring-mark" style="--d:5s" cx="518" cy="44" r="16"></circle>
-          <circle class="gs-pop gs-node gs-accent" style="--d:5.1s" cx="518" cy="44" r="9"></circle>
-        </svg>
-        <div class="ob-doors">
-          <button type="button" class="ob-door" data-door="project">
-            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg></span>
-            <span>Add your first project</span>
-            <span class="ob-door-arrow" aria-hidden="true">›</span>
-          </button>
-          <button type="button" class="ob-door" data-door="run">
-            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M10 9l5 3-5 3z"></path></svg></span>
-            <span>Watch a run end to end, offline</span>
-            <span class="ob-door-arrow" aria-hidden="true">›</span>
-          </button>
-          <button type="button" class="ob-door" data-door="realRun">
-            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z"></path><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path></svg></span>
-            <span>Run a real pipeline</span>
-            <span class="ob-door-arrow" aria-hidden="true">›</span>
-          </button>
+      <div class="card ob-welcome dlg">
+        <div class="dlg-head">
+          <p class="ob-eyebrow">Welcome to Worca</p>
+          <h2 id="welcome-title" class="ob-headline">Your pipelines, <em>on autopilot.</em></h2>
+          <svg class="ob-hero" viewBox="0 0 560 104" role="img" aria-label="A task becomes a chain of agents (plan, refine, implement, review) that loops until the work clears its gates">
+            <circle class="gs-pop gs-node" style="--d:.1s" cx="40" cy="44" r="9"></circle>
+            <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:.5s;--t:1.1s" d="M52 44 C 90 44, 110 44, 150 44"></path>
+            <circle class="gs-pop gs-node" style="--d:1.2s" cx="162" cy="44" r="9"></circle>
+            <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:1.5s;--t:1s" d="M174 44 C 210 44, 230 44, 270 44"></path>
+            <circle class="gs-pop gs-node" style="--d:2.2s" cx="282" cy="44" r="9"></circle>
+            <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:2.5s;--t:1s" d="M294 44 C 330 44, 350 44, 390 44"></path>
+            <circle class="gs-pop gs-node" style="--d:3.2s" cx="402" cy="44" r="9"></circle>
+            <path class="gs-draw gs-wire ob-loop" pathLength="1" style="--d:3.6s;--t:1.2s" d="M402 55 C 402 92, 282 92, 282 55"></path>
+            <path class="gs-draw gs-wire ob-thread gs-accent" pathLength="1" style="--d:4.4s;--t:.9s" d="M414 44 C 450 44, 470 44, 505 44"></path>
+            <circle class="gs-pop gs-ring-mark" style="--d:5s" cx="518" cy="44" r="16"></circle>
+            <circle class="gs-pop gs-node gs-accent" style="--d:5.1s" cx="518" cy="44" r="9"></circle>
+          </svg>
         </div>
-        <button type="button" class="btn btn-quiet ob-skip">Skip</button>
+        <div class="dlg-body">
+          <div class="ob-doors">
+            <button type="button" class="ob-door" data-door="project">
+              <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg></span>
+              <span>Add your first project</span>
+              <span class="ob-door-arrow" aria-hidden="true">›</span>
+            </button>
+            <button type="button" class="ob-door" data-door="run">
+              <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M10 9l5 3-5 3z"></path></svg></span>
+              <span>Watch a run end to end, offline</span>
+              <span class="ob-door-arrow" aria-hidden="true">›</span>
+            </button>
+            <button type="button" class="ob-door" data-door="realRun">
+              <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z"></path><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path></svg></span>
+              <span>Run a real pipeline</span>
+              <span class="ob-door-arrow" aria-hidden="true">›</span>
+            </button>
+          </div>
+        </div>
+        <div class="dlg-foot">
+          <button type="button" class="btn btn-quiet ob-skip">Skip</button>
+        </div>
       </div>
     </div>
 
@@ -3015,115 +3213,139 @@
          tick is derived (the CLI resolves on PATH and is not signed out); "Check
          again" refetches it with a fresh sign-in check. -->
     <div id="claude-setup-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="claude-setup-title">
-      <div class="card ob-claude">
-        <div class="card-head">
-          <h2 id="claude-setup-title">Connect Claude Code</h2>
-          <button type="button" id="claude-setup-close" class="btn">Close</button>
+      <div class="card ob-claude dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="claude-setup-title">Connect Claude Code</h2>
+            <button type="button" id="claude-setup-close" class="btn">Close</button>
+          </div>
         </div>
-        <p class="ob-claude-lead">Worca drives the <strong>Claude Code</strong> CLI. Real runs need it on your <code>PATH</code>; mock runs need nothing.</p>
-        <pre class="ob-claude-cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
-        <p class="ob-claude-note">On native Windows the <a href="https://docs.anthropic.com/en/docs/claude-code/setup" target="_blank" rel="noopener noreferrer">native installer</a> works too. A binary elsewhere: set <code>WORCA_CLAUDE_BIN</code> to its full path and restart the UI.</p>
-        <p class="ob-claude-lead ob-claude-step"><strong>Then sign it in.</strong> Start it once in a terminal and type <code>/login</code>:</p>
-        <pre class="ob-claude-cmd"><code>claude</code></pre>
-        <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over. The CLI keeps its own sign-in.</p>
-        <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
-        <div class="stop-actions">
-          <button type="button" id="claude-setup-check" class="btn btn-primary">Check again</button>
+        <div class="dlg-body">
+          <p class="ob-claude-lead">Worca drives the <strong>Claude Code</strong> CLI. Real runs need it on your <code>PATH</code>; mock runs need nothing.</p>
+          <pre class="ob-claude-cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
+          <p class="ob-claude-note">On native Windows the <a href="https://docs.anthropic.com/en/docs/claude-code/setup" target="_blank" rel="noopener noreferrer">native installer</a> works too. A binary elsewhere: set <code>WORCA_CLAUDE_BIN</code> to its full path and restart the UI.</p>
+          <p class="ob-claude-lead ob-claude-step"><strong>Then sign it in.</strong> Start it once in a terminal and type <code>/login</code>:</p>
+          <pre class="ob-claude-cmd"><code>claude</code></pre>
+          <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over. The CLI keeps its own sign-in.</p>
+          <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
+        </div>
+        <div class="dlg-foot">
+          <div class="stop-actions">
+            <button type="button" id="claude-setup-check" class="btn btn-primary">Check again</button>
+          </div>
         </div>
       </div>
     </div>
 
     <div id="stop-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stop-title">
-      <div class="card stop-card">
-        <h2 id="stop-title" class="stop-title">Stop this run?</h2>
-        <p class="stop-body">A stopped run can't be resumed. Its work so far stays on its branch.</p>
-        <div class="stop-ident"><div class="stop-ident-title"></div></div>
-        <div class="stop-actions" data-card-actions>
-          <button type="button" class="btn stop-cancel">Keep running</button>
-          <button type="button" class="btn btn-danger stop-confirm">Stop run</button>
+      <div class="card stop-card dlg">
+        <div class="dlg-head">
+          <h2 id="stop-title" class="stop-title">Stop this run?</h2>
+          <p class="stop-body">A stopped run can't be resumed. Its work so far stays on its branch.</p>
+        </div>
+        <div class="dlg-body">
+          <div class="stop-ident"><div class="stop-ident-title"></div></div>
+        </div>
+        <div class="dlg-foot">
+          <div class="stop-actions" data-card-actions>
+            <button type="button" class="btn stop-cancel">Keep running</button>
+            <button type="button" class="btn btn-danger stop-confirm">Stop run</button>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- ===== Add-project modal ===== -->
     <div id="project-add-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-add-title">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="proj-add-title">Add project</h2>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="proj-add-title">Add project</h2>
+          </div>
+          <!-- Three ways in: New (a name), Folder, Clone from URL. New makes <projects root>/<folder name>
+               (POST /api/projects/create, a dry run on every keystroke fills Location); Folder registers a
+               folder already on this machine (GET /api/projects/probe fills the detect row); Clone from URL
+               clones into the projects folder on the server (POST /api/projects/clone). Opens on New. -->
+          <div class="md-tabs tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
+            <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-new" data-mode="new" aria-selected="true" aria-controls="proj-add-new-pane">New</button>
+            <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="false" aria-controls="proj-add-folder-pane">Folder</button>
+            <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-clone" data-needs-git data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
+          </div>
         </div>
-        <!-- Three ways in: New (a name), Folder, Clone from URL. New makes <projects root>/<folder name>
-             (POST /api/projects/create, a dry run on every keystroke fills Location); Folder registers a
-             folder already on this machine (GET /api/projects/probe fills the detect row); Clone from URL
-             clones into the projects folder on the server (POST /api/projects/clone). Opens on New. -->
-        <div class="md-tabs tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
-          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-new" data-mode="new" aria-selected="true" aria-controls="proj-add-new-pane">New</button>
-          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="false" aria-controls="proj-add-folder-pane">Folder</button>
-          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-clone" data-needs-git data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
-        </div>
-        <div class="field" id="proj-add-name-field">
-          <label for="proj-add-name">Name</label>
-          <input id="proj-add-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="Project name" />
-        </div>
-        <div id="proj-add-new-pane" role="tabpanel" aria-labelledby="proj-add-tab-new">
-          <div class="field">
-            <label for="proj-add-location">Location</label>
-            <div class="proj-add-loc">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-              <input id="proj-add-location" class="input mono" type="text" readonly spellcheck="false" />
+        <div class="dlg-body">
+          <div class="field" id="proj-add-name-field">
+            <label for="proj-add-name">Name</label>
+            <input id="proj-add-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="Project name" />
+          </div>
+          <div id="proj-add-new-pane" role="tabpanel" aria-labelledby="proj-add-tab-new">
+            <div class="field">
+              <label for="proj-add-location">Location</label>
+              <div class="proj-add-loc">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <input id="proj-add-location" class="input mono" type="text" readonly spellcheck="false" />
+              </div>
+            </div>
+          </div>
+          <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder" hidden>
+            <div class="field">
+              <label for="proj-add-path">Folder</label>
+              <div class="path-row">
+                <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" aria-describedby="proj-add-detect" />
+                <button type="button" id="proj-add-browse" class="btn btn-sm" title="Pick the project folder">Choose folder&hellip;</button>
+                <button type="button" id="proj-add-browse-many" class="btn btn-sm" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+              </div>
+              <div class="proj-add-detect" id="proj-add-detect" role="status" aria-live="polite" hidden></div>
+              <button type="button" class="link-btn proj-add-root" id="proj-add-root" hidden></button>
+            </div>
+          </div>
+          <label class="switch-row proj-add-git" id="proj-add-git-row" data-needs-git hidden><input id="proj-add-git" class="sw-input" type="checkbox" role="switch"><span class="switch"></span><span class="txt">Use git</span></label>
+          <div id="proj-add-clone-pane" role="tabpanel" aria-labelledby="proj-add-tab-clone" hidden>
+            <div class="field">
+              <label for="proj-clone-url">Repository URL</label>
+              <input id="proj-clone-url" class="input" type="url" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo" />
+            </div>
+            <div class="field">
+              <label for="proj-clone-branch">Branch <span class="opt">(optional)</span></label>
+              <input id="proj-clone-branch" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository's default branch" />
+            </div>
+            <div class="field">
+              <label for="proj-clone-name">Folder name <span class="opt">(optional)</span></label>
+              <input id="proj-clone-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository name" />
             </div>
           </div>
         </div>
-        <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder" hidden>
-          <div class="field">
-            <label for="proj-add-path">Folder</label>
-            <div class="path-row">
-              <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" aria-describedby="proj-add-detect" />
-              <button type="button" id="proj-add-browse" class="btn btn-sm" title="Pick the project folder">Choose folder&hellip;</button>
-              <button type="button" id="proj-add-browse-many" class="btn btn-sm" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
-            </div>
-            <div class="proj-add-detect" id="proj-add-detect" role="status" aria-live="polite" hidden></div>
-            <button type="button" class="link-btn proj-add-root" id="proj-add-root" hidden></button>
+        <div class="dlg-foot">
+          <small class="hint" id="proj-add-msg" aria-live="polite"></small>
+          <div class="confirm-actions">
+            <button type="button" id="proj-add-cancel" class="btn">Cancel</button>
+            <button type="button" id="proj-add-save" class="btn btn-primary">Add project</button>
           </div>
-        </div>
-        <label class="switch-row proj-add-git" id="proj-add-git-row" data-needs-git hidden><input id="proj-add-git" class="sw-input" type="checkbox" role="switch"><span class="switch"></span><span class="txt">Use git</span></label>
-        <div id="proj-add-clone-pane" role="tabpanel" aria-labelledby="proj-add-tab-clone" hidden>
-          <div class="field">
-            <label for="proj-clone-url">Repository URL</label>
-            <input id="proj-clone-url" class="input" type="url" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo" />
-          </div>
-          <div class="field">
-            <label for="proj-clone-branch">Branch <span class="opt">(optional)</span></label>
-            <input id="proj-clone-branch" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository's default branch" />
-          </div>
-          <div class="field">
-            <label for="proj-clone-name">Folder name <span class="opt">(optional)</span></label>
-            <input id="proj-clone-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository name" />
-          </div>
-        </div>
-        <small class="hint" id="proj-add-msg" aria-live="polite"></small>
-        <div class="confirm-actions">
-          <button type="button" id="proj-add-cancel" class="btn">Cancel</button>
-          <button type="button" id="proj-add-save" class="btn btn-primary">Add project</button>
         </div>
       </div>
     </div>
 
     <!-- ===== Use git / Link remote modal (POST /api/projects/:key/git-init) ===== -->
     <div id="project-git-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-git-title" aria-describedby="proj-git-lead">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="proj-git-title">Use git for this project</h2>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="proj-git-title">Use git for this project</h2>
+          </div>
         </div>
-        <p class="confirm-message" id="proj-git-lead"></p>
-        <div class="field">
-          <!-- type=text: type=url would mark the scp form git@host:owner/repo.git invalid. -->
-          <label for="proj-git-url">Remote URL <span class="opt" id="proj-git-url-opt">(optional)</span></label>
-          <input id="proj-git-url" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git" />
+        <div class="dlg-body">
+          <p class="confirm-message" id="proj-git-lead"></p>
+          <div class="field">
+            <!-- type=text: type=url would mark the scp form git@host:owner/repo.git invalid. -->
+            <label for="proj-git-url">Remote URL <span class="opt" id="proj-git-url-opt">(optional)</span></label>
+            <input id="proj-git-url" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git" />
+          </div>
         </div>
-        <small class="hint" id="proj-git-msg" aria-live="polite"></small>
-        <div class="confirm-actions">
-          <button type="button" id="proj-git-cancel" class="btn">Cancel</button>
-          <button type="button" id="proj-git-save" class="btn btn-primary">Use git</button>
+        <div class="dlg-foot">
+          <small class="hint" id="proj-git-msg" aria-live="polite"></small>
+          <div class="confirm-actions">
+            <button type="button" id="proj-git-cancel" class="btn">Cancel</button>
+            <button type="button" id="proj-git-save" class="btn btn-primary">Use git</button>
+          </div>
         </div>
       </div>
     </div>
@@ -3133,29 +3355,41 @@
          path, and after Add its outcome. POST /api/projects/bulk adds the valid rows; a skipped
          row keeps its reason until it is renamed and added again, or the dialog is closed. -->
     <div id="project-bulk-modal" class="viewer-modal confirm-modal project-bulk-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-bulk-title">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="proj-bulk-title">Add projects</h2>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="proj-bulk-title">Add projects</h2>
+          </div>
         </div>
-        <p class="hint">Untick a folder to leave it out. Names default to the folder name.</p>
-        <ul id="proj-bulk-list" class="proj-bulk-list"></ul>
-        <small class="hint" id="proj-bulk-msg" aria-live="polite"></small>
-        <div class="confirm-actions" data-card-actions>
-          <button type="button" id="proj-bulk-close" class="btn">Cancel</button>
-          <button type="button" id="proj-bulk-save" class="btn btn-primary">Add projects</button>
+        <div class="dlg-body">
+          <p class="hint">Untick a folder to leave it out. Names default to the folder name.</p>
+          <ul id="proj-bulk-list" class="proj-bulk-list"></ul>
+        </div>
+        <div class="dlg-foot">
+          <small class="hint" id="proj-bulk-msg" aria-live="polite"></small>
+          <div class="confirm-actions" data-card-actions>
+            <button type="button" id="proj-bulk-close" class="btn">Cancel</button>
+            <button type="button" id="proj-bulk-save" class="btn btn-primary">Add projects</button>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- ===== Plugin modal (install consent / update preview / settings / doctor / 409) ===== -->
     <div id="plugin-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
-      <div class="card">
-        <div class="card-head">
-          <h2 id="plugin-modal-title">Plugin</h2>
-          <button type="button" id="plugin-modal-close" class="btn">Close</button>
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="plugin-modal-title">Plugin</h2>
+            <button type="button" id="plugin-modal-close" class="btn">Close</button>
+          </div>
         </div>
-        <div id="plugin-modal-body"></div>
-        <div class="confirm-actions" id="plugin-modal-actions"></div>
+        <div class="dlg-body">
+          <div id="plugin-modal-body"></div>
+        </div>
+        <div class="dlg-foot">
+          <div class="confirm-actions" id="plugin-modal-actions"></div>
+        </div>
       </div>
     </div>
 

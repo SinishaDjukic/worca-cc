@@ -31,7 +31,7 @@ export const SIDEBAR_CLASSES = Object.freeze([
   'ask-input', 'ask-composer-msg', 'ask-composer-row', 'ask-composer-spacer', 'ask-send', 'ask-stop',
   'wx-app', 'wx-select', 'wx-page-chip', 'wx-sends', 'wx-card', 'wx-card-t', 'wx-card-k', 'wx-state', 'wx-state-t', 'wx-state-k', 'wx-code',
   'wx-state-actions', 'wx-state-body', 'wx-settings', 'wf-disc', 'wf-disc-body', 'field', 'hint', 'wx-settings-body', 'wx-settings-row',
-  'btn', 'btn-sm', 'btn-primary', 'btn-quiet', 'btn-icon', 'ic', 'chat-head-btn', 'chat-new-btn',
+  'btn', 'btn-sm', 'btn-primary', 'btn-quiet', 'btn-icon', 'ic', 'chat-head-btn', 'chat-new-plus',
   // Ask's composer controls and popovers (the sidebar's own composer, D-composer). Emitted but unlisted because no rule
   // targets them on their own (they are styled through their parent): ask-model-btn-label, ask-scope-item,
   // ask-effort-row, ask-effort-item, ask-pane-back.
@@ -181,14 +181,15 @@ function checkMark(doc) {
   return n;
 }
 
-/** ask-panel.mjs newChatButton: "+ New chat", a labelled small quiet button (.btn .btn-sm .btn-quiet) with a
- *  decorative plus; the visible label is its name. The markup test pins it to the button the Ask panel renders. */
+/** ask-panel.mjs newChatPlus: the Chat head's New chat, a quiet icon button (.btn-icon) with a plus. Named "New chat"
+ *  (the panel adds its ⌥⌘N hint; the sidebar has no such key). The markup test pins it to the button the Ask panel renders. */
 export function buildNewChatButton(doc, className, onClick) {
-  const b = make(doc, 'button', `btn btn-sm btn-quiet chat-new-btn ${className}`);
+  const b = make(doc, 'button', `btn btn-quiet btn-icon ${className} chat-new-plus`);
   b.type = 'button';
+  b.title = 'New chat';
+  b.setAttribute('aria-label', 'New chat');
   b.setAttribute('data-ask-new-btn', '');
-  b.appendChild(svgIcon(doc, NEW_CHAT_ICON_PATH, 14, 2));
-  b.appendChild(make(doc, 'span', null, 'New chat'));
+  b.appendChild(svgIcon(doc, NEW_CHAT_ICON_PATH, 16, 2));
   b.addEventListener('click', onClick);
   return b;
 }

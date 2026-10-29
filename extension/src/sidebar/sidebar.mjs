@@ -632,7 +632,7 @@ function mountPaired() {
   const threads = V.make(doc, 'select', 'wx-select');
   threads.setAttribute('aria-label', 'Chat');
   threads.onchange = () => { if (threads.value) { st.scopeChosen = false; void openThread(threads.value).catch(reportLoadError); } else newChat(); };
-  // worca's Chat head button (ask-panel.mjs newChatButton('chat-head-btn')): "+ New chat", right after the chat list.
+  // worca's Chat head New chat (ask-panel.mjs newChatPlus): the + right after the chat list.
   const newBtn = V.buildNewChatButton(doc, 'chat-head-btn', () => newChat());
   // Settings (D10): the same disclosure as the state screens, revealed under the head.
   const settingsBtn = V.buildIconButton(doc, 'btn btn-quiet btn-icon chat-head-btn', 'Settings', V.ICON.settings, () => {

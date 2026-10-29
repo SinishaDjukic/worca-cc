@@ -358,18 +358,22 @@ export function renderOverviewStrip(model, { doc, handlers = {} } = {}) {
   return row;
 }
 
-/** Ship It "Try it first": Check out, or Open :port / actions / Editor / Stop. Never blocks the dialog. */
-export function renderShipItStrip(model, { doc, handlers = {} } = {}) {
-  if (!model) return null;
+/** What the Create PR dialog's "Try it first" shows: 'checkout' (the footer button), 'strip' (the branch is checked
+ *  out: Open :port, actions, Stop) or null (no branch, or the run is not finished). */
+export function shipItTryState(model) {
+  if (!model || model.finished === false) return null;
   const m = (model.members || []).find((x) => x.branch);
-  if (!m || model.finished === false) return null;
+  if (!m) return null;
+  return m.checkout ? 'strip' : 'checkout';
+}
+
+/** The Create PR dialog's "Try it first" strip once the branch is checked out: Open :port / actions / Editor / Stop.
+ *  Never blocks the dialog. */
+export function renderShipItStrip(model, { doc, handlers = {} } = {}) {
+  if (shipItTryState(model) !== 'strip') return null;
+  const m = model.members.find((x) => x.branch);
   const row = h(doc, 'div', 'act-row act-shipit');
   row.append(h(doc, 'span', 'act-label', 'Try it first'));
-  if (!m.checkout) {
-    // Secondary: the dialog's one primary is Create pull request.
-    row.append(btn(doc, 'Check out', null, () => handlers.onCheckout?.(model.workspace ? undefined : [m.projectKey]), 'Put this run\'s branch in a folder of its own, to try it before you open the PR'));
-    return row;
-  }
   const mine = instancesOf(model, m.projectKey);
   const live = activeService(mine);
   if (live) {

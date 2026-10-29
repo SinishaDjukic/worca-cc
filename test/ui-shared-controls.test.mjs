@@ -150,6 +150,7 @@ const JS_CHECKBOX_OK = [
   ['app.js', 'wiz-proj-cb', 'picks projects'], ['app.js', 'wiz-import-cb', 'picks imports'], ['app.js', 'wd-add-row', 'picks rows'],
   ['app.js', 'pb-include', 'picks items'], ['app.js', 'shipit-repo-pick', 'picks repos'], ['app.js', 'publish-pick', 'picks items'],
   ['app.js', 'cb.value = opt', 'picks chips'],
+  ['memory-view.mjs', 'mem-seed-all', 'picks: select every note to share'], ['memory-view.mjs', 'mem-seed-check', 'picks notes to share'],
   ['marketplace/browse.mjs', 'mk-hide-installed', 'Hide installed: an opt-in filter next to the list'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
@@ -342,6 +343,55 @@ test('slice 3: the View PR ▾ menu drops under its split, and the Watch row put
   assert.equal(computed(sw, 'flex-direction'), 'row', 'glyph, text, switch on one line');
   assert.equal(computed(sw.querySelector('.wfv-menu-l'), 'flex'), '1', 'the text takes the room, the switch sits on the right');
   assert.equal(computed(m.el.querySelector('.wfv-menu-item:not(.sw-item)'), 'flex-direction'), 'row');
+  closeMenus();
+});
+
+test('openMenu: a segmented item is one .seg group under its head; ←/→ move inside, ↑/↓ treat it as one stop, a pick keeps the menu open', async () => {
+  const { openMenu, closeMenus } = await import('../ui/public/workflows/menu.mjs');
+  const { window } = new JSDOM('<!doctype html><body><button id="a">View</button></body>');
+  const doc = window.document;
+  const picks = [];
+  const m = openMenu({ doc, anchor: doc.getElementById('a'), items: [
+    { label: 'Select' },
+    { segmented: true, label: 'Group by', value: 'none', onSelect: (id) => picks.push(id),
+      options: [{ id: 'none', label: 'None' }, { id: 'project', label: 'Project' }, { id: 'date', label: 'Date', title: 'Today · Recent · Older' }] },
+    { label: 'Keyboard shortcuts', hint: '?' },
+  ] });
+  const g = m.el.querySelector('.seg.wfv-seg[role="group"]');
+  assert.equal(doc.getElementById(g.getAttribute('aria-labelledby')).textContent, 'Group by');
+  const segs = [...g.querySelectorAll('button[role="menuitemradio"]')];
+  assert.deepEqual(segs.map((b) => [b.textContent, b.getAttribute('aria-checked')]), [['None', 'true'], ['Project', 'false'], ['Date', 'false']]);
+  assert.equal(segs[2].title, 'Today · Recent · Older');
+  const key = (k) => doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  assert.equal(doc.activeElement.textContent, 'Select');
+  key('ArrowDown'); assert.equal(doc.activeElement, segs[0], '↓ lands on the checked segment');
+  key('ArrowRight'); assert.equal(doc.activeElement, segs[1]);
+  key('ArrowLeft'); key('ArrowLeft'); assert.equal(doc.activeElement, segs[2], '← wraps');
+  key('ArrowDown'); assert.equal(doc.activeElement.textContent, 'Keyboard shortcuts?');
+  key('ArrowUp'); assert.equal(doc.activeElement, segs[0], '↑ comes back to the checked segment');
+  segs[1].click();
+  assert.deepEqual(picks, ['project']);
+  assert.ok(m.el.isConnected, 'a segment pick keeps the menu open');
+  assert.deepEqual(segs.map((b) => b.getAttribute('aria-checked')), ['false', 'true', 'false']);
+  segs[1].click();
+  assert.deepEqual(picks, ['project'], 'the checked segment again does nothing');
+  closeMenus();
+});
+
+test('openMenu: a radio row is ✓ slot | label | count in tabular figures; a 0 count is dimmed', async () => {
+  const { openMenu, closeMenus } = await import('../ui/public/workflows/menu.mjs');
+  const doc = new JSDOM('<!doctype html><body><button id="a">View</button></body>').window.document;
+  const m = openMenu({ doc, anchor: doc.getElementById('a'), items: [
+    { label: 'All', hint: '104', checked: true }, { label: 'Needs you', hint: '0', checked: false }, { label: 'Archived', checked: false }] });
+  const rows = [...m.el.querySelectorAll('.wfv-menu-item[role="menuitemradio"]')];
+  assert.deepEqual(rows.map((r) => [...r.children].map((c) => c.className)),
+    [['wfv-menu-l', 'wfv-menu-hint'], ['wfv-menu-l', 'wfv-menu-hint is-zero'], ['wfv-menu-l']]);
+  assert.equal(computed(rows[0], 'display'), 'grid');
+  assert.equal(computed(rows[0], 'grid-template-columns'), '12px minmax(0,1fr) auto');
+  const hint = rows[0].querySelector('.wfv-menu-hint');
+  assert.equal(computed(hint, 'font-variant-numeric'), 'tabular-nums');
+  assert.equal(computed(hint, 'text-align'), 'right');
+  assert.equal(computed(rows[1].querySelector('.wfv-menu-hint'), 'color'), 'var(--ink-3)');
   closeMenus();
 });
 

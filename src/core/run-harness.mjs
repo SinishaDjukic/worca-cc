@@ -20,7 +20,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, basename, dirname, resolve, sep, relative } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { readFile, writeFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
+import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
@@ -36,7 +36,7 @@ import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
   retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
-import { resolveTaskInput, retryWriteback } from './sources.mjs';
+import { resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
@@ -54,8 +54,11 @@ import {
   memoryCaps,
 } from './settings.mjs';
 import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
+import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
-import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
+import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
+import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
+import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText, memoryLoadPlans, loadFilteredDirs } from './memory-team.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -64,6 +67,8 @@ import {
 } from './run-manifest.mjs';
 import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE, discoverProjectSettings, skillsRelFor, realDirsBelow } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
+import { createTelemetryRecorder, TELEMETRY_FILE } from './telemetry/recorder.mjs';
+import { dbPath } from './db.mjs';
 import {
   detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction,
   probeClaudeCapabilities, explainUnspawnableClaude,
@@ -93,7 +98,7 @@ import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt, untilText } from './recoverable-error.mjs';
 import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
-import { CURSOR_PROJECT_FILES, cursorOwns, excludeLine } from './engines/cursor.mjs';
+import { ENGINE_PROJECT_FILES, ALL_PROJECT_FILES, worcaOwnsProjectFile, excludeLine } from './engines/project-files.mjs';
 import { helperEngineFor } from './model-env.mjs';
 import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
 import { hostGuardEnabled } from './host-guard.mjs';
@@ -123,7 +128,7 @@ import { readSettings as readRawSettings, userTagDimensions } from './settings.m
 import { readRunTags } from './run-tags-store.mjs';
 import { missingRequired } from '../shared/tag-dimensions.mjs';
 import { byActor } from './identity.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { isWorkspaceScanWorkflow, WORKSPACE_RESYNTH_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
@@ -139,8 +144,9 @@ import { skillMdFields } from './skills-registry/inspect.mjs';
 // without it (no Team-skill deviations until P5 lands).
 import * as policyEffective from './policy/effective.mjs';
 import { createRedactor } from './redact.mjs';
-import { finalizeWorkspaceScan } from './workspace-scan-run.mjs';
-import { readWorkspaceMap } from './workspaces.mjs';
+import { finalizeWorkspaceScan, WORKSPACE_GRAPH_FILE } from './workspace-scan-run.mjs';
+import { readWorkspaceMap, resynthBlocker } from './workspaces.mjs';
+import { STORED_MAP_FILE } from './workspace-map/join.mjs';
 import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 // Night mode (src/core/night/*): a decider answers the open question while the user is away.
 import { effectiveNightConfig } from './night/effective.mjs';
@@ -404,11 +410,18 @@ function subAgentCostModel(inputModel, parentModel) {
   return parentModel ?? null;
 }
 
-/** One `→ Tool target` line per call of a normalized `tool` event. */
+// Max chars for a Bash call's own `description` (#911 slice 3, flag commandSummaries): the run log's
+// Summaries mode shows it in place of the command. One line in the Logs pane; the command keeps its 80.
+const BASH_DESC_MAX = 120;
+
+/** One `→ Tool target` line per call of a normalized `tool` event, plus the Bash call's own
+ *  description as `desc` when the agent gave one (Claude Code does; Codex and Cursor never do). */
 function describeToolUses(calls, projectDir) {
   return calls.filter((c) => typeof c.name === 'string').map((c) => {
     const target = toolTarget(c.name, c.input, projectDir);
-    return target ? `${c.name} ${target}` : c.name;
+    const text = target ? `${c.name} ${target}` : c.name;
+    const d = c.name === 'Bash' && typeof c.input?.description === 'string' ? clip(c.input.description, BASH_DESC_MAX) : '';
+    return d ? { text, desc: d } : { text };
   });
 }
 
@@ -444,6 +457,8 @@ function describeApiRetry(e) {
 
 /** The tools whose `file_path` can be a memory write. */
 const MEMORY_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+// Memory usage (memory-usage.mjs): a Read of a note file is a `read`. Cursor and Copilot reads normalise to `Read` too.
+const MEMORY_READ_TOOLS = new Set(['Read']);
 
 /** The human text of a tool result: a string, or the FIRST text block; `<tool_use_error>`
  *  tags stripped (the CLI wraps some errors in them). '' when there is none. */
@@ -907,8 +922,8 @@ export class RunHarness extends EventEmitter {
     this.workflowId = this.opts.workflowId || 'wf_default';
     // The Workspace scan reads, compares and saves a WORKSPACE: refuse it on any other target
     // (the CLI's --workflow, an Ask card) before a pipeline exists.
-    if (this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !this.isWorkspace) {
-      throw new Error('the Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
+    if (isWorkspaceScanWorkflow(this.workflowId) && !this.isWorkspace) {
+      throw new Error('a Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
     }
     // Which guardrail set governs this run (guardrails are selected PER RUN;
     // there is no per-project guardrails dimension). 'permissive' = the empty
@@ -1037,6 +1052,9 @@ export class RunHarness extends EventEmitter {
     // last: Map<key.id, { ...key, ok, reason }> }. Filled by _trackMemoryCalls/_trackMemoryResults from every tool event,
     // drained by _takeFailedMemoryWrites at sync time.
     this._memoryWrites = new Map();
+    // Memory usage (memory-usage.mjs): Map<executionId, tally> of the note reads seen in tool events — a Set.add per
+    // event, no I/O; merged into <worcaHome>/memory-usage at that execution's sync-back.
+    this._memoryUsage = new Map();
     this._ledgerSeq = 0;         // monotonic: two ledger writes must never share a temp name
     this._pendingAudits = [];    // audit lines an engine hook queued before the pipeline dir existed (_resolveTopology runs first); run() appends them right after "Pipeline created"
     this.toolInstruction = '';
@@ -1049,6 +1067,7 @@ export class RunHarness extends EventEmitter {
     this.extrasFiles = []; // attached files copied into <pipeline>/extras (set in _dispatch)
     this.pipeline = null; // { id, dir, promptText }
     this.logWriter = createRunLogWriter(); // buffered NDJSON persistence of the `log` stream
+    this.telemetry = null; // Run telemetry recorder (Labs), set by _bindTelemetry while the flag is on
     this.baseName = null;
     this.planDatePrefix = null; // DD-MM-YY captured once so -vN versions share it
 
@@ -1483,7 +1502,7 @@ export class RunHarness extends EventEmitter {
       this._noteLocalTagDimensions();
       // The engine's own run-start check (binary, sign-in) and the project deny rules
       // it could not enforce, then the gate's refusals and audit lines.
-      this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false);
+      this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false, { guardrails: this.guardrails });
       await this._engineMcpGate();
       this._pendingAudits.push(...this._engineGate());
       this._log(
@@ -1508,6 +1527,16 @@ export class RunHarness extends EventEmitter {
             ? { type: 'markdown', promptFile: this.opts.promptFile }
             : { type: 'prompt', prompt: '' });
       const input = await resolveTaskInput(source, { projectDir: this.projectDir });
+      // A tracker task titles its run "[TECH-104] <task title>": known now, it needs no AI title call (which a usage
+      // limit would fail, leaving the "<plugin>: <id>" placeholder). A title someone gave the run is kept.
+      const ticketTitle = source.type === 'plugin' && !this.opts.titleLocked
+        && (!this.opts.title || this.opts.title === sourcePlaceholderTitle(source))
+        ? ticketRunTitle(input.sourceMeta) : null;
+      if (ticketTitle) {
+        this.opts.title = ticketTitle;
+        this.opts.titleLocked = true;
+        this.state.title = ticketTitle;
+      }
       this.pipeline = await createPipeline(this.projectDir, {
         promptText: input.promptText,
         // ?? keeps the legacy both-set corner byte-identical: inline prompt wins the
@@ -1539,7 +1568,10 @@ export class RunHarness extends EventEmitter {
       });
       this.state.id = this.pipeline.id;
       this.state.pipelineDir = this.pipeline.dir;
+      // Replace the placeholder the client was shown at start with the task's title.
+      if (ticketTitle) this._emit('title', { title: ticketTitle, provisional: false, pipelineId: this.pipeline.id });
       this.logWriter.bind(this.pipeline.dir);                  // start persisting (flushes buffered preflight lines)
+      this._bindTelemetry(this.pipeline.dir);
       recordArtifact(this.pipeline.id, RUN_LOG_KIND, RUN_LOG_FILE); // index like prompt.md (sync; INSERT OR IGNORE)
       // A11(b): carry the resolved prompt on the in-memory state too (createPipeline
       // already INSERTs prompt and the curated UPSERT excludes it, so persistence is
@@ -1575,6 +1607,10 @@ export class RunHarness extends EventEmitter {
         }));
         this.state.checkpointRefs = {};
         this.state.branches = {};
+        // wf_workspace_resynth: freeze the stored map now — AFTER the workspace fields above, so a terminal
+        // refusal persists a row that still names its workspace (toPipelineRow writes workspace_meta only
+        // when state.target === 'workspace', and the upsert overwrites it).
+        await this._freezeStoredMap();
       }
       if (!this.state.title) this.state.title = basename(this.pipeline.dir);
       // The title set above (firstMeaningfulLine(prompt) or the dir basename) is
@@ -1708,7 +1744,7 @@ export class RunHarness extends EventEmitter {
       // mock included. AFTER 3e: the assembly rewrites injectedPaths and the mount registers
       // itself into that map.
       await this._mountMemory();
-      await this._registerEngineConfig();   // Cursor's .cursor files join the §8.8 set (both modes)
+      await this._registerEngineConfig();   // an engine's checkout config files (Cursor, Gemini CLI) join the §8.8 set (both modes)
       this._checkAbort();
       // D7: every setup step above is done — a pause from here on has nothing to
       // replay, so _completePaused strips any `setupIncomplete` stamp instead.
@@ -1726,7 +1762,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: null });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
-      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
+      await this._finalizeWorkspaceScan();   // Workspace scan workflows only (wf_workspace_scan, wf_workspace_resynth): create/update the workspace (D6)
 
       // 9) Done.
       this._setStatus('done');
@@ -1816,6 +1852,7 @@ export class RunHarness extends EventEmitter {
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
+      await this._closeTelemetry();
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
   }
@@ -1913,6 +1950,7 @@ export class RunHarness extends EventEmitter {
       this._startHeartbeat();
       this._nightSyncCounts();              // night counters continue from the DB, not from 0
       this.logWriter.bind(rp.pipelineDir);
+      this._bindTelemetry(rp.pipelineDir);
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
       if (this._staleResumeModel) {
         this._log('orchestrator', 'warn', this._staleResumeOwner
@@ -1962,6 +2000,10 @@ export class RunHarness extends EventEmitter {
 
       /** The persisted manifest, read once on a detached resume (re-assembly below). */
       let resumeManifest = await this._reattachCheckouts(row, rehydrated);
+      // wf_workspace_resynth paused BEFORE its start-time freeze (a user pause during setup keeps even a
+      // terminal setup error as a pause — run()'s catch): freeze now, or end the run (terminal). A no-op
+      // once stored-map.json exists, so an ordinary resume reuses the frozen copy.
+      await this._freezeStoredMap();
 
       // ── prompts/registry (cheap, local) ──
       this.registry = loadAgentRegistry(this.agentsDir);
@@ -2047,7 +2089,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
-      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
+      await this._finalizeWorkspaceScan();   // Workspace scan workflows only (wf_workspace_scan, wf_workspace_resynth): create/update the workspace (D6)
 
       this._setStatus('done');
       this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
@@ -2122,6 +2164,7 @@ export class RunHarness extends EventEmitter {
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
+      await this._closeTelemetry();
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
   }
@@ -2385,7 +2428,7 @@ export class RunHarness extends EventEmitter {
         await this._reattachMemoryForStop();
         // Not inside _reattachMemoryForStop: it returns early when memory never mounted. A stop never fails on it.
         try { await this._registerEngineConfig(); }
-        catch (err) { this._log('orchestrator', 'warn', `stop: Cursor's .cursor config was not registered for removal (${err.message})`); }
+        catch (err) { this._log('orchestrator', 'warn', `stop: the engine's checkout config was not registered for removal (${err.message})`); }
       } catch (err) {
         // The stop stands — the row is already claimed. Settle with what is known (identity and
         // the pipeline dir at least), so the stopped path still persists, audits and emits done.
@@ -2404,6 +2447,7 @@ export class RunHarness extends EventEmitter {
         await this._teardownRunRoot().catch(() => {});
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));   // #620
       }
+      await this._closeTelemetry();
       await this.logWriter.close().catch(() => {}); // last, to capture the teardown's log lines
     }
   }
@@ -2430,6 +2474,7 @@ export class RunHarness extends EventEmitter {
     this.state.pipelineDir = rp.pipelineDir;
     this._nightSyncCounts();                   // the Away mode counters the stopped frame reports
     this.logWriter.bind(rp.pipelineDir);
+    this._bindTelemetry(rp.pipelineDir);
     recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
     const iv = rp.interventions && typeof rp.interventions === 'object' ? rp.interventions : {};
     const pausedAt = Date.parse(iv.pausedAt || row.updated_at);
@@ -3318,7 +3363,7 @@ export class RunHarness extends EventEmitter {
     const set = (await readGuardrailSet(id)) || (await readGuardrailSet('permissive'));
     const rules = guardrailsToPermissionRules(unionGuardrails([set.settings]));
     const honor = set.settings.honorProjectSettings !== false;
-    this._engineProjectRules = await this._engineChecks(() => honor, { quiet });
+    this._engineProjectRules = await this._engineChecks(() => honor, { quiet, guardrails: unionGuardrails([set.settings]) });
     return { id, rules, projectRules: this._engineProjectRules };
   }
 
@@ -3444,20 +3489,38 @@ export class RunHarness extends EventEmitter {
   async _codexNeedsSignIn() {
     try {
       if (this.workflowId === AUTO_WORKFLOW_ID) return true;
-      const own = (m) => modelForEngine(m || undefined, 'codex', { projectDir: this.projectDir }) || null;
-      const runModel = own(this.claude.model) || CODEX_DEFAULT_MODEL;
-      const steps = this.stepModels || await resolveStepModels(this.projectDir, this.claude.model, 'codex');
-      const named = [
-        ...Object.values(steps || {}).map((s) => s?.model),
-        ...manifestModels(this.state?.stepper || []),
-        ...['title', 'overview', 'prDescription', 'memoryDefrag'].map((job) => this._utilitySlot(job).model || CODEX_DEFAULT_MODEL),
-        effectiveNightConfig(this.projectDir).config?.deciderModel,
-      ];
-      const models = new Set([runModel, ...named.filter(Boolean).map((m) => own(m) || runModel)]);
-      return ![...models].every((m) => hasCodexEndpoint(m));
+      return ![...await this._engineSpawnModels('codex', CODEX_DEFAULT_MODEL)].every((m) => hasCodexEndpoint(m));
     } catch {
       return true;
     }
+  }
+
+  /**
+   * Whether some spawn of this OpenCode run names no model (opencodePreflight `defaultModel`), so OpenCode would pick
+   * its own default, possibly a free OpenCode Zen model. Never throws: anything unreadable counts as "some spawn does".
+   */
+  async _opencodeOnDefaultModel() {
+    try {
+      return (await this._engineSpawnModels('opencode', null)).has(null);
+    } catch {
+      return true;
+    }
+  }
+
+  /** The models this run's spawns on `engine` name, each in the engine's own id: the run's model, each step's and
+   *  workflow node's (one not on the engine runs the run's), the helper jobs' when they run on this engine, and the
+   *  Away-mode decider's. `fallback` stands for a spawn that names none. */
+  async _engineSpawnModels(engine, fallback) {
+    const own = (m) => modelForEngine(m || undefined, engine, { projectDir: this.projectDir }) || null;
+    const runModel = own(this.claude.model) || fallback;
+    const steps = this.stepModels || await resolveStepModels(this.projectDir, this.claude.model, engine);
+    const named = [
+      ...Object.values(steps || {}).map((s) => s?.model),
+      ...manifestModels(this.state?.stepper || []),
+      ...(this._helperEngine() === engine ? ['title', 'overview', 'prDescription', 'memoryDefrag'].map((job) => this._utilitySlot(job).model || fallback) : []),
+      effectiveNightConfig(this.projectDir).config?.deciderModel,
+    ];
+    return new Set([runModel, ...named.filter(Boolean).map((m) => own(m) || runModel)]);
   }
 
   /**
@@ -3467,16 +3530,20 @@ export class RunHarness extends EventEmitter {
    * `.claude/settings.json` (run-context.mjs#discoverProjectSettings, the file Claude
    * Code reads itself). A preflight refusal throws. Returns the merged deny rules, or null.
    * @param {(member:object)=>boolean} honors whether a member's project settings are honored
-   * @param {{quiet?:boolean}} [opts] quiet: skip the preflight's warning line (a
-   *   check made before the run exists; run() checks again and warns then)
+   * @param {{quiet?:boolean, guardrails?:object}} [opts] quiet: skip the preflight's warning line (a
+   *   check made before the run exists; run() checks again and warns then); guardrails: the run's set, whose env
+   *   scrub the OpenCode check reads its credentials through
    * @returns {Promise<{deny:string[]}|null>}
    */
-  async _engineChecks(honors, { quiet = false } = {}) {
+  async _engineChecks(honors, { quiet = false, guardrails = null } = {}) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude') return null;
     const adapter = getEngine(name);
     if (!this.claude.mock && typeof adapter.preflight === 'function') {
-      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}), ...(name === 'codex' ? { signIn: await this._codexNeedsSignIn() } : {}) });
+      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}),
+        ...(name === 'codex' ? { signIn: await this._codexNeedsSignIn() } : {}),
+        ...(name === 'opencode' ? { defaultModel: await this._opencodeOnDefaultModel(), envScrub: !!guardrails?.envScrub,
+          envAllowlist: guardrails?.envScrub ? guardrails.envAllowlist : undefined } : {}) });
       if (r?.refusal) throw engineRefusal(name, r.refusal);
       if (r?.warning && !quiet) this._log('orchestrator', 'warn', `engine ${name}: ${r.warning}`);
     }
@@ -3550,7 +3617,10 @@ export class RunHarness extends EventEmitter {
 
   _utilitySlot(job) {
     const scope = this._settingsScope();
-    return utilityModelFor(this._helperEngine(), job, scope ? { projectDir: scope } : { workspace: true });
+    const engine = this._helperEngine();
+    const slot = utilityModelFor(engine, job, scope ? { projectDir: scope } : { workspace: true });
+    // Model roles (D3): an unset helper slot takes its role (Claude's classifier → everyday, every other job → quick).
+    return withRole(slot, engine, jobSlot(engine, job));
   }
 
   /** The engine worca's helper jobs run on (model-env.mjs helperEngineFor): Claude on a Cursor run. */
@@ -4156,15 +4226,30 @@ export class RunHarness extends EventEmitter {
     // EBUSY past the retries) leaves files under the cwd, and only the §8.8 entry keeps them out
     // of the commit and gets them removed at teardown. Idempotent, harmless on failure.
     await this._registerMemoryMount(scope);
-    // The WRITABLE copy: a full copy of the mounted scopes (agents edit existing files in place;
+    // Team memory (phase 1a): bring each opted-in project's team layer up to date FIRST — following the team rewrites
+    // this machine's unedited tracked copies, and the two copies below must already carry that. Bounded; never throws.
+    await this._refreshTeamMemory(dirs);
+    // What each project loads (team-memory-load-choice.md): a project whose team memory loads team notes only mounts
+    // just its local notes that are team notes, in BOTH copies (an engine without rules, and an Explore or Plan
+    // sub-agent, read the writable copy). A defragment run works on every local note.
+    const plans = this.memoryScope ? new Map() : await memoryLoadPlans(dirs);
+    const loadDirs = loadFilteredDirs(dirs, plans);
+    // The WRITABLE copy: a copy of the mounted scopes (agents edit existing files in place;
     // syncBack diffs it against this baseline). Outside git — no sentinel.
-    const m = await mountMemory({ root, mount, dirs, onError });
+    const m = await mountMemory({ root, mount, dirs: loadDirs, onError });
     // The READ-ONLY rules copy: the same files where the CLI discovers them. Its baseline is
     // irrelevant (nothing syncs back from it). `<rules>/.gitignore` = `*` keeps it out of an agent's
     // own `git add -A`, a staging pre-commit hook, snapshotWorktreePatch's bare `git add -A` and the
     // reviewer's `git status`; the §8.8 `:(exclude)` pathspec stays as defence in depth.
-    await mountMemory({ root, mount: rules, dirs, onError, gitIgnore: true });
-    this.memory = { root, mount, rules, dirs, baseline: m.baseline };
+    await mountMemory({ root, mount: rules, dirs: loadDirs, onError, gitIgnore: true });
+    // …then the team folder(s) of the READ-ONLY copy only (decision D2): an agent changes a team note by writing a
+    // same-named local note, which shadows it here and is shared on sync. A defragment run works on local notes only.
+    const team = this.memoryScope ? [] : (await this._mountTeamDirs(rules, dirs, plans)) ?? [];
+    this.memory = { root, mount, rules, dirs, baseline: m.baseline, team, scoped: await this._memoryScoped(rules) };
+    for (const d of loadDirs) if (d.only) {
+      const hidden = (await listMemory(root, d.scope).catch(() => [])).length - d.only.size;
+      if (hidden > 0) this._log('memory', 'info', `team memory: ${d.label} loads team notes only — ${hidden} local note(s) not loaded`);
+    }
     this.state.memoryMount = mount;
     this.state.memoryRules = rules;
     this._refreshMemoryBlock();
@@ -4190,21 +4275,21 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Cursor reads its deny rules and MCP servers from `<cwd>/.cursor/` (engines/cursor.mjs writes them per spawn).
+   * Cursor reads its deny rules and MCP servers from `<cwd>/.cursor/`, Gemini CLI its MCP servers from
+   * `<cwd>/.gemini/settings.json` (engines/project-files.mjs writes them per spawn).
    * They join the §8.8 set like the memory mount, in BOTH run-root modes: removed at teardown, never rescued (the
    * commit and the diffs keep them out through worca's info/exclude line and _engineConfigState, not a pathspec).
    * Scope rule as the memory mount (_mountMemoryUnguarded). Idempotent.
    * Which file is worca's is decided where it matters, by _injectedFor (the adapter's ownership ledger): a tracked
    * file or an agent's own .cursor/mcp.json is never worca's, so registering the path costs nothing and needs no git.
-   * Not only on a Cursor run: a resume that switched AWAY from Cursor (this.claude.engine is the resume target) still
+   * Not only on the run's engine: a resume that switched AWAY from Cursor (this.claude.engine is the resume target) still
    * has the earlier segment's files in the checkout, and both modes rebuild injectedPaths on resume.
    */
   async _registerEngineConfig() {
     const cwd = this.runCwd || null;
     if (!cwd || (cwd === this.projectDir && this.workMode !== 'none')) return;   // P3: a no-project run's cwd IS its projectDir (work/)
-    const onCursor = (this.claude.engine || 'claude') === 'cursor';
-    const paths = onCursor ? [...CURSOR_PROJECT_FILES]
-      : CURSOR_PROJECT_FILES.filter((p) => existsSync(join(cwd, p)) && cursorOwns(join(cwd, p)));
+    const own = ENGINE_PROJECT_FILES[this.claude.engine || 'claude'] || [];
+    const paths = [...own, ...ALL_PROJECT_FILES.filter((p) => !own.includes(p) && existsSync(join(cwd, p)) && worcaOwnsProjectFile(cwd, p))];
     if (!paths.length) return;
     const scope = (this.runRoot && cwd === this.runRoot) ? 'runRoot'
       : ([...this.workDirs.entries()].find(([, d]) => d === cwd)?.[0] ?? null);
@@ -4217,7 +4302,7 @@ export class RunHarness extends EventEmitter {
 
   /**
    * The §8.8 entries of `key` (a member's projectKey, or 'runRoot'), minus any `engineConfig` path whose file exists
-   * and is not worca's (engines/cursor.mjs cursorOwns): an agent may write .cursor/mcp.json as part of the task, and
+   * and is not worca's (engines/project-files.mjs worcaOwnsProjectFile): an agent may write .cursor/mcp.json as part of the task, and
    * that file must survive teardown. Every reader of the set for REMOVAL uses this; the commit and the diffs never
    * see an engineConfig pathspec (_excludePathspecs) and use _engineConfigState instead.
    */
@@ -4225,23 +4310,23 @@ export class RunHarness extends EventEmitter {
     const entries = this.injectedPaths?.[key] ?? [];
     if (!Array.isArray(entries)) return [];
     const base = dir || (key === 'runRoot' ? this.runRoot : this.workDirs?.get(key)) || null;
-    return entries.filter((e) => e?.kind !== 'engineConfig' || !base || cursorOwns(join(base, e.path)));
+    return entries.filter((e) => e?.kind !== 'engineConfig' || !base || worcaOwnsProjectFile(base, e.path));
   }
 
   /**
-   * The Cursor project files (engines/cursor.mjs CURSOR_PROJECT_FILES) present in checkout `dir`, split for the commit
-   * and the diffs. owned: worca wrote them (cursorOwns) — kept out (info/exclude hides them; callers also unstage
+   * The engine project files (engines/project-files.mjs ALL_PROJECT_FILES) present in checkout `dir`, split for the
+   * commit and the diffs. owned: worca wrote them (worcaOwnsProjectFile) — kept out (info/exclude hides them; callers also unstage
    * them). forced: worca did not write them, the index does not hold them, and ONLY worca's own info/exclude line
    * ignores them — an agent's deliverable, force-staged. Looks at the checkout, not at injectedPaths: the exclude line
-   * sits in the shared common-dir file and outlives the Cursor run that wrote it, so a later run on any engine needs
-   * this too. No .cursor file: no git command at all.
+   * sits in the shared common-dir file and outlives the run that wrote it, so a later run on any engine needs this
+   * too. No such file: no git command at all.
    * @returns {Promise<{owned:string[], forced:string[]}>}
    */
   async _engineConfigState(dir, { ignoreAbort = false } = {}) {
     const state = { owned: [], forced: [] };
     if (!dir) return state;
-    const present = CURSOR_PROJECT_FILES.filter((p) => existsSync(join(dir, p)));
-    for (const p of present) if (cursorOwns(join(dir, p))) state.owned.push(p);
+    const present = ALL_PROJECT_FILES.filter((p) => existsSync(join(dir, p)));
+    for (const p of present) if (worcaOwnsProjectFile(dir, p)) state.owned.push(p);
     let foreign = present.filter((p) => !state.owned.includes(p));
     if (!foreign.length) return state;
     const opts = { cwd: dir, ignoreAbort };
@@ -4275,7 +4360,8 @@ export class RunHarness extends EventEmitter {
    *  mounted scope. Depends on dirs + mount only (never on file contents), so one render per mount. */
   _refreshMemoryBlock() {
     if (!this.memory) { this.memoryBlock = ''; return; }
-    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine: this.claude.engine });
+    const teamDir = this.memory.rules && (this.memory.team || []).some((t) => t.count > 0) ? join(this.memory.rules, 'team') : null;
+    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine: this.claude.engine, teamDir });
   }
 
   /** The `onError` every memory listing gets. A junk NAME is not an I/O failure — phrasing it
@@ -4314,12 +4400,64 @@ export class RunHarness extends EventEmitter {
     return this._memoryTail;
   }
 
+  /** Team memory (phase 1a): fetch + follow for every opted-in project of this run, bounded (TEAM_MOUNT_WAIT_MS) — a
+   *  slow or offline remote never holds the run start; the mount then loads the last fetched team notes. Never throws. */
+  async _refreshTeamMemory(dirs) {
+    if (this.memoryScope) return;
+    const on = dirs.filter((d) => d.scope?.kind === 'project' && isTeamMemoryOn(d.scope.projectKey));
+    // In parallel: a workspace run waits TEAM_MOUNT_WAIT_MS at most in all, never once per member.
+    await Promise.all(on.map(async (d) => {
+      const key = d.scope.projectKey;
+      try {
+        const r = await refreshTeamLayerWithin(key, { projectDir: this.memberByKey.get(key)?.projectDir || null });
+        if (r?.timedOut) this._log('memory', 'warn', `team memory: ${d.label} is still fetching — this run loads the last fetched team notes`);
+        else if (r?.error) this._log('memory', 'warn', `team memory: ${d.label} could not be fetched (${r.error}) — this run loads the last fetched team notes`);
+        if (r?.followed?.length) this._log('memory', 'info', `team memory: ${d.label} followed the team for ${r.followed.map((n) => `${n}.md`).join(', ')}`);
+        // A follow that DELETED a local note says so: the user finds the note gone from the Memory page.
+        if (r?.removed?.length) this._log('memory', 'info', `team memory: ${d.label} — removed ${r.removed.map((n) => `${n}.md`).join(', ')} here too: a teammate deleted ${r.removed.length === 1 ? 'it' : 'them'} from the team`);
+        if (r?.untracked?.length) this._log('memory', 'info', `team memory: ${d.label} — ${r.untracked.map((n) => `${n}.md`).join(', ')} no longer on the team branch (it was started again): kept as local notes`);
+      } catch (err) {
+        this._log('memory', 'warn', `team memory: ${d.label} could not be refreshed: ${err?.message || err}`);
+      }
+    }));
+  }
+
+  /** The rules copy's team folder(s) — [] when nothing is opted in; null when the write failed (warned, never thrown):
+   *  the caller keeps what it had, so one failed re-mount does not stop every later one. */
+  async _mountTeamDirs(rules, dirs, plans) {
+    try { return await mountTeamLayer({ rules, dirs, plans }); }
+    catch (err) { this._log('memory', 'warn', `team memory: team notes not mounted: ${err?.message || err}`); return null; }
+  }
+
+  /** Queue what one sync changed in an opted-in project's scope (decision D1: never a global note); a blocked note is
+   *  a warn line naming the reason, so the run log says why it stayed local. */
+  async _queueTeamMemory(res, dirs) {
+    for (const [key, names] of teamChangesFromSync(res, dirs)) {
+      try {
+        const q = await queueTeamChanges(key, names, { source: `run:${this.pipeline.id}` });
+        if (q.skipped) continue;
+        // A note this sync DELETED is queued as a removal from the team — every teammate's unedited copy follows it (D3):
+        // the run log must never call that "sharing".
+        const gone = new Set(teamChangesFromSync({ deleted: res?.deleted }, dirs).get(key) || []);
+        const shared = q.queued.filter((n) => !gone.has(n));
+        const removing = q.queued.filter((n) => gone.has(n));
+        if (shared.length) this._log('memory', 'info', `team memory: sharing ${shared.map((n) => `${n}.md`).join(', ')}`);
+        if (removing.length) this._log('memory', 'info', `team memory: removing ${removing.map((n) => `${n}.md`).join(', ')} from the team`);
+        for (const b of q.blocked) this._log('memory', 'warn', `team memory: ${b.name}.md stays on this machine — ${b.reason}; edit it to share it`);
+      } catch (err) {
+        this._log('memory', 'warn', `team memory: could not queue ${names.join(', ')}: ${err?.message || err}`);
+      }
+    }
+  }
+
   async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] }) {
     const now = new Date().toISOString();
     const res = await syncBack({
       root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
       caps: memoryCaps(this._settingsScope()), onWarn: (w) => this._log('memory', 'warn', w),
       onError: (p, err) => this._memoryReadWarn(p, err),
+      // Team memory (phase 1a): a note's `team:` marker is worca's, never the writable copy's line from mount time (D10).
+      prepare: teamClientText,
     });
     // `mount` equals this.memory.mount for every in-run sync and for a same-process resume;
     // an OLD instance can never race a resumed one because the scheduler drains in-flight
@@ -4345,21 +4483,65 @@ export class RunHarness extends EventEmitter {
       await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
       await this._recordFailedWrites(failed, now);
     }
+    // Never a defragment run's result (D15). Queued FIRST: a note on its way to the team loads in a project whose team
+    // memory loads team notes only (memoryLoadPlan), so the refresh below must see its intent.
+    if (res.total && !this.memoryScope) await this._queueTeamMemory(res, dirs);
     // The rules copy the NEXT execution loads must carry what this sync stored (the store is the
     // authority: it also holds Ask/UI writes made mid-run). Non-destructive and per-file atomic, so
     // a Task sub-agent spawning right now never reads a torn file; never touches the sentinel.
+    // What each project loads is read again (a note now pending starts loading, a blocked one stops); the writable copy
+    // keeps what it was mounted with — its baseline must stay valid.
     if (res.total && this.memory && this.memory.mount === mount && this.memory.rules) {
+      const plans = this.memoryScope ? new Map() : await memoryLoadPlans(dirs);
       try {
         // the rules copy lives in the cwd: a Folder copy swapped for a link is never written through
         if (this.workMode === 'folder' && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${this.runCwd}`);
-        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs, onError: (p, err) => this._memoryReadWarn(p, err) }));
+        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs: loadFilteredDirs(dirs, plans), onError: (p, err) => this._memoryReadWarn(p, err) }));
         if (stale.length) this._log('memory', 'warn', `memory: the rules copy could not be refreshed for ${stale.join(', ')} — the next agent loads the previous text`);
       } catch (err) {
         this._log('memory', 'warn', `memory: the rules copy could not be refreshed: ${err?.message || err}`);
       }
+      // A note stored now may shadow a team note (or a deletion un-shadow one).
+      if (!this.memoryScope && this.memory.team?.length) {
+        const team = await this._mountTeamDirs(this.memory.rules, dirs, plans);
+        if (team) { this.memory.team = team; this._refreshMemoryBlock(); }   // the team sentence follows the new counts
+      }
     }
+    if (res.total && this.memory && this.memory.mount === mount && this.memory.rules) this.memory.scoped = await this._memoryScoped(this.memory.rules);
+    await this._recordMemoryUsage({ res, dirs, executionId });
     if (this.memory && this.memory.mount === mount) await this._writeMemoryLedger();
     return res;
+  }
+
+  /** Whether this run's spawns carry the InstructionsLoaded counting hook (U3): a rules copy with a note that has
+   *  `paths:`, never on a defragment run. Read at mount and after a sync that changed notes — never per spawn. */
+  async _memoryScoped(rules) {
+    if (this.memoryScope || !rules) return false;
+    try { return await rulesHaveScopedNote(rules); } catch { return false; }
+  }
+
+  /** The InstructionsLoaded hook file of one execution, or null (no scoped note mounted, or a defragment run). */
+  _memoryLoadLogFor(executionId) {
+    return this.memory?.scoped && !this.memoryScope && executionId && this.pipeline?.dir ? memoryLoadLogPath(this.pipeline.dir, executionId) : null;
+  }
+
+  /** Memory usage (memory-usage.mjs, U6): ONE merge per sync-back of what this execution did — its hook file's
+   *  `path_glob_match` loads (hit), the note Reads seen in its tool events (read) and the notes this sync stored (edit),
+   *  each at most once per note. `executionId` null drains every execution (the run-end and resume syncs). A defragment
+   *  run records nothing, and its bookkeeping is dropped. Best-effort: a failure is one debug line, the tally is lost. */
+  async _recordMemoryUsage({ res, dirs, executionId }) {
+    const pending = executionId == null ? [...this._memoryUsage.values()] : [this._memoryUsage.get(executionId)].filter(Boolean);
+    if (executionId == null) this._memoryUsage.clear(); else this._memoryUsage.delete(executionId);
+    const tally = createUsageTally();
+    try {
+      await drainMemoryLoads(this.pipeline?.dir, executionId, dirs, tally);   // always: the file goes either way
+      if (this.memoryScope) return;
+      for (const t of pending) for (const e of t.events()) tally.add(e, e.signal);
+      for (const r of [...(res?.added || []), ...(res?.modified || [])]) tally.add(noteOfMemoryRel(`${r.scope}/${r.name}.md`, dirs), 'edit');
+      if (tally.size) await recordMemoryUsage(tally.events());
+    } catch (err) {
+      this._log('memory', 'debug', `memory usage not recorded: ${err?.message || err}`);
+    }
   }
 
   /** Bump the `.state` counters of every scope a failed write named (memory-write-split design D9).
@@ -4396,7 +4578,7 @@ export class RunHarness extends EventEmitter {
       const rel = relative(base, abs).split(sep).join('/');
       const d = this.memory.dirs.find((x) => rel === x.rel || rel.startsWith(`${x.rel}/`));
       const dn = dirname(rel);
-      return { id: `${where}:${rel}`, where, scope: d ? d.rel : (dn === '.' ? '' : dn), name: basename(rel).replace(/\.md$/i, '') };
+      return { id: `${where}:${rel}`, where, rel, scope: d ? d.rel : (dn === '.' ? '' : dn), name: basename(rel).replace(/\.md$/i, '') };
     }
     return null;
   }
@@ -4405,6 +4587,15 @@ export class RunHarness extends EventEmitter {
     if (!this.memory) return;
     const exec = attr?.executionId ?? '(no execution)';
     for (const c of calls) {
+      if (MEMORY_READ_TOOLS.has(c.name) && !this.memoryScope) {
+        const key = this._memoryWriteKey(c.input?.file_path || c.input?.path);
+        const ref = key && noteOfMemoryRel(key.rel, this.memory.dirs);
+        if (ref) {
+          if (!this._memoryUsage.has(exec)) this._memoryUsage.set(exec, createUsageTally());
+          this._memoryUsage.get(exec).add(ref, 'read');
+        }
+        continue;
+      }
       if (!MEMORY_WRITE_TOOLS.has(c.name) || typeof c.toolUseId !== 'string') continue;
       const key = this._memoryWriteKey(c.input?.file_path || c.input?.path || c.input?.notebook_path);
       if (!key) continue;
@@ -5143,7 +5334,13 @@ export class RunHarness extends EventEmitter {
     // retention stamp must not ride on it (F2's crash window). _persist() also
     // swallows internally, so call the writer directly to observe a real failure.
     try {
-      await writeState(this.pipeline?.dir ?? null, this.state);
+      if (this.telemetry) {
+        const t0 = performance.now();
+        await writeState(this.pipeline?.dir ?? null, this.state);
+        this.telemetry.persisted(performance.now() - t0, this.state.steps?.length || 0);
+      } else {
+        await writeState(this.pipeline?.dir ?? null, this.state);
+      }
     } catch (e) {
       this._log('git', 'error',
         `retention stamp could not be persisted (${e?.message || e}); ` +
@@ -5192,7 +5389,33 @@ export class RunHarness extends EventEmitter {
    *  committed and every member's run branch is deleted at teardown. Read live, never cached:
    *  resume() restores this.workflowId from the resume point AFTER construction. */
   _isWorkspaceScan() {
-    return this.isWorkspace && this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID;
+    return this.isWorkspace && isWorkspaceScanWorkflow(this.workflowId);
+  }
+
+  /** wf_workspace_resynth (a partial re-scan after a member removal): freeze the stored, already
+   *  pruned map — and a copy of its merged graph, under the bare name finalize's adoptGraphFile
+   *  adopts — into the run folder ONCE. The seed card reads it from there (a script child never
+   *  opens the worca DB). Called at start (_run, after the overrides freeze) and at resume (_resume,
+   *  after _reattachCheckouts): a run a user pause parked during setup, before its first freeze,
+   *  freezes on resume. Once the frozen copy exists every later call is a no-op.
+   *  No stored map, or one of another member set: TERMINAL, not a pause (setup failures pause by
+   *  default) — a resume would read the same map and replay into the same pause, and a paused
+   *  re-synthesis owns the workspace (server ownsWorkspaceTarget), which would refuse Re-scan. The
+   *  server checks the same before launching (afterMembersChanged); this is the race-proof re-check. */
+  async _freezeStoredMap() {
+    if (!this.isWorkspace || this.workflowId !== WORKSPACE_RESYNTH_WORKFLOW_ID || !this.pipeline?.dir) return;
+    const dest = join(this.pipeline.dir, STORED_MAP_FILE);
+    if (existsSync(dest)) return;
+    const wsId = this.workspace.id || this.workspaceKey;
+    const stored = await readWorkspaceMap(wsId);
+    const why = resynthBlocker(stored && stored.map, this.members.map((m) => m.projectKey));
+    if (why) throw markTerminal(new Error(`partial re-scan: ${why} — use Re-scan for a full one`));
+    let map = stored.map;
+    if (map.graph && map.graph.file) {
+      const copied = await copyFile(join(workspaceStorePath(wsId), WORKSPACE_GRAPH_FILE), join(this.pipeline.dir, WORKSPACE_GRAPH_FILE)).then(() => true, () => false);
+      map = { ...map, graph: copied ? { ...map.graph, file: WORKSPACE_GRAPH_FILE } : { mode: 'none', file: null, nodes: 0, bridges: 0 } };
+    }
+    await writeFile(dest, JSON.stringify({ map }), 'utf8');
   }
 
   /**
@@ -5332,12 +5555,12 @@ export class RunHarness extends EventEmitter {
       this._log('git', 'warn', `commit skipped: git add failed: ${message}`, errStreamAttr(add.stderr));
       return { ok: false, step: 'add', message, fromStderr: !!add.stderr.trim() };
     }
-    // An agent's own .cursor file that only worca's info/exclude line hides (_engineConfigState): force-staged.
+    // An agent's own engine config file (.cursor, .gemini) that only worca's info/exclude line hides (_engineConfigState): force-staged.
     if (forcePaths.length) {
       const f = await this._gitIndexWrite(['add', '-f', '--', ...forcePaths], gitOpts);
       if (!f.ok) this._log('git', 'warn', `git add -f ${forcePaths.join(' ')}: ${f.stderr.trim() || `exit ${f.code}`}`, errStreamAttr(f.stderr));
     }
-    // worca's own .cursor files, whatever staged them (a user rule un-ignoring them, an agent's `git add -f`).
+    // worca's own engine config files, whatever staged them (a user rule un-ignoring them, an agent's `git add -f`).
     if (unstagePaths.length) {
       await this._gitIndexWrite(['rm', '--cached', '-q', '--ignore-unmatch', '--', ...unstagePaths], gitOpts);
     }
@@ -6392,8 +6615,13 @@ export class RunHarness extends EventEmitter {
         : modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir })) || null;
     // Named before the effort is checked, so an effort codex's default model does not offer (max, xhigh) drops to medium.
     const fallback = !runModel && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
-    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel: runModel || fallback },
-      { models: models.filter((m) => m && runsOn(m, engine)) });
+    // Model roles (D3): an unset decider takes the deep role.
+    const role = config.deciderModel ? null : roleModelFor(engine, 'nightMode.deciderModel');
+    const pair = resolveDeciderPair({
+      deciderModel: config.deciderModel || role?.model,
+      deciderEffort: config.deciderModel ? config.deciderEffort : (role?.effort ?? config.deciderEffort),
+      runModel: runModel || fallback,
+    }, { models: models.filter((m) => m && runsOn(m, engine)) });
     if (fallback && pair.model === fallback && pair.source === 'run') pair.source = 'default';
     const warn = (text) => {
       if ((this._nightWarned ||= new Set()).has(text)) return;
@@ -6575,7 +6803,7 @@ export class RunHarness extends EventEmitter {
         untrackedFiles(dir, ex),
       ]);
       const listed = new Set(ns.map((r) => r.path));
-      // An agent's own .cursor file that only worca's info/exclude line hides is listed; worca's own never is.
+      // An agent's own engine config file that only worca's info/exclude line hides is listed; worca's own never is.
       const ec = await this._engineConfigState(dir);
       const fresh = [...new Set([...untracked, ...ec.forced])].filter((p) => !listed.has(p) && !ec.owned.includes(p));
       if (fresh.length > maxUntracked) untrackedCapped = true;
@@ -6852,7 +7080,7 @@ export class RunHarness extends EventEmitter {
         // warn, not debug: a failed staging hides the agent's new files from the reviewer's diff.
         this._log('git', 'warn', `git add -A -N (${dir}): ${res.stderr.trim()}`, ERR_STREAM);
       }
-      // Cursor's .cursor files: an agent's own file only worca's exclude line hides joins the diff; worca's stay out.
+      // Engine config files (.cursor, .gemini): an agent's own file only worca's exclude line hides joins the diff; worca's stay out.
       const ec = await this._engineConfigState(dir, { ignoreAbort });
       if (ec.forced.length) await this._gitIndexWrite(['add', '-N', '-f', '--', ...ec.forced], { cwd: dir, ignoreAbort });
       if (ec.owned.length) await this._gitIndexWrite(['rm', '--cached', '-q', '--ignore-unmatch', '--', ...ec.owned], { cwd: dir, ignoreAbort });
@@ -6868,9 +7096,9 @@ export class RunHarness extends EventEmitter {
    * Under legacy the set holds exactly the memory mount (`_registerMemoryMount`), so
    * `git add -A -- . :(exclude).claude/rules/worca` is the legacy argv since the
    * native-rules revision.
-   * `kind:'engineConfig'` entries (Cursor's `.cursor/*.json`) are excluded too: git exits 1 on an exclude pathspec
+   * `kind:'engineConfig'` entries (Cursor's `.cursor/*.json`, Gemini CLI's `.gemini/settings.json`) are excluded too: git exits 1 on an exclude pathspec
    * that names a path an ignore rule already matches ("paths are ignored … use -f"), which would fail every commit.
-   * worca's own info/exclude line keeps them out (engines/cursor.mjs writes one for every file it writes inside a
+   * worca's own info/exclude line keeps them out (engines/project-files.mjs writes one for every file it writes inside a
    * work tree), and the callers take them back out of the index (_engineConfigState `owned`).
    * @param {string} projectKey
    * @returns {string[]}
@@ -7172,6 +7400,8 @@ export class RunHarness extends EventEmitter {
       // stderr (agent CLI, git, graphify). Provenance, not severity — the level
       // says how bad it is, this says where it came from.
       if (attr.stream) evt.stream = attr.stream;
+      // A Bash call's own description (#911 slice 3): the web log's Summaries mode shows it; `text` keeps the command.
+      if (typeof attr.desc === 'string' && attr.desc) evt.desc = attr.desc;
     }
     this._emit('log', evt);
     this.logWriter.push(evt); // persist the full stream (buffered; flushed on a timer)
@@ -7271,6 +7501,7 @@ export class RunHarness extends EventEmitter {
       for (const n of normalize(e)) this._onAgentEvent(role, n, attr);
       return;
     }
+    if (this.telemetry) this.telemetry.observe(e, attr);
     switch (e.type) {
       // Sub-agent telemetry (feature-detected, gated by WORCA_SUBAGENT_HOOKS). A
       // surfaced PostToolUse:Agent hook_response carries, as the hook's echoed stdout,
@@ -7494,8 +7725,8 @@ export class RunHarness extends EventEmitter {
     this._recordSkills(e.calls, e.parentId, attr);
     this._recordGraphify(e.calls, e.parentId, attr);
     const { source, logAttr } = this._sourceFor(role, e.parentId, attr);
-    for (const call of describeToolUses(e.calls, this.projectDir)) {
-      this._log(source, 'debug', `→ ${call}`, logAttr);
+    for (const { text, desc } of describeToolUses(e.calls, this.projectDir)) {
+      this._log(source, 'debug', `→ ${text}`, desc ? { ...(logAttr || {}), desc } : logAttr);
     }
   }
 
@@ -7952,6 +8183,7 @@ export class RunHarness extends EventEmitter {
   }
 
   _emit(event, payload) {
+    if (event === 'state' && this.telemetry) this.telemetry.stateEmitted(payload);
     try {
       this.emit(event, payload);
     } catch {
@@ -8047,6 +8279,28 @@ export class RunHarness extends EventEmitter {
       .catch(() => { /* generateTitle already swallows; this is a final backstop */ });
   }
 
+  /** Run telemetry (Labs): one recorder per harness, decided when the run dir is first bound. */
+  _bindTelemetry(dir) {
+    if (this.telemetry || !dir || !flagEnabled('runTelemetry')) return;
+    this.telemetry = createTelemetryRecorder();
+    this.telemetry.bind(dir);
+  }
+
+  async _closeTelemetry() {
+    const t = this.telemetry;
+    if (!t || t.isClosed()) return;
+    try {
+      const size = (p) => stat(p).then((x) => x.size, () => null);
+      const dir = this.pipeline?.dir || this.state.pipelineDir;
+      const [dbBytes, telemetryBytes, logBytes] = await Promise.all([
+        size(dbPath()), dir ? size(join(dir, TELEMETRY_FILE)) : null, dir ? size(join(dir, RUN_LOG_FILE)) : null,
+      ]);
+      await t.close({ dbBytes, telemetryBytes, logBytes });
+    } catch {
+      await t.close().catch(() => {});   /* telemetry never fails a run */
+    }
+  }
+
   /** @returns {Promise<boolean>} whether the state reached the row. */
   async _persist() {
     const rpNow = this.state.resumePoint;
@@ -8059,7 +8313,13 @@ export class RunHarness extends EventEmitter {
       // in state): _rowHandedOff reads it back. A resumed run's new harness never writes this token.
       const st = this._pauseToken && rpNow && typeof rpNow === 'object'
         ? { ...this.state, resumePoint: { ...rpNow, pausedBy: this._pauseToken } } : this.state;
-      await writeState(this.pipeline.dir, st);
+      if (this.telemetry) {
+        const t0 = performance.now();
+        await writeState(this.pipeline.dir, st);
+        this.telemetry.persisted(performance.now() - t0, st.steps?.length || 0);
+      } else {
+        await writeState(this.pipeline.dir, st);
+      }
       return true;
     } catch {
       /* persistence is best-effort */

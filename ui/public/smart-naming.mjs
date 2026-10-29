@@ -14,6 +14,24 @@ const FALLBACK_HINT = 'Could not suggest; using today\'s name. Worca adds the ru
 // is not the window, and reset() runs after every Start even with the flag off.
 const BARE_TIMERS = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id) };
 
+// The pieces both exports draw, so the New run form and the group dialog cannot drift: the Suggest again / Clear icons,
+// the shimmer on the field's .sn-adorn and the violet Suggested chip.
+function fillButtons(doc, icon, pairs) {
+  for (const [btn, name] of pairs) if (btn && !btn.firstChild) btn.append(icon(doc, name, 14));
+}
+function markLoading(input, on) {
+  input.closest('.sn-adorn')?.classList.toggle('sn-loading', on);
+  input.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+function paintChip(doc, slot, on) {
+  slot.replaceChildren();
+  if (!on) return;
+  const c = doc.createElement('span');
+  c.className = 'flag-chip sn-chip';
+  c.textContent = 'Suggested';
+  slot.append(c);
+}
+
 /**
  * @param {object} deps
  * @param {Document} deps.doc
@@ -30,19 +48,11 @@ export function createSmartNaming({ doc, el, flagOn, api, getProjectDir, icon, t
   const idleHint = { title: hintEl('title')?.textContent || '', branch: hintEl('branch')?.textContent || '' };
   const inputOf = (which) => (which === 'title' ? el.title : el.featureBranch);
 
-  for (const [btn, name] of [[el.titleRetry, 'refresh'], [el.branchRetry, 'refresh'], [el.titleClear, 'x'], [el.branchClear, 'x']]) {
-    if (btn && !btn.firstChild) btn.append(icon(doc, name, 14));
-  }
+  fillButtons(doc, icon, [[el.titleRetry, 'refresh'], [el.branchRetry, 'refresh'], [el.titleClear, 'x'], [el.branchClear, 'x']]);
 
   const chip = (which, on) => {
     const slot = doc.getElementById(`${which}SnChip`);
-    if (!slot) return;
-    slot.replaceChildren();
-    if (!on) return;
-    const c = doc.createElement('span');
-    c.className = 'flag-chip sn-chip';
-    c.textContent = 'Suggested';
-    slot.append(c);
+    if (slot) paintChip(doc, slot, on);
   };
   const hint = (which, text, warn = false) => {
     const h = hintEl(which);
@@ -53,9 +63,7 @@ export function createSmartNaming({ doc, el, flagOn, api, getProjectDir, icon, t
 
   function setState(which, s) {
     st[which] = s;
-    const input = inputOf(which);
-    input.closest('.sn-adorn')?.classList.toggle('sn-loading', s === 'loading');
-    input.setAttribute('aria-busy', s === 'loading' ? 'true' : 'false');
+    markLoading(inputOf(which), s === 'loading');
     chip(which, s === 'suggested');
     if (which === 'branch' && el.branchTypeWrap) el.branchTypeWrap.hidden = s !== 'suggested';
     if (s === 'idle') hint(which, idleHint[which]);
@@ -168,5 +176,46 @@ export function createSmartNaming({ doc, el, flagOn, api, getProjectDir, icon, t
     ownsBranchHint: () => ['loading', 'suggested', 'failed'].includes(st.branch),
     state: () => ({ ...st }),
     dispose() { ctl?.abort(); timers.clearTimeout(timer); el.prompt.removeEventListener('input', onPromptInput); },
+  };
+}
+
+const NAME_LOADING_HINT = 'Suggesting a name from the chat titles and first messages.';
+const NAME_SUGGESTED_HINT = 'Suggested from the chats. Type over it to keep your own.';
+
+/**
+ * #948 s3: one name field in Smart run naming's states (idle | loading | suggested | edited), for the Chats column's
+ * group dialog. `suggest(signal)` answers { source: 'model', name }, { aborted: true }, or anything else (a failure:
+ * the field stays empty, no chip). Typing wins: once the person types or clears, nothing writes the field until
+ * Suggest again. Build it only while smartRunNaming is on; off, the dialog keeps a plain field.
+ */
+export function createSuggestedName({ doc, input, chipSlot, hint = null, retry = null, clear = null, suggest, icon }) {
+  let state = 'idle';
+  let ctl = null;
+  fillButtons(doc, icon, [[retry, 'refresh'], [clear, 'x']]);
+  function set(s) {
+    state = s;
+    markLoading(input, s === 'loading');
+    paintChip(doc, chipSlot, s === 'suggested');
+    if (hint) hint.textContent = s === 'loading' ? NAME_LOADING_HINT : s === 'suggested' ? NAME_SUGGESTED_HINT : s === 'edited' ? EDITED_HINT : '';
+  }
+  async function run() {
+    ctl?.abort();
+    const mine = (ctl = new AbortController());
+    input.value = '';
+    set('loading');
+    const r = await suggest(mine.signal);
+    if (r?.aborted || mine !== ctl || state !== 'loading') return;   // typed, cleared or asked again meanwhile
+    if (r && r.source === 'model' && r.name) { input.value = r.name; set('suggested'); } else set('idle');
+  }
+  const onInput = () => { ctl?.abort(); set('edited'); };
+  input.addEventListener('input', onInput);
+  retry?.addEventListener('click', () => { void run(); });
+  clear?.addEventListener('click', () => { ctl?.abort(); input.value = ''; set('edited'); input.focus(); });
+  return {
+    run,
+    /** A prefilled name (Rename) counts as typed. */
+    keep: () => set('edited'),
+    state: () => state,
+    dispose() { ctl?.abort(); input.removeEventListener('input', onInput); },
   };
 }

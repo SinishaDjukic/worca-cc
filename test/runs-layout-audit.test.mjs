@@ -88,3 +88,20 @@ test('bundle QA 2: at 290px the number stays on the title line and the chip icon
   assert.deepEqual(rules({ ...ok, n: R(20, 40, 44, 60) }), ['num-line'], 'the number dropped under the title');
   assert.deepEqual(rules({ ...ok, c: R(48, 120, 44, 80), i: R(48, 62, 44, 58), w: R(48, 120, 62, 78) }), ['chip-wrap'], 'the icon sits above its word');
 });
+
+test('#955 member-height: a row inside a group is 26px, 40px on a coarse pointer; a live member with its line is exempt', () => {
+  const doc = new JSDOM(`<div id="l"><div class="runs-item" data-level="top" id="g"><a class="runs-row"><span class="runs-row-title">G</span><span class="runs-row-right"></span></a>
+    <div class="runs-members">
+      <div class="runs-item" data-level="member" id="m1"><a class="runs-row"><span class="runs-row-title">1 · A</span><span class="runs-row-right"></span><span class="runs-row-sub">Merged</span></a></div>
+      <div class="runs-item" data-level="member" id="m2"><a class="runs-row"><span class="runs-row-title">2 · B</span><span class="runs-row-right"></span><span class="runs-row-sub">Build</span><span class="runs-row-prog"><i></i></span></a></div>
+      <div class="runs-item" data-level="member" id="m3"><a class="runs-row"><span class="runs-row-title">3 · C</span><span class="runs-row-right"></span><span class="runs-row-sub">Refine Plan</span><div class="run-prog runs-stage"></div></a></div>
+    </div></div></div>`).window.document;
+  const root = doc.getElementById('l');
+  // m3 (#1012): a staged live member's four-section block is exempt too.
+  const run = (m1, coarse) => auditRunsLayout(root, { coarse, viewport: { width: 375, height: 800 },
+    rect: (n) => ({ g: R(0, 340, 0, 120), m1, m2: R(0, 340, 60, 93), m3: R(0, 340, 93, 153) })[n.id] || R(0, 0, 0, 0) }, doc).map((p) => p.rule);
+  assert.deepEqual(run(R(0, 340, 34, 60), false), []);
+  assert.deepEqual(run(R(0, 340, 34, 70), false), ['member-height']);
+  assert.deepEqual(run(R(0, 340, 34, 74), true), []);
+  assert.deepEqual(run(R(0, 340, 34, 60), true), ['member-height']);
+});

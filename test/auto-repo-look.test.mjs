@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
+import { spawnSync } from 'node:child_process';
 import { openRepoLook, openWorkspaceRepoLook, sweepRepoLooks, REPO_LOOK_DIRNAME, REPO_LOOK_MAX_MEMBERS } from '../src/core/auto/repo-look.mjs';
 import { runGitCapture } from '../src/core/worktree.mjs';
 
@@ -180,4 +181,40 @@ test('sweepRepoLooks on a missing baseDir returns empty lists; log is optional',
   const res = await sweepRepoLooks(baseDir, { log: (level, msg) => warnings.push([level, msg]) });
   assert.deepEqual(res, { removed: [garbage], failed: [] });
   assert.ok(warnings.some(([level, msg]) => level === 'warn' && /no readable \.git file/.test(msg)));
+});
+
+test('openRepoLook with a ref checks that ref out and returns its commit; default behaviour unchanged', async () => {
+  const projectDir = gitDir('look-ref');
+  const g = (...a) => { const r = spawnSync('git', a, { cwd: projectDir, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+  g('branch', '-m', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+  const mainSha = g('rev-parse', 'HEAD');
+  g('checkout', '-q', '-b', 'other'); g('commit', '-q', '--allow-empty', '-m', 'o');
+  const otherSha = g('rev-parse', 'HEAD');
+  const dflt = await openRepoLook(projectDir, base());
+  assert.equal(dflt.commit, otherSha, 'no ref → HEAD (the checked-out branch)');
+  await dflt.close();
+  const look = await openRepoLook(projectDir, base(), { ref: 'refs/heads/main' });
+  assert.equal(look.commit, mainSha);
+  assert.equal((await runGitCapture(look.cwd, ['rev-parse', 'HEAD'])).stdout.trim(), mainSha);
+  await look.close();
+  assert.equal(await openRepoLook(projectDir, base(), { ref: '--evil' }), null, 'an invalid ref degrades to null');
+});
+
+test('openWorkspaceRepoLook with refs checks each member out at its own ref and returns commits per member', async () => {
+  const mk = (tag) => {
+    const dir = gitDir(tag);
+    const g = (...a) => { const r = spawnSync('git', a, { cwd: dir, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+    g('branch', '-m', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+    const first = g('rev-parse', 'HEAD');
+    g('checkout', '-q', '-b', 'other'); g('commit', '-q', '--allow-empty', '-m', 'o');
+    return { dir, first, head: g('rev-parse', 'HEAD') };
+  };
+  const a = mk('look-wsa'); const b = mk('look-wsb');
+  const members = [{ projectKey: 'a', projectDir: a.dir }, { projectKey: 'b', projectDir: b.dir }];
+  const look = await openWorkspaceRepoLook(members, base(), { refs: { a: 'refs/heads/main' } });
+  assert.deepEqual(look.commits, { a: a.first, b: b.head }, 'a at its ref; b defaults to HEAD');
+  await look.close();
+  const plain = await openWorkspaceRepoLook(members, base());
+  assert.deepEqual(plain.commits, { a: a.head, b: b.head });
+  await plain.close();
 });

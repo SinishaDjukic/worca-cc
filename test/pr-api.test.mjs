@@ -20,15 +20,20 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta, persistPrState, readPrState, createPipeline, writeState, listAllPipelines } from '../src/core/artifacts.mjs';
 import { _testing as prDesc, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
+import * as bitbucketPr from '../src/core/pr/bitbucket.mjs';
 import { setPrRemotePrefs, readPrRemotePrefs } from '../src/core/config.mjs';
 import { createTicket, markTicketFired } from '../src/core/scheduler.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { createRunGroup, addToGroup } from '../src/core/run-groups.mjs';
+import { writeFileSync } from 'node:fs';
 import { getWatch } from '../src/core/pr-watch.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
 const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
 const WITH_ADO = { ...NO_ADO, WORCA_ADO_TOKEN: 'pat' };
+const NO_BB = { WORCA_BB_TOKEN: undefined, WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined, WORCA_BB_EMAIL: undefined };
+const WITH_BB = { ...NO_ADO, ...NO_BB, WORCA_BB_TOKEN: 'bbtok' };
 
 let srv, base, home, prevHome, betaKey, betaId, betaRepo;
 
@@ -54,12 +59,13 @@ after(async () => {
   gitInfo.reset();
   gitSync.reset();
   azurePr._testing.reset();
+  bitbucketPr._testing.reset();
   _resetForTests();
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
 });
 
-beforeEach(() => { gitInfo.reset(); gitSync.reset(); prDesc.reset(); azurePr._testing.reset(); });
+beforeEach(() => { gitInfo.reset(); gitSync.reset(); prDesc.reset(); azurePr._testing.reset(); bitbucketPr._testing.reset(); });
 
 // git-sync's runner (the base-freshness fetch, #527): upstream is a github remote; every argv
 // lands in `seen`; `rev-list --count` answers `moved`.
@@ -85,7 +91,10 @@ const REMOTES_V = [
 ].join('\n') + '\n';
 
 // gh present; git remotes = origin (the fork) + upstream; every argv lands in `seen`.
-function stubForkRepo(seen, { create = 'https://github.com/up/repo/pull/7\n', view = 'MERGEABLE\n', remotesOk = true, refs = REFS } = {}) {
+// `create` may be a function of the 1-based create count (its stdout, or an Error to fail that create); `delayMs` waits
+// that long before answering gh pr create.
+function stubForkRepo(seen, { create = 'https://github.com/up/repo/pull/7\n', view = 'MERGEABLE\n', remotesOk = true, refs = REFS, delayMs = 0 } = {}) {
+  let n = 0;
   gitInfo.setRunner((cmd, args) => {
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
@@ -96,7 +105,11 @@ function stubForkRepo(seen, { create = 'https://github.com/up/repo/pull/7\n', vi
     }
     if (cmd === 'git' && args[0] === 'for-each-ref') return Promise.resolve({ ok: true, stdout: refs, stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return Promise.resolve({ ok: true, stdout: create, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') {
+      const out = typeof create === 'function' ? create(++n) : create;
+      const answer = out instanceof Error ? { ok: false, stdout: '', stderr: out.message, code: 1 } : { ok: true, stdout: out, stderr: '', code: 0 };
+      return delayMs ? new Promise((r) => setTimeout(() => r(answer), delayMs)) : Promise.resolve(answer);
+    }
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: view, stderr: '', code: 0 });
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
@@ -128,6 +141,39 @@ function stubAdo(calls, { create = () => adoJson(201, { pullRequestId: 31 }),
     if (method === 'POST' && path.endsWith('/pullrequests')) return create();
     if (method === 'GET' && path.endsWith('/pullrequests/31')) return adoJson(200, view);
     return adoJson(404, { message: 'not stubbed' });
+  });
+}
+const BB = 'https://bitbucket.org/acme/api.git';
+const BB_REMOTES_V = `origin\t${BB} (fetch)\norigin\t${BB} (push)\n`;
+/** gh present; one Bitbucket origin; argv + env recorded. */
+function stubBitbucketRepo(seen, { remotesV = BB_REMOTES_V, getUrl = (name) => (name === 'fork' ? 'https://bitbucket.org/me/api.git' : BB) } = {}) {
+  gitInfo.setRunner((cmd, args, opts = {}) => {
+    seen.push({ argv: [cmd, ...args], env: opts.env });
+    const done = (stdout = '') => Promise.resolve({ ok: true, stdout, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === '--version') return done('gh 2.x');
+    if (cmd === 'git' && args[0] === 'remote' && args[1] === 'get-url') return done(`${getUrl(args[args.length - 1])}\n`);
+    if (cmd === 'git' && args[0] === 'remote') return done(remotesV);
+    if (cmd === 'git' && args[0] === 'for-each-ref') return done(REFS);
+    if (cmd === 'gh') return Promise.resolve({ ok: false, stdout: '', stderr: 'gh must not run for Bitbucket', code: 1 });
+    return done();
+  });
+}
+const bbJson = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+/** Bitbucket REST fake: no open PR, POST …/pullrequests answers #31, the PR (with its abbreviated commits) and an empty
+ *  file-conflicts list; every call recorded. */
+function stubBb(calls) {
+  bitbucketPr._testing.setFetch(async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push({ url: String(url), method, body: init.body ? JSON.parse(init.body) : undefined, auth: init.headers?.authorization });
+    const path = new URL(url).pathname;
+    if (method === 'POST' && path.endsWith('/pullrequests')) return bbJson(201, { id: 31 });
+    if (path.endsWith('/conflicts')) return bbJson(200, { values: [] });
+    if (path.endsWith('/pullrequests')) return bbJson(200, { values: [] });
+    if (path.endsWith('/pullrequests/31')) {
+      return bbJson(200, { id: 31, state: 'OPEN', source: { branch: { name: FEATURE }, commit: { hash: 'a1b2c3d4e5f6' }, repository: { full_name: 'acme/api' } },
+        destination: { branch: { name: 'main' }, commit: { hash: '0f9e8d7c6b5a' } } });
+    }
+    return bbJson(404, { error: { message: 'not stubbed' } });
   });
 }
 const getRemotes =(q) => fetch(`${base}/api/pr/remotes?${new URLSearchParams(q)}`);
@@ -489,6 +535,286 @@ test('a chained run: GET stacks the default on the previous run\'s branch until 
   }
 });
 
+// ── One ship flow (slice 2): POST /api/chains/:id/ship — a Run-after chain ships stacked or as one PR ──────────
+const nth = (k) => `https://github.com/up/repo/pull/${40 + k}\n`;   // a distinct url per create
+const argOf = (c, k) => c[c.indexOf(k) + 1];
+const prCreates = (seen) => seen.filter((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'create');
+const shipChain = (id, body) => fetch(`${base}/api/chains/${encodeURIComponent(id)}/ship`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const chain2 = async (tag) => {
+  const run = async (title, source, feature) => (await seedPipeline(betaRepo, { title, status: 'done',
+    startedAt: '2026-06-02T00:00:00Z', branch: { source, feature, branchKept: true } })).id;
+  const r1 = await run(`${tag}1`, 'dev', `worca-cc/${tag}1`);
+  const r2 = await run(`${tag}2`, `worca-cc/${tag}1`, `worca-cc/${tag}2`);
+  const t = createTicket({ projectDir: betaRepo, title: 'next', request: { projectDir: betaRepo, prompt: 'next' },
+    after: { kind: 'pipeline', id: r1 }, sourceFromPrevious: true });
+  markTicketFired(t.id, { pipelineId: r2 });
+  return { r1, r2, id: `p:${r1}` };
+};
+
+test('chain ship, stacked: 2 createRunPr calls, run 1 into the root, run 2 onto run 1\'s branch; each run records its PR', async () => {
+  const { r1, r2, id } = await chain2('cs');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cs1\n`, create: nth });
+  const r = await shipChain(id, { mode: 'stacked' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const creates = prCreates(seen);
+  assert.equal(creates.length, 2);
+  assert.deepEqual(creates.map((c) => argOf(c, '--base')), ['dev', 'worca-cc/cs1']);
+  assert.deepEqual([readPrState(r1).url, readPrState(r2).url], [nth(1).trim(), nth(2).trim()]);
+  assert.equal((await shipChain(id, { mode: 'stacked' })).status, 409, 'every run has a PR: nothing left to create');
+});
+
+test('chain ship, stacked: a failure on run 2 keeps run 1\'s PR, lists it, and a retry creates only run 2\'s', async () => {
+  const { r1, r2, id } = await chain2('cf');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cf1\n`, create: (k) => (k === 2 ? new Error('boom') : nth(k)) });
+  const r = await shipChain(id, { mode: 'stacked' });
+  assert.notEqual(r.status, 200);
+  const j = await r.json();
+  assert.match(j.error, /run 2's PR.*Create PR again to continue/);
+  assert.deepEqual(j.prs, [nth(1).trim()]);
+  assert.equal(readPrState(r1).url, nth(1).trim());
+  assert.equal(readPrState(r2), null);
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cf1\n`, create: () => nth(3) });
+  assert.equal((await shipChain(id, { mode: 'stacked' })).status, 200);
+  assert.equal(prCreates(seen).length, 3, '2 tries, then 1 retry');
+});
+
+test('chain ship: One on a forked chain answers 409 before the PR host is asked', async () => {
+  const { r1, id } = await chain2('ck');
+  const r3 = (await seedPipeline(betaRepo, { title: 'ck3', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'worca-cc/ck1', feature: 'worca-cc/ck3', branchKept: true } })).id;
+  const t = createTicket({ projectDir: betaRepo, title: 'fork', request: { projectDir: betaRepo, prompt: 'fork' },
+    after: { kind: 'pipeline', id: r1 }, sourceFromPrevious: true });
+  markTicketFired(t.id, { pipelineId: r3 });               // run 3 also follows run 1: the chain forks
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(id, { mode: 'one' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /forks/);
+  assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
+});
+
+test('chain ship: One on a chain whose run started from its own branch answers 409 before the PR host is asked', async () => {
+  const r1 = (await seedPipeline(betaRepo, { title: 'cl1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'dev', feature: 'worca-cc/cl1', branchKept: true } })).id;
+  const r2 = (await seedPipeline(betaRepo, { title: 'cl2', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'dev', feature: 'worca-cc/cl2', branchKept: true } })).id;
+  const t = createTicket({ projectDir: betaRepo, title: 'next', request: { projectDir: betaRepo, prompt: 'next' },
+    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: One would hold only run 2
+  markTicketFired(t.id, { pipelineId: r2 });
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(`p:${r1}`, { mode: 'one' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /does not start from the previous run's branch/);
+  assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
+  assert.equal(readPrState(r1), null);
+});
+
+test('chain ship: a run with no branch of its own answers 409 before any PR is created', async () => {
+  const { r1, r2 } = await chain2('cn');
+  const r3 = (await seedPipeline(betaRepo, { title: 'cn3', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'worca-cc/cn2' } })).id;           // a Folder-mode run: no feature branch
+  const t = createTicket({ projectDir: betaRepo, title: 'last', request: { projectDir: betaRepo, prompt: 'last' },
+    after: { kind: 'pipeline', id: r2 }, sourceFromPrevious: true });
+  markTicketFired(t.id, { pipelineId: r3 });
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(`p:${r1}`, { mode: 'stacked' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /run 3 has no branch to ship/);
+  assert.equal(prCreates(seen).length, 0, 'no PR is created part-way');
+});
+
+test('chain ship: two ships at once — one runs, the other answers 409 "already shipping"', async () => {
+  const { id } = await chain2('cc');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cc1\n`, create: nth, delayMs: 80 });
+  const rs = await Promise.all([shipChain(id, { mode: 'stacked' }), shipChain(id, { mode: 'stacked' })]);
+  assert.deepEqual(rs.map((r) => r.status).sort(), [200, 409]);
+  assert.match((await rs.find((r) => r.status === 409).json()).error, /already shipping/);
+  assert.equal(prCreates(seen).length, 2);
+});
+
+test('chain ship, stacked with watch: true turns Watch on for each new PR', async () => {
+  const { r1, r2, id } = await chain2('cw');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cw1\n`, create: nth });
+  assert.equal((await shipChain(id, { mode: 'stacked', watch: true })).status, 200);
+  assert.deepEqual([getWatch(nth(1).trim()).pipelineId, getWatch(nth(2).trim()).pipelineId], [r1, r2]);
+});
+
+test('chain ship, one: a single PR from the last run\'s branch into the chain root, recorded on every run; refused once a run has a PR', async () => {
+  const { r1, r2, id } = await chain2('co');
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(id, { mode: 'one', title: 'Both runs' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const creates = prCreates(seen);
+  assert.equal(creates.length, 1);
+  assert.equal(argOf(creates[0], '--base'), 'dev');
+  assert.match(argOf(creates[0], '--head'), /worca-cc\/co2$/);
+  assert.equal(argOf(creates[0], '--title'), 'Both runs');
+  assert.equal(readPrState(r1).url, readPrState(r2).url);
+  const other = await chain2('cx');
+  persistPrState(other.r1, { url: 'https://github.com/up/repo/pull/40', number: 40, state: 'OPEN' });
+  const refused = await shipChain(other.id, { mode: 'one' });
+  assert.equal(refused.status, 409);
+  assert.match((await refused.json()).error, /already has a PR/);
+});
+
+test('chain ship: 400 bad mode or watch, 404 unknown, 409 a run not done — answered before the PR host is asked', async () => {
+  const seen = [];
+  stubForkRepo(seen);
+  assert.equal((await shipChain('p:nope', { mode: 'one' })).status, 404);
+  const { r2, id } = await chain2('cb');
+  assert.equal((await shipChain(id, { mode: 'all' })).status, 400);
+  assert.equal((await shipChain(id, { mode: 'one', watch: 'yes' })).status, 400);
+  getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = ?").run(r2);
+  assert.equal((await shipChain(id, { mode: 'stacked' })).status, 409);
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(r2);
+  assert.equal(seen.filter((c) => c[0] === 'gh').length, 0, 'no gh call for a refused request');
+});
+
+test('chain ship: 409 with the POST /api/pr message when no PR host is available', () => withEnv(NO_ADO, async () => {
+  const { id } = await chain2('ch');
+  gitInfo.setRunner((cmd) => Promise.resolve(cmd === 'gh' ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
+    : { ok: true, stdout: '', stderr: '', code: 0 }));
+  const r = await shipChain(id, { mode: 'stacked' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /No pull request host is available/);
+}));
+
+// ── One ship flow (slice 3): user groups ──
+const sh = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
+const shipGroup = (id, body) => fetch(`${base}/api/run-groups/${encodeURIComponent(id)}/ship`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const combineOf = async (id) => (await fetch(`${base}/api/run-groups/${encodeURIComponent(id)}/combine`)).json();
+/** A real repo with dev and 3 done runs on their own branches off dev; `files[i]` is what run i edits. → { dir, pids, gid } */
+async function userGroup3(tag, files = ['a.txt', 'b.txt', 'c.txt']) {
+  const dir = await mkdtemp(join(tmpdir(), `worca-ug-${tag}-`));
+  for (const a of [['init', '-q', '-b', 'dev'], ['config', 'user.email', 't@t'], ['config', 'user.name', 't'], ['config', 'commit.gpgsign', 'false']]) sh(dir, ...a);
+  for (const f of new Set(files)) writeFileSync(join(dir, f), 'base\n');
+  sh(dir, 'add', '-A'); sh(dir, 'commit', '-qm', 'init');
+  const pids = [];
+  for (const [i, f] of files.entries()) {
+    const feature = `worca-cc/${tag}${i + 1}`;
+    sh(dir, 'checkout', '-q', '-b', feature, 'dev');
+    writeFileSync(join(dir, f), `run ${i + 1}\n`); sh(dir, 'commit', '-qam', `run ${i + 1}`);
+    sh(dir, 'checkout', '-q', 'dev');
+    pids.push((await seedPipeline(dir, { title: `${tag} ${i + 1}`, status: 'done', startedAt: '2026-10-01T00:00:00Z',
+      branch: { source: 'dev', feature, branchKept: true } })).id);
+  }
+  // As the "Runs feat" test does: the project row with the repo as its path, so prTargetFor finds repoDir.
+  const key = projectKey(dir);
+  writeStoreMeta(key, 'project', { key, name: `G ${tag}`, path: dir });
+  const g = createRunGroup({ title: 'Login polish', pipelineId: pids[0], by: 't' });
+  for (const p of pids.slice(1)) addToGroup({ groupId: g.id, pipelineId: p, by: 't' });
+  return { dir, pids, gid: g.id };
+}
+/** HEAD, the member branches and the checkout's status of a userGroup3 repo. */
+const repoSnap = (dir, tag) => [sh(dir, 'rev-parse', 'HEAD'), ...[1, 2, 3].map((k) => sh(dir, 'rev-parse', `worca-cc/${tag}${k}`)),
+  sh(dir, 'status', '--porcelain')];
+
+test('user group ship, separate: 3 PRs, each from its own branch into dev; one member with a PR → 2', async () => {
+  const { pids, gid } = await userGroup3('us');
+  const seen = [];
+  stubForkRepo(seen, { create: nth });
+  const r = await shipGroup(gid, { mode: 'separate' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const creates = prCreates(seen);
+  assert.equal(creates.length, 3);
+  assert.deepEqual(creates.map((c) => argOf(c, '--head').replace(/^[^:]+:/, '')), ['worca-cc/us1', 'worca-cc/us2', 'worca-cc/us3']);
+  assert.deepEqual(creates.map((c) => argOf(c, '--base')), ['dev', 'dev', 'dev']);
+  assert.equal((await r.json()).prs.length, 3);
+  assert.deepEqual(pids.map((p) => readPrState(p).url), [nth(1), nth(2), nth(3)].map((u) => u.trim()));
+
+  const two = await userGroup3('ut');
+  persistPrState(two.pids[1], { url: 'https://github.com/up/repo/pull/99', number: 99, state: 'OPEN' });
+  const seen2 = [];
+  stubForkRepo(seen2, { create: nth });
+  const r2 = await shipGroup(two.gid, { mode: 'separate' });
+  assert.equal(r2.status, 200);
+  assert.equal(prCreates(seen2).length, 2, 'only the members without a PR');
+  assert.equal((await r2.json()).prs.length, 2);
+  // One is refused once a member has a PR (clarify 2).
+  const one = await shipGroup(two.gid, { mode: 'one' });
+  assert.equal(one.status, 409);
+  assert.match((await one.json()).error, /already has a PR/);
+});
+
+test('user group ship, separate: a run with no branch of its own answers 409 before any PR is created', async () => {
+  const { pids, gid } = await userGroup3('un');
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: 'dev' }), pids[1]);
+  const seen = [];
+  stubForkRepo(seen, { create: nth });
+  const r = await shipGroup(gid, { mode: 'separate' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /un 2 has no branch to ship here/);
+  assert.equal(prCreates(seen).length, 0, 'no PR is created part-way');
+  assert.equal(readPrState(pids[0]), null);
+});
+
+test('chain ship, stacked: a failure part-way still watches the PRs made before it', async () => {
+  const { r1, id } = await chain2('cw');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cw1\n`, create: (k) => (k === 2 ? new Error('boom') : nth(k)) });
+  const r = await shipChain(id, { mode: 'stacked', watch: true });
+  assert.notEqual(r.status, 200);
+  assert.equal(getWatch(nth(1).trim()).pipelineId, r1);
+});
+
+test('user group ship, one: a combined branch named after the group is pushed and one PR is recorded on all members', async () => {
+  const { dir, pids, gid } = await userGroup3('uo');
+  const seen = [];
+  stubForkRepo(seen, { create: nth });
+  assert.deepEqual(await combineOf(gid), { n: 3, oneOff: '', line: 'The 3 runs combine without conflicts', base: 'dev', files: [] });
+  const snap0 = repoSnap(dir, 'uo');
+  const r = await shipGroup(gid, { mode: 'one', title: 'Login polish' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const j = await r.json();
+  assert.equal(j.branch, `worca-cc/login-polish-${gid.slice(4, 12)}`);
+  assert.ok(seen.some((c) => c[0] === 'git' && c[1] === 'push' && c.at(-1) === j.branch), 'the combined branch is pushed');
+  const creates = prCreates(seen);
+  assert.equal(creates.length, 1);
+  assert.equal(argOf(creates[0], '--head').replace(/^[^:]+:/, ''), j.branch);
+  assert.equal(argOf(creates[0], '--base'), 'dev');
+  assert.deepEqual(pids.map((p) => readPrState(p).url), Array(3).fill(nth(1).trim()));
+  // The members other than the last get the group audit line (prAudit reads only 'PR %' lines, so query directly).
+  const events = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(id).map((x) => x.text);
+  assert.ok(events(pids[0]).some((t) => t.startsWith('Shipped with its group as one PR') && t.endsWith(nth(1).trim())));
+  const parents = sh(dir, 'rev-list', '--parents', '-n', '1', j.branch).split(' ').slice(1);
+  assert.deepEqual(parents, snap0.slice(1, 4), 'the member heads, in position order');
+  assert.deepEqual(repoSnap(dir, 'uo'), snap0, 'no checkout, member branch or HEAD moved');
+});
+
+test('user group: a conflicting group reports the file, refuses One with 409 and pushes nothing; separate still works', async () => {
+  const { gid } = await userGroup3('uc', ['a.txt', 'a.txt', 'c.txt']);
+  const seen = [];
+  stubForkRepo(seen, { create: nth });
+  const c = await combineOf(gid);
+  assert.equal(c.oneOff, 'The runs conflict in a.txt');
+  assert.deepEqual(c.files, ['a.txt']);
+  const r = await shipGroup(gid, { mode: 'one' });
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).error, 'The runs conflict in a.txt');
+  assert.ok(!seen.some((x) => x[1] === 'push' || x[2] === 'create'), 'nothing pushed or created');
+  assert.equal((await shipGroup(gid, { mode: 'separate' })).status, 200);
+});
+
+test('user group ship: 400 on a bad mode, 404 on an unknown group, 409 while a run is not done', async () => {
+  const { pids, gid } = await userGroup3('ux');
+  stubForkRepo([]);
+  assert.equal((await shipGroup(gid, { mode: 'stacked' })).status, 400);
+  assert.equal((await shipGroup('grp_000000000000', { mode: 'separate' })).status, 404);
+  getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = ?").run(pids[2]);
+  const r = await shipGroup(gid, { mode: 'separate' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /every run in the group must be done/);
+});
+
 // A run started from a remote-tracking ref (the Ask agent's start_run with sourceBranch "origin/dev") records it
 // verbatim; on the remote that branch is `dev`.
 test('a run whose source is origin/dev: GET defaults to dev on origin; POST opens against dev', async () => {
@@ -765,10 +1091,10 @@ test('POST /api/pr/mergeable reads an Azure PR URL over REST', () => withEnv(WIT
 test('GET /api/history and /api/runs expose prHosts next to ghAvailable', () => withEnv(WITH_ADO, async () => {
   stubAzureRepo([]);
   const h = await (await fetch(`${base}/api/history`)).json();
-  assert.deepEqual(h.prHosts, { github: true, azure: true });
+  assert.deepEqual(h.prHosts, { github: true, azure: true, bitbucket: false });
   assert.equal(h.ghAvailable, true);
   const r = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(betaRepo)}`)).json();
-  assert.deepEqual(r.prHosts, { github: true, azure: true });
+  assert.deepEqual(r.prHosts, { github: true, azure: true, bitbucket: false });
 }));
 
 test('POST /api/pr links the Azure Boards work item a run came from', () => withEnv(WITH_ADO, async () => {
@@ -793,8 +1119,66 @@ test('POST /api/pr/describe drafts for the PR host the modal names', async () =>
   assert.match(seen[0].systemPrompt, /Azure DevOps/);
   assert.doesNotMatch(seen[1].systemPrompt, /Azure DevOps/, 'anything else is GitHub');
   assert.doesNotMatch(seen[2].systemPrompt, /Azure DevOps/);
+  assert.equal((await postDescribe({ projectKey: betaKey, id: betaId, forge: 'bitbucket' })).status, 200);
+  assert.match(seen[3].systemPrompt, /a Bitbucket pull request/);
 });
 
+
+test('POST /api/pr on a Bitbucket origin: pushes with the Bitbucket token, creates over REST, persists #31, reads mergeability', () => withEnv(WITH_BB, async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const seen = []; const calls = [];
+  stubBitbucketRepo(seen);
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id: betaId });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.url, 'https://bitbucket.org/acme/api/pull-requests/31');
+  assert.equal(j.mergeable, 'MERGEABLE');
+  const push = seen.find((s) => s.argv[1] === 'push');
+  assert.ok(push, 'the branch was pushed');
+  assert.equal(push.env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(push.env.WORCA_BB_GIT_USER, 'x-token-auth');
+  assert.equal(push.env.WORCA_BB_TOKEN, undefined);
+  assert.equal(push.env.GH_TOKEN, undefined);
+  assert.deepEqual(seen.filter((s) => s.argv[0] === 'gh').map((s) => s.argv), [['gh', '--version']], 'gh never ran beyond --version');
+  const create = calls.find((c) => c.method === 'POST');
+  assert.equal(new URL(create.url).pathname, '/2.0/repositories/acme/api/pullrequests');
+  assert.deepEqual([create.body.source.branch.name, create.body.destination.branch.name], [FEATURE, 'main']);
+  assert.equal(create.auth, 'Bearer bbtok');
+  for (const c of calls) assert.equal(new URL(c.url).origin, 'https://api.bitbucket.org');
+  const pr = readPrState(betaId);
+  assert.deepEqual({ number: pr.number, state: pr.state, url: pr.url }, { number: 31, state: 'OPEN', url: 'https://bitbucket.org/acme/api/pull-requests/31' });
+}));
+
+test('POST /api/pr on a Bitbucket origin without a token -> 409 naming WORCA_BB_TOKEN, nothing pushed', () => withEnv({ ...NO_ADO, ...NO_BB }, async () => {
+  const seen = [];
+  stubBitbucketRepo(seen);
+  const r = await post({ projectKey: betaKey, id: betaId });
+  assert.equal(r.status, 409);
+  const j = await r.json();
+  assert.match(j.error, /WORCA_BB_TOKEN/);
+  assert.equal(j.forge, 'bitbucket');
+  assert.ok(!seen.some((s) => s.argv[1] === 'push'), 'nothing was pushed');
+}));
+
+test('POST /api/pr Bitbucket fork (push to another repo) -> 422 unsupported before anything is pushed', () => withEnv(WITH_BB, async () => {
+  const seen = []; const calls = [];
+  stubBitbucketRepo(seen, { remotesV: `fork\thttps://bitbucket.org/me/api.git (fetch)\nfork\thttps://bitbucket.org/me/api.git (push)\n${BB_REMOTES_V}` });
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'fork', baseRemote: 'origin' });
+  assert.equal(r.status, 422);
+  assert.match((await r.json()).error, /Bitbucket pull requests between repositories \(forks\) are not supported yet — push to origin/);
+  assert.ok(!seen.some((s) => s.argv[1] === 'push'));
+  assert.equal(calls.length, 0);
+}));
+
+test('GET /api/pr/remotes labels a Bitbucket remote and names the missing token', () => withEnv({ ...NO_ADO, ...NO_BB }, async () => {
+  stubBitbucketRepo([]);
+  const j = await (await getRemotes({ projectKey: betaKey, id: betaId })).json();
+  const o = j.remotes.find((x) => x.name === 'origin');
+  assert.deepEqual([o.forge, o.prHost, o.prSupported], ['bitbucket', 'Bitbucket', false]);
+  assert.match(o.prReason, /WORCA_BB_TOKEN/);
+}));
 
 // ---------------------------------------------------------------------------
 // Draft PRs and the source issue's closing line.
@@ -810,7 +1194,7 @@ async function seedIssueRun({ url = ISSUE_URL, feature = 'worca-cc/issue-run' } 
     branch: { source: 'main', feature, branchKept: true } });
   return id;
 }
-const prAudit = (id) => getDb().prepare("SELECT text FROM pipeline_events WHERE pipeline_id = ? AND text LIKE 'Pull request %' ORDER BY id").all(id).map((r) => r.text);
+const prAudit = (id) => getDb().prepare("SELECT text FROM pipeline_events WHERE pipeline_id = ? AND text LIKE 'PR %' ORDER BY id").all(id).map((r) => r.text);
 const FORK = { pushRemote: 'origin', baseRemote: 'upstream' };   // base repo = up/repo
 
 test('POST /api/pr refuses a non-boolean draft with 400 before anything is pushed', async () => {
@@ -824,6 +1208,39 @@ test('POST /api/pr refuses a non-boolean draft with 400 before anything is pushe
   }
 });
 
+test('POST /api/pr title: a custom title reaches gh pr create --title and leads an empty body', async () => {
+  const id = await seedIssueRun({ feature: 'worca-cc/titled-run' });
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await post({ projectKey: betaKey, id, title: '  Fix booking timezone ', ...FORK });
+  assert.equal(r.status, 200, await r.clone().text());
+  const create = seen.find((c) => c[2] === 'create');
+  assert.equal(create[create.indexOf('--title') + 1], 'Fix booking timezone');
+  assert.match(create[create.indexOf('--body') + 1], /^Fix booking timezone/, 'no description: the custom title leads the body');
+});
+
+test('POST /api/pr refuses a non-string or over-long title with 400 before anything is pushed', async () => {
+  for (const [bad, error] of [[7, 'title must be a string'], [{}, 'title must be a string'], ['x'.repeat(257), 'title must be at most 256 characters']]) {
+    const seen = [];
+    stubForkRepo(seen);
+    const r = await post({ projectKey: betaKey, id: betaId, title: bad });
+    assert.equal(r.status, 400);
+    assert.deepEqual(await r.json(), { error });
+    assert.ok(!seen.some((c) => c[1] === 'push'), 'nothing was pushed');
+  }
+});
+
+test('POST /api/pr title: blank or null keeps the run title', async () => {
+  for (const title of ['   ', null]) {
+    const id = await seedIssueRun({ feature: `worca-cc/blank-title-${title === null ? 'n' : 's'}` });
+    const seen = [];
+    stubForkRepo(seen);
+    await post({ projectKey: betaKey, id, title, ...FORK });
+    const create = seen.find((c) => c[2] === 'create');
+    assert.equal(create[create.indexOf('--title') + 1], 'Issue feature');
+  }
+});
+
 test('POST /api/pr draft: true reaches gh pr create --draft, says (draft) in the audit and the response', async () => {
   const id = await seedIssueRun({ feature: 'worca-cc/draft-run' });
   const seen = [];
@@ -833,7 +1250,7 @@ test('POST /api/pr draft: true reaches gh pr create --draft, says (draft) in the
   const j = await r.json();
   assert.equal(j.draft, true);
   assert.equal(seen.find((c) => c[2] === 'create').at(-1), '--draft');
-  assert.deepEqual(prAudit(id), ['Pull request opened (draft): https://github.com/up/repo/pull/7']);
+  assert.deepEqual(prAudit(id), ['PR created (draft): https://github.com/up/repo/pull/7']);
 });
 
 test('POST /api/pr draft: false or absent -> no --draft, draft:false, the audit line unchanged', async () => {
@@ -844,7 +1261,7 @@ test('POST /api/pr draft: false or absent -> no --draft, draft:false, the audit 
     const j = await (await post({ projectKey: betaKey, id, ...FORK, ...extra })).json();
     assert.equal(j.draft, false);
     assert.ok(!seen.find((c) => c[2] === 'create').includes('--draft'));
-    assert.deepEqual(prAudit(id), ['Pull request opened: https://github.com/up/repo/pull/7']);
+    assert.deepEqual(prAudit(id), ['PR created: https://github.com/up/repo/pull/7']);
   }
 });
 
@@ -862,7 +1279,7 @@ test('POST /api/pr draft: true on an existing PR changes nothing: draft:false, "
   const j = await (await post({ projectKey: betaKey, id, draft: true, ...FORK })).json();
   assert.equal(j.existed, true);
   assert.equal(j.draft, false);
-  assert.deepEqual(prAudit(id), ['Pull request linked: https://github.com/up/repo/pull/3']);
+  assert.deepEqual(prAudit(id), ['PR linked: https://github.com/up/repo/pull/3']);
 });
 
 test('POST /api/pr body order: description -> Closes line -> attribution footer', async () => {
@@ -926,6 +1343,22 @@ test('POST /api/pr on an Azure origin: draft reaches the REST create as isDraft;
   assert.equal(create.body.isDraft, true);
   assert.doesNotMatch(create.body.description, /Closes/);
   assert.equal((await (await getRemotes({ projectKey: betaKey, id })).json()).issue, null, 'no "Will close" line for an Azure base');
+}));
+
+test('POST /api/pr on a Bitbucket origin: draft reaches the REST create; a GitHub issue source adds no Closes line', () => withEnv(WITH_BB, async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const id = await seedIssueRun({ feature: 'worca-cc/bb-draft-run' });
+  const calls = [];
+  stubBitbucketRepo([]);
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id, draft: true, body: 'Did it.' });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.draft, true);
+  const create = calls.find((c) => c.method === 'POST');
+  assert.equal(create.body.draft, true);
+  assert.doesNotMatch(create.body.description, /Closes/);
+  assert.equal((await (await getRemotes({ projectKey: betaKey, id })).json()).issue, null, 'no "Will close" line for a Bitbucket base');
 }));
 
 test('POST /api/pr on an Azure origin with watch:true watches the new Azure DevOps PR', () => withEnv(WITH_ADO, async () => {
@@ -1020,7 +1453,7 @@ test('POST /api/push: 409 when not merged back, and 409 for a normal run (open a
 // ---------------------------------------------------------------------------
 // Spec D7 (slice 3): a shaped run's PR ends with its perspective checklist, before the attribution footer.
 // ---------------------------------------------------------------------------
-test('POST /api/pr appends the latest perspective checklist after the Closes line and before the footer (gated)', async () => {
+test('POST /api/pr appends the latest perspective checklist after the Closes line and before the footer', async () => {
   const { writeReview } = await import('../src/core/artifacts.mjs');
   const id = await seedIssueRun({ feature: 'worca-cc/checklist-run' });
   const item = (over) => ({ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes', ...over });
@@ -1033,47 +1466,32 @@ test('POST /api/pr appends the latest perspective checklist after the Closes lin
 
   let seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
-  });
+  assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
   assert.equal(bodyArg(seen), `Did it.\n\nCloses #42\n\n${section}${footer}`, 'only cycle 2 is used');
 
   seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_FLAGS: '-shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
-  });
-  assert.equal(bodyArg(seen), `Did it.\n\nCloses #42${footer}`, 'gate off: today\'s body');
-
-  seen = [];
-  stubForkRepo(seen);
   const own = 'Mine.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] done';
-  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id, body: own, ...FORK })).status, 200);
-  });
+  assert.equal((await post({ projectKey: betaKey, id, body: own, ...FORK })).status, 200);
   assert.equal(bodyArg(seen), `${own}\n\nCloses #42${footer}`, 'a description that carries the marker is left alone');
 });
 
-test('POST /api/pr: a gated run without checklist rows is unchanged; a footer-less run ends with the section', async () => {
+test('POST /api/pr: a run without checklist rows is unchanged; a footer-less run ends with the section', async () => {
   const { writeReview } = await import('../src/core/artifacts.mjs');
   let seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
-  });
+  assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
   assert.equal(bodyArg(seen), 'Did it.', 'no rows: byte-identical');
 
   await writeReview(betaId, 'impl', 1, { issues: [], summary: '', checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'T.', status: 'met', evidence: 'e' }] });
   seen = [];
   stubForkRepo(seen);
-  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
-    assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
-  });
+  assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
   assert.equal(bodyArg(seen), 'Did it.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] **R-qa-1** T. — e');
 });
 
-// D22: a slice's PR body starts with its place in the feature, only while the flag is on.
-test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2" (flag on), and not with the flag off', async () => {
+// D22: a slice's PR body starts with its place in the feature.
+test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2"', async () => {
   const { createSliceFeature } = await import('../src/core/shape/features.mjs');
   const sl = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: '', inScope: [], outOfScope: [], acceptance: [`ok ${n}`], dependsOn: [], estimate: 'M' });
   const seeded = await seedPipeline(betaRepo, { title: 'Charts · 1/2: Slice 1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
@@ -1081,15 +1499,12 @@ test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2" (f
   createSliceFeature({ pipelineId: seeded.id, projectDir: betaRepo, title: 'Charts', outline: { why: '', slices: [sl(1), sl(2)] },
     perspectives: ['product'], workflowId: 'wf_shape' });
   const bodyOf = (seen) => { const c = seen.find((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === 'create'); return c[c.indexOf('--body') + 1]; };
-  for (const [flags, starts] of [['shapeFirst', true], ['-shapeFirst', false]]) {
-    await withEnv({ ...NO_ADO, WORCA_FLAGS: flags }, async () => {
-      const seen = [];
-      stubForkRepo(seen);
-      getDb().prepare('UPDATE pipelines SET pr_url = NULL, pr_state = NULL WHERE id = ?').run(seeded.id);
-      const r = await post({ id: seeded.id, projectKey: seeded.key });
-      assert.equal(r.status, 200, await r.clone().text());
-      const body = bodyOf(seen);
-      assert.equal(body.startsWith('Part of Charts: slice 1 of 2\n\n- Slice 2, Slice 2: not opened yet\n\n'), starts, `${flags}: ${body}`);
-    });
-  }
+  await withEnv(NO_ADO, async () => {
+    const seen = [];
+    stubForkRepo(seen);
+    const r = await post({ id: seeded.id, projectKey: seeded.key });
+    assert.equal(r.status, 200, await r.clone().text());
+    const body = bodyOf(seen);
+    assert.ok(body.startsWith('Part of Charts: slice 1 of 2\n\n- Slice 2, Slice 2: not opened yet\n\n'), body);
+  });
 });

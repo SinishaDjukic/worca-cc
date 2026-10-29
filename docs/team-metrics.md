@@ -90,7 +90,7 @@ workspace runs follow that switch).
 
 ## Cost
 
-While the `runTags` feature flag is on, the Overview tab opens with three chips: **Overview** (the
+The Overview tab opens with three chips: **Overview** (the
 page as before), **By person** (the By actor table on its own) and **Cost**. Cost is the same Cost and
 value report as Statistics › Cost (see [statistics.md](./statistics.md)): KPIs, a filter bar,
 Allocate by → then by, a stacked area chart, one expandable table, saved views and Download CSV, over
@@ -130,7 +130,7 @@ run it. It reads the same records for the same scope; nothing extra is recorded.
   the repository is known, including the ones no Worca run opened. Those appear as work items of
   their own, tagged *outside Worca*: the bar is the pull request itself, from opened (a hollow dot)
   to merged, in the status colour. They count in
-  Shipped, In review, Needs attention and lead time (PR opened to merge), never in spend. The
+  Shipped, In review, Needs attention and lead time (PR created to merge), never in spend. The
   **PRs outside Worca** switch hides them; the choice is remembered per browser. A PR is "outside"
   when no recorded run's branch is its head branch and no run was matched to its number. A bar spans the item's first run to its last, with each run drawn
   inside it (red when it failed). When the item has a pull request, a dashed line runs from the
@@ -203,9 +203,9 @@ It degrades rather than fails:
   period), lead time is hidden, and items read "Done".
 - **gh answers only partly** (rate limit, a repository the viewer cannot read): the note quotes
   GitHub's error; those runs stay unknown and are asked again later.
-- **Not GitHub** (GitLab, Bitbucket, Azure DevOps): merge tracking covers GitHub and Azure DevOps
-  repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md)); GitLab and
-  Bitbucket items show without merge data.
+- **Not GitHub** (GitLab, Bitbucket, Azure DevOps): merge tracking covers GitHub, Azure DevOps and Bitbucket Cloud
+  repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md); Bitbucket: set `WORCA_BB_TOKEN`,
+  see [Bitbucket](bitbucket.md)); GitLab and Bitbucket Data Center items show without merge data.
 
 ## Chat
 

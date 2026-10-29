@@ -17,6 +17,7 @@ import {
   zonedToUtc, zonedParts, localDate, isValidTimeZone,
 } from '../../src/shared/schedule/recurrence.mjs';
 import { guardModal } from './modal-guard.mjs';
+import { layoutDialog } from './dialog-layout.mjs';
 import { whenLabel } from './runs-list.mjs';
 
 const DAY_LABEL = { mo: 'Mo', tu: 'Tu', we: 'We', th: 'Th', fr: 'Fr', sa: 'Sa', su: 'Su' };
@@ -252,9 +253,11 @@ export function openScheduleSheet({
     const cancelBtn = h('button', { type: 'button', class: 'btn sched-cancel', text: 'Cancel' });
     const okBtn = h('button', { type: 'button', class: 'btn btn-primary sched-ok', text: confirmLabel });
 
+    const head = h('div', { class: 'card-head' }, h('h2', { id: 'sched-title', text: heading }));
+    const runTitleEl = runTitle ? h('div', { class: 'sched-run-title', text: runTitle }) : null;
+    const actions = h('div', { class: 'confirm-actions' }, cancelBtn, okBtn);
     const card = h('div', { class: 'card sched-card' },
-      h('div', { class: 'card-head' }, h('h2', { id: 'sched-title', text: heading })),
-      runTitle ? h('div', { class: 'sched-run-title', text: runTitle }) : null,
+      head, runTitleEl,
       showKind ? kindSeg : null,
       showPresets ? seg : null,
       quick, onceRow, daysField, customField, monthField, showKind ? afterRow : null, planRow, repeatRow,
@@ -262,8 +265,9 @@ export function openScheduleSheet({
       policyRow, missedRow, syncRow, engineRow,
       h('small', { class: 'hint sched-note', text: 'A scheduled run starts only while Worca is running and this computer is awake.' }),
       warning ? h('div', { class: 'hint warn sched-warn', text: warning }) : null,
-      err,
-      h('div', { class: 'confirm-actions' }, cancelBtn, okBtn));
+      err, actions);
+    // The error line goes with the buttons: a failed save must stay in view when the form is scrolled.
+    layoutDialog(card, { head: [head, runTitleEl], foot: [err, actions] });
     const modal = h('div', { id: 'schedule-modal', class: 'viewer-modal confirm-modal sched-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sched-title' }, card);
 
     // ── state -> DOM ─────────────────────────────────────────────────────────

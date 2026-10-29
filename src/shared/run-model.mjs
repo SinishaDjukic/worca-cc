@@ -15,6 +15,7 @@
 import { runProgress, groupProgress, askWhat } from './run-progress.mjs';
 import { liveRoleRows } from './shape/role-review.mjs';
 import { parseAzurePrUrl } from './azure-remote.mjs';
+import { parseBitbucketPrUrl } from './bitbucket-remote.mjs';
 
 export const RUN_STATES = Object.freeze({
   starting: Object.freeze({ word: 'Starting', dot: 'peach', pulse: true, symbol: null }),
@@ -103,8 +104,9 @@ export function prState(pr) {
     : id === 'running' ? `${checks.pending} of ${checks.total} checks running · ${ref}`
     : id === 'conflicts' ? `Conflicts with the base branch · ${ref}`
     : number == null ? 'Pull request' : /github\.com\//.test(url || '') ? `PR #${number} · open on GitHub` : `PR #${number}`;
-  // #784: Azure DevOps calls a closed-without-merging PR abandoned; the id, icon and colour stay `closed`.
-  const word = id === 'closed' && parseAzurePrUrl(url) ? 'Abandoned' : PR_STATES[id].word;
+  // #784: Azure DevOps calls a closed-without-merging PR abandoned, Bitbucket declined; the id, icon and colour stay `closed`.
+  const word = id === 'closed' && parseAzurePrUrl(url) ? 'Abandoned'
+    : id === 'closed' && parseBitbucketPrUrl(url) ? 'Declined' : PR_STATES[id].word;
   return { id, ...PR_STATES[id], icon: gitIcon(s, pr), word, number, url, title, needsYou: id === 'conflicts' || id === 'failing',
     ...(pr.pending ? { pending: true } : {}) };
 }
@@ -172,6 +174,7 @@ function singleLine(state, run, prog, pr, opts) {
     case 'paused': {
       const s = String(run.status);
       if (s === 'pausing') return join(where, 'pausing');
+      if (run.resumePending) return join(where, 'resuming');   // a Resume request in flight (the browser's flag)
       return join(where, 'paused', s === 'interrupted' ? 'interrupted' : PAUSE_WORD[run.pauseReason] || '');
     }
     case 'waiting': {
@@ -315,6 +318,8 @@ export function runModel(run, opts = {}) {
     round, progress: prog, roles: liveRoleRows(r, { stage: prog ? prog.stage : null }) };
 }
 
+// The PR states that are still open (a group is In review while each of its runs has one).
+const OPEN_PR = ['ready', 'draft', 'changes', 'conflicts', 'failing', 'running', 'fixing'];
 // A run raised to Needs you by its PR (D31) is still a finished run for count and bar.
 const doneLike = (m) => FINISHED.has(m.state) || !!m.prNeeds;
 /** A member as groupProgress reads it. */
@@ -342,7 +347,13 @@ export function groupModel(group, opts = {}) {
   if (current) state = current.state;
   else if (pr) state = pr.id === 'merged' ? 'merged' : pr.id === 'closed' ? 'ready' : 'in-review';
   else if (members.length && members.every((m) => m.state === 'merged')) state = 'merged';
-  else state = members.some((m) => m.pr && ['ready', 'draft', 'changes', 'conflicts', 'failing', 'running', 'fixing'].includes(m.pr.id)) ? 'in-review' : 'ready';
+  else {
+    // One ship flow (clarify 2): In review once every run not yet merged has an open PR; one still without a PR keeps
+    // the group Ready to ship (Create PR then makes only the missing ones). A feature's draft is a legacy slice draft
+    // the Ship flow still has to mark ready or close, so it does not count.
+    const open = (m) => !!(m.pr && OPEN_PR.includes(m.pr.id) && !(g.kind === 'feature' && m.pr.id === 'draft'));
+    state = members.some(open) && members.every((m) => open(m) || m.state === 'merged') ? 'in-review' : 'ready';
+  }
   const idx = current ? members.indexOf(current) : -1;
   const where = current === planning && planning ? 'Planning' : `Run ${idx + 1} of ${total}`;
   const tail = () => {
@@ -358,8 +369,12 @@ export function groupModel(group, opts = {}) {
       case 'failed': return `${where} · failed`;
       case 'waiting': return idx > 0 ? `${where} · waiting for run ${idx}` : join(where, current.line.replace(/^Waiting · /, '').replace(/^Waiting$/, 'waiting'));
       case 'stopped': return `Stopped at ${where === 'Planning' ? 'planning' : `run ${idx + 1} of ${total}`}`;
-      case 'ready': return `${done} of ${total} done · ready to ship`;
-      case 'in-review': { const n = pr ? 1 : members.filter((m) => m.pr && m.pr.id !== 'merged' && m.pr.id !== 'closed').length; return `In review · ${plural(n, 'PR')}`; }
+      case 'ready': return `Ready to ship · ${done} of ${total} done`;
+      case 'in-review': {
+        // Distinct PRs: a chain shipped as One records the same PR on every run.
+        const urls = new Set(members.filter((m) => m.pr && m.pr.id !== 'merged' && m.pr.id !== 'closed').map((m) => m.pr.url || `#${m.pr.number}`));
+        return `In review · ${plural(pr ? 1 : urls.size, 'PR')}`;
+      }
       default: return 'Merged';
     }
   };

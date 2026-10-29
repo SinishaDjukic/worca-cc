@@ -12,7 +12,7 @@ import {
 } from './sync.mjs';
 import { teamOverHttps } from '../git-free/team-repo.mjs';
 import { repoOfSlug } from '../git-free/team-branch.mjs';
-import { onGitChange, GIT_MISSING } from '../git-available.mjs';
+import { onGitChange, gitMissingMessage } from '../git-available.mjs';
 import { readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
 import { parseRecordLine } from '../../shared/team-metrics/aggregate.mjs';
@@ -169,7 +169,7 @@ async function readSink(slug, projectDir, { refresh, defer = false }) {
     if (https && !hadWorktree && existsSync(worktreePath(slug))) return readLeftWorktree(slug, projectDir, copy, pre, defer);
     // P6: nothing local, and GitHub cannot be asked (a host slug, a repository the slug misnames): git is needed, not a retry.
     if (https && !hadWorktree && (!repoOfSlug(slug) || (projectDir && (await projectSlug(projectDir)).needsGit))) {
-      throw Object.assign(new Error(GIT_MISSING.message), { code: 'GIT_MISSING' });
+      throw Object.assign(new Error(gitMissingMessage(slug)), { code: 'GIT_MISSING' });
     }
     if (!hadWorktree && !pre.fetch) {
       throw Object.assign(new Error(`the ${slug} metrics branch has not been fetched yet; retrying shortly`), { code: 'FETCH_FAILED' });

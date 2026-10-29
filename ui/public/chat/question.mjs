@@ -6,47 +6,6 @@
 const nonEmpty = (v) => typeof v === 'string' && v !== '';
 const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'number';
 
-/** S9, shared: a card that renderTranscript re-appends in a new row drops the focus of the control the user is in to
- *  <body>. Remember that control while it has the focus, and once the card sits in its new row focus it again (only
- *  when the focus fell to nothing). A press or a Tab elsewhere ends the watch. Returns stop(). A port of
- *  `ui/public/chat/run-card.mjs`'s keeper (Open seam 4: run-card keeps its own copy for now). */
-export function keepFocus(el) {
-  const doc = el.ownerDocument;
-  let kept = null;                                   // { node, host } while a control in this card has the focus
-  let keptMo = null;
-  function keptStop() {
-    kept = null;
-    if (keptMo) { keptMo.disconnect(); keptMo = null; }
-    doc.removeEventListener('pointerdown', keptPress, true);
-  }
-  function keptPress(e) { if (kept && !(e.target && kept.node.contains(e.target))) keptStop(); }
-  function keptRestore() {
-    const k = kept;
-    if (!k || doc.activeElement === k.node || el.parentNode === k.host) return;   // still in it, or the card did not move
-    const a = doc.activeElement;
-    if (!k.node.isConnected || (a && a !== doc.body)) { keptStop(); return; }   // gone, or the focus went somewhere
-    k.node.focus({ preventScroll: true });           // its focusin records the new row
-    if (doc.activeElement !== k.node) keptStop();    // it cannot take the focus now (disabled while an answer is in flight)
-  }
-  function onFocusin(e) {
-    kept = { node: e.target, host: el.parentNode };
-    const MO = doc.defaultView && doc.defaultView.MutationObserver;
-    if (!keptMo && MO) {
-      keptMo = new MO(keptRestore);
-      keptMo.observe(doc, { childList: true, subtree: true });
-      doc.addEventListener('pointerdown', keptPress, true);
-    }
-  }
-  function onFocusout(e) { if (e.relatedTarget && !el.contains(e.relatedTarget)) keptStop(); }
-  el.addEventListener('focusin', onFocusin);
-  el.addEventListener('focusout', onFocusout);
-  return () => {
-    keptStop();
-    el.removeEventListener('focusin', onFocusin);
-    el.removeEventListener('focusout', onFocusout);
-  };
-}
-
 /** spec = { id, heading, questions: [{ id, text, why?, options: [{ value, label, chip?: Node, sub?: string }] }],
  *          submitLabel(picks: Map<qid,value>) -> string, onSubmit(picks: Map<qid,value>) -> void | Promise<void>,
  *          answered?: Map<qid,value> }   // answered: the card stays, its picks marked, nothing left to press (B9)
@@ -125,8 +84,7 @@ export function buildChatQuestion(doc, spec) {
       mark(entry, entry.tiles.find((t) => t.dataset.value === String(value)) || null);
     }
     for (const entry of blocks) for (const t of entry.tiles) t.disabled = true;
-    const stop = keepFocus(el);
-    return { el, picks: () => new Map(picks), destroy: stop };
+    return { el, picks: () => new Map(picks), destroy: () => {} };
   }
 
   const foot = h('div', 'qpanel-foot');
@@ -202,8 +160,7 @@ export function buildChatQuestion(doc, spec) {
   });
 
   paint();
-  const stop = keepFocus(el);
-  return { el, picks: () => new Map(picks), destroy: stop };
+  return { el, picks: () => new Map(picks), destroy: () => {} };
 }
 
 /** A question that closed unanswered: one plain line, never the question. */

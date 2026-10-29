@@ -95,7 +95,7 @@ const ROWS = [
   // More dropped tests that asserted a [hidden] rule:
   ['.rd-night-sec', 'ui-night-mode: the answers sit under the run card'],
   ['.chat-panel', 'worca Chat: the run panel slot keeps its hidden twin'],
-  ...['.hd-resume', '.hd-pause', '.hd-stop', '.hd-resume-split', '.rd-page-branch', '.rd-pr-slot']
+  ...['.hd-resume', '.hd-pause', '.hd-stop', '.hd-resume-split', '.rd-route', '.rd-pr-slot']
     .map((sel) => [sel, 'ui-history-detail-tabs: the saved run bar shares the run page bar\'s rules']),
   ['.hd-sec', 'ui-projects-view: the projects shell is a twin of the History track'], ['.pd-sec', 'ui-projects-view: the projects shell is a twin of the History track'],
   ['.rd-questions', 'ui-running-detail: the question panel rises in'],
@@ -174,10 +174,11 @@ test('the chat card footer actions are a wrapping row with a gap between the but
 
 test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship card sits under one divider, and the in-card override stays last', () => {
   const body = (sel) => (flat.find((r) => r.selectorText === sel) || {}).style;
-  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-well,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
+  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
   assert.ok(section, 'the section rule exists');
   assert.equal(section.getPropertyValue('border-top'), '1px solid var(--line)');
   assert.equal(section.getPropertyValue('padding-top'), '12px');
+  assert.equal(flat.some((r) => /chat-rc-well/.test(r.selectorText) && r.style.getPropertyValue('border-top')), false, 'the graph well is a bordered well, not a divider (#959)');
   const ship = body('.feature-page .shape-feature > .ask-shipcard');
   assert.ok(ship, 'the group page Ship card rule exists');
   assert.equal(ship.getPropertyValue('border-top'), '1px solid var(--line)');

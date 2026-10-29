@@ -10,6 +10,7 @@ import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
+import { ASK_IN_CHAT } from '../ui/public/run-head.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -385,8 +386,8 @@ test('a recovery-patch artifact adds the alternate-recovery link once', async ()
   });
   await settle(window);
 
-  // Slice 3: the tracker's Changes step carries the recovery patch.
-  const patchLinks = () => [...window.document.querySelectorAll('#run-detail .rd-track a.rd-track-link')].filter((a) => a.textContent === 'Download patch');
+  // The facts list's Kept work row carries the recovery patch.
+  const patchLinks = () => [...window.document.querySelectorAll('#run-detail .rd-route .rd-route-second a.rd-fact-link')].filter((a) => a.textContent === 'Download patch');
   let links = patchLinks();
   assert.equal(links.length, 1, 'the link renders off the recorded artifact');
   assert.match(links[0].getAttribute('href'), /\/api\/runs\/p1\/recovery-patch/);
@@ -1122,7 +1123,7 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   const st = rd.querySelector('.rd-sheet .run-status');
   assert.equal(st.dataset.state, 'ready');
   // Slice 3 (D5): the page's own detail; the Runs list keeps "Ready to ship".
-  assert.equal(st.querySelector('.run-status-text').textContent, 'Ready to ship · not in main yet');
+  assert.equal(st.dataset.text, 'Ready to ship · not in main yet');
   assert.equal(rd.querySelector('.rd-orb'), null, 'no glance orb: the status dot says it');
   // Time · Cost · Changes, each labelled once.
   const facts = rd.querySelector('.rd-facts .rd-stats');
@@ -1149,8 +1150,9 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.deepEqual([...pr.classList], ['btn', 'btn-primary', 'rd-create-pr']);
   assert.equal(pr.querySelector('.ic').style.width, '16px');
   assert.equal(pr.closest('.rd-head-acts').parentElement, rd.querySelector('.rd-sheet-head'));
-  assert.deepEqual([...rd.querySelectorAll('.rd-track .rd-track-step')].map((x) => x.className.replace('rd-track-step ', '')),
-    ['is-current is-ready', 'is-future', 'is-future']);
+  const route = rd.querySelector('.rd-route');
+  assert.deepEqual([...route.querySelectorAll('.rd-route-row .rd-route-dot')].map((d) => d.getAttribute('aria-label')), ['Done', 'Not yet', 'Not yet']);
+  assert.equal(route.querySelectorAll('.rd-route-row')[1].querySelector('.rd-route-second').textContent, 'Not opened yet · Create PR from the button above');
   assert.equal(rd.querySelector('.rd-actions [data-model-action="ship"]'), null, 'no second Create PR in the bar');
   assert.equal(result.querySelector('.rd-follow-up'), null, 'no follow-up CTA on the card');
   const after = rd.querySelector('.rd-bar .rd-after');
@@ -1185,7 +1187,8 @@ test('a finished run whose branch has only a closed pull request: Create pull re
   const pr = rd.querySelector('.rd-head-acts .rd-pr-slot .rd-create-pr');
   assert.ok(pr, 'a closed PR still offers Create pull request');
   assert.equal(rd.querySelector('.rd-sheet .run-status').dataset.line, 'Ready to ship · the PR was closed');
-  assert.ok(rd.querySelectorAll('.rd-track .rd-track-step')[1].classList.contains('is-closed'));
+  // Folded (a fresh store's default): the end state's one line.
+  assert.equal(rd.querySelector('.rd-route .rd-route-fold.is-closed').textContent, 'o/r#7 closed without merging');
   click(window, pr);
   assert.equal(window.location.hash, `#history/${KEY}/p1`);
   window.dispatchEvent(new window.Event('hashchange'));
@@ -1199,8 +1202,9 @@ test('a finished run whose branch has only a closed pull request: Create pull re
 const PR_URL = 'https://github.com/o/r/pull/781';
 const prRow = (state, extra = {}) => ({ ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
   pr: { state, url: PR_URL, number: 781, ...extra } });
-const CHECKS = { checks: { state: 'failure', failed: 1, total: 15 }, mergeable: 'MERGEABLE',
-  status: { tone: 'bad', label: 'Checks failing', detail: '1 of 15 checks failed' }, watch: { watching: false, status: 'idle' } };
+// The server's own shape (git-info.mjs rollupChecks / prMergeStatus): failing checks ARE the verdict, so no detail.
+const CHECKS = { checks: { state: 'failing', failed: 1, pending: 0, total: 15 }, mergeable: 'MERGEABLE',
+  status: { tone: 'bad', label: '1 of 15 checks failed', detail: '' }, watch: { watching: false, status: 'idle' } };
 async function prGlance({ row = prRow('OPEN'), level = 'advanced', checks = () => ok(CHECKS), watch = () => ok({ watching: true, status: 'idle' }),
   more = () => null } = {}) {
   const calls = { checks: [], watch: [] };
@@ -1231,7 +1235,7 @@ const fail500 = () => Promise.resolve({ ok: false, status: 500, json: async () =
 const itemsOf = (menu) => [...menu.querySelectorAll('[role^="menuitem"]')];
 const labelOf = (b) => (b.querySelector('b') || b.querySelector('.wfv-menu-l') || b).textContent;
 
-test('slice 3: an open PR is View PR │ ▾ in the card head and the tracker\'s PR step; no PR bar, no View PR in the bar', async () => {
+test('slice 3: an open PR is View PR │ ▾ in the card head and the route\'s pull request row; no PR bar, no View PR in the bar', async () => {
   const { scr, calls } = await prGlance();
   assert.equal(scr.querySelector('.rd-pr-box'), null, 'no PR bar');
   const main = scr.querySelector('.rd-head-acts .rd-pr-slot .btn-split.mini.rd-pr-split > a[data-rd-cta]');
@@ -1246,24 +1250,26 @@ test('slice 3: an open PR is View PR │ ▾ in the card head and the tracker\'s
   assert.equal(caret.getAttribute('aria-haspopup'), 'menu');
   assert.equal(caret.getAttribute('aria-expanded'), 'false');
   assert.equal(scr.querySelector('.rd-bar-end .rd-actions [data-model-action="open-pr"]'), null, 'the bar has no View PR');
-  const steps = [...scr.querySelectorAll('.rd-track .rd-track-step')];
-  assert.deepEqual(steps.map((x) => x.className.replace('rd-track-step ', '')), ['is-done', 'is-current is-ready', 'is-future']);
-  assert.equal(steps[1].querySelector('a.rd-track-pr').textContent, '#781');
-  assert.match(steps[1].textContent, /Checks failing/);
-  assert.match(steps[1].textContent, /1 of 15 checks failed/);
+  const rows = [...scr.querySelectorAll('.rd-route .rd-route-row')];
+  assert.deepEqual(rows.map((x) => x.className.replace('rd-route-row ', '').replace(' is-linked', '')), ['is-done', 'is-review', 'is-future']);
+  assert.equal(rows[1].getAttribute('aria-current'), 'step');
+  const link = rows[1].querySelector('.rd-route-place a.rd-fact-link');
+  assert.match(link.textContent, /#\d+$/);
+  assert.equal(link.target, '_blank');
+  assert.match(rows[1].querySelector('.rd-route-second').textContent, /1 of 15 checks failed/);
   assert.ok(calls.checks.length >= 1, 'the feed read the PR status');
   assert.equal(scr.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
 });
 
-test('a live run\'s tracker names its source branch as the base; without one it reads "Merged into base"', async () => {
+test('a live run\'s route ends at its base branch, where the work lands once the pull request is merged; no fold', async () => {
   const ctx = await bootRunning();
   const rd = await openGlance(ctx, 'running/r1', { branch: { source: 'main', feature: 'worca-cc/rate-p1', worktreeDir: '/tmp/wt' } });
-  assert.equal(rd.querySelectorAll('.rd-track .rd-track-step').length, 3, 'a live git run paints the tracker');
-  const lastLabel = () => [...rd.querySelectorAll('.rd-track .rd-track-step')].at(-1).querySelector('.rd-track-label').textContent;
-  assert.equal(lastLabel(), 'Merged into main');
-  const ctx2 = await bootRunning();
-  const rd2 = await openGlance(ctx2);
-  assert.equal([...rd2.querySelectorAll('.rd-track .rd-track-step')].at(-1).querySelector('.rd-track-label').textContent, 'Merged into base');
+  const R = rd.querySelector('.rd-route');
+  const rows = R.querySelectorAll('.rd-route-row');
+  assert.equal(rows.length, 3, 'a live git run paints the route');
+  assert.equal(rows[2].querySelector('.rd-route-place').textContent, 'main');
+  assert.equal(rows[2].querySelector('.rd-route-second').textContent, 'Lands here when the pull request is merged');
+  assert.equal(R.querySelector('.rd-route-fold'), null);
 });
 
 test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose click POSTs /api/pr/watch', async () => {
@@ -1283,7 +1289,7 @@ test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose c
   } })));
 });
 
-test('slice 3: at Simple an in-review run still shows View PR, the ▾ has no Watch, and the tracker has 3 steps', async () => {
+test('slice 3: at Simple an in-review run still shows View PR, the ▾ has no Watch, and the route has 3 rows', async () => {
   // Passing checks, waiting for a review: the run is In review (failing checks would make it Needs you).
   const review = { checks: { state: 'success', failed: 0, total: 15 }, mergeable: 'MERGEABLE',
     status: { tone: 'wait', label: 'Review required' }, watch: { watching: false, status: 'idle' } };
@@ -1291,7 +1297,8 @@ test('slice 3: at Simple an in-review run still shows View PR, the ▾ has no Wa
   assert.equal(scr.querySelector('.rd-sheet .run-status').dataset.state, 'in-review');
   assert.equal(scr.querySelector('.rd-sheet .run-status').dataset.line, 'In review · waiting for a review');
   assert.ok(scr.querySelector('.rd-head-acts .rd-pr-split a[data-rd-cta]'), 'View PR at Simple');
-  assert.equal(scr.querySelectorAll('.rd-track .rd-track-step').length, 3);
+  assert.equal(scr.querySelectorAll('.rd-route .rd-route-row').length, 3);
+  assert.equal(scr.querySelector('.rd-route').hidden, false);
   assert.equal(scr.querySelector('.rd-actions [data-model-action="open-pr"]'), null);
   const m = await openMenu();
   assert.equal(m.querySelectorAll('[role="menuitemcheckbox"]').length, 0);
@@ -1377,7 +1384,7 @@ test('slice 3: conflicts offer Fix conflicts in the head and the ▾; Watch stop
       assert.equal(scr.querySelector('.rd-sheet .run-status').dataset.line, 'Needs you · conflicts with main');
       const fix = scr.querySelector('.rd-head-acts [data-head="fix-conflicts"]');
       assert.ok(fix && fix.classList.contains('btn-primary'));
-      assert.ok(scr.querySelectorAll('.rd-track .rd-track-step')[1].classList.contains('is-problem'));
+      assert.ok(scr.querySelectorAll('.rd-route .rd-route-row')[1].classList.contains('is-problem'));
       const m = await openMenu();
       assert.ok(itemsOf(m).some((b) => labelOf(b) === 'Fix conflicts'));
     } },
@@ -1389,7 +1396,7 @@ test('slice 3: conflicts offer Fix conflicts in the head and the ▾; Watch stop
       assert.ok(ask && ask.disabled);
       assert.equal(ask.title, "Ask for changes from the run's chat");
       assert.equal(scr.querySelector('.rd-head-acts [data-head="fix-conflicts"]'), null);
-      assert.match(scr.querySelectorAll('.rd-track .rd-track-step')[1].textContent, /Ask for changes from the run's chat/);
+      assert.equal(scr.querySelector('.rd-route .rd-route-second .is-line').textContent, ASK_IN_CHAT);
       const m = await openMenu();
       assert.equal(itemsOf(m).some((b) => labelOf(b) === 'Fix conflicts'), false);
     } },
@@ -1397,12 +1404,18 @@ test('slice 3: conflicts offer Fix conflicts in the head and the ▾; Watch stop
 });
 
 test('slice 3: a merged PR is View PR │ ▾ with the merge glyph, no checks fetch and no Watch', async () => {
-  const { scr, calls, openMenu } = await prGlance({ row: prRow('MERGED') });
+  const { ctx, scr, calls, openMenu } = await prGlance({ row: prRow('MERGED') });
   const main = scr.querySelector('.rd-head-acts .rd-pr-split > a[data-rd-cta]');
   assert.equal(main.textContent, 'View PR');
   assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS.merge);
   assert.deepEqual(calls.checks, [], 'no checks fetch');
-  assert.ok(scr.querySelectorAll('.rd-track .rd-track-step')[2].classList.contains('is-merged'));
+  ctx.window.localStorage.removeItem('worca-cc.run.showRoute');
+  assert.ok(scr.querySelector('.rd-route .rd-route-fold.is-merged'), 'folded: one merged line');
+  ctx.window.localStorage.setItem('worca-cc.run.showRoute', '1');
+  frame(ctx, { type: 'pipelines-changed' });
+  await settle(ctx.window, 10);
+  assert.ok(scr.querySelectorAll('.rd-route .rd-route-row')[2].classList.contains('is-merged'));
+  ctx.window.localStorage.removeItem('worca-cc.run.showRoute');
   const m = await openMenu();
   assert.equal(m.querySelectorAll('[role="menuitemcheckbox"]').length, 0, 'no Watch on a merged PR');
   assert.equal(itemsOf(m).some((b) => /Watch/.test(b.textContent)), false);
@@ -1437,9 +1450,10 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   const rd = await openGlance(ctx);
   frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
   await settle(ctx.window, 10);
-  const prStep = () => rd.querySelectorAll('.rd-track .rd-track-step')[1];
-  assert.ok(prStep().querySelector('.rd-track-watch'), 'the open PR reads Watching');
-  assert.match(prStep().textContent, /3 of 15 checks running/);
+  const R = rd.querySelector('.rd-route');
+  const rows = () => R.querySelectorAll('.rd-route-row');
+  assert.ok(rows()[1].querySelector('button.rd-fact-watch'), 'the open PR reads Watching');
+  assert.match(rows()[1].querySelector('.rd-route-second').textContent, /3 of 15 checks running/);
   hold = true;
   frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
   await settle(ctx.window, 4);
@@ -1447,12 +1461,13 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   row.pr = { state: 'MERGED', url, number: 790 };
   frame(ctx, { type: 'pipelines-changed' });
   await settle(ctx.window, 10);
-  assert.ok(rd.querySelectorAll('.rd-track .rd-track-step')[2].classList.contains('is-merged'));
-  assert.equal(rd.querySelector('.rd-track .rd-track-watch'), null, 'merged: no Watch');
+  assert.match(R.querySelector('.rd-route-fold').textContent, /^Merged into main · /, 'merged: the fold names the base');
+  assert.equal(R.querySelector('button.rd-fact-watch'), null, 'merged: no Watch');
+  assert.doesNotMatch(R.textContent, /checks running/, 'merged: no checks words');
   held.shift()();
   await settle(ctx.window, 10);
-  assert.equal(rd.querySelector('.rd-track .rd-track-watch'), null, 'the late answer paints no Watch');
-  assert.doesNotMatch(rd.querySelector('.rd-track').textContent, /checks running/, 'the late answer paints no checks words');
+  assert.equal(R.querySelector('button.rd-fact-watch'), null, 'the late answer paints no Watch');
+  assert.doesNotMatch(R.textContent, /checks running/, 'the late answer paints no checks words');
   hold = false;
   const before = reads;
   frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
@@ -1460,16 +1475,16 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   assert.equal(reads, before, 'a refresh reads no checks for a merged PR');
 });
 
-test('slice 3: a pr-watch-changed frame re-reads the PR and the tracker shows the watch fixing', async () => {
+test('slice 3: a pr-watch-changed frame re-reads the PR and the route\'s pull request row shows it fixing', async () => {
   let answer = { ...CHECKS, watch: { watching: true, status: 'idle' } };
   const { ctx, scr } = await prGlance({ checks: () => ok(answer) });
-  const prStep = () => scr.querySelectorAll('.rd-track .rd-track-step')[1];
-  assert.equal(prStep().querySelector('button.rd-track-watch').textContent, 'Watching');
+  const watch = () => scr.querySelectorAll('.rd-route .rd-route-row')[1].querySelector('.rd-route-second');
+  assert.equal(watch().querySelector('button.rd-fact-watch').textContent, 'Watching');
   answer = { ...CHECKS, watch: { watching: true, status: 'fixing', activePipelineId: 'fx1' } };
   frame(ctx, { type: 'pr-watch-changed', projectKey: KEY, pipelineId: 'p1' });
   await settle(ctx.window, 10);
-  assert.equal(prStep().querySelector('.rd-track-watch.is-run').textContent, 'Fixing');
-  const fix = [...prStep().querySelectorAll('a.rd-track-link')].find((a) => a.textContent === 'View fix run');
+  assert.equal(watch().querySelector('.rd-fact-watch.is-run').textContent, 'Fixing');
+  const fix = [...watch().querySelectorAll('a.rd-fact-link')].find((a) => a.textContent === 'View fix run');
   assert.equal(fix.getAttribute('href'), `#history/${KEY}/fx1`);
 });
 
@@ -1738,8 +1753,8 @@ test('the run page carries the progress bar in its status block, and no chain ba
   assert.equal(screen.querySelector('.rd-prog-chain'), null, 'a run page draws only its own bar (D19)');
   assert.equal(screen.querySelector('.rd-slice-line'), null);
   assert.equal(statusOf(screen).dataset.state, 'working');
-  assert.match(statusOf(screen).querySelector('.run-status-text').textContent, /^Working · .*Implementer/, 'the model line, word first');
-  assert.doesNotMatch(statusOf(screen).querySelector('.run-status-text').textContent, /· step ·|(^|· )(Plan|Build|Review|Ready) ·/,
+  assert.match(statusOf(screen).dataset.text, /^Working · .*Implementer/, 'the model line, word first');
+  assert.doesNotMatch(statusOf(screen).dataset.text, /· step ·|(^|· )(Plan|Build|Review|Ready) ·/,
     'beside the stage bar the live page names only the step');
   assert.equal(statusOf(screen).dataset.line, 'Implementer', 'a nodes-mode run (V2_MANIFEST has no stages): no "Step ·" either');
   assert.equal(screen.querySelector('.rd-meta .rd-step').textContent, 'Implementer', 'the header step segment keeps the P5 text');
@@ -1774,7 +1789,7 @@ test('a question turns the run page bar amber and the status line says what need
   await settle(ctx.window, 6);
   assert.equal(runBarOf(screen).dataset.tone, 'amber');
   assert.equal(statusOf(screen).dataset.state, 'needs-you');
-  assert.match(statusOf(screen).querySelector('.run-status-text').textContent, /needs you/i);
+  assert.match(statusOf(screen).dataset.text, /needs you/i);
   assert.equal(statusOf(screen).querySelector('.status-dot').getAttribute('aria-label'), 'Needs you');
 });
 
@@ -1826,9 +1841,11 @@ const CHAIN_OF_THREE = () => [{ id: 'p:p0', title: 'Chain', members: [
 ] }];
 const FEATURE_OF_THREE = () => [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
   members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i - 1}`, ticketId: null, status: i === 1 ? 'done' : 'running', pr: null, ticket: null, adhoc: false, after: null })) }];
-// A run in a group has no group row in its facts block: its kind chip ("Run 2 of 3") links the group page.
+// A run in a group has no group row in its facts block and no kind chip: the breadcrumb names its place and links the group.
 const groupLineOf = (screen) => screen.querySelector('.rd-glance .rd-sheet .rd-kv [data-fact="group"]');
-const chipOf = (screen) => screen.querySelector('.rd-glance .rd-title-row .kind-chip');
+const headChip = (screen) => screen.querySelector('.rd-glance .rd-page-head .kind-chip');
+const crumbs = (screen) => [...screen.querySelectorAll('.rd-bar .rd-crumbs .rd-crumb')].map((c) => [c.textContent, c.getAttribute('href')]);
+const groupCrumbHref = (screen) => (crumbs(screen)[1] || [])[1] || null;
 
 async function openChainRun(ctx) {
   frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
@@ -1838,46 +1855,44 @@ async function openChainRun(ctx) {
   return ctx.window.document.querySelector('#run-detail');
 }
 
-test('a run in a chain of three: its chip "Run 2 of 3" links the chain\'s group page; no group row, no chain bar', async () => {
+test('a run in a chain of three: its breadcrumb links the chain\'s group page; no group row, no chip, no chain bar', async () => {
   const ctx = await bootRunning();
   ctx.box.chains = CHAIN_OF_THREE();
   const screen = await openChainRun(ctx);
   assert.equal(groupLineOf(screen).hidden, true);
-  assert.equal(chipOf(screen).tagName, 'A');
-  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
-  assert.equal(chipOf(screen).getAttribute('href'), '#group/p%3Ap0');
+  assert.equal(headChip(screen), null);
+  assert.equal(groupCrumbHref(screen), '#group/p%3Ap0');
+  assert.equal(crumbs(screen).at(-1)[0], 'Run 2');
   assert.equal(screen.querySelector('.rd-prog-chain'), null);
   assert.equal(runBarOf(screen).querySelectorAll('.run-prog-sec').length, 4, 'only the run\'s own four sections');
 });
 
-test('a live slice\'s chip "Run 2 of 3" links the feature page; a repaint keeps one chip', async () => {
+test('a live slice\'s breadcrumb links the feature page; no chip; a repaint keeps one breadcrumb', async () => {
   const ctx = await bootRunning();
-  frame(ctx, { type: 'hello', flags: { shapeFirst: true }, runs: [] });
+  frame(ctx, { type: 'hello', runs: [] });
   ctx.box.groups = FEATURE_OF_THREE();
   frame(ctx, { type: 'run-groups-changed' });
   await settle(ctx.window, 4);
   const screen = await openChainRun(ctx);
   assert.equal(groupLineOf(screen).hidden, true);
-  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
-  assert.equal(chipOf(screen).getAttribute('href'), '#feature/feat_1');
-  assert.equal(screen.querySelector('.rd-slice-line'), null, 'the chip replaces the slice line');
+  assert.equal(headChip(screen), null);
+  assert.equal(groupCrumbHref(screen), '#feature/feat_1');
+  assert.equal(screen.querySelector('.rd-slice-line'), null, 'no slice line');
   frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 2 });
   await settle(ctx.window, 4);
-  assert.equal(screen.querySelectorAll('.rd-glance .rd-title-row .kind-chip').length, 1, 'painting twice leaves one chip');
-  assert.equal(chipOf(screen).tagName, 'A');
+  assert.equal(headChip(screen), null);
+  assert.equal(screen.querySelectorAll('.rd-bar .rd-crumbs .rd-crumb').length, 3, 'painting twice leaves one breadcrumb');
 });
 
-test('chain freshness: no group at first, a schedules-changed frame then links the chip', async () => {
+test('chain freshness: no group at first, a schedules-changed frame then links the breadcrumb', async () => {
   const ctx = await bootRunning();
   const screen = await openChainRun(ctx);
-  assert.equal(chipOf(screen).tagName, 'SPAN');
-  assert.equal(chipOf(screen).textContent, 'Run');
+  assert.equal(headChip(screen), null);
+  assert.equal(screen.querySelector('.rd-bar .rd-crumbs').hidden, true);
   ctx.box.chains = CHAIN_OF_THREE();
   frame(ctx, { type: 'schedules-changed' });
   await settle(ctx.window, 8);
-  assert.equal(chipOf(screen).tagName, 'A');
-  assert.equal(chipOf(screen).getAttribute('href'), '#group/p%3Ap0');
-  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
+  assert.equal(groupCrumbHref(screen), '#group/p%3Ap0');
 });
 
 test('a failing /api/schedules is not refetched by repaints; the run reads as in no group', async () => {
@@ -1891,8 +1906,8 @@ test('a failing /api/schedules is not refetched by repaints; the run reads as in
     await settle(ctx.window, 4);
   }
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length, asked, 'repaints do not refetch a failing lookup');
-  assert.equal(chipOf(screen).tagName, 'SPAN');
-  assert.equal(chipOf(screen).textContent, 'Run');
+  assert.equal(headChip(screen), null);
+  assert.equal(screen.querySelector('.rd-bar .rd-crumbs').hidden, true);
 });
 
 test('run page: Apply to branch clears the kept head, and a later state frame does not bring it back', async () => {
@@ -2054,4 +2069,216 @@ test('slice 2, live: a running run lists Away mode in ⋯, and no Archive or Rep
   const menu = doc.querySelector('body > .wfv-menu');
   assert.match(menu.textContent, /Away mode on this run/);
   assert.deepEqual([...menu.querySelectorAll('.menu-item')].map(rdLabel).filter((l) => l === 'Archive' || l === 'Report this run'), []);
+});
+
+// s2 (D2, D7): the route of a live chain run lands in the chain's base, never in Run 1's branch; the route adds no
+// second chain lookup, and a failed one ends the pending state.
+const CHAIN_OF_TWO = () => [{ id: 'p:p1', title: 'Chain', members: [
+  { pipelineId: 'p1', ticketId: null, state: 'done', title: 'One', projectDir: PROJECT },
+  { pipelineId: 'p2', ticketId: null, state: 'current', title: 'Two', projectDir: PROJECT, stacks: true },
+] }];
+const RUN1_ROW = { ...HISTORY_ROW, id: 'p1', title: 'One', branch: 'feat/c1', sourceBranch: 'dev' };
+async function openChainRoute(ctx) {
+  frame(ctx, { type: 'run-created', runId: 'r2', title: 'Two', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r2', id: 'p2', status: 'running', stepper: GLANCE_MANIFEST, active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
+    steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.5, branch: { source: 'feat/c1', feature: 'feat/c2', worktreeDir: '/tmp/wt' } });
+  go(ctx.window, 'running/r2');
+  await settle(ctx.window, 8);
+  return ctx.window.document.querySelector('#run-detail .rd-route');
+}
+
+test('s2: a deep-linked live chain run builds on Run 1 and lands when the chain ships; one /api/schedules ask', async () => {
+  const ctx = await bootRunning({ rows: [RUN1_ROW] });
+  ctx.box.chains = CHAIN_OF_TWO();
+  const route = await openChainRoute(ctx);
+  const rows = route.querySelectorAll('.rd-route-row');
+  assert.equal(rows[0].querySelector('.rd-route-second').textContent, "This run's branch · builds on Run 1 · the agents are working here");
+  assert.equal(rows[2].querySelector('.rd-route-second').textContent, 'Lands here when the chain ships');
+  assert.equal(rows[2].querySelector('.rd-route-place').textContent, 'dev');
+  assert.ok(![...route.querySelectorAll('.rd-route-row:not(:first-child) .rd-route-place')].some((p) => p.textContent.includes('feat/c1')), 'Run 1\'s branch is never the target');
+  const asked = () => ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length;
+  assert.equal(asked(), 1, 'the Runs-section entry load only');
+  for (let i = 0; i < 2; i++) {
+    frame(ctx, { type: 'state', runId: 'r2', id: 'p2', status: 'running', stepper: GLANCE_MANIFEST, active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
+      steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 1 + i });
+    await settle(ctx.window, 4);
+  }
+  assert.equal(asked(), 1, 'state frames add no chain lookup');
+});
+
+test('s2: a failed chain load ends the pending state: the target names the base branch, not "The base branch"', async () => {
+  const ctx = await bootRunning({ rows: [] });
+  ctx.box.schedulesFail = true;
+  const route = await openChainRoute(ctx);
+  assert.equal(route.querySelectorAll('.rd-route-row')[2].querySelector('.rd-route-place').textContent, 'feat/c1');
+});
+
+// --- Pause / Resume show at the click (Pausing… / Resuming…) before the server answers ------------------------
+
+// Hold one endpoint's reply until the test releases it; every other request goes to the boot's own stub.
+function holdFetch(path) {
+  const orig = globalThis.fetch;
+  let release;
+  const held = new Promise((r) => { release = r; });
+  globalThis.fetch = (u, opts) => (String(u).includes(path) ? held : orig(u, opts));
+  return { release: (res) => release(res), restore: () => { globalThis.fetch = orig; } };
+}
+const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
+
+async function openRunPage(status) {
+  const ctx = await bootRunning();
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status, stepper: V2_MANIFEST, steps: V2_STEPS(), active: [], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 6);
+  ctx.screen = ctx.window.document.querySelector('#run-detail');
+  return ctx;
+}
+
+test('the run page shows Pausing… at the Pause click, keeps it through a stale reconnect, and a CANNOT_PAUSE refusal does not flash Running', async () => {
+  await checkRows([
+    { name: 'Pause: the status line says pausing before the server answers; a reconnect hello taken before the pause keeps it', run: async () => {
+      const ctx = await openRunPage('running');
+      const hold = holdFetch('/api/pause');
+      try {
+        const btn = ctx.screen.querySelector('.rd-pause');
+        click(ctx.window, btn);
+        await settle(ctx.window, 2);
+        assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'the run page says pausing at the click');
+        assert.equal(btn.disabled, true, 'Pause stays disabled while the request runs');
+        // The socket reconnects under load; the server took this snapshot before it handled the pause.
+        frame(ctx, { type: 'hello', runs: [live('r1', { pipelineId: 'p1', status: 'running' })] });
+        await settle(ctx.window, 2);
+        assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'a stale hello does not flip it back to Running');
+        hold.release(reply(200, { ok: true }));
+        await settle(ctx.window, 2);
+        frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'paused' });
+        await settle(ctx.window, 2);
+        assert.equal(statusOf(ctx.screen).dataset.state, 'paused');
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /pausing/i, 'the server status takes over');
+      } finally { hold.restore(); }
+    } },
+    { name: 'CANNOT_PAUSE (paused elsewhere first): the refusal\'s status shows at once, with no frame from the server', run: async () => {
+      const ctx = await openRunPage('running');
+      const hold = holdFetch('/api/pause');
+      try {
+        const btn = ctx.screen.querySelector('.rd-pause');
+        click(ctx.window, btn);
+        await settle(ctx.window, 2);
+        hold.release(reply(400, { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'paused' }));
+        await settle(ctx.window, 3);
+        assert.equal(statusOf(ctx.screen).dataset.state, 'paused', 'the run reads Paused, not a Pausing… that waits on a frame');
+        assert.equal(btn.dataset.action, 'resume');
+        assert.equal(btn.disabled, false, 'Resume can be clicked');
+        assert.notEqual(lastToast(ctx.window.document)?.title, 'Could not pause the run', 'not reported as a failure');
+      } finally { hold.restore(); }
+    } },
+    { name: 'CANNOT_PAUSE (pausing elsewhere): Pausing… stays until the next status, which then wins', run: async () => {
+      const ctx = await openRunPage('running');
+      const hold = holdFetch('/api/pause');
+      try {
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+        await settle(ctx.window, 2);
+        hold.release(reply(400, { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'pausing' }));
+        await settle(ctx.window, 3);
+        assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'no flash of Running');
+        assert.notEqual(lastToast(ctx.window.document)?.title, 'Could not pause the run', 'not reported as a failure');
+        // Any next status replaces it, even 'running' (nothing is left waiting on this tab's pause).
+        frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+        await settle(ctx.window, 2);
+        assert.equal(statusOf(ctx.screen).dataset.state, 'working');
+      } finally { hold.restore(); }
+    } },
+    { name: 'CANNOT_PAUSE on a run that is not parked (still starting): back to Running, reported', run: async () => {
+      const ctx = await openRunPage('running');
+      const hold = holdFetch('/api/pause');
+      try {
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+        await settle(ctx.window, 2);
+        hold.release(reply(400, { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'starting' }));
+        await settle(ctx.window, 3);
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /pausing/i, 'no Pausing… on a run that is not pausing');
+        assert.equal(ctx.screen.querySelector('.rd-pause').disabled, false, 'Pause can be clicked again');
+        assert.equal(lastToast(ctx.window.document)?.title, 'Could not pause the run');
+      } finally { hold.restore(); }
+    } },
+    { name: 'a network error puts the run back to Running', run: async () => {
+      const ctx = await openRunPage('running');
+      const orig = globalThis.fetch;
+      globalThis.fetch = (u, o) => (String(u).includes('/api/pause') ? Promise.reject(new Error('offline')) : orig(u, o));
+      try {
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+        await settle(ctx.window, 3);
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /pausing/i);
+        assert.equal(ctx.screen.querySelector('.rd-pause').disabled, false, 'Pause can be clicked again');
+      } finally { globalThis.fetch = orig; }
+    } },
+  ]);
+});
+
+test('a CANNOT_PAUSE refusal keeps Pause disabled while it reads Pausing…, and the next status re-arms the control', async () => {
+  // Refused (pausing elsewhere first), then a further frame while the run still reads pausing: Pause stays disabled.
+  const refuse = async () => {
+    const ctx = await openRunPage('running');
+    const hold = holdFetch('/api/pause');
+    try {
+      click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+      await settle(ctx.window, 2);
+      hold.release(reply(400, { error: 'cannot pause in the current state', code: 'CANNOT_PAUSE', status: 'pausing' }));
+      await settle(ctx.window, 3);
+    } finally { hold.restore(); }
+    const btn = ctx.screen.querySelector('.rd-pause');
+    assert.match(statusOf(ctx.screen).dataset.text, /pausing/i);
+    assert.equal(btn.disabled, true, 'Pause is not clickable while the run reads Pausing…');
+    frame(ctx, { type: 'cost', runId: 'r1', totalCostUsd: 2 });
+    await settle(ctx.window, 2);
+    assert.equal(btn.disabled, true, 'a frame landing before the status does not re-enable it');
+    return { ctx, btn };
+  };
+  await checkRows([
+    { name: 'the next status is paused: the control is Resume, enabled', run: async () => {
+      const { ctx, btn } = await refuse();
+      frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'paused' });
+      await settle(ctx.window, 2);
+      assert.equal(btn.dataset.action, 'resume');
+      assert.equal(btn.querySelector('.rd-btn-label').textContent, 'Resume');
+      assert.equal(btn.disabled, false);
+    } },
+    { name: 'the next status is running again: Pause, enabled, not stuck', run: async () => {
+      const { ctx, btn } = await refuse();
+      frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+      await settle(ctx.window, 2);
+      assert.equal(btn.dataset.action, 'pause');
+      assert.equal(btn.disabled, false, 'Pause can be clicked again');
+    } },
+  ]);
+});
+
+test('the run page shows Resuming… at the Resume click, and a refusal that asks first puts Paused back while the question is open', async () => {
+  await checkRows([
+    { name: 'Resume: the status line says resuming before the server answers', run: async () => {
+      const ctx = await openRunPage('paused');
+      const hold = holdFetch('/api/resume');
+      try {
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /resuming/i);
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));   // the same control reads Resume on a paused run
+        await settle(ctx.window, 2);
+        assert.match(statusOf(ctx.screen).dataset.text, /resuming/i);
+        hold.release(reply(500, { error: 'boom' }));
+        await settle(ctx.window, 3);
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /resuming/i, 'a failure puts Paused back');
+      } finally { hold.restore(); }
+    } },
+    { name: 'a base-moved refusal clears Resuming… before its confirm opens', run: async () => {
+      const ctx = await openRunPage('paused');
+      const hold = holdFetch('/api/resume');
+      try {
+        click(ctx.window, ctx.screen.querySelector('.rd-pause'));
+        await settle(ctx.window, 2);
+        hold.release(reply(409, { error: 'the base moved', code: 'base-moved', members: [] }));
+        await settle(ctx.window, 3);
+        assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /resuming/i, 'nothing is resuming while the question is open');
+      } finally { hold.restore(); }
+    } },
+  ]);
 });

@@ -59,7 +59,6 @@ before(async () => {
   base = `http://127.0.0.1:${srv.address().port}`;
   repo = gitDir('run-tags');
   await addProject({ name: 'run-tags', path: repo });
-  await post('/api/settings', { flags: { runTags: true } });   // experimental, off by default: these tests are about it on
 });
 after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
@@ -242,8 +241,7 @@ test('GET /api/tag-dimensions: none by default, the Settings list after a POST, 
 
 // ── Enforced tags (slice 4A): pre-fill, then refuse a missing mandatory tag or an off-list value ──
 const CCD = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
-// runTags is experimental (off by default): enforcement only applies with it on.
-const enforce = (dims, on = true) => post('/api/settings', { tagDimensions: dims, enforceTags: on, flags: { runTags: true } });
+const enforce = (dims, on = true) => post('/api/settings', { tagDimensions: dims, enforceTags: on });
 // The default identity is a real person here, so a cc run in one test would pre-fill the next one
 // (last value used): clearing drops the stored cc tags too.
 const clear = async () => {
@@ -379,13 +377,6 @@ test('enforcement off: required only warns — the run starts untagged (today)',
   try { const e = await startTagged({}); assert.deepEqual(readRunTags(e.pipelineId), []); } finally { await clear(); }
 });
 
-test('runTags flag off: enforcement is ignored entirely', async () => {
-  await enforce([CCD]);
-  await post('/api/settings', { flags: { runTags: false } });
-  try { const e = await startTagged({}); assert.ok(e.pipelineId); }
-  finally { await post('/api/settings', { flags: { runTags: true } }); await clear(); }
-});
-
 test('enforced: a memory defrag start is exempt (system start)', async () => {
   await enforce([CCD]);
   try {
@@ -407,13 +398,16 @@ test('GET /api/tag-dimensions: per target adds enforce + prefill; machine-wide a
 
 const dimsAs = async (email) => (await fetch(`${base}/api/tag-dimensions?projectDir=${encodeURIComponent(repo)}`,
   { headers: { 'x-forwarded-email': email } })).json();
-test('GET /api/tag-dimensions: autofill is the caller\'s last tagged run in this project; another person does not get it', async (t) => {
+test('GET /api/tag-dimensions (#923): autofill never copies the caller\'s last run; only a mandatory dimension takes its last value', async (t) => {
   withIdentity(t);
-  const r = await postAs({ tags: ['client:acme', 'team:web'] }, 'dee@x.io');
-  assert.ok(r.ok, String(r.status));
-  await untilSettled((await r.json()).runId);
-  assert.deepEqual((await dimsAs('dee@x.io')).autofill, { tags: ['client:acme', 'team:web'], from: 'last-run' });
-  assert.notEqual((await dimsAs('eve@x.io')).autofill.from, 'last-run');
+  await enforce([{ key: 'client', label: 'Client', values: [], required: true }, { key: 'team', label: 'Team', values: [], required: false }], false);
+  try {
+    const r = await postAs({ tags: ['client:acme', 'project:redesign', 'team:web'] }, 'dee@x.io');
+    assert.ok(r.ok, String(r.status));
+    await untilSettled((await r.json()).runId);
+    assert.deepEqual((await dimsAs('dee@x.io')).autofill, { tags: ['client:acme'], from: null });
+    assert.deepEqual((await dimsAs('eve@x.io')).autofill, { tags: [], from: null }, 'another person does not get dee\'s value');
+  } finally { await clear(); }
 });
 
 test('GET /api/tags?projectDir= scopes the vocabulary to that project', async () => {

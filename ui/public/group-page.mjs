@@ -3,13 +3,28 @@
 // primary action, Stop, ⋯) · title + kind · the card (status block, facts block, inline question) · tabs Runs ·
 // Overview · Decisions · Logs. Pure DOM; app.js owns the data (runs-list.mjs groupRow) and binds every dep. Classes
 // use `gpage-`: group-picker.mjs owns `gp-`.
-import { paintRunStatus, syncActions, renderMemberRows, groupShipLine } from './run-status-card.mjs';
+import { paintRunStatus, syncActions, renderMemberRows, groupShipLine, groupBarShows } from './run-status-card.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS } from './run-page-head.mjs';
 import { icon } from './icons.mjs';
+import { groupHead } from './run-head.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+// Slice 3: replace a host's children only when their HTML changed. The last HTML is kept in a JS property, never in
+// the DOM. Contract: the member table (renderMemberRows) and the Logs items carry no listeners, so a kept node acts
+// as a new one would. A row that gains a listener or other non-HTML state breaks that contract: bind it on the host.
+// A focused link in a replaced host moves to its successor: the link of the same class and href in the same row.
+function keepUnchanged(host, kids) {
+  const sig = kids.map((k) => k.outerHTML).join('');
+  if (host.__sig === sig) return;
+  host.__sig = sig;
+  const a = host.ownerDocument.activeElement;
+  const at = (n) => [n.className, n.getAttribute('href'), n.closest('[data-key]')?.dataset.key].join('\n');
+  const was = a && a !== host && host.contains(a) && a.matches('a[href]') ? at(a) : null;
+  host.replaceChildren(...kids);
+  if (was) [...host.querySelectorAll('a[href]')].find((n) => at(n) === was)?.focus();
+}
 
 /** The page skeleton, built once per host. */
 export function buildGroupPage(doc) {
@@ -44,7 +59,15 @@ export function buildGroupPage(doc) {
   const card = el(doc, 'section', 'gpage-card rd-sheet');
   const q = el(doc, 'div', 'gpage-question');
   q.hidden = true;
-  card.append(el(doc, 'div', 'run-status'), buildFacts(doc, GROUP_FACTS), q);
+  // One ship flow (D11): the run page's head — the status line, then the head actions with the one PR slot.
+  const sheetHead = el(doc, 'div', 'rd-sheet-head');
+  const acts = el(doc, 'div', 'rd-head-acts');
+  const slot = el(doc, 'span', 'rd-pr-slot');
+  slot.hidden = true;
+  slot.setAttribute('data-needs-git', '');
+  acts.append(slot);
+  sheetHead.append(el(doc, 'div', 'run-status'), acts);
+  card.append(sheetHead, buildFacts(doc, GROUP_FACTS), q);
   const tabs = el(doc, 'nav', 'gpage-tabs rd-tabs tabs');
   tabs.setAttribute('role', 'tablist');
   const panels = [];
@@ -68,16 +91,39 @@ export function buildGroupPage(doc) {
   return root;
 }
 
-/** QA 7: with several PRs a header "View PR" is ambiguous; each row's chip opens its own. */
+/** One ship flow (D11): a group's Create PR and View PR(s) live on the status line (docs/design-system.md
+ *  "Placement"), never in the bar, for features, chains and user groups alike. */
 export function headerActions(m) {
-  return m.prCount === 1 ? m : { ...m, actions: m.actions.filter((a) => a !== 'open-pr') };
+  return { ...m, actions: m.actions.filter((a) => a !== 'open-pr' && a !== 'ship') };
+}
+
+/** The group's distinct PRs in merge order, closed ones left out (prMenuItems' item shape). The group's own PR (a
+ *  feature shipped as one) comes last unless a member already carries it. A PR several members share (a chain's One PR)
+ *  belongs to the last of them: its head is that run's branch, so Fix conflicts and Watch PR act on it. */
+export function groupPrList(row) {
+  const seen = new Map();
+  const out = [];
+  const add = (pr, mb) => {
+    if (!pr || !pr.url || pr.id === 'closed' || pr.inBase) return;
+    const owner = { key: (mb && mb.pipelineId) || '', name: mb ? `Run ${mb.position}` : '', position: mb ? mb.position : null,
+      pipelineId: (mb && mb.pipelineId) || null };
+    if (seen.has(pr.url)) { if (mb) Object.assign(seen.get(pr.url), owner); return; }
+    const item = { ...owner, number: pr.number, url: pr.url, open: pr.id !== 'merged', merged: pr.id === 'merged',
+      conflicts: pr.id === 'conflicts' };
+    seen.set(pr.url, item);
+    out.push(item);
+  };
+  for (const mb of row.members || []) add(mb.model && mb.model.pr, mb);
+  add(row.model && row.model.pr, null);
+  return out;
 }
 
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
  * members' labels) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
- * mountDecisions(host, row), logsHref(member), labelChip(doc, label) }.
+ * mountDecisions(host, row), logsHref(member), labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
+ * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
  */
 export function paintGroupPage(root, view, deps) {
   const doc = root.ownerDocument;
@@ -88,15 +134,18 @@ export function paintGroupPage(root, view, deps) {
   root.__onMore = deps.onMore || null;
   const title = root.querySelector('.gpage-title');
   title.textContent = row.title;
-  title.title = row.title;   // D13: the heading clamps at 2 lines
+  title.title = row.title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
-  paintRunStatus(root.querySelector('.gpage-card .run-status'), pageModel(m));   // run 3 (D10)
+  const pm = pageModel(m);
+  paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true });   // run 3 (D10); slice 3: keep the last bar
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
   const kv = root.querySelector('.gpage-card > .rd-kv');
   const { done, total } = m.count;
   setFactText(kv, 'project', view.project || '');
-  setFactText(kv, 'runs', `${total} run${total === 1 ? '' : 's'} · ${done} done`);
+  // Said once: while the group bar shows, its label carries "{done} done"; the Runs fact then gives the total alone.
+  const runs = `${total} run${total === 1 ? '' : 's'}`;
+  setFactText(kv, 'runs', groupBarShows(pm) ? runs : `${runs} · ${done} done`);
   // groupRow's costUsd is always a number: a group with no cost yet says nothing, never "$0.00".
   setFactText(kv, 'cost', row.costUsd > 0 ? fmtUsd(row.costUsd) : '');
   const labelsHost = factRow(kv, 'labels').querySelector('.rd-kv-v');
@@ -115,6 +164,10 @@ export function paintGroupPage(root, view, deps) {
   deps.mountQuestion(root.querySelector('.gpage-question'), current);
   syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
     disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' } });
+  if (deps.paintHead) {
+    deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),
+      groupHead({ state: m.state, prs: groupPrList(row) }));
+  }
   const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs);
   const tab = GROUP_TABS.some(([id]) => id === view.tab) && offered(view.tab) ? view.tab : 'runs';
   for (const t of root.querySelectorAll('.gpage-tabs .rd-tab')) {
@@ -123,7 +176,8 @@ export function paintGroupPage(root, view, deps) {
     t.classList.toggle('active', t.dataset.tab === tab);
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
-  root.querySelector('.gpage-runs').replaceChildren(renderMemberRows(doc, row));
+  // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
+  keepUnchanged(root.querySelector('.gpage-runs'), [renderMemberRows(doc, row)]);
   const line = groupShipLine(row);
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;
@@ -131,7 +185,7 @@ export function paintGroupPage(root, view, deps) {
   if (tab === 'overview') deps.mountOverview(root.querySelector('.gpage-overview'));
   if (tab === 'decisions') deps.mountDecisions(root.querySelector('.gpage-decisions'), row);
   const numbered = (mb) => !mb.isPlanning && !mb.adhoc && row.groupKind !== 'user';
-  root.querySelector('.gpage-logs').replaceChildren(...all.map((mb) => {
+  keepUnchanged(root.querySelector('.gpage-logs'), all.map((mb) => {
     const li = el(doc, 'li', 'gpage-log');
     const a = el(doc, 'a', 'btn btn-sm btn-quiet', 'Open logs');
     a.setAttribute('href', deps.logsHref(mb));

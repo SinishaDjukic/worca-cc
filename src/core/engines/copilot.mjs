@@ -44,6 +44,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsIn
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
+import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
@@ -686,7 +687,9 @@ export async function runCopilotProcess({
     return total ? diffUsage(total, priorUsage) : null;
   };
   const res = await superviseSpawn({
-    file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent, stagedDir: asAgent ? scratch : null, onEvent,
+    file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent,
+    // Copilot writes its usage file into the scratch folder, so an agent user gets it writable.
+    stagedDir: asAgent ? { dir: scratch, writable: true } : null, onEvent,
     cleanup: () => {},
     redactText: redactor ? (t) => redactor.text(t) : null,
     stdoutErrorDetail: () => normalizer.finish().error || '',
@@ -726,3 +729,32 @@ export async function runCopilotProcess({
   safeEmit(onEvent, { type: 'result', text: out, isError: false, sessionId, ...(delta ? { usage: claudeStyleUsage(delta) } : {}) });
   return { text: out, exitCode: res.code };
 }
+
+/** Copilot's chat descriptor (engines/chat-descriptor.mjs; plans/ask-on-copilot-design.md Part 2): the read-only spawn
+ *  above with COPILOT_ASK_FLAGS. Copilot has no sign-in status command: a signed-out CLI fails the turn itself (auth
+ *  class), so the preflight only runs the binary. It reports no cost: worca prices its tokens (a Models page price) for
+ *  the per-turn cost cap, and refuses the turn under a cap only for a model with no price. Each
+ *  `impl` is the function a test hands the turn in its place. */
+export const copilotChat = makeChatDescriptor({
+  engine: 'copilot',
+  lockdown: () => COPILOT_ASK_LOCKDOWN,
+  noLockdownMessage: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.',
+  askSupport: (o, impl = copilotAskSupport) => impl(o),
+  preflight: (_ctx, impl = copilotPreflight) => impl(),
+  resumeNotFound: copilotResumeNotFound,
+  docsAnchor: 'github-copilot-cli',
+  shellTrippedMessage: 'Copilot tried to run a shell command although it was given none — worca stopped the turn.',
+  titles: true,
+  // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
+  // costs no premium request there (one on the free plan).
+  suggestionModel: 'gpt-5-mini',
+  signIn: () => ['COPILOT_', 'GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST'],
+  prompt: {
+    cli: "the GitHub Copilot CLI with Copilot's own sign-in",
+    webOff: "Copilot's own web tools stay off.",
+    // Copilot hands an MCP image on only to a model that declares vision, and a PDF only on the Responses and Anthropic
+    // APIs; otherwise it drops the block without a word (plans/ask-on-qwen-gemini-spike.md, "Open topics").
+    attachments: 'Image and PDF attachments are different: read_attachment returns the image or PDF itself, as a block of its result beside its kind and size, and Copilot hands it to your model right after the result only when the model can view that kind — read one to look at it; when it does not reach you, tell the user this Copilot model cannot view it.',
+    composerBinary: 'For an image or PDF, read_attachment returns the image or PDF itself as a block of its result, which Copilot hands on only to a model that can view that kind: read it to look at it; when it does not reach you, say this Copilot model cannot view it.',
+  },
+});

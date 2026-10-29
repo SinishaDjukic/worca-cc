@@ -8,12 +8,13 @@
 import {
   assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertAutoGeneratePrDescriptionInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
-  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair,
+  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair, normalizeRolePair,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
 import { RUN_ENGINES, MODEL_ENGINES, ASK_ENGINES, EFFORTS, SUBAGENT_MODELS, effortsForEngine } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
+import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { receiptCard } from './receipt.mjs';
 
 /** What the chat never reads or changes, and why (list_settings returns `what`; a refused change names `why`). */
@@ -25,6 +26,7 @@ export const SETTING_EXCLUSIONS = Object.freeze([
   { match: ['nightMode', 'nightModeToggle'], what: 'Away mode settings', why: 'Away mode keeps its own card (propose_away_mode_change) and switch (set_away_now)' },
   { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers and plugins', why: 'they hold keys and tokens, or run outside code' },
   { match: ['policy', 'metrics'], what: 'Team policy and team metrics', why: 'they publish to the team' },
+  { match: ['memory.team'], what: 'Team memory sharing', why: 'it publishes to the team' },
   { match: ['guardrails'], what: 'Guardrail sets', why: 'editing a set can loosen it' },
   { match: ['hideBuiltinModels'], what: 'Hide built-in models', why: 'once set it overrides the team default, and a Revert could not bring that back — the Models page sets it' },
 ]);
@@ -75,6 +77,7 @@ const PROJECT_ONLY = Object.freeze({
   watchNewPrs: { label: 'Watch new pull requests', group: 'Runs', fmt: onOff, allowed: 'true | false' },
   'memory.softBytesPerFile': { label: 'Memory: flag files above', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
   'memory.maxBytesPerFile': { label: 'Memory: largest file', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
+  'memory.teamMaxFiles': { label: 'Memory: most team notes loaded', group: 'Memory', fmt: String, allowed: 'a whole number' },
   'memory.maxFilesPerScope': { label: 'Memory: most files', group: 'Memory', fmt: String, allowed: 'a whole number' },
   'memory.hookMaxChars': { label: 'Memory: hook length', group: 'Memory', fmt: (n) => `${n} characters`, allowed: 'a whole number of characters' },
   'memory.defrag.writes': { label: 'Memory defragment due after writes', group: 'Memory', fmt: String, allowed: 'a whole number' },
@@ -88,6 +91,12 @@ const pairAllowed = (engine) => `{"model": a model from list_models that runs on
 const pairCheck = (engine) => async (v, ctx) => {
   const pair = normalizeModelPair(engine, v, ctx.def.id);
   if (pair) await ctx.slot([{ id: ctx.def.id, engine, value: pair }]);
+  return pair;
+};
+/** A model role: the model must exist and run on the harness; its effort is any reasoning level, mapped when used (A7). */
+const roleCheck = (engine) => async (v, ctx) => {
+  const pair = normalizeRolePair(v, ctx.def.id);
+  if (pair) await ctx.slot([{ id: ctx.def.id, engine, value: { model: pair.model } }]);
   return pair;
 };
 
@@ -176,6 +185,10 @@ function buildUserDefs(roles, scanDefaults) {
     ...MODEL_ENGINES.flatMap((e) => roles.map((r) => pairDef(`models.${e}.steps.${r.key}`, `${r.label || r.key} model (${engineLabel(e)})`, 'Models', e,
       (s) => (isObj(s.stepModels) && isObj(s.stepModels[e]) && isObj(s.stepModels[e][r.key]) ? s.stepModels[e][r.key] : null),
       (unit) => ({ stepModels: { [e]: { [r.key]: unit ?? null } } })))),
+    ...ROLE_HARNESSES.flatMap((e) => MODEL_ROLES.map((r) => userDef({ id: `models.${e}.roles.${r}`, label: `${ROLE_LABELS[r]} role (${engineLabel(e)})`, group: 'Models',
+      read: (s) => pickPair(isObj(s.modelRoles) && isObj(s.modelRoles[e]) && isObj(s.modelRoles[e][r]) ? s.modelRoles[e][r] : null),
+      body: (unit) => ({ modelRoles: { [e]: { [r]: unit ?? null } } }),
+      fmt: pairText, allowed: `a model ${engineLabel(e)} can run, with any effort`, check: roleCheck(e) }))),
     ...Object.entries(CLAUDE_HELPER_KEYS).map(([job, key]) => userDef({ id: `models.claude.utility.${job}`, label: `${JOBS[job]} (${engineLabel('claude')})`, group: 'Models',
       fmt: pairText, allowed: '{"model": a Claude model from list_models}',
       read: (s) => (typeof s[key] === 'string' && s[key].trim() ? { model: s[key].trim() } : null),
@@ -221,7 +234,7 @@ function buildUserDefs(roles, scanDefaults) {
 const MODEL_ID_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.(?:steps\\.(.+)|utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
 function buildProjectDefs(ids, userDefs, roles) {
   const twins = new Map(userDefs.map((d) => [d.id, d]));
-  return ids.filter((id) => id !== 'askWeb' && !id.startsWith('nightMode.')).map((id) => {
+  return ids.filter((id) => id !== 'askWeb' && id !== 'memory.team' && !id.startsWith('nightMode.')).map((id) => {
     const twin = twins.get(id) || null;
     const own = PROJECT_ONLY[id] || null;
     const m = MODEL_ID_RE.exec(id);

@@ -1,0 +1,31 @@
+{
+  "name": "jira-source",
+  "version": "0.1.0",
+  "description": "Pull tasks from Jira issues, write results back",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=5 <6" },
+  "taskSources": [
+    {
+      "id": "jira",
+      "displayName": "Jira",
+      "module": "./connector/index.mjs",
+      "multiProfile": true,
+      "configSchema": [
+        { "key": "baseUrl", "type": "text", "label": "Jira URL", "required": true,
+          "help": "The site's address, e.g. https://acme.atlassian.net or https://jira.example.com" },
+        { "key": "email", "type": "text", "label": "Account email",
+          "help": "Jira Cloud: the email of the account the API token belongs to. Leave blank for Jira Data Center / Server, where the token is a personal access token. Test connection checks which kind the site is" },
+        { "key": "token", "type": "text", "secret": true, "required": true, "label": "API token",
+          "help": "A Jira Cloud API token or a Data Center personal access token, or {\"$env\":\"WORCA_JIRA_TOKEN\"} (WORCA_JIRA_TOKEN_<NAME> for each further site)" },
+        { "key": "transitionOnComplete", "type": "text", "label": "Transition on completion",
+          "help": "Optional. A transition or status name (e.g. Done) to move the issue to when a run that writes back finishes successfully. Blank = comment only" }
+      ],
+      "inputs": [
+        { "key": "project", "type": "remote-select", "label": "Project", "optionsFrom": "listProjects" },
+        { "key": "jql", "type": "text", "label": "JQL filter", "default": "assignee = currentUser() AND statusCategory != Done" },
+        { "key": "writeBack", "type": "select", "label": "Write result back", "default": "no", "options": [{ "value": "yes", "label": "Yes" }, { "value": "no", "label": "No" }] },
+        { "key": "task", "type": "task-browser", "label": "Issue" }
+      ]
+    }
+  ]
+}

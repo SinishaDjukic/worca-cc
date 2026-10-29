@@ -61,6 +61,10 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
     if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
     if (url.includes('/api/projects')) return json({ projects });
+    // The setup assistant's load (a fresh boot opens it): minimal answers, so it paints its Check step.
+    if (url.includes('/api/setup/detect')) return json({ checks: [{ id: 'claude', label: 'Claude Code', state: 'ok', line: 'Signed in.' }] });
+    if (url.includes('/api/proxy/status')) return json({ settings: { enabled: false }, login: null, state: 'off' });
+    if (url.includes('/api/providers')) return json({ copilot: { connected: false }, openai: { configured: false }, anthropic: { configured: false }, broker: { enabled: false } });
     return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -83,7 +87,7 @@ test('boot: the pill mounts at the top of the sidebar and routes to the page (wh
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'the pill host is the first child of the nav (New run has no row)');
   assert.equal(pillHost.nextElementSibling.dataset.nav, 'chat', 'right above Chat');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 13, 'the nav census (Chat, Schedules, Team policy, Workflows and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14, 'the nav census (Chat, Schedules, Team policy, Workflows, Requirements and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to the home page (Chat): welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
@@ -148,7 +152,8 @@ test('welcome at 375px: the nav drawer is closed behind it (F-21)', async () => 
   assert.equal(doc.body.classList.contains('nav-open'), false);
   assert.equal(doc.querySelector('.main').hasAttribute('inert'), false);
   const css = readFileSync(join(root, 'style.css'), 'utf8');
-  assert.match(css, /@media \(max-width:760px\)\{\s*\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
+  // The .dlg card selector beats `.viewer-modal .card`'s 86vh, so the phone allowance takes effect.
+  assert.match(css, /@media \(max-width:760px\)\{\s*\.viewer-modal \.card\.dlg\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
 });
 
 test('Hide posts {hidden:true} and removes the pill (the page stays); Settings › Show again posts {hidden:false} and opens the page', async () => {
@@ -417,4 +422,26 @@ test('the project tour: the dialog opens on New (canvas AddNew), the guide rings
   assert.equal(doc.querySelector('.guide-text').textContent, 'Create it. The dialog closes and the project joins the list.');
   assert.doesNotMatch(readFileSync(appPath, 'utf8'), /Files on disk are never touched/);
   assert.doesNotMatch(readFileSync(appPath, 'utf8'), /give the dialog that opens its folder/);
+});
+
+test('first start: a fresh install opens the setup assistant before the welcome; Set up later shows the welcome (AC-4.1)', async () => {
+  await checkRows([
+    { name: 'fresh: #setup-modal up, #welcome-modal hidden; Set up later closes it at once and shows the welcome', run: async () => {
+      const { doc, window, posts } = await boot({ onboarding: status(['claude'], { fresh: true }) });
+      assert.ok(doc.getElementById('setup-modal'), 'the assistant is up');
+      assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), true);
+      await until(() => doc.querySelector('#setup-modal .sa-check'));
+      click(window, doc.querySelector('#setup-modal .sa-later'));
+      await settle();
+      assert.equal(doc.getElementById('setup-modal'), null);
+      assert.equal(doc.querySelector('.discard-modal'), null, 'no Discard changes? question');
+      assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'the welcome follows');
+      assert.deepEqual(posts, [], 'Set up later writes nothing');
+    } },
+    { name: 'a boot without fresh shows the welcome first, and no assistant', run: async () => {
+      const { doc } = await boot();
+      assert.equal(doc.getElementById('setup-modal'), null);
+      assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
+    } },
+  ]);
 });

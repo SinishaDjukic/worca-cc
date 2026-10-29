@@ -95,7 +95,7 @@ test('a Codex custom model takes Codex efforts and refuses env, a non-Responses 
   await assert.rejects(() => addGlobalModel({ id: 'cx-4', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'x', openrouter: { models: ['a/b'] } } }), /openrouter is not available on a codex model/);
   await assert.rejects(() => addGlobalModel({ id: 'claude-opus-5-5', engine: 'codex' }), /is a Claude model id/);
   await assert.rejects(() => addGlobalModel({ id: 'gpt-5.5', label: 'Claude-side' }), /"gpt-5.5" is the id of Codex's built-in gpt-5.5 \(ChatGPT sign-in\) — give this entry its own id, such as "my-gpt-5.5"/);
-  await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gemini' }), /engine must be one of claude \| codex \| copilot \| cursor/);
+  await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gpt' }), /engine must be one of claude \| codex \| copilot \| cursor \| gemini \| goose \| opencode \| qwen/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { engine: 'claude' }), /engine cannot change/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { env: { X: '1' } }), /a codex model takes no env/);
   assert.deepEqual((await updateGlobalModel('cx-tune', { efforts: ['minimal'] })).efforts, ['minimal']);
@@ -152,4 +152,52 @@ test('a custom Cursor model: no efforts, no env, no upstream, never a built-in i
   }
   await assert.rejects(() => updateGlobalModel('sonnet-4.5', { env: { X: '1' } }), /a cursor model takes no env/);
   assert.equal((await listModels('')).some((r) => r.engine === 'cursor' && r.builtin), false, 'no Cursor built-ins');
+});
+
+test('a provider/model id outside the catalog is no Claude id, even when its provider starts with claude', () => {
+  assert.equal(engineOfModel('claude-acp/sonnet'), null);
+  assert.equal(engineOfModel('claude-code/default'), null);
+  assert.equal(engineOfModel('claude-sonnet-4-6'), 'claude');
+  assert.equal(engineOfModel('sonnet'), 'claude');
+});
+
+test('a custom Goose model: provider/model id, Goose\'s efforts, no env, no upstream', async () => {
+  const m = await addGlobalModel({ id: 'google/gemini-2.5-flash', engine: 'goose' });
+  assert.deepEqual(m, { id: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash', efforts: ['low', 'medium', 'high', 'max'], engine: 'goose' });
+  assert.equal(engineOfModel('google/gemini-2.5-flash'), 'goose');
+  const some = await addGlobalModel({ id: 'openai/gpt-4o', engine: 'goose', efforts: ['high', 'low'] });
+  assert.deepEqual(some.efforts, ['low', 'high']);
+  await assert.rejects(() => addGlobalModel({ id: 'gs-1', engine: 'goose' }), /a goose model id is provider\/model/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/gs-2', engine: 'goose', env: { X: '1' } }), /a goose model takes no env/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/gs-3', engine: 'goose', upstream: { provider: 'openai', api: 'openai-responses', model: 'm' } }), /no upstream/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/gs-4', engine: 'goose', efforts: ['xhigh'] }), /unknown effort "xhigh"/);
+  await assert.rejects(() => updateGlobalModel('openai/gpt-4o', { env: { X: '1' } }), /a goose model takes no env/);
+  assert.equal((await listModels('')).some((r) => r.engine === 'goose' && r.builtin), false, 'no Goose built-ins');
+});
+
+test('a custom OpenCode model: provider/model id, OpenCode\'s variants as efforts, no env, no upstream', async () => {
+  const m = await addGlobalModel({ id: 'anthropic/claude-sonnet-4-5', engine: 'opencode' });
+  assert.deepEqual(m, { id: 'anthropic/claude-sonnet-4-5', label: 'anthropic/claude-sonnet-4-5', efforts: ['minimal', 'low', 'medium', 'high', 'max'], engine: 'opencode' });
+  assert.equal(engineOfModel('anthropic/claude-sonnet-4-5'), 'opencode');
+  const some = await addGlobalModel({ id: 'openai/gpt-5', engine: 'opencode', efforts: ['high', 'low'] });
+  assert.deepEqual(some.efforts, ['low', 'high']);
+  await assert.rejects(() => addGlobalModel({ id: 'oc-1', engine: 'opencode' }), /an opencode model id is provider\/model/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/oc-2', engine: 'opencode', env: { X: '1' } }), /an opencode model takes no env/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/oc-3', engine: 'opencode', upstream: { provider: 'openai', api: 'openai-responses', model: 'm' } }), /no upstream/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/oc-4', engine: 'opencode', efforts: ['xhigh'] }), /unknown effort "xhigh"/);
+  await assert.rejects(() => updateGlobalModel('openai/gpt-5', { env: { X: '1' } }), /an opencode model takes no env/);
+  assert.equal((await listModels('')).some((r) => r.engine === 'opencode' && r.builtin), false, 'no OpenCode built-ins');
+});
+
+test('Gemini CLI and Qwen Code models: their CLI\'s own sign-in, their own efforts — no env, no upstream', async () => {
+  for (const [engine, label, id, efforts] of [['gemini', 'Gemini CLI', 'gemini-3.8-flash', ['low', 'medium', 'high']], ['qwen', 'Qwen Code', 'qwen3-coder-plus', ['low', 'medium', 'high', 'xhigh', 'max']]]) {
+    assert.deepEqual(await addGlobalModel({ id, engine }), { id, label: id, efforts, engine });
+    assert.equal(engineOfModel(id), engine);
+    await assert.rejects(() => addGlobalModel({ id: `${engine}-1`, engine, env: { X: '1' } }), new RegExp(`a ${engine} model takes no env`));
+    await assert.rejects(() => addGlobalModel({ id: `${engine}-2`, engine, upstream: { provider: 'openai', api: 'openai-responses', model: 'm' } }), /no upstream/);
+    await assert.rejects(() => addGlobalModel({ id: `${engine}-3`, engine, efforts: ['minimal'] }), /unknown effort "minimal"/);
+    void label;
+    await assert.rejects(() => addGlobalModel({ id: 'gpt-5.6-sol', engine }), /is a built-in model id/);
+    await assert.rejects(() => updateGlobalModel(id, { env: { X: '1' } }), new RegExp(`a ${engine} model takes no env`));
+  }
 });

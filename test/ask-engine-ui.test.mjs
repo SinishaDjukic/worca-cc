@@ -20,8 +20,8 @@ test('pickerGroups: one group per engine present, Claude first; a lock keeps one
   assert.deepEqual(pickerGroups(CAT.models, { lock: 'codex' }).map((g) => g.engine), ['codex']);
 });
 
-test('attachRefusal: PDFs need a Claude chat', () => {
-  assert.equal(attachRefusal({ ext: '.pdf', engine: 'codex' }), 'PDFs need a Claude chat');
+test('attachRefusal: a Codex chat refuses PDFs and names the chats that view them', () => {
+  assert.equal(attachRefusal({ ext: '.pdf', engine: 'codex' }), 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can)');
   assert.equal(attachRefusal({ ext: '.pdf', engine: 'claude' }), null);
   assert.equal(attachRefusal({ ext: '.png', engine: 'codex' }), null);
 });

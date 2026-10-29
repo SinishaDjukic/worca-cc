@@ -6,7 +6,7 @@
 //  - pull-request: a finished run's pull request offer (R9) — its button opens the Create PR dialog with the card's link.
 // The chrome is the Ask card's (.ask-card, .ask-mcard-*, .ask-card-not-now / -err); style.css
 // "Chat P2: Action cards" adds the rest. Emphasis is a background wash, never an edge line.
-import { CREATE_PR_LABEL } from '../ship-words.mjs';
+import { CREATE_PR_LABEL, PR_CREATED, VIEW_PR_LABEL } from '../ship-words.mjs';
 import { icon } from '../icons.mjs';
 import { registerChatCard } from './extensions.mjs';
 import { buildShipChatCard } from '../shape/ship-card.mjs';
@@ -14,7 +14,6 @@ import { buildChangesChatCard } from '../shape/changes-card.mjs';
 import { buildRouteChatCard } from '../shape/route-card.mjs';
 import { prWatchTooltip } from './pr-watch-words.mjs';
 import { renderAskChanges } from './ask-changes.mjs';
-import { shapeFirstOn } from './shape-gate.mjs';
 
 export const RECEIPT_CHIPS = Object.freeze({
   setting: 'Setting', pause: 'Paused', resume: 'Resumed', 'away-now': 'Away mode', 'run-away': 'Away mode',
@@ -244,7 +243,7 @@ export function buildPullRequestCard(block, ctx) {
     const anchors = new Map();
     for (const m of entries) {
       if (!m || !m.url) continue;
-      const a = make(doc, 'a', 'ask-card-link ask-prcard-link', entries.length > 1 && m.memberKey ? `View PR · ${shortKey(m.memberKey)}` : 'View PR');
+      const a = make(doc, 'a', 'ask-card-link ask-prcard-link', entries.length > 1 && m.memberKey ? `${VIEW_PR_LABEL} · ${shortKey(m.memberKey)}` : VIEW_PR_LABEL);
       a.href = m.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
       links.appendChild(a);
       anchors.set(m, a);
@@ -262,7 +261,7 @@ export function buildPullRequestCard(block, ctx) {
       }
     }
     // Shaper s5: Ask for changes on the opened PR's run (the server mints the changes card).
-    if (card.pipelineId && !card.workspaceId && shapeFirstOn(doc) && typeof ctx.postChanges === 'function') {   // a workspace run has no single branch to change
+    if (card.pipelineId && !card.workspaceId && typeof ctx.postChanges === 'function') {   // a workspace run has no single branch to change
       body.appendChild(renderAskChanges(doc, { onSend: (t) => ctx.postChanges({ pipelineId: card.pipelineId }, t) }).el);
     }
   }
@@ -294,7 +293,7 @@ export function buildPullRequestCard(block, ctx) {
       } catch (e) { r = { opened: false, error: errorOf(e) }; }
       if (!r || typeof r !== 'object') r = { opened: false, error: 'Could not open the Create PR dialog.' };   // no opener assigned yet
       if (r.error) err.textContent = r.error;
-      if (r.opened) { announce(ctx, 'Pull request opened'); return; }   // POST /api/pr flipped the card; it rebuilds as applied
+      if (r.opened) { announce(ctx, PR_CREATED); return; }   // POST /api/pr flipped the card; it rebuilds as applied
       lock(false);
       // The dialog took the focus: give it back to the button that opened it (Chrome drops it on <body>, jsdom on the hidden dialog).
       const a = doc.activeElement;

@@ -4,9 +4,6 @@ Plan a task with Worca before it builds, in Chat, and cut a large one into slice
 Nothing here changes a run that does not ask for it: a run without `shape` in its
 request behaves exactly as before.
 
-> **Beta.** Shaper is on by default. You can turn it off in Settings › Labs.
-> See [Turning it off](#turning-it-off).
-
 ## What it is
 
 Worca shapes a thin or large task first. It asks at most 3 questions, writes a plan
@@ -17,24 +14,6 @@ nothing left to guess.
 The plan is checked by rules, not by a model: the shape check reads the plan text
 and tells you what is missing. The approved plan is what the build follows, and the
 review later checks the code against the checklists the plan ended with.
-
-## Turning it off
-
-Shaper is in beta and on by default. To turn it off, switch off **Shaper** in
-Settings › Labs (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
-run `worca flags off shapeFirst`, or start Worca with `WORCA_FLAGS=-shapeFirst`. It takes
-effect at once, without a restart, and the choice is kept until you turn it back on.
-While it is off, everything below is hidden or refused: the **Plan it
-with me** tile, the nudge on a run card, the **Plans** tab, the `shape` field on
-`POST /api/run` (it answers "shape is not available on this server") and every
-`/api/shape/…` route (404).
-
-A run that is already held at a plan or outline question is never stranded by the
-switch. The plan card and the outline card are the same cards with the same buttons
-(**Approve and build**, **Ask for changes**, **Full plan**, and on the outline
-**Approve N runs**; **Fix all**, **Don't split** and **Stop** in ⋯). Only the extras
-that read the plan text need the switch on: the summary, the inline plan, perspective
-chips, **Save to plans/** and **Open in New run**.
 
 ## Three ways in
 
@@ -160,7 +139,8 @@ approved, then `Feature · n/N`. Below the stats:
 - the group bar, one part for planning and one per run, and the current run's bar;
 - the step log: each answered step as a named decision (`Clarify · 2 answers`,
   `Split into 3 runs`, `Run 1 · Plan approved`), each with **Show**, which unfolds
-  what was answered in place;
+  what was answered in place. Once its row is in the log, the step's answer receipt
+  is not shown as well, so the card names each answered step once;
 - the open step, whichever run asks it: run 2's plan approval is answered in this
   card too;
 - a row per run (`Planning · Done`, then `n · title · state`, or its pull request's
@@ -211,22 +191,36 @@ done, which slice comes next.
 items that apply (n/a left out, not reported counts against). Pressing it unfolds
 the run's Perspective checklists in place.
 
-**Ship card.** Each slice opens a draft pull request when it finishes; merge them in
-order, since each slice's branch starts from the one before. When the last run is
-done, a **Ship card** appears once in the chat that started the feature, and the
-same card shows on the group page and the Plans tab. It reads `3 runs · 12 files ·
-+840 −120` with the reason for its suggestion, and ships in one click:
-**Stacked PRs** marks each draft ready for review, **One PR** opens one pull
-request from the last slice's branch into the feature's base and closes the slices'
-drafts with a link to it. The suggested mode is the highlighted button (one PR for a
-feature under about 1,500 added lines). In the chat, **Not now** puts the card away;
-the feature still ships from its page. Until every run is done, the group page says
-when the card will come. Either way, one entry for the feature goes into the
-project's `CHANGELOG.md` under `## Unreleased`, committed on the last slice's
-branch, so it ships with the feature.
+**Ship card.** Slices no longer open draft pull requests: a finished slice opens no
+PR of its own. When the last run is done, a **Ship card** appears once in the chat
+that started the feature, and the same card shows on the group page and the Plans
+tab. It reads `Ready to ship · 3 runs · 12 files · +840 −120` with the reason for its
+suggestion, and has one **Create PR** button. The button opens the **Create PR**
+dialog, the same one a single run uses; the group page's status line has the same
+Create PR. The dialog's **Pull requests** zone offers **One** (one PR from the last
+run's branch into the feature's base) or **N stacked** (one PR per run, each on the
+run before it; merge them in order), with the suggested choice selected (one PR for
+a feature under about 1,500 added lines) and its reason under the choice. Once a run
+already has its own PR, One is disabled and N counts only the runs still without
+one. Features started before this change keep their slice drafts: stacked marks them
+ready for review, One closes them with a link to the one PR. Shipped as One, the one
+PR counts as every run's PR, so the group page reads `In review · 1 PR`. In the chat, **Not now**
+puts the card away; the feature still ships from its page. Until every run is done,
+the group page says when the card will come. Either way, one entry for the feature
+goes into the project's `CHANGELOG.md` under `## Unreleased`, committed on the last
+slice's branch, so it ships with the feature.
 
-**Release.** The Ship card and a single run's **Create PR** dialog carry an optional
-release row. **+ Add a release** suggests the next version: the last tag plus a
+A Run-after chain ships the same way, without Shaper: once every run in it is done,
+its group page reads `Ready to ship · 2 of 2 done` with **Create PR** on the status
+line, and the dialog offers One (the last run's branch into the chain's root, with a
+title and description) or N stacked (the default). One needs each run to start from the
+previous run's branch, in one project; otherwise only N stacked is offered. A run with no
+branch of its own (a workspace or Folder run) ships from its own page. A finished chain
+stays in the Runs list while one of its PRs is open; with a run still without a PR, for
+14 days after its last run, when every run can have one. Archiving a run retires it.
+
+**Release.** A single run's and a feature's **Create PR** dialog carry an optional
+release row, under After it opens. **+ Add a release** suggests the next version: the last tag plus a
 minor (`v1.11.0` → `v1.12.0`), else the version in `package.json`, else you type
 one. Worca records the choice and, once the ship pull request merges (the one PR, or
 the last slice's PR when stacked), creates a **draft** GitHub release for that tag

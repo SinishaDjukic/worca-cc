@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
-import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts } from '../ui/public/group-page.mjs';
+import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList } from '../ui/public/group-page.mjs';
 import { ACTION_LABEL } from '../src/shared/run-model.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 
@@ -52,7 +52,7 @@ test('Overview is offered only when the host says so; Logs links each member', (
   assert.equal(root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'logs');
   assert.deepEqual([...root.querySelectorAll('.gpage-panel[data-tab="logs"] a')].map((a) => a.getAttribute('href')),
     ['#running/r0/details/logs', '#running/r1/details/logs', '#running/r2/details/logs', '#running/r3/details/logs']);
-  assert.equal(root.querySelector('.gpage-ship').hidden, true, 'no ship line for a user group');
+  assert.equal(root.querySelector('.gpage-ship').textContent, 'Create PR comes when all 3 runs are done.');
 });
 
 test('Logs is offered only when the host says so (the run page\'s Logs tab is Expert): /logs falls back to Runs', () => {
@@ -75,19 +75,60 @@ test('runReceipts: plan and review receipts from the recorded run, no fetch; non
   assert.deepEqual(runReceipts({ status: 'done', pr: null }), []);
 });
 
-test('QA 7: the header offers Open PR only when the group has exactly one PR', () => {
+test('one ship flow: PR controls sit on the status line, never in the bar; Create PR, View PR ▾ or View PRs ▾', () => {
   const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
-  const gh = (n, o = {}) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN', ...o });
-  const mk = (g) => { const model = groupModel({ kind: 'feature', title: 'T', ...g }, { now: NOW });
-    return { kind: 'chain', groupKind: 'feature', groupId: 'f', title: 'T', model, costUsd: 0,
-      members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: `#running/r${i}`, model: m })) }; };
-  const head = (row) => { const root = buildGroupPage(doc); paintGroupPage(root, { row, project: 'p', tab: 'runs' }, NOOP);
-    return [...root.querySelectorAll('.gpage-bar [data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction); };
-  assert.deepEqual(head(mk({ members: [done, done], pr: gh(1) })), ['open-pr'], 'shipped as one PR');
-  assert.deepEqual(head(mk({ members: [{ ...done, pr: gh(2, { state: 'CLOSED' }) }, { ...done, pr: gh(1) }], pr: gh(1) })), ['open-pr'],
-    'shipped as one PR: closed slice drafts and the same PR on a member do not count');
-  assert.deepEqual(head(mk({ members: [{ ...done, pr: gh(1) }, done] })), ['open-pr'], 'one member PR');
-  assert.deepEqual(head(mk({ members: [{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }] })), [], 'two PRs: the rows\' chips');
+  const gh = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const mk = (kind, g) => { const model = groupModel({ kind, title: 'T', ...g }, { now: NOW });
+    return { kind: 'chain', groupKind: kind, groupId: 'g', title: 'T', model, costUsd: 0,
+      members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, pipelineId: `p${i + 1}`, href: `#running/r${i}`, model: m })) }; };
+  const paint = (row) => { const heads = []; const root = buildGroupPage(doc);
+    paintGroupPage(root, { row, project: 'p', tab: 'runs' }, { ...NOOP, paintHead: (acts, slot, head) => heads.push({ acts, slot, head }) });
+    const bar = [...root.querySelectorAll('.gpage-bar [data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction);
+    return { root, bar, ...heads.at(-1) }; };
+  const ready = paint(mk('chain', { members: [done, done] }));
+  assert.deepEqual(ready.bar, []);
+  assert.deepEqual(ready.head.cta, { state: 'create' });
+  assert.ok(ready.slot.matches('.gpage-card .rd-sheet-head > .rd-head-acts > .rd-pr-slot'));
+  assert.ok(ready.acts.matches('.gpage-card .rd-sheet-head > .rd-head-acts'));
+  const two = paint(mk('chain', { members: [{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }] }));
+  assert.deepEqual(two.bar, []);
+  assert.deepEqual(two.head.cta, { state: 'view', label: 'View PRs', menu: true, ws: true });
+  assert.ok(two.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 2 PRs'));
+  assert.equal(two.root.querySelector('.gpage-ship').textContent, 'Merge in order 1 → 2');
+  assert.equal(two.root.querySelectorAll('.gpage-runs .run-member-pr .runs-pr').length, 2);
+  const one = paint(mk('chain', { members: [{ ...done, pr: gh(3) }, { ...done, pr: gh(3) }] }));
+  assert.deepEqual(one.head.cta, { state: 'view', href: gh(3).url, menu: true });
+  assert.ok(one.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 1 PR'));
+  const feature = paint(mk('feature', { members: [done, done], pr: gh(4) }));
+  assert.deepEqual(feature.bar, [], 'a feature shipped as one PR: no Open PR in the bar either');
+});
+
+test('groupPrList: distinct, not closed, in merge order, named Run K', () => {
+  const r = { model: { pr: null }, members: [
+    { position: 1, pipelineId: 'p1', model: { pr: { url: 'u1', number: 1, id: 'ready' } } },
+    { position: 2, pipelineId: 'p2', model: { pr: { url: 'u1', number: 1, id: 'ready' } } },
+    { position: 3, pipelineId: 'p3', model: { pr: { url: 'u3', number: 3, id: 'closed' } } }] };
+  assert.deepEqual(groupPrList(r).map((p) => [p.name, p.url, p.key]), [['Run 2', 'u1', 'p2']]);
+});
+
+test('groupPrList: a chain\'s One PR shared by its 2 runs is listed once, owned by run 2 (its head branch)', () => {
+  const r = { model: { pr: null }, members: [
+    { position: 1, pipelineId: 'p1', model: { pr: { url: 'u1', number: 7, id: 'conflicts' } } },
+    { position: 2, pipelineId: 'p2', model: { pr: { url: 'u1', number: 7, id: 'conflicts' } } }] };
+  const list = groupPrList(r);
+  assert.equal(list.length, 1);
+  assert.deepEqual([list[0].pipelineId, list[0].key, list[0].name, list[0].position, list[0].conflicts], ['p2', 'p2', 'Run 2', 2, true]);
+});
+
+test('said once: an ended group has no group bar, so the Runs fact keeps "{done} done"', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const model = groupModel({ kind: 'feature', title: 'Run tags', planning: done, members: [done, done, done] }, { now: NOW });
+  const ended = { ...row(), model, members: model.members.map((m, i) => ({ position: i + 1, title: `Slice ${i + 1}`, href: `#running/r${i + 1}`, runId: `r${i + 1}`, model: m, cost: 1 })) };
+  paintGroupPage(root, { row: ended, project: 'acme-app', tab: 'runs', overview: false }, NOOP);
+  assert.ok(['ready', 'in-review', 'merged'].includes(model.state), model.state);
+  assert.equal(root.querySelector('.run-status-group').hidden, true, 'no group bar once the group has ended');
+  assert.equal(root.querySelector('.rd-kv [data-fact="runs"] .rd-kv-v').textContent, '3 runs · 3 done');
 });
 
 test('run 3: the group page shares the run page head — kind word, crumbs, facts in the card, Stop and ⋯', () => {
@@ -101,9 +142,14 @@ test('run 3: the group page shares the run page head — kind word, crumbs, fact
   assert.deepEqual([...root.querySelectorAll('.gpage-bar .rd-crumb')].map((c) => c.textContent), ['Runs', 'Run tags']);
   assert.ok(root.querySelector('.gpage-bar.rd-bar'), 'the run page\'s bar look');
   const kv = root.querySelector('.gpage-card.rd-sheet > .rd-kv');
-  assert.equal(kv.previousElementSibling.classList.contains('run-status'), true, 'facts right under the status block');
+  assert.ok(kv.previousElementSibling.matches('.rd-sheet-head') && kv.previousElementSibling.querySelector(':scope > .run-status'),
+    'facts right under the status head (the one ship flow\'s status line + PR slot)');
+  const gHead = root.querySelector('.gpage-card.rd-sheet > .rd-sheet-head');
+  assert.ok(gHead.querySelector(':scope > .run-status:first-child'), 's1: a bare .run-status opens the head, so the card-head CSS reaches it');
+  assert.ok(gHead.querySelector(':scope > .rd-head-acts'), 's1: the buttons sit beside it in the same head');
   const shown = [...kv.querySelectorAll('.rd-kv-row:not([hidden])')].map((r) => [r.dataset.fact, r.querySelector('.rd-kv-v').textContent]);
-  assert.deepEqual(shown, [['project', 'acme-app'], ['runs', '3 runs · 1 done'], ['cost', '$4.20']]);
+  assert.deepEqual(shown, [['project', 'acme-app'], ['runs', '3 runs'], ['cost', '$4.20']]);
+  assert.equal(root.querySelector('.run-status-group .run-chain-label').textContent, '1 done', 'said once: on the group bar');
   const moreBtn = root.querySelector('.gpage-bar .gpage-more[aria-haspopup="menu"]');
   assert.ok(moreBtn);
   moreBtn.click();
@@ -154,4 +200,137 @@ test('run 4 D13: the Back link carries the run page\'s chevron; D2: the made ans
   assert.equal(back.getAttribute('aria-label'), 'Back to Runs');
   for (const c of ['btn-sm', 'btn-quiet', 'btn-icon']) assert.ok(back.classList.contains(c), c);
   assert.equal(root.querySelector('.gpage-actions [data-model-action="answer"]').textContent, 'Approve 2 runs');
+});
+
+test('slice 3: a user group\'s PR controls sit on the status line; separate reads In review · 3 PRs and Any order, One reads In review · 1 PR', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const gh = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const mk = (members) => { const model = groupModel({ kind: 'user', title: 'Login polish', members }, { now: NOW });
+    return { kind: 'chain', groupKind: 'user', groupId: 'grp_a1b2c3d4e5f6', title: 'Login polish', model, costUsd: 0,
+      members: model.members.map((m, i) => ({ position: i + 1, title: `R${i + 1}`, pipelineId: `p${i + 1}`, href: `#running/r${i}`, adhoc: true, model: m })) }; };
+  const paint = (row) => { const heads = []; const root = buildGroupPage(doc);
+    paintGroupPage(root, { row, project: 'p', tab: 'runs' }, { ...NOOP, paintHead: (acts, slot, head) => heads.push({ acts, slot, head }) });
+    const bar = [...root.querySelectorAll('.gpage-bar [data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction);
+    return { root, bar, ...heads.at(-1) }; };
+  const ready = paint(mk([done, done, done]));
+  assert.deepEqual(ready.bar, []);
+  assert.deepEqual(ready.head.cta, { state: 'create' });
+  assert.equal(ready.root.querySelector('.gpage-ship').textContent, 'Any order, or as one PR when the runs combine');
+  const sep = paint(mk([1, 2, 3].map((k) => ({ ...done, pr: gh(k) }))));
+  assert.deepEqual(sep.bar, [], 'no Open PR in the bar (D10)');
+  assert.deepEqual(sep.head.cta, { state: 'view', label: 'View PRs', menu: true, ws: true });
+  assert.ok(sep.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 3 PRs'));
+  assert.equal(sep.root.querySelector('.gpage-ship').textContent, 'Any order');
+  assert.equal(sep.root.querySelectorAll('.gpage-runs .run-member-pr .runs-pr').length, 3);
+  const one = paint(mk([1, 2, 3].map(() => ({ ...done, pr: gh(9) }))));
+  assert.deepEqual(one.bar, [], 'QA 7\'s Open PR moved to the head');
+  assert.deepEqual(one.head.cta, { state: 'view', href: gh(9).url, menu: true });
+  assert.ok(one.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 1 PR'));
+  assert.equal(one.root.querySelector('.gpage-ship').hidden, true, 'no ship line after One');
+});
+
+// Slice 3 (no layout jump): the live hand-off the reproduction logged. Run 1 ends → run 2 waits → its ticket fires →
+// it runs before its graph is known → it has its graph. The card's stage bar is never hidden or rebuilt.
+const F = REPLAY_FRAMES;
+const WAIT2 = { ticket: { status: 'scheduled', after: { index: 1 } } };
+const liveRow = (raws, pr = null) => {
+  const model = groupModel({ kind: 'feature', title: 'Run tags', members: raws, pr }, { now: NOW });
+  return { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'Run tags', model, costUsd: 0, planning: null,
+    members: model.members.map((m, i) => ({ position: i + 1, title: `Slice ${i + 1}`, href: `#running/r${i + 1}`, runId: `r${i + 1}`, model: m, cost: null })) };
+};
+const livePage = (opts = {}) => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  doc.body.append(root);
+  const paint = (raws, more = {}) => paintGroupPage(root, { row: liveRow(raws, more.pr), project: '', tab: 'runs', overview: false, logs: !!opts.logs }, NOOP);
+  return { doc, root, paint, bar: () => root.querySelector('.gpage-card .run-status-bar') };
+};
+
+test('slice 3: a live hand-off keeps the last stage bar — never hidden, same nodes, edge still', () => {
+  const { paint, bar: barOf, root } = livePage();
+  paint([F[15], WAIT2]);
+  const bar = barOf();
+  const track = bar.querySelector('.run-prog-track');
+  const marks = bar.querySelector('.run-prog-marks');
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.dataset.mode, 'stages');
+  const text = () => root.querySelector('.gpage-card .run-status').dataset.text;
+  for (const [label, raws, line] of [
+    ['run 1 done, run 2 waiting', [F.at(-1), WAIT2], 'Run 2 of 2 · waiting for run 1'],
+    ['run 2 ticket fired', [F.at(-1), { ticket: { status: 'fired' } }], 'Run 2 of 2 · starting'],
+    ['run 2 running before its graph (a blank nodes progress)', [F.at(-1), { status: 'running' }], 'Run 2 of 2 · starting'],
+  ]) {
+    paint(raws);
+    assert.equal(text(), line, `${label}: the status line is the one the model gives, unchanged by the hold`);
+    assert.equal(bar.hidden, false, `${label}: the bar row stays`);
+    assert.equal(bar.dataset.mode, 'stages', `${label}: no flip to the markless bar`);
+    assert.equal(bar.querySelector('.run-prog-track'), track, `${label}: same track node`);
+    assert.equal(bar.querySelector('.run-prog-marks'), marks, `${label}: same marks node`);
+    assert.equal(bar.dataset.pulse, 'off', `${label}: nothing works on the kept bar`);
+  }
+  paint([F.at(-1), F[3]]);                                           // run 2 has its graph
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.querySelector('.run-prog-track'), track, 'run 2\'s stages reuse the same skeleton');
+  assert.match(text(), /Run 2 of 2/);
+});
+
+test('slice 3: the hold never covers a real change — PR needs you, failed, stopped, ready and in review hide the bar', () => {
+  const PR = (extra = {}) => ({ url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', ...extra });
+  const prNeedsRun = { status: 'done', pr: PR({ checks: { state: 'failing', total: 12, failed: 3, pending: 0 } }) };
+  const openPrRun = { ...F.at(-1), pr: PR() };
+  for (const [label, raws, state] of [
+    ['a run in Needs you only through its PR', [prNeedsRun, WAIT2], 'needs-you'],
+    ['a failed member', [F.at(-1), { status: 'error' }], 'failed'],
+    ['a stopped member', [F.at(-1), { status: 'stopped' }], 'stopped'],
+    ['a group ready to ship', [F.at(-1), F.at(-1)], 'ready'],
+    ['a group in review', [openPrRun, openPrRun], 'in-review'],
+  ]) {
+    const { paint, bar } = livePage();
+    paint([F[15], WAIT2]);
+    assert.equal(bar().hidden, false, `${label}: painted first`);
+    assert.equal(liveRow(raws).model.state, state, `${label}: the fixture is the state it names`);
+    paint(raws);
+    assert.equal(bar().hidden, true, `${label}: hides the bar, as before`);
+  }
+});
+
+test('slice 3 (guard): a real nodes workflow (a step is active) repaints a painted stages bar as nodes', () => {
+  const { paint, bar: barOf } = livePage();
+  paint([F[15], WAIT2]);
+  const nodesRun = { status: 'running', stepper: { version: 2, graph: { nodes: [{ id: 'n1', kind: 'agent', key: 'build', label: 'Build' }] } },
+    steps: [], active: [{ nodeId: 'n1', executionId: 'e1' }] };
+  const prog = liveRow([F.at(-1), nodesRun]).model.current.progress;
+  assert.equal(prog.mode, 'nodes');
+  assert.ok(prog.step, 'the fixture has an active step, so it is not a blank progress');
+  paint([F.at(-1), nodesRun]);
+  const bar = barOf();
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.dataset.mode, 'nodes', 'a known graph with no stages is the markless bar');
+});
+
+test('slice 3: an unchanged repaint keeps the Runs table and the Logs items (same nodes, focus kept); a change replaces them', () => {
+  const { doc, root, paint } = livePage({ logs: true });
+  paint([F[15], WAIT2]);
+  const ol = root.querySelector('.gpage-runs .run-members');
+  const log = root.querySelector('.gpage-logs .gpage-log');
+  const link = ol.querySelector('.run-member-title');
+  link.focus();
+  assert.equal(doc.activeElement, link);
+  paint([F[15], WAIT2]);
+  assert.equal(root.querySelector('.gpage-runs .run-members'), ol, 'same table node');
+  assert.equal(root.querySelector('.gpage-logs .gpage-log'), log, 'same Logs item');
+  assert.equal(doc.activeElement, link, 'focus stays on the member link');
+  paint([F.at(-1), WAIT2]);                                           // run 1's row now reads done
+  assert.notEqual(root.querySelector('.gpage-runs .run-members'), ol, 'a changed table is replaced');
+});
+
+test('slice 3: a focused member link keeps focus when ANOTHER row changes and the table is replaced', () => {
+  const { doc, root, paint } = livePage();
+  paint([F.at(-1), WAIT2]);
+  const ol = root.querySelector('.gpage-runs .run-members');
+  ol.querySelector('.run-member-title').focus();                    // row 1, done
+  paint([F.at(-1), F[3]]);                                            // row 2 starts running
+  const next = root.querySelector('.gpage-runs .run-members');
+  assert.notEqual(next, ol, 'the table was replaced');
+  assert.equal(doc.activeElement, next.querySelector('.run-member-title'), 'focus moved to the new row 1 link');
 });

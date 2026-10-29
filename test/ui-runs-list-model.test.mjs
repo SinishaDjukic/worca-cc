@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -209,7 +209,7 @@ const HIST5 = Array.from({ length: 5 }, (_, i) => histIt(`d${i}`, { run: { statu
 
 test('Show / Group by: counts, Running excludes ended runs, project grouping keeps Needs you on top', () => {
   const m = buildRunsModel({ live: LIVE3, history: HIST5, show: 'running', now: NOW });   // LIVE3: ask + 2 working; HIST5: 5 done
-  assert.deepEqual(m.counts, { all: 8, needs: 1, running: 3, waiting: 0, finished: 5, archived: null });
+  assert.deepEqual(m.counts, { all: 8, needs: 1, running: 3, waiting: 0, finished: 5, ready: 5, archived: null });
   assert.deepEqual(m.sections.map((s) => s.id), ['running']);
   const p = buildRunsModel({ live: LIVE3, history: HIST5, groupBy: 'project', now: NOW });
   assert.equal(p.sections[0].id, 'needs');
@@ -250,6 +250,25 @@ test('the label filter keeps runs with ANY chosen label; a group stays when one 
   assert.equal(host.querySelector('.runs-item[data-row-key="hist:worca-00000002/h0"] .runs-row-labels'), null);
 });
 
+test('Show = Ready to ship: finished git runs with no open PR, not Folder, no-project, in-review, merged or archived', () => {
+  const pr = (state) => ({ url: 'https://github.com/o/r/pull/7', number: 7, state });
+  const history = [
+    histIt('h-ready', { run: { status: 'done' } }),
+    histIt('h-closed', { run: { status: 'done', pr: pr('CLOSED') } }),
+    histIt('h-open', { run: { status: 'done', pr: pr('OPEN') } }),
+    histIt('h-merged', { run: { status: 'done', pr: pr('MERGED') } }),
+    histIt('h-folder', { run: { status: 'done', workMode: 'folder', changes: null } }),
+    histIt('h-none', { run: { status: 'done', workMode: 'none' } }),
+    histIt('h-arch', { archived: true, run: { status: 'done' } }),
+  ];
+  const m = buildRunsModel({ live: [liveIt('r')], history, show: 'ready', now: NOW });
+  assert.deepEqual(keysOf(m).sort(), ['hist:worca-00000002/h-closed', 'hist:worca-00000002/h-ready']);
+  assert.equal(m.counts.ready, 2);
+  assert.deepEqual(m.sections.map((s) => s.title), ['Ready to ship']);
+  assert.equal(buildRunsModel({ live: [liveIt('r')], history, now: NOW }).counts.ready, 2, 'counted under Show = All too');
+  assert.equal(renderRunsList(doc, buildRunsModel({ live: [liveIt('r')], show: 'ready', now: NOW })).at(-1).textContent, 'Nothing is ready to ship.');
+});
+
 test('an archived run reads "Archived" with its time under Show = Archived', () => {
   assert.equal(histRowState({ status: 'done', pr: 'MERGED', archived: true }).word, 'Archived');
   const m = buildRunsModel({ history: [histIt('h-arch', { archived: true, run: { status: 'done' } }), histIt('h-live')], show: 'archived', now: NOW });
@@ -270,6 +289,18 @@ test('a chain member that needs you raises its group row into Needs you (needs b
     assert.deepEqual(m.sections[0].rows.map((r) => r.key), ['chain:p:p1'], show);
   }
   assert.equal(countNeedsYou({ live: [{ pipelineId: 'p2', status: 'running', ask: true }] }), 1);
+});
+
+test('one ship flow (D8): a kept all-done chain without PRs adds 0 to Needs you', () => {
+  const history = [histIt('k1', { pr: null, run: { status: 'done' } }), histIt('k2', { pr: null, run: { status: 'done' } })];
+  const groups = [{ id: 'p:k1', groupKind: 'chain', title: 'Kept', members: [
+    { position: 1, title: 'One', pipelineId: 'k1', kind: 'hist', run: { status: 'done' } },
+    { position: 2, title: 'Two', pipelineId: 'k2', kind: 'hist', run: { status: 'done' } }] }];
+  const m = buildRunsModel({ history, groups, now: NOW });
+  assert.equal(m.counts.needs, 0);
+  assert.equal(m.sections.some((sec) => sec.id === 'needs'), false);
+  assert.equal(groupRow(groups[0], { now: NOW }).model.state, 'ready', 'it reads Ready to ship');
+  assert.equal(countNeedsYou({ history: history.map((h) => ({ id: h.id, status: h.status, pr: null })) }), 0);
 });
 
 test('a finished run whose PR fails checks needs you (D31): Needs you, the badge count, Finished under Show', () => {
@@ -602,4 +633,117 @@ test('whenLabel: rowTime style with the clock after a non-today day (F-9)', () =
   assert.equal(whenLabel('garbage', now), '');
   const inst = Date.UTC(2026, 8, 14, 3, 30);                // 12:30 in Tokyo
   assert.equal(whenLabel(inst, inst, 'Asia/Tokyo'), '12:30');
+});
+
+test('#948 s2 renderRunsList: a bare section has no head, emptyByShow / loadingText / offlineText notes, retry on the offline note, moreLabel', () => {
+  const chatRowItem = { key: 'chat:a', id: 'a', kind: 'chat', title: 'Chat a', href: '#chat/a', labels: [], cost: 0.4, activityMs: NOW - 60000,
+    model: { state: 'idle', word: 'Idle', line: 'worka-cc · $0.40 · 11:00', dot: 'grey', pulse: false, symbol: null, icon: 'chat' } };
+  const flat = { sections: [{ id: 'all', title: 'Chats', rows: [chatRowItem], count: 1, bare: true, more: true, moreLabel: 'Show more' }],
+    view: { show: 'all' }, now: NOW, total: 1, shown: 1, spansProjects: false };
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, flat));
+  assert.equal(host.querySelectorAll('.runs-sec-head').length, 0);
+  assert.equal(host.querySelectorAll('.runs-item').length, 1);
+  assert.equal(host.querySelector('.runs-row-sub').textContent, 'worka-cc · $0.40 · 11:00', 'a chat row reads its model line');
+  assert.equal(host.querySelector('.runs-older').textContent, 'Show more');
+  const empty = (show, total = 0) => ({ sections: [], view: { show }, now: NOW, total, shown: 0, spansProjects: false });
+  assert.equal(renderRunsList(doc, empty('archived'), { emptyByShow: { archived: 'No archived chats.' } }).at(-1).textContent, 'No archived chats.');
+  const loading = renderRunsList(doc, empty('all'), { loading: true, loadingText: 'Loading chats…' });
+  assert.equal(loading[0].className, 'runs-note runs-loading');
+  assert.equal(loading[0].textContent, 'Loading chats…');
+  const off = renderRunsList(doc, empty('all'), { offline: true, retry: true, offlineText: 'The chats show here once Worca\'s server is reachable again.' });
+  assert.equal(off.length, 1);
+  assert.ok(off[0].classList.contains('runs-offline'));
+  assert.equal(off[0].querySelectorAll('[data-runs-retry]').length, 1);
+  assert.equal(off[0].firstChild.textContent, 'The chats show here once Worca\'s server is reachable again.');
+  const runsOff = renderRunsList(doc, empty('all'), { offline: true });
+  assert.equal(runsOff[0].querySelectorAll('[data-runs-retry]').length, 0, 'Runs (retry only with a note) keeps its plain offline note');
+});
+
+test('#955 memberLine: a member drops only the Working / Starting word its dot says', () => {
+  assert.equal(memberLine({ state: 'working' }, 'Working'), '');
+  assert.equal(memberLine({ state: 'working' }, 'Running · Round 2 · Build'), 'Round 2 · Build');
+  assert.equal(memberLine({ state: 'working' }, 'Implementation · Write tests'), 'Implementation · Write tests');
+  assert.equal(memberLine({ state: 'starting' }, 'Starting'), '');
+  assert.equal(memberLine({ state: 'starting' }, 'Copying the folder'), 'Copying the folder');
+  assert.equal(memberLine({ state: 'starting' }, 'Round 2 · Starting'), 'Round 2 · Starting', 'only a leading word goes');
+  for (const [state, line] of [['failed', 'Failed at Build'], ['paused', 'Plan · paused'], ['stopped', 'Stopped at Plan'],
+    ['needs-you', 'Plan · needs you · answer 2 questions'], ['waiting', 'Waiting · starts after run 1']]) {
+    assert.equal(memberLine({ state }, line), line, `${state} keeps its word`);
+  }
+});
+
+test('#955 a one-line member: PR chip kept with no repeated word, no labels, no Independent, a 3px live line', () => {
+  const chain = { id: 'p:c955', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'm1', kind: 'hist', adhoc: true, labels: ['hotfix'], run: { status: 'done', pr: GH(7, { state: 'MERGED' }) } },
+    { position: 2, pipelineId: 'p2', runId: 'r2', kind: 'live', run: { status: 'running', steps: [{ nodeId: 'n' }], active: ['n'] } }] };
+  const m = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2' })], history: [histIt('m1', { run: { status: 'done', pr: GH(7, { state: 'MERGED' }) } })],
+    groups: [chain], now: NOW });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const members = [...host.querySelectorAll('.runs-item[data-row-key="chain:p:c955"] .runs-members > .runs-item[data-level="member"]')];
+  assert.equal(members.length, 2, 'an unfinished group is open (D29)');
+  const [done, live] = members;
+  assert.equal(done.querySelector('.runs-pr-word').textContent, 'Merged', 'the chip stays');
+  assert.doesNotMatch(done.querySelector('.runs-row-sub').textContent, /Merged/, 'the line never repeats the chip');
+  assert.equal(done.querySelector('.runs-row-labels'), null, 'no label chips on a member');
+  assert.equal(done.querySelector('.runs-indep'), null, 'no Independent on a member');
+  assert.ok(live.querySelector(':scope > a.runs-row > .runs-row-prog > i'), 'the live member draws the 3px line');
+  assert.equal(live.querySelector('.runs-stage'), null, 'not the four-section block');
+  assert.doesNotMatch(live.querySelector('.runs-row-sub').textContent, /^(Working|Running)\b/);
+  const liveModel = m.sections.flatMap((s) => s.rows).find((r) => r.key === 'chain:p:c955').members[1].model;
+  assert.equal(live.querySelector(':scope > a.runs-row').dataset.line, liveModel.line, 'data-line keeps the canonical line (D11)');
+});
+
+test('#1012 a staged live member draws the four-section block; a working one names no step, a needing one keeps why', () => {
+  const run = { status: 'running', steps: [{ nodeId: 'n' }], active: ['n'], stepper: { auto: { status: 'deciding' } } };   // Plan · choosing the workflow
+  const chain = { id: 'p:c1012', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run })], groups: [chain], now: NOW });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const row = host.querySelector('.runs-members .runs-item[data-level="member"] > a.runs-row');
+  assert.ok(row.querySelector(':scope > .runs-stage .run-prog-track'), 'the four-section bar');
+  assert.equal(row.querySelector(':scope > .runs-stage .run-prog-mark[data-state="current"]').textContent, 'Plan');
+  assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line beside it');
+  assert.equal(row.querySelector('.runs-row-sub').textContent, '', 'the marks say Plan, the dot says Working: no step');
+  assert.equal(row.dataset.line, 'Plan · choosing the workflow', 'data-line keeps the canonical line (D11)');
+  const asking = { ...run, pendingQuestion: { questions: [{ id: 'q1', question: 'Which?' }] } };
+  const m2 = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run: asking })],
+    groups: [{ ...chain, members: [{ ...chain.members[0], run: asking }] }], now: NOW });
+  const host2 = doc.createElement('div');
+  host2.append(...renderRunsList(doc, m2));
+  const sub2 = host2.querySelector('.runs-members .runs-item[data-level="member"] .runs-row-sub').textContent;
+  assert.match(sub2, /^needs you/, 'a state the dot does not say stays, without the stage word');
+});
+
+test('#1012 a member dispatched but not started yet draws no progress at all', () => {
+  const run = { status: 'running', stepper: { auto: { status: 'deciding' } } };   // no step yet: Starting, with stages
+  const chain = { id: 'p:c1012s', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run })], groups: [chain], now: NOW });
+  assert.equal(m.sections.flatMap((s) => s.rows)[0].members[0].model.state, 'starting');
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const row = host.querySelector('.runs-members .runs-item[data-level="member"] > a.runs-row');
+  assert.equal(row.querySelector(':scope > .runs-stage'), null, 'no four-section block');
+  assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line');
+});
+
+test('#955 a chat inside a one-project topic group does not repeat the project; a "2 projects" group keeps it', () => {
+  const chat = (id, line) => ({ key: `chat:${id}`, id, kind: 'chat', title: id, href: `#chat/${id}`, labels: [],
+    model: { state: 'idle', word: 'Idle', line, dot: 'grey', pulse: false, symbol: null, icon: 'chat' } });
+  const group = (where, members) => ({ key: `cgroup:${where}`, id: where, groupId: where, kind: 'chat-group', title: 'Topic', href: '#chat',
+    memberNoun: 'chats', members, count: String(members.length), memberCount: members.length, open: true, groupName: where, labels: [],
+    model: { state: 'idle', word: 'Idle', line: `${where} · 11:00`, dot: 'grey', pulse: false, symbol: null, icon: 'chat' } });
+  const flat = { sections: [{ id: 'all', title: 'Chats', rows: [
+    group('worka-cc', [chat('a', 'worka-cc · $0.40 · 11:00'), chat('b', 'worka-cc')]),
+    group('2 projects', [chat('c', 'worka-cc · 10:00')]),
+  ], count: 2, bare: true }], view: { show: 'all' }, now: NOW, total: 2, shown: 2, spansProjects: false };
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, flat));
+  const sub = (k) => host.querySelector(`.runs-item[data-row-key="chat:${k}"] .runs-row-sub`).textContent;
+  assert.equal(sub('a'), '$0.40 · 11:00');
+  assert.equal(sub('b'), '');
+  assert.equal(sub('c'), 'worka-cc · 10:00');
 });

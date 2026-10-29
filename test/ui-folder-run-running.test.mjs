@@ -42,7 +42,7 @@ test('learned from a state frame: the tabs rebuild, no branch row, chip or Sync,
     branch: { workMode: 'folder', copyDir: '/tmp/worca/runs/p1/repos/tax' } });   // a folder record has copyDir, never worktreeDir (S51)
   await ctx.settle();
   assert.deepEqual(tabs(ctx), FOLDER_TABS);
-  for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-sync', '.rd-page-branch']) assert.equal($(ctx, sel).hidden, true, sel);
+  for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-sync']) assert.equal($(ctx, sel).hidden, true, sel);
   assert.equal($(ctx, '.rd-page-meta .kind-chip.kind-folder').textContent, 'Folder');
   $(ctx, '.rd-tab[data-sec="changes"]').click();
   await ctx.settle();
@@ -57,7 +57,7 @@ test('a git run while git is missing: the composed predicate (gitOn() && isGitRu
   ctx.dispatch({ type: 'state', runId: 'r1', id: 'p1', status: 'running', steps: [], branch: { source: 'main', feature: 'worca-cc/fix-p1' } });
   ctx.go('running/r1/details');
   await ctx.settle();
-  for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-page-branch']) assert.equal($(ctx, sel).hidden, true, sel);
+  for (const sel of ['.rd-base', '.rd-branch-copy']) assert.equal($(ctx, sel).hidden, true, sel);
   assert.equal($(ctx, '.rd-page-meta .kind-chip'), null, 'still a git run');
 });
 
@@ -74,12 +74,12 @@ test('a finished folder run before its saved row lands: Ready · 14 files change
   await ctx.settle(8);
   assert.equal(ctx.window.location.hash, '#running/r1', 'no saved row yet: it stays here');
   // Runs redesign: the one status block (run-model.mjs) words the run.
-  // Slice 3 (D14): the card head words the pending copy and carries its actions; the tracker has 2 steps.
+  // Slice 3 (D14): the card head words the pending copy and carries its actions; the route has 2 rows (s2).
   assert.equal($(ctx, '.rd-now-top').dataset.word, 'Ready');
-  assert.equal($(ctx, '.rd-now-top .run-status-text').textContent, 'Ready · 14 files changed in a copy');
+  assert.equal($(ctx, '.rd-now-top').dataset.text, 'Ready · 14 files changed in a copy');
   assert.equal($(ctx, '.rd-apply-slot'), null);
   assert.deepEqual([...ctx.window.document.querySelectorAll('#run-detail .rd-head-acts [data-head]')].map((b) => b.textContent), ['Discard', 'Apply to folder']);
-  assert.equal(ctx.window.document.querySelectorAll('#run-detail .rd-track .rd-track-step').length, 2);
+  assert.equal(ctx.window.document.querySelectorAll('#run-detail .rd-route .rd-route-row').length, 2);
   assert.doesNotMatch($(ctx, '.rd-sheet').textContent, /worktree/i);
   assert.equal($(ctx, '.rd-pr-slot').hidden, true);
   const tile = [...ctx.window.document.querySelectorAll('#run-detail .rd-facts .rd-stats > div')].find((t) => t.lastElementChild.textContent === 'files changed');
@@ -123,7 +123,7 @@ test('git comes back: the Running page re-reads the composed predicate without a
   ctx.dispatch({ type: 'git', git: { available: true } });
   await ctx.settle();
   assert.equal($(ctx, '.rd-base').hidden, false);
-  assert.equal($(ctx, '.rd-page-branch').hidden, false);
+  assert.ok(ctx.window.document.querySelector('#run-detail .rd-route .rd-route-copy'), 'the route\'s branch row copies it');
 });
 
 const FPLAN = { target: '/x', add: ['a'], update: [], delete: [], skipped: [] };
@@ -182,7 +182,7 @@ test('a finished git run while git is missing: no pull-request placeholder, a li
   await ctx.settle(8);
   assert.equal($(ctx, '.rd-pr-slot').hidden, true);
   assert.equal($(ctx, '.rd-pr-slot .rd-pr-spin'), null);
-  assert.equal($(ctx, '.rd-now-top .run-status-text').textContent, 'Finished', 'not "Ready to ship": Ship it is hidden');
+  assert.equal($(ctx, '.rd-now-top').dataset.text, 'Finished', 'not "Ready to ship": Ship it is hidden');
 });
 
 test('a finished folder run: changes that land after the detail payload fill the Changes row', async () => {

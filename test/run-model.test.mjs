@@ -98,8 +98,9 @@ const GROUP = [
   ['waiting', [DONE, { ticket: { status: 'scheduled', after: { index: 1 } } }, { ticket: { status: 'scheduled', after: { index: 2 } } }], 'Run 2 of 3 · waiting for run 1'],
   ['failed', [DONE, R({ status: 'error', steps: [row('n_review', 'error')] }), { ticket: { status: 'missed' } }], 'Run 2 of 3 · failed'],
   ['stopped', [DONE, R({ status: 'stopped', steps: [row('n_impl', 'stopped')] }), { ticket: { status: 'canceled' } }], 'Stopped at run 2 of 3'],
-  ['ready', [DONE, DONE, DONE], '3 of 3 done · ready to ship'],
-  ['in-review', [member(DONE, { pr: PR }), member(DONE, { pr: { ...PR, number: 760 } }), member(DONE, { pr: { ...PR, number: 761 } })], 'In review · 3 PRs'],
+  ['ready', [DONE, DONE, DONE], 'Ready to ship · 3 of 3 done'],
+  ['in-review', [member(DONE, { pr: PR }), member(DONE, { pr: { ...PR, number: 760, url: PR.url.replace(/\d+$/, '760') } }),
+    member(DONE, { pr: { ...PR, number: 761, url: PR.url.replace(/\d+$/, '761') } })], 'In review · 3 PRs'],
   ['merged', [member(DONE, { pr: { ...PR, state: 'MERGED' } }), member(DONE, { pr: { ...PR, state: 'MERGED' } }), member(DONE, { pr: { ...PR, state: 'MERGED' } })], 'Merged'],
 ];
 
@@ -263,6 +264,20 @@ test('QA 3: a PR-driven Needs you line is the chip word + number; the page text 
   assert.equal(memberPrState([ghPr(), ghPr({ number: 782, url: 'https://github.com/o/r/pull/782' })]).count, 2);
 });
 
+test('groupModel (one ship flow): ready until every run has an open PR; distinct PRs counted; feature drafts are not PRs', () => {
+  const done = { status: 'done', endReached: true };
+  const gh = (n, o = {}) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN', ...o });
+  const ready = groupModel({ kind: 'chain', members: [{ ...done, pr: gh(1) }, done] });
+  assert.equal(ready.state, 'ready');
+  assert.equal(ready.line, 'Ready to ship · 2 of 2 done');
+  const both = groupModel({ kind: 'chain', members: [{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }] });
+  assert.deepEqual([both.state, both.line, both.prCount], ['in-review', 'In review · 2 PRs', 2]);
+  const one = groupModel({ kind: 'chain', members: [{ ...done, pr: gh(3) }, { ...done, pr: gh(3) }] });
+  assert.deepEqual([one.state, one.line, one.prCount, one.prUrl], ['in-review', 'In review · 1 PR', 1, gh(3).url]);
+  const drafts = groupModel({ kind: 'feature', members: [{ ...done, pr: gh(4, { isDraft: true }) }, { ...done, pr: gh(5, { isDraft: true }) }] });
+  assert.equal(drafts.state, 'ready', 'an in-flight feature\'s slice drafts still read Ready to ship');
+});
+
 test('QA 7: groupModel counts the group\'s distinct PRs (closed member PRs aside) and gives the url of exactly one', () => {
   const pr = (n, more = {}) => ghPr({ number: n, url: `https://github.com/o/r/pull/${n}`, ...more });
   const done = { status: 'done', endReached: true };
@@ -335,6 +350,8 @@ test('one wording per state: no status line has a colon form; a paused-after-res
     assert.ok(!line.includes(': '), `colon form: ${line}`);
   }
   assert.equal(runModel(R({ stepper: noStage, status: 'interrupted', steps: [row('n_x', 'start')] }), OPTS).line, 'Paused · interrupted');
+  assert.equal(runModel(R({ stepper: noStage, status: 'paused', resumePending: true, steps: [row('n_x', 'paused')] }), OPTS).line, 'Resuming',
+    'a Resume in flight reads like a pause in flight ("Pausing")');
 });
 
 test('an interrupted run offers Archive, never Stop: with Resume while it can resume, alone once it never can', () => {
@@ -361,6 +378,11 @@ test('prState: a closed Azure DevOps PR reads Abandoned, colour and id stay clos
   assert.equal(prState({ ...az, url: 'https://acme.visualstudio.com/My%20Project/_git/api/pullrequest/5' }).word, 'Abandoned');
   assert.equal(prState({ ...az, state: 'MERGED' }).word, 'Merged', 'only a closed Azure PR is abandoned');
   assert.equal(prState({ ...PR, state: 'CLOSED' }).word, 'Closed', 'GitHub keeps Closed');
+});
+
+test('prState: a closed Bitbucket PR reads Declined, colour and id stay closed', () => {
+  const s = prState({ url: 'https://bitbucket.org/acme/api/pull-requests/5', number: 5, state: 'CLOSED' });
+  assert.deepEqual([s.id, s.word], ['closed', 'Declined']);
 });
 
 test('memberPrState: a workspace run’s most urgent member PR and their count (#784’s workspace glyph, as words)', () => {

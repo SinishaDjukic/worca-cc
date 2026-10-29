@@ -13,12 +13,23 @@
  *   helpers   it runs a run's helper jobs itself (title, overview, PR description, Auto classifier, night decider);
  *             else they run on Claude
  *   beta      still in beta: every engine picker marks it (taking it out of beta is this one flag)
+ *   signin    its models connect through its own sign-in (its CLI's login or its own providers): a model takes no env
+ *             and no endpoint, and worca ships none of its models (efforts: src/core/model-env.mjs effortsForEngine)
+ *   chat      Chat (Ask) on it: {images, pdfs, verified}; false = the adapter has no chat descriptor. Every engine but
+ *             Claude runs a chat locked down, and its adapter exports the chat descriptor that does it. `verified: false`
+ *             = the descriptor is wired but worca has no verified lockdown yet (its lockdown is null), so Chat stays off
+ *             there. src/core/engines/chat.mjs refuses to load when this and the descriptors disagree. Kept here, not in
+ *             the adapters, because the browser and src/core/model-env.mjs read it and neither may import an adapter.
  */
 export const ENGINES = Object.freeze({
-  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false }),
-  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true }),
-  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true }),
-  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true }),
+  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
+  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }) }),
+  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
+  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }) }),
+  gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
+  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: false }) }),
+  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
+  qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
 });
 
 /** The run engines. */
@@ -27,6 +38,32 @@ export const ENGINE_NAMES = Object.freeze(Object.keys(ENGINES));
 export const MODEL_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].models));
 /** The engines a run can switch between: the model engines (a switch falls back to the target's catalog default). */
 export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
+
+/** The engines whose models connect through their own sign-in (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code). */
+export const SIGN_IN_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].signin));
+
+/** The engines a Chat runs on, Claude first (the `chat` flag above, without the unverified ones). */
+export const CHAT_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].chat && ENGINES[e].chat.verified !== false));
+
+/**
+ * Why a chat on `engine` cannot take an attachment of this kind (`kind` text|image|binary, a PDF is `pdf: true`), said
+ * before upload and again by the server; null when it can. A text attachment always can.
+ */
+export function chatAttachRefusal({ engine, kind, pdf = false }) {
+  const c = Object.hasOwn(ENGINES, engine || 'claude') ? ENGINES[engine || 'claude'].chat : null;
+  if (!c || c.verified === false || kind === 'text') return null;
+  const label = engineLabel(engine);
+  if (!c.images && !c.pdfs) return `a ${label} chat cannot view images or PDFs (${chatEnginesTaking('images', 'pdfs')} chats view both)`;
+  if (pdf && !c.pdfs) return `a ${label} chat cannot view PDFs (${chatEnginesTaking('pdfs')} chats can)`;
+  if (!pdf && kind === 'image' && !c.images) return `a ${label} chat cannot view images (${chatEnginesTaking('images')} chats can)`;
+  return null;
+}
+
+/** The chat engines that take every `what` ('images', 'pdfs'), as words: 'Claude, Copilot, Gemini CLI, OpenCode or Qwen Code'. */
+export function chatEnginesTaking(...what) {
+  const names = CHAT_ENGINE_NAMES.filter((e) => what.every((w) => ENGINES[e].chat[w] === true)).map((e) => ENGINES[e].label);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names.join('');
+}
 
 /** The engines still in beta: every engine picker marks them. */
 export const BETA_ENGINES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].beta));

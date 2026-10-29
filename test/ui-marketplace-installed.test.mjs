@@ -229,7 +229,7 @@ test('P6: "Update all · 2" opens the review sheet with both updates, previewed 
   assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.getElementById('mk-sheet-title').textContent,
     [...doc.querySelectorAll('#mk-sheet .mk-upd')].map((c) => c.dataset.name), doc.querySelector('#mk-sheet .mk-upd-meta').textContent],
   ['update', 'Update 2 plugins', ['atlassian-mcp', 'github-source'], '1 of 2 ready']);
-  assert.deepEqual(calls.filter((c) => c.key.endsWith('/update')).map((c) => [c.key, c.body]),
+  assert.deepEqual(calls.filter((c) => c.key.startsWith('POST /api/plugins/') && c.key.endsWith('/update')).map((c) => [c.key, c.body]),
     [['POST /api/plugins/atlassian-mcp/update', {}], ['POST /api/plugins/github-source/update', {}]]);
 });
 

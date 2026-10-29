@@ -3,7 +3,7 @@
 // between the hero slot and the dock, Escape ownership, the unread report, and where popovers live.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makePanel, key } from './helpers/ask-panel-harness.mjs';
+import { makePanel, key, userScroll } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 
 const TID = 'ask_00000001';
@@ -19,6 +19,7 @@ function api(rec) {
     if (url === '/api/ask/threads' && method === 'POST') return { ok: true, status: 201, json: async () => ({ thread: threadRow(TID2, null) }) };
     if (url === `/api/ask/threads/${TID2}/messages` && method === 'POST') return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000009', attachments: [], contexts: [] }) };
     if (url === `/api/ask/threads/${TID}` && method === 'GET') return { ok: true, status: 200, json: async () => ({ thread: threadRow(TID, 'First'), messages: [USER_ROW], attachments: [], runLinks: [], inFlight: null }) };
+    if (url === `/api/ask/threads/${TID2}` && method === 'GET') return { ok: true, status: 200, json: async () => ({ thread: threadRow(TID2, 'Second'), messages: [{ ...USER_ROW, id: 'askm_u0000002', threadId: TID2 }], attachments: [], runLinks: [], inFlight: null }) };
     if (url === '/api/ask/threads/ask_0000dead') return { ok: false, status: 404, json: async () => ({ error: 'not found' }) };
     return { ok: true, status: 200, json: async () => ({}) };
   };
@@ -235,8 +236,7 @@ test('a pinned transcript stays at the bottom when its column grows with no fram
   sh = 1300;                                                           // a card grew after the flush
   ro.cb([{ target: col }], ro);
   assert.equal(t.scrollTop, 1300, 'followed to the new bottom');
-  t.scrollTop = 200;                                                   // the user scrolled up
-  t.dispatchEvent(new ctx.window.Event('scroll'));
+  userScroll(ctx, t, 200);                                             // the user scrolled up
   sh = 1600;
   ro.cb([{ target: col }], ro);
   assert.equal(t.scrollTop, 200, 'not pinned: left where the user put it');
@@ -253,14 +253,13 @@ test('the scroll event of our own pin write never unpins, even when the column g
   Object.defineProperty(t, 'clientHeight', { configurable: true, value: 400 });
   ctx.panel.close();
   ctx.panel.open();
-  ctx.flush();                                                         // showing again re-pins: the pin writes the bottom
+  ctx.flush();                                                         // showing again: it was following, so it pins (writes the bottom)
   assert.equal(t.scrollTop, 1000);
   sh = 1500;                                                           // a card grew before that write's scroll event
   t.dispatchEvent(new ctx.window.Event('scroll'));
   assert.equal(t.scrollTop, 1500, 'still pinned: followed to the new bottom');
   assert.equal(ctx.doc.querySelector('.ask-jump').hidden, true);
-  t.scrollTop = 300;                                                   // the user scrolls up
-  t.dispatchEvent(new ctx.window.Event('scroll'));
+  userScroll(ctx, t, 300);                                             // the user scrolls up
   assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false, 'a real scroll up still unpins');
 });
 
@@ -435,8 +434,7 @@ test('Jump to latest records its own write: the scroll event that follows keeps 
   let sh = 1000;
   Object.defineProperty(t, 'scrollHeight', { configurable: true, get: () => sh });
   Object.defineProperty(t, 'clientHeight', { configurable: true, value: 400 });
-  t.scrollTop = 100;                                                   // the user scrolled up: unpinned, the pill shows
-  t.dispatchEvent(new ctx.window.Event('scroll'));
+  userScroll(ctx, t, 100);                                             // the user scrolled up: unpinned, the pill shows
   const jump = ctx.doc.querySelector('.ask-jump');
   assert.equal(jump.hidden, false);
   jump.click();
@@ -869,4 +867,146 @@ test('unread: a PR fix-run card (an unread ask-message) lights the dot while Cha
   assert.deepEqual(calls, [true, false, true], 'Chat hidden: the dot, even for the last open chat');
   a.panel.pushServerFrame({ ...msg(TID), unread: undefined });
   assert.deepEqual(calls, [true, false, true], 'a plain ask-message lights nothing new');
+});
+
+test('#958: a resync of the same chat keeps a mid-thread reader\'s scrollTop and does not pin', async () => {
+  const ctx = makePanel({ fetchHandler: api({}) });
+  ctx.panel.open({ threadId: TID });
+  await ticks(ctx);
+  ctx.flush();
+  const t = ctx.doc.querySelector('.ask-transcript');
+  Object.defineProperty(t, 'scrollHeight', { configurable: true, get: () => 2000 });
+  Object.defineProperty(t, 'clientHeight', { configurable: true, value: 400 });
+  userScroll(ctx, t, 700);
+  assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false, 'reading mid-thread');
+  ctx.panel.onHello([]);                             // a reconnect: resync → loadThread(same id)
+  await ticks(ctx);
+  ctx.flush();
+  assert.equal(t.scrollTop, 700, 'not yanked to the bottom');
+  assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false, 'still unpinned');
+  ctx.panel.destroy();
+});
+
+test('#958: leaving Chat and coming back restores the place you left (the bottom when you were there); another chat opens at the bottom', async () => {
+  const ctx = makePanel({ fetchHandler: api({}) });
+  ctx.panel.open({ threadId: TID });
+  await ticks(ctx);
+  ctx.flush();
+  const t = ctx.doc.querySelector('.ask-transcript');
+  const jump = ctx.doc.querySelector('.ask-jump');
+  let sh = 2000;
+  Object.defineProperty(t, 'scrollHeight', { configurable: true, get: () => sh });
+  Object.defineProperty(t, 'clientHeight', { configurable: true, value: 400 });
+  // Mid-thread.
+  userScroll(ctx, t, 700);
+  ctx.panel.close();
+  t.scrollTop = 0;                                   // display:none drops the offset in a browser
+  sh = 2300;                                         // a reply landed while Chat was hidden
+  ctx.panel.open();
+  ctx.flush();
+  assert.equal(t.scrollTop, 700, 'back where the reader was');
+  assert.equal(jump.hidden, false);
+  // At the bottom.
+  jump.click();
+  ctx.panel.close();
+  t.scrollTop = 0;
+  sh = 2600;
+  ctx.panel.open();
+  ctx.flush();
+  assert.equal(t.scrollTop, 2600, 'following: back at the (new) bottom');
+  assert.equal(jump.hidden, true);
+  // Another chat opens at the bottom (clarify answer).
+  userScroll(ctx, t, 500);
+  ctx.panel.close();
+  t.scrollTop = 0;
+  ctx.panel.open({ threadId: TID2 });
+  await ticks(ctx);
+  ctx.flush();
+  assert.equal(t.scrollTop, 2600, 'a switch pins');
+  assert.equal(jump.hidden, true);
+  ctx.panel.destroy();
+});
+
+test('#958: a scroll with no user input (a layout clamp) never unpins; a wheel, or a Tab, then a scroll does', async () => {
+  let T = 1_000_000;
+  const ctx = makePanel({ fetchHandler: api({}), now: () => T });
+  ctx.panel.open({ threadId: TID });
+  await ticks(ctx);
+  ctx.flush();
+  const t = ctx.doc.querySelector('.ask-transcript');
+  const jump = ctx.doc.querySelector('.ask-jump');
+  Object.defineProperty(t, 'scrollHeight', { configurable: true, get: () => 2000 });
+  Object.defineProperty(t, 'clientHeight', { configurable: true, value: 400 });
+  ctx.flush();
+  assert.equal(t.scrollTop, 2000);
+  t.scrollTop = 800;                                 // the browser clamped mid-layout
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  assert.equal(t.scrollTop, 2000, 'still following: back at the bottom');
+  assert.equal(jump.hidden, true);
+  userScroll(ctx, t, 800);
+  assert.equal(jump.hidden, false, 'the reader\'s own scroll unpins');
+  T += 5_000;                                        // later, a clamp while unpinned changes nothing
+  t.scrollTop = 600;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  assert.equal(jump.hidden, false);
+  t.scrollTop = 1600;                                // momentum reaches the bottom with no input: re-pins
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  assert.equal(jump.hidden, true, 'reaching the bottom re-pins');
+  T += 5_000;
+  // A Tab on a control in the transcript scrolls it into view: that is the reader's.
+  const btn = ctx.doc.createElement('button');
+  ctx.doc.querySelector('.ask-transcript-col').lastElementChild.appendChild(btn);
+  btn.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+  t.scrollTop = 500;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  assert.equal(jump.hidden, false, 'a Tab scroll unpins');
+  btn.remove();
+  ctx.panel.destroy();
+});
+
+test('#958: a press on the transcript (a scrollbar drag) counts while it is held; pointerup, pointercancel or a window blur releases it; PageUp counts, Enter in a field does not', async () => {
+  let T = 1_000_000;
+  const ctx = makePanel({ fetchHandler: api({}), now: () => T });
+  ctx.panel.open({ threadId: TID });
+  await ticks(ctx);
+  ctx.flush();
+  const t = ctx.doc.querySelector('.ask-transcript');
+  const jump = ctx.doc.querySelector('.ask-jump');
+  Object.defineProperty(t, 'scrollHeight', { configurable: true, get: () => 2000 });
+  Object.defineProperty(t, 'clientHeight', { configurable: true, value: 400 });
+  ctx.flush();
+  const ev = (type) => new ctx.window.Event(type, { bubbles: true });
+  const clamp = (top) => { t.scrollTop = top; t.dispatchEvent(new ctx.window.Event('scroll')); };
+  const repin = () => { jump.click(); T += 5_000; assert.equal(jump.hidden, true, 'pinned again'); };
+  const dragUp = () => {
+    t.dispatchEvent(ev('pointerdown'));
+    T += 5_000;                                      // the drag outlasts the intent window
+    clamp(500);
+    assert.equal(jump.hidden, false, 'a held press, then a scroll, unpins');
+  };
+  for (const release of [() => ctx.doc.dispatchEvent(ev('pointerup')),
+    () => ctx.doc.dispatchEvent(ev('pointercancel')),
+    () => ctx.window.dispatchEvent(new ctx.window.Event('blur'))]) {
+    dragUp();
+    release();
+    T += 5_000;
+    repin();
+    clamp(800);
+    assert.equal(t.scrollTop, 2000, 'released: a clamp no longer unpins');
+    assert.equal(jump.hidden, true);
+  }
+  // Keys: PageUp on the transcript is the reader's; Enter in a field there is not.
+  t.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
+  clamp(500);
+  assert.equal(jump.hidden, false, 'PageUp unpins');
+  T += 5_000;
+  repin();
+  const input = ctx.doc.createElement('input');
+  ctx.doc.querySelector('.ask-transcript-col').lastElementChild.appendChild(input);
+  input.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  clamp(500);
+  assert.equal(t.scrollTop, 2000, 'Enter in a field: still following');
+  assert.equal(jump.hidden, true);
+  input.remove();
+  ctx.panel.destroy();
 });

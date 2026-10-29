@@ -182,13 +182,13 @@ test('newRealErrors: an error the batch only SHRANK is not new (its message name
   }
   // Removing the card the cycle starts from leaves it unable to start: a deadlock the canvas did not have.
   assert.deepEqual(newRealErrors(was, after([{ op: 'remove_node', node: 'n_p1' }])).map((e) => e.code), ['V11'], 'a new deadlock is new');
-  // A cycle the canvas did not have IS new, even next to an old one.
-  const fresh = applyCanvasOps(cyc, [{ op: 'add_node', ref: '$a', kind: 'agent', key: 'planner', x: 900, y: 900 },
-    { op: 'add_node', ref: '$b', kind: 'agent', key: 'planner', x: 1200, y: 900 },
+  // A cycle the canvas did not have IS new, even next to an old one. Fixed ids: a minted one can start with 'p1'.
+  const fresh = applyCanvasOps(cyc, [{ op: 'add_node', ref: '$a', id: 'n_qa', kind: 'agent', key: 'planner', x: 900, y: 900 },
+    { op: 'add_node', ref: '$b', id: 'n_qb', kind: 'agent', key: 'planner', x: 1200, y: 900 },
     { op: 'connect', from: { node: '$a', port: 'plan' }, to: { node: '$b', port: 'task' } },
     { op: 'connect', from: { node: '$b', port: 'plan' }, to: { node: '$a', port: 'await' } }], { portsFn });
   assert.equal(fresh.ok, true);
-  assert.ok(newRealErrors(was, validateGraph(fresh.tpl, portsFn)).some((e) => e.code === 'V10' && /n_/.test(e.message) && !/n_p1/.test(e.message)), 'a second broken cycle is new');
+  assert.ok(newRealErrors(was, validateGraph(fresh.tpl, portsFn)).some((e) => e.code === 'V10' && /n_qa/.test(e.message) && !/n_p1/.test(e.message)), 'a second broken cycle is new');
   const merged = applyCanvasOps(cyc, [{ op: 'add_node', ref: '$a', kind: 'agent', key: 'planner', x: 900, y: 900 },
     { op: 'connect', from: { node: 'n_p3', port: 'plan' }, to: { node: '$a', port: 'task' } },
     { op: 'connect', from: { node: '$a', port: 'plan' }, to: { node: 'n_p3', port: 'await' } }], { portsFn });

@@ -113,6 +113,50 @@ export async function suggestNames({ prompt, title = '', projectDir, signal, moc
   }
 }
 
+// #948 s3: a name for a topic group of chats, on the Run naming helper model. The prompt carries each chat's title
+// and its first message, nothing else.
+export const GROUP_NAME_CHATS = 20;
+export const GROUP_NAME_CHARS = 300;
+const groupSystem = (of = 'chats') => [
+  `You name a group of ${of === 'runs' ? 'runs' : 'chats'} by the topic they share. Reply with ONE JSON object and nothing else:`,
+  '{"name": 2-5 words, no trailing period}. Never ask questions or add commentary.',
+].join(' ');
+
+/** The user prompt: one numbered entry per item (title, then its first message, or a run's prompt), at most GROUP_NAME_CHATS. */
+export function groupNamePrompt(chats, { of = 'chats' } = {}) {
+  const runs = of === 'runs';
+  const one = (c, i) => {
+    const title = String(c.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const first = String(c.firstMessage || '').replace(/\s+/g, ' ').trim().slice(0, GROUP_NAME_CHARS);
+    return `${i + 1}. Title: ${title || '(none)'}${first ? `\n   ${runs ? 'Prompt' : 'First message'}: ${first}` : ''}`;
+  };
+  return [runs ? 'Runs:' : 'Chats:', ...(chats || []).slice(0, GROUP_NAME_CHATS).map(one)].join('\n');
+}
+
+/** The name in the model's reply ('' when unusable). */
+export function parseGroupName(raw) {
+  const m = /\{[\s\S]*\}/.exec(String(raw || ''));
+  if (!m) return '';
+  let o; try { o = JSON.parse(m[0]); } catch { return ''; }
+  const name = sanitizeTitle(String((o && o.name) || '')).slice(0, 60).trim();
+  return name && !isRefusalTitle(name) ? name : '';
+}
+
+/** One model call -> { source: 'model', name, model } or { source: 'fallback', error }. Never throws. */
+export async function suggestGroupName({ chats, of = 'chats', signal }, deps = {}) {
+  if (!Array.isArray(chats) || !chats.length) return { source: 'fallback', error: 'no chats' };
+  const chosen = deps.pickModel?.() || null;
+  const model = chosen?.model || resolveTitleModel({}).model || undefined;
+  try {
+    const out = await auxTextCall({ systemPrompt: groupSystem(of), prompt: groupNamePrompt(chats, { of }), model },
+      { signal, run: deps.run, onCost: deps.onCost, effortOverride: chosen?.effort || undefined });
+    const name = parseGroupName(out);
+    return name ? { source: 'model', name, model: model || null } : { source: 'fallback', error: 'the model did not return a usable name' };
+  } catch (err) {
+    return { source: 'fallback', error: err?.name === 'AbortError' ? 'cancelled' : String(err?.message || err).slice(0, 200) };
+  }
+}
+
 /** Today's name without its id: what the form shows when the model is unavailable (D10). */
 export function legacyBranchHint(prompt, title) {
   return suggestBranchName({ prompt, title }).replace(/-run$/, '');

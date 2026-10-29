@@ -11,7 +11,7 @@ import { withEnv } from './with-env.mjs';
 import { getDb } from '../../src/core/db.mjs';
 import { projectKey } from '../../src/core/store.mjs';
 import { writeStoreMeta } from '../../src/core/artifacts.mjs';
-import { createSliceFeature } from '../../src/core/shape/features.mjs';
+import { createSliceFeature, recordSliceDraft } from '../../src/core/shape/features.mjs';
 import { _testing as gitInfo } from '../../src/core/git-info.mjs';
 
 export const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
@@ -22,14 +22,9 @@ export const argOf = (argv, flag) => argv[argv.indexOf(flag) + 1];
 export const ghCalls = (seen, sub) => seen.filter((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === sub);
 export const git = (cwd, ...args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 
-/** Gate on (WORCA_FLAGS locks it), no Azure token, and the git-info runner reset after `fn`. */
+/** No Azure token, and the git-info runner reset after `fn`. */
 export async function withShip(fn) {
-  const saved = process.env.WORCA_FLAGS;
-  process.env.WORCA_FLAGS = 'shapeFirst';
-  try { return await withEnv(NO_ADO, fn); } finally {
-    gitInfo.reset();
-    process.env.WORCA_FLAGS = saved === undefined ? '-shapeFirst' : saved;
-  }
+  try { return await withEnv(NO_ADO, fn); } finally { gitInfo.reset(); }
 }
 
 /** gh/git stub for the ship: `gh pr create` answers `create`, `git describe --tags` answers `describe`, every argv is
@@ -51,8 +46,10 @@ export function stubShip(seen, { create = () => okRun('https://github.com/me/rep
 /** → { shipWorld, cleanup }. `nextId()` mints pipeline ids; `outlineOf(n)` builds an n-slice outline. */
 export function shipKit({ nextId, outlineOf }) {
   const dirs = [];
-  /** A real repo (the changelog commit is real git) with slices 1..3 done on stacked branches, each with a draft PR. */
-  function shipWorld({ prs = true } = {}) {
+  /** A real repo (the changelog commit is real git) with slices 1..3 done on stacked branches, each with a draft PR
+   *  (an in-flight feature's: the one ship flow opens none per slice). `drafts: false` leaves them ready PRs (as a partly
+   *  finished stacked ship leaves them); `prs: false` gives no slice a PR. */
+  function shipWorld({ prs = true, drafts = true } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'worca-ship-'));
     dirs.push(dir);
     git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't');
@@ -77,6 +74,7 @@ export function shipKit({ nextId, outlineOf }) {
     }
     if (prs) {
       pids.forEach((p, i) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?").run(`https://github.com/me/repo/pull/${i + 1}`, i + 1, p));
+      if (drafts) pids.forEach((p, i) => recordSliceDraft(p, `https://github.com/me/repo/pull/${i + 1}`));
     }
     return { dir, f, pids, last: `feat/${pids[2]}` };
   }

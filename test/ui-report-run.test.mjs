@@ -680,6 +680,7 @@ test('Report this run: Cancel sits before Create GitHub issue; a backdrop click 
   const doc = ctx.window.document;
   const modal = doc.getElementById('report-modal');
   assert.deepEqual([...doc.querySelectorAll('.report-head-actions button')].map((b) => b.textContent), ['Cancel', 'Create GitHub issue']);
+  assert.ok(doc.querySelector('#report-modal .card.dlg > .report-top.dlg-head'), 'the pinned head of the shared dialog anatomy');
   backdropClick(ctx.window, modal);
   assert.equal(modal.classList.contains('hidden'), false, 'never on a backdrop click');
   const ta = doc.getElementById('report-expectation');

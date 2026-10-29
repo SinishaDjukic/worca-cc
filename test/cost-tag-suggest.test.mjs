@@ -22,9 +22,10 @@ test('value suggestions: the policy list when set, else the values used with the
   assert.deepEqual(suggestValues({ key: 'nope', dims: DIMS, vocab: VOCAB }), []);
 });
 
-test('auto-fill: the last run wins over defaults; off-list values drop; no last run → defaults; nothing → nothing', () => {
-  assert.deepEqual(autoFillTags({ dims: DIMS, lastRun: ['cc:9999', 'client:acme', 'team:web'], projectDefaults: ['team:ops'] }),
-    { tags: ['client:acme', 'team:web'], from: 'last-run' });
-  assert.deepEqual(autoFillTags({ dims: DIMS, lastRun: [], projectDefaults: ['team:ops'] }), { tags: ['team:ops'], from: 'defaults' });
+test('auto-fill (#923): the project defaults, never the last run\'s free-form tags; a mandatory key takes its last value, an optional one does not', () => {
+  assert.deepEqual(autoFillTags({ dims: DIMS, lastUsed: ['cc:4420', 'client:acme', 'project:redesign', 'team:web', 'type:polish'], projectDefaults: ['team:ops'] }),
+    { tags: ['client:acme', 'team:ops'], from: 'defaults' });
+  assert.deepEqual(autoFillTags({ dims: DIMS, lastUsed: ['client:acme', 'project:redesign'] }), { tags: ['client:acme'], from: null });
+  assert.deepEqual(autoFillTags({ dims: DIMS, projectDefaults: ['cc:9999', 'spike'] }), { tags: ['spike'], from: 'defaults' }, 'an off-list default drops');
   assert.deepEqual(autoFillTags({ dims: DIMS }), { tags: [], from: null });
 });

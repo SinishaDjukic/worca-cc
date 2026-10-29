@@ -15,20 +15,21 @@ export const REPO_LOOK_DIRNAME = 'auto-look';
  * @param {string} projectDir the project's live checkout — read for HEAD, never used as cwd
  * @param {string} baseDir where the throwaway checkout lives (the chat passes <worcaHome>/tmp/ask)
  * @param {{signal?:AbortSignal|null, log?:(msg:string)=>void}} [o]
- * @returns {Promise<{cwd:string, close:() => Promise<void>}|null>} null ⇒ no git repository, HEAD does
+ * @param ref what to check out (default HEAD); the checked-out commit comes back as `commit`
+ * @returns {Promise<{cwd:string, commit:string|null, close:() => Promise<void>}|null>} null ⇒ no git repository, `ref` does
  *   not resolve, or git failed — the caller then classifies from the task text only, as before.
  */
-export async function openRepoLook(projectDir, baseDir, { signal = null, log = () => {} } = {}) {
+export async function openRepoLook(projectDir, baseDir, { signal = null, log = () => {}, ref = 'HEAD' } = {}) {
   try {
     if (!projectDir || !baseDir || !existsSync(join(projectDir, '.git'))) return null;
     if (signal?.aborted) throw new Error('aborted before the checkout');
-    if (!(await isValidSourceRef(projectDir, 'HEAD'))) return null;
+    if (!(await isValidSourceRef(projectDir, ref))) return null;
     mkdirSync(baseDir, { recursive: true });
     const worktreeDir = join(baseDir, `${REPO_LOOK_DIRNAME}-${randomBytes(4).toString('hex')}`);
     // The signal is spread in ONLY when present: worktree.mjs's git() forwards it verbatim to
     // child_process.spawn, and Node rejects `options.signal: null` (ERR_INVALID_ARG_TYPE) — git()
     // would swallow that as ok:false and this whole look would silently degrade to text-only.
-    await createDetachedWorktree({ projectDir, worktreeDir, ref: 'HEAD', ...(signal ? { signal } : {}) });
+    const { commit } = await createDetachedWorktree({ projectDir, worktreeDir, ref, ...(signal ? { signal } : {}) });
     let closed = false;
     const close = async () => {
       if (closed) return;
@@ -38,7 +39,7 @@ export async function openRepoLook(projectDir, baseDir, { signal = null, log = (
         for (const s of (res.steps || []).filter((x) => !x.ok)) log(`repo look: ${s.step} failed for ${worktreeDir}: ${s.stderr || 'unknown error'}`);
       } catch (err) { log(`repo look: could not remove ${worktreeDir}: ${err && err.message ? err.message : err}`); }
     };
-    return { cwd: worktreeDir, close };
+    return { cwd: worktreeDir, commit, close };
   } catch (err) {
     log(`repo look unavailable (${err && err.message ? err.message : err}); classifying from the task text only`);
     return null;
@@ -53,13 +54,13 @@ export const REPO_LOOK_MAX_MEMBERS = 8;   // = the workspace fan-out cap (phases
  * checkout fails are skipped (fingerprint-only). Never throws.
  * @param {Array<{projectKey:string, projectDir:string}>} members sorted by projectKey
  * @param {string} baseDir
- * @param {{signal?:AbortSignal|null, log?:(msg:string)=>void, maxMembers?:number}} [o]
- * @returns {Promise<{cwd:string, members:string[], close:() => Promise<void>}|null>} null ⇒ no member checked out
+ * @param {{signal?:AbortSignal|null, log?:(msg:string)=>void, maxMembers?:number, refs?:Record<string,string>}} [o] refs: projectKey → ref (default HEAD)
+ * @returns {Promise<{cwd:string, members:string[], commits:Record<string,string|null>, close:() => Promise<void>}|null>} null ⇒ no member checked out
  */
-export async function openWorkspaceRepoLook(members, baseDir, { signal = null, log = () => {}, maxMembers = REPO_LOOK_MAX_MEMBERS } = {}) {
+export async function openWorkspaceRepoLook(members, baseDir, { signal = null, log = () => {}, maxMembers = REPO_LOOK_MAX_MEMBERS, refs = {} } = {}) {
   if (!baseDir || !Array.isArray(members) || !members.length) return null;
   const root = join(baseDir, `${REPO_LOOK_DIRNAME}-${randomBytes(4).toString('hex')}`);
-  const made = [];                                   // [{ projectDir, worktreeDir, projectKey }]
+  const made = [];                                   // [{ projectDir, worktreeDir, projectKey, commit }]
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -77,11 +78,12 @@ export async function openWorkspaceRepoLook(members, baseDir, { signal = null, l
     for (const m of members.slice(0, Math.max(0, maxMembers))) {
       if (signal?.aborted) throw new Error('aborted between checkouts');
       if (!m?.projectKey || !m.projectDir || !existsSync(join(m.projectDir, '.git'))) { log(`repo look: ${m?.projectKey || '?'} has no git repository — fingerprint only`); continue; }
-      if (!(await isValidSourceRef(m.projectDir, 'HEAD'))) { log(`repo look: ${m.projectKey} has no valid HEAD — fingerprint only`); continue; }
+      const ref = refs?.[m.projectKey] || 'HEAD';
+      if (!(await isValidSourceRef(m.projectDir, ref))) { log(`repo look: ${m.projectKey} has no valid ${ref} — fingerprint only`); continue; }
       const worktreeDir = join(root, 'repos', m.projectKey);
       try {
-        await createDetachedWorktree({ projectDir: m.projectDir, worktreeDir, ref: 'HEAD', ...(signal ? { signal } : {}) });
-        made.push({ projectDir: m.projectDir, worktreeDir, projectKey: m.projectKey });
+        const { commit } = await createDetachedWorktree({ projectDir: m.projectDir, worktreeDir, ref, ...(signal ? { signal } : {}) });
+        made.push({ projectDir: m.projectDir, worktreeDir, projectKey: m.projectKey, commit });
       } catch (err) {
         if (signal?.aborted) throw err;
         log(`repo look: ${m.projectKey} checkout failed (${err && err.message ? err.message : err}) — fingerprint only`);
@@ -89,7 +91,7 @@ export async function openWorkspaceRepoLook(members, baseDir, { signal = null, l
     }
     if (members.length > maxMembers) log(`repo look: ${members.length - maxMembers} member(s) past the ${maxMembers}-checkout cap — fingerprint only`);
     if (!made.length) { await close(); return null; }
-    return { cwd: root, members: made.map((c) => c.projectKey), close };
+    return { cwd: root, members: made.map((c) => c.projectKey), commits: Object.fromEntries(made.map((c) => [c.projectKey, c.commit])), close };
   } catch (err) {
     log(`repo look unavailable (${err && err.message ? err.message : err}); classifying from the task text only`);
     await close();                                   // an abort mid-way leaves nothing behind

@@ -9,8 +9,8 @@ const card = (tabId, id, title, o = {}) => ({ tab: tabId, id, title, min: 'simpl
 
 export const TABS = Object.freeze([
   tab('general', 'General', { alts: ['preferences', 'options', 'configuration', 'config'] }),
-  tab('tags', 'Labels & cost tags', { flag: 'runTags', alts: ['labels', 'tags', 'cost centres', 'tagging'] }),
-  tab('presets', 'Presets', { min: 'advanced', flag: 'runPresets', alts: ['run presets', 'templates', 'saved setups'] }),
+  tab('tags', 'Labels & cost tags', { alts: ['labels', 'tags', 'cost centres', 'tagging'] }),
+  tab('presets', 'Presets', { min: 'advanced', alts: ['run presets', 'templates', 'saved setups'] }),
   tab('runs', 'Runs', { alts: ['pipeline', 'run options'] }),
   tab('experimental', 'Labs', { alts: ['experimental', 'beta', 'feature flags', 'flags', 'early access', 'features'] }),
   tab('ask', 'Chat', { min: 'advanced', alts: ['ask', 'assistant', 'conversation'] }),
@@ -19,6 +19,7 @@ export const TABS = Object.freeze([
 ]);
 
 export const CARDS = Object.freeze([
+  card('general', 'setup-assistant-card', 'Setup assistant', { alts: ['setup', 'install', 'onboarding', 'wizard', 'configure'] }),
   card('general', 'appearance-card', 'Appearance', { alts: ['theme', 'dark mode', 'light mode', 'dark theme', 'colour', 'color', 'look', 'night mode', 'display'] }),
   card('general', 'alerts-card', 'Alerts', { alts: ['notifications', 'sound', 'desktop notifications', 'notify'] }),
   card('general', 'extension-settings-card', 'Browser extension', { alts: ['chrome', 'browser', 'pinpoint'] }),
@@ -27,13 +28,14 @@ export const CARDS = Object.freeze([
   card('general', 'debug-spawn-settings-card', 'Spawn diagnostics', { min: 'expert', alts: ['debug', 'diagnostics', 'process', 'logging'] }),
   card('general', 'getting-started-card', 'Getting started', { alts: ['tour', 'onboarding', 'guide', 'tutorial', 'welcome'] }),
   card('general', 'about-card', 'About', { alts: ['version', 'update', 'licence', 'license'] }),
-  card('tags', 'tag-dims-settings-card', 'Cost tags', { flag: 'runTags', alts: ['cost dimensions', 'tags', 'tagging'] }),
+  card('tags', 'tag-dims-settings-card', 'Cost tags', { alts: ['cost dimensions', 'tags', 'tagging'] }),
   card('tags', 'labels-settings-card', 'Labels', { flag: 'runLabels', alts: ['label', 'tags', 'categories'] }),
   card('runs', 'budget-settings-card', 'Budget & cost limits', { alts: ['budget', 'cost', 'spend', 'money', 'limit', 'cap', 'price'] }),
   card('runs', 'night-settings-card', 'Away mode', { min: 'advanced', alts: ['night', 'overnight', 'unattended', 'away', 'autopilot'] }),
   card('runs', 'smart-naming-settings-card', 'Smart run naming', { alts: ['title', 'branch name', 'naming', 'rename'] }),
   card('runs', 'sync-settings-card', 'Sync before run', { min: 'advanced', alts: ['git', 'pull', 'fetch', 'up to date', 'rebase'] }),
   card('runs', 'schedule-settings-card', 'Scheduled runs', { min: 'advanced', alts: ['schedule', 'cron', 'timer', 'recurring', 'repeat'] }),
+  card('runs', 'network-proxy-settings-card', 'Network proxy', { alts: ['proxy', 'corporate proxy', 'ntlm', 'firewall', 'network'] }),
   card('runs', 'network-wait-settings-card', 'Wait for the network', { min: 'advanced', alts: ['offline', 'internet', 'connection', 'retry', 'wifi'] }),
   card('runs', 'actions-settings-card', 'Actions', { min: 'advanced', alts: ['ci', 'checks', 'github actions'] }),
   card('runs', 'pr-settings-card', 'Pull requests', { alts: ['pr', 'merge', 'github', 'review', 'draft'] }),

@@ -39,6 +39,8 @@ export function sigkillGraceMs() {
 export const SPAWN_ENV_BASE = [
   'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'TERM',
   'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+  // Worca's corporate-proxy marker (proxy-credentials.mjs CORPORATE_PROXY_VAR; a test pins the value).
+  'WORCA_CORPORATE_PROXY_URL',
   'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
 ];
 
@@ -139,7 +141,9 @@ const STDERR_DETAIL_MAX = 2000;
  * @param {string|null} o.stdin                    written then closed when non-null
  * @param {AbortSignal} [o.signal]
  * @param {boolean} [o.asAgent]                    run as WORCA_AGENT_USER when configured
- * @param {string|null} [o.stagedDir]              shared with the agent user before spawn
+ * @param {string|{dir:string, writable?:boolean}|Array|null} [o.stagedDir]  shared with the agent user before spawn
+ *                                                  (agent-user.mjs shareWithAgent)
+ * @param {((id:object) => string)|null} [o.agentHome] the HOME an agent spawn runs with instead of the agent's own
  * @param {() => void} o.cleanup                   called exactly once on every terminal path
  * @param {(e:object) => void} o.onEvent
  * @param {(line:string) => void|Error} o.onStdoutLine each non-empty trimmed stdout line; returning an Error
@@ -149,14 +153,16 @@ const STDERR_DETAIL_MAX = 2000;
  * @param {((text:string) => string)|null} [o.redactText] the adapter's secret redactor: applied to each
  *   buffered stderr line and to the exit detail before the tail cut, which could leave a piece of a secret
  *   that no value matches
+ * @param {(line:string) => void} [o.onStderrLine] each raw stderr line, before it is classified or streamed (an
+ *   adapter that must stop the child on a line, e.g. Gemini CLI reporting that it ignored worca's policy file)
  * @param {(line:string) => boolean} [o.isBenignStderr] the engine's known-benign stderr notices:
  *   still streamed, but never classified and never the exit detail while other evidence exists
  * @param {(err:Error, prefix:string) => Error} o.spawnError
  * @param {(code:number) => any} o.onDone
  */
 export function superviseSpawn(o) {
-  const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, cleanup, onEvent,
-    onStdoutLine, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
+  const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
+    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
@@ -167,8 +173,10 @@ export function superviseSpawn(o) {
       let exe = file;
       let argv = args;
       if (agentId) {
-        if (stagedDir) shareWithAgent(stagedDir, agentId);
-        ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId));
+        // Every folder the server staged for this spawn, opened to the agent's group up to worca's tmp.
+        // A `{dir, writable}` entry is one the agent also writes into (Copilot's usage file).
+        for (const d of [stagedDir].flat()) if (d) shareWithAgent(typeof d === 'string' ? d : d.dir, agentId, { stopAt: join(worcaHome(), 'tmp'), writable: typeof d === 'object' && d.writable === true });
+        ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
       }
       child = spawn(exe, argv, {
         cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
@@ -255,6 +263,7 @@ export function superviseSpawn(o) {
     // `stream:'err'` tags the origin channel; the orchestrator decides the level.
     const rlErr = createInterface({ input: child.stderr });
     rlErr.on('line', (line) => {
+      if (onStderrLine) onStderrLine(line);
       // Classify BEFORE buffering: the class must see every line ever printed —
       // an early 401 or session-limit notice followed by hundreds of KB of MCP
       // chatter would otherwise scroll past both the trim and the tail cap.

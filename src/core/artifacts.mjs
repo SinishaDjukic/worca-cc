@@ -2585,11 +2585,12 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
  * (all statuses). Backs the History sidebar count, so it must agree with what the
  * list reads show — archived rows are hidden there too. Cheap COUNT(*) — never
  * lists or loads rows. Sync (getDb().prepare(...).get()), matching this module's
- * idiom (it imports only getDb + tx, not a bare `prepare`).
+ * idiom (it imports only getDb + tx, not a bare `prepare`). `{ archived: true }` counts the
+ * archived rows instead (the Runs View menu's Show › Archived count).
  * @returns {number}
  */
-export function countPipelines() {
-  const row = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS NULL').get();
+export function countPipelines({ archived = false } = {}) {
+  const row = getDb().prepare(`SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS ${archived ? 'NOT ' : ''}NULL`).get();
   return row ? Number(row.n) : 0;
 }
 
@@ -2634,7 +2635,8 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
       const found = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true })) || null;
       // Positive observations only (null never clears). A closed PR is shown, never
       // recorded: pr_url keeps naming the open or merged PR the other readers act on.
-      if (found && found.state !== 'CLOSED') persistPrState(r.id, found);
+      // The recorded PR itself closing is recorded, so it stops counting as open (a chain's ship ends, Create PR again).
+      if (found && (found.state !== 'CLOSED' || (prUrl && found.url === prUrl))) persistPrState(r.id, found);
       if (!found) return { projectKey: r.projectKey, id: r.id, pr: null };
       // The live PR (isDraft / mergeable) plus the stored verdict and `fixing`, as rowToHistoryEntry builds it.
       const { verdict, ...fresh } = found;

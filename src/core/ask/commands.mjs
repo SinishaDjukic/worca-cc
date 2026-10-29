@@ -86,6 +86,13 @@ export function commandView(rec, out, { tailChars = ASK_LIMITS.commandCardTailCh
     tail: text.length > tailChars ? text.slice(-tailChars) : text, truncated: text.length > tailChars || !!rec.truncated };
 }
 
+/** run_command's optional summary (#911): one trimmed line, clipped to `max`; anything else is null. */
+export function cleanCommandSummary(s, max = ASK_LIMITS.commandSummaryMaxChars) {
+  if (typeof s !== 'string') return null;
+  const line = s.replace(/\s+/g, ' ').trim();
+  return line ? line.slice(0, max) : null;
+}
+
 /**
  * @param {object} o
  * @param {import('../terminal/manager.mjs').TerminalManager} o.terminals
@@ -253,6 +260,8 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
 
   return {
     seen: (blockId) => seenEnd.has(blockId),
+    /** #948 s2: how many Ask-run commands of this chat are running now (the archive busy check). */
+    running: (threadId) => runningCount(threadId),
 
     async run(threadId, input = {}) {
       if (runningCount(threadId) >= limits.commandsPerThread) {
@@ -277,7 +286,8 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
           throw e;
         }
         const blockId = blockIdOf(sid, seq);       // the slot + cap timer were taken by the block 'running' handler
-        return { ok: true, blockId, sessionId: sid, seq, command: line, cwd, folder: target.label, warning: target.warning || null };
+        return { ok: true, blockId, sessionId: sid, seq, command: line, cwd, folder: target.label, warning: target.warning || null,
+          summary: cleanCommandSummary(input.summary, limits.commandSummaryMaxChars) };
       }
     },
 
