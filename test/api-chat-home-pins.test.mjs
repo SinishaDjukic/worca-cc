@@ -66,6 +66,7 @@ test('PUT rejects a non-list with 400 and writes nothing', async () => {
 
 test('per person: two signed-in people keep separate lists; the local list is untouched', async () => {
   process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   try {
     await put({ pins: ['wf_a'] }, { 'x-test-user': 'Ada@example.com' });
     await put({ pins: [] }, { 'x-test-user': 'bob@example.com' });

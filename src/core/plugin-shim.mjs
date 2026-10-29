@@ -8,7 +8,10 @@
 // Config+secrets+state travel via STDIN — never argv (visible in `ps`), never env
 // (inherited by grandchildren). The child env is scrubbed to {PATH, HOME}, the
 // proxy variables (never a proxy URL with credentials) and the CA bundle paths, so
-// plugin X can never read plugin Y's secrets or the host environment. stateDelta
+// plugin Y's secrets and the host environment are not handed to plugin X. That is
+// all the env does: on a single-user install the child runs as worca, and its code
+// can still open every plugins/*/data/secrets.json from disk. Only a container
+// with a plugin user (pluginChildSpawn) puts a uid boundary there. stateDelta
 // is applied HOST-side via writePluginState (the child has no WORCA_HOME and
 // never touches the store). WORCA_MOCK=1 short-circuits the spawn with canned
 // per-op responses so smoke/tests run offline with zero plugins installed.
@@ -24,6 +27,7 @@ import { WORCA_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
 import { readPluginConfig, readPluginState, writePluginState, listProfileIds, DEFAULT_PROFILE } from './plugin-config.mjs';
+import { agentSpawn, killAgentGroup, pluginIdentity } from './agent-user.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./plugin-shim-child.mjs', import.meta.url));
 
@@ -281,6 +285,28 @@ export const WIN32_ENV_BASELINE = Object.freeze([
   'USERPROFILE', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA',
 ]);
 
+/** The spawn for one plugin child (connector op, chat worker, channel check): node with
+ *  `nodeArgs` under the scrubbed env. On a container with a plugin user (agent-user.mjs
+ *  pluginIdentity) it runs as that user with its own HOME, in its own process group so
+ *  killPluginChild reaches it behind sudo: there it cannot open plugins/<name>/data or worca's
+ *  home. Without one it runs as worca, which can read both.
+ *  @returns {{file:string, args:string[], options:{env:object, detached?:boolean}, user:object|null}} */
+export function pluginChildSpawn(nodeArgs, { env = process.env, platform = process.platform } = {}) {
+  const childEnv = scrubbedEnv(platform, env);
+  const user = platform !== 'win32' ? pluginIdentity(env) : null;
+  if (!user) return { file: process.execPath, args: nodeArgs, options: { env: childEnv }, user: null };
+  const s = agentSpawn(process.execPath, nodeArgs, childEnv, user);
+  return { file: s.file, args: s.args, options: { env: s.env, detached: true }, user };
+}
+
+/** SIGKILL a child from pluginChildSpawn. Under the plugin user the server can signal sudo
+ *  but not the node behind it, so the group goes down through sudo too. */
+export function killPluginChild(child, user, killGroup = killAgentGroup) {
+  const alive = child.exitCode == null && child.signalCode == null;
+  try { child.kill('SIGKILL'); } catch { /* gone */ }
+  if (user && alive) killGroup(child.pid, user);
+}
+
 /** The profile invariant, enforced in the shim itself so EVERY caller — the
  *  CLI's `worca plugin exec`, future workers — is safe by construction, not
  *  just the HTTP routes. Presence alone is not enough: a typo'd or deleted
@@ -364,16 +390,13 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
   const frame = await new Promise((resolveFrame, rejectFrame) => {
     // WORCA_PLUGIN_INSPECT=1 attaches the debugger to the connector child
     // (`worca plugin exec --inspect` sets it; spec §7.2 debuggability).
-    const child = spawn(process.execPath,
-      [...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect-brk'] : []), CHILD_PATH], {
-      env: scrubbedEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const run = pluginChildSpawn([...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect-brk'] : []), CHILD_PATH]);
+    const child = spawn(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
     let settled = false;
-    const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+    const killTimer = setTimeout(() => { timedOut = true; killPluginChild(child, run.user); }, timeoutMs);
     const settle = (fn, v) => { if (!settled) { settled = true; clearTimeout(killTimer); fn(v); } };
     child.stdout.setEncoding('utf8').on('data', (c) => { stdout += c; });
     child.stderr.setEncoding('utf8').on('data', (c) => { stderr += c; });

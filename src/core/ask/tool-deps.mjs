@@ -24,6 +24,7 @@ import { runStatusLine } from '../run-status.mjs';
 import { readNightDecisions } from '../night/store.mjs';
 import { PERSPECTIVE_KEYS } from '../../shared/shape/perspectives.mjs';
 import { listPresets } from '../run-presets-store.mjs';
+import { defaultGuardrailSetId } from '../guardrail-store.mjs';
 
 /** Who started runs (pipelines.started_by), one row per person, most active first. Scope: a
  *  projectKey or a workspaceKey, else everything. Archived and pre-attribution (NULL) runs are
@@ -94,6 +95,8 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     // The person signed in to this chat on a shared sign-in (WORCA_ASK_READER), else null: list_runs "me".
     viewer: typeof viewer === 'string' && viewer ? viewer : null,
     // Run presets (#712 slice 3): the viewer's presets for list_presets.
+    // A preset naming no guardrails starts on the install default (list_presets shows it).
+    defaultGuardrailsId: defaultGuardrailSetId,
     listPresets: () => listPresets({ owner: typeof viewer === 'string' && viewer ? viewer : null }),
     listPeople,
     readRunActions,

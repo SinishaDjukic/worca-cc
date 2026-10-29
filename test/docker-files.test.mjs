@@ -5,13 +5,14 @@
 // tools/docker-smoke.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import net from 'node:net';
 
 import { DEFAULT_ALLOW, parseAllow, isAllowed, createProxy } from '../src/core/egress-proxy.mjs';
+import { uiInstanceFile } from '../src/core/ui-instance.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,7 +26,13 @@ test('Dockerfile and .dockerignore: non-root, pinned CLI, tini, healthcheck, tar
       assert.match(d, /DISABLE_AUTOUPDATER=1/, 'the image is immutable: no self-update');
       assert.match(d, /claude-code@\$\{CLAUDE_CODE_VERSION\}/, 'Claude Code is installed at the pinned version');
       assert.match(d, /test -n "\$\{CLAUDE_CODE_VERSION\}"/, 'a missing pin fails the build instead of installing latest');
-      assert.match(d, /npm install -g \/tmp\/worca\.tgz/, 'installs the packed tarball, never COPY of the source');
+      // The packed tarball, never COPY of the source; `npm ci` in the unpacked package, because a
+      // global install of a local tarball ignores its npm-shrinkwrap.json (G20).
+      assert.match(d, /tar -xzf \/tmp\/worca\.tgz -C "\$\{app\}" --strip-components=1/, 'installs the packed tarball, never COPY of the source');
+      assert.match(d, /npm ci --prefix "\$\{app\}" --omit=dev /, 'installs the locked dependency tree');
+      assert.match(d, /ln -s "\$\{app\}\/src\/cli\/worca-cc\.mjs" \/usr\/local\/bin\/worca/, 'the worca bin is on PATH');
+      // CI's hadolint fails on info: COPY of a tarball is DL3010 unless ignored on that COPY.
+      assert.match(d, /^# hadolint ignore=DL3010\nCOPY \$\{WORCA_TARBALL\} \/tmp\/worca\.tgz$/m, 'the tarball COPY carries its DL3010 ignore');
       assert.doesNotMatch(d, /^COPY \. /m, 'no COPY of the whole tree');
       assert.match(d, /^ENTRYPOINT \["tini"/m, 'tini reaps orphaned children');
       // Railway leaves a deployment RUNNING after deploymentStop when the container exits non-zero:
@@ -80,8 +87,9 @@ test('agent isolation: a worca-agent user, sudo only to it, set up on single-vol
   assert.match(d, /useradd -l -u 1001 -g worca-share .* worca-agent/);
   assert.match(d, /usermod -aG worca-share worca/);
   assert.match(d, /'worca ALL=\(WORCA_AGENTS\) NOPASSWD:SETENV: ALL'/, 'worca may become the agent users and nothing else');
-  assert.match(d, /Runas_Alias WORCA_AGENTS = worca-agent, \$\(seq -w 1 16 \| sed 's\/\^\/worca-agent-\/'/, 'the alias names worca-agent and the pool, and only them');
-  assert.match(d, /useradd -l -u "11\$i" -g worca-share -M -d \/nonexistent -s \/bin\/bash "worca-agent-\$i"/, 'the pool users share the agent group, no home, no password');
+  assert.match(d, /Runas_Alias WORCA_AGENTS = worca-agent, worca-plugin, \$\(seq -w 1 16 \| sed 's\/\^\/worca-agent-\/'/, 'the alias names worca-agent, the plugin user and the pool, and only them');
+  assert.match(d, /groupadd -g "11\$i" "worca-agent-\$i" && useradd -l -u "11\$i" -g worca-share -G "worca-agent-\$i" -M -d \/nonexistent -s \/bin\/bash "worca-agent-\$i"/, 'the pool users share the agent group, each also has its own (run folders, G19); no home, no password');
+  assert.match(d, /usermod -aG "worca-agent-\$i" worca/, 'worca joins each pool user\'s own group, so it can hand a run folder to it');
   assert.doesNotMatch(d, /\(root\)|\(ALL\)/, 'never root');
   assert.match(d, /umask=0007, umask_override/, 'agent files stay group-writable, never world-readable');
   assert.match(d, /visudo -cf \/etc\/sudoers\.d\/worca-agent/, 'a broken rule fails the build');
@@ -89,14 +97,70 @@ test('agent isolation: a worca-agent user, sudo only to it, set up on single-vol
   const e = read('docker/entrypoint.sh');
   const block = e.slice(e.indexOf('if [ -n "${WORCA_DATA_DIR:-}" ]'), e.indexOf('# 1. Volume ownership.'));
   assert.match(block, /WORCA_AGENT_ISOLATION:-1/, 'on by default, with an explicit off switch');
-  assert.match(block, /chmod 2770 "\$wh\/store" "\$wh\/runs" "\$data\/projects"/, 'shared dirs are setgid, not world-open');
+  assert.match(block, /chmod 2770 "\$data\/projects"/, 'shared dirs are setgid, not world-open');
+  // G19: the run store and run checkouts are sticky too: an agent cannot rename or delete another
+  // run's folder, and each run's own folder is its owner's group only (agent-pool.mjs claimRunDir).
+  assert.match(block, /chmod 3770 "\$wh\/store" "\$wh\/runs"/, 'store/ and runs/ are setgid + sticky');
+  // V10: the Ask scratch dir holds each relayed turn's MCP config (its relay token): sticky, so no agent user
+  // or plugin code replaces another turn's file.
+  assert.match(e, /chmod 3770 "\$wh\/ask" "\$wh\/tmp\/ask"/, "ask/ and tmp/ask are setgid + sticky (1.4)");
+  assert.match(block, /getent group "\$u"/, 'each pool user\'s own group is looked up');
+  assert.match(block, /export WORCA_AGENT_POOL="\$pool" WORCA_AGENT_HOMES="\$homes" WORCA_AGENT_RUN_GIDS="\$rungids"/);
   assert.match(block, /chmod 0711 "\$data" "\$data\/worca" "\$wh"/, 'the worca home is traverse-only');
   assert.match(block, /chmod 0700 "\$ah"/);
-  assert.match(block, /sharedRepository = group/);
+  assert.match(e, /sharedRepository = group/);
   assert.match(block, /export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="\$ah"/);
   assert.ok(block.indexOf('umask 0007') < block.indexOf('exec setpriv'), 'the server inherits the umask');
   assert.match(block, /WORCA_ALLOWED_HOSTS[\s\S]*exit 78/, 'a hosted worca refuses to run agents as the server when sudo fails');
   assert.doesNotMatch(e, /gh auth setup-git >/, 'no global credential helper');
+});
+
+// 1.2: an agent user owns its HOME, so ~/.gitconfig may be a link it left (to /usr/bin/id, say). The root entrypoint
+// must never write or chown through it: the old name goes, and the agent user writes the new file. Run for real in
+// sh, with a stand-in setpriv that drops the identity switch (the test is not root).
+test('1.2: the agent gitconfig is never written through a link the agent left, as root or otherwise', { skip: process.platform === 'win32' ? 'sh' : false }, async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, chmodSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { spawnSync } = await import('node:child_process');
+  const e = read('docker/entrypoint.sh');
+  const fn = e.match(/^agent_gitconfig\(\) \{[\s\S]*?^\}$/m)?.[0];
+  assert.ok(fn, 'agent_gitconfig is defined');
+  const block = e.slice(e.indexOf('if [ -n "${WORCA_DATA_DIR:-}" ]'), e.indexOf('# 1. Volume ownership.'));
+  assert.match(block, /agent_gitconfig worca-agent "\$ah"/);
+  assert.match(block, /agent_gitconfig "\$u" "\$homes\/\$u"/);
+  assert.doesNotMatch(e, />\s*"[^"]*\/\.gitconfig"\s*$/m, 'no root redirect into a .gitconfig');
+  assert.doesNotMatch(e, /chown [^\n]*\.gitconfig/, 'no chown of a .gitconfig');
+
+  const root = mkdtempSync(join(tmpdir(), 'worca-gitconfig-'));
+  try {
+    const bin = join(root, 'bin'); mkdirSync(bin);
+    writeFileSync(join(bin, 'setpriv'), '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done; shift; exec "$@"\n');
+    chmodSync(join(bin, 'setpriv'), 0o755);
+    const victim = join(root, 'victim'); writeFileSync(victim, 'ORIGINAL');
+    for (const plant of ['link', 'folder']) {
+      const home = join(root, `home-${plant}`); mkdirSync(home);
+      if (plant === 'link') symlinkSync(victim, join(home, '.gitconfig')); else mkdirSync(join(home, '.gitconfig'));
+      const r = spawnSync('sh', ['-c', `set -eu\n${fn}\nagent_gitconfig worca-agent-01 "$1"`, 'sh', home], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(readFileSync(victim, 'utf8'), 'ORIGINAL', `${plant}: the link target is untouched`);
+      assert.ok(lstatSync(join(home, '.gitconfig')).isFile(), `${plant}: a regular file now`);
+      assert.match(readFileSync(join(home, '.gitconfig'), 'utf8'), /\[safe\]\n\tdirectory = \*\n\[core\]\n\tsharedRepository = group\n/);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// G12: connector and chat-channel children run as worca-plugin, which shares the code group but
+// owns its own HOME, so they can open neither plugins/*/data nor worca's home, nor the agents' HOME.
+test('plugin user: worca-plugin in the sudo alias, its own HOME, dropped when sudo refuses', () => {
+  const d = read('docker/Dockerfile');
+  assert.match(d, /useradd -l -u 1002 -g worca-share -M -d \/nonexistent -s \/bin\/bash worca-plugin/);
+  const e = read('docker/entrypoint.sh');
+  const block = e.slice(e.indexOf('if [ -n "${WORCA_DATA_DIR:-}" ]'), e.indexOf('# 1. Volume ownership.'));
+  assert.match(block, /chown worca-plugin:worca-share "\$ph"/);
+  assert.match(block, /chmod 0700 "\$ph"/, "the plugin user's HOME is its own");
+  assert.match(block, /export WORCA_PLUGIN_USER=worca-plugin WORCA_PLUGIN_HOME="\$ph"/);
+  assert.match(block, /sudo -n -u "\$WORCA_PLUGIN_USER" -- true[\s\S]*unset WORCA_PLUGIN_USER WORCA_PLUGIN_HOME/,
+    'an image without the user (or a refused sudo) keeps plugins under worca, and says so');
 });
 
 test('compose.yml: loopback-only publish, least privilege, named volumes, no docker socket', () => {
@@ -147,7 +211,7 @@ test('overlays: egress confines worca to an internal network; clone-in drops the
   assert.match(eg, /HTTPS_PROXY: http:\/\/egress:3128/);
   assert.match(eg, /NO_PROXY: .*\bbroker\b/, 'worca fetch() honors the proxy, so the broker sidecar must bypass it');
   assert.match(eg, /worca-egress-proxy\.mjs/);
-  assert.match(read('docker/Dockerfile'), /install -m 755 "\$\(npm root -g\)\/@worca\/app\/src\/core\/egress-proxy\.mjs" \/usr\/local\/lib\/worca-egress-proxy\.mjs/,
+  assert.match(read('docker/Dockerfile'), /install -m 755 "\$\{app\}\/src\/core\/egress-proxy\.mjs" \/usr\/local\/lib\/worca-egress-proxy\.mjs/,
     'the sidecar runs the proxy shipped in the package');
   const ci = read('docker/compose.clonein.yml');
   assert.match(ci, /projects:\/projects/);
@@ -312,4 +376,24 @@ test('compose.ca.yml mounts the CA read-only and the entrypoint builds the bundl
   assert.match(block, /cat \/etc\/ssl\/certs\/ca-certificates\.crt "\$WORCA_CA_CERT_FILE"/, 'system trust plus the CA, not the CA alone');
   for (const v of ['SSL_CERT_FILE', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE']) assert.match(block, new RegExp(`${v}="\\$cadir/bundle\\.pem"`), v);
   assert.ok(e.indexOf('# 1b.') < e.lastIndexOf('exec "$@"'), 'exported before the command runs');
+});
+
+test('docs/docker.md: the drain command reads the token from where the server writes ui.json', () => {
+  const doc = read('docs/docker.md');
+  const paths = [...doc.matchAll(/\$WORCA_HOME(\/[\w./-]*ui\.json)/g)].map((m) => m[1]);
+  assert.ok(paths.length >= 2, 'the doc names the token file');
+  const prev = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = '/data/worca';
+  try {
+    for (const p of paths) assert.equal(`/data/worca${p}`, uiInstanceFile());
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('V15/V18: docs/docker.md says host networking binds 127.0.0.1, and which runtimes the gateway trust was checked on', () => {
+  const doc = read('docs/docker.md');
+  assert.match(doc, /\*\*`network_mode: host`\.\*\*[^]*?LAN router[^]*?`WORCA_HOST=127\.0\.0\.1`/);
+  assert.match(doc, /Docker Desktop, rootless Docker and Podman[^]*?tools\/docker-linux-pass\.sh[^]*?answers 403/);
+  assert.ok(existsSync(join(ROOT, 'tools/docker-linux-pass.sh')), 'the Linux pass script the doc names');
 });

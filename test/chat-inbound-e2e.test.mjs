@@ -70,7 +70,7 @@ const lastReplyText = () => {
 };
 
 const inject = (text, chatId = '42') => {
-  channelHost.injectInboundMessage(NAME, 'main', { chatId, userId: 'u1', text, meta: {} });
+  channelHost.injectInboundMessage(NAME, 'main', { chatId, userId: 'u1', text, meta: { isGroup: false } });
   // handleChatInbound is fire-and-forget async: give the promise chain a tick
   return new Promise((r) => setTimeout(r, 25));
 };

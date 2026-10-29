@@ -15,6 +15,8 @@ import { projectKey } from '../src/core/store.mjs';
 import { gitState, _testing as gitTesting } from '../src/core/git-available.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { discoverProject } from '../src/core/metrics/sync.mjs';
+import { discoverPolicy } from '../src/core/policy/sync.mjs';
 
 useTempHome(after);
 let homeDir, srv, base, prevHome, runs, T;
@@ -186,6 +188,8 @@ test('POSIX: a registered Folder project\'s start runs no git in its folder (syn
   writeFileSync(join(shim, 'git'), `#!/bin/sh\nprintf '%s\\t%s\\n' "$PWD" "$*" >> '${log}'\nexec '${real}' "$@"\n`, { mode: 0o755 });
   const dir = plain({ 'g.txt': 'g\n' });
   await api('POST', '/api/projects', { name: 'census', path: dir });
+  // The add's own background team discoveries (not the start path) settle before the census begins.
+  await Promise.all([discoverProject(dir), discoverPolicy(dir)]).catch(() => {});
   const rp = (p) => { try { return realpathSync(p); } catch { return p; } };
   let copy = null;
   const prevPath = process.env.PATH; process.env.PATH = `${shim}:${prevPath}`;

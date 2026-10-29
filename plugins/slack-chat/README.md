@@ -43,6 +43,11 @@ stop/pause runs). `allowedChatIds` is deny-by-default (empty = no inbound
 commands). Tokens travel only over stdin to the sandboxed worker child;
 host-side redaction scrubs them from logs.
 
+`allowedUserIds` (optional) narrows an allowed chat to named senders; everyone
+else in it is ignored. `/direct` and the answer commands (`/answer`, `/approve`, `/retry`, `/abort`,
+`/cancel`) steer a live run, so in a group chat they are accepted only from those senders unless `directInGroups` is `anyone`; a direct
+message to the bot always works.
+
 ## Behavior notes
 
 - Envelopes are **acked before processing** (Slack's 3s deadline); an ack that

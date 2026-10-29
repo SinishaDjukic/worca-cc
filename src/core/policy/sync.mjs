@@ -19,7 +19,7 @@ import { readTeamPolicyPrefs, writeTeamPolicyPrefs } from '../config.mjs';
 import { readWorkspace, listWorkspaces } from '../workspaces.mjs';
 import { withLock } from '../metrics/lock.mjs';
 import {
-  runGit, projectSlug, gitUserName, orphanCommit, identityArgs, findLocalRepoBySlug, isNonFastForward,
+  runGit, addBranchWorktree, projectSlug, gitUserName, orphanCommit, identityArgs, findLocalRepoBySlug, isNonFastForward,
   slugDirName, DISCOVERY_TTL_MS, DISCOVERY_RETRY_MS,
 } from '../metrics/sync.mjs';
 import { canonicalMetricsSlug, sameMetricsSlug } from '../../shared/team-metrics/slug.mjs';
@@ -271,13 +271,8 @@ export async function ensureWorktree(slug, projectDir) {
   await mkdir(dirname(dir), { recursive: true });
   const f = await fetchPolicyBranch(projectDir);
   if (!f.ok) throw policyError('FETCH_FAILED', firstLine(f.stderr) || 'git fetch failed', { stderr: f.stderr });
-  let add = await runGit(projectDir, ['worktree', 'add', '--detach', '--force', dir, REMOTE_REF]);
-  if (!add.ok) {
-    await rm(dir, { recursive: true, force: true, maxRetries: 10 });
-    await runGit(projectDir, ['worktree', 'prune']);
-    add = await runGit(projectDir, ['worktree', 'add', '--detach', '--force', dir, REMOTE_REF]);
-    if (!add.ok) throw policyError('WORKTREE_FAILED', firstLine(add.stderr), { stderr: add.stderr });
-  }
+  const err = await addBranchWorktree(projectDir, dir, REMOTE_REF);
+  if (err) throw policyError('WORKTREE_FAILED', firstLine(err), { stderr: err });
   return dir;
 }
 

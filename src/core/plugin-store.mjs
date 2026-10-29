@@ -423,6 +423,10 @@ function precheck(versionDir, manifest) {
   }
 }
 
+/** A full commit id (SHA-1, or SHA-256 for a sha256 repository): what the
+ *  consent routes accept as the pin a person reviewed. */
+export const COMMIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
 /**
  * Install (spec §6.1): ensure cache -> export pinned sha -> validate -> setup ->
  * doctor precheck -> atomic symlink swap -> lock entry. sha omitted -> repo HEAD.
