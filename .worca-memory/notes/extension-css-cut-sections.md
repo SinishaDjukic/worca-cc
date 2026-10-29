@@ -2,7 +2,7 @@
 name: extension-css-cut-sections
 description: Read before adding Ask/Chat composer CSS the browser extension also renders, or refreshing its Linux Playwright screenshots without docker.
 paths: ui/public/style.css, tools/extension-css.mjs, e2e/extension/**
-updated: 2026-10-26T22:14:35.543Z
+updated: 2026-10-29T14:11:20.958Z
 author: Bulibas
 ---
 
@@ -22,5 +22,7 @@ works in the app and in every jsdom pin but never reaches the sidebar. Seen on #
 `extension-playwright-report`; `gh run download <run> -n extension-playwright-report` holds expected (sha = the committed
 file), actual and diff PNGs under `data/`. The actual is the CURRENT commit's render: if your fix changes a region,
 paste that pixel band from the old baseline (PIL, run outside the download dir) after diffing rows to find the bands.
-`npx playwright install chromium` is needed once to run the specs locally (darwin snapshots are absent, so run only
-non-screenshot specs locally).
+`npx playwright install chromium` is needed once to run the specs locally. Under a temp HOME also set
+`PLAYWRIGHT_BROWSERS_PATH=<real HOME>/Library/Caches/ms-playwright` (else "Executable doesn't exist"). `*-darwin.png`
+baselines ARE tracked but CI never gates them, and some are stale (~3%). To check a splice, render darwin into a
+scratch copy with `--update-snapshots -g "model popover"` and compare its structure with the linux PNG.
