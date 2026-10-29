@@ -1,6 +1,8 @@
 // src/core/workflow-tests/guard-calls.mjs — board 37 (D68): what a try tried to send that the outward guard stopped. One row
 // per attempt, in connectors.mjs sentCall's shape (server, tool, noun, preview, full) plus `guard`, the caption of its full
 // text and the command itself. `forgeOf(remote)` names the forge of the real project's remote (P9), or null.
+import { PUBLISH_SERVERS } from './try-guard.mjs';
+
 const VALUE_OPTS = new Set(['--title', '-t', '--body', '-b', '--base', '-B', '--head', '-H', '--repo', '-R', '--label', '-l',
   '--assignee', '-a', '--reviewer', '-r', '--milestone', '-m', '--body-file', '-F', '--description', '-d', '--target-branch',
   '--source-branch', '--push-option', '-o', '--prefix', '-P']);
@@ -69,7 +71,11 @@ export function guardCall(e, { forgeOf = () => null } = {}) {
     return row({ tool: 'open an issue', noun: 'issue', preview: `Open an issue: ${clip(title, 80)}`, cap: 'Full text', full: `Title: ${title}${body ? `\n${body}` : ''}` });
   }
   if (server === 'git' && tool.startsWith('remote ')) return row({ tool: 'change a remote', noun: 'remote change', preview: clip(cmd, 80), cap: STOPPED, full: cmd });
-  if (['npm', 'yarn', 'pnpm'].includes(server)) return row({ tool: 'publish a package', noun: 'package', preview: clip(cmd, 80), cap: STOPPED, full: cmd });
+  if (PUBLISH_SERVERS.includes(server)) return row({ tool: 'publish a package', noun: 'package', preview: clip(cmd, 80), cap: STOPPED, full: cmd });
+  // Task 5b: what the guard could not read (nested too deep, a shell fed unreadable input, an encoded PowerShell command).
+  if (server === 'shell' || (server === 'PowerShell' && tool === 'shell')) {
+    return row({ tool: 'run a command Worca could not read', noun: 'command', preview: clip(cmd, 80), cap: STOPPED, full: cmd });
+  }
   if (server === 'web') {
     const url = argv.find((a) => /^https?:\/\//i.test(a)) || '';
     return row({ tool: 'send a web request', noun: 'web request', preview: clip(url || cmd, 80), cap: STOPPED, full: cmd });

@@ -89,6 +89,7 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * - PATH: the stand-ins first, written to the env's own key (`Path` on Windows); any other spelling of PATH is dropped.
  * - git: no terminal prompt, Git Credential Manager never interactive, ssh fails at once, every credential helper reset.
  * - gh / glab / az found some other way (a script's spawn('gh') skips .cmd on Windows): empty config, so no sign-in.
+ * - Windows: WSLENV carries the git settings and the empty sign-in folders into WSL (its own git and gh).
  * Stated limit: a web call with a token typed into the command can still go out (no network block yet).
  */
 export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = process.platform } = {}) {
@@ -111,13 +112,24 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
   out[`GIT_CONFIG_KEY_${n}`] = 'credential.helper';
   out[`GIT_CONFIG_VALUE_${n}`] = '';
   out.GIT_CONFIG_COUNT = String(n + 1);
+  if (platform === 'win32') {
+    // WSL's own git and gh (wsl git push, bash.exe -c "gh pr create") see none of the above unless WSLENV names it: the
+    // git settings as they are, the sign-in folders as WSL paths (/p). Entries already there are kept.
+    const wk = Object.keys(out).find((k) => k.toUpperCase() === 'WSLENV') || 'WSLENV';
+    const prev = String(out[wk] || '').split(':').filter(Boolean);
+    const named = new Set(prev.map((e) => e.split('/')[0].toUpperCase()));
+    const add = ['GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p', 'GIT_CONFIG_COUNT',
+      ...Array.from({ length: n + 1 }, (_, i) => [`GIT_CONFIG_KEY_${i}`, `GIT_CONFIG_VALUE_${i}`]).flat()];
+    out[wk] = [...prev, ...add.filter((e) => !named.has(e.split('/')[0].toUpperCase()))].join(':');
+  }
   return out;
 }
 
-/** The PreToolUse hook entry buildSettingsPayload adds for a try, beside the host guard. */
+/** The PreToolUse hook entry buildSettingsPayload adds for a try, beside the host guard: on Bash, and on the PowerShell
+ *  tool Claude Code has on Windows. */
 export function tryGuardHookEntry() {
   const q = (s) => JSON.stringify(fwd(s));
-  return { matcher: 'Bash', hooks: [{ type: 'command', command: `${q(process.execPath)} ${q(TRY_GUARD_PATH)}` }] };
+  return { matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `${q(process.execPath)} ${q(TRY_GUARD_PATH)}` }] };
 }
 
 /** Permission rules with the try's deny list added. */
