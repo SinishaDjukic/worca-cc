@@ -3,10 +3,10 @@
 // the built-in automatic checks (counted exactly, without AI) and the verdict of one try. A Library script check is
 // only validated and labelled here; src/core/workflow-tests/result.mjs runs it on the script bench.
 
-export const CHECK_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'file', 'script']);
+export const CHECK_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'file', 'script', 'command']);
 /** The kinds that read the main result's text (D25). */
 export const TEXT_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions']);
-export const PROJECT_KINDS = Object.freeze(['command']);   // 3a D57: checks that run in the copy of the project (Task 6 adds the kind)
+export const PROJECT_KINDS = Object.freeze(['command']);   // 3a D57: checks that run in the copy of the project (Task 6 added the kind)
 export const CHECK_KIND_LABELS = Object.freeze({
   words: 'Length in words',
   sections: 'Has these sections',
@@ -14,7 +14,13 @@ export const CHECK_KIND_LABELS = Object.freeze({
   'not-mentions': 'Must not mention a text',
   file: 'A file with this name is in the result',
   script: 'A Library script',
+  command: 'The command passes',
 });
+/** Board 33: the file check's name in an example with a project (D59: added, changed or renamed, never removed). */
+export const PROJECT_FILE_KIND_LABEL = 'A file with this name is added or changed';
+/** D57: "Stop the command after" (board 33), in minutes. */
+export const COMMAND_TIMEOUTS = Object.freeze([1, 5, 10, 30]);
+const CMD_MAX = 500;
 /** G11: no cost limit until the person sets one. */
 export const DEFAULT_BASICS = Object.freeze({ noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null });
 
@@ -143,6 +149,16 @@ export function headingsOf(text) {
 
 const int = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
 const cleanText = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
+const cleanPath = (v) => cleanText(v).replace(/\\/g, '/');
+/** D58: a text check's optional file. {file: null} when none; {error} for a path outside the project. */
+function fileOf(raw) {
+  if (raw.file == null || String(raw.file).trim() === '') return { file: null };
+  const p = cleanPath(raw.file);
+  if (p.length > TEXT_MAX || p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.split('/').includes('..')) {
+    return { error: 'give a file inside the project, such as CHANGELOG.md' };
+  }
+  return { file: p };
+}
 
 /**
  * One automatic check, checked and cleaned. A valid `id` (c_…) is kept; the store gives new checks one.
@@ -153,7 +169,9 @@ export function normaliseCheck(raw) {
   const kind = raw.kind;
   if (!CHECK_KINDS.includes(kind)) return { check: null, error: `unknown check kind "${kind}"` };
   const id = typeof raw.id === 'string' && CHECK_ID_RE.test(raw.id) ? raw.id : null;
-  const done = (fields) => ({ check: { ...(id ? { id } : {}), kind, ...fields }, error: null });
+  const done = (fields, file = null) => ({ check: { ...(id ? { id } : {}), kind, ...fields, ...(file ? { file } : {}) }, error: null });
+  const f = TEXT_KINDS.includes(kind) ? fileOf(raw) : { file: null };
+  if (f.error) return { check: null, error: f.error };
   if (kind === 'words') {
     const min = int(raw.min);
     const max = int(raw.max);
@@ -162,7 +180,7 @@ export function normaliseCheck(raw) {
     }
     if (min === null && max === null) return { check: null, error: 'give a smallest or a largest number of words' };
     if (min !== null && max !== null && min > max) return { check: null, error: 'the smallest number of words is larger than the largest' };
-    return done({ min, max });
+    return done({ min, max }, f.file);
   }
   if (kind === 'sections') {
     const list = Array.isArray(raw.names) ? raw.names : typeof raw.names === 'string' ? raw.names.split(',') : [];
@@ -171,12 +189,12 @@ export function normaliseCheck(raw) {
     if (names.length > SECTIONS_MAX || names.some((n) => n.length > TEXT_MAX)) {
       return { check: null, error: `at most ${SECTIONS_MAX} sections of up to ${TEXT_MAX} characters` };
     }
-    return done({ names });
+    return done({ names }, f.file);
   }
   if (kind === 'mentions' || kind === 'not-mentions') {
     const text = cleanText(raw.text);
     if (!text || text.length > TEXT_MAX) return { check: null, error: `the text must be 1 to ${TEXT_MAX} characters` };
-    return done({ text });
+    return done({ text }, f.file);
   }
   if (kind === 'file') {
     const name = cleanText(raw.name).replace(/\\/g, '/');
@@ -184,6 +202,14 @@ export function normaliseCheck(raw) {
       return { check: null, error: 'give a file name inside the result, such as summary.md' };
     }
     return done({ name });
+  }
+  if (kind === 'command') {
+    const cmd = typeof raw.cmd === 'string' ? raw.cmd.trim() : '';
+    if (!cmd) return { check: null, error: 'write the command, such as npm test' };
+    if (cmd.length > CMD_MAX || /[\r\n]/.test(cmd)) return { check: null, error: `the command must fit on one line of up to ${CMD_MAX} characters` };
+    const t = raw.timeoutMin === undefined || raw.timeoutMin === null || raw.timeoutMin === '' ? 10 : Number(raw.timeoutMin);
+    if (!COMMAND_TIMEOUTS.includes(t)) return { check: null, error: 'the time limit must be 1, 5, 10 or 30 minutes' };
+    return done({ cmd, timeoutMin: t });
   }
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!SCRIPT_KEY_RE.test(key)) return { check: null, error: 'pick a script from the Library' };
@@ -205,15 +231,17 @@ export const andList = (names) => (names.length < 2 ? names.join('') : `${names.
 /** The check in plain words, as the editor and the results list it (C5 for a script). */
 export function checkLabel(check, { scriptName = null } = {}) {
   const c = check || {};
+  const inFile = (s) => (c.file ? `${s} in ${c.file}` : s);
   if (c.kind === 'words') {
-    if (c.min !== null && c.max !== null) return `Length is ${c.min} to ${c.max} words`;
-    return c.min !== null ? `Length is at least ${c.min} words` : `Length is at most ${c.max} words`;
+    if (c.min !== null && c.max !== null) return inFile(`Length is ${c.min} to ${c.max} words`);
+    return inFile(c.min !== null ? `Length is at least ${c.min} words` : `Length is at most ${c.max} words`);
   }
-  if (c.kind === 'sections') return c.names.length === 1 ? `Has the section ${c.names[0]}` : `Has the sections ${andList(c.names)}`;   // C20
-  if (c.kind === 'mentions') return `Mentions "${c.text}"`;
-  if (c.kind === 'not-mentions') return `Does not mention "${c.text}"`;
+  if (c.kind === 'sections') return inFile(c.names.length === 1 ? `Has the section ${c.names[0]}` : `Has the sections ${andList(c.names)}`);   // C20
+  if (c.kind === 'mentions') return inFile(`Mentions "${c.text}"`);
+  if (c.kind === 'not-mentions') return inFile(`Does not mention "${c.text}"`);
   if (c.kind === 'file') return `Has a file named ${c.name}`;
   if (c.kind === 'script') return `The Library script "${scriptName || c.key}" passes`;
+  if (c.kind === 'command') return `The command ${c.cmd} passes`;
   return 'Unknown check';
 }
 
@@ -249,7 +277,7 @@ export function runCheck(check, { text = null, files = [] } = {}) {
     const met = (Array.isArray(files) ? files : []).some((f) => fileMatches(check.name, f));
     return { met, value: met ? 'Met' : 'Not met' };
   }
-  throw new Error(`runCheck: "${check.kind}" is not a built-in check`);
+  throw new Error(`runCheck: "${check.kind}" is not a built-in check`);   // script and command: result.mjs runs them
 }
 
 /** @returns {{basics: object|null, error: string|null}} */
@@ -318,4 +346,20 @@ export function judgeTry(example, facts, checkResults = [], result = {}) {
       sentBack: Number(f.sentBack || 0), help, failReason: f.failReason || null },
     result: { name: result.name ?? null, source: result.source ?? null, words: result.words ?? null },
   };
+}
+
+/**
+ * D57: the value of a command check (board 36: "213 passed", "212 passed, 1 failed"). node:test's and TAP's counts become
+ * that sentence; otherwise the last line that counts passed or failed tests; otherwise the last line. Colours removed.
+ */
+export function commandSummary(text) {
+  const lines = String(text ?? '').split(/\r?\n/).map((l) => l.replace(/\u001b\[[0-9;]*m/g, '').trim()).filter(Boolean);
+  const last = (re) => { for (let i = lines.length - 1; i >= 0; i -= 1) { const m = re.exec(lines[i]); if (m) return Number(m[1]); } return null; };
+  const pass = last(/^(?:ℹ|#)\s*pass\s+(\d+)$/);
+  const fail = last(/^(?:ℹ|#)\s*fail\s+(\d+)$/);
+  if (pass !== null && fail !== null) return fail ? `${pass} passed, ${fail} failed` : `${pass} passed`;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (/\b\d+\s+(?:passed|passing|failed|failing)\b/i.test(lines[i])) return lines[i].slice(0, 120);
+  }
+  return lines.length ? lines[lines.length - 1].slice(0, 120) : '';
 }
