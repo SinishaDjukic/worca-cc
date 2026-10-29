@@ -23,11 +23,13 @@ let lost = new Map();                    // spend of cut turns the CLI never res
 // gone; the sessions created after it resume normally, as a real CLI resumes what it wrote after such a loss.
 let bornAfterLoss = null;                // null until the first vanished turn; then the ids created since
 
-/** Test seams. `behave`, `costFor`, `onMemberStart`, `resolvedModel`, `hookUsd` and `restoreCutCost` are the test's configuration;
- *  `resetSessions()` clears the session state only: `spent`, `seen`, `spendBeforeHang`, the ids and the turn counter. */
+/** Test seams. `behave`, `costFor`, `onMemberStart`, `onTurn`, `resolvedModel`, `hookUsd` and `restoreCutCost` are the test's
+ *  configuration; `resetSessions()` clears the session state only: `spent`, `seen`, `spendBeforeHang`, the ids and the turn
+ *  counter. `onTurn({ agentType, turn, hostOpts })` runs once per turn, before anything is emitted (Task 50's bridge row). */
 export const _testing = {
   costFor: null,
   behave: null,
+  onTurn: null,
   spent: new Map(),                      // the ground truth: Map<hostSessionId, usd>, added the moment it is spent
   seen: [],
   onMemberStart: null,
@@ -44,6 +46,10 @@ export const _testing = {
     ids.host = 0; ids.agent = 0; ids.call = 0; ids.turn = 0;
   },
 };
+
+/** Does this mock CLI restore a killed turn's spend in the next `--resume`'s cumulative (S4's costRestoredAfterKill)? The
+ *  SessionHost on the mock transport reads it as its HOST_CUT_COST_RESTORED: the mock is the CLI it drives (Task 50). */
+export const mockRestoresCutCost = () => _testing.restoreCutCost !== false;
 
 const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
 const waitForKill = (signal) => new Promise((_, reject) => {
@@ -85,6 +91,7 @@ export async function runMockSession(hostOpts = {}) {
     emit({ type: 'log', text: SIDELOAD_REFUSAL });
     throw new Error('claude exited with code 1');
   }
+  _testing.onTurn?.({ agentType, turn, hostOpts });   // a turn the CLI refused before any model call reaches no one
 
   const hostSessionId = resumeSessionId || `mock-host-${++ids.host}`;
   if (!resumeSessionId) bornAfterLoss?.add(hostSessionId);
@@ -187,6 +194,6 @@ export async function runMockSession(hostOpts = {}) {
     return { text: 'DONE', exitCode: 0 };
   } finally {
     // A turn that ended without a result: its spend reaches a later cumulative only when the CLI restores it (S4).
-    if (!resulted && turnSpend && !_testing.restoreCutCost) lost.set(hostSessionId, (lost.get(hostSessionId) || 0) + turnSpend);
+    if (!resulted && turnSpend && !mockRestoresCutCost()) lost.set(hostSessionId, (lost.get(hostSessionId) || 0) + turnSpend);
   }
 }

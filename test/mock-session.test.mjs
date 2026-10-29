@@ -56,6 +56,18 @@ test('failure shapes follow the CLI: vanished, budget exits 1 after its result, 
   assert.equal(s.frames.some((f) => f.raw?.type === 'system'), false, 'no init');
 });
 
+test('v4 — onTurn runs once per turn the CLI ran, never for a turn it refused before any model call (vanished, sideload)', async () => {
+  const turns = [];
+  _testing.onTurn = (t) => turns.push(t.agentType);
+  try {
+    await turn({ resume: 'mock-host-gone', behave: () => 'vanished' });
+    await turn({ behave: () => 'sideload-refused', pluginDirs: ['/p'] });
+    assert.deepEqual(turns, []);
+    await turn();
+    assert.deepEqual(turns, ['worca-x-n_plan-1-a1']);
+  } finally { _testing.onTurn = null; _testing.behave = null; }
+});
+
 test('a behaviour that waits for the kill rejects as an abort when the signal fires', async () => {
   const ac = new AbortController();
   const dir = mkdtempSync(join(tmpdir(), 'mock-sess-'));
@@ -219,7 +231,7 @@ test('v2 — seen, the turn counter, behave\'s and costFor\'s arguments; resetSe
 });
 
 test('v2 — a cut turn reaches the next cumulative only when the CLI restores it; spendBeforeHang is spent', async () => {
-  for (const restore of [true, false]) {
+  for (const restore of [true, false, null]) {                     // v4: only a literal false loses the spend (null: the default)
     _testing.resetSessions();
     _testing.restoreCutCost = restore;
     _testing.spendBeforeHang = 0.07;
@@ -238,7 +250,7 @@ test('v2 — a cut turn reaches the next cumulative only when the CLI restores i
     await runMockSession({ cwd: dir, agents, prompt, model: 'claude-haiku-4-5', resumeSessionId: 'mock-host-1', onEvent: (e) => frames.push(e) });
     const total = frames.at(-1).raw.total_cost_usd;
     const turn2 = 0.0011 + 0.0085;
-    assert.ok(Math.abs(total - (restore ? 0.0711 + turn2 : turn2)) < 1e-12, `restore=${restore}: ${total}`);
+    assert.ok(Math.abs(total - (restore !== false ? 0.0711 + turn2 : turn2)) < 1e-12, `restore=${restore}: ${total}`);
     const third = [];
     await runMockSession({ cwd: dir, agents, prompt, model: 'claude-haiku-4-5', resumeSessionId: 'mock-host-1', onEvent: (e) => third.push(e) });
     assert.ok(Math.abs(third.at(-1).raw.total_cost_usd - total - turn2) < 1e-12, 'a turn with a result is never lost');

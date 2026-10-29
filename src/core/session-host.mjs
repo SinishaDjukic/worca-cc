@@ -4,7 +4,7 @@
 // (session-demux.mjs), its dollars through the harness port (Task 42), and every fact lands in the session trace
 // (session-trace.mjs), never a prompt.
 import { runClaude, mockEnabled } from './claude-runner.mjs';
-import { runMockSession } from './engines/mock-session.mjs';
+import { runMockSession, mockRestoresCutCost } from './engines/mock-session.mjs';
 import { SessionHostError, HOST_MAX_TURNS, HOST_TOOLS_MODE, dispatchIdFor, turnIdFor, dispatchMessage, memberDefinition, hostFlagsFor,
   hostSpawnOpts } from './engines/session-dispatch.mjs';
 import { createTurnDemux, watchdogVerdict } from './engines/session-demux.mjs';
@@ -86,8 +86,10 @@ export class SessionHost {
     this.port = port;
     this.transport = transport;
     this.plainRun = plainRun;
-    // Tests only: cutCostRestored, rotateDispatches, rotateContextTokens, degradeAfter, mainThreadGuard, guardField.
-    this.limits = { cutCostRestored: HOST_CUT_COST_RESTORED, rotateDispatches: HOST_ROTATE_DISPATCHES, rotateContextTokens: HOST_ROTATE_CONTEXT_TOKENS,
+    // Tests only: cutCostRestored, rotateDispatches, rotateContextTokens, degradeAfter, mainThreadGuard, guardField. On the mock
+    // transport the cut-cost fact is the mock CLI's own (Task 50): it is a property of the CLI the host drives (S4).
+    const cutCostRestored = port.mock ? mockRestoresCutCost() : HOST_CUT_COST_RESTORED;
+    this.limits = { cutCostRestored, rotateDispatches: HOST_ROTATE_DISPATCHES, rotateContextTokens: HOST_ROTATE_CONTEXT_TOKENS,
       degradeAfter: HOST_DEGRADE_AFTER, mainThreadGuard: HOST_MAIN_THREAD_GUARD, guardField: HOST_GUARD_CONTEXT_FIELD, ...limits };
     this.engine = port.engine ?? null;
     this.hostEpoch = 1;                        // C2: the first host session is epoch 1
