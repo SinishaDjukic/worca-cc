@@ -20,6 +20,8 @@ jobs:
   # A 4-way split of every tier: tools/test.mjs balances test/*.mjs by
   # test/timings.json, one runner each. A single runner took ~17 of a ~21-minute release.
   # Nothing publishes unless every shard passes on the tagged commit.
+  # Node 22, the floor every dev CI run proves (package.json engines), so a release re-runs the
+  # suite dev already passed. Node 24 differences are caught by ci.yml's Node 24 fast tests.
   test:
     name: npm test (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
@@ -34,7 +36,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 22
           cache: "npm"
 
       - name: Install dependencies
@@ -140,10 +142,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Node 22 like the tests: this job only builds the extension zips. build-and-publish alone
+      # needs Node 24, for the npm that Trusted Publishing requires.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 22
           cache: "npm"
 
       - name: Install dependencies
