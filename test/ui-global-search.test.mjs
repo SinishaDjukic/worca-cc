@@ -278,6 +278,21 @@ test('R-po-18/A-5: every name match is listed before an alternative-word-only ma
     'the Chat tab before the card that also starts with "chat", then the cards found through the tab name');
 });
 
+test('Settings and Add-ons rows match only where a query word starts a word of the title, tab/page title or an alt word', () => {
+  const ar = setRows('ar');
+  assert.deepEqual([ar.settings, ar.addons], [[], []], '"ar" starts no word in the catalogue (Labs, Marketplace, Guardrails, Appearance … hold it mid-word)');
+  assert.ok(setRows('guard').settings.some((x) => x.title === 'Guardrails'), 'guard → Guardrails');
+  assert.ok(setRows('market').addons.some((x) => x.meta === 'Marketplace'), 'market → the Marketplace rows');
+  assert.ok(setRows('early').settings.some((x) => x.title === 'Labs'), 'early → Labs (alt word "early access")');
+  assert.ok(setRows('mode').settings.some((x) => x.title === 'Appearance'), 'mode → Appearance (alt "dark mode")');
+  assert.deepEqual(setRows('dark mo').settings.map((x) => x.title), ['Appearance'], 'a multi-word alt matches word by word');
+  assert.ok(!setRows('ppear').settings.some((x) => x.title === 'Appearance'), 'a mid-word hit stays out');
+  assert.ok(!setRows('rkets').addons.length, 'a mid-word page-name hit stays out');
+  const re = setRows('re').settings.map((x) => x.title);
+  assert.ok(re.indexOf('Memory') < re.indexOf('Sync before run'),
+    '"re" only mid-word in the name ("before") is no name match: Sync before run ranks with the alt-word matches');
+});
+
 test('R-po-10/11: locked rows stay listed with a note naming the mode and the Labs feature', () => {
   const p = setRows('presets', { level: 'simple', flags: {} }).settings[0];
   assert.equal(p.href, '#settings/presets');
@@ -339,6 +354,8 @@ test('Plugins: a disabled install says so; no description is no sub line; an ent
     'a catalogue entry with no marketplace id has no address to open');
   assert.deepEqual(run(PSRC, '').plugins, []);
   assert.deepEqual(run(PSRC, 'zzz').plugins, []);
+  assert.deepEqual(run(PSRC, 'ira').plugins, [], 'a mid-word hit in a name or description stays out');
+  assert.deepEqual(run(PSRC, 'cloud').plugins.map((r) => r.title), ['jira-cloud'], 'a word after a hyphen starts a word');
 });
 
 test('Plugins: a long description is cut to 120 characters on one line; names are encoded in the address', () => {

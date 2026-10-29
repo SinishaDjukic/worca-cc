@@ -186,15 +186,15 @@ const byOther = (a, b) => (a.rank - b.rank) || (KIND_ORDER[a.row.kind] - KIND_OR
 const byPlugin = (a, b) => (a.rank - b.rank) || (Number(b.installed) - Number(a.installed))
   || a.row.title.localeCompare(b.row.title) || (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0);
 
-/** Settings / Add-ons rows (settings-index.mjs: the static catalogue plus `addonEntriesFrom(sources)`): every query word in the name (the title and, for a card, its tab's
- *  title) or the alternative words. A name match ranks like any title (0-2); a match that needs an alternative word
- *  ranks 3, after every name match (R-po-18). Ties: catalogue order, where every tab precedes the cards (A-5). */
+/** Settings / Add-ons rows (settings-index.mjs: the static catalogue plus `addonEntriesFrom(sources)`): every query word starts a word
+ *  (startsWord) of the name (the title and, for a card, its tab's title) or of the alternative words; a mid-word hit
+ *  never matches. A name match ranks like any title (0-2); a match that needs an alternative word ranks 3, after every name match (R-po-18). Ties: catalogue order, where every tab precedes the cards (A-5). */
 function catalogueRows(entries, words, q, ctx, kind, limit) {
   const lc = (s) => String(s).toLowerCase();
   return entries
     .map((e, order) => ({ e, order, name: lc(`${e.title} ${e.tabTitle}`), all: lc(`${e.title} ${e.tabTitle} ${e.alts.join(' ')}`) }))
-    .filter((it) => words.every((w) => it.all.includes(w)))
-    .map((it) => ({ ...it, rank: words.every((w) => it.name.includes(w)) ? titleRank(it.e.title, q, words[0]) : 3 }))
+    .filter((it) => words.every((w) => startsWord(it.all, w)))
+    .map((it) => ({ ...it, rank: words.every((w) => startsWord(it.name, w)) ? titleRank(it.e.title, q, words[0]) : 3 }))
     .sort((a, b) => (a.rank - b.rank) || (a.order - b.order))   // SETTING_ENTRIES lists every tab before the cards (A-5)
     .slice(0, limit)
     .map(({ e }) => {
@@ -211,7 +211,8 @@ function catalogueRows(entries, words, q, ctx, kind, limit) {
  * a run's title, project and state word; anything else's name and meta. Ranked title prefix >
  * a title word starting with the first query word > a match elsewhere; ties: needs you, live,
  * newest (runs) and project, workspace, workflow, schedule, name (the rest). Settings and Add-ons rows come
- * from catalogueRows. An empty query lists runs only: needs you, then live, then the newest finished.
+ * from catalogueRows; they and Plugins rows match only where each query word starts a word (startsWord).
+ * An empty query lists runs only: needs you, then live, then the newest finished.
  */
 export function searchRows(sources = {}, query = '', { now = Date.now(), tz = localZone() } = {}) {
   const src = sources || {};
@@ -221,8 +222,8 @@ export function searchRows(sources = {}, query = '', { now = Date.now(), tz = lo
     return { runs: runs.map((r) => ({ ...r, rank: 0 })).sort(byRun).slice(0, RUN_LIMIT).map((r) => r.row), other: [], settings: [], addons: [], plugins: [] };
   }
   const q = words.join(' ');
-  const pick = (items, cmp, limit) => items
-    .filter((it) => words.every((w) => it.hay.includes(w)))
+  const pick = (items, cmp, limit, has = (hay, w) => hay.includes(w)) => items
+    .filter((it) => words.every((w) => has(it.hay, w)))
     // A run found only by a tag names that tag in its meta ("proj · Merged · client:acme").
     .map((it) => {
       if (it.row.kind !== 'run' || !it.tags || !it.tags.length) return it;
@@ -239,6 +240,6 @@ export function searchRows(sources = {}, query = '', { now = Date.now(), tz = lo
     other: pick(otherRows(src, tz), byOther, OTHER_LIMIT),
     settings: catalogueRows(SETTING_ENTRIES, words, q, ctx, 'setting', SETTINGS_LIMIT),
     addons: catalogueRows([...ADDON_ENTRIES, ...addonEntriesFrom(src)], words, q, ctx, 'addon', ADDON_LIMIT),
-    plugins: pick(pluginRows(src), byPlugin, PLUGIN_LIMIT),
+    plugins: pick(pluginRows(src), byPlugin, PLUGIN_LIMIT, startsWord),   // a plugin's name or description: word starts only
   };
 }
