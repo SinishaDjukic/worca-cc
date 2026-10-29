@@ -417,6 +417,13 @@ test('a malformed %-escape in the set hash never throws out of show(): it reads 
   assert.equal(host.querySelector('.form-msg.err').textContent, 'set not found');
 });
 
+test('parseMcpParam: servers/<id> is the Servers view naming one server (a top bar search pick); bare servers keeps its shape', () => {
+  assert.deepEqual(parseMcpParam('servers/manual%3Alinear'), { view: 'servers', setId: null, server: 'manual:linear' });
+  assert.deepEqual(parseMcpParam('servers'), { view: 'servers', setId: null });
+  assert.deepEqual(parseMcpParam('servers/%E0%A4%A'), { view: 'servers', setId: null, server: '%E0%A4%A' }, 'a malformed escape reads as typed');
+  assert.deepEqual(parseMcpParam('servers/'), { view: 'sets', setId: 'general' });
+});
+
 test('a value a repaint restored still saves when the user leaves the field; a change and its focusout save once', async () => {
   const { host, ctl, writes } = mount();
   await ctl.show('sets/billing');

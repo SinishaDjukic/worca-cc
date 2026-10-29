@@ -10,7 +10,7 @@ import { createUpdateReview } from './update-sheet.mjs';
 import { createMarketplacesTab } from './marketplaces-tab.mjs';
 import { createAddMarketplaceDialog } from './add-dialog.mjs';
 
-export { tabFromParam, tabHash } from './page.mjs';
+export { tabFromParam, tabHash, targetFromParam } from './page.mjs';
 
 /** The page on #mk-root (a detached host when the document has none, so a caller always gets a Page). */
 export function mountMarketplace({ doc, win, deps }) {
