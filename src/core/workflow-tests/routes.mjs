@@ -21,6 +21,8 @@ export const WORKFLOW_TEST_ROUTES = Object.freeze([
   ['GET', `${W}/plan`], ['POST', `${W}/runs`], ['GET', `${W}/runs/:run`], ['POST', `${W}/runs/:run/stop`],
   ['POST', `${W}/runs/:run/continue`], ['GET', `${W}/runs/:run/compare`], ['GET', `${W}/runs/:run/examples/:ex`],
   ['GET', `${W}/runs/:run/tries/:try/result`], ['GET', '/api/workflow-tests/past-run/:pipelineId'],
+  ['GET', '/api/workflow-tests/projects'], ['GET', '/api/workflow-tests/projects/:key/branches'],
+  ['POST', `${W}/examples/:ex/project/latest`], ['GET', `${W}/runs/:run/tries/:try/changes`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
 const num = (v, what) => {
@@ -34,7 +36,8 @@ const usdOf = (v) => (v === undefined || v === null || v === '' ? null : Number(
  * @param {import('express').Express} app
  * @param {{broadcast?: Function, deps: {startRun: Function, liveRun: Function, stopRun: Function, answer: Function, mockMode?: Function,
  *   connectorsPreview?: Function}}} opts `liveRun(runKey)` → { orch, status, launch, pipelineId, pauseReason, pauseDetail } | null;
- *   `connectorsPreview()` → { copies: [{ name, untested }], fileServers: string[] } (untested = no stand-in on a pretend try)
+ *   `connectorsPreview(scope)` → { copies: [{ name, untested }], fileServers: string[] } (untested = no stand-in on a pretend try;
+ *   scope = { key, name, projectDir } of the one project a test's examples work on, else null)
  */
 export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {} } = {}) {
   const gate = requireFlag('workflowTests');
@@ -69,10 +72,9 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   const route = (method, path, fn) => app[method.toLowerCase()](path, gate, handle(fn));
   const wid = (req) => String(req.params.id || '');
   const by = (req) => actorOf(req) || null;
-  const testable = (req) => {
-    const t = service.testTarget(wid(req));
-    if (!t.testable) throw store.testError(service.NOT_TESTABLE_TEXT, 'NOT_TESTABLE');
-  };
+  // 3a D62 (replaces D20): every saved user workflow can be tested, so the start routes only check that it is one (404, 400);
+  // whether each example can be tried is the runner's (targetOf).
+  const knownWorkflow = (req) => { service.workflowRowOf(wid(req)); };
   const example = (req) => {
     const ex = store.readExample(wid(req), num(req.params.ex, 'example'));
     if (!ex) throw store.testError(`no example ${req.params.ex}`, 'NOT_FOUND');
@@ -82,14 +84,14 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   route('GET', W, async (req, res) => res.json(await service.testsOverview(wid(req))));
   route('POST', `${W}/examples`, async (req, res) => {
     service.workflowRowOf(wid(req));
-    res.status(201).json({ example: store.createExample(wid(req), req.body || {}, { by: by(req) }) });
+    res.status(201).json({ example: await service.saveExample(wid(req), null, req.body || {}, { by: by(req) }) });
   });
   route('POST', `${W}/examples/from-run`, async (req, res) => {
     service.workflowRowOf(wid(req));
     const b = req.body || {};
     res.status(201).json(await service.exampleFromRun(wid(req), { pipelineId: String(b.pipelineId || ''), name: b.name,
       keepRequest: b.keepRequest !== false, keepAnswers: b.keepAnswers !== false, verdict: b.verdict ?? null,
-      note: typeof b.note === 'string' ? b.note : null }, { by: by(req) }));
+      note: typeof b.note === 'string' ? b.note : null, setupCmd: typeof b.setupCmd === 'string' ? b.setupCmd : null }, { by: by(req) }));
   });
   route('POST', `${W}/examples/from-runs`, async (req, res) => {
     service.workflowRowOf(wid(req));
@@ -101,7 +103,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   // A deleted workflow's examples stay in the store (deleteWorkflow does not cascade): they are not edited.
   route('PUT', `${W}/examples/:ex`, async (req, res) => {
     service.workflowRowOf(wid(req));
-    res.json({ example: store.updateExample(wid(req), num(req.params.ex, 'example'), req.body || {}) });
+    res.json({ example: await service.saveExample(wid(req), num(req.params.ex, 'example'), req.body || {}) });
   });
   route('DELETE', `${W}/examples/:ex`, async (req, res) => {
     service.workflowRowOf(wid(req));
@@ -119,7 +121,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     res.json({ example: store.deleteExampleFile(wid(req), num(req.params.ex, 'example'), String(req.params.name)) });
   });
   route('POST', `${W}/examples/:ex/try-once`, async (req, res) => {
-    testable(req);
+    knownWorkflow(req);
     const ex = example(req);
     res.status(201).json({ run: await runner.start({ workflowId: wid(req), kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, reuseB: false,
       connectors: 'pretend', by: by(req) }) });   // D35: Try it once now always pretends
@@ -135,7 +137,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     { mock: !!(deps.mockMode && deps.mockMode()), connectorsPreview: deps.connectorsPreview || null }));
   });
   route('POST', `${W}/runs`, async (req, res) => {
-    testable(req);
+    knownWorkflow(req);
     const b = req.body || {};
     const a = store.parseUse(b.a);
     const bb = store.parseUse(b.b);
@@ -144,21 +146,37 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
       exampleIds: Array.isArray(b.exampleIds) ? b.exampleIds.map((x) => num(x, 'example')) : [], tries: Number(b.tries), reuseA: b.reuseA !== false, reuseB: b.reuseB === true,
       quickCheck: b.quickCheck === true, capUsd: usdOf(b.capUsd), connectors: b.connectors === undefined ? 'pretend' : b.connectors, by: by(req) }) });
   });
-  route('GET', `${W}/runs/:run`, async (req, res) => res.json(service.progressOf(wid(req), num(req.params.run, 'test'), { costOf: runner.costOf })));
+  route('GET', `${W}/runs/:run`, async (req, res) => {
+    const p = service.progressOf(wid(req), num(req.params.run, 'test'), { costOf: runner.costOf, phaseOf: runner.phaseOf });
+    if (p.project) p.project.disk = await service.progressDisk(wid(req), p.run, { diskOf: runner.diskOf });
+    res.json(p);
+  });
   route('POST', `${W}/runs/:run/stop`, async (req, res) => {
     const run = service.runOf(wid(req), num(req.params.run, 'test'));
     res.json({ run: await runner.stop(run.id) });
   });
   route('POST', `${W}/runs/:run/continue`, async (req, res) => {
-    testable(req);   // D20, as the start routes: the workflow may have changed to need a project, or be gone
+    knownWorkflow(req);   // as the start routes: the workflow may be gone
     const run = service.runOf(wid(req), num(req.params.run, 'test'));
     res.json({ run: await runner.continueRun(run.id, { capUsd: usdOf(req.body && req.body.capUsd) }) });
   });
   route('GET', `${W}/runs/:run/compare`, async (req, res) => res.json(await service.compareOf(wid(req), num(req.params.run, 'test'))));
-  route('GET', `${W}/runs/:run/examples/:ex`, async (req, res) =>
-    res.json(await service.sideBySide(wid(req), num(req.params.run, 'test'), num(req.params.ex, 'example'))));
+  route('GET', `${W}/runs/:run/examples/:ex`, async (req, res) => {
+    const ex = example(req);
+    const forgeOf = ex.project ? await service.forgeNamer(ex.project.key) : null;   // P9: board 37's "… on GitHub"
+    res.json(await service.sideBySide(wid(req), num(req.params.run, 'test'), ex.id, { forgeOf }));
+  });
   route('GET', `${W}/runs/:run/tries/:try/result`, async (req, res) =>
     res.json(await service.tryResult(wid(req), num(req.params.run, 'test'), num(req.params.try, 'try'))));
   route('GET', '/api/workflow-tests/past-run/:pipelineId', async (req, res) => res.json(await service.pastRunSummary(String(req.params.pipelineId || ''))));
+  // 3a: the editor's projects and a project's branches (read only), "Start from the latest" (D63), a try's whole diff.
+  route('GET', '/api/workflow-tests/projects', async (_req, res) => res.json(await service.projectsForTests()));
+  route('GET', '/api/workflow-tests/projects/:key/branches', async (req, res) => res.json(await service.projectBranches(String(req.params.key || ''))));
+  route('POST', `${W}/examples/:ex/project/latest`, async (req, res) => {
+    service.workflowRowOf(wid(req));
+    res.json({ example: await service.startFromLatest(wid(req), num(req.params.ex, 'example')) });
+  });
+  route('GET', `${W}/runs/:run/tries/:try/changes`, async (req, res) =>
+    res.json(await service.tryChanges(wid(req), num(req.params.run, 'test'), num(req.params.try, 'try'))));
   return { runner };
 }

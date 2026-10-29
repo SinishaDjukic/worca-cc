@@ -397,3 +397,27 @@ export async function sweepTestCopies({ log = () => {} } = {}) {
   if (out.branches) log('info', `workflow tests: removed ${out.branches} leftover try branch(es) in ${out.copies} copy(ies) of a project`);
   return out;
 }
+
+/** The branch the folder is on and its commit (the editor's default start point). Read only. null without a commit. */
+export async function headOf(projectDir) {
+  const sha = (await git(projectDir, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])).stdout.trim();
+  if (!sha) return null;
+  const branch = (await git(projectDir, ['symbolic-ref', '-q', '--short', 'HEAD'])).stdout.trim() || null;
+  return { branch, sha, at: await commitDate(projectDir, sha) };
+}
+
+// A commit id (a run's branch record or a stored pin): never an option or a ref expression handed to git.
+const isSha = (sha) => typeof sha === 'string' && /^[0-9a-f]{7,64}$/i.test(sha);
+
+/** Whether the repository has this commit (P4: a project added again keeps an example's start point). Read only. */
+export async function commitExists(projectDir, sha) {
+  return isSha(sha) && (await git(projectDir, ['cat-file', '-e', `${sha}^{commit}`])).ok;
+}
+
+/** A commit's committer date as ISO, or null. Read only. */
+export async function commitDate(projectDir, sha) {
+  if (!isSha(sha)) return null;
+  const r = await git(projectDir, ['show', '-s', '--format=%cI', sha]);
+  const d = r.ok ? Date.parse(r.stdout.trim()) : NaN;
+  return Number.isFinite(d) ? new Date(d).toISOString() : null;
+}

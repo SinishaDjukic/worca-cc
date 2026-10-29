@@ -346,6 +346,9 @@ export function createTestRunner(deps) {
         store.updateTry(t.id, { status: 'waiting', startedAt: null });   // never tried: it stays for "Finish the rest"
         return;
       }
+      // A project try's start answers without its pipeline id (the run makes its worktree first): the id the launch gave
+      // it goes on the row now, so the side by side, its diff and what the guard stopped can be read (3a Task 8).
+      if (s.pipelineId && !rec.pipelineId) { rec.pipelineId = s.pipelineId; store.updateTry(t.id, { pipelineId: s.pipelineId }); }
       // A step error is a finished, failed try; any other pause leaves it unfinished (pauseVerdict).
       if (s.pause && s.pause.fail && !rec.failReason) rec.failReason = sentence(s.pause.detail);
       const unfinished = !!(s.pause && s.pause.stop);

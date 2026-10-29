@@ -27,9 +27,9 @@ after(async () => {
 });
 
 test('every workflow test route is 404 while the flag is off', async () => {
-  assert.equal(routes.length, 19);
+  assert.equal(routes.length, 23);
   for (const { method, path } of routes) {
-    const url = path.replace(':id', 'wf_x').replace(':ex', '1').replace(':run', '1').replace(':try', '1').replace(':name', 'a.md').replace(':pipelineId', 'abcd1234');
+    const url = path.replace(':id', 'wf_x').replace(':ex', '1').replace(':run', '1').replace(':try', '1').replace(':name', 'a.md').replace(':pipelineId', 'abcd1234').replace(':key', 'p-1a2b3c4d');
     const r = await fetch(`${base}${url}`, { method, headers: { 'Content-Type': 'application/json' }, ...(method === 'GET' ? {} : { body: '{}' }) });
     assert.equal(r.status, 404, `${method} ${path}`);
   }

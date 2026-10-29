@@ -151,7 +151,7 @@ test('errors: unknown workflow, a bad example, an unknown example; a workflow th
   const mode = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [9999], tries: 1, connectors: 'maybe' });
   assert.deepEqual([mode.status, mode.body.error], [400, 'connectors must be "pretend" or "real"']);
   const o = await service.testsOverview('wf_api_t', { registry: { planner: { needsRepo: true } } });
-  assert.deepEqual([o.testable, o.reason], [true, null]);
+  assert.deepEqual([o.testable, o.reason, o.needsProject], [true, null, true]);
 });
 
 test("the server's liveRun carries a paused try's reason: a drain-paused try stops the test as a drain", async () => {
@@ -198,7 +198,7 @@ test('the example routes: edit, delete a file, add from runs, stop a test, a try
   assert.deepEqual([delFile.status, delFile.body.example.files], [200, []]);
 
   // From runs: ids are de-duplicated, and one run that cannot become an example adds none of them.
-  const pastId = service.recentRuns('wf_api_t')[0].pipelineId;
+  const pastId = (await service.recentRuns('wf_api_t'))[0].pipelineId;
   const tryId = store.triesOfRun(store.listTestRuns('wf_api_t').at(-1).id)[0].pipelineId;
   const pr = (await call('GET', `/api/workflow-tests/past-run/${tryId}`)).body;
   assert.deepEqual([pr.testable, pr.reason, pr.reasonText], [false, 'test-try', 'A test try cannot become an example.']);

@@ -9,9 +9,12 @@ import { isSafeWorkflowId } from '../workflows.mjs';
 import { isReservedWorkflowId } from '../graph/builtin-workflows.mjs';
 import { isVersionableRow, liveVersionNo, latestVersion } from '../workflow-revisions.mjs';
 import { loadAgentRegistry } from '../agent-registry.mjs';
-import { findPipelineRowById, readStepQuestions, readClarifyRow, runDirForRow } from '../artifacts.mjs';
-import { NO_PROJECT_KEY, isNoProjectKey, testCopyDirFor } from '../store.mjs';
+import { findPipelineRowById, readStepQuestions, readClarifyRow, runDirForRow, resolveIndexedArtifactForRow } from '../artifacts.mjs';
+import { isNoProjectKey, testCopyDirFor } from '../store.mjs';
 import { listProjects } from '../projects.mjs';
+import { readProjectActions } from '../config.mjs';
+import { listRemotes } from '../git-info.mjs';
+import { workModeOfRow } from '../project-kind.mjs';
 import { diffGraphs } from '../../shared/graph/diff-graphs.mjs';
 import { basicsList } from '../../shared/workflow-tests/checks.mjs';
 import { useLabel, testTitle, latestTitle, compareModel, TRIES_AT_ONCE } from '../../shared/workflow-tests/compare.mjs';
@@ -19,19 +22,21 @@ import { loadScriptRegistry } from '../script-registry.mjs';
 import * as store from './store.mjs';
 import { useGraph, useFingerprint } from './uses.mjs';
 import { testTargetOf, exampleReadiness } from './try-body.mjs';
-import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout } from './project-copy.mjs';
-import { leftOutText, folderMissingText, folderProjectText, diskRefusalText, diskRefusalOnceText } from '../../shared/workflow-tests/project-text.mjs';
+import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStart, listBranches, behindCount, headOf, commitExists,
+  commitDate } from './project-copy.mjs';
+import { leftOutText, folderMissingText, folderProjectText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult } from './result.mjs';
+import { DIFF_PATCH_FILE } from '../results.mjs';
 import { connectorNotes, userScopeServerNames, seenClaudeAiServers, wouldHaveSent, stepEngines, scriptSteps } from './connectors.mjs';
 
+/** Part 2's D20 sentence. 3a (D62) tests every workflow, so nothing produces it any more; kept for old callers. */
 export const NOT_TESTABLE_TEXT = 'This workflow works on a project, and tests work for workflows without a project for now.';
 export const NOT_TESTABLE_REASONS = Object.freeze({
   'test-try': 'A test try cannot become an example.',
   'not-finished': 'Wait until the run has finished.',
-  'project-run': 'This run worked on a project: tests try workflows without a project for now.',
-  'needs-project': NOT_TESTABLE_TEXT,
   'not-versionable': 'Its workflow comes from a plugin or is built in, so it has no tests.',
   'no-workflow': 'Its workflow was deleted.',
+  ...PAST_RUN_REFUSALS,   // 3a D65: folder-run, workspace-run, no-start (board 39)
 });
 const PREVIEW_MAX = 4000;
 const FIN = new Set(store.FINISHED);
@@ -121,6 +126,84 @@ export async function cleanupTry(outcome) {
   return removeTryCheckout({ copyDir: testCopyDirFor(p.key), worktreeDir: p.checkoutDir, branch: p.branch, runRoot: p.runRoot, pipelineId: outcome.pipelineId });
 }
 
+/** The project's own setup command (its Actions settings), the default of an example's "Before each try, run". */
+const setupOf = (key) => { try { return readProjectActions(key).setup || null; } catch { return null; } };
+
+/** The editor's project select (board 32): every registered project, the branch its folder is on, its setup. Read only. */
+export async function projectsForTests() {
+  const out = [];
+  for (const p of await listProjects()) {
+    const head = p.exists && p.vcs === 'git' ? await headOf(p.path) : null;
+    out.push({ key: p.key, name: p.name, path: p.path, exists: p.exists, vcs: p.vcs,
+      current: head ? { branch: head.branch, sha: head.sha, short: head.sha.slice(0, 7), at: head.at } : null, setupCmd: setupOf(p.key) });
+  }
+  return { projects: out };
+}
+
+/** The start point dialog (P2): a Git project's local branches. Read only. */
+export async function projectBranches(key) {
+  const reg = (await listProjects()).find((p) => p.key === key);
+  if (!reg || !reg.exists || reg.vcs !== 'git') throw err('no such Git project', 'NOT_FOUND');
+  return { branches: (await listBranches(reg.path)).map((b) => ({ ...b, short: b.sha.slice(0, 7) })) };
+}
+
+/** Board 32 / 38: an example's project as the page shows it, with its drift (D63). The name is the registry's. */
+export async function projectView(project, { projects = null } = {}) {
+  if (!project) return null;
+  const { state, reg } = await projectStateOf(project, { projects });
+  const behind = state === 'ok' ? await behindCount({ projectDir: reg.path, startSha: project.startSha, startRef: project.startRef }) : null;
+  return { key: project.key, name: reg ? reg.name : project.key, path: reg ? reg.path : null, state, startSha: project.startSha,
+    short: project.startSha.slice(0, 7), startRef: project.startRef, startAt: project.startAt, changes: !!project.changesSha256,
+    setupCmd: project.setupCmd, behind };
+}
+
+/**
+ * A save's `project` field → the pin to store (D41, D63, P3, P4): undefined keeps, null removes. Pins again only when the
+ * start point changes (another project or branch, "Start from the latest", the changes switched); the person's
+ * repository is only read.
+ */
+export async function resolveProjectInput(was, input) {
+  if (input === undefined) return undefined;
+  if (input === null) return null;
+  if (typeof input !== 'object' || Array.isArray(input)) throw err('pick a project', 'BAD_REQUEST');
+  const key = String(input.key || '');
+  const { state, reg } = await projectStateOf({ key });
+  if (state === 'not-registered') throw err('pick a project', 'BAD_REQUEST');
+  if (state === 'missing') throw err(folderMissingText(reg.name, reg.path), 'NOT_READY');
+  if (state === 'folder') throw err(folderProjectText(reg.name), 'NOT_READY');
+  if (input.ref !== undefined && input.ref !== null && typeof input.ref !== 'string') throw err('pick a branch of the project', 'BAD_REQUEST');
+  const prev = was && was.project ? was.project : null;
+  const setupCmd = typeof input.setupCmd === 'string' ? input.setupCmd : prev ? prev.setupCmd : setupOf(key);
+  const wantsChanges = input.includeChanges === undefined ? !!(prev && prev.changesSha256) : !!input.includeChanges;
+  const same = prev && prev.key === key && input.repin !== true && (input.ref === undefined || input.ref === prev.startRef)
+    && wantsChanges === !!prev.changesSha256;
+  if (same) return { ...prev, changes: store.readExampleChanges(was.id), setupCmd };
+  // P4: the same start, when the project's repository (re-added under another key, say) still has that commit.
+  const keepSha = prev && input.ref === undefined && input.repin !== true && !wantsChanges && prev.key !== key
+    && await commitExists(reg.path, prev.startSha) ? prev.startSha : null;
+  const pin = await pinStart({ key, name: reg.name, projectDir: reg.path, ref: keepSha ? prev.startRef : (input.ref ?? null),
+    sha: keepSha, includeChanges: wantsChanges });
+  return { ...pin, setupCmd };
+}
+
+/** Create (id null) or update an example; its `project` input goes through resolveProjectInput. */
+export async function saveExample(workflowId, id, body = {}, { by = null } = {}) {
+  const was = id == null ? null : store.readExample(workflowId, id);
+  if (id != null && !was) throw err(`no example ${id}`, 'NOT_FOUND');
+  const { project: input, ...fields } = body && typeof body === 'object' ? body : {};
+  const project = await resolveProjectInput(was, input);
+  return id == null ? store.createExample(workflowId, fields, { by, project: project ?? null })
+    : store.updateExample(workflowId, was.id, fields, { project });
+}
+
+/** D63: "Start from the latest": the newest commit of the example's branch, now. */
+export async function startFromLatest(workflowId, id) {
+  const ex = store.readExample(workflowId, id);
+  if (!ex) throw err(`no example ${id}`, 'NOT_FOUND');
+  if (!ex.project || !ex.project.startRef) throw err('this example does not follow a branch', 'BAD_REQUEST');
+  return saveExample(workflowId, ex.id, { project: { key: ex.project.key, ref: ex.project.startRef, repin: true } });
+}
+
 export function labelCtx(workflowId) {
   const latest = latestVersion(workflowId);
   return { liveVersionNo: liveVersionNo(workflowId), latestVersionNo: latest ? latest.versionNo : null };
@@ -160,18 +243,28 @@ const normPrompt = (s) => String(s ?? '').normalize('NFKC').toLowerCase().replac
 const extrasOf = (pipelineId) => prepare("SELECT rel_path FROM artifacts WHERE pipeline_id = ? AND kind = 'extra' ORDER BY rel_path")
   .all(pipelineId).map((r) => r.rel_path);
 
-/** Board 19 / G4, G7: the workflow's newest finished no-project runs (never a try); an exactly equal request is "the same". */
-export function recentRuns(workflowId, { limit = 10 } = {}) {
+/** Boards 19, 25, 38, 39 (D65): the workflow's newest finished runs, any target, never a try. A Folder or workspace run is
+ *  listed with its refusal. An exactly equal request is "the same". `project` is the registry's name of the run's
+ *  project (a workspace run: its members), null without one. */
+export async function recentRuns(workflowId, { limit = 10, projects = null } = {}) {
   getDb();
-  const rows = prepare(`SELECT id, title, prompt, status, started_at FROM pipelines WHERE project_key = ? AND is_test IS NULL
-      AND archived_at IS NULL AND deleted_at IS NULL AND status IN ('done', 'stopped', 'error') AND ${templateIdSql} = ?
-      ORDER BY started_at DESC LIMIT ?`).all(NO_PROJECT_KEY, workflowId, limit);
+  const list = projects || await listProjects();
+  const rows = prepare(`SELECT id, title, prompt, status, started_at, project_key, target, branch, workspace_meta FROM pipelines
+      WHERE is_test IS NULL AND archived_at IS NULL AND deleted_at IS NULL AND status IN ('done', 'stopped', 'error') AND ${templateIdSql} = ?
+      ORDER BY started_at DESC LIMIT ?`).all(workflowId, limit);
   const first = new Map();
   return rows.map((r) => {
     const key = normPrompt(r.prompt);
     const sameAs = key && first.has(key) ? first.get(key) : null;
     if (key && !first.has(key)) first.set(key, r.title || r.id);
-    return { pipelineId: r.id, title: r.title || r.id, at: r.started_at, status: r.status, files: extrasOf(r.id).length, sameAs };
+    const ws = r.target === 'workspace';
+    const refusal = ws ? 'workspace' : !isNoProjectKey(r.project_key) && workModeOfRow(r) !== 'git' ? 'folder' : null;
+    const nameOf = (k) => (k ? (list.find((p) => p.key === k) || {}).name || null : null);   // the registry's name, never the key
+    const wsProjects = ws ? (parse(r.workspace_meta, {}) || {}).projects : null;
+    const members = Array.isArray(wsProjects) ? wsProjects.map((m) => m && (nameOf(m.projectKey) || m.projectName || m.name)).filter(Boolean) : [];
+    const project = ws ? members.join(', ') || null : isNoProjectKey(r.project_key) ? null : nameOf(r.project_key);
+    return { pipelineId: r.id, title: r.title || r.id, at: r.started_at, status: r.status, files: extrasOf(r.id).length, sameAs, project, refusal,
+      refusalText: refusal ? PAST_RUN_REFUSALS[`${refusal}-run`] : null };
   });
 }
 
@@ -194,7 +287,15 @@ function pastAnswers(pipelineId) {
   return out;
 }
 
-/** Board 3: what "Use this run as a test example" keeps, and whether it can. */
+/** D65: where a single-project git run started: its branch record's baseSha (else diffBase), on its source branch. */
+function startOfRow(row) {
+  const br = parse(row.branch, {}) || {};
+  const sha = typeof br.baseSha === 'string' && br.baseSha ? br.baseSha : typeof br.diffBase === 'string' && br.diffBase ? br.diffBase : null;
+  return sha ? { sha, ref: typeof br.source === 'string' && br.source ? br.source : null } : null;
+}
+
+/** Board 3 (3a: boards 38, 39): what "Use this run as a test example" keeps, and whether it can. A project run's example
+ *  starts where the run started (D65); a Folder or workspace run, or one with no recorded start, cannot be one. */
 export async function pastRunSummary(pipelineId, { registry = loadAgentRegistry() } = {}) {
   getDb();
   const row = findPipelineRowById(pipelineId);
@@ -207,17 +308,27 @@ export async function pastRunSummary(pipelineId, { registry = loadAgentRegistry(
   let target = null;
   if (row.is_test) reason = 'test-try';
   else if (!['done', 'stopped', 'error'].includes(row.status)) reason = 'not-finished';
-  else if (!isNoProjectKey(row.project_key)) reason = 'project-run';
+  else if (row.target === 'workspace') reason = 'workspace-run';
+  else if (!isNoProjectKey(row.project_key) && workModeOfRow(row) !== 'git') reason = 'folder-run';
+  else if (!isNoProjectKey(row.project_key) && !startOfRow(row)) reason = 'no-start';
   else {
-    try { target = testTarget(workflowId || '', { registry }); if (!target.testable) reason = 'needs-project'; }
+    try { target = testTarget(workflowId || '', { registry }); }   // D62: a workflow is always testable now
     catch (e) { reason = e && e.code === 'NOT_VERSIONABLE' ? 'not-versionable' : 'no-workflow'; }
   }
   const ctx = target ? labelCtx(workflowId) : {};
+  let project = null;
+  const start = !reason && !isNoProjectKey(row.project_key) ? startOfRow(row) : null;
+  if (start) {
+    const reg = (await listProjects()).find((p) => p.key === row.project_key) || null;   // the registry's name, never the key
+    project = { key: row.project_key, name: reg ? reg.name : row.project_key, startSha: start.sha, short: start.sha.slice(0, 7), startRef: start.ref,
+      startAt: (reg && reg.exists ? await commitDate(reg.path, start.sha) : null) || row.started_at || null, setupCmd: setupOf(row.project_key) };
+  }
   return {
     pipelineId: row.id, workflowId, workflowName: target ? target.row.name : (tpl.name || ''),
     title: row.title || '', request: row.prompt || '', files: extrasOf(row.id).map((p) => basename(p)), qa: pastAnswers(row.id),
     use, useLabel: use === 'draft' ? 'your draft' : useLabel(use, ctx), testable: !reason, reason,
     reasonText: reason ? NOT_TESTABLE_REASONS[reason] : null,
+    project,
   };
 }
 
@@ -228,16 +339,25 @@ const exampleName = (name, past) => (typeof name === 'string' && name.trim() ? n
 async function usablePastRun(workflowId, pipelineId, registry) {
   const past = await pastRunSummary(pipelineId, registry ? { registry } : {});
   if (past.workflowId !== workflowId) throw err('this run is of another workflow', 'BAD_REQUEST');
-  if (!past.testable) throw err(NOT_TESTABLE_REASONS[past.reason] || NOT_TESTABLE_TEXT, past.reason === 'needs-project' ? 'NOT_TESTABLE' : 'BAD_REQUEST');
+  if (!past.testable) throw err(NOT_TESTABLE_REASONS[past.reason] || NOT_TESTABLE_TEXT, 'BAD_REQUEST');
   return past;
 }
 
-export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest = true, keepAnswers = true, verdict = null, note = null } = {}, { by = null, registry } = {}) {
+export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest = true, keepAnswers = true, verdict = null, note = null,
+  setupCmd = null } = {}, { by = null, registry } = {}) {
   const past = await usablePastRun(workflowId, pipelineId, registry);
   if (verdict !== null && verdict !== 'good' && verdict !== 'not-good') throw err('verdict must be "good" or "not-good"', 'BAD_REQUEST');
   const clean = exampleName(name, past);
+  // D65: a project run's example starts exactly where the run started, with no changes (runs start from commits).
+  let project = null;
+  if (past.project) {
+    const { state, reg } = await projectStateOf({ key: past.project.key });
+    if (state !== 'ok') throw err(readinessText({ name: clean, project: past.project }, state, { reg }), 'NOT_READY');
+    const pin = await pinStart({ key: past.project.key, name: reg.name, projectDir: reg.path, sha: past.project.startSha, ref: past.project.startRef });
+    project = { ...pin, setupCmd: typeof setupCmd === 'string' && setupCmd.trim() ? setupCmd.trim() : past.project.setupCmd };
+  }
   const example = store.createExample(workflowId, { name: clean, request: keepRequest ? past.request : '', answers: keepAnswers ? past.qa : [], note },
-    { by, from: { pipelineId: past.pipelineId, use: past.use, verdict } });
+    { by, from: { pipelineId: past.pipelineId, use: past.use, verdict }, project });
   const skipped = [];
   if (keepRequest) {
     const row = findPipelineRowById(past.pipelineId);
@@ -257,7 +377,8 @@ export async function examplesFromRuns(workflowId, pipelineIds, opts = {}) {
   for (const id of ids) {
     const past = await usablePastRun(workflowId, id, opts.registry);
     // The example as exampleFromRun would write it (a request too long, …): its first error, before anything is added.
-    const { errors } = store.normaliseExample({ name: exampleName(undefined, past), request: past.request, answers: past.qa });
+    const { errors } = store.normaliseExample({ name: exampleName(undefined, past), request: past.request, answers: past.qa },
+      { hasProject: !!past.project });   // D65: a project run's example carries its project
     if (errors.length) throw err(errors[0], 'BAD_REQUEST', { errors });
   }
   const examples = [];
@@ -290,28 +411,35 @@ function modelInput(run, ctx) {
 
 /** Boards 1 and 19 in one read. */
 export async function testsOverview(workflowId, { registry = loadAgentRegistry(), fingerprintOf = (id, use) => useFingerprint(id, use) } = {}) {
-  const { row, testable, reason } = testTarget(workflowId, { registry });
+  const { row, testable, reason, needsProject } = testTarget(workflowId, { registry });
   const ctx = labelCtx(workflowId);
   const uses = [...(ctx.liveVersionNo ? [ctx.liveVersionNo] : []), 'draft'];
   const fpNow = {};
   for (const use of uses) {
     try { fpNow[store.useRef(use)] = await fingerprintOf(workflowId, use); } catch { fpNow[store.useRef(use)] = null; }
   }
-  const examples = store.listExamples(workflowId).map((ex) => {
+  const projects = await listProjects();   // read once: every example's project and the past runs' names
+  const examples = [];
+  for (const ex of store.listExamples(workflowId)) {
     const from = ex.from ? findPipelineRowById(ex.from.pipelineId) : null;
-    return {
+    const project = await projectView(ex.project, { projects });
+    // D62: whether a test can try it (the draft's needs; targetFor checks each version again at the start).
+    const ready = exampleReadiness({ needsProject, example: ex, state: project ? project.state : null });
+    examples.push({
       id: ex.id, name: ex.name, hasRequest: !!ex.request.trim(), files: ex.files.map((f) => f.name),
       fromAt: from ? from.started_at || null : null, note: ex.note, tries: ex.tries,
       basics: basicsList(ex.basics).length, checks: ex.checks.length,
       cells: Object.fromEntries(uses.map((use) => [store.useRef(use), cellOf(ex, use, fpNow[store.useRef(use)])])),
-    };
-  });
+      project, ready: ready.ready, reason: ready.reason,
+      readyText: ready.ready ? null : readinessText(ex, ready.reason, { reg: project ? projects.find((p) => p.key === project.key) || null : null }),
+    });
+  }
   const runs = store.listTestRuns(workflowId, { limit: 20 });
   const running = runs.find((r) => r.status === 'running') || null;
   const last = runs.find((r) => r.kind === 'compare' && r.status !== 'running') || null;
   const own = running ? store.triesOfRun(running.id).filter((t) => t.runId === running.id) : [];
   return {
-    workflowId, name: row.name, testable, reason, ctx,
+    workflowId, name: row.name, testable, reason, needsProject, ctx,
     columns: uses.map((use) => ({ use, label: useLabel(use, ctx, 'column') })),
     examples,
     running: running ? { runId: running.id, title: testTitle(running, ctx, { mode: 'testing', exampleName: firstExampleName(running) }),
@@ -319,7 +447,7 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
     latest: last ? { runId: last.id, title: latestTitle(last, ctx), finishedAt: last.finishedAt, examples: last.exampleIds.length,
       tries: last.tries, costUsd: store.spentOfRun(last.id), counts: compareModel(modelInput(last, ctx)).counts, status: last.status,
       stopReason: last.stopReason } : null,
-    pastRuns: recentRuns(workflowId),
+    pastRuns: await recentRuns(workflowId, { projects }),
   };
 }
 
@@ -329,10 +457,11 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
  * script steps on either side, and the engines other than Claude its agent steps run on. Read when the dialog asks, so
  * the engine is today's `run.engine` (`runEngine` overrides it, a test seam).
  */
-async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEngine = null, mode = 'pretend' } = {}) {
+async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEngine = null, mode = 'pretend', scope = null } = {}) {
   let preview = {};
   let previewError = false;   // the dialog says it could not read the connectors, never "none"
-  try { preview = connectorsPreview ? (await connectorsPreview()) || {} : {}; } catch { preview = {}; previewError = true; }
+  // 3a: `scope` = the one project the test's examples work on ({ key, name, projectDir }), else null (no project).
+  try { preview = connectorsPreview ? (await connectorsPreview(scope)) || {} : {}; } catch { preview = {}; previewError = true; }
   const copies = Array.isArray(preview.copies) ? preview.copies : [];
   const fileServers = Array.isArray(preview.fileServers) ? preview.fileServers : [];
   let scripts = {};
@@ -359,6 +488,27 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
   const ctx = labelCtx(workflowId);
   const all = store.listExamples(workflowId);
   const examples = exampleIds.length ? all.filter((e) => exampleIds.includes(e.id)) : all;
+  // D62: only the examples that can be tried count; the others are named in the dialog's hint (board 34).
+  const projects = await listProjects();
+  const registry = loadAgentRegistry();
+  const readyEx = [];
+  const leftOut = [];
+  for (const ex of examples) {
+    let ok = true;
+    for (const use of [a, b].filter((u) => u != null)) { if (!(await targetFor(workflowId, use, ex, { registry, projects })).ready) ok = false; }
+    (ok ? readyEx : leftOut).push(ex);
+  }
+  const projEx = readyEx.filter((e) => e.project);
+  const names = [...new Set(projEx.map((e) => (projects.find((p) => p.key === e.project.key) || {}).name || e.project.key))];
+  const setupMsList = projEx.map((e) => store.avgSetupMs(e.id, e.project.startCommit)).filter((n) => n != null);
+  const cmds = [...new Set(projEx.map((e) => e.project.setupCmd).filter(Boolean))];
+  const one = names.length === 1 && projEx.length ? projects.find((p) => p.key === projEx[0].project.key) : null;
+  const project = projEx.length ? {
+    names, leftOut: leftOut.map((e) => e.name),
+    disk: await diskPlanOf(projEx, { tries, sides: a != null ? 2 : 1, projects }),
+    setupCmd: cmds.length === 1 ? cmds[0] : null,
+    setupMs: setupMsList.length ? Math.round(setupMsList.reduce((sum, n) => sum + n, 0) / setupMsList.length) : null,
+  } : (leftOut.length ? { names: [], leftOut: leftOut.map((e) => e.name), disk: null, setupCmd: null, setupMs: null } : null);
   const side = async (use) => {
     if (use == null) return null;
     let fp = null;
@@ -366,18 +516,19 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
     let reusable = 0;
     let at = null;
     if (fp) {
-      for (const ex of examples) {
+      for (const ex of readyEx) {
         const kept = store.reusableTries({ workflowId, exampleId: ex.id, use, fp, exampleFp: ex.fingerprint, mock, connectors, limit: tries });
         reusable += kept.length;
         for (const t of kept) if (t.finishedAt && (!at || t.finishedAt > at)) at = t.finishedAt;
       }
     }
     const perTryUsd = perTryCost(workflowId, use);
-    return { use, label: useLabel(use, ctx, 'select'), short: useLabel(use, ctx), want: examples.length * tries, reusable,
+    return { use, label: useLabel(use, ctx, 'select'), short: useLabel(use, ctx), want: readyEx.length * tries, reusable,
       reusableAt: at, perTryUsd, savesUsd: perTryUsd === null ? null : reusable * perTryUsd };
   };
-  return { a: await side(a), b: await side(b), examples: examples.length, tries, perTryMs: perTryMs(workflowId),
-    connectors: { mode: connectors, ...(await connectorsOf(workflowId, [a, b], { connectorsPreview, runEngine, mode: connectors })) } };
+  return { a: await side(a), b: await side(b), examples: readyEx.length, tries, perTryMs: perTryMs(workflowId), project,
+    connectors: { mode: connectors, ...(await connectorsOf(workflowId, [a, b], { connectorsPreview, runEngine, mode: connectors,
+      scope: one ? { key: one.key, name: one.name, projectDir: one.path } : null })) } };
 }
 
 /** C9 and board 20's "So far" column. */
@@ -417,8 +568,9 @@ export function takenMs(run, tries) {
   return total + (to - from);
 }
 
-/** Board 20 (G8: two rows per example when both versions need tries). `costOf` = the runner's live cost. */
-export function progressOf(workflowId, runId, { costOf = null } = {}) {
+/** Board 20 (G8: two rows per example when both versions need tries). `costOf` = the runner's live cost. 3a (board 35):
+ *  `phaseOf` = what a running project try is doing now (the runner's); `project.disk` is filled by progressDisk. */
+export function progressOf(workflowId, runId, { costOf = null, phaseOf = null } = {}) {
   const run = runOf(workflowId, runId);
   const ctx = labelCtx(workflowId);
   const tries = store.triesOfRun(run.id);
@@ -430,10 +582,32 @@ export function progressOf(workflowId, runId, { costOf = null } = {}) {
     const ex = store.readExample(workflowId, id);
     for (const side of sides) {
       const list = tries.filter((t) => t.exampleId === id && t.side === side).sort((x, y) => x.tryNo - y.tryNo || x.id - y.id);
+      // Board 35: a project example's running try and its phase. An example without a project has none (its brief
+      // 'preparing' is not "copying the project").
+      const running = ex && ex.project ? list.find((t) => t.status === 'running') : null;
+      const ph = running && phaseOf ? phaseOf(run.id, running.id) : null;
+      const now = running ? { tryNo: running.tryNo, phase: ph ? ph.phase : 'working', checking: ph ? ph.checking : null,
+        setupCmd: ex.project.setupCmd, startedMs: ph ? ph.startedMs : null } : null;
       rows.push({ exampleId: id, name: ex ? ex.name : 'A deleted example', label: both ? useLabel(side === 'a' ? run.a : run.b, ctx) : null,
-        dots: list.map((t) => t.status), summary: rowSummary(list, run) });
+        dots: list.map((t) => t.status), summary: rowSummary(list, run), now });
     }
   }
+  // Board 35: the phase card shows the first running project try; a setup stop shows its output.
+  const firstNow = rows.find((r) => r.now);
+  const projectRows = run.exampleIds.map((id) => store.readExample(workflowId, id)).filter((x) => x && x.project);
+  let setupStop = null;
+  if (run.stopReason === 'setup') {
+    const bad = own.find((t) => t.setup && t.setup.ok === false);
+    const ex = bad ? store.readExample(workflowId, bad.exampleId) : null;
+    if (bad) setupStop = { cmd: bad.setup.cmd, tail: bad.setup.tail || '', exampleId: bad.exampleId, exampleName: ex ? ex.name : '', label: useLabel(bad.use, ctx), tryNo: bad.tryNo };
+  }
+  const phases = (() => {
+    const ex = firstNow ? store.readExample(workflowId, firstNow.exampleId) : null;
+    if (!ex || !ex.project) return null;
+    return { exampleName: firstNow.name, label: firstNow.label || useLabel(run.b, ctx), tryNo: firstNow.now.tryNo, phase: firstNow.now.phase,
+      start: { ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt }, setupCmd: ex.project.setupCmd };
+  })();
+  const project = projectRows.length ? { phases, disk: null, setupStop } : null;   // disk: progressDisk (async), in the route
   const costBy = new Map();
   const costFor = (use) => { const k = store.useRef(use); if (!costBy.has(k)) costBy.set(k, perTryCost(workflowId, use)); return costBy.get(k); };
   const estimateUsd = own.reduce((s, t) => { const c = costFor(t.use); return s === null || c === null ? null : s + c; }, 0);
@@ -446,7 +620,18 @@ export function progressOf(workflowId, runId, { costOf = null } = {}) {
     minutesLeft: ms !== null && remaining ? Math.max(1, Math.ceil((Math.ceil(remaining / TRIES_AT_ONCE) * ms) / 60000)) : null,
     takenMs: takenMs(run, own),
     quick: run.quick,
+    project,
   };
+}
+
+/** Board 35's "Disk in use" (D60): free at the start minus free now, of about the need. The route adds it (statfs is async). */
+export async function progressDisk(workflowId, run, { diskOf = null } = {}) {
+  const exs = run.exampleIds.map((id) => store.readExample(workflowId, id)).filter((x) => x && x.project);
+  if (!exs.length) return null;
+  const plan = await diskPlanOf(exs, { tries: run.tries, sides: run.a != null ? 2 : 1 });
+  const free = plan ? plan.freeBytes : null;
+  const start = diskOf ? (diskOf(run.id) || {}).freeAtStart ?? null : null;
+  return { inUseBytes: start != null && free != null ? Math.max(0, start - free) : null, needBytes: plan ? plan.needBytes : null, freeBytes: free };
 }
 
 async function changesBetween(workflowId, a, b, registry) {
@@ -480,8 +665,9 @@ export async function compareOf(workflowId, runId, { registry = loadAgentRegistr
 }
 
 /** Board 6 (G2: one column for Try it once now) and board 31 (what a pretend try would have sent). The cards show the
- *  first PREVIEW_MAX characters; tryResult reads all. */
-export async function sideBySide(workflowId, runId, exampleId) {
+ *  first PREVIEW_MAX characters; tryResult reads all. 3a (boards 36, 37): a project try's changes and setup, and what the
+ *  guard stopped in both modes; `forgeOf` names a remote's forge (forgeNamer). */
+export async function sideBySide(workflowId, runId, exampleId, { forgeOf = null } = {}) {
   const run = runOf(workflowId, runId);
   const ex = store.readExample(workflowId, exampleId);
   if (!ex || !run.exampleIds.includes(ex.id)) throw err(`no example ${exampleId} in this test`, 'NOT_FOUND');
@@ -494,17 +680,45 @@ export async function sideBySide(workflowId, runId, exampleId) {
     if (!t) return null;
     const m = await mainResult(t.pipelineId);
     const text = typeof m.text === 'string' ? m.text : null;
-    const sent = t.connectors === 'pretend' ? await wouldHaveSent(t.pipelineId) : null;
+    // 3a D68: the guard's rows in both modes. A real try has no stand-ins, so its log holds only what the guard stopped.
+    const sent = await wouldHaveSent(t.pipelineId, forgeOf ? { forgeOf } : {});
     return { tryId: t.id, status: t.status, verdict: t.verdict, name: m.name,
       text: text && text.length > PREVIEW_MAX ? text.slice(0, PREVIEW_MAX) : text, truncated: !!text && text.length > PREVIEW_MAX,
-      connectors: t.connectors, wouldHaveSent: sent ? sent.sent : null, answeredReads: sent ? sent.reads : [] };
+      connectors: t.connectors, wouldHaveSent: sent.sent, answeredReads: sent.reads,
+      project: t.startCommit || t.changes ? { changes: t.changes, setup: t.setup ? { cmd: t.setup.cmd, ms: t.setup.ms } : null } : null };
   };
   const out = [];
   for (let i = 0; i < Math.max(A.length, B.length); i += 1) out.push({ n: i + 1, a: await view(A[i]), b: await view(B[i]) });
   const labels = { a: run.a != null ? useLabel(run.a, ctx) : null, b: useLabel(run.b, ctx) };
   const m = compareModel({ examples: [{ id: ex.id, name: ex.name }], a: labels.a ? { label: labels.a } : null, b: { label: labels.b }, tries });
   return { run, compareTitle: testTitle(run, ctx, { exampleName: ex.name }), example: { id: ex.id, name: ex.name }, labels, row: m.examples[0],
-    connectors: run.connectors, tries: out };
+    connectors: run.connectors, tries: out,
+    start: ex.project ? { ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt, setupCmd: ex.project.setupCmd,
+      setupMs: store.avgSetupMs(ex.id, ex.project.startCommit) } : null,
+    nothingPushed: !!ex.project,
+  };
+}
+
+const FORGE_NAMES = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps' });
+/** P9: the forge of the real project's remote by its name, for board 37's "… on GitHub". Read only (`git remote -v`). */
+export async function forgeNamer(key) {
+  const reg = (await listProjects()).find((p) => p.key === key);
+  if (!reg || !reg.exists) return () => null;
+  const r = await listRemotes(reg.path);
+  const by = new Map((r.ok ? r.remotes : []).map((x) => [x.name, FORGE_NAMES[x.forge] || null]));
+  return (name) => by.get(name) || null;
+}
+
+export const TRY_PATCH_MAX = 5 * 1024 * 1024;
+/** A try's whole diff (board 36's "Read all the changes"), at most TRY_PATCH_MAX characters; '' when it has none. */
+export async function tryChanges(workflowId, runId, tryId) {
+  const run = runOf(workflowId, runId);
+  const t = store.triesOfRun(run.id).find((x) => x.id === Number(tryId));
+  if (!t) throw err(`no try ${tryId} in this test`, 'NOT_FOUND');
+  const row = t.pipelineId ? findPipelineRowById(t.pipelineId) : null;
+  const hit = row ? await resolveIndexedArtifactForRow(row, DIFF_PATCH_FILE) : null;
+  const patch = hit ? hit.text : '';
+  return { patch: patch.length > TRY_PATCH_MAX ? patch.slice(0, TRY_PATCH_MAX) : patch };
 }
 
 /** "Read the whole result". */

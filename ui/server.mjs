@@ -13169,14 +13169,17 @@ const workflowTestDeps = {
     return ok;
   },
   mockMode: serverMockMode,
-  // D35, board 30: what a run without a project would load, for the Test a version dialog's notes. A registry copy is
-  // `untested` when a pretend try gives it no stand-in (pretendCopies: a current, passing Test with tools); the servers of
-  // the projects root's `.mcp.json` (the root layer a run without a project merges) are the file servers.
-  connectorsPreview: async () => {
-    const [{ result }, mcpStore] = await Promise.all([
-      mcpRunPreview({ kind: 'project', key: NO_PROJECT_KEY, name: NO_PROJECT_NAME, rank: 0 }), readMcpStore()]);
+  // D35, board 30 (3a: board 34): what a try would load, for the Test a version dialog's notes. A registry copy is
+  // `untested` when a pretend try gives it no stand-in (pretendCopies: a current, passing Test with tools). Without a
+  // project: the registry's no-project scope, and the servers of the projects root's `.mcp.json` (the root layer a run
+  // without a project merges) are the file servers. On one project: that project's scope and the `.mcp.json` of its
+  // folder (read only).
+  connectorsPreview: async (scope = null) => {
+    const target = scope && scope.key ? { kind: 'project', key: scope.key, name: scope.name || scope.key, rank: 0 }
+      : { kind: 'project', key: NO_PROJECT_KEY, name: NO_PROJECT_NAME, rank: 0 };
+    const [{ result }, mcpStore] = await Promise.all([mcpRunPreview(target), readMcpStore()]);
     const standIns = new Set(pretendCopies(result.copies, (mcpStore && mcpStore.tests) || {}).map((c) => c.name));
-    const root = getProjectsRoot();
+    const root = scope && scope.projectDir ? scope.projectDir : getProjectsRoot();
     const file = root ? (await readMcpFile(path.join(root, '.mcp.json'))).servers : null;
     return {
       copies: result.copies.map((c) => ({ name: c.name, untested: !standIns.has(c.name) })),
