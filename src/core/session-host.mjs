@@ -50,6 +50,10 @@ const BUDGET_FLOOR_USD = 0.01;
  *  predicate is claude-runner's own (`opts.mock` OR WORCA_MOCK/ORCH_MOCK, critique minor 8), never `opts.mock` alone. */
 export const defaultTransport = (hostOpts) => (mockEnabled(hostOpts) ? runMockSession(hostOpts) : runClaude({ ...hostOpts, rawEvents: true }));
 
+/** Test seam (Task 49's parity check): `onDefinitions(definitions, memberOpts, member)` sees each turn's definitions beside
+ *  the member's own runOpts. Never set in production. */
+export const _testing = { onDefinitions: null };
+
 const WATCHDOG_TEXT = {
   SESSION_HOST_NO_DISPATCH: 'the main agent did not dispatch the step',
   SESSION_HOST_MULTI_DISPATCH: 'the main agent dispatched the step more than once',
@@ -472,6 +476,7 @@ export class SessionHost {
     this.lastDispatch.set(executionId, { dispatchId, nodeId });
     const { agentType, definitions } = memberDefinition(opts, { executionId, attempt, label });
     const definition = definitions[agentType];
+    try { _testing.onDefinitions?.(definitions, opts, member); } catch { /* a test seam never breaks a turn */ }
     // A member with no model of its own and no host model runs on the CLI's default model, which nothing here can price:
     // no flag then (as for an ungrouped step; C37's gate still runs before every spawn).
     const maxBudgetUsd = definition.model || flags.model ? this._maxBudgetUsd([flags.model, this.hostResolvedModel, definition.model].filter(Boolean)) : null;
