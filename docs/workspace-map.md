@@ -5,7 +5,10 @@ other: which member calls another's API, consumes the messages it publishes, bui
 package or shares its tables. Every scanned edge carries file:line evidence and a confidence,
 every member a coverage level. The map is stored with the workspace, shown on the workspace
 page's **Map** tab, and rendered into the workspace description that every agent of a
-workspace run receives (`## Workspace Context`).
+workspace run receives (`## Workspace Context`). Workspaces group 2–40 related projects, Git
+repositories or Folder projects, under **Workspaces** (Advanced level).
+
+![The Nimbus workspace's Map tab: coverage chips for nimbus-crm, nimbus-web and nimbus-jobs, a graph of REST API, message/queue and shared DB edges, and the Edges table with confidence badges, file:line evidence and Confirm/Reject buttons above the Add edge form](screenshots/workspace-map.png)
 
 ## How a scan works
 
@@ -105,7 +108,9 @@ A re-scan replaces the description, hand edits included.
 ## Reviewing the map
 
 On the **Map** tab you can confirm an edge or reject it, clear either, add an edge the scan
-missed (from, to, kind, a one-line name and an optional detail) and delete it again.
+missed (from, to, kind, a one-line name and an optional detail) and delete it again. The edge
+list filters by project (either end), kind, confidence and state; a manual edge has no
+confidence, so a confidence filter never shows it.
 
 - A rejected edge leaves the description and the Map tab's graph; the merged graph file (see
   below) keeps every scanned edge. A manual edge is marked `(manual)` unless the description is
@@ -162,7 +167,7 @@ yet come in through **Add…** or the box under it — paste paths, one per line
   existing rows start ticked, up to the 40-project limit; untick what you do not want.
 - **Scan interconnections** registers the ticked new rows as projects first — named after the
   `.code-workspace` entry or the folder; a name already taken gets its parent folder's name in
-  front — then starts the scan.
+  front — then starts the scan. The workspace is saved when that scan ends.
 - Importing only reads: it lists folders, reads the `.code-workspace` file and runs
   `git rev-parse`. It never writes into a repository. The projects Scan registers are ordinary
   projects from then on, with the same background fetches as a project added under **Projects**.
@@ -175,7 +180,7 @@ yet come in through **Add…** or the box under it — paste paths, one per line
 ## Changing members
 
 A workspace's members can change after it is created: **Add projects** and **Remove** on the
-workspace page's Projects card, `POST /api/workspaces/:id/members` with `{ "add": [paths] }` or
+Projects card of the workspace page's Overview tab, `POST /api/workspaces/:id/members` with `{ "add": [paths] }` or
 `{ "remove": path }`, or Chat's workspace card. The workspace keeps its id, so its runs,
 schedules, homes and map reviews stay attached; runs already started keep the members they
 started with.
@@ -239,6 +244,14 @@ A partial re-scan saves exactly like a full one: a member change while it runs m
 (`SET_CHANGED`). If the stored map no longer covers the members when it is about to start, worca runs
 a full re-scan instead and says so; a partial run that still cannot read a matching map ends as
 failed (never paused), so Re-scan stays available.
+
+## Workspace runs
+
+In **New pipeline**, set **Target** to **Workspace**. The planner writes one plan whose every
+task is tagged with the projects it touches (`Projects: <projectKey>[, ...]`), and each
+implementer edits only those. Every Git member gets its own branch and worktree; every Folder
+member gets its own copy, which you apply to its folder (or discard) on its own. **Workspace
+Review** reviews each changed member and merges the findings into one verdict per review cycle.
 
 ## Cross-project graph
 

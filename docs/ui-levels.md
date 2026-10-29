@@ -124,7 +124,8 @@ be skipped by forgetting it.
   The guides open that dialog too when a save failed.
 - `ui-level.mjs` paints all three (the menu row and side menu, the Settings card,
   the dialog) from one controller.
-- Stored as `uiLevel` in `settings.json`. Absent means "never chosen".
+- Stored as `uiLevel` in the server's `settings.json`, so a choice applies in every browser that
+  opens this Worca. Absent means "never chosen".
 
 ## Catalogue
 

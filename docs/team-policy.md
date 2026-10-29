@@ -43,6 +43,7 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 | Required MCP servers (`mcp.required`) | servers each developer turns on with consent; they form the **Team** set ([below](#mcp-servers-the-team-set)); never in `workspaceRuns` | soft |
 | Required skills (`skills.required`) | plugin skills each developer turns on with consent; they join the **Team** set ([below](#skills-required-plugin-skills)); never in `workspaceRuns` | soft |
 | Default workflow, human in the loop | when the project has no active workflow / switch of its own | default |
+| Away mode defaults (`night.*`) | the [Away mode](away-mode.md) settings (which runs, away hours, method, thresholds, spend cap and limits) when you have not set your own | default |
 | Record runs to team metrics, minimum Worca version | a hint when "Include my runs" is off; a banner on an older client | soft |
 | Tag dimensions (`runs.tagDimensions`) | up to 10 `{ key, label, values?, required?, default? }` run-tag keys: one New run slot each, a picker of the allowed values; `default` pre-fills it (one of the values, when there are values). A mandatory (`required`) key the run does not carry records a `tag-missing:cc` finding: mandatory keys warn, or block a start with Require mandatory tags on. Setting it replaces the developer's Settings › Tags rows and makes them read-only | soft |
 | Require mandatory tags (`runs.enforceTags`) | bool. On: a run cannot start (New run, Chat, schedules, Run after, API, CLI) while a mandatory tag has no value after pre-fill, or a tag is outside its values; a scheduled firing is skipped with the reason. Off, or unset under a policy that sets `runs.tagDimensions`: mandatory tags only warn. Unset with no policy list: the developer's own Settings › Tags switch applies | soft |
@@ -217,7 +218,7 @@ any project or workspace that resolves a policy from the cached branch reads
 
 ## The Team policy page
 
-The page separates what the team publishes from what your machine makes of it.
+The page is **Manage › Team policy** in the sidebar (Expert level). It separates what the team publishes from what your machine makes of it.
 
 - The **top right** carries the sync chip that Team metrics uses: how fresh this machine's copy
   is, and **Refresh**. Nothing about the document itself.

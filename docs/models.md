@@ -27,8 +27,8 @@ before it closes on unsaved changes.
 
 ### Harnesses, providers and models
 
-A **harness** runs the agents: Claude Code, Codex, Copilot, Cursor or Goose, picked per
-run. A **provider** is where a model's tokens are billed: a harness's own
+A **harness** runs the agents: Claude Code, Codex, Copilot, Cursor, Gemini CLI, Goose,
+OpenCode or Qwen Code, picked per run (see [Engines](#engines)). A **provider** is where a model's tokens are billed: a harness's own
 sign-in, or an endpoint. A **model** sits on one provider. Which harnesses can
 run a model follows from its connection, never from a setting:
 
@@ -76,12 +76,44 @@ worca's read-only investigator and the node's sub-agent model. A value set in
 the shell Worca starts from does not change this, and an entry's env may not
 set the key.
 
+## Engines
+
+Agents run on Claude Code by default. The other engines are all in **beta**: OpenAI's
+[Codex](#codex) CLI, GitHub's [Copilot CLI](#github-copilot-cli), Cursor's
+[CLI agent](#cursor), Google's [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code),
+[Goose](#goose) and [OpenCode](#opencode).
+
+- Pick one per run with **Engine** on New pipeline (Advanced) or
+  `--engine claude|codex|copilot|cursor|gemini|goose|opencode|qwen`, or set a default on the
+  Models page's **Engines** card or in a project's settings.
+- Each needs its own CLI installed and signed in; each section below says how.
+- The beta engines hold guardrail rules only in part, so a run under Normal or Strict needs
+  **Allow unguarded** (`--allow-unguarded-engine`); the partial rules still apply, and the run
+  log lists what is held.
+- Copilot, Cursor, Gemini CLI and Qwen Code report no dollar cost; Goose and OpenCode price
+  what they know. Each section's **Cost** note says how worca shows it.
+- Chat runs on every engine but Cursor ([Chat](#chat)).
+- A model's connection decides which engines can run it
+  ([Harnesses, providers and models](#harnesses-providers-and-models)).
+
+![New pipeline in Advanced mode for the nimbus-crm project: the Workflow picker on Auto beside the Engine picker set to Codex (Beta), the hint that Codex runs this pipeline including titles and summaries, a typed task to add an Idempotency-Key header to POST /contacts, and the Branches table starting from main, up to date](screenshots/engine-picker.png)
+
 ## The catalog
 
 The Models page is the catalog and nothing else. Above the rows sit a search
 box (id, label or upstream id) and filter chips — *All*, *Yours*, *Built-in*,
 *Plugin*, *Team*, *Needs setup*, plus *Just imported* right after an import.
 Each group folds, with the count in its header; built-in models start folded.
+*Hide built-in models* (`hideBuiltinModels`) drops the built-ins from every picker; their ids
+still resolve.
+
+*Add model* registers any model id (a proxy, a fine-tune, an alternative provider), declares
+which effort levels it supports, and attaches per-model routing env (for example
+`ANTHROPIC_BASE_URL`) that is merged into that model's agent spawns. An entry that routes to
+a custom endpoint also gets Claude Code's internal tier keys
+(`ANTHROPIC_DEFAULT_HAIKU_MODEL`, `…_SONNET_…`, `…_OPUS_…`, `…_FABLE_…`) set to its own id
+wherever its env leaves them unset, so the CLI's own calls (session titles, a Task's
+`model: haiku`) never fall back to the Anthropic API.
 
 ## Model roles
 
@@ -497,6 +529,11 @@ worca models set openrouter apiKey='${OPENROUTER_KEY}'   # openai provider → O
 A `worca --model copilot-gpt-5 --prompt …` run starts its own bridge.
 
 ## Plugins and team policy
+
+*Share as plugin…* on the Models page exports your models as a plugin scaffold. Each env
+value is **Include value** (committed), **Omit**, or **Require at install**: kept out of the
+repository as a secret each teammate enters once, after installing, under the plugin's
+*Model secrets*.
 
 A plugin manifest's `models[]` entry may carry the same `upstream` block
 (`provider`, `api`, `model`, optional `baseUrl` / `headers` / `capabilities`).

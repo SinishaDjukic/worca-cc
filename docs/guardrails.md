@@ -1,9 +1,9 @@
 # Guardrails
 
 Guardrails are **named policy sets**, selected **per pipeline run**. The
-**Guardrails** view in the web UI lists the built-ins — **Permissive**,
-**Normal**, **Strict** — alongside your own sets ("Create guardrails" starts
-from any of them, or blank), with an editor for the five policy fields:
+**Guardrails** tab in Settings (Advanced level) lists the built-ins — **Permissive**,
+**Normal**, **Strict** — alongside your own sets with their details ("Create guardrails",
+Expert level, starts from any of them, or blank), with an editor for the five policy fields:
 
 1. honor project settings
 2. environment scrub
@@ -11,9 +11,13 @@ from any of them, or blank), with an editor for the five policy fields:
 4. protected paths
 5. deny rules
 
-The New Pipeline form has a **Guardrails** picker next to the workflow picker:
+The New Pipeline form has a **Guardrails** picker next to the workflow picker
+(under **Advanced**):
 the selected set is the run's entire policy, applied uniformly to every agent
 the run spawns — and, for a workspace run, uniformly to every member project.
+A [team policy](team-policy.md) can preset the picker (`guardrails.default`) and
+warn when a run's set ranks below its minimum tier (`guardrails.minimum`); the
+run still starts and the deviation is recorded.
 
 **Guardrails apply per run; runs without a selection run unguarded
 (Permissive).** The picker defaults to Permissive — no restrictions,
