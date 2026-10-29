@@ -15,7 +15,7 @@ const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v 
 const textOf = (content) => (typeof content === 'string' ? content
   : Array.isArray(content) ? content.filter((c) => c && c.type === 'text' && typeof c.text === 'string').map((c) => c.text).join('') : '');
 
-export function createClaudeNormalizer() {
+export function createClaudeNormalizer({ rootParentId = null } = {}) {
   const agents = new Set();
   const messageIds = new Map();
 
@@ -124,8 +124,13 @@ export function createClaudeNormalizer() {
     if (e.type === 'stderr') return [{ type: 'stderr', stream: 'err', text: e.text }];
     const raw = e.raw;
     if (!raw || typeof raw !== 'object') return e.text ? [{ type: 'text', text: e.text, parentId: null, from: 'assistant' }] : [];
+    const rawPid = raw.parent_tool_use_id ?? raw.message?.parent_tool_use_id ?? null;
+    // Session host re-root (consult R1, Task 30): this stream is ONE member's, the child of the host's Agent call
+    // `rootParentId`. The host's own frames (no parent), the child's result and its init (S9: the host forwards its
+    // session) never reach it; the member's frames become main-stream, so its own Agent calls are sub-agents.
+    if (rootParentId !== null && (rawPid === null || raw.type === 'result' || (raw.type === 'system' && raw.subtype === 'init'))) return [];
     if (raw.mock === true && raw.type !== 'result') return e.text ? [{ type: 'text', text: e.text, parentId: null, from: 'assistant' }] : [];
-    const parentId = raw.parent_tool_use_id ?? raw.message?.parent_tool_use_id ?? null;
+    const parentId = rootParentId !== null && rawPid === rootParentId ? null : rawPid;
     if (isHookEvent(raw)) return [{ type: 'hook', raw }];
     // Text on a frame this vocabulary has no shape for is still worth a log line;
     // `from:'other'` keeps it out of an Ask Worca answer.
