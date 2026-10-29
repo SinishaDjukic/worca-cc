@@ -346,12 +346,26 @@ enforces the set's latest definition.
     from it — only allowlist hosts you trust with that.
   - **SSRF:** a host that resolves to any loopback, private, link-local
     (cloud metadata), CGNAT, ULA or other reserved address is refused; the check
-    runs on the address actually dialled. Pages are capped at 2 MiB and 100 000
+    runs on the address actually dialled (direct connections; see the proxy
+    rule below). Pages are capped at 2 MiB and 100 000
     characters of text, 15 s per call; only text types are read. The text reaches
     the chat in pages of 20 000 characters, 30 000 at most (Claude Code moves a
-    larger tool result into a file the chat cannot read). Node's `https`
-    ignores `HTTPS_PROXY`, so a proxy-only network cannot use web access in v1.
-    On a worca with no route to the internet (`compose.egress.yml` puts it on an
+    larger tool result into a file the chat cannot read).
+  - **Behind a proxy.** When `HTTPS_PROXY` (else `HTTP_PROXY`) is set and
+    `NO_PROXY` does not list the host (loopback never goes through it), each
+    fetch and search opens a `CONNECT` tunnel to `host:443` through the proxy
+    and verifies the site's certificate inside it, so the proxy sees the host
+    name but not the page or the request (unless it intercepts TLS with a CA
+    this machine trusts). The allowlist and data-in-URL rules run first, as
+    above. The proxy resolves the host, so the SSRF check can no longer run on
+    the address actually dialled: worca resolves the host itself first and
+    refuses it when any answer is non-public, but when worca cannot resolve it
+    (a proxy-only network) the request goes ahead and the proxy's DNS decides.
+    Behind a proxy, the allowlist (and the proxy's own rules) is the guard
+    against reaching internal hosts: an allowlisted name the proxy resolves to
+    an intranet address is reached. List only hosts you trust, and put internal
+    domains in `NO_PROXY` so the full direct check applies to them.
+  - On a worca with no route to the internet (`compose.egress.yml` puts it on an
     internal network) every fetch fails; when the host name does not resolve, or
     the connection is refused or times out before the host answers, the error
     says this worca may not have internet access instead of only the network
