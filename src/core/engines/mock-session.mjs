@@ -19,6 +19,9 @@ const WAITS = new Set(['two-dispatch', 'stray-bash', 'model-override', 'backgrou
 
 const ids = { host: 0, agent: 0, call: 0, turn: 0 };
 let lost = new Map();                    // spend of cut turns the CLI never restores (restoreCutCost false)
+// `vanished` is ONE loss of the CLI's transcripts (Task 47): every session that existed when the first resume hit it is
+// gone; the sessions created after it resume normally, as a real CLI resumes what it wrote after such a loss.
+let bornAfterLoss = null;                // null until the first vanished turn; then the ids created since
 
 /** Test seams. `behave`, `costFor`, `onMemberStart`, `resolvedModel`, `hookUsd` and `restoreCutCost` are the test's configuration;
  *  `resetSessions()` clears the session state only: `spent`, `seen`, `spendBeforeHang`, the ids and the turn counter. */
@@ -37,6 +40,7 @@ export const _testing = {
     this.seen = [];
     this.spendBeforeHang = null;
     lost = new Map();
+    bornAfterLoss = null;
     ids.host = 0; ids.agent = 0; ids.call = 0; ids.turn = 0;
   },
 };
@@ -73,13 +77,17 @@ export async function runMockSession(hostOpts = {}) {
   _testing.seen.push(seen);
   check();                               // a turn stopped before it started shows and spends nothing (v5)
 
-  if (behaviour === 'vanished' && resume) throw new Error(`No conversation found with session ID: ${resumeSessionId}`);
+  if (behaviour === 'vanished' && resume && !bornAfterLoss?.has(resumeSessionId)) {
+    bornAfterLoss ??= new Set();
+    throw new Error(`No conversation found with session ID: ${resumeSessionId}`);
+  }
   if (behaviour === 'sideload-refused' && pluginDirs?.length) {
     emit({ type: 'log', text: SIDELOAD_REFUSAL });
     throw new Error('claude exited with code 1');
   }
 
   const hostSessionId = resumeSessionId || `mock-host-${++ids.host}`;
+  if (!resumeSessionId) bornAfterLoss?.add(hostSessionId);
   seen.hostSessionId = hostSessionId;
   let turnSpend = 0;
   let resulted = false;

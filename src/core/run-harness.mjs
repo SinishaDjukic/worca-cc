@@ -1955,6 +1955,9 @@ export class RunHarness extends EventEmitter {
       // The total is Σ steps (I2): rehydrate it with them, or the first persist of a resumed run writes
       // $0 and a resumed run that books nothing new finishes at $0 while its ledger keeps the spend.
       this.state.totalCostUsd = sumStepCosts(this.state.steps);
+      // Session groups (Task 47): the session summaries the row holds (outcome.sessionHosts) stay the run's; a resumed
+      // SessionHost then folds its trace on top, and a kill-switch resume keeps the history it does not extend.
+      if (saved.state?.sessionHosts && typeof saved.state.sessionHosts === 'object') this.state.sessionHosts = saved.state.sessionHosts;
       this.baseName = row.base_name;
       this.planDatePrefix = row.date_prefix;
       this.pipeline = { id: row.id, dir: rp.pipelineDir, promptText: row.prompt || '' };
@@ -7811,12 +7814,35 @@ export class RunHarness extends EventEmitter {
     return map.get(sessionId);
   }
 
+  /** Session groups (Task 47): put one session's live snapshot in the run's resume point, which the next persist writes with
+   *  the rows a booking changed. Only a point that already carries `sessionHosts` (built while the hosts run) takes it. */
+  _saveSessionSnapshot(sid, snap) {
+    const rp = this.state.resumePoint;
+    if (!rp || typeof rp !== 'object' || !rp.sessionHosts || typeof rp.sessionHosts !== 'object') return;
+    this.state.resumePoint = { ...rp, sessionHosts: { ...rp.sessionHosts, [sid]: snap } };
+  }
+
   /** The SessionHost restore's baseline (Task 47, through `port.seedBaseline`): the trace's last `turn_end.cumulativeUsd`
    *  of the current epoch (C28), so a "restored less" baseline is the same figure before and after a restart (critique
-   *  M-1). A non-finite figure is ignored; a seeded id never falls back to the row max. */
-  seedSessionBaseline(sessionId, usd) {
-    if (!Number.isFinite(usd)) return;
-    (this._sessionBaselines ||= new Map()).set(sessionId, usd);
+   *  M-1). A non-finite figure is ignored; a seeded id never falls back to the row max. One exception (run 5's crash
+   *  seam): a turn's booking persists the rows before its `turn_end` lands (an async append), so a row of session `sid`
+   *  whose own BOOKED turn (`step.session.costSource` set) on this host is newer than `afterTurn` (the trace's last
+   *  turn_end) holds the newer figure, and the newest such row wins. @returns {number|undefined} the figure seeded */
+  seedSessionBaseline(sessionId, usd, { sid = null, afterTurn = null } = {}) {
+    if (!Number.isFinite(usd)) return undefined;
+    let seed = usd;
+    if (sid && Number.isInteger(afterTurn)) {
+      let newest = afterTurn;
+      for (const s of this.state.steps) {
+        const ref = s.session;
+        if (!ref || ref.sid !== sid || ref.hostSessionId !== sessionId || ref.costSource == null) continue;
+        const n = Number(/:(\d+)$/.exec(String(ref.turnId))?.[1]);
+        const v = Number(s.sessionCosts?.[sessionId]);
+        if (Number.isInteger(n) && n > newest && Number.isFinite(v)) { newest = n; seed = v; }
+      }
+    }
+    (this._sessionBaselines ||= new Map()).set(sessionId, seed);
+    return seed;
   }
 
   /** Sub-agent lifecycle: a spawn learns its label (for the child lines' "▸"
@@ -8320,7 +8346,9 @@ export class RunHarness extends EventEmitter {
       stampRow: (stepKey, ref) => this._stampSessionRow(stepKey, ref),
       remainingBudgetUsd: (q) => this._remainingPipelineBudgetUsd(q),
       checkCostLimits: () => this._checkCostLimits(),
-      seedBaseline: (hostSessionId, usd) => this.seedSessionBaseline(hostSessionId, usd),
+      seedBaseline: (hostSessionId, usd, o) => this.seedSessionBaseline(hostSessionId, usd, o),
+      // Task 47: a booking's host snapshot joins the resume point the next persist writes with the rows (the trace lags both).
+      saveSnapshot: (sid, snap) => this._saveSessionSnapshot(sid, snap),
       onQueue: (executionId, queued) => this._onSessionQueue(executionId, queued),
       log: (level, text, attr) => this._log('session', level, text, attr),
     };
@@ -8340,7 +8368,8 @@ export class RunHarness extends EventEmitter {
       carried: null, reconcile: { ok: true, checks: [] }, ...over });
     if (Number.isFinite(b.cutEstimateUsd)) {                       // C9: a cut the harness will never restore
       this._openTurns?.delete(b.stepKey);
-      if (!engineCost) return booking({});                          // C24: an engine without cost books nothing, never $0
+      // C24: an engine without cost books nothing, never $0 — judged on the engine the cut was spent on (an engine switch).
+      if (!(b.cutEngine ? engineReportsCost(b.cutEngine) : engineCost)) return booking({});
       this._recordCost(b.cutEstimateUsd, b.stepKey);
       return booking({ memberUsd: b.cutEstimateUsd, costSource: 'estimate' });
     }

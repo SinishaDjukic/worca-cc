@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { splitCarried } from '../../src/core/session-cost.mjs';
 import { sessionAuditLine } from '../../src/core/session-trace.mjs';
+import { createOrchestrator } from '../../src/core/orchestrator.mjs';
+import { readPipelineForResume } from '../../src/core/artifacts.mjs';
+import { getDb } from '../../src/core/db.mjs';
+import { _testing as mockT } from '../../src/core/engines/mock-session.mjs';
+import { gitDir } from './git-dir.mjs';
 
 export const SID = 's_aaaaaaaa';
 
@@ -131,4 +136,60 @@ export function gatedTransport() {
   }
   const fail = (i, err) => calls[i].reject(err);
   return { transport, calls, ok, fail };
+}
+
+/** Hang `nodeId`'s FIRST dispatch (`x:<nodeId>:1`, attempt 1) on the mock host and call `onBound(seen)` once its member
+ *  is bound (the mock's onMemberStart: member_bound is written, the turn is about to hang). `spendBeforeHang`: what the
+ *  mock spends before it hangs, as a killed CLI spends money its result never reports. Restored by the returned undo. */
+function hangFirstDispatch(nodeId, spendBeforeHang, onBound) {
+  const prefix = `worca-x-${nodeId}-1-a1`;
+  const prev = { behave: mockT.behave, onMemberStart: mockT.onMemberStart, spendBeforeHang: mockT.spendBeforeHang };
+  let hung = false;
+  mockT.spendBeforeHang = Number.isFinite(spendBeforeHang) ? spendBeforeHang : null;
+  mockT.behave = (a) => {
+    if (!hung && a.agentType === prefix) { hung = true; return 'hang'; }
+    return prev.behave?.(a) ?? null;
+  };
+  mockT.onMemberStart = (a) => {
+    prev.onMemberStart?.(a);
+    if (a.agentType === prefix) onBound(mockT.seen.at(-1));
+  };
+  return () => { mockT.behave = prev.behave; mockT.onMemberStart = prev.onMemberStart; mockT.spendBeforeHang = prev.spendBeforeHang; };
+}
+
+/** A whole mock run of `workflowId`, paused (the user's Pause) while `nodeId`'s first dispatch is inside its host turn:
+ *  member bound, the member at work. Resolves once the run settled as paused. → { orch, id } */
+export async function pauseMidTurn({ workflowId, nodeId, spendBeforeHang = null }) {
+  let orch = null;
+  const undo = hangFirstDispatch(nodeId, spendBeforeHang, () => { queueMicrotask(() => orch.pause()); });
+  try {
+    orch = createOrchestrator({ projectDir: gitDir(`pause-${nodeId}`), workflowId, prompt: 'demo', auto: true, claude: { mock: true } });
+    const res = await orch.run();
+    if (res.status !== 'paused') throw new Error(`pauseMidTurn: the run ended ${res.status}${res.error ? ` (${res.error})` : ''}, not paused`);
+    return { orch, id: orch.getState().id };
+  } finally { undo(); }
+}
+
+/** A whole mock run of `workflowId` that "crashes" while `nodeId`'s first dispatch is inside its host turn: the first
+ *  orchestrator is left hanging and cut off from the DB (it writes nothing more: no turn_end, no close), its heartbeat
+ *  stops, and the row reads as a crashed server's reconcile leaves it (`interrupted`, the member row `running`).
+ *  → { id, orch, hostSessionId } (hostSessionId: the host the hung turn ran on). */
+export async function crashMidTurn({ workflowId, nodeId }) {
+  let bound;
+  const atBind = new Promise((resolve) => { bound = resolve; });
+  const undo = hangFirstDispatch(nodeId, null, (seen) => bound(seen));
+  let orch;
+  try {
+    orch = createOrchestrator({ projectDir: gitDir(`crash-${nodeId}`), workflowId, prompt: 'demo', auto: true, claude: { mock: true } });
+    orch.run().catch(() => {});                                     // never settles: the process "died" mid-turn
+    const seen = await atBind;
+    const id = orch.getState().id;
+    orch._persist = async () => {};                                 // a dead process writes nothing more
+    orch._stopHeartbeat();
+    const db = getDb();
+    db.prepare("UPDATE pipelines SET status = 'interrupted', heartbeat_at = ? WHERE id = ?").run(new Date(Date.now() - 300_000).toISOString(), id);
+    db.prepare("UPDATE pipeline_steps SET status = 'running' WHERE pipeline_id = ? AND key = ?").run(id, `x:${nodeId}:1`);
+    if (!readPipelineForResume(id)) throw new Error('crashMidTurn: the row is not resumable');
+    return { id, orch, hostSessionId: seen.hostSessionId };
+  } finally { undo(); }
 }

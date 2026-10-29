@@ -154,7 +154,7 @@ test('v2 — snapshot() is the HostSnapshot; close: pause on paused, close on th
   const p = host.run(memberOpts(), member('n_a')); await tick(); g.ok(0); await p;
   const s = hosts.snapshot()[SID];
   assert.deepEqual(Object.keys(s), ['sid', 'mode', 'degradeReason', 'engine', 'hostEpoch', 'hostSessionId', 'hostResolvedModel', 'turns', 'dispatches',
-    'epochDispatches', 'rotations', 'restarts', 'attempts', 'consecutiveWatchdog', 'lastContextTokens', 'lastCumulativeUsd', 'epochOpeningUsd', 'openCut', 'status']);
+    'epochDispatches', 'rotations', 'restarts', 'attempts', 'consecutiveWatchdog', 'lastContextTokens', 'lastCumulativeUsd', 'epochOpeningUsd', 'openCut', 'status', 'pendingRotate']);
   assert.deepEqual([s.sid, s.mode, s.degradeReason, s.engine, s.hostEpoch, s.turns, s.dispatches, s.epochDispatches, s.attempts, s.openCut, s.status],
     [SID, 'subagents', null, 'claude', 1, 1, 1, 1, { 'x:n_a:1': 1 }, null, 'idle']);
   await hosts.close('done');

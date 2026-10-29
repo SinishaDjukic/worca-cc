@@ -8,7 +8,7 @@ import { runMockSession } from './engines/mock-session.mjs';
 import { SessionHostError, HOST_MAX_TURNS, HOST_TOOLS_MODE, dispatchIdFor, turnIdFor, dispatchMessage, memberDefinition, hostFlagsFor,
   hostSpawnOpts } from './engines/session-dispatch.mjs';
 import { createTurnDemux, watchdogVerdict } from './engines/session-demux.mjs';
-import { createSessionTrace, applyTraceRecord, emptySummary } from './session-trace.mjs';
+import { createSessionTrace, applyTraceRecord, emptySummary, readTraceSync, reduceTrace } from './session-trace.mjs';
 import { priceUsage, usageTokens, reconcileEpoch, estimateMemberUsd } from './session-cost.mjs';
 import { listCostRates } from './config.mjs';
 import { upstreamKey } from './model-roles.mjs';
@@ -61,6 +61,10 @@ const emitTo = (onEvent, e) => { try { if (typeof onEvent === 'function') onEven
 const decisionOf = (decisions, sid) => (decisions instanceof Map ? decisions.get(sid) : decisions?.[sid]) || null;
 const ZERO_TOKENS = () => ({ in: 0, out: 0, cr: 0, cw: 0 });
 const addTokens = (a, t) => { for (const k of ['in', 'out', 'cr', 'cw']) a[k] += t[k]; return a; };
+/** A count from a snapshot or a record: a non-negative integer, else 0. */
+const count = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+/** A trace record's `{ in, out, cr, cw }` (turn_end.hostUsage, member_done.tokens), each part a finite figure or 0. */
+const tokensOf = (t) => ({ in: fin(t?.in) ? t.in : 0, out: fin(t?.out) ? t.out : 0, cr: fin(t?.cr) ? t.cr : 0, cw: fin(t?.cw) ? t.cw : 0 });
 /** USD of a usage at a model, 0 when it cannot be priced (a cut turn's estimate, C9). `ratesFor` as priceUsage's (default:
  *  the operator's override, else the list price). */
 const priced = (model, usage, ratesFor) => { const p = priceUsage(model, usage, { ratesFor }); return fin(p) ? p : 0; };
@@ -116,6 +120,118 @@ export class SessionHost {
     this.trace = createSessionTrace({ pipelineDir: port.pipelineDir, sid: this.sid, runId: port.runId ?? null });
   }
 
+  /** A fresh session's first records (C27: a separate session still writes the short trace, so the Sessions tab can say why). */
+  _open() {
+    const d = this.decision;
+    const s = this.settings;
+    this._write('open', { engine: this.engine, mode: d.mode, transport: SESSION_TRANSPORT, hostModel: s.hostModel ?? null,
+      hostEffort: s.hostEffort ?? null, members: this.members, label: this.label });
+    this._writeMode();
+  }
+
+  /** The run-start gate's decision as a `mode` record, plus `degrade` when it is separate (C27). */
+  _writeMode() {
+    const d = this.decision;
+    this._write('mode', { mode: d.mode, requested: d.requested ?? null, reason: d.reason ?? null, engine: this.engine, transport: SESSION_TRANSPORT });
+    if (d.mode === 'separate') this._write('degrade', { from: d.requested ?? 'subagents', to: 'separate', reason: d.reason ?? null });
+  }
+
+  /**
+   * Task 47 (spec §5.2; C2, C28, C30, C43): continue this session from the resume point's snapshot `S` and its trace,
+   * either of which a crash may have cut short of its last write. The live summary is the trace's own fold (C6). The
+   * higher epoch, turn, dispatch, rotation, restart and attempt figures win; the host id and the cumulative figure are
+   * those of the CURRENT epoch (the trace's when it reached it: a crash keeps an older snapshot, C43); the held cut, the
+   * degrade (C30), the watchdog streak and a pending rotation come from the snapshot. The baseline is seeded so the first
+   * resumed turn's Δ and `--max-budget-usd` use the figure the CLI reports (critique M-1). Then `resume {after}` — or, on
+   * another engine, the held cut is booked as an estimate (it cannot carry across epochs), `restart {reason:
+   * 'engine-switch'}` opens a new epoch, and the new run's gate decision is written as `mode`. A trace that holds no
+   * record (lost, or never written) is opened again first; the snapshot alone then restores the host.
+   */
+  _restore(S) {
+    let records = [];
+    try { records = readTraceSync(this.trace.path).records; } catch { records = []; }
+    const traceLost = !records.length;
+    if (traceLost) this._open();
+    else this.summary = reduceTrace(records);
+    const T = this.summary;
+    const sEpoch = count(S.hostEpoch);
+    // A crash right after a rotate/restart record (its next epoch's first record lost, the usual torn tail) is in the new
+    // epoch already: the old epoch's host id and cumulative must not come back (its cut was booked by the rotate).
+    const recEpoch = records.reduce((m, r) => Math.max(m, count(r.hostEpoch)), 0);
+    const lastSwitch = records.findLast((r) => r.kind === 'rotate' || r.kind === 'restart');
+    const tEpoch = Math.max(count(T.hostEpoch), lastSwitch && count(lastSwitch.hostEpoch) === recEpoch ? recEpoch + 1 : 0);
+    const epoch = Math.max(sEpoch, tEpoch, 1);
+    const sameEpoch = sEpoch === epoch;
+    this.hostEpoch = epoch;
+    this.hostSessionId = (T.hostEpoch === epoch ? T.hostSessionId : null) ?? (sameEpoch ? S.hostSessionId ?? null : null);
+    this.hostResolvedModel = (sameEpoch ? S.hostResolvedModel : null) ?? null;
+    this.turns = Math.max(count(S.turns), T.turns);
+    this.dispatches = Math.max(count(S.dispatches), T.dispatches);
+    this.rotations = Math.max(count(S.rotations), T.rotations);
+    this.restarts = Math.max(count(S.restarts), T.restarts);
+    for (const [x, n] of Object.entries(S.attempts && typeof S.attempts === 'object' ? S.attempts : {})) if (count(n)) this.attempts.set(x, n);
+    const inEpoch = records.filter((r) => r.hostEpoch === epoch);
+    const costed = new Set();                                                // C9: a turn with a cost record is no longer a cut
+    for (const r of records) {
+      if (r.kind === 'dispatch' && typeof r.executionId === 'string' && count(r.attempt)) this.attempts.set(r.executionId, Math.max(this.attempts.get(r.executionId) || 0, r.attempt));
+      else if (r.kind === 'cost') { this._addMemberUsd(r.nodeId, r.memberUsd); if (typeof r.turnId === 'string') costed.add(r.turnId); }
+      else if (r.kind === 'turn_end') { if (fin(r.durationMs)) this.activeMs += r.durationMs; addTokens(this.tokens, tokensOf(r.hostUsage)); }
+      else if (r.kind === 'member_done') addTokens(this.tokens, tokensOf(r.tokens));
+      else if ((r.kind === 'rotate' || r.kind === 'restart') && r.epochCheck && typeof r.epochCheck === 'object') this.epochChecks.push(r.epochCheck);
+    }
+    this.epochDispatches = Math.max(inEpoch.filter((r) => r.kind === 'dispatch').length, sameEpoch ? count(S.epochDispatches) : 0);
+    const lastEnd = inEpoch.filter((r) => r.kind === 'turn_end' && fin(r.cumulativeUsd)).at(-1);
+    this.lastCumulativeUsd = lastEnd ? lastEnd.cumulativeUsd : (sameEpoch && fin(S.lastCumulativeUsd) ? S.lastCumulativeUsd : 0);
+    this.lastContextTokens = sameEpoch && fin(S.lastContextTokens) ? S.lastContextTokens : 0;
+    // This run checks what it books from here: its epoch bookings start at 0, so the epoch opens at the restored figure.
+    this.epochOpeningUsd = this.lastCumulativeUsd;
+    // The snapshot is taken when an execution completes, so after a crash its held cut can be older than the trace: a part
+    // the trace already carried or booked (a cost record for its turn) is not held again (C9).
+    const held = S.openCut && typeof S.openCut === 'object' ? (Array.isArray(S.openCut.parts) ? S.openCut.parts : [S.openCut]) : [];
+    const open = held.filter((p) => p && typeof p === 'object' && !costed.has(p.turnId));
+    if (open.length === held.length) this.openCut = held.length ? structuredClone(S.openCut) : null;
+    else for (const p of open) this._holdCut(structuredClone(p));
+    this.pendingRotate = T.rotations > count(S.rotations) ? null : S.pendingRotate ?? null;   // a rotate the trace holds used it
+    this.consecutiveWatchdog = count(S.consecutiveWatchdog);
+    const opened = Date.parse(T.startedAt ?? '');
+    if (fin(opened)) this.openedAt = opened;
+    // C30: a runtime degrade (a degrade after a dispatch, since the last gate decision) holds even where the snapshot
+    // predates it (a crash during the plain retry that follows it).
+    const tail = records.slice(records.findLastIndex((r) => r.kind === 'mode') + 1);
+    const ranAt = tail.findIndex((r) => r.kind === 'dispatch');
+    const traceDegrade = ranAt >= 0 ? tail.slice(ranAt).findLast((r) => r.kind === 'degrade') ?? null : null;
+    const degraded = (S.mode === 'separate' || !!traceDegrade) && this.mode !== 'separate';
+    if (degraded) {                                                          // C30: a degraded session stays degraded
+      this.mode = 'separate';
+      this.degradeReason = (S.mode === 'separate' ? S.degradeReason : traceDegrade?.reason) ?? null;
+    }
+    if (S.engine != null && this.engine != null && S.engine !== this.engine) {
+      this.mode = this.decision.mode;                                        // the new run's gate chose it
+      this.degradeReason = this.decision.mode === 'separate' ? (this.decision.reason ?? null) : null;
+      this.consecutiveWatchdog = 0;
+      this.pendingRotate = null;
+      this._bookOpenCut(S.engine);                                           // spent on the old engine: priced as its estimate
+      this._restart('engine-switch');
+      if (!traceLost) this._writeMode();                                     // a reopened trace's open already wrote it
+      return;
+    }
+    this._write('resume', { after: S.status === 'paused' ? 'pause' : 'crash' });
+    if (degraded && traceLost) this._write('degrade', { from: this.decision.mode, to: 'separate', reason: this.degradeReason });   // the lost trace said it
+    if (this.decision.mode === 'separate' && S.mode !== 'separate') {        // the gate says separate now (flag, CLI, …)
+      this.mode = 'separate';
+      this.degradeReason = this.decision.reason ?? null;
+      if (!traceLost) this._writeMode();                                     // a reopened trace's open already wrote it
+    }
+    if (this.hostSessionId && fin(this.lastCumulativeUsd)) {
+      // The rows are written before a turn's turn_end lands (an async append): the harness seeds from a row whose own booked
+      // turn is newer than the trace's last turn_end, and answers the figure it seeded (run 5's crash seam).
+      const afterTurn = lastEnd ? Number(/:(\d+)$/.exec(String(lastEnd.turnId))?.[1] ?? 0) : 0;
+      let seeded;
+      try { seeded = this.port.seedBaseline?.(this.hostSessionId, this.lastCumulativeUsd, { sid: this.sid, afterTurn }); } catch { /* the baseline falls back to the rows */ }
+      if (fin(seeded)) { this.lastCumulativeUsd = seeded; this.epochOpeningUsd = seeded; }
+    }
+  }
+
   /** Append one record (with the host's ids), fold it into the live summary and hand both to the port (C6). */
   _write(kind, fields = {}) {
     const rec = this.trace.append(kind, { hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, ...fields });
@@ -135,6 +251,13 @@ export class SessionHost {
 
   _stamp(executionId, ref) {
     try { this.port.stampRow?.(executionId, ref); } catch { /* the row ref is best-effort, like _persist */ }
+  }
+
+  /** Task 47 (C28, the crash seam): this session's snapshot for the run's resume point, handed over with every booking. The
+   *  harness persists the rows a booking changes at once and the trace appends later, so a snapshot taken only when an
+   *  execution completes would, after a crash, still hold a cut the rows already carried or booked. */
+  _saveSnapshot() {
+    try { this.port.saveSnapshot?.(this.sid, this.snapshot()); } catch { /* best-effort, like _persist */ }
   }
 
   /** The harness books; a booking that throws is logged and the turn goes on (its records say what is known). */
@@ -524,7 +647,9 @@ export class SessionHost {
       const rc = booking.reconcile || { ok: true, checks: [] };
       this._write('reconcile', { turnId, dispatchId, ok: rc.ok !== false, checks: Array.isArray(rc.checks) ? rc.checks : [] });
     }
-    // C7: the full ref replaces the bind-time one.
+    // C7: the full ref replaces the bind-time one. The snapshot goes first, so the persist after this turn's booking writes it
+    // with the rows (Task 47: the trace's appends lag both; a crash then never holds again a cut the rows already carried).
+    this._saveSnapshot();
     this._stamp(executionId, { sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId, dispatchId, attempt,
       memberAgentId: boundId, memberTranscriptId: done?.agentId ?? null, costSource: booking?.costSource ?? null });
 
@@ -598,19 +723,21 @@ export class SessionHost {
   }
 
   /** A cut that can never be carried (no restore, a closing host, a rotate or restart): booked now, as an estimate. */
-  _bookCut(cut) {
+  _bookCut(cut, cutEngine = null) {
+    this._saveSnapshot();                       // what is still held, as the rows will say once this booking persists
     const booking = this._book({ sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId: cut.turnId, dispatchId: cut.dispatchId,
-      stepKey: cut.executionId, nodeId: cut.nodeId, cutEstimateUsd: cut.cutUsd });
+      stepKey: cut.executionId, nodeId: cut.nodeId, cutEstimateUsd: cut.cutUsd, ...(cutEngine ? { cutEngine } : {}) });
     this._write('cost', { turnId: cut.turnId, dispatchId: cut.dispatchId, executionId: cut.executionId, nodeId: cut.nodeId,
       memberUsd: booking?.memberUsd ?? null, hostOverheadUsd: booking?.hostOverheadUsd ?? null, costSource: booking?.costSource ?? 'estimate', cut: true });
     this._addMemberUsd(cut.nodeId, booking?.memberUsd);
   }
 
-  _bookOpenCut() {
+  /** `cutEngine`: the engine the cut was spent on, when it is not this run's (an engine switch on resume, Task 47). */
+  _bookOpenCut(cutEngine = null) {
     if (!this.openCut) return;
     const c = this.openCut;
     this.openCut = null;
-    for (const p of c.parts || [c]) this._bookCut(p);                         // each cut turn on its own row (C9)
+    for (const p of c.parts || [c]) this._bookCut(p, cutEngine);              // each cut turn on its own row (C9)
   }
 
   /** C5: the executor's verdict on the execution's latest dispatch (counts only). */
@@ -629,7 +756,7 @@ export class SessionHost {
       epochDispatches: this.epochDispatches, rotations: this.rotations, restarts: this.restarts,
       attempts: Object.fromEntries(this.attempts), consecutiveWatchdog: this.consecutiveWatchdog, lastContextTokens: this.lastContextTokens,
       lastCumulativeUsd: this.lastCumulativeUsd, epochOpeningUsd: this.epochOpeningUsd, openCut: this.openCut ? structuredClone(this.openCut) : null,
-      status: this.summary.status,
+      status: this.summary.status, pendingRotate: this.pendingRotate,
     };
   }
 
@@ -691,7 +818,6 @@ export class SessionHost {
  * session's dispatch calls (Task 41, C30): the executor's own runner, so it runs exactly as ungrouped.
  */
 export function createSessionHosts({ specs = [], decisions = null, port, transport = defaultTransport, plainRun = runClaude, restore = null, limits = {} } = {}) {
-  void restore;                                                            // Task 47
   const hosts = new Map();
   const byNode = new Map();
   for (const spec of Array.isArray(specs) ? specs : []) {
@@ -701,13 +827,9 @@ export function createSessionHosts({ specs = [], decisions = null, port, transpo
     const host = new SessionHost({ spec, decision, port, transport, plainRun, limits });
     hosts.set(spec.sid, host);
     for (const id of host.members) byNode.set(id, host);
-    const s = spec.settings || {};
-    host._write('open', { engine: port.engine ?? null, mode: decision.mode, transport: SESSION_TRANSPORT, hostModel: s.hostModel ?? null,
-      hostEffort: s.hostEffort ?? null, members: host.members, label: host.label });
-    host._write('mode', { mode: decision.mode, requested: decision.requested ?? null, reason: decision.reason ?? null,
-      engine: port.engine ?? null, transport: SESSION_TRANSPORT });
-    // C27: a separate session still writes a short trace, so the Sessions tab can say why.
-    if (decision.mode === 'separate') host._write('degrade', { from: decision.requested ?? 'subagents', to: 'separate', reason: decision.reason ?? null });
+    const snap = restore && typeof restore === 'object' ? restore[spec.sid] : null;
+    if (snap && typeof snap === 'object') host._restore(snap);             // Task 47: a resumed session continues its trace
+    else host._open();
   }
   return {
     hosts,

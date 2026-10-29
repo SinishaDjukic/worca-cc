@@ -401,7 +401,7 @@ test('sweep — a fresh host\'s snapshot is complete and null-filled; a junk spe
   const { hosts } = hostWith(runMockSession);
   assert.deepEqual(hosts.snapshot()[SID], { sid: SID, mode: 'subagents', degradeReason: null, engine: 'claude', hostEpoch: 1, hostSessionId: null,
     hostResolvedModel: null, turns: 0, dispatches: 0, epochDispatches: 0, rotations: 0, restarts: 0, attempts: {}, consecutiveWatchdog: 0,
-    lastContextTokens: 0, lastCumulativeUsd: 0, epochOpeningUsd: 0, openCut: null, status: 'cold' });
+    lastContextTokens: 0, lastCumulativeUsd: 0, epochOpeningUsd: 0, openCut: null, status: 'cold', pendingRotate: null });
   const port = fakePort(); delete port.engine;
   const bare = { sid: SID, members: ['n_a'], settings: { label: 'Bare' } };
   const h = createSessionHosts({ specs: [null, { sid: 7 }, bare], decisions: new Map([[SID, { mode: 'separate' }]]), port, transport: runMockSession });

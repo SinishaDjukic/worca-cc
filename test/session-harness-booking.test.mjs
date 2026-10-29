@@ -111,7 +111,7 @@ test('v2 — _sessionPort(): the Task 39 shape, each method wired to the harness
   o.pipeline = { id: 'p_port', dir: '/pipe' };
   const port = o._sessionPort();
   assert.deepEqual(Object.keys(port), ['runId', 'pipelineDir', 'engine', 'mock', 'bookTurn', 'onRecord', 'stampRow', 'remainingBudgetUsd',
-    'checkCostLimits', 'seedBaseline', 'onQueue', 'log']);
+    'checkCostLimits', 'seedBaseline', 'saveSnapshot', 'onQueue', 'log']);
   assert.deepEqual([port.runId, port.pipelineDir, port.engine, port.mock], ['p_port', '/pipe', 'claude', true]);
   assert.equal(port.bookTurn(B('x:n_a:1', 0.4)).costSource, 'harness');
   near(o.state.steps[0].costUsd, 0.4);

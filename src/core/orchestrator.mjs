@@ -897,6 +897,9 @@ export class GraphOrchestrator extends RunHarness {
       ? createSessionHosts({ specs: this._sessionSpecs, decisions: this._sessionDecisions, port: this._sessionPort(),
         plainRun: (o) => (executorTesting.runClaude || runClaude)(o), restore: this._sessionRestore ?? null })
       : null;
+    // C36 + C9 (Task 47): under the kill switch no host will ever carry a cut the last run held, so it is booked now, as an
+    // estimate on the engine it was spent on; the snapshots, without it, ride on in this run's resume points.
+    if (this._sessionsDisabled && this._sessionRestore) this._sessionRestore = this._bookHeldCuts(this._sessionRestore);
 
     const sched = createScheduler({
       template: this._schedulerTemplate(),
@@ -972,6 +975,22 @@ export class GraphOrchestrator extends RunHarness {
       await appendAudit(this.pipeline.dir, `Run **${QUIESCENCE_WARNING}**.`).catch(() => {});
     }
     return 'done';
+  }
+
+  /** Session groups (Task 47; C36, C9): books each held cut of the restored snapshots as an estimate on its own row (on the
+   *  engine it was spent on) and answers the snapshots without it. Writes no trace and builds no host (the kill switch). */
+  _bookHeldCuts(restore) {
+    const out = {};
+    for (const [sid, S] of Object.entries(restore)) {
+      const c = S && typeof S === 'object' && S.openCut && typeof S.openCut === 'object' ? S.openCut : null;
+      for (const p of c ? (Array.isArray(c.parts) ? c.parts : [c]) : []) {
+        if (!p || typeof p !== 'object' || !Number.isFinite(p.cutUsd)) continue;
+        this._bookSessionTurn({ sid, hostEpoch: S.hostEpoch ?? null, hostSessionId: S.hostSessionId ?? null, turnId: p.turnId ?? null,
+          dispatchId: p.dispatchId ?? null, stepKey: p.executionId, nodeId: p.nodeId ?? null, cutEstimateUsd: p.cutUsd, cutEngine: S.engine ?? null });
+      }
+      out[sid] = c ? { ...S, openCut: null } : S;
+    }
+    return out;
   }
 
   /** Session groups (Task 45): close every SessionHost once, with how the run ended. */
@@ -1078,8 +1097,9 @@ export class GraphOrchestrator extends RunHarness {
       toolInstruction: this.toolInstruction ?? '',
       pipelineDir: this.pipeline.dir,
       pausedAt: new Date().toISOString(),
-      // Session groups (C2, C28): each host's snapshot, which the resumed run's SessionHost restores (Task 47).
-      ...(this._sessions ? { sessionHosts: this._sessions.snapshot() } : {}),
+      // Session groups (C2, C28): each host's snapshot, which the resumed run's SessionHost restores (Task 47). A resumed run
+      // that built no host (the kill switch) keeps the snapshots it restored, so a later run with sessions continues them.
+      ...(this._sessions ? { sessionHosts: this._sessions.snapshot() } : this._sessionRestore ? { sessionHosts: this._sessionRestore } : {}),
     };
   }
 
