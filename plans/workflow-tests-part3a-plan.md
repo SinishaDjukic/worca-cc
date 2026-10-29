@@ -6757,6 +6757,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Board 34's two "Part 3b" lines ("Your personal Claude Code plugins, skills and hooks are switched off." / "The project's own instructions stay on. Its hooks and plugins are switched off.").
   - The brief §6 plugins-off proofs, free (a sandbox `CLAUDE_CONFIG_DIR` with a plugin and marker hooks) and paid (a user `PreToolUse` hook does not fire; sign-in works under `project,local`), plus a security review of the sign-in carry-over.
 - **3b: the file-scope checks (Q10).** "Changes only files under …", "Leaves these files unchanged" and "Changes at most N files". They are pure, in `src/shared/workflow-tests/checks.mjs`, read the try's change list (Task 6's `project.files` / `paths`), and have the board 33 fields and the board 36 rows marked "Part 3b".
+- **3b: the before-and-after command run** (approved 2026-10-29; SWE-bench FAIL_TO_PASS / PASS_TO_PASS, see [workflow-tests-eval-frameworks.md](workflow-tests-eval-frameworks.md)). "The command passes" also runs once on the start commit, cached per start point; the result separates "tests the change made pass", "tests that passed before and still pass" and "tests it broke".
 - Folder (non-git) projects as examples (Q1 b): a kept copy per example, up to 1 GB.
 - Workspace / several-project workflows.
 - "The test Worca did not see passes" (hidden test files, board 6) and "A result you liked" (boards 32, 38).

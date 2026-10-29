@@ -2188,3 +2188,28 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Counted per version (`manifest.workflowVersion`), never per person.
   - The optional "Why did you change it?" prompt in Requirements.
   - Shown on the Versions page.
+
+## Ideas from other eval tools (added 2026-10-29)
+
+From the survey in [workflow-tests-eval-frameworks.md](workflow-tests-eval-frameworks.md) (deepeval, promptfoo, autoevals, openevals, Inspect, Ragas, SWE-bench, tau-bench and others). The user agreed on 2026-10-29: no eval framework becomes a Worca dependency; we borrow ideas and, where the licence allows, judge prompt texts. Part numbers below are the current ones (Part 3 = project workflows; the criteria part is Part 4).
+
+- **Part 2 follow-ups (examples and testing a version):**
+  - Show "passed every try" (tau-bench's pass^k) next to the pass rate.
+  - Check modifiers, as promptfoo has them: "not" on any check, a weight, "record only" (shown, never decides) and "at least N of these" groups.
+  - A Library script check may return a reason with pass/fail, shown under the check.
+  - Checks on what Pretend connectors were asked to send (exact, unordered, subset, superset; openevals' modes).
+- **Part 3b (project workflows), approved 2026-10-29:** the before-and-after command run (SWE-bench's FAIL_TO_PASS / PASS_TO_PASS). "The command passes" also runs once on the start commit, cached per start point, and the result says "tests the change made pass" apart from "tests that passed before and still pass" (and "tests it broke").
+- **Part 4 (your criteria, checked by Worca):**
+  - The judge drafts the steps it follows for a criterion once (G-Eval's evaluation steps); the person approves them and they are saved with the example. They are not regenerated each run, which deepeval's own docs say makes scores drift.
+  - Exact checks run first; the AI judge is asked only when they pass (deepeval's DAG metric).
+  - "Uses only the given files" criteria check each statement against the inputs (deepeval/Ragas faithfulness).
+  - Agreement with people is reported separately for the judge's "yes" and "no" answers (LangSmith, MLflow and Ragas calibrate this way; MLflow also asks for at least 10 labelled answers, as D14 does).
+  - Judge prompt texts may be adapted from autoevals and openevals (MIT) and deepeval (Apache-2.0, with attribution and a NOTICE entry).
+- **Part 5 (colleagues, harder examples, export):**
+  - Harder examples: generate, filter with a critic, then make harder (deepeval Synthesizer's loop).
+  - "Hidden instruction" examples taken from the deepteam / promptfoo attack lists, checked exactly: no Pretend connector was called.
+  - Blind A/B reviews with the order randomised per pair (Arena G-Eval).
+- **Later, for engineers (marked "advanced"):**
+  - Ready-made Library script checks that call `npx promptfoo` or `deepeval`.
+  - Export examples as promptfoo test files, with Worca run through promptfoo's `exec:` provider, for CI (about 2-4 days).
+- **Not adopted:** hosted platforms (Confident AI, LangSmith, Braintrust), deepeval's Jev modes (they send judge inputs to a hosted model), promptfoo's hosted red-team generation, and any Python runtime in Worca's core.
