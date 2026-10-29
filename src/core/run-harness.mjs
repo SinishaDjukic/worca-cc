@@ -74,7 +74,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, listCostRates, estimateCost } from './config.mjs';
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
@@ -160,7 +160,8 @@ import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPer
 import { probeTargetForModel, probeReachable, hostOf } from './upstream-probe.mjs';
 import { waitForNetwork, NETWORK_ACTOR } from './network-wait.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
-import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineList, engineLabel, engineReportsCost } from '../shared/engine-switch.mjs';
+import { splitTurnCost, splitCarried, reconcileTurn, usageTokens } from './session-cost.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
@@ -273,6 +274,14 @@ export function errStreamAttr(stderrText, extra = null) {
 /** Round a USD amount to 4 decimals (tenth-of-a-cent) to avoid float drift. */
 export function roundUsd(n) {
   return Math.round((Number(n) || 0) * 1e4) / 1e4;
+}
+
+/** A usage of either shape (API, the session demux's {in,out,cr,cw}, Ask's) with the API keys config.mjs resolveModelCost
+ *  prices, `cache_creation` buckets kept (session groups, Task 42). */
+function apiUsage(u) {
+  if (!u || typeof u !== 'object') return null;
+  const t = usageTokens(u);
+  return { ...u, input_tokens: t.in, output_tokens: t.out, cache_read_input_tokens: t.cr, cache_creation_input_tokens: t.cw };
 }
 
 /**
@@ -5657,13 +5666,10 @@ export class RunHarness extends EventEmitter {
     }
   }
 
-  /** Step-boundary budget gate. Reads settings + DB FRESH each boundary so a
-   *  raised limit or a window reset takes effect at the next step (F9). */
-  _checkCostLimits() {
-    if (!this.pipeline?.id) return;                    // pre-createPipeline: nothing to meter
-    this._persistPolicyState();                        // first boundary with a row: home/sha/deviations land
+  /** The pipeline caps _checkCostLimits enforces, read the same way, so the gate and a session host's budget
+   *  (_remainingPipelineBudgetUsd, C10) never disagree. Reads settings + DB fresh. */
+  _pipelineCaps() {
     const teamFields = this.policyRun?.fields || {};
-    const home = this.policyRun?.home || null;
     // resume() rehydrates state.steps but not state.totalCostUsd, so the row
     // total reads $0 until the first cost event of the resumed run. Take the
     // larger of the two so a resumed over-cap pipeline cannot run one free step.
@@ -5675,6 +5681,38 @@ export class RunHarness extends EventEmitter {
     // The developer's own cap (or a team DEFAULT, which is the same thing): the existing
     // pause + the existing per-pipeline override. A team-bound fold has no "own" cap here.
     const ownCap = pipe.binding === 'team' ? null : pipe.cap;
+    return { spentHere, ownCap, teamPipe };
+  }
+
+  /** What a session host turn may still spend (C10): the tightest pipeline cap that would PAUSE this run, minus what it
+   *  has spent; null when none meters it (no pipeline row yet, no cap, an override, a team soft cap this run only
+   *  warns at, or a turn model priced apart from the CLI's meter — `--max-budget-usd` must never stop a turn an ungrouped
+   *  step would finish). Total-window caps are not a per-turn budget: _checkCostLimits gates them before every spawn, as
+   *  ungrouped. */
+  _remainingPipelineBudgetUsd({ models = [] } = {}) {
+    if (!this.pipeline?.id) return null;
+    // The CLI meters --max-budget-usd at list price. A model with a cost override, or one routed through a base URL (a
+    // bridge's upstream figure, a custom endpoint), is booked at other prices, so the flag could stop a turn the books say
+    // may go on: no flag then, as for an ungrouped step (_checkCostLimits still gates every spawn, C37).
+    if ((Array.isArray(models) ? models : []).some((m) => modelCostConfig(m) || modelHasBaseUrlRouting(m))) return null;
+    const { spentHere, ownCap, teamPipe } = this._pipelineCaps();
+    const caps = [];
+    if (ownCap != null && !readCostCapOverride(this.pipeline.id)) caps.push(ownCap);
+    if (teamPipe && teamPipe.kind === 'soft' && !hasPipelineOverride(this.pipeline.id) && !this._teamCapContinues(teamPipe).continues) {
+      caps.push(Number(teamPipe.value));
+    }
+    const finite = caps.filter((c) => Number.isFinite(c));
+    return finite.length ? Math.min(...finite) - spentHere : null;
+  }
+
+  /** Step-boundary budget gate. Reads settings + DB FRESH each boundary so a
+   *  raised limit or a window reset takes effect at the next step (F9). */
+  _checkCostLimits() {
+    if (!this.pipeline?.id) return;                    // pre-createPipeline: nothing to meter
+    this._persistPolicyState();                        // first boundary with a row: home/sha/deviations land
+    const teamFields = this.policyRun?.fields || {};
+    const home = this.policyRun?.home || null;
+    const { spentHere, ownCap, teamPipe } = this._pipelineCaps();
     if (ownCap != null && spentHere >= ownCap && !readCostCapOverride(this.pipeline.id)) {
       this._capReached(REASON.COST_PIPELINE,
         `pipeline cost limit reached ($${spentHere.toFixed(2)} >= $${ownCap.toFixed(2)})`);
@@ -5723,12 +5761,8 @@ export class RunHarness extends EventEmitter {
    * run pauses on the policy reason so the resume flow can offer "continue past".
    */
   _teamCapBreach(which, team, detail, reason) {
-    const breach = team?.onBreach || 'pause';
-    // Night mode may continue past a TEAM soft cap when allowed (never a developer's own caps):
-    // the unattended run then behaves like --yes here, and the override is a flagged decision.
-    const nightOverride = !this.auto && breach !== 'warn' && this._nightActiveNow()
-      && effectiveNightConfig(this.projectDir).config.allowCostCapOverride === true;
-    if (breach === 'warn' || this.auto || nightOverride) {
+    const { continues, breach, nightOverride } = this._teamCapContinues(team);
+    if (continues) {
       if (this._policyWarned.has(which)) return;
       this._policyWarned.add(which);
       const why = breach === 'warn' ? 'the policy says warn'
@@ -5744,6 +5778,17 @@ export class RunHarness extends EventEmitter {
       return;
     }
     this._capReached(reason, detail);
+  }
+
+  /** Whether a reached team soft cap only warns (`onBreach: warn`, an unattended run, Away mode allowed past it) rather
+   *  than pausing: _teamCapBreach's rule, shared with a session host's budget (_remainingPipelineBudgetUsd). */
+  _teamCapContinues(team) {
+    const breach = team?.onBreach || 'pause';
+    // Night mode may continue past a TEAM soft cap when allowed (never a developer's own caps):
+    // the unattended run then behaves like --yes here, and the override is a flagged decision.
+    const nightOverride = !this.auto && breach !== 'warn' && this._nightActiveNow()
+      && effectiveNightConfig(this.projectDir).config.allowCostCapOverride === true;
+    return { continues: breach === 'warn' || this.auto || nightOverride, breach, nightOverride };
   }
 
   /** The BUDGET site (failure-policy.mjs): a cost cap was reached at a step
@@ -7577,6 +7622,12 @@ export class RunHarness extends EventEmitter {
   // observeModelCost. One warning per model per run; the observation itself
   // is derived state and must never fail the run.
   _onResultEvent(role, e, attr) {
+    // A session member's result (session-host.mjs): its SessionHost booked the turn through _bookSessionTurn already.
+    if (e.sessionBooked) {
+      const text = (e.text || '').trim();
+      if (text) this._log(role, 'info', text, attr);
+      return;
+    }
     const rawCost = this._sessionCostDelta(e, attr?.stepKey);
     const costCfg = attr?.model ? modelCostConfig(attr.model) : null;
     // A bridged node whose upstream reported what its calls cost (OpenRouter's
@@ -8112,6 +8163,93 @@ export class RunHarness extends EventEmitter {
       this._log('orchestrator', 'warn', `cost for "${key}" has no step row; booked on ${fb.key}`);
     }
     return fb;
+  }
+
+  /** The harness side of a session's SessionHost (session groups, Task 39's port; session-host.mjs). */
+  _sessionPort() {
+    return {
+      runId: this.pipeline?.id ?? null,
+      pipelineDir: this.pipeline?.dir ?? null,
+      engine: this.claude.engine || 'claude',
+      mock: mockEnabled({ mock: this.claude.mock }),
+      bookTurn: (b) => this._bookSessionTurn(b),
+      // Task 43 adds the three record methods; until then they are skipped.
+      onRecord: (sid, rec, summary) => this._onSessionRecord?.(sid, rec, summary),
+      stampRow: (stepKey, ref) => this._stampSessionRow?.(stepKey, ref),
+      remainingBudgetUsd: (q) => this._remainingPipelineBudgetUsd(q),
+      checkCostLimits: () => this._checkCostLimits(),
+      seedBaseline: (hostSessionId, usd) => this.seedSessionBaseline(hostSessionId, usd),
+      onQueue: (executionId, queued) => this._onSessionQueue?.(executionId, queued),
+      log: (level, text, attr) => this._log('session', level, text, attr),
+    };
+  }
+
+  /**
+   * Book one session turn (spec §6.3; C9, C22, C24, C33, C34): every dollar it reports lands on exactly one row, once.
+   * Order: a never-restored cut's estimate (and nothing else); else Δ from the run-level cumulative baseline (Task 34),
+   * the bridge's upstream figure, the carried spend of a cut turn (to the CUT step's row), the split at the CLI's list
+   * rates, each part's cost override, the bookings (the step's share, the main agent's overhead as aux `session` — even
+   * at $0, so `calls` counts hand-offs), and the checks, which never change a booking.
+   * @returns {{ deltaUsd, memberUsd, hostOverheadUsd, costSource, hostPriced, overridden, carried: {usd, parts}|null, reconcile }}
+   */
+  _bookSessionTurn(b) {
+    const engineCost = engineReportsCost(this.claude.engine);
+    const booking = (over) => ({ deltaUsd: null, memberUsd: null, hostOverheadUsd: null, costSource: 'none', hostPriced: false, overridden: false,
+      carried: null, reconcile: { ok: true, checks: [] }, ...over });
+    if (Number.isFinite(b.cutEstimateUsd)) {                       // C9: a cut the harness will never restore
+      this._openTurns?.delete(b.stepKey);
+      if (!engineCost) return booking({});                          // C24: an engine without cost books nothing, never $0
+      this._recordCost(b.cutEstimateUsd, b.stepKey);
+      return booking({ memberUsd: b.cutEstimateUsd, costSource: 'estimate' });
+    }
+    const delta = this._sessionCostDelta({ costUsd: b.cumulativeUsd, cumulativeCost: true, sessionId: b.hostSessionId }, b.stepKey);
+    // C34 / critique M-15: the member's modelEnv is tagged with its executionId; booked here, never again at the flush.
+    const bridge = bridgeCostFor(b.stepKey);
+    const bridgeUsd = bridge && Number.isFinite(bridge.costUsd) ? bridge.costUsd : NaN;
+    if (Number.isFinite(bridgeUsd)) { this._recordBridgeCalls(b.stepKey, b.stepKey); forgetBridgeTag(b.stepKey); }
+    let deltaUsd = delta;
+    let carried = null;
+    let overridden = false;
+    if (b.carried && Number.isFinite(delta)) {                      // no Δ, nothing to split: the cut stays pending (session-host.mjs)
+      // C9: each cut turn, oldest first, takes back its spend at the CLI's LIST rates, as Δ itself is priced (correction 5);
+      // its row then books that share at the cut's own rates: its estimate at the operator's rates (cutUsd) over its list
+      // price (cutListUsd). A {free} cut books $0, and the current step never pays the cut member's list spend.
+      const shares = [];
+      for (const p of Array.isArray(b.carried.parts) && b.carried.parts.length ? b.carried.parts : [b.carried]) {
+        const listUsd = Number.isFinite(p.cutListUsd) ? p.cutListUsd : p.cutUsd;
+        const { carriedUsd, restUsd } = splitCarried({ deltaUsd, cutUsd: listUsd });
+        deltaUsd = restUsd;
+        const usd = listUsd > 0 && Number.isFinite(p.cutUsd) ? carriedUsd * (p.cutUsd / listUsd) : carriedUsd;
+        // A share of $0 (a short Δ) books nothing: a blank row stays blank (C24). A {free} cut's share is a real $0.
+        if (carriedUsd > 0) this._recordCost(usd, p.executionId);
+        // The override is the CUT record's (C9: the record with an override says so), not this turn's.
+        shares.push({ turnId: p.turnId ?? null, executionId: p.executionId ?? null, usd, overridden: usd !== carriedUsd });
+      }
+      carried = { usd: shares.reduce((a, s) => a + s.usd, 0), parts: shares };
+    }
+    const split = splitTurnCost({ deltaUsd, bridgeUsd, hostUsage: b.hostUsage, hostModel: b.hostModel, memberUsage: b.memberUsage, memberModel: b.memberModel,
+      investigators: b.investigators, hookUsd: b.hookUsd, engineCost, ratesFor: listCostRates });
+    let { memberUsd, hostOverheadUsd } = split;
+    // Each part at its own model's override (as _onResultEvent re-prices an ungrouped turn); an upstream bridge figure wins.
+    if (split.costSource !== 'bridge' && split.costSource !== 'none') {
+      const reprice = (model, usd, usage, warnWhat) => {
+        const cfg = model ? modelCostConfig(model) : null;
+        if (!cfg || !Number.isFinite(usd)) return usd;
+        overridden = true;
+        const v = resolveModelCost(model, usd, apiUsage(usage), cfg);
+        if (!Number.isFinite(v)) this._log('orchestrator', 'warn', `model "${model}" is priced per-Mtok but the turn carried no token usage — ${warnWhat} is unaccounted`, { executionId: b.stepKey });
+        return v;
+      };
+      memberUsd = reprice(b.memberModel, memberUsd, b.memberUsage, 'this step\'s share');
+      hostOverheadUsd = reprice(b.hostModel, hostOverheadUsd, b.hostUsage, 'the session hand-off');
+    }
+    if (Number.isFinite(memberUsd)) this._recordCost(memberUsd, b.stepKey);
+    if (Number.isFinite(hostOverheadUsd)) this._recordCost(hostOverheadUsd, b.stepKey, { aux: 'session' });
+    this._openTurns?.delete(b.stepKey);                            // the booking prices every turn it closes (as a result does)
+    const reconcile = reconcileTurn({ memberUsd: split.memberUsd, hookUsd: b.hookUsd, estimateUsd: split.estimateUsd, costSource: split.costSource });
+    return booking({ deltaUsd: Number.isFinite(delta) ? delta : null, memberUsd: Number.isFinite(memberUsd) ? memberUsd : null,
+      hostOverheadUsd: Number.isFinite(hostOverheadUsd) ? hostOverheadUsd : null, costSource: split.costSource, hostPriced: split.hostPriced,
+      overridden, carried, reconcile });
   }
 
   /** A worca AI call that ended before a priced `result` frame: count it on its step and keep its
