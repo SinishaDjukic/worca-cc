@@ -15,7 +15,8 @@ import { askCardsIn } from './alerts.mjs';
 
 /** The easter egg's on/off switch. On by design; set to false to turn it off. */
 export const AWAY_SCREENSAVER = true;
-export const IDLE_MS = 10 * 60 * 1000;
+// 5 minutes, not 10: a 10-minute display sleep (the macOS and Windows default) would turn the screen off first.
+export const IDLE_MS = 5 * 60 * 1000;
 
 const INPUTS = ['pointermove', 'pointerdown', 'mousedown', 'click', 'keydown', 'wheel', 'touchstart'];
 const SPEED = 60;          // px per second, each axis
