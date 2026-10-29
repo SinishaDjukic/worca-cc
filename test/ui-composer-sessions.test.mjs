@@ -184,6 +184,30 @@ test('Delete on a session toasts, keeps the cards and selects the first step; nu
   assert.equal(sidOf(c, 'n_agent'), undefined, '⇧⌘G on a member ungroups its session');
 });
 
+test('a header drag survives a redo that removes a card it moves: the release commits the cards still there', async () => {
+  const s = await open({ template: loopFixture() });
+  const { c, win } = s;
+  const sid = c.sessions.join('n_agent', 'n_rev').sid;
+  c.select({ kind: 'node', id: 'n_rev' });
+  c.deleteSelection();
+  c.undo();                                                        // the redo stack now removes n_rev
+  c.view.setTransform({ x: 0, y: 0, z: 1 });
+  const r = c.view.sessionRects().get(sid);
+  const x0 = c.template().nodes.find((n) => n.id === 'n_agent').x;
+  const pev = (type, o) => new win.PointerEvent(type, { pointerId: 1, bubbles: true, cancelable: true, button: 0, ...o });
+  c.view.stage.dispatchEvent(pev('pointerdown', { clientX: r.x + 30, clientY: r.head.y + 10 }));
+  c.view.stage.dispatchEvent(pev('pointermove', { clientX: r.x + 74, clientY: r.head.y + 10 }));
+  s.flush();
+  c.redo();
+  assert.equal(c.template().nodes.some((n) => n.id === 'n_rev'), false);
+  c.view.stage.dispatchEvent(pev('pointermove', { clientX: r.x + 96, clientY: r.head.y + 10 }));
+  s.flush();
+  c.view.stage.dispatchEvent(pev('pointerup', { clientX: r.x + 96, clientY: r.head.y + 10 }));
+  s.flush();
+  assert.equal(c.gesture(), null, 'the release finished the gesture, no TypeError on the gone card');
+  assert.equal(c.template().nodes.find((n) => n.id === 'n_agent').x, x0 + 66, '66 = 6 snaps of 11');
+});
+
 test('a cancelled header drag rewinds every member and commits nothing', async () => {
   const s = await open({ template: loopFixture() });
   const { c, win } = s;

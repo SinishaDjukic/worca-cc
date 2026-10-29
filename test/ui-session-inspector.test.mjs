@@ -124,6 +124,30 @@ test('composer: + Add joins the offered step (flag on only); × leaves; Split an
   assert.deepEqual(c.selection(), { kind: 'node', id: 'n_a' });
 });
 
+test('composer: Split leaves the focus on the panel\'s first control once Split goes, never on Ungroup', async () => {
+  const t = chain();
+  t.nodes.push({ id: 'n_d', kind: 'agent', key: 'planner', x: 1360, y: 80, config: {} });
+  t.wires.find((w) => w.id === 'w4').from = { node: 'n_d', port: 'plan' };
+  t.wires.push({ id: 'w5', from: { node: 'n_c', port: 'plan' }, to: { node: 'n_d', port: 'task' } });
+  const { c, el, doc } = await open({ template: t });
+  const sid = c.sessions.join('n_a', 'n_b').sid;
+  c.sessions.join('n_b', 'n_c');
+  c.sessions.join('n_c', 'n_d');
+  c.sessions.leave('n_c');                                      // n_d is not wired to n_a/n_b: V27
+  c.select({ kind: 'session', id: sid });
+  await new Promise((r) => setTimeout(r, 0));
+  const split = el.insBody.querySelector('[data-sess-act="split"]');
+  split.focus();
+  clickEl(split);
+  assert.equal(sidOf(c, 'n_d'), undefined, 'Split kept n_a, n_b');
+  assert.equal(sidOf(c, 'n_a'), sid);
+  await new Promise((r) => setTimeout(r, 0));                   // the validation repaint drops Split (correction 53)
+  assert.equal(el.insBody.querySelector('[data-sess-act="split"]'), null);
+  assert.notEqual(doc.activeElement.dataset.sessAct, 'ungroup', 'a second Enter must not ungroup');
+  const first = [...el.insBody.querySelectorAll('input, select, textarea, button, summary, [tabindex]:not([tabindex="-1"])')].find((e) => !e.disabled && !e.hidden);
+  assert.equal(doc.activeElement, first, 'the panel\'s first control');
+});
+
 test('composer, the gate open (Task 53): Sub-agents only while the Labs flag is on; off, the panel names the flag', async () => {
   const { c, el, doc } = await open({ template: loopFixture(), sessionVerified: { claude: true } });
   const sid = c.sessions.join('n_agent', 'n_rev').sid;

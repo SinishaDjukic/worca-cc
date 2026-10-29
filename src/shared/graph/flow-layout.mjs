@@ -61,6 +61,7 @@ export function flowOrder(tpl, portsFn, { agentOrder = null, keepSessions = true
     nextOf.get(w.from.node).push(w.to.node);
   }
   let out = ids;
+  const placed = new Map();                                   // card → the block an earlier session's pass placed it in
   for (const spec of sessionsOf(tpl, portsFn, { loops })) {
     if (spec.members.filter((id) => out.includes(id)).length < 2) continue;
     const keep = new Set(spec.closure);
@@ -68,12 +69,26 @@ export function flowOrder(tpl, portsFn, { agentOrder = null, keepSessions = true
     const first = out.indexOf(block[0]);
     const last = out.indexOf(block[block.length - 1]);
     // A card between them that the block feeds goes after it; any other (a branch into a later member) goes before
-    // it, so no wire of a legal session runs backwards.
+    // it, so no wire of a legal session runs backwards. An earlier session's block in the gap moves as ONE unit (after
+    // the block when any of its cards is fed): split by card, its tray would span this block and enclose its tray. So
+    // the trace marks such a block fed WHOLE and goes on from all its cards: what it feeds then follows it too. The one
+    // exception is two sessions that each feed the other's later member: no order keeps both trays whole with every
+    // wire forward, and the trays win (one wire runs backwards).
     const fed = new Set();
     const todo = [...block];
-    while (todo.length) for (const o of nextOf.get(todo.pop()) || []) if (!keep.has(o) && !fed.has(o)) { fed.add(o); todo.push(o); }
-    const gap = out.slice(first, last + 1).filter((id) => !keep.has(id));
-    out = [...out.slice(0, first), ...gap.filter((id) => !fed.has(id)), ...block, ...gap.filter((id) => fed.has(id)), ...out.slice(last + 1)];
+    while (todo.length) for (const o of nextOf.get(todo.pop()) || []) if (!keep.has(o) && !fed.has(o)) for (const x of placed.get(o) || [o]) if (!fed.has(x)) { fed.add(x); todo.push(x); }
+    const units = new Map();                                  // the gap in today's order, an earlier block as one entry
+    for (const id of out.slice(first, last + 1)) {
+      if (keep.has(id)) continue;
+      const u = placed.get(id) || id;
+      if (!units.has(u)) units.set(u, []);
+      units.get(u).push(id);
+    }
+    const before = [];
+    const after = [];
+    for (const u of units.values()) (u.some((id) => fed.has(id)) ? after : before).push(...u);
+    out = [...out.slice(0, first), ...before, ...block, ...after, ...out.slice(last + 1)];
+    for (const id of block) placed.set(id, block);
   }
   return out;
 }

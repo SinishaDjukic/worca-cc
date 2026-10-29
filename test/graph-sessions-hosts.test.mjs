@@ -154,3 +154,65 @@ test('flow order: a branch into a later member moves before the block, so no wir
   for (const id of ['n_impl', 'n_review']) t.nodes.find((n) => n.id === id).config.session = 's_aaaaaaaa';
   assert.deepEqual(flowOrder(t, portsFn), ['n_task', 'n_plan', 'n_x1', 'n_x2', 'n_impl', 'n_review', 'n_end']);
 });
+
+test('flow order with two sessions: a later session\'s pass moves an earlier block whole, so neither tray splits', async () => {
+  const { sessionLegal } = await import('../src/shared/graph/sessions.mjs');
+  // S1 = [a, b] and S2 = [c, d], both legal; c feeds b's answers, so today c sits between a and b.
+  const agent = (id, x) => ({ id, kind: 'agent', key: 'planner', x, y: 100, config: {} });
+  const t = { nodes: [{ id: 'n_t', kind: 'task', x: 0, y: 100, config: {} }, agent('n_a', 200), agent('n_b', 400),
+    agent('n_c', 600), agent('n_d', 800), { id: 'n_e', kind: 'end', x: 1000, y: 100, config: {} }],
+  wires: [['w1', 'n_t', 'task', 'n_a', 'task'], ['w2', 'n_t', 'task', 'n_c', 'task'], ['w3', 'n_a', 'plan', 'n_b', 'task'],
+    ['w4', 'n_c', 'plan', 'n_b', 'answers'], ['w5', 'n_c', 'plan', 'n_d', 'task'], ['w6', 'n_b', 'plan', 'n_e', 'in'],
+    ['w7', 'n_d', 'plan', 'n_e', 'in']].map(([id, a, ap, b, bp]) => ({ id, from: { node: a, port: ap }, to: { node: b, port: bp } })) };
+  assert.deepEqual(flowOrder(t, portsFn), ['n_t', 'n_a', 'n_c', 'n_b', 'n_d', 'n_e'], 'today');
+  for (const [sid, ids] of [['s_aaaaaaaa', ['n_a', 'n_b']], ['s_bbbbbbbb', ['n_c', 'n_d']]]) {
+    assert.equal(sessionLegal(t, portsFn, ids).ok, true, `${ids} is legal`);
+    for (const id of ids) t.nodes.find((n) => n.id === id).config.session = sid;
+  }
+  const order = flowOrder(t, portsFn);
+  for (const [a, b] of [['n_a', 'n_b'], ['n_c', 'n_d']]) assert.equal(order.indexOf(b), order.indexOf(a) + 1, `${a} ${b} side by side: ${order}`);
+  for (const w of t.wires) assert.ok(order.indexOf(w.from.node) < order.indexOf(w.to.node), `${w.id} runs forward: ${order}`);
+  assert.deepEqual(order, ['n_t', 'n_c', 'n_d', 'n_a', 'n_b', 'n_e']);
+});
+
+test('flow order with two sessions: an earlier block moved after drags along what it feeds, so no wire runs backwards', async () => {
+  const { sessionLegal } = await import('../src/shared/graph/sessions.mjs');
+  // A = [a, d] and B = [b, e], both legal; b feeds d's answers and a also feeds the plain step c. B's pass moves A
+  // after B, so c (fed by a, never reached from B) must follow A instead of staying before B.
+  const agent = (id, x) => ({ id, kind: 'agent', key: 'planner', x, y: 100, config: {} });
+  const t = { nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 100, config: {} }, agent('n_a', 200), agent('n_b', 400),
+    agent('n_c', 600), agent('n_d', 800), agent('n_e', 1000), { id: 'n_end', kind: 'end', x: 1200, y: 100, config: {} }],
+  wires: [['w1', 'n_task', 'task', 'n_a', 'task'], ['w2', 'n_task', 'task', 'n_b', 'task'], ['w3', 'n_a', 'plan', 'n_d', 'task'],
+    ['w4', 'n_b', 'plan', 'n_e', 'task'], ['w5', 'n_b', 'plan', 'n_d', 'answers'], ['w6', 'n_a', 'plan', 'n_c', 'task'],
+    ['w7', 'n_c', 'plan', 'n_end', 'in'], ['w8', 'n_d', 'plan', 'n_end', 'in'], ['w9', 'n_e', 'plan', 'n_end', 'in']]
+    .map(([id, a, ap, b, bp]) => ({ id, from: { node: a, port: ap }, to: { node: b, port: bp } })) };
+  assert.deepEqual(flowOrder(t, portsFn), ['n_task', 'n_a', 'n_b', 'n_c', 'n_d', 'n_e', 'n_end'], 'today');
+  for (const [sid, ids] of [['s_aaaaaaaa', ['n_a', 'n_d']], ['s_bbbbbbbb', ['n_b', 'n_e']]]) {
+    assert.equal(sessionLegal(t, portsFn, ids).ok, true, `${ids} is legal`);
+    for (const id of ids) t.nodes.find((n) => n.id === id).config.session = sid;
+  }
+  const order = flowOrder(t, portsFn);
+  for (const [a, b] of [['n_a', 'n_d'], ['n_b', 'n_e']]) assert.equal(order.indexOf(b), order.indexOf(a) + 1, `${a} ${b} side by side: ${order}`);
+  for (const w of t.wires) assert.ok(order.indexOf(w.from.node) < order.indexOf(w.to.node), `${w.id} runs forward: ${order}`);
+  assert.deepEqual(order, ['n_task', 'n_b', 'n_e', 'n_a', 'n_d', 'n_c', 'n_end']);
+});
+
+test('flow order with two crossed sessions: both trays stay whole, and the one wire no order can keep forward runs back', async () => {
+  const { sessionLegal } = await import('../src/shared/graph/sessions.mjs');
+  // [p, q] and [x, y], both legal; p feeds y's answers and x feeds q's answers. Either tray first sends one wire back.
+  const agent = (id, x) => ({ id, kind: 'agent', key: 'planner', x, y: 100, config: {} });
+  const t = { nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 100, config: {} }, agent('n_p', 200), agent('n_x', 400),
+    agent('n_q', 600), agent('n_y', 800), { id: 'n_end', kind: 'end', x: 1000, y: 100, config: {} }],
+  wires: [['w1', 'n_task', 'task', 'n_p', 'task'], ['w2', 'n_task', 'task', 'n_x', 'task'], ['w3', 'n_p', 'plan', 'n_q', 'task'],
+    ['w4', 'n_x', 'plan', 'n_y', 'task'], ['w5', 'n_p', 'plan', 'n_y', 'answers'], ['w6', 'n_x', 'plan', 'n_q', 'answers'],
+    ['w7', 'n_q', 'plan', 'n_end', 'in'], ['w8', 'n_y', 'plan', 'n_end', 'in']]
+    .map(([id, a, ap, b, bp]) => ({ id, from: { node: a, port: ap }, to: { node: b, port: bp } })) };
+  for (const [sid, ids] of [['s_aaaaaaaa', ['n_p', 'n_q']], ['s_bbbbbbbb', ['n_x', 'n_y']]]) {
+    assert.equal(sessionLegal(t, portsFn, ids).ok, true, `${ids} is legal`);
+    for (const id of ids) t.nodes.find((n) => n.id === id).config.session = sid;
+  }
+  const order = flowOrder(t, portsFn);
+  for (const [a, b] of [['n_p', 'n_q'], ['n_x', 'n_y']]) assert.equal(order.indexOf(b), order.indexOf(a) + 1, `${a} ${b} side by side: ${order}`);
+  assert.deepEqual(t.wires.filter((w) => order.indexOf(w.from.node) > order.indexOf(w.to.node)).map((w) => w.id), ['w5']);
+  assert.deepEqual(order, ['n_task', 'n_x', 'n_y', 'n_p', 'n_q', 'n_end']);
+});

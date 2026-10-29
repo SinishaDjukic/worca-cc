@@ -403,7 +403,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       return;
     }
     if (g.type === 'session' && g.moved) {
-      const to = new Map([...g.starts.keys()].map((id) => { const n = nodeById(id); return [id, { x: n.x, y: n.y }]; }));
+      const to = new Map([...g.starts.keys()].flatMap((id) => { const n = nodeById(id); return n ? [[id, { x: n.x, y: n.y }]] : []; }));   // a redo mid-drag may have removed one
       for (const [id, st] of g.starts) { const n = nodeById(id); if (n) { n.x = st.x; n.y = st.y; } }   // rewind: ONE undo entry
       finish(g);
       commit('move session', () => { for (const [id, p] of to) { const n = nodeById(id); if (n) { n.x = p.x; n.y = p.y; } } });
@@ -838,6 +838,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function insFocusAt(body, at) {
     const list = insControls(body);
     let i = at.field ? list.findIndex((e) => e.dataset.field === at.field) : -1;
+    // A session action that went (Split, once V27 clears): the first control, never its old place, which is Ungroup now.
+    if (i < 0 && at.act) i = Math.max(0, list.findIndex((e) => e.dataset.sessAct === at.act));
     if (i < 0) i = at.index;
     const t = list[i + at.step] || list[i] || list[list.length - 1];
     if (t) t.focus({ preventScroll: true });
@@ -848,7 +850,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const active = doc.activeElement;
     const inside = Boolean(active && active !== doc.body && hostBody.contains(active));
     const had = inside ? active : (insFrom && hostBody.contains(insFrom) ? insFrom : null);
-    const at = had ? { field: (had.dataset && had.dataset.field) || '', index: Math.max(0, insControls(hostBody).indexOf(had)), step: insTab } : null;
+    const at = had ? { field: (had.dataset && had.dataset.field) || '', act: (had.dataset && had.dataset.sessAct) || '', index: Math.max(0, insControls(hostBody).indexOf(had)), step: insTab } : null;
     if (at) insTab = 0;
     disposeInsEditors();
     hostBody.replaceChildren(inspectorFor(sel));
