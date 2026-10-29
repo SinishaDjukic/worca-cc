@@ -20,6 +20,7 @@ import { createPipeline } from '../src/core/artifacts.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
 import { _runOptsForTests as runOpts } from '../src/core/phases.mjs';
 import { envForShell, buildEnvelope } from '../src/core/graph/script-runner.mjs';
+import { tryShellEnv } from '../src/core/workflow-tests/shell-step.mjs';
 
 let home;
 const readLog = (f) => (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
@@ -338,6 +339,48 @@ test('fix 3: forge and registry tokens never reach a try (any spelling, not thro
   assert.deepEqual([plain.NPM_TOKEN, plain.GITLAB_TOKEN], ['j', 'e']);
   const triedSpawn = composeSpawnEnv({ overlay: { NPM_TOKEN: 'j', GITLAB_TOKEN: 'e' }, tryGuard: { logFile: join(home, 't.ndjson') } }).env;
   assert.deepEqual([triedSpawn.NPM_TOKEN, triedSpawn.GITLAB_TOKEN], [undefined, undefined]);
+});
+
+test('fix 4: the setup step keeps the package-registry tokens, never a forge token; agents, checks and scripts get the full strip', () => {
+  const registry = { NPM_TOKEN: 'r1', NODE_AUTH_TOKEN: 'r2', NPM_CONFIG__AUTH: 'r3', npm_config__authToken: 'r4', 'npm_config_//r.example/:_authToken': 'r5' };
+  const forge = { GH_TOKEN: 'f1', GITHUB_TOKEN: 'f2', GITLAB_TOKEN: 'f3', GLAB_TOKEN: 'f4', CI_JOB_TOKEN: 'f5', AZURE_DEVOPS_EXT_PAT: 'f6', SYSTEM_ACCESSTOKEN: 'f7',
+    GH_ENTERPRISE_TOKEN: 'f8', GITHUB_ENTERPRISE_TOKEN: 'f9' };
+  const base = { PATH: '/usr/bin', WSLENV: 'NPM_TOKEN:GH_TOKEN:FOO', ...registry, ...forge };
+  const setup = withTryGuardEnv(base, { logFile: 'f', keepRegistryAuth: true }, { home, platform: 'win32' });
+  for (const [k, v] of Object.entries(registry)) assert.equal(setup[k], v, `setup keeps ${k}`);
+  for (const k of Object.keys(forge)) assert.equal(setup[k], undefined, `setup drops ${k}`);
+  assert.deepEqual(setup.WSLENV.split(':').filter((e) => ['NPM_TOKEN', 'GH_TOKEN', 'FOO'].includes(e)), ['NPM_TOKEN', 'FOO']);
+  const agent = withTryGuardEnv(base, { logFile: 'f' }, { home, platform: 'win32' });
+  for (const k of [...Object.keys(registry), ...Object.keys(forge)]) assert.equal(agent[k], undefined, `the full strip drops ${k}`);
+  assert.equal(withTryGuardEnv(base, { logFile: 'f', keepRegistryAuth: 'yes' }, { home }).NPM_TOKEN, undefined, 'only true keeps them');
+  // The paths: tryShellEnv keeps them only when asked (the setup), and the setup is the only caller that asks.
+  const saved = Object.fromEntries(Object.keys({ ...registry, GITLAB_TOKEN: 1 }).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, registry, { GITLAB_TOKEN: 'f3' });
+  try {
+    const setupEnv = tryShellEnv({ logFile: join(home, 's.ndjson'), keepRegistryAuth: true });
+    assert.deepEqual([setupEnv.NPM_TOKEN, setupEnv.NODE_AUTH_TOKEN, setupEnv.GITLAB_TOKEN], ['r1', 'r2', undefined]);
+    const checkEnv = tryShellEnv({ logFile: join(home, 's.ndjson') });
+    assert.deepEqual([checkEnv.NPM_TOKEN, checkEnv.NODE_AUTH_TOKEN, checkEnv.GITLAB_TOKEN], [undefined, undefined, undefined]);
+    assert.equal(tryShellEnv().NPM_TOKEN, 'r1', 'no try (no log file): no guard, unchanged');
+    const ctx = { executionId: 'e1', projectDir: home, pipelineDir: home, pipelineId: 'abcd1234', claudeOpts: {} };
+    const script = envForShell(buildEnvelope({ ...ctx, node: { id: 'n1', key: 's1' }, script: { meta: {}, params: {} }, testConnectors: 'pretend', tryGuard: { logFile: join(home, 's.ndjson') } }));
+    assert.deepEqual([script.NPM_TOKEN, script.GITLAB_TOKEN], [undefined, undefined], 'a Library script step: full strip');
+    const spawned = composeSpawnEnv({ tryGuard: { logFile: join(home, 's.ndjson') } }).env;
+    assert.deepEqual([spawned.NPM_TOKEN, spawned.GITLAB_TOKEN], [undefined, undefined], 'an agent: full strip');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  const harness = readFileSync(new URL('../src/core/run-harness.mjs', import.meta.url), 'utf8');
+  const setupBody = harness.slice(harness.indexOf('async _runTrySetup()'), harness.indexOf('writeTrySetup(this.pipeline.dir'));
+  assert.match(setupBody, /tryShellEnv\(\{[^}]*keepRegistryAuth: true \}\)/, 'the setup asks for the registry tokens');
+  assert.equal((harness.match(/keepRegistryAuth/g) || []).length, 1, 'and nothing else in the harness does');
+  assert.doesNotMatch(readFileSync(new URL('../src/core/workflow-tests/result.mjs', import.meta.url), 'utf8'), /keepRegistryAuth/, 'the command check never does');
+});
+
+test('fix 4: more forge verbs for an expansion-named gh / glab', () => {
+  for (const c of ['$GH gist create f.txt', '"$GH" gist create f.txt', '$GLAB snippet create f', '$GH secret set X', '$GH variable set X', '$GH workflow run ci.yml',
+    '$GH label create bug', '"$GH" --repo x/y gist create f']) assert.equal(guardDecision(c)?.tool, 'unreadable', c);
+  for (const c of ['$PY gist.py', '$TOOL labels', '"$NODE" workflow.js']) assert.equal(guardDecision(c), null, c);
 });
 
 test('task 5b: WSL, Git Bash cmd //c and nested re-reads are seen through', () => {

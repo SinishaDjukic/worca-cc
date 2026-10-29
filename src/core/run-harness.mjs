@@ -2820,8 +2820,10 @@ export class RunHarness extends EventEmitter {
     const { cmd, timeoutMs } = this.opts.trySetup;
     const cwd = this.workDirs.get(this.members[0].projectKey) || this.runCwd || this.workDir;
     this._setupStage(TRY_SETUP_STAGE);
-    const r = await runShellStep({ command: cmd, cwd, env: tryShellEnv({ logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE) }),
-      timeoutMs, signal: this.abort.signal });
+    // The setup keeps the package-registry tokens (the person's own command, before the agent changed anything); never
+    // a forge token. The checks and the agents get the full strip (D56).
+    const env = tryShellEnv({ logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE), keepRegistryAuth: true });
+    const r = await runShellStep({ command: cmd, cwd, env, timeoutMs, signal: this.abort.signal });
     // A stop during the setup is a stop, not a setup failure: it throws here, before any setup record is written.
     if (!r.ok) this._checkAbort();
     if (r.ok) this._trySetupPaths = await this._untrackedDirs(cwd);

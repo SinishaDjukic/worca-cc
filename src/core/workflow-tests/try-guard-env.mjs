@@ -101,7 +101,11 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * - gh / glab / az found some other way (a script's spawn('gh') skips .cmd on Windows): empty config, so no sign-in.
  * - Windows: WSLENV carries the git settings and the empty sign-in folders into WSL (its own git and gh).
  * - WORCA_TRY_GUARD_JSON=1 only with `tryGuard.structuredDeny` (a CLI at or above TRY_GUARD_MIN_CLAUDE).
- * - No forge or registry token (TRY_STRIPPED_KEYS, npm_config_*_auth*), and none forwarded through WSLENV.
+ * - No forge or registry token (TRY_STRIPPED_KEYS, npm_config_*_auth*), and none forwarded through WSLENV. The setup
+ *   step ("Before each try, run") alone passes `tryGuard.keepRegistryAuth`: it keeps the registry tokens (NPM_TOKEN,
+ *   NODE_AUTH_TOKEN, npm_config_*_auth*), never the forge ones. Setup is trusted: it is the person's own command and runs
+ *   before the agent changed anything; a setup command that itself publishes is the person's own choice. The agents and
+ *   the checks (the command check, Library scripts) get the full strip: by then the agent may have changed scripts.
  * What the guard covers (with the hook, try-guard.mjs): Bash and the CLI's PowerShell tool, nested shells, WSL (wsl,
  * wslg, distro launchers, System32 bash.exe; WSLENV for WSL's git and gh), pipes and here-strings into a shell, and a
  * structured deny with an exit-2 fallback.
@@ -117,7 +121,10 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
 export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = process.platform } = {}) {
   if (!tryGuard) return env;
   const out = { ...(env ?? process.env) };
-  for (const k of Object.keys(out)) if (isTryStrippedKey(k)) delete out[k];   // no forge or registry token in a try
+  // No forge token in a try; no registry token either, but for the setup step (`keepRegistryAuth`, the person's own
+  // command, run before the agent changed anything: `npm ci` from a private registry keeps working).
+  const strip = { keepRegistryAuth: tryGuard.keepRegistryAuth === true };
+  for (const k of Object.keys(out)) if (isTryStrippedKey(k, strip)) delete out[k];
   const key = pathKeyOf(out);
   const dir = ensureStandIns(home);
   const sep = platform === 'win32' ? ';' : ':';
@@ -146,21 +153,27 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
     const add = ['GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p', 'GIT_CONFIG_COUNT',
       ...Array.from({ length: n + 1 }, (_, i) => [`GIT_CONFIG_KEY_${i}`, `GIT_CONFIG_VALUE_${i}`]).flat()];
     const ours = new Set(add.map((e) => e.split('/')[0].toUpperCase()));
-    const prev = String(out[wk] || '').split(':').filter((e) => e && !ours.has(e.split('/')[0].toUpperCase()) && !isTryStrippedKey(e.split('/')[0]));
+    const prev = String(out[wk] || '').split(':').filter((e) => e && !ours.has(e.split('/')[0].toUpperCase()) && !isTryStrippedKey(e.split('/')[0], strip));
     out[wk] = [...prev, ...add].join(':');
   }
   return out;
 }
 
-/** Forge and registry tokens a try's env never carries (any spelling of the name: Windows env names ignore case). The
- *  spawn env already drops the GitHub / Azure ones for agents (host-credentials.mjs); this covers every try path (shell
- *  and script steps too) and the GitLab, CI and npm ones. */
-export const TRY_STRIPPED_KEYS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN',
-  'CI_JOB_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'SYSTEM_ACCESSTOKEN', 'NPM_TOKEN', 'NODE_AUTH_TOKEN']);
-const STRIPPED = new Set(TRY_STRIPPED_KEYS);
+/** Forge tokens a try's env never carries (any spelling of the name: Windows env names ignore case). The spawn env
+ *  already drops the GitHub / Azure ones for agents (host-credentials.mjs); this covers every try path (shell and script
+ *  steps too) and the GitLab and CI ones. */
+export const TRY_FORGE_TOKEN_KEYS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN',
+  'CI_JOB_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'SYSTEM_ACCESSTOKEN']);
+/** Package-registry tokens: dropped for the agents and the checks; the setup step keeps them (`keepRegistryAuth`). */
+export const TRY_REGISTRY_TOKEN_KEYS = Object.freeze(['NPM_TOKEN', 'NODE_AUTH_TOKEN']);
+export const TRY_STRIPPED_KEYS = Object.freeze([...TRY_FORGE_TOKEN_KEYS, ...TRY_REGISTRY_TOKEN_KEYS]);
+const FORGE_TOKENS = new Set(TRY_FORGE_TOKEN_KEYS);
+const REGISTRY_TOKENS = new Set(TRY_REGISTRY_TOKEN_KEYS);
 /** npm's own auth settings given as env: npm_config__auth, NPM_CONFIG__AUTHTOKEN, npm_config_//registry…/:_authToken, … */
 const NPM_AUTH_RE = /^npm_config_.*_auth/i;
-export const isTryStrippedKey = (k) => STRIPPED.has(String(k).toUpperCase()) || NPM_AUTH_RE.test(String(k));
+const isRegistryAuthKey = (k) => REGISTRY_TOKENS.has(String(k).toUpperCase()) || NPM_AUTH_RE.test(String(k));
+/** Whether a try's env drops `k`: every forge token; a registry token unless `keepRegistryAuth`. */
+export const isTryStrippedKey = (k, { keepRegistryAuth = false } = {}) => FORGE_TOKENS.has(String(k).toUpperCase()) || (!keepRegistryAuth && isRegistryAuthKey(k));
 
 /** The PreToolUse hook entry buildSettingsPayload adds for a try, beside the host guard: on Bash, and on the PowerShell
  *  tool Claude Code has on Windows. */

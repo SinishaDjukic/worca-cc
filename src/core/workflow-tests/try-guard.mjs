@@ -90,7 +90,7 @@ const GUARD_CMD_RE = /(^|[^\w.:/-])(git|gh|glab|az|curl|wget|npm|yarn|pnpm|bun|n
 const ACTION_RE = /(^|[^\w-])(push|publish|send-?email|upload)(?=$|[^\w-])|(^|\s)(pr|mr|issue|api|release)\s+[\w-]|(^|[^\w-])(post|put|patch|delete)(?=$|[^\w-])|--data(-binary|-raw|-urlencode|-ascii)?(?![\w-])|--form(?![\w-])|--json(?![\w-])|--method(?![\w-])|(^|\s)-X\s*[A-Za-z]/i;
 /** An expansion-named command is unreadable only when its own words push / publish / send mail, or name a method with a URL. */
 /** Fix 3: also a forge verb as its first word (`"$GH" pr create`), or a data flag or an httpie write method with a URL. */
-const FORGE_VERBS = new Set(['pr', 'mr', 'issue', 'release', 'repo', 'api']);
+const FORGE_VERBS = new Set(['pr', 'mr', 'issue', 'release', 'repo', 'api', 'gist', 'snippet', 'secret', 'variable', 'workflow', 'label']);
 const EXPANSION_SENDS = (w) => {
   if (w.some((x) => ['push', 'publish', 'send-email'].includes(x))) return true;
   // The first word, or the second after an option's value (`"$GH" --repo x/y pr create`).
