@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { repoSnapshot } from './helpers/repo-snapshot.mjs';
+import { runSettled } from './helpers/run-settled.mjs';
 
 // worcaHome() is <WORCA_HOME>/.worca-cc (src/core/projects.mjs worcaHome), not WORCA_HOME itself.
 const home = join(useTempHome(after, 'worca-cc-wftkey-'), '.worca-cc');
@@ -17,25 +18,8 @@ const cleanup = [];
 let real, key, copy, store, artifacts, config, server;
 
 // wf_default parks at its clarify gate whatever humanInLoop says (run-harness.mjs: the switch only changes an Auto run):
-// answer it as auto mode would (the api-run-no-project pattern).
-const answered = new Set();
-async function settled(runs, runId, ms = 200000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    const e = runs.get(runId);
-    if (e && e.settled) return e;
-    const pq = e && e.pendingQuestion;
-    if (pq && !answered.has(pq.id)) {
-      answered.add(pq.id);
-      const payload = (pq.kind === 'clarify' || pq.kind === 'questions')
-        ? { answers: (pq.questions || []).map((q) => ({ id: q.id, choice: (q.options || []).find((o) => o && o.trim()) || 'auto' })) }
-        : { decision: 'continue' };
-      server._testing.answerRun(runId, pq.id, payload);
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error(`run ${runId} never settled`);
-}
+// runSettled answers it as auto mode would (the api-run-no-project pattern).
+let settled;
 
 before(async () => {
   process.env.WORCA_MOCK = '1';
@@ -53,6 +37,7 @@ before(async () => {
   await config.setHumanInLoop(real, false);
   artifacts = await import('../src/core/artifacts.mjs');
   server = await import('../ui/server.mjs');
+  settled = runSettled({ runs: server.runs, answerRun: server._testing.answerRun });
 });
 after(() => {
   delete process.env.WORCA_MOCK;
@@ -90,7 +75,7 @@ test('a git run in the copy: the real key, a checkout under its run root, and th
   const out = await server._testing.invokeStartRun({ projectDir: copy, sourceBranch: sha, prompt: 'Add a feature', title: 'Prototype try' }, null, {});
   assert.equal(out.status, 200, JSON.stringify(out.body));
   const { runId } = out.body;                     // the body carries only runId; the entry has the pipeline id
-  const { pipelineId } = await settled(server.runs, runId);
+  const { pipelineId } = await settled(runId);
   const row = artifacts.findPipelineRowById(pipelineId);
   assert.equal(row.project_key, key);
   const br = JSON.parse(row.branch);
