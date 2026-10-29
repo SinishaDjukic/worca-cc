@@ -1,6 +1,7 @@
 # CLI
 
-Every `worca` command runs the same engine as the web UI. `worca --help` lists them all; most subcommands have their own `worca <subcommand> help`.
+Every `worca` command runs the same engine as the web UI. Below are the commands you'll use most, then the full
+list of subcommands.
 
 ## Common commands
 
@@ -74,24 +75,29 @@ worca flags                     # list them
 worca flags on smartRunNaming   # a Labs feature, off by default
 ```
 
-Run `worca --help` for every subcommand — the project registry (`add`,
-`list`, `remove`, top-level: `worca list`, not `worca projects list`), `ui`,
-`run --preset`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`,
-`workflow`, `script`, `plugin`, `marketplace`, `models`, `config`, `flags`,
-`metrics`, `policy`, `memory team`, `container`, `broker`, `proxy`, `setup`,
-`extension`, `doctor`, `version` — and flag; most have their own
-`worca <subcommand> help`.
+## All subcommands
+
+`worca --help` lists every subcommand and flag, and most subcommands have their own `worca <subcommand> help`:
+
+- The project registry: `add`, `list` and `remove`. These are top-level, so it's `worca list`, not
+  `worca projects list`.
+- The rest: `ui`, `run --preset`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
+  `plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`, `memory team`, `container`, `broker`,
+  `proxy`, `setup`, `extension`, `doctor` and `version`.
 
 ## Exit codes
 
-For scripts and CI wrappers: `0` the run finished (or an
-interactive run paused and you can resume it); `1` a hard error, a stop, or an
-interactive pause an error forced; `2` a usage error; `3` any pause under
-`--yes` — the run parked itself (auth, quota, a usage or cost limit, exhausted
-retries, a step error) with nobody attached to resume it. Nothing is discarded
-on a pause: `worca resume <pipelineId>` picks the run up where it stopped — on
-the model it was started with (`--model`, or the one picked in the UI) — and
-the cause is printed with the pause block on stdout.
+For scripts and CI wrappers, `worca` exits with:
+
+- `0` when the run finished, or when an interactive run paused and you can resume it.
+- `1` on a hard error, a stop, or an interactive pause forced by an error.
+- `2` on a usage error.
+- `3` on any pause under `--yes`. The run parked itself (auth, quota, a usage or cost limit, retries used up, a
+  step error) and nobody is attached to resume it.
+
+Nothing is thrown away on a pause. The cause is printed with the pause block on stdout, and
+`worca resume <pipelineId>` picks the run up where it stopped, on the model it was started with (`--model`, or the
+one picked in the UI).
 
 ## The `/worca` skill (inside Claude Code)
 
@@ -99,17 +105,17 @@ the cause is printed with the pause block on stdout.
 worca --install /path/to/your/project
 ```
 
-This copies Worca's agents and the `/worca` skill into the project's
-`.claude/` folder (files already there are kept; `--force` overwrites them).
+This copies Worca's agents and the `/worca` skill into the project's `.claude/` folder. Files already there are
+kept, and `--force` overwrites them.
+
 To have `/worca` in every project, install into your home folder instead:
 
 ```bash
 worca --install ~
 ```
 
-Claude Code loads `~/.claude/agents/` and `~/.claude/skills/` in every
-project, so the agents and the skill are then available everywhere. Add
-`--force` to overwrite copies from an older Worca version.
+Claude Code loads `~/.claude/agents/` and `~/.claude/skills/` in every project, so the agents and the skill are then
+available everywhere. Add `--force` to overwrite copies from an older Worca version.
 
 Then open Claude Code in a project and run:
 
@@ -117,6 +123,4 @@ Then open Claude Code in a project and run:
 /worca Add a /search endpoint with pagination
 ```
 
-The skill starts the same deterministic orchestrator as the CLI;
-`/worca --ui` starts the web UI.
-
+The skill starts the same deterministic orchestrator as the CLI, and `/worca --ui` starts the web UI.
