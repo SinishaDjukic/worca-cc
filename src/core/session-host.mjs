@@ -1,23 +1,50 @@
 // src/core/session-host.mjs — one SessionHost per session: the member dispatches of a session run one at a time, each as
-// ONE host turn (session groups, Tasks 39–41; spec §5, §5.2; C2, C25, C39). The executor hands a member's unchanged
-// runOpts to `host.run(opts, member)` (Task 45). Every fact lands in the session trace (session-trace.mjs), never a prompt.
+// ONE host turn (session groups, Tasks 39–41; spec §5, §5.2, §6.3; C2, C9–C12, C20, C25, C35, C39, C41, C43). The executor
+// hands a member's unchanged runOpts to `host.run(opts, member)` (Task 45). A turn's frames go through the demux
+// (session-demux.mjs), its dollars through the harness port (Task 42), and every fact lands in the session trace
+// (session-trace.mjs), never a prompt.
 import { runClaude, mockEnabled } from './claude-runner.mjs';
 import { runMockSession } from './engines/mock-session.mjs';
-import { HOST_MAX_TURNS, dispatchIdFor, turnIdFor, dispatchMessage, memberDefinition, hostFlagsFor, hostSpawnOpts } from './engines/session-dispatch.mjs';
+import { SessionHostError, HOST_MAX_TURNS, HOST_TOOLS_MODE, dispatchIdFor, turnIdFor, dispatchMessage, memberDefinition, hostFlagsFor,
+  hostSpawnOpts } from './engines/session-dispatch.mjs';
+import { createTurnDemux, watchdogVerdict } from './engines/session-demux.mjs';
 import { createSessionTrace, applyTraceRecord, emptySummary } from './session-trace.mjs';
+import { priceUsage, usageTokens, reconcileEpoch, estimateMemberUsd } from './session-cost.mjs';
+import { listCostRates } from './config.mjs';
+import { upstreamKey } from './model-roles.mjs';
+import { classifyError } from './recoverable-error.mjs';
+import { engineReportsCost } from '../shared/engine-switch.mjs';
 import { markTerminal } from './failure-policy.mjs';
 
 /** v1 runs every session on the `turns` transport: one `--resume` process per dispatch (spec D4). */
 export const SESSION_TRANSPORT = 'turns';
+/** Does the next `--resume` of the same host restore a killed turn's spend in its cumulative total (S4)? Then a cut turn's
+ *  spend is carried into the next Δ of its epoch; else it is booked at the cut as an estimate (C9). */
+export const HOST_CUT_COST_RESTORED = true;
+/** The result subtype of a turn `--max-budget-usd` stopped (S4; C10). */
+export const HOST_BUDGET_SUBTYPE = 'error_max_budget_usd';
+/** A `--resume` whose host transcript is gone (S1 pins the fragment; C20). */
+export const VANISHED_RE = /No conversation found/i;
 
 /** The host turn's runner. The mock host plays a turn offline; a real one is `runClaude` with the RAW envelopes the demux
  *  routes (`rawEvents`: runClaude otherwise hands out the normalized vocabulary, which carries no Agent call). The mock
  *  predicate is claude-runner's own (`opts.mock` OR WORCA_MOCK/ORCH_MOCK, critique minor 8), never `opts.mock` alone. */
 export const defaultTransport = (hostOpts) => (mockEnabled(hostOpts) ? runMockSession(hostOpts) : runClaude({ ...hostOpts, rawEvents: true }));
 
+const WATCHDOG_TEXT = {
+  SESSION_HOST_NO_DISPATCH: 'the main agent did not dispatch the step',
+  SESSION_HOST_MULTI_DISPATCH: 'the main agent dispatched the step more than once',
+  SESSION_HOST_STRAY_TOOL: 'the main agent called a tool itself',
+};
+const fin = (v) => typeof v === 'number' && Number.isFinite(v);
 const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
 const emitTo = (onEvent, e) => { try { if (typeof onEvent === 'function') onEvent(e); } catch { /* a listener never breaks the turn */ } };
 const decisionOf = (decisions, sid) => (decisions instanceof Map ? decisions.get(sid) : decisions?.[sid]) || null;
+const ZERO_TOKENS = () => ({ in: 0, out: 0, cr: 0, cw: 0 });
+const addTokens = (a, t) => { for (const k of ['in', 'out', 'cr', 'cw']) a[k] += t[k]; return a; };
+/** USD of a usage at a model, 0 when it cannot be priced (a cut turn's estimate, C9). `ratesFor` as priceUsage's (default:
+ *  the operator's override, else the list price). */
+const priced = (model, usage, ratesFor) => { const p = priceUsage(model, usage, { ratesFor }); return fin(p) ? p : 0; };
 
 export class SessionHost {
   constructor({ spec, decision, port, transport, plainRun, limits = {} }) {
@@ -32,7 +59,8 @@ export class SessionHost {
     this.port = port;
     this.transport = transport;
     this.plainRun = plainRun;
-    this.limits = { ...limits };
+    // Tests only: cutCostRestored (Task 41 adds the rotation, degrade and guard limits).
+    this.limits = { cutCostRestored: HOST_CUT_COST_RESTORED, ...limits };
     this.engine = port.engine ?? null;
     this.hostEpoch = 1;                        // C2: the first host session is epoch 1
     this.hostSessionId = null;
@@ -47,7 +75,12 @@ export class SessionHost {
     this.lastContextTokens = 0;
     this.lastCumulativeUsd = 0;
     this.epochOpeningUsd = 0;
+    this.epochBookedUsd = 0;                   // Σ harness-sourced bookings of the current epoch (C33)
+    this.epochChecks = [];                     // every closed epoch's check (rotate, restart; Task 41)
     this.openCut = null;
+    this.memberUsdByNode = {};
+    this.tokens = ZERO_TOKENS();
+    this.activeMs = 0;
     this.lastDispatch = new Map();             // executionId → { dispatchId, nodeId } of its latest dispatch (noteVerdict)
     this.queue = [];
     this.busy = false;
@@ -70,6 +103,22 @@ export class SessionHost {
 
   _queued(executionId, queued) {
     try { this.port.onQueue?.(executionId, queued); } catch { /* status only */ }
+  }
+
+  _log(level, text, attr) {
+    try { this.port.log?.(level, text, attr); } catch { /* a log line never breaks a turn */ }
+  }
+
+  _stamp(executionId, ref) {
+    try { this.port.stampRow?.(executionId, ref); } catch { /* the row ref is best-effort, like _persist */ }
+  }
+
+  /** The harness books; a booking that throws is logged and the turn goes on (its records say what is known). */
+  _book(b) {
+    try { return this.port.bookTurn(b) || null; } catch (err) {
+      this._log('warn', `session ${this.sid}: booking ${b.turnId} failed: ${err?.message || err}`, { session: this.sid });
+      return null;
+    }
   }
 
   /** The executor's `run` for a member (C25: FIFO, one turn at a time). Rejects at once with an AbortError when the
@@ -134,36 +183,270 @@ export class SessionHost {
     return n;
   }
 
-  /** One host turn. Task 39 runs the transport and writes the turn's frame records; Task 40 fills in the rest. */
+  /** `--max-budget-usd` for the next turn (Task 41); null ⇒ omitted. */
+  _maxBudgetUsd() { return null; }
+
+  /** The main-thread guard's settings for a host spawn (Task 41); null ⇒ none. */
+  _mainThreadGuard() { return null; }
+
+  /** One host turn: turn_start and dispatch, the transport through the demux, the outcome's records and booking. */
   async _turn(opts, member, { queueMs = 0 } = {}) {
     const executionId = String(member.executionId);
     const nodeId = member.nodeId ?? null;
     const label = member.label || nodeId || executionId;
+    const attr = { nodeId, executionId, session: this.sid };
     const attempt = this._nextAttempt(executionId);
     const turnId = turnIdFor(this.sid, ++this.turns);
     const dispatchId = dispatchIdFor(executionId, attempt);
-    const flags = hostFlagsFor({ settings: this.settings, firstMemberModel: this.decision.firstMemberModel ?? null, member });
+    const flags = hostFlagsFor({ settings: this.settings, firstMemberModel: this.decision.firstMemberModel ?? null, member });   // C26
+    const resume = this.hostSessionId;
+    const maxBudgetUsd = this._maxBudgetUsd();
     this.dispatches += 1;
     this.epochDispatches += 1;
     this.lastDispatch.set(executionId, { dispatchId, nodeId });
     const { agentType, definitions } = memberDefinition(opts, { executionId, attempt, label });
-    this._write('turn_start', { turnId, resume: !!this.hostSessionId, maxTurns: HOST_MAX_TURNS, maxBudgetUsd: null,
-      hostModel: flags.model ?? null, hostEffort: flags.effort ?? null });
+    const definition = definitions[agentType];
+    this._write('turn_start', { turnId, resume: !!resume, maxTurns: HOST_MAX_TURNS, maxBudgetUsd, hostModel: flags.model ?? null,
+      hostEffort: flags.effort ?? null });
     this._write('dispatch', { turnId, dispatchId, executionId, nodeId, attempt, agentType,
       cold: attempt > 1 || !!opts.resumeSessionId || !!opts.coldRedispatch, queueMs });
+
+    const started = Date.now();
     const turnAbort = new AbortController();
     const signal = opts.signal ? AbortSignal.any([opts.signal, turnAbort.signal]) : turnAbort.signal;
-    const hostOpts = hostSpawnOpts(opts, { hostSessionId: this.hostSessionId, hostModel: flags.model, hostEffort: flags.effort, definitions,
-      dispatchText: dispatchMessage({ agentType, label }) });
-    try {
-      const out = await this.transport({ ...hostOpts, signal, onEvent: (e) => emitTo(opts.onEvent, e) });
-      this._write('turn_end', { turnId, exit: 'ok' });
-      return { text: String(out?.text ?? ''), exitCode: out?.exitCode ?? 0 };
-    } catch (err) {
-      const aborted = !!opts.signal?.aborted;
-      this._write('turn_end', { turnId, exit: aborted ? 'aborted' : 'error' });
-      throw aborted && err?.name !== 'AbortError' ? abortError() : err;
+    const emit = (e) => emitTo(opts.onEvent, e);
+    const memberUsage = new Map();              // the member's own usage per message id: a cut turn's price before its tool_result
+    let memberMsgModel = null;                  // the model the member's own messages name (one that pins none, C26)
+    let boundId = null;
+    const demux = createTurnDemux({
+      agentType,
+      onMember: (e) => {
+        if (e?.type === 'usage' && e.phase === 'message' && (e.parentId ?? null) === null && e.usage) {
+          memberUsage.set(e.messageId ?? `n${memberUsage.size}`, e.usage);
+          if (typeof e.model === 'string' && e.model) memberMsgModel = e.model;
+        }
+        emit(e);                                // the member's row; runOpts stamps the role
+      },
+      onInit: ({ hostSessionId, model }) => {   // C43: adopt the id the moment it arrives; C35: the main agent's real model
+        if (hostSessionId) this.hostSessionId = hostSessionId;
+        if (model) this.hostResolvedModel = model;
+      },
+      onBind: (id) => {
+        boundId = id;
+        this._write('member_bound', { turnId, dispatchId, memberAgentId: id });
+        // A partial ref: a row paused mid-turn already says it ran inside the session (C42); the full one follows the booking.
+        this._stamp(executionId, { sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId, dispatchId, attempt, memberAgentId: id });
+        emit({ type: 'subagent', event: 'spawn', toolUseId: id, subagentType: agentType, label, memberOf: this.sid });   // C8
+        emit({ type: 'session', init: true, model: definition.model ?? null, sessionId: this.hostSessionId });
+      },
+      onMemberDone: (x) => {
+        this._write('member_done', { turnId, dispatchId, memberAgentId: boundId, memberTranscriptId: x.agentId, tokens: x.usage ? usageTokens(x.usage) : null,
+          resolvedModel: x.resolvedModel, durationMs: x.durationMs, isError: x.isError, ...(x.isError ? { errorClass: classifyError(x.errorText || '') } : {}) });
+        // Verify minor 7: no tokens, usage or duration — the member's sub_agents row never carries a price (C8).
+        emit({ type: 'subagent', event: x.isError ? 'error' : 'finish', toolUseId: boundId, ...(x.resolvedModel ? { resolvedModel: x.resolvedModel } : {}) });
+        const requested = definition.model ?? null;
+        if (requested && x.resolvedModel && upstreamKey(x.resolvedModel) !== upstreamKey(requested)) {   // S2, C26 (a dated id of it is no mismatch)
+          this._write('watchdog', { turnId, dispatchId, code: 'model-mismatch', level: 'warn', detail: { requested, resolved: x.resolvedModel } });
+          this._log('warn', `${label} asked for ${requested} but ran on ${x.resolvedModel}`, attr);
+          emit({ type: 'session', init: true, model: x.resolvedModel });
+        } else if (!requested && x.resolvedModel) {
+          emit({ type: 'session', init: true, model: x.resolvedModel });   // no model of its own: the real one stamps the row, as an ungrouped init does
+        }
+      },
+      onHostText: (t) => this._log('info', t, attr),
+      onViolation: () => turnAbort.abort(),     // C11: at once, before AND after the member's result
+      onWarn: (w) => this._onWarn(w, { turnId, dispatchId, label, attr }),
+    });
+
+    let hostOpts = hostSpawnOpts(opts, { hostSessionId: resume, hostModel: flags.model, hostEffort: flags.effort, definitions, maxBudgetUsd,
+      hostToolsMode: HOST_TOOLS_MODE, mainThreadGuard: this._mainThreadGuard(), dispatchText: dispatchMessage({ agentType, label }) });
+    // A model entry's env is merged over the run env (composeSpawnEnv): it must not switch background tasks back on.
+    if (hostOpts.modelEnv && Object.hasOwn(hostOpts.modelEnv, 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS')) {
+      hostOpts = { ...hostOpts, modelEnv: { ...hostOpts.modelEnv, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' } };
     }
+    let err = null;
+    try { await this.transport({ ...hostOpts, signal, onEvent: (e) => demux.feed(e) }); } catch (e) { err = e; }
+    const facts = demux.facts();
+    const durationMs = Date.now() - started;
+    const r = facts.result;
+    const done = facts.done;
+    const killed = turnAbort.signal.aborted;
+
+    // The outcome; the first matching rule wins (C10, C11, C12, C20, C41).
+    let outcome;
+    if (opts.signal?.aborted) outcome = 'abort';                                                   // Stop / pause: the turn is cut
+    else if (done && !done.isError) outcome = 'accept';                                             // C12: the step finished
+    else if (r && (r.subtype === HOST_BUDGET_SUBTYPE || r.subtype === 'error_max_turns')) outcome = 'limit';   // Task 41
+    else if (facts.violation) outcome = 'watchdog';                                                 // C11: before the member's result
+    else if (done?.isError && (!err || killed)) outcome = 'member-error';                           // C41 (after-done violations stay warnings)
+    else if (err && resume && !facts.sawInit && VANISHED_RE.test([err.message, err.stream, ...facts.said].join('\n'))) outcome = 'vanished';   // C20: before init
+    else if (err) outcome = 'adapter';
+    else outcome = watchdogVerdict(facts) ? 'watchdog' : 'accept';
+    const flagged = facts.afterDone.length > 0 || (outcome === 'accept' && !!facts.violation);
+    const exit = {
+      abort: 'aborted',
+      accept: flagged ? 'violation' : err ? 'error' : 'ok',
+      limit: r?.subtype === HOST_BUDGET_SUBTYPE ? 'budget' : 'max_turns',
+      watchdog: killed ? 'violation' : 'ok',
+      'member-error': err ? 'error' : 'ok',
+      vanished: 'error',
+      adapter: 'error',
+    }[outcome];
+
+    // Warnings the turn earned: a violation that raced a clean result, every violation after the member's result (C11, C41).
+    if (outcome === 'accept' || outcome === 'member-error') {
+      for (const v of [outcome === 'accept' ? facts.violation : null, ...facts.afterDone].filter(Boolean)) {
+        this._write('watchdog', { turnId, dispatchId, code: v.code, level: 'warn', detail: v.detail || {} });
+        this._log('warn', `${label}: ${v.code} after the step's own result`, attr);   // C11: a warn line, as for every warn record
+      }
+    }
+    let verdict = null;
+    if (outcome === 'watchdog') {
+      verdict = facts.violation || watchdogVerdict(facts);
+      this._write('watchdog', { turnId, dispatchId, code: verdict.code, level: 'error', detail: verdict.detail || {} });
+    }
+
+    // Booking (C9, critique minor 2): the port first, then turn_end, the carried cost, the cost and the reconcile.
+    const hostModel = this.hostResolvedModel || flags.model || null;
+    // A member that pins no model runs on what its own messages name, else on the main agent's (C26: it inherits it).
+    const memberModel = done?.resolvedModel || definition.model || memberMsgModel || hostModel;
+    const hostUsage = r?.usage ?? facts.hostUsage;     // the result's host usage keeps its real output and 1-hour cache writes
+    const fromEvents = ZERO_TOKENS();
+    for (const u of memberUsage.values()) addTokens(fromEvents, usageTokens(u));
+    // The member's own total when its tool_result arrived, else what its messages reported so far (null: it never spoke).
+    const memberSpent = done?.usage ?? (memberUsage.size ? fromEvents : null);
+    let booking = null;
+    let cutNow = null;                                  // a cut that can never be carried: booked right after its turn_end
+    // A result with no cumulative on an engine that reports cost is held like a cut: the next result of the epoch holds its
+    // spend, so booking an estimate now would book it twice (C9; C24's estimate then only books what nothing carries).
+    const unpricedResult = !!r && !fin(r.cumulativeUsd) && engineReportsCost(this.engine);
+    if (r && !unpricedResult) {                         // every turn that produced a result, failed ones too (the child may have spent)
+      booking = this._book({ sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId, dispatchId, stepKey: executionId, nodeId,
+        cumulativeUsd: r.cumulativeUsd ?? NaN, hostUsage, hostModel, memberUsage: memberSpent, memberModel,
+        investigators: facts.investigators, hookUsd: facts.hookUsd, carried: this.openCut });
+    } else if (r || facts.sawInit) {                    // a CUT turn: no result (pause, stop, a kill, a host death), or no cost on it
+      // Its price: the member's own usage plus its finished investigators' (C33), plus the main agent's; unpriceable parts 0.
+      // Twice: at the operator's rates (what an estimate books) and at the CLI's list rates, which is how the next Δ holds
+      // it: the carried split is taken at those, then the cut keeps its own rates (Task 42; correction 5's rule).
+      const memberCut = memberSpent ?? fromEvents;
+      const cutPrice = (ratesFor) => {
+        const m = estimateMemberUsd({ memberUsage: memberCut, memberModel, investigators: facts.investigators, ratesFor });
+        return (fin(m) ? m : 0) + priced(hostModel, hostUsage, ratesFor);
+      };
+      const cutTokens = addTokens(usageTokens(memberCut), usageTokens(hostUsage));
+      for (const i of facts.investigators) addTokens(cutTokens, usageTokens(i.usage));
+      const cut = { turnId, dispatchId, executionId, nodeId, cutUsd: cutPrice(), cutListUsd: cutPrice(listCostRates), cutTokens };
+      if (this.limits.cutCostRestored || r) this._holdCut(cut);                 // a finished turn's spend is in the next cumulative
+      else cutNow = cut;
+    }
+    if (fin(r?.cumulativeUsd)) this.lastCumulativeUsd = r.cumulativeUsd;
+    if (facts.lastHostUsage) this.lastContextTokens = facts.lastHostUsage.in + facts.lastHostUsage.cr + facts.lastHostUsage.cw;   // critique minor 4
+    this.activeMs += durationMs;
+    addTokens(this.tokens, usageTokens(hostUsage));
+    if (memberSpent) addTokens(this.tokens, usageTokens(memberSpent));
+    for (const i of facts.investigators) addTokens(this.tokens, usageTokens(i.usage));   // the member's investigators too (spec §6.3)
+    this._write('turn_end', { turnId, cumulativeUsd: r?.cumulativeUsd ?? null, deltaUsd: booking?.deltaUsd ?? null, hostUsage: usageTokens(hostUsage),
+      hostModel: this.hostResolvedModel, numTurns: r?.numTurns ?? null, durationMs: r?.durationMs ?? durationMs, exit, subtype: r?.subtype ?? null });
+    if (cutNow) this._bookCut(cutNow);
+    if (booking) {
+      if (booking.carried && this.openCut) {            // C9: each cut turn's spend inside this Δ goes back to its own row
+        const c = this.openCut;
+        this.openCut = null;
+        // The port's shares follow the cuts' order; a port that answers one figure gives it all to the first cut.
+        const shares = Array.isArray(booking.carried.parts) ? booking.carried.parts : [{ usd: booking.carried.usd }];
+        (c.parts || [c]).forEach((p, i) => {
+          const usd = shares[i]?.usd ?? null;
+          // A carry is taken out of the CLI's Δ (a harness figure), whatever this turn's own source; an override on the cut
+          // member is that record's, not this turn's (C9).
+          this._write('cost', { turnId: p.turnId, dispatchId: p.dispatchId, executionId: p.executionId, nodeId: p.nodeId, memberUsd: usd,
+            hostOverheadUsd: null, costSource: 'harness', overridden: shares[i]?.overridden === true, carriedBy: turnId });
+          this._addMemberUsd(p.nodeId, usd);
+        });
+      }
+      this._write('cost', { turnId, dispatchId, executionId, nodeId, memberUsd: booking.memberUsd, hostOverheadUsd: booking.hostOverheadUsd,
+        costSource: booking.costSource, hostPriced: booking.hostPriced, overridden: booking.overridden });
+      this._addMemberUsd(nodeId, booking.memberUsd);
+      this.epochBookedUsd += this._harnessPart(booking);
+      const rc = booking.reconcile || { ok: true, checks: [] };
+      this._write('reconcile', { turnId, dispatchId, ok: rc.ok !== false, checks: Array.isArray(rc.checks) ? rc.checks : [] });
+    }
+    // C7: the full ref replaces the bind-time one.
+    this._stamp(executionId, { sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId, dispatchId, attempt,
+      memberAgentId: boundId, memberTranscriptId: done?.agentId ?? null, costSource: booking?.costSource ?? null });
+
+    switch (outcome) {
+      case 'abort': throw err?.name === 'AbortError' ? err : abortError();
+      case 'accept':
+        this.consecutiveWatchdog = 0;
+        if (err) this._log('warn', 'the main agent failed after the step finished; the step is kept', attr);
+        emit({ type: 'result', text: done.report, sessionBooked: true });     // the harness logs it and books nothing (Task 42)
+        return { text: done.report, exitCode: 0 };
+      case 'member-error':
+        this.consecutiveWatchdog = 0;
+        // C41: a 529 retries as rate_limit, a usage limit pauses as usage_limit with its reset time, exactly as ungrouped.
+        throw Object.assign(new Error(done.errorText || 'the step failed'), { errorClass: classifyError(done.errorText || '') });
+      case 'watchdog':
+        this.consecutiveWatchdog += 1;
+        throw new SessionHostError(verdict.code, WATCHDOG_TEXT[verdict.code] || 'the main agent did not dispatch as told', verdict.detail || {});
+      case 'vanished':
+        throw new SessionHostError('SESSION_HOST_VANISHED', 'the host session was not found', { hostSessionId: resume });
+      case 'limit':                                     // Task 41 decides; until then the adapter's own error
+      case 'adapter':
+      default:
+        // C20: the adapter's error unchanged (message, errorClass, stream), so a --plugin-dir refusal reaches the executor's
+        // sideload retry and an auth failure classifies as auth. Only a missing class takes the member's error class (C41).
+        if (err && err.errorClass == null && done?.isError) err.errorClass = classifyError(done.errorText || '');
+        throw err;
+    }
+  }
+
+  _onWarn(w, { turnId, dispatchId, label, attr }) {
+    this._write('watchdog', { turnId, dispatchId, code: w.code, level: 'warn', detail: w.detail || {} });
+    this._log('warn', `${label}: ${w.code}`, attr);
+  }
+
+  _addMemberUsd(nodeId, usd) {
+    if (!fin(usd) || nodeId == null) return;
+    this.memberUsdByNode[nodeId] = (this.memberUsdByNode[nodeId] ?? 0) + usd;
+  }
+
+  /** What a booking adds to its epoch's harness side: the booked parts when the harness figure was booked as split, else
+   *  the turn's Δ (a bridge or override booking still moved the CLI's cumulative by Δ). */
+  _harnessPart(b) {
+    const carriedOverridden = (b.carried?.parts || []).some((p) => p?.overridden === true);
+    if (b.costSource === 'harness' && !b.overridden && !carriedOverridden) {
+      return [b.memberUsd, b.hostOverheadUsd, b.carried?.usd].reduce((a, x) => a + (fin(x) ? x : 0), 0);
+    }
+    return fin(b.deltaUsd) ? b.deltaUsd : 0;
+  }
+
+  _epochCheck() {
+    return reconcileEpoch({ epoch: this.hostEpoch, openingUsd: this.epochOpeningUsd, lastCumulativeUsd: this.lastCumulativeUsd, bookedHarnessUsd: this.epochBookedUsd });
+  }
+
+  /** A cut turn waits for the next booking of its epoch (C9). A second cut before that booking joins the pending one as
+   *  another part: both spends reach the same next Δ, and the carried split gives each cut turn its own share, oldest
+   *  first, on its own row (Task 42). The totals, under the first cut's ids, are what `pause` records. */
+  _holdCut(cut) {
+    const o = this.openCut;
+    this.openCut = o ? { ...o, cutUsd: o.cutUsd + cut.cutUsd, cutListUsd: (o.cutListUsd ?? o.cutUsd) + cut.cutListUsd,
+      cutTokens: addTokens({ ...o.cutTokens }, cut.cutTokens), parts: [...(o.parts || [o]), cut] } : { ...cut, parts: [cut] };
+  }
+
+  /** A cut that can never be carried (no restore, a closing host, Task 41's rotate or restart): booked now, as an estimate. */
+  _bookCut(cut) {
+    const booking = this._book({ sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId: cut.turnId, dispatchId: cut.dispatchId,
+      stepKey: cut.executionId, nodeId: cut.nodeId, cutEstimateUsd: cut.cutUsd });
+    this._write('cost', { turnId: cut.turnId, dispatchId: cut.dispatchId, executionId: cut.executionId, nodeId: cut.nodeId,
+      memberUsd: booking?.memberUsd ?? null, hostOverheadUsd: booking?.hostOverheadUsd ?? null, costSource: booking?.costSource ?? 'estimate', cut: true });
+    this._addMemberUsd(cut.nodeId, booking?.memberUsd);
+  }
+
+  _bookOpenCut() {
+    if (!this.openCut) return;
+    const c = this.openCut;
+    this.openCut = null;
+    for (const p of c.parts || [c]) this._bookCut(p);                         // each cut turn on its own row (C9)
   }
 
   /** C5: the executor's verdict on the execution's latest dispatch (counts only). */
@@ -180,14 +463,16 @@ export class SessionHost {
       hostSessionId: this.hostSessionId, hostResolvedModel: this.hostResolvedModel, turns: this.turns, dispatches: this.dispatches,
       epochDispatches: this.epochDispatches, rotations: this.rotations, restarts: this.restarts,
       attempts: Object.fromEntries(this.attempts), consecutiveWatchdog: this.consecutiveWatchdog, lastContextTokens: this.lastContextTokens,
-      lastCumulativeUsd: this.lastCumulativeUsd, epochOpeningUsd: this.epochOpeningUsd, openCut: this.openCut ? { ...this.openCut } : null,
+      lastCumulativeUsd: this.lastCumulativeUsd, epochOpeningUsd: this.epochOpeningUsd, openCut: this.openCut ? structuredClone(this.openCut) : null,
       status: this.summary.status,
     };
   }
 
-  /** 'paused' writes `pause` (a later run resumes this host, Task 47); any other outcome writes `close`. Once. A run that
-   *  ends on Stop or a failure does not wait for its running steps (graph/scheduler.mjs `finish`), so close refuses the
-   *  waiters and lets the turn in flight settle first: its records come before `pause`/`close`. */
+  /** 'paused' writes `pause` and keeps `openCut` in the snapshot, so the resumed turn carries it (Task 47). Any other
+   *  outcome first books a pending cut as an estimate (verify major 1: a host that died after the LAST member's
+   *  tool_result, or a Stop never resumed, would drop that member's dollars), then writes `close`. Once. A run that ends
+   *  on Stop or a failure does not wait for its running steps (graph/scheduler.mjs `finish`), so close refuses the
+   *  waiters and lets the turn in flight settle first: its records and its cut come before `pause`/`close`. */
   close(outcome) {
     this.closing ??= this._close(outcome);                                    // once; a second caller waits for the first
     return this.closing;
@@ -210,11 +495,16 @@ export class SessionHost {
     }
     await this.inflight;
     if (outcome === 'paused') {
-      this._write('pause', { reason: 'pause', ...(this.openCut ? { turnId: this.openCut.turnId, dispatchId: this.openCut.dispatchId } : {}) });
+      const c = this.openCut;
+      this._write('pause', { reason: 'pause', ...(c ? { turnId: c.turnId, dispatchId: c.dispatchId, cutTokens: c.cutTokens } : {}) });
     } else {
-      this._write('close', { status: outcome, costUsd: this.summary.costUsd, hostOverheadUsd: this.summary.hostOverheadUsd,
-        turns: this.turns, dispatches: this.dispatches, rotations: this.rotations, restarts: this.restarts,
-        wallMs: Date.now() - this.openedAt, reconciled: this.summary.reconciled });
+      this._bookOpenCut();
+      const epochChecks = [...this.epochChecks, ...(this.epochDispatches ? [this._epochCheck()] : [])];
+      const turnChecksOk = this.summary.reconciled;
+      this._write('close', { status: outcome, costUsd: this.summary.costUsd, memberUsd: Object.keys(this.memberUsdByNode).length ? { ...this.memberUsdByNode } : null,
+        hostOverheadUsd: this.summary.hostOverheadUsd, turns: this.turns, dispatches: this.dispatches, rotations: this.rotations,
+        restarts: this.restarts, wallMs: Date.now() - this.openedAt, activeMs: this.activeMs, tokens: { ...this.tokens },
+        reconciled: turnChecksOk && epochChecks.every((c) => c.ok !== false), epochChecks });
     }
     await this.trace.close();
   }

@@ -20,7 +20,7 @@ const WAITS = new Set(['two-dispatch', 'stray-bash', 'model-override', 'backgrou
 const ids = { host: 0, agent: 0, call: 0, turn: 0 };
 let lost = new Map();                    // spend of cut turns the CLI never restores (restoreCutCost false)
 
-/** Test seams. `behave`, `costFor`, `onMemberStart`, `hookUsd` and `restoreCutCost` are the test's configuration;
+/** Test seams. `behave`, `costFor`, `onMemberStart`, `resolvedModel`, `hookUsd` and `restoreCutCost` are the test's configuration;
  *  `resetSessions()` clears the session state only: `spent`, `seen`, `spendBeforeHang`, the ids and the turn counter. */
 export const _testing = {
   costFor: null,
@@ -28,6 +28,7 @@ export const _testing = {
   spent: new Map(),                      // the ground truth: Map<hostSessionId, usd>, added the moment it is spent
   seen: [],
   onMemberStart: null,
+  resolvedModel: null,                   // the model the child reports it ran on (S2), when not its definition's (Task 40)
   hookUsd: null,
   restoreCutCost: true,                  // S4's costRestoredAfterKill
   spendBeforeHang: null,
@@ -122,7 +123,7 @@ export async function runMockSession(hostOpts = {}) {
 
     firstHostMessage([agentCall()]);
     check();
-    const resolvedModel = definition.model || model || 'mock-default';
+    const resolvedModel = _testing.resolvedModel || definition.model || model || 'mock-default';
     const memberUsd = () => _testing.costFor?.({ agentType, turn }) ?? (priceUsage(resolvedModel, MOCK_MEMBER_USAGE) || 0);
     if (Object.hasOwn(MEMBER_ERRORS, behaviour)) {                      // the child never ran (or failed at once): no spend
       toolResult(MEMBER_ERRORS[behaviour], true, null);

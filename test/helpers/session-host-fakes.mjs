@@ -70,6 +70,15 @@ export function memberOpts({ signal = new AbortController().signal, events = [] 
   return { cwd: tmpdir(), systemPrompt: 'SYS', prompt: 'TASK', allowedTools: ['Read'], signal, onEvent: (e) => events.push(e), mock: true, engine: 'claude' };
 }
 
+/** A member's runOpts for the offline host (mock-session.mjs): a generic producer that writes `out.md` in its own dir, pinned to
+ *  Opus at high effort. `executionId` only names the call; the host reads the execution from `member()`. */
+export function mockMember(executionId, events = [], over = {}) {
+  void executionId;
+  const dir = mkdtempSync(join(tmpdir(), 'turn-'));
+  return { cwd: dir, systemPrompt: 'SYS\nMOCK_ROLE: generic-producer', prompt: `TASK\nMOCK_OUT: ${join(dir, 'out.md')}`, allowedTools: ['Read'],
+    signal: new AbortController().signal, onEvent: (e) => events.push(e), mock: true, engine: 'claude', model: 'claude-opus-5-5', effort: 'high', ...over };
+}
+
 /** memberInfo(full) (Task 45): a member that pins no model or effort of its own. */
 export const member = (nodeId, n = 1) => ({ nodeId, executionId: `x:${nodeId}:${n}`, ordinal: n, label: `${nodeId} · cycle ${n}`, model: null, effort: null, fanOut: false });
 
@@ -85,6 +94,26 @@ export function okFrames({ agentType, hostSessionId = 'H1', callId = 'T1', model
     { type: 'assistant', message: { id: `${callId}h2`, usage: { input_tokens: 950, output_tokens: 2 }, content: [{ type: 'text', text: 'DONE' }] } },
     { type: 'result', subtype, is_error: subtype !== 'success', session_id: hostSessionId, total_cost_usd: cumulativeUsd, num_turns: 3, usage: { input_tokens: 1850 } },
   ];
+}
+
+/** A transport that plays `frames(hostOpts, i)` (raw stream-json objects) through `hostOpts.onEvent`, as the Claude runner
+ *  hands them on, and rejects with an AbortError once the turn's signal fired, as a killed CLI does (`race: true` plays every
+ *  frame and resolves regardless). Otherwise it rejects with `fail(i)` when that gives an error, else resolves. Every call's hostOpts is kept in `calls`. */
+export function framesTransport(frames, { fail = () => null, race = false } = {}) {
+  const calls = [];
+  const transport = async (hostOpts) => {
+    const i = calls.length;
+    calls.push(hostOpts);
+    for (const raw of frames(hostOpts, i)) {
+      if (!race && hostOpts.signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+      hostOpts.onEvent?.(raw.type === 'hook-event' || raw.type === 'log' ? raw : { type: raw.type, raw });
+    }
+    if (!race && hostOpts.signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });   // the kill
+    const err = fail(i);
+    if (err) throw err;
+    return { text: 'DONE', exitCode: 0 };
+  };
+  return { transport, calls };
 }
 
 /** A transport whose every call parks until the test settles it: `ok(i, over)` plays a clean turn (okFrames) through

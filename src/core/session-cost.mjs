@@ -27,14 +27,15 @@ export function usageTokens(u) {
   };
 }
 
-/** USD for `usage` at `model`'s rates (the operator's override, else the list price: `liveCostRates`). NaN when the
- *  model has no rates or the usage reports no counts at all (an all-zero usage is priceable, at $0, as
- *  `isPriceableUsage` says). Either usage shape (`usageTokens`); the demux's short shape has no `cache_creation`
- *  buckets, so its `cw` prices at the 5-minute cache-write rate (pass an API-shaped usage when the 1-hour split matters). */
-export function priceUsage(model, usage) {
+/** USD for `usage` at `model`'s rates (the operator's override, else the list price: `liveCostRates`; `ratesFor` picks
+ *  another reader, e.g. config.mjs `listCostRates`, Task 42). NaN when the model has no rates or the usage reports no
+ *  counts at all (an all-zero usage is priceable, at $0, as `isPriceableUsage` says). Either usage shape (`usageTokens`);
+ *  the demux's short shape has no `cache_creation` buckets, so its `cw` prices at the 5-minute cache-write rate (pass an
+ *  API-shaped usage when the 1-hour split matters). */
+export function priceUsage(model, usage, { ratesFor = liveCostRates } = {}) {
   const o = usage && typeof usage === 'object' ? usage : null;
   if (!o || !(isPriceableUsage(o) || SHORT_KEYS.some((k) => o[k] != null))) return NaN;
-  const rates = liveCostRates(model);
+  const rates = ratesFor(model);
   if (!rates) return NaN;
   const t = usageTokens(o);
   return estimateCost({ ...o, input_tokens: t.in, output_tokens: t.out, cache_read_input_tokens: t.cr, cache_creation_input_tokens: t.cw }, rates);
@@ -46,23 +47,24 @@ export function toleranceFor(harnessUsd, { abs = RECONCILE_ABS_USD, rel = RECONC
 
 /** The member's own usage at its model plus each investigator's at its resolved model (C33). An unpriceable part is
  *  skipped; NaN only when no part is priceable. */
-export function estimateMemberUsd({ memberUsage, memberModel, investigators = [] } = {}) {
+export function estimateMemberUsd({ memberUsage, memberModel, investigators = [], ratesFor } = {}) {
   const parts = [[memberModel, memberUsage], ...(Array.isArray(investigators) ? investigators : []).map((i) => [i?.resolvedModel, i?.usage])];
   let sum = 0;
   let priced = false;
   for (const [model, usage] of parts) {
-    const p = priceUsage(model, usage);
+    const p = priceUsage(model, usage, { ratesFor });
     if (Number.isFinite(p)) { sum += p; priced = true; }
   }
   return priced ? sum : NaN;
 }
 
 /** The split table (C9, C24, C34). `hostModel` is the RESOLVED main-agent model (C35). The first matching row wins:
- *  bridge, harness Δ, hook, estimate (only on an engine that reports cost), none (blank, never 0). */
-export function splitTurnCost({ deltaUsd, bridgeUsd, hostUsage, hostModel, memberUsage, memberModel, investigators = [], hookUsd, engineCost } = {}) {
-  const h = priceUsage(hostModel, hostUsage);
+ *  bridge, harness Δ, hook, estimate (only on an engine that reports cost), none (blank, never 0). `ratesFor` prices the
+ *  parts (default `liveCostRates`; the harness passes the list rates the CLI's Δ is priced at, Task 42). */
+export function splitTurnCost({ deltaUsd, bridgeUsd, hostUsage, hostModel, memberUsage, memberModel, investigators = [], hookUsd, engineCost, ratesFor } = {}) {
+  const h = priceUsage(hostModel, hostUsage, { ratesFor });
   const hostPriced = Number.isFinite(h);
-  const estimateUsd = estimateMemberUsd({ memberUsage, memberModel, investigators });
+  const estimateUsd = estimateMemberUsd({ memberUsage, memberModel, investigators, ratesFor });
   const H = (x) => (hostPriced ? Math.min(Math.max(h, 0), x) : 0);
   const row = (memberUsd, hostOverheadUsd, costSource) => ({ memberUsd, hostOverheadUsd, costSource, hostPriced, estimateUsd });
   if (Number.isFinite(bridgeUsd)) return row(bridgeUsd - H(bridgeUsd), H(bridgeUsd), 'bridge');
