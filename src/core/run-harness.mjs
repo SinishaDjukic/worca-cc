@@ -7635,7 +7635,9 @@ export class RunHarness extends EventEmitter {
    *  figure per session id (`sessionCosts`, in exec_meta so a resumed run starts from it) and books
    *  the difference. A figure below the kept one means the CLI restored less (a process killed before
    *  it saved its cost): nothing is booked and it becomes the baseline. Any other cost is the
-   *  result's own, as is a cumulative one with no session id or no step row. */
+   *  result's own, as is a cumulative one with no session id or no step row.
+   *  The baseline is run-level (`_sessionBaseline`): a host session shared by several rows (session groups) books each
+   *  dollar once. With one row per session id (every ungrouped run) it is that row's own last figure, as before. */
   _sessionCostDelta(e, stepKey) {
     const cost = e.costUsd != null ? Number(e.costUsd) : NaN;
     if (!e.cumulativeCost || !e.sessionId || !Number.isFinite(cost)) return cost;
@@ -7643,9 +7645,34 @@ export class RunHarness extends EventEmitter {
       || (this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase);
     const step = this.state.steps.find((s) => s.key === key);
     if (!step) return cost;
-    const seen = Number(step.sessionCosts?.[e.sessionId]) || 0;
+    const seen = this._sessionBaseline(e.sessionId);
     (step.sessionCosts ||= {})[e.sessionId] = cost;
+    this._sessionBaselines.set(e.sessionId, cost);
     return Math.max(0, cost - seen);
+  }
+
+  /** The last cumulative figure this run saw for a session id (consult V3). First use: the max over the rows'
+   *  persisted `sessionCosts` (a resumed run rebuilds it from exec_meta), unless `seedSessionBaseline` set it. After
+   *  that: the last figure seen, even a lower one ("restored less" becomes the baseline). */
+  _sessionBaseline(sessionId) {
+    const map = (this._sessionBaselines ||= new Map());
+    if (!map.has(sessionId)) {
+      let max = 0;
+      for (const s of this.state.steps) {
+        const v = Number(s.sessionCosts?.[sessionId]);
+        if (Number.isFinite(v) && v > max) max = v;
+      }
+      map.set(sessionId, max);
+    }
+    return map.get(sessionId);
+  }
+
+  /** The SessionHost restore's baseline (Task 47, through `port.seedBaseline`): the trace's last `turn_end.cumulativeUsd`
+   *  of the current epoch (C28), so a "restored less" baseline is the same figure before and after a restart (critique
+   *  M-1). A non-finite figure is ignored; a seeded id never falls back to the row max. */
+  seedSessionBaseline(sessionId, usd) {
+    if (!Number.isFinite(usd)) return;
+    (this._sessionBaselines ||= new Map()).set(sessionId, usd);
   }
 
   /** Sub-agent lifecycle: a spawn learns its label (for the child lines' "▸"
