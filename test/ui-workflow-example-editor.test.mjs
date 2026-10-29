@@ -42,7 +42,7 @@ test('the board-2 layout: title, actions, cards 1, 2, 4 on the left and 3 on the
     'AI can answer differently each time. More tries give a surer result, and cost more.',
     'A try passes only when everything below is met.',
   ]);
-  assert.equal(root.querySelector('.wft-grp-hint').textContent, 'Counted exactly, without AI. Pick a ready check, or a script from the Library.');
+  assert.equal(root.querySelector('.wft-c3 .wft-grp-hint').textContent, 'Counted exactly, without AI. Pick a ready check, or a script from the Library.');
   assert.deepEqual([...root.querySelectorAll('.wft-sect .wft-line-text')].map((n) => n.textContent), ['Length is 400 to 900 words', 'Has the sections Problem, Users, Success metric and Risks']);
   const name = root.querySelector('#wft-ex-name');
   name.value = 'Bulk export'; name.dispatchEvent(new name.ownerDocument.defaultView.Event('input'));
@@ -66,7 +66,7 @@ test('Basics, tries and the estimate read back into the value', () => {
   root.querySelector('#wft-b-cost-usd').value = '$2';
   click(byText(root, '.wft-c2 .seg button', 'The try counts as failed'));
   const v = ed.value();
-  assert.deepEqual([v.tries, v.otherwise, v.basics], [5, 'fail', { noError: true, noHelp: false, maxCostUsd: 2, maxSentBack: 1 }]);
+  assert.deepEqual([v.tries, v.otherwise, v.basics, v.project], [5, 'fail', { noError: true, noHelp: false, maxCostUsd: 2, maxSentBack: 1 }, null]);
   root.querySelector('#wft-b-cost-usd').value = '1,50';
   assert.equal(ed.value().basics.maxCostUsd, 1.5, 'a decimal comma is a point');
   root.querySelector('#wft-b-cost-usd').value = '1.234,50';
@@ -140,6 +140,7 @@ test('automatic checks: the G1 dialog with a live label, refusals in plain words
   click(byText(root, '.wft-sect button', 'Add an automatic check'));
   const kind = doc.querySelector('#wft-ck-kind');
   assert.deepEqual([...kind.options].map((o) => o.textContent), ['Length in words', 'Has these sections', 'Must mention a text', 'Must not mention a text', 'A file with this name is in the result', 'A Library script']);
+  assert.equal(doc.querySelector('.wft-dlg-ok').textContent, 'Add check', 'a new check: Add check (board 33)');
   click(doc.querySelector('.wft-dlg-ok'));
   await tick();
   assert.equal(doc.querySelector('.wft-dlg-error').textContent, 'Give a smallest or a largest number of words.');
@@ -162,6 +163,7 @@ test('automatic checks: the G1 dialog with a live label, refusals in plain words
   e0.focus();
   click(e0);
   assert.equal(doc.querySelector('#wft-ck-min').value, '400');
+  assert.equal(doc.querySelector('.wft-dlg-ok').textContent, 'Save check', 'an edited check keeps Save check');
   click(doc.querySelector('.wft-dlg-remove'));
   assert.equal(ed.value().checks.length, 3);
   assert.equal(doc.activeElement, byText(root, '.wft-sect button', 'Add an automatic check'));

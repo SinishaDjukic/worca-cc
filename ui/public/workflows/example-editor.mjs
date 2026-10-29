@@ -4,15 +4,71 @@
 // Pure DOM; app.js saves.
 import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT } from './test-ui.mjs';
 import { makeSwitch } from '../switch.mjs';
-import { CHECK_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
+import { icon } from '../icons.mjs';
+import {
+  CHECK_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
+} from '../../../src/shared/workflow-tests/checks.mjs';
+import {
+  WHERE_TITLE, WHERE_HINT, START_HINT, START_LABEL, PROJECT_LABEL, CHANGE_BUTTON, behindText, LATEST_BUTTON, LATEST_HINT, CHANGES_LABEL,
+  CHANGES_HINT, DEV_CAPTION, SETUP_LABEL, SETUP_HINT, CARD1_HINT_PROJECT, CHECKS_HINT_PROJECT, NO_PROJECT_OPTION, PICK_PROJECT_OPTION,
+  PICK_PROJECT_TITLE, pickProjectText, PICK_THE_FOLDER, FOLDER_MISSING_TITLE, folderMissingText, FOLDER_PROJECT_TITLE, folderProjectText,
+  UNSUPPORTED_TITLE, START_DIALOG_TITLE, START_DIALOG_HINT, START_DIALOG_OK, CHECK_DIALOG_HINT_PROJECT, GROUP_RESULT, GROUP_PROJECT,
+  COMMAND_LABEL, COMMAND_HINT, TIMEOUT_LABEL, TIMEOUT_HINT, timeoutText, READ_FROM_LEGEND, READ_FROM_RESULT, READ_FROM_RESULT_SUB,
+  READ_FROM_FILE, ADD_CHECK,
+} from '../../../src/shared/workflow-tests/project-text.mjs';
 
 export const BLANK_EXAMPLE = Object.freeze({
   id: null, name: '', request: '', answers: [], otherwise: 'pick', basics: { ...DEFAULT_BASICS }, checks: [], tries: 3, files: [], note: null,
+  project: null,
 });
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const GONE_TEXT = 'This script is no longer in the Library.';
 /** A script check whose script left the Library. `scripts` null: the Library did not load, so no claim either way. */
 const scriptGone = (scripts, key) => Array.isArray(scripts) && !!key && !scripts.some((s) => s.key === key);
+/** A select in the shared .select-wrap, whose ::after draws the chevron (boards 32, 33). */
+const skinned = (doc, select, cls = '') => { const w = el(doc, 'div', `select-wrap${cls ? ` ${cls}` : ''}`); w.append(select); return w; };
+
+const P2_CARD1_HINT = 'The same request and files are used every time this example is tried.';
+const P2_CHECKS_HINT = 'Counted exactly, without AI. Pick a ready check, or a script from the Library.';   // C3
+const TEXT_KIND_SET = new Set(['words', 'sections', 'mentions', 'not-mentions']);
+/** A check in its words: a command in code (boards 32, 33), any other check as its label. Inline, in one span. */
+function checkWords(doc, c, label) {
+  const s = el(doc, 'span');
+  if (c && c.kind === 'command') s.append(doc.createTextNode('The command '), el(doc, 'span', 'code', c.cmd), doc.createTextNode(' passes'));
+  else s.textContent = label;
+  return s;
+}
+/** A check as its line shows it. The line's text is a flex column, so the words go in one inline span. */
+function checkLineEl(doc, c, label) {
+  const s = el(doc, 'span', 'wft-line-text');
+  s.append(checkWords(doc, c, label));
+  return s;
+}
+
+/** P2 (not drawn): the start point, from the project's local branches; the one its folder is on comes first. */
+export function openStartDialog({ doc, win, branches = [], current = null, dateText = (s) => s, onPick }) {
+  const list = el(doc, 'div', 'wft-pick-list');
+  list.setAttribute('role', 'radiogroup');
+  list.setAttribute('aria-label', START_DIALOG_TITLE);
+  for (const b of branches) {
+    const row = el(doc, 'label', 'wft-pick-row');
+    const radio = el(doc, 'input');
+    radio.type = 'radio'; radio.name = 'wft-start-ref'; radio.value = b.name; radio.checked = b.name === current;
+    const text = el(doc, 'span', 'wft-pick-text');
+    text.append(el(doc, 'b', '', b.name), el(doc, 'span', 'hint', ' · '), el(doc, 'span', 'code', b.short), el(doc, 'span', 'hint', ` · ${dateText(b.at)}`));
+    row.append(radio, text);
+    list.append(row);
+  }
+  return testDialog({
+    doc, win, title: START_DIALOG_TITLE, confirmLabel: START_DIALOG_OK, body: [el(doc, 'p', 'hint', START_DIALOG_HINT), list],
+    onConfirm: () => {
+      const hit = [...list.querySelectorAll('input[name="wft-start-ref"]')].find((x) => x.checked);
+      if (!hit) return { ok: false, error: 'Pick a branch first.' };
+      onPick(branches.find((b) => b.name === hit.value));
+      return { ok: true };
+    },
+  });
+}
 
 export function openAnswerDialog({ doc, win, pair = null, onSave, onRemove = null }) {
   const q = el(doc, 'textarea');
@@ -34,17 +90,26 @@ export function openAnswerDialog({ doc, win, pair = null, onSave, onRemove = nul
   });
 }
 
-/** G1: Add an automatic check — the kind, its fields, and the label it will have. `scripts` null: the Library did not load. */
-export function openCheckDialog({ doc, win, check = null, scripts = [], onSave, onRemove = null }) {
+/** G1: Add an automatic check — the kind, its fields, and the label it will have. `scripts` null: the Library did not load.
+ *  `project`: the example works on a project (board 33): the kinds go in two groups, the command check joins, and a text
+ *  check can read a file in the project. */
+export function openCheckDialog({ doc, win, check = null, scripts = [], project = false, onSave, onRemove = null }) {
   const listed = scripts;
   scripts = Array.isArray(scripts) ? scripts : [];
   const kind = el(doc, 'select');
   kind.id = 'wft-ck-kind';
-  for (const k of CHECK_KINDS) {
-    if (k === 'script' && !scripts.length && !(check && check.kind === 'script')) continue;   // an edited script check keeps its kind
-    const o = el(doc, 'option', '', CHECK_KIND_LABELS[k]);
-    o.value = k;
-    kind.append(o);
+  const opt = (k, label = CHECK_KIND_LABELS[k]) => { const o = el(doc, 'option', '', label); o.value = k; return o; };
+  // An edited script check keeps its kind, also when the Library lists none.
+  const resultKinds = CHECK_KINDS.filter((k) => k !== 'command' && !(k === 'script' && !scripts.length && !(check && check.kind === 'script')));
+  if (project) {
+    const g1 = el(doc, 'optgroup'); g1.label = GROUP_RESULT;
+    for (const k of resultKinds) g1.append(opt(k, k === 'file' ? PROJECT_FILE_KIND_LABEL : undefined));   // D59, board 33
+    const g2 = el(doc, 'optgroup'); g2.label = GROUP_PROJECT;
+    g2.append(opt('command'));
+    kind.append(g1, g2);
+  } else {
+    for (const k of resultKinds) kind.append(opt(k));
+    if (check && check.kind === 'command') kind.append(opt('command'));   // an edited command check keeps its kind
   }
   kind.value = check ? check.kind : 'words';
   const fields = el(doc, 'div', 'wft-ck-fields');
@@ -54,7 +119,8 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], onSave, 
   let read = () => ({ kind: kind.value });
   const paintPreview = () => {
     const { check: ok } = normaliseCheck(read());
-    preview.textContent = ok ? checkLabel(ok, { scriptName: ok.kind === 'script' ? scriptName(ok.key) : null }) : '';
+    preview.replaceChildren();
+    if (ok) preview.append(checkWords(doc, ok, checkLabel(ok, { scriptName: ok.kind === 'script' ? scriptName(ok.key) : null })));
   };
   const input = (id, type, value, extra = {}) => {
     const i = el(doc, 'input');
@@ -83,6 +149,15 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], onSave, 
       const name = input('wft-ck-file', 'text', c.name ?? '', { maxLength: 200 });
       fields.append(field(doc, 'File name', name, { id: name.id, hint: 'A file the result must have, such as summary.md.' }));
       read = () => ({ kind: 'file', name: name.value });
+    } else if (kind.value === 'command') {
+      const cmd = input('wft-ck-cmd', 'text', c.cmd ?? '', { maxLength: 500, className: 'wft-mono' });
+      const time = el(doc, 'select');
+      time.id = 'wft-ck-timeout';
+      for (const n of COMMAND_TIMEOUTS) { const o = el(doc, 'option', '', timeoutText(n)); o.value = String(n); time.append(o); }
+      time.value = String(c.timeoutMin ?? 10);
+      time.addEventListener('change', paintPreview);
+      fields.append(field(doc, COMMAND_LABEL, cmd, { id: cmd.id, hint: COMMAND_HINT }), field(doc, TIMEOUT_LABEL, skinned(doc, time, 'wft-ck-time'), { id: time.id, hint: TIMEOUT_HINT }));
+      read = () => ({ kind: 'command', cmd: cmd.value, timeoutMin: Number(time.value) });
     } else {
       const sel = el(doc, 'select');
       sel.id = 'wft-ck-script';
@@ -96,13 +171,38 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], onSave, 
       fields.append(field(doc, 'Script', sel, { id: sel.id, hint: 'For developers: the check is met when the script finds no problems in the result.' }), gone);
       read = () => ({ kind: 'script', key: sel.value, params: c.params || {} });
     }
+    if (project && TEXT_KIND_SET.has(kind.value)) {   // board 33, P17: a text check reads the final result or a file in the project
+      const rads = el(doc, 'fieldset', 'wft-rads');
+      rads.append(el(doc, 'legend', '', READ_FROM_LEGEND));
+      const from = input('wft-ck-from-file', 'text', c.file ?? '', { maxLength: 200, className: 'wft-mono' });
+      from.setAttribute('aria-label', 'File in the project');
+      const rad = (value, label, sub = null) => {
+        const l = el(doc, 'label', 'wft-rad');
+        const r = el(doc, 'input'); r.type = 'radio'; r.name = 'wft-ck-from'; r.value = value;
+        const words = el(doc, 'span', '', label);
+        if (sub) words.append(el(doc, 'span', 'wft-rad-sub', sub));
+        l.append(r, words);
+        r.addEventListener('change', () => { from.disabled = value !== 'file'; paintPreview(); });
+        return { l, r };
+      };
+      const res = rad('result', READ_FROM_RESULT, READ_FROM_RESULT_SUB);
+      const fil = rad('file', READ_FROM_FILE);
+      res.r.checked = !c.file; fil.r.checked = !!c.file; from.disabled = !c.file;
+      rads.append(res.l, fil.l);
+      fields.append(rads, from);
+      const base = read;
+      read = () => ({ ...base(), ...(fil.r.checked && from.value.trim() ? { file: from.value.trim() } : {}) });
+    } else if (c.file && TEXT_KIND_SET.has(kind.value)) {   // the project was unpicked: an edited check keeps the file it reads
+      const base = read;
+      read = () => ({ ...base(), file: c.file });
+    }
     paintPreview();
   };
   kind.addEventListener('change', paintFields);
   paintFields();
   return testDialog({
-    doc, win, title: check ? 'Edit the automatic check' : 'Add an automatic check', confirmLabel: 'Save check',
-    body: [el(doc, 'p', 'hint', 'Counted exactly, without AI.'), field(doc, 'What to check', kind, { id: kind.id }), fields, preview],
+    doc, win, title: check ? 'Edit the automatic check' : 'Add an automatic check', confirmLabel: check ? 'Save check' : ADD_CHECK,
+    body: [el(doc, 'p', 'hint', project ? CHECK_DIALOG_HINT_PROJECT : 'Counted exactly, without AI.'), field(doc, 'What to check', skinned(doc, kind), { id: kind.id }), fields, preview],
     onRemove: check && onRemove ? onRemove : null,
     onConfirm: () => {
       const { check: ok, error } = normaliseCheck({ ...read(), ...(check && check.id ? { id: check.id } : {}) });
@@ -135,12 +235,17 @@ function basicRow(doc, id, text, on, extra = null, after = null) {
  * @param {object} ex an example (the store's shape) or BLANK_EXAMPLE
  * @param {{back:Function, save:Function, tryOnce:Function, addFiles:Function, removeFile:Function}} actions
  *   each → Promise<{ok, error?, example?}>; an `example` with an error (a partly done upload) is still shown
+ *   3a: also branches(key) → {ok, data: {branches}} and startLatest() → {ok, example}
  * @param {{doc: Document, win: Window, scripts?: Array<{key:string, displayName?:string}>|null, perTryUsd?: number|null,
- *   draftLabel?: string, testRunning?: boolean}} ctx  scripts null: the Library did not load; testRunning: a test of
- *   this workflow runs, so Try it once now waits (G19)
+ *   draftLabel?: string, testRunning?: boolean, projects?: Array<object>|null, needsProject?: boolean, workflowName?: string,
+ *   projectView?: object|null, dateText?: (iso: string) => string}} ctx  scripts null: the Library did not load; testRunning:
+ *   a test of this workflow runs, so Try it once now waits (G19); projects: GET /api/workflow-tests/projects (null: not
+ *   read); needsProject: the workflow changes a project's code (D62); projectView: the overview's view of the example's
+ *   project (its drift, D63)
  * @returns {{value: () => object}}
  */
-export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false }) {
+export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [], perTryUsd = null, draftLabel = 'your draft', testRunning = false,
+  projects = null, needsProject = false, workflowName = '', projectView = null, dateText = (s) => s }) {
   const listed = scripts;
   const lib = Array.isArray(scripts) ? scripts : [];
   const draft = clone({ ...BLANK_EXAMPLE, ...ex });
@@ -152,10 +257,11 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
 
   // One editor action at a time: Save, Try it once now and the file controls wait while one runs (no second post).
   let busyN = 0;
+  let usableProject = false;   // a Git project whose folder is there, with a start point (paintWhere)
   const paintBusy = () => {
     const on = busyN > 0;
     saveBtn.disabled = on;
-    tryBtn.disabled = on || testRunning;
+    tryBtn.disabled = on || testRunning || (needsProject && !usableProject);   // board 39
     picker.disabled = on;
     for (const b of files.querySelectorAll('button')) b.disabled = on;
   };
@@ -181,7 +287,12 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     error.textContent = '';
     const problem = limitsProblem();
     if (problem) { error.textContent = problem; return; }
-    failed(await busyWhile(() => fn(value())), 'That did not work. Try again.');
+    const r = await busyWhile(() => fn(value()));
+    failed(r, 'That did not work. Try again.');
+    if (r && !r.ok && /so tries could go wrong\.$/.test(String(r.error || ''))) {   // board 39: LFS or submodules
+      notice.replaceChildren(el(doc, 'p', 'wft-notice-title', UNSUPPORTED_TITLE), el(doc, 'p', 'hint', r.error));
+      notice.hidden = false;
+    }
   };
   const tryBtn = btn(doc, 'Try it once now', () => void run(actions.tryOnce), 'btn');
   const saveBtn = btn(doc, 'Save example', () => void run(actions.save), 'btn btn-primary');
@@ -251,8 +362,135 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     showFiles(r);   // also after a partly done upload: the files that went up
     failed(r, 'The file was not added.');
   });
-  const c1 = card(doc, '1. What Worca gets', 'wft-c1-h', 'The same request and files are used every time this example is tried.', 'wft-c1');
+  const c1 = card(doc, '1. What Worca gets', 'wft-c1-h', P2_CARD1_HINT, 'wft-c1');
   c1.append(field(doc, 'Name of the example', name, { id: name.id }), field(doc, 'Request', request, { id: request.id }), field(doc, 'Files', files));
+  const c1Hint = c1.querySelector(':scope > .hint');
+  let checksHint = null;   // card 3's Automatic checks hint (below)
+
+  // ── 1b. Where it starts (board 32; board 39's states; D41, D63, P2–P4) ──
+  const reg = (key) => (Array.isArray(projects) ? projects.find((p) => p.key === key) : null) || null;
+  let stored = draft.project || null;                    // the store's pin
+  let view = projectView;                                // the overview's view of it (state, behind)
+  const pick = { key: stored ? stored.key : '', ref: undefined, branch: null, repin: false };
+  const where = el(doc, 'div', 'wft-sect wft-where');
+  const projectSel = el(doc, 'select');
+  projectSel.id = 'wft-ex-project';
+  const startField = el(doc, 'div', 'field wft-start-field');
+  const notice = el(doc, 'div', 'wft-notice');
+  notice.setAttribute('role', 'note');
+  const changesRow = el(doc, 'label', 'wft-uncommitted');   // not .wft-chk: on this page every .wft-chk is a switch (Part 2)
+  const changesBox = el(doc, 'input', 'wft-changes-box');   // test/ui-shared-controls.test.mjs JS_CHECKBOX_OK: opts in to keeping uncommitted changes
+  changesBox.type = 'checkbox';
+  changesBox.checked = !!(stored && stored.changesSha256);
+  changesRow.append(changesBox, el(doc, 'span', '', CHANGES_LABEL));
+  const changesHint = el(doc, 'span', 'hint wft-changes-hint', CHANGES_HINT);
+  const setup = el(doc, 'input');
+  setup.type = 'text'; setup.id = 'wft-ex-setup'; setup.className = 'wft-mono'; setup.maxLength = 4000;
+  setup.addEventListener('input', () => { setup.dataset.touched = '1'; });
+  const dev = el(doc, 'div', 'wft-dev');
+  dev.append(el(doc, 'span', 'wft-dev-cap', DEV_CAPTION), field(doc, SETUP_LABEL, setup, { id: setup.id, hint: SETUP_HINT }));
+  /** A project no longer registered keeps its name (Task 8: never the internal key while a name is known). */
+  const nameOf = (key) => (view && view.key === key && view.name) || (stored && stored.key === key && stored.name) || key;
+  const fillProjects = () => {
+    projectSel.replaceChildren();
+    const first = el(doc, 'option', '', needsProject ? PICK_PROJECT_OPTION : NO_PROJECT_OPTION);
+    first.value = '';
+    projectSel.append(first);
+    for (const p of Array.isArray(projects) ? projects : []) { const o = el(doc, 'option', '', p.name); o.value = p.key; projectSel.append(o); }
+    if (pick.key && !reg(pick.key)) { const o = el(doc, 'option', '', nameOf(pick.key)); o.value = pick.key; projectSel.append(o); }   // it stays picked
+    projectSel.value = pick.key;
+  };
+  /** The start point the row shows: a branch picked in Change, the stored pin, else the branch the folder is on. */
+  const startShown = () => {
+    if (pick.branch) return { ref: pick.branch.name, short: pick.branch.short, at: pick.branch.at };
+    if (stored && stored.key === pick.key) return { ref: stored.startRef, short: stored.startSha.slice(0, 7), at: stored.startAt };
+    const r = reg(pick.key);
+    return r && r.current ? { ref: r.current.branch, short: r.current.short, at: r.current.at } : null;
+  };
+  /** "Worca can't find gone in /code/gone. …" with the folder in code (board 39); the words stay project-text's. */
+  const missingEl = (r) => {
+    const p = el(doc, 'p', 'hint');
+    const text = folderMissingText(r.name, r.path);
+    const at = r.path ? text.indexOf(` in ${r.path}.`) : -1;
+    if (at < 0) { p.textContent = text; return p; }
+    const from = at + 4;
+    p.append(doc.createTextNode(text.slice(0, from)), el(doc, 'span', 'code', r.path), doc.createTextNode(text.slice(from + r.path.length)));
+    return p;
+  };
+  const paintWhere = () => {
+    const r = reg(pick.key);
+    const st = startShown();
+    startField.replaceChildren();
+    notice.replaceChildren();
+    notice.hidden = true;
+    const say = (title, textEl, button = null) => {
+      notice.hidden = false;
+      notice.append(el(doc, 'p', 'wft-notice-title', title), textEl);
+      if (button) { const foot = el(doc, 'div', 'wft-notice-foot'); foot.append(button); notice.append(foot); }
+    };
+    if (!pick.key) { if (needsProject) say(PICK_PROJECT_TITLE, el(doc, 'p', 'hint', pickProjectText(workflowName))); }
+    else if (r && !r.exists) say(FOLDER_MISSING_TITLE, missingEl(r), btn(doc, PICK_THE_FOLDER, () => projectSel.focus()));   // P4
+    else if (r && r.vcs !== 'git') say(FOLDER_PROJECT_TITLE, el(doc, 'p', 'hint', folderProjectText(r.name)));
+    usableProject = !!(pick.key && r && r.exists && r.vcs === 'git' && st);
+    if (usableProject) {
+      const row = el(doc, 'div', 'wft-start');
+      const words = el(doc, 'span');
+      words.append(el(doc, 'b', '', st.ref || st.short), doc.createTextNode(' at '), el(doc, 'span', 'code', st.short), doc.createTextNode(` · ${dateText(st.at)}`));
+      row.append(words, btn(doc, CHANGE_BUTTON, () => void changeStart()));
+      startField.append(el(doc, 'span', 'label', START_LABEL), row, el(doc, 'span', 'hint', START_HINT));
+      // D63: the overview counted the drift of this very pin; a pin moved since then has none to show.
+      const samePin = !!(view && stored && stored.key === pick.key && !pick.branch && (!view.startSha || view.startSha === stored.startSha));
+      const behind = samePin && view.behind > 0 && view.startRef ? view.behind : 0;
+      if (behind) {
+        const moved = el(doc, 'div', 'wft-moved');
+        moved.setAttribute('role', 'note');
+        const top = el(doc, 'span', 'wft-moved-top');
+        top.append(icon(doc, 'alert', 14), el(doc, 'span', '', behindText(behind, view.startRef)));
+        const act = el(doc, 'span', 'wft-moved-act');
+        act.append(btn(doc, LATEST_BUTTON, () => void latest()), el(doc, 'span', 'hint', LATEST_HINT));
+        moved.append(top, act);
+        startField.append(moved);
+      }
+    }
+    startField.hidden = !usableProject;
+    const onCurrent = usableProject && !!(r.current && st.ref && st.ref === r.current.branch);   // P3
+    changesRow.hidden = !onCurrent;
+    changesHint.hidden = !onCurrent;
+    dev.hidden = !usableProject;
+    if (usableProject && !setup.dataset.touched) setup.value = stored && stored.key === pick.key && stored.setupCmd != null ? stored.setupCmd : (r.setupCmd || '');
+    c1Hint.textContent = pick.key ? CARD1_HINT_PROJECT : P2_CARD1_HINT;
+    if (checksHint) checksHint.textContent = pick.key ? CHECKS_HINT_PROJECT : P2_CHECKS_HINT;
+    paintBusy();
+  };
+  async function changeStart() {
+    if (busyN) return;
+    error.textContent = '';
+    const r = await busyWhile(() => actions.branches(pick.key));
+    if (!r || !r.ok) { failed(r, 'Worca could not read the branches of the project.'); return; }
+    const st = startShown();
+    openStartDialog({ doc, win, branches: r.data.branches, current: st ? st.ref : null, dateText,
+      onPick: (b) => { pick.branch = b; pick.ref = b.name; pick.repin = true; paintWhere(); } });
+  }
+  async function latest() {
+    if (busyN) return;
+    error.textContent = '';
+    const r = await busyWhile(() => actions.startLatest());
+    if (!r || !r.ok) { failed(r, 'The start point did not move.'); return; }
+    stored = r.example.project;
+    draft.project = stored;
+    view = view ? { ...view, behind: 0 } : view;
+    pick.branch = null; pick.ref = undefined; pick.repin = false;
+    paintWhere();
+  }
+  projectSel.addEventListener('change', () => {
+    pick.key = projectSel.value; pick.ref = undefined; pick.branch = null; pick.repin = false;
+    setup.dataset.touched = '';
+    paintWhere();
+  });
+  fillProjects();
+  where.append(el(doc, 'p', 'wft-grp', WHERE_TITLE), el(doc, 'p', 'wft-grp-hint', WHERE_HINT),
+    field(doc, PROJECT_LABEL, skinned(doc, projectSel), { id: projectSel.id }), notice, startField, changesRow, changesHint, dev);
+  c1.append(where);
 
   // ── 2. Your answers to Worca's questions ──
   const qa = el(doc, 'div', 'wft-lines');
@@ -318,23 +556,24 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     draft.checks.forEach((c, i) => {
       const line = el(doc, 'div', 'wft-line');
       const label = checkLabel(c, { scriptName: c.kind === 'script' ? scriptName(c.key) : null });
-      const edit = btn(doc, 'Edit', () => openCheckDialog({ doc, win, check: c, scripts: listed,
+      const edit = btn(doc, 'Edit', () => openCheckDialog({ doc, win, check: c, scripts: listed, project: !!pick.key,
         onSave: (nc) => { draft.checks[i] = nc; repaintCheckRows(); }, onRemove: () => { draft.checks.splice(i, 1); repaintCheckRows(); return addCk; } }));
       edit.setAttribute('aria-label', `Edit ${label}`);
       edit.dataset.focusKey = `ck-${c.id || i}`;
       const main = el(doc, 'div', 'wft-line-main');
-      main.append(el(doc, 'span', 'wft-line-text', label));
+      main.append(checkLineEl(doc, c, label));
       if (c.kind === 'script' && scriptGone(listed, c.key)) main.append(el(doc, 'span', 'hint wft-gone', GONE_TEXT));
       line.append(main, edit);
       lines.append(line);
     });
-    addCk = btn(doc, 'Add an automatic check', () => openCheckDialog({ doc, win, scripts: listed, onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); } }));
+    addCk = btn(doc, 'Add an automatic check', () => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); } }));
     addCk.dataset.focusKey = 'ck-add';
     lines.append(addCk);
   };
   repaintCheckRows();
   const sect = el(doc, 'div', 'wft-sect');
-  sect.append(el(doc, 'p', 'wft-grp', 'Automatic checks'), el(doc, 'p', 'wft-grp-hint', 'Counted exactly, without AI. Pick a ready check, or a script from the Library.'), lines);   // C3
+  checksHint = el(doc, 'p', 'wft-grp-hint', P2_CHECKS_HINT);   // C3; a project example's is board 32's (paintWhere)
+  sect.append(el(doc, 'p', 'wft-grp', 'Automatic checks'), checksHint, lines);
   c3.append(sect);
 
   const cols = el(doc, 'div', 'wft-cols');
@@ -344,6 +583,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   page.append(cols);
   root.append(page);
   paintFiles();
+  paintWhere();
 
   /** The cost box in dollars (parseUsd): "$1.50", "1,50" → 1.5; empty → null; not a number → NaN. */
   const readMoney = () => parseUsd(cost.value);
@@ -370,6 +610,12 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
         maxSentBack: rows.fix.input.checked ? orNull(readFix()) : null,
       },
       checks: draft.checks, tries: draft.tries, note: draft.note,
+      // D41, P2–P4: the server keeps the pin unless the key, the branch (`ref`), `repin` or the changes switch say otherwise.
+      project: !pick.key ? null : {
+        key: pick.key, setupCmd: setup.value.trim() || null,
+        ...(pick.ref !== undefined ? { ref: pick.ref } : {}), ...(pick.repin ? { repin: true } : {}),
+        ...(!changesRow.hidden ? { includeChanges: changesBox.checked } : {}),
+      },
     };
   }
   return { value };

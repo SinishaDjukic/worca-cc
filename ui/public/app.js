@@ -3872,9 +3872,13 @@ const wftEditorLive = (s) => wft.view === 'editor' && wft.editorToken === s.toke
 function wftRenderEditor(root) {
   const session = { workflowId: wftWorkflowId(), exampleId: wft.example && wft.example.id ? wft.example.id : null, token: ++wftEditorSeq };
   wft.editorToken = session.token;
+  const o = wft.overview;
+  const row = o && wft.example && wft.example.id ? o.examples.find((e) => e.id === wft.example.id) : null;
   renderExampleEditor(root, wft.example, wftEditorActions(session), { doc: document, win: window, scripts: wft.scripts, perTryUsd: wft.perTryUsd,
-    draftLabel: wft.overview ? wftUseLabel('draft', wft.overview.ctx) : 'your draft',
-    testRunning: !!(wft.overview && wft.overview.running) });   // G19
+    draftLabel: o ? wftUseLabel('draft', o.ctx) : 'your draft', testRunning: !!(o && o.running),   // G19
+    // 3a (boards 32, 39): the projects to pick, whether the workflow needs one, and the overview's drift of this example's pin
+    projects: wft.projects || null, needsProject: !!(o && o.needsProject), workflowName: o ? o.name : '',
+    projectView: row ? row.project : null, dateText: wftDate });
 }
 async function wftOpenExample(exampleId) {
   const id = wftWorkflowId();
@@ -3890,11 +3894,12 @@ async function wftOpenExample(exampleId) {
   }
   let scripts = null;                                               // null: the Library did not load (no "left the Library" claims)
   try { scripts = (await gvApi.scripts()).filter((s) => s && s.placeable !== false); } catch { scripts = null; }
+  const pj = await wftCall('GET', '/api/workflow-tests/projects');   // 3a: the Project select (board 32); null when not read
   const plan = await wftCall('GET', `${wftBase(id)}/plan?b=draft&tries=1`);
   const o = await wftCall('GET', wftBase(id));                      // fresh: G19 reads whether a test runs
   if (stale()) return;
   wft = { ...wft, workflowId: id, view: 'editor', example, scripts, ...(o.ok ? { overview: o.data } : {}),
-    perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null };
+    perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null, projects: pj.ok ? pj.data.projects : null };
   wftRender();
 }
 /** Save the session's example: PUT when it has an id, else POST (and remember the new id). */
@@ -3911,6 +3916,15 @@ function wftEditorActions(session) {
   const keep = (example) => { if (wftEditorLive(session)) wft.example = example; };
   return {
     back: () => { if (wftEditorLive(session)) wftShow('list', { overview: null }); },
+    // 3a: the start point dialog's branches (P2) and "Start from the latest" (D63, board 32)
+    branches: (key) => wftCall('GET', `/api/workflow-tests/projects/${encodeURIComponent(key)}/branches`),
+    startLatest: async () => {
+      if (!session.exampleId) return { ok: false, error: 'Save the example first.' };
+      const r = await wftCall('POST', `${base}/examples/${session.exampleId}/project/latest`, {});
+      if (!r.ok) return r;
+      keep(r.data.example);
+      return { ok: true, example: r.data.example };
+    },
     save: async (value) => {
       const r = await wftSaveExample(session, value);
       if (r.ok) { notify({ tone: 'ok', title: 'Example saved' }); if (wftEditorLive(session)) wftShow('list', { overview: null }); }
