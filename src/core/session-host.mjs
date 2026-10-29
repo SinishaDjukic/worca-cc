@@ -1,5 +1,5 @@
 // src/core/session-host.mjs — one SessionHost per session: the member dispatches of a session run one at a time, each as
-// ONE host turn (session groups, Tasks 39–41; spec §5, §5.2, §6.3; C2, C9–C12, C20, C25, C35, C39, C41, C43). The executor
+// ONE host turn (session groups, Tasks 39–41; spec §5, §5.2, §6.3; C2, C9–C12, C20, C25, C30, C31, C35, C39–C41, C43). The executor
 // hands a member's unchanged runOpts to `host.run(opts, member)` (Task 45). A turn's frames go through the demux
 // (session-demux.mjs), its dollars through the harness port (Task 42), and every fact lands in the session trace
 // (session-trace.mjs), never a prompt.
@@ -14,7 +14,8 @@ import { listCostRates } from './config.mjs';
 import { upstreamKey } from './model-roles.mjs';
 import { classifyError } from './recoverable-error.mjs';
 import { engineReportsCost } from '../shared/engine-switch.mjs';
-import { markTerminal } from './failure-policy.mjs';
+import { RECOVERY_MAX_AUTO_ATTEMPTS, markTerminal } from './failure-policy.mjs';
+import { sessionHostGuardSettings } from './session-host-guard.mjs';
 
 /** v1 runs every session on the `turns` transport: one `--resume` process per dispatch (spec D4). */
 export const SESSION_TRANSPORT = 'turns';
@@ -25,6 +26,21 @@ export const HOST_CUT_COST_RESTORED = true;
 export const HOST_BUDGET_SUBTYPE = 'error_max_budget_usd';
 /** A `--resume` whose host transcript is gone (S1 pins the fragment; C20). */
 export const VANISHED_RE = /No conversation found/i;
+/** Rotation (spec §5, C25): a fresh host session after this many dispatches, or once the LAST host message of a turn held
+ *  this much context (input + cache, critique minor 4). S6 / Task 53 may change them. */
+export const HOST_ROTATE_DISPATCHES = 24;
+export const HOST_ROTATE_CONTEXT_TOKENS = 120000;
+/** Does `--max-budget-usd` count the whole host session, earlier turns included (S4)? Then the flag is the remaining
+ *  pipeline budget plus the host's last cumulative figure (C10). */
+export const HOST_BUDGET_IS_CUMULATIVE = true;
+/** C40: attach the host-only PreToolUse guard (session-host-guard.mjs) in `union` mode, once S3 shows a payload field that
+ *  only a sub-agent's call carries; HOST_GUARD_CONTEXT_FIELD names it. Off until then: the watchdog stops such a call after the fact. */
+export const HOST_MAIN_THREAD_GUARD = false;
+export const HOST_GUARD_CONTEXT_FIELD = null;
+/** C30: this many consecutive watchdog failures in one session degrade it to `separate` for the rest of the run. */
+export const HOST_DEGRADE_AFTER = RECOVERY_MAX_AUTO_ATTEMPTS;
+/** `--max-budget-usd` never goes below a cent (C10). */
+const BUDGET_FLOOR_USD = 0.01;
 
 /** The host turn's runner. The mock host plays a turn offline; a real one is `runClaude` with the RAW envelopes the demux
  *  routes (`rawEvents`: runClaude otherwise hands out the normalized vocabulary, which carries no Agent call). The mock
@@ -59,8 +75,9 @@ export class SessionHost {
     this.port = port;
     this.transport = transport;
     this.plainRun = plainRun;
-    // Tests only: cutCostRestored (Task 41 adds the rotation, degrade and guard limits).
-    this.limits = { cutCostRestored: HOST_CUT_COST_RESTORED, ...limits };
+    // Tests only: cutCostRestored, rotateDispatches, rotateContextTokens, degradeAfter, mainThreadGuard, guardField.
+    this.limits = { cutCostRestored: HOST_CUT_COST_RESTORED, rotateDispatches: HOST_ROTATE_DISPATCHES, rotateContextTokens: HOST_ROTATE_CONTEXT_TOKENS,
+      degradeAfter: HOST_DEGRADE_AFTER, mainThreadGuard: HOST_MAIN_THREAD_GUARD, guardField: HOST_GUARD_CONTEXT_FIELD, ...limits };
     this.engine = port.engine ?? null;
     this.hostEpoch = 1;                        // C2: the first host session is epoch 1
     this.hostSessionId = null;
@@ -76,12 +93,14 @@ export class SessionHost {
     this.lastCumulativeUsd = 0;
     this.epochOpeningUsd = 0;
     this.epochBookedUsd = 0;                   // Σ harness-sourced bookings of the current epoch (C33)
-    this.epochChecks = [];                     // every closed epoch's check (rotate, restart; Task 41)
+    this.epochChecks = [];                     // every closed epoch's check (rotate, restart)
     this.openCut = null;
+    this.pendingRotate = null;                 // a member-level cap refusal: rotate before the next dispatch (S6)
     this.memberUsdByNode = {};
     this.tokens = ZERO_TOKENS();
     this.activeMs = 0;
     this.lastDispatch = new Map();             // executionId → { dispatchId, nodeId } of its latest dispatch (noteVerdict)
+    this.plainSessions = new Set();            // the CLI sessions plain runs started (a degraded member's follow-up resumes its own)
     this.queue = [];
     this.busy = false;
     this.inflight = null;                      // the turn in flight: close() lets it settle first
@@ -128,6 +147,7 @@ export class SessionHost {
     const m = member || {};
     if (o.signal?.aborted) return Promise.reject(abortError());
     if (this.closed) return Promise.reject(this._refusal());
+    if (this.mode === 'separate') return this._plain(o, m);                  // C30: degraded, as ungrouped
     return new Promise((resolve, reject) => {
       const entry = { opts: o, member: m, enqueuedAt: Date.now(), resolve, reject, onAbort: null, waited: false };
       if (o.signal) {
@@ -150,6 +170,7 @@ export class SessionHost {
 
   _pump() {
     if (this.busy) return;
+    if (this.mode === 'separate') { this._drainPlain(); return; }            // degraded: the waiters run plain, side by side
     const entry = this.queue.shift();
     if (!entry) return;
     this.busy = true;
@@ -169,11 +190,104 @@ export class SessionHost {
       });
   }
 
+  /** The waiters a degrade left in the queue: each runs plain at once, as ungrouped steps run side by side (C30), not one
+   *  at a time behind the host. Each still passes the abort, close and cost-gate checks `_dispatch` makes. */
+  _drainPlain() {
+    for (const entry of this.queue.splice(0)) {
+      if (entry.onAbort) entry.opts.signal.removeEventListener('abort', entry.onAbort);
+      if (entry.waited) this._queued(entry.member.executionId, false);
+      Promise.resolve()
+        .then(() => {
+          if (entry.opts.signal?.aborted) throw abortError();
+          if (this.closed) throw this._refusal();
+          if (entry.waited) this.port.checkCostLimits?.();
+          return this._plain(entry.opts, entry.member);
+        })
+        .then(entry.resolve, entry.reject);
+    }
+  }
+
+  /** C30: a degraded session's dispatch is a plain spawn (no record, no turn), never `--resume <host>`: only a CLI session a
+   *  plain run started itself is resumed (a follow-up round of a degraded member, as ungrouped). Its host dispatch is
+   *  history: a verdict on this plain run (Task 46 calls noteVerdict after it) must not land on that failed turn. */
+  _plain(opts, member) {
+    this.lastDispatch.delete(String(member.executionId));
+    const own = typeof opts.resumeSessionId === 'string' && this.plainSessions.has(opts.resumeSessionId);
+    const onEvent = (e) => {
+      if (e?.type === 'session' && typeof e.sessionId === 'string' && e.sessionId) this.plainSessions.add(e.sessionId);
+      return opts.onEvent?.(e);
+    };
+    return this.plainRun({ ...opts, resumeSessionId: own ? opts.resumeSessionId : undefined, onEvent });
+  }
+
   async _dispatch(opts, member, { queueMs, waited = false }) {
     if (opts.signal?.aborted) throw abortError();                            // aborted after it left the queue: no attempt, no record
     if (this.closed) throw this._refusal();                                  // closed after it left the queue: it never starts
     if (waited) this.port.checkCostLimits?.();                               // C37: the executor gated it before it queued; spend moved since
-    return this._turn(opts, member, { queueMs });
+    if (this.mode === 'separate') return this._plain(opts, member);          // it degraded while this one waited
+    this._rotateIfDue();                                                       // C25: before a dispatch, never mid-turn
+    try {
+      return await this._turn(opts, member, { queueMs });
+    } catch (err) {
+      const retry = err instanceof SessionHostError ? { SESSION_HOST_CAP: 'cap', SESSION_HOST_VANISHED: 'vanished' }[err.code] : null;
+      if (!retry) throw err;
+      if (opts.signal?.aborted) throw abortError();                          // no retry once the member's signal fired (41-4)
+      if (this.closed) throw this._refusal();                                // nor on a closed host
+      this.port.checkCostLimits?.();                                           // C37: the cost gate runs before every spawn, a retry's too
+      // One retry on a fresh host with a FRESH attempt (C31: a new agentType and dispatchId, so every turn's rows stay apart).
+      if (retry === 'cap') this._rotate('cap');                                // S6
+      else this._restart('vanished');                                          // C20
+      return this._turn(opts, member, { retry });
+    }
+  }
+
+  _rotateIfDue() {
+    const reason = this.pendingRotate ? 'cap'
+      : this.epochDispatches >= this.limits.rotateDispatches ? 'dispatches'
+        : this.lastContextTokens >= this.limits.rotateContextTokens ? 'context' : null;
+    if (reason) this._rotate(reason);
+  }
+
+  /** A new host session (epoch + 1). The old epoch is reconciled first; a cut on it can never be carried, so it is booked
+   *  as an estimate (C9). */
+  _closeEpoch() {
+    this._bookOpenCut();
+    const epochCheck = this._epochCheck();
+    this.epochChecks.push(epochCheck);
+    return epochCheck;
+  }
+
+  _newEpoch() {
+    this.hostEpoch += 1;
+    this.hostSessionId = null;
+    this.epochDispatches = 0;
+    this.lastContextTokens = 0;
+    this.lastCumulativeUsd = 0;
+    this.epochOpeningUsd = 0;
+    this.epochBookedUsd = 0;
+  }
+
+  _rotate(reason) {
+    const epochCheck = this._closeEpoch();
+    this._write('rotate', { reason, fromSessionId: this.hostSessionId, fromEpoch: this.hostEpoch, dispatches: this.epochDispatches,
+      contextTokens: this.lastContextTokens, epochCheck });
+    this._newEpoch();
+    this.rotations += 1;
+    this.pendingRotate = null;
+  }
+
+  _restart(reason) {
+    const epochCheck = this._closeEpoch();
+    this._write('restart', { reason, fromSessionId: this.hostSessionId, engine: this.engine, transport: SESSION_TRANSPORT, epochCheck });
+    this._newEpoch();
+    this.restarts += 1;
+  }
+
+  _degrade(reason) {
+    this._bookOpenCut();                                                       // no host turn follows to carry it (C9)
+    this._write('degrade', { from: this.mode, to: 'separate', reason });   // its audit line comes from the port (sessionAuditLine)
+    this.mode = 'separate';
+    this.degradeReason = reason;
   }
 
   /** The attempt number is taken when the dispatch STARTS, so a cancelled waiter consumes none (C2). */
@@ -183,14 +297,28 @@ export class SessionHost {
     return n;
   }
 
-  /** `--max-budget-usd` for the next turn (Task 41); null ⇒ omitted. */
-  _maxBudgetUsd() { return null; }
+  /** `--max-budget-usd` for the next turn: the remaining pipeline budget (own cap and team soft cap), plus the host's last
+   *  cumulative figure when the flag counts the whole session; null ⇒ omitted (C10). `models` are the turn's known models:
+   *  the harness withholds the budget when one of them is booked at other prices than the CLI's list-price meter (Task 42). */
+  _maxBudgetUsd(models) {
+    let remaining = null;
+    try { remaining = this.port.remainingBudgetUsd?.({ models }) ?? null; } catch { remaining = null; }
+    if (!fin(remaining)) return null;
+    // A held cut is in the CLI's cumulative at its LIST price, and the books will take it at its own (cutUsd): the flag
+    // gives the difference back, so a cut under a cost override never stops the next turn early (correction 21's class).
+    const cutGap = (this.openCut?.parts || []).reduce((a, p) => a + (fin(p?.cutListUsd) && fin(p?.cutUsd) ? p.cutListUsd - p.cutUsd : 0), 0);
+    return Math.max(BUDGET_FLOOR_USD, remaining + (HOST_BUDGET_IS_CUMULATIVE ? this.lastCumulativeUsd + cutGap : 0));
+  }
 
-  /** The main-thread guard's settings for a host spawn (Task 41); null ⇒ none. */
-  _mainThreadGuard() { return null; }
+  /** C40: the host-only guard, in `union` mode only (agent-only hosts hold no other tool), and only with a proven context
+   *  field: without one it would allow every call while the run-start line says the main agent's tools are refused. */
+  _mainThreadGuard() {
+    const field = this.limits.guardField;
+    return this.limits.mainThreadGuard && field && HOST_TOOLS_MODE === 'union' ? sessionHostGuardSettings({ field }) : null;
+  }
 
   /** One host turn: turn_start and dispatch, the transport through the demux, the outcome's records and booking. */
-  async _turn(opts, member, { queueMs = 0 } = {}) {
+  async _turn(opts, member, { queueMs = 0, retry = null } = {}) {
     const executionId = String(member.executionId);
     const nodeId = member.nodeId ?? null;
     const label = member.label || nodeId || executionId;
@@ -200,12 +328,14 @@ export class SessionHost {
     const dispatchId = dispatchIdFor(executionId, attempt);
     const flags = hostFlagsFor({ settings: this.settings, firstMemberModel: this.decision.firstMemberModel ?? null, member });   // C26
     const resume = this.hostSessionId;
-    const maxBudgetUsd = this._maxBudgetUsd();
     this.dispatches += 1;
     this.epochDispatches += 1;
     this.lastDispatch.set(executionId, { dispatchId, nodeId });
     const { agentType, definitions } = memberDefinition(opts, { executionId, attempt, label });
     const definition = definitions[agentType];
+    // A member with no model of its own and no host model runs on the CLI's default model, which nothing here can price:
+    // no flag then (as for an ungrouped step; C37's gate still runs before every spawn).
+    const maxBudgetUsd = definition.model || flags.model ? this._maxBudgetUsd([flags.model, this.hostResolvedModel, definition.model].filter(Boolean)) : null;
     this._write('turn_start', { turnId, resume: !!resume, maxTurns: HOST_MAX_TURNS, maxBudgetUsd, hostModel: flags.model ?? null,
       hostEffort: flags.effort ?? null });
     this._write('dispatch', { turnId, dispatchId, executionId, nodeId, attempt, agentType,
@@ -274,11 +404,15 @@ export class SessionHost {
 
     // The outcome; the first matching rule wins (C10, C11, C12, C20, C41).
     let outcome;
+    let verdict = null;
     if (opts.signal?.aborted) outcome = 'abort';                                                   // Stop / pause: the turn is cut
     else if (done && !done.isError) outcome = 'accept';                                             // C12: the step finished
-    else if (r && (r.subtype === HOST_BUDGET_SUBTYPE || r.subtype === 'error_max_turns')) outcome = 'limit';   // Task 41
-    else if (facts.violation) outcome = 'watchdog';                                                 // C11: before the member's result
-    else if (done?.isError && (!err || killed)) outcome = 'member-error';                           // C41 (after-done violations stay warnings)
+    else if (r?.subtype === HOST_BUDGET_SUBTYPE) outcome = 'budget';                                 // C10: exit 1 after its result
+    else if (r?.subtype === 'error_max_turns') {                                                    // the host looped instead of dispatching
+      outcome = 'watchdog';
+      verdict = { code: 'SESSION_HOST_NO_DISPATCH', detail: { maxTurns: HOST_MAX_TURNS } };
+    } else if (facts.violation) outcome = 'watchdog';                                               // C11: before the member's result
+    else if (done?.isError && (!err || killed)) outcome = facts.capRefused ? 'cap' : 'member-error';   // S6; C41 (after-done violations stay warnings)
     else if (err && resume && !facts.sawInit && VANISHED_RE.test([err.message, err.stream, ...facts.said].join('\n'))) outcome = 'vanished';   // C20: before init
     else if (err) outcome = 'adapter';
     else outcome = watchdogVerdict(facts) ? 'watchdog' : 'accept';
@@ -286,8 +420,9 @@ export class SessionHost {
     const exit = {
       abort: 'aborted',
       accept: flagged ? 'violation' : err ? 'error' : 'ok',
-      limit: r?.subtype === HOST_BUDGET_SUBTYPE ? 'budget' : 'max_turns',
-      watchdog: killed ? 'violation' : 'ok',
+      budget: 'budget',
+      watchdog: r?.subtype === 'error_max_turns' ? 'max_turns' : killed ? 'violation' : 'ok',
+      cap: err ? 'error' : 'ok',
       'member-error': err ? 'error' : 'ok',
       vanished: 'error',
       adapter: 'error',
@@ -300,10 +435,12 @@ export class SessionHost {
         this._log('warn', `${label}: ${v.code} after the step's own result`, attr);   // C11: a warn line, as for every warn record
       }
     }
-    let verdict = null;
     if (outcome === 'watchdog') {
-      verdict = facts.violation || watchdogVerdict(facts);
+      verdict ??= facts.violation || watchdogVerdict(facts);
       this._write('watchdog', { turnId, dispatchId, code: verdict.code, level: 'error', detail: verdict.detail || {} });
+    }
+    if (outcome === 'cap') {                            // the refused child; a refusal on any retry fails the dispatch (S6)
+      this._write('watchdog', { turnId, dispatchId, code: 'SESSION_HOST_CAP', level: retry ? 'error' : 'warn', detail: { capRefused: true } });
     }
 
     // Booking (C9, critique minor 2): the port first, then turn_end, the carried cost, the cost and the reconcile.
@@ -385,12 +522,20 @@ export class SessionHost {
         this.consecutiveWatchdog = 0;
         // C41: a 529 retries as rate_limit, a usage limit pauses as usage_limit with its reset time, exactly as ungrouped.
         throw Object.assign(new Error(done.errorText || 'the step failed'), { errorClass: classifyError(done.errorText || '') });
-      case 'watchdog':
+      case 'watchdog': {
         this.consecutiveWatchdog += 1;
-        throw new SessionHostError(verdict.code, WATCHDOG_TEXT[verdict.code] || 'the main agent did not dispatch as told', verdict.detail || {});
+        const e = new SessionHostError(verdict.code, WATCHDOG_TEXT[verdict.code] || 'the main agent did not dispatch as told', verdict.detail || {});
+        // C30: a main agent that keeps misbehaving degrades its session; this dispatch still fails, its retry runs plain.
+        if (this.consecutiveWatchdog >= this.limits.degradeAfter && this.mode !== 'separate') this._degrade('the main agent did not dispatch');
+        throw e;
+      }
+      case 'budget':
+        this.port.checkCostLimits?.();                  // a reached cap throws the pause sentinel: COST_PIPELINE, as ungrouped (C10)
+        throw new SessionHostError('SESSION_HOST_BUDGET', 'the host turn reached its budget', { maxBudgetUsd });
+      case 'cap':
+        throw new SessionHostError('SESSION_HOST_CAP', 'the session reached its sub-agent cap', { capRefused: true });
       case 'vanished':
         throw new SessionHostError('SESSION_HOST_VANISHED', 'the host session was not found', { hostSessionId: resume });
-      case 'limit':                                     // Task 41 decides; until then the adapter's own error
       case 'adapter':
       default:
         // C20: the adapter's error unchanged (message, errorClass, stream), so a --plugin-dir refusal reaches the executor's
@@ -403,6 +548,7 @@ export class SessionHost {
   _onWarn(w, { turnId, dispatchId, label, attr }) {
     this._write('watchdog', { turnId, dispatchId, code: w.code, level: 'warn', detail: w.detail || {} });
     this._log('warn', `${label}: ${w.code}`, attr);
+    if (w.code === 'member-cap-refused') this.pendingRotate = 'cap';           // S6: the member's own child hit the cap
   }
 
   _addMemberUsd(nodeId, usd) {
@@ -433,7 +579,7 @@ export class SessionHost {
       cutTokens: addTokens({ ...o.cutTokens }, cut.cutTokens), parts: [...(o.parts || [o]), cut] } : { ...cut, parts: [cut] };
   }
 
-  /** A cut that can never be carried (no restore, a closing host, Task 41's rotate or restart): booked now, as an estimate. */
+  /** A cut that can never be carried (no restore, a closing host, a rotate or restart): booked now, as an estimate. */
   _bookCut(cut) {
     const booking = this._book({ sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId: cut.turnId, dispatchId: cut.dispatchId,
       stepKey: cut.executionId, nodeId: cut.nodeId, cutEstimateUsd: cut.cutUsd });
