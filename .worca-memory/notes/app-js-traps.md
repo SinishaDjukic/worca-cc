@@ -2,7 +2,7 @@
 name: app-js-traps
 description: Read before editing ui/public/app.js or src/shared — imported helpers, makeRun's fixed fields, capture-phase Escape arms, the purity test's word scans.
 paths: ui/public/app.js, ui/public/*.mjs, ui/public/*.js, src/shared/**, test/ui-*.test.mjs, test/helpers/feedback.mjs, test/shared-graph-purity.test.mjs
-updated: 2026-10-29T17:45:58.260Z
+updated: 2026-10-29T18:10:09.749Z
 author: Bulibas
 ---
 
@@ -56,6 +56,11 @@ Simple in jsdom), and on `actions-changed` its `onModel` also refetches and call
 "the head follows actions-changed" stays green with the head's own refetch path deleted (Try it review, 2026-10-29:
 `openTryHeadScopes` + `tryModelAsked.clear()` removed together, still green). Mutation-check a new cache reader's refresh
 path, and pin it on a screen without that controller, or accept that the controller covers it.
+Destroying the controller alone is NOT enough: jsdom also builds the Overview tab, whose `.act-strip` (Advanced-only by
+CSS, present in the DOM at Simple too) keeps the run in `mounted` and refetches. In a browser both are built lazily
+(`initDetailTabs` builds a tab on activate). Pin that worked (fix cycle 2, M3/M18 went red): before the frame,
+`for (const el of doc.querySelectorAll('#hist-detail *')) el.__actionsCtl?.destroy();` and remove every
+`#hist-detail .act-strip` (`#run-detail` on the run page).
 
 A checkout's setup state is fresher on History's row (`checkout.members[i].setup`, followed by `pipelines-changed`) than
 in the model. The server writes `ok`/`failed` after the setup instance's last `actions-changed`, so a model refetched on
