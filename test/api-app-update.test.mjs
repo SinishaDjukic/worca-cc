@@ -79,19 +79,19 @@ test('shared (container deployment or WORCA_IDENTITY_HEADER) → GET says shared
   }
 });
 
-test('cross-origin page → 403 UPDATE_CROSS_ORIGIN', async () => {
+test('cross-origin page → 403', async () => {
   eligibleRig();
   const r = await rawPost('/api/app/update', { version: '9.1.0' }, { origin: 'http://localhost:9999' });
-  assert.deepEqual([r.status, r.body.code], [403, 'UPDATE_CROSS_ORIGIN']);
+  assert.equal(r.status, 403);   // G10: the global Origin check refuses it before the update route's own check
   assert.deepEqual(shutdowns, []);
 });
 
-test('possible agent caller → 403 UPDATE_AGENT_BLOCKED', async () => {
+test('possible agent caller → 403 AGENT_CALLER_BLOCKED', async () => {
   eligibleRig();
   process.env.WORCA_AGENT_USER = 'worca-agent';
   process.env.WORCA_AGENT_HOME = join(process.env.WORCA_HOME, 'agent');
   const r = await post({ version: '9.1.0' });
-  assert.deepEqual([r.status, (await r.json()).code], [403, 'UPDATE_AGENT_BLOCKED']);
+  assert.deepEqual([r.status, (await r.json()).code], [403, 'AGENT_CALLER_BLOCKED']);   // G1: the global gate answers first
 });
 
 test('bad / unknown / same version → 400; not supervised → 409 with reason', async () => {

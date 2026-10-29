@@ -268,3 +268,41 @@ test('the prune keeps a row whose file exists, even if the listing missed it', a
   const kept = (await listRunArtifacts(id)).map((a) => a.relPath);
   assert.ok(kept.includes('shots/s04.png'), `a file on disk keeps its row: ${kept.join(',')}`);
 });
+
+// G11: only `work` rows refused links; every other kind followed them, so an agent that swapped its plan (or any run
+// file) for a link made the artifact routes serve whatever the worca user can read. Every kind is now served only as
+// a real file with no link anywhere between its base and itself, and the listing sizes nothing behind a link.
+test('no artifact kind is served or sized through a link planted in the run dir or the store', async () => {
+  const { symlink, rm } = await import('node:fs/promises');
+  const { id, dir } = await seedPipeline(await mkdtemp(join(tmpdir(), 'worca-g11-')), { title: 'G11', status: 'done' });
+  const storeRoot = dirname(dirname(dir));
+  const secretDir = await mkdtemp(join(tmpdir(), 'worca-g11-secret-'));
+  await writeFile(join(secretDir, 'settings.json'), '{"secret":"s3cr3t!"}', 'utf8');
+  await mkdir(join(storeRoot, 'plans'), { recursive: true });
+  await writeFile(join(storeRoot, 'plans', 'plan.md'), '# plan\n', 'utf8');
+  await mkdir(join(dir, 'extras'), { recursive: true });
+  await writeFile(join(dir, 'extras', 'a.md'), 'mine', 'utf8');
+  await writeFile(join(dir, 'note.md'), 'note', 'utf8');
+  recordArtifact(id, 'plan', 'plans/plan.md');
+  recordArtifact(id, 'extra', 'extras/a.md');
+  recordArtifact(id, 'note', 'note.md');
+  const row = findPipelineRowById(id);
+  assert.equal((await resolveIndexedArtifactForRow(row, 'plans/plan.md')).text, '# plan\n');
+  assert.equal((await resolveIndexedArtifactForRow(row, 'extras/a.md')).text, 'mine');
+  assert.equal((await resolveIndexedArtifactForRow(row, 'note.md')).text, 'note');
+
+  await rm(join(storeRoot, 'plans', 'plan.md'));
+  await rm(join(dir, 'extras'), { recursive: true });
+  await rm(join(dir, 'note.md'));
+  try {
+    await symlink(join(secretDir, 'settings.json'), join(storeRoot, 'plans', 'plan.md'));   // a file swapped for a link
+    await symlink(secretDir, join(dir, 'extras'), 'junction');                              // a folder swapped for a link
+    await writeFile(join(secretDir, 'a.md'), 'not yours', 'utf8');
+    await symlink(join(secretDir, 'settings.json'), join(dir, 'note.md'));
+  } catch (e) { if (e.code === 'EPERM') return; throw e; }   // Windows without the privilege
+  assert.equal(await resolveIndexedArtifactForRow(row, 'plans/plan.md'), null, 'a store-root plan swapped for a link');
+  assert.equal(await resolveIndexedArtifactForRow(row, 'extras/a.md'), null, 'a run folder swapped for a link');
+  assert.equal(await resolveIndexedArtifactForRow(row, 'note.md'), null, 'a run file swapped for a link');
+  const bytes = Object.fromEntries((await listRunArtifacts(id)).map((a) => [a.relPath, a.bytes]));
+  assert.deepEqual([bytes['plans/plan.md'], bytes['extras/a.md'], bytes['note.md']], [0, 0, 0], 'nothing behind a link is sized');
+});

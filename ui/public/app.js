@@ -31,7 +31,8 @@ const state = {
   // CLI's Task tool refuses catalog ids), not a slice of `models`.
   subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
-  guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
+  guardrailsId: null, // the guardrail set the next run applies; null until the list names the install default
+  guardrailsDefault: 'normal', // the install's default set, from GET /api/guardrails (Normal on a fresh install)
   mcpOptOut: [], // New Pipeline › MCP servers: the '<setId>|<serverId>' memberships the next run opts out of
   mcpPreview: null, // POST /api/mcp/preview for the selected target, or null (control hidden)
   memoryScope: 'global', // Memory defragment only: the scope the next run restructures
@@ -103,7 +104,7 @@ import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../s
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -309,6 +310,7 @@ import { createChatHome, findFollowingThread } from './chat/home.mjs';
 import { installIntentAddon } from './chat/intent.mjs';
 import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
+import { createAwayScreensaver } from './away-screensaver.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
@@ -633,6 +635,7 @@ async function featureThreadFor(ref) {
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
+let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -1708,6 +1711,7 @@ function handleServerMessage(msg) {
   // !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
     alerts.onAskFrame(msg);   // a card waiting for an OK, in any chat (the panel only applies the open one)
+    awayScreensaver?.onAskFrame(msg);   // chat turns and proposals it counts
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
@@ -4326,7 +4330,9 @@ async function listGuardrailsApi() {
   try {
     const res = await fetch('/api/guardrails');
     const data = await safeJson(res);
-    return res.ok && Array.isArray(data.guardrails) ? data.guardrails : null;
+    if (!res.ok || !Array.isArray(data.guardrails)) return null;
+    if (typeof data.default === 'string' && data.default) state.guardrailsDefault = data.default;
+    return data.guardrails;
   } catch { return null; }
 }
 
@@ -4337,7 +4343,7 @@ function updateGuardrailsHint() {
   if (!el.guardrailsHint) return;
   const sel = state.guardrailSets.find((g) => g.id === state.guardrailsId) || null;
   if (!sel || sel.id === 'permissive') {
-    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).';
+    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions.';
     return;
   }
   const members = state.runTarget === 'workspace' ? ' across every workspace member' : '';
@@ -4362,10 +4368,11 @@ async function loadGuardrailsInto(selectId) {
   }
   const list = sets.length ? sets : [{ id: 'permissive', name: 'Permissive', settings: null }];
   state.guardrailSets = list;
-  const want = selectId || state.guardrailsId || 'permissive';
+  const dflt = list.some((g) => g.id === state.guardrailsDefault) ? state.guardrailsDefault : list[0].id;
+  const want = selectId || state.guardrailsId || dflt;
   sel.innerHTML = '';
-  list.forEach((g) => sel.appendChild(option(g.id, g.id === 'permissive' ? 'Permissive (default)' : g.name)));
-  // Fall back to the Permissive default if the wanted id is gone (deleted set) —
+  list.forEach((g) => sel.appendChild(option(g.id, g.id === dflt ? `${g.name} (default)` : g.name)));
+  // Fall back to the install default if the wanted id is gone (deleted set) —
   // and SAY so via the form's message line: a vanished selection must never
   // silently revert while the user believes it is still selected.
   if (state.preset && !list.some((g) => g.id === want)) {
@@ -4376,9 +4383,10 @@ async function loadGuardrailsInto(selectId) {
     o.disabled = true;
     sel.appendChild(o);
   } else {
-    state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
-    if (want !== 'permissive' && state.guardrailsId === 'permissive') {
-      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use Permissive (no restrictions).`, 'err');
+    state.guardrailsId = list.some((g) => g.id === want) ? want : dflt;
+    if (state.guardrailsId !== want) {
+      const name = (list.find((g) => g.id === dflt) || {}).name || dflt;
+      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use ${name}${dflt === 'permissive' ? ' (no restrictions)' : ''}.`, 'err');
     }
   }
   sel.value = state.guardrailsId;
@@ -4530,7 +4538,7 @@ function paintHiddenSettings() {
   const items = [];
   if (!levelAtLeast('advanced')) {
     const gr = (state.guardrailSets || []).find((g) => g.id === state.guardrailsId);
-    if (state.guardrailsId && state.guardrailsId !== 'permissive') items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
+    if (state.guardrailsId && state.guardrailsId !== state.guardrailsDefault) items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
     if (state.preset) items.push(...presetHiddenItems(state.preset.setup));   // the preset's picks, counted once (#712)
     else {
       const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
@@ -10030,10 +10038,10 @@ if (el.wsDetail) {
 // The automatic re-scan after a member change (server afterMembersChanged): a Workspace scan run
 // of the new set — graphs, the map and a new description — followed on the Projects card with the
 // wizard's loader look (spinner, status, a stage track) and a link to the run.
-// id -> { runId, state: running|done|failed|stopped|paused|skipped, reason, cleared, seen }
+// id -> { runId, state: running|done|failed|stopped|paused|skipped|pruned, reason, cleared, partial, note, seen }
 // An ended entry the page has shown (seen) is dropped when the page is next opened.
 const wsRescans = new Map();
-const WS_RESCAN_ENDED = new Set(['done', 'failed', 'stopped', 'skipped']);
+const WS_RESCAN_ENDED = new Set(['done', 'failed', 'stopped', 'skipped', 'pruned']);
 const WS_RESCAN_ENDS = {
   description: 'done', 'rescan-failed': 'failed', 'rescan-stopped': 'stopped', 'rescan-paused': 'paused',
 };
@@ -10043,14 +10051,18 @@ function subscribeRescan(runId) {
   if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify({ type: 'subscribe', runId })); } catch { /* ignore */ } }
 }
 
-/** Start (or keep) following a workspace's re-scan: {runId, paused?} or {skipped: reason}. A run
- *  already followed keeps its own state. */
+/** Start (or keep) following a workspace's re-scan: {runId, paused?, partial?|mode, note?}, {skipped: reason}
+ *  or {mode: 'none'} (a removal that kept the pruned map). A run already followed keeps its own state. */
 function trackWsRescan(id, rescan, cleared = null) {
   const cur = wsRescans.get(id);
   if (rescan.runId && cur && cur.runId === rescan.runId) { if (cleared) cur.cleared = cleared; return; }
+  const partial = rescan.mode === 'partial' || rescan.partial === true;
+  const base = { cleared: cleared || [], partial, note: String(rescan.note || '') };
   wsRescans.set(id, rescan.runId
-    ? { runId: rescan.runId, state: rescan.paused ? 'paused' : 'running', reason: '', cleared: cleared || [] }
-    : { runId: null, state: 'skipped', reason: String(rescan.skipped || ''), cleared: cleared || [] });
+    ? { ...base, runId: rescan.runId, state: rescan.paused ? 'paused' : 'running', reason: '' }
+    : rescan.mode === 'none'
+      ? { ...base, runId: null, state: 'pruned', reason: '', partial: false }
+      : { ...base, runId: null, state: 'skipped', reason: String(rescan.skipped || '') });
   if (rescan.runId && !rescan.paused) subscribeRescan(rescan.runId);
 }
 
@@ -10071,6 +10083,7 @@ function resumeWsRescan(id, runId) {
 function endWsRescan(id, how, runId = null) {
   const r = wsRescans.get(id);
   if (!r || (runId && r.runId && r.runId !== runId)) return;
+  if (!r.runId && runId) return;   // a box that follows no run (pruned / skipped) is not ended by some other run's frame
   r.state = how;
   r.seen = false;   // an end the page has not shown yet
   paintWsRescan(id);
@@ -10108,22 +10121,29 @@ function renderWsRescan(r) {
     lead.appendChild(Object.assign(document.createElement('div'), { className: 'spinner wd-rescan-spinner' }));
   } else {
     const mark = Object.assign(document.createElement('span'), { className: 'wd-rescan-mark' });
-    if (r.state === 'done') mark.append(icon(document, 'check', 12)); else mark.textContent = '!';
+    if (r.state === 'done' || r.state === 'pruned') mark.append(icon(document, 'check', 12)); else mark.textContent = '!';
     lead.appendChild(mark);
   }
   const body = document.createElement('div');
   body.className = 'wd-rescan-body';
   const LABEL = {
-    running: 'Members changed: re-scanning the workspace', done: 'Workspace re-scanned', failed: 'Re-scan failed',
-    stopped: 'Re-scan stopped', paused: 'Re-scan paused', skipped: 'Members changed: not re-scanned',
+    running: r.partial ? 'Member removed: partial re-scan' : 'Members changed: re-scanning the workspace',
+    done: r.partial ? 'Partial re-scan done' : 'Workspace re-scanned',
+    failed: 'Re-scan failed', stopped: 'Re-scan stopped', paused: 'Re-scan paused',
+    skipped: 'Members changed: not re-scanned',
+    pruned: 'Member removed: map pruned, not re-scanned',
   };
   const SUB = {
-    running: 'A Workspace scan run rebuilds the graphs, the map and the description.',
-    done: 'The map and the description were refreshed from the new member set.',
+    running: (r.note ? `${r.note} ` : '') + (r.partial
+      ? 'One agent rewrites the overview and coordination notes from the pruned map; no member is scanned again.'
+      : 'A Workspace scan run rebuilds the graphs, the map and the description.'),
+    done: r.partial ? 'The overview and coordination notes were rewritten for the members left. Use Re-scan for a full scan.'
+      : 'The map and the description were refreshed from the new member set.',
     failed: 'Use Re-scan to refresh the map and the description.',
     stopped: 'Use Re-scan to refresh the map and the description.',
     paused: 'Resume it under Running, or use Re-scan.',
     skipped: `${String(r.reason || 'The scan could not start').replace(/\.?$/, '.')} Use Re-scan once that is fixed.`,
+    pruned: (r.note ? `${r.note} ` : '') + 'Its edges and reviews left the map. The overview and notes are as the last scan wrote them — use Re-scan any time.',
   };
   const label = document.createElement('div');
   label.className = 'status-label';
@@ -10207,7 +10227,7 @@ async function postWsMembers(id, body) {
     } else {
       trackWsRescan(id, { skipped: 'choose a scan model to re-scan the workspace' }, cleared);
     }
-  } else if (data.rescan && (data.rescan.runId || data.rescan.skipped)) trackWsRescan(id, data.rescan, cleared);
+  } else if (data.rescan && (data.rescan.runId || data.rescan.skipped || data.rescan.mode === 'none')) trackWsRescan(id, data.rescan, cleared);
   if (wsDetail && wsDetail.id === id) { setWdError(wsDetail.screen, ''); refreshWdOverview(); }
   tpCache.at = 0;
   void paintWsMetricsRows(true);
@@ -10261,20 +10281,47 @@ function openWsAddMembers(id) {
   });
 }
 
-// Remove: confirm (naming a home it clears), then post; an error lands on the page header.
+// Remove: ask worca what the removal invalidates (GET …/members/remove-impact), confirm with its
+// recommended re-scan preselected among none / partial / full (naming a home it clears), then post the
+// choice; an error lands on the page header. A failed lookup still offers the three, full preselected.
+const WS_RESCAN_OPTIONS = [
+  { value: 'none', title: 'No re-scan', hint: 'Keep the pruned map. Instant — no agent runs; the overview and notes stay as the last scan wrote them.' },
+  { value: 'partial', title: 'Partial re-scan', hint: 'One agent rewrites the overview and coordination notes from the pruned map. A few minutes; no member is scanned again.' },
+  { value: 'full', title: 'Full re-scan', hint: 'Scan every member left again: graphs, edges, map and description. The slowest; runs in the background.' },
+];
+
+async function fetchRemoveImpact(id, path) {
+  try {
+    const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}/members/remove-impact?path=${encodeURIComponent(path)}`);
+    const data = await safeJson(r);
+    return r.ok && data && data.recommendation ? { rec: data.recommendation } : { error: (data && data.error) || (r.ok ? 'no answer' : `HTTP ${r.status}`) };
+  } catch (err) { return { error: err.message }; }
+}
+
 async function removeWsMember(id, path) {
   const w = workspaceById(id);
   if (!w || !path) return;
   const proj = state.projects.find((p) => p.path === path);
   const name = (proj && proj.name) || basenameOf(path);
   const homes = [w.metricsProject === path ? 'metrics' : '', w.policyProject === path ? 'policy' : ''].filter(Boolean);
-  const ok = await confirmModal({
+  const { rec, error } = await fetchRemoveImpact(id, path);
+  const recommended = rec ? rec.level : 'full';
+  const res = await confirmModal({
     title: 'Remove project', danger: true, confirmLabel: 'Remove',
     message: `Remove ${name} from "${w.name || w.id}"?\n\nThe project itself is untouched, and runs already started keep their members.`
-      + (homes.length ? `\n\n${name} is the ${homes.join(' and ')} home, so it is cleared.` : ''),
+      + (homes.length ? `\n\n${name} is the ${homes.join(' and ')} home, so it is cleared.` : '')
+      + `\n\n${rec ? rec.reason : `worca could not work out a recommendation (${error}); a full re-scan is preselected.`}`,
+    choices: {
+      name: 'ws-rescan', label: 'Re-scan after the removal', value: recommended,
+      options: WS_RESCAN_OPTIONS.map((o) => ({
+        ...o,
+        title: o.value === recommended && rec ? `${o.title} — recommended` : o.title,
+        disabled: o.value === 'partial' && rec ? !rec.partialAvailable : false,
+      })),
+    },
   });
-  if (!ok) return;
-  const r = await postWsMembers(id, { remove: path });
+  if (!res || !res.ok || !res.choice) return;
+  const r = await postWsMembers(id, { remove: path, rescan: res.choice });
   if (r.error && wsDetail && wsDetail.id === id) setWdError(wsDetail.screen, r.error);
 }
 
@@ -13708,7 +13755,7 @@ function showProjMemoryView(view) {
 // ---- Reusable confirm / prompt modal ---------------------------------------
 // One shell, two public entry points:
 //   confirmModal(opts) -> Promise<boolean>, or Promise<{ok, checked}> when
-//     opts.checkbox is given. Contract unchanged from before promptModal existed.
+//     opts.checkbox is given, or Promise<{ok, choice}> when opts.choices is given.
 //   promptModal(opts)  -> Promise<object|null> keyed by field id. This is what
 //     replaced window.prompt: it takes an ARRAY of fields, so the two places
 //     that used to fire two blocking prompts back to back (name + domain,
@@ -13726,7 +13773,7 @@ const confirmGuard = el.confirmModal ? guardModal(el.confirmModal) : null;
 let shellDone = null;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
-  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok',
+  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok', choices = null,
 } = {}) {
   return new Promise((resolve) => {
     modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
@@ -13797,6 +13844,31 @@ function modalShell({
     }
     syncOk();
 
+    // choices: ONE radio group as .radio-card rows — { name, label, value, options: [{value, title, hint, disabled}] }.
+    // confirmModal then resolves { ok, choice }. Built fresh each time, text only (never innerHTML).
+    const choiceInputs = [];
+    if (choices && Array.isArray(choices.options)) {
+      const group = document.createElement('div');
+      group.className = 'confirm-choices';
+      group.setAttribute('role', 'radiogroup');
+      if (choices.label) group.setAttribute('aria-label', choices.label);
+      for (const o of choices.options) {
+        const row = document.createElement('label');
+        row.className = `radio-card${o.disabled ? ' disabled' : ''}`;
+        const inp = document.createElement('input');
+        inp.type = 'radio'; inp.name = `confirm-choice-${choices.name || 'pick'}`; inp.value = o.value;
+        inp.checked = o.value === choices.value && !o.disabled; inp.disabled = !!o.disabled;
+        const text = document.createElement('span');
+        text.className = 'radio-card-text';
+        text.appendChild(Object.assign(document.createElement('b'), { textContent: o.title }));
+        if (o.hint) text.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: o.hint }));
+        row.append(inp, text);
+        group.appendChild(row);
+        choiceInputs.push(inp);
+      }
+      el.confirmFields.appendChild(group);
+    }
+
     // opt-in checkbox: shown only when requested, always reset to unchecked
     el.confirmCheckboxWrap.classList.toggle('hidden', !checkbox);
     el.confirmCheckbox.checked = false;
@@ -13818,6 +13890,7 @@ function modalShell({
       el.confirmMessage.classList.remove('err');
       el.confirmOk.disabled = false;
       el.confirmMessage.hidden = false;
+      const choice = (choiceInputs.find((i) => i.checked) || {}).value ?? null;
       el.confirmFields.replaceChildren();
       el.confirmModal.classList.add('hidden');
       el.confirmCheckboxWrap.classList.add('hidden');
@@ -13825,6 +13898,7 @@ function modalShell({
       el.confirmCancel.removeEventListener('click', onCancel);
       document.removeEventListener('keydown', onKey);
       if (fields) resolve(val ? values : null);
+      else if (choices) resolve({ ok: val, choice });
       else resolve(checkbox ? { ok: val, checked } : val);
     };
     const onOk = () => { if (!el.confirmOk.disabled) done(true); };
@@ -14988,12 +15062,10 @@ function buildRunBody() {
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
-    // Omit-when-default: 'permissive' IS the server default, so the key is
-    // absent on default runs — byte-identical legacy request bodies. (The
-    // server normalizes omitted/''/null to 'permissive'; always-sending would
-    // be equivalent but would change every legacy-shaped request for no gain.)
-    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal'
-      : (state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined),
+    // Always the picked set: the server's default for an omitted key is the
+    // install default, which is not Permissive on a fresh install (G13), so an
+    // explicit Permissive pick must be sent. Absent only when the list never loaded.
+    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal' : (state.guardrailsId || undefined),
     // MCP registry (§6.2): absent unless something is opted out, so default bodies stay byte-identical;
     // a memory-defrag run starts no registry servers (§6.1), so it sends none.
     mcpOptOut: state.mcpOptOut.length && !isDefragRun ? [...state.mcpOptOut] : undefined,
@@ -21403,7 +21475,7 @@ async function paintPolicyLine() {
   const scope = currentRunScopeId();
   const seq = ++policyLineSeq;
   if (!scope) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
-  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || 'permissive' });
+  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || state.guardrailsDefault });
   // What the run will actually pick: the Agents accordion's model selects (per workflow node),
   // falling back to the legacy per-role config when the accordion has not painted yet.
   const models = selectedRunModels();
@@ -21414,7 +21486,8 @@ async function paintPolicyLine() {
   if (seq !== policyLineSeq) return;
   if (!data || !data.policy) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
   // The team's default guardrail set preselects the picker until the user picks one themselves.
-  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === 'permissive' && el.guardrailsSelect
+  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === state.guardrailsDefault
+      && data.guardrailsDefault !== state.guardrailsId && el.guardrailsSelect
       && [...el.guardrailsSelect.options].some((o) => o.value === data.guardrailsDefault)) {
     state.guardrailsId = data.guardrailsDefault;
     el.guardrailsSelect.value = data.guardrailsDefault;
@@ -21631,7 +21704,7 @@ async function updateRequiredPlugin(name) {
   // #555 D5: the dialog's own button carries the progress; the result is a toast after it closes.
   if (confirmBtn) confirmBtn.addEventListener('click', async () => {
     const r2 = await withButton(confirmBtn, async () => {
-      const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+      const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true, candidateSha: data.preview.candidateSha });
       return r.ok ? r : { ...r, ok: false };
     }, { busy: 'Updating…', done: 'Updated' });
     if (r2.skipped) return;
@@ -33741,7 +33814,7 @@ el.runsPane?.addEventListener('click', (e) => {
   goRunsList();
 });
 function toggleRunsGroup(key) {
-  if (runsUi.collapsed.has(key)) runsUi.collapsed.delete(key); else runsUi.collapsed.add(key);
+  setFolded(runsUi.collapsed, key, !isFolded(runsUi.collapsed, key));
   persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);
   paintRunsList();
 }
@@ -34171,7 +34244,7 @@ async function afterRunsAdd(out, { items, before, opener }) {
   await loadRunGroups();
   paintRunsList();
   const sec = collapsedSectionOf(runsUi.lastModel, `chain:${gid}`);
-  if (sec) { runsUi.collapsed.delete(sec); persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed); paintRunsList(); }
+  if (sec) { setFolded(runsUi.collapsed, sec, false); persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed); paintRunsList(); }
   const want = new Set(items.map((x) => x.pipelineId));
   const node = [...el.runsList.querySelectorAll('.runs-item[data-level="member"] > a.runs-row')].find((a) => want.has(a.dataset.pipelineId));
   landOn({ host: el.runsList, rove: runsRove, state: runsUi, node, fallback: () => opener() || roveRunsList() });
@@ -34269,7 +34342,7 @@ function applyPendingSelect(answered) {
   const hitKeys = new Set(keys);
   const folded = (runsUi.lastModel?.sections || []).filter((s) => s.collapsed && s.rows.some((r) => hitKeys.has(r.key)));
   if (folded.length) {
-    for (const s of folded) runsUi.collapsed.delete(s.id);
+    for (const s of folded) setFolded(runsUi.collapsed, s.id, false);
     persistIdSet(RUNS_COLLAPSED_KEY, runsUi.collapsed);   // as openRunsForProject does
     queueMicrotask(paintRunsList);
   }
@@ -38823,7 +38896,7 @@ function showView(name, param = '') {
   }
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
-  else requirementsView.leave();   // the Feature chat phone sheet makes the page inert; leaving the view puts it back
+  else requirementsView.leave();   // the Feature chat phone sheet and an export dialog make the page inert; leaving the view puts it back
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -39047,6 +39120,30 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
   navigate: (hash) => { location.hash = hash; },
 }) : null;
 
+// The away screensaver easter egg: Away mode now (the account corner's state), the Keep awake row, and the runs
+// counted as the Runs list counts them. Chats arrive through onAskFrame; the open chat's unread dot through askPanel.
+awayScreensaver = createAwayScreensaver({
+  doc: document, win: window,
+  getState: () => {
+    const live = liveRuns();
+    const asking = live.filter((r) => r.pendingQuestion != null);
+    const lingered = [...runs.values()].filter(isLingering);
+    return {
+      away: acctState.away?.state === 'away',
+      keepAwake: el.acctKeepAwake?.getAttribute('aria-checked') === 'true',
+      runs: {
+        running: live.length - asking.length,
+        questions: asking.length,
+        askTitle: asking[0]?.title || '',
+        paused: [...runs.values()].filter((r) => !r._finished && isPaused(r)).length,
+        failed: lingered.filter((r) => r.status === 'error' || r.status === 'failed').length,
+        done: lingered.filter((r) => r.status === 'done').length,
+      },
+      chatUnread: !!askPanel?.unreadThreadId(),
+    };
+  },
+});
+
 // Settings tabs are hash-first, exactly like the nav buttons: the single
 // hashchange listener drives showView, so a click renders once.
 el.settingsTabs?.addEventListener('click', (e) => {
@@ -39089,6 +39186,7 @@ function rdTickHosts(r) {
 
 function timerTick() {
   try { paintAwayMenuRow(); } catch { /* the row moves with the clock (away hours start and end) */ }
+  try { awayScreensaver?.tick(); } catch { /* an easter egg must never break the tick */ }
   // The Away mode pill counts down while the run WAITS on a question, which the loop below skips.
   try { const open = rdOpenRun(); if (open && runDetailState.screen) paintRdAwayPill(runDetailState.screen, open); } catch { /* a closed test window must not throw from a timer */ }
   for (const r of runs.values()) {

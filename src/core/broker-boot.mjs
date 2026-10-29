@@ -2,7 +2,8 @@
 // The server's boot check for the credential broker (plans/credential-broker-design.html
 // §6.7): configuration, the credential guard (K1), then the broker itself. Returns the
 // problems instead of exiting, so ui/server.mjs prints them and exits 78 in one place.
-import { brokerConfig, connectBroker, cachedBrokerInfo } from './broker-client.mjs';
+import { brokerConfig, currentBrokerConfig, connectBroker, cachedBrokerInfo, sealedSecretFileMode } from './broker-client.mjs';
+import { agentIdentity } from './agent-user.mjs';
 import { findLocalCredentials, credentialFiles, guardMessage } from './broker-guard.mjs';
 import { listGlobalModels, readSettings } from './settings.mjs';
 import { listPluginModels, pluginModelSecretStatus } from './plugin-models.mjs';
@@ -14,7 +15,8 @@ import { syncPluginSlots, currentPluginSlots } from './plugin-broker-slots.mjs';
  * @returns {Promise<{on:boolean, fatal:string[], warnings:string[], info?:object}>}
  */
 export async function checkBrokerAtBoot({ env = process.env, shared = false, log = console.log, waitMs = 60_000 } = {}) {
-  const c = brokerConfig(env);
+  // The server's own env no longer holds the secret (sealBrokerSecret): the sealed config has it.
+  const c = env === process.env ? currentBrokerConfig() : brokerConfig(env);
   if (!c) {
     const warnings = [];
     const fatal = [];
@@ -26,6 +28,12 @@ export async function checkBrokerAtBoot({ env = process.env, shared = false, log
     return { on: false, fatal, warnings };
   }
   if (c.error) return { on: true, fatal: [c.error], warnings: [] };
+  // X2: under agent isolation an agent user reads a secret file its group or others may read; the secret lets it
+  // mint tokens charged to anyone. The sealed file's mode decides (sealBrokerSecret read it once).
+  const fileMode = env === process.env ? sealedSecretFileMode() : null;
+  if (fileMode !== null && (fileMode & 0o044) && agentIdentity(env)) {
+    return { on: true, fatal: [`WORCA_BROKER_SECRET_FILE is readable by its group or by others (mode 0${fileMode.toString(8)}), and agents run under their own users: they could read the broker secret. Make it 0600, owned by the user worca runs as. See docs/credential-broker.md.`], warnings: [] };
+  }
 
   // The broker first: its slots say which remote endpoints are reachable through it.
   let info;
@@ -33,6 +41,15 @@ export async function checkBrokerAtBoot({ env = process.env, shared = false, log
     info = await connectBroker({ waitMs, log });
   } catch (err) {
     return { on: true, fatal: [`${err.message}. Is the broker running at ${c.url}, and does WORCA_BROKER_SECRET match on both sides?`], warnings: [] };
+  }
+
+  // Several people's keys and GitHub tokens sit behind the broker secret, and an agent running as
+  // worca can read it from worca's process (/proc/<pid>/environ): agents need their own users.
+  const isolationWarnings = [];
+  if (info.mode === 'multi' && !agentIdentity(env)) {
+    const msg = 'the credential broker is in multi mode, but agents run as worca itself: they can read worca\'s broker secret from its process, then mint tokens charged to anyone or fetch a person\'s GitHub token. Run agents under their own users (docker/compose.isolation.yml; single-volume hosts such as Railway do already). See docs/credential-broker.md.';
+    if (String(env.WORCA_AGENT_ISOLATION || '').trim() !== '0') return { on: true, fatal: [msg], warnings: [] };
+    isolationWarnings.push(`${msg} (WORCA_AGENT_ISOLATION=0 accepts it)`);
   }
 
   // Then the enabled plugins' own slots, so their endpoints count as reachable through it.
@@ -65,7 +82,7 @@ export async function checkBrokerAtBoot({ env = process.env, shared = false, log
   });
   if (findings.length) return { on: true, fatal: [guardMessage(findings, info.publicUrl)], warnings: [] };
   // A plugin model the broker can't serve is refused when picked, not at boot.
-  const warnings = plugin.problems.map((p) => `${p}; it can't be used while the credential broker is on`);
+  const warnings = [...isolationWarnings, ...plugin.problems.map((p) => `${p}; it can't be used while the credential broker is on`)];
   if (syncError) warnings.push(syncError);
   const asPerson = String(env.WORCA_GH_AS_PERSON || '').trim().toLowerCase();
   if (asPerson && !['prefer', 'required', 'off', '0'].includes(asPerson)) warnings.push(`WORCA_GH_AS_PERSON must be prefer or required (got ${JSON.stringify(asPerson)}); pushes use worca's own GitHub credential`);

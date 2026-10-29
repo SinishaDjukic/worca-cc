@@ -9,7 +9,7 @@ const MODELS = [{ id: 'claude-opus-5-5', efforts: ['low', 'high'], harnesses: ['
 const ctx = (over = {}) => ({
   assertWorkflow: async (id) => { if (id !== 'wf_x') throw Object.assign(new Error(`unknown workflowId "${id}"`), { code: 'NOT_FOUND' }); return WF; },
   guardrailExists: async (id) => ['permissive', 'normal'].includes(id),
-  scopeExists: async () => true, models: MODELS, ...over,
+  scopeExists: async () => true, models: MODELS, defaultGuardrailsId: () => 'normal', ...over,
 });
 
 test('a clean setup has no broken items', async () => {
@@ -29,6 +29,13 @@ test('each gone reference is named once, with the agent label for models', async
     'Loop w_gone: no longer a loop of workflow wf_x',
   ]);
   assert.equal(items[0].reset, false);
+});
+
+test('V21: a setup naming no guardrails is checked as the install default, never as Permissive', async () => {
+  const seen = [];
+  const c = ctx({ guardrailExists: async (id) => { seen.push(id); return id === 'strict'; }, defaultGuardrailsId: () => 'strict' });
+  assert.deepEqual(await presetRefusals({ workflowId: 'wf_x' }, c), []);
+  assert.deepEqual(seen, ['strict']);
 });
 
 test('a gone workflow and an engine refusal are named', async () => {

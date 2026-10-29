@@ -4,7 +4,11 @@
 // the site is pinned on the run by the host. REST v2 throughout, so Cloud and Data Center share one code path;
 // only search pagination differs (Cloud: /search/jql + nextPageToken, Data Center: /search + startAt). Which one a
 // site is comes from its own /serverInfo, remembered per profile; the hostname is only the fallback.
-// deps.fetch injected by tests.
+// A6 (plans/requirements-a6-design.md §5): the optional export ops. A tool-neutral ticket (Markdown description, normalised
+// labels) becomes a v2 issue in wiki markup; a create stores Worca's marker as the issue property `worca.export`; after a
+// create or update the description is read back once for the fingerprint Worca compares (D9). A refused field and a ticket
+// that is gone are results, not errors (D11). deps.fetch injected by tests.
+import { createHash } from 'node:crypto';
 import { jiraFetch } from './jira-api.mjs';
 import { htmlToMarkdown, markdownToWiki, wikiLink } from './markup.mjs';
 
@@ -48,10 +52,22 @@ export function buildJql({ project, jql, search } = {}) {
 /** The fallback guess when the site does not say: Atlassian's own domains are Cloud, the rest Data Center. */
 export const isCloud = (base) => /\.(atlassian\.net|jira\.com)$/i.test((() => { try { return new URL(base).hostname; } catch { return ''; } })());
 
+/** D9: the fingerprint of a description as Jira stores it: what reads back is wiki markup Cloud re-renders from ADF, so line
+ *  endings, trailing spaces and outer blank lines never count. Worca compares these opaque strings only. */
+export function fingerprintOf(text) {
+  const norm = String(text ?? '').replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/[ \t]+$/, '')).join('\n').trim();
+  return createHash('sha256').update(norm).digest('hex');
+}
+const PROPERTY = 'worca.export';
+/** D10: once Jira has made the issue, each further request (the marker property, the read-back) gets this long, so a
+ *  hung one cannot run the op into the host's 60 s limit, which would read as "nothing made" and make a second ticket. */
+export const AFTER_KEY_TIMEOUT_MS = 15_000;
+
 export default function createTaskSource(ctx, deps = {}) {
   const base = String(ctx.config?.baseUrl || '').trim().replace(/\/+$/, '');
   const jira = { fetch: deps.fetch || globalThis.fetch, base, email: String(ctx.config?.email || '').trim(), token: ctx.config?.token || '' };
   const log = (level, msg) => { try { ctx.log?.(level, msg); } catch { /* logging never fails an op */ } };
+  const afterKey = Number(deps.afterKeyTimeoutMs) > 0 ? Number(deps.afterKeyTimeoutMs) : AFTER_KEY_TIMEOUT_MS;
 
   const summary = (i) => {
     const f = i.fields || {};
@@ -88,6 +104,94 @@ export default function createTaskSource(ctx, deps = {}) {
 
   const issue = (key, fields = FIELDS, expand = '') =>
     jiraFetch(jira, `/rest/api/2/issue/${enc(key)}?fields=${fields.join(',')}${expand ? `&expand=${expand}` : ''}`);
+  // Every project: Data Center lists them at once, Cloud pages (up to 2,000, as listProjects always did).
+  async function projectList() {
+    if ((await deployment()) !== 'cloud') {
+      const all = await jiraFetch(jira, '/rest/api/2/project');
+      return (Array.isArray(all) ? all : []).map((p) => ({ key: p.key, name: p.name }));
+    }
+    const out = [];
+    for (let startAt = 0, page = 0; page < 20; page++) {
+      const j = await jiraFetch(jira, `/rest/api/2/project/search?orderBy=name&maxResults=100&startAt=${startAt}`);
+      const values = j?.values || [];
+      out.push(...values.map((p) => ({ key: p.key, name: p.name })));
+      if (j?.isLast !== false || !values.length) break;
+      startAt += values.length;
+    }
+    return out;
+  }
+  // Create metadata (D16): Cloud and Data Center 8.4+, paged; Cloud names the list issueTypes / fields, Data Center values.
+  async function createmeta(path, key) {
+    const out = [];
+    for (let startAt = 0, page = 0; page < 20; page++) {
+      const j = await jiraFetch(jira, `${path}?startAt=${startAt}&maxResults=100`);
+      const list = Array.isArray(j?.[key]) ? j[key] : Array.isArray(j?.values) ? j.values : [];
+      out.push(...list);
+      const total = Number(j?.total);
+      if (!list.length || j?.isLast === true || (Number.isFinite(total) ? startAt + list.length >= total : list.length < 100)) break;
+      startAt += list.length;
+    }
+    return out;
+  }
+  const createFields = (project, issueType) => createmeta(`/rest/api/2/issue/createmeta/${enc(project)}/issuetypes/${enc(issueType)}`, 'fields');
+  const fieldId = (f) => f.fieldId || f.key || f.id;
+  const browse = (key) => `${base}/browse/${key}`;
+  // The issue's own description, read back after a create or an update (and for a ticket findTicket matched), with the
+  // after-key timeout: a failure or a hang answers text and fingerprint null (the host then skips the edited check once);
+  // it never throws, or the host would think nothing was made (D10)
+  async function readBack(key) {
+    try {
+      const got = await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}?fields=description`, { timeoutMs: afterKey });
+      // jiraFetch answers null for a 200 whose body stalled or does not parse: that read says nothing, and the fingerprint
+      // of nothing would make the next Update warn "edited in Jira". An empty description (fields present) is real.
+      if (!got || typeof got.fields !== 'object' || got.fields === null) throw new Error('the answer had no fields');
+      const text = got.fields.description;
+      return { text: text ?? '', fingerprint: fingerprintOf(text) };
+    } catch (e) { log('warn', `${key}: could not read the description back: ${e?.message || e}`); return { text: null, fingerprint: null }; }
+  }
+  const readFingerprint = async (key) => (await readBack(key)).fingerprint;
+  // serverInfo's [major, minor] (Data Center 8.4 added create metadata per project, D16); null when the site does not say
+  async function serverVersion() {
+    for (const anonymous of [true, false]) {
+      try {
+        const info = await jiraFetch(jira, '/rest/api/2/serverInfo', { anonymous });
+        const v = Array.isArray(info?.versionNumbers) ? info.versionNumbers.map(Number)
+          : /^\d+\.\d+/.test(String(info?.version || '')) ? String(info.version).split('.').map((n) => parseInt(n, 10)) : [];
+        if (Number.isFinite(v[0]) && Number.isFinite(v[1])) return v;
+      } catch { /* try the next way */ }
+    }
+    return null;
+  }
+  // D11: jira-api's message names the HTTP status and the REST path, which the host would show. An export op's `plugin`
+  // failure that is not a refusal or gone says Jira's own words only; auth, network and rate-limit pass unchanged.
+  function plainFailure(e) {
+    if (!e || e.kind !== 'plugin') return e;
+    const said = (e.body?.errorMessages || []).map((m) => String(m).trim()).filter(Boolean).join('; ');
+    return Object.assign(new Error(`Jira refused the request: ${said || 'no reason given'}`), { kind: 'plugin', status: e.status });
+  }
+  const exportOp = (fn) => async (args = {}) => { try { return await fn(args); } catch (e) { throw plainFailure(e); } };
+  // The ticket's fields (design §5). Labels arrive normalised (no spaces); the criteria field gets the items as a wiki list.
+  function ticketFields(t) {
+    const f = { project: { key: t.project }, issuetype: { id: String(t.issueType) }, summary: t.title, description: markdownToWiki(t.description),
+      labels: Array.isArray(t.labels) ? t.labels : [] };
+    if (t.priority) f.priority = { id: String(t.priority) };
+    if (t.criteria?.target === 'field' && t.criteria.field) f[t.criteria.field] = markdownToWiki((t.criteria.items || []).map((i) => `- ${i}`).join('\n'));
+    return f;
+  }
+  // D11: a 400 naming a field is a result the product owner can act on; the field's name comes from create metadata.
+  async function refusal(e, project, issueType) {
+    if (e?.status !== 400) return null;
+    const errors = e.body?.errors && typeof e.body.errors === 'object' ? e.body.errors : {};
+    const [id, msg] = Object.entries(errors)[0] || [];
+    if (!id) return null;
+    let name = id;
+    try { const f = (await createFields(project, issueType)).find((x) => fieldId(x) === id); if (f?.name) name = f.name; } catch { /* its id, then */ }
+    const message = /\brequired\b/i.test(String(msg)) ? `Jira needs a value for “${name}” in ${project}.` : `Jira refused “${name}”: ${String(msg)}`;
+    return { refused: { field: name, message } };
+  }
+  const refusesProperties = (e) => e?.status === 400 && ('properties' in (e.body?.errors || {})
+    || (e.body?.errorMessages || []).some((m) => /propert/i.test(String(m))));
+  const lastLine = (text) => String(text ?? '').replace(/\r\n?/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).at(-1) || '';
 
   return {
     async validateConfig() {
@@ -113,19 +217,7 @@ export default function createTaskSource(ctx, deps = {}) {
       }
     },
     async listProjects() {
-      if ((await deployment()) !== 'cloud') {
-        const all = await jiraFetch(jira, '/rest/api/2/project');
-        return (Array.isArray(all) ? all : []).map((p) => ({ value: p.key, label: `${p.name} (${p.key})` }));
-      }
-      const out = [];
-      for (let startAt = 0, page = 0; page < 20; page++) {
-        const j = await jiraFetch(jira, `/rest/api/2/project/search?orderBy=name&maxResults=100&startAt=${startAt}`);
-        const values = j?.values || [];
-        out.push(...values.map((p) => ({ value: p.key, label: `${p.name} (${p.key})` })));
-        if (j?.isLast !== false || !values.length) break;
-        startAt += values.length;
-      }
-      return out;
+      return (await projectList()).map((p) => ({ value: p.key, label: `${p.name} (${p.key})` }));
     },
     async listTasks({ inputs = {}, search, cursor } = {}) {
       const key = pastedKey(search);
@@ -196,6 +288,107 @@ export default function createTaskSource(ctx, deps = {}) {
       await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/comment`, { method: 'POST', body: { body } });
       return { commented: true, transitioned };
     },
-    capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false }; },
+    capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true }; },
+    // ---- A6: export (plans/requirements-a6-design.md §4, §5); each op through exportOp (Jira's words, never a status or path) ----
+    exportOptions: exportOp(async ({ project, issueType } = {}) => {
+      const projects = (await projectList()).map((p) => ({ value: p.key, label: `${p.key} — ${p.name}` }));
+      const doneStatus = String(ctx.config?.transitionOnComplete || '').trim() || null;
+      if (!project) return { projects, doneStatus };
+      let types;
+      try { types = await createmeta(`/rest/api/2/issue/createmeta/${enc(project)}/issuetypes`, 'issueTypes'); }
+      catch (e) {
+        // only a Data Center before 8.4 lacks this endpoint, as its serverInfo says; on Cloud, on a newer Data Center and when
+        // the version is unknown, a 404 means the project is gone or not visible (D16) and goes the normal way
+        if (e.status === 404 && (await deployment()) === 'datacenter') {
+          const v = await serverVersion();
+          if (v && (v[0] < 8 || (v[0] === 8 && v[1] < 4))) return { projects, issueTypes: [], tooOld: true, doneStatus };
+        }
+        throw e;
+      }
+      const issueTypes = types.filter((t) => !t.subtask).map((t) => ({ value: String(t.id), label: t.name }));
+      if (!issueType) return { projects, issueTypes, doneStatus };
+      const fields = await createFields(project, issueType);
+      const prio = fields.find((f) => fieldId(f) === 'priority');
+      return {
+        projects, issueTypes, doneStatus,
+        priorities: (prio?.allowedValues || []).map((p) => ({ value: String(p.id), label: p.name })),
+        // a list needs lines: only multi-line text fields can hold the criteria (D16)
+        criteriaFields: fields.filter((f) => /:textarea$/.test(String(f.schema?.custom || ''))).map((f) => ({ value: fieldId(f), label: f.name })),
+      };
+    }),
+    createTicket: exportOp(async ({ ticket } = {}) => {
+      const fields = ticketFields(ticket);
+      const props = ticket.marker ? [{ key: PROPERTY, value: { marker: ticket.marker } }] : null;
+      let made;
+      let propertyLater = false;
+      try {
+        made = await jiraFetch(jira, '/rest/api/2/issue', { method: 'POST', body: { fields, ...(props ? { properties: props } : {}) } });
+      } catch (e) {
+        if (!(props && refusesProperties(e))) { const r = await refusal(e, ticket.project, ticket.issueType); if (r) return r; throw e; }
+        // a site that will not take properties in the create body: create, then set the property
+        try { made = await jiraFetch(jira, '/rest/api/2/issue', { method: 'POST', body: { fields } }); }
+        catch (e2) { const r = await refusal(e2, ticket.project, ticket.issueType); if (r) return r; throw e2; }
+        propertyLater = true;
+      }
+      // Jira has made the issue: from here nothing throws (D10). A throw would keep the host's pending marker, and since the
+      // issue then lacks the property findTicket would not match it, so Try again would make a second ticket.
+      if (propertyLater) {
+        try { await jiraFetch(jira, `/rest/api/2/issue/${enc(made.key)}/properties/${PROPERTY}`, { method: 'PUT', body: { marker: ticket.marker },
+          timeoutMs: afterKey }); }
+        catch (e) { log('warn', `${made.key}: could not store Worca's marker: ${e?.message || e}`); }
+      }
+      return { key: made.key, url: browse(made.key), fingerprint: await readFingerprint(made.key) };
+    }),
+    updateTicket: exportOp(async ({ key, ticket } = {}) => {
+      const k = requireKey(key);
+      const { project, labels, ...fields } = ticketFields(ticket);
+      // Many sites refuse issuetype in an edit (Data Center: a type change is a Move; Cloud: often not on the edit screen), so it
+      // is sent only when it changes. The same read finds a ticket that is gone.
+      let now;
+      try { now = await issue(k, ['issuetype']); }
+      catch (e) { if (e.status === 404) return { gone: true }; throw e; }
+      if (String(now?.fields?.issuetype?.id ?? '') === fields.issuetype.id) delete fields.issuetype;
+      try {
+        await jiraFetch(jira, `/rest/api/2/issue/${enc(k)}`, { method: 'PUT',
+          body: { fields, update: { labels: labels.map((add) => ({ add })) } } });   // labels are added, never removed (D7)
+      } catch (e) {
+        if (e.status === 404) return { gone: true };
+        const r = await refusal(e, project.key, ticket.issueType);
+        if (r) return r;
+        throw e;
+      }
+      // the edit is made: a failed read-back answers fingerprint null, never a failure (D10)
+      return { key: k, url: browse(k), fingerprint: await readFingerprint(k) };
+    }),
+    commentTicket: exportOp(async ({ key, body } = {}) => {
+      const k = requireKey(key);
+      try { await jiraFetch(jira, `/rest/api/2/issue/${enc(k)}/comment`, { method: 'POST', body: { body: markdownToWiki(body) } }); }
+      catch (e) { if (e.status === 404) return { gone: true }; throw e; }
+      return { ok: true };
+    }),
+    ticketState: exportOp(async ({ key } = {}) => {
+      const k = requireKey(key);
+      try { return { exists: true, url: browse(k), fingerprint: fingerprintOf((await issue(k, ['description']))?.fields?.description) }; }
+      catch (e) { if (e.status === 404) return { exists: false }; throw e; }
+    }),
+    findTicket: exportOp(async ({ project, label, marker } = {}) => {
+      const jql = buildJql({ project, jql: `labels = ${jqlString(label)} ORDER BY created DESC` });
+      const q = `jql=${enc(jql)}&fields=description,labels&maxResults=10`;
+      const j = (await deployment()) === 'cloud'
+        ? await jiraFetch(jira, `/rest/api/2/search/jql?${q}`) : await jiraFetch(jira, `/rest/api/2/search?${q}&startAt=0`);
+      for (const i of (j?.issues || []).slice(0, 10)) {
+        let prop = null;
+        try { prop = await jiraFetch(jira, `/rest/api/2/issue/${enc(i.key)}/properties/${PROPERTY}`); }
+        catch (e) { if (e.status !== 404) throw e; }
+        if (!prop || prop.value?.marker !== marker) continue;
+        // the fingerprint of the issue itself, as createTicket and ticketState read it: a search may answer the description
+        // otherwise (Cloud), and a mismatch would show a false "edited in Jira" on the next Update
+        const back = await readBack(i.key);
+        return { key: i.key, url: browse(i.key), fingerprint: back.fingerprint, lastLine: lastLine(back.text ?? i.fields?.description),
+          marker: prop.value.marker,
+          labels: Array.isArray(i.fields?.labels) ? i.fields.labels : [] };
+      }
+      return null;
+    }),
   };
 }

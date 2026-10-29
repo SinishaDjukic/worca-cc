@@ -145,13 +145,14 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
  * reported. Returns `{ files, failed }` where `files` is what the mount SHOULD hold (the store
  * entries of the scope set) and `failed` the names that could not be refreshed this call.
  * `only` on a dir: as in mountMemory — the other notes are not written, and a copy of one already there is unlinked.
+ * `dirMode` / `fileMode`: the modes new folders and files are made with (the Ask mount: never group-writable).
  */
-export async function refreshMount({ root, mount, dirs, onError }) {
+export async function refreshMount({ root, mount, dirs, onError, dirMode, fileMode }) {
   let files = 0;
   const failed = [];
   for (const d of dirs) {
     const dest = join(mount, d.rel);
-    await mkdir(dest, { recursive: true });
+    await mkdir(dest, { recursive: true, mode: dirMode });
     const entries = (await listMemory(root, d.scope, { onError })).filter((e) => !d.only || d.only.has(e.name));
     // `keep` is built from what we actually WROTE or deliberately kept — an entry that vanished
     // between the listing and the read is not in it, so its stale mount copy is swept THIS call.
@@ -164,7 +165,7 @@ export async function refreshMount({ root, mount, dirs, onError }) {
       keep.add(`${e.name}.md`);                                       // written below, or kept as the previous copy on failure
       const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
       try {
-        await writeFile(tmp, text, 'utf8');
+        await writeFile(tmp, text, { encoding: 'utf8', mode: fileMode });
         await rename(tmp, target);
       } catch (err) {
         await unlink(tmp).catch(() => {});

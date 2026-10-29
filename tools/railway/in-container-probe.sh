@@ -20,7 +20,19 @@ P=$(pgrep -u worca -o node)
 want "public Host, no token -> 401" "$(code -H "Host: $host" http://127.0.0.1:4317/api/projects)" 401
 want "public Host, forged token -> 401" "$(code -H "Host: $host" -H 'Cf-Access-Jwt-Assertion: eyJhbGciOiJSUzI1NiIsImtpZCI6ImsifQ.eyJhIjoxfQ.c2ln' http://127.0.0.1:4317/api/projects)" 401
 want "foreign Host -> 403" "$(code -H 'Host: evil.example' http://127.0.0.1:4317/api/projects)" 403
-want "in-container localhost -> 200" "$(code http://127.0.0.1:4317/api/projects)" 200
+# G1: under agent isolation a caller on this box is the operator only with the per-boot instance token
+# (ui.json, 0600, worca's home; the in-box worca CLI sends it). Without agent isolation it is plain local.
+if id worca-agent >/dev/null 2>&1; then
+  want "in-container localhost, no instance token -> 403 (G1)" "$(code http://127.0.0.1:4317/api/projects)" 403
+  tok=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([0-9a-f]*\)".*/\1/p' /data/worca/.worca-cc/ui.json 2>/dev/null)
+  if [ -n "$tok" ]; then
+    want "in-container localhost + instance token -> 200" "$(code -H "x-worca-ui-token: $tok" http://127.0.0.1:4317/api/projects)" 200
+  else
+    fail "no instance token in /data/worca/.worca-cc/ui.json"
+  fi
+else
+  want "in-container localhost -> 200 (no agent isolation)" "$(code http://127.0.0.1:4317/api/projects)" 200
+fi
 
 # 2. Users and the agent boundary
 want "node processes run as" "$(ps -C node -o user= | sort -u | tr '\n' ' ' | sed 's/ $//')" worca

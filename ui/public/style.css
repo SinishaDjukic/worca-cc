@@ -2060,7 +2060,7 @@ div.ws-members:empty{display:none;}
 .wd-rescan-lead{flex:0 0 auto;padding-top:1px;}
 .wd-rescan-spinner{width:22px;height:22px;border-width:2.5px;}
 .wd-rescan-mark{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:var(--r-sm);font-size:12px;font-weight:700;}
-.wd-rescan.is-done .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
+.wd-rescan.is-done .wd-rescan-mark,.wd-rescan.is-pruned .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
 .wd-rescan.is-failed .wd-rescan-mark{color:var(--red-ink);background:var(--red-bg);}
 .wd-rescan-body{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto;}
 .wd-rescan .status-label{font-size:13px;}
@@ -4913,8 +4913,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    stays a caption), and a gap above each later section keeps one section's last row from running into the next head.
    The text sits 12px in from both ends; the line under it still spans the list. */
 .runs-sec + .runs-sec{margin-top:8px;}
-.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font-size:var(--fs-section);font-weight:300;color:var(--ink);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
-.runs-sec-head .runs-count{margin-left:auto;font-size:var(--fs-body);font-weight:400;}
+/* The list section head (Runs and Chats: Needs you, projects, topics, days) is a meta label, quieter than its rows. */
+.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font:600 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+.runs-sec-head .runs-count{margin-left:auto;font-weight:400;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .runs-older{margin:8px 0;}
@@ -6289,6 +6290,10 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* model card (buildModelCard; docs/models.md "Chat"): the policy card's change list + what will still block the model */
 .ask-modcard-warn,.ask-wscard-warn{color:var(--amber-ink);}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
+/* workspace removal card (buildWorkspaceCard): worca's recommended re-scan, its reason, and the three options */
+.ask-wscard-rescan{border:0;margin:10px 0 0;padding:0;min-width:0;}
+.ask-wscard-rescan-reason{font-size:12px;color:var(--ink-2);margin-bottom:2px;}
+.ask-wscard-rescan .radio-card{margin-top:6px;}
 
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
@@ -6727,6 +6732,18 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-gbody[hidden]{display:none;}
 .ask-cmd-gbody > .ask-card.ask-cmd.is-sum{margin:0;border:0;border-radius:0;background:none;animation:none;}
 .ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum{border-top:1px solid var(--line);}
+/* A lone command (#911) is a line like the group head (no card, no dot): its summary · time ›; opening it shows the detail. */
+.ask-card.ask-cmd.is-sum:not(.ask-cmd-gbody > *){border:0;border-radius:0;background:none;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-row{display:inline-flex;align-self:flex-start;gap:6px;max-width:100%;padding:0 8px 0 0;
+  border-radius:var(--r-sm);color:var(--ink-2);font-size:13px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn{flex:0 1 auto;gap:0;color:var(--ink-2);}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn > .status-dot{display:none;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-sum{font-weight:400;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-meta{font-size:13px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-meta:not(:empty)::before{content:"\00a0·\00a0";color:var(--ink-2);}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-stop{order:1;margin-left:2px;}   /* after the chevron, as beside a group head */
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-detail{padding:6px 0 4px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-warning{margin:6px 0 0;}
 .ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}
@@ -6874,6 +6891,8 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
 .confirm-field > label{display:block;font-weight:600;font-size:var(--fs-body);margin-bottom:6px;}
 .confirm-field .input{font-size:var(--fs-body);}
 .confirm-field .hint.err{color:var(--red-ink);}
+.confirm-choices{display:flex;flex-direction:column;margin-top:2px;}
+.confirm-choices .radio-card{margin-top:8px;}
 .confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
   background:var(--field);border-radius:var(--r-sm);font-size:var(--fs-body);color:var(--ink-2);
   cursor:pointer;line-height:1.45;}
@@ -10862,6 +10881,136 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-help-btns .btn{flex:1}
 }
 
+/* A6 (plans/requirements-a6-design.md §7): Export to a tracker. The dialogs are .req-dialog cards on the page's modal (the
+   setup 560 px, board 26); a field is its label over its control, two short fields share a row. The label chips' remove
+   button is the shared remove icon, in --ink-2 (an icon needs 3:1; --ink-3 is under it on white). */
+.req-dialog.req-export .req-export-body{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-export-fld{display:flex;flex-direction:column;gap:6px;margin:0;min-width:0}
+.req-export-fld > label,.req-export-fl{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-export-fld .opt{font-weight:400;color:var(--ink-3)}
+.req-export-fld > .hint{margin:0}
+.req-export-pair{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px}
+.req-export-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-export-labin{flex:1 1 120px;min-width:0;box-sizing:border-box}   /* board 26: "Add a label" ends the chips row */
+.req-export-lab{display:inline-flex;align-items:center;gap:4px;max-width:100%;overflow-wrap:anywhere}
+.req-export-x{display:inline-flex;align-items:center;justify-content:center;padding:2px;border:0;border-radius:var(--r-xs);background:transparent;color:var(--ink-2);cursor:pointer}
+.req-export-x:hover{color:var(--ink)}
+.req-export-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-export-rad{display:flex;align-items:center;gap:10px;min-height:28px;font-size:var(--fs-body);color:var(--ink);cursor:pointer}
+.req-export-rad input{margin:0}
+.req-export-radrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.req-export-radrow .select-wrap{flex:1 1 220px;min-width:0}
+.req-export-alert{margin:0}
+.req-export-alert:empty{display:none}
+.req-dialog.req-export .req-dlg-btns{padding-top:14px;border-top:1px solid var(--line)}   /* board 26: the buttons under a rule */
+/* Board 29 (7): an archived feature's "Restore the feature to export it." under the open Export menu, in a box of its own
+   (the menu holds only items); the pair floats where the list alone would. */
+.req-menu .req-export-menupop{position:absolute;top:calc(100% + 6px);right:0;z-index:5;display:flex;flex-direction:column;align-items:stretch;gap:6px;width:max-content;max-width:min(280px,calc(100vw - 32px))}
+.req-export-menupop[hidden]{display:none}
+.req-menu .req-export-menupop > .hd-menu{position:static;min-width:200px}
+.req-export-menupop > .req-export-archnote{margin:0;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu)}
+/* Board 27: the preview (1000 px): Fields beside the description as the tracker will show it, then the footer. The description
+   box scrolls inside; on a phone it folds behind Show all (board 31). */
+.req-dlg-wrap .card.req-dialog.req-export-preview{width:min(1000px,100%)}
+.viewer-modal.req-dlg-wrap.req-dlg-sheet{padding-top:min(8vh,48px)}   /* openModal's page mode: the six export dialogs only */
+.req-export-grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
+.req-export-grid[hidden],.req-export-desc[hidden]{display:none}   /* until the first preview arrives */
+.req-export-col{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-export-col h3,.req-export-changes h3{margin:0;font-size:var(--fs-body);font-weight:700}
+.req-export-fields{display:flex;flex-direction:column;gap:14px}
+.req-export-val{margin:0;font-size:var(--fs-body);color:var(--ink);overflow-wrap:anywhere}
+.req-export-items{margin:0;padding-left:18px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-export-desc{max-height:548px;overflow:auto;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);
+  font-size:var(--fs-body);line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+.req-export-desc:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-export-desc h4{margin:12px 0 4px;font-size:var(--fs-body);font-weight:700}
+.req-export-desc h4:first-child{margin-top:0}
+.req-export-desc p,.req-export-desc ul,.req-export-desc ol{margin:0 0 6px}
+.req-export-desc ul,.req-export-desc ol{padding-left:20px}
+.req-export-desc .req-export-sig{margin-top:10px;padding-top:8px;border-top:1px solid var(--line);color:var(--ink-2)}
+.req-export-comment{max-height:360px}
+.req-export-more{display:none}
+.req-export-more[hidden]{display:none}
+.req-export-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:14px;border-top:1px solid var(--line)}
+.req-export-foot > .hint{margin:0}
+.req-export-foot .req-dlg-btns{margin:0 0 0 auto}
+.req-export .req-export-foot .req-dlg-btns{padding-top:0;border-top:0}   /* one rule above a footer: its own, at every width */
+.req-export-status{margin:0}
+.req-export-status:empty{display:none}
+.req-export-status .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg (5.0:1; --blue-ink is 3.6:1), as .req-reading's */
+/* Board 31: at 900 px and narrower the preview's title is "Export to Jira" over "FEAT-7 · <title>". */
+.req-export-sub{display:none;margin:-4px 0 0}
+@media (max-width:900px){
+  .req-export-title .req-export-tid{display:none}
+  .req-export-sub{display:block}
+}
+.req-export-alert.is-warn{padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-md);background:var(--amber-wash);color:var(--ink)}
+.req-export-alert.is-warn b{font-weight:600}
+.req-export-alert-hint{margin:0}
+.req-export-foot > .req-export-alert-hint{flex:1 0 100%}   /* board 29 (1): a line of its own under the footer's buttons */
+.req-export-alert-btns{display:flex;flex-wrap:wrap;gap:8px}
+.req-export-alert-btns[hidden]{display:none}
+/* Board 28: Export again — the choices as radio cards (the picked one has an ink border, never a fill), what changed. */
+.req-export-modes{display:flex;flex-direction:column;gap:8px}
+.req-export-modes[hidden],.req-export-changes[hidden]{display:none}
+.req-export-mode{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
+.req-export-mode:has(input:checked){border-color:var(--ink)}
+.req-export-mode.off{cursor:not-allowed;color:var(--ink-3)}
+.req-export-mode input{margin:3px 0 0}
+.req-export-mode-txt{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-body)}
+.req-export-mode-txt b{font-weight:600}
+.req-export-mode-txt .hint{margin:0}
+.req-export-changes{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:var(--r-md);background:var(--field)}
+.req-export-change{margin:0;font-size:var(--fs-body)}
+.req-export-change code{font-size:var(--fs-meta)}
+/* Board 28: the ticket chip after the header chips (the shared external icon), in link ink (--blue-ink-strong: AA on --field);
+   the History card; board 29 (5): "Created SHOP-123", icon and text in green ink, never a fill. */
+a.chip.req-export-chip{display:inline-flex;align-items:center;gap:4px;text-decoration:none;color:var(--blue-ink-strong)}
+a.chip.req-export-chip:hover{text-decoration:underline}
+a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-export-done{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-body);color:var(--green-ink-strong)}
+.req-export-done:empty{display:none}
+.req-export-done > svg{flex:none}
+.req-history{display:flex;flex-direction:column;gap:8px}
+.req-history h3{margin:0;font-size:var(--fs-section);font-weight:600}
+.req-history-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.req-history-list li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:var(--fs-body)}
+.req-history-list li:first-child{border-top:0}
+.req-history-list .hint{margin:0}
+/* Board 29 (6), D15: Report back on Ready to build, the start dialog and the runs card (upstream's switch row, ink when on). */
+.req-report{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.req-report .req-report-hint{margin:0 0 0 40px;font-size:var(--fs-meta)}
+.req-dialog .req-report{margin-top:0}
+/* Board 31 (D20): at 900 px and narrower an export dialog is a full-screen sheet: fixed to the viewport (its size, never the
+   content's), its body scrolls inside while the button row stays at the bottom, ← FEAT-7 first, the description folded behind
+   Show all, full-width buttons whose hit areas reach 44 px (::after, as .req-fpick), rows 14–18 px apart so no two overlap. */
+.req-export-back{display:none}
+@media (max-width:900px){
+  .viewer-modal.req-dlg-wrap.req-dlg-sheet{padding:0;place-items:stretch}
+  .req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export{position:fixed;inset:0;width:auto;max-width:none;height:auto;max-height:none;border:0;border-radius:0;
+    box-shadow:none;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px 0}
+  .req-dlg-sheet .req-export > *{flex-shrink:0}
+  .req-dlg-sheet .req-export > .req-dlg-btns,
+  .req-dlg-sheet .req-export > .req-export-foot{position:sticky;bottom:0;z-index:1;margin-top:auto;padding:12px 0 16px;background:var(--panel)}
+  .req-export-back{display:inline-flex;align-self:flex-start;position:relative;font-size:var(--fs-body)}
+  .req-export-back::after{content:"";position:absolute;inset:-14px -8px}   /* an 18 px line box + 28 = 46 px */
+  .req-export-grid,.req-export-pair{grid-template-columns:minmax(0,1fr)}
+  .req-dlg-sheet .req-export-desc{max-height:none}
+  .req-export-desc.folded{max-height:180px;overflow:hidden}
+  .req-export-more{display:block;width:100%;position:relative}
+  .req-export-more[hidden]{display:none}
+  .req-export-foot{flex-direction:column;align-items:stretch}
+  .req-export .req-dlg-btns{flex-direction:column;align-items:stretch;gap:14px;margin:0}
+  .req-export .req-dlg-btns .btn,.req-export .req-export-alert-btns .btn{width:100%;position:relative}
+  .req-export .req-dlg-btns .btn::after,.req-export .req-export-alert-btns .btn::after,.req-export-more::after{content:"";position:absolute;inset:-7px 0}   /* a 32 px button: 30 + 14 = 44 */
+  .req-export .req-export-alert-btns{flex-direction:column;gap:18px}
+  .req-export .req-export-alert-btns .btn-sm::after{inset:-9px 0}   /* a 28 px button: 26 + 18 = 44 */
+  .req-export-x{position:relative}
+  .req-export-x::after{content:"";position:absolute;inset:-14px}
+  a.chip.req-export-chip{position:relative}
+  a.chip.req-export-chip::after{content:"";position:absolute;inset:-8px 0}
+}
+
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
 .mk-mt{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:var(--r-md);}
@@ -11367,6 +11516,32 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 #network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
 #network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
 
+
+/* The away screensaver (away-screensaver.mjs), an easter egg: the wordmark drifts over a faint network while Away
+   mode and Keep awake are on and the window sits idle. Under the session-expired notice (10000). */
+.ss{position:fixed;inset:0;z-index:9999;overflow:hidden;background:var(--bg);color:var(--ink);cursor:none;}
+.ss-net{position:absolute;inset:0;}
+.ss-block{position:absolute;top:0;left:0;width:max-content;max-width:calc(100vw - 32px);will-change:transform;}
+.ss.is-still .ss-block{top:50%;left:50%;transform:translate(-50%,-50%);}
+.ss-bubble{display:flex;align-items:center;gap:8px;width:max-content;margin:0 0 12px;padding:4px 12px;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);font-size:var(--fs-meta);visibility:hidden;}
+.ss-bubble.is-on{visibility:visible;}
+.ss-logo{width:200px;aspect-ratio:512/190;background:var(--ink);
+  -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+.ss-logo.is-squash-x{animation:ss-squash-x .35s ease-out;}
+.ss-logo.is-squash-y{animation:ss-squash-y .35s ease-out;}
+.ss-head{margin:16px 0 8px;font-size:var(--fs-section);font-weight:500;line-height:var(--lh-title);}
+.ss-caret{display:inline-block;width:6px;height:1em;margin-left:4px;vertical-align:-2px;background:var(--ink-2);animation:ss-blink 1s steps(1) infinite;}
+.ss-items{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0;list-style:none;color:var(--ink-2);font-size:var(--fs-body);}
+.ss-items li{display:flex;align-items:center;gap:8px;}
+.ss-hint{position:absolute;right:24px;bottom:16px;margin:0;color:var(--ink-2);font-size:var(--fs-caption);}
+.ss-spark{position:absolute;top:0;left:0;width:10px;height:10px;background:var(--ink-2);pointer-events:none;
+  clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);animation:ss-spark .9s ease-out forwards;}
+@keyframes ss-squash-x{30%{scale:.88 1.06;}}
+@keyframes ss-squash-y{30%{scale:1.06 .88;}}
+@keyframes ss-blink{50%{opacity:0;}}
+@keyframes ss-spark{from{opacity:.8;scale:1;}to{opacity:0;scale:.3;}}
+@media (prefers-reduced-motion: reduce){.ss-caret{animation:none;}}
 
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */

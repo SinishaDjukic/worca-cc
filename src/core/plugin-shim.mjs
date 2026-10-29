@@ -8,20 +8,26 @@
 // Config+secrets+state travel via STDIN — never argv (visible in `ps`), never env
 // (inherited by grandchildren). The child env is scrubbed to {PATH, HOME}, the
 // proxy variables (never a proxy URL with credentials) and the CA bundle paths, so
-// plugin X can never read plugin Y's secrets or the host environment. stateDelta
+// plugin Y's secrets and the host environment are not handed to plugin X. That is
+// all the env does: on a single-user install the child runs as worca, and its code
+// can still open every plugins/*/data/secrets.json from disk. Only a container
+// with a plugin user (pluginChildSpawn) puts a uid boundary there. stateDelta
 // is applied HOST-side via writePluginState (the child has no WORCA_HOME and
 // never touches the store). WORCA_MOCK=1 short-circuits the spawn with canned
 // per-op responses so smoke/tests run offline with zero plugins installed.
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFlag } from './model-env.mjs';
+import { PROXY_URL_NAMES, proxyUrlHasLogin } from './env-proxy.mjs';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
 import { readPluginConfig, readPluginState, writePluginState, listProfileIds, DEFAULT_PROFILE } from './plugin-config.mjs';
+import { agentSpawn, killAgentGroup, pluginIdentity } from './agent-user.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./plugin-shim-child.mjs', import.meta.url));
 
@@ -47,15 +53,24 @@ export class PluginOpError extends Error {
 
 let _mockResponses = null; // op -> value | (args) => value; null = defaults only
 
-/** Tests: override/extend the canned per-op responses. Pass null to reset. */
+/** Tests: override/extend the canned per-op responses. Pass null to reset (A6: the mock ticket numbers restart at 123). */
 export function setMockSourceResponses(map) {
   _mockResponses = map && typeof map === 'object' ? map : null;
+  if (!_mockResponses) resetMockTickets();
 }
 
 const MOCK_TASKS = [
   { id: 'MOCK-1', title: 'Fix the login redirect', url: 'https://mock.test/MOCK-1', state: 'open', labels: ['bug'], updatedAt: '2026-07-12T00:00:00.000Z' },
   { id: 'MOCK-2', title: 'Add CSV export to reports', url: 'https://mock.test/MOCK-2', state: 'open', labels: ['feature'], updatedAt: '2026-07-12T00:00:00.000Z' },
 ];
+// A6 (plans/requirements-a6-design.md §4, D19): the export ops' canned answers, so the Requirements browser proof runs
+// offline. Tickets are numbered <project>-123, -124, … in one sequence; the fingerprint is the description's sha256 and
+// ticketState returns the last one written.
+let mockTicketNo = 123;
+const mockFingerprints = new Map();
+function resetMockTickets() { mockTicketNo = 123; mockFingerprints.clear(); }
+const mockFingerprint = (text) => createHash('sha256').update(String(text ?? '')).digest('hex');
+const mockUrl = (key) => `https://mock.test/browse/${key}`;
 const MOCK_DEFAULTS = {
   listTasks: () => ({ tasks: MOCK_TASKS.map((t) => ({ ...t })) }),
   getTask: (args) => ({
@@ -66,6 +81,30 @@ const MOCK_DEFAULTS = {
   }),
   reportResult: () => ({ ok: true }),
   validateConfig: () => ({ ok: true }),
+  // Write-back stays on (what a missing capabilities op defaulted to before A6), and the mock source can export.
+  capabilities: () => ({ writeBack: true, export: true }),
+  exportOptions: (args = {}) => ({
+    projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }],
+    ...(args.project ? { issueTypes: [{ value: '10001', label: 'Story' }, { value: '10002', label: 'Task' }, { value: '10003', label: 'Bug' }] } : {}),
+    ...(args.project && args.issueType ? {
+      priorities: [{ value: '1', label: 'Highest' }, { value: '2', label: 'High' }, { value: '3', label: 'Medium' }, { value: '4', label: 'Low' }],
+      criteriaFields: [{ value: 'customfield_10070', label: 'Acceptance Criteria' }, { value: 'customfield_10071', label: 'Definition of Done' }],
+    } : {}),
+    doneStatus: 'Done',
+  }),
+  createTicket: (args = {}) => {
+    const t = args.ticket || {};
+    const key = `${t.project || 'MOCK'}-${mockTicketNo++}`;
+    mockFingerprints.set(key, mockFingerprint(t.description));
+    return { key, url: mockUrl(key), fingerprint: mockFingerprints.get(key) };
+  },
+  updateTicket: (args = {}) => {
+    mockFingerprints.set(args.key, mockFingerprint(args.ticket && args.ticket.description));
+    return { key: args.key, url: mockUrl(args.key), fingerprint: mockFingerprints.get(args.key) };
+  },
+  commentTicket: () => ({ ok: true }),
+  ticketState: (args = {}) => ({ exists: true, url: mockUrl(args.key), fingerprint: mockFingerprints.get(args.key) ?? null }),
+  findTicket: () => null,
 };
 
 /** Same env-flag semantics as claude-runner.mjs#mockEnabled — one shared rule. */
@@ -128,7 +167,7 @@ export function scrubbedEnv(platform = process.platform, env = process.env) {
   // secret, though, so then NO proxy URL passes (one alone would half-route the
   // child): it goes direct, and worca says why (withheldProxyNotice). NO_PROXY
   // and the CA paths never carry one.
-  const names = proxyHasCredentials(env) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
+  const names = proxyUrlHasLogin(env) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
   for (const k of [...names, ...CA_NAMES]) if (env[k]) child[k] = env[k];
   // Windows has no HOME and a child cannot even start without SYSTEMROOT (Node
   // docs); the rest are the non-secret system vars node/npm need to resolve
@@ -140,18 +179,10 @@ export function scrubbedEnv(platform = process.platform, env = process.env) {
   return child;
 }
 
-const PROXY_URL_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'];
 const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
 /** The CA names engines/spawn.mjs SPAWN_ENV_BASE passes too: node reads the first,
- *  the tools a connector may run (gh, curl, git) the other two. */
-const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'];
-
-/** URL credentials always need an '@' (user:password@, token@, the scheme-less
- *  user:password@host form) and a host never has one, so any '@' counts, even
- *  in a value that is not a valid URL. */
-function proxyHasCredentials(env = process.env) {
-  return PROXY_URL_NAMES.some((k) => String(env[k] || '').includes('@'));
-}
+ *  the tools a connector may run (gh, curl, git, Python) the rest. */
+const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE'];
 
 let withheldProxyNoticed = false;
 
@@ -160,9 +191,9 @@ let withheldProxyNoticed = false;
  *  the variables only, never a value. The UI server prints it at boot, before
  *  any plugin spawn; every other process at its first one (warnWithheldProxy). */
 export function withheldProxyNotice() {
-  if (withheldProxyNoticed || !proxyHasCredentials()) return null;
+  if (withheldProxyNoticed || !proxyUrlHasLogin()) return null;
   withheldProxyNoticed = true;
-  return 'proxy: HTTP(S)_PROXY carries credentials, which plugin code never receives; plugin connectors and chat channels go direct';
+  return 'proxy: HTTP(S)_PROXY carries credentials, which plugin code never receives, and the corporate proxy is not running; plugin connectors and chat channels go direct';
 }
 
 /** Every plugin spawn calls this: withheldProxyNotice() on stderr, the process's
@@ -182,6 +213,28 @@ export function _resetWithheldProxyNotice() {
 export const WIN32_ENV_BASELINE = Object.freeze([
   'USERPROFILE', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA',
 ]);
+
+/** The spawn for one plugin child (connector op, chat worker, channel check): node with
+ *  `nodeArgs` under the scrubbed env. On a container with a plugin user (agent-user.mjs
+ *  pluginIdentity) it runs as that user with its own HOME, in its own process group so
+ *  killPluginChild reaches it behind sudo: there it cannot open plugins/<name>/data or worca's
+ *  home. Without one it runs as worca, which can read both.
+ *  @returns {{file:string, args:string[], options:{env:object, detached?:boolean}, user:object|null}} */
+export function pluginChildSpawn(nodeArgs, { env = process.env, platform = process.platform } = {}) {
+  const childEnv = scrubbedEnv(platform, env);
+  const user = platform !== 'win32' ? pluginIdentity(env) : null;
+  if (!user) return { file: process.execPath, args: nodeArgs, options: { env: childEnv }, user: null };
+  const s = agentSpawn(process.execPath, nodeArgs, childEnv, user);
+  return { file: s.file, args: s.args, options: { env: s.env, detached: true }, user };
+}
+
+/** SIGKILL a child from pluginChildSpawn. Under the plugin user the server can signal sudo
+ *  but not the node behind it, so the group goes down through sudo too. */
+export function killPluginChild(child, user, killGroup = killAgentGroup) {
+  const alive = child.exitCode == null && child.signalCode == null;
+  try { child.kill('SIGKILL'); } catch { /* gone */ }
+  if (user && alive) killGroup(child.pid, user);
+}
 
 /** The profile invariant, enforced in the shim itself so EVERY caller — the
  *  CLI's `worca plugin exec`, future workers — is safe by construction, not
@@ -266,16 +319,13 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
   const frame = await new Promise((resolveFrame, rejectFrame) => {
     // WORCA_PLUGIN_INSPECT=1 attaches the debugger to the connector child
     // (`worca plugin exec --inspect` sets it; spec §7.2 debuggability).
-    const child = spawn(process.execPath,
-      [...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect-brk'] : []), CHILD_PATH], {
-      env: scrubbedEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const run = pluginChildSpawn([...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect-brk'] : []), CHILD_PATH]);
+    const child = spawn(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
     let settled = false;
-    const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+    const killTimer = setTimeout(() => { timedOut = true; killPluginChild(child, run.user); }, timeoutMs);
     const settle = (fn, v) => { if (!settled) { settled = true; clearTimeout(killTimer); fn(v); } };
     child.stdout.setEncoding('utf8').on('data', (c) => { stdout += c; });
     child.stderr.setEncoding('utf8').on('data', (c) => { stderr += c; });

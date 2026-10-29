@@ -780,6 +780,14 @@ test('propose_run passes through validateProposal (commentIds untouched); unknow
   ]);
 });
 
+test('propose_workspace_change: remove_member takes an optional rescan, and the description says to relay card.recommendation', () => {
+  const def = createAskTools({ limits: ASK_LIMITS, workspaceChanges: {} }).list().find((d) => d.name === 'propose_workspace_change');
+  assert.ok(def.inputSchema.properties.rescan, 'rescan is in the schema');
+  assert.match(def.inputSchema.properties.rescan.description, /none \| partial \| full/);
+  assert.deepEqual(def.inputSchema.required, ['kind'], 'rescan stays optional');
+  assert.match(def.description, /card\.recommendation \{level, reason\}.*relay it in one or two sentences; the user picks on the card/);
+});
+
 test('propose_run hands the thread\'s attachment ledger to the validator', async () => {
   const rows = [{ id: 'att_00000001', name: 'notes.md', bytes: 3, kind: 'text' }];
   const t = createAskTools({ ...fake,
@@ -1347,4 +1355,18 @@ test('get_run / list_runs: an unsuccessful run carries successful:false + outcom
       assert.equal('outcomeReason' in good, false);
     } },
   ]);
+});
+
+test('defaultToolDeps: list_presets shows a preset naming no guardrails as the install default (V21 wiring)', async () => {
+  const { prepare, GUARDRAILS_DEFAULT_META_KEY } = await import('../src/core/db.mjs');
+  prepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('secure'));
+  try {
+    const deps = defaultToolDeps({ threadId: 'ask_00000001' });
+    assert.equal(deps.defaultGuardrailsId?.(), 'secure');
+    const t = createAskTools({ ...deps, pinnedScope: () => null,
+      listPresets: () => [{ id: 'rp_aaaaaaaaaaaa', name: 'Bare', scope: { kind: 'global', ref: null }, setup: {} }] });
+    assert.equal((await t.call('list_presets', {})).presets[0].guardrailsId, 'secure');
+  } finally {
+    prepare('DELETE FROM store_meta WHERE key = ?').run(GUARDRAILS_DEFAULT_META_KEY);
+  }
 });

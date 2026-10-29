@@ -52,6 +52,7 @@ import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
+import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
@@ -147,6 +148,7 @@ function toolArgs(input) {
 }
 
 const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
+const SCRIPT_APPROVAL_TYPE = 'script-approval';   // G6: src/core/ask/script-approval.mjs
 
 /**
  * The script tools' thread line (scripts-workbench-design.md §9.3): the key instead of a JSON
@@ -4666,6 +4668,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- Workspace card (propose_workspace_change): create, add / remove members, rename ------------------------------
   const WS_KIND_LABEL = { create: 'Create', add_members: 'Add members', remove_member: 'Remove member', rename: 'Rename' };
   const WS_APPLY_LABEL = { create: 'Create', add_members: 'Add', remove_member: 'Remove', rename: 'Rename' };
+  const WS_RESCAN = ['none', 'partial', 'full'];
+  const WS_RESCAN_LABEL = { none: 'no re-scan', partial: 'partial re-scan', full: 'full re-scan' };
+  const WS_RESCAN_TITLE = { none: 'No re-scan', partial: 'Partial re-scan', full: 'Full re-scan' };
+  const WS_RESCAN_HINT = {
+    none: 'Keep the pruned map. Instant — no agent runs.',
+    partial: 'One agent rewrites the overview and notes from the pruned map. A few minutes.',
+    full: 'Scan every member left again. The slowest; runs in the background.',
+  };
   /** proposed → applied | failed, or declined. Every value is text. */
   function buildWorkspaceCard(block) {
     const card = block.card || {};
@@ -4703,12 +4713,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       ul.appendChild(li);
     }
     body.appendChild(ul);
+    let rescanPick = null;
     if (block.state === 'proposed') {
       for (const [items, cls] of [[card.warnings, 'ask-mcard-effects ask-wscard-warn'], [card.effects, 'ask-mcard-effects ask-wscard-effects']]) {
         if (!Array.isArray(items) || !items.length) continue;
         const list = make('ul', cls);
         for (const w of items) list.appendChild(make('li', null, w));
         body.appendChild(list);
+      }
+      // A removal: worca's recommended re-scan and its reason (shown only here), and the three options, recommended preselected.
+      if (card.kind === 'remove_member' && card.recommendation) {
+        const rec = card.recommendation;
+        const box = make('fieldset', 'ask-wscard-rescan');
+        box.setAttribute('data-ask-ws-rescan', '');
+        box.appendChild(make('div', 'ask-wscard-rescan-reason', `Recommended: ${WS_RESCAN_LABEL[rec.level] || rec.level}. ${rec.reason || ''}`.trim()));
+        // The card's pick, unless it is the disabled partial (then worca's level) — never an empty group.
+        const chosen = WS_RESCAN.includes(card.rescan) && !(card.rescan === 'partial' && !rec.partialAvailable) ? card.rescan : rec.level;
+        for (const value of WS_RESCAN) {
+          const off = value === 'partial' && !rec.partialAvailable;
+          const lab = make('label', `radio-card${off ? ' disabled' : ''}`);
+          const input = make('input');
+          input.type = 'radio'; input.name = `ask-ws-rescan-${block.id}`; input.value = value;
+          input.checked = value === chosen && !off; input.disabled = off;
+          const text = make('span', 'radio-card-text');
+          text.append(make('b', null, `${WS_RESCAN_TITLE[value]}${value === rec.level ? ' — recommended' : ''}`), make('small', 'hint', WS_RESCAN_HINT[value]));
+          lab.append(input, text);
+          box.appendChild(lab);
+        }
+        rescanPick = () => (box.querySelector('input[type="radio"]:checked') || {}).value || null;
+        body.appendChild(box);
       }
     }
     const result = card.result || null;
@@ -4733,7 +4766,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.kind === 'remove_member';
       const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', WS_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-ws-apply', destructive ? null : WF_ICO.save);
-      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      apply.addEventListener('click', () => {
+        const pick = rescanPick ? rescanPick() : null;
+        postCard(block, rootEl, { state: 'applied', ...(pick ? { rescan: pick } : {}) }, apply);
+      });
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
     }
@@ -5904,7 +5940,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   // #958: one build per card per reconcile. renderTranscript asks for a card twice (is it away? then the tail paint);
@@ -5955,13 +5991,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
+    const isScriptApproval = !!(block.card && block.card.type === SCRIPT_APPROVAL_TYPE);
     const isProgress = isProgressBlock(block);
     // #911: a command card is built in the mode the gate gives; a changed mode rebuilds it (the dispose below clears its ticker).
     const sumStale = isCommand && cached && cached.sum !== summariesOn();
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -5976,6 +6013,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
       : isComposer ? composerCards().render(block)
+      : isScriptApproval ? buildScriptApprovalCard(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
@@ -6025,6 +6063,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!st.cardEls) return false;
     for (const c of st.cardEls.values()) if (c.handle && typeof c.handle.setDescriptions === 'function' && c.el.isConnected) return true;
     return false;
+  }
+
+  /** G6: the card that asks before a draft script runs or a saved one is replaced (workflows/card-views.mjs, shared with
+   *  the Workflows chat). Its click runs or saves on the server and starts the event turn. */
+  function buildScriptApprovalCard(block) {
+    const { h, button } = cardKit(doc, { onChange: () => scheduleFlush() });
+    const wrap = make('div', 'ask-ccard');
+    wrap.dataset.cardId = block.id;
+    wrap.appendChild(scriptApprovalCardView(block, { h, button, onAnswer: async (body) => {
+      try { await postCardJson(block, body); return ''; }
+      catch (err) { return err && err.message === 'turn in flight' ? 'Chat is still replying. Try again once the answer lands.' : (err && err.message) || 'failed'; }
+    } }));
+    return { el: wrap };
   }
 
   // ---- command cards (ui/public/ask-command-card.mjs; Ask agent mode, #574) ------------------------------------------

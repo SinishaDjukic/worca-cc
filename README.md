@@ -9,7 +9,7 @@ Worca turns a task into **reviewed, merge-ready work**. It is a
 work, and a state machine runs the agents of a workflow in sequence — by
 default **Clarify → Plan → Refine → Implement → Review** — looping until the
 work clears quality gates, pausing to ask *you* the questions that matter, and
-keeping every run isolated in its own git worktree and branch — or, for a plain
+keeping every run's changes apart in its own git worktree and branch — or, for a plain
 folder, on a copy you apply back with **Apply to folder**; with **No project**, in a folder of its own. Pick **Auto**
 and Worca chooses the workflow for the task, draw your own in **Workflows** (or
 ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
@@ -105,7 +105,9 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Isolated worktrees** — each run works in its own git worktree on its own
   `worca-cc/…` branch, so agents never edit your checkout and parallel runs
   don't collide. When a run ends, its work is committed to that branch and the
-  worktree is removed; the branch stays.
+  worktree is removed; the branch stays. A worktree isolates changes, not the
+  host: natively, agents run as your user and can reach whatever you can (see
+  [Guardrails](#guardrails)).
 - **Run on the source branch** — switch it on under the feature branch (or
   `--on-source-branch`) and the run still works on a hidden branch, but when it
   finishes `done` its source branch is fast-forwarded onto that work and the
@@ -338,7 +340,8 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 - **Named policy sets, picked per run** — the **Guardrails** picker under
   **New pipeline › Advanced** offers the built-in **Permissive / Normal /
-  Strict** tiers plus your own sets; Permissive, the default, adds no rules.
+  Strict** tiers plus your own sets. A new install defaults to Normal; an
+  install from before that keeps Permissive, which adds no rules.
   Normal protects credential files (`.env*`, keys, cert stores, container
   secrets, Worca's own DB and settings) and blocks publication commands
   (`git push`, `npm`/`yarn`/`pnpm publish`); Strict adds an environment scrub on agent spawn, denies
@@ -359,6 +362,11 @@ level and has no **Diff**, **Changes** or **Actions**.
   MCP registry tools, but a deny rule you write on a server reaches every copy
   of it. See [`docs/guardrails.md`](docs/guardrails.md) for the full model and
   its honest limitations.
+- **Not a sandbox** — native mode runs agents as your user. Normal and Strict
+  restrict tools, not the filesystem: an agent with Bash can still reach your
+  files, `HOME` and network through an interpreter. For untrusted work, run
+  Worca in a container ([`docs/docker.md`](docs/docker.md)), where agents see
+  only the projects you mount and can run as their own user.
 
 ### MCP servers & credential broker
 
@@ -595,6 +603,10 @@ level and has no **Diff**, **Changes** or **Actions**.
   A note above it reads like "5 answers while you were away — 2 to check". A
   short notice says when away hours start and end, and a violet dot sits on your avatar while you
   are away; turning **Away** off in the account menu ends it.
+- **A small easter egg** — while you are away with **Keep awake** on, leave the Worca window in front and untouched
+  for 5 minutes and a screensaver takes over: the wordmark drifts across the window with one line on how your runs
+  and chats are doing. Moving the mouse or pressing a key brings the page back. `AWAY_SCREENSAVER` in
+  `ui/public/away-screensaver.mjs` turns it off.
 
 ### Scheduled runs
 
@@ -718,7 +730,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   **Engine & models** card or in a project's settings. Each needs its own CLI
   installed and signed in. The beta engines hold guardrail rules only in part,
   so Normal and Strict need **Allow unguarded**
-  (`--allow-unguarded-engine`); Copilot and Cursor report no cost; Chat
+  (`--allow-unguarded-engine`), or run them on Permissive
+  (`--guardrails permissive`); Copilot and Cursor report no cost; Chat
   runs on Claude Code or Codex. A model's connection decides which engines can
   run it. See [`docs/models.md`](docs/models.md#codex).
 - **Bring your own models** — *Add model* on the **Models** page registers any
@@ -968,6 +981,9 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 
 # run the agents on another engine (beta: codex, copilot, cursor)
 worca --project /path/to/your/project --prompt "Add a /search endpoint" --engine codex
+
+# pick the run's guardrail set (default: Normal on a new install; every engine but Claude needs permissive or --allow-unguarded-engine)
+worca --project /path/to/your/project --prompt "Add a /search endpoint" --engine codex --guardrails permissive
 
 # register a project: the current folder, or a clone into the projects folder
 worca add

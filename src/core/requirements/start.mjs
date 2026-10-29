@@ -8,10 +8,11 @@ import { tx } from '../db.mjs';
 import { RequirementsError } from './spec.mjs';
 import {
   requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId, listAttachments,
+  getExportLink,
 } from './store.mjs';
 import { isBusy } from './interview.mjs';
 import { runFiles, unsendableRunFile, cannotGoWithRun } from './attachment-job.mjs';
-import { markStarting, unmarkStarting, isStarting } from './starting.mjs';
+import { markStarting, unmarkStarting, isStarting, isExporting, EXPORTING_MESSAGE } from './starting.mjs';
 import { readiness } from './ready.mjs';
 import { renderTaskMarkdown } from './markdown.mjs';
 
@@ -41,21 +42,25 @@ function refusal(res) {
  * switched-on files and documents go as `extrasFiles` (the key only when there are some), each with the sha256 the
  * staging checks its copy against; one Worca cannot open refuses the start (CONFLICT, naming it), so a run never
  * goes without a file the product owner chose. The start row records `files`.
+ * A6 D15: with a linked ticket and reportBack not false, the run is linked to it (reportTo, in-process only): the result,
+ * the pull request link and a status move go back through the existing write-back. Refused while the feature is exported (D13).
  * @param {number} seq
- * @param {{ reason?:string, workflowId?:string, sourceBranch?:string }} input
+ * @param {{ reason?:string, workflowId?:string, sourceBranch?:string, reportBack?:boolean }} input
  * @param {{ by?:string|null }} who
  * @param {{ startRun:(body:object, opts:{runId:string, startedBy:string|null,
- *     extrasFiles?:Array<{id:string, name:string, path:string, sha256:string}>})=>Promise<{status:number, body:any}>,
+ *     extrasFiles?:Array<{id:string, name:string, path:string, sha256:string}>, reportTo?:object})=>Promise<{status:number, body:any}>,
  *   target:{ ok:boolean, label?:string, hint?:string, name?:string, path?:string }, newRunId?:()=>string }} deps
  * @returns {Promise<{ runId:string, version:number }>}
  */
-export async function startFeature(seq, { reason, workflowId, sourceBranch } = {}, { by = null } = {}, deps = {}) {
+export async function startFeature(seq, { reason, workflowId, sourceBranch, reportBack } = {}, { by = null } = {}, deps = {}) {
   const { startRun, target = { ok: false }, newRunId = randomUUID } = deps;
   if (typeof startRun !== 'function') throw new Error('starting runs is not available');
   const f = requireFeature(seq);
   if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
   if (isBusy(f.seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
   if (isStarting(f.seq)) throw new RequirementsError('BUSY', 'this feature is already starting a run. Try again in a moment.');
+  if (isExporting(f.seq)) throw new RequirementsError('BUSY', EXPORTING_MESSAGE);
+  if (reportBack !== undefined && typeof reportBack !== 'boolean') throw new RequirementsError('BAD_REQUEST', 'reportBack must be true or false');
   markStarting(f.seq);   // before the first await: two starts at once cannot both pass
   try {
     // A8 D8: a file no round asked about fails "Interview finished" here too (an override, with a reason)
@@ -88,8 +93,13 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
     const bad = unsendableRunFile(sent);
     if (bad) throw new RequirementsError('CONFLICT', cannotGoWithRun(bad.name));
     const runId = newRunId();
+    // A6 D15: read once, here: a link forgotten later leaves this run reporting to the ticket its pipeline row names
+    const link = getExportLink(f.seq);
+    const reportTo = link && link.key && reportBack !== false ? { plugin: link.plugin, sourceId: link.sourceId, profile: link.profile || null,
+      taskId: link.key, url: link.url || null, title: f.title, inputs: { writeBack: 'yes' } } : null;   // writeBack: jira-source's reserved "on"
     const res = await startRun(body, { runId, startedBy: by,
-      ...(sent.length ? { extrasFiles: sent.map(({ id, name, path, sha256 }) => ({ id, name, path, sha256 })) } : {}) });
+      ...(sent.length ? { extrasFiles: sent.map(({ id, name, path, sha256 }) => ({ id, name, path, sha256 })) } : {}),
+      ...(reportTo ? { reportTo } : {}) });
     const status = Number(res && res.status);
     if (!(status >= 200 && status <= 299)) throw refusal(res);
     const stored = (res.body && typeof res.body.runId === 'string' && res.body.runId) || runId;

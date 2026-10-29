@@ -11,7 +11,7 @@ useTempHome(after);
 
 test('a mock Codex run sends every spawn to codex — the title too, read-only', { timeout: 120000 }, async () => {
   mockSpawnLog.length = 0;
-  const orch = createOrchestrator({ projectDir: gitDir('codex-mock-run'), workflowId: 'wf_default', prompt: 'Add a settings page', auto: true, claude: { mock: true, engine: 'codex' } });
+  const orch = createOrchestrator({ projectDir: gitDir('codex-mock-run'), workflowId: 'wf_default', prompt: 'Add a settings page', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex' } });
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
   await orch._titlePromise;

@@ -51,7 +51,7 @@ test('the Workflows chat keeps its exact composer tool definitions (Ask\'s varia
   assert.match(defs.build_workflow.description, /^Propose a WHOLE workflow\. The user gets an "Apply to canvas" card;/);
   assert.equal('thenRun' in defs.build_workflow.inputSchema.properties, false);
   assert.match(defs.draft_agent.description, /output contract\)\. then: \{near\?: node, ops\?: \[\.\.\.\]\} places and wires it on the canvas when the user saves it — \$new is the drafted node\. Returns the draft with its key: build_workflow may use that key in this conversation \(Apply saves the draft first\); edit_canvas refuses it until the user saves it — place and wire it through then\.$/);
-  assert.match(defs.draft_script.description, /\(saved with it\)\. then: as for draft_agent\. test_script with draft: \{meta, source, sourceWin32\?\} runs it before it exists\.$/);
+  assert.match(defs.draft_script.description, /\(saved with it\)\. then: as for draft_agent\. test_script with draft: \{meta, source, sourceWin32\?\} runs it before it exists, once the user presses Run on its card\.$/);
   assert.deepEqual(Object.keys(defs.draft_agent.inputSchema.properties).slice(-2), ['prompt', 'then']);
   assert.deepEqual(Object.keys(defs.draft_script.inputSchema.properties).slice(-2), ['cases', 'then']);
   // test_script is in COMPOSER_ALLOW: the Workflows chat keeps its own `draft` wording (Task 2(d)).

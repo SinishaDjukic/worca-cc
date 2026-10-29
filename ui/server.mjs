@@ -41,7 +41,7 @@ import {
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   folderApplyRetainFor,
-  resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
+  resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
 } from '../src/core/artifacts.mjs';
@@ -64,7 +64,7 @@ import {
 import { listProjects, runOnboarded, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
-import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR, SHELL_CSP } from '../src/core/index-html.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
@@ -165,7 +165,8 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
-import { askScriptPromptInput, scriptToolsEnabled } from '../src/core/ask/script-deps.mjs';
+import { askScriptPromptInput, scriptToolsEnabled, defaultScriptDeps as askScriptDeps } from '../src/core/ask/script-deps.mjs';
+import { applyScriptCard, scriptEventPrompt, scriptNoticeText } from '../src/core/ask/script-approval.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
 import { validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
@@ -215,8 +216,9 @@ import { policyCatalogModels, cachedPolicyHomes } from '../src/core/policy/cache
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
-  isPeerThisMachine, LOCAL_HOSTNAMES, hostnameOf,
+  isThisBox, LOCAL_HOSTNAMES, hostnameOf, createPeerGuard, readRouteGateways,
 } from '../src/core/remote-access.mjs';
+import { identityHeaderTrust } from '../src/core/trusted-proxies.mjs';
 import {
   createExtensionPairing, decideExtensionRequest, extensionOrigin, EXTENSION_WS_PROTOCOL, TOKEN_PREFIX,
 } from '../src/core/extension-pairing.mjs';
@@ -248,7 +250,7 @@ import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, baseM
   resolveMark, toRecord, resolveTaskText } from '../src/core/base-conflicts.mjs';
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
-import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
+import { sealBrokerSecret, brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
 import {
   startPlatformHeartbeat, buildHeartbeatBody, dbPipelineCounts, todayCounts, nextScheduledAt, dbWritable, diskNearlyFull,
   HEARTBEAT_INTERVAL_MS,
@@ -290,12 +292,12 @@ import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
 import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
-  DEFAULT_UI_PORT, UI_HEALTH_NAME, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet, listPolicyGuardrailSets, isPolicyGuardrailSetId,
-  writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
+  writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId, defaultGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
@@ -390,9 +392,13 @@ import {
   readWorkspaceMap, setWorkspaceEdgeState, addWorkspaceManualEdge, removeWorkspaceManualEdge,
   regenerateWorkspaceDescription, readWorkspaceStacks, updateWorkspaceStacks, workspaceMembers,
   addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode, memberHasTeamRepo, setWorkspaceScanPick,
+  RESCAN_CHOICES, removeImpactFor, resynthBlocker, memoGitProbe,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
+import {
+  WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID, isWorkspaceScanWorkflow, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID,
+  GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID,
+} from '../src/core/graph/builtin-workflows.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
@@ -453,7 +459,7 @@ import { PORT_ID_RE } from '../src/shared/graph/constants.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin, pythonNoticeFor,
   setPluginEnabled, doctorPlugin, linkPlugin,
-  listOrphanPluginData, purgePluginData, installedInventory, pluginReferences,
+  listOrphanPluginData, purgePluginData, installedInventory, pluginReferences, COMMIT_SHA_RE,
 } from '../src/core/plugin-store.mjs';
 import { githubWebUrl } from '../src/shared/plugin-access.mjs';
 import { fetchCandidate } from '../src/core/plugin-repo.mjs';
@@ -547,6 +553,8 @@ import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposa
 // direct-bin fallback. We removeAllListeners('warning') FIRST so Node's default
 // printer no longer fires (a bare listener would NOT suppress the warning and would
 // double-print every OTHER warning), then attach our single filtering listener.
+// The credential broker's secret leaves process.env before anything can spawn: no child inherits it.
+sealBrokerSecret();
 process.removeAllListeners('warning');
 process.on('warning', (w) => {
   if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
@@ -679,9 +687,11 @@ const VOICE_VENDOR = [
 
 // PORT=0 is a real value (the OS picks a free port; `--scratch` uses it), not "unset".
 const PORT = process.env.PORT === '0' ? 0 : Number(process.env.PORT) || DEFAULT_UI_PORT;
-// Bind to loopback by default (S1). Power users who knowingly want LAN exposure
-// can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
-// applies unless they also front it with auth.
+// Bind to loopback by default (S1). WORCA_HOST=0.0.0.0 (the worca image) still
+// answers only callers on this machine: local mode needs a loopback Host AND a
+// loopback TCP peer (or Docker's gateway, in the image), so a network caller
+// sending `Host: localhost` gets a 403 (G4, createPeerGuard). Anything wider
+// goes through remote access below.
 const HOST = process.env.WORCA_HOST || '127.0.0.1';
 
 // Remote access behind an identity proxy (src/core/remote-access.mjs): opt-in
@@ -689,12 +699,25 @@ const HOST = process.env.WORCA_HOST || '127.0.0.1';
 // contract above, unchanged. A config error stops the server at boot (isMain)
 // and, should the app be imported anyway, refuses every non-local request.
 const REMOTE_ACCESS = readRemoteAccessConfig(process.env);
-const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: HOST });
 const REMOTE_MODE = isRemoteMode(REMOTE_ACCESS);
-const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
-const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
+// In the image, a published port reaches worca from the container's gateway (G4).
+const PEER_GATEWAYS = DEPLOYMENT === 'container' ? readRouteGateways() : [];
+const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: HOST, gateways: PEER_GATEWAYS });
+const isTrustedPeer = createPeerGuard(REMOTE_ACCESS, { gateways: PEER_GATEWAYS });
+const hostGuard = createHostGuard(REMOTE_ACCESS.allowedHosts);
+const isLocalRequest = (req) => isTrustedPeer(req) && hostGuard(req);
+// X1: WORCA_IDENTITY_HEADER names a person (Ask thread owner, broker bill-to, startedBy) only when the identity
+// proxy sent it, from WORCA_IDENTITY_TRUSTED_PROXIES, as on the broker's key page (trusted-proxies.mjs). From any
+// other peer it is dropped before anything reads it. Read per request: tests flip the env between requests.
+let idHeaderTrust = null;
+function dropUntrustedIdentityHeader(req) {
+  const key = `${process.env.WORCA_IDENTITY_HEADER || ''}\0${process.env.WORCA_IDENTITY_TRUSTED_PROXIES || ''}`;
+  if (idHeaderTrust?.key !== key) idHeaderTrust = { key, ...identityHeaderTrust(process.env) };
+  if (idHeaderTrust.header && !idHeaderTrust.trusted(req)) delete req.headers[idHeaderTrust.header];
+}
+const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // Keep awake, the account menu's switch (keepAwake setting, default on locally): one OS child holds off idle
 // system sleep while any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it
 // wherever a run's status or pendingQuestion changes, and when the setting changes.
@@ -721,6 +744,8 @@ const extensionPairing = createExtensionPairing({ file: () => path.join(worcaHom
  * also carries name, org, inst, teams and exp), null when refused. Rejects when the identity provider cannot be reached (-> 503).
  */
 async function requestIdentity(req) {
+  // A caller on this box skips the identity check. Under agent isolation that caller may be the agent, which is
+  // safe only because G1 (admitThisBoxCaller, the same isThisBox test) then demands the per-boot token.
   if (isInContainer(req)) return { local: true };
   if (REMOTE_ACCESS_CHECK.errors.length) return null;
   if (!identityCheck) return { local: true };
@@ -879,6 +904,8 @@ const wss = new WebSocketServer({
   server,
   path: '/ws',
   verifyClient: (info, done) => {
+    if (!isTrustedPeer(info.req)) return done(false, 403);   // G4: before the extension gate, as for HTTP
+    dropUntrustedIdentityHeader(info.req);
     const ext = extensionSocketAuth(info.req);
     if (ext === 'refuse') return done(false, 401);
     if (ext) { info.req.worcaExtension = ext; return done(true); }
@@ -886,7 +913,11 @@ const wss = new WebSocketServer({
     requestIdentity(info.req).then(
       // Keep who this is on the upgrade request: the connection handler reads it to scope
       // per-thread Ask frames to their owner (askViewer).
-      (who) => { if (who) info.req.worcaUser = who; return who ? done(true) : done(false, 401); },
+      (who) => {
+        if (!who) return done(false, 401);
+        info.req.worcaUser = who;
+        return admitThisBoxCaller(info.req, { ws: true }) ? done(true) : done(false, 403);   // G1
+      },
       () => done(false, 503),
     );
   },
@@ -1700,7 +1731,8 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // loopback (see HOST below); this guard is the DNS-rebinding belt to that
 // suspenders: reject any request whose Host (or browser Origin) is not a
 // loopback name, so a malicious page resolving a name to 127.0.0.1 still can't
-// drive the API. Override WORCA_HOST only if you understand the exposure.
+// drive the API. On a non-loopback bind (WORCA_HOST) the header alone proves
+// nothing, so local mode also needs a trusted TCP peer (isTrustedPeer, G4).
 // The one sanctioned exception is a deployment behind an identity proxy:
 // WORCA_ALLOWED_HOSTS adds its hostname here, and the identity middleware
 // right below then demands the proxy's token (src/core/remote-access.mjs).
@@ -1724,6 +1756,8 @@ function setExtensionCors(req, res, origin) {
   if (req.headers['access-control-request-private-network'] === 'true') res.setHeader('Access-Control-Allow-Private-Network', 'true');
 }
 app.use((req, res, next) => {
+  if (!isTrustedPeer(req)) return res.status(403).json({ error: HOST_FORBIDDEN });   // G4: a loopback Host from the network
+  dropUntrustedIdentityHeader(req);
   const d = decideExtensionRequest(req, { remoteMode: REMOTE_MODE, verify: extensionPairing.verify });
   if (d.kind === 'pass') return next();
   if (d.origin) setExtensionCors(req, res, d.origin);   // none for an Origin / X-Worca-Extension mismatch
@@ -1772,6 +1806,43 @@ app.use((req, res, next) => {
   }, () => {
     res.status(503).json({ error: 'cannot verify the sign-in token right now' });
   });
+});
+
+/**
+ * D4: under agent isolation a caller on this machine may be the agent itself. Identity is skipped for a
+ * loopback peer + loopback Host (requestIdentity). In local mode the host guard accepts `Host: localhost`
+ * from ANY peer, so a peer at one of this machine's own addresses (the container's eth0) counts too.
+ * A request that carries a verified sign-in (`req.worcaUser` with an email/sub) is a person: the agent
+ * holds no identity token. agentIdentity() reads process.env per call (tests flip it between requests).
+ *
+ * G1: such a caller is the operator only with the per-boot token (UI_TOKEN_HEADER). It lives in memory
+ * and in ui.json (0600, in worca's home): the worca user reads it (the in-box `worca` CLI), an agent user
+ * cannot, and it is never put in an environment, so no spawn inherits it.
+ */
+const UI_TOKEN = newUiToken();
+const hasUiToken = (req) => {
+  const got = Buffer.from(String(req?.headers?.[UI_TOKEN_HEADER] || ''));
+  const want = Buffer.from(UI_TOKEN);
+  return got.length === want.length && timingSafeEqual(got, want);
+};
+const signedInPerson = (req) => !!(req.worcaUser && (req.worcaUser.email || req.worcaUser.sub));
+const thisBoxCaller = (req) => !!(req && agentIdentity() && !signedInPerson(req) && isThisBox(req));
+const agentMayBeCaller = (req) => thisBoxCaller(req) && !hasUiToken(req);
+// What a possible agent still reaches: the healthcheck, and routes that check their own credential
+// (the per-turn Ask relay and command tokens, the shutdown bearer).
+const AGENT_OPEN_ROUTES = new Set(['GET /api/health', 'POST /api/ask/relay', 'POST /api/ask/commands', 'POST /api/shutdown']);
+const AGENT_CALLER_BLOCKED = 'Worca refuses callers on this machine while agent isolation is on, unless they send the instance token (the worca CLI does). Open Worca through its published address.';
+/** G1 + G17 for one request (HTTP or a WebSocket upgrade): false = refuse it. A caller from this box names
+ *  no person either: the configured identity header is dropped, since the agent can set it too. */
+function admitThisBoxCaller(req, { ws = false } = {}) {
+  if (!thisBoxCaller(req)) return true;
+  const header = String(process.env.WORCA_IDENTITY_HEADER || '').trim().toLowerCase();
+  if (header) delete req.headers[header];
+  return hasUiToken(req) || (!ws && AGENT_OPEN_ROUTES.has(`${req.method} ${req.path}`));
+}
+app.use((req, res, next) => {
+  if (admitThisBoxCaller(req)) return next();
+  res.status(403).json({ error: AGENT_CALLER_BLOCKED, code: 'AGENT_CALLER_BLOCKED' });
 });
 
 // Ask threads have an owner (ask_threads.created_by). On a shared deployment (a real per-person
@@ -2027,8 +2098,9 @@ function sendIndex(res) {
   res.set('Cache-Control', 'no-store');
   res.set('X-Content-Type-Options', 'nosniff');
   // Nothing frames the shell. A framed shell lets a third party (an extension, any page) put a decoy over a
-  // security prompt it can trigger, e.g. the browser-extension pairing Approve.
-  res.set('Content-Security-Policy', "frame-ancestors 'none'");
+  // security prompt it can trigger, e.g. the browser-extension pairing Approve. Scripts come only from
+  // this origin (SHELL_CSP).
+  res.set('Content-Security-Policy', SHELL_CSP);
   res.set('X-Frame-Options', 'DENY');
   return res.send(html);
 }
@@ -2693,7 +2765,7 @@ const startRunHandler = async (req, res) => {
 
     // The Workspace scan workflow starts only through scanRequest: a hand-built body would run
     // a read-only scan the launch never validated (D2).
-    if (workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !scanTarget) {
+    if (isWorkspaceScanWorkflow(workflowId) && !scanTarget) {
       return badRequest(res, 'the workspace scan starts from the Workspaces view');
     }
     // Credential broker: the run's own model, when the request names one, is checked here
@@ -2759,16 +2831,16 @@ const startRunHandler = async (req, res) => {
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
-    // Absent/blank/null normalizes to 'permissive' — the empty policy,
-    // byte-identical legacy spawn — so pre-picker API/CLI callers keep today's
-    // behavior. A NON-STRING value is a caller bug and 400s (normalizing it
+    // Absent/blank/null normalizes to the install's default set (Normal on a
+    // fresh install, Permissive on one from before v81 — defaultGuardrailSetId).
+    // A NON-STRING value is a caller bug and 400s (normalizing it
     // away would silently drop the requested policy). Unknown ids 400 up
     // front, like workflowId.
     if (body.guardrailsId != null && typeof body.guardrailsId !== 'string') {
       return badRequest(res, 'guardrailsId must be a string');
     }
     const guardrailsId =
-      typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : 'permissive';
+      typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : defaultGuardrailSetId();
     if (!(await readGuardrailSet(guardrailsId))) {
       return badRequest(res, `unknown guardrailsId "${guardrailsId}"`);
     }
@@ -2836,6 +2908,9 @@ const startRunHandler = async (req, res) => {
     // Shaper s5 (D4): a round of an earlier run (Ask for changes → Start round n, or a Watch PR fix run). Set in-process
     // by startRunAs / invokeStartRun only, never from HTTP.
     const roundOf = req._roundOf && typeof req._roundOf === 'object' && typeof req._roundOf.pipelineId === 'string' ? req._roundOf : null;
+    // A6 D15: a requirements start's ticket (Report back). Set in-process by invokeStartRun only, never from HTTP, like _roundOf.
+    const reportTo = req._reportTo && typeof req._reportTo === 'object' && typeof req._reportTo.plugin === 'string'
+      && typeof req._reportTo.taskId === 'string' ? req._reportTo : null;
     // Run on the source branch (explicit flag — never inferred from feature === source): the run
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
@@ -3036,6 +3111,7 @@ const startRunHandler = async (req, res) => {
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
+        ...(reportTo ? { reportTo } : {}),   // A6 D15: the pipeline row names the ticket, so write-back reports to it
         branch,
         ...(titleLocked ? { titleLocked: true } : {}),
         sync,
@@ -3203,6 +3279,7 @@ const startRunHandler = async (req, res) => {
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
+        ...(reportTo ? { reportTo } : {}),   // A6 D15: the pipeline row names the ticket, so write-back reports to it
         branch,
         ...(titleLocked ? { titleLocked: true } : {}),
         sync,
@@ -3711,8 +3788,9 @@ function dropStagedOnceCopied(runId, drop) {
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. A8 D14: `extrasFiles` ([{ id?, name, path, sha256? }],
  *  a requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
- *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null } = {}) {
+ *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy.
+ *  A6 D15: `reportTo` (a requirements start's ticket) is handed over as req._reportTo. */
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3723,7 +3801,8 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
       json(payload) { out = { status: this.statusCode, body: payload }; return this; },
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
-      _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}) }, res);
+      _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
+      ...(reportTo ? { _reportTo: reportTo } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
@@ -3841,8 +3920,8 @@ async function fireTicket(ticket) {
     const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];
     body = bodyFollowingPreset(body, preset, { keep });
     // An Ask card can never propose Permissive (D9 / R-sec-2), so an unattended run from one never starts on it,
-    // whatever the preset says now. (A missing guardrailsId starts as Permissive.)
-    if (ticket.askCardId && (!body.guardrailsId || body.guardrailsId === 'permissive')) {
+    // whatever the preset says now. (A missing guardrailsId starts on the install default, defaultGuardrailSetId.)
+    if (ticket.askCardId && (body.guardrailsId || defaultGuardrailSetId()) === 'permissive') {
       return { ok: false, error: `it was scheduled from Chat and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
     }
   }
@@ -5629,7 +5708,7 @@ class ResumeError extends Error {
 
 /** A workspace scan run, as the harness's _isWorkspaceScan() sees it once restored from the resume point. */
 function isWorkspaceScanResume(saved) {
-  return saved.row.target === 'workspace' && saved.resumePoint?.workflowId === WORKSPACE_SCAN_WORKFLOW_ID;
+  return saved.row.target === 'workspace' && isWorkspaceScanWorkflow(saved.resumePoint?.workflowId);
 }
 
 /** Per member: does the recorded source still exist, and how far did <remote>/<source> move since
@@ -6166,51 +6245,85 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
   const hit = await resolveIndexedArtifactFileForRow(row, rel);
   if (!hit) return res.status(404).json({ error: 'artifact not found' });
   const mime = mimeForPath(hit.rel);
+  // V16: the shell's CSP `script-src 'self'` admits any script on this origin. Agent-written JS is served
+  // from here, so a script load from the worca origin itself is refused, and the JS is a script only for a
+  // deck's sandboxed frame (an opaque origin: cross-site). Anything else gets it as text, which nosniff never
+  // runs: the viewer reads it as text, and a browser that sends no fetch metadata cannot be told apart.
+  const fetchHeader = (name) => String(res.req?.headers?.[name] || '').toLowerCase();
+  const isScript = mime?.startsWith('text/javascript') && !download;
+  if (isScript && fetchHeader('sec-fetch-site') === 'same-origin'
+      && ['script', 'worker', 'sharedworker', 'serviceworker'].includes(fetchHeader('sec-fetch-dest'))) {
+    return res.status(403).json({ error: 'artifact scripts do not run in the worca page' });
+  }
+  const servedMime = isScript && fetchHeader('sec-fetch-site') !== 'cross-site' ? 'text/plain; charset=utf-8' : mime;
   if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
-  let size;
-  try { size = (await fsp.stat(hit.file)).size; } catch { return res.status(404).json({ error: 'artifact not found' }); }
-  const kind = viewerKindFor(hit.rel);
-  const anySize = download || kind === 'audio' || kind === 'video';
-  if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
-  // Set Content-Type explicitly so express/send does not re-derive it from the ext.
-  res.set('Content-Type', mime || 'application/octet-stream');
-  res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
-    : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
-  res.set('Cache-Control', 'no-store');                       // artifacts are mutable while a run is live
-  // Defense in depth for scriptable markup: even opened in a top-level tab the
-  // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
-  if (kind === 'html') res.set('Content-Security-Policy', 'sandbox allow-scripts');
-  else if (mime === 'image/svg+xml') res.set('Content-Security-Policy', 'sandbox');
-  // NO Access-Control-Allow-Origin, deliberately.
-  //
-  // The viewer frames a deck with sandbox="allow-scripts" and no
-  // allow-same-origin, so it has an opaque origin and its CORS-mode `@font-face`
-  // requests carry `Origin: null` — which the localhost-only guard refuses. A
-  // previewed deck therefore renders in FALLBACK TYPE. That is the accepted
-  // cost: the PDF and the standalone HTML (what actually gets sent to anyone)
-  // embed their fonts correctly.
-  //
-  // An earlier attempt exempted `Origin: null` from that guard so the header
-  // could work. It was a hole: every condition is attacker-controllable — any
-  // page can produce `Origin: null` from `<iframe sandbox="allow-scripts">`, and
-  // `Host: localhost:PORT` is simply what the browser sends — so any site the
-  // user visited while worca ran could read a run's font/media bytes and probe
-  // artifact paths for existence. Serving these to an opaque origin safely needs
-  // an unforgeable token in the PATH (so relative subresource URLs inherit it),
-  // not a header the caller chooses.
-  res.sendFile(path.basename(hit.file), { root: path.dirname(hit.file), dotfiles: 'allow', cacheControl: false }, (err) => {
-    if (!err || res.headersSent) return;
-    // A player's Range past the end (or any Range on an empty file) is send's 416: answer it as one, with the
-    // Content-Range send already set — never a 500. Other errors are JSON, not the artifact's type or name.
-    if (err.status === 416) return res.status(416).end();
-    res.removeHeader('Content-Disposition');
-    res.removeHeader('Content-Type');
-    // A conditional request send refuses (If-Match, If-Unmodified-Since) is a 412, not a server error.
-    if (err.status === 412) return res.status(412).end();
-    if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'artifact not found' });
-    res.status(500).json({ error: err.message || String(err) });
-  });
+  // Served from the file the link check passed, never by path again (V9: openArtifactUnder).
+  const fh = await openArtifactUnder(hit.base, hit.rel);
+  if (!fh) return res.status(404).json({ error: 'artifact not found' });
+  let streaming = false;
+  try {
+    const st = await fh.stat();
+    const size = st.size;
+    // The preconditions send answered: no ETag is sent, so any If-Match but `*` fails, as does an
+    // If-Unmodified-Since older than the file. A 412 carries neither the artifact's type nor its name.
+    const ifMatch = String(res.req?.headers?.['if-match'] || '').trim();
+    const unmodifiedSince = Date.parse(res.req?.headers?.['if-unmodified-since'] || '');
+    if ((ifMatch && ifMatch !== '*') || (Number.isFinite(unmodifiedSince) && Math.floor(st.mtimeMs / 1000) * 1000 > unmodifiedSince)) {
+      return res.status(412).end();
+    }
+    const kind = viewerKindFor(hit.rel);
+    const anySize = download || kind === 'audio' || kind === 'video';
+    if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
+    res.set('Accept-Ranges', 'bytes');
+    // One byte range for the players' seeks (express's req.range); a Range the file cannot satisfy is a 416
+    // with Content-Range, never the artifact's type or name. Several ranges get the whole file.
+    const ranges = res.req?.headers?.range ? res.req.range(size, { combine: true }) : null;
+    if (ranges === -1 || (ranges && size === 0)) {
+      res.set('Content-Range', `bytes */${size}`);
+      return res.status(416).end();
+    }
+    let start = 0, end = size - 1, status = 200;
+    if (Array.isArray(ranges) && ranges.type === 'bytes' && ranges.length === 1) {
+      ({ start, end } = ranges[0]);
+      status = 206;
+      res.set('Content-Range', `bytes ${start}-${end}/${size}`);
+    }
+    res.status(status);
+    res.set('Content-Length', String(size ? end - start + 1 : 0));
+    res.set('Content-Type', servedMime || 'application/octet-stream');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
+      : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
+    res.set('Cache-Control', 'no-store');                       // artifacts are mutable while a run is live
+    // Defense in depth for scriptable markup: even opened in a top-level tab the
+    // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
+    if (kind === 'html') res.set('Content-Security-Policy', 'sandbox allow-scripts');
+    else if (mime === 'image/svg+xml' || mime === 'application/xml') res.set('Content-Security-Policy', 'sandbox');
+    // NO Access-Control-Allow-Origin, deliberately.
+    //
+    // The viewer frames a deck with sandbox="allow-scripts" and no
+    // allow-same-origin, so it has an opaque origin and its CORS-mode `@font-face`
+    // requests carry `Origin: null` — which the localhost-only guard refuses. A
+    // previewed deck therefore renders in FALLBACK TYPE. That is the accepted
+    // cost: the PDF and the standalone HTML (what actually gets sent to anyone)
+    // embed their fonts correctly.
+    //
+    // An earlier attempt exempted `Origin: null` from that guard so the header
+    // could work. It was a hole: every condition is attacker-controllable — any
+    // page can produce `Origin: null` from `<iframe sandbox="allow-scripts">`, and
+    // `Host: localhost:PORT` is simply what the browser sends — so any site the
+    // user visited while worca ran could read a run's font/media bytes and probe
+    // artifact paths for existence. Serving these to an opaque origin safely needs
+    // an unforgeable token in the PATH (so relative subresource URLs inherit it),
+    // not a header the caller chooses.
+    if (res.req?.method === 'HEAD' || size === 0) return res.end();
+    const stream = fh.createReadStream({ start, end, autoClose: true });
+    streaming = true;
+    stream.on('error', () => res.destroy());
+    stream.pipe(res);
+  } finally {
+    if (!streaming) await fh.close().catch(() => {});
+  }
 }
 
 /** The run dir behind a LIVE id: the pipeline id (what /api/runs/:id/artifact
@@ -6829,7 +6942,7 @@ app.get('/api/policy/notes', async (req, res) => {
     const { meta, r, workspaceRun } = await policyForScope(scope);
     if (!r.ok) return res.json({ scope: meta, policy: null, notes: [] });
     const fields = fieldsForRun(r.doc, { workspaceRun });
-    const guardrailsId = typeof req.query.guardrailsId === 'string' && req.query.guardrailsId ? req.query.guardrailsId : 'permissive';
+    const guardrailsId = typeof req.query.guardrailsId === 'string' && req.query.guardrailsId ? req.query.guardrailsId : defaultGuardrailSetId();
     const set = await readGuardrailSet(guardrailsId);
     const models = typeof req.query.models === 'string' && req.query.models ? req.query.models.split(',').filter(Boolean).map((m) => ({ role: null, model: m })) : [];
     const dev = deviationsFor(fields, { guardrailsId, guardrailSet: set, stepModels: models, installed: installedPluginsMap(), worcaVersion: POLICY_WORCA_VERSION, metricsRecord: null });
@@ -7952,16 +8065,6 @@ const autoDetectedBuiltins = () => {
   return { editor: d.editor?.label || null, terminal: d.terminal?.label || null };
 };
 
-/**
- * D4: under agent isolation a caller on this machine may be the agent itself. Identity is skipped for a
- * loopback peer + loopback Host (requestIdentity). In local mode the host guard accepts `Host: localhost`
- * from ANY peer, so a peer at one of this machine's own addresses (the container's eth0) counts too.
- * A request that carries a verified sign-in (`req.worcaUser` with an email/sub) is a person: the agent
- * holds no identity token. Actions run as the server user, so a possible agent never gets them.
- * agentIdentity() reads process.env per call (tests flip it between requests).
- */
-const signedInPerson = (req) => !!(req.worcaUser && (req.worcaUser.email || req.worcaUser.sub));
-const agentMayBeCaller = (req) => !!(req && agentIdentity() && !signedInPerson(req) && (isInContainer(req) || isPeerThisMachine(req)));
 /** D4: actions run locally, or on a hosted deployment that opted in. No isInContainer exemption. */
 const actionsEnabledHere = (req = null) =>
   !agentMayBeCaller(req) && (!REMOTE_MODE || isTruthy(process.env.WORCA_ACTIONS_REMOTE));
@@ -8172,9 +8275,10 @@ const terminals = new TerminalManager({ runLive: (id) => isLiveRun(id) });
 Object.defineProperty(terminals, 'pidFile', { get: terminalPidFileNow, set: () => {} });
 Object.defineProperty(terminals, 'zshDir', { get: () => zshDotDir(worcaHome()), set: () => {} });
 
-// D13: isLocalRequest checks the Origin's hostname only, so a page on another localhost port (a dev
-// server, an Action service running agent-written code) passes it. The terminal runs commands, so a
-// browser Origin must name this server exactly. No Origin = not a browser page (the agent gate applies).
+// D13: the terminal runs commands, so a browser Origin must name this server exactly. Since G10
+// isLocalRequest already refuses a page on another localhost port (a dev server, an Action service
+// running agent-written code); this stays stricter where the host guard admits an allowlisted public
+// Origin behind a Host-rewriting proxy. No Origin = not a browser page (the agent gate applies).
 function terminalSameOrigin(req) {
   const origin = req?.headers?.origin;
   if (!origin) return true;
@@ -10757,7 +10861,11 @@ function liveAutoRescan(id) {
 }
 function liveRescanOf(id) {
   const r = liveAutoRescan(id);
-  return r ? { runId: r.id, pipelineId: r.pipelineId || null, paused: String(r.status).toLowerCase() === 'paused' } : null;
+  if (!r) return null;
+  const out = { runId: r.id, pipelineId: r.pipelineId || null, paused: String(r.status).toLowerCase() === 'paused' };
+  // A resumed run's harness reads 'wf_default' until _resume() restores its workflowId (orchestrator.mjs:89,
+  // run-harness.mjs:1797): for that moment a partial run lists as a full one — harmless, it self-corrects.
+  return r.orch?.workflowId === WORKSPACE_RESYNTH_WORKFLOW_ID ? { ...out, partial: true } : out;
 }
 const withRescan = (w) => { const rescan = w && liveRescanOf(w.id); return rescan ? { ...w, rescan } : w; };
 
@@ -10883,7 +10991,7 @@ async function supersedeRescans(id) {
  * { needsModel: true } when the workspace has no usable stored pick (the page asks the user).
  * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
  */
-async function startAutoRescan(ws) {
+async function startAutoRescan(ws, { workflowId = WORKSPACE_SCAN_WORKFLOW_ID } = {}) {
   const problems = scanMemberProblems(ws.projectPaths);
   if (problems.length) return { skipped: `read-only workspace scan: ${problems.join('; ')}` };
   let models;
@@ -10902,7 +11010,7 @@ async function startAutoRescan(ws) {
     status(code) { this.statusCode = code; return this; },
     json(payload) { out = { status: this.statusCode, body: payload }; this.headersSent = true; return this; },
   };
-  await scanRequest({ body: {} }, res, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models });
+  await scanRequest({ body: {} }, res, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models, workflowId });
   const runId = out.body && out.body.runId;
   const entry = runId ? runs.get(runId) : null;
   if (!entry) return { skipped: (out.body && out.body.error) || `the re-scan could not start (HTTP ${out.status})` };
@@ -10912,31 +11020,85 @@ async function startAutoRescan(ws) {
 
 let autoRescanOn = true; // test seam: _testing.setAutoRescan(false) skips the re-scan a member change starts
 
+/** The re-scan worca recommends for removing `projectPath` (src/core/workspaces.mjs
+ *  memberRemoveImpact over the map as stored now). A live automatic re-scan this change would
+ *  replace (supersedeRescans) raises it: the earlier change still needs its re-scan. A just-resumed
+ *  partial run still reads 'wf_default' until _resume() restores its workflowId, so for that moment
+ *  it counts as 'full' — the safe direction (it recommends more, never less). Throws
+ *  removeWorkspaceMember's own coded refusals. `git`: a memoGitProbe shared with the removal. */
+function removeRecommendation(id, projectPath, git) {
+  const auto = liveAutoRescan(id);
+  const pendingRescan = !auto ? null : auto.orch?.workflowId === WORKSPACE_RESYNTH_WORKFLOW_ID ? 'partial' : 'full';
+  return removeImpactFor(id, projectPath, { pendingRescan, ...(git ? { git } : {}) });
+}
+
+/** A removal re-scanned with 'none' against a 'full' recommendation can leave the map short: a
+ *  member it never covered, or an earlier change's re-scan this one stopped (supersedeRescans).
+ *  The pruned notice says so (rescan.note) — the pick stands. */
+function prunedNote(rec) {
+  const s = (rec && rec.signals) || {};
+  if (s.uncovered && s.uncovered.length) return `The map still does not cover ${s.uncovered.join(', ')}.`;
+  if (s.pendingRescan) return 'The re-scan for an earlier member change was stopped, so the map may be missing what it changed.';
+  return null;
+}
+
 /**
  * After a member change (the members route and Ask's workspace card): discover the added
  * members' metrics / policy branches (so the Team tab and the homes read them at once), stop an
- * automatic re-scan of the old set, and re-scan the workspace — per-member graphify graphs, the
- * map and a new description, saved when the run ends done. Runs build their own graphs per
- * member worktree from the registry at start, so the next run already covers the new set.
- * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
+ * automatic re-scan of the old set, and re-scan as asked — 'full' (every member: graphs, map, description), 'partial' (wf_workspace_resynth: the
+ * synthesis rewritten from the stored, pruned map) or 'none' (the pruned map stands). Adds are
+ * always 'full'. A 'partial' whose stored map does not cover exactly the members (resynthBlocker)
+ * runs 'full' instead, with a `note` saying why — decided HERE, before launch, so a partial run that
+ * cannot work never starts (its seed would pause it, and a paused one owns the workspace).
+ * Runs build their own graphs per member worktree from the registry at start.
+ * @returns {Promise<{mode:'none'|'partial'|'full', runId?:string, skipped?:string, needsModel?:boolean, note?:string}>}
  */
-async function afterMembersChanged(workspace, added = []) {
+async function afterMembersChanged(workspace, added = [], { rescan = 'full' } = {}) {
   for (const dir of added) {
     if (getProjectByPath(dir)?.vcs === 'none') continue;   // P5: a Folder member has no origin of its own (nested in a repository it would take that one's)
     discoverProject(dir, { force: true }).then(() => emitChanged('team-metrics-changed', 'discovered')).catch(() => { /* retried hourly */ });
     discoverPolicy(dir, { force: true }).then(() => emitChanged('team-policy-changed', 'discovered')).catch(() => { /* retried hourly */ });
   }
   await supersedeRescans(workspace.id);
-  if (!autoRescanOn) return { skipped: 'automatic re-scans are off (test seam)' };
-  try { return await startAutoRescan(workspace); }
-  catch (err) { return { skipped: err && err.message ? err.message : String(err) }; }
+  if (rescan === 'none') return { mode: 'none' };
+  let mode = rescan === 'partial' ? 'partial' : 'full';
+  let note = null;
+  if (mode === 'partial') {
+    const stored = await readWorkspaceMap(workspace.id);
+    const why = resynthBlocker(stored && stored.map, workspace.projectKeys || []);
+    if (why) { mode = 'full'; note = `A partial re-scan could not run: ${why}. A full re-scan runs instead.`; }
+  }
+  const told = note ? { note } : {};
+  if (!autoRescanOn) return { mode, ...told, skipped: 'automatic re-scans are off (test seam)' };
+  const workflowId = mode === 'partial' ? WORKSPACE_RESYNTH_WORKFLOW_ID : WORKSPACE_SCAN_WORKFLOW_ID;
+  try { return { mode, ...told, ...(await startAutoRescan(workspace, { workflowId })) }; }
+  catch (err) { return { mode, ...told, skipped: err && err.message ? err.message : String(err) }; }
 }
 
-// Change the member set: body {add: [paths]} or {remove: path}. The id stays frozen
-// (workspaces.mjs D1). 409 while a run (or a scan the user started) owns the workspace —
-// a live run keeps its own frozen members, but the metrics / policy home it resolves at
-// its end must not move under it, and a scan would save a map of the old set. Removing the home member clears that home
-// (clearedHomes). Every change re-scans the workspace (afterMembersChanged -> rescan).
+// What removing one member would invalidate in the stored map, and the re-scan worca recommends
+// (none | partial | full) with its reason — read-only, computed in code (no model call) BEFORE
+// anything changes, so the Remove confirm can show it. The removal's own refusals: 400 not a
+// member / fewer than two left, 404 unknown workspace.
+app.get('/api/workspaces/:id/members/remove-impact', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+  const projectPath = typeof req.query.path === 'string' ? req.query.path : '';
+  if (!projectPath) return badRequest(res, 'give path (the member project to remove)');
+  try {
+    res.json({ recommendation: removeRecommendation(id, projectPath) });
+  } catch (err) {
+    return workspaceFail(res, err);
+  }
+});
+
+// Change the member set: body {add: [paths]} or {remove: path, rescan?: 'none'|'partial'|'full'}.
+// The id stays frozen (workspaces.mjs D1). 409 while a run (or a scan the user started) owns the
+// workspace — a live run keeps its own frozen members, but the metrics / policy home it resolves at
+// its end must not move under it, and a scan would save a map of the old set. Removing the home
+// member clears that home (clearedHomes). An add always re-scans in full. A removal re-scans as
+// asked; with no `rescan` the server applies its own recommendation (removeRecommendation), worked
+// out from the stored map BEFORE it is pruned and returned as `recommendation`. A partial the
+// recommendation marks unavailable (no stored map, or one that does not cover the members left) is a 400.
 app.post('/api/workspaces/:id/members', async (req, res) => {
   const id = req.params.id;
   if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
@@ -10944,21 +11106,32 @@ app.post('/api/workspaces/:id/members', async (req, res) => {
   const adding = Array.isArray(body.add);
   const removing = typeof body.remove === 'string';
   if (adding === removing) return badRequest(res, 'give add (an array of project paths) or remove (one project path)');
+  const asked = body.rescan === undefined || body.rescan === null ? null : body.rescan;
+  if (asked !== null && !RESCAN_CHOICES.includes(asked)) return badRequest(res, `rescan must be one of ${RESCAN_CHOICES.join(', ')}`);
+  if (adding && asked !== null && asked !== 'full') return badRequest(res, 'adding members always starts a full re-scan');
   if (workspaceMembersBusy(id)) return res.status(409).json({ error: 'cannot change the members of a workspace while a run or scan owns it' });
   try {
     const before = await readWorkspace(id);
     if (!before) return res.status(404).json({ error: 'workspace not found' });
+    const git = memoGitProbe();   // one set of git probes for the recommendation and the removal
+    const recommendation = removing ? removeRecommendation(id, body.remove, git) : null;
+    const mode = adding ? 'full' : (asked ?? recommendation.level);
+    if (mode === 'partial' && !recommendation.partialAvailable) {
+      return badRequest(res, `a partial re-scan is not available: ${recommendation.reason} Choose none or full.`);
+    }
     const workspace = adding
       ? await addWorkspaceMembers(id, body.add.map((p) => resolveProjectDir(p)).filter(Boolean))
-      : await removeWorkspaceMember(id, body.remove);
-    const rescan = await afterMembersChanged(workspace, workspace.projectPaths.filter((p) => !before.projectPaths.includes(p)));
+      : await removeWorkspaceMember(id, body.remove, { git });
+    let rescan = await afterMembersChanged(workspace, workspace.projectPaths.filter((p) => !before.projectPaths.includes(p)), { rescan: mode });
+    const short = rescan.mode === 'none' ? prunedNote(recommendation) : null;
+    if (short) rescan = { ...rescan, note: short };
     const clearedHomes = [
       ...(before.metricsProject && !workspace.metricsProject ? ['metrics'] : []),
       ...(before.policyProject && !workspace.policyProject ? ['policy'] : []),
     ];
     emitChanged('workspaces-changed', 'members');
     if (clearedHomes.includes('policy')) emitChanged('team-policy-changed', 'policy-home');
-    res.json({ workspace, clearedHomes, rescan });
+    res.json({ workspace, clearedHomes, rescan, ...(recommendation ? { recommendation } : {}) });
   } catch (err) {
     return workspaceFail(res, err);
   }
@@ -11086,7 +11259,7 @@ const setHashOf = (id) => workspaceSetHash(id) ?? String(id).slice(-8);
 function ownsWorkspaceTarget(r) {
   const s = String(r.status || '').toLowerCase();
   return ['created', 'starting', 'running', 'pausing'].includes(s)
-    || (s === 'paused' && r.orch?.workflowId === WORKSPACE_SCAN_WORKFLOW_ID);
+    || (s === 'paused' && isWorkspaceScanWorkflow(r.orch?.workflowId));
 }
 
 /** A run of this workspace or over this PROJECT SET that owns it, or a scan of the set still
@@ -11172,7 +11345,7 @@ async function scanModelsFor(body, projectPaths, workspace = null) {
  *  teardown deletes (D5). The live check and the reservation are the first two statements, with
  *  NO await between them: a second request for the same set, arriving while this one is still
  *  inside startRunHandler's awaits, finds the reservation and gets 409 (Review Focus 3). */
-async function scanRequest(req, res, { id, name, projectPaths, rescan, models }) {
+async function scanRequest(req, res, { id, name, projectPaths, rescan, models, workflowId = WORKSPACE_SCAN_WORKFLOW_ID }) {
   if (liveOverSet(id, projectPaths)) {
     return res.status(409).json({ error: rescan ? 'a live run exists for this workspace' : 'a scan of this project set is already running' });
   }
@@ -11181,11 +11354,12 @@ async function scanRequest(req, res, { id, name, projectPaths, rescan, models })
   try {
     const mock = !!(req.body && req.body.mock === true);
     req._workspaceScan = { id, name, projectPaths, description: '', models };   // D9: no Workspace Context
+    const partial = workflowId === WORKSPACE_RESYNTH_WORKFLOW_ID;
     req.body = {
       workspaceId: id,
-      prompt: scanRunPrompt({ name, projectNames: projectPaths.map((p) => path.basename(p)), rescan }),
-      title: scanRunTitle(name),
-      workflowId: WORKSPACE_SCAN_WORKFLOW_ID,
+      prompt: scanRunPrompt({ name, projectNames: projectPaths.map((p) => path.basename(p)), rescan, partial }),
+      title: scanRunTitle(name, { partial }),
+      workflowId,
       guardrailsId: 'normal',
       ...(mock ? { mock: true } : {}),
     };
@@ -13346,7 +13520,7 @@ async function presetScopeExists(scope) {
 
 /** The engine gate's early refusal for a setup on a target, without starting anything (pick-time check only). */
 async function presetEngineRefusal(setup, target, runEngine) {
-  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || 'permissive', claude: { mock: !!setup.mock, ...runEngine } };
+  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || defaultGuardrailSetId(), claude: { mock: !!setup.mock, ...runEngine } };
   const probe = await createOrchestratorFor(target.workspaceId
     ? { ...base, workspace: { id: target.workspaceId, key: target.workspaceId, name: target.workspaceId, projects: [] } }
     : { ...base, projectDir: target.projectDir });
@@ -13366,6 +13540,7 @@ async function presetCheckCtx(scope, target, setup, { probeEngine }) {
     engine: runEngine.engine || 'claude',
     assertWorkflow: (id) => assertRunnableWorkflow(id),
     guardrailExists: async (id) => !!(await readGuardrailSet(id)),
+    defaultGuardrailsId: defaultGuardrailSetId,
     engineRefusal: engineError ? async () => engineError
       // Same rule as the start gate: only a non-Claude engine is probed, so a Claude preset's check builds no orchestrator.
       : probeEngine && runEngine.engine && runEngine.engine !== 'claude' && (t.workspaceId || t.projectDir) ? () => presetEngineRefusal(setup, t, runEngine) : null,
@@ -13597,7 +13772,8 @@ let detectSystemProxyImpl = detectSystemProxy;
 app.get('/api/proxy/detect', async (req, res) => {
   // Like the proxy routes that act: it fetches a PAC file and starts processes, so an agent run is refused.
   if (refuseProxyAgent(req, res)) return;
-  res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl());
+  // Linux falls back to the HTTPS_PROXY Worca started with: the pre-swap sourceEnv, never its own local proxy URL.
+  res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl({ env: upstreamEnv(egressNow()?.sourceEnv ?? process.env) }));
 });
 
 app.post('/api/proxy/login', (req, res) => {
@@ -13752,7 +13928,8 @@ app.get('/api/guardrails', async (_req, res) => {
   try {
     const sets = await listGuardrailSets(); // CONV-1: await
     // Team policy sets (gp:<id>, origin policy:<home>) sit between the built-ins and the user's own.
-    res.json({ guardrails: [...listBuiltinGuardrailSets(), ...listPolicyGuardrailSets(), ...sets] });
+    // `default`: what the New run picker starts on (defaultGuardrailSetId).
+    res.json({ guardrails: [...listBuiltinGuardrailSets(), ...listPolicyGuardrailSets(), ...sets], default: defaultGuardrailSetId() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -15972,9 +16149,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === 'script-approval' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, 'script-approval': scriptEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, 'script-approval': scriptNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
@@ -16306,6 +16483,34 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
     }
+    if (found.block.card && found.block.card.type === 'script-approval') {
+      // G6 (docs/guardrails.md "Scripts the chat can write and run"): proposed → applied | failed | declined. The
+      // draft runs, or the saved script is replaced, HERE behind the click — never in the model's tool — through the
+      // chat's own script bundle (stamped ask:<threadId>), re-checked now: the switch, and the pin for a project run.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (body.state === 'applied' && agentMayBeCaller(req)) return refuseAgentCaller(res);
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        const card = found.block.card;
+        let result;
+        try { result = await applyScriptCard(card, { scripts: askScriptDeps({ threadId: id }).scripts, pin: chatScopeOf(askGetThread(id)?.context) }); }
+        catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
+        if (result.ok && card.kind === 'save') emitChanged('scripts-changed', 'updated');
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
     if (found.block.card && found.block.card.type === 'workspace') {
       // Workspace card: proposed → applied | failed | declined. The registry write happens HERE, behind the
       // click, through the same core functions as the workspace routes — and behind the same live-run guard.
@@ -16329,15 +16534,34 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
             throw new Error('cannot change the members of a workspace while a run or scan owns it');
           }
           const before = wid ? await readWorkspace(wid) : null;
-          result = await applyWorkspaceChange(card);
+          // A removal re-scans as the user picked on the card (body.rescan), else as they asked Ask for
+          // (card.rescan when card.rescanAsked), else as worca recommends NOW — worked out at apply time,
+          // BEFORE the map is pruned. A pick the recommendation marks unavailable falls back to it, never
+          // to a failed card; afterMembersChanged re-checks feasibility at launch anyway. An unknown
+          // body.rescan is ignored, not a 400 (unlike the members route): the card's own radios are its
+          // only sender, and failing the Apply would lose a change the user already confirmed.
+          let rescanMode = 'full';
+          let rec = null;
+          const git = memoGitProbe();
+          if (card.kind === 'remove_member') {
+            rec = removeRecommendation(wid, card.change && card.change.projectPath, git);
+            const pick = RESCAN_CHOICES.includes(body.rescan) ? body.rescan
+              : card.rescanAsked && RESCAN_CHOICES.includes(card.rescan) ? card.rescan : rec.level;
+            rescanMode = pick === 'partial' && !rec.partialAvailable ? rec.level : pick;
+          }
+          result = await applyWorkspaceChange(card, card.kind === 'remove_member' ? { remove: (w, p) => removeWorkspaceMember(w, p, { git }) } : {});
           if (card.kind !== 'rename') {
-            // A new or changed member set: discover the new members and re-scan (graphs + description).
+            // A new or changed member set: discover the new members and re-scan as chosen (adds: always full).
             const ws = await readWorkspace(result.workspaceId);
             if (ws) {
-              const rescan = await afterMembersChanged(ws, ws.projectPaths.filter((p) => !(before?.projectPaths || []).includes(p)));
-              result = rescan.runId
-                ? { ...result, rescanRunId: rescan.runId, detail: `${result.detail} · re-scanning the workspace` }
-                : { ...result, detail: `${result.detail} · no re-scan (${rescan.skipped})` };
+              let rescan = await afterMembersChanged(ws, ws.projectPaths.filter((p) => !(before?.projectPaths || []).includes(p)), { rescan: rescanMode });
+              const short = rescan.mode === 'none' ? prunedNote(rec) : null;
+              if (short) rescan = { ...rescan, note: short };
+              const what = rescan.mode === 'none' ? 'map pruned, not re-scanned'
+                : rescan.runId ? (rescan.mode === 'partial' ? 'partial re-scan (the overview and notes are rewritten)' : 're-scanning the workspace')
+                : `no re-scan (${rescan.skipped})`;
+              result = { ...result, rescan: rescan.mode, ...(rescan.runId ? { rescanRunId: rescan.runId } : {}),
+                detail: `${result.detail} · ${what}${rescan.note ? ` — ${rescan.note}` : ''}` };
             }
           }
           emitChanged('workspaces-changed', card.kind === 'create' ? 'created' : card.kind === 'rename' ? 'renamed' : 'members');
@@ -17284,6 +17508,8 @@ app.post('/api/plugins/install', async (req, res) => {
   for (const k of ['repoUrl', 'name', 'sha']) {
     if (!(typeof body[k] === 'string' && body[k].trim())) return badRequest(res, `${k} is required`);
   }
+  // G8: the pin names versions/<sha7>, which is cleared before export — only a full commit id is a pin.
+  if (!COMMIT_SHA_RE.test(body.sha.trim())) return badRequest(res, 'sha must be a full commit id');
   const subdir = typeof body.subdir === 'string' ? body.subdir : '';
   // A4: layer-3 option-injection guard on the install body. (?!-) rejects
   // dash-leading segments too, matching parseMarketplaceManifest exactly — no
@@ -17308,18 +17534,20 @@ app.post('/api/plugins/install', async (req, res) => {
 // POST /api/plugins/:name/update — two-phase (§6.2): without { confirm: true }
 // it ONLY previews (commit log + diffstat between pinned and candidate; nothing
 // changes on disk); with it, updatePlugin performs export/setup/doctor/swap/lock.
+// The confirm sends back the preview's { candidateSha }: the update applies that
+// commit and answers 409 when the source moved since the preview (G9).
 app.post('/api/plugins/:name/update', async (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
   const body = req.body || {};
-  // The commit the user reviewed (CONTRACT §1.4): the apply refuses STALE_PREVIEW when the tip moved since. Absent = today.
-  if (body.confirm === true && body.candidateSha !== undefined
-    && !(typeof body.candidateSha === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(body.candidateSha))) {
+  // The commit the user reviewed (CONTRACT §1.4, G9): a confirm must name it, and the apply refuses
+  // STALE_PREVIEW when the tip moved since, so unreviewed code never lands.
+  if (body.confirm === true && !(typeof body.candidateSha === 'string' && COMMIT_SHA_RE.test(body.candidateSha.trim()))) {
     return badRequest(res, 'candidateSha must be a commit sha');
   }
   try {
     if (body.confirm !== true) return res.json({ preview: await fetchCandidate(name) });
-    const updated = await updatePlugin(name, { expectSha: body.candidateSha });
+    const updated = await updatePlugin(name, { expectSha: body.candidateSha.trim() });
     reloadChatWorkers(name);
     void retestServers((s) => s.startsWith(`plugin:${name}/`));   // MCP registry §7.3
     emitPluginsChanged('update');
@@ -18962,6 +19190,14 @@ if (isMain) {
     process.exit(1);
   }
   for (const w of REMOTE_ACCESS_CHECK.warnings) console.warn(`[worca-ui] remote access: ${w}`);
+  {
+    const { errors } = identityHeaderTrust(process.env);
+    if (errors.length) {
+      for (const e of errors) console.error(`[worca-ui] identity header: ${e}`);
+      console.error('[worca-ui] not starting. See docs/remote-access.md.');
+      process.exit(1);
+    }
+  }
 
   // Credential broker (docs/credential-broker.md): with WORCA_BROKER_URL set, worca holds no
   // model credential. Refuse to serve while one is still reachable by agents, or while the
@@ -19065,7 +19301,7 @@ if (isMain) {
       const who = identityCheck ? `identity: ${id.provider} (${id.provider === 'issuer' ? id.issuer : id.teamDomain})` : 'identity: NOT CHECKED';
       console.log(`[worca-ui] remote access on for ${REMOTE_ACCESS.allowedHosts.join(', ')}; ${who}`);
     }
-    uiControl.token = newUiToken();
+    uiControl.token = UI_TOKEN;   // one per-boot token: shutdown, and API calls from this box (G1)
     uiControl.onShutdown = shutdown;
     uiControl.startedAt = new Date().toISOString();
     writeUiInstance({
@@ -19159,7 +19395,7 @@ export const _testing = {
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
-  uiControl, bearerMatches,
+  uiControl, bearerMatches, uiToken: () => UI_TOKEN,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
@@ -19167,6 +19403,7 @@ export const _testing = {
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
+  startAutoRescan,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },

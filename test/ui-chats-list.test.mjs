@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildChatsModel, chatRow, chatArchivePlan, chatRowMenuItems, chatsViewChip, loadChatsView, CHATS_VIEW_KEY,
-  CHATS_RECENT, chatGroupRow, chatGroupMenuItems } from '../ui/public/chats-list.mjs';
+  chatGroupRow, chatGroupMenuItems } from '../ui/public/chats-list.mjs';
 import { CHAT_BUSY, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 
 const NOW = new Date(2026, 9, 25, 12, 0, 0).getTime();
@@ -11,29 +11,40 @@ const thread = (id, o = {}) => ({ id, title: `Chat ${id}`, createdAt: new Date(N
   updatedAt: new Date(NOW - HOUR).toISOString(), totals: { costUsd: 0.4 }, scope: { projectKey: 'worka-1' }, ...o });
 const daysAgo = (d) => new Date(NOW - d * 24 * HOUR).toISOString();
 
-test('Group by Date: Pinned · Today · Recent · Older; Recent holds at most 10; Older is folded and counts the unloaded', () => {
+test('Group by Date: Pinned, then the Runs day sections by last activity; Older is folded and counts the unloaded', () => {
   const threads = [
-    thread('p1', { pinnedAt: daysAgo(30), updatedAt: daysAgo(30) }),
+    thread('p1', { pinnedAt: daysAgo(40), updatedAt: daysAgo(40) }),
     thread('t1'), thread('t2'),
-    ...Array.from({ length: 14 }, (_, i) => thread(`o${i}`, { updatedAt: daysAgo(i + 1) })),
+    ...[1, 3, 7, 8, 30, 31, 90].map((d) => thread(`d${d}`, { updatedAt: daysAgo(d) })),
   ];
-  const m = buildChatsModel({ threads, total: 20, now: NOW });
-  assert.deepEqual(m.sections.map((s) => s.title), ['Pinned', 'Today', 'Recent', 'Older']);
-  assert.equal(m.sections[2].rows.length, CHATS_RECENT);
-  assert.equal(m.sections[3].collapsed, true);
-  assert.equal(m.sections[3].count, 20 - 1 - 2 - 10);
-  assert.equal(m.sections[3].more, false, 'Show older only once Older is open');
-  assert.equal(buildChatsModel({ threads, total: 20, more: true, olderOpen: true, now: NOW }).sections[3].more, true);
+  const m = buildChatsModel({ threads, total: 15, now: NOW });
+  assert.deepEqual(m.sections.map((s) => [s.title, s.rows.map((r) => r.id)]), [
+    ['Pinned', ['p1']], ['Today', ['t1', 't2']], ['Yesterday', ['d1']], ['Previous 7 days', ['d3', 'd7']],
+    ['Previous 30 days', ['d8', 'd30']], ['Older', ['d31', 'd90']]]);
+  const older = m.sections[5];
+  assert.equal(older.collapsed, true);
+  assert.equal(older.count, 15 - 8, 'the 2 loaded plus the 5 not loaded');
+  assert.equal(older.more, false, 'Show older only once Older is open');
+  assert.equal(buildChatsModel({ threads, total: 15, more: true, olderOpen: true, now: NOW }).sections[5].more, true);
+  assert.deepEqual(m.sections.slice(1, 5).map((s) => s.collapsed), [false, false, false, false], 'the other day sections fold by hand');
+  assert.equal(buildChatsModel({ threads, collapsed: new Set(['week']), now: NOW }).sections[3].collapsed, true);
 });
 
-test('Today starts at local midnight: a chat at 00:00 today is Today, one a millisecond earlier is Recent', () => {
+test('Group by Date: before the loaded chats reach Older, Show more ends the last day section and no Older is guessed', () => {
+  const m = buildChatsModel({ threads: [thread('t1'), thread('d3', { updatedAt: daysAgo(3) })], total: 9, more: true, now: NOW });
+  assert.deepEqual(m.sections.map((s) => s.id), ['today', 'week']);
+  assert.equal(m.sections[1].more, true);
+  assert.equal(m.sections[1].moreLabel, 'Show more');
+});
+
+test('Today starts at local midnight: a chat at 00:00 today is Today, one a millisecond earlier is Yesterday', () => {
   const midnight = new Date(NOW);
   midnight.setHours(0, 0, 0, 0);
   const m = buildChatsModel({ threads: [thread('at', { updatedAt: new Date(midnight.getTime()).toISOString() }),
     thread('before', { updatedAt: new Date(midnight.getTime() - 1).toISOString() })], total: 2, now: NOW });
   const ids = (sec) => m.sections.find((s) => s.id === sec).rows.map((r) => r.id);
   assert.deepEqual(ids('today'), ['at']);
-  assert.deepEqual(ids('recent'), ['before']);
+  assert.deepEqual(ids('yesterday'), ['before']);
 });
 
 test('row: state column and sub line; busy rows carry their reason', () => {
@@ -80,6 +91,9 @@ test('Show = Archived and Group by None are flat (bare); the chip names the view
   assert.equal(chatsViewChip({ show: 'all', sort: 'activity', groupBy: 'date' }, { shown: 8 }), '');
   assert.equal(chatsViewChip({ show: 'all', sort: 'title', groupBy: 'date' }, { shown: 4 }), 'Title A–Z · 4 chats', 'the chip keeps the full name');
   assert.equal(chatsViewChip({ show: 'all', sort: 'activity', groupBy: 'date' }, { shown: 4 }), '');
+  for (const groupBy of ['project', 'topic', 'none']) {
+    assert.equal(chatsViewChip({ show: 'all', sort: 'activity', groupBy }, { shown: 4 }), '', 'grouping draws no chip (the Runs rule)');
+  }
   const mem = { m: new Map([[CHATS_VIEW_KEY, '{"show":"bogus","sort":"cost"}']]), getItem(k) { return this.m.get(k) ?? null; } };
   assert.deepEqual(loadChatsView(mem), { show: 'all', sort: 'cost', groupBy: 'date' });
 });
@@ -87,7 +101,7 @@ test('Show = Archived and Group by None are flat (bare); the chip names the view
 test('Sort by orders rows inside a section, not across sections', () => {
   const threads = [thread('a', { title: 'Zed', updatedAt: daysAgo(2) }), thread('b', { title: 'Alpha', updatedAt: daysAgo(3) })];
   const m = buildChatsModel({ threads, view: { sort: 'title' }, now: NOW });
-  assert.deepEqual(m.sections.find((s) => s.id === 'recent').rows.map((r) => r.title), ['Alpha', 'Zed']);
+  assert.deepEqual(m.sections.find((s) => s.id === 'week').rows.map((r) => r.title), ['Alpha', 'Zed']);
 });
 
 test('flat lists put pinned chats first and mark them; grouped lists do not; Show more names the button', () => {
@@ -123,16 +137,16 @@ test('a group row folds its chats, sits in its newest chat\'s section, counts th
   assert.deepEqual(g.members.map((r) => r.id), ['b', 'a']);
   assert.match(g.model.line, /^2 projects · /);
   assert.equal(g.open, false);
-  assert.ok(!m.sections.find((s) => s.id === 'recent').rows.some((r) => r.id === 'a'), 'a member is not listed twice');
+  assert.ok(!m.sections.find((s) => s.id === 'week').rows.some((r) => r.id === 'a'), 'a member is not listed twice');
 });
 
 test('Group by Date: a group row counts its chats, so no phantom Older section appears', () => {
   const threads = [thread('a', { groupId: GID }), thread('b', { groupId: GID }), thread('c', { groupId: GID }), thread('d')];
   const m = buildChatsModel({ threads, total: 4, groups: [G(GID, 'Release prep', { count: 3 })], now: NOW });
   assert.deepEqual(m.sections.map((s) => s.id), ['today']);
-  const older = [thread('o1', { groupId: GID, updatedAt: daysAgo(20) }), thread('o2', { groupId: GID, updatedAt: daysAgo(21) }),
-    ...Array.from({ length: CHATS_RECENT }, (_, i) => thread(`r${i}`, { updatedAt: daysAgo(i + 1) }))];
-  const m2 = buildChatsModel({ threads: older, total: CHATS_RECENT + 4, groups: [G(GID, 'x')], now: NOW });
+  const older = [thread('o1', { groupId: GID, updatedAt: daysAgo(40) }), thread('o2', { groupId: GID, updatedAt: daysAgo(41) }),
+    ...Array.from({ length: 10 }, (_, i) => thread(`r${i}`, { updatedAt: daysAgo(i + 1) }))];
+  const m2 = buildChatsModel({ threads: older, total: 10 + 4, groups: [G(GID, 'x')], now: NOW });
   assert.equal(m2.sections.find((s) => s.id === 'older').count, 4, 'the 2 folded chats plus 2 not loaded');
 });
 
@@ -176,7 +190,7 @@ test('a group whose chat needs you opens by default; the person\'s toggle wins; 
   assert.ok(needs.sections[0].rows.every((r) => r.kind === 'chat'));
 });
 
-test('Group by Topic: one section per group (newest first), then Ungrouped; pinned leads; chip "By topic"', () => {
+test('Group by Topic: one section per group (newest first), then Ungrouped; pinned leads; no chip', () => {
   const groups = [G(GID, 'Release prep'), G('askg_00000002', 'Docs')];
   const threads = [thread('a', { groupId: GID, updatedAt: daysAgo(3) }), thread('b', { groupId: 'askg_00000002' }),
     thread('d', { updatedAt: daysAgo(1) }), thread('c', { pinnedAt: daysAgo(1), updatedAt: daysAgo(4) })];
@@ -185,7 +199,7 @@ test('Group by Topic: one section per group (newest first), then Ungrouped; pinn
   assert.deepEqual(m.sections.map((s) => s.id), ['topic:askg_00000002', `topic:${GID}`, 'topic:none']);
   assert.deepEqual(m.sections[2].rows.map((r) => r.id), ['c', 'd']);
   assert.match(m.sections[2].rows[0].model.line, /^Pinned · /);
-  assert.equal(chatsViewChip(m.view, { shown: 4 }), 'By topic · 4 chats');
+  assert.equal(chatsViewChip(m.view, { shown: 4 }), '');
 });
 
 test('group ⋯: Archive group is disabled with the reason while a member is busy; chat ⋯ gains the group items', () => {

@@ -558,6 +558,158 @@ test('a member change the scan cannot read skips the re-scan with the reason, an
   assert.match(body.rescan.skipped, /read-only workspace scan/);
 });
 
+/** A 3-member workspace with a stored map (a → b over sampleMap's 3 edges; c in the map with no
+ *  edges) and one manual a → b edge. The map is stamped NOW: the server recommends with the real
+ *  clock, and a map over 30 days old turns any member with edges into R4's "full". */
+async function mappedWorkspace(name, { extraEdge = null } = {}) {
+  const { saveWorkspaceScanResult, addWorkspaceManualEdge } = await import('../src/core/workspaces.mjs');
+  const { sampleMap } = await import('./helpers/wsmap-stored.mjs');
+  const [a, b, c] = [await freshRepo(), await freshRepo(), await freshRepo()];
+  const { workspace: ws } = await (await post('/api/workspaces', { name, projectPaths: [a, b, c] })).json();
+  await savePick(ws.id);   // the re-scans these tests start must not stop at needsModel
+  const k = (p) => ws.projectKeys[ws.projectPaths.indexOf(p)];
+  const s = sampleMap({ keys: [k(a), k(b)], names: ['a', 'b'], name });
+  s.map.members.push({ ...s.map.members[0], key: k(c), name: 'c', aliases: [] });
+  s.map.scannedAt = new Date().toISOString();   // never sampleMap's fixed date (see the doc comment)
+  await saveWorkspaceScanResult(ws.id, { map: s.map, synthesis: s.synthesis });
+  await addWorkspaceManualEdge(ws.id, { from: k(a), to: k(b), kind: 'http', display: 'zz-keep-a-b' });
+  if (extraEdge === 'c-uses-a') await addWorkspaceManualEdge(ws.id, { from: k(c), to: k(a), kind: 'http', display: 'zz-c-uses-a' });
+  return { ws, a, b, c, k };
+}
+const liveRunsOf = (id) => [...runs.values()].filter((e) => e.workspaceId === id && e.autoRescan && !['done', 'stopped', 'error'].includes(String(e.status).toLowerCase()));
+
+test('GET members/remove-impact recommends from the stored map; refuses like the removal', async () => {
+  const { ws, a, c } = await mappedWorkspace('Impact');
+  let r = await get(`/api/workspaces/${ws.id}/members/remove-impact?path=${encodeURIComponent(c)}`);
+  assert.equal(r.status, 200, await r.clone().text());
+  const { recommendation } = await r.json();
+  assert.equal(recommendation.level, 'none');
+  assert.equal(recommendation.partialAvailable, true);
+  assert.equal(recommendation.signals.ageDays, 0, 'the fixture map is fresh');
+  assert.match(recommendation.reason, /No re-scan is needed/);
+  r = await get(`/api/workspaces/${ws.id}/members/remove-impact?path=${encodeURIComponent(a)}`);
+  assert.notEqual((await r.json()).recommendation.level, 'none', 'a has the edges');
+  assert.equal((await get(`/api/workspaces/${ws.id}/members/remove-impact`)).status, 400);
+  assert.equal((await get(`/api/workspaces/${ws.id}/members/remove-impact?path=/nope`)).status, 400);
+  assert.equal((await get('/api/workspaces/not-a-key/members/remove-impact?path=/x')).status, 404);
+});
+
+test('remove with rescan: none prunes the map and starts no run; omitted applies the recommendation', async () => {
+  const { ws, c } = await mappedWorkspace('No Rescan');
+  const r = await post(`/api/workspaces/${ws.id}/members`, { remove: c, rescan: 'none' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const body = await r.json();
+  assert.deepEqual(body.rescan, { mode: 'none' });
+  assert.equal(body.recommendation.level, 'none');
+  assert.deepEqual(liveRunsOf(ws.id), [], 'no re-scan run');
+
+  const m2 = await mappedWorkspace('Omitted');
+  const body2 = await (await post(`/api/workspaces/${m2.ws.id}/members`, { remove: m2.c })).json();
+  assert.equal(body2.rescan.mode, body2.recommendation.level, 'the server applies its own recommendation');
+  stopRunsOf(m2.ws.id);
+});
+
+test('remove with rescan: partial runs wf_workspace_resynth and saves through finalize with overrides intact', async () => {
+  const { ws, c } = await mappedWorkspace('Partial', { extraEdge: 'c-uses-a' });
+  const before = (await (await get(`/api/workspaces/${ws.id}/map`)).json()).map;
+  const r = await post(`/api/workspaces/${ws.id}/members`, { remove: c, rescan: 'partial' });
+  const body = await r.json();
+  assert.equal(body.recommendation.signals.ageDays, 0, 'a fresh map: R4 (stale) cannot apply on any date');
+  assert.equal(body.recommendation.level, 'partial', 'c-uses-a: one consumer edge');
+  assert.equal(body.rescan.mode, 'partial');
+  const entry = runs.get(body.rescan.runId);
+  assert.equal(entry.orch.workflowId, 'wf_workspace_resynth');
+  assert.equal(entry.autoRescan, true);
+  const got = await until(async () => {
+    const m = await (await get(`/api/workspaces/${ws.id}/map`)).json();
+    return m.synthesis && /^Mock overview of 2 projects/.test(m.synthesis.overview) ? m : null;
+  }, 60000);
+  assert.equal(got.map.scannedAt, before.scannedAt, 'a partial re-scan keeps the scan date');
+  assert.ok(got.map.resynthesizedAt);
+  assert.deepEqual(got.overrides.manual.map((m) => m.display), ['zz-keep-a-b'], 'reviews of the members left survive');
+  const runDir = entry.orch.pipeline && entry.orch.pipeline.dir;   // entry.orch IS the harness (GraphOrchestrator extends RunHarness)
+  assert.ok(runDir, 'the run has a folder');
+  assert.equal(existsSync(join(runDir, 'stored-map.json')), true, 'the harness froze the stored map');
+  stopRunsOf(ws.id);
+});
+
+test('partial is never left paused: unavailable → recommended full + 400 on request; a run that slips through ENDS (error); a launch over an uncovered map falls back to full; Re-scan is not refused', async () => {
+  const { ws, a } = await mappedWorkspace('Uncovered');
+  testing.setAutoRescan(false);
+  try { assert.equal((await post(`/api/workspaces/${ws.id}/members`, { add: [await freshRepo()] })).status, 200); }
+  finally { testing.setAutoRescan(true); }                     // the add's scan never ran: the map lacks the new member
+  const rec = (await (await get(`/api/workspaces/${ws.id}/members/remove-impact?path=${encodeURIComponent(a)}`)).json()).recommendation;
+  assert.equal(rec.level, 'full');
+  assert.equal(rec.partialAvailable, false);
+  assert.match(rec.reason, /^The map does not cover .* yet \(its scan never finished\)/);
+  const p = await post(`/api/workspaces/${ws.id}/members`, { remove: a, rescan: 'partial' });
+  assert.equal(p.status, 400);
+  assert.match((await p.json()).error, /partial re-scan is not available/);
+  const cur = (await (await get(`/api/workspaces/${ws.id}`)).json()).workspace;
+
+  // Layer 2 FIRST: no other run of this workspace has started yet, so no scan can save a covering map
+  // under it. A resynth launched anyway (the race the server check cannot close) ends at the harness freeze — terminal.
+  const started = await testing.startAutoRescan(cur, { workflowId: 'wf_workspace_resynth' });
+  assert.ok(started.runId, JSON.stringify(started));
+  let endedState = null;
+  const ended = await until(() => {
+    const e = runs.get(started.runId);
+    const s = e && String(e.status).toLowerCase();
+    if (s === 'error' || s === 'paused') endedState = e.orch && e.orch.state;
+    return s === 'error' || s === 'paused' ? s : null;
+  }, 30000);
+  assert.equal(ended, 'error', 'a partial re-scan that cannot run ends; it never sits paused owning the workspace');
+  // The freeze runs AFTER the workspace fields are set, so the persisted error row names its workspace.
+  assert.equal(endedState && endedState.target, 'workspace');
+  assert.equal(endedState && endedState.workspaceId, ws.id);
+
+  // Layer 1: afterMembersChanged re-checks at launch — a partial asked for over an uncovered map starts a FULL scan.
+  const out = await testing.afterMembersChanged(cur, [], { rescan: 'partial' });
+  assert.equal(out.mode, 'full');
+  assert.match(out.note, /partial re-scan could not run/);
+  assert.equal(runs.get(out.runId).orch.workflowId, 'wf_workspace_scan');
+  stopRunsOf(ws.id);
+
+  // The ended resynth owns nothing: Re-scan is not refused.
+  const rescan = await post(`/api/workspaces/${ws.id}/scan`, {});
+  assert.notEqual(rescan.status, 409, `Re-scan is not refused: ${await rescan.clone().text()}`);
+  stopRunsOf(ws.id);
+});
+
+test('remove with rescan: none over a map that misses a member says so on the pruned notice', async () => {
+  const { ws, a } = await mappedWorkspace('Short');
+  testing.setAutoRescan(false);
+  try { assert.equal((await post(`/api/workspaces/${ws.id}/members`, { add: [await freshRepo()] })).status, 200); }
+  finally { testing.setAutoRescan(true); }                     // the add's scan never ran: the map lacks the new member
+  const body = await (await post(`/api/workspaces/${ws.id}/members`, { remove: a, rescan: 'none' })).json();
+  assert.equal(body.recommendation.level, 'full');
+  assert.equal(body.rescan.mode, 'none', 'the pick stands');
+  assert.match(body.rescan.note, /^The map still does not cover \S+\.$/);
+  const m2 = await mappedWorkspace('Complete');
+  const full = await (await post(`/api/workspaces/${m2.ws.id}/members`, { remove: m2.c, rescan: 'none' })).json();
+  assert.deepEqual(full.rescan, { mode: 'none' }, 'a complete map adds no note');
+});
+
+test('rescan is validated: unknown value, partial without a stored map, a non-full add', async () => {
+  const a = await freshRepo(); const b = await freshRepo(); const c = await freshRepo();
+  const { workspace } = await (await post('/api/workspaces', { name: 'Validate', projectPaths: [a, b, c] })).json();
+  assert.equal((await post(`/api/workspaces/${workspace.id}/members`, { remove: c, rescan: 'some' })).status, 400);
+  const p = await post(`/api/workspaces/${workspace.id}/members`, { remove: c, rescan: 'partial' });
+  assert.equal(p.status, 400);
+  assert.match((await p.json()).error, /partial re-scan is not available/);
+  assert.equal((await post(`/api/workspaces/${workspace.id}/members`, { add: [await freshRepo()], rescan: 'none' })).status, 400);
+});
+
+test('the listed re-scan of a partial run says so; a full one keeps the pinned shape', async () => {
+  const a = await freshRepo(); const b = await freshRepo();
+  const { workspace } = await (await post('/api/workspaces', { name: 'Reported Partial', projectPaths: [a, b] })).json();
+  runs.set('auto-resynth-r', { id: 'auto-resynth-r', pipelineId: 'abcd1235', kind: 'workspace-run', workspaceId: workspace.id, status: 'running', autoRescan: true, orch: { workflowId: 'wf_workspace_resynth' } });
+  try {
+    const listed = (await (await get('/api/workspaces')).json()).workspaces.find((w) => w.id === workspace.id);
+    assert.deepEqual(listed.rescan, { runId: 'auto-resynth-r', pipelineId: 'abcd1235', paused: false, partial: true });
+  } finally { runs.delete('auto-resynth-r'); }
+});
+
 test('a chained run that starts from the previous run\'s branches still fires after a member was added', async () => {
   const { createTicket, getTicket } = await import('../src/core/scheduler.mjs');
   const { seedPipelineRow } = await import('./helpers/db-seed.mjs');

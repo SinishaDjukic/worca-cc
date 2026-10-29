@@ -522,6 +522,14 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
   ]);
 });
 
+test('rule 20: a removal re-scans as the card says, and Ask relays the recommendation', () => {
+  const rule = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('20. Workspaces:'));
+  assert.ok(rule, 'rule 20 is there');
+  assert.match(rule, /removing one prunes the map at once .* none .* partial .* full/);
+  assert.match(rule, /relay the recommendation and its reason/);
+  assert.doesNotMatch(rule, /Once a member change is applied worca starts a Workspace scan run of the new set itself/);
+});
+
 test('the context header says which part of a run page is open; runPage is an enum', async () => {
   const { validateClientContext } = await import('../src/core/ask/prompt.mjs');
   assert.match(buildContextHeader({ view: 'running', runPage: 'glance' }), /\nrun page: the run summary/);

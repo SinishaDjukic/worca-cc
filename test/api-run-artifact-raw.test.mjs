@@ -84,7 +84,8 @@ test('html is served with a sandboxing CSP and its relative siblings stream too'
   assert.equal(r.headers['content-security-policy'], 'sandbox allow-scripts');
   const js = await raw(`/api/runs/${id}/artifact-raw/deck/deck-stage.js`);
   assert.equal(js.status, 200);
-  assert.equal(js.headers['content-type'], 'text/javascript; charset=utf-8');
+  // No fetch metadata: served as text, never as a script (V16); the deck's own frame is pinned below.
+  assert.equal(js.headers['content-type'], 'text/plain; charset=utf-8');
 });
 
 test('unknown extension → 415, unindexed path → 404, traversal row → 404, oversize → 413', async () => {
@@ -132,3 +133,32 @@ test('no artifact response carries a wildcard allow-origin header', async () => 
   }
 });
 
+
+// V16: the shell's CSP `script-src 'self'` admits any script on this origin, so agent-written JS served from
+// the artifact route would run in the shell if a script tag could be injected. A script load from this very
+// origin is refused; a sandboxed deck frame (opaque origin = cross-site) and the viewer's text fetch still work.
+function rawWith(path, headers) {
+  return new Promise((resolve, reject) => {
+    http.get(`${base}${path}`, { headers }, (res) => {
+      const parts = [];
+      res.on('data', (c) => parts.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], text: Buffer.concat(parts).toString('utf8') }));
+    }).on('error', reject);
+  });
+}
+
+test('V16: artifact JS is not served to a script load from the worca origin itself', async () => {
+  const url = `/api/runs/${id}/artifact-raw/deck/deck-stage.js`;
+  for (const dest of ['script', 'worker', 'sharedworker', 'serviceworker']) {
+    const r = await rawWith(url, { 'sec-fetch-dest': dest, 'sec-fetch-site': 'same-origin' });
+    assert.equal(r.status, 403, dest);
+  }
+  const deck = await rawWith(url, { 'sec-fetch-dest': 'script', 'sec-fetch-site': 'cross-site' });
+  assert.deepEqual([deck.status, deck.type], [200, 'text/javascript; charset=utf-8'], 'a sandboxed deck frame runs it');
+  const viewer = await rawWith(url, { 'sec-fetch-dest': 'empty', 'sec-fetch-site': 'same-origin' });
+  assert.deepEqual([viewer.status, viewer.type], [200, 'text/plain; charset=utf-8'], 'the viewer reads it as text');
+  // A browser that sends no fetch metadata cannot be told apart from the worca page: text, which nosniff never runs.
+  const bare = await rawWith(url, {});
+  assert.deepEqual([bare.status, bare.type], [200, 'text/plain; charset=utf-8'], 'no fetch metadata: never a script');
+  assert.equal((await rawWith(`${url}?download=1`, { 'sec-fetch-site': 'same-origin' })).status, 200);
+});
