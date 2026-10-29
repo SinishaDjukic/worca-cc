@@ -61,8 +61,13 @@ const DRY_RUN_OK = new Set([...NPM_LIKE, 'cargo', 'uv', 'poetry']);
 const dryRun = (args) => args.some((a) => /^--dry-run(=true)?$/.test(a));
 /** Every server name guardDecision gives a publish (guard-calls.mjs lists them as "publish a package"). */
 export const PUBLISH_SERVERS = Object.freeze([...NPM_LIKE, ...Object.keys(PUBLISH_OTHER)]);
+/** Other registry tools: name → whether these words (no options) send to a registry. */
+const IMAGE_OTHER = {
+  buildah: (n) => n[0] === 'push', crane: (n) => ['push', 'copy', 'cp'].includes(n[0]), helm: (n) => n[0] === 'push',
+  skopeo: (n) => n[0] === 'copy' && /^docker:\/\//.test(n[n.length - 1] || ''),
+};
 /** Container tools whose push sends an image to a registry (guard-calls.mjs: "push an image"). */
-export const IMAGE_SERVERS = Object.freeze(['docker', 'podman']);
+export const IMAGE_SERVERS = Object.freeze(['docker', 'podman', 'nerdctl', ...Object.keys(IMAGE_OTHER)]);
 /** Every first word guardDecision acts on: a wrapper's arguments are searched for these. */
 const GUARDED = new Set(['git', 'curl', 'wget', 'eval', 'iex', 'invoke-expression', 'cmd', ...Object.keys(FORGE_CLIS), ...SHELLS, ...POWERSHELLS, ...WSLS, ...PS_WEB, ...HTTPIE,
   ...PUBLISH_SERVERS, ...IMAGE_SERVERS, ...WRAPPERS]);
@@ -84,8 +89,17 @@ const GUARD_CMD_RE = /(^|[^\w.:/-])(git|gh|glab|az|curl|wget|npm|yarn|pnpm|bun|n
 /** What a sending command does (push, publish, a pull request, a web write). */
 const ACTION_RE = /(^|[^\w-])(push|publish|send-?email|upload)(?=$|[^\w-])|(^|\s)(pr|mr|issue|api|release)\s+[\w-]|(^|[^\w-])(post|put|patch|delete)(?=$|[^\w-])|--data(-binary|-raw|-urlencode|-ascii)?(?![\w-])|--form(?![\w-])|--json(?![\w-])|--method(?![\w-])|(^|\s)-X\s*[A-Za-z]/i;
 /** An expansion-named command is unreadable only when its own words push / publish / send mail, or name a method with a URL. */
-const EXPANSION_SENDS = (w) => w.some((x) => ['push', 'publish', 'send-email'].includes(x))
-  || (w.some((x) => /^(-X.*|--request(=.*)?|-Method(:.*)?|--method(=.*)?)$/i.test(x)) && w.some((x) => /^https?:\/\//i.test(x)));
+/** Fix 3: also a forge verb as its first word (`"$GH" pr create`), or a data flag or an httpie write method with a URL. */
+const FORGE_VERBS = new Set(['pr', 'mr', 'issue', 'release', 'repo', 'api']);
+const EXPANSION_SENDS = (w) => {
+  if (w.some((x) => ['push', 'publish', 'send-email'].includes(x))) return true;
+  // The first word, or the second after an option's value (`"$GH" --repo x/y pr create`).
+  if (w.filter((x) => !String(x).startsWith('-')).slice(0, 2).some((x) => FORGE_VERBS.has(x))) return true;
+  if (!w.some((x) => /^https?:\/\//i.test(x))) return false;
+  return w.some((x) => /^(-X.*|--request(=.*)?|-Method(:.*)?|--method(=.*)?)$/i.test(x)
+    || /^(-d.*|--data.*|-F|--form(=.*)?|-T|--upload-file(=.*)?|--json(=.*)?)$/.test(x)
+    || /^(POST|PUT|PATCH|DELETE)$/.test(x));
+};
 /** Words a command written as an expansion leaves behind as a command of its own (`` `which git` push ``). */
 const ACTION_WORDS = new Set(['push', 'publish', 'send-email', 'upload']);
 /** Commands that turn their input into other text: what they hand a shell cannot be read here. */
@@ -331,6 +345,18 @@ function reparse(words, depth, { win = false } = {}) {
   return first;
 }
 
+/** git push's options that take the next word as their value. */
+const GIT_PUSH_VALUE = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
+function gitPushDryRun(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === '--') break;
+    if (GIT_PUSH_VALUE.has(a)) { i += 1; continue; }
+    if (a === '-n' || /^--dry-run(=true)?$/.test(a)) return true;
+  }
+  return false;
+}
+
 function gitDecision(args) {
   let i = 0;
   let aliasPush = false;
@@ -343,8 +369,8 @@ function gitDecision(args) {
   }
   const sub = args[i];
   if (sub == null) return null;
-  // `git push --dry-run` / `-n` sends nothing.
-  if (sub === 'push') return dryRun(args.slice(i + 1)) || args.slice(i + 1).includes('-n') ? null : { server: 'git', tool: 'push', argv: args.slice(i + 1) };
+  // `git push --dry-run` / `-n` sends nothing; only a word of its own counts, never the value of -o / --repo / ….
+  if (sub === 'push') return gitPushDryRun(args.slice(i + 1)) ? null : { server: 'git', tool: 'push', argv: args.slice(i + 1) };
   if ((sub === 'subtree' || sub === 'lfs') && args[i + 1] === 'push') return { server: 'git', tool: `${sub} push`, argv: args.slice(i + 2) };
   if (sub === 'send-email') return { server: 'git', tool: 'send-email', argv: args.slice(i + 1) };
   if (sub === 'remote' && (args[i + 1] === 'add' || args[i + 1] === 'set-url')) return { server: 'git', tool: `remote ${args[i + 1]}`, argv: args.slice(i + 2) };
@@ -606,7 +632,7 @@ function commandDecision(w, depth, ctx = {}) {
     return null;
   }
   if (PUBLISH_OTHER[b] && PUBLISH_OTHER[b](nonOptions(args)) && !(DRY_RUN_OK.has(b) && dryRun(args))) return { server: b, tool: 'publish', argv: args, readOnly: false };
-  if (IMAGE_SERVERS.includes(b) && imagePush(args)) return { server: b, tool: 'push', argv: args, readOnly: false };
+  if (IMAGE_SERVERS.includes(b) && (IMAGE_OTHER[b] ? IMAGE_OTHER[b](nonOptions(args)) : imagePush(args))) return { server: b, tool: 'push', argv: args, readOnly: false };
   const web = (b === 'curl' && (curlWrites(args) || psWebWrites(args, 3)))
     || (b === 'wget' && (wgetWrites(args) || psWebWrites(args, 3)))
     || (PS_WEB.has(b) && psWebWrites(args))
@@ -622,7 +648,8 @@ function psText(words, depth) {
   if (PS_DOTNET_WRITE_RE.test(text)) return { server: 'web', tool: 'request', argv: words, readOnly: false };
   // As PowerShell reads it first (escapes gone, backslashes literal), then a script block's body ({ git push }, given to
   // Invoke-Command, ForEach-Object, a variable, …) as commands too, then the words as a POSIX shell would read them.
-  const stripped = stripPsEscapes(text).replaceAll('\\', '/');
+  // PowerShell arrays (@("push","origin"), @('-C','.','push')) read as their items.
+  const stripped = stripPsEscapes(text).replaceAll('\\', '/').replace(/@\(([^()]*)\)/g, ' $1 ');
   const blocks = stripped.replace(/[{}]/g, ' ; ');
   const reads = [() => (stripped !== text ? guardDecision(stripped, depth + 1) : null),
     () => (blocks !== stripped ? guardDecision(blocks, depth + 1) : null), () => reparse(words, depth, { win: true })];
@@ -738,6 +765,54 @@ function literalOf(words, m) {
   return null;
 }
 
+/** \x, octal (\0nnn for echo, \nnn for printf), \u / \U and \c: escapes that hide what a text says. */
+const ENCODED_RE = /\\(x[0-9a-fA-F]|[0-7]|u[0-9a-fA-F]|U[0-9a-fA-F]|c)/;
+/** A text's escapes decoded as bash's echo -e (`echoStyle`, octal as \0nnn) or printf's format (octal as \nnn) does;
+ *  `stop` after \c (nothing more is written). */
+function decodeEscapes(s, echoStyle) {
+  let out = '';
+  for (let i = 0; i < s.length; i += 1) {
+    if (s[i] !== '\\' || i + 1 >= s.length) { out += s[i]; continue; }
+    const r = s.slice(i + 1);
+    let m;
+    if (r[0] === 'c') return { text: out, stop: true };
+    if ((m = /^x([0-9a-fA-F]{1,2})/.exec(r))) out += String.fromCharCode(parseInt(m[1], 16));
+    else if ((m = /^u([0-9a-fA-F]{1,4})/.exec(r)) || (m = /^U([0-9a-fA-F]{1,8})/.exec(r))) { try { out += String.fromCodePoint(parseInt(m[1], 16)); } catch { /* out of range */ } }
+    else if ((m = (echoStyle ? /^0([0-7]{0,3})/ : /^([0-7]{1,3})/).exec(r))) out += String.fromCharCode(parseInt(m[1] || '0', 8) & 0xff);
+    else if (ANSI_C[r[0]] != null) { out += ANSI_C[r[0]]; m = [r[0]]; }
+    else { out += `\\${r[0]}`; m = [r[0]]; }
+    i += m[0].length;
+  }
+  return { text: out, stop: false };
+}
+/** What `echo -e …` or `printf …` writes when it hides text behind \x / octal / \u / \c escapes (in printf's format or
+ *  its %b arguments), decoded; null when it carries none (plain text is literalOf's) or is neither. */
+function encodedLiteral(words) {
+  const w = words.slice(leading(words));
+  const b = bin(w[0] ?? '');
+  let args = w.slice(1);
+  if (b === 'echo') {
+    let escapes = false;
+    while (args.length && /^-[neE]+$/.test(args[0])) { if (args[0].includes('e')) escapes = true; args = args.slice(1); }
+    const text = args.join(' ');
+    return escapes && ENCODED_RE.test(text) ? decodeEscapes(text, true).text : null;
+  }
+  if (b !== 'printf') return null;
+  const [fmt = '', ...rest] = args;
+  if (!ENCODED_RE.test(fmt) && !(fmt.includes('%b') && rest.some((a) => ENCODED_RE.test(a)))) return null;
+  let out = '';
+  let k = 0;
+  for (const part of fmt.split(/(%[-+ #0-9.]*[%sbdiouxXfeEgGc])/)) {
+    if (/^%.*%$/.test(part)) { out += '%'; continue; }
+    if (/^%.*b$/.test(part)) { const r = decodeEscapes(rest[k++] ?? '', true); out += r.text; if (r.stop) return out; continue; }
+    if (part.startsWith('%') && part.length > 1) { out += rest[k++] ?? ''; continue; }
+    const r = decodeEscapes(part, false);
+    out += r.text;
+    if (r.stop) return out;
+  }
+  return out;
+}
+
 /** The input a shell-reading command gets (its here-strings, its <( ), the pipeline before it): a hit inside, or a deny
  *  when it cannot be read and carries a guarded word, an action or a decoder (always, when WSL reads it). */
 function inputDecision(segs, metas, idx, kind, depth) {
@@ -754,7 +829,13 @@ function inputDecision(segs, metas, idx, kind, depth) {
     sources.push(chainSource(segs, metas, start, idx));
   }
   for (const src of sources) {
-    if (src.text != null) { const d = guardDecision(src.text, depth + 1); if (d) return d; continue; }
+    if (src.text != null) {
+      const d = guardDecision(src.text, depth + 1);
+      if (d) return d;
+      // Escape-encoded text into a shell: decoded and read above; with nothing found, still denied (it was hidden).
+      if (src.encoded) return unreadable('command, which hands a shell escape-encoded input', [src.raw]);
+      continue;
+    }
     if (kind === 'wsl') return unreadable('command, which hands WSL input Worca cannot read', [src.raw]);
     if (src.decoded || GUARD_CMD_RE.test(src.raw) || ACTION_RE.test(src.raw)) return unreadable('command, which hands a shell input Worca cannot read', [src.raw]);
   }
@@ -765,8 +846,10 @@ function chainSource(segs, metas, from, to) {
   const raw = segs.slice(from, to).map((w) => w.join(' ')).concat(metas.slice(from, to).flatMap((x) => x.here)).join(' | ');
   const decoded = segs.slice(from, to).some((w) => DECODERS.has(bin(w[leading(w)] ?? '')));
   const passThrough = segs.slice(from + 1, to).every((w) => ['cat', 'tee'].includes(bin(w[leading(w)] ?? '')) && w.slice(leading(w) + 1).every((a) => bin(w[leading(w)]) === 'tee' || a === '-'));
-  const text = from < to && passThrough ? literalOf(segs[from], metas[from]) : null;
-  return { text, raw, decoded: text == null && decoded };
+  let text = from < to && passThrough ? literalOf(segs[from], metas[from]) : null;
+  let encoded = false;
+  if (text == null && from < to && passThrough) { const e = encodedLiteral(segs[from]); if (e != null) { text = e; encoded = true; } }
+  return { text, raw, decoded: text == null && decoded, encoded };
 }
 
 /** NAME=value words set earlier in the line ($NAME and ${NAME} are read with them); `export`/`declare`/… too. */

@@ -101,19 +101,23 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * - gh / glab / az found some other way (a script's spawn('gh') skips .cmd on Windows): empty config, so no sign-in.
  * - Windows: WSLENV carries the git settings and the empty sign-in folders into WSL (its own git and gh).
  * - WORCA_TRY_GUARD_JSON=1 only with `tryGuard.structuredDeny` (a CLI at or above TRY_GUARD_MIN_CLAUDE).
+ * - No forge or registry token (TRY_STRIPPED_KEYS, npm_config_*_auth*), and none forwarded through WSLENV.
  * What the guard covers (with the hook, try-guard.mjs): Bash and the CLI's PowerShell tool, nested shells, WSL (wsl,
  * wslg, distro launchers, System32 bash.exe; WSLENV for WSL's git and gh), pipes and here-strings into a shell, and a
  * structured deny with an exit-2 fallback.
  * Stated limits (not covered, no network block yet): a web call with a token typed into the command; `npm publish` run
  * from inside a script (npm run …, make, a test); web calls from `node -e` / `python -c` / any program; shell aliases,
  * Set-Alias or a git alias configured in an earlier, separate command; tokens a WSL profile sets (GH_TOKEN in
- * ~/.bashrc, /etc/environment); git http.extraheader / url.insteadOf tokens; docker push forms beyond push, image /
- * manifest / compose push and build --push; `curl -K` config files; a PowerShell -Method given as a variable;
- * Send-MailMessage and .NET web calls other than Upload* / *Async.
+ * ~/.bashrc, /etc/environment); tokens in files (~/.npmrc, ~/.docker/config.json, gh / glab config inside WSL);
+ * git http.extraheader / url.insteadOf tokens; image pushes beyond docker / podman / nerdctl push, image / manifest /
+ * compose push, build --push, buildah push, skopeo copy to docker://, crane push / copy and helm push (e.g. oras, ko,
+ * jib, kaniko); `curl -K` config files; a PowerShell -Method given as a variable; Send-MailMessage and .NET web calls
+ * other than Upload* / *Async.
  */
 export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = process.platform } = {}) {
   if (!tryGuard) return env;
   const out = { ...(env ?? process.env) };
+  for (const k of Object.keys(out)) if (isTryStrippedKey(k)) delete out[k];   // no forge or registry token in a try
   const key = pathKeyOf(out);
   const dir = ensureStandIns(home);
   const sep = platform === 'win32' ? ';' : ':';
@@ -142,11 +146,21 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
     const add = ['GIT_TERMINAL_PROMPT', 'GCM_INTERACTIVE', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR/p', 'GLAB_CONFIG_DIR/p', 'AZURE_CONFIG_DIR/p', 'GIT_CONFIG_COUNT',
       ...Array.from({ length: n + 1 }, (_, i) => [`GIT_CONFIG_KEY_${i}`, `GIT_CONFIG_VALUE_${i}`]).flat()];
     const ours = new Set(add.map((e) => e.split('/')[0].toUpperCase()));
-    const prev = String(out[wk] || '').split(':').filter((e) => e && !ours.has(e.split('/')[0].toUpperCase()));
+    const prev = String(out[wk] || '').split(':').filter((e) => e && !ours.has(e.split('/')[0].toUpperCase()) && !isTryStrippedKey(e.split('/')[0]));
     out[wk] = [...prev, ...add].join(':');
   }
   return out;
 }
+
+/** Forge and registry tokens a try's env never carries (any spelling of the name: Windows env names ignore case). The
+ *  spawn env already drops the GitHub / Azure ones for agents (host-credentials.mjs); this covers every try path (shell
+ *  and script steps too) and the GitLab, CI and npm ones. */
+export const TRY_STRIPPED_KEYS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN',
+  'CI_JOB_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'SYSTEM_ACCESSTOKEN', 'NPM_TOKEN', 'NODE_AUTH_TOKEN']);
+const STRIPPED = new Set(TRY_STRIPPED_KEYS);
+/** npm's own auth settings given as env: npm_config__auth, NPM_CONFIG__AUTHTOKEN, npm_config_//registry…/:_authToken, … */
+const NPM_AUTH_RE = /^npm_config_.*_auth/i;
+export const isTryStrippedKey = (k) => STRIPPED.has(String(k).toUpperCase()) || NPM_AUTH_RE.test(String(k));
 
 /** The PreToolUse hook entry buildSettingsPayload adds for a try, beside the host guard: on Bash, and on the PowerShell
  *  tool Claude Code has on Windows. */
