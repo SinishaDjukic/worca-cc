@@ -8,6 +8,9 @@
 // labels) becomes a v2 issue in wiki markup; a create stores Worca's marker as the issue property `worca.export`; after a
 // create or update the description is read back once for the fingerprint Worca compares (D9). A refused field and a ticket
 // that is gone are results, not errors (D11). deps.fetch injected by tests.
+// Ticket updates (plans/ticket-updates-design.md §7): Worca decides what happens to a ticket when a run finishes and passes it
+// as reportResult's `move`; this plugin maps Jira onto Worca's four categories (D1), lists a project's statuses, says what its
+// old transitionOnComplete setting means (legacyMove, D4), and without a `move` behaves exactly as before.
 import { createHash } from 'node:crypto';
 import { jiraFetch } from './jira-api.mjs';
 import { htmlToMarkdown, markdownToWiki, wikiLink } from './markup.mjs';
@@ -62,6 +65,18 @@ const PROPERTY = 'worca.export';
 /** D10: once Jira has made the issue, each further request (the marker property, the read-back) gets this long, so a
  *  hung one cannot run the op into the host's 60 s limit, which would read as "nothing made" and make a second ticket. */
 export const AFTER_KEY_TIMEOUT_MS = 15_000;
+
+/** D1: a done status whose name means a negative ending is cancelled (case-insensitive; ' or ’). */
+export const CANCELLED_NAME = /^(?:won['’]t (?:do|fix)|rejected|duplicate|cancell?ed|declined|invalid|obsolete|abandoned|not planned)$/i;
+export const isCancelledName = (name) => CANCELLED_NAME.test(String(name ?? '').trim());
+/** D1: Jira's statusCategory onto Worca's four: new → todo, indeterminate → in_progress, done → done (cancelled-named:
+ *  cancelled); a status without a category is to do. */
+export function categoryOf(status) {
+  const key = status?.statusCategory?.key;
+  if (key === 'done') return isCancelledName(status?.name) ? 'cancelled' : 'done';
+  if (key === 'indeterminate') return 'in_progress';
+  return 'todo';
+}
 
 export default function createTaskSource(ctx, deps = {}) {
   const base = String(ctx.config?.baseUrl || '').trim().replace(/\/+$/, '');
@@ -170,6 +185,8 @@ export default function createTaskSource(ctx, deps = {}) {
     return Object.assign(new Error(`Jira refused the request: ${said || 'no reason given'}`), { kind: 'plugin', status: e.status });
   }
   const exportOp = (fn) => async (args = {}) => { try { return await fn(args); } catch (e) { throw plainFailure(e); } };
+  // Ticket updates (S3): listStatuses through exportOp, so a 403 or 404 carries Jira's own words to the host's reach sentence
+  const listStatusesOp = exportOp(async ({ project }) => statusesOf(project));
   // The ticket's fields (design §5). Labels arrive normalised (no spaces); the criteria field gets the items as a wiki list.
   function ticketFields(t) {
     const f = { project: { key: t.project }, issuetype: { id: String(t.issueType) }, summary: t.title, description: markdownToWiki(t.description),
@@ -192,6 +209,32 @@ export default function createTaskSource(ctx, deps = {}) {
   const refusesProperties = (e) => e?.status === 400 && ('properties' in (e.body?.errors || {})
     || (e.body?.errorMessages || []).some((m) => /propert/i.test(String(m))));
   const lastLine = (text) => String(text ?? '').replace(/\r\n?/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).at(-1) || '';
+  // Ticket updates: a project key, never a path (S9): `..` would turn /project/../statuses into another REST endpoint
+  function projectKeyOf(project) {
+    const key = String(project ?? '').trim();
+    if (!key) throw Object.assign(new Error('a project is required'), { kind: 'plugin' });
+    if (key.length > 100 || /^\.+$/.test(key) || /[/\\?#]/.test(key)) {
+      throw Object.assign(new Error('a project key cannot be a path'), { kind: 'plugin' });
+    }
+    return key;
+  }
+  // Every status of a project once by id, in Jira's order (one list per issue type), with its category (D1). Unwrapped: applyMove
+  // (Task 10) reads jira-api's own failure kinds and status.
+  async function statusesOf(project) {
+    const key = projectKeyOf(project);
+    const types = await jiraFetch(jira, `/rest/api/2/project/${enc(key)}/statuses`);
+    const seen = new Set();
+    const out = [];
+    for (const t of Array.isArray(types) ? types : []) {
+      for (const s of Array.isArray(t?.statuses) ? t.statuses : []) {
+        const id = String(s?.id ?? '');
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push({ value: id, label: String(s.name || id), category: categoryOf(s) });
+      }
+    }
+    return out;
+  }
 
   return {
     async validateConfig() {
@@ -217,7 +260,8 @@ export default function createTaskSource(ctx, deps = {}) {
       }
     },
     async listProjects() {
-      return (await projectList()).map((p) => ({ value: p.key, label: `${p.name} (${p.key})` }));
+      // `name` (Ticket updates, D5): the project's name alone, for the chips
+      return (await projectList()).map((p) => ({ value: p.key, label: `${p.name} (${p.key})`, name: p.name }));
     },
     async listTasks({ inputs = {}, search, cursor } = {}) {
       const key = pastedKey(search);
@@ -288,7 +332,16 @@ export default function createTaskSource(ctx, deps = {}) {
       await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/comment`, { method: 'POST', body: { body } });
       return { commented: true, transitioned };
     },
-    capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true }; },
+    capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true, ticketUpdates: true }; },
+    // ---- Ticket updates (plans/ticket-updates-design.md §3, §7) ----
+    async listStatuses({ project } = {}) {
+      projectKeyOf(project);   // its own words pass unchanged: plainFailure would turn them into "no reason given"
+      return listStatusesOp({ project });   // S3: a refusal says Jira's words, not the REST path
+    },
+    legacyMove() {
+      const text = String(ctx.config?.transitionOnComplete || '').trim();
+      return { field: 'transitionOnComplete', target: text ? { typed: text } : null };
+    },
     // ---- A6: export (plans/requirements-a6-design.md §4, §5); each op through exportOp (Jira's words, never a status or path) ----
     exportOptions: exportOp(async ({ project, issueType } = {}) => {
       const projects = (await projectList()).map((p) => ({ value: p.key, label: `${p.key} — ${p.name}` }));

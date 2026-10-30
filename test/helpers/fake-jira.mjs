@@ -26,7 +26,7 @@ export async function startFakeJira(o = {}) {
   const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, refusePropertyPut: false,
     failReadBack: false, refuseIssuetypeEdit: false, fail: null, oldCreatemeta: false, requiredField: null, refuseOnUpdate: null, storeCrlf: false,
     version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false,
-    brokenReadBack: false, noVersionNumbers: false, ...o };
+    brokenReadBack: false, noVersionNumbers: false, projectStatuses: {}, ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
@@ -55,6 +55,13 @@ export async function startFakeJira(o = {}) {
     if (opt.fail && req.method === opt.fail.method && p === opt.fail.path) return send(res, opt.fail.status, opt.fail.body);
     if (cloud && p === '/rest/api/2/project/search') return send(res, 200, { values: PROJECTS, isLast: true });
     if (!cloud && p === '/rest/api/2/project') return send(res, 200, PROJECTS);
+    // Ticket updates: a project's statuses per issue type (GET /rest/api/2/project/{key}/statuses), the same on Cloud and Data Center
+    const ps = /^\/rest\/api\/2\/project\/([^/]+)\/statuses$/.exec(p);
+    if (ps) {
+      const types = opt.projectStatuses[decodeURIComponent(ps[1])];
+      if (!types) return send(res, 404, { errorMessages: [`No project could be found with key '${ps[1]}'.`], errors: {} });
+      return send(res, 200, types.map((statuses, i) => ({ id: String(10001 + i), name: `Type ${i + 1}`, subtask: false, statuses })));
+    }
     let m = /^\/rest\/api\/2\/issue\/createmeta\/([^/]+)\/issuetypes(?:\/([^/]+))?$/.exec(p);
     if (m) {
       if (opt.oldCreatemeta) return send(res, 404, { errorMessages: ['null for uri'], errors: {} });
