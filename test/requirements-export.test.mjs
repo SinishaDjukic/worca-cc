@@ -673,3 +673,34 @@ test("Ticket updates (D9): exportOptions lists the connection's picked projects;
     if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was;
   }
 });
+
+test("Ticket updates (D14): exportView's move is the rule of the link's connection and project", async () => {
+  reset();
+  await saveSetup(SCOPE, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', project: 'SHOP', projectName: 'SHOP — Shop web',
+    issueType: '10001', issueTypeName: 'Story', labels: ['worca'] }, { by: 'po' }, d);
+  const f = readyFeature('Report move');
+  await exportNow(f.seq);   // a link on acme, project SHOP
+  const move = async () => (await exportView(getFeature(f.seq), listTurns(f.seq), d)).move;
+  const ALL_DONE = { project: '', moment: 'finished', target: { kind: 'category', value: 'done' } };
+  await withTicketUpdates(async () => {
+    writeTicketUpdates('jira-source', 'acme', 'jira', { projects: [], rules: [ALL_DONE,
+      { project: 'SHOP', label: 'Shop web', moment: 'finished', target: { kind: 'status', value: '10012', label: 'Resolved', category: 'done' } }] });
+    assert.deepEqual(await move(), { kind: 'status', label: 'Resolved' });
+    writeTicketUpdates('jira-source', 'acme', 'jira', { projects: [], rules: [ALL_DONE] });
+    assert.deepEqual(await move(), { kind: 'category', label: 'a Done status' });
+    writeTicketUpdates('jira-source', 'acme', 'jira', { projects: [], rules: TU_NONE });
+    assert.deepEqual(await move(), { kind: 'none', label: 'SHOP' });
+    writeTicketUpdates('jira-source', 'acme', 'jira', { projects: [], rules: [{ ...ALL_DONE, target: { kind: 'typed', value: 'Resolve' } }] });
+    assert.deepEqual(await move(), { kind: 'status', label: 'Resolve (as typed)' }, 'as the sheet shows it (decided 2026-10-30)');
+    assert.equal((await exportView(readyFeature('No link'), [], d)).move, null, 'no link');
+    // A connector that cannot hear a move (a downgrade that kept the record): no promise write-back would not keep
+    _resetExportCaches();
+    setMockSourceResponses({ capabilities: { writeBack: true, export: true } });
+    try { assert.equal(await move(), null, 'no ticketUpdates: the old lines'); } finally { setMockSourceResponses(null); _resetExportCaches(); }
+  });
+  const was = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-ticketUpdates';
+  try { assert.equal(await move(), null, 'flag off: the old lines'); } finally {
+    if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was;
+  }
+});
