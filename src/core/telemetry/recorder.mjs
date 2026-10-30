@@ -20,6 +20,10 @@
 //   agent    {ts, step, ev, id, type, model, tokens, ms}     a sub-agent spawned / finished
 //   result   {ts, step, session, in, cr, cw, out, ctx, costUsd, cumulative, turns, durationMs}
 //            the end-of-session usage; the only usage some engines report
+//   host     {ts, step, sid, turn, in, cr, cw, out, ctx, costUsd, memberUsd, durationMs, cut?}
+//            one session host turn (session groups): the main agent's own tokens summed over its
+//            calls that turn (so ctx is a sum, not a context size), the turn's cost and the step's
+//            share; cut: booked later (carried or estimated). The session trace stays the record.
 //   harness  {ts, windowMs, persists, persistMs, persistMaxMs, rows, emits, emitBytes,
 //            emitMaxBytes, lagP50Ms, lagP99Ms, lagMaxMs}    Worca's own work, per window
 //   end      {ts, dbBytes, telemetryBytes, logBytes}
@@ -195,6 +199,15 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
       if (!step) return;
       if (status !== 'start') flushStep(step);
       push({ t: 'step', ts: now(), step, node: node ?? null, status });
+    }),
+    /** One session host turn (session groups, Task 63; run-harness _onSessionRecord): `in/cr/cw/out` are the main
+     *  agent's own tokens, `costUsd` the turn's booked cost (the step's share + the hand-off), `memberUsd` the step's. */
+    host: safe(({ step, sid = null, turn = null, in: input, cr, cw, out, costUsd = null, memberUsd = null, durationMs = null, cut = false } = {}) => {
+      if (!step) return;
+      const f = { in: n(input), cr: n(cr), cw: n(cw), out: n(out) };
+      const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      push({ t: 'host', ts: now(), step, sid, turn, ...f, ctx: f.in + f.cr + f.cw, costUsd: num(costUsd), memberUsd: num(memberUsd), durationMs: num(durationMs),
+        ...(cut ? { cut: true } : {}) });
     }),
     /** One state save took `took` ms and wrote `rows` step rows. */
     persisted: safe((took, rows) => {

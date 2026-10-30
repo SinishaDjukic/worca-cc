@@ -8300,6 +8300,34 @@ export class RunHarness extends EventEmitter {
       if (!seen.has(sid)) { seen.add(sid); this._sessionAudit(line); }
     } else if (line) this._sessionAudit(line);
     if (SESSION_PERSIST_KINDS.has(rec.kind)) this._persist().catch(() => {});
+    if (this.telemetry) this._hostTelemetry(sid, rec);
+  }
+
+  /** Labs run telemetry (Task 63): one `host` record per booked host turn. A turn's step comes from its `dispatch`, the
+   *  main agent's tokens and time from its `turn_end`, its cost and the step's share from its first `cost` record (written
+   *  after `turn_end`; a cut turn's comes later, carried by the next turn or booked as an estimate: `cut: true`). A turn
+   *  whose `turn_end` this harness did not see (cut before a pause or a crash) writes none. `pause` and `close` both end
+   *  the session's host in this harness (a resume builds a new one), so both forget its open turns. Only while the
+   *  recorder exists: a run without the flag keeps no map. */
+  _hostTelemetry(sid, rec) {
+    const turns = (this._hostTurns ||= new Map());
+    if (rec.kind === 'close' || rec.kind === 'pause') {
+      for (const k of [...turns.keys()]) if (k.startsWith(`t:${sid}:`)) turns.delete(k);
+      return;
+    }
+    const id = typeof rec.turnId === 'string' ? rec.turnId : null;
+    if (!id) return;
+    if (rec.kind === 'dispatch') turns.set(id, { step: rec.executionId ?? null });
+    else if (rec.kind === 'turn_end' && turns.has(id)) Object.assign(turns.get(id), { usage: rec.hostUsage || {}, durationMs: rec.durationMs ?? null, ended: true });
+    else if (rec.kind === 'cost' && turns.get(id)?.ended) {
+      const t = turns.get(id);
+      turns.delete(id);
+      const known = (v) => typeof v === 'number' && Number.isFinite(v);
+      const costUsd = known(rec.memberUsd) || known(rec.hostOverheadUsd)
+        ? Math.round(((known(rec.memberUsd) ? rec.memberUsd : 0) + (known(rec.hostOverheadUsd) ? rec.hostOverheadUsd : 0)) * 1e9) / 1e9 : null;
+      this.telemetry.host({ step: t.step, sid, turn: Number(id.split(':').pop()) || null, in: t.usage.in, cr: t.usage.cr, cw: t.usage.cw, out: t.usage.out,
+        costUsd, memberUsd: known(rec.memberUsd) ? rec.memberUsd : null, durationMs: t.durationMs, cut: !!(rec.carriedBy || rec.cut) });
+    }
   }
 
   _sessionAudit(line) {
