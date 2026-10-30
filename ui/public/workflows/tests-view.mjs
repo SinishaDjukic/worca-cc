@@ -6,7 +6,8 @@ import { el, btn, iconBtn, BUSY_HINT, runStatusBadge, refusedRun } from './test-
 import { withButton } from '../feedback.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.mjs';
-import { NO_PROJECT_YET_HINT, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText }
+import { NO_PROJECT_YET_HINT, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText,
+  refusedRunsCount }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
 export const HOW_HIDDEN_KEY = 'worca.workflowTests.howHidden';
@@ -51,12 +52,13 @@ function howCard(doc, { first, onHide }) {
   return c;
 }
 
+/** What follows an example's start: where it came from, its note (Part 2; a project example too, after its start point). */
+const hintTail = (e, dateText) => [e.hasRequest && e.fromAt ? `from a run on ${dateText(e.fromAt)}` : null, e.hasRequest && e.note ? e.note : null]
+  .filter(Boolean).map((x) => ` · ${x}`).join('');
+
 /** The hint under an example's name: what it has, where it came from, its note. */
 export function exampleHint(e, { dateText = defaultDate } = {}) {
-  const parts = [!e.hasRequest ? 'No request yet' : e.files && e.files.length ? `Request + ${e.files.join(', ')}` : 'Request only'];
-  if (e.hasRequest && e.fromAt) parts.push(`from a run on ${dateText(e.fromAt)}`);
-  if (e.hasRequest && e.note) parts.push(e.note);
-  return parts.join(' · ');
+  return `${!e.hasRequest ? 'No request yet' : e.files && e.files.length ? `Request + ${e.files.join(', ')}` : 'Request only'}${hintTail(e, dateText)}`;
 }
 
 /** Board 38: the hint under an example's name, with its project and start point; an example left out says so. */
@@ -67,6 +69,8 @@ export function exampleHintEl(doc, e, { dateText = defaultDate } = {}) {
   const lead = !e.hasRequest ? 'No request yet' : e.files && e.files.length ? `Request + ${e.files.join(', ')}` : 'Request';
   h.append(doc.createTextNode(`${lead} · ${e.project.name} · from `), el(doc, 'span', 'code', e.project.short));
   if (e.project.changes) h.append(doc.createTextNode(WITH_CHANGES_HINT));
+  const tail = hintTail(e, dateText);   // the run it came from and its note, as Part 2 says them
+  if (tail) h.append(doc.createTextNode(tail));
   return h;
 }
 
@@ -191,8 +195,9 @@ function firstUse(doc, page, o, actions, { dateText }) {
   h.id = 'wft-pick-h';
   pick.setAttribute('aria-labelledby', h.id);
   const runs = o.pastRuns || [];
+  const refused = runs.filter((r) => r.refusal).length;   // P34: listed, but not usable
   pick.append(h, el(doc, 'p', 'hint', runs.length
-    ? `Worca found ${runs.length} recent ${runs.length === 1 ? 'run' : 'runs'} of ${o.name}. Pick different kinds of requests, and include ones where the result was not good: they show what must improve.`
+    ? `Worca found ${runs.length} recent ${runs.length === 1 ? 'run' : 'runs'} of ${o.name}${refused ? refusedRunsCount(refused) : ''}. Pick different kinds of requests, and include ones where the result was not good: they show what must improve.`
     : firstUseNoneText(o.name, { needsProject: !!o.needsProject })));   // board 39 (P16)
   const boxes = [];
   let ticked = 0;

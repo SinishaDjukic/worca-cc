@@ -2531,7 +2531,7 @@ test('Export… from the canvas (Workflows ▾ › Export…) shows the Version 
 
 // ------------------------------------------------- The Tests page (plans/workflow-tests-part2-plan.md Task 10)
 const TESTS_OVERVIEW = {
-  workflowId: 'wf_g', name: 'Graph one', testable: true, reason: null, ctx: { liveVersionNo: 1, latestVersionNo: 2 },
+  workflowId: 'wf_g', name: 'Graph one', ctx: { liveVersionNo: 1, latestVersionNo: 2 },
   columns: [{ use: 1, label: 'v1 · the team uses it' }, { use: 'draft', label: 'Your draft' }],
   examples: [{ id: 1, name: 'Bulk invoice export', hasRequest: true, files: [], fromAt: null, note: null, tries: 3, basics: 2, checks: 0,
     cells: { 1: null, draft: null } }],

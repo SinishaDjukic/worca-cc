@@ -176,7 +176,7 @@ test('a workflow that needs a project: its example without one is left out, and 
   const service = await import('../src/core/workflow-tests/service.mjs');
   const none = await call('POST', `${WF}/examples`, { name: 'Ticket 497', request: 'r' });
   const o = await service.testsOverview('wf_pt', { registry: { implementer: { needsRepo: true } } });
-  assert.deepEqual([o.testable, o.needsProject], [true, true]);
+  assert.equal(o.needsProject, true);
   const row = o.examples.find((e) => e.id === none.body.example.id);
   assert.deepEqual([row.ready, row.reason, row.readyText], [false, 'pick-project', 'Ticket 497 is left out: pick its project first.']);
   // P27: the plan says why each example is left out, so the dialog says "pick its project first" only when that is why.
@@ -238,6 +238,12 @@ test('a past project run: it starts where the run started; a Folder run is refus
   assert.equal(made.status, 201, JSON.stringify(made.body));
   assert.deepEqual([made.body.example.project.startSha, made.body.example.project.changesBytes, made.body.example.project.setupCmd],
     [past.project.startSha, 0, 'npm ci']);
+  // Fix 1 (P34): '' is "no setup" (stored as null); leaving setupCmd out keeps the project's own.
+  const noSetup = await call('POST', `${WF}/examples/from-run`, { pipelineId, name: 'No setup', setupCmd: '' });
+  assert.equal(noSetup.status, 201, JSON.stringify(noSetup.body));
+  assert.equal(noSetup.body.example.project.setupCmd, null);
+  const own = await call('POST', `${WF}/examples/from-run`, { pipelineId, name: 'Its own setup' });
+  assert.equal(own.body.example.project.setupCmd, 'node -e "0"');
   const { getDb } = await import('../src/core/db.mjs');
   const branchWas = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pipelineId).branch;
   getDb().prepare("UPDATE pipelines SET branch = json_remove(branch, '$.baseSha', '$.diffBase') WHERE id = ?").run(pipelineId);

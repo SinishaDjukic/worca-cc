@@ -15,7 +15,7 @@ const ex = (id, name, over = {}) => ({ id, name, hasRequest: true, files: [], fr
   cells: { 2: { passed: 3, total: 3, stale: false, past: null }, draft: { passed: 1, total: 3, stale: false, past: null } },
   project: proj(), ready: true, reason: null, readyText: null, ...over });
 const overview = (over = {}) => ({
-  workflowId: 'wf_fix', name: 'Fix a bug from a ticket', testable: true, reason: null, needsProject: true, ctx: { liveVersionNo: 2, latestVersionNo: 2 },
+  workflowId: 'wf_fix', name: 'Fix a bug from a ticket', needsProject: true, ctx: { liveVersionNo: 2, latestVersionNo: 2 },
   columns: [{ use: 2, label: 'v2 · the team uses it' }, { use: 'draft', label: 'v3 draft · yours' }],
   examples: [
     ex(1, 'Ticket 482: invoice totals round wrong', { project: proj({ behind: 14 }) }),
@@ -190,7 +190,7 @@ test("a past run without a project: no start box, no setup, and no setupCmd in w
   assert.equal('setupCmd' in sent[0], false);
 });
 
-test("board 38: a cleared setup sends null; the dialog body keeps board 38's order", async () => {
+test("board 38: a cleared setup sends '' (no setup, Fix 1); the dialog body keeps board 38's order", async () => {
   const { window } = new JSDOM('<!doctype html><body></body>');
   const doc = window.document;
   const sent = [];
@@ -204,5 +204,18 @@ test("board 38: a cleared setup sends null; the dialog body keeps board 38's ord
   assert.equal(doc.querySelector('#wft-fr-setup').value, '');
   click([...doc.querySelectorAll('.mk-dialog button')].find((b) => b.textContent === 'Add example'));
   await tick();
-  assert.equal(sent[0].setupCmd, null);
+  assert.equal(sent[0].setupCmd, '', "'' = no setup; the server keeps the project's own only when setupCmd is left out");
+});
+
+test('Fix 1: a project example keeps the run it came from and its note after its start point; first use counts the runs it cannot use', () => {
+  const { root } = boot(overview({ examples: [ex(1, 'A', { fromAt: '2026-10-28T09:00:00Z', note: 'Worca should ask first', project: proj({ changes: true }) })] }));
+  assert.equal(root.querySelector('.wft-ex > .hint').textContent,
+    'Request · worca-cc · from abc1234 · with changes not committed yet · from a run on 28 Oct · Worca should ask first');
+  const run = (id, refusal) => ({ pipelineId: id, title: id, at: 'x', status: 'done', files: 0, sameAs: null, project: 'worca-cc', refusal,
+    refusalText: refusal ? "This run worked on a Folder project. Folder projects can't be tested yet." : null });
+  const some = boot(overview({ examples: [], pastRuns: [run('a', null), run('b', 'folder'), run('c', 'folder')] }));
+  assert.equal(some.root.querySelector('.wft-pick > .hint').textContent,
+    "Worca found 3 recent runs of Fix a bug from a ticket (2 can't be used yet). Pick different kinds of requests, and include ones where the result was not good: they show what must improve.");
+  const fine = boot(overview({ examples: [], pastRuns: [run('a', null)] }));
+  assert.match(fine.root.querySelector('.wft-pick > .hint').textContent, /^Worca found 1 recent run of Fix a bug from a ticket\. Pick/);
 });

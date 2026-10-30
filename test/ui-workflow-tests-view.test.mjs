@@ -9,7 +9,7 @@ const texts = (root, sel) => [...root.querySelectorAll(sel)].map((n) => n.textCo
 const NOW = Date.parse('2026-10-26T12:00:00Z');
 const dateText = () => '14 Oct';
 const overview = (over = {}) => ({
-  workflowId: 'wf_b', name: 'Product brief writer', testable: true, reason: null, ctx: { liveVersionNo: 4, latestVersionNo: 4 },
+  workflowId: 'wf_b', name: 'Product brief writer', ctx: { liveVersionNo: 4, latestVersionNo: 4 },
   columns: [{ use: 4, label: 'v4 · the team uses it' }, { use: 'draft', label: 'v5 draft · yours' }],
   examples: [
     { id: 1, name: 'Bulk invoice export', hasRequest: true, files: ['interviews-q3.md', 'support-tickets.csv'], fromAt: '2026-10-14T10:00:00Z', note: null,

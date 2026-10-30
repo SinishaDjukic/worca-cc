@@ -178,6 +178,8 @@ export const PICK_FIRST_TEXT = 'Pick a project first';
 // P33 (not drawn; decided 2026-10-30 by the controller): an example left out for another reason than "no project yet" (its
 // folder is missing, a Folder project, no longer registered): its result columns; the row adds the server's readyText.
 export const CANT_TRY_TEXT = "Can't be tried yet";
+// P34 (not drawn; decided 2026-10-30 by the controller): first use, when some of the runs found cannot become examples.
+export const refusedRunsCount = (n) => ` (${n} can't be used yet)`;
 export const NO_PROJECT_YET_HINT = 'Request only · no project yet, so it is left out of tests';
 export const WITH_CHANGES_HINT = ' · with changes not committed yet';
 export const MOVED_BADGE = 'Moved on';

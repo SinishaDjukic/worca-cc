@@ -135,7 +135,7 @@ export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => 
     onConfirm: () => {
       if (!name.value.trim()) return { ok: false, error: 'Give the example a name.' };
       return onSubmit({ name: name.value.trim(), keepRequest: req.box.checked, keepAnswers: ans ? ans.box.checked : false, verdict,
-        note: note.value.trim() || null, ...(setup ? { setupCmd: setup.value.trim() || null } : {}) });
+        note: note.value.trim() || null, ...(setup ? { setupCmd: setup.value.trim() } : {}) });
     },
   });
 }

@@ -69,7 +69,8 @@ after(async () => {
 test('examples, a past run as an example, a test of v1 against the draft, reuse, compare, side by side', { timeout: 600000 }, async () => {
   assert.equal((await call('POST', '/api/workflows', graph('Brief writer'))).status, 201);
   let o = (await call('GET', WF)).body;
-  assert.deepEqual([o.testable, o.columns, o.examples, o.pastRuns], [true, [{ use: 'draft', label: 'Your draft' }], [], []]);
+  assert.deepEqual([o.columns, o.examples, o.pastRuns], [[{ use: 'draft', label: 'Your draft' }], [], []]);
+  assert.equal('testable' in o || 'reason' in o, false, '3a D62: every workflow can be tested, so the overview no longer says so');
   assert.equal((await call('POST', '/api/workflows/wf_api_t/versions', { note: 'First' })).status, 201);
 
   // A past run of v1 (a normal run: it stays in the Runs list), turned into an example with the person's verdict.
@@ -151,7 +152,7 @@ test('errors: unknown workflow, a bad example, an unknown example; a workflow th
   const mode = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [9999], tries: 1, connectors: 'maybe' });
   assert.deepEqual([mode.status, mode.body.error], [400, 'connectors must be "pretend" or "real"']);
   const o = await service.testsOverview('wf_api_t', { registry: { planner: { needsRepo: true } } });
-  assert.deepEqual([o.testable, o.reason, o.needsProject], [true, null, true]);
+  assert.deepEqual([o.needsProject, 'testable' in o], [true, false]);
 });
 
 test("the server's liveRun carries a paused try's reason: a drain-paused try stops the test as a drain", async () => {

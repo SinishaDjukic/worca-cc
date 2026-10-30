@@ -414,7 +414,8 @@ export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest
     const { state, reg } = await projectStateOf({ key: past.project.key });
     if (state !== 'ok') throw err(readinessText({ name: clean, project: past.project }, state, { reg }), 'NOT_READY');
     const pin = await pinStart({ key: past.project.key, name: reg.name, projectDir: reg.path, sha: past.project.startSha, ref: past.project.startRef });
-    project = { ...pin, setupCmd: typeof setupCmd === 'string' && setupCmd.trim() ? setupCmd.trim() : past.project.setupCmd };
+    // A string is the dialog's field ('' = no setup; the store keeps it as null); null or left out: the project's setup.
+    project = { ...pin, setupCmd: typeof setupCmd === 'string' ? setupCmd.trim() : past.project.setupCmd };
   }
   const example = store.createExample(workflowId, { name: clean, request: keepRequest ? past.request : '', answers: keepAnswers ? past.qa : [], note },
     { by, from: { pipelineId: past.pipelineId, use: past.use, verdict }, project });
@@ -471,7 +472,7 @@ function modelInput(run, ctx) {
 
 /** Boards 1 and 19 in one read. */
 export async function testsOverview(workflowId, { registry = loadAgentRegistry(), fingerprintOf = (id, use) => useFingerprint(id, use) } = {}) {
-  const { row, testable, reason, needsProject } = testTarget(workflowId, { registry });
+  const { row, needsProject } = testTarget(workflowId, { registry });   // D62: always testable, so the overview no longer says so
   const ctx = labelCtx(workflowId);
   const uses = [...(ctx.liveVersionNo ? [ctx.liveVersionNo] : []), 'draft'];
   const fpNow = {};
@@ -500,7 +501,7 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
   const last = runs.find((r) => r.kind === 'compare' && r.status !== 'running') || null;
   const own = running ? store.triesOfRun(running.id).filter((t) => t.runId === running.id) : [];
   return {
-    workflowId, name: row.name, testable, reason, needsProject, ctx,
+    workflowId, name: row.name, needsProject, ctx,
     columns: uses.map((use) => ({ use, label: useLabel(use, ctx, 'column') })),
     examples,
     running: running ? { runId: running.id, title: testTitle(running, ctx, { mode: 'testing', exampleName: firstExampleName(running) }),
