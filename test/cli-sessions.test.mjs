@@ -85,6 +85,16 @@ test('v2 — the report: unknown cost, a failed check, skipped trace lines, hist
   const lines = formatSessionsReport({ sessions: [s] }, { labelOf: (id) => ({ n_review: 'Review' })[id] }).split('\n');
   assert.equal(lines[0], `Session ${SID} · Build · sub-agents · Claude · main agent claude-haiku-4-5`);
   assert.equal(lines[1], '  host H (epoch 2) · 2 turns · 3 dispatches · 1 rotation · 1 restart · $0.68 (steps $0.65, hand-offs $0.03) · not reconciled');
+  // Task 66: one conversation has no main agent: neither its model nor a hand-off split is printed; it names its
+  // conversation, and it has no dispatch or rotation to count (v4).
+  const shared = formatSessionsReport({ sessions: [{ ...s, mode: 'shared', hostOverheadUsd: 0 }] }, { labelOf: (id) => ({ n_review: 'Review' })[id] }).split('\n');
+  assert.equal(shared[0], `Session ${SID} · Build · one conversation · Claude`);
+  assert.equal(shared[1], '  conversation H (epoch 2) · 2 turns · 1 restart · $0.68 · not reconciled');
+  const none = formatSessionsReport({ sessions: [{ ...s, mode: 'shared', hostSessionId: null, turns: 0, restarts: 0, costUsd: null, reconcile: null, reconciled: null }] }).split('\n');
+  assert.equal(none[1], '  no conversation · 0 turns · 0 restarts · no turn · not checked');
+  // v5: on an engine without cost its turns list no tokens either, so it is not checked, never "tokens only".
+  const sharedCopilot = formatSessionsReport({ sessions: [{ ...s, mode: 'shared', engine: 'copilot', turnRows: [], reconcile: { ok: true, mismatches: [] }, history: [], integrity: {} }] }).split('\n');
+  assert.match(sharedCopilot[1], / · cost unknown · not checked$/);
   assert.match(lines[3], /^ {2}2 {5}Review {18}1 {8}2m11s {5}3\.0k\/400\/120 {9}\$0\.68 {3}harness {2}blocking · 2 issues$/);
   assert.match(lines[4], /^ {2}3 {5}Review {18}1 {8}— {9}— {20}— {7}none {5}—$/, 'unknown is a dash, never $0.00');
   assert.equal(lines[5], `  ⚠ t:${SID}:2: harness $0.65 vs estimate $0.90`);

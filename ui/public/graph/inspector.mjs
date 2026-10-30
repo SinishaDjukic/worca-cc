@@ -216,6 +216,7 @@ const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const MODE_HINT = {
   live: 'Each step runs as its own sub-agent with a fresh context. The main agent hands work over and keeps their reports.',
   separate: 'Each step runs in its own session, one after another.',
+  shared: 'Every step is a turn of one conversation: each step sees the earlier steps\' work. Steps keep their own model and tools.',
 };
 
 /**
@@ -286,8 +287,15 @@ export function renderSessionInspector(spec, { template = null, portsFn = null, 
     return b;
   };
   // Not live: the reason names what holds it back, the Labs flag (canAdd) or else the engine's gate.
+  const why = canAdd ? 'sub-agents not available yet' : 'off in Settings › Labs';
   if (live) seg.appendChild(segBtn('subagents', 'Sub-agents'));
-  else how.appendChild(h(doc, 'span', 'ins-resolved', `Separate sessions (${canAdd ? 'sub-agents not available yet' : 'off in Settings › Labs'})`));
+  else if (s.mode === 'shared') {
+    // One conversation picked: the default mode is the way back, named for what it runs as here (the toolbar's How
+    // menu does the same), never a "Separate sessions" line beside the pressed One conversation (Task 66).
+    const back = segBtn('subagents', 'Separate sessions');
+    back.title = why;
+    seg.appendChild(back);
+  } else how.appendChild(h(doc, 'span', 'ins-resolved', `Separate sessions (${why})`));
   const shared = segBtn('shared', 'One conversation');
   shared.dataset.minLevel = 'expert';
   // Selectable once `shared` runs: Task 66 flips SESSION_SHARED_SELECTABLE (sessions.mjs), here and in the toolbar.
@@ -295,7 +303,9 @@ export function renderSessionInspector(spec, { template = null, portsFn = null, 
   seg.appendChild(shared);
   how.appendChild(seg);
   body.appendChild(how);
-  if (s.mode !== 'shared') body.appendChild(h(doc, 'small', 'ins-hint', live ? MODE_HINT.live : MODE_HINT.separate));
+  // One conversation needs no sub-agents, only the Labs flag (canAdd): with it off, its steps run as separate sessions (C14).
+  const hint = s.mode === 'shared' ? (canAdd ? MODE_HINT.shared : MODE_HINT.separate) : live ? MODE_HINT.live : MODE_HINT.separate;
+  body.appendChild(h(doc, 'small', 'ins-hint', hint));
 
   const offered = models.filter((m) => m && (!m.hidden || m.id === s.hostModel));
   const modelItems = modelGroups(offered).map((g) => ({ group: g.label, items: g.models.map((m) => ({ value: m.id, text: (m.label || m.id) + modelSourceSuffix(m) })) }));
@@ -311,20 +321,25 @@ export function renderSessionInspector(spec, { template = null, portsFn = null, 
   const harness = field(doc, 'ins-sess-harness', 'Harness');
   harness.appendChild(h(doc, 'div', 'ins-resolved', "the run's engine, chosen at Start run"));
   const yes = Object.keys(ENGINES).filter((e) => sessionSupport(e, { verified }).subagents);
-  harness.appendChild(h(doc, 'small', 'ins-hint', yes.length
+  // One conversation needs only a resume, which every engine has (sessionSupport's `shared`, 5.1); the Labs flag off runs
+  // it separate (C14).
+  harness.appendChild(h(doc, 'small', 'ins-hint', s.mode === 'shared' && canAdd ? 'Every engine runs these steps as one conversation.' : yes.length
     ? `Sub-agents on ${yes.map(engineLabel).join(', ')}; every other engine runs these steps as separate sessions.`
     : 'Every engine runs these steps as separate sessions.'));
   body.appendChild(harness);
 
   // The Labs flag off is the reason the steps run separately, whatever the gate says (C14): name the flag, not the engine.
-  const notes = sessionNotes(spec, { engine, verified, members, labelOf }).filter((n) => canAdd || n.code !== 'gate-off');
+  // Nor does a reviewer read anyone's reasoning then, or a step wait in a session: no conversation is shared (Task 66).
+  const notes = sessionNotes(spec, { engine, verified, members, labelOf }).filter((n) => canAdd || !['gate-off', 'shared-not-independent', 'asks'].includes(n.code));
   if (!canAdd) notes.unshift({ level: 'info', code: 'flag-off', text: 'One session is off in Settings › Labs: these steps run as separate sessions.' });
   if (notes.length) {
     const ul = h(doc, 'ul', 'ins-notes');
     for (const n of notes) { const li = h(doc, 'li', `ins-note is-${n.level}`, n.text); li.dataset.code = n.code; ul.appendChild(li); }
     body.appendChild(ul);
   }
-  body.appendChild(h(doc, 'p', 'ins-blurb', 'worca still decides what runs next, so files, loop limits and reviews work as they do today.'));
+  // In one conversation a review is not what it was (shared-not-independent): the blurb does not promise it.
+  body.appendChild(h(doc, 'p', 'ins-blurb', s.mode === 'shared' && canAdd ? 'worca still decides what runs next, so files and loop limits work as they do today.'
+    : 'worca still decides what runs next, so files, loop limits and reviews work as they do today.'));
   const acts = h(doc, 'div', 'ins-sess-acts');
   if (split) { const b = h(doc, 'button', 'btn btn-sm', 'Split'); b.type = 'button'; b.dataset.sessAct = 'split'; acts.appendChild(b); }
   const ug = h(doc, 'button', 'btn btn-sm', 'Ungroup');

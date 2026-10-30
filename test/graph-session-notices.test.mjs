@@ -35,13 +35,15 @@ test('one line per session, per engine and gate', () => {
     'beside a two-step session, only the two-step one has a line');
 });
 
-// ── v2: the Labs flag, One conversation before its runtime, three steps, a label-less card, the shipped gate ──
-test('v2 — the flag off, One conversation not built yet, three steps, the shipped gate', () => {
+// ── v2: the Labs flag, One conversation (shipped, and before its runtime), three steps, a label-less card, the shipped gate ──
+test('v2 — the flag off, One conversation as shipped and before its runtime, three steps, the shipped gate', () => {
   assert.deepEqual(sessionStartNotices(t, realPortsFn(), { engine: 'claude', verified: { claude: true }, labelOf, flagOn: false }),
     ['One session is off in Settings › Labs: Refine Plan and Decompose run as separate sessions.'], 'the flag off: every session runs separate (C14)');
   const shared = { ...t, sessions: { s_aaaaaaaa: { mode: 'shared' } } };
-  assert.equal(SESSION_SHARED_SELECTABLE, false, 'Task 66 flips it with the runtime; this row then reads the shared line');
+  assert.equal(SESSION_SHARED_SELECTABLE, true, 'Task 66 turned it on with Task 65\'s runtime');
   assert.deepEqual(sessionStartNotices(shared, realPortsFn(), { engine: 'claude', verified: { claude: true }, labelOf }),
+    ['Refine Plan and Decompose share one conversation.'], 'the default reads the shipped switch');
+  assert.deepEqual(sessionStartNotices(shared, realPortsFn(), { engine: 'claude', verified: { claude: true }, labelOf, sharedReady: false }),
     ['One conversation is not available yet: Refine Plan and Decompose run as separate sessions.']);
   const three = structuredClone(SEED_TEMPLATES.find((s) => s.id === 'wf_full'));
   for (const id of ['n_plan', 'n_refine', 'n_decompose']) three.nodes.find((x) => x.id === id).config.session = 's_bbbbbbbb';

@@ -43,6 +43,8 @@ test('the reconcile badge shows both figures; unknown cost is a dash, never $0.0
   assert.equal([...el2.querySelectorAll('.rs-turns tbody tr')[0].children][6].textContent.trim(), '—');
   assert.doesNotMatch(el2.textContent, /\$0\.00/);
   assert.equal(el2.querySelector('.rs-reconcile').textContent.trim(), 'no cost from this engine · tokens only', 'nothing was compared: the mock\'s words, not "✓ reconciled"');
+  // Task 66 v5: One conversation's turns list no tokens: the card does not say "tokens only".
+  assert.equal(renderSessionCard({ ...none, mode: 'shared' }, { doc, labelOf, engineCost: false }).querySelector('.rs-reconcile').textContent.trim(), 'no cost from this engine');
   assert.equal(renderSessionCard({ ...S, reconcile: { ok: true, mismatches: [] } }, { doc, labelOf, engineCost: true, live: false }).querySelector('.rs-reconcile').textContent.trim(), '✓ reconciled');
 });
 
@@ -59,6 +61,20 @@ test('v2 — the card: separate and shared heads, no host yet, the bar only with
   assert.equal(sep.querySelector('[data-copy]'), null, 'no host session, nothing to copy');
   assert.equal(sep.querySelector('.rs-why').textContent, 'Its steps ran as separate sessions: the One session Labs flag is off.', 'the flag key is not copy (never "group")');
   assert.match(renderSessionCard({ ...S, mode: 'shared' }, { doc, labelOf }).querySelector('.rs-head').textContent, /One conversation · turns · Claude/);
+  // Task 66: a turn of one conversation is all its step's: its cost tooltip names no hand-off (the overhead is a booked 0).
+  const one = { ...S, mode: 'shared', hostOverheadUsd: 0, turnRows: S.turnRows.map((r) => ({ ...r, hostOverheadUsd: 0 })) };
+  assert.deepEqual([...renderSessionCard(one, { doc, labelOf }).querySelectorAll('.rs-turns tbody tr')].map((tr) => tr.children[6].title), ['step $1.70', 'step $0.65']);
+  assert.equal(renderSessionCard(one, { doc, labelOf }).querySelector('.rs-hand'), null, 'no hand-off segment');
+  // v3: no host and no hand-off in its words either: the conversation's id, and what reconciles.
+  const oneCard = renderSessionCard({ ...one, hostSessionId: 'b1f0c2d3-0000-4000-8000-00000000abcd', reconcile: { ok: true, mismatches: [] } }, { doc, labelOf, engineCost: true, live: false });
+  assert.match(oneCard.querySelector('.rs-meta').textContent, /^One conversation.*conversation b1f0c2d3…abcd/);
+  assert.doesNotMatch(oneCard.querySelector('.rs-meta').textContent, /host/);
+  assert.equal(oneCard.querySelector('.rs-copy').title, 'Copy the conversation id');
+  assert.equal(oneCard.querySelector('.rs-ok').title, 'The steps add up to the harness total.');
+  const subCard = renderSessionCard({ ...S, hostSessionId: 'b1f0c2d3-0000-4000-8000-00000000abcd', reconcile: { ok: true, mismatches: [] } }, { doc, labelOf, engineCost: true, live: false });
+  assert.deepEqual([subCard.querySelector('.rs-copy').title, subCard.querySelector('.rs-ok').title], ['Copy the host session id', 'The steps and the hand-offs add up to the harness total.']);
+  assert.match(subCard.querySelector('.rs-meta').textContent, /host session b1f0c2d3…abcd/);
+  assert.equal(renderSessionCard(S, { doc, labelOf }).querySelector('.rs-turns tbody tr').children[6].title, 'step $1.70 + hand-off $0.03', 'sub-agents keep theirs');
   assert.equal(renderSessionCard(S, { doc, labelOf, engineCost: false }).querySelector('.rs-bar'), null, 'an engine without cost draws no bar');
   assert.equal(renderSessionCard({ ...S, costUsd: 0, hostOverheadUsd: 0 }, { doc, labelOf }).querySelector('.rs-bar'), null, 'nor does a $0 session');
   const bar = renderSessionCard(S, { doc, labelOf }).querySelector('.rs-bar');
@@ -537,6 +553,11 @@ test('v5 — an unknown hand-off is unknown in the turn\'s title; a turn being b
   assert.doesNotMatch(at({ status: 'busy', costUsd: 0.12 }), /outside/, 'the rows are booked before the turn\'s trace records: the turn is still busy');
   assert.doesNotMatch(at({ status: 'idle', costUsd: 0.62 }), /outside/, 'then the live summary has the turn (the fetched report may not yet)');
   assert.match(at({ status: 'idle', costUsd: 0.32 }), /incl\. \$0\.30 outside the host$/);
+  // Task 66 v3: One conversation has no host: what ran outside it ran outside the conversation.
+  const one = doc.createElement('div');
+  paintSessions(one, { sessions: [{ ...S, mode: 'shared', costUsd: 0.12 }] }, { labelOf, engine: 'claude',
+    state: { ...st, active: [], steps: rows, sessionHosts: { [SID]: { ...st.sessionHosts[SID], mode: 'shared', status: 'idle', costUsd: 0.32 } } }, live: true });
+  assert.match(one.querySelector('.rs-total-s').textContent, /incl\. \$0\.30 outside the conversation$/);
   const deg = renderSessionCard({ ...S, mode: 'separate', modeReason: 'the main agent did not dispatch', history: [{ kind: 'degrade', reason: 'the main agent did not dispatch' }] }, { doc, labelOf });
   assert.equal(deg.querySelectorAll('.rs-history li').length, 1, 'a session that degraded after its turns: its degrade is news, not the why line repeated');
   const never = renderSessionCard({ ...S, mode: 'separate', modeReason: 'the Labs flag is off', hostSessionId: null, turns: 0, turnRows: [],

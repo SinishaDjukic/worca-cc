@@ -594,7 +594,8 @@ function decorateSessions(decor, ctx) {
       fallback ? `Separate ${engineText} sessions${why ? ` · ${why}` : ''}`
         : shared ? `One ${engineText} conversation` : `One ${engineText} session · main agent ${(summary && summary.hostModel) || 'default model'}`,
       ran ? `${turns > 0 ? `${count(turns, 'turn')} · ` : ''}runs: ${perMember}` : '',
-      [dur, cost ? `${cost}${overheadUsd != null && !unpriced ? ` incl. ${fmtUsd(overheadUsd)} hand-offs` : ''}` : ''].filter(Boolean).join(' · '),
+      // One conversation has no main agent, so no hand-off to name (Task 66).
+      [dur, cost ? `${cost}${overheadUsd != null && !unpriced && !shared ? ` incl. ${fmtUsd(overheadUsd)} hand-offs` : ''}` : ''].filter(Boolean).join(' · '),
       restarts > 0 ? `restarted fresh ${times(restarts)}` : '',
       rotations > 0 ? `rotated ${times(rotations)}` : '',
     ].filter(Boolean).join('\n');

@@ -143,13 +143,14 @@ export function renderSessionCard(session, { doc, labelOf = (id) => id, engineCo
     s.mode === 'subagents' ? `main agent ${s.hostModel || 'default model'}` : null].filter(Boolean).join(' · ');
   meta.appendChild(el(doc, 'span', null, how));
   if (s.hostSessionId) {
-    const host = el(doc, 'span', null, 'host session ');
+    // One conversation has no host of its own: the id is the conversation's (Task 66).
+    const host = el(doc, 'span', null, s.mode === 'shared' ? 'conversation ' : 'host session ');
     host.appendChild(el(doc, 'code', null, shortId(String(s.hostSessionId))));
     if (s.hostEpoch > 1) host.appendChild(doc.createTextNode(` (epoch ${s.hostEpoch})`));
     const copy = el(doc, 'button', 'btn btn-sm btn-quiet rs-copy', 'Copy id');
     copy.type = 'button';
     copy.dataset.copy = String(s.hostSessionId);
-    copy.title = 'Copy the host session id';
+    copy.title = s.mode === 'shared' ? 'Copy the conversation id' : 'Copy the host session id';
     meta.append(host, copy);
   }
   // The tray's figures (Σ the members' rows): a member run outside a host turn (a runtime degrade, ×N slices, a session
@@ -157,7 +158,8 @@ export function renderSessionCard(session, { doc, labelOf = (id) => id, engineCo
   // session had a turn.
   const durMs = tray && finite(tray.durMs) ? tray.durMs : rows.reduce((a, r) => a + (finite(r.durationMs) ? r.durationMs : 0), 0);
   const totalUsd = finite(membersUsd) ? membersUsd : s.costUsd;
-  const outside = engineCost && finite(outsideUsd) && outsideUsd >= 0.01 && (s.turns ?? 0) > 0 ? ` · incl. ${fmtUsd(outsideUsd)} outside the host` : '';
+  const outside = engineCost && finite(outsideUsd) && outsideUsd >= 0.01 && (s.turns ?? 0) > 0
+    ? ` · incl. ${fmtUsd(outsideUsd)} outside the ${s.mode === 'shared' ? 'conversation' : 'host'}` : '';
   const total = el(doc, 'div', 'rs-total');
   total.append(el(doc, 'span', 'rs-total-v', usdOr(totalUsd, engineCost)), el(doc, 'span', 'rs-total-s',
     `${plural(s.turns ?? rows.length, 'turn')} · ${fmtDur(durMs)}${outside}`));
@@ -215,7 +217,9 @@ export function renderSessionCard(session, { doc, labelOf = (id) => id, engineCo
       });
       const costCell = row.children[6];
       if (known) {
-        const parts = [`step ${finite(r.memberUsd) ? fmtUsd(r.memberUsd) : 'unknown'} + hand-off ${finite(r.hostOverheadUsd) ? fmtUsd(r.hostOverheadUsd) : 'unknown'}`];
+        const step = `step ${finite(r.memberUsd) ? fmtUsd(r.memberUsd) : 'unknown'}`;
+        // One conversation has no main agent: a turn is all the step's, no hand-off (Task 66).
+        const parts = [s.mode === 'shared' ? step : `${step} + hand-off ${finite(r.hostOverheadUsd) ? fmtUsd(r.hostOverheadUsd) : 'unknown'}`];
         if (finite(r.carriedUsd) && r.carriedUsd > 0) parts.push(`it also carried ${fmtUsd(r.carriedUsd)} of a cut turn, booked on that turn's row`);
         costCell.title = parts.join('; ');
       }
@@ -259,11 +263,12 @@ export function renderSessionCard(session, { doc, labelOf = (id) => id, engineCo
     bad.title = 'The host\'s close says the figures did not add up; the failed check was not recorded.';
     rec.appendChild(bad);
   } else if (!mism.length && checked) {
-    if (!engineCost) rec.appendChild(el(doc, 'span', 'rs-na', 'no cost from this engine · tokens only'));
+    // One conversation's turns list no tokens (no member_done, Task 66): the card promises none.
+    if (!engineCost) rec.appendChild(el(doc, 'span', 'rs-na', s.mode === 'shared' ? 'no cost from this engine' : 'no cost from this engine · tokens only'));
     else if (stillWorking) rec.appendChild(el(doc, 'span', 'rs-na', 'reconciles after each turn'));
     else if (okWord === true) {
       const ok = el(doc, 'span', 'rs-ok', '✓ reconciled');   // glyph-ok: the check's status word; Task 58 pins this text
-      ok.title = 'The steps and the hand-offs add up to the harness total.';
+      ok.title = s.mode === 'shared' ? 'The steps add up to the harness total.' : 'The steps and the hand-offs add up to the harness total.';
       rec.appendChild(ok);
     }
   }

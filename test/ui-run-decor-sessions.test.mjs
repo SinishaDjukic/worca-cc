@@ -43,6 +43,12 @@ test('fallback, right side, unpriced engines, tooltip', () => {
   assert.match(d.title, /incl\. \$0\.06 hand-offs/);
   assert.match(d.title, /^5 turns · runs: Implementation ×1, Review ×1$/m, 'runs per member; the session counts host turns');
   assert.equal(S({ runEngine: 'copilot', sessionHosts: host({ costUsd: null }) }).right, 'turn 5 · 0s');
+  // Task 66: one conversation has no main agent, so its tooltip names no hand-off (its summary's overhead is a booked 0).
+  const shared = S({ status: 'done', steps: [row('n_impl', 'done', 1, { costUsd: 1.70 }), row('n_review', 'done', 1, { costUsd: 0.71 })],
+    sessionHosts: host({ mode: 'shared', hostOverheadUsd: 0 }) });
+  assert.match(shared.title, /^One Claude conversation$/m);
+  assert.match(shared.title, /\$2\.41$/m);
+  assert.doesNotMatch(shared.title, /hand-off|main agent/);
 });
 
 test('C39 — a member waiting for its host says "queued"', () => {

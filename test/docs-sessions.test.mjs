@@ -11,7 +11,8 @@ import { MAX_SESSION_MEMBERS, SESSION_MIN_MEMBERS } from '../src/shared/graph/co
 import { flagByKey } from '../src/shared/flags/registry.mjs';
 import { SESSION_SUBAGENTS_VERIFIED } from '../src/shared/engine-switch.mjs';
 import { RECOVERY_MAX_AUTO_ATTEMPTS } from '../src/core/failure-policy.mjs';
-import { sessionStartNotices } from '../src/shared/graph/sessions.mjs';
+import { sessionStartNotices, SESSION_SHARED_SELECTABLE } from '../src/shared/graph/sessions.mjs';
+import { SESSION_SHARED_RUNTIME } from '../src/core/session-host.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { realPortsFn } from './helpers/graph-ports.mjs';
 
@@ -75,4 +76,29 @@ test('v2 — the flag, the flags page and the telemetry page point here', () => 
   assert.ok(doc.includes('[run-telemetry.md](run-telemetry.md)') && /one `host` record per booked host turn/.test(doc));
   // v4: the one case without a record (Task 63: a resumed run's harness never saw the cut turn's turn_end), said on both pages.
   assert.ok(/cut by a pause or a crash and booked after the resume gets none/.test(doc.replace(/\n\s*/g, ' ')) && tel.includes('booked after the resume has none'));
+});
+
+test('Task 66 — One conversation is documented as it runs: selectable, no main agent, no hand-off, a reviewer not independent', () => {
+  const row = doc.split('\n').find((l) => l.startsWith('| One conversation (`shared`) |'));
+  assert.ok(row, 'the mode table has its row');
+  assert.equal(/not available yet/i.test(row), !(SESSION_SHARED_RUNTIME && SESSION_SHARED_SELECTABLE), 'it says "not available" exactly while it is not');
+  for (const v of ['There is no main agent', 'not independent', 'never rotates', 'every engine can resume']) assert.ok(row.includes(v), v);
+  assert.ok(doc.includes('- **One conversation.** No main agent, so no hand-off'), 'the cost section says where its dollars go');
+  // v3: which engines report a running total (Claude Code, Goose), the override, and the limits and surfaces it skips.
+  const flat = doc.replace(/\n\s*/g, ' ');
+  for (const v of ['On Claude Code and Goose it is the Δ of the conversation\'s running total; on Codex and OpenCode, whose result is the turn\'s own cost, that figure.',
+    'A cost override on the step\'s model prices the turn from its own usage', 'the three limits below are the sub-agents mode\'s only',
+    'A session in One conversation has no main agent and no hand-offs']) assert.ok(flat.includes(v), v);
+  // v4: the closed Claude gate holds Sub-agents sessions only, and a turn nothing prices stays blank (Task 65).
+  for (const v of ['every Sub-agents session on Claude runs as separate sessions, and the run says so (One conversation needs no sub-agents).',
+    'that its usage cannot price books nothing: the row stays blank, never $0.00.']) assert.ok(flat.includes(v), v);
+  assert.ok(!flat.includes('every session on Claude runs as separate sessions'), 'the gate holds no One conversation session');
+  // v5: where a shared turn's figure comes from, per engine, and the two turns that book nothing of their own.
+  for (const v of ['| `harness` | The harness\'s own figure: Δ of the running total it reports (Claude Code, Goose), or, in One conversation on Codex and OpenCode, the turn\'s own cost |',
+    'in One conversation also a turn whose result came without its figure on Codex or OpenCode |']) assert.ok(doc.includes(v), v);
+  for (const v of ['A step on a bridged model is booked at what its upstream reported, a stopped turn too,',
+    'a result of a turn that never ran (a refusal before the CLI starts, the answer to a lost conversation) books nothing.']) assert.ok(flat.includes(v), v);
+  // Its turns write no `host` telemetry record (Task 65), said on both pages.
+  const tel = readFileSync(new URL('../docs/run-telemetry.md', import.meta.url), 'utf8');
+  assert.ok(/every turn of One conversation \(it has no main agent\)/.test(doc.replace(/\n\s*/g, ' ')) && tel.includes('One conversation has no main agent and writes none'));
 });

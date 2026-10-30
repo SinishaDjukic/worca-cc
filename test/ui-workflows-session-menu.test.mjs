@@ -86,7 +86,7 @@ test('flag off: ⌘G creates nothing and stays the browser\'s; flag on: ⌘G wit
   assert.equal(s.c.template().nodes.find((n) => n.id === 'n_rev').config.session, undefined, 'the menu, not a join');
 });
 
-test('the session toolbar: label, How, Main agent, Effort, Ungroup, More; One conversation is not yet selectable and not level-gated', async () => {
+test('the session toolbar: label, How, Main agent, Effort, Ungroup, More; One conversation follows SESSION_SHARED_SELECTABLE and is not level-gated', async () => {
   const s = await bootShell({ template: loopFixture(), flags: 'sessionGroups' });
   const sid = s.c.sessions.join('n_agent', 'n_rev').sid;
   s.c.select({ kind: 'session', id: sid });

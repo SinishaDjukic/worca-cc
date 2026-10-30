@@ -11,9 +11,9 @@ import { LABEL_H } from './geometry.mjs';
 import { ENGINES, engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../engine-switch.mjs';
 
 export const SESSION_DEFAULT_LABEL = 'One session';
-/** "One conversation" (mode `shared`) is offered but not selectable until its runtime exists (Task 65). Task 66 flips
- *  this one switch, which the toolbar's How menu and the inspector's segment both read. */
-export const SESSION_SHARED_SELECTABLE = false;
+/** "One conversation" (mode `shared`) is selectable: Task 65 built its runtime, Task 66 turned this one switch on, which
+ *  the toolbar's How menu, the inspector's segment and the run-start notice read. */
+export const SESSION_SHARED_SELECTABLE = true;
 const FLOW_IN_CLOSURE = new Set(['and', 'or', 'combine']);   // task and end never ride inside a session
 const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const text = (v) => (typeof v === 'string' && v.trim() ? v : null);
@@ -308,6 +308,14 @@ export function sessionNotes(spec, { engine = 'claude', verified = SESSION_SUBAG
     if ((live || mode === 'shared') && m.asks) add('info', 'asks', `${m.label} asks you questions: the session waits for your answers.`);
     if (live && s.hostModel && !m.model) add('info', 'inherits-host-model', `${m.label} has no model of its own, so it runs on the main agent's model (${s.hostModel}).`);
     if (live && s.hostEffort && !m.effort) add('info', 'inherits-host-model', `${m.label} has no effort of its own, so it runs at the main agent's effort (${s.hostEffort}).`);
+  }
+  // Task 66 (04's reviewer rule for `shared`): a reviewer that is a turn of the implementer's own conversation reads its
+  // reasoning. One note per verifier, naming the code step nearest before it.
+  if (mode === 'shared') {
+    steps.forEach((m, i) => {
+      const coder = m.runnerType === 'verifier' ? steps.slice(0, i).findLast((x) => x.sideEffect === 'code') : null;
+      if (coder) add('warn', 'shared-not-independent', `In one conversation ${m.label} sees ${coder.label}'s reasoning, so the review is not independent.`);
+    });
   }
   if (mode === 'shared' && (s.hostModel || s.hostEffort)) add('warn', 'shared-ignores', 'One conversation has no main agent: the main-agent model and effort are not used.');
   return notes;

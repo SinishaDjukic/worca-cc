@@ -210,21 +210,26 @@ export function formatSessionsReport(report, { color = (n, s) => s, labelOf: nam
     const e = s.engine;
     const lines = [];
     const how = s.mode === 'separate' ? `separate sessions${s.modeReason ? ` — ${reasonText(s.modeReason)}` : ''}` : (SESSION_MODE_WORDS[s.mode] ?? s.mode ?? 'mode unknown');
-    const host2 = s.mode === 'separate' || s.mode == null ? '' : ` · main agent ${s.hostModel || 'default model'}`;   // no open read: no host to name
+    // No open read: no host to name; one conversation has no main agent (Task 66).
+    const host2 = s.mode === 'separate' || s.mode == null || s.mode === 'shared' ? '' : ` · main agent ${s.hostModel || 'default model'}`;
     lines.push(color('bold', `Session ${s.sid} · ${s.label || 'One session'} · ${how}${e ? ` · ${engineLabel(e)}` : ''}${host2}`));
-    const host = s.hostSessionId ? `host ${s.hostSessionId} (epoch ${s.hostEpoch})` : 'no host session';
+    // One conversation names its conversation and counts no dispatch or rotation: it has neither (Task 66).
+    const conv = s.mode === 'shared';
+    const host = s.hostSessionId ? `${conv ? 'conversation' : 'host'} ${s.hostSessionId} (epoch ${s.hostEpoch})` : conv ? 'no conversation' : 'no host session';
     // A session separate from the start never had a host: every restore writes a resume or restart for it (the live lines
     // drop them, correction 42), so its report counts and lists none.
     const never = s.mode === 'separate' && s.hostSessionId == null && !(s.turns > 0);
     const steps = finite(s.costUsd) ? Math.max(0, s.costUsd - (finite(s.hostOverheadUsd) ? s.hostOverheadUsd : 0)) : null;
-    const cost = finite(s.costUsd) && engineReportsCost(e) ? `${sessionUsd(e, s.costUsd)} (steps ${sessionUsd(e, steps)}, hand-offs ${finite(s.hostOverheadUsd) ? sessionUsd(e, s.hostOverheadUsd) : 'unknown'})`
-      : (s.turns ?? 0) > 0 ? 'cost unknown' : 'no host turn';   // a separate session's steps book on their own rows
+    const split = s.mode === 'shared' ? '' : ` (steps ${sessionUsd(e, steps)}, hand-offs ${finite(s.hostOverheadUsd) ? sessionUsd(e, s.hostOverheadUsd) : 'unknown'})`;
+    const cost = finite(s.costUsd) && engineReportsCost(e) ? `${sessionUsd(e, s.costUsd)}${split}`
+      : (s.turns ?? 0) > 0 ? 'cost unknown' : conv ? 'no turn' : 'no host turn';   // a separate session's steps book on their own rows
     const ok = s.reconcile ? s.reconcile.ok : s.reconciled;  // null: nothing was checked (an unreadable trace, no valid line)
     // The tab's words (correction 50): nothing compared is not "reconciled" — a session with no host turn, or an engine
-    // that reports no cost (its figures are tokens only).
+    // that reports no cost (its figures are tokens only). One conversation's turns list no tokens (Task 66): not checked.
     const rec = ok === false ? color('yellow', 'not reconciled') : ok == null || !((s.turns ?? 0) > 0) ? 'not checked'
-      : !engineReportsCost(e) ? 'tokens only' : 'reconciled';
-    lines.push(`  ${host} · ${plural(s.turns ?? 0, 'turn')} · ${plural(s.dispatches ?? 0, 'dispatch', 'dispatches')} · ${plural(s.rotations ?? 0, 'rotation')} · ${plural(never ? 0 : s.restarts ?? 0, 'restart')} · ${cost} · ${rec}`);
+      : !engineReportsCost(e) ? (conv ? 'not checked' : 'tokens only') : 'reconciled';
+    const counts = conv ? '' : ` · ${plural(s.dispatches ?? 0, 'dispatch', 'dispatches')} · ${plural(s.rotations ?? 0, 'rotation')}`;
+    lines.push(`  ${host} · ${plural(s.turns ?? 0, 'turn')}${counts} · ${plural(never ? 0 : s.restarts ?? 0, 'restart')} · ${cost} · ${rec}`);
     const rows = Array.isArray(s.turnRows) ? s.turnRows : [];
     if (rows.length) {
       lines.push(color('gray', cols(SESSION_COLS.map(([h]) => h)).replace(/\s+$/, '')));

@@ -9,8 +9,8 @@ and cost, exactly as it would on its own.
 
 **Sub-agents on Claude are not on yet.** Claude Code sessions run their steps as sub-agents only after the owner has
 run the Phase 0 spikes against the real CLI and the S7b go/no-go (the reference pipeline run with and without a
-session, compared for quality) has passed. Until the owner flips that gate, every session on Claude runs as separate
-sessions, and the run says so. The mock engine (`--mock`, the Mock switch) runs sessions as sub-agents today, with the
+session, compared for quality) has passed. Until the owner flips that gate, every Sub-agents session on Claude runs as
+separate sessions, and the run says so (One conversation needs no sub-agents). The mock engine (`--mock`, the Mock switch) runs sessions as sub-agents today, with the
 flag on.
 
 ## What a session is
@@ -32,7 +32,7 @@ session.
 | Mode | What happens | When |
 |---|---|---|
 | Sub-agents (`subagents`, the default) | One harness session hosts the steps. For each step, Worca sends one turn (`--resume`) that tells the main agent to dispatch exactly one sub-agent; the sub-agent gets the step's own system prompt and brief, byte for byte, its model, effort and tools. The main agent does no work itself. | The engine has sub-agents, its gate is open, the Labs flag is on, and (on Claude) the CLI is at least 2.1.281 and supports `--forward-subagent-text` |
-| One conversation (`shared`) | The steps run as consecutive turns of one conversation, so each step sees what the steps before it said. A reviewer then reads the implementer's reasoning. | Chosen per session in its settings. Not available yet: until its runtime is built, such a session runs as separate sessions |
+| One conversation (`shared`) | The steps run as consecutive turns of one conversation (`--resume`), so each step sees what the steps before it said and did. There is no main agent: each turn is the step itself, with its own model, effort and tools, its role and task in the turn's message. A reviewer then reads the implementer's reasoning, so its review is not independent (the inspector warns). The conversation never rotates. | Chosen per session in its settings (How it runs › One conversation). It needs only the Labs flag: every engine can resume a session |
 | Separate sessions | Every step starts its own harness session, exactly as without a session. The tray is drawn dashed and says why. | Anything else: the flag is off, the engine has no sub-agents, the gate is closed, the CLI is too old, the steps use different model endpoints, or the kill switch is set |
 
 A step's ×N task slices always run outside the session, one harness session each, and so does a role review. A session
@@ -48,6 +48,8 @@ Troubleshooting). Worca promises nothing about the harness beyond this: the step
 | Copilot CLI | Separate sessions until S10 passes | Reports no cost: tokens only, cost blank |
 | OpenCode | Separate sessions until S10 passes | A sub-agent's steps only after the turn |
 | Cursor, Gemini CLI, Goose, Qwen Code | Separate sessions | No sub-agents |
+
+With the Labs flag on, a session set to One conversation runs as one conversation on every engine in this table.
 
 ## Turning it on
 
@@ -71,6 +73,8 @@ Troubleshooting). Worca promises nothing about the harness beyond this: the step
   validator names the rule a selection breaks.
 - ×N task slices and role reviews run outside the session (one harness session each); the run-start notice names the
   step whose tasks or reviews do.
+- One conversation has no main agent, so the three limits below are the sub-agents mode's only: each of its turns is
+  the step's own spawn with the step's own flags, and the conversation never rotates.
 - Every host turn runs with `--max-turns 4` and, when the run has a cost cap, `--max-budget-usd` set to what is left of
   it (left off when the step runs on the CLI's default model, or a model of the turn has a cost override or a custom
   endpoint: the CLI meters at list price, Worca's books would not). A turn stopped there checks the run's cap: a reached cap pauses
@@ -89,6 +93,9 @@ A session is not topology: `TOPOLOGY_CONFIG` (`src/shared/graph/isomorphic.mjs`)
 Auto run matches a saved template that has sessions, the template is reused and its sessions run as written.
 
 ## What you see
+
+A session in One conversation has no main agent and no hand-offs, so none of the places below names either for it; its
+Sessions card names the conversation's id.
 
 - **The run monitor's tray.** A header over the session's cards: its status, engine and mode, the step running now, and
   at Expert `turn N · time · cost`. Its tooltip tells the whole story, including `incl. $x hand-offs` and any restart.
@@ -109,7 +116,8 @@ Auto run matches a saved template that has sessions, the template is reused and 
   (open, a switch to separate sessions, dispatch, rotate, restart, resume, a failed dispatch, close) next to its step
   lines.
 - **Run telemetry** (its own Labs flag, [run-telemetry.md](run-telemetry.md)): one `host` record per booked host turn. A
-  turn cut by a pause or a crash and booked after the resume gets none. It never replaces the trace.
+  turn cut by a pause or a crash and booked after the resume gets none, and so does every turn of One conversation (it
+  has no main agent). It never replaces the trace.
 
 ## The session trace
 
@@ -158,10 +166,10 @@ session and the sessions to the run.
 
 | Source (`costSource`) | Where the figure comes from |
 |---|---|
-| `harness` | Δ of the harness's cumulative cost (Claude Code, Codex, OpenCode) |
+| `harness` | The harness's own figure: Δ of the running total it reports (Claude Code, Goose), or, in One conversation on Codex and OpenCode, the turn's own cost |
 | `bridge` | The cost Worca's model bridge reported for the turn |
 | `hook` | The sub-agent's own cost from the sub-agent hooks |
-| `estimate` | A cut turn's tokens priced at their models, when no later turn of the same host session can carry its spend |
+| `estimate` | A cut turn's tokens priced at their models, when no later turn of the same host session can carry its spend; in One conversation also a turn whose result came without its figure on Codex or OpenCode |
 | `none` | An engine without cost (Copilot): blank, never $0.00 |
 
 - **A cut turn.** A process killed after the sub-agent spent money but before its result: the next turn of the same
@@ -169,6 +177,15 @@ session and the sessions to the run.
   its own `cost` record with `carriedBy` (the turn that carried it); the rest is the current step's. When no later turn
   of that host session can carry it (a rotation, a restart, an engine switch, the session's close), the cut turn is
   booked at once as an `estimate`, its `cost` record marked `cut`.
+- **One conversation.** No main agent, so no hand-off: all of a turn's cost is its step's (`hostOverheadUsd` is 0 and
+  there is no **Session hand-offs** line). On Claude Code and Goose it is the Δ of the conversation's running total; on
+  Codex and OpenCode, whose result is the turn's own cost, that figure. A cost override on the step's model prices the
+  turn from its own usage, as it prices the step without a session (on Goose, whose usage is the session's sum, a
+  per-Mtok price cannot be applied, and the run log says so). A cut turn, or a result without its figure, that its usage
+  cannot price books nothing: the row stays blank, never $0.00. A step on a bridged model is booked at what its upstream
+  reported, a stopped turn too, and a result of a turn that never ran (a refusal before the CLI starts, the answer to a
+  lost conversation) books nothing. With no hook, and a step usage that leaves out what its
+  investigators spent, its turns are checked only per conversation: the bookings against the running total.
 - **Checks.** After every turn: the hook figure against the booked step cost within `max($0.001, 2%)`, and the step's
   own token estimate within `max($0.01, 15%)`. Per host session (on rotate, restart and close): the bookings against
   the harness's own total within `max($0.001, 2%)`. A mismatch is shown and audited once; it never changes a booking.
