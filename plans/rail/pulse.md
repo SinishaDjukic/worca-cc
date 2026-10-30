@@ -4,7 +4,9 @@ Status: concept, prototype only (`prototype/pulse.html`). No product code. Date:
 Builds on [`plans/notification-hub-design.md`](../notification-hub-design.md) (Pulse Center, 22 Oct): its rule, event
 catalogue, data model and phases stand. This spec redraws it in the Rail rules
 ([`docs/design-system.md`](../../docs/design-system.md) › Worca Rail) and adds **usage limits**: session and weekly
-limit notifications, and the usage rings on the avatar, for Claude, OpenAI and Gemini.
+limit notifications, the usage rings on the avatar, the account menu's **Usage and costs** side menu, and what Worca
+does when a run would start near a limit, for every harness and provider Worca runs on (Claude, OpenAI and Gemini
+among them).
 
 ## 1. What changes for a person
 
@@ -13,7 +15,9 @@ limit notifications, and the usage rings on the avatar, for Claude, OpenAI and G
 | Activity popover (live state), Schedules' notification log, desktop alerts, chat notices and toasts, each with its own switches | One hub, **Pulse**, under one top-bar button: **Now** (live state, today's Activity) and **Updates** (what happened, stored, read and cleared) |
 | Desktop switches in Settings › General › Alerts, chat switches in Settings › Chat | One page, **Settings › Notifications**: one row per group, one sentence per row |
 | A usage limit is known only when a run hits it and pauses | Usage is visible before it stops anything: **rings on the avatar**, a **Limits** row in Now when one is near, and an update when it crosses the warning line, is reached or resets |
-| The avatar ring shows spend against a budget | The avatar shows every window that can stop a run: **session**, **week**, and **spend** when a budget is set |
+| The avatar ring shows spend against a budget | The avatar shows every window that can stop a run: **session**, the **long window** (week, day or month), and **spend** when a budget has a limit; each ring shades along its arc |
+| The account menu opens on the spend card | The menu keeps its rows; the spend card moves into one row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
+| A run starts and pauses at the limit | Before it starts, New run says the limit is near and offers a harness with room or a start after the reset; slices and scheduled runs follow a setting |
 
 ## 2. The rule that places everything
 
@@ -80,70 +84,125 @@ Two sections, one rail. Every choice is a **picker in its sentence** (Rail: neve
 | Runs | needs_you, cost_cap, failed, paused, done, resumed | Needs you and problems | Desktop and chat |
 | Schedules | missed, late, skipped, self_paused, ended, completed | Needs you and problems | Desktop and chat |
 | Pull requests | fix_started, published, needs_person (watched PRs) | Needs you | Desktop and chat |
-| **Usage and spend** (new) | usage.near, usage.reached, usage.reset, budget.threshold, budget.exceeded | Needs you and problems | Desktop and chat |
+| **Usage and spend** (new) | usage.near, usage.reached, usage.reset, usage.moved, usage.held, budget.threshold, budget.exceeded | Needs you and problems | Desktop and chat |
 | Away mode | started, ended | Everything | Chat |
 | Projects | clone, sync, scan | Needs you and problems | Pulse only |
 
 - Usage and spend has one more picker in its sentence: `warn at [80% ▾]` (70, 80, 90%). It sets the line for the
-  rings' amber, the Limits row in Now and the `usage.near` update.
+  rings' amber, the Limits row in Now, the `usage.near` update and what "near" means below.
 
-## 4. Usage: session and week, three providers
+**When a limit is near** (the last section): what a start does when its harness is at or over the warning line (§4.5).
+| Row | Sentence | Choices (default first) |
+|---|---|---|
+| You start it | `New run and Resume near a limit [suggest one with room ▾]` | suggest one with room · pick one with room · start after the reset · start as chosen |
+| Worca starts it | `A slice or scheduled run near a limit [moves to one with room ▾]` | moves to one with room (else waits) · waits for the reset · starts anyway |
+
+## 4. Usage: any harness, any window
 
 ### 4.1 The windows
-| Provider (harness) | Short window, "Session" | Long window, "Week" | Where Worca reads it |
+Usage is read for anything a run can spend against: a harness's own sign-in, or a provider through the bridge
+(`docs/models.md`). Each has at most two windows: a **short** one (the session) and a **long** one (a week, or a day or
+a month where that is the only one).
+
+| Harness or provider | Short window | Long window | Where Worca reads it |
 |---|---|---|---|
-| Claude (Claude Code) | 5-hour session | weekly (all models; Opus weekly when the plan has one) | the rate-limit figures the harness reports with each turn |
-| OpenAI (Codex) | 5-hour | weekly | the rate-limit figures Codex reports with each turn |
-| Gemini (Gemini CLI) | none | **daily** requests (shown as "Day") | the requests Worca counted today against the plan's daily quota |
+| Claude Code (Claude) | 5-hour session | week (all models; Opus week when the plan has one) | the rate-limit figures Claude Code reports with each turn |
+| Codex (OpenAI) | 5-hour | week | the rate-limit figures Codex reports with each turn |
+| Copilot (GitHub) | none | month: premium requests | the requests Worca counts (it already pins them *Free* and counts them) |
+| Cursor | none | month: requests, where the plan has a cap | not reported today: "Not reported by Cursor" |
+| Gemini (Google, through the bridge) | none | day: requests on a free tier | the requests Worca counts against the tier's daily quota |
+| OpenRouter free models | none | day: free requests | the count the spend card shows today ("Free requests today") |
+| An API key (any vendor) | none | none: billed per token | the spend and its budget are its limit |
 
-To check before building: which harness versions report the figures (Claude Code, Codex), and whether Gemini exposes
-its quota or Worca must count. Where a provider reports nothing, its ring is not drawn and the card says
-"Not reported by Gemini CLI" (never a made-up figure).
-
-Figures are as fresh as the last turn that used the provider; the card says `as of 14:28`. A provider no run has used
-in its window is not shown (quiet until needed).
+To check before building: which harness versions report the figures (Claude Code, Codex), and each quota Worca has to
+count itself. Where nothing is reported, the side menu says so and draws no ring (never a made-up figure). Figures are
+as fresh as the last turn that used the harness (`as of 14:28`). A harness no run has used in its window is not shown
+(quiet until needed); there is no fixed list of three.
 
 ### 4.2 The rings on the avatar
 - The account corner keeps its place (sidebar foot; the rail shows the avatar alone). Around the avatar, concentric
-  rings, outside in: **Session**, **Week**, **Spend** (only when a budget is set). At most three.
-- Each ring shows its **tightest provider** (the highest share). Neutral `--ink-2` under the warning line, amber at or
-  over it, red and full when reached (a reached limit is never hidden, as a blocked budget today).
-- A ring a provider does not report (Gemini's session) is simply not drawn by that provider; if no provider in use has
-  a session window, the session ring is not drawn.
-- The avatar's tooltip says it in words, one line per ring:
-  `Session 86% · Claude · resets 16:40` / `Week 41% · Claude · resets Mon 09:00` / `Spend $42 of $100 this month`.
+  rings, outside in: **Session**, the **long window**, **Spend** (only when a budget has a limit). At most three.
+- Each ring shows its **tightest harness** (the highest share): with Claude Code at 48% and Codex at 12%, the session
+  ring shows 48%.
+- **Each ring shades along its arc**: `--ink-2` at the start, `--amber` at the warning line, `--red` at the limit. It
+  shows how far it has filled, so the colours it reaches say how close it is; a ring under the line never reaches
+  amber. Used up, it is full and solid red (a reached limit is never hidden). The track is `--line-2`. Never green
+  (green is done) and never violet. The same ring, smaller, leads each row of the side menu and the menu row.
+- A ring no harness in use reports is not drawn (with only Gemini in use there is no session ring).
+- The avatar's tooltip says it in words, one line per ring, naming the window:
+  `Session 86% · Claude Code · resets 16:40` / `Day 84% · Gemini · resets 02:00` / `Spend $92 of $100 in October`.
 
-### 4.3 The usage card (account menu)
-The menu's first card, replacing the spend card and keeping its spend row:
-- One block per provider in use: name and plan (`Claude · Max`), `as of 14:28`; then one row per window: a mini ring,
-  the share (`86%`, amber or red text with the `-strong` inks when near or reached), and `resets 16:40`.
-- Gemini's row reads `Day · 120 of 1,000 requests · resets 02:00`.
-- Spend row as today (`$42 of $100 this month`).
-- Every row's tooltip names its source (`Reported by Claude Code at 14:28`).
+### 4.3 The account menu and its Usage and costs side menu
+The account menu stays as it is today (`#acct-menu`: Interface mode, Settings, Away, Keep awake, Appearance). Only its
+first card changes: the spend card becomes one row, the way Interface mode is one row.
+- **Usage and costs ›**: the small ring of the tightest window, the label, its share as the value (`86%`, or `Reached`;
+  the spend when no limit is reported), the chevron. Tooltip: `Closest to its limit: Session 86% · Claude Code · resets 16:40`.
+- It opens a **side menu** beside the menu, as Interface mode does (`side-flyout.mjs`, mode `beside`). On a narrow
+  screen it opens in the menu's place, with a row back (`‹ Account`).
+- The side menu, top to bottom:
+  - **Limits**: one block per harness in use: its name, then vendor and plan (`Claude · Max`), and `as of 14:28`; one
+    row per window: the small ring, the window (Session, Week, Day, Month), the share or the count (`48%`,
+    `212 of 300`, amber or red text with the `-strong` inks), and `resets 16:40`. An API key reads `Billed per token: no
+    session or weekly limit`. Each row's tooltip names its source (`Reported by Claude Code at 14:28`).
+  - **The spend card**, unchanged (`renderSpendCard`): `Spend this week`, Spent and Saved, or Limit and Spent with its
+    ring; **Details** opens Statistics. OpenRouter's free-request row leaves the card: it is a block in Limits now.
+  - **Limit settings**: opens Settings › Notifications.
 
 ### 4.4 Usage notifications
 | Event | When | Severity | Pulse row | Now |
 |---|---|---|---|---|
-| `usage.near` | a provider's session or week crosses the warning line (once per window) | problem | `Claude session at 80% · resets 16:40` | Limits row while it stays over |
-| `usage.reached` | a window is used up; runs on that provider pause | problem | `OpenAI weekly limit reached · 2 runs paused · resets Mon 09:00` | Limits row, red, until reset |
-| `usage.reset` | a window resets after it was reached | info | `OpenAI week reset · 2 runs resumed` | the Limits row goes |
-| `budget.threshold` / `exceeded` | spend crosses the warning line / 100% of a budget | problem | `Spend at 92% of $100 this month` | Limits row |
+| `usage.near` | a harness's window crosses the warning line (once per window) | problem | `Claude Code session at 80% · resets 16:40` | Limits row while it stays over |
+| `usage.reached` | a window is used up; runs on that harness pause | problem | `Codex weekly limit reached · 2 runs paused · resets Mon 09:00` | Limits row, red, until reset |
+| `usage.reset` | a window resets after it was reached | info | `Codex week reset · 2 runs resumed` | the Limits row goes |
+| `usage.moved` | a slice or scheduled run started on another harness because of a limit (§4.5) | info | `Slice 2 of 4 moved to Codex · Rate limiting` | — |
+| `usage.held` | a slice or scheduled run waits for a reset (§4.5) | problem | `Slice 3 of 4 waits for 16:40 · Rate limiting` | Scheduled row says so |
+| `budget.threshold` / `exceeded` | spend crosses the warning line / 100% of a budget | problem | `Spend at 92% of $100 in October` | Limits row |
 
-`usage.reached` is the one notice for the provider; each paused run keeps its own pause notice on its page
+`usage.reached` is the one notice for the harness; each paused run keeps its own pause notice on its page
 (`limit-notice.mjs`, unchanged) and does not raise its own `run.paused` update for the same limit.
 
-### 4.5 Where else a limit shows
-Only where a person is about to spend: **New run** and **Resume** carry one grey line under the start button while
-the provider is near or reached: `Claude's session is at 86% and resets 16:40. This run may pause and resume after.`
-Nowhere else: not in the runs list, not on the run card (its own pause notice covers a run that stopped).
+### 4.5 When a limit is near: warn before it starts, and give the run to a harness with room
+A run that starts on a harness near its limit may pause halfway; the time to say so is before it starts. "Near" is at
+or over the warning line; the setting is Settings › Notifications › When a limit is near (§3.4).
+
+**A harness with room**: set up, able to run every agent of the run's workflow (the engine locks of
+`engine-locks.mjs` hold), and every window under the warning line; the one with the most room first. Each agent runs
+the same tier on it (`model-tiers.mjs`), so the switch keeps the run's shape. With none, the only offer is the reset.
+
+**You start it** (New run, Resume). The sentence that picks the harness stays where it is (`Runs on [Claude Code ▾]`,
+each choice showing its windows: `session 86%, week 52%`). Under it, on the rail with an amber dot, one note, by the
+setting:
+- *suggest one with room* (default): `Claude Code's session is at 86% and resets 16:40. This run may pause before it
+  finishes. Codex has room.` · **Run on Codex** · **Start at 16:40**. Run on Codex changes the sentence; Start at turns
+  the start button into **Start at 16:40** and the note says when, with **Start now instead**.
+- *pick one with room*: the sentence opens on Codex, and a grey line says why: `Worca picked Codex: Claude Code's
+  session is at 86%.` Changing it back is the sentence.
+- *start after the reset*: the start button is **Start at 16:40** from the start, with Start now instead.
+- *start as chosen*: the note alone, no buttons.
+- Used up (red dot): `Codex's weekly limit is used up until Mon 09:00. It starts at Mon 09:00, when that resets.` A
+  harness with room is still offered; Start now is not (it would only pause).
+
+**Worca starts it** (a Shaper slice, a scheduled run): nobody is there to ask, so it follows the setting and says what
+it did:
+- *moves to one with room* (default): it starts on the harness with the most room and **keeps it to the end** (a run
+  never changes harness halfway); an update `usage.moved` says so. With none, it waits.
+- *waits for the reset*: it starts when the window resets; `usage.held`.
+- *starts anyway*: as today; it may pause and resumes by itself after the reset (`limit-resume.mjs`).
+- **Slices**: slice k starts when slice k-1 is done (`shape-it-first.md`); the rule applies at that moment, per slice.
+  Moving a slice does not touch its branch (it still starts from slice k-1's branch). Before it starts, its row in Now ›
+  Scheduled says what it will do: `Will start on Codex: Claude Code's session is at 86%`, or `Waits for 16:40: …`. With
+  **Ask me before each run** on, the plan stop shows the same note as New run.
+- A run already running is not moved; its Running row and the Limits row say it may pause.
 
 ## 5. Page rules
 - Every row reads from one left edge on the 20px rail; the dot is the state (amber needs you or near, red reached,
   peach running, hollow scheduled, blue unread).
 - Unread is a blue dot on the rail, never bold text.
-- Usage never uses violet (violet is merged and AI writing only).
+- Usage rings shade along the arc (`--ink-2`, `--amber` at the warning line, `--red` at the limit); never green or violet.
 - Every control has a tooltip; a disabled one says why.
 - Clear, Mark read and pickers do not confirm; Reset to defaults does (the strip).
+- A limit warns in one place before it is spent: New run and Resume (and the plan stop of a slice that asks first).
+  Nowhere else: not in the runs list, not on the run card (its own pause notice covers a run that stopped).
 - The gate (`prototype/pulse-sweep.mjs`) holds for every case and view at 900 and 375px in both themes.
 
 ## 6. Decided

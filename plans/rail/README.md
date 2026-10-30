@@ -10,7 +10,7 @@ Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (
 | Page | Spec | Status |
 |---|---|---|
 | Run and group page | `spec.md` (review `review.md`, shipping plan `enrollment.md`) | In the prototype |
-| Pulse: the notification hub, usage rings and limit notifications | `pulse.md` | Concept, in the prototype (`pulse.html`) |
+| Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
 
 - `prototype/`: the clickable prototype, every page in one place (`index.html`; the run page is `run-page-model.js`
   and `run-page.js`, the shared styles `rail.css`). Pulse is `pulse.html`, `pulse-model.js`, `pulse.js` and `pulse.css`. The gates: `node plans/rail/prototype/sweep.mjs file://$PWD/plans/rail/prototype/index.html` and

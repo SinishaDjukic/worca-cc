@@ -73,8 +73,10 @@ Pause, Resume, Copy link and Terminal do not confirm.
 - No emoji and no exclamation marks in the interface.
 - In a list you can select, the tick box takes the mark's place on the rail (on hover, focus, or while anything is
   selected; always on a touch screen), so the list keeps one text edge.
-- Usage is rings around the avatar, outside in: session, week, spend (when a budget is set). Each ring shows its
-  tightest provider: neutral, amber at the warning line, red and full when reached. Never violet.
+- Usage is rings around the avatar, outside in: session, the long window (week, day or month), spend (when a budget
+  has a limit). Each ring shows its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at the
+  warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in one
+  place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run and Resume.
 
 ### The gate
 Every Rail page passes its gate (`plans/rail/prototype/sweep.mjs` for the run page, `pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways

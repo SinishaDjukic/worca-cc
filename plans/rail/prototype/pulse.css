@@ -27,41 +27,65 @@
 .pz-pulse-b[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
 .pz-page{padding:24px 24px 40px;min-width:0;max-width:760px;}
 
-/* The account corner: the avatar inside its usage rings, outside in: session, week, spend. */
+/* The account corner: the avatar inside its usage rings, outside in: session, the long window, spend. */
 .pz-acct{display:flex;align-items:center;gap:9px;width:100%;height:50px;padding:0 8px 0 2px;border:0;border-radius:var(--r-sm);
   background:none;color:var(--ink);font-family:inherit;text-align:left;cursor:pointer;}
 .pz-acct:hover,.pz-acct[aria-expanded="true"]{background:var(--field);}
 .pz-acct:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .pz-ava-wrap{position:relative;display:grid;place-items:center;width:44px;height:44px;flex:none;}
-.pz-rings{position:absolute;inset:0;width:44px;height:44px;transform:rotate(-90deg);}
-.pz-rings circle,.pz-mini circle{fill:none;stroke-width:2.5;}
-.pz-rings .trk,.pz-mini .trk{stroke:var(--line-2);}
-.pz-rings .arc,.pz-mini .arc{stroke:var(--ink-2);stroke-linecap:round;transition:stroke-dasharray .4s ease;}
-.pz-rings .arc.is-warn,.pz-mini .arc.is-warn{stroke:var(--amber);}
-.pz-rings .arc.is-over,.pz-mini .arc.is-over{stroke:var(--red);stroke-linecap:butt;}
-.pz-ava{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--line-2);color:var(--ink);font:600 9px/1 var(--sans);letter-spacing:.02em;}
+.pz-ava{position:relative;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--line-2);color:var(--ink);font:600 9px/1 var(--sans);letter-spacing:.02em;}
 .pz-acct-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
 .pz-updown{flex:none;color:var(--ink-3);}
-@media (prefers-reduced-motion: reduce){.pz-rings .arc,.pz-mini .arc{transition:none;}}
 
-/* The account menu opens upward from the corner; its first card is usage. */
-.pz-acct-menu{position:absolute;left:8px;bottom:64px;z-index:45;width:min(312px,calc(100% - 16px));padding:6px;}
-.pz-ucard{display:flex;flex-direction:column;gap:10px;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);}
-.pz-ucap{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
-.pz-ublock{display:flex;flex-direction:column;gap:4px;}
+/* A ring that shades along its arc: --ink-2 at the start, --amber at the warning line (--w), --red at the limit; it
+   shows the first --p percent. Used up: full and solid red. The track is --line-2. Never violet, never green. */
+.pz-gring{--s:18px;--t:2.5px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
+  mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
+.pz-gring::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(var(--ink-2) 0%,var(--amber) calc(var(--w) * 1%),var(--red) 100%);
+  -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}
+.pz-gring.is-over::before{background:var(--red);}
+.pz-ava-wrap .pz-gring{position:absolute;inset:0;margin:auto;}
+.pz-ring-0{--s:44px;} .pz-ring-1{--s:37px;} .pz-ring-2{--s:30px;}
+.pz-mi-ring{--s:16px;--t:2px;}
+
+/* The account menu is Worca's own (#acct-menu, style.css › .acct-menu); here it sits in the mock window, not the viewport.
+   Its side menus open beside it, bottom-aligned; on a narrow screen in its place, with a row back. */
+.pz-app .nav-fly{position:absolute;z-index:45;}
+.pz-app .nav-fly.acct-menu{left:8px;bottom:64px;max-height:none;}
+.pz-fly{left:calc(8px + 258px + 4px);bottom:64px;width:296px;max-height:none;gap:0;padding:6px;}
+.pz-fly.lvl-menu{width:236px;gap:1px;}
+.pz-subback{display:none;}
+.pz-fly .nav-fly-k{color:var(--ink-2);}   /* style.css's --ink-3 caption is under 4.5:1 on the menu */
+.pz-ublocks{display:flex;flex-direction:column;gap:10px;padding:2px 9px 10px;}
+.pz-fly > .msect{position:relative;margin-top:9px;}
+.pz-fly > .msect::before{content:"";position:absolute;top:-5px;left:6px;right:6px;height:1px;background:var(--line);}
+.pz-ublock{display:flex;flex-direction:column;gap:2px;}
 .pz-ublock + .pz-ublock{padding-top:10px;border-top:1px solid var(--line);}
-.pz-uhead{display:flex;align-items:baseline;gap:8px;min-width:0;}
-.pz-uname{font-weight:600;color:var(--ink);}
+.pz-uhead{display:flex;align-items:baseline;gap:8px;min-width:0;min-height:22px;}
+.pz-uname{flex:none;font-weight:600;color:var(--ink);}
 .pz-uplan{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
 .pz-uas{margin-left:auto;flex:none;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
 .pz-urow{display:grid;grid-template-columns:18px 56px minmax(0,1fr) auto;align-items:center;column-gap:8px;min-height:24px;font-size:var(--fs-meta);}
-.pz-mini{width:18px;height:18px;transform:rotate(-90deg);}
 .pz-uk{color:var(--ink-2);}
 .pz-uv{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;}
 .pz-uv.is-warn{color:var(--amber-ink-strong);}
 .pz-uv.is-over{color:var(--red-ink-strong);}
 .pz-ur{color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;}
-.pz-unote{margin:0;padding-left:26px;font-size:var(--fs-meta);color:var(--ink-2);}
+.pz-unote{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+
+/* New run: the task, the sentence that picks the harness, and the advice when that harness is near its limit, on the rail. */
+.pz-newrun{width:min(420px,calc(100% - 16px));max-height:none;}
+.pz-nr{display:flex;flex-direction:column;gap:12px;padding:16px 16px 12px 4px;}
+.pz-nr > :not(.pz-advice){margin-left:var(--edge);}
+.pz-nr-h{margin:0;font:600 var(--fs-section)/1.3 var(--sans);color:var(--ink);}
+.pz-nr-task{min-height:56px;padding:8px 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
+.pz-nr .pz-sentence{margin-block:0;}
+.pz-advice{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);column-gap:var(--gap);align-items:start;}
+.pz-advice .pz-rail{height:20px;}
+.pz-advice-t{margin:0;font-size:var(--fs-meta);line-height:1.5;color:var(--ink-2);}
+.pz-advice-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
 
 /* The popover under the Pulse button: Now and Updates, then the foot. */
 .pz-popover{position:absolute;top:52px;right:8px;z-index:44;display:flex;flex-direction:column;width:min(400px,calc(100% - 16px));max-height:520px;
@@ -163,7 +187,10 @@
   .pz-sv > .btn-quiet{margin-left:-10px;}
   .pz-events{margin-left:var(--edge);}
   .pz-ek{flex-basis:100%;padding-top:8px;}
-  .pz-acct-menu{bottom:64px;}
+  .pz-app .nav-fly.acct-menu,.pz-fly{left:4px;}
+  .pz-fly{width:min(296px,calc(100% - 8px));}
+  .acct-menu.has-sub{display:none;}
+  .pz-subback{display:flex;}
 }
 @media (max-width: 480px){
   .pz-pulse-l,.pz-new-l{display:none;}

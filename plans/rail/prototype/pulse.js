@@ -16,18 +16,32 @@ const ICON = {
   more: '<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle>',
   x: P('M7 7l10 10M17 7 7 17'),
   updown: P('M8 10l4-4 4 4M8 14l4 4 4-4'),
+  chevR: P('M9 6l6 6-6 6'), chevL: P('M15 6l-6 6 6 6'),
+  sliders: P('M4 7.5h9M17 7.5h3M4 16.5h3M11 16.5h9') + '<circle cx="15" cy="7.5" r="2"></circle><circle cx="9" cy="16.5" r="2"></circle>',
+  away: P('M14 2.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z') + P('M13 8l-1.5 5.5') + P('M8.5 12l2-3.2 2.5-.8 2.5 2.5 2.5 1') + P('M11.5 13.5l2.5 3 1 4.5') + P('M11.5 13.5l-1.5 3.5-3 3.5'),
+  cup: P('M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z') + P('M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16') + P('M9 3.5v2.5M12.5 3.5v2.5'),
+  monitor: P('M4 4.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z') + P('M8.5 19.5h7M12 15.5v4'),
+  sun: '<circle cx="12" cy="12" r="4"></circle>' + P('M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4'),
+  moon: P('M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z'),
 };
 const svg = (name, size, cls) => `<svg${cls ? ` class="${cls}"` : ''} width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
 const caseOf = (id) => M.CASES.find((c) => c.id === id);
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);
 function freshSettings(c) {
-  return { desktop: c.desktop, badge: 'needs', warnAt: 80, groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
+  return { desktop: c.desktop, badge: 'needs', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
 }
 // a case starts fresh: nothing from the case before it carries over
-const fresh = (caseId) => ({ caseId, page: 'pulse', tab: 'now', pop: false, popTab: 'now', acct: false, menu: '', show: 'unread', from: 'all',
-  sel: [], read: [], cleared: [], custom: '', confirm: '', toast: '', flash: '', s: freshSettings(caseOf(caseId)) });
+const fresh = (caseId) => ({ caseId, page: 'pulse', tab: 'now', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all',
+  sel: [], read: [], cleared: [], custom: '', confirm: '', toast: '', flash: '', level: 'expert', away: false, keep: true, s: freshSettings(caseOf(caseId)) });
 let ui = fresh('afternoon');
+// Appearance is the viewer's, not the case's: it outlives a case change.
+let appearance = 'system';
+function applyAppearance(m) {
+  appearance = m;
+  if (m === 'system') document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; else document.documentElement.dataset.theme = m;
+  document.querySelectorAll('[data-theme-pick]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.themePick === document.documentElement.dataset.theme)));
+}
 
 const C = () => caseOf(ui.caseId);
 const isUnread = (u) => u.unread && !ui.read.includes(u.id);
@@ -51,18 +65,16 @@ function menu(id, items, align) {
 function picker(id, text, items, tip) {
   return `<span class="pz-pick"><button type="button" class="pd-base is-words" data-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="${ui.menu === id}" title="${esc(tip)}">${esc(text)}${svg('chevron', 12)}</button>${menu(id, items)}</span>`;
 }
-// A ring: a track and an arc filling `pct`; full and square-ended when used up.
-function ringSvg(r, pct, t, size, view) {
-  const c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, pct / 100));
-  return `<circle class="trk" cx="${view / 2}" cy="${view / 2}" r="${r}"></circle><circle class="arc${t ? ' is-' + t : ''}" cx="${view / 2}" cy="${view / 2}" r="${r}" stroke-dasharray="${(f * c).toFixed(2)} ${c.toFixed(2)}"></circle>`;
-}
-const RADII = [20.5, 17, 13.5];
+// A ring that shades along its arc: neutral at the start, amber at the warning line, red at the limit, so how far it
+// has filled shows which colours it has reached. Used up, it is full and solid red (a reached limit is never hidden).
+const gring = (pct, cls, t) => `<span class="pz-gring${cls ? ' ' + cls : ''}${t === 'over' ? ' is-over' : ''}" style="--p:${Math.max(0, Math.min(100, pct))};--w:${ui.s.warnAt}" aria-hidden="true"></span>`;
 function avatar() {
   const rs = M.rings(C(), ui.s.warnAt);
   const tip = rs.length ? rs.map((r) => r.line).join('\n') : 'No usage reported yet';
-  return `<span class="pz-ava-wrap" title="${esc(tip)}"><svg class="pz-rings" viewBox="0 0 44 44" aria-hidden="true">${rs.map((r, i) => ringSvg(RADII[i], r.pct, r.tone, 44, 44)).join('')}</svg><span class="pz-ava">EA</span></span>`;
+  return `<span class="pz-ava-wrap" title="${esc(tip)}">${rs.map((r, i) => gring(r.pct, 'pz-ring-' + i, r.tone)).join('')}<span class="pz-ava">EA</span></span>`;
 }
-const mini = (pct, t) => `<svg class="pz-mini" viewBox="0 0 20 20" aria-hidden="true">${ringSvg(7.5, pct, t, 20, 20)}</svg>`;
+const mini = (pct, t) => gring(pct, 'pz-mini', t);
+const pname = (p) => M.PROVIDER[p].name;
 
 // ---- shell ----
 const NAV = [['runs', 'Runs'], ['chat', 'Chats'], ['clock', 'Schedules'], ['folder', 'Projects']];
@@ -111,8 +123,18 @@ function nowSections(compact) {
   const out = sec('Needs you', c.needs.length, c.needs.map((r, i) => row({ dot: 'is-amber', title: r.title, meta: `${r.project} · ${r.detail}`, time: r.time, key: 'need' + i, tip: 'Opens the run page at what it asks' })).join(''))
     + sec('Limits', lim.length, lim.map((l, i) => row({ dot: l.tone === 'over' ? 'is-red' : 'is-amber', title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens the usage card` })).join(''))
     + sec('Running', c.running.length, c.running.map((r, i) => row({ dot: 'is-peach', title: r.title, meta: `${r.project} · ${r.detail}`, time: r.time, key: 'run' + i, tip: 'Opens the live run' })).join(''))
-    + (compact ? '' : sec('Scheduled', c.scheduled.length, c.scheduled.map((r, i) => row({ dot: 'is-grey-ring', title: r.title, meta: `${r.project} · ${r.detail}`, time: r.time, key: 'sch' + i, tip: 'Opens Schedules with its sheet open' })).join('')));
+    + (compact ? '' : sec('Scheduled', c.scheduled.length, c.scheduled.map((r, i) => row({ dot: 'is-grey-ring', title: r.title, meta: `${r.project} · ${r.slice ? sliceDetail(r) : r.detail}`, time: r.time, key: 'sch' + i, tip: r.slice ? 'Opens the feature: its slices and where each runs' : 'Opens Schedules with its sheet open' })).join('')));
   return out || '<p class="pz-empty">Nothing needs you. Nothing is running.</p>';
+}
+
+// A slice or scheduled run starts with nobody there to ask: what it will do follows Settings › When a limit is near.
+function sliceDetail(r) {
+  const w = ui.s.warnAt, lim = M.near(C(), r.on, w);
+  if (!lim) return `Starts on ${pname(r.on)} when slice 2 is done`;
+  const rm = M.room(C(), w, r.on), why = `${lim.name}'s ${lim.what} is at ${lim.pct}%`;
+  if (ui.s.auto === 'asis') return `Starts on ${lim.name} and may pause: ${why}`;
+  if (ui.s.auto === 'move' && rm.length) return `Will start on ${pname(rm[0])}: ${why}`;
+  return `Waits for ${lim.resets}: ${why}`;
 }
 
 // ---- the popover: a glance at Now and the latest unread updates ----
@@ -128,29 +150,101 @@ function popover() {
   </div>`;
 }
 
-// ---- the account menu: usage first ----
+// ---- the account menu: Worca's own menu (index.html #acct-menu), its spend card moved into Usage and costs ----
+const LEVELS_UI = [['simple', 'Simple', 'The essentials: start runs, answer them, see what shipped'], ['standard', 'Standard', 'Also workflows, schedules and costs'], ['expert', 'Expert', 'Everything: agents, engines, Labs']];
+const cap = (w) => w[0].toUpperCase() + w.slice(1);
 function acctMenu() {
   if (!ui.acct) return '';
+  const c = C(), top = M.rings(c, ui.s.warnAt).sort((a, b) => b.pct - a.pct)[0];
+  const val = top ? (top.pct >= 100 ? 'Reached' : `${top.pct}%`) : c.budget ? M.usd(c.budget.spent) : '';
+  const lvl = LEVELS_UI.find((l) => l[0] === ui.level);
+  const sub = (id) => `data-sub="${id}" aria-haspopup="menu" aria-expanded="${ui.sub === id}"`;
+  return `<div class="menu nav-fly acct-menu${ui.sub ? ' has-sub' : ''}" role="menu" aria-label="Account">
+    <div class="msect" role="group">
+      <button type="button" class="mi menu-item" role="menuitem" ${sub('usage')} title="${esc(top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend')}">${top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic')}<span class="mi-lbl">Usage and costs</span><span class="mi-val">${esc(val)}</span>${svg('chevR', 14, 'mi-chev')}</button>
+    </div>
+    <div class="msect" role="group">
+      <button type="button" class="mi menu-item" role="menuitem" ${sub('lvl')} title="How much of Worca you see">${svg('sliders', 16, 'mi-ic')}<span class="mi-lbl">Interface mode</span><span class="mi-val">${lvl[1]}</span>${svg('chevR', 14, 'mi-chev')}</button>
+      <button type="button" class="mi menu-item" role="menuitem" data-go="settings" title="Settings › Notifications (the only settings page in this prototype)">${svg('gear', 16, 'mi-ic')}<span class="mi-lbl">Settings</span></button>
+    </div>
+    <div class="msect sw-sect" role="group" aria-label="Switches">
+      <button type="button" class="mi menu-item away-item sw-item" role="menuitemcheckbox" aria-checked="${ui.away}" data-state="${ui.away ? 'away' : 'here'}" data-sw="away" title="worca answers waiting run questions for you while you're away.">${svg('away', 16, 'mi-ic')}<span class="mi-lbl">Away</span><span class="switch" aria-hidden="true"></span></button>
+      <button type="button" class="mi menu-item sw-item" role="menuitemcheckbox" aria-checked="${ui.keep}" data-sw="keep" title="Keeps the computer awake while runs are working. The display may still turn off.">${svg('cup', 16, 'mi-ic')}<span class="mi-lbl">Keep awake</span><span class="switch" aria-hidden="true"></span></button>
+    </div>
+    <div class="msect theme-sect" role="group" aria-labelledby="pz-theme-k"><span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => `<button type="button" class="theme-ic${appearance === m ? ' on' : ''}" role="menuitemradio" aria-checked="${appearance === m}" data-appearance="${m}" aria-label="${cap(m)}" title="${cap(m)}">${svg(ic, 14, 'mi-ic')}</button>`).join('')}</div></div>
+  </div>${usageFly()}${lvlFly()}`;
+}
+// The side menus open beside the account menu (side-flyout.mjs 'beside'); on a narrow screen in its place, with a way back.
+const back = `<button type="button" class="mi menu-item pz-subback" role="menuitem" data-sub="" title="Back to the account menu">${svg('chevL', 14, 'mi-chev')}<span class="mi-lbl">Account</span></button>`;
+function usageFly() {
+  if (ui.sub !== 'usage') return '';
   const c = C(), w = ui.s.warnAt;
   const block = (u) => {
     const pr = M.PROVIDER[u.p];
     const rows = u.win.length ? u.win.map((x) => {
       const t = M.tone(x.pct, w);
-      const fig = x.k === 'day' ? `${x.used.toLocaleString('en')} of ${x.of.toLocaleString('en')}` : `${x.pct}%`;
-      const src = x.k === 'day' ? `${x.pct}% · requests Worca counted today against the ${u.plan} plan's daily quota` : `Reported by ${pr.harness} at ${u.asOf}`;
-      return `<div class="pz-urow" title="${esc(src)}">${mini(x.pct, t)}<span class="pz-uk">${M.winWord(x.k)}</span><span class="pz-uv${t ? ' is-' + t : ''}">${x.pct >= 100 ? 'Reached' : fig}</span><span class="pz-ur">resets ${esc(x.resets)}</span></div>`;
-    }).join('') + (u.p === 'gemini' ? `<p class="pz-unote" title="Gemini's limit is per day; there is no session window">No session window</p>` : '')
-      : `<p class="pz-unote" title="An API key is billed per token; the budget below is the limit">No session or weekly limit: billed per token</p>`;
-    return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${pr.name}</span><span class="pz-uplan">${esc(pr.harness)} · ${esc(u.plan)}</span><span class="pz-uas" title="Figures are as fresh as the last turn that used ${pr.name}">as of ${esc(u.asOf)}</span></div>${rows}</div>`;
+      return `<div class="pz-urow" title="${esc(`${M.winWord(x.k)} ${x.pct}% · ${pr.src} at ${u.asOf}`)}">${mini(x.pct, t)}<span class="pz-uk">${M.winWord(x.k)}</span><span class="pz-uv${t ? ' is-' + t : ''}">${x.pct >= 100 ? 'Reached' : M.fig(x)}</span><span class="pz-ur">resets ${esc(x.resets)}</span></div>`;
+    }).join('') : '<p class="pz-unote" title="An API key is billed per token: the spend below is its limit">Billed per token: no session or weekly limit</p>';
+    return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${esc(pr.name)}</span><span class="pz-uplan" title="${esc(`${pr.vendor} · ${u.plan}`)}">${esc(pr.vendor)} · ${esc(u.plan)}</span><span class="pz-uas" title="As fresh as the last turn that used ${esc(pr.name)}">as of ${esc(u.asOf)}</span></div>${rows}</div>`;
   };
-  const spend = c.budget ? (() => { const pct = Math.round((c.budget.spent / c.budget.limit) * 100), t = M.tone(pct, w);
-    return `<div class="pz-ublock"><div class="pz-urow" title="Worca's own budget, set in Costs">${mini(pct, t)}<span class="pz-uk">Spend</span><span class="pz-uv${t ? ' is-' + t : ''}">$${c.budget.spent} of $${c.budget.limit}</span><span class="pz-ur">this month</span></div></div>`; })() : '';
-  return `<div class="menu pz-acct-menu" role="menu">
-    <div class="pz-ucard"><p class="pz-ucap" title="Rings around your avatar, outside in: session, week, spend">Usage</p>${c.usage.map(block).join('')}${spend}</div>
-    <div class="menu-sep" role="separator"></div>
-    <button type="button" class="menu-item" data-go="settings" title="Choose what reaches you and where, and the warning line">Notification settings</button>
-    <button type="button" class="menu-item" aria-disabled="true" title="Away mode is not in this prototype">Away mode</button>
-    <button type="button" class="menu-item" aria-disabled="true" title="Signing out is not in this prototype">Sign out</button>
+  return `<div class="menu nav-fly pz-fly" role="menu" aria-label="Usage and costs">${back}
+    <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
+    <div class="pz-ublocks">${c.usage.map(block).join('')}</div>${spendCard(c)}
+    <div class="msect" role="group"><button type="button" class="mi menu-item" role="menuitem" data-go="settings" title="The warning line, what reaches you, and what Worca does when a limit is near">${svg('gear', 16, 'mi-ic')}<span class="mi-lbl">Limit settings</span></button></div>
+  </div>`;
+}
+// The spend card as account-menu.mjs paints it today (renderSpendCard), with the gradient ring when a budget has a limit.
+function spendCard(c) {
+  const b = c.budget; if (!b) return '';
+  const pct = M.spendPct(b), t = pct == null ? '' : M.tone(pct, ui.s.warnAt);
+  const rows = b.limit ? `<dt>Limit</dt><dd>${M.usd(b.limit)}</dd><dt>Spent</dt><dd class="${t}">${M.usd(b.spent)}</dd>` : `<dt>Spent</dt><dd>${M.usd(b.spent)}</dd><dt>Saved</dt><dd class="pos">${M.usd(b.saved)}</dd>`;
+  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. Claude Code client-side estimate, not authoritative billing"><div class="mc-head">${pct != null ? mini(pct, t) : ''}<span class="mc-title">Spend ${b.period}</span><button type="button" class="btn btn-sm mc-btn" role="menuitem" data-details title="Opens Statistics">Details</button></div><dl class="mc-rows">${rows}</dl></div>`;
+}
+function lvlFly() {
+  if (ui.sub !== 'lvl') return '';
+  return `<div class="menu nav-fly lvl-menu pz-fly" role="menu" aria-label="Interface mode">${back}<span class="nav-fly-k">Interface mode</span>${LEVELS_UI.map(([id, t, h]) => `<button type="button" class="menu-item" role="menuitemradio" aria-checked="${ui.level === id}" data-level="${id}" title="${esc(h)}"><span class="mi-l">${t}</span></button>`).join('')}</div>`;
+}
+
+// ---- New run: where a limit is about to be spent, the one place it warns before starting ----
+const MINE = [
+  { id: 'suggest', text: 'suggest one with room', help: 'New run and Resume say which limit is near and offer a harness with room, or a start after the reset; you choose' },
+  { id: 'move', text: 'pick one with room', help: 'Worca picks the harness with the most room and says why; you can change it back in the sentence' },
+  { id: 'wait', text: 'start after the reset', help: 'The start button becomes Start at, the time the limit resets' },
+  { id: 'asis', text: 'start as chosen', help: 'Only a line saying it may pause' }];
+const AUTO = [
+  { id: 'move', text: 'moves to one with room', help: 'It starts on the harness with the most room and keeps it to the end; with none, it waits for the reset. Each move or wait is an update in Pulse' },
+  { id: 'wait', text: 'waits for the reset', help: 'It starts when the limit resets; an update in Pulse says so' },
+  { id: 'asis', text: 'starts anyway', help: 'It starts as planned and may pause; it resumes by itself after the reset' }];
+function openNewRun() {
+  const c = C(), w = ui.s.warnAt, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w), rm = M.room(c, w, first);
+  ui.nr = { on: first, wait: false, moved: '' };
+  if (lim && ui.s.mine === 'move' && rm.length) ui.nr = { on: rm[0], wait: false, moved: `Worca picked ${pname(rm[0])}: ${lim.name}'s ${lim.what} is at ${lim.pct}%` };
+  else if (lim && ui.s.mine === 'wait') ui.nr.wait = true;
+}
+function newRun() {
+  if (!ui.nr) return '';
+  const c = C(), w = ui.s.warnAt, h = ui.nr.on, lim = M.near(c, h, w), rm = M.room(c, w, h);
+  const hint = (p) => { const u = c.usage.find((x) => x.p === p); return u.win.length ? u.win.map((x) => `${M.winWord(x.k).toLowerCase()} ${x.pct}%`).join(', ') : 'billed per token'; };
+  const items = c.usage.filter((u) => M.PROVIDER[u.p].runs).map((u) => ({ id: u.p, text: pname(u.p), hint: hint(u.p), checked: u.p === h, help: `${M.PROVIDER[u.p].vendor} · ${u.plan}` }));
+  const reached = !!lim && lim.pct >= 100, waits = !!lim && (ui.nr.wait || reached);
+  const note = (dot, text, acts) => `<div class="pz-advice"><span class="pz-rail">${dot ? `<span class="status-dot ${dot}" aria-hidden="true"></span>` : ''}</span><div class="pz-advice-b"><p class="pz-advice-t">${esc(text)}</p>${acts ? `<div class="pz-advice-acts">${acts}</div>` : ''}</div></div>`;
+  let advice = '';
+  if (ui.nr.moved) advice = note('', `${ui.nr.moved}.`);
+  else if (lim) {
+    const say = reached ? `${lim.name}'s ${lim.what} is used up until ${lim.resets}.` : `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This run may pause before it finishes.`;
+    const other = rm.length ? `<button type="button" class="btn btn-sm" data-nr-use="${rm[0]}" title="${esc(`${pname(rm[0])} has room: ${hint(rm[0])}. Each agent runs the same tier on it`)}">Run on ${esc(pname(rm[0]))}</button>` : '';
+    if (waits) advice = note(reached ? 'is-red' : 'is-amber', `${say} It starts at ${lim.resets}, when that resets.${rm.length ? '' : ' No other harness has room.'}`,
+      other + (reached ? '' : '<button type="button" class="btn btn-sm btn-quiet" data-nr-now title="Start now: it may pause and resume by itself after the reset">Start now instead</button>'));
+    else if (ui.s.mine === 'asis') advice = note('is-amber', say);
+    else advice = note('is-amber', say + (rm.length ? ` ${pname(rm[0])} has room.` : ' No other harness has room.'), other + `<button type="button" class="btn btn-sm btn-quiet" data-nr-wait title="Schedules it for when the limit resets">Start at ${esc(lim.resets)}</button>`);
+  }
+  const start = waits ? `Start at ${lim.resets}` : 'Start run';
+  return `<div class="pz-popover pz-newrun" role="dialog" aria-label="New run">
+    <div class="pz-nr"><h2 class="pz-nr-h">New run</h2>
+      <div class="pz-nr-task" title="The task (filled in for this prototype)">Add rate limiting to the public API</div>
+      <p class="pz-sentence">Runs on ${picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used')} in web-app</p>
+      ${advice}</div>
+    <div class="pz-pfoot"><button type="button" class="btn btn-sm btn-quiet" data-nr-cancel title="Closes without starting">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-nr-start title="${waits ? `Schedules it for ${esc(lim.resets)}` : `Starts it now on ${esc(pname(h))}`}">${esc(start)}</button></div>
   </div>`;
 }
 
@@ -215,18 +309,23 @@ function settingsPage() {
     return `<div class="pz-grow${open ? ' is-open' : ''}"><div class="pz-srow"><span class="pz-sk">${esc(g.name)}</span><span class="pz-sv"><span class="pz-sentence">Tell me about ${picker('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} on ${picker('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`)}${warn}</span>
       <button type="button" class="btn btn-sm btn-quiet" data-custom="${g.id}" aria-expanded="${open}" title="${open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ')}">${open ? 'Done' : nEx ? `Customise · ${nEx}` : 'Customise'}</button></span></div>${events}</div>`;
   }).join('');
+  const limitSec = `<section class="pz-sec"><h3 class="pz-h" title="Near: at or over the warning line set in Usage and spend (${s.warnAt}%)">When a limit is near</h3><div class="pz-list">
+    <div class="pz-srow"><span class="pz-sk">You start it</span><span class="pz-sv"><span class="pz-sentence">New run and Resume near a limit ${picker('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}</span></span></div>
+    <div class="pz-srow"><span class="pz-sk">Worca starts it</span><span class="pz-sv"><span class="pz-sentence">A slice or scheduled run near a limit ${picker('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit')}</span></span></div>
+  </div></section>`;
   const confirm = ui.confirm === 'reset' ? `<div class="rc-confirm pz-strip"><span class="rc-confirm-t">Reset every group to its defaults? Your channels stay as they are.</span><span class="rc-confirm-acts"><button type="button" class="btn btn-sm btn-quiet" data-confirm="no">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-confirm="yes">Reset</button></span></div>` : '';
   return `<div class="pz-head"><h1 class="pz-title">Notifications</h1></div>
     <p class="pz-meta"><span>Pulse keeps everything; these choices say what else reaches you.</span></p>
     ${confirm}
     <section class="pz-sec"><h3 class="pz-h">How Worca reaches you</h3><div class="pz-list">${channels}</div></section>
-    <section class="pz-sec"><div class="pz-h-row"><h3 class="pz-h">What reaches you</h3><button type="button" class="btn btn-sm btn-quiet" data-reset title="Every group back to its defaults; asks first">Reset to defaults</button></div><div class="pz-list">${groups}</div></section>`;
+    <section class="pz-sec"><div class="pz-h-row"><h3 class="pz-h">What reaches you</h3><button type="button" class="btn btn-sm btn-quiet" data-reset title="Every group back to its defaults; asks first">Reset to defaults</button></div><div class="pz-list">${groups}</div></section>
+    ${limitSec}`;
 }
 
 // ---- render ----
 function render() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
-  document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${ui.page === 'settings' ? settingsPage() : pulsePage()}</main></div>${popover()}${acctMenu()}</div>`;
+  document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${ui.page === 'settings' ? settingsPage() : pulsePage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
   const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? '<button type="button" class="pz-undo" data-undo title="Puts them back in the list">Undo</button>' : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   fitMenus();
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
@@ -253,6 +352,9 @@ function pick(id, v) {
   else if (id === 'more') { if (v === 'settings') { ui.page = 'settings'; } else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.sel = []; toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids); } }
   else if (id === 'desktop') { s.desktop = v; toast(v === 'on' ? 'Desktop notifications on' : 'Desktop notifications off'); }
   else if (id === 'badge') s.badge = v;
+  else if (id === 'mine') s.mine = v;
+  else if (id === 'auto') s.auto = v;
+  else if (id === 'nr-on') ui.nr = { on: v, wait: false, moved: '' };
   else if (id === 'warn') { s.warnAt = +v; toast(`Warning line at ${v}%: rings, Now and updates follow it`); }
   else if (id.startsWith('lvl:')) s.groups[id.slice(4)].level = v;
   else if (id.startsWith('whr:')) s.groups[id.slice(4)].where = v;
@@ -273,9 +375,20 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-menu]'))) { ui.menu = ui.menu === el.dataset.menu ? '' : el.dataset.menu; render(); return; }
   if (!tg('.pz-pick')) ui.menu = '';
   // an open popover or account menu closes on a click outside it, and that click does nothing else
-  if ((ui.pop || ui.acct) && !tg('.pz-popover, .pz-acct-menu, [data-pop], [data-acct]')) { ui.pop = false; ui.acct = false; render(); return; }
-  if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; render(); return; }
-  if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.pop = false; render(); return; }
+  if ((ui.pop || ui.acct || ui.nr) && !tg('.pz-popover, .nav-fly, [data-pop], [data-acct], [data-newrun]')) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; render(); return; }
+  if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; render(); return; }
+  if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; render(); return; }
+  if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; render(); return; }
+  if ((el = tg('[data-level]'))) { ui.level = el.dataset.level; ui.sub = ''; toast(`Interface mode: ${cap(ui.level)}`); render(); return; }
+  if ((el = tg('[data-sw]'))) { const k = el.dataset.sw; ui[k] = !ui[k]; render(); return; }
+  if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
+  if ((el = tg('[data-details]'))) { toast('Opens Statistics (not in this prototype)'); render(); return; }
+  if ((el = tg('[data-newrun]'))) { if (ui.nr) ui.nr = null; else openNewRun(); ui.pop = false; ui.acct = false; render(); return; }
+  if ((el = tg('[data-nr-use]'))) { ui.nr = { on: el.dataset.nrUse, wait: false, moved: '' }; render(); return; }
+  if ((el = tg('[data-nr-wait]'))) { ui.nr.wait = true; render(); return; }
+  if ((el = tg('[data-nr-now]'))) { ui.nr.wait = false; render(); return; }
+  if ((el = tg('[data-nr-cancel]'))) { ui.nr = null; render(); return; }
+  if ((el = tg('[data-nr-start]'))) { toast(`${el.textContent === 'Start run' ? `Started on ${pname(ui.nr.on)}` : `Scheduled: ${el.textContent.replace('Start at', 'starts at')}`} (not in this prototype)`); ui.nr = null; render(); return; }
   if ((el = tg('[data-ptab]'))) { ui.popTab = el.dataset.ptab; render(); return; }
   if ((el = tg('[data-tab]'))) { ui.tab = el.dataset.tab; ui.sel = []; render(); return; }
   if ((el = tg('[data-go]'))) { ui.page = el.dataset.go; ui.pop = false; ui.acct = false; if (el.dataset.go === 'pulse') ui.tab = ui.popTab; render(); return; }
@@ -293,7 +406,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-open]'))) {
     const key = el.dataset.open, u = C().updates.find((x) => x.id === key);
     if (u) { if (!ui.read.includes(u.id)) ui.read = ui.read.concat(u.id); toast(`Opens ${u.to} (not in this prototype)`); }
-    else if (key.startsWith('lim')) { ui.pop = false; ui.acct = true; }
+    else if (key.startsWith('lim')) { ui.pop = false; ui.acct = true; ui.sub = 'usage'; }
     else toast(`${el.title} (not in this prototype)`);
     render(); return;
   }
@@ -304,22 +417,15 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-test]'))) { toast('Test notification sent'); render(); return; }
   if ((el = tg('[data-how]'))) { toast(el.title); render(); return; }
   if ((el = tg('[data-manage]'))) { toast('Opens Settings › Chat (not in this prototype)'); render(); return; }
-  if ((el = tg('[data-newrun]'))) {
-    const lim = limitsNow().find((l) => !/^Spend/.test(l.title));
-    toast(lim ? `New run would note: ${lim.title}. ${lim.tone === 'over' ? 'Runs on it pause until it resets.' : 'This run may pause and resume after.'}` : 'Opens New run (not in this prototype)'); render(); return;
-  }
   if (hadMenu && !ui.menu) render();
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (ui.menu) ui.menu = ''; else if (ui.pop || ui.acct) { ui.pop = false; ui.acct = false; } else if (ui.confirm) ui.confirm = ''; else if (ui.sel.length) ui.sel = []; else return;
+  if (ui.menu) ui.menu = ''; else if (ui.sub) ui.sub = ''; else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else if (ui.sel.length) ui.sel = []; else return;
   render();
 });
 const caseSel = document.getElementById('case');
 caseSel.innerHTML = M.CASES.map((c) => `<option value="${c.id}">${esc(c.label)}</option>`).join('');
 caseSel.addEventListener('change', () => { ui = fresh(caseSel.value); render(); });
-document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => {
-  document.documentElement.dataset.theme = b.dataset.themePick;
-  document.querySelectorAll('[data-theme-pick]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-}));
+document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
 render();
