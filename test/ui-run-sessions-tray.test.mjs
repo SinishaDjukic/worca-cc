@@ -95,15 +95,17 @@ test('v2 — the run page: state frames carry sessionHosts, the monitor wires th
   np.paintGraphFor(host, r.stepper, decor, []);
   assert.ok(host.classList.contains('gv-sess-links'), 'paintGraphFor passes onSessionClick');
   host.querySelector('.gv-sess-head').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));   // never throws
-  assert.deepEqual(np.openSessionLog(host, decor, SID), { executionId: 'x:n_review:1', nodeId: 'n_review' }, 'the member running now');
+  // Task 60: the header opens the whole session, whichever member runs now (it used to pick one member's log).
+  const T = { session: SID, sessionMembers: ['n_impl', 'n_review'], label: 'One session · Implementation + Review' };
+  assert.deepEqual(np.openSessionLog(host, decor, SID), T, 'the member running now: the whole session');
   const queued = { ...decor, run: { ...decor.run, steps: [...st.steps, { key: 'x:n_impl:2', executionId: 'x:n_impl:2', nodeId: 'n_impl', ordinal: 2, status: 'running', queued: true }] } };
-  assert.deepEqual(np.openSessionLog(host, queued, SID), { executionId: 'x:n_review:1', nodeId: 'n_review' }, 'v5: a member queued after it (the newest row) is not the one running');
+  assert.deepEqual(np.openSessionLog(host, queued, SID), T, 'a member queued: the whole session');
   // A fix loop: Implementation cycle 2 failed after Review cycle 1; nothing runs now.
   const loop = { ...decor, run: { ...decor.run, steps: [...st.steps.slice(0, 2), { ...st.steps[2], status: 'done' }, { key: 'x:n_impl:2', executionId: 'x:n_impl:2', nodeId: 'n_impl', ordinal: 2, status: 'error' }] },
     sessions: { [SID]: { ...decor.sessions[SID], current: null } } };
-  assert.deepEqual(np.openSessionLog(host, loop, SID), { executionId: 'x:n_impl:2', nodeId: 'n_impl' }, 'else the member execution that ran last');
+  assert.deepEqual(np.openSessionLog(host, loop, SID), T, 'nothing running: the whole session');
   const early = { ...loop, sessions: { [SID]: { ...decor.sessions[SID], current: { nodeId: 'n_review', label: 'Review' } } }, run: { ...loop.run, steps: st.steps.slice(0, 2) } };
-  assert.deepEqual(np.openSessionLog(host, early, SID), { executionId: 'x:n_impl:1', nodeId: 'n_impl' }, 'a member active before its first row: the last that ran');
+  assert.deepEqual(np.openSessionLog(host, early, SID), T, 'a member active before its first row: the whole session');
   const none = { ...loop, run: { ...loop.run, steps: [st.steps[0]] } };
   assert.equal(np.openSessionLog(host, none, SID), null, 'a session that never ran opens nothing');
   assert.equal(np.openSessionLog(host, decor, 's_zzzzzzzz'), null);
@@ -131,7 +133,7 @@ test('v3 — a session whose members never ran is no tab stop and takes no click
   assert.doesNotMatch(css, /\.gv-sess-links \.gv-sess-head\{[^}]*cursor/, 'v5: an inert header keeps the default cursor');
 });
 
-test('v3 — the run page: a header click opens the drawer on the member; a ×N member opens its node-wide log', async () => {
+test('v3 — the run page: a header click opens the drawer on the whole session (Task 60), a ×N member\'s slices included', async () => {
   const ctx = await bootApp();
   const { window } = ctx;
   const np = window.__np;
@@ -146,13 +148,17 @@ test('v3 — the run page: a header click opens the drawer on the member; a ×N 
   screen.querySelector('.rd-graph .gv-sess-head').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const drawer = screen.querySelector('.rd-sec[data-sec="workflow"] .wf-log-drawer');
   assert.equal(drawer.hidden, false, 'the wiring reaches openSessionLog (a throw inside a listener only prints in jsdom)');
-  assert.equal(drawer.querySelector('.wf-log-title').textContent, 'Review');
-  assert.deepEqual(r.logDrawer, { node: 'n_review', execution: 'x:n_review:1' });
+  assert.equal(drawer.querySelector('.wf-log-title').textContent, 'One session · Implementation + Review');
+  const T = { session: SID, sessionMembers: ['n_impl', 'n_review'], label: 'One session · Implementation + Review' };
+  assert.deepEqual(r.logDrawer, T);
   const slice = { key: 'x:n_review:1:t2', executionId: 'x:n_review:1:t2', nodeId: 'n_review', kind: 'task', parentExecutionId: 'x:n_review:1', status: 'start', activeMs: 0 };
   ctx.dispatch({ type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: SESSION_STEPPER, runEngine: 'claude', steps: [...st.steps, slice], active: st.active, sessionHosts: st.sessionHosts });
   await ctx.settle(4);
   screen.querySelector('.rd-graph .gv-sess-head').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  assert.deepEqual(r.logDrawer, { node: 'n_review', execution: '' }, 'a ×N member: every slice, not the newest one');
+  assert.deepEqual(r.logDrawer, T, 'a ×N member: the same session filter (its slices carry its node id)');
+  ctx.dispatch({ type: 'log', runId: 'r1', ts: Date.now(), source: 'reviewer', level: 'info', text: 'slice t2 line', nodeId: 'n_review', executionId: 'x:n_review:1:t2' });
+  await ctx.settle(2);
+  assert.ok([...drawer.querySelectorAll('.log-line')].some((n) => n.textContent.includes('slice t2 line')), 'a slice\'s own line is in the session\'s log');
 });
 
 // ── v4: History links a header only where it can open a log ──
