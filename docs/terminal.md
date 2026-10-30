@@ -107,7 +107,8 @@ running command and, if that command is still running 3 seconds later, kills eve
 terminal started, including jobs you put in the background with `&`. There is no foreground job to aim
 at, so the first Ctrl+C also reaches those background jobs. A stop through the API is recorded with who
 stopped it. In a shell without blocks (sh, fish, cmd.exe), Worca cannot tell when a command ends, so
-the stop API sends Ctrl+C only and never escalates.
+the stop API sends Ctrl+C only and never escalates. On Windows over pipes there is no Ctrl+C to
+send: Stop ends the command after the 3 seconds (see Windows).
 
 To end a terminal, type `exit` or press its tab's **×**; `DELETE /api/terminal/sessions/<id>` closes it from outside. The stop
 and close APIs always work, even when the terminal is turned off. Discarding a run's checkout closes
@@ -167,7 +168,8 @@ scope, or a member of its workspace); another project's folder is refused until 
   Ask already saw the end while it waited. Ask can also list and read the commands you ran here
   (`list_blocks`), so "why did this fail?" works on your own commands.
 - **Environment.** Ask's shells start from a cleaned environment: `PATH`, `HOME`, locale, proxy and CA
-  variables and `SSH_AUTH_SOCK`, and nothing else from the server. No model, GitHub or server tokens. Your
+  variables and `SSH_AUTH_SOCK`, and nothing else from the server. On Windows they also keep the system variables (`SystemRoot`,
+  `USERPROFILE`, `TEMP`, …). No model, GitHub or server tokens. Your
   shell rc files (`.bashrc`, `.zshrc`, `.zshenv`) are not loaded, so tools put on `PATH` only there (nvm,
   pyenv) come from the server's own `PATH` instead. Pagers are off and git never asks for a password.
 - **The command check.** Before anything is typed, Worca refuses a command that names its own files or
@@ -188,8 +190,8 @@ scope, or a member of its workspace); another project's folder is refused until 
   run's audit.
 - **Where it is off.** On a hosted Worca, agent mode follows the terminal: off unless
   `WORCA_TERMINAL_REMOTE=1`. With agent isolation on, agent mode is off: the
-  shell would run as the server user, not the agent user. Only bash and zsh record commands, so a terminal
-  with another shell (sh, fish, cmd.exe) cannot run Ask's commands.
+  shell would run as the server user, not the agent user. Only bash and zsh record commands (Git Bash on
+  Windows), so a terminal with another shell (sh, fish, cmd.exe) cannot run Ask's commands.
 
 ## Without node-pty
 
@@ -206,7 +208,23 @@ state and prints the `chmod +x` fix.
 
 ## Windows
 
-The shell is `cmd.exe` (`ComSpec`): a working terminal without blocks. Stop sends Ctrl+C only.
+Terminals run **Git Bash** (from Git for Windows), with the same command blocks, Stop and Ask
+commands as bash elsewhere. Worca looks for `bash.exe` in this order:
+
+1. `WORCA_TERMINAL_SHELL` — the full path of a shell (read when a terminal opens; set it before starting Worca)
+2. `CLAUDE_CODE_GIT_BASH_PATH` (the variable Claude Code reads)
+3. `%ProgramFiles%\Git\bin\bash.exe`, `%ProgramFiles(x86)%\Git\bin\bash.exe`, `%LOCALAPPDATA%\Programs\Git\bin\bash.exe`
+4. `bin\bash.exe` of the Git install whose `git.exe` is first on `PATH`
+
+WSL's `bash.exe` (in `C:\Windows\System32`, or the WindowsApps alias) is never used: it runs Linux on another
+filesystem. When no Git Bash is found the shell is `cmd.exe` (`ComSpec`): a working terminal without
+blocks, where Ask cannot run commands; Ask's error and `worca doctor` say how to fix it. Folders are
+recorded as Windows paths (`C:/Users/…`), and Ask's command check reads the session folder in each
+form a command may use (`C:\…`, `C:/…`, `/c/…`).
+
+Stop: under node-pty (ConPTY) it sends Ctrl+C. Over plain pipes Windows has no Ctrl+C for another
+process, so the command is ended 3 seconds later (`taskkill /T /F` on its processes); the shell keeps
+running. Closing a terminal ends Git Bash and everything it started.
 
 ## Troubleshooting
 
@@ -219,3 +237,4 @@ The shell is `cmd.exe` (`ComSpec`): a working terminal without blocks. Stop send
 | 409 "At most 16 terminals" | Close one. |
 | 403 `TERMINAL_CROSS_ORIGIN` | The page's address differs from the `Host` the server received, for example a proxy that rewrites `Host`. Forward `Host` unchanged. |
 | `bash: !": event not found` | Bash history expansion, as in any bash: quote `!` with single quotes. |
+| "no Git Bash was found" (Windows) | Install Git for Windows, or set `WORCA_TERMINAL_SHELL` to the full path of `bash.exe` and restart Worca. `worca doctor` prints the shell a terminal would use. |

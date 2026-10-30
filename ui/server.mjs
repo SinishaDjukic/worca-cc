@@ -238,7 +238,7 @@ import { getSession as getTerminalSession, listBlocks as listTerminalBlocks, cou
   listAudit as listTerminalAudit, listBranchWorktrees, findBranchWorktree, markInterruptedSessions, listRecentBlocks as listRecentTerminalBlocks } from '../src/core/terminal/store.mjs';
 import { createAskCommands, terminalEventPrompt, terminalNoticeText } from '../src/core/ask/commands.mjs';
 import { openBranchWorktree, removeBranchWorktree, releaseBranchWorktree, enforceBranchWorktreeCap, sweepBranchWorktrees } from '../src/core/terminal/worktrees.mjs';
-import { pidAlive, killDescendants } from '../src/core/terminal/pty.mjs';
+import { pidAlive, killDescendants, endWinTerminal, winShellPidSync, winReapable } from '../src/core/terminal/pty.mjs';
 import { createTerminalFanout } from '../src/core/terminal/fanout.mjs';
 import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
@@ -18954,8 +18954,21 @@ export async function bootMaintenance({ log } = {}) {
   // interrupted, and sweep the branch worktrees under the keep policy and cap. Before Actions: its keep
   // policy and checkout cap read the terminal pid file, which must not still hold the last server's rows.
   try {
-    const orphans = await reapOrphans({ pidFile: terminalPidFileNow(),
-      kill: (pid) => { killDescendants(pid); try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
+    const termPidFile = terminalPidFileNow();
+    // Windows has no process groups: before a taskkill /T, check each pid is still the shell its row recorded and
+    // started before the file was last written (reapOrphans rewrites the file, so read both first).
+    let termRows = []; let termSince = NaN;
+    if (process.platform === 'win32') {
+      try { termSince = fs.statSync(termPidFile).mtimeMs; termRows = JSON.parse(fs.readFileSync(termPidFile, 'utf8')); } catch { /* no file */ }
+    }
+    const shellOf = (pid) => (Array.isArray(termRows) && termRows.find((r) => r?.pid === pid)?.shell) || null;
+    const orphans = await reapOrphans({ pidFile: termPidFile,
+      ...(process.platform === 'win32' ? { isGroupLeader: async (pid) => winReapable(pid, { shell: shellOf(pid), sinceMs: termSince }) } : {}),
+      kill: (pid) => {
+        // Windows: Git Bash's commands from MSYS's table, then the launcher, its real shell and the rest of its tree.
+        if (process.platform === 'win32') { endWinTerminal(pid, shellOf(pid), winShellPidSync(pid) || pid); return; }
+        killDescendants(pid); try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ }
+      } });
     // reapOrphans keeps rows stamped with this pid; a restarted container reuses the old server's pid, so
     // such rows would keep their runs "busy" for ever. Nothing is live here yet: rewrite the file.
     terminals.writePidFile();
