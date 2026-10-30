@@ -2793,7 +2793,7 @@ const PROGRESS_DONE = { run: { ...CMP_RUN }, title: CMP.title, done: 6, total: 6
   minutesLeft: null, rows: [{ exampleId: 1, name: 'Bulk invoice export', label: null, dots: ['passed', 'passed', 'passed'], summary: 'Done · 3 of 3 passed' }] };
 /** The progress page of test 7 (done), its Compare, example 1 side by side, a try's whole result; `holdPost` holds POST /runs,
  *  `holdResult` the whole-result reads. */
-async function bootCompare({ holdPost = false, holdResult = false } = {}) {
+async function bootCompare({ holdPost = false, holdResult = false, sbs = SBS, changes = null } = {}) {
   const log = [];
   const held = [];
   const booted = await bootVersions({ extra: (url, init) => {
@@ -2807,7 +2807,8 @@ async function bootCompare({ holdPost = false, holdResult = false } = {}) {
     if (rest === '/runs/7') return okJson(PROGRESS_DONE);
     if (rest === '/runs/8') return okJson({ ...PROGRESS_DONE, run: { ...CMP_RUN, id: 8, status: 'running', exampleIds: [1], tries: 6 }, done: 3 });
     if (rest === '/runs/7/compare') return okJson(CMP);
-    if (rest === '/runs/7/examples/1') return okJson(SBS);
+    if (rest === '/runs/7/examples/1') return okJson(sbs);
+    if (changes && (x = /^\/runs\/7\/tries\/(\d+)\/changes$/.exec(rest))) return changes(Number(x[1]), held);
     if ((x = /^\/runs\/7\/tries\/(\d+)\/result$/.exec(rest))) {
       const reply = { ok: true, status: 200, json: async () => ({ name: 'brief.md', text: `All of try ${x[1]}.` }) };
       return holdResult ? new Promise((r) => held.push(() => r(reply))) : Promise.resolve(reply);
@@ -2891,4 +2892,31 @@ test('Side by side (Task 14 fix 4): a whole result that lands after another try 
   held[0]();
   await tick(6);
   assert.equal(w.document.querySelector('#mk-dialog'), null, 'try 2 shows now: no dialog of try 1');
+});
+
+test('Side by side (Task 13 step 0): a retried diff read is the only read: a repaint while it is out sends no second GET', async () => {
+  const PROJ_TRY = (id) => ({ ...SBS_TRY(id), text: null, name: null, project: { changes: { counts: { added: 0, changed: 1, removed: 0 }, total: 1,
+    files: [{ status: 'changed', path: 'a.mjs', added: 1, removed: 1 }] } } });
+  const sbs = { ...SBS, tries: [{ n: 1, a: PROJ_TRY(1), b: PROJ_TRY(4) }], start: { ref: 'main', short: 'abc1234', at: '2026-10-28T09:00:00Z' } };
+  const seen = [];
+  const { window: w, page, log, held } = await bootCompare({ sbs, changes: (tryId, h) => {
+    seen.push(tryId);
+    const n = seen.filter((t) => t === tryId).length;
+    if (n === 1) return okJson({ error: 'Not read.' }, 500);                 // the card's first read fails
+    return new Promise((r) => h.push(() => r({ ok: true, status: 200, json: async () => ({ patch: 'diff --git a/a.mjs b/a.mjs\n', cut: false }) })));
+  } });
+  clickEl(w, page.querySelector('.wft-crow2:not(.is-head) .wft-ex-open'));
+  await tick(8);
+  const reads = (id) => gets(log).filter((p) => p === `/runs/7/tries/${id}/changes`).length;
+  assert.deepEqual([reads(1), reads(4)], [1, 1], 'one read per try; both failed');
+  clickEl(w, page.querySelector('[aria-label="Read all the changes, v1"]'));   // the retry: GET held
+  await tick(2);
+  assert.equal(reads(1), 2);
+  clickEl(w, page.querySelector('.wft-fbtn'));                                 // pickFile repaints while the retry is out
+  await tick(4);
+  assert.equal(reads(1), 2, 'the repaint sends no second GET for the try being read');
+  assert.equal(reads(4), 1, 'a failed read is not tried again by a repaint alone');
+  held[0]();
+  await tick(8);
+  assert.ok(w.document.querySelector('#mk-dialog .wft-whole'), 'the retry opens the changes');
 });

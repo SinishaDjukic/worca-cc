@@ -3736,7 +3736,9 @@ function wftDetailActions() {
       let patch = cache.get(tryId);
       if (typeof patch !== 'string') {
         if (patch === null) cache.delete(tryId);                       // Fix 1: a failed read is tried again, here and in the card
-        const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/changes`);
+        wftPatchLoading.add(tryId);                                    // a repaint meanwhile (empty cache) sends no second GET
+        const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/changes`);   // never rejects
+        wftPatchLoading.delete(tryId);
         if (!r.ok) {
           if (wftWorkflowId() === id && !cache.has(tryId)) cache.set(tryId, null);
           notify({ tone: 'err', title: CHANGES_NOT_READ_TITLE, detail: r.error });
