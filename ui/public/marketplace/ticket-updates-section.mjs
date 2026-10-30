@@ -150,7 +150,60 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     return b;
   }
 
-  // ---- the rules (Task 14b adds Add a project rule, the new row and remove) ----
+  // ---- the rules ----
+  const rowOf = (r) => (refs.listEl ? refs.listEl.querySelector(`[data-uid="${r.uid}"]`) : null);
+  const option = (value, text, { name = '', placeholder = false } = {}) => {
+    const o = mk('option', '', text);
+    o.value = value;
+    if (name) o.dataset.name = name;
+    if (placeholder) { o.disabled = true; o.selected = true; }
+    return o;
+  };
+  async function fillPicker(sel) {
+    const taken = new Set(rules.map((x) => x.project).filter(Boolean));
+    // "OPS · Operations": key, middle dot, name, as the boards (decided 2026-10-30)
+    const choices = (src) => src.filter((p) => !taken.has(p.value))
+      .map((p) => option(p.value, p.label && p.label !== p.value ? `${p.value} · ${p.label}` : p.value, { name: p.label }));
+    // §10 C: an option's text is not announced when it changes, so the loading and failure lines are also said (aria-live)
+    const live = sel.parentElement ? sel.parentElement.querySelector('.mk-tu-plive') : null;
+    const say = (t) => { if (live) live.textContent = t; };
+    delete sel.dataset.failed;
+    if (projects.length) { say(''); sel.replaceChildren(option('', TU_COPY.project, { placeholder: true }), ...choices(projects)); return; }
+    const getting = `Getting ${profileLabel()}'s projects…`;
+    sel.replaceChildren(option('', getting, { placeholder: true }));
+    say(getting);
+    try {
+      const all = (await projectList()).map((p) => ({ value: String(p.value), label: String(p.name || p.label || p.value) }));
+      if (destroyed || !refs.listEl || !refs.listEl.contains(sel)) return;
+      sel.replaceChildren(option('', TU_COPY.project, { placeholder: true }), ...choices(all));
+      say('');
+    } catch (e) {
+      if (destroyed || !refs.listEl || !refs.listEl.contains(sel)) return;
+      const msg = (e && e.message) || FALLBACK_ERROR;
+      sel.replaceChildren(option('', msg, { placeholder: true }));
+      say(msg);
+      sel.dataset.failed = '1';   // asked again when the select takes focus
+    }
+  }
+  function projectPicker(r) {
+    const wrap = mk('div', 'select-wrap mk-tu-pwrap');
+    const sel = mk('select', 'select mk-tu-project');
+    sel.setAttribute('aria-label', TU_COPY.project);
+    sel.addEventListener('change', () => {
+      const o = sel.selectedOptions[0];
+      if (!o || !o.value) return;
+      r.project = o.value;
+      r.label = o.dataset.name || o.value;
+      replaceRow(r, true);
+      refreshRules();
+    });
+    sel.addEventListener('focus', () => { if (sel.dataset.failed === '1') void fillPicker(sel); });
+    const live = mk('span', 'sr-only mk-tu-plive');
+    live.setAttribute('aria-live', 'polite');
+    wrap.append(sel, live);
+    void fillPicker(sel);
+    return wrap;
+  }
   function ruleRow(r) {
     const row = mk('div', 'mk-tu-rule');
     row.setAttribute('role', 'listitem');
@@ -159,20 +212,71 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     if (r.project === '') {
       row.classList.add('mk-tu-all');
       name.append(mk('span', 'mk-tu-rname', TU_COPY.all), mk('span', 'hint mk-tu-rsub', TU_COPY.allSub));
-    } else {
+    } else if (r.project) {
       row.dataset.project = r.project;
       name.append(mk('span', 'mk-mono mk-tu-key', r.project));
       if (r.label && r.label !== r.project) name.append(mk('span', 'mk-tu-rname', r.label));
+    } else {
+      row.classList.add('mk-tu-newrow');
+      name.append(projectPicker(r));
     }
-    const ms = createMoveSelect({ doc, project: r.project || '', value: r.target, general: !r.project, host: popHost || doc.body,
+    const ms = createMoveSelect({ doc, project: r.project || '', value: r.target, general: !r.project,
+      label: r.project === null ? TU_COPY.newRuleLabel : null, host: popHost || doc.body,
       loadStatuses: () => statuses(r.project),
       onChange: (t) => { r.target = t; } });
     selects.set(r.uid, ms);
     row.append(name, ms.el);
+    if (r.project !== '') {
+      const rm = mk('button', 'btn btn-quiet btn-icon mk-tu-remove');
+      rm.type = 'button';
+      rm.setAttribute('aria-label', r.project ? `Remove the ${r.project} rule` : 'Remove the new rule');
+      rm.append(icon(doc, 'x', 16));
+      rm.addEventListener('click', () => removeRule(r));
+      row.append(rm);
+    }
     return row;
   }
-  /** After the projects you work on change. Task 14b gives it Add a project rule's state and the new row's picker. */
-  function refreshRules() {}
+  function replaceRow(r, focusMove) {
+    const old = rowOf(r);
+    selects.get(r.uid)?.destroy();
+    const fresh = ruleRow(r);
+    old.replaceWith(fresh);
+    if (focusMove) fresh.querySelector('.mk-tu-move').focus();
+  }
+  function removeRule(r) {
+    const prev = rules[rules.indexOf(r) - 1];
+    rules = rules.filter((x) => x !== r);
+    selects.get(r.uid)?.destroy();
+    selects.delete(r.uid);
+    rowOf(r)?.remove();
+    refreshRules();
+    if (!refs.addRule.disabled) { refs.addRule.focus(); return; }
+    // S11: Add a project rule may be disabled now; the focus never falls to <body>, where Tab would leave the sheet
+    // (manage-sheet.mjs's focus trap): the row above takes it, its remove button, else its move select (All projects)
+    const above = prev ? rowOf(prev) : null;
+    (above?.querySelector('.mk-tu-remove') || above?.querySelector('.mk-tu-move') || refs.addProjects).focus();
+  }
+  function addRule() {
+    const pending = rules.find((x) => x.project === null);
+    if (pending) { rowOf(pending)?.querySelector('.mk-tu-project')?.focus(); return; }
+    const r = { uid: uid(), project: null, label: '', target: { kind: 'category', value: 'done' } };   // board 4: starts at Any Done status
+    rules.push(r);
+    refs.listEl.append(ruleRow(r));
+    refreshRules();
+    rowOf(r).querySelector('.mk-tu-project').focus();
+  }
+  function refreshRules() {
+    if (!refs.addRule) return;
+    const taken = new Set(rules.map((x) => x.project).filter(Boolean));
+    const hasNew = rules.some((x) => x.project === null);
+    const full = !hasNew && projects.length > 0 && projects.every((p) => taken.has(p.value));
+    refs.addRule.disabled = full;
+    refs.addHint.hidden = !full;
+    if (full) refs.addRule.setAttribute('aria-describedby', refs.addHint.id); else refs.addRule.removeAttribute('aria-describedby');
+    refs.newHint.hidden = !hasNew;
+    const sel = refs.listEl.querySelector('.mk-tu-project');
+    if (sel) void fillPicker(sel);
+  }
   function rulesBlock() {
     const b = mk('div', 'mk-tu-block mk-tu-rulesblock');
     const hid = `mk-tu-rh-${sid}`;
@@ -182,7 +286,14 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     refs.listEl.setAttribute('role', 'list');
     refs.listEl.setAttribute('aria-labelledby', hid);
     for (const r of rules) refs.listEl.append(ruleRow(r));
-    b.append(h, refs.listEl, mk('p', 'hint mk-tu-hint', TU_COPY.hint));
+    refs.addRule = mk('button', 'btn btn-sm mk-tu-add-rule', TU_COPY.addRule);
+    refs.addRule.type = 'button';
+    refs.addRule.addEventListener('click', addRule);
+    refs.addHint = mk('p', 'hint mk-tu-add-hint', TU_COPY.allHaveRules);
+    refs.addHint.id = `mk-tu-ah-${sid}`;
+    refs.newHint = mk('p', 'hint mk-tu-newrow-hint', TU_COPY.newRowHint);
+    b.append(h, refs.listEl, refs.addRule, refs.addHint, refs.newHint, mk('p', 'hint mk-tu-hint', TU_COPY.hint));
+    refreshRules();
     return b;
   }
 

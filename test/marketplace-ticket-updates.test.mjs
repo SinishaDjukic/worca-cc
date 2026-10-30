@@ -144,3 +144,103 @@ test("picking a status: the project's statuses load once per opening; the body t
   m.tu.markSaved(body);
   assert.equal(m.tu.dirty(), false);
 });
+
+test('board 1: each project rule has its remove button, All projects none; then Add a project rule', async () => {
+  const m = await section();
+  assert.deepEqual(m.rows().map((r) => r.querySelector('.mk-tu-remove')?.getAttribute('aria-label') ?? null),
+    [null, 'Remove the SHOP rule', 'Remove the CRM rule']);
+  assert.equal(m.$('.mk-tu-add-rule').textContent, 'Add a project rule');
+  assert.ok(m.$('.mk-tu-add-rule').compareDocumentPosition(m.$('.mk-tu-hint')) & 4, 'the hint comes last');
+});
+
+test('board 4: Add a project rule: a Project select of the projects you work on without a rule; the move starts at Any Done status', async () => {
+  const m = await section();
+  assert.deepEqual([m.$('.mk-tu-add-rule').disabled, m.$('.mk-tu-add-hint').hidden, m.$('.mk-tu-add-hint').textContent],
+    [true, false, 'Every project you work on has a rule.'], 'SHOP and CRM have rules');
+  assert.equal(m.$('.mk-tu-add-rule').getAttribute('aria-describedby'), m.$('.mk-tu-add-hint').id);
+  m.$('.mk-tu-add-projects').click();
+  await settle();
+  m.pick('OPS');
+  m.doc.querySelector('.mk-tu-done').click();
+  assert.deepEqual([m.$('.mk-tu-add-rule').disabled, m.$('.mk-tu-add-hint').hidden], [false, true]);
+  m.$('.mk-tu-add-rule').click();
+  await settle();
+  const row = m.rows().at(-1);
+  const sel = row.querySelector('select.mk-tu-project');
+  assert.equal(m.doc.activeElement, sel);
+  assert.equal(sel.getAttribute('aria-label'), 'Project');
+  assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent, o.disabled]), [['', 'Project', true], ['OPS', 'OPS · Operations', false]],
+    'key, middle dot, name, as the boards (decided 2026-10-30)');
+  assert.equal(row.querySelector('.mk-tu-move').textContent, 'Any Done status');
+  assert.equal(m.doc.getElementById(row.querySelector('.mk-tu-move').getAttribute('aria-labelledby')).textContent, 'New rule: move to');
+  assert.equal(row.querySelector('.mk-tu-remove').getAttribute('aria-label'), 'Remove the new rule');
+  assert.equal(m.$('.mk-tu-newrow-hint').hidden, false);
+  assert.equal(m.$('.mk-tu-newrow-hint').textContent, 'A project rule lists that project\'s own statuses. The project list is the projects you work on (all projects when none are picked).');
+  assert.deepEqual(m.tu.body().rules.length, 3, 'a row without a project is not sent');
+  sel.value = 'OPS';
+  sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+  const ops = m.rowFor('OPS');
+  assert.deepEqual([ops.querySelector('.mk-tu-key').textContent, ops.querySelector('.mk-tu-rname').textContent, ops.querySelector('.mk-tu-move').textContent],
+    ['OPS', 'Operations', 'Any Done status']);
+  assert.equal(m.doc.activeElement, ops.querySelector('.mk-tu-move'));
+  assert.deepEqual(m.tu.body().rules.at(-1), { project: 'OPS', label: 'Operations', moment: 'finished', target: { kind: 'category', value: 'done' } });
+  assert.equal(m.$('.mk-tu-newrow-hint').hidden, true);
+});
+
+test('none picked: the new row lists all projects (loaded once), minus those with a rule', async () => {
+  const m = await section(tuRoutes(tuGet({ saved: true, rules: [ALL_DONE, SHOP_RULE] })));
+  m.$('.mk-tu-add-rule').click();
+  const sel = m.rows().at(-1).querySelector('select.mk-tu-project');
+  const live = m.rows().at(-1).querySelector('.mk-tu-plive');
+  assert.deepEqual([...sel.options].map((o) => o.textContent), ["Getting Acme's projects…"]);
+  assert.deepEqual([live.getAttribute('aria-live'), live.textContent], ['polite', "Getting Acme's projects…"], '§10 C: said, not only shown');
+  await settle();
+  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'CRM', 'OPS', 'SUP', 'MKT', 'DATA']);
+  assert.equal(live.textContent, '');
+  assert.equal(m.calls.filter((c) => c[1] === `${TU}/projects${TU_Q}`).length, 1);
+});
+
+test('removing a rule: the row goes, focus to Add a project rule', async () => {
+  const m = await section();
+  m.rowFor('CRM').querySelector('.mk-tu-remove').click();
+  assert.equal(m.rowFor('CRM'), undefined);
+  assert.equal(m.doc.activeElement, m.$('.mk-tu-add-rule'));
+  assert.deepEqual(m.tu.body().rules.map((r) => r.project), ['', 'SHOP']);
+});
+
+test('S11: removing a rule while Add a project rule stays disabled moves the focus to the row above, never to <body>', async () => {
+  // OPS is no longer a project you work on, but its rule stays (D2); SHOP, the only pick, has a rule, so Add stays disabled
+  const m = await section(tuRoutes(tuGet({ saved: true, projects: [{ value: 'SHOP', label: 'Shop' }],
+    rules: [ALL_DONE, SHOP_RULE, { project: 'OPS', label: 'Operations', moment: 'finished', target: { kind: 'none' } }] })));
+  assert.equal(m.$('.mk-tu-add-rule').disabled, true);
+  m.rowFor('OPS').querySelector('.mk-tu-remove').click();
+  assert.equal(m.$('.mk-tu-add-rule').disabled, true);
+  assert.equal(m.doc.activeElement, m.rowFor('SHOP').querySelector('.mk-tu-remove'), "the SHOP row's remove button");
+  m.rowFor('SHOP').querySelector('.mk-tu-remove').click();
+  assert.equal(m.$('.mk-tu-add-rule').disabled, false, 'SHOP has no rule now');
+  assert.equal(m.doc.activeElement, m.$('.mk-tu-add-rule'));
+});
+
+test('a saved record wins over the old setting: no carried-over note; All projects shows the saved rule, not the typed value', async () => {
+  const m = await section(tuRoutes(tuGet({ saved: true, rules: [ALL_DONE, SHOP_RULE], legacy: { ...LEGACY, target: { typed: 'Resolve' } } })));
+  assert.equal(m.$('.mk-tu-carried'), null);
+  assert.equal(m.rows()[0].querySelector('.mk-tu-move').textContent, 'Any Done status');
+  assert.deepEqual(m.tu.body().rules[0], ALL_DONE);
+  assert.equal(m.tu.dirty(), false);
+});
+
+test('destroy leaves the focus where it was, with a move list open or not', async () => {
+  const m = await section();
+  const btn = m.rowFor('CRM').querySelector('.mk-tu-move');
+  btn.click();
+  await settle();
+  assert.ok(m.doc.querySelector('.mk-tu-movepop'));
+  btn.focus();
+  m.tu.destroy();
+  assert.equal(m.doc.activeElement, btn);
+  const n = await section();
+  const rm = n.rowFor('SHOP').querySelector('.mk-tu-remove');
+  rm.focus();
+  n.tu.destroy();
+  assert.equal(n.doc.activeElement, rm);
+});
