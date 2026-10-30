@@ -3,6 +3,8 @@
 // Worca enforces on whatever comes back — the question cap, ids it assigns itself, sections the product
 // owner edited, items only the product owner removes. The interview runner (interview.mjs) calls these.
 import { SECTIONS, MAX_QUESTIONS, MAX_ROUNDS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
+// (ticket-import.mjs reaches round.mjs back through attachments.mjs; neither uses the other at module top level)
+import { importThreadLine } from './ticket-import.mjs';
 
 export class RoundError extends Error {
   constructor(message) { super(message); this.name = 'RoundError'; }
@@ -137,6 +139,8 @@ export function threadText(turns) {
       else if (t.payload.action === 'edited') lines.push(`The product owner edited what Worca took from ${n}.`);
     } else if (t.kind === 'start') {
       lines.push(`The product owner started build v${asData(t.payload.version)}.`);
+    } else if (t.kind === 'export') {   // A6: no line; A6.1 D14: the import writes one, as data
+      if (t.payload && t.payload.action === 'imported') lines.push(asData(importThreadLine(t.payload)));
     } else if (t.kind === 'finish') {
       lines.push('The product owner asked to finish the interview now.');
     }

@@ -138,6 +138,12 @@ function ageOld(iso) {
 
 // ---- A8: files (plans/requirements-a8-design.md §6; design round 3, boards 15–21) ----
 const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF' });
+// A6.1 (D9, board 36): A8's caps for the New feature form, said where a ticket's attachment cannot be ticked
+const CAP_FILES_UI = 'A feature takes up to 10 files; 10 are picked.';
+const CAP_BYTES_UI = "Picked files are at 100 MB, a new feature's limit. Add more on the feature page.";
+// A6.1 D11: an export link a ticket import made. A backtick literal, because the specifier scan in
+// test/shared-graph-purity reads the word in quotes followed by a quote as a dynamic import.
+const IMPORT_ORIGIN = `import`;
 const READ_RANGE = '$0.05–0.20';   // a read's cost before any read has been made
 /** 640 B, 9 KB, 2.1 MB (the server's sizeLabel). */
 export function sizeText(bytes) {
@@ -628,6 +634,133 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
     const title = h('input', { id: 'req-new-title', type: 'text', maxlength: '200', placeholder: 'Cancel an order before it ships' });
     const desc = h('textarea', { id: 'req-new-desc', rows: '5', placeholder: 'A few sentences, the way you would tell a colleague.' });
+    // A6.1 (board 32, D1): From a ticket… at the right of the Describe it label, shown once a connection can import (no nudge without one)
+    const scopeNow = () => { const [scopeType, ...rest] = select.value.split(':'); return { scopeType, scopeKey: rest.join(':') }; };
+    const fromBtn = h('button', { type: 'button', class: 'btn btn-sm req-import-open', 'data-ui': 'import-open', 'aria-haspopup': 'dialog', hidden: true,
+      onclick: () => openPick(importCtx, null) }, 'From a ticket…');
+    // the preview's caps count the files already picked on this form (D9); `onUse` is Use this ticket
+    const importCtx = { scope: scopeNow, trigger: fromBtn, formFiles: () => ({ count: picked.length, bytes: picked.reduce((n, p) => n + p.size, 0) }),
+      onUse: (t, pick) => useTicket(t, pick) };
+    // A6.1 (board 32): the ticket the form starts from (Use this ticket) or null, the title and description its fill wrote (Change ticket…
+    // asks before replacing what was edited since), and the pick it came from. Leaving New feature drops all of it: nothing was stored.
+    let imp = null;
+    let filled = null;
+    let lastPick = null;
+    const strip = h('div', { class: 'req-import-strip', hidden: true });
+    const askEl = h('div', { class: 'req-import-ask', role: 'group', 'aria-labelledby': 'req-import-ask-q', hidden: true });
+    const descFrom = h('p', { class: 'hint req-import-deschint', id: 'req-import-descfrom', hidden: true });
+    const descClip = h('p', { class: 'hint req-import-descclip', hidden: true });
+    // not a `.field`: the form's fields stay Title, Describe it, Files and For (it has no control to label); CSS gives it a field's spacing
+    const critField = h('div', { class: 'req-import-critfield', hidden: true });
+    let descOwn = false;   // Keep mine: the description is the user's own, so the hint about the ticket's description no longer describes it
+    const ticketChips = h('div', { class: 'req-new-chips req-import-chips' });
+    const ticketNote = h('p', { class: 'hint req-import-filesnote', hidden: true });
+    const createFail = h('div', { class: 'req-import-fail', role: 'alert' });   // persistent: board 36 (8)
+    const ticketFiles = () => (imp ? [
+      ...(imp.commentsFile ? [{ key: 'comments', name: imp.commentsFile.name, kind: 'text', bytes: imp.commentsFile.bytes }] : []),
+      ...(imp.descriptionFile ? [{ key: 'description', name: imp.descriptionFile.name, kind: 'text', bytes: imp.descriptionFile.bytes }] : []),
+      ...imp.attachments.map((a) => ({ key: a.id, name: a.name, kind: a.kind, bytes: a.bytes })),
+    ] : []);
+    function renderImport() {
+      const on = !!imp;
+      strip.hidden = !on;
+      descFrom.hidden = !on || descOwn;
+      descClip.hidden = !on || !imp.clipped || descOwn;
+      critField.hidden = !on || !imp.criteria.length;
+      ticketNote.hidden = !on || !ticketFiles().length;
+      if (!descFrom.hidden) desc.setAttribute('aria-describedby', 'req-import-descfrom'); else desc.removeAttribute('aria-describedby');
+      if (!on) { strip.replaceChildren(); critField.replaceChildren(); ticketChips.replaceChildren(); return; }
+      const meta = [imp.meta.type && imp.meta.type.name, imp.meta.status].filter(Boolean).join(' · ');
+      strip.replaceChildren(
+        h('div', { class: 'req-import-strip-top' },
+          h('span', { class: 'hint', text: 'Starting from' }),
+          // the page's one guard for ticket links (A6's webHref, as exportChip): only an http(s) URL is a link (plan review S4)
+          webHref(imp.url) ? h('a', { class: 'chip req-export-chip', 'data-ui': 'import-chip', href: webHref(imp.url), target: '_blank', rel: 'noopener',
+            'aria-label': `${imp.key}, opens the ticket in ${imp.tracker} in a new tab` }, h('span', { text: imp.key }), sharedIcon(document, 'external', 12))
+            : h('span', { class: 'chip', 'data-ui': 'import-chip', text: imp.key }),
+          meta ? h('span', { class: 'hint', text: `· ${meta}` }) : null,
+          h('span', { class: 'req-file-gap' }),
+          h('button', { type: 'button', class: 'link-btn', 'data-ui': 'import-change', 'aria-haspopup': 'dialog', onclick: () => openPick(importCtx, lastPick) }, 'Change ticket…'),
+          icoBtn('remove', `Stop using ${imp.key}`, () => stopUsing(), { cls: 'req-import-x', 'data-ui': 'import-stop' })),
+        h('p', { class: 'hint req-import-site', text: imp.linkedTo ? `${imp.connection} · ${imp.key} follows ${imp.linkedTo.id}, so the new feature stays unlinked.`
+          : `${imp.connection} · The new feature stays linked to ${imp.key}: Export updates it, and a run can report back to it.` }),
+        askEl);
+      descFrom.textContent = imp.description ? `From ${imp.key}'s description. Change it as you like: the interview starts from what is here.`
+        : `${imp.key} has no description. Describe it in a few sentences.`;
+      // × on the description file takes the clause about it away: the sentence stops at what is still true
+      descClip.textContent = imp.descriptionFile
+        ? `${imp.key}'s description is longer than 20,000 characters. The form keeps the start; the whole text goes along as ${imp.key} description.md.`
+        : `${imp.key}'s description is longer than 20,000 characters. The form keeps the start.`;
+      critField.replaceChildren(h('span', { class: 'req-export-fl', id: 'req-import-critlabel' }, 'Acceptance criteria ', h('span', { class: 'opt', text: `from ${imp.key}` })),
+        h('ul', { class: 'req-import-critlist', 'aria-labelledby': 'req-import-critlabel' }, ...imp.criteria.map((t, i) => h('li', {}, h('code', { text: `R-po-${i + 1}` }), ' ', h('span', { text: t })))),
+        h('p', { class: 'hint', text: 'They start the spec as your criteria. Edit or remove them on the feature page.' }));
+      ticketChips.replaceChildren(...ticketFiles().map((x) => h('span', { class: 'req-new-chip' },
+        icon(x.kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }), h('span', { class: 'req-new-chip-name', text: x.name }),
+        h('span', { class: 'hint', text: `${KIND_TITLE[x.kind] || 'Text'} · ${sizeText(x.bytes)}` }), h('span', { class: 'req-import-tchip', text: imp.key }),
+        icoBtn('remove', `Remove ${x.name}`, () => removeTicketFile(x.key), { cls: 'req-new-chip-x req-import-chip-x', 'data-ui': `import-x-${x.key}` }))));
+      ticketNote.textContent = `Worca gets the ${imp.key} files from ${imp.tracker} when you start the interview.`;
+    }
+    /** Use this ticket (D1): it fills the form; Change ticket… asks before it replaces a title or description edited since (§7). The
+     *  criteria and the ticket's files are replaced either way. Nothing is created until Start the interview. */
+    function useTicket(t, pick = null) {
+      lastPick = pick;
+      createFail.replaceChildren();
+      const edited = !!imp && !!filled && (title.value !== filled.title || desc.value !== filled.description);
+      const fill = () => { title.value = t.title; desc.value = t.description; filled = { title: t.title, description: t.description }; };
+      imp = t;
+      descOwn = edited;
+      if (!edited) fill();
+      renderImport();
+      sync();
+      if (!edited) { askEl.hidden = true; fromBtn.focus(); return; }
+      const done = (replace) => { if (replace) fill(); descOwn = !replace; renderImport(); askEl.hidden = true; askEl.replaceChildren(); fromBtn.focus(); };
+      askEl.replaceChildren(h('p', { id: 'req-import-ask-q', text: `Replace the title and description with ${t.key}'s?` }),
+        h('div', { class: 'req-import-askbtns' },
+          h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'import-keep', onclick: () => done(false) }, 'Keep mine'),
+          h('button', { type: 'button', class: 'btn btn-sm btn-primary', 'data-ui': 'import-replace', onclick: () => done(true) }, 'Replace')));
+      askEl.hidden = false;
+      askEl.querySelector('[data-ui="import-replace"]').focus();
+    }
+    /** × "Stop using SHOP-124": what was typed stays; the criteria and the ticket's files go. */
+    function stopUsing() {
+      imp = null; filled = null; lastPick = null; descOwn = false;
+      askEl.hidden = true;
+      askEl.replaceChildren();
+      createFail.replaceChildren();
+      renderImport();
+      sync();
+      fromBtn.focus();
+    }
+    /** × on a ticket file: it goes; the focus moves to the next chip's ×, else the previous one's, else Choose files. */
+    function removeTicketFile(k) {
+      if (!imp) return;
+      createFail.replaceChildren();   // a 400 that named this file no longer applies
+      const at = ticketFiles().findIndex((x) => x.key === k);
+      imp = k === 'comments' ? { ...imp, comments: [], commentsFile: null } : k === 'description' ? { ...imp, descriptionFile: null }
+        : { ...imp, attachments: imp.attachments.filter((a) => a.id !== k) };
+      renderImport();
+      sync();
+      const xs = ticketChips.querySelectorAll('.req-import-chip-x');
+      (xs[Math.min(at, xs.length - 1)] || choose).focus();
+    }
+    /** The feature page's line for what the second read no longer found (D10). */
+    const notOnTicketLines = (gone, sent) => {
+      if (!gone || !sent) return [];
+      const out = [];
+      for (const id of gone.comments || []) {
+        const c = sent.comments.find((x) => x.id === id);
+        if (c) out.push(`The comment by ${c.author} (${c.when}) was not added: it is no longer on ${gone.key}.`);
+      }
+      for (const a of gone.attachments || []) {
+        const x = sent.attachments.find((y) => y.id === a.id);
+        if (x) out.push(a.reason ? `${x.name} was not added: ${String(a.reason).replace(/^Not offered: /, '')}` : `${x.name} was not added: it is no longer on ${gone.key}.`);
+      }
+      return out;
+    };
+    if (select.value) {
+      const mine = paintNo;
+      api('GET', importUrl(scopeNow())).then((r) => { if (mine === paintNo && r && Array.isArray(r.sources) && r.sources.length) fromBtn.hidden = false; }, () => {});
+    }
     // A brief is usable once made (D10), also while it is being refreshed.
     const usable = new Map(briefs.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
     const cost = costHint(lookCost, interview, estimates);
@@ -670,8 +803,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('span', { class: 'hint', text: `${KIND_TITLE[kind]} · ${sizeText(file.size)}` }),
           icoBtn('remove', `Remove ${file.name}`, () => removePicked(file), { cls: 'req-new-chip-x' }));
       }));
-      note.hidden = !picked.length;
-      cost.files(picked.map((p) => kindOfName(p.name)));
+      note.hidden = !picked.length && !ticketFiles().length;
+      cost.files([...ticketFiles().map((x) => x.kind), ...picked.map((p) => kindOfName(p.name))]);
       if (cost.el && cost.el.parentNode !== actions) actions.prepend(cost.el);   // A2's line appears with the first file
     };
     // A removed chip hands the focus to the next chip's ×, else the previous one's, else Choose files.
@@ -685,7 +818,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const addPicked = (files) => {
       const errors = [];
       for (const file of files) {
-        const c = checkAttachment(file, { pending: picked.map((p) => ({ name: p.name, bytes: p.size })), limits: reqLimits({ create: true }), typeMessage: reqTypeMessage });
+        // the caps count everything the form holds: the ticket's files and the files picked here (D9)
+        const pending = [...ticketFiles().map((x) => ({ name: x.name, bytes: x.bytes })), ...picked.map((p) => ({ name: p.name, bytes: p.size }))];
+        const c = checkAttachment(file, { pending, limits: reqLimits({ create: true }), typeMessage: reqTypeMessage });
         if (!c.ok) { errors.push(c.error); continue; }
         picked = [...picked.filter((p) => p.name !== file.name), file];
       }
@@ -718,18 +853,38 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     zone.addEventListener('paste', (e) => { const files = pastedFiles(e.clipboardData); if (!files) return; e.preventDefault(); addPicked(namer(files)); });
     // One create at a time: reading the files slows the press down, so a second press while it runs does nothing.
     let sending = false;
-    const create = () => (sending ? undefined : act(async () => {
+    const create = () => {
+      if (sending) return undefined;
       sending = true;
-      try {
-        const [scopeType, ...rest] = select.value.split(':');
-        const attachments = picked.length ? await Promise.all(picked.map(encodeFile)) : undefined;
-        const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value, ...(attachments ? { attachments } : {}) });
-        // A file the server could not store is named on the feature page (the feature stays; the create's filesNotStored).
-        const lost = Array.isArray(data.filesNotStored) ? data.filesNotStored : [];
-        if (lost.length) carry = { param: `feature/${data.feature.seq}`, text: lost.map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`).join(' ') };
-        route(`feature/${data.feature.seq}`);
-      } finally { sending = false; }
-    }));
+      say('');
+      createFail.replaceChildren();
+      return (async () => {
+        try {
+          const [scopeType, ...rest] = select.value.split(':');
+          const attachments = picked.length ? await Promise.all(picked.map(encodeFile)) : undefined;
+          const sent = imp;   // the ticket as posted: Stop using or × while the create runs must not lose its lines
+          const fromTicket = imp ? { ...imp.conn, key: imp.key, criteria: imp.criteria, comments: imp.comments.map((c) => c.id),
+            attachments: imp.attachments.map((a) => a.id), descriptionFile: !!imp.descriptionFile } : undefined;
+          const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value,
+            ...(attachments ? { attachments } : {}), ...(fromTicket ? { fromTicket } : {}) });
+          // A file the server could not store, and what the ticket no longer has, are named on the feature page (the feature stays).
+          const lines = (Array.isArray(data.filesNotStored) ? data.filesNotStored : []).map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`);
+          lines.push(...notOnTicketLines(data.notOnTicket, sent));
+          if (lines.length) carry = { param: `feature/${data.feature.seq}`, text: lines.join(' ') };
+          route(`feature/${data.feature.seq}`);
+        } catch (err) {
+          // board 36 (8): the ticket could not be read; nothing was created and the form keeps everything
+          if (imp && err && (err.status === 502 || (err.data && err.data.gone))) {
+            createFail.replaceChildren(h('p', { class: 'form-msg err', text: importErr(err) }),
+              h('p', { class: 'hint', text: `Nothing was created, and the form keeps what you entered. Try again, or stop using ${imp.key} to start without it.` }));
+          } else if (imp && err && err.status === 400) {
+            // the server refused the form with the ticket (A8's caps on the tracker's sizes, D9: the preview caps only the attachments,
+            // so 10 files plus the comments file get here): its sentence names the file, so × on that file and Start again
+            createFail.replaceChildren(h('p', { class: 'form-msg err', text: importErr(err) }));
+          } else fail(err);
+        } finally { sending = false; }
+      })();
+    };
     actions.append(...[cost.el, h('div', { class: 'req-new-btns' },
       h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
       h('button', { type: 'button', class: 'btn btn-primary', onclick: create }, 'Start the interview'))].filter(Boolean));
@@ -740,12 +895,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('h2', { text: 'New feature' }),
         h('p', { class: 'req-sub', text: 'Describe it the way you would to a colleague. Worca asks the rest, a few questions at a time.' })),
       h('div', { class: 'card req-new' },
+        strip,
         field('req-new-title', ['Title'], title),
-        field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
+        h('div', { class: 'field' },
+          h('div', { class: 'req-import-labrow' },
+            h('label', { for: 'req-new-desc' }, 'Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })), fromBtn),
+          desc, descFrom, descClip),
+        critField,
         h('div', { class: 'field req-new-files' },
           h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', id: 'req-new-files-opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
-          input, zone, privacyNote(interview, 'req-new-files-privacy'), chips, refused),
+          input, zone, privacyNote(interview, 'req-new-files-privacy'), ticketChips, chips, ticketNote, refused),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
+        createFail,
         actions),
       note));
   }
@@ -1300,18 +1461,22 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         }))));
   }
 
-  // A8 D2: a feature created with files reads them before round 1. One role=status node for the page, moved into
-  // each paint and updated in place, so a screen reader announces the count as it drops (2 → 1).
+  // A8 D2, A6.1 D10: a feature created with files gets them (from the tracker) and reads them before round 1. One role=status node for
+  // the page, moved into each paint and updated in place: "Getting 3 files from SHOP-124…" while any download runs, then "Reading 4 files…".
   function readingLine(f) {
-    const n = (f.attachments || []).filter((a) => a && a.status === 'reading').length;
-    if (!n || (Number(f.rounds) || 0) > 0 || f.pending) { readingEl = null; return null; }
-    if (!readingEl) {
-      readingEl = h('p', { class: 'req-reading', role: 'status' }, h('span', { class: 'badge blue' }), ' ',
-        h('span', { class: 'hint', text: 'Worca reads the files first, then shows round 1.' }));
-    }
+    const list = (f.attachments || []).filter(Boolean);
+    const getting = list.filter((a) => a.status === 'downloading');
+    const reading = list.filter((a) => a.status === 'reading').length;
+    if ((!getting.length && !reading) || (Number(f.rounds) || 0) > 0 || f.pending) { readingEl = null; return null; }
+    if (!readingEl) readingEl = h('p', { class: 'req-reading', role: 'status' }, h('span', { class: 'badge blue' }), ' ', h('span', { class: 'hint' }));
+    const from = (getting.find((a) => a.from) || {}).from || null;
+    const words = getting.length ? `Getting ${plural(getting.length, 'file')} from ${from ? from.key : 'the tracker'}…` : `Reading ${plural(reading, 'file')}…`;
+    const hint = getting.length ? `Worca gets the files from ${from && from.tracker ? from.tracker : 'the tracker'} and reads them first, then shows round 1.`
+      : 'Worca reads the files first, then shows round 1.';
     const badgeEl = readingEl.querySelector('.badge');
-    const words = `Reading ${plural(n, 'file')}…`;
+    const hintEl = readingEl.querySelector('.hint');
     if (badgeEl.textContent !== words) badgeEl.textContent = words;
+    if (hintEl.textContent !== hint) hintEl.textContent = hint;
     return readingEl;
   }
 
@@ -1492,6 +1657,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const cannotGo = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
   // a brief document's switch is "Send with every run": it speaks of runs and of interviews
   const cannotGoDoc = (name) => `${name} cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.`;
+  // the Files card's failed line for a tracker file whose download failed or was refused: the server's words (A6.1 D10)
+  const downloadSaid = (a) => (a.error.code === 'DOWNLOAD' ? `${String(a.error.message || '')} The interview lists it by name only.` : String(a.error.message || ''));
+  // the Build chip's line for such a file (copy Q3, the user's call): A8's "<name> cannot go with the run: …" with the download's own
+  // reason alone ("…: it did not answer within 2 minutes."), without the Files card's interview tail; a file a restart cut off
+  // (INTERRUPTED) has no reason of its own and keeps the server's sentence
+  const cannotGoDownload = (a) => `${a.name} cannot go with the run: ${a.error.reason ? `${String(a.error.reason)}.` : String(a.error.message || '')}`;
   function filesForRun(f) {
     const files = Array.isArray(f.attachments) ? f.attachments : [];
     const docs = Array.isArray(f.briefDocuments) ? f.briefDocuments : [];
@@ -1501,10 +1672,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const chip = (a, doc) => {
       const key = doc ? 'sendWithEveryRun' : 'sendWithRun';
       const sel = !!a[key];
-      const reading = a.status === 'reading';
+      const reading = a.status === 'reading' || a.status === 'downloading';
       const stuck = !reading && unsendable(a);
       const why = stuck || reading ? `req-fpick-why-${a.id}` : null;
-      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why, text: cannotGo(a.name) }));
+      // a download that failed or was refused never had a stored file: say why with the download's reason
+      const noBody = !!a.error && a.error.job === 'download';
+      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why, text: noBody ? cannotGoDownload(a) : cannotGo(a.name) }));
       return h('button', { type: 'button', class: `req-fpick${sel ? ' on' : ''}${stuck ? ' bad' : ''}`, 'aria-pressed': sel ? 'true' : 'false',
         'aria-label': doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, 'aria-describedby': why, 'data-ui': `fpick-${a.id}`,
         disabled: starting || reading || (stuck && !sel),
@@ -1518,7 +1691,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         } },
       icon(stuck ? ICONS.warn : sel ? ICONS.check : ICONS.plus, { size: 13, width: sel && !stuck ? 2.6 : 2.2 }),
       h('span', { class: 'req-fpick-name', text: a.name }),
-      reading ? [' ', h('span', { class: 'req-fpick-state', id: why, text: 'Reading…' })] : null);
+      reading ? [' ', h('span', { class: 'req-fpick-state', id: why, text: a.status === 'downloading' ? 'Downloading…' : 'Reading…' })] : null);
     };
     const told = [...files, ...docs].filter((a) => (a.mentions || []).length).map((a) => `${a.name} (${a.mentions.join(', ')})`);
     return h('div', { class: 'req-build-files', role: 'group', 'aria-labelledby': 'req-build-files-h' },
@@ -2035,19 +2208,22 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** The ⋯ of a file (boards 16, 20, 21): Open · Edit what Worca took from it (the pencil at phone width) · Ask about this
    *  file… · Replace with a newer version… · Read again · Remove. Each state offers only what applies: nothing but Open
    *  and Remove while the file is read; Ask once it is read; Read again not on a version that could not be stored. The
-   *  A1 lock disables all but Open. `replace` is the row's file picker (also behind a stored-version failure's button). */
+   *  A1 lock disables all but Open. `replace` is the row's file picker (also behind a stored-version failure's button).
+   *  A6.1: a tracker file without its body (downloading, or a failed or refused download) has no Open and no Read again. */
   function fileMenu(a, ctx, replace) {
-    const reading = a.status === 'reading' || !!a.asking;   // an ask in progress waits like a read (one job per file)
+    // an ask in progress waits like a read (one job per file); so does a download (A6.1 D10)
+    const reading = a.status === 'reading' || a.status === 'downloading' || !!a.asking;
+    const absent = a.status === 'downloading' || (!!a.error && a.error.job === 'download');   // A6.1: no body yet
     const stuck = storeFailedOf(a);
     const off = ctx.locked;
     const remove = menuItem('Remove', () => removeFile(a, ctx), { disabled: off, ui: `fmi-remove-${a.id}` });
     remove.classList.add('is-danger');
     const items = [
-      h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': `fmi-open-${a.id}`, href: a.href, target: '_blank', rel: 'noopener' }, 'Open'),
+      absent ? null : h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': `fmi-open-${a.id}`, href: a.href, target: '_blank', rel: 'noopener' }, 'Open'),
       hasTextOf(a) && !reading ? menuItem('Edit what Worca took from it', () => openEdit(a, ctx), { disabled: off, ui: `fmi-edit-${a.id}` }) : null,
       a.status === 'done' && !reading ? menuItem('Ask about this file…', () => openAsk(a, ctx), { disabled: off, ui: `fmi-ask-${a.id}` }) : null,
       reading ? null : menuItem('Replace with a newer version…', () => { focusMore(a); replace.click(); }, { disabled: off, ui: `fmi-replace-${a.id}` }),
-      reading || stuck ? null : menuItem('Read again', () => act(async () => {
+      reading || stuck || absent ? null : menuItem('Read again', () => act(async () => {   // a missing body: Try again on its failed line
         if (a.summaryEdited && !window.confirm("Read again? Your text goes to the file's history.")) { focusMore(a); return; }
         await api('POST', `${a.href}/read-again`, {});
         ctx.focus(moreUi(a));
@@ -2180,6 +2356,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
    *  exists (case-insensitive), plain text once none does. */
   function srcTag(f, source) {
     if (!source) return null;
+    // A6.1 D7, D19: a criterion from the feature's own ticket links to it (the tag names the key; a key is not a file name). The link
+    // goes through the page's webHref guard, as exportChip (plan review S4); a URL it refuses leaves the plain tag below.
+    const l = linkOf(f);
+    const ticketHref = l ? webHref(l.url) : null;
+    if (ticketHref && String(source).toUpperCase() === String(l.key).toUpperCase()) {
+      return h('a', { class: 'req-src-tag req-src-ticket', href: ticketHref, target: '_blank', rel: 'noopener',
+        'aria-label': `${l.key}, opens the ticket in ${l.tracker || 'the tracker'} in a new tab` }, l.key, sharedIcon(document, 'external', 11));
+    }
     const k = String(source).toLowerCase();
     const all = [...(f.attachments || []), ...(f.briefDocuments || [])].filter(Boolean);
     const same = (name) => String(name || '').toLowerCase() === k;
@@ -2195,6 +2379,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const n = fileNode(a.id);
     if (!n.badge) n.badge = h('span', { class: 'badge blue', role: 'status', text: 'Reading…' });
     return n.badge;
+  }
+  /** A6.1 (board 35): the Downloading… badge (role=status), one node per file while its body is on its way from the tracker. */
+  function downloadingBadge(a) {
+    const n = fileNode(a.id);
+    if (!n.dl) n.dl = h('span', { class: 'badge blue', role: 'status', text: 'Downloading…' });
+    return n.dl;
   }
   /** The Asking… badge (role=status), the same pattern: one node per file while a question about it is answered. */
   function askingBadge(a) {
@@ -2213,15 +2403,23 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     // A version that could not be stored (D11): the server's words, and Replace, which mends it (Read again is refused).
     const stuck = storeFailedOf(a);
+    const dl = !!a.error && a.error.job === 'download';   // A6.1 D10: a tracker file that could not be got, or used
     const said = stuck ? String(a.error.message || '')
-      : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
+      : dl ? downloadSaid(a)
+        : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
     if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
     const label = stuck ? 'Replace with a newer version…' : 'Try again';
     if (n.failed.btn.textContent !== label) n.failed.btn.textContent = label;
+    n.failed.btn.hidden = dl && a.error.code === 'REFUSED';   // the same file would be refused again: Remove is in the ⋯ menu
     n.failed.btn.setAttribute('data-ui', `${stuck ? 'file-replace' : 'file-retry'}-${a.id}`);
     n.failed.btn.disabled = ctx.locked;
     n.failed.run = stuck ? () => replace.click()
-      : () => act(async () => { await api('POST', `${a.href}/read-again`, {}); ctx.focus(`file-name-${a.id}`); await paint(); });
+      : () => {
+        if (n.failed.posting) return;   // one post per press
+        n.failed.posting = true;
+        act(async () => { await api('POST', `${a.href}/read-again`, {}); ctx.focus(`file-name-${a.id}`); await paint(); })
+          .finally(() => { if (n.failed) n.failed.posting = false; });
+      };
     return n.failed.p;
   }
   /** A failed ask (D12): one role=alert node per failure, so a repaint does not say it again. */
@@ -2237,14 +2435,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   /** One file of the Files card or of the Documents card (boards 16, 19, 20). The switch shows in every state but Reading (D1):
-   *  a file Worca could not read, or that the budget stopped, may still go to the run. Names and summaries are text only. */
+   *  a file Worca could not read, or that the budget stopped, may still go to the run. Names and summaries are text only.
+   *  A6.1 (boards 35, 36): a tracker file without its body yet (downloading, or a download that failed or was refused) has
+   *  no switch, no Open, no Read again and no link on its name (its href would answer 404). */
   function fileRow(a, ctx) {
     const s = fu(a.id);
     const reading = a.status === 'reading';
+    const downloading = a.status === 'downloading';   // A6.1 D10: its body is on its way
+    const waiting = reading || downloading;
+    const absent = downloading || (!!a.error && a.error.job === 'download');   // A6.1: no body yet (downloading, or a download that failed or was refused)
     const hasText = hasTextOf(a);
     const n = fileNode(a.id);
     if (!reading) n.badge = null;
-    const asking = !reading && !!a.asking;   // an ask in progress (D12): the answer's frame clears it
+    if (!downloading) n.dl = null;
+    const asking = !waiting && !!a.asking;   // an ask in progress (D12): the answer's frame clears it
     if (!asking) n.asking = null;
     if (a.status !== 'failed') n.failed = null;   // a later failure is a new alert
     if (s.ask != null && (a.status !== 'done' || asking)) {   // Ask is for a read file (board 21); the lock only disables it
@@ -2254,24 +2458,29 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const replace = filePicker((files) => openReplace(a, ctx, files[0]), { multiple: false });
     const sendKey = ctx.doc ? 'sendWithEveryRun' : 'sendWithRun';
     const usesIt = ctx.doc ? 'Interviews use it once it is read.' : 'The next round uses it.';
-    const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
+    const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.from ? `from ${a.from.key}` : null,
+      a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
     const top = h('div', { class: 'req-file-top' },
-      h('a', { class: 'req-file-name', href: a.href, target: '_blank', rel: 'noopener', 'data-ui': `file-name-${a.id}`, text: a.name }),
+      // no body yet: the name is text, with the same data-ui and a tabindex, so ctx.focus('file-name-…') still lands
+      absent ? h('span', { class: 'req-file-name', 'data-ui': `file-name-${a.id}`, tabindex: '-1', text: a.name })
+        : h('a', { class: 'req-file-name', href: a.href, target: '_blank', rel: 'noopener', 'data-ui': `file-name-${a.id}`, text: a.name }),
       h('span', { class: 'hint req-file-meta', text: meta }),
       h('span', { class: 'req-file-gap' }),
-      reading ? readingBadge(a) : null,
+      downloading ? downloadingBadge(a) : reading ? readingBadge(a) : null,
       asking ? askingBadge(a) : null,
       a.status === 'unread-budget' ? h('span', { class: 'badge amber', text: 'Not read yet' }) : null,
-      hasText && !reading && !asking ? icoBtn('pencil', `Edit what Worca took from ${a.name}`, () => openEdit(a, ctx),
+      hasText && !waiting && !asking ? icoBtn('pencil', `Edit what Worca took from ${a.name}`, () => openEdit(a, ctx),
         { cls: 'req-file-pencil', disabled: ctx.locked, 'data-ui': `file-edit-${a.id}` }) : null,
       fileMenu(a, ctx, replace));
-    const state = reading
-      ? h('p', { class: 'hint req-file-state', text: typeof a.estimateUsd === 'number'
-        ? `Worca is reading it (about ${usd(a.estimateUsd)}). ${usesIt}` : `Worca is reading it. ${usesIt}` })
-      : a.status === 'failed' ? failedLine(a, ctx, replace)
-        : a.status === 'unread-budget'
-          ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then ${ctx.doc ? 'interviews list' : 'the interview lists'} it by name only.` })
-          : asking ? h('p', { class: 'hint req-file-state req-file-asking', text: `Worca is looking for: “${a.asking}”…` }) : null;
+    const est = typeof a.estimateUsd === 'number' ? ` (about ${usd(a.estimateUsd)})` : '';
+    const state = downloading
+      ? h('p', { class: 'hint req-file-state', text: `Worca is getting it from ${a.from ? a.from.key : 'the tracker'}. Then it reads it${est}.` })
+      : reading
+        ? h('p', { class: 'hint req-file-state', text: `${a.fetched && a.from ? `Downloaded from ${a.from.key}. ` : ''}Worca is reading it${est}. ${usesIt}` })
+        : a.status === 'failed' ? failedLine(a, ctx, replace)
+          : a.status === 'unread-budget'
+            ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then ${ctx.doc ? 'interviews list' : 'the interview lists'} it by name only.` })
+            : asking ? h('p', { class: 'hint req-file-state req-file-asking', text: `Worca is looking for: “${a.asking}”…` }) : null;
     if (s.edit != null && (!hasText || reading)) {
       // The text went away under the open editor (read again, replaced): the draft cannot be saved, and the card says why.
       // The editor had the focus: it goes to the file's ⋯, which every state has.
@@ -2305,7 +2514,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       history.addEventListener('toggle', () => { s.history = history.open; });
     }
     let send = null;
-    if (!reading) {
+    if (!reading && !absent) {   // A6.1: a file without its body has nothing to send (and A8's "could not open the stored file" would mislead)
       const sw = makeSwitch(document, { label: ctx.doc ? 'Send with every run' : 'Send with the run',
         ariaLabel: ctx.doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, checked: !!a[sendKey], data: { ui: `file-send-${a.id}` } });
       // D14: a file Start would refuse (sendable: false) can be switched off, not on, as its Files for the run chip
@@ -3335,7 +3544,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function startExport(f, trigger) {
     const x = xOf(f);
     if (!x || !x.tracker || f.status === 'archived' || x.exporting) return;
-    if (!x.hasSetup) { void openSetup(f, { trigger, then: () => continueExport(f, trigger) }); return; }
+    // A6.1 D11: a linked feature updates or comments without a setup; only a new ticket needs one
+    if (!x.hasSetup && !linkOf(f)) { void openSetup(f, { trigger, then: () => continueExport(f, trigger) }); return; }
     continueExport(f, trigger);
   }
   /** After the setup (or with one): Not Ready asks for a reason first (D5); a feature with a ticket chooses what happens (D7);
@@ -3389,6 +3599,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       },
     };
   }
+  /** A new ticket for a feature, the export setup first when it has none (one place for the again dialog's Continue and the gone
+   *  state's New ticket). */
+  function newTicket(f, { reason = null, trigger = null } = {}) {
+    const go = () => openPreview(f, { mode: 'new', reason, trigger });
+    if (!(xOf(f) || {}).hasSetup) void openSetup(f, { trigger, then: go });
+    else go();
+  }
   /** A ticket gone from the tracker, as the server says it (D11). */
   const goneError = (key, name) => ({ status: 409, data: { gone: true, error: `${key} no longer exists in ${name}.` } });
   /** Board 29's states (D11, D12): a tracker that cannot be reached (nothing recorded; the main button tries again), a field it
@@ -3437,7 +3654,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         }
       } }, 'Forget the link');
       const fresh = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'export-new',
-        onclick: () => { if (!forgetting) openPreview(f, { mode: 'new', reason, trigger }); } }, 'New ticket');
+        onclick: () => { if (!forgetting) newTicket(f, { reason, trigger }); } }, 'New ticket');
       const buttons = [forget, fresh];
       box.show(dd.error || `${key} no longer exists in ${name}.`, { note, buttons });
       lost(forget);
@@ -3792,8 +4009,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const changes = h('div', { class: 'req-export-changes', role: 'group', 'aria-labelledby': 'req-again-chg', hidden: true });
     const note = h('p', { class: 'hint', hidden: true, text: 'The preview shows the result before anything is sent.' });
     const cont = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'again-continue', disabled: true,
-      onclick: () => { if (busy || !data) return; if (mode === 'comment') openComment(f, { reason, trigger }); else openPreview(f, { mode, reason, trigger }); } }, 'Continue');
-    const title = h('h2', { id: 'req-again-title', tabindex: '-1', text: `Export ${f.id} again` });
+      onclick: () => {
+        if (busy || !data) return;
+        if (mode === 'comment') openComment(f, { reason, trigger });
+        // A6.1 D11: a new ticket needs the export setup, which a feature that started from a ticket may not have yet
+        else if (mode === 'new') newTicket(f, { reason, trigger });
+        else openPreview(f, { mode, reason, trigger });
+      } }, 'Continue');
+    const lk0 = linkOf(f) || {};
+    const title = h('h2', { id: 'req-again-title', tabindex: '-1',
+      text: lk0.origin === IMPORT_ORIGIN && lk0.sinceImport ? `Export ${f.id} to ${name}` : `Export ${f.id} again` });
     const card = h('section', { class: 'card req-dialog req-export req-export-again', role: 'dialog', 'aria-modal': 'true',
       'aria-labelledby': 'req-again-title', 'aria-describedby': 'req-again-desc' },
       // board 28: the alert (edited in Jira) under the choices, what changed and the note, so picking a choice moves no card
@@ -3824,18 +4049,32 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     function render() {
       const L = data.link;
       const changed = data.changes.length > 0;
-      desc.textContent = changed ? `${L.key} was made on ${L.madeOn}. The spec has changed since. What should happen?`
-        : `${L.key} was made on ${L.madeOn}. The spec has not changed since the last export (${L.lastOn}).`;
+      // A6.1 D11: an imported link says so: until the first export the dialog is about the import, then A6's with "was imported on"
+      const imported = L.origin === IMPORT_ORIGIN;
+      const first = imported && L.sinceImport;
+      title.textContent = first ? `Export ${f.id} to ${name}` : `Export ${f.id} again`;
+      desc.textContent = first
+        ? (changed ? `${f.id} started from ${L.key} on ${L.importedOn}. The spec has changed since. What should happen?`
+          : `${f.id} started from ${L.key} on ${L.importedOn}. The spec has not changed since the import.`)
+        : imported
+          ? (changed ? `${L.key} was imported on ${L.importedOn}. The spec has changed since. What should happen?`
+            : `${L.key} was imported on ${L.importedOn}. The spec has not changed since the last export (${L.lastOn}).`)
+          : changed ? `${L.key} was made on ${L.madeOn}. The spec has changed since. What should happen?`
+            : `${L.key} was made on ${L.madeOn}. The spec has not changed since the last export (${L.lastOn}).`;
       if (data.gone) {
         modes.hidden = true; changes.hidden = true; note.hidden = true; cont.hidden = true;
         showFailure(box, goneError(L.key, name), ctx, { focus: false });   // load() places the focus once
         return;
       }
-      modes.replaceChildren(option('update', `Update ${L.key}`, 'Rewrites its summary, description and fields.'),
-        option('comment', `Add a comment to ${L.key}`, 'Lists what changed since the last export. The description stays.', !changed),
+      modes.replaceChildren(
+        option('update', `Update ${L.key}`, first ? `Rewrites its summary, description and fields. Its description was written in ${name}; ${name} keeps the old text in the ticket's history.`
+          : 'Rewrites its summary, description and fields.'),
+        option('comment', `Add a comment to ${L.key}`, first ? 'Lists what changed since the import. The description stays.'
+          : 'Lists what changed since the last export. The description stays.', !changed),
         option('new', 'Create a new ticket', 'For example when the feature was split.'));
       modes.hidden = false;
-      changes.replaceChildren(h('h3', { id: 'req-again-chg', text: `What changed since the last export (${L.lastOn})` }), ...data.changes.map(changeNode));
+      changes.replaceChildren(h('h3', { id: 'req-again-chg', text: first ? `What changed since the import (${L.importedOn})` : `What changed since the last export (${L.lastOn})` }),
+        ...data.changes.map(changeNode));
       changes.hidden = !changed;
       note.hidden = false;
       cont.disabled = false;
@@ -3970,12 +4209,409 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       created: (x) => [`Exported to ${tracker(x)} as `, keyLink(x)], new: (x) => [`Exported to ${tracker(x)} as `, keyLink(x)],
       updated: (x) => ['Updated ', keyLink(x), ` in ${tracker(x)}`], commented: (x) => ['Commented on ', keyLink(x), ` in ${tracker(x)}`],
       linked: (x) => ['Linked ', keyLink(x), ', which an earlier export made'], forgot: (x) => ['Forgot the link to ', keyLink(x)],
+      // A6.1 (board 35, D12): the import, linked to the ticket or not
+      imported: (x) => (x.linked === false ? [`Started from ${x.key} in ${tracker(x)}, not linked: ${x.linkedTo || 'another feature'} is.`]
+        : ['Imported ', keyLink(x), ` from ${tracker(x)}`]),
     };
     return h('section', { class: 'card req-history', 'aria-labelledby': 'req-history-h' },
       h('h3', { id: 'req-history-h', text: 'History' }),
       h('ul', { class: 'req-history-list' }, ...list.filter((x) => LINE[x.action]).map((x) => h('li', {},
         h('span', {}, ...LINE[x.action](x), x.when ? ` · ${x.when}` : '', x.reason ? ` · before Ready: ${x.reason}` : ''),
         x.by ? h('span', { class: 'hint', text: x.by }) : null))));
+  }
+
+  // ---- A6.1: start from a ticket (plans/requirements-a61-design.md §7, boards 32–36). Both dialogs are the page's modal with the page
+  // behind inert (openModal's `page`; closeDialog and leave() release it); dlgGen drops an answer for a dialog that is gone and a
+  // search's own number drops one a newer search superseded. Ticket text is set with textContent only, never as HTML. ----
+  let importPrefs = null;   // D3: the connection and project last used, for the page session: { conn, project }
+  const importUrl = (s, path = '') => `/api/requirements/import/${s.scopeType}/${encodeURIComponent(s.scopeKey)}${path}`;
+  const SEARCH_MS = 300;
+  const pastedKeyOf = (v) => {
+    const s = String(v || '').trim();
+    if (/^[A-Z][A-Z0-9_]*-\d+$/i.test(s)) return s.toUpperCase();
+    const m = /(?:\/browse\/|[?&]selectedIssue=)([A-Z][A-Z0-9_]*-\d+)\b/i.exec(s);
+    return m ? m[1].toUpperCase() : null;
+  };
+  /** An import route's refusal: a gone ticket answers 404 with `gone` and its own sentence, which is not the flag's 404. */
+  const importErr = (err) => (err && err.data && err.data.gone && typeof err.data.error === 'string' ? err.data.error : errText(err));
+  const sameConnUi = (a, b) => !!a && !!b && a.plugin === b.plugin && a.sourceId === b.sourceId && (a.profile || null) === (b.profile || null);
+  /** The tracker's name for a pick's connection (its source's displayName). */
+  const pickTracker = (st) => {
+    const src = st && st.info && st.conn ? (st.info.sources || []).find((x) => x.plugin === st.conn.plugin && x.sourceId === st.conn.sourceId) : null;
+    return (src && src.name) || 'the tracker';
+  };
+  /** D19 (board 36): a sheet's way back to New feature (shown at 900 px and narrower only, by A6's CSS). */
+  const importBack = () => h('button', { type: 'button', class: 'link-btn req-export-back', 'data-ui': 'import-back', 'aria-label': 'Back to New feature',
+    onclick: () => { if (dialog && dialog.canClose()) closeDialog(true); } }, '← New feature');
+
+  /** Start from a ticket (board 33; D3, D4, D19). `keep`: the pick Back comes back to (its search, results and choice). */
+  function openPick(ctx, keep = null) {
+    closeDialog(false);
+    const s = ctx.scope();
+    const st = keep || { info: null, conn: null, project: '', projects: [], search: '', searched: '', tickets: [], cursor: null, chosen: null, seq: 0, projSeq: 0 };
+    let timer = null;
+    const title = h('h2', { id: 'req-pick-title', tabindex: '-1', text: 'Start from a ticket' });
+    const lead = h('p', { class: 'req-dlg-lead', id: 'req-pick-desc' });
+    const connField = h('div', { class: 'field req-export-fld', hidden: true });
+    const projLabel = h('label', { for: 'req-pick-project' });
+    const projSel = h('select', { id: 'req-pick-project', 'data-ui': 'pick-project' });
+    const search = h('input', { type: 'search', id: 'req-pick-search', 'data-ui': 'pick-search', placeholder: 'Search by key or words',
+      'aria-describedby': 'req-pick-paste', autocomplete: 'off' });
+    const status = h('p', { class: 'req-import-status', role: 'status' });   // one node: "Searching SHOP…", then the count line
+    const empty = h('p', { class: 'hint req-import-empty', hidden: true, text: "Try other words, or paste the ticket's key or link." });
+    const failEl = h('p', { class: 'form-msg err req-export-alert', role: 'alert' });
+    const note = h('p', { class: 'hint req-import-note', hidden: true }, 'Nothing was changed.', h('span', { 'data-min-level': 'advanced' }));
+    // Try again re-runs the step that failed: the sources, the connection's projects (then the search), or the search
+    const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'pick-retry', hidden: true,
+      onclick: () => { void (!st.info ? load() : projFailed ? projectsThenSearch() : run()); } }, 'Try again');
+    const results = h('div', { class: 'req-import-results', role: 'radiogroup', 'aria-label': 'Tickets' });
+    const more = h('button', { type: 'button', class: 'btn btn-sm req-import-more', 'data-ui': 'pick-more', hidden: true, onclick: () => { void run({ next: true }); } },
+      'Show more');
+    const cont = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'pick-continue', disabled: true,
+      onclick: () => { if (!st.chosen) return; importPrefs = { conn: st.conn, project: st.project }; openImportPreview(ctx, st); } }, 'Continue');
+    const card = h('section', { class: 'card req-dialog req-export req-import req-import-pick', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'req-pick-title', 'aria-describedby': 'req-pick-desc' },
+      importBack(), title, lead, connField,
+      h('div', { class: 'field req-export-fld' }, projLabel, h('div', { class: 'select-wrap' }, projSel)),
+      h('div', { class: 'field req-export-fld' }, h('label', { for: 'req-pick-search' }, 'Find a ticket'),
+        h('div', { class: 'req-import-search' }, sharedIcon(document, 'search', 14), search),
+        h('p', { class: 'hint', id: 'req-pick-paste', text: "Paste a ticket's key or link to find it in any project." })),
+      status, empty, failEl, note, retry, results, more,
+      h('div', { class: 'req-dlg-btns' },
+        h('button', { type: 'button', class: 'btn', 'data-ui': 'pick-cancel', onclick: () => closeDialog(true) }, 'Cancel'), cont));
+    openModal(card, { trigger: ctx.trigger, first: title, page: true });
+    const g = dlgGen;
+    let projFailed = false;   // the last projects call for this connection failed: Try again loads them again
+    const where = () => st.project || null;
+    const searching = () => status.replaceChildren(h('span', { class: 'badge blue', text: where() ? `Searching ${where()}…` : 'Searching all projects…' }));
+    // D16 (board 36, 1): the server's sentence; for a tracker that could not be reached also "Nothing was changed." and, at the
+    // Advanced level, where the connection is fixed
+    const showFail = (err) => {
+      status.textContent = '';
+      failEl.textContent = importErr(err);
+      note.lastChild.textContent = ` Fix the connection on the Marketplace page (Installed › ${pickTracker(st)}), then try again.`;
+      note.hidden = !(err && err.status === 502);
+      retry.hidden = false;
+    };
+    const clearFail = () => { failEl.textContent = ''; note.hidden = true; retry.hidden = true; };
+    const countText = () => {
+      const typed = st.searched;
+      if (!typed) return where() ? `Recently updated in ${where()}` : 'Recently updated';
+      const n = st.tickets.length;
+      const key = pastedKeyOf(typed);
+      if (!n) {
+        return key ? `${key} was not found in ${pickTracker(st)}, or this connection cannot see it.`
+          : where() ? `No ticket in ${where()} matches “${typed}”.` : `No ticket matches “${typed}”.`;
+      }
+      const verb = n === 1 ? 'matches' : 'match';
+      return where() ? `${plural(n, 'ticket')} in ${where()} ${verb} “${typed}”.` : `${plural(n, 'ticket')} ${verb} “${typed}”.`;
+    };
+    function render() {
+      status.textContent = countText();
+      empty.hidden = !(st.searched && !st.tickets.length && !pastedKeyOf(st.searched));
+      results.replaceChildren(...st.tickets.map((t, i) => {
+        // the radio's name is the key and title; the rest of the row (type, status, date, D12's chip) describes it
+        const hintId = `req-pick-row-${i}-hint`;
+        const chipId = `req-pick-row-${i}-link`;
+        const radio = h('input', { type: 'radio', name: 'req-pick-ticket', value: t.key, 'data-ui': `pick-${t.key}`, 'aria-label': `${t.key} ${t.title}`,
+          'aria-describedby': t.linkedTo ? `${hintId} ${chipId}` : hintId });
+        radio.checked = st.chosen === t.key;
+        radio.addEventListener('change', () => { if (radio.checked) { st.chosen = t.key; cont.disabled = false; } });
+        return h('label', { class: 'req-import-ticket' }, radio,
+          h('span', { class: 'req-import-ticket-txt' },
+            h('span', { class: 'req-import-ticket-head' }, h('b', { text: t.key }), ' ', h('span', { text: t.title })),
+            h('span', { class: 'hint', id: hintId, text: [t.type, t.status, t.updatedOn ? `updated ${t.updatedOn}` : null].filter(Boolean).join(' · ') })),
+          t.linkedTo ? h('span', { class: 'chip req-import-linkchip', id: chipId, text: `Linked to ${t.linkedTo.id}` }) : null);
+      }));
+      more.hidden = !st.cursor;
+      cont.disabled = !st.chosen;
+    }
+    async function run({ next = false } = {}) {
+      if (!st.conn) return;
+      const n = ++st.seq;
+      const typed = search.value.trim();
+      clearFail();
+      searching();
+      try {
+        const r = await api('POST', importUrl(s, '/search'), { ...st.conn, ...(st.project ? { project: st.project } : {}), ...(typed ? { search: typed } : {}),
+          ...(next && st.cursor ? { cursor: st.cursor } : {}) });
+        if (!live(g) || n !== st.seq) return;   // the dialog is gone, or a newer search (or a Connection change) superseded this one
+        const had = next ? st.tickets.length : 0;
+        st.searched = typed;
+        st.tickets = next ? [...st.tickets, ...(r.tickets || [])] : (r.tickets || []);
+        st.cursor = r.cursor || null;
+        if (!next && st.chosen && !st.tickets.some((t) => t.key === st.chosen)) st.chosen = null;
+        render();
+        // Show more hides itself on the last page: the focus goes to the first ticket it added, not to <body>; only while it is
+        // still on Show more (or left the dialog), never taken from the search box the user went on to type in
+        const added = next && st.tickets.length > had ? results.querySelectorAll('input[type="radio"]')[had] : null;
+        if (added && (document.activeElement === more || !card.contains(document.activeElement))) added.focus();
+      } catch (err) { if (live(g) && n === st.seq) showFail(err); }
+    }
+    // The connection's projects. Its own request number (plan review S8): after two quick Connection changes only the last one's
+    // answer fills the select; an earlier one (also an earlier failure) is dropped. Answers whether this answer was used.
+    async function loadProjects() {
+      const n = ++st.projSeq;
+      let r;
+      try { r = await api('POST', importUrl(s, '/options'), { ...st.conn }); }
+      catch (err) { if (live(g) && n === st.projSeq) { projFailed = true; throw err; } return false; }
+      if (!live(g) || n !== st.projSeq) return false;
+      projFailed = false;
+      st.projects = r.projects || [];
+      if (st.project && !st.projects.some((p) => p.value === st.project)) st.project = '';
+      syncSelect(projSel, [{ value: '', label: 'All projects' }, ...st.projects], st.project);
+      return true;
+    }
+    // The projects, then a search with them (a Connection change, and Try again after a projects call failed)
+    const projectsThenSearch = () => {
+      clearFail();
+      searching();
+      return loadProjects().then((used) => (used ? run() : undefined), (err) => { if (live(g)) showFail(err); });
+    };
+    async function load() {
+      clearFail();
+      try {
+        if (!st.info) {
+          const info = await api('GET', importUrl(s));
+          if (!live(g)) return;
+          st.info = info;
+        }
+        const sources = st.info.sources || [];
+        const conns = sources.flatMap((t) => (t.profiles || []).map((p) => ({ conn: { plugin: t.plugin, sourceId: t.sourceId, profile: p.id || null },
+          label: sources.length > 1 ? `${t.name} · ${p.label}` : p.label })));
+        if (!st.conn) {
+          const pref = importPrefs && conns.find((c) => sameConnUi(c.conn, importPrefs.conn));
+          st.conn = pref ? pref.conn : st.info.defaultConnection || (conns[0] && conns[0].conn) || null;
+          st.project = pref ? importPrefs.project || '' : st.info.defaultProject || '';
+        }
+        const name = pickTracker(st);
+        lead.textContent = `Pick the ticket this feature starts from. Worca reads it through your ${name} connection and changes nothing in ${name}.`;
+        projLabel.textContent = `${name} project`;
+        if (conns.length > 1) {
+          connField.replaceChildren(h('label', { for: 'req-pick-conn' }, 'Connection'),
+            exportSelect({ id: 'req-pick-conn', ui: 'pick-conn', list: conns.map((c) => ({ value: connValue(c.conn), label: c.label })), value: connValue(st.conn),
+              onchange: (e) => {
+                st.conn = connFrom(e.target.value);
+                st.project = '';
+                st.chosen = null;
+                importPrefs = { conn: st.conn, project: '' };
+                // the old connection's tickets go at once (none can be picked and previewed through the new one), and its
+                // search in flight is superseded; the select keeps only All projects until the new projects arrive
+                st.seq += 1;
+                st.tickets = [];
+                st.cursor = null;
+                st.searched = '';
+                st.projects = [];
+                syncSelect(projSel, [{ value: '', label: 'All projects' }], '');
+                render();
+                void projectsThenSearch();
+              } }));
+          connField.hidden = false;
+        }
+        // Back from the preview (`keep`): its search words, project and tickets are on screen before the projects call, so a
+        // failed call shows its error and Try again under them and Try again searches the same words
+        if (keep) {
+          search.value = st.search;
+          syncSelect(projSel, [{ value: '', label: 'All projects' }, ...st.projects], st.project);
+          render();
+        }
+        await loadProjects();
+        if (!live(g)) return;
+        if (keep) render(); else await run();   // the kept pick again, with the projects as they came back
+      } catch (err) { if (live(g)) showFail(err); }
+    }
+    projSel.addEventListener('change', () => { st.project = projSel.value; importPrefs = { conn: st.conn, project: st.project }; void run(); });
+    search.addEventListener('input', () => {
+      st.search = search.value;
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (live(g)) void run(); }, SEARCH_MS);   // D4: 300 ms after the last key
+    });
+    void load();
+  }
+
+  /** Start from SHOP-124 (board 34; D5–D9, D12, D19): what the new feature takes, each part with a checkbox. Nothing is imported
+   *  until Start the interview; Use this ticket only fills the form. */
+  function openImportPreview(ctx, pick) {
+    closeDialog(false);
+    const s = ctx.scope();
+    const key = pick.chosen;
+    const name = pickTracker(pick);
+    let data = null;
+    let loading = false;
+    const title = h('h2', { id: 'req-ipv-title', tabindex: '-1', text: `Start from ${key}` });
+    const box = stateBox();
+    const body = h('div', { class: 'req-import-body' });
+    // D16 (plan review S2): a tracker that could not be reached also says nothing changed and, at the Advanced level, where the
+    // connection is fixed — the same persistent line as the pick's
+    const note = h('p', { class: 'hint req-import-note', hidden: true }, 'Nothing was changed.', h('span', { 'data-min-level': 'advanced' }));
+    const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'ipv-retry', onclick: () => { void load(); } }, 'Try again');
+    const use = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'ipv-use', disabled: true,
+      onclick: () => { if (!data) return; const t = chosen(); closeDialog(false); ctx.onUse(t, pick); } }, 'Use this ticket');
+    const card = h('section', { class: 'card req-dialog req-export req-import req-import-preview', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'req-ipv-title', 'aria-describedby': 'req-ipv-desc' },
+      importBack(), title,
+      h('p', { class: 'req-dlg-lead', id: 'req-ipv-desc', text: `This is what the new feature takes from ${key}. Untick what it should not start with. Nothing changes in ${name}.` }),
+      box.els[0], note, ...box.els.slice(1), body,
+      h('div', { class: 'req-export-foot' }, h('p', { class: 'hint', text: `Nothing is sent to ${name}.` }),
+        h('div', { class: 'req-dlg-btns' }, h('button', { type: 'button', class: 'btn', 'data-ui': 'ipv-back', onclick: () => openPick(ctx, pick) }, 'Back'), use)));
+    openModal(card, { trigger: ctx.trigger, first: title, page: true });
+    const g = dlgGen;
+    const ui = { crit: [], comments: new Map(), atts: new Map(), critHead: null, critHint: null, comHead: null, attHead: null };
+
+    function critSection(L) {
+      const items = L.criteria.items || [];
+      ui.crit = items.map((t, i) => {
+        const cb = h('input', { type: 'checkbox', 'data-ui': `ipv-crit-${i}` });
+        cb.checked = !Array.isArray(L.criteria.picked) || L.criteria.picked[i] !== false;
+        cb.addEventListener('change', sync);
+        return { cb, code: h('code', { class: 'req-import-code' }), text: t };
+      });
+      const found = L.criteria.from === 'field' ? `found in the ${name} field “${L.criteria.name}”`
+        : L.criteria.from === 'section' ? `found under “${L.criteria.name}” in the description` : null;
+      ui.critHead = h('h3', { class: 'req-import-h' });
+      ui.critHint = h('p', { class: 'hint', 'data-ui': 'ipv-hint-crit' });
+      return h('section', { class: 'req-import-sec' }, ui.critHead, found ? h('p', { class: 'hint', text: found }) : null,
+        items.length ? h('ul', { class: 'req-import-list' }, ...ui.crit.map((c) => h('li', {}, h('label', { class: 'req-import-check' }, c.cb, c.code, h('span', { text: c.text })))))
+          : null,
+        ui.critHint);
+    }
+    function commentsSection(L) {
+      ui.comments.clear();
+      ui.comHead = h('h3', { class: 'req-import-h' });
+      const rows = L.comments.map((c) => {
+        const cb = h('input', { type: 'checkbox', 'data-ui': `ipv-com-${c.id}`, 'aria-label': `Use the comment by ${c.author}, ${c.when}`, 'aria-describedby': `req-ipv-cbody-${c.id}` });
+        cb.checked = !!c.picked;
+        cb.addEventListener('change', sync);
+        ui.comments.set(c.id, cb);
+        return h('li', { class: 'req-import-com' }, h('label', { class: 'req-import-check' }, cb,
+          h('span', { class: 'req-import-ctext' }, h('span', { class: 'req-import-cby' }, h('b', { text: c.author }), ` · ${c.when}`),
+            h('span', { class: 'req-import-cbody', id: `req-ipv-cbody-${c.id}`, text: c.body }))));
+      });
+      const restricted = Number(L.restrictedComments) || 0;
+      // board 36 (phone): author and date only, three at first; the rest fold behind Show all (CSS shows it at 900 px and narrower)
+      const folded = rows.length > 3;
+      rows.forEach((li, i) => { if (folded && i >= 3) li.classList.add('folded'); });
+      const showAll = folded ? h('button', { type: 'button', class: 'link-btn req-import-showall', 'data-ui': 'ipv-showall',
+        onclick: () => {
+          for (const li of rows) li.classList.remove('folded');
+          showAll.hidden = true;
+          rows[3].querySelector('input').focus();   // the button hid itself: the focus goes to the first comment it unfolded (A6's Show all)
+        } }, `Show all ${rows.length} comments`) : null;
+      return h('section', { class: 'req-import-sec' }, ui.comHead,
+        rows.length ? h('p', { class: 'hint', text: `Context for the interview, not spec text. Worca puts the picked ones in one file, ${L.key} comments.md, and reads it like your other files. Authors are shown by name only.` }) : null,
+        rows.length ? h('ul', { class: 'req-import-list' }, ...rows) : null, showAll,
+        L.olderComments ? h('p', { class: 'hint', text: `and ${plural(L.olderComments, 'older comment')}` }) : null,
+        restricted ? h('p', { class: 'hint', text: restricted === 1 ? `1 comment visible only to a ${name} group or role is left out.`
+          : `${restricted} comments visible only to a ${name} group or role are left out.` }) : null);
+    }
+    function attachmentsSection(L) {
+      ui.atts.clear();
+      ui.attHead = h('h3', { class: 'req-import-h' });
+      const rows = L.attachments.map((a) => {
+        const cb = h('input', { type: 'checkbox', 'data-ui': `ipv-att-${a.id}`, 'aria-label': `Add ${a.name} as a feature file` });
+        cb.checked = !!a.picked && !a.refused;
+        cb.disabled = !!a.refused;
+        cb.addEventListener('change', sync);
+        const why = h('p', { class: 'hint req-import-why', id: `req-ipv-why-${a.id}`, hidden: !a.refused, text: a.refused || '' });
+        cb.setAttribute('aria-describedby', a.refused ? `req-ipv-ameta-${a.id} ${why.id}` : `req-ipv-ameta-${a.id}`);
+        ui.atts.set(a.id, { cb, why, a });
+        return h('li', { class: a.refused ? 'req-import-off' : null }, h('label', { class: 'req-import-check' }, cb,
+          icon(a.kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }), h('span', { class: 'req-import-aname', text: a.name }),
+          h('span', { class: 'hint', id: `req-ipv-ameta-${a.id}`, text: a.kind ? `${KIND_TITLE[a.kind]} · ${sizeText(a.bytes)}` : sizeText(a.bytes) })), why);
+      });
+      return h('section', { class: 'req-import-sec' }, ui.attHead,
+        rows.length ? h('p', { class: 'hint', text: `Picked files become feature files. Worca gets them from ${name} when you start the interview and reads each once, like a file you add.` }) : null,
+        rows.length ? h('ul', { class: 'req-import-list' }, ...rows) : null);
+    }
+    function render() {
+      const L = data;
+      const meta = [L.meta && L.meta.type && L.meta.type.name, L.meta && L.meta.status, L.meta && L.meta.priority && L.meta.priority.name, L.connection]
+        .filter(Boolean).join(' · ');
+      const hidden = Number(L.redacted) || 0;
+      body.replaceChildren(
+        ...(L.linkedTo ? [h('p', { class: 'req-import-linked', role: 'alert',
+          text: `${L.key} is linked to ${L.linkedTo.id} · ${L.linkedTo.title}. The new feature can start from it but stays unlinked: one ticket follows one feature.` })] : []),
+        h('p', { class: 'hint req-import-meta', text: meta }),
+        h('div', { class: 'req-import-cols' },
+          h('div', { class: 'req-import-col' },
+            exportField(null, 'Title', h('p', { class: 'req-import-title', text: L.title })),
+            exportField(null, 'Description', L.description
+              ? h('div', { class: 'req-export-desc req-import-desc', role: 'region', 'aria-label': 'Description preview', tabindex: '0' }, ...mdBlocks(L.description))
+              : h('p', { class: 'hint', text: `${L.key} has no description.` })),
+            L.criteria.from === 'section' ? h('p', { class: 'hint', text: 'Without its Acceptance criteria section, which becomes the criteria below.' }) : null,
+            L.clipped ? h('p', { class: 'hint', text: `${L.key}'s description is longer than 20,000 characters. The form keeps the start; the whole text goes along as ${L.key} description.md.` }) : null,
+            hidden ? h('p', { class: 'hint', text: hidden === 1 ? 'Worca hid 1 thing that looked like a key or password.' : `Worca hid ${hidden} things that looked like keys or passwords.` }) : null,
+            critSection(L)),
+          h('div', { class: 'req-import-col' }, commentsSection(L), attachmentsSection(L))));
+      sync();
+    }
+    /** The ticks as they stand: the criteria's future ids, the headings' counts. */
+    function sync() {
+      const L = data;
+      let n = 0;
+      for (const c of ui.crit) {
+        if (c.cb.checked) { n += 1; c.code.textContent = `R-po-${n}`; c.cb.setAttribute('aria-label', `Use R-po-${n}: ${c.text}`); }
+        else { c.code.textContent = ''; c.cb.setAttribute('aria-label', `Use this criterion: ${c.text}`); }
+      }
+      const items = L.criteria.items || [];
+      ui.critHead.textContent = items.length ? `Acceptance criteria · ${items.length}` : 'Acceptance criteria · none';
+      ui.critHint.textContent = !items.length ? `None found in ${L.key}. Round 1 asks for them.`
+        : `Ticked criteria start the spec as ${n === 1 ? 'R-po-1' : `R-po-1 to R-po-${n}`}, kept as your own edits and marked “from ${L.key}”. Unticked ones are left out; they stay in ${name}.`;
+      ui.critHint.hidden = items.length > 0 && n === 0;   // none ticked: the R-po line would be false, so it hides (copy Q1, the user's call)
+      const coms = L.comments.filter((c) => ui.comments.get(c.id).checked);
+      ui.comHead.textContent = L.comments.length ? `Comments · ${coms.length} of ${L.comments.length}` : 'Comments · none';
+      const atts = [...ui.atts.values()].filter((x) => x.cb.checked);
+      ui.attHead.textContent = L.attachments.length ? `Attachments · ${atts.length} of ${L.attachments.length}` : 'Attachments · none';
+      // D9: the caps count every file the form would hold: its own files, the comments file, the description file, the ticked attachments.
+      // An unticked attachment whose tick would pass one is disabled with that line (aria-describedby, after its kind and size); room
+      // made frees it again.
+      const form = ctx.formFiles();
+      const count = form.count + (coms.length ? 1 : 0) + (L.descriptionFile ? 1 : 0) + atts.length;
+      const bytes = form.bytes + coms.reduce((sum, c) => sum + (Number(c.bytes) || 0), 0) + (L.descriptionFile ? L.descriptionFile.bytes : 0)
+        + atts.reduce((sum, x) => sum + x.a.bytes, 0);
+      for (const x of ui.atts.values()) {
+        if (x.a.refused) continue;
+        const cap = x.cb.checked ? null : count + 1 > REQ_ATTACH.maxFiles ? CAP_FILES_UI : bytes + x.a.bytes > REQ_ATTACH.maxRequestBytes ? CAP_BYTES_UI : null;
+        x.cb.disabled = !!cap;
+        x.cb.closest('li').classList.toggle('req-import-off', !!cap);   // a capped row looks off like a refused one
+        x.why.textContent = cap || '';
+        x.why.hidden = !cap;
+        x.cb.setAttribute('aria-describedby', cap ? `req-ipv-ameta-${x.a.id} ${x.why.id}` : `req-ipv-ameta-${x.a.id}`);
+      }
+    }
+    /** What Use this ticket hands the form. */
+    function chosen() {
+      const L = data;
+      const comments = L.comments.filter((c) => ui.comments.get(c.id).checked);
+      return { conn: pick.conn, tracker: L.tracker, key: L.key, url: L.url, meta: L.meta || {}, connection: L.connection, linkedTo: L.linkedTo || null,
+        title: L.title, description: L.description, clipped: !!L.clipped, descriptionFile: L.descriptionFile || null,
+        criteria: ui.crit.filter((c) => c.cb.checked).map((c) => c.text),
+        comments: comments.map((c) => ({ id: c.id, author: c.author, when: c.when, bytes: c.bytes })),
+        commentsFile: comments.length ? { name: `${L.key} comments.md`, bytes: comments.reduce((sum, c) => sum + (Number(c.bytes) || 0), 0) } : null,
+        attachments: [...ui.atts.values()].filter((x) => x.cb.checked).map(({ a }) => ({ id: a.id, name: a.name, kind: a.kind, bytes: a.bytes })) };
+    }
+    async function load() {
+      if (loading) return;
+      loading = true;
+      try {
+        const answer = await api('POST', importUrl(s, '/preview'), { ...pick.conn, key, formFiles: ctx.formFiles() });
+        if (!live(g)) return;   // Back, Cancel or Escape came first
+        data = answer;
+        box.clear();
+        note.hidden = true;
+        render();
+        use.disabled = false;
+        focusLost(title);   // Try again was the focus and is gone
+      } catch (err) {
+        if (!live(g)) return;
+        const gone = !!(err && err.data && err.data.gone);
+        box.show(importErr(err), { buttons: gone ? [] : [retry] });
+        if (gone) focusLost(title);
+        note.lastChild.textContent = ` Fix the connection on the Marketplace page (Installed › ${name}), then try again.`;
+        note.hidden = !(err && err.status === 502);
+      } finally { loading = false; }
+    }
+    void load();
   }
 
   // A repaint from the feature on screen, without a fetch (a fold, an editor opened, Change, Cancel).

@@ -8,9 +8,13 @@
 // labels) becomes a v2 issue in wiki markup; a create stores Worca's marker as the issue property `worca.export`; after a
 // create or update the description is read back once for the fingerprint Worca compares (D9). A refused field and a ticket
 // that is gone are results, not errors (D11). deps.fetch injected by tests.
+// A6.1 (plans/requirements-a61-design.md §5): the optional import ops read a ticket — its rendered description as Markdown, a
+// criteria field, the visible comments by display name only, the attachments' metadata — and download one attachment into the
+// path the host names.
 import { createHash } from 'node:crypto';
-import { jiraFetch } from './jira-api.mjs';
-import { htmlToMarkdown, markdownToWiki, wikiLink } from './markup.mjs';
+import { isAbsolute } from 'node:path';
+import { jiraDownload, jiraFetch } from './jira-api.mjs';
+import { htmlToMarkdown, markdownToWiki, plainWiki, wikiLink } from './markup.mjs';
 
 const PAGE = 50;
 const FIELDS = ['summary', 'status', 'labels', 'updated'];
@@ -62,6 +66,20 @@ const PROPERTY = 'worca.export';
 /** D10: once Jira has made the issue, each further request (the marker property, the read-back) gets this long, so a
  *  hung one cannot run the op into the host's 60 s limit, which would read as "nothing made" and make a second ticket. */
 export const AFTER_KEY_TIMEOUT_MS = 15_000;
+
+// A6.1 (plans/requirements-a61-design.md §4, §5): the optional import ops. They only read; REST v2 as the rest.
+const IMPORT_SEARCH_FIELDS = ['summary', 'status', 'issuetype', 'updated'];
+const IMPORT_PAGE = 20;
+const IMPORT_COMMENTS = 50;
+const emailish = (s) => /^[^@\s]+@[^@\s]+$/.test(String(s || ''));
+/** D8: an app or automation author: Cloud's accountType when the author has one (a deactivated Cloud person stays a person),
+ *  else Data Center's inactive user without an email-shaped name. */
+const authorKind = (a) => (a && (a.accountType ? a.accountType === 'app' : (a.active === false && !emailish(a.name))) ? 'app' : 'person');
+/** A criteria field's text as items: one per list item (nested ones too: `- `, `  - `, wiki `**`, `##`), else one per line. */
+const listItems = (md) => String(md || '').split('\n').map((l) => l.replace(/^\s*(?:[-*+#]+|\d+[.)])\s+/, '').trim()).filter(Boolean);
+/** Jira Cloud refuses a search with no clause before ORDER BY ("Unbounded JQL queries are not allowed here"): the import's
+ *  "All projects, recently updated" asks for the tickets updated within this window. */
+const CLOUD_RECENT = 'updated >= -365d';
 
 export default function createTaskSource(ctx, deps = {}) {
   const base = String(ctx.config?.baseUrl || '').trim().replace(/\/+$/, '');
@@ -192,6 +210,22 @@ export default function createTaskSource(ctx, deps = {}) {
   const refusesProperties = (e) => e?.status === 400 && ('properties' in (e.body?.errors || {})
     || (e.body?.errorMessages || []).some((m) => /propert/i.test(String(m))));
   const lastLine = (text) => String(text ?? '').replace(/\r\n?/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).at(-1) || '';
+  const ticketOf = (i) => {
+    const f = i.fields || {};
+    return { key: i.key, title: f.summary || i.key, url: browse(i.key), type: f.issuetype?.name || null, status: f.status?.name || null, updatedAt: f.updated || null };
+  };
+  // A6.1 D16: Jira answers 404 for a ticket that does not exist and for one this connection may not see; a Data Center may answer 403
+  const notVisible = async (e) => e.status === 404 || (e.status === 403 && (await deployment()) === 'datacenter');
+  // D7: the multi-line text fields named "Acceptance Criteria", when no criteria field is given (multi-line: a textarea custom
+  // field, as exportOptions' criteriaFields filters them). A site may have several; importTicket reads them all and takes the
+  // first with a value.
+  async function criteriaFieldIds() {
+    try {
+      const all = await jiraFetch(jira, '/rest/api/2/field');
+      return (Array.isArray(all) ? all : []).filter((x) => x && x.custom && /:textarea$/.test(String(x.schema?.custom || ''))
+        && String(x.name || '').trim().toLowerCase() === 'acceptance criteria').map((x) => String(x.id));
+    } catch (e) { log('warn', `the field list could not be read: ${String(e?.message || e).split('\n')[0].slice(0, 200)}`); return []; }
+  }
 
   return {
     async validateConfig() {
@@ -288,7 +322,7 @@ export default function createTaskSource(ctx, deps = {}) {
       await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/comment`, { method: 'POST', body: { body } });
       return { commented: true, transitioned };
     },
-    capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true }; },
+    capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true, import: true }; },
     // ---- A6: export (plans/requirements-a6-design.md §4, §5); each op through exportOp (Jira's words, never a status or path) ----
     exportOptions: exportOp(async ({ project, issueType } = {}) => {
       const projects = (await projectList()).map((p) => ({ value: p.key, label: `${p.key} — ${p.name}` }));
@@ -389,6 +423,84 @@ export default function createTaskSource(ctx, deps = {}) {
           labels: Array.isArray(i.fields?.labels) ? i.fields.labels : [] };
       }
       return null;
+    }),
+    // ---- A6.1: import (plans/requirements-a61-design.md §4, §5); read-only, each op through exportOp ----
+    importOptions: exportOp(async () => ({ projects: (await projectList()).map((p) => ({ value: p.key, label: `${p.key} — ${p.name}` })) })),
+    searchTickets: exportOp(async ({ project, search, cursor } = {}) => {
+      const key = pastedKey(search);
+      if (key) {
+        try { return { tickets: [ticketOf(await issue(key, IMPORT_SEARCH_FIELDS))] }; }
+        catch (e) { if (await notVisible(e)) return { tickets: [] }; throw e; }
+      }
+      const cloud = (await deployment()) === 'cloud';
+      const bounded = Boolean(String(project || '').trim() || String(search || '').trim());
+      // never the user's saved filter: the import searches the whole project; on Cloud an otherwise unbounded search gets a window
+      const jql = buildJql({ project, jql: cloud && !bounded ? CLOUD_RECENT : '', search });
+      const q = `jql=${enc(jql)}&fields=${IMPORT_SEARCH_FIELDS.join(',')}&maxResults=${IMPORT_PAGE}`;
+      if (cloud) {
+        const j = await jiraFetch(jira, `/rest/api/2/search/jql?${q}${cursor ? `&nextPageToken=${enc(cursor)}` : ''}`);
+        return { tickets: (j?.issues || []).map(ticketOf), ...(j?.nextPageToken && j?.isLast !== true ? { cursor: j.nextPageToken } : {}) };
+      }
+      const start = Number(cursor) || 0;
+      const j = await jiraFetch(jira, `/rest/api/2/search?${q}&startAt=${start}`);
+      const issues = j?.issues || [];
+      const next = start + issues.length;
+      return { tickets: issues.map(ticketOf), ...(issues.length && next < (j?.total ?? 0) ? { cursor: String(next) } : {}) };
+    }),
+    importTicket: exportOp(async ({ key, criteriaField } = {}) => {
+      const k = requireKey(key);
+      const candidates = /^customfield_\d+$/.test(String(criteriaField || '')) ? [String(criteriaField)] : await criteriaFieldIds();
+      const fields = ['summary', 'description', 'issuetype', 'priority', 'status', 'project', 'attachment', 'comment', ...candidates];
+      let i;
+      try { i = await issue(k, fields, 'renderedFields,names'); }
+      catch (e) { if (await notVisible(e)) return { gone: true }; throw e; }
+      const f = i.fields || {};
+      const r = i.renderedFields || {};
+      // the rendered HTML (the same on Cloud and Data Center) as Markdown; the raw wiki text as plain text when a site renders
+      // nothing, through plainWiki so a mention's account id never leaves the connector (D8, D15)
+      const description = r.description ? htmlToMarkdown(r.description) : plainWiki(f.description);
+      // the first candidate field with items; its unrendered value goes through plainWiki like the description (D8, D15)
+      let criteria = null;
+      for (const id of candidates) {
+        const items = listItems(r[id] ? htmlToMarkdown(r[id]) : plainWiki(f[id]));
+        if (items.length) { criteria = { field: { id, name: (i.names && i.names[id]) || id }, items }; break; }
+      }
+      let raw = Array.isArray(f.comment?.comments) ? f.comment.comments : [];
+      const total = Number.isFinite(Number(f.comment?.total)) ? Number(f.comment.total) : raw.length;
+      // only a comment Jira rendered: one without (null or absent) falls back to its wiki text below
+      const rendered = new Map((r.comment?.comments || []).filter((c) => c && c.body).map((c) => [String(c.id), c.body]));
+      if (total > raw.length) {
+        const page = await jiraFetch(jira, `/rest/api/2/issue/${enc(k)}/comment?orderBy=-created&maxResults=${IMPORT_COMMENTS}&expand=renderedBody`);
+        raw = [...(Array.isArray(page?.comments) ? page.comments : [])].reverse();   // the newest 50, oldest first
+        for (const c of raw) if (c.renderedBody) rendered.set(String(c.id), c.renderedBody);
+      }
+      const visible = raw.filter((c) => !c.visibility);   // a comment restricted to a group or role is never offered (D8)
+      const comments = visible.slice(-IMPORT_COMMENTS).map((c) => ({ id: String(c.id), author: c.author?.displayName || 'Someone', authorKind: authorKind(c.author),
+        created: c.created || null, body: rendered.has(String(c.id)) ? htmlToMarkdown(rendered.get(String(c.id))) : plainWiki(c.body) }));
+      return {
+        key: i.key, url: browse(i.key), title: f.summary || i.key, description, criteria, comments, commentsTotal: total,
+        restrictedComments: raw.length - visible.length,
+        attachments: (Array.isArray(f.attachment) ? f.attachment : []).map((a) => ({ id: String(a.id), name: String(a.filename || ''), mime: a.mimeType || '',
+          bytes: Number(a.size) || 0, created: a.created || null })),
+        meta: { project: f.project?.key || null, projectName: f.project?.name || null,
+          type: f.issuetype ? { id: String(f.issuetype.id), name: f.issuetype.name } : null, status: f.status?.name || null,
+          priority: f.priority ? { id: String(f.priority.id), name: f.priority.name } : null },
+        fingerprint: fingerprintOf(f.description),   // as ticketState computes it, so A6's edited check holds (D11)
+      };
+    }),
+    downloadAttachment: exportOp(async ({ key, id, maxBytes, dest } = {}) => {
+      const k = requireKey(key);
+      if (typeof dest !== 'string' || !isAbsolute(dest)) throw Object.assign(new Error('dest must be an absolute path the host made'), { kind: 'plugin' });
+      const max = Number(maxBytes) > 0 ? Number(maxBytes) : 25 * 1024 * 1024;
+      let meta;
+      try { meta = await issue(k, ['attachment']); }
+      catch (e) { if (e.status === 404) return { gone: true }; if (e.status === 403) return { gone: true, forbidden: true }; throw e; }
+      const a = (meta?.fields?.attachment || []).find((x) => String(x.id) === String(id));
+      if (!a) return { gone: true };   // the attachment must belong to this ticket
+      if (Number(a.size) > max) return { tooLarge: true, bytes: Number(a.size) };   // checked before any download
+      const r = await jiraDownload(jira, a.content, { dest, maxBytes: max, allowHttpRedirect: deps.allowHttpRedirect === true });
+      if (r.gone || r.tooLarge) return r;
+      return { name: String(a.filename || ''), mime: a.mimeType || '', bytes: r.bytes };   // never the body in the frame
     }),
   };
 }

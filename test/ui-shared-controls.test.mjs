@@ -152,6 +152,8 @@ const JS_CHECKBOX_OK = [
   ['app.js', 'cb.value = opt', 'picks chips'],
   ['memory-view.mjs', 'mem-seed-all', 'picks: select every note to share'], ['memory-view.mjs', 'mem-seed-check', 'picks notes to share'],
   ['marketplace/browse.mjs', 'mk-hide-installed', 'Hide installed: an opt-in filter next to the list'],
+  ['requirements-view.mjs', 'ipv-crit-', 'picks the ticket criteria to start from'], ['requirements-view.mjs', 'ipv-com-', 'picks the ticket comments to take'],
+  ['requirements-view.mjs', 'ipv-att-', 'picks the ticket attachments to add as files'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));

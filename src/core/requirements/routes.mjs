@@ -18,7 +18,7 @@ import {
 import {
   sendMessage, retryMessage, stopHelper, acceptProposal, rejectProposal, askAgain, clearChat, isAnswering, helperView,
 } from './helper.mjs';
-import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles } from './attachments.mjs';
+import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles, fileOrigins } from './attachments.mjs';
 import {
   addAttachments, removeAttachment, editSummary, setSend, readAgain, askAttachment, replaceAttachment, ownAttachment, fileView, readEstimates,
   attachmentFile, removeOwnerBodies, stopJobs, runFiles,
@@ -34,6 +34,7 @@ import {
 import { readiness, displayState, changedSince, unaskedRejections, unaskedFiles } from './ready.mjs';
 import { startFeature, startView } from './start.mjs';
 import { exportSetupView, exportOptions, saveSetup, previewExport, runExport, forgetLink, exportView } from './export.mjs';
+import { importView, importOptions, searchTickets, previewImport, prepareImport, createImported } from './import.mjs';
 import { budgetStatus, requirementsWindowedSpendUsd } from '../cost-budget.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
 import { saveSpecToCheckout, specFileName } from './save.mjs';
@@ -59,6 +60,9 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   // A6 §6: the export setup of a project or workspace, before the /:seq routes
   ['GET', `${P}/export-setup/:scopeType/:scopeKey`], ['PUT', `${P}/export-setup/:scopeType/:scopeKey`],
   ['POST', `${P}/export-setup/:scopeType/:scopeKey/options`],
+  // A6.1 §6: start from a ticket, before the /:seq routes
+  ['GET', `${P}/import/:scopeType/:scopeKey`], ['POST', `${P}/import/:scopeType/:scopeKey/options`],
+  ['POST', `${P}/import/:scopeType/:scopeKey/search`], ['POST', `${P}/import/:scopeType/:scopeKey/preview`],
   ['GET', P], ['POST', P],
   ['GET', `${P}/:seq`], ['PATCH', `${P}/:seq`],
   ['POST', `${P}/:seq/answers`], ['POST', `${P}/:seq/finish`], ['POST', `${P}/:seq/retry`], ['POST', `${P}/:seq/look`],
@@ -215,6 +219,7 @@ export async function featureView(seq, d = {}) {
   const busy = isBusy(seq);
   const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
   const files = listAttachments('feature', seq);
+  const origins = fileOrigins(turns);   // A6.1 D14: "from SHOP-124"
   const brief = usableBrief(f.scopeType, f.scopeKey);
   const docs = brief ? listAttachments('brief', brief.id) : [];
   const ready = readiness({ ...f, pending }, { turns, target: await targetFor(f), files });
@@ -232,7 +237,7 @@ export async function featureView(seq, d = {}) {
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
       starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec, sentFiles(rows[0], f)) : [],
       brief: featureBrief(f), lookCostUsd: lookCostUsd(model),
-      attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates })),
+      attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates, from: origins.get(r.id) || null })),
       briefDocuments: docs.map((r) => fileView(r, { spec: f.spec, href: `${briefPathOf(f.scopeType, f.scopeKey)}/documents/${r.id}`, doc: true, estimates })),
       unaskedFiles: unaskedFiles(files, turns),
       interview: await interviewInfo(async () => im, d.listModels || listModels),
@@ -539,6 +544,23 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       await checkTarget(...scope(req));
       res.json(await exportOptions({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
     },
+    // ---- A6.1: start from a ticket (plans/requirements-a61-design.md §6); every tracker call is server-side ----
+    [`GET ${P}/import/:scopeType/:scopeKey`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await importView({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, { memberKeys: await memberKeysOf(...scope(req)) }, d));
+    },
+    [`POST ${P}/import/:scopeType/:scopeKey/options`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await importOptions({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
+    },
+    [`POST ${P}/import/:scopeType/:scopeKey/search`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await searchTickets({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
+    },
+    [`POST ${P}/import/:scopeType/:scopeKey/preview`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await previewImport({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
+    },
     [`GET ${P}`]: async (req, res) => {
       const q = req.query || {};
       const targets = new Map();
@@ -562,8 +584,20 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     [`POST ${P}`]: fileRoute(async (req, res) => {
       const b = req.body || {};
       await checkTarget(b.scopeType, b.scopeKey);
+      const uploads = b.attachments === undefined ? [] : uploadsOf(b.attachments, { owner: 'feature', create: true });
+      if (b.fromTicket !== undefined) {
+        // A6.1 D10: capacity first; the ticket read again; then the feature at once, without waiting for any download
+        assertCapacity();
+        const s = { scopeType: b.scopeType, scopeKey: b.scopeKey };
+        const plan = await prepareImport(s, b.fromTicket, { diskFiles: uploads }, d);
+        assertCapacity();   // again: the read awaited the tracker; from here to the orientation nothing awaits
+        const made = createImported(s, { title: b.title, description: b.description }, plan, { by: by(req) }, d);
+        startOrientation(made.seq, { by: by(req) }, d);
+        onChange(made.seq);
+        return res.status(201).json({ ...(await featureView(made.seq, d)), filesNotStored: made.filesNotStored, notOnTicket: made.notOnTicket });
+      }
       // A8 D2: the files are checked before anything is created, then stored and queued before the orientation
-      const files = b.attachments === undefined ? [] : checkNewFiles('feature', [], uploadsOf(b.attachments, { owner: 'feature', create: true }));
+      const files = checkNewFiles('feature', [], uploads);
       assertCapacity();   // before creating: a refused start must not leave a feature stuck at "looking"
       const f = createFeature({ scopeType: b.scopeType, scopeKey: b.scopeKey, title: b.title, description: b.description }, { by: by(req) });
       // The feature exists now: a file that cannot be stored (a disk or database error; the refusals all came before the

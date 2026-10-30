@@ -10724,7 +10724,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-files .req-menu .menu-item{white-space:nowrap}   /* board 21: one line a row */
 /* D13: a source after an item's text; a link while the file exists (--blue-ink-strong on --field, 5.5:1), else --ink-2. */
 .req-src-tag{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 6px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:12px;line-height:1.4;text-decoration:none;vertical-align:baseline;overflow-wrap:anywhere}
-.req-src-tag > svg{flex:none}
+.req-src-tag > svg,.req-src-tag > .ic{flex:none}
 a.req-src-tag{color:var(--blue-ink-strong)}
 a.req-src-tag:hover{color:var(--ink)}
 a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
@@ -11015,6 +11015,110 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
   a.chip.req-export-chip{position:relative}
   a.chip.req-export-chip::after{content:"";position:absolute;inset:-8px 0}
 }
+
+/* A6.1 (plans/requirements-a61-design.md §7, boards 32–34): Start from a ticket. Both dialogs are A6's .req-dialog.req-export cards, so its
+   900 px sheet rules apply; the pick is 560 px, the preview 880 px in two columns. A picked ticket row has an ink border, never a fill. */
+.req-import-labrow{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.req-import-labrow > label{margin:0;font-weight:600;font-size:var(--fs-body)}
+.req-import-open[hidden]{display:none}
+.req-import-search{display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink-2)}
+.req-import-search input{flex:1;min-width:0;border:0;background:transparent;padding:7px 0;font-size:var(--fs-body);color:var(--ink)}
+.req-import-search input:focus{outline:none}
+.req-import-search:focus-within{outline:2px solid var(--ink);outline-offset:1px}
+.req-import-status{margin:0;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-import-empty,.req-import-note{margin:0}
+.req-import-note[hidden],.req-import-empty[hidden]{display:none}
+.req-import-results{display:flex;flex-direction:column;gap:6px;max-height:min(46vh,420px);overflow-y:auto}
+.req-import-ticket{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
+.req-import-ticket:has(input:checked){border-color:var(--ink)}
+.req-import-ticket input{margin:3px 0 0;flex:none}
+.req-import-ticket-txt{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:var(--fs-body)}
+.req-import-ticket-txt .hint{margin:0}
+.req-import-linkchip{flex:none;align-self:center}
+.req-import-more{align-self:flex-start}
+.req-import-more[hidden]{display:none}
+/* A6.1 (board 34): the preview, two columns of checkboxes; a refused row says why under it. */
+.req-dlg-wrap .card.req-dialog.req-import-preview{width:min(880px,100%)}
+.req-import-body{display:flex;flex-direction:column;gap:12px;min-width:0}
+.req-import-meta{margin:0}
+.req-import-linked{margin:0;padding:8px 10px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+.req-import-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.req-import-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.req-import-col > .hint{margin:0}
+.req-import-title{margin:0;font-size:var(--fs-body);font-weight:600}
+.req-import-sec{display:flex;flex-direction:column;gap:6px}
+.req-import-sec > .hint{margin:0}
+.req-import-h{margin:0;font-size:var(--fs-body);font-weight:600}
+.req-import-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.req-import-check{display:flex;align-items:flex-start;gap:8px;font-size:var(--fs-body);cursor:pointer}
+.req-import-check input{margin:3px 0 0;flex:none}
+.req-import-code{flex:none;font-size:var(--fs-meta)}
+.req-import-check{min-width:0;overflow-wrap:anywhere}
+.req-import-aname{flex:0 1 auto;min-width:0;overflow-wrap:anywhere}
+.req-import-check > .hint{flex:none;max-width:45%}
+.req-import-cby{overflow-wrap:anywhere}
+.req-import-ctext{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-import-cbody{overflow-wrap:anywhere;color:var(--ink-2)}
+.req-import-off .req-import-check{cursor:not-allowed;color:var(--ink-2)}
+.req-import-why{margin:2px 0 0 24px;font-size:var(--fs-meta)}
+.req-import-why[hidden]{display:none}
+/* A6.1 (board 36, D19): at 900 px and narrower both dialogs are A6's full-screen sheets (← New feature first, full-width buttons); the
+   preview is one column, a comment shows its author and date only, three at first; every row and small button reaches 44 px through an
+   ::after hit area (a 19–20 px row + 2 × 13; rows 26 px apart, so the areas touch but never overlap; a 28 px .btn-sm + 2 × 9). */
+.req-import-showall{display:none}
+@media (max-width:900px){
+  .req-import-cols{grid-template-columns:minmax(0,1fr)}
+  .req-import-cbody{display:none}
+  .req-import-com.folded{display:none}
+  .req-import-list{gap:26px}
+  .req-import-check{position:relative}
+  .req-import-check::after{content:"";position:absolute;inset:-13px 0}
+  .req-import-showall{display:block;width:100%;position:relative;text-align:left;margin-top:20px}
+  .req-import-showall[hidden]{display:none}
+  .req-import-showall::after{content:"";position:absolute;inset:-13px 0}
+  .req-import .btn-sm{position:relative}
+  .req-import .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-import-results{max-height:none}
+}
+/* A6.1 (board 32): the form a ticket filled: the strip at its top, the criteria, the ticket's files as chips with the key, the Replace
+   question and the create's failure. */
+.req-import-strip{display:flex;flex-direction:column;gap:6px;padding:12px 14px;margin-bottom:18px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--field)}   /* 18px: the .field rhythm */
+.req-import-strip[hidden],.req-import-critfield[hidden],.req-import-filesnote[hidden],.req-import-deschint[hidden],.req-import-descclip[hidden],.req-import-ask[hidden]{display:none}
+.req-import-strip-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:var(--fs-body)}
+.req-import-strip-top .hint,.req-import-site{margin:0}
+.req-import-tchip{font-size:var(--fs-caption);padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);color:var(--ink-2);background:var(--field)}
+.req-import-critfield{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+.req-import-critfield .opt{color:var(--ink-2);font-weight:500}
+.req-import-critfield > .req-export-fl{font-size:var(--fs-body);font-weight:600;color:inherit}   /* a field label: .field > label's size, weight and ink */
+.req-import-critfield > .hint{margin:0}
+.req-import-critlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:var(--fs-body)}
+.req-import-critlist code{font-size:var(--fs-meta)}
+.req-import-deschint,.req-import-descclip,.req-import-filesnote{margin:4px 0 0}
+.req-import-ask{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+.req-import-ask p{margin:0}
+.req-import-askbtns{display:flex;gap:8px}
+.req-import-fail{display:flex;flex-direction:column;gap:4px}
+.req-import-fail:empty{display:none}
+.req-import-fail p{margin:0}
+@media (max-width:900px){
+  /* Stop using SHOP-124 is a 28 px .req-ico: 28 + 2 × 8. A ticket file's × is also A8's .req-new-chip-x, so A8's phone rule gives it
+     its 44 px, as the form's own file chips */
+  .req-import-x{position:relative}
+  .req-import-x::after{content:"";position:absolute;inset:-8px}
+  /* the form's new controls reach 44 px too (plan review Minor 8): From a ticket… is a 28 px .btn-sm, Change ticket… an 18 px line,
+     Keep mine and Replace 28 px .btn-sm */
+  .req-import-open,.req-import-strip .link-btn,.req-import-askbtns .btn-sm{position:relative}
+  .req-import-open::after,.req-import-askbtns .btn-sm::after{content:"";position:absolute;inset:-9px 0}   /* a bordered 28 px .btn-sm is 26 + 18 */
+  .req-import-strip .link-btn::after{content:"";position:absolute;inset:-13px 0}
+}
+/* a ticket file's × is 24 px between 601 and 900 px (A8's 44 px rule starts at 600): 24 + 2 × 10 */
+@media (min-width:601px) and (max-width:900px){
+  .req-new-chip .req-import-chip-x{position:relative}
+  .req-new-chip .req-import-chip-x::after{content:"";position:absolute;inset:-10px}
+}
+/* A6.1 (board 35): the Files card while a file comes from the tracker — A8's row; its badge is the shared .badge.blue (no rule here). */
+/* a file without its body yet is named in plain text, not link blue: there is nothing to open */
+span.req-file-name{color:var(--ink)}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */

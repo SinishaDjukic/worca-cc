@@ -11,8 +11,9 @@ import { createProfile } from '../src/core/plugin-config.mjs';
 import { callSource, setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
 import {
-  createFeature, getFeature, updateFeature, appendTurn, listTurns, getExportLink, getExportSetup, upsertExportSetup, setPendingExport,
+  createFeature, getFeature, updateFeature, appendTurn, listTurns, getExportLink, getExportSetup, upsertExportSetup, setPendingExport, saveExportLink,
 } from '../src/core/requirements/store.mjs';
+import { exportTime } from '../src/core/requirements/ticket.mjs';
 import { startOrientation, settled, isBusy } from '../src/core/requirements/interview.mjs';
 import { markStarting, unmarkStarting } from '../src/core/requirements/starting.mjs';
 import {
@@ -646,4 +647,67 @@ test('the search grace after a restart: a refused create this process did not se
   _resetExportCaches();   // what a restart forgets
   await assert.rejects(exportVia(f.seq, { mode: 'create' }, { ...d, now: () => new Date(Date.now() + 5_000) }), (e) => e.code === 'BUSY');
   assert.equal((await exportVia(f.seq, { mode: 'create' }, later())).action, 'created');
+});
+
+// ── A6.1: a link an import made (plans/requirements-a61-design.md D11) ──
+const IMPORTED_AT = '2026-10-27T09:12:00.000Z';
+/** A Ready feature that started from SHOP-124 (a Bug, High) and has not been exported since. */
+function importedFeature(scopeKey = SCOPE.scopeKey) {
+  const f = createFeature({ scopeType: 'project', scopeKey, title: 'Partial cancel', description: 'From SHOP-124',
+    criteria: [{ text: 'A customer can cancel unpicked items.', source: 'SHOP-124' }] });
+  appendTurn(f.seq, { kind: 'export', payload: { action: 'imported', tracker: 'Jira', key: 'SHOP-124', url: 'https://mock.test/browse/SHOP-124', at: IMPORTED_AT,
+    linked: true, criteria: ['R-po-1'], comments: 2, files: [] } });
+  saveExportLink(f.seq, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', trackerProject: 'SHOP', key: 'SHOP-124', url: 'https://mock.test/browse/SHOP-124',
+    createdAt: IMPORTED_AT, exportedAt: IMPORTED_AT, spec: f.spec, fingerprint: 'fp-import', origin: 'import',
+    fields: { projectName: 'Shop web', issueType: '10003', issueTypeName: 'Bug', priority: '2', priorityName: 'High', labels: ['worca'], criteria: { target: 'description' } } });
+  appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true } });
+  return updateFeature(f.seq, { status: 'done', spec: { ...f.spec, goal: { text: 'Customers cancel part of an order', measure: 'fewer calls' } } });
+}
+
+test("A6.1 D11: an imported link's Update keeps the ticket's issue type and priority (a setup on the same connection does not apply) and leaves its own key out", async () => {
+  reset();
+  const f = importedFeature();
+  const p = await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d);
+  assert.deepEqual([p.ticket.issueType, p.ticket.priority, p.fields.issueType.label, p.fields.priority.label], ['10003', '2', 'Bug', 'High']);
+  assert.match(p.ticket.description, /- R-po-1 A customer can cancel unpicked items\.\n/);
+  assert.ok(!/\(from SHOP-124\)/.test(p.ticket.description));
+  assert.deepEqual([p.link.origin, p.link.importedOn, p.link.sinceImport], ['import', '27 Oct', true]);
+  const r = await runExport(f.seq, { mode: 'update', previewHash: p.previewHash }, { by: 'po', target: TARGET }, d);
+  assert.equal(r.action, 'updated');
+  const l = getExportLink(f.seq);
+  assert.deepEqual([l.origin, l.createdAt, l.exportedAt === IMPORTED_AT], ['import', IMPORTED_AT, false]);
+  assert.equal((await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d)).link.sinceImport, false);
+});
+
+test("A6.1 D11: the comment is \"since the import\" until the first export; the edited check compares with the import's fingerprint", async () => {
+  reset();
+  const f = importedFeature();
+  const c = await previewExport(f.seq, { mode: 'comment' }, { target: TARGET }, d);
+  assert.match(c.comment, /^Updated in Worca since the import \(27 Oct\)\n\n/);
+  setMockSourceResponses({ ticketState: () => ({ exists: true, url: 'https://mock.test/browse/SHOP-124', fingerprint: 'fp-edited-in-jira' }) });
+  assert.equal((await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d)).edited, true);
+  setMockSourceResponses({ ticketState: () => ({ exists: true, url: 'https://mock.test/browse/SHOP-124', fingerprint: 'fp-import' }) });
+  assert.equal((await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d)).edited, false);
+});
+
+test('A6.1 D11: without an export setup an imported feature still updates; a new ticket needs the setup and makes an ordinary export link', async () => {
+  reset();
+  const f = importedFeature('shop-no-setup');
+  const p = await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d);
+  assert.equal((await runExport(f.seq, { mode: 'update', previewHash: p.previewHash }, { by: 'po', target: TARGET }, d)).key, 'SHOP-124');
+  await assert.rejects(previewExport(f.seq, { mode: 'new' }, { target: TARGET }, d), (e) => e.message === 'Set up the export first.');
+  const g = importedFeature();
+  const n = await previewExport(g.seq, { mode: 'new' }, { target: TARGET }, d);
+  assert.match(n.ticket.description, /\(from SHOP-124\)/, 'a new ticket keeps where the criterion came from');
+  await runExport(g.seq, { mode: 'new', previewHash: n.previewHash }, { by: 'po', target: TARGET }, d);
+  assert.equal(getExportLink(g.seq).origin, 'export');
+});
+
+test("A6.1: the feature's export view carries the origin and the import's History entry", async () => {
+  reset();
+  const f = importedFeature();
+  const v = await exportView(getFeature(f.seq), listTurns(f.seq), d);
+  assert.deepEqual([v.link.origin, v.link.importedOn, v.link.sinceImport], ['import', '27 Oct', true]);
+  const h = v.history.find((x) => x.action === 'imported');
+  assert.deepEqual([h.key, h.tracker, h.linked, h.linkedTo, h.when], ['SHOP-124', 'Jira', true, null, exportTime(IMPORTED_AT)]);
 });

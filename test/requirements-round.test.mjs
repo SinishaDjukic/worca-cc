@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { emptySpec, MAX_QUESTIONS } from '../src/core/requirements/spec.mjs';
 import {
   applyRound, RoundError, buildRoundPrompt, buildOrientationPrompt, ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, normalizeOrientation, mockRoundReply, pendingRound, latestAnswers,
-  removedCriteria, roundPromptParts,
+  removedCriteria, roundPromptParts, threadText,
 } from '../src/core/requirements/round.mjs';
+import { renderAttachmentsForPrompt } from '../src/core/requirements/attachments.mjs';
 
 const base = () => ({
   ...emptySpec(),
@@ -553,4 +554,32 @@ test('A8 D8: a follow-up round for files says so, outside the round count; with 
   assert.ok(both.includes('The product owner rejected these assumptions: A-4: Full refund.') && both.includes('these files after the interview finished: “b.pdf”.'));
   const m = mockRoundReply({ title: 'T', rounds: 2 }, false, { followUpFiles: ['b.pdf'] });
   assert.deepEqual([m.questions.length, m.questions[0].source, m.done], [1, 'b.pdf', false]);
+});
+
+test("A6.1 D14: an import writes one thread line, as data; A6's other export turns write none, so a feature that was not imported keeps its thread byte for byte", () => {
+  const base = [{ id: 1, kind: 'round', payload: { questions: [] } }];
+  const exported = [{ id: 2, kind: 'export', payload: { action: 'created', tracker: 'Jira', key: 'SHOP-1' } }];
+  assert.equal(threadText([...base, ...exported]), threadText(base));
+  const imported = { id: 0, kind: 'export', payload: { action: 'imported', tracker: 'Jira', key: 'SHOP-124', criteria: ['R-po-1', 'R-po-2', 'R-po-3'], comments: 5 } };
+  assert.equal(threadText([imported]),
+    'The product owner started this feature from Jira ticket SHOP-124. Its acceptance criteria are R-po-1 to R-po-3; its comments are in “SHOP-124 comments.md”.');
+  assert.ok(!threadText([{ ...imported, payload: { ...imported.payload, key: 'SHOP-1<b>' } }]).includes('<b>'), 'asData escapes it');
+});
+
+test("A6.1 §9 (Prompts): an imported feature's round 1 prompt has the import line in <thread>, the comments file's full text in <attachments>, and a file still downloading by name only", () => {
+  const comments = '# Comments on SHOP-124\n\n**Ann Example** · 21 Oct 2026\nWarehouse confirms items are picked per parcel.\n';
+  const rows = [
+    { id: 'ratt_000000000001', name: 'SHOP-124 comments.md', kind: 'text', bytes: Buffer.byteLength(comments), status: 'done', summary: 'Items are picked per parcel.',
+      summaryEdited: false, asks: [] },
+    { id: 'ratt_000000000002', name: 'partial-cancel-flow.pdf', kind: 'binary', bytes: 1258291, status: 'downloading', summary: '', summaryEdited: false, asks: [],
+      fetch: { tracker: 'Jira', key: 'SHOP-124' } },
+  ];
+  const attachments = renderAttachmentsForPrompt(rows, { texts: new Map([['ratt_000000000001', comments]]) });
+  const turns = [{ id: 1, kind: 'export', payload: { action: 'imported', tracker: 'Jira', key: 'SHOP-124', criteria: ['R-po-1', 'R-po-2', 'R-po-3'], comments: 1 } }];
+  const p = buildRoundPrompt({ feature: { id: 'FEAT-8', title: 'Partial cancel', description: 'd', spec: emptySpec() }, turns, attachments, round: 1 });
+  const block = (tag) => (new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(p) || [])[1];
+  assert.equal(block('thread'),
+    'The product owner started this feature from Jira ticket SHOP-124. Its acceptance criteria are R-po-1 to R-po-3; its comments are in “SHOP-124 comments.md”.');
+  assert.ok(block('attachments').includes(`SHOP-124 comments.md (text, ${Buffer.byteLength(comments)} B)\nWhat Worca took from it:\nItems are picked per parcel.\nFull text:\n${comments}`));
+  assert.ok(block('attachments').includes('partial-cancel-flow.pdf (PDF, 1.2 MB): being downloaded from SHOP-124; known by name only.'));
 });

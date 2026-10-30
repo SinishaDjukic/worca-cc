@@ -20,9 +20,11 @@
 // preview and its dark theme, Create with the chip, the History card and Created SHOP-123, Export again with the comment
 // preview, Export anyway, the 390 px sheet with its phone title, Back, Show all, 44 px targets and the page inert until the
 // view is left, Tab kept inside a dialog, AA text in light and dark, the states of a tracker that cannot be reached, Start
-// with Report back writing back to the ticket; `--only=a6` runs it alone); no page errors.
-// NOT part of `npm test`. REQ_SHOTS=<dir> also writes the Feature chat and export screens there (a3-*.png, a6-*.png) for a
-// human look.
+// with Report back writing back to the ticket; `--only=a6` runs it alone); start from a ticket (A6.1: jira-source linked in mock
+// mode; New feature › From a ticket…, the search, the preview, Use this ticket, Start the interview with the files downloaded and
+// read, the feature linked to SHOP-124, Export to Jira… on it, the 390 px sheet; `--only=a61` runs it alone); no page errors.
+// NOT part of `npm test`. REQ_SHOTS=<dir> also writes the Feature chat, export and start-from-a-ticket screens there (a3-*.png,
+// a6-*.png, a61-*.png) for a human look.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
 //
@@ -48,6 +50,8 @@ const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 
   ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 // --only=a6: the boot, the flag and the A6 section (export to a tracker) alone, then the page-error gate.
 const ONLY_A6 = process.argv.includes('--only=a6');
+// --only=a61: the boot, the flag and the A6.1 section (start from a ticket) alone, then the page-error gate.
+const ONLY_A61 = process.argv.includes('--only=a61');
 const SHOTS = process.env.REQ_SHOTS || '';
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const PORT = Number(process.env.CDP_PORT || 9344);
@@ -88,6 +92,7 @@ const READ_MS = 1500;
 const HOLD_MS = 6000;
 const AFTER_HOLD_MS = HOLD_MS + 14_000;
 process.env.WORCA_MOCK_READ_MS = String(READ_MS);
+process.env.WORCA_MOCK_DOWNLOAD_MS = '2500';   // A6.1: a mock download waits, so "Downloading…" can be seen
 delete process.env.WORCA_FLAGS;
 const projDir = path.join(home, 'shop');
 await mkdir(projDir, { recursive: true });
@@ -183,7 +188,7 @@ await sleep(500);
 check('flag off: no Requirements row', !(await navShown()));
 await A.evalJs(`window.__np.flags.set('requirements', true)`);
 check('flag on: the row appears without a reload', await until(navShown, 2000));
-if (!ONLY_A6) {   // --only=a6 skips to the A6 section
+if (!ONLY_A6 && !ONLY_A61) {   // --only=a6 / --only=a61 skip to their section
   await A.evalJs(`location.hash = '#requirements/new'`);
   check('the new-feature form renders', await until(() => A.evalJs(`!!document.getElementById('req-new-title')`)));
   check('the New feature page names the interview model ("Worca interviews with …")',
@@ -752,11 +757,82 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   }
   return { hh, ww }; };`;
 
+// The screens, the theme, the contrast and the Tab walk: shared by the A6 and A6.1 sections.
+/** REQ_SHOTS=<dir>: a screenshot of the viewport for a human look (nothing is written without it). */
+const shot = async (name) => {
+  if (!SHOTS) return;
+  await mkdir(SHOTS, { recursive: true });
+  const { data } = await A.send('Page.captureScreenshot', { format: 'png' });
+  writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(data, 'base64'));
+};
+/** The theme the page shows ('' = the system's), once its colours have finished changing. */
+const setTheme = async (t) => {
+  await A.evalJs(`(() => { const r = document.documentElement; if (${JSON.stringify(t)}) r.dataset.theme = ${JSON.stringify(t)}; else delete r.dataset.theme; })()`);
+  await sleep(150);
+  await until(() => A.evalJs(`document.getAnimations().length === 0`), 3000);
+};
+/** The text in `sels` below WCAG AA against what is drawn under it (4.5:1; 3:1 for large text): [text, ratio, ink, ground].
+ *  A colour is read back through a canvas, so any CSS colour syntax works; a disabled control and hidden text are skipped.
+ *  Selectors that reach no visible text are a failure too (a renamed class never passes unseen). */
+const lowContrast = (sels) => A.evalJs(`(() => {
+  const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
+  const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
+    const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const over = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+  const ground = (el) => { const layers = [];
+    for (let n = el; n; n = n.parentElement) { const c = rgba(getComputedStyle(n).backgroundColor); if (c[3] > 0) layers.push(c); if (c[3] >= 1) break; }
+    let g = [255, 255, 255, 1]; for (const l of layers.reverse()) g = over(l, g); return g; };
+  const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+  const out = [];
+  let seen = 0;
+  for (const root of document.querySelectorAll(${JSON.stringify(sels.join(', '))})) {
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (![...el.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
+      if (!el.getClientRects().length || el.closest('[hidden], [aria-hidden="true"], button:disabled')) continue;
+      const cs = getComputedStyle(el); if (cs.visibility === 'hidden') continue;
+      seen += 1;
+      const bg = ground(el); const ink = over(rgba(cs.color), bg);
+      const [a, b] = [lum(ink), lum(bg)]; const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      const px = parseFloat(cs.fontSize); const large = px >= 24 || (px >= 18.66 && Number(cs.fontWeight) >= 700);
+      if (ratio < (large ? 3 : 4.5)) out.push([el.textContent.trim().slice(0, 40), Math.round(ratio * 100) / 100, cs.color, 'rgb(' + bg.slice(0, 3).map(Math.round).join(', ') + ')']);
+    }
+  }
+  if (!seen) out.push(['no visible text matched', ${JSON.stringify(sels.join(', '))}]);
+  return out; })()`);
+/** lowContrast in the light and the dark theme; the page's theme is put back after. */
+const contrastBoth = async (sels, darkShot = null) => {
+  const was = await A.evalJs(`document.documentElement.dataset.theme || ''`);
+  await setTheme('light');
+  const light = await lowContrast(sels);
+  await setTheme('dark');
+  const dark = await lowContrast(sels);
+  if (darkShot) await shot(darkShot);
+  await setTheme(was);
+  return { light, dark };
+};
+/** Tab (or Shift+Tab) as the keyboard sends it; where the focus is after: inside the open dialog or not. */
+const tabKey = async (shift) => {
+  const k = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: shift ? 8 : 0 };
+  await A.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
+  await A.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });   // answered once the page has handled the key
+  return A.evalJs(`(() => { const a = document.activeElement; const d = document.querySelector('.req-dlg-wrap [role="dialog"]');
+    return { inDlg: !!d && !!a && d.contains(a), el: a ? (a.getAttribute('data-ui') || a.id || a.tagName) : null }; })()`);
+};
+/** From the dialog's title (where it puts the focus): Shift+Tab, then `n` Tabs round the dialog. Every stop is inside it. */
+const tabWalk = async (n) => {
+  await A.evalJs(`document.querySelector('.req-dlg-wrap [role="dialog"] h2').focus()`);
+  const back = await tabKey(true);
+  const fwd = [];
+  for (let i = 0; i < n; i += 1) fwd.push(await tabKey(false));
+  return { back, fwd, out: [back, ...fwd].filter((t) => !t.inDlg).map((t) => t.el) };
+};
+
 // ---- A6: export to a tracker (boards 26–31), in mock mode: jira-source linked with one connection; the shim's canned export
 // answers (SHOP — Shop web, Story, tickets SHOP-123, 124, …, doneStatus Done). This server runs in this process, so a Ready
 // feature is made straight in the store, and a tracker that cannot be reached is the shim's answer swapped for one op
 // (setMockSourceResponses; `{}` puts the canned answers back without restarting the ticket numbers). Runs alone with --only=a6.
-{
+if (!ONLY_A61) {
   const store = await import(new URL('../src/core/requirements/store.mjs', import.meta.url).href);
   const { emptySpec } = await import(new URL('../src/core/requirements/spec.mjs', import.meta.url).href);
   const { linkPlugin } = await import(new URL('../src/core/plugin-store.mjs', import.meta.url).href);
@@ -764,75 +840,6 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   const { retryWriteback } = await import(new URL('../src/core/sources.mjs', import.meta.url).href);
   const { setMockSourceResponses } = await import(new URL('../src/core/plugin-shim.mjs', import.meta.url).href);
   const { getDb } = await import(new URL('../src/core/db.mjs', import.meta.url).href);
-  /** REQ_SHOTS=<dir>: a screenshot of the viewport for a human look (nothing is written without it). */
-  const shot = async (name) => {
-    if (!SHOTS) return;
-    await mkdir(SHOTS, { recursive: true });
-    const { data } = await A.send('Page.captureScreenshot', { format: 'png' });
-    writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(data, 'base64'));
-  };
-  /** The theme the page shows ('' = the system's), once its colours have finished changing. */
-  const setTheme = async (t) => {
-    await A.evalJs(`(() => { const r = document.documentElement; if (${JSON.stringify(t)}) r.dataset.theme = ${JSON.stringify(t)}; else delete r.dataset.theme; })()`);
-    await sleep(150);
-    await until(() => A.evalJs(`document.getAnimations().length === 0`), 3000);
-  };
-  /** The text in `sels` below WCAG AA against what is drawn under it (4.5:1; 3:1 for large text): [text, ratio, ink, ground].
-   *  A colour is read back through a canvas, so any CSS colour syntax works; a disabled control and hidden text are skipped.
-   *  Selectors that reach no visible text are a failure too (a renamed class never passes unseen). */
-  const lowContrast = (sels) => A.evalJs(`(() => {
-    const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
-    const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
-      const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
-    const over = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
-    const ground = (el) => { const layers = [];
-      for (let n = el; n; n = n.parentElement) { const c = rgba(getComputedStyle(n).backgroundColor); if (c[3] > 0) layers.push(c); if (c[3] >= 1) break; }
-      let g = [255, 255, 255, 1]; for (const l of layers.reverse()) g = over(l, g); return g; };
-    const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
-      return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
-    const out = [];
-    let seen = 0;
-    for (const root of document.querySelectorAll(${JSON.stringify(sels.join(', '))})) {
-      for (const el of [root, ...root.querySelectorAll('*')]) {
-        if (![...el.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
-        if (!el.getClientRects().length || el.closest('[hidden], [aria-hidden="true"], button:disabled')) continue;
-        const cs = getComputedStyle(el); if (cs.visibility === 'hidden') continue;
-        seen += 1;
-        const bg = ground(el); const ink = over(rgba(cs.color), bg);
-        const [a, b] = [lum(ink), lum(bg)]; const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-        const px = parseFloat(cs.fontSize); const large = px >= 24 || (px >= 18.66 && Number(cs.fontWeight) >= 700);
-        if (ratio < (large ? 3 : 4.5)) out.push([el.textContent.trim().slice(0, 40), Math.round(ratio * 100) / 100, cs.color, 'rgb(' + bg.slice(0, 3).map(Math.round).join(', ') + ')']);
-      }
-    }
-    if (!seen) out.push(['no visible text matched', ${JSON.stringify(sels.join(', '))}]);
-    return out; })()`);
-  /** lowContrast in the light and the dark theme; the page's theme is put back after. */
-  const contrastBoth = async (sels, darkShot = null) => {
-    const was = await A.evalJs(`document.documentElement.dataset.theme || ''`);
-    await setTheme('light');
-    const light = await lowContrast(sels);
-    await setTheme('dark');
-    const dark = await lowContrast(sels);
-    if (darkShot) await shot(darkShot);
-    await setTheme(was);
-    return { light, dark };
-  };
-  /** Tab (or Shift+Tab) as the keyboard sends it; where the focus is after: inside the open dialog or not. */
-  const tabKey = async (shift) => {
-    const k = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: shift ? 8 : 0 };
-    await A.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
-    await A.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });   // answered once the page has handled the key
-    return A.evalJs(`(() => { const a = document.activeElement; const d = document.querySelector('.req-dlg-wrap [role="dialog"]');
-      return { inDlg: !!d && !!a && d.contains(a), el: a ? (a.getAttribute('data-ui') || a.id || a.tagName) : null }; })()`);
-  };
-  /** From the dialog's title (where it puts the focus): Shift+Tab, then `n` Tabs round the dialog. Every stop is inside it. */
-  const tabWalk = async (n) => {
-    await A.evalJs(`document.querySelector('.req-dlg-wrap [role="dialog"] h2').focus()`);
-    const back = await tabKey(true);
-    const fwd = [];
-    for (let i = 0; i < n; i += 1) fwd.push(await tabKey(false));
-    return { back, fwd, out: [back, ...fwd].filter((t) => !t.inDlg).map((t) => t.el) };
-  };
   const unreachable = () => { const e = new Error('401 Unauthorized'); e.kind = 'auth'; throw e; };
 
   // The first-visit Welcome dialog (upstream onboarding) may still sit over the page: Skip it, so the screens and the inert
@@ -1112,6 +1119,159 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
     check('A6 D15: the run reports back to SHOP-123 through the existing write-back', wb.ok === true && last.id === 'SHOP-123', JSON.stringify({ wb, last }));
   }
   for (const r of runs.values()) { try { r.orch?.stop?.(); } catch {} }
+}
+// ---- A6.1: start from a ticket (boards 32–36), in mock mode: jira-source linked with one connection; the shim's canned import answers
+// (four tickets; SHOP-124 with six comments, one by an app, and five attachments, two of them not offered); a mock download writes a tiny
+// body after WORCA_MOCK_DOWNLOAD_MS, a mock read takes READ_MS. Runs alone with --only=a61.
+if (!ONLY_A6) {
+  const { linkPlugin } = await import(new URL('../src/core/plugin-store.mjs', import.meta.url).href);
+  const { createProfile } = await import(new URL('../src/core/plugin-config.mjs', import.meta.url).href);
+  try { await linkPlugin('jira-source', fileURLToPath(new URL('../plugins/jira-source', import.meta.url))); } catch { /* the A6 section linked it */ }
+  try { createProfile('jira-source', 'acme', 'acme.atlassian.net (Cloud)'); } catch { /* the A6 section made it */ }
+  // After the A6 section, SHOP-124 is a ticket A6 created and one of its features follows it, so an import of it would start
+  // unlinked (D12). This section starts a feature linked to SHOP-124: the mock tracker starts afresh (null puts the canned answers
+  // back and restarts its ticket numbers and fingerprints) and A6's feature forgets the link, as Forget the link does (A6 D12).
+  // Alone (--only=a61) there is nothing to undo.
+  const { setMockSourceResponses } = await import(new URL('../src/core/plugin-shim.mjs', import.meta.url).href);
+  const { forgetLink } = await import(new URL('../src/core/requirements/export.mjs', import.meta.url).href);
+  const { getDb } = await import(new URL('../src/core/db.mjs', import.meta.url).href);
+  setMockSourceResponses(null);
+  for (const r of getDb().prepare(`SELECT feature_seq FROM req_export_links WHERE UPPER(ticket_key) = 'SHOP-124'`).all()) forgetLink(r.feature_seq);
+  await A.evalJs(`fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) })
+    .then(() => { document.querySelector('#welcome-modal:not(.hidden) .ob-skip')?.click(); })`);
+  await A.send('Emulation.clearDeviceMetricsOverride');
+  const DLG = `document.querySelector('.req-dlg-wrap [role="dialog"]')`;
+  const HOST = `document.querySelector('#requirements-host')`;
+  const othersInert = () => A.evalJs(`[...document.body.children].filter((el) => !el.classList.contains('req-dlg-wrap')).every((el) => el.hasAttribute('inert'))`);
+  const noneInert = () => A.evalJs(`[...document.body.children].every((el) => !el.hasAttribute('inert'))`);
+  const click = (sel) => A.evalJs(`document.querySelector(${JSON.stringify(sel)}).click()`);
+  const search = (words) => A.evalJs(`(() => { const s = document.querySelector('[data-ui="pick-search"]'); s.value = ${JSON.stringify(words)};
+    s.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  const newFeature = async () => {
+    await A.evalJs(`location.hash = '#requirements'`);
+    await sleep(300);
+    await A.evalJs(`location.hash = '#requirements/new'`);
+    return until(() => A.evalJs(`(() => { const b = ${HOST}?.querySelector('[data-ui="import-open"]'); return !!b && !b.hidden && !!b.closest('.req-import-labrow'); })()`), 15000);
+  };
+
+  check('A6.1 D1 (board 32): New feature shows From a ticket… at the right of the Describe it label', await newFeature());
+  await shot('a61-board32-new-feature');
+  await click('#requirements-host [data-ui="import-open"]');
+  check('A6.1 board 33: Start from a ticket opens with its title focused and four recently updated tickets; every other child of <body> is inert',
+    await until(async () => (await A.evalJs(`(() => { const d = ${DLG}; return !!d && d.querySelector('h2').textContent === 'Start from a ticket'
+      && document.activeElement === d.querySelector('h2') && d.querySelectorAll('[role="radiogroup"] input').length === 4; })()`)) && (await othersInert()), 15000));
+  // D3: the pick opens on the export setup's project (SHOP after the A6 section) or on All projects (no setup: --only=a61). Pick SHOP
+  // in the Jira project select as a user does, so the count line below names it either way.
+  check('A6.1 D3: the Jira project select offers SHOP — Shop web; picking it lists "Recently updated in SHOP"',
+    await until(() => A.evalJs(`(() => { const d = ${DLG}; const p = d?.querySelector('[data-ui="pick-project"]'); const o = p && p.querySelector('option[value="SHOP"]');
+      if (!o || o.textContent !== 'SHOP — Shop web') return false;
+      if (p.value !== 'SHOP') { p.value = 'SHOP'; p.dispatchEvent(new Event('change')); }
+      return d.querySelector('.req-import-status')?.textContent === 'Recently updated in SHOP' && d.querySelectorAll('[role="radiogroup"] input').length === 4; })()`),
+    15000));
+  await search('cancel');
+  const pickStatus = () => A.evalJs(`${DLG}?.querySelector('.req-import-status')?.textContent ?? null`);
+  check('A6.1 D4: the search runs after a pause: "4 tickets in SHOP match “cancel”."',
+    await until(async () => (await pickStatus()) === '4 tickets in SHOP match “cancel”.', 15000), JSON.stringify(await pickStatus()));
+  await shot('a61-board33-pick');
+  const pickAA = await contrastBoth(['.req-dlg-wrap .req-import-pick'], 'a61-board33-pick-dark');
+  check('A6.1 board 33: the pick is AA in light and dark', pickAA.light.length === 0 && pickAA.dark.length === 0, JSON.stringify(pickAA));
+  await click('[data-ui="pick-SHOP-124"]');
+  await click('[data-ui="pick-continue"]');
+  check('A6.1 board 34: the preview: three criteria ticked, the app comment unticked, the Office file and the 31 MB scan not offered, nothing sent to Jira',
+    await until(() => A.evalJs(`(() => { const d = ${DLG}; if (!d || d.querySelector('h2').textContent !== 'Start from SHOP-124') return false;
+      const crit = [...d.querySelectorAll('[data-ui^="ipv-crit-"]')]; const app = d.querySelector('[data-ui="ipv-com-10234"]');
+      const off = ['10044', '10045'].map((id) => d.querySelector('[data-ui="ipv-att-' + id + '"]'));
+      return crit.length === 3 && crit.every((c) => c.checked) && !!app && !app.checked && off.every((x) => !!x && x.disabled && !x.checked)
+        && d.textContent.includes('Nothing is sent to Jira.') && d.textContent.includes('Worca hid 1 thing that looked like a key or password.'); })()`), 15000));
+  await shot('a61-board34-preview');
+  const previewAA = await contrastBoth(['.req-dlg-wrap .req-import-preview'], 'a61-board34-preview-dark');
+  check('A6.1 board 34: the preview is AA in light and dark', previewAA.light.length === 0 && previewAA.dark.length === 0, JSON.stringify(previewAA));
+  // §9 says "untick the automation comment"; D8 has it unticked already (checked above), so the proof unticks a person's comment
+  await click('[data-ui="ipv-com-10235"]');
+  await click('[data-ui="ipv-use"]');
+  check('A6.1 board 32: Use this ticket fills the form (title, the strip, three criteria, the comments file and three attachments) and releases the page',
+    await until(async () => (await A.evalJs(`(() => { const h = ${HOST}; return !${DLG} && h.querySelector('#req-new-title').value === 'Partial cancel for multi-item orders'
+      && h.querySelector('[data-ui="import-chip"]')?.textContent === 'SHOP-124' && h.querySelectorAll('.req-import-critlist li').length === 3
+      && [...h.querySelectorAll('.req-import-chips .req-new-chip-name')].map((n) => n.textContent).join('|')
+        === 'SHOP-124 comments.md|packing-slip.png|partial-cancel-flow.pdf|support-macro.txt'; })()`)) && (await noneInert()), 15000));
+  await shot('a61-board32-filled');
+  const formAA = await contrastBoth(['#requirements-host .req-import-strip', '#requirements-host .req-import-critfield', '#requirements-host .req-import-chips'],
+    'a61-board32-filled-dark');
+  check('A6.1 board 32: the strip, the criteria and the ticket files are AA in light and dark', formAA.light.length === 0 && formAA.dark.length === 0, JSON.stringify(formAA));
+  await click('#requirements-host .req-new-btns .btn-primary');
+  let seq = null;
+  check('A6.1 D10 (board 35): Start the interview opens the feature at once: the chip SHOP-124, R-po-1 to R-po-3 tagged SHOP-124, a file Downloading…',
+    await until(async () => {
+      const r = await A.evalJs(`(() => { const h = ${HOST}; const head = h.querySelector('[data-req-feature]'); if (!head) return null;
+        return { seq: head.getAttribute('data-req-feature'), chip: h.querySelector('[data-ui="export-chip"]')?.textContent || '',
+          tags: [...h.querySelectorAll('.req-src-ticket')].map((t) => t.textContent),
+          downloading: [...h.querySelectorAll('.req-file .badge')].some((b) => b.textContent === 'Downloading…') }; })()`);
+      if (!r) return false;
+      seq = r.seq;
+      return r.chip === 'SHOP-124' && r.tags.length === 3 && r.tags.every((t) => t === 'SHOP-124') && r.downloading;
+    }, 20000));
+  check('A6.1 board 35: the working line reads "Getting … from SHOP-124…"',
+    await until(() => A.evalJs(`/^Getting [1-3] files? from SHOP-124…$/.test(${HOST}.querySelector('.req-reading .badge')?.textContent || '')`), 10000));
+  await shot('a61-board35-downloading');
+  const filesAA = await contrastBoth(['#requirements-host .req-files', '#requirements-host .req-reading'], 'a61-board35-downloading-dark');
+  check('A6.1 board 35: the Files card while files are downloaded is AA in light and dark', filesAA.light.length === 0 && filesAA.dark.length === 0, JSON.stringify(filesAA));
+  check('A6.1 D10: every file is downloaded and read, each "from SHOP-124", then round 1 asks',
+    await until(() => A.evalJs(`(() => { const h = ${HOST}; const metas = [...h.querySelectorAll('.req-files .req-file-meta')].map((m) => m.textContent);
+      return metas.length === 4 && metas.every((m) => m.includes('from SHOP-124'))
+        && ![...h.querySelectorAll('.req-file .badge')].some((b) => /Downloading|Reading/.test(b.textContent)) && !!h.querySelector('.qpanel .qopt'); })()`),
+      AFTER_HOLD_MS + 30000));
+  check('A6.1 board 35: History records the import',
+    await until(() => A.evalJs(`/^Imported SHOP-124 from Jira · /.test(${HOST}.querySelector('.req-history li span')?.textContent || '')`), 10000));
+  await shot('a61-board35-read');
+  // Export ▾ › Export to Jira… on the imported feature: not Ready yet, so A6 asks for a reason first, then the again dialog in the import's words
+  await A.evalJs(`(() => { document.querySelector('#requirements-host [data-ui="menu-export"]').click(); document.querySelector('#requirements-host [data-ui="mi-export"]').click(); })()`);
+  await until(() => A.evalJs(`!!document.querySelector('[data-ui="export-reason"]')`), 10000);
+  await A.evalJs(`(() => { const a = document.querySelector('[data-ui="export-reason"]'); a.value = 'The team refines it in Jira.';
+    a.dispatchEvent(new Event('input')); document.querySelector('[data-ui="export-anyway"]').click(); })()`);
+  check('A6.1 D11 (board 35): Export to Jira… on it opens "Export FEAT-n to Jira" — "FEAT-n started from SHOP-124 on <day>. …"',
+    await until(() => A.evalJs(`(() => { const d = ${DLG}; return !!d && d.querySelector('h2').textContent === 'Export FEAT-${seq} to Jira'
+      && /^FEAT-${seq} started from SHOP-124 on \\d{1,2} [A-Z][a-z]{2}\\. The spec has changed since\\. What should happen\\?$/.test(d.querySelector('#req-again-desc')?.textContent || ''); })()`), 15000));
+  await shot('a61-board35-export');
+  await click('[data-ui="again-cancel"]');
+  await until(() => A.evalJs(`!${DLG}`), 5000);
+
+  // 390 px (board 36, D19): the preview as a full-screen sheet that fits the screen, ← New feature first, three comments then Show all, 44 px targets
+  await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await newFeature();
+  await click('#requirements-host [data-ui="import-open"]');
+  await until(() => A.evalJs(`${DLG}?.querySelectorAll('[role="radiogroup"] input').length === 4`), 15000);
+  await search('cancel');
+  await until(() => A.evalJs(`${DLG}?.querySelector('.req-import-status')?.textContent === '4 tickets in SHOP match “cancel”.'`), 15000);
+  await click('[data-ui="pick-SHOP-124"]');
+  await click('[data-ui="pick-continue"]');
+  await until(() => A.evalJs(`!!${DLG}?.querySelector('[data-ui="ipv-use"]') && !${DLG}.querySelector('[data-ui="ipv-use"]').disabled`), 15000);
+  const sheet = await A.evalJs(`(() => { const d = ${DLG}; const r = d.getBoundingClientRect(); const vw = document.documentElement.clientWidth; const vh = window.innerHeight;
+    const back = d.querySelector('[data-ui="import-back"]'); const all = d.querySelector('[data-ui="ipv-showall"]');
+    const btns = ['ipv-back', 'ipv-use'].map((u) => { const b = d.querySelector('[data-ui="' + u + '"]'); const br = b.getBoundingClientRect();
+      const top = document.elementFromPoint(br.left + br.width / 2, br.top + br.height / 2);
+      return br.left >= 0 && br.top >= 0 && br.right <= vw && br.bottom <= vh && !!top && b.contains(top); });
+    return { fixed: getComputedStyle(d).position === 'fixed', fits: Math.round(r.left) === 0 && Math.round(r.top) === 0 && Math.round(r.width) === vw && Math.round(r.height) === vh,
+      back: back && getComputedStyle(back).display !== 'none' ? back.getAttribute('aria-label') : null,
+      showAll: !!all && getComputedStyle(all).display !== 'none' ? all.textContent : null,
+      shown: [...d.querySelectorAll('.req-import-com')].filter((li) => getComputedStyle(li).display !== 'none').length,
+      bodyHidden: [...d.querySelectorAll('.req-import-cbody')].every((b) => getComputedStyle(b).display === 'none'),
+      btns, noScroll: document.documentElement.scrollWidth === document.documentElement.clientWidth }; })()`);
+  check('A6.1 board 36: at 390 x 844 the preview is a full-screen sheet with ← New feature, three comments by author and date, Show all 6 comments, Back and Use this ticket on screen',
+    sheet.fixed && sheet.fits && sheet.back === 'Back to New feature' && sheet.showAll === 'Show all 6 comments' && sheet.shown === 3 && sheet.bodyHidden
+      && sheet.btns.every(Boolean) && sheet.noScroll, JSON.stringify(sheet));
+  const small = await A.evalJs(`(() => { const d = ${DLG}; ${HIT_FN}
+    return [...d.querySelectorAll('.btn, .req-export-back, .req-import-check, .req-import-showall')].filter((b) => b.offsetParent !== null)
+      .map((b) => [b, hit(b)]).filter(([, s]) => s.hh < 44).map(([b, s]) => (b.getAttribute('data-ui') || b.className) + ':' + Math.round(s.hh)); })()`);
+  check('A6.1 D19: every row and button of the sheet is a 44 px target', small.length === 0, JSON.stringify(small));
+  await shot('a61-board36-phone-sheet');
+  const walk = await tabWalk(24);
+  check('A6.1 D19: on the 390 px sheet Tab and Shift+Tab stay inside it', walk.out.length === 0, JSON.stringify({ back: walk.back, fwd: walk.fwd.map((t) => t.el) }));
+  const phoneAA = await contrastBoth(['.req-dlg-wrap .req-import-preview'], 'a61-board36-phone-dark');
+  check('A6.1 board 36: the sheet is AA in light and dark', phoneAA.light.length === 0 && phoneAA.dark.length === 0, JSON.stringify(phoneAA));
+  await A.evalJs(`location.hash = '#runs'`);
+  check('A6.1 D19: leaving the Requirements view closes the sheet and puts the page back (nothing left inert)',
+    await until(async () => !(await A.evalJs(`!!${DLG}`)) && (await noneInert()), 8000));
+  await A.send('Emulation.clearDeviceMetricsOverride');
 }
 await sleep(1000);
 check('no page errors', A.pageErrors.length === 0, A.pageErrors.join(' | '));

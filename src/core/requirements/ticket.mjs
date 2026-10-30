@@ -47,14 +47,14 @@ export function exportTime(iso) {
 
 /** The neutral ticket (D4, §4). `criteria` is the setup's target; with a field the description leaves its criteria out. */
 export function buildTicket(f, { project, issueType, labels = [], priority = null, criteria = { target: 'description' }, reason = null, exportedOn,
-  mentionedFiles = [] } = {}) {
+  mentionedFiles = [], ownKey = null } = {}) {
   const toField = !!(criteria && criteria.target === 'field' && criteria.field);
   return {
     project, issueType, title: f.title,
-    description: renderTicketMarkdown(f, { reason, exportedOn, criteriaInDescription: !toField, mentionedFiles }),
+    description: renderTicketMarkdown(f, { reason, exportedOn, criteriaInDescription: !toField, mentionedFiles, ownKey }),
     labels: normalizeLabels(labels, exportLabel(f)),
     priority: priority || null,
-    criteria: toField ? { target: 'field', field: criteria.field, items: f.spec.criteria.map(criterionLine) } : { target: 'description' },
+    criteria: toField ? { target: 'field', field: criteria.field, items: f.spec.criteria.map((c) => criterionLine(c, ownKey)) } : { target: 'description' },
   };
 }
 
@@ -107,9 +107,10 @@ export function changeSummary(changes) {
   return out;
 }
 
-/** The comment of Add a comment (design §4, board 28): the head, an Export anyway reason, one paragraph per change, the footer. */
-export function renderExportComment(f, changes, { since, reason = null } = {}) {
-  const out = [`Updated in Worca since the last export (${since})`];
+/** The comment of Add a comment (design §4, board 28): the head, an Export anyway reason, one paragraph per change, the footer.
+ *  A6.1 D11: 'since the import' until the first export of an imported link. */
+export function renderExportComment(f, changes, { since, reason = null, after = 'export' } = {}) {
+  const out = [`Updated in Worca since the ${after === 'import' ? 'import' : 'last export'} (${since})`];
   if (reason) out.push(`Exported before Ready: ${reason}`);
   for (const c of changes || []) {
     if (c.kind === 'criterion') {
