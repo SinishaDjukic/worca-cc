@@ -82,12 +82,12 @@ function manifestSessions(stepper) {
   return specsMemo.get(stepper);
 }
 
-/** The members in bar order (the summary's, else the order they first ran), only those with a turn: a member that has
- *  not run is no priced $0.00 share (the mock lists the members with turns). */
+/** The members in bar order (the summary's, else the order they first ran), only those with a priced turn: a member that
+ *  has not run, or whose turn has no cost record yet, is no $0.00 share (the mock lists the members with turns). */
 function membersOf(session, rows) {
   const out = Array.isArray(session.members) ? [...session.members] : [];
   for (const r of rows) if (r.nodeId && !out.includes(r.nodeId)) out.push(r.nodeId);
-  return out.filter((id) => rows.some((r) => r.nodeId === id));
+  return out.filter((id) => rows.some((r) => r.nodeId === id && finite(r.memberUsd)));
 }
 
 /** One session's card. `engineCost`: the engine reports a cost (else every figure is a dash). `runStatus` + `live`: a run
@@ -225,16 +225,23 @@ export function renderSessionCard(session, { doc, labelOf = (id) => id, engineCo
   }
 
   // Whether it adds up (the mock's three words): every failed check, the harness figure first (the harness figure is what
-  // was booked); else no cost to compare on this engine, the checks still coming on a live session, or reconciled. A
-  // trace nothing was checked on (unreadable, no valid line) or a session that ran no host turn (separate, or one that
-  // ended before its first) says nothing; a live one still waiting for its first turn says the checks are coming.
+  // was booked); a check that failed with no figures to show (the host's close says so, its failed record was lost:
+  // correction 54); else no cost to compare on this engine, the checks still coming on a live session, or reconciled
+  // (only a report that says so: `ok` is true | false | null). A trace nothing was checked on (unreadable, no valid line)
+  // or a session that ran no host turn (separate, or one that ended before its first) says nothing; a live one still
+  // waiting for its first turn says the checks are coming.
   const rec = el(doc, 'div', 'rs-reconcile');
   const mism = s.reconcile && Array.isArray(s.reconcile.mismatches) ? s.reconcile.mismatches : [];
+  const okWord = s.reconcile ? s.reconcile.ok : null;
   const checked = !(s.reconcile && s.reconcile.ok === null) && ((s.turns ?? 0) > 0 || stillWorking);
-  if (!mism.length && checked) {
+  if (!mism.length && okWord === false) {
+    const bad = el(doc, 'span', 'rs-bad', '⚠ not reconciled');
+    bad.title = 'The host\'s close says the figures did not add up; the failed check was not recorded.';
+    rec.appendChild(bad);
+  } else if (!mism.length && checked) {
     if (!engineCost) rec.appendChild(el(doc, 'span', 'rs-na', 'no cost from this engine · tokens only'));
     else if (stillWorking) rec.appendChild(el(doc, 'span', 'rs-na', 'reconciles after each turn'));
-    else {
+    else if (okWord === true) {
       const ok = el(doc, 'span', 'rs-ok', '✓ reconciled');   // glyph-ok: the check's status word; Task 58 pins this text
       ok.title = 'The steps and the hand-offs add up to the harness total.';
       rec.appendChild(ok);

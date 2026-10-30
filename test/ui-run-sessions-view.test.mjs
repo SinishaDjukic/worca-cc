@@ -243,6 +243,31 @@ test('v2 — History: the same tab, from the saved state, fetched by the row id'
   assert.ok(doc2.querySelector('#hist-detail .hd-sec[data-sec="sessions"] .rs-out'), 'and the steps outside it (Plan)');
 });
 
+test('History: a failed load is asked again when the tab is opened again', async () => {
+  _resetSessionsCache();
+  const st = groupedRunningState();
+  let seen = 0;
+  let up = false;
+  const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, stepper: st.stepper, steps: st.steps, sessionHosts: st.sessionHosts, runEngine: 'claude' } },
+    arms: (url) => {
+      if (!url.endsWith(`/api/runs/${ROW.id}/sessions`)) return null;
+      seen += 1;
+      return up ? ok({ sessions: [S] }) : Promise.resolve({ ok: false, status: 500, json: async () => ({}) });
+    } });
+  await openDetail(ctx, 'details/sessions');
+  await settle(ctx.window, 6);
+  const doc2 = ctx.window.document;
+  const sec = doc2.querySelector('#hist-detail .hd-sec[data-sec="sessions"]');
+  assert.equal(sec.textContent, 'The sessions could not be loaded. Open the tab again to retry.');
+  const before = seen;
+  up = true;
+  doc2.querySelector('#hist-detail .hd-tab:not([data-sec="sessions"])').click();
+  doc2.querySelector('#hist-detail .hd-tab[data-sec="sessions"]').click();
+  await settle(ctx.window, 6);
+  assert.equal(seen - before, 1, 'the copy promises a retry: reopening the tab asks again');
+  assert.ok(sec.querySelector('.rs-card'), 'and the report painted');
+});
+
 // ── v3: the review's rows (a live refetch of the same report, the trailing look, the reconcile words, unknown figures) ──
 test('v3 — live: the same report fetched again rebuilds nothing; a sessionHost count drives the refetch', async () => {
   _resetSessionsCache();
@@ -304,13 +329,21 @@ test('v3 — the reconcile words (the mock\'s three), history with no reason, me
   assert.equal(word({ ...S, status: 'done', reconcile: okRec }, { live: true }), '✓ reconciled', 'closed');
   assert.equal(word({ ...S, reconcile: { ok: null, mismatches: [] }, integrity: { torn: 0, invalid: 0, seqGaps: 0, unreadable: true } }), '', 'nothing was checked');
   assert.equal(word({ ...S, mode: 'separate', turns: 0, turnRows: [], reconcile: okRec }), '', 'a separate session with no host turn');
+  const lost = renderSessionCard({ ...S, status: 'done', reconcile: { ok: false, mismatches: [] } }, { doc, labelOf, engineCost: true, live: false });
+  assert.deepEqual([lost.querySelectorAll('.rs-ok').length, lost.querySelectorAll('.rs-bad').length], [0, 1],
+    'the close says not reconciled and its failed check was lost (correction 54): never "✓ reconciled"');
+  assert.equal(lost.querySelector('.rs-reconcile').textContent.trim(), '⚠ not reconciled', 'the CLI\'s words for the same report');
+  assert.equal(word({ ...S, status: 'done', reconcile: undefined }), '', 'no check in the report: no tick');
   const h = renderSessionCard({ ...S, history: [{ kind: 'degrade', reason: null }, { kind: 'resume', reason: null }, { kind: 'pause', reason: 'pause' }, { kind: 'degrade', reason: 'the Labs flag sessionGroups is off' }] }, { doc, labelOf });
   assert.deepEqual([...h.querySelectorAll('.rs-history li')].map((li) => li.textContent), ['runs as separate sessions', 'resumed', 'paused', 'runs as separate sessions — the One session Labs flag is off']);
   const three = renderSessionCard({ ...S, members: ['n_impl', 'n_review', 'n_docs'] }, { doc, labelOf: (id) => ({ n_impl: 'Implementation', n_review: 'Review', n_docs: 'Docs' })[id] });
   assert.doesNotMatch(three.querySelector('.rs-legend').textContent, /Docs/, 'a member with no turn yet is no $0.00 share');
   assert.equal(three.querySelectorAll('.rs-bar > span').length, 3);
-  const lost = renderSessionCard({ ...S, engine: null }, { doc, labelOf, runEngine: 'codex' });
-  assert.match(lost.querySelector('.rs-meta').textContent, /Sub-agents · turns · Codex · main agent/, 'the open line was torn: the run\'s engine');
+  const booking = renderSessionCard({ ...S, turnRows: [S.turnRows[0], { ...S.turnRows[1], memberUsd: null, hostOverheadUsd: null, costSource: null }] }, { doc, labelOf });
+  assert.doesNotMatch(booking.querySelector('.rs-legend').textContent, /Review/, 'a turn with no cost record yet is no $0.00 share');
+  assert.doesNotMatch(booking.querySelector('.rs-bar').getAttribute('aria-label'), /\$0\.00/);
+  const torn = renderSessionCard({ ...S, engine: null }, { doc, labelOf, runEngine: 'codex' });
+  assert.match(torn.querySelector('.rs-meta').textContent, /Sub-agents · turns · Codex · main agent/, 'the open line was torn: the run\'s engine');
   assert.doesNotMatch(renderSessionCard({ ...S, engine: null }, { doc, labelOf }).querySelector('.rs-meta').textContent, /Claude/, 'no engine made up');
 });
 

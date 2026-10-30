@@ -30548,10 +30548,12 @@ function buildRdSessions(sec, ctx) {
 function buildHdSessions(sec, record, data) {
   wireSessionsClicks(sec, () => ({ run: data.state, record: hdCurrentRecord(record) }));
   // History's Logs tab is Expert and exists only with a saved log. History gets no live frames: the report is the one
-  // fetched when the tab opened (a run still going shows it as live, and reopening the tab asks again).
+  // fetched when the tab opened (a run still going shows it as live). A failed load un-stamps the tab (as History's Logs
+  // tab does, after initDetailTabs' stamp), so reopening the tab asks again, as its message says.
   const logs = Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log');
   const trays = data.state && isGraphManifest(data.state.stepper) ? decorFromState(data.state, { live: false, now: 0 }).sessions : null;   // History's graph decor
-  paintSessionsTab(sec, sessionsTabArgs(data.state, record.id, !isTerminalStatus(data.state && data.state.status), logs ? 'expert' : null, undefined, trays));
+  paintSessionsTab(sec, sessionsTabArgs(data.state, record.id, !isTerminalStatus(data.state && data.state.status), logs ? 'expert' : null, undefined, trays))
+    .then((report) => { if (!report) sec.dataset.loaded = ''; });
 }
 
 function buildRdAgents(sec, ctx) {

@@ -162,6 +162,17 @@ test('v2 — sessionsReport: failed checks (turn and epoch, once each), skipped 
       { v: 1, ts: '2026-10-28T10:00:01.000Z', seq: 2, kind: 'turn_start', sid: 's_llllllll', turnId: 't:s_llllllll:1' },
       { v: 1, ts: '2026-10-28T10:01:00.000Z', seq: 4, kind: 'close', sid: 's_llllllll', status: 'done', reconciled: false }], seqGaps: 1 });
     assert.deepEqual([lost.reconciled, lost.reconcile.ok], [false, false], 'v4: the close says not reconciled (its failed record was lost): never "reconciled"');
+    const rec = (ok, checks) => sessionReport({ records: [{ v: 1, ts: '2026-10-28T10:00:00.000Z', seq: 1, kind: 'open', sid: 's_llllllll', engine: 'claude', mode: 'subagents', members: [] },
+      { v: 1, ts: '2026-10-28T10:00:01.000Z', seq: 2, kind: 'reconcile', sid: 's_llllllll', turnId: 't:s_llllllll:1', ok, checks }] });
+    const both = (x) => [x.reconciled, x.reconcile.ok];
+    assert.deepEqual(both(rec(false, [])), [false, false], 'a failed record with no failed check: one rule for both fields');
+    assert.deepEqual(both(rec(true, [{ method: 'hook', harnessUsd: 0.4, otherUsd: 0.5, tolerance: 0.008, ok: false }])), [false, false], 'and the reverse');
+    const gap = join(dir, 'gap-run');                          // the first turn's start was lost: its later turn still ran
+    await writeTrace(gap, 's_pppppppp', [['open', { engine: 'claude', mode: 'subagents', label: 'P', members: [] }], ['turn_start', { turnId: 't:s_pppppppp:1' }]],
+      { at: { turn_start: '2026-10-28T10:05:00.000Z' } });
+    await writeTrace(gap, 's_qqqqqqqq', [['open', { engine: 'claude', mode: 'subagents', label: 'Q', members: [] }], ['dispatch', { turnId: 't:s_qqqqqqqq:1', executionId: 'x:n_q:1', nodeId: 'n_q', attempt: 1 }],
+      ['turn_start', { turnId: 't:s_qqqqqqqq:2' }]], { at: { turn_start: '2026-10-28T10:02:00.000Z' } });
+    assert.deepEqual((await sessionsReport(gap)).sessions.map((x) => x.sid), ['s_qqqqqqqq', 's_pppppppp'], 'sorted by the first turn that has a start');
   } finally {
     await chmod(join(dir, 'sessions', 's_jjjjjjjj'), 0o755).catch(() => {});
     await chmod(join(dir, 'sessions', 's_hhhhhhhh', 'trace.ndjson'), 0o644).catch(() => {});

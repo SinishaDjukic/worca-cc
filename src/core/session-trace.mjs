@@ -363,9 +363,11 @@ export function sessionReport({ records = [], torn = 0, invalid = 0, seqGaps = 0
   // (a write error leaves a seq gap), so the report never reads "reconciled" where the host said otherwise.
   const writerNo = records.some((r) => isObj(r) && r.kind === 'close' && r.reconciled === false);
   const summary = records.reduce(applyTraceRecord, emptySummary({ sid }));
-  return { ...summary, ...(checked ? {} : { reconciled: null }), ...(writerNo ? { reconciled: false } : {}), turnRows: turnRows(records),
-    history: sessionHistory(records),
-    reconcile: { ok: mismatches.length || writerNo ? false : checked ? true : null, mismatches }, integrity: { torn, invalid, seqGaps } };
+  // One rule for both fields: a failed check, the writer's no, or a record that says it failed (the fold) is not
+  // reconciled, so a record whose `ok` and `checks` disagree (the folder is agent-writable) never splits them.
+  const ok = mismatches.length > 0 || writerNo || summary.reconciled === false ? false : checked ? true : null;
+  return { ...summary, reconciled: ok, turnRows: turnRows(records), history: sessionHistory(records),
+    reconcile: { ok, mismatches }, integrity: { torn, invalid, seqGaps } };
 }
 
 /** A trace the report reads at most (16 MiB, thousands of turns): the dir is agent-writable and the Sessions tab asks
@@ -435,8 +437,9 @@ export async function sessionsReport(runDir) {
     sessions.push(sessionReport(read, sid));                   // the dir name is the path-safe id
   }
   const unstarted = (x) => (x.startedAt == null ? 1 : 0);      // a trace with no valid open goes last
-  const noTurn = (x) => (x.turnRows[0] && x.turnRows[0].startedAt ? 0 : 1);   // opened, never ran: after the ones that ran
-  const firstRan = (x) => String((x.turnRows[0] && x.turnRows[0].startedAt) ?? x.startedAt ?? '');
+  const ranAt = (x) => x.turnRows.find((r) => r.startedAt)?.startedAt;   // a first turn whose start was lost (a seq gap) still ran
+  const noTurn = (x) => (ranAt(x) ? 0 : 1);                    // opened, never ran: after the ones that ran
+  const firstRan = (x) => String(ranAt(x) ?? x.startedAt ?? '');
   return { sessions: sessions.sort((a, b) => unstarted(a) - unstarted(b) || noTurn(a) - noTurn(b) || firstRan(a).localeCompare(firstRan(b))
     || a.sid.localeCompare(b.sid)) };
 }
