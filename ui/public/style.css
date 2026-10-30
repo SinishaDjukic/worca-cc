@@ -8725,6 +8725,10 @@ button.act-srow-name{cursor:pointer}
 .wf-log-spacer{flex:1;}
 .wf-log-close:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 .wf-log-drawer .log.wf-log-body{flex:1;min-height:0;max-height:none;border:0;border-radius:0;padding:10px 16px;}
+/* A session member's place (Task 59): "Inside session ‹label› · turn N · dispatch d:…", its sub-agent and a copy button. */
+.wf-log-sub{flex:none;margin:0;padding:6px 16px;border-bottom:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
+.wf-log-sub code{padding:1px 5px;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:var(--fs-caption) var(--mono);}
+.wf-log-sub .btn{margin-left:6px;}
 .wf-log-drawer .log.wf-log-body:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 /* The card the drawer shows (aria-current, not a class: the contrast baselines key on the class list). */
 .run-flow.gv-host .gv-world .node[aria-current="true"],.hd-graph .run-node[aria-current="true"]{outline:2px solid var(--blue);outline-offset:3px;}

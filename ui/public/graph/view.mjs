@@ -400,6 +400,7 @@ export function createGraphView(host, {
       const row = h('div', execRowClass(band));
       row.dataset.executionId = band.executionId || '';
       row.dataset.nodeId = nodeId;
+      if (band.title) row.title = band.title;      // a session member's row: where it ran (Task 59)
       row.append(h('i', 'led'), h('span', 'xl', band.label || ''), h('span', 'xr', band.right || ''));
       return row;
     }
@@ -496,6 +497,8 @@ export function createGraphView(host, {
       const rt = band.right || '';
       if (l && l.textContent !== lt) l.textContent = lt;
       if (r && r.textContent !== rt) r.textContent = rt;
+      if (band.title) { if (el.title !== band.title) el.title = band.title; }   // a row stamped into its session later
+      else if (el.hasAttribute('title')) el.removeAttribute('title');            // a plain row keeps no attribute
       return true;
     }
     const a = el.querySelector(':scope > a');            // kind: 'result'

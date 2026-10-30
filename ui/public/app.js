@@ -83,7 +83,7 @@ const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', 
 
 import { icon } from './icons.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
-import { paintSessionsTab, sessionsTabVisible, sessionsBadge } from './run-sessions-view.mjs';
+import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
@@ -29341,6 +29341,7 @@ function buildRdWorkflow(sec, ctx) {
     if (sec.__drawer && c.run.logDrawer) {
       sec.__drawer.setLive(!RD_TERMINAL.includes(c.run.status));
       markLogTarget(sec, c.run.logDrawer);   // a repaint may have rebuilt the cards
+      paintDrawerSessionLine(sec.__drawer, c.run.steps, c.run.sessionHosts, c.run.logDrawer);   // a member stamped mid-step
     }
   };
 }
@@ -32149,6 +32150,11 @@ function revealLogDrawer(sec) {
 }
 function newLogDrawer(sec, { onClose, onOpenInLogs }) {
   const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs, tools: cloneLogViewSeg() });
+  // The session line's copy button (Task 59): the sub-agent id.
+  d.el.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.wf-log-sub button[data-copy]');
+    if (b) copyText(b.dataset.copy).then((ok) => flashCopyBtn(b, ok ? 'Copied' : 'Copy failed'));
+  });
   // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
   d.body.addEventListener('scroll', () => {
     d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
@@ -32167,12 +32173,26 @@ function rdMountLogDrawer(sec, r) {
   });
   if (r.logDrawer) rdPaintLogDrawer(sec, r);
 }
+/** The drawer's "Inside session …" line (Task 59) for its target's row: the target execution's row, else the node's
+ *  newest. Rebuilt only when its words change, so a frame never takes the focus off its copy button. */
+function paintDrawerSessionLine(d, steps, sessionHosts, t) {
+  if (!d || typeof d.setSub !== 'function') return;
+  const rows = Array.isArray(steps) ? steps : [];
+  const row = !t || !t.node ? null
+    : (t.execution ? rows.find((x) => x && x.executionId === t.execution) : rows.filter((x) => x && x.nodeId === t.node).at(-1)) || null;
+  const line = row ? sessionRowLine(row, sessionHosts) : '';
+  const key = line ? `${line}|${row.session.memberAgentId || ''}` : '';
+  if (d.__subKey === key) return;
+  d.__subKey = key;
+  d.setSub(key ? sessionRowEl(document, row, sessionHosts) : null);
+}
 function rdPaintLogDrawer(sec, r, opener = null) {
   const d = sec.__drawer;
   const t = r.logDrawer;
   if (!d || !t) return;
   sec._drawerCycle = fillLogDrawerBody(d.body, r.logLines, t);
   d.open({ label: stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  paintDrawerSessionLine(d, r.steps, r.sessionHosts, t);
   markLogTarget(sec, t);
   if (opener) revealLogDrawer(sec);   // a click, not a rebuild on tab re-activation
 }
@@ -32262,6 +32282,8 @@ function openHdStepLog(screen, target, openInLogs) {
   const t = { ...target, openInLogs };
   sec.__logTarget = t;
   d.open({ label: target.label || '', isLive: false, opener: logTargetCard(graph, target) });
+  const st = histDetailState && histDetailState.data ? histDetailState.data.state : null;
+  paintDrawerSessionLine(d, st && st.steps, st && st.sessionHosts, target);
   markLogTarget(graph, target);
   revealLogDrawer(sec);
   d.body.textContent = 'Loading…';

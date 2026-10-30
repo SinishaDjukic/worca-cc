@@ -319,6 +319,8 @@ const awayTitle = (a, floorShown) => ['Away mode', a.calls ? fmtAuxCalls('away',
 function decorateExecutions(decor, ctx) {
   const { nodes, wires, grouped, activeList, rowFor, state, now, live, subsOf, lastLines, status, modelLabel } = ctx;
   const unpriced = !engineReportsCost(state?.runEngine);   // Cursor: no $0.00 pill
+  // A session member's row says where it ran (Task 59): its exec row's tooltip. A row outside a host turn gets no key.
+  const inSession = (row) => sessionRowLine(row, state && state.sessionHosts);
 
   for (const node of nodes) {
     const list = grouped.get(node.id) || [];
@@ -339,6 +341,7 @@ function decorateExecutions(decor, ctx) {
       const durMs = flow ? 0 : rowMs(row, now, live);
       const costUsd = flow || script ? 0 : round2(row.costUsd);
       const away = flow || script ? null : awayOf(row, reviewModels, modelLabel);
+      const where = inSession(row);
       return {
         executionId: row.executionId, nodeId: node.id,
         kind: row.kind === 'task' ? 'task' : 'cycle',
@@ -349,6 +352,7 @@ function decorateExecutions(decor, ctx) {
         exit: script && row.exitCode != null ? `exit ${row.exitCode}` : '',
         durMs, costUsd, flow,
         ...(away ? { away } : {}),
+        ...(where ? { title: where } : {}),
       };
     });
 
@@ -445,6 +449,19 @@ function noSummaryFallback(spec, engine, sessionVerified, ended, ran) {
 /** A session's mode reason in UI words: the flag's key is not copy ("never 'group'"); its Labs title is "One session". */
 export function sessionReasonText(reason) {
   return String(reason ?? '').replace('the Labs flag sessionGroups is off', 'the One session Labs flag is off');
+}
+
+/** Where a member row ran (Task 59; spec §6.4 "inside session ‹label› · turn 7"): `Inside session ‹label› · turn N ·
+ *  dispatch d:…`, N the number after the last `:` of its `turnId`; '' for a row that ran outside a host turn. The label is
+ *  the session summary's (`state.sessionHosts[sid]`), else the default. Here, not in run-sessions-view.mjs (which
+ *  re-exports it): that view imports this module, and a helper the decor imports back would close a module cycle. */
+export function sessionRowLine(step, sessionHosts) {
+  const ref = step && step.session && typeof step.session === 'object' ? step.session : null;
+  if (!ref || typeof ref.sid !== 'string' || !ref.sid) return '';
+  const s = sessionHosts && typeof sessionHosts === 'object' && Object.hasOwn(sessionHosts, ref.sid) ? sessionHosts[ref.sid] : null;
+  const label = (s && typeof s.label === 'string' && s.label) || SESSION_DEFAULT_LABEL;
+  const n = ref.turnId == null ? '' : String(ref.turnId).split(':').pop();
+  return [`Inside session ${label}`, n ? `turn ${n}` : '', ref.dispatchId ? `dispatch ${ref.dispatchId}` : ''].filter(Boolean).join(' · ');
 }
 
 /**
@@ -639,7 +656,7 @@ export function applyDecor(view, decor) {
         for (const r of foot.rows) {
           const right = [r.dur, r.cost || r.exit].filter(Boolean).join(' · ');
           bands.push({ kind: 'exec', executionId: r.executionId, led: r.led, label: r.label,
-            right, ...execBandLayout(r.label, right) });
+            right, ...execBandLayout(r.label, right), ...(r.title ? { title: r.title } : {}) });
           bands.push(...awayBands(r));
         }
       }

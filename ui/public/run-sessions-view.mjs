@@ -4,11 +4,13 @@
 // their own harness session, with the reason. Data: GET /api/runs/:id/sessions (Task 54), the run's ledger rows and its
 // manifest. A live run refetches after a trace record (a `sessionHost` frame), at most every LIVE_TTL_MS. DOM builders
 // only: every text goes through textContent.
-import { fmtUsd, fmtDur, sessionReasonText, decorFromState } from './graph/run-decor.mjs';
+import { fmtUsd, fmtDur, sessionReasonText, decorFromState, sessionRowLine } from './graph/run-decor.mjs';
 import { engineLabel, engineReportsCost } from '../../src/shared/engine-switch.mjs';
 import { manifestTemplate, manifestPortsFn } from '../../src/shared/graph/manifest.mjs';
 import { sessionsOf } from '../../src/shared/graph/sessions.mjs';
 import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../../src/shared/graph/constants.mjs';
+
+export { sessionRowLine };
 
 const LIVE_TTL_MS = 2000;
 const CACHE_MAX = 20;   // runs kept; the least recently painted one goes first
@@ -58,6 +60,24 @@ function usdPair(a, b) {
   return f(a, 2) === f(b, 2) && finite(a) && finite(b) && a !== b ? [f(a, 4), f(b, 4)] : [f(a, 2), f(b, 2)];
 }
 const shortId = (id) => (id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id);
+
+/** The step drawer's line under its head (Task 59): where a member row ran (`sessionRowLine`), then its sub-agent with a
+ *  copy button (`data-copy`). null for a row that ran outside a host turn. */
+export function sessionRowEl(doc, step, sessionHosts) {
+  const line = sessionRowLine(step, sessionHosts);
+  if (!line) return null;
+  const p = el(doc, 'p', 'wf-log-sub', line);
+  const id = step.session.memberAgentId;
+  if (typeof id === 'string' && id) {
+    p.append(doc.createTextNode(' · sub-agent '), el(doc, 'code', null, shortId(id)));
+    const b = el(doc, 'button', 'btn btn-sm btn-quiet', 'Copy id');
+    b.type = 'button';
+    b.dataset.copy = id;
+    b.title = 'Copy the sub-agent id';   // its name is its text, so the "Copied" flash is what a screen reader hears
+    p.appendChild(b);
+  }
+  return p;
+}
 
 /** The tab shows when the run has a session: a summary in its state, or a session in its manifest. */
 export function sessionsTabVisible(state) {
