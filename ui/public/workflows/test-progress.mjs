@@ -4,6 +4,9 @@
 import { el, btn } from './test-ui.mjs';
 import { fmtUsd, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
+import { icon } from '../icons.mjs';
+import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
+  SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, EDIT_EXAMPLE, TRY_AGAIN } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const DOT = { passed: 'ok', failed: 'no', running: 'run' };
 /** A stored detail is one line with no full stop (runner.mjs pauseVerdict, quickCheck); a server refusal may have one. */
@@ -19,6 +22,7 @@ const STOPPED = {
   refused: (p) => `Stopped: ${full(p.run.stopDetail || 'a try did not start')}`,
   changed: (p) => p.run.stopDetail || 'Something this test uses changed: start a new test.',   // D27: the C18 sentence
   error: (p) => `Stopped: ${full(p.run.stopDetail || 'something went wrong')}`,
+  setup: (p) => full(p.run.stopDetail || 'the setup step failed'),   // D55, board 35 (the box below says more)
 };
 const stoppedText = (p) => (STOPPED[p.run.stopReason] || STOPPED.error)(p);
 
@@ -42,14 +46,92 @@ function fact(doc, label, value, sub = null, cls = '') {
 }
 /** root → { runId, key } of the Stop testing / Finish the rest whose action is still out. */
 const BUSY = new WeakMap();
+/** root → the run id whose setup output is open: a repaint keeps it open. */
+const LOG_OPEN = new WeakMap();
 const keyed = (root, key) => [...root.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === key) || null;
+
+/** Board 35's Now column: a running project try's phase and what it is doing; any other row its Part 2 summary. Only a
+ *  project example has `now` (service.progressOf), so a no-project try never reads "Preparing a copy of the project". */
+function nowCell(doc, r, tried, over) {
+  if (!r.now || over) return el(doc, 'span', tried ? '' : 'wft-prow-quiet', r.summary);
+  const cell = el(doc, 'span', 'wft-now');
+  const sub = el(doc, 'span', 's');
+  if (r.now.phase === 'checking' && r.now.checking) sub.append(doc.createTextNode(RUNNING_LEAD), el(doc, 'span', 'code', r.now.checking));
+  else if (r.now.phase === 'setup' && r.now.setupCmd) sub.append(el(doc, 'span', 'code', r.now.setupCmd));
+  else if (r.now.phase === 'working' && r.now.startedMs) sub.textContent = forMinutes(Date.now() - r.now.startedMs);
+  cell.append(el(doc, 'span', '', nowText(r.now)));
+  if (sub.childNodes.length) cell.append(sub);
+  return cell;
+}
+
+/** Board 35: why the test stopped when the setup failed (D55), its output on request, and where it ran. Grey, as the
+ *  Stopped pill: nothing the workflow did failed. */
+function setupStopCard(doc, root, runId, ss, costUsd) {
+  const card = el(doc, 'section', 'card wft-setup-stop');
+  card.setAttribute('aria-label', 'Why the test stopped');
+  const box = el(doc, 'p', 'wft-stopbox');
+  box.setAttribute('role', 'alert');
+  const b = el(doc, 'b');
+  b.append(doc.createTextNode('The setup step failed: '), el(doc, 'span', 'code', ss.cmd), doc.createTextNode(' ended with an error.'));
+  const words = el(doc, 'span');
+  words.append(b, doc.createTextNode(SETUP_STOP_REST));
+  box.append(icon(doc, 'stop', 16), words);
+  const hint = el(doc, 'p', 'hint wft-setup-hint', SETUP_STOP_HINT);
+  hint.append(el(doc, 'span', 'code', fmtUsd(costUsd)), doc.createTextNode('.'));
+  const log = el(doc, 'pre', 'wft-outlog', ss.tail || '');
+  log.id = 'wft-pg-setup-log';
+  log.hidden = LOG_OPEN.get(root) !== runId;
+  const see = btn(doc, SEE_SETUP_OUTPUT, () => {
+    log.hidden = !log.hidden;
+    see.setAttribute('aria-expanded', log.hidden ? 'false' : 'true');
+    if (log.hidden) LOG_OPEN.delete(root); else LOG_OPEN.set(root, runId);
+  }, 'wft-linkbtn wft-setup-see');
+  see.setAttribute('aria-expanded', log.hidden ? 'false' : 'true');
+  see.setAttribute('aria-controls', log.id);
+  see.dataset.focusKey = 'wft-pg-setup-see';
+  const line = el(doc, 'div', 'wft-setup-line');
+  line.append(see, el(doc, 'span', 'hint wft-setup-where', setupWhere(ss.exampleName, ss.label, ss.tryNo)));
+  card.append(box, hint, line, log, el(doc, 'p', 'hint wft-setup-fix', SETUP_FIX_HINT));
+  return card;
+}
+
+/** Board 35: what one try goes through, for the first try that runs (D55, D61). Setup only when the example has one. */
+function phasesCard(doc, ph, dateText) {
+  const c = el(doc, 'section', 'card wft-phases');
+  const h = el(doc, 'h2', '', PHASES_TITLE);
+  h.id = 'wft-pg-phases';
+  c.setAttribute('aria-labelledby', h.id);
+  const list = el(doc, 'ol', 'wft-ph-list');
+  const steps = PHASES.filter(([k]) => k !== 'setup' || ph.setupCmd);
+  const at = Math.max(0, steps.findIndex(([k]) => k === ph.phase));
+  steps.forEach(([k, label], i) => {
+    const li = el(doc, 'li', `wft-ph${i < at ? ' is-done' : i === at ? ' is-now' : ''}`);
+    if (i === at) li.setAttribute('aria-current', 'step');
+    const n = el(doc, 'span', 'wft-ph-dot', String(i + 1));
+    n.setAttribute('aria-hidden', 'true');
+    const words = el(doc, 'span', 'wft-ph-words');
+    const sub = el(doc, 'span', 's');
+    if (k === 'preparing') {
+      const st = ph.start || {};
+      sub.append(doc.createTextNode(`${FROM_LEAD}${st.ref || st.short} at `), el(doc, 'span', 'code', st.short || ''), doc.createTextNode(st.at ? ` · ${dateText(st.at)}` : ''));
+    } else if (k === 'setup') sub.append(el(doc, 'span', 'code', ph.setupCmd));
+    else sub.textContent = PHASE_SUB[k];
+    words.append(el(doc, 'b', '', label), sub);
+    if (i < at) words.append(el(doc, 'span', 'sr-only', ', done'));
+    li.append(n, words);
+    list.append(li);
+  });
+  c.append(h, list, el(doc, 'p', 'hint', phasesShownFor(ph.exampleName, ph.label, ph.tryNo)));
+  return c;
+}
 
 /**
  * @param {HTMLElement} root
  * @param {object} p GET /api/workflows/:id/tests/runs/:run (service.progressOf)
- * @param {{back:Function, stop:Function, continue:(capUsd:number|null)=>void, open:Function}} actions
+ * @param {{back:Function, stop:Function, continue:(capUsd:number|null)=>void, open:Function, editExample?:(exampleId:number)=>void}} actions
+ * @param {{doc: Document, dateText?: (iso: string) => string}} ctx
  */
-export function renderTestProgress(root, p, actions, { doc }) {
+export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s }) {
   // What the repaint takes away: the focused control (by its key), a cost limit typed for this test, the live line.
   const active = doc.activeElement;
   const hadFocus = !!active && active !== root && root.contains(active);
@@ -103,7 +185,11 @@ export function renderTestProgress(root, p, actions, { doc }) {
   };
   if (st === 'running') acts.append(act('Stop testing', () => actions.stop(), 'btn btn-danger', 'wft-pg-stop'));
   else if (st === 'done') acts.append(act(p.run.kind === 'once' ? 'See the result' : 'See what changed', () => actions.open(), 'btn btn-primary', 'wft-pg-open'));
-  else if (p.run.stopReason !== 'changed') {   // N5: after a change, Finish the rest would only be refused
+  else if (p.run.stopReason === 'setup') {   // board 35: the setup failed: edit the example or try again; no cost limit to change
+    const where = p.project && p.project.setupStop;
+    if (where && actions.editExample) acts.append(act(EDIT_EXAMPLE, () => actions.editExample(where.exampleId), 'btn', 'wft-pg-edit'));
+    acts.append(act(TRY_AGAIN, () => actions.continue(null), 'btn btn-primary', 'wft-pg-finish'));   // Finish the rest (it checks the disk again)
+  } else if (p.run.stopReason !== 'changed') {   // N5: after a change, Finish the rest would only be refused
     let capInput = null;
     // Board 27: the start dialog's cost limit beside Finish the rest, raised when the cap stopped it. Try it once now
     // has no limit to change.
@@ -147,28 +233,37 @@ export function renderTestProgress(root, p, actions, { doc }) {
     : q.status === 'passed' ? fact(doc, 'Free quick check', 'Passed', 'every step is connected', `${word} is-ok`)
       : q.status === 'failed' ? fact(doc, 'Free quick check', 'Not passed', q.detail || null, `${word} is-bad`)
         : fact(doc, 'Free quick check', over ? 'Not done' : 'Checking…', null, word);
-  const facts = el(doc, 'div', 'wft-facts');
+  // Board 35 (P15): a running test with a project example says the disk its copies use (once it is over, they are gone).
+  const dk = st === 'running' && p.project ? p.project.disk : null;
+  const inUse = dk && dk.inUseBytes != null ? (dk.inUseBytes < 0.05 * 2 ** 30 ? '0 GB' : fmtGb(dk.inUseBytes)) : null;   // fmtGb never says less than 0.1
+  const diskFact = inUse ? fact(doc, DISK_IN_USE, inUse, dk.needBytes != null && dk.freeBytes != null ? diskInUseSub(dk.needBytes, dk.freeBytes) : null) : null;
+  const facts = el(doc, 'div', `wft-facts${diskFact ? ' is-four' : ''}`);
   // Boards 27/28: once it is over, how long it took (service.takenMs), in the time left's minutes ("35 min").
   const timeFact = over
     ? fact(doc, 'Time taken', Number.isFinite(p.takenMs) ? `${Math.max(1, Math.round(p.takenMs / 60000))} min` : 'not known')
     : fact(doc, 'Time left', p.minutesLeft ? `about ${p.minutesLeft} min` : 'not known yet');
-  facts.append(timeFact,
-    fact(doc, 'Cost so far', fmtUsd(p.costUsd), costLine), quickFact);
+  facts.append(timeFact, fact(doc, 'Cost so far', fmtUsd(p.costUsd), costLine), ...(diskFact ? [diskFact] : []), quickFact);   // board 35's order
   prog.append(bar, facts);
   let stopped = null;
+  let setupCard = null;
   if (st === 'running') {
     prog.append(el(doc, 'p', 'hint', `You can close this page or keep working. Worca tells you when the results are ready.${p.run.tries > 1
       ? ` Results so far are not final: wait for all ${p.run.tries} tries of an example.` : ''}`));
   } else if (st === 'stopped') {
     stopped = stoppedText(p);
-    prog.append(el(doc, 'p', 'wft-stopped', stopped));
+    const ss = p.run.stopReason === 'setup' && p.project ? p.project.setupStop : null;
+    if (ss) setupCard = setupStopCard(doc, root, p.run.id, ss, p.costUsd);   // board 35: its own card, under the title
+    else prog.append(el(doc, 'p', 'wft-stopped', stopped));
   }
+  if (setupCard) page.append(setupCard);
   page.append(prog);
+  if (st === 'running' && p.project && p.project.phases) page.append(phasesCard(doc, p.project.phases, dateText));   // P15
 
   const table = el(doc, 'section', 'card wft-table');
   table.setAttribute('aria-label', 'Tries per example');
   const headRow = el(doc, 'div', 'wft-prow is-head');
-  headRow.append(el(doc, 'span', '', 'Example'), el(doc, 'span', '', 'Tries'), el(doc, 'span', '', st === 'done' ? 'Result' : 'So far'));
+  const nowCol = !over && p.rows.some((r) => r.now);   // board 35: what each project try is doing now
+  headRow.append(el(doc, 'span', '', 'Example'), el(doc, 'span', '', 'Tries'), el(doc, 'span', '', st === 'done' ? 'Result' : nowCol ? 'Now' : 'So far'));
   table.append(headRow);
   for (const r of p.rows) {
     const row = el(doc, 'div', 'wft-prow');
@@ -179,7 +274,7 @@ export function renderTestProgress(root, p, actions, { doc }) {
     const name = el(doc, 'span', 'wft-prow-name', r.name);
     if (r.label) name.append(el(doc, 'span', 'wft-prow-use', ` · ${r.label}`));
     const tried = r.dots.some((d) => d === 'passed' || d === 'failed' || d === 'running');
-    row.append(name, dots, el(doc, 'span', tried ? '' : 'wft-prow-quiet', r.summary));
+    row.append(name, dots, nowCell(doc, r, tried, over));
     table.append(row);
   }
   page.append(table);

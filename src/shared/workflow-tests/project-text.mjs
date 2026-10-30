@@ -20,7 +20,11 @@ export const setupFailedText = (cmd) => `The setup step failed: ${cmd} ended wit
 export const TRY_NEVER_SHIPS_TEXT = 'A test try stays in Worca: it is never pushed and gets no pull request or issue.';
 // D60, boards 34 and 39: disk.
 const GB = 2 ** 30;
-export const fmtGb = (bytes) => `${Math.max(0.1, Number(bytes || 0) / GB).toFixed(1)} GB`;
+/** "0.9 GB", "1.2 GB", and whole GB from 10 GB up ("48 GB"), as boards 34 and 35 write them. */
+export const fmtGb = (bytes) => {
+  const gb = Math.max(0.1, Number(bytes || 0) / GB);
+  return `${gb < 9.95 ? gb.toFixed(1) : Math.round(gb)} GB`;
+};
 const freeUp = (need, free) => fmtGb(Math.max(0, need - free));
 export const DISK_TITLE = 'Not enough free disk';
 export const diskRow = (need, free) => `Needs about ${fmtGb(need)} free while it runs · ${fmtGb(free)} free`;

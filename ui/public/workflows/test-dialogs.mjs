@@ -5,6 +5,8 @@ import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
+import { allOnProject, leftOutText, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest }
+  from '../../../src/shared/workflow-tests/project-text.mjs';
 
 /** Auto's id (src/core/graph/builtin-workflows.mjs AUTO_WORKFLOW_ID; the browser cannot load /src/core, and the dialogs
  *  test pins this to the server's constant). An Auto run that matched no saved workflow keeps it (auto/proposal.mjs). */
@@ -158,6 +160,8 @@ function optInRow(doc, box, lead, rest) {
 /**
  * Boards 4 and 30: Test a version (G10, G12, G16, C6, C12, C16, C19). The plan comes from the server per pick (loadPlan);
  * the estimate, the default cost cap, the connectors' notes and "Start N tries" follow it live.
+ * 3a (board 34, D60, D62, P13, P14): `examples[].ready` false = left out (named under Examples), `projectName` = the
+ * example's project; a plan with a project adds the disk and time rows and the lock line, and refuses too little free disk.
  */
 export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'draft', examples = [], exampleIds = null, connectors = 'pretend',
   dateText, loadPlan, onStart }) {
@@ -174,12 +178,18 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   selB.value = String(b);
   const pickEx = el(doc, 'select');
   pickEx.id = 'wft-tv-examples';
-  const allOpt = el(doc, 'option', '', `All ${examples.length}`);
+  // D62: only the examples that can be tried are offered; the others stay listed, disabled, and are named in the hint.
+  const ready = examples.filter((e) => e.ready !== false);
+  const oneProject = ready.length && ready.every((e) => e.projectName && e.projectName === ready[0].projectName) ? ready[0].projectName : null;
+  const allOpt = el(doc, 'option', '', oneProject ? allOnProject(ready.length, oneProject) : `All ${ready.length}`);   // P14
   allOpt.value = 'all';
   pickEx.append(allOpt);
-  for (const e of examples) { const x = el(doc, 'option', '', e.name); x.value = String(e.id); pickEx.append(x); }
-  if (Array.isArray(exampleIds) && exampleIds.length === 1) pickEx.value = String(exampleIds[0]);
-  const chosen = () => (pickEx.value === 'all' ? examples : examples.filter((e) => String(e.id) === pickEx.value));
+  for (const e of examples) { const x = el(doc, 'option', '', e.name); x.value = String(e.id); x.disabled = e.ready === false; pickEx.append(x); }
+  if (Array.isArray(exampleIds) && exampleIds.length === 1 && ready.some((e) => e.id === exampleIds[0])) pickEx.value = String(exampleIds[0]);
+  const chosen = () => (pickEx.value === 'all' ? ready : ready.filter((e) => String(e.id) === pickEx.value));
+  const leftHint = el(doc, 'p', 'hint wft-tv-left');
+  leftHint.setAttribute('aria-live', 'polite');
+  leftHint.hidden = true;
   const startTries = () => { const t = Math.max(1, ...chosen().map((e) => e.tries || 3)); return [1, 3, 5].includes(t) ? t : 3; };   // G10
   let tries = startTries();
   let triesTouched = false;
@@ -203,6 +213,17 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   // D21 with D35: the promise holds only with Pretend connectors, so it shows only then.
   const safe = el(doc, 'div', 'wft-safe');
   safe.append(icon(doc, 'shield', 16), el(doc, 'b', '', 'Tests never touch real work through your connectors.'));
+  // Board 34 (P13): a test with a project example says it never pushes, in both modes, in the shield line's place.
+  const lock = el(doc, 'div', 'wft-lock');
+  const lockWords = el(doc, 'span');
+  lockWords.append(el(doc, 'b', '', LOCK_LEAD), doc.createTextNode(LOCK_REST));
+  lock.append(icon(doc, 'lock', 16), lockWords);
+  lock.hidden = true;
+  // Board 34's aside (D60): too little free disk. Amber: the person can free some up, or pick fewer examples.
+  const refuse = el(doc, 'p', 'wft-refuse');
+  refuse.id = 'wft-tv-refuse';
+  refuse.setAttribute('role', 'alert');
+  refuse.hidden = true;
   // ── Connectors (board 30, C19, D35) ──
   let mode = connectors === 'real' ? 'real' : 'pretend';
   const conn = el(doc, 'fieldset', 'wft-conn');
@@ -246,12 +267,14 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   triesField.classList.add('wft-tv-tries');
   const row2 = el(doc, 'div', 'wft-row2');
   row2.append(field(doc, 'Examples', pickEx, { id: pickEx.id }), triesField);
+  row2.firstChild.append(leftHint);   // under the Examples field (board 34)
   const reused = (side) => !!(plan && plan[side] && plan[side].reusable) && (side === 'a' ? boxA : boxB).checked;
+  const projectTest = () => !!(plan && plan.project && plan.project.names && plan.project.names.length);
 
   const capField = field(doc, 'Stop if the cost goes over', cap, { id: cap.id, hint: 'Tests count in your spending limit. You can close this page: Worca tells you when the results are ready.' });
   const dlg = testDialog({
     doc, win, title: 'Test a version', confirmLabel: 'Start',
-    body: [vs, reuse, row2, conn, quickRow, safe, est, capField, note],
+    body: [vs, reuse, row2, conn, quickRow, safe, lock, est, refuse, capField, note],
     onConfirm: async () => {
       // testDialog gives the button back after a refusal: a pick made meanwhile may have nothing to start.
       if (!estimate || !estimate.total || !versions.length || selA.value === selB.value) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
@@ -282,7 +305,23 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     if (held && held.isConnected && doc.activeElement !== held) held.focus();
     const e = plan && !same ? estimateOf(plan, { reuseA: reused('a'), reuseB: reused('b') }) : null;
     estimate = e;
+    let timeShown = false;
     if (e) {
+      // Board 34: a test on a project says the disk it needs and the time it takes first, then the costs and "Total".
+      const pj = projectTest() ? plan.project : null;
+      if (pj && pj.disk) {
+        const r = el(doc, 'div', 'wft-est-row is-disk');
+        r.append(el(doc, 'span', 'wft-est-k', DISK_KEY), el(doc, 'span', '', diskRow(pj.disk.needBytes, pj.disk.freeBytes)));
+        est.append(r);
+      }
+      timeShown = !!(pj && e.minutes);
+      if (timeShown) {
+        const r = el(doc, 'div', 'wft-est-row is-time');
+        const v = el(doc, 'span', '', aboutDuration(e.minutes * 60000));
+        if (pj.setupCmd && pj.setupMs) v.append(doc.createTextNode(SETUP_TAKES_LEAD), el(doc, 'span', 'code', pj.setupCmd), doc.createTextNode(setupTakesRest(pj.setupMs)));
+        r.append(el(doc, 'span', 'wft-est-k', TIME_KEY), v);
+        est.append(r);
+      }
       const line = (left, right, cls = '') => {
         const r = el(doc, 'div', `wft-est-row${cls ? ` ${cls}` : ''}`);
         r.append(el(doc, 'span', '', left), el(doc, 'span', 'wft-est-usd', right));
@@ -295,17 +334,32 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       for (const side of ['a', 'b']) {
         if (reused(side)) line(`${plan[side].short} results from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
       }
-      line(e.minutes ? `Total · ready in about ${e.minutes} minutes` : 'Total', e.usd === null ? 'cost not known yet' : fmtUsdRange(e.low, e.high), 'is-total');
+      line(timeShown ? 'Total' : e.minutes ? `Total · ready in about ${e.minutes} minutes` : 'Total', e.usd === null ? 'cost not known yet' : fmtUsdRange(e.low, e.high), 'is-total');
       if (!capTouched) cap.value = `$${e.capUsd}`;
     }
     const total = e ? e.total : 0;
     // C16: a disabled Start for no saved version or the same version twice reads just "Start"; "Start 0 tries" only when all is reused.
     dlg.okButton.textContent = noA || same || !e ? 'Start' : `Start ${total} ${total === 1 ? 'try' : 'tries'}`;
     dlg.okButton.disabled = posting || noA || same || !e || total === 0;
+    // Board 34's aside: too little free disk keeps "Start 30 tries", disabled, and says why (D60).
+    const disk = !noA && !same && projectTest() && plan.project.disk ? plan.project.disk : null;
+    refuse.replaceChildren();
+    refuse.hidden = !(disk && disk.enough === false && disk.text);
+    if (!refuse.hidden) {
+      refuse.append(icon(doc, 'alert', 14), el(doc, 'span', '', disk.text));
+      dlg.okButton.disabled = true;
+      dlg.okButton.setAttribute('aria-describedby', refuse.id);
+    } else dlg.okButton.removeAttribute('aria-describedby');
+    // D62: the examples this test leaves out: not ready for the draft (here), or not on the other version (the plan's).
+    const leftNames = [...new Set([...(pickEx.value === 'all' ? examples.filter((x) => x.ready === false).map((x) => x.name) : []),
+      ...(plan && plan.project && Array.isArray(plan.project.leftOut) ? plan.project.leftOut : [])])];
+    const leftText = leftNames.length ? leftOutText(leftNames) : '';
+    if (leftHint.textContent !== leftText) leftHint.textContent = leftText;   // aria-live: only a change is news
+    leftHint.hidden = !leftNames.length || noA;
     paintConnectors(e);
     // M6 (board 29): with no saved version only the two selects and the sentence are shown.
     for (const n of [reuse, row2, conn, quickRow, est, capField]) n.hidden = noA;
-    if (noA) safe.hidden = true;
+    if (noA) { safe.hidden = true; lock.hidden = true; }
     const text = noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
       : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
     if (note.textContent !== text) note.textContent = text;   // aria-live: only a change is news
@@ -314,7 +368,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   /** Board 30: the Real sentence names how often a post would go out; Pretend lists each connector; the script caution stays. */
   function paintConnectors(e) {
     const n = e ? e.total : null;
-    realOpt.hint.textContent = `Tries use your real connectors. If the workflow posts or sends something, it does it in every try${!n ? '' : n === 1 ? ': once in this test' : `: ${n} times in this test`}.`;   // nothing to try: no count
+    realOpt.hint.textContent = `Tries use your real connectors. If the workflow posts or sends something, it does it in every try${!n ? '' : n === 1 ? ': once in this test' : `: ${n} times in this test`}.${projectTest() ? REAL_BLOCKED_HINT : ''}`;   // nothing to try: no count
     const c = plan && plan.connectors;
     notes.replaceChildren();
     const line = (name, parts) => {
@@ -350,7 +404,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       if (sc.more) words.append(doc.createTextNode(sc.more.lead), el(doc, 'b', '', sc.more.name), doc.createTextNode(sc.more.rest));
       caution.append(icon(doc, 'alert', 14), words);
     }
-    safe.hidden = mode !== 'pretend';
+    lock.hidden = !projectTest();
+    safe.hidden = mode !== 'pretend' || projectTest();   // P13
   }
 
   async function refresh() {

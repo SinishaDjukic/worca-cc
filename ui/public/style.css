@@ -8972,6 +8972,45 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-notice .hint + .hint{margin-top:6px;}
 .wft-start-status{margin:6px 0 0;}
 .wft-start-status:empty{display:none;}
+/* Board 34: Test a version on a project: the lock line (in the shield line's place), the disk and time rows, too little disk */
+.wft-lock{display:flex;gap:10px;align-items:flex-start;margin:0;font-size:var(--fs-body);line-height:1.45;color:var(--ink-2);}
+.wft-lock[hidden]{display:none;}
+.wft-lock .ic{flex:0 0 auto;margin-top:2px;}
+.wft-lock b{font-weight:600;color:var(--ink);}
+.wft-est-row.is-disk,.wft-est-row.is-time{flex-wrap:wrap;gap:4px 12px;}
+.wft-est-k{color:var(--ink-2);}
+.wft-est-row:is(.is-disk,.is-time) + .wft-est-row:not(.is-time){border-top:1px solid var(--line-2);padding-top:6px;}
+.wft-est .code,.wft-ph .code,.wft-now .code,.wft-stopbox .code,.wft-setup-hint .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-refuse{display:flex;gap:8px;align-items:flex-start;margin:0;padding:10px 12px;border-radius:var(--r-sm);background:var(--amber-wash);border:1px solid var(--amber-line);font-size:var(--fs-meta);line-height:1.45;color:var(--ink);}
+.wft-refuse[hidden]{display:none;}
+.wft-refuse .ic{flex:0 0 auto;margin-top:2px;color:var(--amber-ink-strong);}
+.wft-tv-left{margin:0;}
+.wft-tv-left[hidden]{display:none;}
+/* Board 35: while a project test runs: the disk fact, what happens in each try, the Now column, a setup that failed */
+.wft-facts.is-four{grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));}
+.wft-phases{padding:18px 22px;display:flex;flex-direction:column;gap:12px;}
+.wft-phases h2{margin:0;font-size:var(--fs-section);}
+.wft-phases > .hint{margin:0;}
+.wft-ph-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:12px;}
+.wft-ph{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);font-size:var(--fs-body);color:var(--ink);min-width:0;}
+.wft-ph.is-done{color:var(--ink-2);}
+.wft-ph.is-now{background:var(--peach-wash);border-color:var(--peach-line);}
+.wft-ph-words{min-width:0;}
+.wft-ph b{display:block;font-weight:600;color:var(--ink);}
+.wft-ph .s{display:block;font-size:var(--fs-meta);line-height:1.4;color:var(--ink-2);}
+.wft-ph-dot{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--field);font-size:var(--fs-caption);font-weight:700;color:var(--ink-2);}
+.wft-ph.is-now .wft-ph-dot{background:var(--peach);color:var(--on-status);}
+.wft-now{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.wft-now .s{font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-setup-stop{padding:18px 22px;display:flex;flex-direction:column;gap:14px;}
+.wft-setup-stop .hint{margin:0;}
+.wft-stopbox{display:flex;gap:10px;align-items:flex-start;margin:0;font-size:var(--fs-body);line-height:1.5;color:var(--ink);}
+.wft-stopbox .ic{flex:0 0 auto;margin-top:2px;color:var(--ink-2);}
+.wft-stopbox b{font-weight:600;}
+.wft-setup-line{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
+.wft-setup-see{font-size:var(--fs-body);font-weight:600;text-decoration:none;}
+.wft-outlog{margin:0;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-family:var(--mono);font-size:var(--fs-meta);line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:auto;}
+.wft-outlog[hidden]{display:none;}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}

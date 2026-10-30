@@ -82,7 +82,8 @@ test('a workflow that needs a project is testable; an example without one is lef
 test('the disk sentences (boards 34, 39)', () => {
   const GB = 2 ** 30;
   assert.equal(fmtGb(1.2 * GB), '1.2 GB');
-  assert.equal(diskRow(1.2 * GB, 48 * GB), 'Needs about 1.2 GB free while it runs · 48.0 GB free');
+  assert.equal(diskRow(1.2 * GB, 48 * GB), 'Needs about 1.2 GB free while it runs · 48 GB free');   // boards 34, 35: whole GB from 10 up
+  assert.deepEqual([fmtGb(9.9 * GB), fmtGb(9.96 * GB), fmtGb(12.4 * GB), fmtGb(0)], ['9.9 GB', '10 GB', '12 GB', '0.1 GB']);
   assert.equal(diskRefusalText(1.2 * GB, 0.9 * GB), 'Not enough free disk to start. This test needs about 1.2 GB free, and this computer has 0.9 GB free. Free up at least 0.3 GB, or pick fewer examples.');
   assert.equal(diskRefusalOnceText(0.4 * GB, 0.2 * GB), 'One try needs about 0.4 GB free, and this computer has 0.2 GB free. Free up at least 0.2 GB and try again. Nothing was tried and nothing was charged.');
 });
@@ -200,6 +201,9 @@ test('Try it once now gets the one-try disk sentence; any other test the test se
     'two tries are not "one try"');
   await assert.rejects(r.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id, example({ name: 'B' }).id], tries: 1 }),
     { code: 'NO_DISK', message: d.text }, 'two examples are not "one try"');
+  const counted = createTestRunner({ ...harness().deps, diskCheck: async () => ({ ...d, needBytes: 0.4 * GB, freeBytes: 0.2 * GB }) });
+  await assert.rejects(counted.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id], tries: 1 }),
+    { code: 'NO_DISK', message: d.once, disk: { needBytes: 0.4 * GB, freeBytes: 0.2 * GB } }, 'board 39: the refusal carries the numbers for the card');
   const noOnce = createTestRunner({ ...harness().deps, diskCheck: async () => ({ enough: false, text: d.text, once: null }) });
   await assert.rejects(noOnce.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id], tries: 1 }), { code: 'NO_DISK', message: d.text },
     'no one-try sentence: the test sentence');

@@ -16,7 +16,7 @@ import {
   COMMAND_LABEL, COMMAND_HINT, TIMEOUT_LABEL, TIMEOUT_HINT, timeoutText, READ_FROM_LEGEND, READ_FROM_RESULT, READ_FROM_RESULT_SUB,
   READ_FROM_FILE, ADD_CHECK, lfsText, submodulesText, MISSING_FOLDER_ADD_AGAIN, notRegisteredText, PROJECTS_UNREAD_TEXT,
   NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, startWillBeText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
-  START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL,
+  START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL, DISK_TITLE, DISK_KEY, diskRow,
 } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 export const BLANK_EXAMPLE = Object.freeze({
@@ -296,10 +296,23 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   const run = async (fn) => {
     if (busyN) return;
     error.textContent = '';
+    page.querySelector('.wft-refusal')?.remove();
     const problem = limitsProblem();
     if (problem) { error.textContent = problem; return; }
     const r = await busyWhile(() => fn(value()));
     if (!unsupported(r)) failed(r, 'That did not work. Try again.');
+    if (r && !r.ok && r.body && r.body.code === 'NO_DISK' && r.body.disk) {   // board 39: Try it once now, not enough free disk
+      const c = card(doc, DISK_TITLE, 'wft-ex-disk-h', null, 'wft-refusal');
+      const est = el(doc, 'div', 'wft-est');
+      const row = el(doc, 'div', 'wft-est-row is-disk');
+      row.append(el(doc, 'span', 'wft-est-k', DISK_KEY), el(doc, 'span', '', diskRow(r.body.disk.needBytes, r.body.disk.freeBytes)));
+      est.append(row);
+      const why = el(doc, 'p', 'hint', r.error);
+      why.setAttribute('role', 'alert');   // the card replaces the error line, so it says it
+      c.append(est, why);
+      error.textContent = '';
+      error.after(c);
+    }
   };
   const tryBtn = btn(doc, 'Try it once now', () => void run(actions.tryOnce), 'btn');
   const saveBtn = btn(doc, 'Save example', () => void run(actions.save), 'btn btn-primary');

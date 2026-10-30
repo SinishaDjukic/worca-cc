@@ -3628,7 +3628,7 @@ async function wftCall(method, path, body) {
   try {
     const res = await fetch(path, { method, ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
     const d = await safeJson(res);
-    return res.ok ? { ok: true, data: d } : { ok: false, status: res.status, error: wftSentence((d && d.error) || `That did not work (${res.status})`) };
+    return res.ok ? { ok: true, data: d } : { ok: false, status: res.status, error: wftSentence((d && d.error) || `That did not work (${res.status})`), body: d };
   } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
 }
 const wftWorkflowId = () => { const t = gvComposer && gvComposer.template(); return t && t.id ? t.id : null; };
@@ -3665,7 +3665,7 @@ function wftReadView(id) {
 }
 function wftRenderView(root) {
   if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc: document, error: wft.error }); return; }
-  if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document }); return; }
+  if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document, dateText: wftDate }); return; }
   if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc: document }); return; }
   if (wft.view === 'detail') { renderSideBySide(root, wft.data, wftDetailActions(), { doc: document, tryIndex: wft.tryIndex || 0, renderMarkdown: wftMarkdown }); return; }
   wft.view = 'list';
@@ -3739,6 +3739,7 @@ function wftProgressActions() {
       if (run && run.kind === 'once') wftShow('detail', { runId, exampleId: run.exampleIds[0], tryIndex: 0 });   // G2
       else wftShow('compare', { runId });
     },
+    editExample: (exampleId) => void wftOpenExample(exampleId),   // board 35: a setup that failed is fixed in the example
   };
 }
 /** D33: a test changed (a try ended, the test finished): the toast for a finished test (C13), and the open page. */
@@ -3854,7 +3855,8 @@ async function wftTestVersion({ a, b = 'draft', exampleIds = null } = {}) {
   const nos = versions.versions.map((v) => v.versionNo).sort((x, y) => x - y);
   const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select') }];
   openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : (o.ctx.liveVersionNo || nos.at(-1) || null), b,
-    examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries })), exampleIds, dateText: wftDate,
+    examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries, ready: e.ready !== false, projectName: e.project ? e.project.name : null })),
+    exampleIds, dateText: wftDate,
     loadPlan: async (q) => { const r = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q).toString()}`); return r.ok ? r.data : null; },
     onStart: async (body) => {
       const r = await wftCall('POST', `${wftBase(id)}/runs`, body);

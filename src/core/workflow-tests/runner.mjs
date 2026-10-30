@@ -78,7 +78,8 @@ const capError = () => err('the cost limit must be more than $0 and at most $10,
  * D60: the refusal of a test the disk cannot hold. "Try it once now" (one example, one try, one version) gets the
  * one-try sentence (board 39); every other test the test sentence (board 34).
  */
-const diskRefusal = (d, { once }) => err(once && d.once ? d.once : d.text, 'NO_DISK');
+const diskRefusal = (d, { once }) => Object.assign(err(once && d.once ? d.once : d.text, 'NO_DISK'),
+  { disk: { needBytes: d.needBytes ?? null, freeBytes: d.freeBytes ?? null } });   // board 39: the editor's card shows the numbers
 const validCap = (v) => Number.isFinite(v) && v > 0 && v <= 10000;
 
 /** @param {object} deps see the Interfaces of Task 7 */

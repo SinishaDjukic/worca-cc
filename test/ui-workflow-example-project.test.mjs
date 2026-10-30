@@ -277,6 +277,27 @@ test('review 5, 6, 7, 10: no longer registered, projects not read, not on a bran
   assert.equal(byText(det.root, '.wft-acts button', 'Try it once now').disabled, true);
 });
 
+test('board 39: Try it once now with too little free disk shows its card', async () => {
+  const GB = 2 ** 30;
+  const once = 'One try needs about 0.4 GB free, and this computer has 0.2 GB free. Free up at least 0.2 GB and try again. Nothing was tried and nothing was charged.';
+  let n = 0;
+  const { root } = boot(example(), { over: { tryOnce: async () => { n += 1; return n === 1
+    ? { ok: false, status: 422, error: once, body: { code: 'NO_DISK', disk: { needBytes: 0.4 * GB, freeBytes: 0.2 * GB } } }
+    : { ok: false, status: 409, error: 'A test of this workflow is running.' }; } } });
+  click(byText(root, '.wft-acts button', 'Try it once now'));
+  await tick(); await tick();
+  const card = root.querySelector('.wft-refusal');
+  assert.equal(card.querySelector('h2').textContent, 'Not enough free disk');
+  assert.equal(card.querySelector('.wft-est-row').textContent, 'DiskNeeds about 0.4 GB free while it runs · 0.2 GB free');
+  assert.equal(card.querySelector('.hint').textContent, once);
+  assert.equal(card.querySelector('.hint').getAttribute('role'), 'alert');
+  assert.equal(root.querySelector('.wft-error').textContent, '', 'the card says it, not also the error line');
+  click(byText(root, '.wft-acts button', 'Try it once now'));
+  await tick(); await tick();
+  assert.equal(root.querySelector('.wft-refusal'), null, 'a new try takes the card away');
+  assert.equal(root.querySelector('.wft-error').textContent, 'A test of this workflow is running.');
+});
+
 test('review 8: switching the changes on says it moves the start, only when it would', () => {
   const same = boot();
   assert.equal(same.root.querySelector('.wft-changes-hint').textContent, 'Off: the example starts from the commit only. On: your changes are saved with the example.');

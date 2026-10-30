@@ -123,8 +123,17 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   route('POST', `${W}/examples/:ex/try-once`, async (req, res) => {
     knownWorkflow(req);
     const ex = example(req);
-    res.status(201).json({ run: await runner.start({ workflowId: wid(req), kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, reuseB: false,
-      connectors: 'pretend', by: by(req) }) });   // D35: Try it once now always pretends
+    let run;
+    try {
+      run = await runner.start({ workflowId: wid(req), kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, reuseB: false,
+        connectors: 'pretend', by: by(req) });   // D35: Try it once now always pretends
+    } catch (e) {
+      // Board 39: the editor shows its own card with the disk row, so the refusal carries the numbers the runner worked out.
+      if (!e || e.code !== 'NO_DISK') throw e;
+      res.status(422).json({ error: e.message, code: 'NO_DISK', disk: e.disk || null });
+      return;
+    }
+    res.status(201).json({ run });
   });
   route('GET', `${W}/plan`, async (req, res) => {
     const q = req.query || {};
