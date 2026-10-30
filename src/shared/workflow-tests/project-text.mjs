@@ -32,6 +32,11 @@ export const diskRefusalText = (need, free) => `Not enough free disk to start. T
 export const diskRefusalOnceText = (need, free) => `One try needs about ${fmtGb(need)} free, and this computer has ${fmtGb(free)} free. Free up at least ${freeUp(need, free)} and try again. Nothing was tried and nothing was charged.`;
 // D62, board 34: an example a test leaves out.
 export const leftOutText = (names) => `${andList(names)} ${names.length === 1 ? 'is' : 'are'} left out: pick ${names.length === 1 ? 'its' : 'their'} project first.`;
+// P27 (decided 2026-10-30 by the controller): left out for any other reason (its project is missing, a Folder project or no
+// longer registered); the Tests list's row says which.
+export const leftOutBlockedText = (names) => `${andList(names)} ${names.length === 1 ? 'is' : 'are'} left out: ${names.length === 1 ? 'it cannot' : 'they cannot'} be tried yet. See the Tests list.`;
+// P28 (decided 2026-10-30 by the controller): Test a version when no example can be tried.
+export const NONE_READY_TEXT = 'Nothing to try yet: every example is left out. Fix them in the Tests list, then test again.';
 
 // ── Board 32: Edit an example, where it starts ───────────────────────────────
 export const shortSha = (sha) => String(sha || '').slice(0, 7);
@@ -114,7 +119,7 @@ export const PHASES = Object.freeze([['preparing', 'Preparing a copy of the proj
 export const PHASE_LABEL = Object.freeze(Object.fromEntries(PHASES));
 export const PHASE_SUB = Object.freeze({ working: 'The workflow does its work', checking: 'The checks run, then the copy is deleted' });
 export const PHASES_TITLE = 'What happens in each try';
-export const phasesShownFor = (name, label, tryNo) => `Shown for ${name}, ${label}, try ${tryNo}. Three tries run at once, each in its own copy of the project.`;
+export const phasesShownFor = (name, label, tryNo) => `Shown for ${name}, ${label}, try ${tryNo}. Up to three tries run at once, each in its own copy of the project.`;   // P29
 export const nowText = (now) => `Try ${now.tryNo} · ${PHASE_LABEL[now.phase] || PHASE_LABEL.working}`;
 export const forMinutes = (ms) => { const m = Math.max(1, Math.round(ms / 60000)); return `for ${m} ${m === 1 ? 'minute' : 'minutes'}`; };
 export const RUNNING_LEAD = 'running ';

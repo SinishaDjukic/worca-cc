@@ -1,6 +1,6 @@
 // test/ui-workflow-test-project-run.test.mjs — workflow tests 3a: Test a version on a project (board 34) and the page while
 // it runs (board 35): disk and time, the lock line, examples left out, the phases, the Now column, a setup that failed.
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { openTestVersionDialog } from '../ui/public/workflows/test-dialogs.mjs';
@@ -20,7 +20,7 @@ const plan = (over = {}) => ({
 function dialog(p = plan()) {
   const { window } = new JSDOM('<!doctype html><body></body>');
   const examples = [1, 2, 3, 4, 5].map((id) => ({ id, name: `Ticket ${id}`, tries: 3, ready: true, projectName: 'worca-cc' }))
-    .concat([{ id: 6, name: 'Ticket 497', tries: 3, ready: false, projectName: null }]);
+    .concat([{ id: 6, name: 'Ticket 497', tries: 3, ready: false, reason: 'pick-project', projectName: null }]);
   openTestVersionDialog({ doc: window.document, win: window, options: [{ use: 2, label: 'v2 · the team uses it' }, { use: 'draft', label: 'v3 draft · your changes' }],
     a: 2, b: 'draft', examples, dateText: () => '24 Oct', loadPlan: async () => p, onStart: async () => ({ ok: true }) });
   return window.document;
@@ -92,7 +92,7 @@ test('board 35: disk in use, what happens in each try, the Now column', () => {
   assert.deepEqual(texts(root, '.wft-ph b'), ['Preparing a copy of the project', 'Running setup', 'Working', 'Checking']);
   assert.deepEqual(texts(root, '.wft-ph .s'), ['From main at abc1234 · 28 Oct', 'npm ci', 'The workflow does its work', 'The checks run, then the copy is deleted']);
   assert.deepEqual([...root.querySelectorAll('.wft-ph')].map((li) => li.className), ['wft-ph is-done', 'wft-ph is-done', 'wft-ph is-now', 'wft-ph']);
-  assert.equal(root.querySelector('.wft-phases > .hint').textContent, 'Shown for Ticket 482, v3 draft, try 1. Three tries run at once, each in its own copy of the project.');
+  assert.equal(root.querySelector('.wft-phases > .hint').textContent, 'Shown for Ticket 482, v3 draft, try 1. Up to three tries run at once, each in its own copy of the project.');
   assert.equal(root.querySelector('.wft-prow.is-head').lastChild.textContent, 'Now');
   const nows = [...root.querySelectorAll('.wft-prow:not(.is-head)')].map((r) => r.lastChild.textContent);
   assert.deepEqual(nows, ['Try 2 · Checkingrunning npm test', 'Try 1 · Workingfor 6 minutes', 'Try 1 · Running setupnpm ci', 'Waiting']);
@@ -111,7 +111,8 @@ test('board 35: the test stopped because the setup step failed', () => {
   assert.equal(root.querySelector('.wft-phases'), null);
   assert.deepEqual(texts(root, '.wft-acts button'), ['Edit the example', 'Try again']);
   const box = root.querySelector('.wft-stopbox');
-  assert.equal(box.getAttribute('role'), 'alert');
+  assert.equal(box.getAttribute('role'), null, 'Fix 1: the polite live line says it once, not an alert on every repaint');
+  assert.equal(root.querySelector('.wft-pg-live').textContent, 'Stopped · 0 of 30 tries done. The setup step failed: npm ci ended with an error.');
   assert.equal(box.textContent, 'The setup step failed: npm ci ended with an error. The test stopped, and no try counts as failed.');
   assert.equal(box.querySelector('b .code').textContent, 'npm ci');
   assert.equal(root.querySelector('.wft-setup-hint').textContent, "Setup gets the project ready before the workflow starts, so a problem there is not the workflow's fault. Cost: $0.00.");
@@ -166,4 +167,64 @@ test('board 34: Part 2 examples (no project): "All N", no lock line, the shield 
   assert.equal(doc.querySelector('.wft-tv-left').hidden, true);
   assert.equal(doc.querySelector('.wft-est-row.is-disk'), null);
   assert.match(doc.querySelector('.wft-est-row.is-total span').textContent, /^Total · ready in about \d+ minutes$/);
+});
+
+// ── Task 11 review, Fix 1 ──
+function openWith(examples, p = plan()) {
+  const { window } = new JSDOM('<!doctype html><body></body>');
+  let asked = 0;
+  openTestVersionDialog({ doc: window.document, win: window, options: [{ use: 2, label: 'v2' }, { use: 'draft', label: 'v3 draft' }], a: 2, b: 'draft',
+    examples, dateText: () => '', loadPlan: async () => { asked += 1; return p; }, onStart: async () => ({ ok: true }) });
+  return { doc: window.document, asked: () => asked };
+}
+
+test('Fix 1 (P28): no example can be tried: "All 0", nothing planned, Start disabled and described by the note', async () => {
+  const { doc, asked } = openWith([{ id: 1, name: 'Ticket 497', tries: 3, ready: false, reason: 'pick-project' },
+    { id: 2, name: 'Ticket 471', tries: 3, ready: false, reason: 'missing' }]);
+  await tick(); await tick();
+  assert.equal(doc.querySelector('#wft-tv-examples').options[0].textContent, 'All 0');
+  assert.equal(asked(), 0, 'no plan: an empty list would plan every example');
+  const note = doc.querySelector('.wft-tv-note');
+  assert.equal(note.textContent, 'Nothing to try yet: every example is left out. Fix them in the Tests list, then test again.');
+  assert.ok(!note.textContent.includes('both versions have results'));
+  const ok = doc.querySelector('.wft-dlg-ok');
+  assert.deepEqual([ok.textContent, ok.disabled, ok.getAttribute('aria-describedby')], ['Start', true, note.id]);
+  assert.equal(doc.querySelector('.wft-est').hidden, true);
+  assert.equal(doc.querySelector('#wft-tv-cap').closest('.field').hidden, true);
+  assert.equal(doc.querySelector('.wft-tv-left').textContent,
+    'Ticket 497 is left out: pick its project first. Ticket 471 is left out: it cannot be tried yet. See the Tests list.');
+});
+
+test('Fix 1 (P27): left out by reason; the plan\'s reasons for the other version; the disk alert describes Start', async () => {
+  const examples = [{ id: 1, name: 'Ticket 482', tries: 3, ready: true, projectName: 'worca-cc' },
+    { id: 2, name: 'Ticket 490', tries: 3, ready: false, reason: 'not-registered' }];
+  const p = plan({ project: { names: ['worca-cc'], leftOut: ['Ticket 466'], leftOutWhy: [{ name: 'Ticket 466', reason: 'pick-project' }],
+    setupCmd: null, setupMs: null, disk: { needBytes: 1.2 * GB, freeBytes: 0.9 * GB, enough: false, text: 'Not enough free disk to start.' } } });
+  const { doc } = openWith(examples, p);
+  await tick(); await tick();
+  assert.equal(doc.querySelector('.wft-tv-left').textContent,
+    'Ticket 466 is left out: pick its project first. Ticket 490 is left out: it cannot be tried yet. See the Tests list.');
+  assert.equal(doc.querySelector('.wft-dlg-ok').getAttribute('aria-describedby'), 'wft-tv-refuse');
+});
+
+test('Fix 1: "for N minutes" repaints once a minute while a try works; a newer paint or another page ends it', () => {
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  try {
+    const p = progress({ rows: [{ exampleId: 1, name: 'Ticket 482', label: 'v3 draft', dots: ['running'], summary: 'Trying 1 of 1',
+      now: { tryNo: 1, phase: 'working', checking: null, setupCmd: null, startedMs: 1_000_000 - 6 * 60000 } }] });
+    const { root } = page(p);
+    const cell = () => root.querySelector('.wft-prow:not(.is-head)').lastChild.textContent;
+    assert.equal(cell(), 'Try 1 · Workingfor 6 minutes');
+    mock.timers.tick(60000);
+    assert.equal(cell(), 'Try 1 · Workingfor 7 minutes');
+    mock.timers.tick(60000);
+    assert.equal(cell(), 'Try 1 · Workingfor 8 minutes');
+    root.replaceChildren();   // the page closed
+    mock.timers.tick(60000);
+    assert.equal(root.children.length, 0, 'no repaint over another page');
+    const quiet = page(progress({ rows: [{ exampleId: 1, name: 'A', label: null, dots: ['running'], summary: 'Trying', now: { tryNo: 1, phase: 'setup', setupCmd: 'npm ci', checking: null, startedMs: 1 } }] }));
+    const before = quiet.root.querySelector('.wft-progress');
+    mock.timers.tick(60000);
+    assert.equal(quiet.root.querySelector('.wft-progress'), before, 'nothing working: no timer');
+  } finally { mock.timers.reset(); }
 });

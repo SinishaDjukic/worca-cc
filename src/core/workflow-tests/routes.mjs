@@ -51,8 +51,9 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     // The runner reads the registry once per start (listProjects) and hands it to both.
     listProjects: () => listProjects(),
     targetOf: (workflowId, use, example, o = {}) => service.targetFor(workflowId, use, example, { projects: o.projects || null }),
-    diskCheck: ({ examples, tries, uses, counts = null, projects = null }) =>
-      service.diskPlanOf(examples, { tries, sides: uses.length, counts, projects }),
+    // A test may pass its own (the try-once NO_DISK route's test); the server never does.
+    diskCheck: deps.diskCheck || (({ examples, tries, uses, counts = null, projects = null }) =>
+      service.diskPlanOf(examples, { tries, sides: uses.length, counts, projects })),
     prepareProject: (example) => service.prepareProject(example),
     cleanupTry: (outcome) => service.cleanupTry(outcome),
     measureDisk: (dir) => dirBytes(dir),

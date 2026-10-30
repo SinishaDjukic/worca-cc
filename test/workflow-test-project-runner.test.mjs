@@ -282,7 +282,10 @@ test('projectStateOf and readinessText for each state (D62, board 39)', async ()
   assert.deepEqual(await state([{ ...reg, key: 'other-12345678' }]), { state: 'not-registered', reg: null });
   assert.equal(readinessText(ex, 'missing', { reg }), folderMissingText('tickets', 'C:/src/tickets'));
   assert.equal(readinessText(ex, 'folder', { reg }), folderProjectText('tickets'));
-  assert.equal(readinessText(ex, 'not-registered', { reg: null }), 'Ticket 482 is left out: pick its project first.');
+  assert.equal(readinessText(ex, 'not-registered', { reg: null }), "tickets-1a2b3c4d is no longer one of Worca's projects. Add it again under Projects, or pick another project.",
+    'P20: the right reason, not "pick its project first"');
+  assert.equal(readinessText({ ...ex, project: { ...pin, name: 'tickets' } }, 'not-registered'),
+    "tickets is no longer one of Worca's projects. Add it again under Projects, or pick another project.", 'its stored name, never the key');
   assert.equal(readinessText({ name: 'Ticket 497', project: null }, 'pick-project'), 'Ticket 497 is left out: pick its project first.');
   assert.equal(readinessText(ex, 'missing'), folderMissingText(pin.key, ''), 'no registry row: the key names it');
 });

@@ -136,3 +136,16 @@ test('the plan refuses more tries than a test can run, as the start does (final 
     assert.deepEqual([r.status, r.body.error], [400, 'tries must be 1 to 10'], tries);
   }
 });
+
+test('board 39: POST …/examples/:ex/try-once refused for disk answers 422 with the numbers the editor card shows', async () => {
+  const { diskRefusalText, diskRefusalOnceText } = await import('../src/shared/workflow-tests/project-text.mjs');
+  const GB = 2 ** 30;
+  const ex = await workflowWithExample();
+  const d = { enough: false, needBytes: 0.4 * GB, freeBytes: 0.2 * GB, text: diskRefusalText(0.4 * GB, 0.2 * GB), once: diskRefusalOnceText(0.4 * GB, 0.2 * GB) };
+  const { handlers } = boot({ diskCheck: async () => d });
+  const r = await invoke(handlers.get('POST /api/workflows/:id/tests/examples/:ex/try-once'), { params: { id: 'wf_rt', ex: String(ex.id) } });
+  assert.equal(r.status, 422);
+  assert.deepEqual(r.body, { error: 'One try needs about 0.4 GB free, and this computer has 0.2 GB free. Free up at least 0.2 GB and try again. Nothing was tried and nothing was charged.',
+    code: 'NO_DISK', disk: { needBytes: 0.4 * GB, freeBytes: 0.2 * GB } });
+  assert.deepEqual(store.listTestRuns('wf_rt'), [], 'nothing was started');
+});

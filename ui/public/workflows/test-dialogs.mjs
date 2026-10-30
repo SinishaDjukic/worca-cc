@@ -5,7 +5,7 @@ import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
-import { allOnProject, leftOutText, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest }
+import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
 /** Auto's id (src/core/graph/builtin-workflows.mjs AUTO_WORKFLOW_ID; the browser cannot load /src/core, and the dialogs
@@ -160,7 +160,7 @@ function optInRow(doc, box, lead, rest) {
 /**
  * Boards 4 and 30: Test a version (G10, G12, G16, C6, C12, C16, C19). The plan comes from the server per pick (loadPlan);
  * the estimate, the default cost cap, the connectors' notes and "Start N tries" follow it live.
- * 3a (board 34, D60, D62, P13, P14): `examples[].ready` false = left out (named under Examples), `projectName` = the
+ * 3a (board 34, D60, D62, P13, P14, P27, P28): `examples[].ready` false = left out (named under Examples, by `reason`), `projectName` = the
  * example's project; a plan with a project adds the disk and time rows and the lock line, and refuses too little free disk.
  */
 export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'draft', examples = [], exampleIds = null, connectors = 'pretend',
@@ -254,6 +254,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   let capTouched = false;
   cap.addEventListener('input', () => { capTouched = true; });
   const note = el(doc, 'p', 'hint wft-tv-note');
+  note.id = 'wft-tv-note';
   note.setAttribute('aria-live', 'polite');
   let plan = null;
   let estimate = null;
@@ -348,21 +349,30 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     if (!refuse.hidden) {
       refuse.append(icon(doc, 'alert', 14), el(doc, 'span', '', disk.text));
       dlg.okButton.disabled = true;
-      dlg.okButton.setAttribute('aria-describedby', refuse.id);
-    } else dlg.okButton.removeAttribute('aria-describedby');
+    }
     // D62: the examples this test leaves out: not ready for the draft (here), or not on the other version (the plan's).
-    const leftNames = [...new Set([...(pickEx.value === 'all' ? examples.filter((x) => x.ready === false).map((x) => x.name) : []),
-      ...(plan && plan.project && Array.isArray(plan.project.leftOut) ? plan.project.leftOut : [])])];
-    const leftText = leftNames.length ? leftOutText(leftNames) : '';
+    // P27: "pick its project first" only when that is the reason; any other reason points at the Tests list's row.
+    const why = new Map();
+    if (pickEx.value === 'all') for (const x of examples) if (x.ready === false) why.set(x.name, x.reason || null);
+    const fromPlan = plan && plan.project ? (plan.project.leftOutWhy || (plan.project.leftOut || []).map((name) => ({ name, reason: null }))) : [];
+    for (const x of fromPlan) if (!why.has(x.name)) why.set(x.name, x.reason || null);
+    const pickFirst = [...why].filter(([, r]) => r === 'pick-project').map(([n]) => n);
+    const blocked = [...why].filter(([, r]) => r !== 'pick-project').map(([n]) => n);
+    const leftText = [pickFirst.length ? leftOutText(pickFirst) : '', blocked.length ? leftOutBlockedText(blocked) : ''].filter(Boolean).join(' ');
     if (leftHint.textContent !== leftText) leftHint.textContent = leftText;   // aria-live: only a change is news
-    leftHint.hidden = !leftNames.length || noA;
+    leftHint.hidden = !leftText || noA;
     paintConnectors(e);
     // M6 (board 29): with no saved version only the two selects and the sentence are shown.
     for (const n of [reuse, row2, conn, quickRow, est, capField]) n.hidden = noA;
     if (noA) { safe.hidden = true; lock.hidden = true; }
+    const noneReady = !noA && !ready.length;   // P28: nothing to estimate and no cost limit to set
+    if (noneReady) { est.hidden = true; capField.hidden = true; }
     const text = noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
-      : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
+      : noneReady ? NONE_READY_TEXT : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
     if (note.textContent !== text) note.textContent = text;   // aria-live: only a change is news
+    // A disabled Start says why: the disk refusal, else the note (P28, C16).
+    const why2 = !refuse.hidden ? refuse.id : dlg.okButton.disabled && text ? note.id : null;
+    if (why2) dlg.okButton.setAttribute('aria-describedby', why2); else dlg.okButton.removeAttribute('aria-describedby');
   }
 
   /** Board 30: the Real sentence names how often a post would go out; Pretend lists each connector; the script caution stays. */
@@ -412,7 +422,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     const my = (seq += 1);
     plan = null;
     paint();
-    if (!selA.value || selA.value === selB.value) return;
+    if (!selA.value || selA.value === selB.value || !ready.length) return;   // P28: an empty list would plan every example
     let p = null;
     try {
       p = await loadPlan({ a: selA.value, b: selB.value, examples: chosen().map((e) => e.id).join(','), tries: String(tries), connectors: mode });

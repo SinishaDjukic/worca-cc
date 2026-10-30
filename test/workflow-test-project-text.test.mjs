@@ -50,7 +50,10 @@ test('board 35: while the test runs', () => {
     ['working', 'Working'], ['checking', 'Checking']]);
   assert.deepEqual(t.PHASE_SUB, { working: 'The workflow does its work', checking: 'The checks run, then the copy is deleted' });
   assert.equal(t.PHASES_TITLE, 'What happens in each try');
-  assert.equal(t.phasesShownFor('Ticket 482', 'v3 draft', 1), 'Shown for Ticket 482, v3 draft, try 1. Three tries run at once, each in its own copy of the project.');
+  assert.equal(t.phasesShownFor('Ticket 482', 'v3 draft', 1), 'Shown for Ticket 482, v3 draft, try 1. Up to three tries run at once, each in its own copy of the project.');   // P29
+  assert.equal(t.NONE_READY_TEXT, 'Nothing to try yet: every example is left out. Fix them in the Tests list, then test again.');   // P28
+  assert.equal(t.leftOutBlockedText(['Ticket 471']), 'Ticket 471 is left out: it cannot be tried yet. See the Tests list.');   // P27
+  assert.equal(t.leftOutBlockedText(['Ticket 471', 'Ticket 466']), 'Ticket 471 and Ticket 466 are left out: they cannot be tried yet. See the Tests list.');
   assert.equal(t.nowText({ tryNo: 2, phase: 'checking' }), 'Try 2 · Checking');
   assert.equal(t.DISK_IN_USE, 'Disk in use');
   assert.equal(t.SETUP_STOP_REST, ' The test stopped, and no try counts as failed.');

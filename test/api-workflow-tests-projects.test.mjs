@@ -179,6 +179,9 @@ test('a workflow that needs a project: its example without one is left out, and 
   assert.deepEqual([o.testable, o.needsProject], [true, true]);
   const row = o.examples.find((e) => e.id === none.body.example.id);
   assert.deepEqual([row.ready, row.reason, row.readyText], [false, 'pick-project', 'Ticket 497 is left out: pick its project first.']);
+  // P27: the plan says why each example is left out, so the dialog says "pick its project first" only when that is why.
+  const plan = await service.testPlan('wf_pt', { b: 'draft', exampleIds: [none.body.example.id], tries: 1 }, { registry: { implementer: { needsRepo: true } } });
+  assert.deepEqual([plan.project.leftOut, plan.project.leftOutWhy], [['Ticket 497'], [{ name: 'Ticket 497', reason: 'pick-project' }]]);
   await call('DELETE', `${WF}/examples/${none.body.example.id}`);
 });
 

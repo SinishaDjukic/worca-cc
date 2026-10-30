@@ -3855,7 +3855,7 @@ async function wftTestVersion({ a, b = 'draft', exampleIds = null } = {}) {
   const nos = versions.versions.map((v) => v.versionNo).sort((x, y) => x - y);
   const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select') }];
   openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : (o.ctx.liveVersionNo || nos.at(-1) || null), b,
-    examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries, ready: e.ready !== false, projectName: e.project ? e.project.name : null })),
+    examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries, ready: e.ready !== false, reason: e.reason || null, projectName: e.project ? e.project.name : null })),
     exampleIds, dateText: wftDate,
     loadPlan: async (q) => { const r = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q).toString()}`); return r.ok ? r.data : null; },
     onStart: async (body) => {

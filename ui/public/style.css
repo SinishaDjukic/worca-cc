@@ -8999,7 +8999,7 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-ph b{display:block;font-weight:600;color:var(--ink);}
 .wft-ph .s{display:block;font-size:var(--fs-meta);line-height:1.4;color:var(--ink-2);}
 .wft-ph-dot{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--field);font-size:var(--fs-caption);font-weight:700;color:var(--ink-2);}
-.wft-ph.is-now .wft-ph-dot{background:var(--peach);color:var(--on-status);}
+.wft-ph.is-now .wft-ph-dot{background:var(--peach);color:var(--on-signal);}
 .wft-now{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .wft-now .s{font-size:var(--fs-meta);color:var(--ink-2);}
 .wft-setup-stop{padding:18px 22px;display:flex;flex-direction:column;gap:14px;}

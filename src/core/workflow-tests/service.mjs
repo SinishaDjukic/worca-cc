@@ -26,7 +26,7 @@ import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStar
   commitDate, remoteUrl } from './project-copy.mjs';
 import { parseRemoteUrl, forgeOf as forgeOfRemote, FORGE_LABEL } from '../forge.mjs';
 import { pushRemoteOf } from './guard-calls.mjs';
-import { leftOutText, folderMissingText, folderProjectText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
+import { leftOutText, folderMissingText, folderProjectText, notRegisteredText, diskRefusalText, diskRefusalOnceText, PAST_RUN_REFUSALS } from '../../shared/workflow-tests/project-text.mjs';
 import { mainResult } from './result.mjs';
 import { DIFF_PATCH_FILE } from '../results.mjs';
 import { connectorNotes, userScopeServerNames, seenClaudeAiServers, wouldHaveSent, stepEngines, scriptSteps, readConnectorCalls } from './connectors.mjs';
@@ -74,10 +74,11 @@ export async function projectStateOf(project, { projects = null } = {}) {
 
 /** The sentence for an example a test cannot try (board 39's cards; board 34's left-out hint). */
 export function readinessText(example, reason, { reg = null } = {}) {
-  const name = reg ? reg.name : example.project ? example.project.key : '';
+  const name = reg ? reg.name : example.project ? example.project.name || example.project.key : '';   // never the key while a name is known
   if (reason === 'missing') return folderMissingText(name, reg ? reg.path : '');
   if (reason === 'folder') return folderProjectText(name);
-  return leftOutText([example.name]);   // pick-project, not-registered
+  if (reason === 'not-registered') return notRegisteredText(name);   // P20's sentence, not "pick its project first"
+  return leftOutText([example.name]);   // pick-project
 }
 
 /** The runner's targetOf (D62): one example on one version. */
@@ -544,32 +545,36 @@ async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEng
 
 /** Board 4: per version, what would be tried, what can be reused, and what a try usually costs; board 30's notes. */
 export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds = [], tries = 3, connectors = 'pretend' } = {},
-  { fingerprintOf = (id, use) => useFingerprint(id, use), mock = false, connectorsPreview = null, runEngine = null } = {}) {
+  { fingerprintOf = (id, use) => useFingerprint(id, use), mock = false, connectorsPreview = null, runEngine = null, registry: reg0 = null } = {}) {
   workflowRowOf(workflowId);
   const ctx = labelCtx(workflowId);
   const all = store.listExamples(workflowId);
   const examples = exampleIds.length ? all.filter((e) => exampleIds.includes(e.id)) : all;
   // D62: only the examples that can be tried count; the others are named in the dialog's hint (board 34).
   const projects = await listProjects();
-  const registry = loadAgentRegistry();
+  const registry = reg0 || loadAgentRegistry();   // reg0: a test's registry (whether the workflow needs a project)
   const readyEx = [];
   const leftOut = [];
   for (const ex of examples) {
-    let ok = true;
-    for (const use of [a, b].filter((u) => u != null)) { if (!(await targetFor(workflowId, use, ex, { registry, projects })).ready) ok = false; }
-    (ok ? readyEx : leftOut).push(ex);
+    let why = null;   // the first version's reason (P27: the dialog says "pick its project first" only for pick-project)
+    for (const use of [a, b].filter((u) => u != null)) {
+      const t = await targetFor(workflowId, use, ex, { registry, projects });
+      if (!t.ready && !why) why = t.reason;
+    }
+    if (why) leftOut.push({ ex, why }); else readyEx.push(ex);
   }
+  const leftOutWhy = leftOut.map(({ ex, why }) => ({ name: ex.name, reason: why }));
   const projEx = readyEx.filter((e) => e.project);
   const names = [...new Set(projEx.map((e) => projectNameOf(e.project.key, { projects, pinName: e.project.name })))];
   const setupMsList = projEx.map((e) => store.avgSetupMs(e.id, e.project.startCommit)).filter((n) => n != null);
   const cmds = [...new Set(projEx.map((e) => e.project.setupCmd).filter(Boolean))];
   const one = names.length === 1 && projEx.length ? projects.find((p) => p.key === projEx[0].project.key) : null;
   const project = projEx.length ? {
-    names, leftOut: leftOut.map((e) => e.name),
+    names, leftOut: leftOutWhy.map((x) => x.name), leftOutWhy,
     disk: await diskPlanOf(projEx, { tries, sides: a != null ? 2 : 1, projects }),
     setupCmd: cmds.length === 1 ? cmds[0] : null,
     setupMs: setupMsList.length ? Math.round(setupMsList.reduce((sum, n) => sum + n, 0) / setupMsList.length) : null,
-  } : (leftOut.length ? { names: [], leftOut: leftOut.map((e) => e.name), disk: null, setupCmd: null, setupMs: null } : null);
+  } : (leftOut.length ? { names: [], leftOut: leftOutWhy.map((x) => x.name), leftOutWhy, disk: null, setupCmd: null, setupMs: null } : null);
   const side = async (use) => {
     if (use == null) return null;
     let fp = null;

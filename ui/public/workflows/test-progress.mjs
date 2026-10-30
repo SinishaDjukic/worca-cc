@@ -48,6 +48,9 @@ function fact(doc, label, value, sub = null, cls = '') {
 const BUSY = new WeakMap();
 /** root → the run id whose setup output is open: a repaint keeps it open. */
 const LOG_OPEN = new WeakMap();
+/** root → the timer that repaints "for N minutes" once a minute while a try is working (a frame repaints sooner). */
+const TICK = new WeakMap();
+const TICK_MS = 60000;
 const keyed = (root, key) => [...root.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === key) || null;
 
 /** Board 35's Now column: a running project try's phase and what it is doing; any other row its Part 2 summary. Only a
@@ -69,8 +72,7 @@ function nowCell(doc, r, tried, over) {
 function setupStopCard(doc, root, runId, ss, costUsd) {
   const card = el(doc, 'section', 'card wft-setup-stop');
   card.setAttribute('aria-label', 'Why the test stopped');
-  const box = el(doc, 'p', 'wft-stopbox');
-  box.setAttribute('role', 'alert');
+  const box = el(doc, 'p', 'wft-stopbox');   // no role="alert": the page's polite live line says it once
   const b = el(doc, 'b');
   b.append(doc.createTextNode('The setup step failed: '), el(doc, 'span', 'code', ss.cmd), doc.createTextNode(' ended with an error.'));
   const words = el(doc, 'span');
@@ -132,6 +134,8 @@ function phasesCard(doc, ph, dateText) {
  * @param {{doc: Document, dateText?: (iso: string) => string}} ctx
  */
 export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s }) {
+  clearTimeout(TICK.get(root));
+  TICK.delete(root);
   // What the repaint takes away: the focused control (by its key), a cost limit typed for this test, the live line.
   const active = doc.activeElement;
   const hadFocus = !!active && active !== root && root.contains(active);
@@ -283,6 +287,16 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   const said = stopped ? `${pillText}. ${stopped}` : pillText;
   if (live.textContent !== said) live.textContent = said;   // only a change is news
 
+  // "for 6 minutes" stays true: while a try is working, repaint this same page once a minute. A newer paint, or another
+  // page in its place, ends it.
+  if (!over && p.rows.some((r) => r.now && r.now.phase === 'working' && r.now.startedMs)) {
+    const t = setTimeout(() => {
+      TICK.delete(root);
+      if (page.isConnected && root.contains(page)) renderTestProgress(root, p, actions, { doc, dateText });
+    }, TICK_MS);
+    if (t && typeof t.unref === 'function') t.unref();   // never keeps a test process alive
+    TICK.set(root, t);
+  }
   if (hadFocus && !root.contains(doc.activeElement)) {
     const again = focusKey ? keyed(root, focusKey) : null;
     (again && !again.disabled ? again : root).focus({ preventScroll: true });   // never <body>, where the canvas keys answer

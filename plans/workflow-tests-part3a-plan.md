@@ -84,6 +84,9 @@
 | P24 | "Read from: A file in the project" with an empty file box (decided 2026-10-29 by the controller) | The dialog refuses: "Write the file name." |
 | P25 | Change on a project with no branches (decided 2026-10-29 by the controller) | No dialog; the error line says "Worca found no branches in this project." |
 | P26 | After Change or Start from the latest (decided 2026-10-29 by the controller) | The focus stays on Change, and a polite status line says, after a Change pick (not yet saved), "The start point will be <ref> at <short sha> when you save the example."; after Start from the latest (stored at once), "The start point is now <ref> at <short sha>." |
+| P27 | Board 34's left-out hint for an example left out for another reason than "no project yet" (decided 2026-10-30 by the controller) | "pick its project first" only for an example with no project. Any other reason (the project is missing, a Folder project, no longer registered): "<name> is left out: it cannot be tried yet. See the Tests list." (the Tests list's row says why). The server's refusal for a project no longer registered is P20's sentence. |
+| P28 | Test a version when no example can be tried (decided 2026-10-30 by the controller) | "Nothing to try yet: every example is left out. Fix them in the Tests list, then test again." The examples read "All 0", no plan is asked for, the estimate and the cost limit are hidden, and the disabled Start is described by the sentence. |
+| P29 | Board 35's phase card hint (decided 2026-10-30 by the controller) | "Shown for <example>, <version>, try <n>. Up to three tries run at once, each in its own copy of the project." (board: "Three tries run at once"; fewer run when fewer are left). |
 
 ## Decisions
 
