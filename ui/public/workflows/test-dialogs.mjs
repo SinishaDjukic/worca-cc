@@ -365,8 +365,11 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     // M6 (board 29): with no saved version only the two selects and the sentence are shown.
     for (const n of [reuse, row2, conn, quickRow, est, capField]) n.hidden = noA;
     if (noA) { safe.hidden = true; lock.hidden = true; }
-    const noneReady = !noA && !ready.length;   // P28: nothing to estimate and no cost limit to set
-    if (noneReady) { est.hidden = true; capField.hidden = true; }
+    // P28: nothing to estimate and no cost limit to set; nor tries, connectors or a quick check to choose. The selects,
+    // "All 0" with its hint, the note and the disabled Start stay.
+    const noneReady = !noA && !ready.length;
+    triesField.hidden = noneReady;
+    if (noneReady) { for (const n of [reuse, conn, quickRow, est, capField, safe, lock]) n.hidden = true; }
     const text = noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
       : noneReady ? NONE_READY_TEXT : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
     if (note.textContent !== text) note.textContent = text;   // aria-live: only a change is news

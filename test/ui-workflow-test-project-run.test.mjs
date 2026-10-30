@@ -193,6 +193,14 @@ test('Fix 1 (P28): no example can be tried: "All 0", nothing planned, Start disa
   assert.equal(doc.querySelector('#wft-tv-cap').closest('.field').hidden, true);
   assert.equal(doc.querySelector('.wft-tv-left').textContent,
     'Ticket 497 is left out: pick its project first. Ticket 471 is left out: it cannot be tried yet. See the Tests list.');
+  // Only the selects, "All 0" with its hint, the note and the disabled Start stay: no tries, connectors or quick check.
+  assert.equal(doc.querySelector('.wft-tv-tries').hidden, true);
+  assert.equal(doc.querySelector('#wft-tv-quick').closest('.wft-tv-chk').hidden, true);
+  assert.equal(doc.querySelector('#wft-tv-conn-pretend').closest('fieldset').hidden, true);
+  assert.equal(doc.querySelector('.wft-lock').hidden, true);
+  assert.equal(doc.querySelector('.wft-safe').hidden, true);
+  assert.equal(doc.querySelector('.wft-tv-left').hidden, false);
+  assert.equal(doc.querySelector('#wft-tv-examples').closest('.field').hidden, false);
 });
 
 test('Fix 1 (P27): left out by reason; the plan\'s reasons for the other version; the disk alert describes Start', async () => {
