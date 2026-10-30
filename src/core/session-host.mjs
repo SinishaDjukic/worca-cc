@@ -6,7 +6,7 @@
 import { runClaude, mockEnabled } from './claude-runner.mjs';
 import { runMockSession, mockRestoresCutCost } from './engines/mock-session.mjs';
 import { SessionHostError, HOST_MAX_TURNS, HOST_TOOLS_MODE, dispatchIdFor, turnIdFor, dispatchMessage, memberDefinition, hostFlagsFor,
-  hostSpawnOpts } from './engines/session-dispatch.mjs';
+  hostSpawnOpts, sharedTurnOpts } from './engines/session-dispatch.mjs';
 import { createTurnDemux, watchdogVerdict } from './engines/session-demux.mjs';
 import { createSessionTrace, applyTraceRecord, emptySummary, readTraceSync, reduceTrace } from './session-trace.mjs';
 import { priceUsage, usageTokens, reconcileEpoch, estimateMemberUsd } from './session-cost.mjs';
@@ -16,6 +16,8 @@ import { classifyError } from './recoverable-error.mjs';
 import { engineReportsCost } from '../shared/engine-switch.mjs';
 import { RECOVERY_MAX_AUTO_ATTEMPTS, markTerminal } from './failure-policy.mjs';
 import { sessionHostGuardSettings } from './session-host-guard.mjs';
+import { CODEX_RESUME_NOT_FOUND_RE } from './engines/codex.mjs';
+import { COPILOT_RESUME_NOT_FOUND_RE } from './engines/copilot.mjs';
 
 /** v1 runs every session on the `turns` transport: one `--resume` process per dispatch (spec D4). */
 export const SESSION_TRANSPORT = 'turns';
@@ -37,9 +39,22 @@ export const HOST_BUDGET_IS_CUMULATIVE = true;
  *  only a sub-agent's call carries; HOST_GUARD_CONTEXT_FIELD names it. Off until then: the watchdog stops such a call after the fact. */
 export const HOST_MAIN_THREAD_GUARD = false;
 export const HOST_GUARD_CONTEXT_FIELD = null;
-/** Is there a `shared` ("one conversation") runtime? Not before Task 65, which builds it (its `_turn` path) and turns this
- *  on: until then the run-start gate runs a `shared` session separate, never as sub-agents behind the closed gate (C18). */
-export const SESSION_SHARED_RUNTIME = false;
+/** Is there a `shared` ("one conversation") runtime? Task 65 built it (`_sharedTurn`). Off, the run-start gate would run a
+ *  `shared` session separate, never as sub-agents behind the closed gate (C18). */
+export const SESSION_SHARED_RUNTIME = true;
+/** Engines whose result reports the conversation's running total, so a cut turn's spend reaches the next result:
+ *  Claude Code (claude-events.mjs `cumulativeCost`) and Goose (its `complete` is the session's sum, goose.mjs). Codex and
+ *  OpenCode report each process's own figure. */
+const CUMULATIVE_COST_ENGINES = new Set(['claude', 'goose']);
+/** Engines whose result usage is the session's sum too, never one turn's tokens (goose.mjs `complete`, `total: true`). */
+const SESSION_SUM_USAGE_ENGINES = new Set(['goose']);
+/** What each engine says when a `--resume` finds no conversation (C20), where its adapter does not start a fresh one
+ *  itself: Claude Code, Codex, Copilot. (Goose, OpenCode, Cursor, Gemini and Qwen retry fresh and name the new id.) */
+const LOST_CONVERSATION_RES = [VANISHED_RE, CODEX_RESUME_NOT_FOUND_RE, COPILOT_RESUME_NOT_FOUND_RE];
+/** A result of a turn that never ran: an error with no model turn. Claude Code answers a `--resume` of a lost conversation
+ *  with one (`error_during_execution`, `num_turns: 0`, `errors: ["No conversation found …"]`, $0) before it exits 1
+ *  (test/fixtures/ask/bogus-resume.jsonl), so it is no sign the conversation answered (C20). */
+const noTurnResult = (e) => e.isError === true && !(e.numTurns > 0);
 /** C30: this many consecutive watchdog failures in one session degrade it to `separate` for the rest of the run. */
 export const HOST_DEGRADE_AFTER = RECOVERY_MAX_AUTO_ATTEMPTS;
 /** `--max-budget-usd` never goes below a cent (C10). */
@@ -48,11 +63,17 @@ const BUDGET_FLOOR_USD = 0.01;
 /** The host turn's runner. The mock host plays a turn offline; a real one is `runClaude` with the RAW envelopes the demux
  *  routes (`rawEvents`: runClaude otherwise hands out the normalized vocabulary, which carries no Agent call). The mock
  *  predicate is claude-runner's own (`opts.mock` OR WORCA_MOCK/ORCH_MOCK, critique minor 8), never `opts.mock` alone. */
-export const defaultTransport = (hostOpts) => (mockEnabled(hostOpts) ? runMockSession(hostOpts) : runClaude({ ...hostOpts, rawEvents: true }));
+export const defaultTransport = (hostOpts) => {
+  if (mockEnabled(hostOpts)) return runMockSession(hostOpts);
+  // A `shared` turn is the member's own spawn on the run's engine: normalized events, as an ungrouped step gets (Task 65).
+  if (hostOpts.shared === true) { const o = { ...hostOpts }; delete o.shared; return runClaude(o); }
+  return runClaude({ ...hostOpts, rawEvents: true });
+};
 
-/** Test seam (Task 49's parity check): `onDefinitions(definitions, memberOpts, member)` sees each turn's definitions beside
- *  the member's own runOpts. Never set in production. */
-export const _testing = { onDefinitions: null };
+/** Test seams (the parity checks): `onDefinitions(definitions, memberOpts, member)` sees each turn's definitions beside the
+ *  member's own runOpts (Task 49); `onSharedTurn(turnOpts, memberOpts, member)` sees each `shared` turn's options beside
+ *  them (Task 65). Never set in production. */
+export const _testing = { onDefinitions: null, onSharedTurn: null };
 
 const WATCHDOG_TEXT = {
   SESSION_HOST_NO_DISPATCH: 'the main agent did not dispatch the step',
@@ -370,7 +391,9 @@ export class SessionHost {
     if (this.closed) throw this._refusal();                                  // closed after it left the queue: it never starts
     if (waited) this.port.checkCostLimits?.();                               // C37: the executor gated it before it queued; spend moved since
     if (this.mode === 'separate') return this._plain(opts, member);          // it degraded while this one waited
-    this._rotateIfDue();                                                       // C25: before a dispatch, never mid-turn
+    // C25: before a dispatch, never mid-turn. One conversation never rotates: its context is what it is for (Claude Code
+    // compacts it itself), and a fresh one would drop the earlier steps' work without a word.
+    if (this.mode !== 'shared') this._rotateIfDue();
     try {
       return await this._turn(opts, member, { queueMs });
     } catch (err) {
@@ -467,6 +490,7 @@ export class SessionHost {
 
   /** One host turn: turn_start and dispatch, the transport through the demux, the outcome's records and booking. */
   async _turn(opts, member, { queueMs = 0, retry = null } = {}) {
+    if (this.mode === 'shared') return this._sharedTurn(opts, member, { queueMs });
     const executionId = String(member.executionId);
     const nodeId = member.nodeId ?? null;
     const label = member.label || nodeId || executionId;
@@ -635,28 +659,7 @@ export class SessionHost {
     this._write('turn_end', { turnId, cumulativeUsd: r?.cumulativeUsd ?? null, deltaUsd: booking?.deltaUsd ?? null, hostUsage: usageTokens(hostUsage),
       hostModel: this.hostResolvedModel, numTurns: r?.numTurns ?? null, durationMs: r?.durationMs ?? durationMs, exit, subtype: r?.subtype ?? null });
     if (cutNow) this._bookCut(cutNow);
-    if (booking) {
-      if (booking.carried && this.openCut) {            // C9: each cut turn's spend inside this Δ goes back to its own row
-        const c = this.openCut;
-        this.openCut = null;
-        // The port's shares follow the cuts' order; a port that answers one figure gives it all to the first cut.
-        const shares = Array.isArray(booking.carried.parts) ? booking.carried.parts : [{ usd: booking.carried.usd }];
-        (c.parts || [c]).forEach((p, i) => {
-          const usd = shares[i]?.usd ?? null;
-          // A carry is taken out of the CLI's Δ (a harness figure), whatever this turn's own source; an override on the cut
-          // member is that record's, not this turn's (C9).
-          this._write('cost', { turnId: p.turnId, dispatchId: p.dispatchId, executionId: p.executionId, nodeId: p.nodeId, memberUsd: usd,
-            hostOverheadUsd: null, costSource: 'harness', overridden: shares[i]?.overridden === true, carriedBy: turnId });
-          this._addMemberUsd(p.nodeId, usd);
-        });
-      }
-      this._write('cost', { turnId, dispatchId, executionId, nodeId, memberUsd: booking.memberUsd, hostOverheadUsd: booking.hostOverheadUsd,
-        costSource: booking.costSource, hostPriced: booking.hostPriced, overridden: booking.overridden });
-      this._addMemberUsd(nodeId, booking.memberUsd);
-      this.epochBookedUsd += this._harnessPart(booking);
-      const rc = booking.reconcile || { ok: true, checks: [] };
-      this._write('reconcile', { turnId, dispatchId, ok: rc.ok !== false, checks: Array.isArray(rc.checks) ? rc.checks : [] });
-    }
+    if (booking) this._writeBooking(booking, { turnId, dispatchId, executionId, nodeId });
     // C30: the watchdog streak counts this turn before the snapshot is taken, so a crash after it degrades on time.
     if (outcome === 'watchdog') this.consecutiveWatchdog += 1;
     else if (outcome === 'accept' || outcome === 'member-error') this.consecutiveWatchdog = 0;
@@ -696,6 +699,169 @@ export class SessionHost {
         if (err && err.errorClass == null && done?.isError) err.errorClass = classifyError(done.errorText || '');
         throw err;
     }
+  }
+
+  /** A booked turn's records (C9, critique minor 2): each carried cut back on its own row, then the turn's `cost` and its
+   *  `reconcile`. */
+  _writeBooking(booking, { turnId, dispatchId, executionId, nodeId }) {
+    if (booking.carried && this.openCut) {              // C9: each cut turn's spend inside this Δ goes back to its own row
+      const c = this.openCut;
+      this.openCut = null;
+      // The port's shares follow the cuts' order; a port that answers one figure gives it all to the first cut.
+      const shares = Array.isArray(booking.carried.parts) ? booking.carried.parts : [{ usd: booking.carried.usd }];
+      (c.parts || [c]).forEach((p, i) => {
+        const usd = shares[i]?.usd ?? null;
+        // A carry is taken out of the CLI's Δ (a harness figure), whatever this turn's own source; an override on the cut
+        // member is that record's, not this turn's (C9).
+        this._write('cost', { turnId: p.turnId, dispatchId: p.dispatchId, executionId: p.executionId, nodeId: p.nodeId, memberUsd: usd,
+          hostOverheadUsd: null, costSource: 'harness', overridden: shares[i]?.overridden === true, carriedBy: turnId });
+        this._addMemberUsd(p.nodeId, usd);
+      });
+    }
+    this._write('cost', { turnId, dispatchId, executionId, nodeId, memberUsd: booking.memberUsd, hostOverheadUsd: booking.hostOverheadUsd,
+      costSource: booking.costSource, hostPriced: booking.hostPriced, overridden: booking.overridden });
+    this._addMemberUsd(nodeId, booking.memberUsd);
+    this.epochBookedUsd += this._harnessPart(booking);
+    const rc = booking.reconcile || { ok: true, checks: [] };
+    this._write('reconcile', { turnId, dispatchId, ok: rc.ok !== false, checks: Array.isArray(rc.checks) ? rc.checks : [] });
+  }
+
+  /**
+   * `shared` mode (Task 65; spec §5, 04 §5): the member runs ITSELF as the next turn of the session's one conversation, on
+   * the run's engine, with its own runOpts (`sharedTurnOpts`: the role in the user turn). No Agent call, no watchdog, no
+   * `member_bound`: its frames go to its own row as they come. The conversation's id is adopted the moment it is named
+   * (and again whenever the engine names another), and the row and the snapshot say it before the turn can be cut (C43).
+   * The `result` is held back and booked first, all of it the step's (`shared: true`: no main agent, so no hand-off), then
+   * handed on as booked. Its figure is the conversation's running total on Claude Code and Goose (Δ from the run-level
+   * baseline) and the turn's own elsewhere (`turnUsd`); the result's own usage prices a cost override, as it does an
+   * ungrouped step's. A turn with no result, or no figure on an engine that reports cost, is priced from its usage and its
+   * investigators': held for the next running total where one follows, else booked now as an estimate (C9, C24); with
+   * nothing priceable it books nothing (a blank row, never $0.00). A turn a bridged member's upstream priced books that
+   * figure, never a cut beside it (C34). Failures are the runner's, unchanged (C20, C41), except a `--resume` that found no
+   * conversation before it answered, in the engine's own words, which restarts it once (C20). A result of a turn that
+   * never ran (no model turn, $0: Claude Code's answer to a lost conversation, or to a refusal before it starts) is no
+   * answer, and nothing of it is booked or handed on.
+   */
+  async _sharedTurn(opts, member, { queueMs = 0 } = {}) {
+    const executionId = String(member.executionId);
+    const nodeId = member.nodeId ?? null;
+    const attempt = this._nextAttempt(executionId);
+    const turnId = turnIdFor(this.sid, ++this.turns);
+    const dispatchId = dispatchIdFor(executionId, attempt);
+    const resume = this.hostSessionId;
+    this.dispatches += 1;
+    this.epochDispatches += 1;
+    this.lastDispatch.set(executionId, { dispatchId, nodeId });
+    this._write('turn_start', { turnId, resume: !!resume, maxTurns: null, maxBudgetUsd: null, hostModel: null, hostEffort: null });
+    this._write('dispatch', { turnId, dispatchId, executionId, nodeId, attempt, agentType: null,
+      cold: attempt > 1 || !!opts.resumeSessionId || !!opts.coldRedispatch, queueMs });
+
+    const started = Date.now();
+    const signal = AbortSignal.any([...(opts.signal ? [opts.signal] : []), this.closeKill.signal]);
+    const ref = () => ({ sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId, dispatchId, attempt });
+    const usage = new Map();                    // the turn's own usage per message id: a cut turn's price
+    const inv = new Map();                      // its investigators' usage per message id: part of that price (C33)
+    let msgModel = null;                        // the model its messages name (a member that pins none)
+    let got = null;                             // the result: booked before it is handed on
+    let named = false;                          // the row says where the turn runs
+    let answered = false;                       // the conversation answered: its init, the model's output, a turn's result
+    const said = [];                            // the runner's plain and stderr lines, where a lost conversation says so (C20)
+    const onEvent = (e) => {
+      if (!e || typeof e !== 'object') return;
+      if (['usage', 'text', 'tool'].includes(e.type) || (e.type === 'session' && e.init === true) || (e.type === 'result' && !noTurnResult(e))) answered = true;
+      if (e.type === 'result') { got = e; return; }
+      if (e.type === 'session' && typeof e.sessionId === 'string' && e.sessionId) {
+        // Adopted when named, and again when the engine names another: an adapter that starts a fresh session itself
+        // when a resume finds none (Gemini, Qwen, OpenCode, Goose, Cursor) goes on in the new one.
+        if (!named || e.sessionId !== this.hostSessionId) {
+          const fresh = e.sessionId !== this.hostSessionId;
+          named = true;
+          this.hostSessionId = e.sessionId;
+          if (fresh) this._saveSnapshot();
+          this._stamp(executionId, { ...ref(), memberAgentId: null });   // a row cut mid-turn already says where it ran (C42)
+        }
+      } else if (e.type === 'usage' && e.phase === 'message' && e.usage && e.total !== true) {   // `total`: a session's sum
+        if ((e.parentId ?? null) !== null) inv.set(e.messageId ?? `n${inv.size}`, { resolvedModel: e.model ?? null, usage: e.usage });
+        else {
+          usage.set(e.messageId ?? `n${usage.size}`, e.usage);
+          if (typeof e.model === 'string' && e.model) msgModel = e.model;
+        }
+      } else if ((e.type === 'log' || e.type === 'stderr') && typeof e.text === 'string' && said.length < 20) said.push(e.text.slice(0, 500));
+      emitTo(opts.onEvent, e);
+    };
+    const turnOpts = sharedTurnOpts(opts, { hostSessionId: resume });
+    try { _testing.onSharedTurn?.(turnOpts, opts, member); } catch { /* a test seam never breaks a turn */ }
+    let err = null;
+    let out = null;
+    try { out = await this.transport({ ...turnOpts, signal, onEvent }); } catch (e) { err = e; }
+    const durationMs = Date.now() - started;
+    const cutByClose = this.closeKill.signal.aborted && !opts.signal?.aborted;   // a 'paused' close cut it (Task 45)
+    const aborted = !!opts.signal?.aborted || cutByClose;
+    const lostText = err ? [err.message, err.stream, ...said, ...(Array.isArray(got?.errors) ? got.errors : [])].join('\n') : '';
+    const vanished = !aborted && !!err && !!resume && !answered && LOST_CONVERSATION_RES.some((re) => re.test(lostText));
+    // A result of a turn that never ran is not this turn's (a lost conversation's, a refusal before the CLI starts, which
+    // the sideload retry runs again): it spent nothing, and its $0 is no running total. Booked, it would reset the
+    // conversation's baseline (the next result's Δ would then book every earlier turn again) and give a held cut a $0 share.
+    const r = got && !noTurnResult(got) ? got : null;
+
+    const usd = fin(r?.costUsd) ? r.costUsd : null;
+    const cumulative = this._cumulativeEngine();
+    const memberModel = opts.model || msgModel || null;
+    const fromEvents = ZERO_TOKENS();
+    for (const u of usage.values()) addTokens(fromEvents, usageTokens(u));
+    // The turn's own usage: the result's (a session's sum is none of it), else its messages'.
+    const own = r?.usage && !SESSION_SUM_USAGE_ENGINES.has(this.engine) ? r.usage : null;
+    const spent = own ?? (usage.size ? fromEvents : null);
+    // A cut turn, or a result without its figure on an engine that reports cost, is priced from the usage the turn reported
+    // and its investigators' (C9, C24, C33). Nothing priceable is no estimate: the turn books nothing, never $0.00.
+    const price = (ratesFor) => estimateMemberUsd({ memberUsage: spent, memberModel, investigators: [...inv.values()], ratesFor });
+    // A bridged member whose upstream reported what this turn cost (C34): that figure is booked now, as the booking's bridge
+    // part. A cut held or booked beside it would book the turn twice (the open-turn flush books the upstream's figure too).
+    const bridged = fin(this.port.bridgeUsd?.(executionId));
+    const cutUsd = answered && !bridged && (!r || (usd === null && engineReportsCost(this.engine))) ? price() : NaN;
+    let booking = null;
+    let cutNow = null;
+    if (fin(cutUsd)) {
+      const listUsd = price(listCostRates);
+      const cut = { turnId, dispatchId, executionId, nodeId, cutUsd, cutListUsd: listUsd, cutTokens: usageTokens(spent ?? fromEvents) };
+      // The next running total holds its spend at the CLI's list price. A model without one (a gateway id the CLI cannot
+      // price) is no part of it: that cut is booked now, never carried out of the next step's Δ.
+      if (cumulative && fin(listUsd) && (this.limits.cutCostRestored || r)) this._holdCut(cut);
+      else cutNow = cut;
+    } else if (r || bridged) {                          // its figure as it is (none: a blank row), or its upstream's
+      booking = this._book({ sid: this.sid, hostEpoch: this.hostEpoch, hostSessionId: this.hostSessionId, turnId, dispatchId, stepKey: executionId, nodeId,
+        shared: true, ...(cumulative ? { cumulativeUsd: usd ?? NaN, carried: this.openCut } : { turnUsd: usd ?? NaN }), hostUsage: null, hostModel: null,
+        memberUsage: own, memberModel, investigators: [], hookUsd: null });
+    }
+    // The books' running total of this conversation: the CLI's own figure, else the sum of the turn figures (the epoch check).
+    if (usd !== null) this.lastCumulativeUsd = cumulative ? usd : this.lastCumulativeUsd + usd;
+    this.activeMs += durationMs;
+    if (spent) addTokens(this.tokens, usageTokens(spent));
+    this._write('turn_end', { turnId, cumulativeUsd: cumulative ? usd : null, deltaUsd: booking?.deltaUsd ?? null, hostUsage: usageTokens(null),
+      hostModel: null, numTurns: r?.numTurns ?? null, durationMs: r?.durationMs ?? durationMs, exit: aborted ? 'aborted' : err ? 'error' : 'ok',
+      subtype: r?.subtype ?? null });
+    if (cutNow) this._bookCut(cutNow);
+    if (booking) this._writeBooking(booking, { turnId, dispatchId, executionId, nodeId });
+    this._saveSnapshot();
+    this._stamp(executionId, { ...ref(), memberAgentId: null, memberTranscriptId: null, costSource: booking?.costSource ?? null });
+    if (r) {
+      // Handed on as booked: the harness logs its text and books nothing (Task 42). Its figure is the conversation's (a
+      // running total), never this step's, so it goes without it: nothing downstream reads it as the step's cost.
+      const booked = { ...r, sessionBooked: true };
+      delete booked.costUsd;
+      delete booked.cumulativeCost;
+      emitTo(opts.onEvent, booked);
+    }
+    if (aborted) throw cutByClose ? this._refusal() : err?.name === 'AbortError' ? err : abortError();
+    if (vanished) throw new SessionHostError('SESSION_HOST_VANISHED', 'the host session was not found', { hostSessionId: resume });
+    if (err) throw err;
+    return out;
+  }
+
+  /** Does this engine's result report the conversation's running total (a cut turn's spend then reaches the next one)? The
+   *  offline host plays Claude Code. */
+  _cumulativeEngine() {
+    return this.port.mock === true || CUMULATIVE_COST_ENGINES.has(this.engine ?? 'claude');
   }
 
   _onWarn(w, { turnId, dispatchId, label, attr }) {

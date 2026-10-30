@@ -1,17 +1,10 @@
 // test/graph-session-parity.test.mjs — X1: a session changes WHERE a step runs, never WHAT runs or where its files go.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { basename } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { gitDir } from './helpers/git-dir.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
-import { BRIEF_DIVIDER } from '../src/core/engines/session-dispatch.mjs';
-import { runClaude } from '../src/core/claude-runner.mjs';
-import { _testing as execT } from '../src/core/graph/executor.mjs';
-import { _testing as hostT } from '../src/core/session-host.mjs';
-import { projectKey } from '../src/core/store.mjs';
+import { runOnce } from './helpers/session-parity.mjs';   // Task 65 moved it there, to run `shared` mode through it too
 
 useTempHome(after);
 const SID = 's_aaaaaaaa';
@@ -20,30 +13,6 @@ async function save(id, seedId, members) {
   for (const m of members) t.nodes.find((n) => n.id === m).config.session = SID;
   await writeGraphWorkflow({ ...t, id, name: id });
 }
-async function runOnce(workflowId) {
-  const facts = { starts: [], tokens: [], raw: [], hostedOk: [] };
-  const projectDir = gitDir(workflowId);
-  const orch = createOrchestrator({ projectDir, workflowId, prompt: 'demo', auto: true, claude: { mock: true } });
-  orch.on('exec', (e) => { if (e.status === 'start') facts.starts.push([e.nodeId, e.executionId]); });
-  orch.on('token', (e) => facts.tokens.push([e.from.node, e.from.port]));          // scheduler.mjs:268-279
-  execT.runClaude = async (opts) => { facts.raw.push(opts.systemPrompt + BRIEF_DIVIDER + opts.prompt); return runClaude(opts); };
-  hostT.onDefinitions = (defs, memberOpts, member) => {
-    const [type, def] = Object.entries(defs).find(([k]) => k.startsWith('worca-x-'));
-    facts.hostedOk.push([member.executionId, def.prompt === memberOpts.systemPrompt + BRIEF_DIVIDER + memberOpts.prompt, type]);
-    facts.raw.push(def.prompt);
-  };
-  try { assert.equal((await orch.run()).status, 'done'); } finally { execT.runClaude = null; hostT.onDefinitions = null; }
-  const st = orch.getState();
-  // Run-specific tokens beyond the master's five (Step 3): the project's store key and folder name (the memory block, the
-  // store paths) and the run's checkpoint commit (the reviewer's `git diff <ref>` line).
-  const norm = (s) => [[st.pipelineDir, '<P>'], [st.branch?.worktreeDir, '<W>'], [projectDir, '<D>'], [projectKey(projectDir), '<K>'],
-    [basename(projectDir), '<B>'], [orch.checkpointRef, '<C>'], [st.id, '<R>'], [workflowId, '<WF>']]
-    .reduce((acc, [from, to]) => (from ? acc.split(from).join(to) : acc), String(s));
-  const { listArtifacts } = await import('../src/core/artifacts.mjs');          // what History serves (artifacts.mjs:283)
-  return { ...facts, briefs: facts.raw.map(norm).sort(), rows: st.steps.filter((s) => s.executionId && !s.executionId.startsWith('x:preflight') && !s.executionId.startsWith('x:done')).length,
-    deliveries: st.wireDeliveries, artifacts: (await listArtifacts(st.id)).map((a) => norm(a.relPath || a.path)).sort() };
-}
-
 before(async () => {
   process.env.WORCA_FLAGS = 'sessionGroups';
   await save('wf_par_plain', 'wf_quick-fix', []);

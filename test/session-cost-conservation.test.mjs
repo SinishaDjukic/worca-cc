@@ -22,6 +22,7 @@ before(async () => {
   for (const id of ['n_plan', 'n_impl', 'n_review']) t.nodes.find((n) => n.id === id).config.session = SID;
   t.sessions = { [SID]: { hostModel: 'claude-haiku-4-5' } };
   await writeGraphWorkflow({ ...t, id: 'wf_cons', name: 'Cons' });
+  await writeGraphWorkflow({ ...t, sessions: { [SID]: { mode: 'shared' } }, id: 'wf_cons_shared', name: 'Cons shared' });   // Task 65
 });
 beforeEach(() => { mockT.resetSessions(); mockT.behave = null; mockT.restoreCutCost = true; mockT.costFor = null; mockT.onTurn = null; mockT.onMemberStart = null; });   // priced spend: cut estimates are exact (Task 38)
 const rowUsd = (s) => s.costUsd || 0;                                  // _recordCost adds an aux booking to costUsd too (run-harness.mjs:8036)
@@ -194,6 +195,31 @@ test('v3 — Copilot: blank means null, not $0 (every hosted member row, every c
   assert.ok(members.every((s) => s.costUsd == null && s.auxCosts?.session?.usd == null), JSON.stringify(members.map((s) => [s.costUsd, s.auxCosts])));
   const { records } = await readTrace(tracePath(st.pipelineDir, SID));
   assert.ok(records.filter((r) => r.kind === 'cost').length >= 5);
+});
+
+test('shared mode: one conversation conserves, all of it the steps\' (no hand-off overhead)', { timeout: 120000 }, async () => {
+  mockT.costFor = ({ turn }) => 0.01 * turn;                        // the master row's spend would be $0: every member pins no model
+  const o = createOrchestrator({ projectDir: gitDir('cons-shared'), workflowId: 'wf_cons_shared', prompt: 'demo', auto: true, claude: { mock: true } });
+  assert.equal((await o.run()).status, 'done');
+  const st = o.getState();
+  const { costs } = await conserve(st);
+  assert.equal(st.sessionHosts[SID].mode, 'shared');
+  assert.deepEqual(costs.map((r) => r.executionId).sort(), ['x:n_impl:1', 'x:n_impl:2', 'x:n_plan:1', 'x:n_review:1', 'x:n_review:2']);
+  assert.ok(costs.every((r) => r.hostOverheadUsd === 0 && r.costSource === 'harness' && r.memberUsd > 0));
+  assert.ok(st.steps.every((s) => !s.auxCosts?.session), 'no hand-off booked or counted');
+});
+
+test('shared mode on Copilot: every figure blank, never $0', { timeout: 120000 }, async () => {
+  mockT.behave = () => 'no-cost';
+  const o = createOrchestrator({ projectDir: gitDir('cons-shared-copilot'), workflowId: 'wf_cons_shared', prompt: 'demo', auto: true, claude: { mock: true, engine: 'copilot' } });
+  assert.equal((await o.run()).status, 'done');
+  const st = o.getState();
+  const members = st.steps.filter((s) => s.session?.sid === SID);
+  assert.equal(members.length, 5);
+  assert.ok(members.every((s) => s.costUsd == null && s.auxCosts?.session == null), JSON.stringify(members.map((s) => [s.costUsd, s.auxCosts])));
+  assert.equal(st.sessionHosts[SID].costUsd, null);
+  const { records } = await readTrace(tracePath(st.pipelineDir, SID));
+  assert.deepEqual(records.filter((r) => r.kind === 'cost').map((r) => [r.costSource, r.memberUsd, r.hostOverheadUsd]), members.map(() => ['none', null, null]));
 });
 
 test('v3 — correction 14 is the mock transport\'s only: a real CLI\'s host reads HOST_CUT_COST_RESTORED, whatever the mock says', () => {

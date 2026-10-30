@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { runCostBreakdown, AUX_ORDER, fmtAuxCalls } from '../src/shared/cost/breakdown.mjs';
-import { recordBridgeCost } from '../src/core/bridge/telemetry.mjs';
+import { recordBridgeCost, forgetBridgeTag } from '../src/core/bridge/telemetry.mjs';
 import { setPipelineCostLimitUsd, addGlobalModel, removeGlobalModel } from '../src/core/settings.mjs';
 import { priceUsage, splitTurnCost } from '../src/core/session-cost.mjs';
 import { listCostRates, liveCostRates, PREDEFINED_LIST_PRICES } from '../src/core/config.mjs';
@@ -52,6 +52,53 @@ test('two turns on one host: each row books its own share; hand-offs are an aux 
   assert.deepEqual(br.lines.map((l) => [l.kind, l.label]), [['session', 'Session hand-offs']]);
   assert.deepEqual([...AUX_ORDER], ['away', 'auto', 'title', 'session']);
   assert.equal(fmtAuxCalls('session', 2), '2 hand-offs');
+});
+
+test('Task 65 — a shared turn books every dollar on its step: no host share, no hand-off line, no hand-off count', () => {
+  const o = unit();
+  const r1 = o._bookSessionTurn(B('x:n_a:1', 0.5, { shared: true, hostUsage: null, hostModel: null, memberUsage: null }));
+  // A host usage handed over anyway is never split off: one conversation has no main agent.
+  const r2 = o._bookSessionTurn(B('x:n_b:1', 0.8, { shared: true, memberUsage: null }));
+  const [a, b] = o.state.steps;
+  near(a.costUsd, 0.5);
+  near(b.costUsd, 0.3);
+  assert.deepEqual([a.auxCosts?.session, b.auxCosts?.session], [undefined, undefined]);
+  assert.deepEqual([r1.memberUsd, r1.hostOverheadUsd, r1.costSource, r1.deltaUsd, r1.hostPriced], [0.5, 0, 'harness', 0.5, false]);
+  near(r2.memberUsd, 0.3);
+  assert.equal(r2.hostOverheadUsd, 0);
+  assert.deepEqual(runCostBreakdown(o.state.steps, o.state.totalCostUsd).lines, [], 'no "Session hand-offs" line');
+  near(o.state.totalCostUsd, 0.8);
+});
+
+test('v3 — a shared turn\'s own usage prices a cost override, as an ungrouped step\'s does, and is no estimate to check Δ against', async () => {
+  await addGlobalModel({ id: 'claude-opus-5-5', cost: { perMtok: { input: 1, output: 2 } } });
+  try {
+    const o = unit();
+    const r = o._bookSessionTurn(B('x:n_a:1', 0.5, { shared: true, hostUsage: null, hostModel: null, memberUsage: { input_tokens: 1_000_000, output_tokens: 1_000_000 } }));
+    near(r.memberUsd, 3, '{perMtok} prices the turn from the result\'s own usage (_onResultEvent prices an ungrouped step so)');
+    near(o.state.steps[0].costUsd, 3);
+    assert.deepEqual([r.costSource, r.overridden, r.hostOverheadUsd, r.reconcile], ['harness', true, 0, { ok: true, checks: [] }]);
+  } finally { await removeGlobalModel('claude-opus-5-5'); }
+  // No override: Δ as it is, and no estimate check, although the usage prices far above Δ (Δ holds the investigators too).
+  const r = unit()._bookSessionTurn(B('x:n_a:1', 0.5, { shared: true, hostUsage: null, hostModel: null, memberUsage: { input_tokens: 1_000_000 } }));
+  assert.deepEqual([r.memberUsd, r.reconcile], [0.5, { ok: true, checks: [] }]);
+  // Sub-agents keep the check: there the member's usage is an estimate of its share.
+  const s = unit()._bookSessionTurn(B('x:n_a:1', 0.5, { memberUsage: { input_tokens: 1_000_000 } }));
+  assert.deepEqual(s.reconcile.checks.map((c) => [c.method, c.ok]), [['estimate', false]]);
+});
+
+test('Task 65 — turnUsd: a result that is the turn\'s own cost is its Δ as it is, never measured against a running total', () => {
+  const o = unit('codex');
+  const r1 = o._bookSessionTurn(B('x:n_a:1', undefined, { turnUsd: 0.5, shared: true, hostUsage: null, memberUsage: null }));
+  const r2 = o._bookSessionTurn(B('x:n_b:1', undefined, { turnUsd: 0.3, shared: true, hostUsage: null, memberUsage: null }));
+  const [a, b] = o.state.steps;
+  near(a.costUsd, 0.5);
+  near(b.costUsd, 0.3, 'a running total would book 0 here (0.3 < 0.5)');
+  assert.deepEqual([r1.deltaUsd, r2.deltaUsd, a.sessionCosts, b.sessionCosts], [0.5, 0.3, undefined, undefined]);
+  // A turnUsd that is no figure books nothing: never measured against the conversation's running total either.
+  const r3 = o._bookSessionTurn(B('x:n_a:1', 0.9, { turnUsd: NaN, shared: true, hostUsage: null, memberUsage: null }));
+  assert.deepEqual([r3.deltaUsd, r3.memberUsd, r3.costSource], [null, null, 'none']);
+  near(a.costUsd, 0.5);
 });
 
 test('C9 — carried spend goes to the CUT step\'s row; the rest to the current step; nothing twice', () => {
@@ -111,7 +158,11 @@ test('v2 — _sessionPort(): the Task 39 shape, each method wired to the harness
   o.pipeline = { id: 'p_port', dir: '/pipe' };
   const port = o._sessionPort();
   assert.deepEqual(Object.keys(port), ['runId', 'pipelineDir', 'engine', 'mock', 'bookTurn', 'onRecord', 'stampRow', 'remainingBudgetUsd',
-    'checkCostLimits', 'seedBaseline', 'saveSnapshot', 'onQueue', 'log']);
+    'checkCostLimits', 'seedBaseline', 'bridgeUsd', 'saveSnapshot', 'onQueue', 'log']);
+  assert.equal(port.bridgeUsd('x:n_port:1'), null, 'v5: no upstream figure for this execution');
+  recordBridgeCost({ tag: 'x:n_port:1', costUsd: 0.25 });
+  near(port.bridgeUsd('x:n_port:1'), 0.25, 'v5: the bridge\'s figure for the execution, as a booking would take it');
+  forgetBridgeTag('x:n_port:1');
   assert.deepEqual([port.runId, port.pipelineDir, port.engine, port.mock], ['p_port', '/pipe', 'claude', true]);
   assert.equal(port.bookTurn(B('x:n_a:1', 0.4)).costSource, 'harness');
   near(o.state.steps[0].costUsd, 0.4);
@@ -314,6 +365,82 @@ test('v4 — the remaining budget: the per-pipeline override drops the own cap, 
     writePolicyState(id, { overrides: ['pipeline'] });
     assert.equal(o._remainingPipelineBudgetUsd(), null, '"continue past the team cap" too: nothing meters it');
   } finally { await setPipelineCostLimitUsd(null); o.policyRun = undefined; }
+});
+
+// ── Task 65 v5: one conversation on the real port — a bridged member's cut, a cut at a model without a list price ──
+
+const SHARED = (port) => createSessionHosts({ specs: [spec(['n_a', 'n_b'], { mode: 'shared' })],
+  decisions: decisions('shared', { requested: 'shared', reason: 'chosen in the session settings' }), port }).hosts.get(SID);
+/** A shared turn's normalized events on Claude Code: `hang` waits for the kill after the usage; else the running total `usd`. */
+const conversationTurn = ({ model, usd = null, hang = false }) => async (h) => {
+  h.onEvent({ type: 'session', sessionId: 'C1', model, init: true });
+  h.onEvent({ type: 'usage', phase: 'message', parentId: null, messageId: `m-${model}`, model, usage: { input_tokens: 1000, output_tokens: 500 } });
+  if (hang) {
+    await new Promise((_, reject) => h.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true }));
+  }
+  h.onEvent({ type: 'result', text: 'R', usage: { input_tokens: 1000, output_tokens: 500 }, isError: false, numTurns: 1, sessionId: 'C1', costUsd: usd, cumulativeCost: true });
+  return { text: 'R', exitCode: 0 };
+};
+const stopTurn = async (host, opts, m) => {
+  const ac = new AbortController();
+  const p = assert.rejects(host.run({ ...opts, signal: ac.signal }, m), { name: 'AbortError' });
+  await new Promise((r) => setTimeout(r, 5));
+  ac.abort();
+  await p;
+};
+
+test('Task 65 v5 — a bridged member stopped mid-turn in one conversation: its upstream\'s figure is booked once, never a cut beside it (C34)', async () => {
+  const o = unit();
+  o.pipeline = { id: 'p_bridge_cut', dir: mkdtempSync(join(tmpdir(), 'worca-sess-bridge-')) };
+  for (const s of o.state.steps) delete s.costUsd;
+  const host = SHARED(o._sessionPort());
+  recordBridgeCost({ tag: 'x:n_a:1', costUsd: 0.02 });                  // what the upstream reported before the kill
+  host.transport = conversationTurn({ model: 'claude-opus-5-5', hang: true });
+  await stopTurn(host, { systemPrompt: 'SYS', prompt: 'A', model: 'claude-opus-5-5', engine: 'claude' }, member('n_a'));
+  assert.equal(host.openCut, null, 'no cut held: the next running total would carry it to the same row again');
+  near(o.state.steps[0].costUsd, 0.02, 'booked at the turn, as the bridge\'s figure');
+  o._closeOpenTurns('x:n_a:1');                                          // the executor's finally, on the stopped step
+  near(o.state.steps[0].costUsd, 0.02, 'the tag was forgotten: the open-turn flush books nothing more');
+  host.transport = conversationTurn({ model: 'claude-opus-5-5', usd: 0.05 });
+  await host.run({ systemPrompt: 'SYS', prompt: 'B', model: 'claude-opus-5-5', engine: 'claude' }, member('n_b'));
+  near(o.state.steps[1].costUsd, 0.05, 'the next step pays its own Δ, nothing of the cut carried back');
+  await host.close('stopped');
+  near(o.state.steps[0].costUsd, 0.02, 'nothing booked at the close');
+  near(o.state.totalCostUsd, 0.07);
+});
+
+test('Task 65 v5 — a cut at a model without a list price is booked now as its estimate, never carried out of the next step\'s Δ', async () => {
+  await addGlobalModel({ id: 'gateway-coder-1', cost: { perMtok: { input: 1, output: 2 } } });   // an operator's price, no list price
+  try {
+    const o = unit();
+    o.pipeline = { id: 'p_gw_cut', dir: mkdtempSync(join(tmpdir(), 'worca-sess-gw-')) };
+    for (const s of o.state.steps) delete s.costUsd;
+    assert.equal(listCostRates('gateway-coder-1'), null);
+    const host = SHARED(o._sessionPort());
+    host.transport = conversationTurn({ model: 'gateway-coder-1', hang: true });
+    await stopTurn(host, { systemPrompt: 'SYS', prompt: 'A', model: 'gateway-coder-1', engine: 'claude' }, member('n_a'));
+    assert.equal(host.openCut, null, 'the CLI cannot price that model, so no running total holds its spend');
+    near(o.state.steps[0].costUsd, 0.002, 'the estimate at the operator\'s price: 1000 in at $1, 500 out at $2 per Mtok');
+    host.transport = conversationTurn({ model: 'claude-opus-5-5', usd: 0.05 });
+    await host.run({ systemPrompt: 'SYS', prompt: 'B', model: 'claude-opus-5-5', engine: 'claude' }, member('n_b'));
+    near(o.state.steps[1].costUsd, 0.05, 'the next step keeps its whole Δ');
+    await host.close('done');
+  } finally { await removeGlobalModel('gateway-coder-1'); }
+});
+
+test('Task 65 v5 — a shared turn whose share an override cannot price is unknown: blank, never a $0.00 hand-off (Goose: no turn usage)', async () => {
+  await addGlobalModel({ id: 'claude-opus-5-5', cost: { perMtok: { input: 1, output: 2 } } });
+  try {
+    const o = unit('goose');
+    delete o.state.steps[0].costUsd;
+    const r = o._bookSessionTurn(B('x:n_a:1', 0.5, { shared: true, hostUsage: null, hostModel: null, memberUsage: null }));
+    assert.deepEqual([r.memberUsd, r.hostOverheadUsd, r.costSource, r.overridden], [null, null, 'harness', true]);
+    assert.equal(o.state.steps[0].costUsd, undefined);
+    // Sub-agents keep the main agent's share: its spend is known whatever the member's override says.
+    const s = unit()._bookSessionTurn(B('x:n_a:1', 0.5, { memberUsage: null }));
+    assert.equal(s.memberUsd, null);
+    assert.ok(s.hostOverheadUsd > 0, String(s.hostOverheadUsd));
+  } finally { await removeGlobalModel('claude-opus-5-5'); }
 });
 
 // ── v5: a $0 carried share leaves a blank row blank; the override flags of a {free} carry, end to end ──

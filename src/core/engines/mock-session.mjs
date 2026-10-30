@@ -5,6 +5,7 @@
 // behaviours copy the CLI's, so every SessionHost test runs the path a real host takes.
 import { runMock, emitRaw } from './mock.mjs';
 import { safeEmit } from './spawn.mjs';
+import { createClaudeNormalizer } from './claude-events.mjs';
 import { BRIEF_DIVIDER, CHILD_PROMPT } from './session-dispatch.mjs';
 import { priceUsage } from '../session-cost.mjs';
 
@@ -62,6 +63,7 @@ const waitForKill = (signal) => new Promise((_, reject) => {
  *  adapter writes them to the staging dir, the mock needs no file, C3), the dispatch line as `prompt`,
  *  `resumeSessionId`, `model`, `signal`, `onEvent`, and the member's `cwd`, `workspaceWriteTargets`, `permissionMode`. */
 export async function runMockSession(hostOpts = {}) {
+  if (hostOpts.shared === true) return runMockSharedTurn(hostOpts);
   const { cwd, agents, prompt, resumeSessionId, model, signal, onEvent, workspaceWriteTargets, permissionMode, pluginDirs } = hostOpts;
   const live = () => !signal?.aborted;   // nothing reaches the stream after the kill
   const emit = (e) => { if (live()) safeEmit(onEvent, e); };
@@ -194,6 +196,78 @@ export async function runMockSession(hostOpts = {}) {
     return { text: 'DONE', exitCode: 0 };
   } finally {
     // A turn that ended without a result: its spend reaches a later cumulative only when the CLI restores it (S4).
+    if (!resulted && turnSpend && !mockRestoresCutCost()) lost.set(hostSessionId, (lost.get(hostSessionId) || 0) + turnSpend);
+  }
+}
+
+/**
+ * One turn of a `shared` session (Task 65): no main agent, no Agent call. The member runs ITSELF through runMock, with the
+ * turn's own system prompt and user turn (sharedTurnOpts: the preamble, then the role and the task, as the CLI sees them),
+ * under the conversation's id (`mock-host-N`, resumed after its first turn), and the result reports the conversation's
+ * running total, as Claude Code's does. Its events are normalized, as `runClaude` hands a plain spawn's on: runMock's own
+ * session and result never pass. Behaviours: `vanished` (a resume of a conversation the loss took), `hang` (its usage
+ * so far, `spendBeforeHang`, then it waits for the kill), `no-cost` (a result without its figure),
+ * `host-error-after-member` (the process exits 1 after its result).
+ */
+async function runMockSharedTurn(hostOpts) {
+  const { cwd, systemPrompt, prompt, resumeSessionId, model, signal, onEvent, workspaceWriteTargets, permissionMode, pluginDirs } = hostOpts;
+  const emit = (e) => { if (!signal?.aborted) safeEmit(onEvent, e); };
+  const check = () => { if (signal?.aborted) throw abortError(); };
+  const turn = ++ids.turn;
+  const resume = !!resumeSessionId;
+  const behaviour = _testing.behave?.({ agentType: null, turn, resume, hostOpts }) ?? null;
+  const seen = { agentType: null, resumeSessionId: resumeSessionId ?? null, hostSessionId: resumeSessionId ?? null, briefPrompt: null,
+    prompt: prompt ?? null, model: model ?? null, effort: hostOpts.effort ?? null, maxBudgetUsd: hostOpts.maxBudgetUsd ?? null,
+    pluginDirs: pluginDirs ?? null, shared: true };
+  _testing.seen.push(seen);
+  check();
+  if (behaviour === 'vanished' && resume && !bornAfterLoss?.has(resumeSessionId)) {
+    bornAfterLoss ??= new Set();
+    throw new Error(`No conversation found with session ID: ${resumeSessionId}`);
+  }
+  _testing.onTurn?.({ agentType: null, turn, hostOpts });
+  const hostSessionId = resumeSessionId || `mock-host-${++ids.host}`;
+  if (!resumeSessionId) bornAfterLoss?.add(hostSessionId);
+  seen.hostSessionId = hostSessionId;
+  let turnSpend = 0;
+  let resulted = false;
+  const spend = (usd) => {
+    const n = Number.isFinite(usd) ? usd : 0;
+    _testing.spent.set(hostSessionId, (_testing.spent.get(hostSessionId) || 0) + n);
+    turnSpend += n;
+  };
+  const cumulative = () => (_testing.spent.get(hostSessionId) || 0) - (lost.get(hostSessionId) || 0);
+  const resolvedModel = _testing.resolvedModel || model || 'mock-default';
+  const normalize = createClaudeNormalizer();
+  const messageId = `mock_s${++ids.call}`;
+  const usage = () => emit({ type: 'usage', phase: 'message', parentId: null, messageId, model: resolvedModel, usage: { ...MOCK_MEMBER_USAGE } });
+  const result = (text) => {
+    check();
+    resulted = true;
+    const raw = { type: 'result', subtype: 'success', is_error: false, session_id: hostSessionId, result: text, usage: { ...MOCK_MEMBER_USAGE },
+      ...(behaviour === 'no-cost' ? {} : { total_cost_usd: cumulative() }) };
+    for (const n of normalize({ type: 'result', raw })) emit(n);
+  };
+  try {
+    emit({ type: 'session', sessionId: hostSessionId });
+    _testing.onMemberStart?.({ agentType: null, turn });
+    if (behaviour === 'hang') {
+      usage();
+      if (Number.isFinite(_testing.spendBeforeHang)) spend(_testing.spendBeforeHang);
+      return await waitForKill(signal);
+    }
+    const out = await runMock({ cwd, systemPrompt, prompt, signal, workspaceWriteTargets, permissionMode, onEvent: (e) => {
+      if (!e || typeof e !== 'object' || e.type === 'session' || e.type === 'result') return;
+      for (const n of normalize(e)) emit(n);
+    } });
+    check();
+    usage();
+    spend(_testing.costFor?.({ agentType: null, turn }) ?? (priceUsage(resolvedModel, MOCK_MEMBER_USAGE) || 0));
+    const text = String(out?.text ?? '');
+    result(text);
+    if (behaviour === 'host-error-after-member') throw new Error('claude exited with code 1');
+    return { text, exitCode: 0 };
+  } finally {
     if (!resulted && turnSpend && !mockRestoresCutCost()) lost.set(hostSessionId, (lost.get(hostSessionId) || 0) + turnSpend);
   }
 }

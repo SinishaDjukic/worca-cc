@@ -99,6 +99,19 @@ test('v4 — a pause ends the session\'s host here: its open turns are forgotten
   assert.deepEqual(pushed, []);
 });
 
+test('Task 65 — one conversation has no main agent: its turns write no `host` record', () => {
+  const o = unit();
+  const { pushed, rec: r } = sink();
+  o.telemetry = r;
+  const shared = { ...summary, mode: 'shared' };
+  const T = `t:${SID}:1`;
+  o._onSessionRecord(SID, rec('dispatch', { turnId: T, dispatchId: 'd:x:n_a:1:a1', executionId: 'x:n_a:1', nodeId: 'n_a', attempt: 1, agentType: null }), shared);
+  o._onSessionRecord(SID, rec('turn_end', { turnId: T, cumulativeUsd: 0.4, deltaUsd: 0.4, hostUsage: { in: 0, out: 0, cr: 0, cw: 0 }, durationMs: 900, exit: 'ok' }), shared);
+  o._onSessionRecord(SID, rec('cost', { turnId: T, dispatchId: 'd:x:n_a:1:a1', executionId: 'x:n_a:1', nodeId: 'n_a', memberUsd: 0.4, hostOverheadUsd: 0, costSource: 'harness' }), shared);
+  assert.deepEqual(pushed, []);
+  assert.equal(o._hostTurns, undefined, 'and keeps no map');
+});
+
 test('v2 — Run telemetry off: no recorder, no record, no map', () => {
   const o = unit();
   assert.equal(o.telemetry, null);

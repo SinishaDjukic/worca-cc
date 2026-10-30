@@ -99,8 +99,8 @@ test('v4 — shared before its runtime exists runs separate, on every engine and
   assert.deepEqual(on.lines, [`session ${SID}: one conversation on Claude (2 steps: Implementation, Review Implementation)`]);
 });
 
-test('the one pin of SESSION_SHARED_RUNTIME: it ships off; Task 65 turns it on with the shared runtime, and this pin with it', () => {
-  assert.equal(SESSION_SHARED_RUNTIME, false);
+test('the one pin of SESSION_SHARED_RUNTIME: Task 65 built the shared runtime and turned it on, and this pin with it', () => {
+  assert.equal(SESSION_SHARED_RUNTIME, true);
 });
 
 test('no session: no line, no probe', async () => {

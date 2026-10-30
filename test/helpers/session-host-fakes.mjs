@@ -39,6 +39,10 @@ export function fakePort(over = {}) {
       const none = { deltaUsd: null, memberUsd: null, hostOverheadUsd: null, costSource: 'none', hostPriced: false, overridden: false, carried: null, reconcile: NO_CHECKS() };
       if (over.engineCost === false) return none;                        // C24: blank, never $0
       if (Number.isFinite(b.cutEstimateUsd)) return { ...none, memberUsd: b.cutEstimateUsd, costSource: 'estimate' };
+      if (Object.hasOwn(b, 'turnUsd')) {                                 // a result that is the turn's own cost (Task 65): Δ as it is
+        if (!Number.isFinite(b.turnUsd)) return none;
+        return { ...none, deltaUsd: b.turnUsd, memberUsd: b.turnUsd, hostOverheadUsd: 0, costSource: 'harness' };
+      }
       if (!Number.isFinite(b.cumulativeUsd)) return none;
       const prev = totals.get(b.hostSessionId) ?? 0;
       const deltaUsd = Math.max(0, b.cumulativeUsd - prev);

@@ -597,3 +597,124 @@ test('v5 — the frame details later runs pin: the Agent input, the texts and na
   assert.notEqual(asked.map((f) => f.raw).find((x) => x?.tool_use_result).message.content[0].content[0].text,
     noModel.map((f) => f.raw).find((x) => x?.tool_use_result).message.content[0].content[0].text, 'runMock gets the permission mode (dontAsk takes the Ask arm)');
 });
+
+// ── Task 65: a `shared` turn — the member runs itself, as one turn of the conversation ──
+import { SHARED_SESSION_PREAMBLE, SHARED_ROLE_HEADING } from '../src/core/engines/session-dispatch.mjs';
+const nearUsd = (a, b, m) => assert.ok(Math.abs(a - b) < 1e-9, `${m ?? ''} ${a} vs ${b}`);
+function sharedTurn(over = {}, behave = null) {
+  const dir = mkdtempSync(join(tmpdir(), 'mock-shared-'));
+  const out = join(dir, 'out.md');
+  const ev = [];
+  _testing.behave = behave;
+  return runMockSession({ shared: true, cwd: dir, systemPrompt: SHARED_SESSION_PREAMBLE, prompt: `${SHARED_ROLE_HEADING}SYS\n\nTASK\nMOCK_ROLE: generic-producer\nMOCK_OUT: ${out}`,
+    model: 'claude-haiku-4-5', onEvent: (e) => ev.push(e), ...over })
+    .then((r) => ({ r, ev, out }), (err) => ({ err, ev, out }));
+}
+
+test('Task 65 — shared: the member runs itself under the conversation\'s id, its events normalized; the result reports the running total', async () => {
+  _testing.resetSessions();
+  _testing.costFor = ({ turn }) => 0.1 * turn;
+  const turns = [];
+  _testing.onTurn = (a) => turns.push([a.agentType, a.turn, a.hostOpts.shared]);
+  const a = await sharedTurn();
+  const b = await sharedTurn({ resumeSessionId: 'mock-host-1' });
+  _testing.costFor = null;
+  _testing.onTurn = null;
+  assert.equal(existsSync(a.out), true, 'the member really ran (runMock wrote its output)');
+  assert.deepEqual(a.ev[0], { type: 'session', sessionId: 'mock-host-1' });
+  assert.equal(a.ev.filter((e) => e.type === 'session').length, 1, 'runMock\'s own session never passes');
+  assert.ok(a.ev.every((e) => !('raw' in e)), 'normalized, as runClaude hands a plain spawn\'s events on');
+  assert.ok(a.ev.some((e) => e.type === 'text' && /generic producer/.test(e.text)), 'runMock\'s own lines reach the row');
+  assert.deepEqual(a.ev.filter((e) => e.type === 'usage'), [{ type: 'usage', phase: 'message', parentId: null, messageId: 'mock_s1', model: 'claude-haiku-4-5', usage: { ...MOCK_MEMBER_USAGE } }]);
+  assert.deepEqual(a.ev.filter((e) => e.type === 'result').length, 1);
+  assert.deepEqual(a.ev.at(-1), { type: 'result', text: a.r.text, costUsd: 0.1, cumulativeCost: true, usage: { ...MOCK_MEMBER_USAGE }, subtype: 'success',
+    isError: false, sessionId: 'mock-host-1' });
+  assert.deepEqual(a.r, { text: a.r.text, exitCode: 0 });
+  assert.equal(typeof a.r.text, 'string');
+  assert.deepEqual([b.ev[0].sessionId, b.ev.at(-1).sessionId], ['mock-host-1', 'mock-host-1'], 'a resumed turn keeps the conversation');
+  nearUsd(b.ev.at(-1).costUsd, 0.3, 'the running total: 0.1 + 0.2');
+  assert.deepEqual(turns, [[null, 1, true], [null, 2, true]]);
+  assert.deepEqual(_testing.seen[0], { agentType: null, resumeSessionId: null, hostSessionId: 'mock-host-1', briefPrompt: null, prompt: _testing.seen[0].prompt,
+    model: 'claude-haiku-4-5', effort: null, maxBudgetUsd: null, pluginDirs: null, shared: true });
+  assert.ok(_testing.seen[0].prompt.startsWith(`${SHARED_ROLE_HEADING}SYS\n\nTASK\n`));
+  assert.equal(_testing.seen[1].resumeSessionId, 'mock-host-1');
+});
+
+test('Task 65 — shared behaviours: the default price, a lost conversation, a result without its figure, an exit after the result, a hang', async () => {
+  _testing.resetSessions();
+  const a = await sharedTurn();
+  nearUsd(a.ev.at(-1).costUsd, priceUsage('claude-haiku-4-5', MOCK_MEMBER_USAGE), 'MOCK_MEMBER_USAGE at the turn\'s model');
+  const lost = await sharedTurn({ resumeSessionId: 'mock-host-1' }, () => 'vanished');
+  assert.match(lost.err.message, /^No conversation found with session ID: mock-host-1$/);
+  assert.deepEqual(lost.ev, []);
+  const fresh = await sharedTurn({}, () => 'vanished');                      // a first turn resumes nothing, so nothing is lost
+  assert.equal(fresh.ev[0].sessionId, 'mock-host-2');
+  const after = await sharedTurn({ resumeSessionId: 'mock-host-2' }, () => 'vanished');   // born after the loss: it resumes
+  assert.equal(after.err, undefined);
+  const noCost = (await sharedTurn({}, () => 'no-cost')).ev.at(-1);
+  assert.deepEqual([noCost.type, 'costUsd' in noCost, 'cumulativeCost' in noCost], ['result', false, false]);
+  const exit = await sharedTurn({}, () => 'host-error-after-member');
+  assert.deepEqual([exit.err?.message, exit.ev.at(-1).type], ['claude exited with code 1', 'result']);
+  _testing.spendBeforeHang = 0.05;
+  _testing.restoreCutCost = false;
+  const ac = new AbortController();
+  const started = [];
+  _testing.onMemberStart = (x) => { started.push(x); queueMicrotask(() => ac.abort()); };
+  const hung = await sharedTurn({ signal: ac.signal }, () => 'hang');
+  _testing.onMemberStart = null;
+  _testing.spendBeforeHang = null;
+  assert.equal(hung.err?.name, 'AbortError');
+  assert.deepEqual(hung.ev.map((e) => e.type), ['session', 'usage'], 'its usage so far, then nothing after the kill');
+  assert.deepEqual(started, [{ agentType: null, turn: _testing.seen.length }]);
+  const id = hung.ev[0].sessionId;
+  nearUsd(_testing.spent.get(id), 0.05);
+  const next = await sharedTurn({ resumeSessionId: id });
+  _testing.restoreCutCost = true;
+  _testing.behave = null;
+  nearUsd(next.ev.at(-1).costUsd, priceUsage('claude-haiku-4-5', MOCK_MEMBER_USAGE), 'a CLI that does not restore the killed turn drops its spend');
+});
+
+test('Task 65 v2 — shared: the abort checks, a $0 spend, a clean turn\'s spend kept, the seams\' arguments, a turn given nothing', async () => {
+  _testing.resetSessions();
+  const p = priceUsage('claude-haiku-4-5', MOCK_MEMBER_USAGE);
+  const pre = new AbortController();
+  pre.abort();
+  const reached = [];
+  _testing.onTurn = (a) => reached.push(a);
+  const stopped = await sharedTurn({ signal: pre.signal });
+  _testing.onTurn = null;
+  assert.deepEqual([stopped.err?.name, stopped.ev, _testing.spent.size, reached], ['AbortError', [], 0, []], 'stopped before it started: nothing shown, spent or reached');
+  const last = new AbortController();
+  const lastEv = [];
+  const cut = await sharedTurn({ signal: last.signal, onEvent: (e) => { lastEv.push(e); if (/^\[mock\] done role=/.test(e.text ?? '')) last.abort(); } });
+  assert.equal(cut.err?.name, 'AbortError');
+  assert.equal(lastEv.some((e) => e.type === 'usage' || e.type === 'result'), false);
+  assert.equal(_testing.spent.get(lastEv[0].sessionId) ?? 0, 0, 'killed on runMock\'s last line: nothing spent after it');
+  assert.equal(lastEv[0].sessionId, 'mock-host-1', 'the stopped turn minted no conversation');
+  _testing.restoreCutCost = false;
+  const kill = new AbortController();
+  const args = [];
+  _testing.costFor = (a) => { args.push(a); kill.abort(); return 0.25; };
+  const late = await sharedTurn({ signal: kill.signal });
+  _testing.costFor = null;
+  assert.deepEqual([late.err?.name, late.ev.some((e) => e.type === 'result')], ['AbortError', false], 'killed between its spend and its result');
+  assert.deepEqual(args, [{ agentType: null, turn: _testing.seen.length }]);
+  const lateId = late.ev[0].sessionId;
+  nearUsd(_testing.spent.get(lateId), 0.25);
+  nearUsd((await sharedTurn({ resumeSessionId: lateId })).ev.at(-1).costUsd, p, 'a CLI that does not restore a killed turn drops its 0.25');
+  const clean = await sharedTurn();
+  nearUsd((await sharedTurn({ resumeSessionId: clean.ev[0].sessionId })).ev.at(-1).costUsd, 2 * p, 'a turn that reached its result keeps its spend');
+  _testing.restoreCutCost = true;
+  _testing.costFor = () => 0;
+  assert.equal((await sharedTurn()).ev.at(-1).costUsd, 0, 'costFor 0 is a $0 turn');
+  _testing.costFor = null;
+  const behaved = [];
+  await sharedTurn({}, (a) => { behaved.push([a.agentType, a.turn, a.resume, a.hostOpts.shared]); return null; });
+  assert.deepEqual(behaved, [[null, _testing.seen.length, false, true]]);
+  _testing.behave = null;
+  const bare = [];
+  await runMockSession({ shared: true, cwd: mkdtempSync(join(tmpdir(), 'mock-shared-')), onEvent: (e) => bare.push(e) });
+  assert.deepEqual(_testing.seen.at(-1), { agentType: null, resumeSessionId: null, hostSessionId: bare[0].sessionId, briefPrompt: null, prompt: null, model: null,
+    effort: null, maxBudgetUsd: null, pluginDirs: null, shared: true });
+});
+

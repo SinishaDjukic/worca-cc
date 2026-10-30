@@ -8300,7 +8300,8 @@ export class RunHarness extends EventEmitter {
       if (!seen.has(sid)) { seen.add(sid); this._sessionAudit(line); }
     } else if (line) this._sessionAudit(line);
     if (SESSION_PERSIST_KINDS.has(rec.kind)) this._persist().catch(() => {});
-    if (this.telemetry) this._hostTelemetry(sid, rec);
+    // One conversation has no main agent (Task 65): its turns are the steps' own, so they write no `host` record.
+    if (this.telemetry && summary?.mode !== 'shared') this._hostTelemetry(sid, rec);
   }
 
   /** Labs run telemetry (Task 63): one `host` record per booked host turn. A turn's step comes from its `dispatch`, the
@@ -8375,6 +8376,8 @@ export class RunHarness extends EventEmitter {
       remainingBudgetUsd: (q) => this._remainingPipelineBudgetUsd(q),
       checkCostLimits: () => this._checkCostLimits(),
       seedBaseline: (hostSessionId, usd, o) => this.seedSessionBaseline(hostSessionId, usd, o),
+      // C34: what a bridged member's upstream reported for this execution so far (null: none), which a booking takes first.
+      bridgeUsd: (executionId) => bridgeCostFor(executionId)?.costUsd ?? null,
       // Task 47: a booking's host snapshot joins the resume point the next persist writes with the rows (the trace lags both).
       saveSnapshot: (sid, snap) => this._saveSessionSnapshot(sid, snap),
       onQueue: (executionId, queued) => this._onSessionQueue(executionId, queued),
@@ -8387,7 +8390,10 @@ export class RunHarness extends EventEmitter {
    * Order: a never-restored cut's estimate (and nothing else); else Δ from the run-level cumulative baseline (Task 34),
    * the bridge's upstream figure, the carried spend of a cut turn (to the CUT step's row), the split at the CLI's list
    * rates, each part's cost override, the bookings (the step's share, the main agent's overhead as aux `session` — even
-   * at $0, so `calls` counts hand-offs), and the checks, which never change a booking.
+   * at $0, so `calls` counts hand-offs), and the checks, which never change a booking. A `shared` turn (Task 65: one
+   * conversation, no main agent) books no hand-off, its `memberUsage` is the result's own (it prices a cost override, as
+   * `_onResultEvent` prices an ungrouped step's, and is no estimate to check Δ against), and an engine whose result is
+   * the turn's own cost (no running total: Codex, OpenCode) hands over `turnUsd`, which is the turn's Δ as it is.
    * @returns {{ deltaUsd, memberUsd, hostOverheadUsd, costSource, hostPriced, overridden, carried: {usd, parts}|null, reconcile }}
    */
   _bookSessionTurn(b) {
@@ -8401,7 +8407,8 @@ export class RunHarness extends EventEmitter {
       this._recordCost(b.cutEstimateUsd, b.stepKey);
       return booking({ memberUsd: b.cutEstimateUsd, costSource: 'estimate' });
     }
-    const delta = this._sessionCostDelta({ costUsd: b.cumulativeUsd, cumulativeCost: true, sessionId: b.hostSessionId }, b.stepKey);
+    const delta = Object.hasOwn(b, 'turnUsd') ? (Number.isFinite(b.turnUsd) ? b.turnUsd : NaN)
+      : this._sessionCostDelta({ costUsd: b.cumulativeUsd, cumulativeCost: true, sessionId: b.hostSessionId }, b.stepKey);
     // C34 / critique M-15: the member's modelEnv is tagged with its executionId; booked here, never again at the flush.
     const bridge = bridgeCostFor(b.stepKey);
     const bridgeUsd = bridge && Number.isFinite(bridge.costUsd) ? bridge.costUsd : NaN;
@@ -8426,7 +8433,10 @@ export class RunHarness extends EventEmitter {
       }
       carried = { usd: shares.reduce((a, s) => a + s.usd, 0), parts: shares };
     }
-    const split = splitTurnCost({ deltaUsd, bridgeUsd, hostUsage: b.hostUsage, hostModel: b.hostModel, memberUsage: b.memberUsage, memberModel: b.memberModel,
+    // One conversation has no main agent (Task 65): no host share is split off, repriced, booked or counted.
+    const shared = b.shared === true;
+    const host = shared ? { usage: null, model: null } : { usage: b.hostUsage, model: b.hostModel };
+    const split = splitTurnCost({ deltaUsd, bridgeUsd, hostUsage: host.usage, hostModel: host.model, memberUsage: shared ? null : b.memberUsage, memberModel: b.memberModel,
       investigators: b.investigators, hookUsd: b.hookUsd, engineCost, ratesFor: listCostRates });
     let { memberUsd, hostOverheadUsd } = split;
     // Each part at its own model's override (as _onResultEvent re-prices an ungrouped turn); an upstream bridge figure wins.
@@ -8440,10 +8450,12 @@ export class RunHarness extends EventEmitter {
         return v;
       };
       memberUsd = reprice(b.memberModel, memberUsd, b.memberUsage, 'this step\'s share');
-      hostOverheadUsd = reprice(b.hostModel, hostOverheadUsd, b.hostUsage, 'the session hand-off');
+      hostOverheadUsd = reprice(host.model, hostOverheadUsd, host.usage, 'the session hand-off');
     }
+    // One conversation's turn whose share nothing could price (an override with no usage) is unknown, not a $0 hand-off.
+    if (shared && !Number.isFinite(memberUsd)) hostOverheadUsd = NaN;
     if (Number.isFinite(memberUsd)) this._recordCost(memberUsd, b.stepKey);
-    if (Number.isFinite(hostOverheadUsd)) this._recordCost(hostOverheadUsd, b.stepKey, { aux: 'session' });
+    if (Number.isFinite(hostOverheadUsd) && !shared) this._recordCost(hostOverheadUsd, b.stepKey, { aux: 'session' });
     this._openTurns?.delete(b.stepKey);                            // the booking prices every turn it closes (as a result does)
     const reconcile = reconcileTurn({ memberUsd: split.memberUsd, hookUsd: b.hookUsd, estimateUsd: split.estimateUsd, costSource: split.costSource });
     return booking({ deltaUsd: Number.isFinite(delta) ? delta : null, memberUsd: Number.isFinite(memberUsd) ? memberUsd : null,

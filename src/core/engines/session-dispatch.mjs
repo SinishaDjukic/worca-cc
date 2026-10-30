@@ -85,6 +85,21 @@ export function hostFlagsFor({ settings, firstMemberModel, member, inherits = CH
   return { model, effort };
 }
 
+/** `shared` mode (Task 65; spec §5, 04 §5): the system prompt of every turn of a one-conversation session. Claude Code keeps
+ *  a conversation's first system prompt (`--system-prompt-snapshot`), so each member's own system prompt travels in its
+ *  user turn, under SHARED_ROLE_HEADING, and this preamble holds for every member. */
+export const SHARED_SESSION_PREAMBLE = 'You are working through a worca pipeline in one conversation. Each user message gives you your role for that step and its task. Follow the latest role only.';
+export const SHARED_ROLE_HEADING = '## Your role for this step\n\n';
+
+/** The options of one `shared` turn (Task 65): the member's own runOpts — its model, effort, tools and modelEnv unchanged
+ *  (04 §5.1) — with its role moved into the user turn and the conversation resumed (none on its first turn). `shared: true`
+ *  tells the offline host (mock-session.mjs) to run the member itself; the real transport drops it. */
+export function sharedTurnOpts(memberOpts, { hostSessionId } = {}) {
+  const m = memberOpts || {};
+  return { ...m, systemPrompt: SHARED_SESSION_PREAMBLE, prompt: `${SHARED_ROLE_HEADING}${m.systemPrompt || ''}\n\n${m.prompt || ''}`,
+    resumeSessionId: hostSessionId || undefined, shared: true };
+}
+
 /** runClaude options for one host turn, built from the member's own runOpts (Task 31). */
 export function hostSpawnOpts(memberOpts, { hostSessionId, hostModel, hostEffort, definitions, maxBudgetUsd, hostToolsMode = HOST_TOOLS_MODE,
   mainThreadGuard = null, dispatchText } = {}) {
