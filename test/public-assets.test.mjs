@@ -147,6 +147,7 @@ const ALLOW = new Map([
   ['test/public-assets.test.mjs', 'reads the monoliths on purpose and holds the guard fixtures'],
   ['tools/split-by-feature.mjs', 'the migration tool itself'],
   ['test/house-brief.test.mjs', "writes a fixture project's own ui/public/style.css and ui/server.mjs"],
+  ['test/parity.test.mjs', "edits a copied tree's ui/server.mjs and style.css to prove the parity gates catch a change"],
 ]);
 const ALLOW_PREFIX = ['tools/split-by-feature/', 'test/split-by-feature'];   // the tool and its fixture strings
 test('no test or tool reaches style.css, index.html or ui/server.mjs on disk directly', () => {

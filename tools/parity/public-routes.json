@@ -1,0 +1,4 @@
+[
+  { "method": "GET", "path": "/api/health", "reason": "platform healthcheck; a remote caller gets only name and version (its handler in ui/server.mjs; exempt from the remote-access guard)" },
+  { "method": "POST", "path": "/api/ingress/teams/:plugin/:channelId/:token", "reason": "mounted in ui/server.mjs before every guard; checks its own capability token" }
+]

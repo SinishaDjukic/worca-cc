@@ -118,6 +118,9 @@ jobs:
               - 'test/wsmap-detectors-p4-registry.test.mjs'
               - 'test/wsmap-http-client-shapes-slow.test.mjs'
               - 'test/wsmap-graphql-client-copy-slow.test.mjs'
+              - 'tools/parity/**'
+              - 'test/parity-launch.test.mjs'
+              - 'test/parity-routes.test.mjs'
 
   test-fast:
     # tools/test.mjs balances the shards by test/timings.json (longest first); each shard has
@@ -225,7 +228,7 @@ jobs:
     # even if two ever ran on one machine.
     name: headless-Chrome UI proofs (${{ matrix.group }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -279,6 +282,21 @@ jobs:
             exit 1
           fi
 
+      # #919 parity harness (docs/parity-harness.md): routes, signed-out pass, flows and
+      # visuals of this tree against itself. Timings are reported, not gated, on shared runners.
+      - name: Parity (dev against itself)
+        if: matrix.group != 'theme'
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a tree:. --b tree:. --out "$RUNNER_TEMP/parity" --no-timing-gate
+
+      - if: failure() && matrix.group != 'theme'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parity-cdp-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/parity
+          if-no-files-found: ignore
+
   # The browser extension (docs/browser-extension.md): build the three browser
   # targets and their store zips, lint the Firefox build and smoke it in Firefox.
   extension:
@@ -330,7 +348,7 @@ jobs:
   docker:
     name: container image
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -342,6 +360,17 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # The parity steps at the end drive the UI with the runner's Chrome, as the cdp job does.
+      # Same step as the cdp job's "Locate Chrome": keep the two in sync.
+      - name: Locate Chrome
+        run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          if [ -z "$CHROME" ]; then
+            echo "::error::no Google Chrome on the runner — set CHROME_BIN"
+            exit 1
+          fi
+          echo "chrome: $CHROME ($("$CHROME" --version 2>/dev/null || echo 'version unavailable'))"
 
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
@@ -415,3 +444,26 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
           skip-setup-trivy: true
+
+      # #919 parity harness (docs/parity-harness.md), after both scans so a parity failure never
+      # skips the OS-layer scan: this tree against the image it just built and against its own
+      # npm pack. Visuals of the docker pair are reported, not gated; timings are not gated.
+      - name: Parity (tree against the image)
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a tree:. --b docker:ghcr.io/sinishadjukic/worca:ci --out "$RUNNER_TEMP/parity-docker" --no-timing-gate
+
+      - name: Parity (tree against the package)
+        if: ${{ !cancelled() }}
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a tree:. --b package:. --out "$RUNNER_TEMP/parity-pkg" --no-timing-gate
+
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parity-docker-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/parity-docker
+            ${{ runner.temp }}/parity-pkg
+          if-no-files-found: ignore
