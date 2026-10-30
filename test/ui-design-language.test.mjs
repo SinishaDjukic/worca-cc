@@ -338,7 +338,7 @@ const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.chat-home-preset': 28
 const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
-const ROW_OK = ['.act-srow'];                            // activity list row, 26px dense row (spec §3.1)
+const ROW_OK = ['.act-srow', '.mk-tu'];                // activity list row, 26px dense row (spec §3.1); Ticket updates' phone targets, 36px chips and 44px controls (ticket-updates board 6)
 const classWords = (s) => (s.match(/\.[\w-]+/g) || []).flatMap((c) => c.slice(1).split('-'));
 test('control heights on the scale (A5)', () => {
   for (const [sel, h] of Object.entries(CONTROL_HEIGHTS)) {

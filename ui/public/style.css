@@ -11314,6 +11314,89 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 #mk-sheet[data-mode="manage"] .mk-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
 #mk-sheet[data-mode="manage"]>.mk-sheet-body{scroll-padding-block:8px;}
 
+/* ── marketplace ticket updates ── */
+/* Ticket updates in the installed plugin sheet (plans/ticket-updates-design.md §8, boards 1–6): the section, the move select
+   (board 4) and the projects popover (board 3). Tokens and scale sizes only, so the dark theme (board 2) needs nothing more. */
+.mk-tu{display:flex;flex-direction:column;gap:12px;padding-top:12px;border-top:1px solid var(--line);}
+.mk-tu[hidden]{display:none;}
+.mk-tu-head{align-items:baseline;gap:8px;margin:0;}
+.mk-tu-sub,.mk-tu-new,.mk-tu-hint,.mk-tu-add-hint,.mk-tu-newrow-hint,.mk-tu-moved{margin:0;}
+.mk-tu-add-hint[hidden],.mk-tu-newrow-hint[hidden]{display:none;}
+.mk-tu-block{display:flex;flex-direction:column;gap:8px;}
+.mk-tu-h{margin:0;font:600 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);}
+.mk-tu-chiprow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.mk-tu-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.mk-tu-chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:2px 4px 2px 10px;font-weight:500;color:var(--ink);}
+.mk-tu-key{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink);}
+.mk-tu-cname,.mk-tu-rname{min-width:0;overflow-wrap:anywhere;}
+.mk-tu-x{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;}
+.mk-tu-x:hover{background:var(--hover);color:var(--ink);}
+.mk-tu-x:focus-visible,.mk-tu-move:focus-visible,.mk-tu-remove:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mk-tu-carried{margin:0;padding:8px 12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
+.mk-tu-rules{display:flex;flex-direction:column;border:1px solid var(--line-2);border-radius:var(--r-md);}
+.mk-tu-rule{display:grid;grid-template-columns:minmax(0,1fr) 220px 32px;align-items:center;gap:4px 8px;padding:8px 12px;}
+.mk-tu-rule+.mk-tu-rule{border-top:1px solid var(--line);}
+.mk-tu-name{display:flex;flex-direction:column;min-width:0;}
+.mk-tu-rule:not(.mk-tu-all)>.mk-tu-name{flex-direction:row;align-items:baseline;gap:8px;}
+.mk-tu-all .mk-tu-rname{font-weight:500;}
+.mk-tu-rsub{font-size:var(--fs-meta);}
+.mk-tu-pwrap,.mk-tu-project{width:100%;}
+.mk-tu-remove{grid-column:3;}
+.mk-tu-gone{grid-column:1 / -1;margin:0;font-size:var(--fs-meta);color:var(--red-ink-strong);}
+.mk-tu-movewrap{min-width:0;}
+.mk-tu-move{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:0 8px 0 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.mk-tu-move:hover{border-color:var(--hover-outline);}
+.mk-tu-move-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mk-tu-move-ic{flex:none;transform:rotate(90deg);color:var(--ink-2);}
+/* box-shadow:var(--shadow-menu) as the group-picker and label-picker popovers; the P6 and P7 blocks ban it for their own sheets,
+   and their tests read only those blocks */
+.mk-tu-pop{position:fixed;z-index:60;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;padding:4px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);box-shadow:var(--shadow-menu);}
+.mk-tu-projpop{width:320px;padding:8px;display:flex;flex-direction:column;gap:6px;}
+.mk-tu-list,.mk-tu-plist{display:flex;flex-direction:column;}
+.mk-tu-opt{display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;border-radius:var(--r-xs);cursor:pointer;}
+.mk-tu-opt:hover,.mk-tu-opt.is-active,.mk-tu-prow:hover,.mk-tu-prow.is-active{background:var(--hover);}
+.mk-tu-opt-b{display:flex;flex-direction:column;flex:1;min-width:0;}
+.mk-tu-opt-t{overflow-wrap:anywhere;}
+.mk-tu-opt-s{font-size:var(--fs-meta);color:var(--ink-2);}
+.mk-tu-opt-check{flex:none;color:var(--ink);}
+.mk-tu-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--slate);}
+.mk-tu-dot-none{background:none;border:1.5px solid var(--ink-2);}
+.mk-tu-dot-category{background:var(--green);}
+.mk-tu-dot-done{background:var(--green);}
+.mk-tu-dot-in_progress{background:var(--peach);}
+.mk-tu-dot-todo{background:var(--slate);}
+.mk-tu-dot-typed{background:var(--slate);}
+.mk-tu-dot-cancelled{background:var(--red);}
+.mk-tu-sep{height:1px;margin:4px 0;background:var(--line);}
+.mk-tu-optgroup{display:flex;flex-direction:column;}
+.mk-tu-group{padding:8px 8px 2px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+.mk-tu-live{margin:0;padding:4px 8px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mk-tu-live:empty{display:none;}
+.mk-tu-retry{align-self:flex-start;margin:0 8px 4px;}
+.mk-tu-retry[hidden]{display:none;}
+.mk-tu-search{width:100%;}
+.mk-tu-prow{display:grid;grid-template-columns:16px auto minmax(0,1fr);align-items:center;gap:8px;min-height:32px;padding:4px;border-radius:var(--r-xs);cursor:pointer;}
+.mk-tu-pcheck{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1.5px solid var(--ink-2);border-radius:var(--r-xs);background:var(--field);}
+.mk-tu-prow[aria-selected="true"] .mk-tu-pcheck{border-color:var(--ink);background:var(--ink);}
+.mk-tu-prow[aria-selected="true"] .mk-tu-pcheck::after{content:"";width:4px;height:8px;margin-top:-2px;border:solid var(--panel);border-width:0 2px 2px 0;transform:rotate(45deg);}
+.mk-tu-opt.is-active,.mk-tu-prow.is-active{outline:2px solid var(--ink);outline-offset:-2px;}
+.mk-tu-pname{min-width:0;overflow-wrap:anywhere;}
+.mk-tu-pfoot{display:flex;align-items:center;gap:8px;padding-top:6px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+.mk-tu-pcount{flex:1;min-width:0;}
+/* Board 6: a rule stacks (its name and remove button on one line, the select below at full width), chips are 36 px with 32 px
+   × buttons, and every button, select, listbox option and popover row is 44 px tall (decided 2026-10-30). */
+@media (max-width:600px){
+.mk-tu-rule{grid-template-columns:minmax(0,1fr) 44px;}
+.mk-tu-rule>.mk-tu-movewrap{grid-column:1 / -1;grid-row:2;}
+.mk-tu-remove{grid-column:2;grid-row:1;width:44px;}
+.mk-tu-chip{min-height:36px;}
+.mk-tu-x{width:32px;height:32px;}
+.mk-tu .btn,.mk-tu-move,.mk-tu-project,.mk-tu-remove,.mk-tu-pop .btn{min-height:44px;}
+.mk-tu-opt,.mk-tu-prow{min-height:44px;}
+.mk-tu-search{min-height:44px;}
+.mk-tu-projpop{width:calc(100vw - 16px);}
+}
+
 /* ── marketplace P7 ── */
 /* Marketplaces tab (board 4.1): one card per marketplace; Remove lives in its ⋯ menu. Tokens and scale sizes only. */
 .mk-mkts{display:flex;flex-direction:column;gap:12px;}
