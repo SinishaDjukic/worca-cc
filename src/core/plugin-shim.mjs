@@ -265,10 +265,12 @@ export function killPluginChild(child, user, killGroup = killAgentGroup) {
  *  profile passes a presence check, silently runs against an EMPTY bucket
  *  (false "not configured" verdicts) and then persists state into a phantom
  *  bucket the DELETE route can never purge — so membership in the roster is
- *  checked here too. `allowLegacyDefault` is the ONE host-internal exception:
+ *  checked here too. `allowLegacyDefault` is the host-internal exception, used twice:
  *  write-back for a pipeline row that predates profiles targets the
  *  DEFAULT_PROFILE bucket, because that is where the pre-upgrade flat config
- *  migrated — i.e. the instance the task actually came from (sources.mjs). */
+ *  migrated — i.e. the instance the task actually came from (sources.mjs). The
+ *  Ticket updates GET also uses it to ask `capabilities` before the first profile
+ *  exists (ticket-updates-routes.mjs). */
 function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacyDefault }) {
   if (source.multiProfile === true) {
     if (!profile) {
@@ -293,9 +295,10 @@ function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacy
  * Run ONE connector op in an ephemeral child. Resolves with the op result;
  * rejects with PluginOpError. `logger(level, msg)` is optional — connector
  * ctx.log lines route there (default: console.error, since stdout is the UI's).
- * `allowLegacyDefault` (host-internal, never surfaced to CLI/routes) lets the
- * legacy write-back path name DEFAULT_PROFILE on a multiProfile source — see
- * assertProfileInvariant.
+ * `allowLegacyDefault` (host-internal, never surfaced to CLI or a request) lets the
+ * legacy write-back path name DEFAULT_PROFILE on a multiProfile source, and lets the
+ * Ticket updates GET probe `capabilities` for a source whose roster is still empty
+ * (plans/ticket-updates-plan.md Deviation 2) — see assertProfileInvariant.
  * @returns {Promise<any>}
  */
 export async function callSource({ plugin, sourceId, op, args = {}, profile, timeoutMs = 30000, logger, allowLegacyDefault = false } = {}) {

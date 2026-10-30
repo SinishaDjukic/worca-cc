@@ -475,6 +475,7 @@ import {
   redactedConfig, writePluginConfig, readPluginConfig, listProfiles, listProfileIds,
   createProfile, deleteProfile, isValidProfileId, DEFAULT_PROFILE,
 } from '../src/core/plugin-config.mjs';
+import { registerTicketUpdatesRoutes } from '../src/core/ticket-updates-routes.mjs';
 import {
   setBinding, clearBinding, listBindingsForScope,
   clearBindingsForProfile, resolveProfile,
@@ -17811,6 +17812,10 @@ app.put('/api/plugins/:name/config', (req, res) => {
     sendPluginError(res, err);
   }
 });
+
+// Ticket updates (plans/ticket-updates-design.md §5, D8): the projects you work on and the rules for a finished run, beside the
+// config routes, behind the `ticketUpdates` flag. Tracker ops run here through callSource, never from the browser.
+registerTicketUpdatesRoutes(app, { requirePlugin, readManifest: readInstalledManifest, onChanged: () => emitPluginsChanged('config') });
 
 // GET /api/plugins/:name/model-env?id=<modelId> — the RAW manifest env of one
 // plugin model, for the Models view "Edit a copy" prefill (design §9.6).
