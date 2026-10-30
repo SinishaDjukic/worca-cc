@@ -2191,6 +2191,68 @@ export async function readRunResultsById(pipelineId) {
 }
 
 /**
+ * One member's change evidence, as a TRI-STATE. Shared by workspaceMemberFacts (History rows) and
+ * memberChangeFacts (the Actions route) so the two can never drift apart.
+ *  - affected: true / false / null. `null` means nothing could decide it — no frozen summary, no
+ *    folder record, and no live git answer. A caller that must choose treats null as "changed", so a
+ *    legacy run keeps offering its members instead of silently hiding them.
+ *  - files / added / removed: null when that evidence carries no such count. In particular the live
+ *    path has NO file count: `git diff --shortstat` reports lines, and parseShortstat's shape is
+ *    pinned by test/git-info.test.mjs — widening it for a fallback is not worth it.
+ * `opts.live:false` skips the git fallback entirely (a run still going: its counts move anyway).
+ * @param {{projectDir:string|null, feature:string|null, source:string|null}} m
+ * @returns {Promise<{affected:boolean|null, files:number|null, added:number|null, removed:number|null, frozen:boolean}>}
+ */
+export async function memberChangeEvidence(m, { summary = null, counts = null, live = true } = {}) {
+  const unknown = { affected: null, files: null, added: null, removed: null, frozen: false };
+  if (summary) {
+    const files = changedFileCount(summary);
+    return { affected: files > 0, files, added: summary.linesAdded | 0, removed: summary.linesRemoved | 0, frozen: true };
+  }
+  if (counts) {
+    // A Folder member's record counts FILES (folder-copy.mjs scanChanges), never lines.
+    const files = (counts.added | 0) + (counts.modified | 0) + (counts.deleted | 0);
+    return { affected: files > 0, files, added: null, removed: null, frozen: false };
+  }
+  if (!live || !m.projectDir || !m.feature || !m.source) return unknown;
+  const n = await commitsAhead(m.projectDir, m.source, m.feature);
+  if (n == null) return unknown;                                        // git could not say
+  if (n === 0) return { affected: false, files: 0, added: 0, removed: 0, frozen: false };
+  const d = await diffShortstat(m.projectDir, m.source, m.feature);
+  return { affected: true, files: null, added: d.added, removed: d.removed, frozen: false };
+}
+
+/**
+ * Per-member change facts for the Actions route, keyed by `projectKey` — the key membersOfRow uses,
+ * NOT workspaceMembers' `memberKey`. Feed it `membersOfRow(row)` so single-project and workspace rows
+ * take the same path.
+ * @param {object} row  the pipelines row (read for workspace_meta.projects[].workMode only)
+ * @param {Array<{projectKey:string, projectDir:string|null, br:object|null}>} members
+ * @param {object|null} results  the parsed results.json, or null
+ * @returns {Promise<Map<string, {affected:boolean|null, files:number|null, added:number|null, removed:number|null, workMode:'git'|'folder'}>>}
+ */
+export async function memberChangeFacts(row, members, results, { live = true } = {}) {
+  const workspace = row.target === 'workspace';
+  const wm = workspace ? j(row.workspace_meta, null) || {} : {};
+  // Same detection the Ask card already uses (ui/server.mjs:11800).
+  const folderKeys = new Set((wm.projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey));
+  const perProject = results && results.perProject && typeof results.perProject === 'object' ? results.perProject : null;
+  const runSummary = results && results.summary && typeof results.summary === 'object' ? results.summary : null;
+  const out = new Map();
+  await Promise.all(members.map(async (m) => {
+    // A workspace row freezes one summary PER MEMBER; a single-project row freezes one for the run.
+    const summary = workspace ? perProject?.[m.projectKey]?.summary || null : runSummary;
+    const counts = m.br?.changes?.counts || null;
+    const ev = await memberChangeEvidence(
+      { projectDir: m.projectDir, feature: m.br?.feature || null, source: m.br?.source || null },
+      { summary, counts, live });
+    out.set(m.projectKey, { affected: ev.affected, files: ev.files, added: ev.added, removed: ev.removed,
+      workMode: folderKeys.has(m.projectKey) ? 'folder' : 'git' });
+  }));
+  return out;
+}
+
+/**
  * Per-member facts of a WORKSPACE history row — the eligibility the UI decides on
  * (the row's own branch/survived describe the PRIMARY member only):
  *  - affected: the member's frozen results.json summary (perProject[key]) when it has
@@ -2219,21 +2281,13 @@ async function workspaceMemberFacts(row, results, opts = {}) {
     };
     if (m.projectDir && m.feature) out.survived = await branchExists(m.projectDir, m.feature);
     const sum = perProject && perProject[m.memberKey] ? perProject[m.memberKey].summary : null;
-    if (sum) {
-      out.diffFrozen = true;
-      out.affected = changedFileCount(sum) > 0;
-      out.added = sum.linesAdded | 0;
-      out.removed = sum.linesRemoved | 0;
-    } else if (ch) {
-      // a Folder member with no frozen summary: its record's counts (never git — it has no branch)
-      out.affected = ((ch.counts?.added | 0) + (ch.counts?.modified | 0) + (ch.counts?.deleted | 0)) > 0;
-    } else if (out.survived && m.source) {
-      out.affected = ((await commitsAhead(m.projectDir, m.source, m.feature)) || 0) > 0;
-      if (out.affected) {
-        const d = await diffShortstat(m.projectDir, m.source, m.feature);
-        out.added = d.added; out.removed = d.removed;
-      }
-    }
+    // `live` only when the branch is still there — today's code skipped git entirely otherwise, and
+    // spawning a doomed rev-list per dead branch would be a regression on big History pages.
+    const ev = await memberChangeEvidence(m, { summary: sum, counts: ch ? ch.counts : null, live: out.survived && !!m.source });
+    out.diffFrozen = ev.frozen;
+    out.affected = ev.affected === true;   // History's contract stays a plain boolean (app.js:36334 reads `!== false`)
+    out.added = ev.added | 0;
+    out.removed = ev.removed | 0;
     if (opts.withPr) {
       out.pr = gh && m.projectDir && m.feature
         ? withFixing(await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null }))

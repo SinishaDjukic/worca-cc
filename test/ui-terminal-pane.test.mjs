@@ -176,7 +176,10 @@ test('a project page reattaches its own-folder shell, never a branch-folder one 
   assert.equal(sent.find((m) => m.type === 'term-attach').sessionId, 't-p');
 });
 
-test('a finished run without a checkout: the checkout is made first, then the shell starts in it', async () => {
+// The start POST makes the checkout server-side. The pane must NOT ask POST /checkout for it: that route
+// refuses a member the run did not change (409 NOT_AFFECTED), which turned "give me a shell" into
+// "No changes in this project" and left such a member with no terminal at all.
+test('a finished run without a checkout: the shell start makes it, and /checkout is never asked', async () => {
   let checkedOut = false;
   const DONE = { ...SNAP, runLive: false, cwd: '/home/checkouts/r1/app' };
   const { pane, doc, calls, sent } = makePane({ ctx: RUN_CTX, routes: {
@@ -184,16 +187,20 @@ test('a finished run without a checkout: the checkout is made first, then the sh
     'GET /api/runs/r1/terminal': () => ({ enabled: true, live: false, finished: true, workspace: false, sessions: [],
       members: [checkedOut ? { projectKey: 'app-0000aaaa', projectName: 'app', state: 'checkout', cwd: DONE.cwd }
         : { projectKey: 'app-0000aaaa', projectName: 'app', state: 'needs-checkout', cwd: null }] }),
-    'POST /api/runs/r1/checkout': () => { checkedOut = true; return { members: [] }; },
-    'POST /api/runs/r1/terminal': { session: DONE, warning: null },
+    'POST /api/runs/r1/checkout': { __status: 409, error: 'No changes in this project', code: 'NOT_AFFECTED' },
+    'POST /api/runs/r1/terminal': () => { checkedOut = true; return { session: DONE, warning: null }; },
   } });
   await pane.open();
   await tick();
   const p = posts(calls);
-  assert.deepEqual(p.map((c) => c.url), ['/api/runs/r1/checkout?projectDir=%2Fp%2Fapp', '/api/runs/r1/terminal?projectDir=%2Fp%2Fapp']);
-  assert.deepEqual(p[0].body, { members: ['app-0000aaaa'] });
+  assert.deepEqual(p.map((c) => c.url), ['/api/runs/r1/terminal?projectDir=%2Fp%2Fapp']);
+  assert.equal(p[0].body.member, 'app-0000aaaa');
   assert.ok(sent.some((m) => m.type === 'term-attach' && m.sessionId === 't-1'));
   assert.equal(doc.querySelector('.term-folder').textContent, DONE.cwd);
+  // That start made a checkout, so the picker's 'needs-checkout' is stale: the pane re-reads the context.
+  const i = calls.findIndex((c) => c.method === 'POST');
+  assert.ok(calls.slice(i + 1).some((c) => c.method === 'GET' && c.url.startsWith('/api/runs/r1/terminal')),
+    'the context is read again after the start');
 });
 
 test('a run with no folder shows the reason and starts nothing', async () => {

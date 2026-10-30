@@ -315,3 +315,21 @@ test('rowToHistoryEntry: a run whose branch reached main through another branch 
   assert.deepEqual(rows.find((r) => r.id === inDev.id).inBase, { base: 'main' });
   assert.equal('inBase' in rows.find((r) => r.id === ahead.id), false, 'a branch still ahead: no key');
 });
+
+test('memberChangeEvidence: tri-state, and the History coercion keeps its boolean contract', async () => {
+  const { memberChangeEvidence } = await import('../src/core/artifacts.mjs');
+  const none = { projectDir: null, feature: null, source: null };
+
+  // frozen summary wins, and carries file + line counts
+  assert.deepEqual(await memberChangeEvidence(none, { summary: { filesNew: 2, filesChanged: 1, linesAdded: 40, linesRemoved: 3 } }),
+    { affected: true, files: 3, added: 40, removed: 3, frozen: true });
+  // an all-zero frozen summary is PROOF of unchanged, not unknown
+  assert.deepEqual(await memberChangeEvidence(none, { summary: { filesNew: 0, filesChanged: 0, linesAdded: 0, linesRemoved: 0 } }),
+    { affected: false, files: 0, added: 0, removed: 0, frozen: true });
+  // a folder member's counts are file counts: lines are unknown, not zero
+  assert.deepEqual(await memberChangeEvidence(none, { counts: { added: 1, modified: 2, deleted: 0 } }),
+    { affected: true, files: 3, added: null, removed: null, frozen: false });
+  // no evidence at all, and the git fallback switched off: unknown
+  assert.deepEqual(await memberChangeEvidence(none, { live: false }),
+    { affected: null, files: null, added: null, removed: null, frozen: false });
+});

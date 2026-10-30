@@ -934,7 +934,10 @@ test('F-2: the Actions row, the Overview WORKTREE row and the Actions strip read
   assert.match(wt().querySelector('.hd-ov-wt-path').title, /\/tmp\/co/);
   assert.match(actionsValueOf(doc), /^Local copy open · since /);
   const strip = () => secOf(doc, 'overview').querySelector('.act-strip');
-  assert.ok(![...strip().querySelectorAll('button')].some((b) => b.textContent === 'Check out'), 'no Check out while checked out');
+  // The strip's button now counts what the run changed ("Check out 1 changed project") and opens the
+  // Actions tab, so match on the prefix rather than the old exact label.
+  const offersCheckout = () => [...strip().querySelectorAll('button')].some((b) => b.textContent.startsWith('Check out'));
+  assert.ok(!offersCheckout(), 'no Check out while checked out');
   // Discarded: the row, then both change events
   model = actModel(false);
   await deliverRows(ctx, [ROW]);
@@ -942,7 +945,7 @@ test('F-2: the Actions row, the Overview WORKTREE row and the Actions strip read
   await settle(ctx.window, 6);
   assert.match(wt().textContent, /released/);
   assert.equal(actionsValueOf(doc), 'Try it on this machine');
-  assert.ok([...strip().querySelectorAll('button')].some((b) => b.textContent === 'Check out'));
+  assert.ok(offersCheckout());
 });
 
 test('F-11: a finished run with no PR reads Ready to ship; an open PR reads In review', async () => {
