@@ -314,8 +314,9 @@ Worca. Exporting costs nothing: no model is called.
 - **Report back.** Once a feature has a ticket, **Start in Worca** has **Report back to SHOP-123**, on by default: when the
   run ends, Worca comments on the ticket with the result and the pull request link, and moves it to the status named in
   the Jira connection (**Transition on completion**), if any. With [Ticket updates](ticket-updates.md) (Labs) saved for that
-  connection, the hint says what its rule for the ticket's project does instead: "moves the ticket to a Done status", "moves
-  the ticket to Resolved" ("Resolve (as typed)" for an old setting carried over), or "leave SHOP tickets where they are".
+  connection, the hint says what its rule for the ticket's project does instead: "and moves the ticket to a Done status
+  (Ticket updates in the Jira connection)", "and moves the ticket to Resolved (…)" ("Resolve (as typed)" for an old setting
+  carried over), or "Ticket updates in the Jira connection leave SHOP tickets where they are".
 - If Jira cannot be reached or refuses a field, nothing is recorded and the preview stays open.
 - If the answer to a create was lost (Jira took too long, the network dropped, or Worca stopped) after Jira made the
   ticket, the next export finds that ticket instead of making a second one. Usually it then updates the ticket with what
