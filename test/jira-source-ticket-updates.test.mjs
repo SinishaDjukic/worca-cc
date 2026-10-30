@@ -78,3 +78,142 @@ test('D1: the negative endings, case-insensitive, either apostrophe; Jira\'s thr
   assert.equal(categoryOf(S.wontdo), 'cancelled');
   assert.equal(categoryOf(st('9', 'Odd', 'undefined')), 'todo', 'no category: to do');
 });
+
+// ---- reportResult with a move (§7, D10, D11) ----
+const tr = (id, name, to, fields) => ({ id, name, to, ...(fields ? { fields } : {}) });
+const RES = (...names) => ({ resolution: { required: true, name: 'Resolution', allowedValues: names.map((n, i) => ({ id: String(i + 1), name: n })) } });
+const RESULT = { status: 'completed', summary: 'done', links: [{ title: 'Pull request', url: 'https://github.com/acme/shop/pull/5' }], inputs: { writeBack: 'yes' } };
+const LINK = '* [Pull request|https://github.com/acme/shop/pull/5]';
+/** One report against a fresh fake Jira holding SHOP-12 in `from` with `transitions`. */
+async function report(move, { from = S.prog, transitions = [], deployment = 'cloud', ...more } = {}) {
+  const { jira, src, logs } = await site({ deployment, projectStatuses: STATUSES, seed: [{ key: 'SHOP-12', project: 'SHOP', status: from, transitions }], ...more });
+  const out = await src.reportResult('SHOP-12', { ...RESULT, move });
+  const i = jira.issues.get('SHOP-12');
+  return { out, comment: i.comments.at(-1), posts: jira.requests.filter((r) => r.method === 'POST' && /\/transitions$/.test(r.path)),
+    reads: jira.requests.filter((r) => r.method === 'GET' && /\/transitions$/.test(r.path)), status: i.fields.status, jira, logs };
+}
+
+test('Any Done status: prefers Done, then Closed, Resolved, Complete, Completed, then the rest in Jira\'s order; the line is last', async () => {
+  for (const deployment of BOTH) {
+    const r = await report({ category: 'done' }, { deployment,
+      transitions: [tr('51', 'Resolve', S.resolved), tr('61', 'Close', S.closed), tr('71', 'Finish', S.done), tr('81', "Won't do", S.wontdo)] });
+    assert.deepEqual(r.posts.map((p) => p.body), [{ transition: { id: '71' } }], deployment);
+    assert.deepEqual(r.out, { commented: true, transitioned: true, moved: { from: 'In Progress', to: 'Done' }, note: 'Moved to Done.' }, deployment);
+    assert.equal(r.comment, `done\n\n${LINK}\n\nMoved to Done.`, `${deployment}: summary, links, then the outcome line`);
+    assert.equal(r.reads[0].query.expand, 'transitions.fields');
+  }
+  const closed = await report({ category: 'done' }, { transitions: [tr('51', 'Resolve', S.resolved), tr('61', 'Close', S.closed)] });
+  assert.equal(closed.out.note, 'Moved to Closed.');
+  const other = await report({ category: 'done' }, { transitions: [tr('91', 'Ship', st('20', 'Shipped', 'done')), tr('92', 'Archive', st('21', 'Archived', 'done'))] });
+  assert.equal(other.out.note, 'Moved to Shipped.', "no preferred name: Jira's order");
+});
+
+test('Any Done status never takes a cancelled one; with none it does not move and says so; already done is said', async () => {
+  const only = await report({ category: 'done' }, { from: S.review, transitions: [tr('81', "Won't do", S.wontdo), tr('82', 'Duplicate', S.dup), tr('83', 'Dup again', S.dup)] });
+  assert.deepEqual([only.posts.length, only.out.moved, only.out.transitioned], [0, null, false]);
+  assert.equal(only.out.note, 'Not moved: from "In Review" only Won\'t Do and Duplicate lead to a Done status.');
+  assert.equal(only.comment, `done\n\n${LINK}\n\nNot moved: from "In Review" only Won't Do and Duplicate lead to a Done status.`);
+  const one = await report({ category: 'done' }, { from: S.review, transitions: [tr('81', "Won't do", S.wontdo)] });
+  assert.equal(one.out.note, 'Not moved: from "In Review" only Won\'t Do leads to a Done status.', 'one: leads (decided 2026-10-30)');
+  const none = await report({ category: 'done' }, { from: S.review, transitions: [tr('11', 'Start', S.prog)] });
+  assert.equal(none.out.note, 'Not moved: from "In Review" no transition leads to a Done status.');
+  const already = await report({ category: 'done' }, { from: S.closed, transitions: [tr('71', 'Finish', S.done)] });
+  assert.deepEqual([already.out.note, already.reads.length, already.posts.length], ['Already in Closed.', 0, 0]);
+  const wontdo = await report({ category: 'done' }, { from: S.wontdo });
+  assert.equal(wontdo.out.note, "Already in Won't Do.", 'a ticket already in a done-category status is not moved again');
+});
+
+test('a required Resolution: filled with Done, Fixed, Complete or Completed; else the next candidate; else not moved', async () => {
+  const filled = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done, RES("Won't Do", 'Done'))] });
+  assert.deepEqual(filled.posts[0].body, { transition: { id: '71' }, fields: { resolution: { id: '2' } } });
+  assert.equal(filled.out.note, 'Moved to Done, Resolution: Done.');
+  const fallback = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done, RES("Won't Do")), tr('61', 'Close', S.closed)] });
+  assert.deepEqual([fallback.posts.map((p) => p.body.transition.id), fallback.out.note], [['61'], 'Moved to Closed.']);
+  const no = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done, RES('Rejected'))] });
+  assert.deepEqual([no.posts.length, no.out.note], [0, 'Not moved: the move to Done needs a Resolution, and none is named Done, Fixed or Complete.']);
+  const status = await report({ status: '10001', name: 'Done' }, { transitions: [tr('71', 'Finish', S.done, RES('Fixed'))] });
+  assert.equal(status.out.note, 'Moved to Done, Resolution: Fixed.', 'the same rule for a status move');
+});
+
+test('other required fields without a default: Worca fills none, so it does not move and names them', async () => {
+  const r = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done, { customfield_10020: { required: true, name: 'Fix versions', hasDefaultValue: false },
+    customfield_10021: { required: true, name: 'Team', hasDefaultValue: true } })] });
+  assert.deepEqual([r.posts.length, r.out.note], [0, 'Not moved: the move to Done asks for fields Worca does not fill (Fix versions).']);
+});
+
+test('a status move: by id, a typed name, already there, gone from the project, not reachable', async () => {
+  for (const deployment of BOTH) {
+    const byId = await report({ status: '10012', name: 'Resolved' }, { deployment, transitions: [tr('11', 'Start', S.prog), tr('51', 'Resolve', S.resolved)] });
+    assert.deepEqual([byId.posts[0].body, byId.out.note, byId.status.name], [{ transition: { id: '51' } }, 'Moved to Resolved.', 'Resolved'], deployment);
+  }
+  const typed = await report({ status: 'resolve' }, { transitions: [tr('51', 'Resolve', S.resolved)] });
+  assert.equal(typed.out.note, 'Moved to Resolved.', 'typed: by transition name, case-insensitive');
+  const toName = await report({ status: 'resolved' }, { transitions: [tr('51', 'Wrap up', S.resolved)] });
+  assert.equal(toName.out.note, 'Moved to Resolved.', "typed: by the target status's name");
+  // S2: as legacy, a transition's name wins over another transition's target name (plugins/jira-source/connector/index.mjs:274)
+  const order = await report({ status: 'Done' }, { transitions: [tr('61', 'Close', S.done), tr('62', 'Done', S.closed)] });
+  assert.deepEqual([order.posts[0].body, order.out.note], [{ transition: { id: '62' } }, 'Moved to Closed.'],
+    'typed "Done": the transition named Done, not the one leading to Done');
+  const already = await report({ status: '3', name: 'In Progress' }, { transitions: [tr('51', 'Resolve', S.resolved)] });
+  assert.deepEqual([already.out.note, already.reads.length], ['Already in In Progress.', 0]);
+  const gone = await report({ status: '10099', name: 'Shipped' }, { transitions: [tr('11', 'Start', S.prog)] });
+  assert.equal(gone.out.note, 'Not moved: SHOP has no status named Shipped any more.');
+  const away = await report({ status: '10012', name: 'Resolved' }, { transitions: [tr('11', 'Start', S.prog), tr('12', 'Review', S.review)] });
+  assert.equal(away.out.note, 'Could not move to "Resolved" from "In Progress" (available: Start, Review).');
+  const legacyTyped = await report({ status: 'Shipped' }, { transitions: [tr('11', 'Start', S.prog), tr('12', 'Review', S.review)] });
+  assert.equal(legacyTyped.out.note, 'Could not move to "Shipped" from "In Progress" (available: Start, Review).');
+  assert.ok(legacyTyped.logs.some((l) => /^warn SHOP-12: Could not move/.test(l)));
+});
+
+test("a 4xx refusal of the transition still comments with Jira's reason (D10, Deviation 3); 401, 429 and 5xx throw", async () => {
+  const r = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
+    refuseTransition: { status: 400, body: { errorMessages: ['Field Assignee is required.'], errors: {} } } });
+  assert.deepEqual([r.out.transitioned, r.out.moved], [false, null]);
+  assert.equal(r.out.note, 'Not moved: Jira refused the move to Done: Field Assignee is required.');
+  assert.equal(r.comment.split('\n').at(-1), r.out.note);
+  const forbidden = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
+    refuseTransition: { status: 403, body: { errorMessages: [], errors: { status: 'You may not move this issue.' } } } });
+  assert.equal(forbidden.out.note, 'Not moved: Jira refused the move to Done: You may not move this issue.');
+  const silent = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
+    refuseTransition: { status: 409, body: {} } });
+  assert.equal(silent.out.note, 'Not moved: Jira refused the move to Done: Jira gave no reason.', 'no message (decided 2026-10-30)');
+  const { jira, src } = await site({ projectStatuses: STATUSES, seed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [] }], refuseToken: true });
+  await assert.rejects(src.reportResult('SHOP-12', { ...RESULT, move: { category: 'done' } }), (e) => e.kind === 'auth');
+  assert.deepEqual(jira.issues.get('SHOP-12').comments, [], 'no comment after a refused token');
+  // S4: the boundary is the transition POST itself: these throw there, so the write-back fails and Report result retries
+  for (const [refusal, kind] of [[{ status: 429, body: {} }, 'rate-limit'], [{ status: 401, body: {} }, 'auth'],
+    [{ status: 500, body: { errorMessages: ['Internal server error'] } }, 'plugin']]) {
+    const site2 = await site({ projectStatuses: STATUSES, refuseTransition: refusal,
+      seed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [tr('71', 'Finish', S.done)] }] });
+    await assert.rejects(site2.src.reportResult('SHOP-12', { ...RESULT, move: { category: 'done' } }), (e) => e.kind === kind, String(refusal.status));
+    assert.ok(site2.jira.requests.some((q) => q.method === 'POST' && /\/transitions$/.test(q.path)), `${refusal.status}: the POST was tried`);
+    assert.deepEqual(site2.jira.issues.get('SHOP-12').comments, [], `${refusal.status}: no comment`);
+  }
+});
+
+test("Jira does not let Worca read the ticket's status or transitions (403, 404): a Not moved line, the comment still posted", async () => {
+  const hidden = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
+    refuseTransitionsRead: { status: 403, body: { errorMessages: ['You do not have the permission to see the specified issue.'] } } });
+  assert.deepEqual([hidden.posts.length, hidden.out.transitioned, hidden.out.moved], [0, false, null]);
+  assert.equal(hidden.out.note, "Not moved: Jira did not let Worca read SHOP-12's transitions (You do not have the permission to see the specified issue).");
+  assert.equal(hidden.comment.split('\n').at(-1), hidden.out.note);
+  const silent = await report({ status: '10012', name: 'Resolved' }, { refuseTransitionsRead: { status: 404, body: {} } });
+  assert.equal(silent.out.note, "Not moved: Jira did not let Worca read SHOP-12's transitions (Jira gave no reason).");
+});
+
+test("Don't move: no read, no transition, no line; a failed run passes none and only comments", async () => {
+  const r = await report({ none: true }, { transitions: [tr('71', 'Finish', S.done)] });
+  assert.deepEqual([r.reads.length, r.posts.length, r.out], [0, 0, { commented: true, transitioned: false, moved: null, note: '' }]);
+  assert.equal(r.comment, `done\n\n${LINK}`);
+  assert.equal(r.jira.requests.filter((q) => /\/issue\/SHOP-12$/.test(q.path)).length, 0, 'the status is not even read');
+});
+
+test('without a move: exactly the old behaviour (transitionOnComplete, its line before the links)', async () => {
+  const { jira, src } = await site({ done: 'Done', projectStatuses: STATUSES,
+    seed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [tr('71', 'Finish', S.done)] }] });
+  const out = await src.reportResult('SHOP-12', RESULT);
+  assert.deepEqual(out, { commented: true, transitioned: true });
+  assert.equal(jira.issues.get('SHOP-12').comments.at(-1), `done\n\nMoved to Done.\n\n${LINK}`);
+  const reads = jira.requests.filter((q) => q.method === 'GET' && /\/transitions$/.test(q.path));
+  assert.equal(reads[0].query.expand, undefined, 'the legacy read asks for no fields');
+});

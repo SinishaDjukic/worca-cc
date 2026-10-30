@@ -26,7 +26,7 @@ export async function startFakeJira(o = {}) {
   const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, refusePropertyPut: false,
     failReadBack: false, refuseIssuetypeEdit: false, fail: null, oldCreatemeta: false, requiredField: null, refuseOnUpdate: null, storeCrlf: false,
     version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false,
-    brokenReadBack: false, noVersionNumbers: false, projectStatuses: {}, ...o };
+    brokenReadBack: false, noVersionNumbers: false, projectStatuses: {}, seed: [], refuseTransition: null, refuseTransitionsRead: null, ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
@@ -34,6 +34,11 @@ export async function startFakeJira(o = {}) {
   const issues = new Map();   // key → { key, project, fields, properties, comments }
   const requests = [];
   let next = 101;
+  // Ticket updates: issues that exist from the start, each with a status and the transitions it offers
+  for (const s of opt.seed) {
+    issues.set(s.key, { key: s.key, project: s.project, fields: { summary: s.summary || s.key, description: '', labels: [], status: s.status },
+      properties: {}, comments: [], transitions: s.transitions || [] });
+  }
   // Cloud keeps descriptions as ADF and answers v2 reads in wiki markup it re-renders: storeCrlf mimics a re-render that is
   // not byte-equal (CRLF, trailing spaces), which the fingerprint must not count as an edit.
   const stored = (text) => (opt.storeCrlf ? `${String(text ?? '').split('\n').join('  \r\n')}\r\n` : String(text ?? ''));
@@ -93,6 +98,21 @@ export async function startFakeJira(o = {}) {
       }
       return m[2] in i.properties ? send(res, 200, { key: m[2], value: i.properties[m[2]] }) : send(res, 404, { errorMessages: ['The property was not found.'] });
     }
+    m = /^\/rest\/api\/2\/issue\/([^/]+)\/transitions$/.exec(p);
+    if (m) {
+      const i = issues.get(m[1]);
+      if (!i) return gone(res);
+      if (req.method === 'GET') {
+        if (opt.refuseTransitionsRead) return send(res, opt.refuseTransitionsRead.status, opt.refuseTransitionsRead.body);
+        return send(res, 200, { transitions: i.transitions || [] });
+      }
+      if (opt.refuseTransition) return send(res, opt.refuseTransition.status, opt.refuseTransition.body);
+      const t = (i.transitions || []).find((x) => x.id === body?.transition?.id);
+      if (!t) return send(res, 400, { errorMessages: ['Transition id is not valid for this issue.'], errors: {} });
+      i.fields.status = t.to;
+      if (body.fields?.resolution) i.fields.resolution = body.fields.resolution;
+      return send(res, 204);
+    }
     m = /^\/rest\/api\/2\/issue\/([^/]+)\/comment$/.exec(p);
     if (m) {
       const i = issues.get(m[1]);
@@ -122,7 +142,7 @@ export async function startFakeJira(o = {}) {
       }
       if (opt.failReadBack && /description/.test(url.searchParams.get('fields') || '')) return send(res, 500, { errorMessages: [], errors: {} });
       return send(res, 200, { key: i.key, fields: { description: i.fields.description, labels: i.fields.labels, summary: i.fields.summary,
-        issuetype: i.fields.issuetype } });
+        issuetype: i.fields.issuetype, status: i.fields.status, project: { key: i.project } } });
     }
     if ((cloud && p === '/rest/api/2/search/jql') || (!cloud && p === '/rest/api/2/search')) {
       const jql = url.searchParams.get('jql') || '';
