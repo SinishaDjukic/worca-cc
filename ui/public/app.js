@@ -218,7 +218,7 @@ import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workf
 import { renderTestsPage } from './workflows/tests-view.mjs';
 import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
-import { SAVE_FIRST_TEXT } from '../../src/shared/workflow-tests/project-text.mjs';
+import { SAVE_FIRST_TEXT, CHANGES_NOT_READ_TITLE, NO_DIFF_TEXT, PATCH_CUT_TEXT } from '../../src/shared/workflow-tests/project-text.mjs';
 import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog } from './workflows/test-dialogs.mjs';
 import { renderTestProgress } from './workflows/test-progress.mjs';
 import { renderCompare, renderSideBySide, openWholeResult } from './workflows/test-compare.mjs';
@@ -3667,7 +3667,11 @@ function wftRenderView(root) {
   if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc: document, error: wft.error }); return; }
   if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document, dateText: wftDate }); return; }
   if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc: document }); return; }
-  if (wft.view === 'detail') { renderSideBySide(root, wft.data, wftDetailActions(), { doc: document, tryIndex: wft.tryIndex || 0, renderMarkdown: wftMarkdown }); return; }
+  if (wft.view === 'detail') {
+    renderSideBySide(root, wft.data, wftDetailActions(), { doc: document, tryIndex: wft.tryIndex || 0, renderMarkdown: wftMarkdown,
+      patches: wft.patches || (wft.patches = new Map()), picked: wft.picked || {}, dateText: wftDate });
+    return;
+  }
   wft.view = 'list';
   void wftRefresh();
 }
@@ -3680,7 +3684,7 @@ function wftCompareActions() {
   return {
     back: () => wftShow('list', { overview: null }),
     testAgain: () => wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds }),
-    open: (exampleId) => wftShow('detail', { runId: run.id, exampleId, tryIndex: 0 }),
+    open: (exampleId) => wftShow('detail', { runId: run.id, exampleId, tryIndex: 0, picked: {} }),
     tryMore: async (exampleId) => {   // G15: at once, reusing the tries made, with the same cap and connectors choice
       const r = await wftCall('POST', `${wftBase(id)}/runs`, { a: run.a, b: run.b, exampleIds: [exampleId], tries: Math.min(10, run.tries + 3),
         reuseA: true, reuseB: true, quickCheck: false, capUsd: run.capUsd, connectors: run.connectors });
@@ -3713,6 +3717,35 @@ function wftDetailActions() {
       if (!r.ok) { notify({ tone: 'err', title: 'Could not read the result', detail: r.error }); return; }
       openWholeResult({ doc: document, win: window, title, name: r.data.name, text: r.data.text, renderMarkdown: wftMarkdown });
     },
+    // 3a (board 36): a project try's diff, read once per try (wft.patches: a string, '' when none was kept, null when it
+    // could not be read); the page repaints when it lands.
+    loadChanges: async (tryId) => {
+      const cache = wft.patches || (wft.patches = new Map());
+      if (cache.has(tryId) || wftPatchLoading.has(tryId)) return;
+      wftPatchLoading.add(tryId);
+      const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/changes`);
+      wftPatchLoading.delete(tryId);
+      if (wftWorkflowId() !== id) return;                            // another workflow: its wft has its own cache
+      cache.set(tryId, r.ok ? String(r.data.patch || '') : null);
+      if (r.ok && r.data.cut) wftPatchCut.add(tryId);
+      if (still()) wftRender();
+    },
+    pickFile: (side, path) => { if (!still()) return; wft.picked = { ...(wft.picked || {}), [side]: path }; wftRender(); },
+    readChanges: async (tryId, title) => {
+      const cache = wft.patches || (wft.patches = new Map());
+      let patch = cache.get(tryId);
+      if (typeof patch !== 'string') {
+        const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/changes`);
+        if (!r.ok) { notify({ tone: 'err', title: CHANGES_NOT_READ_TITLE, detail: r.error }); return; }
+        patch = String(r.data.patch || '');
+        if (r.data.cut) wftPatchCut.add(tryId);
+        if (wftWorkflowId() === id) cache.set(tryId, patch);
+      }
+      if (!still()) return;
+      // Text, never markup: the diff is the project's data (openWholeResult shows it in a <pre> without a renderer).
+      openWholeResult({ doc: document, win: window, title, name: wftPatchCut.has(tryId) ? PATCH_CUT_TEXT : null, text: patch || NO_DIFF_TEXT });
+    },
+    commandOutput: (title, output) => openWholeResult({ doc: document, win: window, title, text: output || '' }),
   };
 }
 /** Board 20's actions. The workflow and the test are read when the page paints: an answer that lands after the page
@@ -3870,6 +3903,9 @@ async function wftTestVersion({ a, b = 'draft', exampleIds = null } = {}) {
 // session.exampleId (set by the G17 auto-save), and write wft / change the view only while that editor still shows. A
 // slow upload that lands after Cancel and another Open never retargets the next editor.
 let wftEditorSeq = 0;
+/** Board 36: the tries whose diff is being read (one read each), and those whose diff is longer than the server reads. */
+const wftPatchLoading = new Set();
+const wftPatchCut = new Set();
 let wftOpenSeq = 0;
 const wftEditorLive = (s) => wft.view === 'editor' && wft.editorToken === s.token && wftWorkflowId() === s.workflowId;
 function wftRenderEditor(root) {

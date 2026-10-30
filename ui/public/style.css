@@ -9011,6 +9011,47 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-setup-see{font-size:var(--fs-body);font-weight:600;text-decoration:none;}
 .wft-outlog{margin:0;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-family:var(--mono);font-size:var(--fs-meta);line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:auto;}
 .wft-outlog[hidden]{display:none;}
+/* Boards 36, 37: one example side by side on a project: what changed (the picked file's diff), the command, what the guard
+   stopped, For developers. .card.wft-chg undoes Part 2's .wft-chg line (Compare's "What you changed") for the card. */
+.wft-modes{display:flex;flex-direction:column;gap:6px;}
+.card.wft-chg{align-items:stretch;gap:0;padding:18px 20px;line-height:inherit;}
+.wft-chg-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:6px 12px;margin-bottom:12px;}
+.wft-chg-head h2{margin:0;font-size:var(--fs-section);}
+.wft-chg-head .hint{margin:0;}
+.wft-files-list{list-style:none;margin:0 0 12px;padding:0;border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:hidden;}
+.wft-files-list li + li{border-top:1px solid var(--line);}
+.wft-fbtn{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:center;width:100%;padding:8px 12px;border:0;border-radius:0;background:none;color:var(--ink);text-align:left;font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+.wft-fbtn:hover{background:var(--hover);}
+.wft-fbtn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wft-fbtn.is-sel{background:var(--field);font-weight:600;}
+.wft-fbtn .badge{justify-self:start;}
+.wft-fbtn .p{min-width:0;font-family:var(--mono);font-size:var(--fs-meta);overflow-wrap:anywhere;}
+.badge.wft-badge-rm{background:var(--ink-2);color:var(--panel);}
+.wft-chg-more{margin:-4px 0 12px;}
+/* The diff scrolls sideways inside its own box; each line is as wide as the longest, so its colour runs to the end. */
+.wft-diff{display:grid;grid-template-columns:minmax(100%,max-content);margin:0;border:1px solid var(--line-2);border-radius:var(--r-sm);overflow-x:auto;font-family:var(--mono);font-size:var(--fs-meta);line-height:1.6;}
+.wft-diff:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.wft-diff-cap{position:sticky;left:0;padding:6px 12px;border-bottom:1px solid var(--line);background:var(--canvas-2);font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);overflow-wrap:anywhere;}
+.wft-dl{padding:0 12px;white-space:pre;color:var(--ink);}
+.wft-dl.add{background:var(--green-bg);}
+.wft-dl.del{background:var(--red-bg);}
+.wft-dl.ctx{color:var(--ink-2);}
+.wft-dl.is-hunk{border-top:1px dashed var(--line-2);}
+.wft-diff-note{position:sticky;left:0;padding:6px 12px;font-family:var(--sans);color:var(--ink-2);}
+.wft-dl + .wft-diff-note{border-top:1px solid var(--line);}
+.wft-chg-foot{margin-top:12px;}
+.wft-chg-foot .wft-linkbtn{font-weight:600;text-decoration:none;}
+.wft-chg-foot .wft-linkbtn:hover{text-decoration:underline;}
+.wft-call-cmd{display:block;margin-top:8px;font-family:var(--mono);font-size:var(--fs-meta);white-space:pre-wrap;overflow-wrap:anywhere;}
+.wft-why-cmd{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;padding:10px 12px;border-radius:var(--r-sm);background:var(--red-bg);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
+.wft-why-cmd b{font-weight:600;}
+.wft-why-cmd > span{flex:1 1 240px;min-width:0;}
+.wft-pg-head .code,.wft-dev-facts .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-dev-card{padding:18px 22px;border-style:dashed;}
+.wft-dev-card h2{margin:0 0 4px;font-size:var(--fs-section);}
+.wft-dev-card > .hint{margin:0 0 10px;}
+.wft-dev-facts{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:var(--fs-body);}
+.wft-dev-facts > span{min-width:0;}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}

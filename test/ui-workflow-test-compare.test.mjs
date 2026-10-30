@@ -358,7 +358,8 @@ test('board 6/31 (M1): what each version wrote is rendered markdown, sanitized; 
 
 test('app.js hands the side by side and Read the whole result the sandboxed renderer (M1)', () => {
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
-  assert.ok(/renderSideBySide\(root, wft\.data, wftDetailActions\(\), \{ doc: document, tryIndex: wft\.tryIndex \|\| 0, renderMarkdown: wftMarkdown \}\)/.test(app));
+  // 3a (Task 12) passes the project diff context after the renderer: patches, picked, dateText.
+  assert.ok(/renderSideBySide\(root, wft\.data, wftDetailActions\(\), \{ doc: document, tryIndex: wft\.tryIndex \|\| 0, renderMarkdown: wftMarkdown[,\s]/.test(app));
   assert.ok(/openWholeResult\(\{ doc: document, win: window, title, name: r\.data\.name, text: r\.data\.text, renderMarkdown: wftMarkdown \}\)/.test(app));
   assert.ok(/function wftMarkdown\(text, mount\) \{\s*const out = hdMarkdown\.render\(text\);/.test(app), 'hdMarkdown: marked + DOMPurify (ask-markdown.mjs)');
 });

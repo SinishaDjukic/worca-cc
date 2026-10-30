@@ -9,14 +9,29 @@ import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
+import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
+import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
+  changesLine, notMetFor, COMMAND_ENDED, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT, READING_CHANGES,
+  NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
 const usdOr = (n) => (typeof n === 'number' && Number.isFinite(n) ? fmtUsd(n) : '—');
 const timeOr = (ms) => (typeof ms === 'number' && Number.isFinite(ms) ? fmtDuration(ms) : '—');
-const wrote = (label) => `What ${/^Your\b/.test(label) ? `y${label.slice(1)}` : label} wrote`;
+const inSentence = (label) => (/^Your\b/.test(label) ? `y${label.slice(1)}` : label);   // "Your draft" inside a sentence
+const wrote = (label) => `What ${inSentence(label)} wrote`;
 const plural = (w) => (/(?:s|sh|ch|x)$/.test(w) ? `${w}es` : `${w}s`);
 /** A test tries an example at most this often (src/core/workflow-tests/store.mjs MAX_TRIES): Try 3 more has no room above. */
 const MAX_TRIES = 10;
+const STARTED_FROM = ' · started from ';   // one version (Try it once now): "both" would be wrong
+/** The picked file's diff shows at most this many lines; Read all the changes has the rest. */
+const DIFF_LINES_MAX = 400;
+const BADGE_CLASS = { added: 'badge green', removed: 'badge wft-badge-rm' };   // "Changed" and "Renamed" are plain
+/** "main at <code>abc1234</code> · 28 Oct" into `node`. */
+function startInto(doc, node, st, dateText) {
+  const when = st.at ? dateText(st.at) : '';
+  node.append(doc.createTextNode(`${st.ref || st.short} at `), el(doc, 'span', 'code', st.short), doc.createTextNode(when ? ` · ${when}` : ''));
+  return node;
+}
 
 /** N3: the count beside "Would have sent": "1 message, 1 issue", by what each call makes. */
 export function sentCount(calls) {
@@ -73,10 +88,12 @@ const modeNote = (doc, name, text) => {
   return p;
 };
 
-/** Board 31: what one pretend try would have sent (C19), or what a real try did. null when the column has no try. */
-function sentCard(doc, v, key) {
+/** Board 31: what one pretend try would have sent (C19), or what a real try did. null when the column has no try.
+ *  Board 37 (3a, D68): a project try also lists what the outward guard stopped, in both modes. */
+function sentCard(doc, v, key, { project = false } = {}) {
   if (!v) return null;
-  if (v.connectors === 'real') {
+  const sent = v.wouldHaveSent || [];
+  if (v.connectors === 'real' && !sent.length) {   // a real try that the guard never had to stop: Part 2's note
     const c = el(doc, 'section', 'card wft-sent-real');
     c.append(modeNote(doc, 'plug', 'Connectors: real. This try used your real connectors.'));
     return c;
@@ -87,7 +104,6 @@ function sentCard(doc, v, key) {
   h.id = `wft-sent-${key}`;
   c.setAttribute('aria-labelledby', h.id);
   head.append(h);
-  const sent = v.wouldHaveSent || [];
   if (sent.length) head.append(el(doc, 'span', 'hint', sentCount(sent)));
   c.append(head);
   for (const call of sent) {
@@ -95,6 +111,16 @@ function sentCard(doc, v, key) {
     const sum = el(doc, 'summary');
     const chev = icon(doc, 'chevron', 12, 'ic wft-call-chev');
     const line = el(doc, 'span', 'wft-call-line');
+    if (call.guard) {   // 3a D68: what the outward guard stopped, by the command's own name ("git", "GitHub CLI")
+      line.append(el(doc, 'b', '', call.server), el(doc, 'span', 'wft-call-what', ` · ${call.tool} · `), el(doc, 'span', 'wft-call-prev', call.preview));
+      sum.append(chev, line);
+      const full = el(doc, 'div', 'wft-call-full');
+      full.append(el(doc, 'span', 'wft-call-cap', call.cap), doc.createTextNode(call.full));
+      if (call.cmd) full.append(el(doc, 'span', 'wft-call-cmd', call.cmd));
+      d.append(sum, full);
+      c.append(d);
+      continue;
+    }
     line.append(el(doc, 'b', '', serverName(call.server)), el(doc, 'span', 'wft-call-what', ` · ${call.tool} · `),
       el(doc, 'span', 'wft-call-prev', call.to ? `to ${call.to}: "${call.preview}"` : `"${call.preview}"`));
     sum.append(chev, line);
@@ -103,7 +129,8 @@ function sentCard(doc, v, key) {
     d.append(sum, full);
     c.append(d);
   }
-  if (!sent.length) c.append(el(doc, 'p', 'wft-sent-foot', 'Nothing would have been sent.'));
+  if (!sent.length) c.append(el(doc, 'p', 'wft-sent-foot', project ? `Nothing would have been sent. ${NOTHING_PUSHED_TEXT}` : 'Nothing would have been sent.'));
+  else if (project) c.append(el(doc, 'p', 'wft-sent-foot', EACH_ANSWERED_TEXT));   // board 37
   for (const r of v.answeredReads || []) {
     c.append(el(doc, 'p', 'wft-sent-foot', `Worca also answered ${r.n === 1 ? '1 request' : `${r.n} requests`} in ${serverName(r.server)}: ${r.n === 1 ? 'it' : 'they'} came back empty.`));
   }
@@ -268,12 +295,39 @@ function resultInto(box, text, renderMarkdown) {
   return box;
 }
 
+/** Board 36's "For developers": the start, the setup, and how big each version's change was. */
+function devCard(doc, s, cur, once, dateText) {
+  const c = el(doc, 'section', 'card wft-dev-card');
+  const h = el(doc, 'h2', '', DEV_CAPTION);
+  h.id = 'wft-sbs-dev';
+  c.setAttribute('aria-labelledby', h.id);
+  const facts = el(doc, 'div', 'wft-dev-facts');
+  facts.append(startInto(doc, el(doc, 'span', '', DEV_START_LEAD), s.start, dateText));
+  if (s.start.setupCmd) {
+    const su = el(doc, 'span', '', DEV_SETUP_LEAD);
+    su.append(el(doc, 'span', 'code', s.start.setupCmd));
+    if (s.start.setupMs) su.append(doc.createTextNode(` · ${fmtDuration(s.start.setupMs)}`));
+    facts.append(su);
+  }
+  for (const [label, v] of once ? [[s.labels.b, cur.b]] : [[s.labels.a, cur.a], [s.labels.b, cur.b]]) {
+    if (v && v.project && v.project.changes) facts.append(el(doc, 'span', '', changesLine(label, v.project.changes)));
+  }
+  c.append(h, el(doc, 'p', 'hint', DEV_SBS_HINT), facts);
+  return c;
+}
+
 /**
  * Board 6 (G2: one column after Try it once now). `s` = GET …/runs/:run/examples/:ex.
- * @param {{back:Function, pick:(index:number)=>void, readWhole:(tryId:number, title:string)=>void|Promise}} actions
- * @param {{renderMarkdown?: (text:string, mount:HTMLElement)=>void}} o the app's sandboxed markdown (ask-markdown.mjs), board 31's excerpt
+ * 3a (boards 36, 37): a project example's columns show what each try changed in the project (the picked file's diff
+ * below the list), the command check's output, what the guard stopped, and the "For developers" facts.
+ * @param {{back:Function, pick:(index:number)=>void, readWhole:(tryId:number, title:string)=>void|Promise,
+ *   loadChanges?:(tryId:number)=>void, pickFile?:(side:'a'|'b', path:string)=>void, readChanges?:(tryId:number, title:string)=>void|Promise,
+ *   commandOutput?:(title:string, output:string)=>void}} actions
+ * @param {{renderMarkdown?: (text:string, mount:HTMLElement)=>void, patches?: Map<number, string|null|undefined>,
+ *   picked?: {a?:string, b?:string}, dateText?: (iso:string)=>string}} o the app's sandboxed markdown (ask-markdown.mjs), board
+ *   31's excerpt; each try's diff (undefined: not read yet, null: could not be read); the file picked per column
  */
-export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMarkdown = null }) {
+export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMarkdown = null, patches = new Map(), picked = {}, dateText = (x) => x }) {
   const held = heldFocus(root, doc);
   const live = root.querySelector('.wft-sbs-live') || el(doc, 'p', 'sr-only wft-sbs-live');
   live.setAttribute('aria-live', 'polite');
@@ -290,8 +344,10 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
   const counts = once
     ? `${s.labels.b} passed ${s.row.b.passed} of ${s.row.b.total} ${s.row.b.total === 1 ? 'try' : 'tries'}`
     : `${s.labels.a} passed ${s.row.a.passed} of ${s.row.a.total} tries · ${s.labels.b} passed ${s.row.b.passed} of ${s.row.b.total}`;
+  const countsEl = el(doc, 'span', 'hint', counts);
+  if (s.start) startInto(doc, (countsEl.append(doc.createTextNode(once ? STARTED_FROM : BOTH_STARTED_FROM)), countsEl), s.start, dateText);   // board 36
   head.append(titles(doc, act(doc, root, runId, once ? 'Tests' : s.compareTitle, () => actions.back(), 'wft-crumb', 'wft-sbs-back'),
-    name, el(doc, 'span', 'hint', counts)));
+    name, countsEl));
   if (s.tries.length > 1) {
     const tabs = el(doc, 'div', 'seg wft-sbs-tabs');
     tabs.setAttribute('role', 'tablist');
@@ -317,7 +373,19 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     head.append(tabs);
   }
   page.append(head);
-  if (s.connectors === 'pretend') page.append(modeNote(doc, 'shield', 'Connectors: pretend. Nothing was posted or sent.'));   // board 31
+  // Board 31's pretend note; board 37 adds the lock note below it (a project try never pushes, in either mode), the two
+  // close together.
+  const notes = s.nothingPushed ? el(doc, 'div', 'wft-modes') : page;
+  if (s.connectors === 'pretend') notes.append(modeNote(doc, 'shield', 'Connectors: pretend. Nothing was posted or sent.'));
+  if (s.nothingPushed) {
+    const p = el(doc, 'p', 'wft-mode');
+    const words = el(doc, 'span');
+    words.append(el(doc, 'b', '', NOTHING_PUSHED_TEXT));
+    if (s.connectors === 'real') words.append(doc.createTextNode(REAL_BLOCKED_TEXT));
+    p.append(icon(doc, 'lock', 14), words);
+    notes.append(p);
+    page.append(notes);
+  }
   if (!cur) {   // board 29
     page.append(el(doc, 'p', 'hint wft-empty-sbs', 'No finished try of this example in this test.'));
     root.append(page, live);
@@ -347,11 +415,83 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     }
     return c;
   };
-  // Board 31: each column is what that version wrote, then what it would have sent.
+  // Board 36: what one project try changed. The files are buttons; the picked one's diff shows below the list (read once
+  // per try through actions.loadChanges; the page repaints when it lands).
+  const changesCard = (label, v, key) => {
+    const c = el(doc, 'section', 'card wft-card wft-chg');
+    const h = el(doc, 'h2', '', changesTitle(label));
+    h.id = `wft-chg-${key}`;
+    c.setAttribute('aria-labelledby', h.id);
+    const ch = v.project.changes || { files: [], total: 0, counts: { added: 0, changed: 0, removed: 0 } };
+    const head = el(doc, 'div', 'wft-chg-head');
+    head.append(h, el(doc, 'span', 'hint', changeCountText(ch.counts)));
+    c.append(head);
+    const files = Array.isArray(ch.files) ? ch.files : [];
+    if (!files.length) return c;
+    const sel = picked[key] && files.some((f) => f.path === picked[key]) ? picked[key] : files[0].path;
+    const regionId = `wft-diff-${key}`;
+    const ul = el(doc, 'ul', 'wft-files-list');
+    ul.setAttribute('aria-label', `Files ${label} changed`);
+    for (const f of files) {
+      const li = el(doc, 'li');
+      const b = btn(doc, null, () => actions.pickFile(key, f.path), `wft-fbtn${f.path === sel ? ' is-sel' : ''}`);
+      b.setAttribute('aria-pressed', f.path === sel ? 'true' : 'false');
+      b.setAttribute('aria-controls', regionId);
+      b.dataset.focusKey = `wft-f-${key}-${f.path}`;
+      b.append(el(doc, 'span', BADGE_CLASS[f.status] || 'badge', FILE_BADGE[f.status] || FILE_BADGE.changed), el(doc, 'span', 'p', f.path));
+      li.append(b);
+      ul.append(li);
+    }
+    c.append(ul);
+    const more = Number(ch.total) - files.length;   // D67: the list keeps the first 50 files
+    if (more > 0) c.append(el(doc, 'p', 'hint wft-chg-more', moreFilesText(more)));
+    const patch = patches.get(v.tryId);
+    if (patch === undefined) actions.loadChanges(v.tryId);
+    const region = el(doc, 'div', 'wft-diff');
+    region.id = regionId;
+    region.setAttribute('role', 'region');
+    region.setAttribute('aria-label', `Changes in ${sel}, ${label}`);
+    region.tabIndex = 0;   // it scrolls sideways: the keys reach it
+    region.append(el(doc, 'span', 'wft-diff-cap', sel));
+    const section = typeof patch === 'string' && patch ? splitPatchSections(patch).find((x) => x.path === sel) : null;
+    const parsed = section ? parseFileSection(section.raw) : null;
+    if (parsed && parsed.binary) region.append(el(doc, 'span', 'wft-diff-note', BINARY_FILE_TEXT));
+    else if (parsed && parsed.hunks.length) {
+      let n = 0;
+      let cut = parsed.truncated;
+      for (const [k, hk] of parsed.hunks.entries()) {
+        for (const [j, line] of hk.lines.entries()) {
+          if (n >= DIFF_LINES_MAX) { cut = true; break; }
+          n += 1;
+          // Text, never markup: a diff line is the project's data.
+          const lead = line.kind === 'add' ? '+ ' : line.kind === 'del' ? '- ' : '  ';
+          const row = el(doc, 'span', `wft-dl ${line.kind}`, `${lead}${line.text}`);
+          if (k > 0 && j === 0) row.classList.add('is-hunk');   // a gap in the file: a rule above the next part
+          region.append(row);
+        }
+        if (n >= DIFF_LINES_MAX && k < parsed.hunks.length - 1) { cut = true; break; }
+      }
+      if (cut) region.append(el(doc, 'span', 'wft-diff-note', DIFF_SHORTENED_TEXT));
+    } else {
+      region.append(el(doc, 'span', 'wft-diff-note', patch === undefined ? READING_CHANGES : patch === null ? CHANGES_UNREAD_TEXT
+        : patch === '' ? NO_DIFF_TEXT : NO_FILE_DIFF_TEXT));
+    }
+    const all = act(doc, root, runId, READ_ALL_CHANGES, () => actions.readChanges(v.tryId, changesTitle(label)), 'wft-linkbtn', `wft-chg-all-${key}`,
+      { busy: true, busyKey: `wft-chg-all-${key}-${v.tryId}` });
+    all.setAttribute('aria-label', `${READ_ALL_CHANGES}, ${label}`);
+    const foot = el(doc, 'div', 'wft-chg-foot');
+    foot.append(all);
+    c.append(region, foot);
+    return c;
+  };
+  // Board 31: each column is what that version wrote, then what it would have sent. Boards 36, 37: a project try's column
+  // is what it changed, then what it wrote (only when it left a result, P7), then what it would have sent.
   const column = (label, v, key) => {
     const col = el(doc, 'div', 'wft-outcol');
-    col.append(out(label, v, key));
-    const sent = sentCard(doc, v, key);
+    const project = !!(v && v.project);
+    if (project) col.append(changesCard(label, v, key));
+    if (!project || v.text) col.append(out(label, v, key));
+    const sent = sentCard(doc, v, key, { project: !!s.nothingPushed });
     if (sent) col.append(sent);
     return col;
   };
@@ -390,6 +530,22 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
       row.append(el(doc, 'span', '', label));
       if (!once) row.append(cell(cur.a, key, label, `${s.labels.a} · try ${cur.n}`));
       row.append(cell(cur.b, key, label, `${s.labels.b} · try ${cur.n}`));
+      // Board 36: a command not met says so under its row, and opens its output (the last 40 lines; P6: no "Failed:" line).
+      if (key === 'checks') {
+        for (const [side, vl, v] of [['a', s.labels.a, once ? null : cur.a], ['b', s.labels.b, cur.b]]) {
+          const it = v && v.verdict ? (v.verdict.checks || []).find((x) => x.label === label) : null;
+          if (!it || it.met || typeof it.output !== 'string') continue;
+          const why = el(doc, 'div', 'wft-why wft-why-cmd');
+          const words = el(doc, 'span');
+          words.append(el(doc, 'b', '', notMetFor(inSentence(vl))), doc.createTextNode(COMMAND_ENDED));
+          why.append(words);
+          if (it.output.trim()) {
+            why.append(act(doc, root, runId, SEE_COMMAND_OUTPUT, () => actions.commandOutput(`${it.label} · ${vl}`, it.output), 'btn btn-sm',
+              `wft-cmd-out-${side}-${it.id || label}`));
+          }
+          row.append(why);
+        }
+      }
       inner.append(row);
     }
   }
@@ -400,6 +556,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
   for (const [label, v] of [[s.labels.a, cur.a], [s.labels.b, cur.b]]) {
     for (const it of (v && v.verdict && v.verdict.basics) || []) if (!it.met && it.detail) page.append(el(doc, 'p', 'hint wft-detail-why', `${label}: ${it.detail}`));
   }
+  if (s.start) page.append(devCard(doc, s, cur, once, dateText));   // board 36
   root.append(page, live);
   const said = s.tries.length > 1 ? `Try ${cur.n} of ${s.tries.length}` : '';
   if (live.textContent !== said) live.textContent = said;   // only a change is news
