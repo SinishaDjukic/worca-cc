@@ -252,7 +252,7 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     const ms = createMoveSelect({ doc, project: r.project || '', value: r.target, general: !r.project,
       label: r.project === null ? TU_COPY.newRuleLabel : null, host: popHost || doc.body,
       loadStatuses: () => statuses(r.project),
-      onChange: (t) => { r.target = t; } });
+      onChange: (t) => { r.target = t; clearGone(r); } });
     selects.set(r.uid, ms);
     row.append(name, ms.el);
     if (r.project !== '') {
@@ -326,6 +326,35 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     return b;
   }
 
+  // ---- a status that is gone (board 5 E) ----
+  function markGone(r) {
+    const row = rowOf(r);
+    if (!row || row.querySelector('.mk-tu-gone')) return;
+    const p = mk('p', 'mk-tu-gone', goneLine(r.project, r.target.label || r.target.value));
+    p.id = `${r.uid}-gone`;
+    row.append(p);
+    selects.get(r.uid)?.describe(p.id);
+  }
+  function clearGone(r) {
+    rowOf(r)?.querySelector('.mk-tu-gone')?.remove();
+    selects.get(r.uid)?.describe(null);
+  }
+  /** STATUS_LOADS projects at a time; a project that cannot be read marks nothing (its listbox says why when opened, §10 D). */
+  async function checkGone() {
+    const todo = rules.filter((r) => r.project && r.target && r.target.kind === 'status');
+    let next = 0;
+    const worker = async () => {
+      while (next < todo.length) {
+        const r = todo[next++];
+        let found;
+        try { found = await statuses(r.project); } catch { continue; }
+        if (destroyed || !rules.includes(r) || !r.target || r.target.kind !== 'status') continue;
+        if (!found.some((s) => String(s.value) === String(r.target.value))) markGone(r);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(STATUS_LOADS, todo.length) }, worker));
+  }
+
   // ---- the section ----
   /** Close whatever is open (each widget drops its document listeners); the focus is left where it is. */
   function closeWidgets() {
@@ -368,6 +397,7 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     baseline = JSON.stringify(collect());   // a carried-over All projects row is not a change (§10 B)
     el.hidden = false;
     paint();
+    if (info.connection === 'saved') void checkGone();
     return { available: true, saved: !!info.saved, connection: info.connection, legacyField: legacyField() };
   }
 

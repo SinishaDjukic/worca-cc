@@ -322,3 +322,41 @@ test('S11: removing the new row when Add a project rule has just become disabled
   assert.equal(m.doc.activeElement, m.rowFor('CRM').querySelector('.mk-tu-remove'));
   assert.equal(m.$('.mk-tu-newrow'), null);
 });
+
+const SHIPPED = { kind: 'status', value: '10099', label: 'Shipped', category: 'done' };
+test('board 5 E: a stored status the project no longer has keeps its name; the line under the row; picking another clears it', async () => {
+  const m = await section(tuRoutes(tuGet({ saved: true, projects: [], rules: [ALL_DONE, { project: 'CRM', label: 'Customer portal', moment: 'finished', target: SHIPPED },
+    { project: 'OPS', label: 'Operations', moment: 'finished', target: { kind: 'none' } }] })));
+  await settle();
+  const row = m.rowFor('CRM');
+  const btn = row.querySelector('.mk-tu-move');
+  const line = row.querySelector('.mk-tu-gone');
+  assert.equal(btn.textContent, 'Shipped', 'the select shows the stored name');
+  assert.equal(line.textContent, 'CRM has no status named Shipped any more. Pick another; until then a run leaves CRM tickets where they are and says so in its comment.');
+  assert.equal(btn.getAttribute('aria-describedby'), line.id);
+  assert.deepEqual([statusCalls(m, 'CRM'), statusCalls(m, 'OPS')], [1, 0], 'only a rule that names a status is checked');
+  assert.equal(m.tu.dirty(), false, 'Save still works; nothing changed');
+  btn.click();
+  await settle();
+  assert.equal(statusCalls(m, 'CRM'), 1, 'the check filled the cache');
+  [...m.doc.querySelectorAll('.mk-tu-movepop [role="option"]')].find((o) => o.textContent === 'Released').click();
+  assert.deepEqual([row.querySelector('.mk-tu-gone'), btn.hasAttribute('aria-describedby')], [null, false]);
+});
+
+test('board 5 E: four projects at a time; a project that cannot be read marks nothing', async () => {
+  const gate = deferred();
+  let running = 0;
+  let most = 0;
+  const slow = () => async () => { running += 1; most = Math.max(most, running); await gate.p; running -= 1; return ok({ statuses: [] }); };
+  const keys = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'];
+  const more = Object.fromEntries(keys.map((k) => [`GET ${TU}/statuses${TU_Q}&project=${k}`, slow()]));
+  more[`GET ${TU}/statuses${TU_Q}&project=P6`] = async () => { running += 1; most = Math.max(most, running); await gate.p; running -= 1;
+    return fail(502, { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' }); };
+  const m = await section(tuRoutes(tuGet({ saved: true, rules: [ALL_DONE, ...keys.map((k) => ({ project: k, label: k, moment: 'finished',
+    target: { kind: 'status', value: '7', label: 'Gone', category: 'done' } }))] }), more));
+  assert.equal(running, 4);
+  gate.resolve();
+  await settle(30);
+  assert.equal(most, 4);
+  assert.deepEqual(keys.map((k) => !!m.rowFor(k).querySelector('.mk-tu-gone')), [true, true, true, true, true, false]);
+});
