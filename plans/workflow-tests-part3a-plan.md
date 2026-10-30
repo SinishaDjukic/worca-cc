@@ -78,12 +78,12 @@
 | P18 | Small states no board draws | "This try changed no file.", "Reading the changes…", "No changes to show for this file.", "A binary file." (the change card); "Pick a branch first.", "Worca could not read the branches of the project.", "The start point did not move." (the editor). |
 | P19 | Board 39's missing folder, when the folder moved (decided 2026-10-29 by the controller) | "Pick the folder" stays, and the notice adds "If the folder moved, add it again under Projects, then pick it here." |
 | P20 | An example's project that is no longer registered (not drawn; decided 2026-10-29 by the controller) | A board-39-style notice: "<name> is no longer one of Worca's projects. Add it again under Projects, or pick another project." Try it once now is disabled and described by it. A save that keeps the pin still works (the server keeps a kept pin without checking the project). |
-| P21 | The project list could not be read (not drawn; decided 2026-10-29 by the controller) | Notice: "Worca could not read your projects. Reload the page to try again." Try it once now is disabled (and described by it) when the example has a project or the workflow needs one. |
+| P21 | The project list could not be read (not drawn; decided 2026-10-29 by the controller) | Notice: "Worca could not read your projects. Reload the page to try again." It shows, and Try it once now is disabled (and described by it), only when the example has a project or the workflow needs one. |
 | P22 | A Git project folder not on a branch (detached HEAD, empty repository) with no start point yet (not drawn; decided 2026-10-29 by the controller) | Notice: "The project folder is not on a branch. Check out a branch in it, then come back." No start point row. |
 | P23 | "Include my changes" pins again from the branch's newest commit (decided 2026-10-29 by the controller) | When that is not the kept start point, its hint adds "Turning this on also moves the start point to the newest commit on <branch>." |
 | P24 | "Read from: A file in the project" with an empty file box (decided 2026-10-29 by the controller) | The dialog refuses: "Write the file name." |
 | P25 | Change on a project with no branches (decided 2026-10-29 by the controller) | No dialog; the error line says "Worca found no branches in this project." |
-| P26 | After Change or Start from the latest (decided 2026-10-29 by the controller) | The focus stays on Change, and a polite status line says "The start point is now <ref> at <short sha>." |
+| P26 | After Change or Start from the latest (decided 2026-10-29 by the controller) | The focus stays on Change, and a polite status line says, after a Change pick (not yet saved), "The start point will be <ref> at <short sha> when you save the example."; after Start from the latest (stored at once), "The start point is now <ref> at <short sha>." |
 
 ## Decisions
 

@@ -15,7 +15,7 @@ import {
   UNSUPPORTED_TITLE, START_DIALOG_TITLE, START_DIALOG_HINT, START_DIALOG_OK, CHECK_DIALOG_HINT_PROJECT, GROUP_RESULT, GROUP_PROJECT,
   COMMAND_LABEL, COMMAND_HINT, TIMEOUT_LABEL, TIMEOUT_HINT, timeoutText, READ_FROM_LEGEND, READ_FROM_RESULT, READ_FROM_RESULT_SUB,
   READ_FROM_FILE, ADD_CHECK, lfsText, submodulesText, MISSING_FOLDER_ADD_AGAIN, notRegisteredText, PROJECTS_UNREAD_TEXT,
-  NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
+  NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, startWillBeText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
   START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL,
 } from '../../../src/shared/workflow-tests/project-text.mjs';
 
@@ -463,7 +463,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       if (button) { const foot = el(doc, 'div', 'wft-notice-foot'); foot.append(button); notice.append(foot); }
     };
     const only = (text) => [el(doc, 'p', 'wft-notice-text', text)];   // a notice the boards draw no title for (P20–P22)
-    if (!Array.isArray(projects)) say(null, only(PROJECTS_UNREAD_TEXT));   // P21
+    if (!Array.isArray(projects)) { if (needsProject || pick.key) say(null, only(PROJECTS_UNREAD_TEXT)); }   // P21: only when a project matters here
     else if (!pick.key) { if (needsProject) say(PICK_PROJECT_TITLE, [el(doc, 'p', 'hint', pickProjectText(workflowName))]); }
     else if (!r) say(null, only(notRegisteredText(nameOf(pick.key))));   // P20
     else if (!r.exists) {   // board 39, P4, P19
@@ -515,10 +515,11 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (button) button.setAttribute('aria-busy', 'true');
     try { return await busyWhile(fn); } finally { if (button) button.removeAttribute('aria-busy'); }
   };
-  /** After a new start point: say it (P26) and keep the focus on Change. */
-  const startMoved = () => {
+  /** After a new start point: say it (P26) and keep the focus on Change. A Change pick is kept only when the example is
+   *  saved ("will be"); Start from the latest is already stored ("is now"). */
+  const startMoved = (saved) => {
     const st = startShown();
-    status.textContent = st ? startNowText(st.ref || st.short, st.short) : '';
+    status.textContent = st ? (saved ? startNowText : startWillBeText)(st.ref || st.short, st.short) : '';
     if (changeBtn) changeBtn.focus();
   };
   async function changeStart() {
@@ -530,7 +531,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (!branches.length) { error.textContent = NO_BRANCHES_TEXT; return; }   // P25: no dialog with nothing to pick
     const st = startShown();
     openStartDialog({ doc, win, branches, current: st ? st.ref : null, dateText,
-      onPick: (b) => { pick.branch = b; pick.ref = b.name; pick.repin = true; paintWhere(); startMoved(); } });
+      onPick: (b) => { pick.branch = b; pick.ref = b.name; pick.repin = true; paintWhere(); startMoved(false); } });
   }
   async function latest() {
     if (busyN) return;
@@ -542,7 +543,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     view = view ? { ...view, behind: 0 } : view;
     pick.branch = null; pick.ref = undefined; pick.repin = false;
     paintWhere();
-    startMoved();
+    startMoved(true);
   }
   projectSel.addEventListener('change', () => {
     pick.key = projectSel.value; pick.ref = undefined; pick.branch = null; pick.repin = false;

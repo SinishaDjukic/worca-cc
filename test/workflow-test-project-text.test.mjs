@@ -18,6 +18,9 @@ test('board 32: where it starts', () => {
   assert.equal(t.CARD1_HINT_PROJECT, 'The same request and the same starting point are used every time this example is tried.');
   assert.equal(t.CHECKS_HINT_PROJECT, "Counted exactly, without AI. They look at what changed in Worca's own copy of the project.");
   assert.equal(t.shortSha('abc1234def'), 'abc1234');
+  // P26: a Change pick waits for the save; Start from the latest is stored at once.
+  assert.equal(t.startWillBeText('release', 'e9f2c47'), 'The start point will be release at e9f2c47 when you save the example.');
+  assert.equal(t.startNowText('main', 'fffffff'), 'The start point is now main at fffffff.');
 });
 
 test('board 33: the project checks in the dialog', () => {

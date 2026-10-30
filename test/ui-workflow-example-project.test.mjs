@@ -201,7 +201,7 @@ test('review 3, 12: Change is busy while it loads; a pick says the new start and
   await tick(); await tick();
   const status = root.querySelector('.wft-start-status');
   assert.deepEqual([status.getAttribute('role'), status.getAttribute('aria-live'), status.textContent],
-    ['status', 'polite', 'The start point is now release at e9f2c47.']);
+    ['status', 'polite', 'The start point will be release at e9f2c47 when you save the example.']);
   assert.equal(doc.activeElement, byText(root, '.wft-start button', 'Change'));
 });
 
@@ -262,6 +262,12 @@ test('review 5, 6, 7, 10: no longer registered, projects not read, not on a bran
   const unread = boot(example(), { projects: null });
   assert.deepEqual(texts(unread.root, '.wft-notice > p'), ['Worca could not read your projects. Reload the page to try again.']);
   assert.equal(byText(unread.root, '.wft-acts button', 'Try it once now').getAttribute('aria-describedby'), 'wft-ex-notice');
+  const unreadNoPin = boot(example({ project: null }), { projects: null, projectView: null });
+  assert.equal(unreadNoPin.root.querySelector('.wft-notice').hidden, true, 'P21: no project pinned and none needed: nothing to say');
+  assert.equal(byText(unreadNoPin.root, '.wft-acts button', 'Try it once now').disabled, false);
+  const unreadNeeds = boot(example({ project: null }), { projects: null, projectView: null, needsProject: true });
+  assert.deepEqual(texts(unreadNeeds.root, '.wft-notice > p'), ['Worca could not read your projects. Reload the page to try again.']);
+  assert.equal(byText(unreadNeeds.root, '.wft-acts button', 'Try it once now').disabled, true);
   const detached = [{ ...PROJECTS[0], key: 'det-1', name: 'detached', current: { branch: null, sha: SHA, short: 'abc1234', at: '2026-10-28T09:00:00.000Z' } }];
   const det = boot(example({ project: null }), { projects: detached, projectView: null });
   const sel = det.root.querySelector('#wft-ex-project');
