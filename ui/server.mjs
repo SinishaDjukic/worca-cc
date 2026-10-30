@@ -347,6 +347,9 @@ import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { buildCapabilityCatalog, planRunAgentCapabilities, warningLines, knownToolsByServer } from '../src/core/agent-capabilities.mjs';
+import { pickAccess, unreviewedTools } from '../src/shared/agent-access.mjs';
+import { listNativeMcpServers } from '../src/core/native-mcp.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { probePython, pythonRuntimeState } from '../src/core/graph/python-probe.mjs';
 import {
@@ -16781,10 +16784,71 @@ app.get('/api/agents', async (req, res) => {
     // (the mock switch in claude-runner.mjs), unlike the open channel vocabulary
     // it replaces in Task 12: an unknown mockRole is dropped by the registry
     // with a warning, never rejected.
-    res.json({ agents, mockWriterRoles: [...MOCK_WRITER_ROLES] });
+    // FEAT-1 (R-po-17): the library's "N tools to review" flag — computed, never stored, and a COPY (listAgents() objects stay untouched).
+    // The MCP store is read only when some agent has an 'all' entry.
+    const flaggable = agents.some((a) => (a.mcpAccess ?? []).some((e) => e.tools === 'all'));
+    const known = flaggable ? knownToolsByServer((await readMcpStore()).tests) : null;   // Map<serverId, string[]>
+    const out = !known ? agents : agents.map((a) => {
+      const n = (a.mcpAccess ?? []).reduce((c, e) => c + unreviewedTools(e, known.get(e.server)).length, 0);
+      return n ? { ...a, reviewTools: n } : a;
+    });
+    res.json({ agents: out, mockWriterRoles: [...MOCK_WRITER_ROLES] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// FEAT-1: the member directories of a resolver target (a project, or a workspace's members) with their work mode — the same
+// ('git' | 'folder') the run derives, which keys the local-scope lookup and the `git` flag of the approval check (cycle-3 m1, m2).
+async function mcpTargetMembers(target) {
+  const keys = new Set(target.kind === 'project' ? [target.key] : target.members.map((m) => m.key));
+  return (await listProjects()).filter((p) => keys.has(p.key)).map((p) => ({ dir: p.path, workMode: effectiveWorkMode(p.vcs, gitAvailable()) }));
+}
+
+// FEAT-1: what an agent in this project can be given (the picker's input). Registered before GET /api/agents/:key, or the literal path is shadowed.
+app.get('/api/agents/capabilities', async (req, res) => {
+  try {
+    const target = req.query.projectKey
+      ? await mcpTargetOf({ projectKey: String(req.query.projectKey) })
+      : { kind: 'project', key: NO_PROJECT_KEY, name: NO_PROJECT_NAME, rank: 0 };
+    if (target === undefined) return badRequest(res, 'projectKey is not valid');
+    if (!target) return res.status(404).json({ error: 'project not found' });
+    const [{ result }, sr, native] = await Promise.all([
+      mcpResolve(target), skillRunPreview(target),
+      listNativeMcpServers({ members: req.query.projectKey ? await mcpTargetMembers(target) : [], single: target.kind === 'project' }),
+    ]);
+    res.json({ ...buildCapabilityCatalog({ mcp: result, skills: sr.result, native }), newer: !!result.newer });
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+
+// FEAT-1: the missing-capability warnings a run would start with (R-po-10, R-po-13). The start response stays { runId }.
+// An Auto run has no workflow at start (the graph is decided later), so this returns [] for it; its warnings appear in the run details only (cycle-2 #8).
+app.post('/api/agents/run-check', async (req, res) => {
+  const b = req.body || {};
+  const opt = parseMcpOptOut(b.mcpOptOut);
+  if (opt.error) return badRequest(res, opt.error);
+  try {
+    const target = await mcpTargetOf(b.target);
+    if (!target) return badRequest(res, 'target must be { projectKey } or { workspaceId }');
+    const wf = typeof b.workflowId === 'string' ? await readWorkflow(b.workflowId).catch(() => null) : null;
+    const registry = loadAgentRegistry(AGENTS_DIR);                       // Record<key, meta> (every other call site passes AGENTS_DIR)
+    const nodes = (wf?.nodes || []).filter((n) => n.kind === 'agent' && registry[n.key])
+      .map((n) => ({ id: n.id, key: n.key, name: registry[n.key].displayName || n.key, access: pickAccess(registry[n.key]) }));
+    if (!nodes.some((n) => n.access.mcpAccess || n.access.skillAccess)) return res.json({ warnings: [] });
+    const engine = typeof b.engine === 'string' ? b.engine : 'claude';
+    const [{ result }, sr, listed] = await Promise.all([
+      mcpResolve(target, { optOut: opt.list, toolNameLimit: toolNameLimitFor(b.models || []) }),
+      skillRunPreview(target, { optOut: opt.list }),
+      listNativeMcpServers({ members: await mcpTargetMembers(target), single: target.kind === 'project' }),
+    ]);
+    // Only what the run would PROVIDE: a committed-identical server Claude has not approved is not in the run, so a chosen one is reported (cycle-2 #6).
+    // Every other member server is `approved` here because the run provides it whatever its approval (cycle-3 M1). Pre-run stand-in for the
+    // committed copy: git HEAD (git member) / the real-dir file itself (Folder member, which the run copies) — cycle-4 m1.
+    const native = listed.filter((s) => s.approval === 'approved').map((s) => ({ name: s.name, raw: s.name, eligible: true }));   // the dialog has no renames; the run applies them
+    const notProvided = Object.fromEntries(listed.filter((s) => s.approval !== 'approved').map((s) => [`native:${s.name}`, s.approval === 'disabled' ? 'turned off in Claude Code' : 'not approved in Claude Code yet']));
+    const plans = planRunAgentCapabilities({ nodes, mcp: result, skills: sr.result, native, notProvided, engine });
+    res.json({ warnings: nodes.flatMap((n) => warningLines(plans.get(n.id), n.name)) });
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 
 // Map agent-store err.code -> HTTP (mirrors workspaceErrorStatus).

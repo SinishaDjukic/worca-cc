@@ -5,6 +5,7 @@
 // claude-runner.mjs, so the mock-role vocabulary is INJECTED.
 import { PORT_TYPES, MAX_PORTS_PER_SIDE, PORT_ID_RE } from './constants.mjs';
 import { normalizeAskBlock } from '../forms/form-def.mjs';
+import { readMcpAccess, readSkillAccess } from '../agent-access.mjs';
 
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 // PORT_ID_RE is P1's, NOT a local copy: spec §3 puts it in constants.mjs
@@ -222,6 +223,12 @@ export function normalizeAgentMeta(raw, opts = {}) {
   if (PROGRESS_STAGE_SET.has(raw.progressStage)) meta.progressStage = raw.progressStage;
   const humanEffort = readHumanEffort(raw.humanEffort, (m) => warn(`[agent-meta] "${key || '<unkeyed>'}": ${m}`));
   if (humanEffort) meta.humanEffort = humanEffort;
+  // Per-agent MCP server/tool and skill selection (FEAT-1). Absent when empty, so an old sidecar round-trips byte-identically.
+  const accessWarn = (m) => warn(`[agent-meta] "${key || '<unkeyed>'}": ${m}`);
+  const mcpAccess = readMcpAccess(raw.mcpAccess, accessWarn);
+  if (mcpAccess.length) meta.mcpAccess = mcpAccess;
+  const skillAccess = readSkillAccess(raw.skillAccess, accessWarn);
+  if (skillAccess.length) meta.skillAccess = skillAccess;
   if (mockRole) meta.mockRole = mockRole;
   if (raw.wantsRequest) meta.wantsRequest = true;
   // P3 (U13): the agent expects a code repository in its cwd — a non-blocking hint for runs without a project.

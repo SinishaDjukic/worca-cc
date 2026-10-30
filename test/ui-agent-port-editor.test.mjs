@@ -259,3 +259,18 @@ test('hints mirror the store rules VERBATIM and appear/disappear live, without b
   assert.equal(host.querySelector('.pf-add-out').disabled, false);
   assert.equal(api.agentFormRead(host).meta.runnerType, 'clarifier');
 });
+
+test('mcpAccess / skillAccess are form-owned: they round-trip via the picker state, never via dataset.extra, and clear', async () => {
+  const { host, api } = await boot();
+  const access = {
+    mcpAccess: [{ server: 'plugin:gh', name: 'github', tools: ['a'] }, { server: 'manual:db', tools: 'all', reviewedTools: ['q'] }],
+    skillAccess: [{ skill: 'skill:library:x', name: 'x' }],
+  };
+  api.agentFormRender(host, { ...META, ...access }, { markdown: '# body\n', mockWriterRoles: MOCK_ROLES });
+  assert.deepEqual(JSON.parse(host.dataset.extra), { futureField: { keep: 'me' } }, 'not carried as an unknown key');
+  assert.deepEqual(api.agentFormRead(host).meta, { ...META, ...access });
+  host.__access = {};   // what removing the last item leaves
+  const { meta } = api.agentFormRead(host);
+  assert.equal('mcpAccess' in meta, false, 'a removed selection is not resurrected from the stored meta');
+  assert.equal('skillAccess' in meta, false);
+});

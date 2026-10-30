@@ -8212,6 +8212,23 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .mcp-runs-row.is-skipped{color:var(--ink-3);}
 .mcp-runs-row.is-problem .hint{color:var(--amber-ink);}
 .mcp-runs-row .hint{margin-left:auto;}
+.cap-section{margin:0 0 18px;}
+.cap-title{margin:0 0 4px;font-size:13px;font-weight:600;color:var(--ink);}
+.cap-summary,.cap-note{margin:0 0 8px;}
+.cap-group{margin:0 0 10px;}
+.cap-group-head{padding:4px 0;font-size:11px;font-weight:600;color:var(--ink-3);}
+.cap-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:5px 0;font-size:12px;}
+.cap-check{display:inline-flex;align-items:center;gap:8px;cursor:pointer;}
+.cap-name{color:var(--ink);}
+.cap-tools{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:2px 0 6px 26px;padding-left:12px;border-left:1px solid var(--line);}
+.cap-tool{padding:2px 0;}
+.cap-gone .cap-name{color:var(--ink-3);}
+.cap-foot{margin:4px 0 0;}
+.hd-ov-caps .cap-run-agent{padding:6px 0;border-top:1px solid var(--line);font-size:12px;}
+.cap-run-name{font-weight:600;color:var(--ink);}
+.cap-run-line{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;margin-top:3px;}
+.cap-run-item{display:inline-flex;align-items:center;gap:6px;}
+.cap-run-note{margin-top:3px;}
 /* team-cap pause banner (board 9) */
 /* Team metrics KPI row: the policy tiles (Off-policy, Pooled budget) make 7–8 tiles, which leave a
    hole in the 3-column row; four columns fill two rows for eight. Back to one column when narrow. */
@@ -8811,6 +8828,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-qchip{flex:0 0 auto;height:19px;padding:0 7px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 11px/19px var(--sans);}
 .wfl-qchip.mono{font-family:var(--mono);}
 .wfl-qchip.is-new{background:var(--blue-bg);color:var(--blue-ink);}
+.wfl-qchip.is-review{background:var(--amber-bg);color:var(--amber-ink);}
 .wfl-qchip.is-open{background:var(--green-bg);color:var(--green-ink-strong);}
 .wfl-add{position:absolute;right:8px;top:50%;margin-top:-14px;opacity:0;}
 .wfl-row:hover .wfl-add{opacity:1;}

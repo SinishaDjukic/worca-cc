@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderRunSkills } from '../ui/public/mcp-run-picker.mjs';
+import { renderRunAgentCapabilities } from '../ui/public/agent-capabilities-view.mjs';
 import { skillLayerText } from '../src/core/skills-registry/texts.mjs';
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 import { bootDetail, openDetail, secOf, DETAIL } from './helpers/history-detail-boot.mjs';
@@ -82,4 +83,41 @@ test('History › Overview: the saved record\'s card', async () => {
   const none = await bootDetail();
   await openDetail(none, 'details/overview');
   assert.equal(secOf(none.window.document, 'overview').querySelector('.hd-ov-skills'), null);
+});
+
+// FEAT-1 (R-po-22): the run's own snapshot of what each agent got, live and saved.
+const CAPS = { n1: { agent: 'Plan', servers: [{ server: 'github', name: 'github', tools: 'all' }], skills: [], requiredServers: [], requiredSkills: [], emptyServers: false, emptySkills: true, missing: [], enforced: true } };
+const CAPS_LATER = { n1: { ...CAPS.n1, servers: [{ server: 'jira', name: 'jira', tools: 'all' }] } };
+
+test('run page › Overview: the agent capabilities card shows the run\'s own snapshot and follows state frames', async () => {
+  assert.equal(renderRunAgentCapabilities(null, { doc: new JSDOM('<!doctype html>').window.document }), null);
+  const ctx = await bootApp();
+  helloRun(ctx, { runId: 'r1' });
+  ctx.dispatch({ type: 'state', runId: 'r1', id: 'p1', status: 'running', agentCapabilities: CAPS });
+  ctx.go('running/r1/details/overview');
+  await ctx.settle(6);
+  const ov = () => ctx.window.document.querySelector('#run-detail .rd-sec[data-sec="overview"]');
+  const host = ov().querySelector('.hd-ov-caps-host');
+  assert.equal(host.hidden, false);
+  assert.match(host.textContent, /github/);
+  ctx.dispatch({ type: 'state', runId: 'r1', id: 'p1', status: 'running', agentCapabilities: CAPS_LATER });
+  await ctx.settle(4);
+  assert.match(ov().querySelector('.hd-ov-caps-host').textContent, /jira/);
+  ctx.dispatch({ type: 'state', runId: 'r1', id: 'p1', status: 'running', agentCapabilities: null });
+  await ctx.settle(4);
+  assert.equal(ov().querySelector('.hd-ov-caps-host').hidden, true, 'a run without agent selections shows no card');
+});
+
+test('History › Overview: the saved record\'s agent capabilities card', async () => {
+  // run.json nests the planner record; History must render that shape, not the flat state-frame one.
+  const { agent, ...record } = CAPS.n1;
+  const saved = { n1: { agent, selection: {}, record, missing: [], enforced: true } };
+  const ctx = await bootDetail({ detail: { ...DETAIL, agentCapabilities: saved } });
+  await openDetail(ctx, 'details/overview');
+  const card = secOf(ctx.window.document, 'overview').querySelector('.hd-ov-caps');
+  assert.ok(card, 'the card is on the saved run\'s Overview');
+  assert.match(card.textContent, /github/);
+  const none = await bootDetail();
+  await openDetail(none, 'details/overview');
+  assert.equal(secOf(none.window.document, 'overview').querySelector('.hd-ov-caps'), null);
 });

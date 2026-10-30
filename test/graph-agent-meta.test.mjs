@@ -196,3 +196,18 @@ test('progressStage: plan|build|review copy through, anything else is an error, 
   assert.ok(errs(base({ progressStage: 'ship' })).includes('progressStage must be one of plan, build, review'));
   assert.equal('progressStage' in normalizeAgentMeta(base()).meta, false);
 });
+
+test('mcpAccess / skillAccess: absent stays absent, present round-trips, malformed is dropped with a warning', () => {
+  const m = normalizeAgentMeta(base()).meta;
+  assert.equal('mcpAccess' in m, false);
+  assert.equal('skillAccess' in m, false);
+  const access = { mcpAccess: [{ server: 'manual:docs', tools: ['a'] }], skillAccess: [{ skill: 'skill:plugin:p:s' }] };
+  const got = normalizeAgentMeta(base(access)).meta;
+  assert.deepEqual(got.mcpAccess, access.mcpAccess);
+  assert.deepEqual(got.skillAccess, access.skillAccess);
+  const warnings = [];
+  const bad = normalizeAgentMeta(base({ mcpAccess: 'x' }), { warn: (w) => warnings.push(w) });
+  assert.deepEqual(bad.errors, []);
+  assert.equal('mcpAccess' in bad.meta, false);
+  assert.ok(warnings.some((w) => w.includes('mcpAccess must be an array')));
+});

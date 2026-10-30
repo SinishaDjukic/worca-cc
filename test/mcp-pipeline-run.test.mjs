@@ -4,7 +4,8 @@
 // API under a temp WORCA_HOME. No claude spawn anywhere.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, realpathSync, existsSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
@@ -385,4 +386,230 @@ test('§10: a run.json write still queued on the MCP chain when the run ends lan
   orch._onAgentEvent('planner', init([{ name: orch.mcpLayer.copies[0].name, status: 'failed' }]));
   await orch._mcpTail;
   assert.equal(existsSync(orch.runRoot), false, 'the removed run root is never recreated');
+});
+
+// ── FEAT-1: per-agent servers and tools — the plan from the START-TIME selection, applied in _execCtx ──────────────────────
+/** Give agent nodes a selection (extra meta per node id). `byNode` may be a function: it is read each time the graph is (re)adopted,
+ *  which stands for "the sidecar as it is right now" (a resume adopts the graph again). */
+function choose(orch, byNode) {
+  const adopt = orch._adoptResolvedGraph.bind(orch);
+  orch._adoptResolvedGraph = (r) => {
+    adopt(r);
+    for (const [id, extra] of Object.entries(typeof byNode === 'function' ? byNode() : byNode)) {
+      const nc = orch.resolved.nodeCtx[id];
+      if (nc) nc.meta = { ...nc.meta, ...extra };
+    }
+  };
+}
+const NODES = ['n_plan', 'n_impl', 'n_review'];
+const ctxOf = (seen, id) => seen.find((r) => r.ctx.nodeId === id)?.ctx;
+const pickPg = (tools) => ({ mcpAccess: [{ server: 'manual:pg', name: 'pg', tools }] });
+const warningsOf = async (orch) => (await readRunManifest(orch.getState().pipelineDir)).warnings;
+const home = () => mkdtempSync(join(tmpdir(), 'worca-cc-mcp-home-'));
+const HOME_ENV = (h) => ({ HOME: h, USERPROFILE: h, WORCA_TEST_ALLOW_HOME_FALLBACK: '1' });
+
+test('FEAT-1: a selecting agent gets only its picked tools and the others\' copies are denied; a sibling without a selection keeps the run-wide lists (===)', async () => {
+  const { dir, set } = await fixture();
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen) });
+  choose(orch, { n_plan: pickPg(['query']) });
+  assert.equal((await orch.run()).status, 'done');
+  const pg = `pg_${set.slug}`, sentry = `sentry_${set.slug}`;
+  const mine = ctxOf(seen, 'n_plan');
+  assert.ok(mine.mcpServerGrants.includes(`mcp__${pg}__query`) && !mine.mcpServerGrants.includes(`mcp__${pg}`));
+  assert.ok(!mine.mcpServerGrants.includes(`mcp__${sentry}`));
+  assert.ok(mine.mcpDisallowed.includes(`mcp__${sentry}`), 'the unpicked copy is denied');
+  for (const d of orch.mcpLayer.disallowed) assert.ok(mine.mcpDisallowed.includes(d), 'the run-level held-back names stay denied');
+  const sibling = ctxOf(seen, 'n_impl');
+  assert.equal(sibling.mcpServerGrants, orch.mcpServerGrants);
+  assert.equal(sibling.mcpDisallowed, orch.mcpLayer.disallowed);
+  assert.equal(sibling.skillPluginDirs, orch.skillLayer?.pluginDirs);
+  assert.deepEqual(orch.state.agentCapabilities.n_plan.servers.map((s) => s.server), ['manual:pg'], 'persisted on the run state (m2)');
+  assert.ok(NODES.every((n) => n in orch.state.agentCapabilities), 'a snapshot for EVERY agent node');
+});
+
+test('FEAT-1: the stored selection wins on resume (R-po-22), a new run reads the sidecar (R-po-21); an agent with none at start stays unrestricted (M2)', async () => {
+  const { dir, set } = await fixture();
+  let sidecar = { n_plan: pickPg(['query']) };
+  const run1 = [];
+  const box = {};
+  const orch1 = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(run1, { pauseFirst: box }) });
+  box.orch = orch1;
+  choose(orch1, () => sidecar);
+  assert.equal((await orch1.run()).status, 'paused');
+  const stored = (await readRunManifest(orch1.runRoot)).agentCapabilities;
+  assert.deepEqual(stored.n_plan.selection, pickPg(['query']));
+  assert.deepEqual(stored.n_impl.selection, {}, 'a snapshot for every agent node: empty selection = {}');
+
+  // The sidecar changes while paused: n_plan now picks sentry, n_impl (which picked nothing at start) picks pg.
+  sidecar = { n_plan: { mcpAccess: [{ server: 'manual:sentry', name: 'sentry', tools: 'all' }] }, n_impl: pickPg('all') };
+  const run2 = [];
+  const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: runners(run2), resume: readPipelineForResume(orch1.state.id) });
+  choose(orch2, () => sidecar);
+  assert.equal((await orch2.resume()).status, 'done');
+  const m2 = (await readRunManifest(orch2.getState().pipelineDir)).agentCapabilities;
+  assert.deepEqual(m2.n_plan.selection, pickPg(['query']), 'the plan still uses the stored selection');
+  assert.deepEqual(m2.n_impl.selection, {}, 'M2: no selection at start stays none');
+  const plan = ctxOf(run2, 'n_plan') ?? ctxOf(run1, 'n_plan');
+  assert.ok(plan.mcpServerGrants.includes(`mcp__pg_${set.slug}__query`));
+  const impl = ctxOf(run2, 'n_impl');
+  assert.equal(impl.mcpServerGrants, orch2.mcpServerGrants);
+  assert.equal(impl.mcpDisallowed, orch2.mcpLayer.disallowed);
+
+  // A NEW run reads the sidecar as it is now.
+  const run3 = [];
+  const orch3 = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(run3) });
+  choose(orch3, () => sidecar);
+  assert.equal((await orch3.run()).status, 'done');
+  assert.deepEqual((await readRunManifest(orch3.getState().pipelineDir)).agentCapabilities.n_plan.selection, sidecar.n_plan);
+});
+
+test('FEAT-1: a picked server opted out for this run starts the run and warns; a deleted agent is recorded under its key', async () => {
+  const { dir, set } = await fixture();
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen), mcpOptOut: [`${set.id}|manual:pg`] });
+  choose(orch, { n_plan: { displayName: 'Planner', ...pickPg('all') } });
+  assert.equal((await orch.run()).status, 'done');
+  assert.ok((await warningsOf(orch)).includes('Agent "Planner": server pg is not available — turned off for this run'));
+  assert.deepEqual(ctxOf(seen, 'n_plan').mcpServerGrants.filter((g) => g.startsWith(`mcp__pg_`)), []);
+  // Resume with the agent's sidecar gone: nc.meta is {} and the record names the node's key, not its id.
+  const nc = { ...orch.resolved.nodeCtx.n_plan, meta: {} };
+  const o2 = createOrchestrator({ projectDir: dir, claude: { mock: true } });
+  o2.resolved = { nodeCtx: { n_plan: nc } };
+  await o2._planAgentCaps();
+  assert.equal(o2.state.agentCapabilities.n_plan.agent, nc.key);
+  assert.notEqual(nc.key, 'n_plan');
+});
+
+test('FEAT-1: an engine that cannot enforce records the selection, warns and hands the node the run-wide lists (===)', async () => {
+  const { dir } = await fixture();
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners([]) });
+  assert.equal((await orch.run()).status, 'done');
+  orch.claude.engine = 'codex';
+  orch.resolved.nodeCtx.n_plan.meta = { ...orch.resolved.nodeCtx.n_plan.meta, displayName: 'Planner', ...pickPg('all') };
+  const logs = [];
+  orch.on('log', (l) => logs.push(l.text));
+  await orch._planAgentCaps();
+  const plan = orch.agentCaps.get('n_plan');
+  assert.equal(plan.enforced, false);
+  assert.ok(logs.includes('Agent "Planner": its servers and skills are recorded but this engine applies them run-wide'));
+  assert.equal(plan.grants, undefined);
+  assert.equal(plan.disallowed, undefined);
+  assert.equal(plan.skillPluginDirs, undefined);
+  const ctx = orch._execCtx({ id: 'n_plan', kind: 'agent' }, orch.resolved.nodeCtx.n_plan, { executionId: 'e1' });
+  assert.equal(ctx.mcpServerGrants, orch.mcpServerGrants);
+  assert.equal(ctx.mcpDisallowed, orch.mcpLayer.disallowed);
+  assert.equal(ctx.skillPluginDirs, orch.skillLayer?.pluginDirs);
+});
+
+// Native servers: the run's own grants decide what is provided; the catalog only decides what may be denied.
+async function nativeRun(dir, h, access, { setup = null } = {}) {
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen) });
+  choose(orch, Object.fromEntries(Object.entries(access).map(([id, ids]) => [id, { displayName: id, mcpAccess: ids.map((s) => ({ server: `native:${s}`, name: s, tools: 'all' })) }])));
+  await withEnv(HOME_ENV(h), async () => { if (setup) await setup(); assert.equal((await orch.run()).status, 'done'); });
+  return { orch, seen, warnings: await warningsOf(orch) };
+}
+const mcpJson = (dir, servers) => writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: Object.fromEntries(servers.map((n) => [n, { command: 'x', args: [n] }])) }));
+
+test('FEAT-1: native picks — an untracked .mcp.json is provided whole; the pick is granted, the other denied, no warning', async () => {
+  const dir = gitDir('mcp-native');
+  mcpJson(dir, ['linear', 'sentry']);
+  const { orch, seen, warnings } = await nativeRun(dir, home(), { n_plan: ['linear'] });
+  assert.ok(orch.mcpServerGrants.includes('mcp__linear') && orch.mcpServerGrants.includes('mcp__sentry'));
+  const ctx = ctxOf(seen, 'n_plan');
+  assert.ok(ctx.mcpServerGrants.includes('mcp__linear') && !ctx.mcpServerGrants.includes('mcp__sentry'));
+  assert.ok(ctx.mcpDisallowed.includes('mcp__sentry'));
+  assert.ok(!warnings.some((w) => /linear|sentry/.test(w)));
+});
+
+test('FEAT-1: committed and identical but unapproved servers are not in the run: missing + warning, and never denied', async () => {
+  const dir = gitDir('mcp-native-unapproved');
+  mcpJson(dir, ['linear', 'wip']);
+  execSync('git add .mcp.json && git -c user.email=t@t -c user.name=t commit -q -m mcp', { cwd: dir });
+  const { orch, seen, warnings } = await nativeRun(dir, home(), { n_plan: ['wip'], n_impl: ['linear'] });
+  assert.ok(!orch.mcpServerGrants.includes('mcp__wip') && !orch.mcpServerGrants.includes('mcp__linear'));
+  assert.ok(warnings.includes('Agent "n_plan": server wip is not available — not approved in Claude Code yet'));
+  assert.ok(warnings.includes('Agent "n_impl": server linear is not available — not approved in Claude Code yet'));
+  for (const r of seen) assert.ok(!r.ctx.mcpDisallowed.some((d) => d === 'mcp__wip' || d === 'mcp__linear'));
+});
+
+test('FEAT-1: a locally edited committed server is provided whatever its approval; an approved identical one too', async () => {
+  const dir = gitDir('mcp-native-edited');
+  mcpJson(dir, ['linear', 'wip']);
+  execSync('git add .mcp.json && git -c user.email=t@t -c user.name=t commit -q -m mcp', { cwd: dir });
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { linear: { command: 'x', args: ['linear'] }, wip: { command: 'y' } } }));
+  const h = home();
+  mkdirSync(join(h, '.claude'), { recursive: true });
+  writeFileSync(join(h, '.claude', 'settings.json'), JSON.stringify({ enabledMcpjsonServers: ['linear'] }));
+  const { orch, seen, warnings } = await nativeRun(dir, h, { n_plan: ['wip'], n_impl: ['linear'] });
+  assert.ok(orch.mcpServerGrants.includes('mcp__wip') && orch.mcpServerGrants.includes('mcp__linear'));
+  const wip = ctxOf(seen, 'n_plan'), lin = ctxOf(seen, 'n_impl');
+  assert.ok(wip.mcpServerGrants.includes('mcp__wip') && wip.mcpDisallowed.includes('mcp__linear'));
+  assert.ok(lin.mcpServerGrants.includes('mcp__linear') && lin.mcpDisallowed.includes('mcp__wip'));
+  assert.ok(!warnings.some((w) => /Agent .*(wip|linear)/.test(w)));
+});
+
+test('FEAT-1: a Folder run is approval-gated: the folder copy makes every real-dir server identical to its committed file', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-mcp-folder-'));
+  mcpJson(dir, ['linear', 'wip']);
+  mkdirSync(join(dir, '.claude'));
+  writeFileSync(join(dir, '.claude', 'settings.local.json'), JSON.stringify({ enabledMcpjsonServers: ['linear'] }));
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen), workMode: 'folder' });
+  choose(orch, { n_plan: { displayName: 'n_plan', mcpAccess: [{ server: 'native:wip', name: 'wip', tools: 'all' }] } });
+  await withEnv(HOME_ENV(home()), async () => assert.equal((await orch.run()).status, 'done'));
+  assert.deepEqual(orch.mcpServerGrants, ['mcp__linear']);
+  assert.ok((await warningsOf(orch)).includes('Agent "n_plan": server wip is not available — not approved in Claude Code yet'));
+  assert.ok(seen.every((r) => !r.ctx.mcpDisallowed.includes('mcp__wip')));
+});
+
+test('FEAT-1: a personal (local-scope) pick is granted; a top-level user-scope pick is not provided by the run', async () => {
+  const dir = gitDir('mcp-native-personal');
+  const h = home();
+  writeFileSync(join(h, '.claude.json'), JSON.stringify({
+    mcpServers: { userwide: { command: 'u' } },
+    projects: { [realpathSync(dir)]: { mcpServers: { mine: { command: 'm' }, other: { command: 'o' } } } },
+  }));
+  const { orch, seen, warnings } = await nativeRun(dir, h, { n_plan: ['mine'], n_impl: ['userwide'] });
+  assert.ok(orch.mcpServerGrants.includes('mcp__mine') && orch.mcpServerGrants.includes('mcp__other'));
+  assert.ok(!orch.mcpServerGrants.includes('mcp__userwide'));
+  const mine = ctxOf(seen, 'n_plan');
+  assert.ok(mine.mcpServerGrants.includes('mcp__mine') && mine.mcpDisallowed.includes('mcp__other'));
+  assert.ok(!warnings.some((w) => /server mine/.test(w)));
+  assert.ok(warnings.includes('Agent "n_impl": server userwide is not available — not provided by this run'));
+  assert.ok(!ctxOf(seen, 'n_impl').mcpServerGrants.includes('mcp__userwide'));
+});
+
+test('FEAT-1: old-CLI degradation — with no --mcp-config nothing is provided, so a pick is missing and no mcp__ grant remains', async () => {
+  const { dir } = await fixture();
+  const bin = join(mkdtempSync(join(tmpdir(), 'worca-cc-mcp-oldcli-')), 'claude');
+  writeFileSync(bin, '#!/bin/sh\necho "2.1.100 (Claude Code)"\n', { mode: 0o755 });
+  const orch = createOrchestrator({ projectDir: dir, claude: { bin } });
+  orch.runRoot = mkdtempSync(join(tmpdir(), 'worca-cc-mcp-oldcli-rr-'));
+  orch.mcpConfigPath = join(orch.runRoot, 'mcp.json');
+  orch.mcpServerGrants = ['mcp__pg_billing'];
+  orch.mcpLayer = { env: {}, redact: [], disallowed: [], allowlist: [], copies: [] };
+  await orch._recordCapabilities();
+  assert.deepEqual(orch.mcpServerGrants, []);
+  const nc = { nodeId: 'n_plan', kind: 'agent', key: 'planner', meta: { displayName: 'Planner', ...pickPg('all') } };
+  orch.resolved = { nodeCtx: { n_plan: nc } };
+  await orch._planAgentCaps();
+  const plan = orch.agentCaps.get('n_plan');
+  assert.deepEqual(plan.grants, []);
+  assert.equal(plan.missing[0].kind, 'server');
+  assert.ok(!(plan.grants.some((g) => g.startsWith('mcp__'))));
+});
+
+test('FEAT-1: a server the run provides but the picker never offered is never denied; an unpicked registry server still is', async () => {
+  const { dir, set } = await fixture();
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners([]) });
+  choose(orch, { n_plan: pickPg('all') });
+  const assemble = orch._assembleContext.bind(orch);
+  orch._assembleContext = async (...a) => { const r = await assemble(...a); orch.mcpServerGrants.push('mcp__extra'); return r; };
+  assert.equal((await orch.run()).status, 'done');
+  await orch._planAgentCaps();
+  const plan = orch.agentCaps.get('n_plan');
+  assert.ok(plan.grants.includes('mcp__extra') && !plan.disallowed.includes('mcp__extra'));
+  assert.ok(plan.disallowed.includes(`mcp__sentry_${set.slug}`));
 });

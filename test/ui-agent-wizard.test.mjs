@@ -179,3 +179,32 @@ test('agentgen-error returns to Step 1; leave-guard POSTs stop + unsubscribes a 
   assert.equal(stops.length, 1);
   assert.ok(ws().sent.some((m) => m.type === 'unsubscribe' && m.genId === 'agen_3'));
 });
+
+test('Step 3 (chat draft "Edit…" path) renders the capability picker and the ticks read back', async () => {
+  const caps = {
+    servers: [{ id: 'plugin:gh', name: 'github', group: 'project', required: false, tools: [{ name: 'a', heldBack: null }] }],
+    skills: [{ id: 'skill:library:x', name: 'x', group: 'project', required: false }],
+    unavailable: { servers: {}, skills: {} },
+  };
+  const { window } = await boot({
+    fetchHandler: (u) => {
+      if (u.includes('/api/agents/capabilities')) return Promise.resolve({ ok: true, status: 200, json: async () => caps });
+      return null;
+    },
+  });
+  window.__agents.agentFormRender(window.document.getElementById('agw-step-3'), {
+    metaVersion: 2, key: 'docsWriter', displayName: 'Docs Writer', runnerType: 'producer', order: 99,
+    inputs: [{ id: 'plan', type: 'md' }], outputs: [{ id: 'review', type: 'md', filename: 'review-{cycle}.md' }],
+    skillAccess: [{ skill: 'skill:library:x' }],
+  }, { markdown: '# x' });
+  await new Promise((r) => setTimeout(r, 0));
+  const step3 = window.document.getElementById('agw-step-3');
+  assert.deepEqual([...step3.querySelectorAll('.cap-title')].map((n) => n.textContent), ['MCP servers', 'Skills']);
+  assert.equal(step3.querySelector('input[data-id="skill:library:x"]').checked, true, 'a drafted selection shows ticked');
+  const box = step3.querySelector('input[data-id="plugin:gh"]');
+  box.checked = true;
+  box.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const { meta } = window.__agents.agentFormRead(step3);
+  assert.deepEqual(meta.mcpAccess, [{ server: 'plugin:gh', name: 'github', tools: 'all', reviewedTools: ['a'] }]);
+  assert.deepEqual(meta.skillAccess, [{ skill: 'skill:library:x', name: 'x' }]);
+});

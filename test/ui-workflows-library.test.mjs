@@ -568,3 +568,21 @@ test('workflow row ⋯: Pin to Chat home / Unpin from Chat home calls togglePin 
   click(more);   // reopen: the label follows the state at open time
   assert.deepEqual([...s.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.textContent), ['Pin to Chat home']);
 });
+
+test('an agent with a capability selection shows its summary chip; an amber "new tools to review" chip only when the server flags it', async () => {
+  const picked = { ...AGENTS[2], mcpAccess: [{ server: 'manual:jira', tools: 'all' }], skillAccess: [{ skill: 'skill:library:lint' }] };
+  const s = await boot({ agents: [AGENTS[0], picked] });
+  s.lib.openFolder(['agents', 'general']);
+  const card = () => s.host.querySelector('.wfl-item[data-item="agent:docsWriter"]');
+  assert.match(card().querySelector('.wfl-l1').textContent, /1 server · all tools · 1 skill/);
+  assert.doesNotMatch(card().textContent, /new tools to review/, 'no flag from the server, no chip');
+  s.lib.setData({ agents: [AGENTS[0], { ...picked, reviewTools: 2 }] });
+  const chip = card().querySelector('.wfl-qchip.is-review');
+  assert.equal(chip.textContent, 'new tools to review');
+  assert.equal(chip.title, '2 new tools');
+  click(card().querySelector('.wfl-main'));
+  assert.match(card().querySelector('.wfl-detail').textContent, /MCP servers · Skills/);
+  s.lib.open('agents');
+  s.lib.openFolder(['agents', 'coding']);
+  assert.doesNotMatch(s.host.querySelector('.wfl-item[data-item="agent:planner"]').textContent, /server|skill|review/, 'an agent without a selection shows neither');
+});

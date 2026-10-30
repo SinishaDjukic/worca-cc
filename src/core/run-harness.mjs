@@ -14,7 +14,7 @@
 // interaction via answer()/stop().
 
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -138,6 +138,9 @@ import { keepListNames } from './mcp/keep-list.mjs';
 import { expandMcpDenyRules } from './mcp/deny.mjs';
 import { resolveSkillRegistry, requiredSkillsOf, SKILL_CAP } from './skills-registry/resolve.mjs';
 import { materializeSkillMount } from './skills-registry/mount.mjs';
+import { planRunAgentCapabilities, warningLines } from './agent-capabilities.mjs';
+import { pickAccess } from '../shared/agent-access.mjs';
+import { listNativeMcpServers } from './native-mcp.mjs';
 import { skillHostFacts } from './skills-registry/host.mjs';
 import { SKILL_PROBLEM_REASONS, skillSkipMessage, skillSkipReasonText, skillLayerText, skillHooksIgnoredText } from './skills-registry/texts.mjs';
 import { skillMdFields } from './skills-registry/inspect.mjs';
@@ -3772,6 +3775,7 @@ export class RunHarness extends EventEmitter {
       allowlist: Object.values(reg.result.servers).some((s) => typeof s.command === 'string') ? keepListNames() : [],
       copies: reg.result.copies,
       servers: reg.result.servers,
+      skipped: reg.result.skipped, skippedTools: reg.result.skippedTools, sets: reg.result.sets,   // FEAT-1 (in memory only)
     };
     const mcpWhy = this._engineMcpRefusal(this.mcpLayer);
     if (mcpWhy) throw engineRefusal(this.claude.engine, mcpWhy);
@@ -4044,6 +4048,7 @@ export class RunHarness extends EventEmitter {
     const agentNames = onEngine && !blocked ? kept.map((m) => mountedAs[`${m.pluginName}:${m.name}`]) : null;
     this.skillLayer = {
       base: mount.base, pluginDirs: blocked || onEngine ? [] : mount.pluginDirs, plugins, mounted: kept, skipped: allSkipped, blocked,
+      sets: result.sets,                                  // FEAT-1 (in memory only)
       ...(agentNames ? { rel: skillsRelFor(engine), names: agentNames } : {}),
     };
     const record = {
@@ -4086,6 +4091,69 @@ export class RunHarness extends EventEmitter {
   /** Whether the SKILL.md in a copied set skill's folder declares `hooks:` (skills registry §2a U1); unreadable: no. */
   _skillDeclaresHooks(dir) {
     try { return !!skillMdFields(readFileSync(join(dir, 'SKILL.md'), 'utf8'))?.hooks; } catch { return false; }
+  }
+
+  /** FEAT-1: each agent node's capability plan, from its START-TIME selection. Sets this.agentCaps (Map nodeId -> plan). */
+  async _planAgentCaps({ reported = new Set() } = {}) {
+    this.agentCaps = new Map();
+    const manifest = this.runRoot ? await readRunManifest(this.runRoot) : null;
+    // A-8 / R-po-22: once a snapshot exists it is the truth — a node missing from it started with NO selection.
+    const snap = manifest?.agentCapabilities && typeof manifest.agentCapabilities === 'object' ? manifest.agentCapabilities : null;
+    const nodes = Object.entries(this.resolved?.nodeCtx || {}).filter(([, nc]) => nc.kind === 'agent').map(([id, nc]) => ({
+      id, key: nc.key, name: nc.meta?.displayName || nc.key,       // nc.key is always the resolved key; nc.meta is {} for a deleted agent on resume
+      access: snap ? (snap[id]?.selection ?? {}) : pickAccess(nc.meta || {}),
+    }));
+    if (!nodes.length) return;
+    // The servers this run PROVIDES outside the registry = the run's own grants minus the registry copies. Starting from
+    // this.mcpServerGrants (not rc.mcpServerNames) keeps the old-CLI degradation and the exact nativeOnly / attachCommittedMcp outcome.
+    // The catalog is consulted only for ELIGIBILITY: a provided server is denied (when unchosen) only if the picker could have offered it.
+    const rc = this.runContext || {};
+    const registryNames = new Set((this.mcpLayer?.copies || []).map((c) => c.name));
+    // committedDir: the run's own committed copy (worktree / folder copy) — the exact file mergeMcpConfigs compared
+    const listed = await listNativeMcpServers({
+      members: this.members.map((m) => ({ dir: m.projectDir, workMode: this._memberWorkMode(m.projectKey), committedDir: this.workDirs?.get(m.projectKey) })),
+      single: !this.isWorkspace,
+    });
+    const choosable = new Set(listed.filter((s) => s.approval === 'approved').map((s) => s.name));
+    const native = this.mcpServerGrants.filter((g) => g.startsWith('mcp__')).map((g) => g.slice(5)).filter((n) => !registryNames.has(n)).map((name) => {
+      const raw = rc.renames?.mcpServers?.[name] ?? name;
+      return { name, raw, eligible: choosable.has(raw) };
+    });
+    const notProvided = Object.fromEntries(listed.filter((s) => s.approval !== 'approved').map((s) => [`native:${s.name}`, s.approval === 'disabled' ? 'turned off in Claude Code' : 'not approved in Claude Code yet']));
+    const plans = planRunAgentCapabilities({
+      nodes, mcp: this.mcpLayer || {}, skills: this.skillLayer || {}, native, notProvided,
+      engine: this.claude.engine || 'claude', permissionMode: this.claude.permissionMode || 'acceptEdits',
+    });
+    const out = {}, lines = [];
+    for (const n of nodes) {
+      const plan = plans.get(n.id);
+      if (plan.enforced && plan.skillKeep) plan.skillPluginDirs = this._mountAgentSkills(n.id, plan.skillKeep);
+      this.agentCaps.set(n.id, plan);
+      out[n.id] = { agent: n.key, selection: n.access, record: plan.record, missing: plan.missing, enforced: plan.enforced, ...(plan.note ? { note: plan.note } : {}) };
+      lines.push(...warningLines(plan, n.name));
+    }
+    this.state.agentCapabilities = Object.fromEntries(Object.entries(out).map(([id, v]) => [id, { agent: v.agent, ...v.record, missing: v.missing, enforced: v.enforced, note: v.note }]));
+    if (this.runRoot) {
+      const cur = manifest || (await readRunManifest(this.runRoot)) || {};
+      const have = Array.isArray(cur.warnings) ? cur.warnings : [];
+      await updateRunManifest(this.runRoot, { agentCapabilities: out, warnings: [...have, ...lines.filter((l) => !have.includes(l))] });
+    }
+    await this._persist();                                                // History / reconnects see it now (after run.json, so the emit never races its write)
+    for (const l of lines) if (!reported.has(l)) this._log('agents', 'warn', l);
+  }
+
+  /** One plugin dir per allowed set, holding only the allowed skills (reuses P3's materializer on a filtered result).
+   *  Never mounts into a blocked layer: policy / the machine / a sideload refusal said no `--plugin-dir`. */
+  _mountAgentSkills(nodeId, keep) {
+    const layer = this.skillLayer;
+    if (!layer || layer.blocked || !layer.pluginDirs?.length || !layer.plugins?.length) return [];
+    const safe = /^[A-Za-z0-9._-]+$/.test(nodeId) ? nodeId : createHash('sha1').update(nodeId).digest('hex').slice(0, 12);
+    const base = join(this.pipeline.dir, 'agent-skills', 'skills', safe);
+    const plugins = layer.plugins.filter((p) => keep.some((m) => m.setId === p.setId));
+    // base sits directly under a `skills` folder (materializeSkillMount's rule) and is wiped first — never the shared <pipeline.dir>/skills
+    const { pluginDirs, failed } = materializeSkillMount({ result: { plugins, mounted: keep }, base });
+    for (const f of failed || []) this._log('skills', 'warn', `Agent skills for node ${nodeId}: ${f.pluginName}:${f.name ?? '?'} could not be copied`);
+    return pluginDirs;
   }
 
   /**

@@ -335,3 +335,59 @@ test('a claude without --plugin-dir: the layer is skipped (`cli-no-plugin-dir`);
   assert.ok(!(await readRunManifest(orch.runRoot)).warnings.includes(RENAMED), 'a blocked layer loads nothing: no rename to report');
   assert.deepEqual(readFileSync(count, 'utf8').trim().split('\n').sort(), ['--help', '--version'], 'one probe serves both gates');
 });
+
+// ── FEAT-1: per-agent skills — a plugin dir per agent holding only its picks (plus the team's) ─────────────────────────────
+function choose(orch, byNode) {
+  const adopt = orch._adoptResolvedGraph.bind(orch);
+  orch._adoptResolvedGraph = (r) => {
+    adopt(r);
+    for (const [id, extra] of Object.entries(byNode)) orch.resolved.nodeCtx[id].meta = { ...orch.resolved.nodeCtx[id].meta, ...extra };
+  };
+}
+const pickSkill = (name) => ({ skillAccess: [{ skill: `skill:library:${name}`, name }] });
+const byNode = (seen, id) => seen.find((r) => r.ctx.nodeId === id);
+
+test('FEAT-1: a skill-selecting agent mounts only its pick under <pipeline>/agent-skills/skills/<node>/<plugin>; a sibling keeps the run-wide dirs (===)', async () => {
+  const { dir, set } = await fixture();
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen) });
+  choose(orch, { n_plan: pickSkill('release-notes') });
+  assert.equal((await orch.run()).status, 'done');
+  const mine = byNode(seen, 'n_plan');
+  assert.deepEqual(mine.dirs, [join(orch.getState().pipelineDir, 'agent-skills', 'skills', 'n_plan', set.slug)]);
+  assert.ok(mine.present);
+  assert.deepEqual(mine.skills, [['release-notes']], 'only the chosen skill (no team skills in this set)');
+  assert.equal(byNode(seen, 'n_impl').ctx.skillPluginDirs, orch.skillLayer.pluginDirs);
+  assert.deepEqual(byNode(seen, 'n_impl').skills, [['deploy-checklist', 'release-notes']], 'the shared mount still holds everything');
+});
+
+test('FEAT-1 (M1): a blocked skill layer always wins — no per-agent mount, no agent-skills folder', async () => {
+  const { dir } = await fixture();
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen) });
+  orch._skillHostFacts = () => ({ installedPluginNames: [], sideloadDisabled: true });
+  choose(orch, { n_plan: pickSkill('release-notes') });
+  assert.equal((await orch.run()).status, 'done');
+  assert.equal(orch.skillLayer.blocked, 'sideload-disabled');
+  assert.ok(orch.skillLayer.plugins.length, 'plugins stay populated (what would have loaded)');
+  assert.deepEqual(byNode(seen, 'n_plan').ctx.skillPluginDirs, []);
+  assert.equal(existsSync(join(orch.getState().pipelineDir, 'agent-skills')), false);
+});
+
+test('FEAT-1 (M1): after a sideload refusal the next dispatch of a skill-selecting agent carries no --plugin-dir and the run finishes', async () => {
+  const { dir } = await fixture();
+  const seen = [];
+  const base = runners(seen);
+  let refused = false;
+  const refuse = (inner) => async (ctx) => {
+    if (!refused && ctx.nodeId === 'n_plan') { refused = true; ctx.onSkillSideloadRefused(); }
+    return inner(ctx);
+  };
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: { producer: refuse(base.producer), verifier: refuse(base.verifier) } });
+  choose(orch, { n_plan: pickSkill('release-notes'), n_impl: pickSkill('deploy-checklist') });
+  assert.equal((await orch.run()).status, 'done');
+  assert.equal(orch.skillLayer.blocked, 'sideload-disabled');
+  const impl = byNode(seen, 'n_impl');
+  assert.ok(impl, 'a later skill-selecting agent was dispatched');
+  assert.deepEqual(impl.ctx.skillPluginDirs, [], 'its own mount does not override the refusal');
+});

@@ -185,3 +185,118 @@ test('PUT /api/agents/:key answers 422 the same way, and 400 keeps its old body'
   assert.equal(plain.status, 400);
   assert.equal((await plain.json()).errors, undefined);
 });
+
+// ── FEAT-1: per-agent MCP servers and skills — capabilities, run-check, review flag ─────────────────────────
+const cap = {};   // shared fixture of the three tests below, built on first use
+
+async function capFixture() {
+  if (cap.key) return cap;
+  const { execFileSync } = await import('node:child_process');
+  const { writeFileSync, realpathSync } = await import('node:fs');
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const store = await import('../src/core/mcp/store.mjs');
+  const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a], { stdio: 'ignore' });
+  const mk = async (tag) => realpathSync(await mkdtemp(join(tmpdir(), `agents-cap-${tag}-`)));
+  // Git project: `.mcp.json` has `committed` (committed, unchanged => the run drops it until Claude approves it) and `wip`
+  // (added after the commit => untracked edit, provided). The user's LOCAL scope has `mine`; the top-level `mcpServers` has `userwide`.
+  const dir = await mk('git');
+  git(dir, 'init', '-q');
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { committed: { command: 'x' } } }));
+  git(dir, 'add', '.mcp.json'); git(dir, 'commit', '-qm', 'init');
+  writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { committed: { command: 'x' }, wip: { command: 'y' } } }));
+  // Folder project: its single `.mcp.json` server is unapproved (the run copies the real-dir file as its "committed" copy).
+  const folder = await mk('folder');
+  writeFileSync(join(folder, '.mcp.json'), JSON.stringify({ mcpServers: { fsrv: { command: 'z' } } }));
+  const prevHome = process.env.HOME;
+  const home = await mkdtemp(join(tmpdir(), 'agents-cap-home-'));
+  process.env.HOME = home;
+  writeFileSync(join(home, '.claude.json'), JSON.stringify({
+    mcpServers: { userwide: { command: 'u' } },
+    projects: { [dir]: { mcpServers: { mine: { command: 'm' } } } },
+  }));
+  await addProject({ name: 'cap-git', path: dir });
+  await addProject({ name: 'cap-folder', path: folder, vcs: 'none' });
+  const pg = await store.addManualServer('pg', { type: 'stdio', command: 'node', args: ['/srv/pg.js'], description: 'db' });
+  const team = await store.createSet('Billing');
+  await store.putMember(team.id, 'manual:pg', { enabled: true, values: {}, secrets: {} }, { def: pg });
+  await store.recordTest(team.id, 'manual:pg', { at: new Date().toISOString(), ok: true, tools: ['query', 'drop'], error: null, fingerprint: 'f' });
+  Object.assign(cap, { key: projectKey(dir), folderKey: projectKey(folder), dir, home, prevHome, set: team, store });
+  return cap;
+}
+after(() => { if (cap.key) { if (cap.prevHome === undefined) delete process.env.HOME; else process.env.HOME = cap.prevHome; } });
+
+test('GET /api/agents/capabilities: Project/Team/Personal order, native rows, no user-scope row, unavailable approvals', async () => {
+  const f = await capFixture();
+  await f.store.setProjectAssignment(f.key, { sets: [f.set.id], includeGeneral: false });
+  const r = await get(`/api/agents/capabilities?projectKey=${f.key}`);
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  const ids = body.servers.map((s) => s.id);
+  assert.ok(ids.includes('native:wip'), 'an untracked/edited .mcp.json server is a Project row');
+  assert.ok(ids.includes('native:mine'), 'local scope is a Personal row');
+  assert.ok(!ids.includes('native:userwide'), 'the top-level user-scope server is not a row');
+  assert.ok(!ids.includes('native:committed'), 'a committed-identical unapproved server is not choosable');
+  assert.equal(body.unavailable.servers['native:committed'], 'not approved in Claude Code yet');
+  const groups = body.servers.map((s) => s.group);
+  assert.deepEqual(groups, [...groups].sort((a, b) => ['project', 'team', 'personal'].indexOf(a) - ['project', 'team', 'personal'].indexOf(b)));
+  assert.equal(body.servers.find((s) => s.id === 'native:wip').group, 'project');
+  assert.equal(body.servers.find((s) => s.id === 'native:mine').group, 'personal');
+  assert.equal((await get('/api/agents/capabilities?projectKey=nope-00000000')).status, 404);
+  assert.equal((await get('/api/agents/capabilities?projectKey=../x')).status, 400);
+  assert.equal((await get('/api/agents/capabilities')).status, 200, 'no project: the library has no native rows');
+});
+
+test('GET /api/agents: reviewTools counts untested-since tools of an "all" entry; no entry => the key is absent', async () => {
+  const f = await capFixture();
+  const meta = (key, mcpAccess) => ({ ...META, key, displayName: key, order: 50, ...(mcpAccess ? { mcpAccess } : {}) });
+  await post('/api/agents', { meta: meta('revFlagged', [{ server: 'manual:pg', tools: 'all', reviewedTools: ['query'] }]), markdown: MD });
+  await post('/api/agents', { meta: meta('revPlain', [{ server: 'manual:pg', tools: ['query'] }]), markdown: MD });
+  await post('/api/agents', { meta: meta('revNone'), markdown: MD });
+  const { agents } = await (await get('/api/agents')).json();
+  assert.equal(agents.find((a) => a.key === 'revFlagged').reviewTools, 1);
+  assert.equal('reviewTools' in agents.find((a) => a.key === 'revPlain'), false);
+  assert.equal('reviewTools' in agents.find((a) => a.key === 'revNone'), false);
+  assert.ok(f.set);
+});
+
+test('POST /api/agents/run-check: opted-out server, no selection, codex, unapproved native, untracked native, Folder project, Auto', async () => {
+  const f = await capFixture();
+  const agentMeta = (key, mcpAccess) => ({ ...META, key, displayName: key, order: 51, ...(mcpAccess ? { mcpAccess } : {}) });
+  const names = { opted: 'rcOpted', none: 'rcNone', committed: 'rcCommitted', wip: 'rcWip', folder: 'rcFolder' };
+  await post('/api/agents', { meta: agentMeta(names.opted, [{ server: 'manual:pg', tools: 'all' }]), markdown: MD });
+  await post('/api/agents', { meta: agentMeta(names.none), markdown: MD });
+  await post('/api/agents', { meta: agentMeta(names.committed, [{ server: 'native:committed', tools: 'all' }]), markdown: MD });
+  await post('/api/agents', { meta: agentMeta(names.wip, [{ server: 'native:wip', tools: 'all' }]), markdown: MD });
+  await post('/api/agents', { meta: agentMeta(names.folder, [{ server: 'native:fsrv', tools: 'all' }]), markdown: MD });
+  const wfIds = new Map();
+  const wfFor = async (key) => {
+    if (wfIds.has(key)) return wfIds.get(key);
+    const r = await post('/api/workflows', {
+      version: 2, name: `rc ${key}`, domain: 'coding',
+      nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+        { id: 'n_a', kind: 'agent', key, x: 600, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
+      wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+        { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_a', port: 'plan' } },
+        { id: 'w3', from: { node: 'n_a', port: 'review' }, to: { node: 'n_end', port: 'result' } }],
+    });
+    assert.equal(r.status, 201, JSON.stringify(await r.clone().json()));
+    wfIds.set(key, (await r.json()).workflow.id);
+    return wfIds.get(key);
+  };
+  const check = async (key, body = {}, projectKey = f.key) => (await (await post('/api/agents/run-check', { target: { projectKey }, workflowId: await wfFor(key), ...body })).json());
+
+  await f.store.setProjectAssignment(f.key, { sets: [f.set.id], includeGeneral: false });
+  assert.deepEqual((await check(names.none)).warnings, [], 'an agent without a selection');
+  assert.deepEqual((await check(names.wip)).warnings, [], 'an untracked/edited .mcp.json server is provided');
+  const opted = await check(names.opted, { mcpOptOut: [`${f.set.id}|manual:pg`] });
+  assert.equal(opted.warnings.length, 1);
+  assert.match(opted.warnings[0], /rcOpted/);
+  assert.match((await check(names.committed)).warnings[0], /not approved in Claude Code yet$/);
+  const codex = await check(names.wip, { engine: 'codex' });
+  assert.ok(codex.warnings.some((w) => /applies them run-wide/.test(w)));
+  assert.match((await check(names.folder, {}, f.folderKey)).warnings[0], /not approved in Claude Code yet$/);
+  const auto = await (await post('/api/agents/run-check', { target: { projectKey: f.key } })).json();
+  assert.deepEqual(auto.warnings, [], 'Auto has no workflow at start');
+  assert.equal((await post('/api/agents/run-check', { target: {} })).status, 400);
+});

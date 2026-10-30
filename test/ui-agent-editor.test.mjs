@@ -206,3 +206,94 @@ test('a PUT result\'s warnings make a warn toast; updatedVariants make an ok toa
     } },
   ]);
 });
+
+// FEAT-1: the shared form's MCP server / skill picker (loaded from GET /api/agents/capabilities).
+const GH = 'plugin:gh', SK = 'skill:library:x';
+const CATALOG = {
+  servers: [{ id: GH, name: 'github', group: 'project', required: false, tools: [{ name: 'a', heldBack: null }, { name: 'b', heldBack: null }] }],
+  skills: [{ id: SK, name: 'x', group: 'project', required: false }],
+  unavailable: { servers: {}, skills: {} },
+};
+const settle = () => new Promise((r) => setTimeout(r, 0));
+const bootCaps = async (store) => {
+  const puts = [], caps = [];
+  const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.includes('/api/agents/capabilities')) { caps.push(u); return json(CATALOG); }
+      if (u.endsWith('/api/agents/docsWriter') && opts.method === 'PUT') {
+        const body = JSON.parse(opts.body);
+        puts.push(body);
+        store.meta = { ...AGENTS[1], ...body.meta };
+        return json({ meta: store.meta, markdown: body.markdown });
+      }
+      if (u.endsWith('/api/agents/docsWriter')) return json({ meta: store.meta, markdown: '# b\n' });
+      return null;
+    },
+  });
+  await goAgents(window, 'docsWriter');
+  const open = async () => {
+    const card = window.document.querySelector('.agent-card[data-agent-key="docsWriter"]');
+    click(window, card.querySelector('.agent-edit'));
+    await settle(); await settle();
+    return card;
+  };
+  return { window, puts, caps, open };
+};
+const tick = (window, card, sel) => { const b = card.querySelector(sel); b.checked = !b.checked; b.dispatchEvent(new window.Event('change', { bubbles: true })); };
+
+test('picker: ticks save as mcpAccess / skillAccess, reopen shows the same ticks, unticking all omits both keys', async () => {
+  const store = { meta: AGENTS[1] };
+  const { window, puts, caps, open } = await bootCaps(store);
+  let card = await open();
+  assert.equal(caps.length, 1);
+  assert.equal(caps[0].includes('projectKey'), false, 'no project selected: the param is omitted');
+  tick(window, card, `.cap-server input[data-id="${GH}"]`);
+  click(window, [...card.querySelectorAll('.cap-tools .seg button')].find((b) => b.textContent === 'Selected tools'));
+  tick(window, card, `input[data-tool="b"]`);
+  tick(window, card, `.cap-section input[data-id="${SK}"]`);
+  click(window, card.querySelector('.agent-edit-save'));
+  await settle(); await settle();
+  assert.deepEqual(puts[0].meta.mcpAccess, [{ server: GH, name: 'github', tools: ['a'] }]);
+  assert.deepEqual(puts[0].meta.skillAccess, [{ skill: SK, name: 'x' }]);
+
+  card = await open();
+  assert.equal(card.querySelector(`.cap-server input[data-id="${GH}"]`).checked, true);
+  assert.deepEqual([...card.querySelectorAll('.cap-tool input')].map((b) => b.checked), [true, false]);
+  assert.equal(card.querySelector(`.cap-section input[data-id="${SK}"]`).checked, true);
+
+  tick(window, card, `.cap-server input[data-id="${GH}"]`);
+  tick(window, card, `.cap-section input[data-id="${SK}"]`);
+  click(window, card.querySelector('.agent-edit-save'));
+  await settle(); await settle();
+  assert.equal(puts.length, 2);
+  assert.equal('mcpAccess' in puts[1].meta, false);
+  assert.equal('skillAccess' in puts[1].meta, false);
+});
+
+test('picker: an "all" server saved without a baseline is stamped with reviewedTools', async () => {
+  const store = { meta: { ...AGENTS[1], mcpAccess: [{ server: GH, name: 'github', tools: 'all' }] } };
+  const { window, puts, open } = await bootCaps(store);
+  const card = await open();
+  const pane = card.querySelector('.agent-edit-pane');
+  assert.equal(card.querySelector(`.cap-server input[data-id="${GH}"]`).checked, true);
+  tick(window, card, `.cap-section input[data-id="${SK}"]`);
+  tick(window, card, `.cap-section input[data-id="${SK}"]`);
+  click(window, pane.querySelector('.agent-edit-save'));
+  await settle(); await settle();
+  assert.deepEqual(puts[0].meta.mcpAccess, [{ server: GH, name: 'github', tools: 'all', reviewedTools: ['a', 'b'] }]);
+  assert.equal(JSON.stringify(puts[0].meta).includes('"extra"'), false);
+});
+
+test('built-in agent: read-only access summary, no picker', async () => {
+  const withAccess = { ...AGENTS[0], mcpAccess: [{ server: GH, name: 'github', tools: 'all' }], skillAccess: [{ skill: SK, name: 'x' }] };
+  const { window } = await boot({ fetchHandler: (u, opts) => (u.endsWith('/api/agents/planner') && !opts.method
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ meta: withAccess, markdown: '# p' }) }) : null) });
+  await goAgents(window, 'planner');
+  await settle();
+  const view = window.document.querySelector('.agent-card[data-agent-key="planner"] .agent-access-view');
+  assert.ok(view && !view.hidden);
+  assert.match(view.textContent, /1 server · all tools · 1 skill/);
+  assert.match(view.textContent, /github/);
+  assert.equal(window.document.querySelector('.agent-card[data-agent-key="planner"] .cap-picker'), null);
+});

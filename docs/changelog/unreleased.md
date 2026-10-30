@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Choose an agent's MCP servers, tools and skills
+
+**Each agent gets only the servers, tools and skills you give it.**
+
+The agent editor has an **MCP servers** and a **Skills** section. Tick the servers an agent may use, keep **All tools** or pick tools, and tick the skills from your skill sets; an empty choice still means everything the run provides. Tools a server adds later are flagged **New — needs review** until you keep or untick them, items the team requires are always received, and a removed server, tool or skill shows as **Unavailable** and warns at run start. Servers from the project's `.mcp.json` and your local scope can be chosen too. The run details show what each agent got. Enforced on the Claude engine; other engines apply the run-wide lists with a warning. Skills from `.claude/skills`, `~/.claude/skills` and installed plugins are not hidden in this version.
+
+Chips: agents · MCP servers · tools · skills · Required by team · Unavailable
+
+Read it: [Per-agent servers and tools](../mcp-servers.md#per-agent-servers-and-tools)
+
+Pull requests (add each number when it opens):
+
+- Agent creation: choose MCP servers, tools and skills per agent
+
 ## Requirements (experimental)
 
 **Define a feature with Worca before anything is built.**

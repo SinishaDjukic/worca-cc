@@ -100,6 +100,8 @@ import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState }
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { stampBaseline, pickAccess, accessSummary } from '../../src/shared/agent-access.mjs';
+import { renderCapabilityPicker, renderRunAgentCapabilities } from './agent-capabilities-view.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
@@ -842,6 +844,7 @@ const el = {
   // Team policy surfaces (team-policy design §11)
   teamCapsReadout: $('#teamCapsReadout'),
   policyLine: $('#policyLine'),
+  agentCapsLine: $('#agentCapsLine'),
   mcpRunsField: $('#mcpRunsField'),
   mcpRunsLabel: $('#mcpRunsLabel'),
   mcpRunsPop: $('#mcpRunsPop'),
@@ -3001,6 +3004,8 @@ function onState(r, msg) {
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
   if (msg.skillMount !== undefined) r.skillMount = msg.skillMount;
+  // FEAT-1: what each agent got (run-harness state.agentCapabilities) for the same Overview.
+  if (msg.agentCapabilities !== undefined) r.agentCapabilities = msg.agentCapabilities;
   // Every state event is a new decor generation (runDecorFor memoises on it).
   r._decorSeq = (r._decorSeq || 0) + 1;
   if (msg.title && msg.title !== r.title) r.title = msg.title;
@@ -11311,8 +11316,28 @@ function paintAgentFormsView(host, meta) {
   host.replaceChildren();
   const forms = meta && meta.ask && meta.ask.forms && typeof meta.ask.forms === 'object' ? meta.ask.forms : {};
   const ids = Object.keys(forms);
-  if (!ids.length) { host.hidden = true; return; }
+  const access = pickAccess(meta);
+  const summary = accessSummary(access);
+  if (!ids.length && !summary) { host.hidden = true; return; }
   host.hidden = false;
+  if (summary) {
+    // FEAT-1: what the agent is limited to, read-only (the picker is the user-agent editor's).
+    const view = document.createElement('div');
+    view.className = 'afv-row agent-access-view';
+    const line = (label, items) => {
+      if (!items.length) return;
+      const p = document.createElement('div');
+      p.className = 'hint';
+      p.textContent = `${label}: ${items.join(', ')}`;
+      view.appendChild(p);
+    };
+    const sum = document.createElement('b');
+    sum.textContent = summary;
+    view.appendChild(sum);
+    line('Servers', (access.mcpAccess || []).map((e) => `${e.name || e.server}${e.tools === 'all' ? '' : ` (${e.tools.join(', ')})`}`));
+    line('Skills', (access.skillAccess || []).map((e) => e.name || e.skill));
+    host.appendChild(view);
+  }
   for (const id of ids) {
     const row = document.createElement('div');
     row.className = 'afv-row';
@@ -11453,7 +11478,7 @@ const AGENT_OWN_KEYS = [
   'key', 'displayName', 'description', 'color', 'runnerType', 'order', 'domain', 'scope', 'icon',
   'fanOut', 'asksQuestions', 'questionsLocked', 'questionsDefault', 'inputs', 'outputs', 'verdict',
   'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut', 'workspaceStrategy',
-  'workspaceVariantOf', 'placeable', 'requiresSkills', 'promptHints', 'metaVersion', 'ask',
+  'workspaceVariantOf', 'placeable', 'requiresSkills', 'promptHints', 'metaVersion', 'ask', 'mcpAccess', 'skillAccess',
   // Computed by the registry, never authored back into a sidecar.
   'origin', 'agentPath', 'agentFile', 'descriptionDerived', 'portSummary',
 ];
@@ -12054,6 +12079,32 @@ function agentFormRender(host, meta, opts = {}) {
   frag.appendChild(ws);
   frag.appendChild(buildFormsSection(m.ask));
 
+  // FEAT-1: MCP servers + skills. The selection lives on the form host (not in inputs); `dataset.extra` never carries it.
+  const access = document.createElement('div');
+  access.className = 'agent-access';
+  frag.appendChild(access);
+  root.__access = pickAccess(m);
+  root.__known = new Map();
+  root.__catalog = null;
+  const load = (root.__capsLoad = {});
+  const paintAccess = () => {
+    if (root.__capsLoad !== load || !root.__catalog) return;
+    access.replaceChildren(renderCapabilityPicker({
+      doc: document, catalog: root.__catalog, access: root.__access,
+      onChange: (next) => { root.__access = next; paintAccess(); refreshAgentForm(root); },
+    }));
+  };
+  const projectKey = selectedProjectKey();
+  fetch(`/api/agents/capabilities${projectKey ? `?projectKey=${encodeURIComponent(projectKey)}` : ''}`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((c) => {
+      if (root.__capsLoad !== load || !c || !Array.isArray(c.servers) || !Array.isArray(c.skills) || !c.unavailable) return;
+      root.__catalog = c;
+      root.__known = new Map(c.servers.filter((s) => s.tools).map((s) => [s.id, s.tools.map((t) => t.name)]));
+      paintAccess();
+    })
+    .catch(() => { /* no catalog: the stored selection still saves as it was */ });
+
   const md = document.createElement('textarea');
   md.className = 'agent-f-md textarea';
   md.rows = 16;
@@ -12204,6 +12255,14 @@ function agentFormRead(host) {
   if (variantOf) meta.workspaceVariantOf = variantOf;
   const skills = val('agent-f-skills').split(',').map((s) => s.trim()).filter(Boolean);
   if (skills.length) meta.requiresSkills = skills;
+  const cat = root.__catalog;
+  const named = (list, key, rows) => (list || []).map((e) => { const r = (rows || []).find((x) => x.id === e[key]); return r ? { ...e, name: r.name } : e; });
+  const picked = stampBaseline({
+    ...(root.__access?.mcpAccess ? { mcpAccess: named(root.__access.mcpAccess, 'server', cat?.servers) } : {}),
+    ...(root.__access?.skillAccess ? { skillAccess: named(root.__access.skillAccess, 'skill', cat?.skills) } : {}),
+  }, root.__known || new Map());
+  if (picked.mcpAccess?.length) meta.mcpAccess = picked.mcpAccess;
+  if (picked.skillAccess?.length) meta.skillAccess = picked.skillAccess;
   const promptHints = val('agent-f-hints');
   if (promptHints.trim()) meta.promptHints = promptHints;
   if (!on('agent-f-placeable')) meta.placeable = false;
@@ -12265,8 +12324,9 @@ async function openAgentSheet(key, { edit = false } = {}) {
  *  form row Save would refuse included — against what openAgentEdit painted. A hidden pane (never opened, Cancelled,
  *  saved) holds none. A form's live preview is not in it: trying the form there changes nothing Save writes. */
 function agentEditSnap(pane) {
-  return JSON.stringify([...pane.querySelectorAll('input, select, textarea')].filter((n) => !n.closest('.afm-preview'))
-    .map((n) => (n.type === 'checkbox' ? n.checked : n.value)));
+  // The picker's boxes paint after an async fetch and are views of `__access`, so the selection itself is the snapshot.
+  return JSON.stringify([[...pane.querySelectorAll('input, select, textarea')].filter((n) => !n.closest('.afm-preview, .agent-access'))
+    .map((n) => (n.type === 'checkbox' ? n.checked : n.value)), formHost(pane).__access || null]);
 }
 function agentEditDirty(pane) {
   return !pane.hidden && agentEditSnap(pane) !== pane.__agentBase;
@@ -15372,8 +15432,10 @@ el.form.addEventListener('submit', async (e) => {
       // The run's page is the confirmation (audit F-24): no toast when it is already open.
       const [openView, openParam] = parseHash();
       const onThatRun = (openView === 'running' && runDetailParts(openParam).runId === data.runId) || state.selectedRunId === data.runId;
-      if (!onThatRun) {
-        notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
+      const capsWarned = agentCapsWarnings.length;
+      if (!onThatRun || capsWarned) {   // a warning is worth a toast even on the run's own page
+        notify({ tone: capsWarned ? 'warn' : 'ok', title: 'Run started',
+          detail: capsWarned ? `Run started — ${capsWarned} agent item${capsWarned === 1 ? ' is' : 's are'} not available (see run details)` : title || '', key: `run-${data.runId}`,
           action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
       }
       if (extras.length) {
@@ -21419,7 +21481,7 @@ let policyLineSeq = 0;
 function schedulePolicyLine() {
   if (!el.policyLine) return;
   clearTimeout(policyLineTimer);
-  policyLineTimer = setTimeout(() => { void paintPolicyLine(); void paintMcpRuns(); void paintMcpjsonHint(); }, 150);
+  policyLineTimer = setTimeout(() => { void paintPolicyLine(); void paintAgentCapsLine(); void paintMcpRuns(); void paintMcpjsonHint(); }, 150);
 }
 // A run leaves out the repository's .mcp.json servers nobody approved, on every engine: say so before Start, with
 // the project's Sets tab, where Approve is (src/core/mcpjson-approval.mjs).
@@ -21504,6 +21566,7 @@ function renderMcpRuns() {
       state.mcpOptOut = [...off];
       renderMcpRuns();
       void paintPolicyLine();                 // an opted-out required server is off-policy
+      void paintAgentCapsLine();              // an opted-out server an agent chose is not available
     },
   }));
   if (focused) [...el.mcpRunsPop.querySelectorAll('input')].find((i) => i.dataset.keys === focused.keys && i.dataset.kind === focused.kind)?.focus();
@@ -21544,6 +21607,43 @@ async function paintPolicyLine() {
   }
   el.policyLine.hidden = false;
   el.policyLine.replaceChildren(renderPolicyNotesLine(data, { doc: document }));
+}
+
+// FEAT-1: the agent servers/skills this run could not provide (POST /api/agents/run-check). Never blocks Start; the last
+// answer's count feeds the post-start toast.
+let agentCapsSeq = 0;
+let agentCapsWarnings = [];
+async function paintAgentCapsLine() {
+  if (!el.agentCapsLine || currentView() !== 'new') return;
+  const scope = currentRunScopeId();
+  const seq = ++agentCapsSeq;
+  const i = scope.indexOf(':');
+  let warnings = [];
+  if (scope) {
+    try {
+      const r = await fetch('/api/agents/run-check', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target: scope.startsWith('project:') ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) },
+          workflowId: state.workflowId || 'wf_default', mcpOptOut: state.mcpOptOut, models: selectedRunModels(), engine: state.engine,
+        }),
+      });
+      const d = r.ok ? await safeJson(r) : null;
+      if (d && Array.isArray(d.warnings)) warnings = d.warnings.filter((w) => typeof w === 'string');
+    } catch { warnings = []; }
+  }
+  if (seq !== agentCapsSeq) return;
+  agentCapsWarnings = warnings;
+  el.agentCapsLine.hidden = !warnings.length;
+  const root = document.createElement('div');
+  root.className = 'policy-line';
+  for (const w of warnings) {
+    const row = document.createElement('div');
+    row.className = 'pl-note warn';
+    row.textContent = w;
+    root.append(row);
+  }
+  el.agentCapsLine.replaceChildren(...(warnings.length ? [root] : []));
 }
 
 // Team-cap prompts (board 9): the one dialog behind the banner button, a refused resume and a
@@ -29003,6 +29103,8 @@ function buildHdOverview(sec, record, data) {
   // Skills registry §6 board 9: the set skills the run got (run.json.skillMount, in the detail payload).
   const skillsCard = renderRunSkills(data.skillMount, { doc: document });
   if (skillsCard) wrap.appendChild(tagLevel(skillsCard, 'advanced'));
+  const capsCard = renderRunAgentCapabilities(data.agentCapabilities, { doc: document });
+  if (capsCard) wrap.appendChild(tagLevel(capsCard, 'advanced'));
   const filesBox = hdFilesChangedBox(sec, results, { diffLink: git });
   if (filesBox) wrap.appendChild(filesBox);
   // Agent memory (§6): what this run wrote into worca's memory, per execution.
@@ -30453,6 +30555,12 @@ function rdOvTask(r) {
 }
 
 /** Skills registry §6 board 9: a run's set-skill card into `host` (hidden without a record). */
+function paintRunAgentCaps(host, map) {
+  const card = renderRunAgentCapabilities(map, { doc: document });
+  host.hidden = !card;
+  host.replaceChildren(...(card ? [card] : []));
+}
+
 function paintRunSkills(host, mount) {
   const card = renderRunSkills(mount, { doc: document });
   host.hidden = !card;
@@ -30493,17 +30601,19 @@ function buildRdOverview(sec, ctx) {
   strip.hidden = true;
   const skills = tagLevel(document.createElement('div'), 'advanced');   // the set skills it got (§6 board 9)
   skills.className = 'hd-ov-skills-host';
+  const caps = tagLevel(document.createElement('div'), 'advanced');   // what each agent got (FEAT-1)
+  caps.className = 'hd-ov-caps-host';
   const checklists = document.createElement('div');   // Perspective checklists (spec D7)
   checklists.className = 'rd-checklists';
   checklists.hidden = true;
-  wrap.append(banner, strip, grid, checklists, skills, rdOvTask(ctx.run));
+  wrap.append(banner, strip, grid, checklists, skills, caps, rdOvTask(ctx.run));
   sec.appendChild(wrap);
   const paintStrip = (run) => {
     const on = gitOn() && isGitRun(run) && isTerminalStatus(run.status) && !!run.pipelineId;
     strip.hidden = !on;
     if (on && strip.dataset.runId !== run.pipelineId) paintActionsStrip(strip, run.pipelineId, rdScopeQuery(run));
   };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); paintRunAgentCaps(caps, c.run.agentCapabilities); };
   paint(ctx);
   sec.__update = paint;
 }
