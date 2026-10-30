@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { linkPlugin } from '../src/core/plugin-store.mjs';
-import { createProfile, writePluginConfig, readTicketUpdates } from '../src/core/plugin-config.mjs';
+import { createProfile, writePluginConfig, readTicketUpdates, writeTicketUpdates } from '../src/core/plugin-config.mjs';
 import { setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { WebSocket } from 'ws';
 
@@ -210,4 +210,18 @@ test('POST /api/sources/call still refuses listStatuses and legacyMove (D8)', as
     const r = await call('POST', '/api/sources/call', { plugin: 'jira-source', sourceId: 'jira', op, profile: 'acme', args: { project: 'SHOP' } });
     assert.equal(r.status, 400, op);
   }
+});
+
+const SIX = ['SHOP', 'CRM', 'OPS', 'SUP', 'MKT', 'DATA'];
+test("POST /api/sources/call filters listProjects by the call's profile, only with the flag on and projects picked (D9)", async () => {
+  setMockSourceResponses(null);
+  const NONE = [{ project: '', moment: 'finished', target: { kind: 'none' } }];
+  writeTicketUpdates('jira-source', 'acme', 'jira', { projects: [{ value: 'SHOP', label: 'Shop' }, { value: 'CRM', label: 'Customer portal' }], rules: NONE });
+  const values = async (profile) => (await call('POST', '/api/sources/call', { plugin: 'jira-source', sourceId: 'jira', op: 'listProjects', profile })).json.result.map((p) => p.value);
+  assert.deepEqual(await values('acme'), ['SHOP', 'CRM']);
+  assert.deepEqual(await values('beta'), SIX, "another profile: its own record (none saved)");
+  writeTicketUpdates('jira-source', 'beta', 'jira', { projects: [], rules: NONE });
+  assert.deepEqual(await values('beta'), SIX, 'none picked: all projects');
+  process.env.WORCA_FLAGS = '-ticketUpdates';
+  try { assert.deepEqual(await values('acme'), SIX, 'flag off: no filter'); } finally { process.env.WORCA_FLAGS = 'ticketUpdates'; }
 });

@@ -476,6 +476,7 @@ import {
   createProfile, deleteProfile, isValidProfileId, DEFAULT_PROFILE,
 } from '../src/core/plugin-config.mjs';
 import { registerTicketUpdatesRoutes } from '../src/core/ticket-updates-routes.mjs';
+import { projectFilter, filterProjects } from '../src/core/ticket-updates.mjs';
 import {
   setBinding, clearBinding, listBindingsForScope,
   clearBindingsForProfile, resolveProfile,
@@ -18539,7 +18540,9 @@ app.post('/api/sources/call', async (req, res) => {
     return badRequest(res, `task source "${sourceId}" does not use profiles, so omit profile`);
   }
   try {
-    const result = await callSource({ plugin, sourceId, op, args, profile });
+    let result = await callSource({ plugin, sourceId, op, args, profile });
+    // Ticket updates (D9): New run's project select lists only the projects this connection works on (flag off or none picked: all)
+    if (op === 'listProjects') result = filterProjects(result, projectFilter(plugin, sourceId, profile || DEFAULT_PROFILE));
     res.json({ ok: true, result });
   } catch (err) {
     if (err instanceof PluginOpError) {

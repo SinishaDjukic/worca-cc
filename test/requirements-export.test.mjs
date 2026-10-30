@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { linkPlugin } from '../src/core/plugin-store.mjs';
-import { createProfile } from '../src/core/plugin-config.mjs';
+import { createProfile, writeTicketUpdates } from '../src/core/plugin-config.mjs';
 import { callSource, setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
 import {
@@ -646,4 +646,30 @@ test('the search grace after a restart: a refused create this process did not se
   _resetExportCaches();   // what a restart forgets
   await assert.rejects(exportVia(f.seq, { mode: 'create' }, { ...d, now: () => new Date(Date.now() + 5_000) }), (e) => e.code === 'BUSY');
   assert.equal((await exportVia(f.seq, { mode: 'create' }, later())).action, 'created');
+});
+
+// ---- Ticket updates (plans/ticket-updates-design.md D9): the export setup lists only the projects a connection works on ----
+const TU_NONE = [{ project: '', moment: 'finished', target: { kind: 'none' } }];
+async function withTicketUpdates(fn) {
+  const was = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'ticketUpdates';
+  try { return await fn(); } finally { if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was; }
+}
+
+test("Ticket updates (D9): exportOptions lists the connection's picked projects; the setup's project stays listed", async () => {
+  reset();
+  await saveSetup(SCOPE, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', project: 'SHOP', projectName: 'SHOP — Shop web',
+    issueType: '10001', issueTypeName: 'Story', labels: ['worca'] }, { by: 'po' }, d);
+  writeTicketUpdates('jira-source', 'acme', 'jira', { projects: [{ value: 'OPS', label: 'Operations' }], rules: TU_NONE });
+  writeTicketUpdates('jira-source', 'beta', 'jira', { projects: [{ value: 'OPS', label: 'Operations' }], rules: TU_NONE });
+  const values = async (profile) => (await exportOptions(SCOPE, { plugin: 'jira-source', sourceId: 'jira', profile }, d)).projects.map((p) => p.value);
+  await withTicketUpdates(async () => {
+    assert.deepEqual(await values('acme'), ['SHOP', 'OPS'], "the setup's SHOP stays; OPS is picked");
+    assert.deepEqual(await values('beta'), ['OPS'], 'another connection: only its picks');
+  });
+  const was = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-ticketUpdates';
+  try { assert.deepEqual(await values('beta'), ['SHOP', 'OPS'], 'flag off: all'); } finally {
+    if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was;
+  }
 });

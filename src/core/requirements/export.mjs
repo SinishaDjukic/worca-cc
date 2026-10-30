@@ -7,7 +7,8 @@ import { randomBytes } from 'node:crypto';
 import { callSource as shimCallSource } from '../plugin-shim.mjs';
 import { listTaskSources } from '../sources.mjs';
 import { readPluginsLock } from '../plugins-lock.mjs';
-import { listProfiles } from '../plugin-config.mjs';
+import { listProfiles, DEFAULT_PROFILE } from '../plugin-config.mjs';
+import { projectFilter, filterProjects } from '../ticket-updates.mjs';
 import { resolveProfile, listBindingsForScope } from '../source-bindings.mjs';
 import { actorLabel } from '../identity.mjs';
 import { tx } from '../db.mjs';
@@ -227,6 +228,9 @@ export async function exportOptions(scope, body = {}, d = {}) {
   };
   lastDone.set(connKey(conn), out.doneStatus);
   const setup = getExportSetup(scope.scopeType, scope.scopeKey);
+  // Ticket updates (D9): only the projects this connection works on; the setup's own project stays listed when it is this connection's
+  const keep = setup && sameConn(setup, conn) && setup.trackerProject ? [setup.trackerProject] : [];
+  out.projects = filterProjects(out.projects, projectFilter(conn.plugin, conn.sourceId, conn.profile || DEFAULT_PROFILE), keep);
   if (setup && sameConn(setup, conn) && setup.doneStatus !== out.doneStatus) setExportSetupDoneStatus(scope.scopeType, scope.scopeKey, out.doneStatus);
   return out;
 }
