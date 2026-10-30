@@ -176,7 +176,7 @@ test('board 4: Add a project rule: a Project select of the projects you work on 
   assert.equal(row.querySelector('.mk-tu-remove').getAttribute('aria-label'), 'Remove the new rule');
   assert.equal(m.$('.mk-tu-newrow-hint').hidden, false);
   assert.equal(m.$('.mk-tu-newrow-hint').textContent, 'A project rule lists that project\'s own statuses. The project list is the projects you work on (all projects when none are picked).');
-  assert.deepEqual(m.tu.body().rules.length, 3, 'a row without a project is not sent');
+  assert.equal(m.tu.body().rules.length, 3, 'a row without a project is not sent');
   sel.value = 'OPS';
   sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
   const ops = m.rowFor('OPS');
@@ -243,4 +243,82 @@ test('destroy leaves the focus where it was, with a move list open or not', asyn
   rm.focus();
   n.tu.destroy();
   assert.equal(n.doc.activeElement, rm);
+});
+
+test('WCAG 3.2.2: arrowing through the closed Project select keeps the row pending; Enter commits, focus to the move select', async () => {
+  const m = await section(tuRoutes(tuGet({ saved: true, rules: [ALL_DONE, SHOP_RULE] })));
+  m.$('.mk-tu-add-rule').click();
+  await settle();
+  const sel = m.rows().at(-1).querySelector('select.mk-tu-project');
+  const before = m.tu.body().rules;
+  const key = (k) => sel.dispatchEvent(new m.window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  key('ArrowDown');
+  sel.value = 'CRM';
+  sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(m.rows().at(-1).querySelector('select.mk-tu-project'), sel, 'still the picker row');
+  assert.equal(m.doc.activeElement, sel);
+  assert.deepEqual(m.tu.body().rules, before);
+  key('Enter');
+  const crm = m.rowFor('CRM');
+  assert.ok(crm, 'committed');
+  assert.equal(m.doc.activeElement, crm.querySelector('.mk-tu-move'));
+  assert.deepEqual(m.tu.body().rules.at(-1), { project: 'CRM', label: 'Customer portal', moment: 'finished', target: { kind: 'category', value: 'done' } });
+});
+
+test('WCAG 3.2.2: a typed pick commits on blur; Tab into the row lands on its move select, Tab out stays where it goes', async () => {
+  for (const into of [true, false]) {
+    const m = await section(tuRoutes(tuGet({ saved: true, rules: [ALL_DONE, SHOP_RULE] })));
+    m.$('.mk-tu-add-rule').click();
+    await settle();
+    const row = m.rows().at(-1);
+    const sel = row.querySelector('select.mk-tu-project');
+    sel.dispatchEvent(new m.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    sel.value = 'OPS';
+    sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+    const next = into ? row.querySelector('.mk-tu-move') : m.$('.mk-tu-add-projects');
+    next.focus();
+    await settle();
+    const ops = m.rowFor('OPS');
+    assert.ok(ops, 'committed on blur');
+    assert.equal(m.doc.activeElement, into ? ops.querySelector('.mk-tu-move') : next);
+    assert.notEqual(m.doc.activeElement, m.doc.body);
+    assert.equal(m.tu.body().rules.at(-1).project, 'OPS');
+  }
+});
+
+test("WCAG 3.2.2: a press on the new row's remove button after a typed pick removes the row, it does not commit the pick", async () => {
+  const m = await section(tuRoutes(tuGet({ saved: true, rules: [ALL_DONE, SHOP_RULE] })));
+  m.$('.mk-tu-add-rule').click();
+  await settle();
+  const row = m.rows().at(-1);
+  const sel = row.querySelector('select.mk-tu-project');
+  sel.dispatchEvent(new m.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  sel.value = 'OPS';
+  sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+  const rm = row.querySelector('.mk-tu-remove');
+  rm.focus();   // the mousedown's focus; the click follows after the blur's timer
+  await settle();
+  assert.ok(rm.isConnected, 'not committed yet');
+  rm.click();
+  assert.deepEqual([m.rowFor('OPS'), m.$('.mk-tu-newrow')], [undefined, null]);
+  assert.deepEqual(m.tu.body().rules.map((r) => r.project), ['', 'SHOP']);
+  assert.equal(m.doc.activeElement, m.$('.mk-tu-add-rule'));
+});
+
+test('S11: removing the new row when Add a project rule has just become disabled: focus to the row above, never <body>', async () => {
+  const m = await section();
+  m.$('.mk-tu-add-projects').click();
+  await settle();
+  m.pick('OPS');
+  m.doc.querySelector('.mk-tu-done').click();
+  m.$('.mk-tu-add-rule').click();
+  await settle();
+  // OPS leaves the projects you work on: SHOP and CRM have rules, but the pending row keeps Add enabled
+  m.$('.mk-tu-chip[data-value="OPS"] .mk-tu-x').click();
+  assert.equal(m.$('.mk-tu-add-rule').disabled, false);
+  m.rows().at(-1).querySelector('.mk-tu-remove').click();
+  assert.equal(m.$('.mk-tu-add-rule').disabled, true, 'every project you work on has a rule now');
+  assert.equal(m.doc.activeElement, m.rowFor('CRM').querySelector('.mk-tu-remove'));
+  assert.equal(m.$('.mk-tu-newrow'), null);
 });

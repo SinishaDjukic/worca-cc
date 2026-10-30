@@ -30,6 +30,8 @@ export const goneLine = (key, name) => `${key} has no status named ${name} any m
 const list = (v) => (Array.isArray(v) ? v : []);
 const fromLegacy = (t) => (t && t.category === 'done' ? { kind: 'category', value: 'done' }
   : t && typeof t.typed === 'string' && t.typed ? { kind: 'typed', value: t.typed } : null);
+/** Keys that move a closed select's choice (and fire change on Windows) without the user meaning to commit it. */
+const PICK_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
 let instances = 0;   // two sections on one page (the same source twice) never share an element id
 
 /**
@@ -189,13 +191,40 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     const wrap = mk('div', 'select-wrap mk-tu-pwrap');
     const sel = mk('select', 'select mk-tu-project');
     sel.setAttribute('aria-label', TU_COPY.project);
-    sel.addEventListener('change', () => {
+    // WCAG 3.2.2: on Windows, each arrow key on a closed select fires change, so a pick made with the keys stays pending
+    // until Enter or blur; a mouse pick (no key before it) commits at once
+    let typed = false;
+    const commit = (focusMove) => {
       const o = sel.selectedOptions[0];
-      if (!o || !o.value) return;
+      if (destroyed || r.project !== null || !o || !o.value || !rowOf(r)) return false;
       r.project = o.value;
       r.label = o.dataset.name || o.value;
-      replaceRow(r, true);
+      replaceRow(r, focusMove);
       refreshRules();
+      return true;
+    };
+    sel.addEventListener('mousedown', () => { typed = false; });
+    sel.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        typed = false;
+        if (commit(true)) e.preventDefault();
+        return;
+      }
+      if (e.altKey) return;
+      if (PICK_KEYS.has(e.key) || (e.key.length === 1 && !e.ctrlKey && !e.metaKey)) typed = true;
+    });
+    sel.addEventListener('change', () => { if (!typed) commit(true); });
+    sel.addEventListener('blur', () => {
+      // after the focus has landed: a Tab into this row (its move select or remove button, replaced with the row)
+      // goes on to the fresh row's move select; a move out of the row stays where it went
+      setTimeout(() => {
+        const row = rowOf(r);
+        if (!row || doc.activeElement === sel) return;   // gone, or the window lost the focus (the select keeps it)
+        // a press on this row's remove button (Tab from the select reaches the move select first): it removes, not commits
+        if (doc.activeElement === row.querySelector('.mk-tu-remove')) return;
+        const inRow = row.contains(doc.activeElement);
+        if (commit(inRow)) typed = false;
+      }, 0);
     });
     sel.addEventListener('focus', () => { if (sel.dataset.failed === '1') void fillPicker(sel); });
     const live = mk('span', 'sr-only mk-tu-plive');
