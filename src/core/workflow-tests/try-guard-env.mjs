@@ -118,9 +118,12 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * wslg, distro launchers, System32 bash.exe; WSLENV for WSL's git and gh), pipes and here-strings into a shell, and a
  * structured deny with an exit-2 fallback.
  * The hook's parser is best-effort recording: what stops a send is these env layers (no sign-in for git, the forge
- * CLIs and the stripped tokens) and the try's remote-less copy. Parser limits (read as plain commands, not stopped by
- * the hook): a `$( )` / backtick of any program other than a literal writer, a decoder or a download landing in eval /
- * a shell (e.g. `eval "$(cat cmds.txt)"`); names and values set outside the command line (variables, aliases,
+ * CLIs and the stripped tokens) and the try's remote-less copy; for publishers and image pushes whose tokens sit in
+ * files (~/.npmrc, ~/.docker/config.json), the hook is the only layer. By design a try denies an expanded subcommand
+ * of a publisher (`yarn $SCRIPT`, `pnpm $SCRIPT`, `bun $FILE`, `npm "$@"`): it could be publish. Parser limits (read as
+ * plain commands, not stopped by the hook): a `$( )` / backtick of any program other than a literal writer, a decoder
+ * or a download landing in eval / a shell (`eval "$(cat cmds.txt)"`, `bash -c "$(cat script.sh)"`); a gh / glab verb
+ * counted as a read (`$GH label clone`); names and values set outside the command line (variables, aliases,
  * functions); interpreters and scripts (`node -e`, `python -c`, make, npm scripts); word building the shell does that
  * the parser does not (brace expansion `{g,}it`, `${x:0:3}`, `${x//a/b}`, arrays); encodings other than \x / octal /
  * \u / \c (rev, a variable's value); PowerShell string building (`'gi'+'t'`, `&('g'+'it')`, `-join`).

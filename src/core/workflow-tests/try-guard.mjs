@@ -99,7 +99,9 @@ const FORGE_ACTIONS = new Set(['create', 'edit', 'merge', 'comment', 'set', 'run
 const FORGE_GLOBAL_VALUE = new Set(['-R', '--repo', '--hostname', '-g', '--group']);
 /** Fix 6: a name that says gh / glab (`$GH`, `$GLAB_BIN`, `$env:GH`, `$(which gh)`): then any second word that only reads
  *  is the exception, not the rule. */
-const FORGE_NAME_RE = /(^|[^a-z])(gh|glab|github|gitlab)([^a-z]|$)/i;
+// Fix 7: the expansion itself, matched whole: `"$GITHUB_WORKSPACE/scripts/test.sh"` or `$GH_PAGES_DIR/build.sh` (a path
+// after it) is no gh.
+const FORGE_NAME_RE = /^(\$\{?(GH|GLAB|GH_BIN|GLAB_BIN|GH_CLI|GITHUB_CLI|GITLAB_CLI)\}?|\$env:(GH|GLAB)|\$\((which|command -v) (gh|glab)\)|`(which|command -v) (gh|glab)`)$/i;
 const FORGE_READS = new Set([...READ_VERBS, 'clone', 'browse', 'checkout', 'ls', 'search', 'watch', 'download']);
 function forgeVerbSends(w, name = '') {
   const pos = [];
@@ -116,7 +118,7 @@ function forgeVerbSends(w, name = '') {
   }
   // Named gh / glab: any command group (pr, repo, cache, …) whose second word does more than read sends; the local
   // ones (help, completion, auth, config, alias, version) do not.
-  if (FORGE_NAME_RE.test(String(name).replace(/^[$"'`&\s]+/, ''))) {
+  if (FORGE_NAME_RE.test(String(name).trim())) {
     return pos[0] != null && !FORGE_LOCAL.has(pos[0]) && pos[1] != null && !FORGE_READS.has(pos[1]);
   }
   return FORGE_VERBS.has(pos[0] ?? '') && FORGE_ACTIONS.has(pos[1] ?? '');
@@ -854,10 +856,13 @@ function stdinReader(words, depth = 0) {
 /** The text a command writes, when it is a literal the guard can read (echo "…", printf '…', a lone quoted string,
  *  anything given a here-string), else null. */
 function literalOf(words, m) {
-  if (m && m.here.length) return m.here.some((h) => /[$`]/.test(h)) ? null : m.here.join('\n');
   const w = words.slice(leading(words));
+  const b = bin(w[0] ?? '');
+  // Fix 7: a here-string is what is written only when cat (or nothing) reads it; a decoder reading one (base64 -d,
+  // rev, tr, …) writes something else, which chainSource counts as decoded.
+  if (m && m.here.length && (!w.length || b === 'cat')) return m.here.some((h) => /[$`]/.test(h)) ? null : m.here.join('\n');
+  if (m && m.here.length && DECODERS.has(b)) return null;
   if (!w.length) return null;
-  const b = bin(w[0]);
   let args = w.slice(1);
   if (w.length === 1 && /\s/.test(w[0])) return /[$`]/.test(w[0]) ? null : w[0];   // PowerShell: "git push" | powershell -Command -
   if (b === 'echo' || b === 'write-output' || b === 'write') {

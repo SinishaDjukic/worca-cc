@@ -527,6 +527,22 @@ test('fix 6: quoted substitutions, decoders and downloads that run, expanded sub
   assert.deepEqual([isTryStrippedKey('NUGET_AUTH_TOKEN'), isTryStrippedKey('nuget_auth_token', { keepRegistryAuth: true })], [true, false]);
 });
 
+test('fix 7: a gh / glab name is the whole expansion, not a path under GITHUB_*; a decoder reading a here-string writes something else', () => {
+  const hit = (c) => { const d = guardDecision(c); return d ? `${d.server}|${d.tool}` : null; };
+  for (const c of ['"$GITHUB_WORKSPACE/scripts/test.sh" unit fast', '$GITHUB_ACTION_PATH/run.sh build prod', '"$GITLAB_CI_DIR/deploy.sh" check all',
+    '$GH_PAGES_DIR/build.sh docs site', '"${GITHUB_WORKSPACE}/x.sh" a b', '$GHOST run x']) assert.equal(guardDecision(c), null, c);
+  for (const c of ['$GH pr create', '$GH repo fork', '$GLAB mr note', '"${GH}" pr ready', '$GH_BIN cache delete', '$GITHUB_CLI repo fork',
+    '"$(which gh)" pr ready 1', '"$(command -v glab)" mr note 1', '`which gh` repo fork']) assert.equal(hit(c), 'shell|unreadable', c);
+  assert.equal(psToolDecision('& $env:GH repo fork')?.tool, 'unreadable');
+  for (const c of ['base64 -d <<< Z2l0IHB1c2g= | sh', 'rev <<< "hsup tig" | sh', 'tr a-z n-za-m <<< "tvg chfu" | bash', 'eval "$(base64 -d <<< Z2l0IHB1c2g=)"',
+    'base64 -d <<< bnBtIHB1Ymxpc2g= | sh', 'xxd -r -p <<< 67697420707573680a | sh']) assert.equal(hit(c), 'shell|unreadable', c);
+  for (const c of ['cat <<< "git push" | sh', '<<< "git push" sh']) assert.equal(hit(c), 'git|push', c);
+  for (const c of ['base64 -d <<< aGk= > out.txt', 'rev <<< "olleh"', 'grep x <<< "git push"', 'cat <<< "npm test" | sh']) assert.equal(guardDecision(c), null, c);
+  // Denied by design (an expanded subcommand of a publisher could be publish), and the stated limits that pass.
+  for (const c of ['yarn $SCRIPT', 'pnpm $SCRIPT', 'bun $FILE', 'npm "$@"']) assert.equal(guardDecision(c)?.tool, 'unreadable', c);
+  for (const c of ['eval "$(cat cmds.txt)"', 'bash -c "$(cat script.sh)"', '{g,}it push', '$GH label clone x/y']) assert.equal(guardDecision(c), null, `stated limit: ${c}`);
+});
+
 test('task 5b: WSL, Git Bash cmd //c and nested re-reads are seen through', () => {
   const hit = (c) => { const d = guardDecision(c); return d ? `${d.server}|${d.tool}` : null; };
   const HITS = [
