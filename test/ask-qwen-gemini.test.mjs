@@ -2,7 +2,7 @@
 // MCP child's file tools, the catalog (no effort vocabulary), the prompt, the turn's readiness gate (support check,
 // self-test, preflight), the watchdog, the resume fallback, the title, and the panel's engine rules.
 import { test, after } from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -33,8 +33,8 @@ const FAMILY = { anchor: 'gemini-cli-and-qwen-code' };
 const ENGINES_UNDER_TEST = [
   { ...FAMILY, engine: 'qwen', label: 'Qwen Code', cli: "Qwen Code with Qwen Code's own sign-in", model: 'qwen3-coder-plus', session: 'qwen:0b5e8c1a-0000-4000-8000-0000000000a1', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'qwen: No saved session found with ID x' },
   { ...FAMILY, engine: 'gemini', label: 'Gemini CLI', cli: "Gemini CLI with Gemini CLI's own sign-in", model: 'gemini-3-pro', session: 'gemini:0b5e8c1a-0000-4000-8000-0000000000e1', cwd: '/h/.worca-cc/tmp/ask/gemini/ask_00000001', resumeGone: 'gemini exited with code 42: Invalid session identifier' },
-  { engine: 'goose', label: 'Goose', cli: "Goose with Goose's own providers", anchor: 'goose', model: 'google/gemini-3-flash', session: 'goose:worca-1-abc', cwd: '/h/.worca-cc/tmp/ask', resumeGone: "goose exited with code 1: No session found with name 'worca-1-abc'" },
-  { engine: 'opencode', label: 'OpenCode', cli: "OpenCode with OpenCode's own providers", anchor: 'opencode', model: 'anthropic/claude-sonnet-5-5', session: 'opencode:ses_abc123', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'opencode exited with code 1: Error: Session not found' },
+  { engine: 'goose', label: 'Goose', cli: "Goose with Goose's own providers", anchor: 'goose', model: 'google/gemini-3-flash', session: 'goose:worca-1-abc', cwd: '/h/.worca-cc/tmp/ask/goose/ask_00000001', resumeGone: "goose exited with code 1: No session found with name 'worca-1-abc'" },
+  { engine: 'opencode', label: 'OpenCode', cli: "OpenCode with OpenCode's own providers", anchor: 'opencode', model: 'anthropic/claude-sonnet-5-5', session: 'opencode:ses_abc123', cwd: '/h/.worca-cc/tmp/ask/opencode/ask_00000001', resumeGone: 'opencode exited with code 1: Error: Session not found' },
 ];
 
 const spawnBase = (over = {}) => ({
@@ -194,6 +194,25 @@ for (const E of ENGINES_UNDER_TEST) {
     assert.equal(frames.at(-1).type, 'ask-done');
   });
 
+  test(`a ${E.label} chat stays local where runs default to E2B (no sandbox runs ${E.label} yet): no execution environment, no refusal`, async () => {
+    const home = mkdtempSync(join(tmpdir(), 'worca-qg-e2b-home-'));
+    mkdirSync(join(home, '.worca-cc'), { recursive: true });
+    writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ execEnv: 'e2b' }));
+    const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    Object.assign(process.env, { HOME: home, USERPROFILE: home });
+    try {
+      const s = seed();
+      const { turn, frames, calls } = makeTurn(E, s, {}, { runClaudeImpl: async (o) => reply(E, o) });
+      await turn.run();
+      assert.equal(calls.length, 1);
+      assert.equal('execEnv' in calls[0], false, 'a chat spawns on this machine');
+      assert.equal(frames.at(-1).type, 'ask-done');
+    } finally {
+      for (const [k, v] of Object.entries(prev)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test(`a failed ${E.label} self-test: ${E.engine}-not-ready, a notice with the setup link, no spawn, no preflight`, async () => {
     const s = seed();
     const { turn, frames, calls, order } = makeTurn(E, s, {}, {
@@ -241,6 +260,23 @@ for (const E of ENGINES_UNDER_TEST) {
     const done = frames.find((f) => f.type === 'ask-done');
     assert.equal(done.costUsd, 0.015, '10 input + 5 output tokens at $1000 per million each');
     assert.equal(done.reason, 'max_budget');
+  });
+
+  test(`a ${E.label} turn worca cannot price is stored cost unknown, never $0 (the rule a run step follows)`, async () => {
+    const s = seed();
+    const { turn, frames } = makeTurn(E, s, {}, { chatModelRates: () => null, runClaudeImpl: async (o) => reply(E, o) });
+    await turn.run();
+    const done = frames.find((f) => f.type === 'ask-done');
+    assert.equal(done.costUsd, null);
+    assert.equal(done.costKnown, false);
+    assert.equal(getMessage(s.asst.id).costKnown, false);
+    assert.equal(done.threadTotals.costKnown, false, 'the thread total is a floor from now on');
+    // A priced turn carries no such flag.
+    const p = seed();
+    const priced = makeTurn(E, p, {}, { chatModelRates: () => ({ input: 1, output: 1 }), runClaudeImpl: async (o) => reply(E, o) });
+    await priced.turn.run();
+    assert.equal('costKnown' in priced.frames.find((f) => f.type === 'ask-done'), false);
+    assert.equal('costKnown' in getMessage(p.asst.id), false);
   });
 
   test(`the mock: no ${E.label} binary is asked`, async () => {

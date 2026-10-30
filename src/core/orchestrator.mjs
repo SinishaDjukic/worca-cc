@@ -75,6 +75,7 @@ import { classifyError } from './recoverable-error.mjs';
 import { withRecoveryRetry, RETRYABLE_CLASSES, HELPER_RETRY_ATTEMPTS } from './recovery-backoff.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 import { byActor } from './identity.mjs';
+import { isExecEnvFatal } from './exec-env/index.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
@@ -470,7 +471,7 @@ export class GraphOrchestrator extends RunHarness {
       // Stop OR pause ends the call (the same composition every node spawn uses).
       signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
       envScrub: this.guardrails?.envScrub || undefined,
-      envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
+      envAllowlist: this.guardrails?.envAllowlist?.length ? this.guardrails.envAllowlist : undefined,
       // A bridged Auto model: the upstream's own cost comes back under this tag (classify.mjs).
       bridgeTag: `auto-classify:${this.pipeline?.id || 'run'}:${round}`,
     };
@@ -744,7 +745,7 @@ export class GraphOrchestrator extends RunHarness {
     // attributes a cost whose stepKey names a ledger row (state.steps + totalCostUsd —
     // no else branch; the DB spend ledger is written regardless), and
     // _checkCostLimits reads that total: without the row the pipeline cap could never trip.
-    this._recordCost(costUsd, 'x:preflight:1', { aux: 'auto' });
+    this._bookUsage({ source: 'engine', costUsd, aux: 'auto' }, { stepKey: 'x:preflight:1' });
     if (checkCaps) this._checkCostLimits();   // a cost cap pauses here (_capReached → pauseErr()); the resume re-enters the decision
   }
 
@@ -1009,6 +1010,12 @@ export class GraphOrchestrator extends RunHarness {
       ...this._resumePointClaude(),
       // A run started as mock (a per-request `mock: true`) resumes as mock (the harness constructor).
       ...(this.claude.mock ? { mock: true } : {}),
+      // Where the run executes (e2b only; a local point gains no key). Before the sandbox exists (a pause in
+      // setup or in the capacity queue) the kind alone, so the run never resumes as local. A resumed run that
+      // pauses again before it reconnected keeps the saved record (its parked sandbox).
+      ...(this.execEnv ? { execEnv: this.execEnv.resumeRecord() }
+        : this._savedExecEnv ? { execEnv: this._savedExecEnv }
+        : this.execEnvKind && this.execEnvKind !== 'local' ? { execEnv: { kind: this.execEnvKind } } : {}),
       workflowId: this.workflowId,
       // Auto workflow: the decision state while UNDECIDED (spec §5.6); null once
       // the graph is adopted (workflowId is then the real id) and on saved workflows.
@@ -1180,7 +1187,12 @@ export class GraphOrchestrator extends RunHarness {
       },
       (err) => {
         if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
-        else this._scheduler?.abort();
+        else {
+          // Keep the real cause (an Away mode refusal, a lost sandbox): without it the run rethrows the generic
+          // 'a graph execution failed'. A stop keeps its own path (the abort signal names it).
+          if (!isAbort(err)) this._graphError ||= markTerminal(err);
+          this._scheduler?.abort();
+        }
         return new Promise(() => {});   // never settles: the hold survives (see above)
       },
     );
@@ -1870,6 +1882,8 @@ export class GraphOrchestrator extends RunHarness {
       mcpjsonProjectDir: this.isWorkspace ? undefined : this.projectDir,
       runRoot: this.runRoot,
       mcpConfigPath: this.mcpConfigPath,
+      // The run's E2B execution environment (script nodes read it here); undefined on local runs.
+      execEnv: this.execEnv || undefined,
       mcpServerGrants: this.mcpServerGrants,
       // MCP registry (design §6.1): the copies' secret env, the values to redact and the tools
       // withheld for the run's tool-name limit. Never persisted anywhere.
@@ -1970,13 +1984,22 @@ export class GraphOrchestrator extends RunHarness {
         ...this._nodeModelPair(nc),
         permissionRules: this._spawnPermissionRules(),
         envScrub: this.guardrails?.envScrub || undefined,
-        // §5.5.1: a scrubbed spawn with a registry stdio copy keeps the launcher's keep-list.
-        envAllowlist: this.guardrails?.envScrub
-          ? (this.mcpLayer?.allowlist?.length ? [...this.guardrails.envAllowlist, ...this.mcpLayer.allowlist] : this.guardrails.envAllowlist)
-          : undefined,
+        // The project's allowlist adds names to the engine's catalog allowlist (src/core/spawn.mjs childEnv), scrub or
+        // not; §5.5.1: a spawn with a registry stdio copy keeps the launcher's keep-list.
+        envAllowlist: this._spawnAllowlist(),
+        // Decision 11: the engine's sub-agent tool is off unless the catalog proves its sub-agents keep the rules.
+        ...(this._subagentsOff ? { subagentsOff: true } : {}),
         mock: this.claude.mock,
+        execEnv: this.execEnv || undefined,
       },
     };
+  }
+
+  /** The names a spawn adds to its engine's catalog allowlist: the guardrail set's envAllowlist and the MCP registry's
+   *  launcher keep-list (§5.5.1); undefined when there are none. */
+  _spawnAllowlist() {
+    const names = [...(this.guardrails?.envAllowlist || []), ...(this.mcpLayer?.allowlist || [])];
+    return names.length ? [...new Set(names)] : undefined;
   }
 
   /** The allocation context of one execution. `_execCtx` and `_finishRoleReview` share it, so a role reviewer's
@@ -2057,6 +2080,9 @@ export class GraphOrchestrator extends RunHarness {
         // row does not exist yet when the event lands. History labels a loop
         // re-fire `cycle 2 · fix` off this.
         trigger: ctx.trigger || { wireIds: [], freshPorts: [] },
+        // Who serves an agent step's model calls and whether its cost can be counted (run-harness _stepFacts): only set
+        // keys, so an in-memory step and a reloaded one have the same shape.
+        ...(ctx.node?.kind === 'agent' ? this._stepFacts(ctx.claudeOpts?.model ?? null) : {}),
         ...(ctx.slice
           ? { taskId: ctx.slice.id, parentExecutionId: ctx.parentExecutionId ?? null, title: ctx.slice.title ?? null,
               phaseOrdinal: ctx.slice.phase ?? null, taskIndex: ctx.taskIndex ?? null, taskTotal: ctx.taskTotal ?? null }
@@ -2196,6 +2222,9 @@ export class GraphOrchestrator extends RunHarness {
         if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) throw pauseErr();
         if (isAbort(err) || isPause(err)) throw err;
         if (this.abort.signal.aborted || this.state.status === 'stopped') throw err;  // a stop is in flight: _execute marks it 'stopped'
+        // A lost E2B sandbox or a sandbox change that cannot reach the host: no retry, recovery prompt or pause
+        // can fix it, and the Q&A wants a clean failure (plans/e2b-execution-design.md §10). Never on a local run.
+        if (isExecEnvFatal(err)) throw markTerminal(err);
         const cls = classifyError(err);
         const verdict = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt,
           model: nc.kind === 'agent' ? (ctx.claudeOpts?.model ?? null) : null });
@@ -2209,14 +2238,30 @@ export class GraphOrchestrator extends RunHarness {
     }
   }
 
+  /** One invocation of this execution's executor. In e2b mode the sync itself runs inside each spawn
+   *  (RemoteChild / runInProcess); here the node's bound inputs are registered with the sandbox, and a
+   *  fatal exec-env failure replaces whatever the executor threw (spawnFailure rebuilds the error). */
+  async _runOnce(nc, ctx) {
+    const ee = this.execEnv;
+    if (!ee) return this._runOnceLocal(nc, ctx);
+    ee.addInputs(Object.values(ctx.bindings || {}).map((t) => t?.path));   // scheduler tokens (scheduler.mjs)
+    let result;
+    try { result = await this._runOnceLocal(nc, ctx); }
+    catch (err) { const fatal = ee.fatalError(); throw fatal ? markTerminal(fatal) : err; }
+    const fatal = ee.fatalError();
+    if (fatal) throw markTerminal(fatal);
+    return result;
+  }
+
   /** One invocation of this execution's executor (P3's runExecution, with the
    *  injected runners as the seam), plus the vanished-session fresh re-run
-   *  fallback (a dead `--resume` session must not fail the run). */
-  async _runOnce(nc, ctx) {
+   *  fallback (a dead `--resume` session must not fail the run) — never after a
+   *  fatal exec-env failure, which no fresh run can fix. */
+  async _runOnceLocal(nc, ctx) {
     try {
       return await runExecution(ctx, { runners: this._runners });
     } catch (err) {
-      if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
+      if (ctx.resumeSessionId && !this.execEnv?.fatalError() && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
         this._log(nc.key || ctx.nodeId, 'warn',
           `session resume failed (${err?.message || err}); re-running the execution fresh`,
           { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal, ...(err?.stream ? { stream: err.stream } : {}) });
@@ -2297,7 +2342,11 @@ export class GraphOrchestrator extends RunHarness {
     }
     // Agent memory (§5): sync the mount back after EVERY execution, slices included.
     await this._syncMemory(nc, ctx);
-    if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
+    if (nc.meta?.sideEffect === 'code' && !ctx.slice) {
+      await this._stageWorkingTree();
+      // The sandbox's own index in step (same pathspecs): the next node's `git diff` there sees new files.
+      if (this.execEnv) await this.execEnv.stageAll(this._excludePathspecs(this.members[0].projectKey));
+    }
   }
 
   /** Deterministic delivery: read the inbox at step start and hang the pending
@@ -2828,7 +2877,10 @@ export class GraphOrchestrator extends RunHarness {
    * live case, `implementer.done` — that is byte-identical to an ordinary execution.
    */
   async _finishComposite(nc, args) {
-    if (nc.meta?.sideEffect === 'code') await this._stageWorkingTree();
+    if (nc.meta?.sideEffect === 'code') {
+      await this._stageWorkingTree();
+      if (this.execEnv) await this.execEnv.stageAll(this._excludePathspecs(this.members[0].projectKey));
+    }
     const label = nc.meta?.displayName || nc.key || args.node.id;
     const n = Array.isArray(args.phases) ? args.phases.length : 0;
     return { summary: `${label}: composite execution complete (${n} phase(s)).`, outputs: {}, verdict: null };

@@ -26,7 +26,8 @@ for Strict, or a saved set's id); an unknown id exits before the run starts.
 A resumed run keeps the set it started with, so `worca resume` has no such flag.
 Only Claude holds all of Normal's rules: on a new install a run on any other
 engine is refused unless you start it with `--guardrails permissive` or accept
-the gap with `--allow-unguarded-engine`.
+the gap with `--allow-unguarded-engine`. A refused resume names a new run with
+`--guardrails permissive`, or `worca resume <id> --allow-unguarded-engine`.
 A team policy's default set preselects the picker over it. Protection stays a
 per-run choice, not a persistent project property: there is no per-project
 default, and one set applies to all workspace members.
@@ -49,8 +50,8 @@ the network.
 
 - **Permissive** — no restrictions; the default on installs from before
   Normal became the default.
-- **Normal** (the default on a new install) — protects credential files (`.env*`, `*.pem`, `*.key`, SSH keys,
-  cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
+- **Normal** (the default on a new install) — protects credential files (`.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
+  SSH keys (`id_*`), cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
   and blocks publication commands
   (`git push`, `npm/yarn/pnpm publish`). It also protects Worca's own state
   (the DB, secrets, settings and MCP registry) from Read/Edit and blocks edits
@@ -188,6 +189,30 @@ not seen; the fixed keys and hooks have no such window. `http.sslCAInfo` is left
   the egress overlay makes non-allowlisted hosts unreachable at the packet
   level. The Normal and Strict sets also deny `Read` on `/run/secrets/**`,
   where a compose secret (an API key via `apiKeyHelper`) lands.
+- **Every engine's agents get an allowlist environment, scrub on or off**: the
+  base names, the engine's own exact names (its catalog entry in
+  `src/shared/engine-switch.mjs`), its sign-in names and this set's
+  environment allowlist. No prefix family passes. The run log names each
+  variable it did not pass, once per run (names only); add one to the
+  allowlist to pass it. Scrub on additionally limits script nodes.
+- **Proxy and CA variables every agent, script and plugin keeps** (connectivity
+  config, not secrets): `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`
+  (and their lower-case forms), `npm_config_proxy` and
+  `npm_config_https_proxy` (either casing), `NODE_USE_ENV_PROXY`,
+  `WORCA_CORPORATE_PROXY_URL`, and the CA paths `NODE_EXTRA_CA_CERTS`,
+  `SSL_CERT_FILE`, `SSL_CERT_DIR`, `GIT_SSL_CAINFO`, `CURL_CA_BUNDLE`,
+  `REQUESTS_CA_BUNDLE`, `PIP_CERT`, `AWS_CA_BUNDLE`, `npm_config_cafile`
+  (either casing), `CARGO_HTTP_CAINFO` and `DENO_CERT`. Plugin setup
+  (`npm ci`, `uv sync`) also keeps `UV_NATIVE_TLS`. `NODE_OPTIONS` and
+  `JAVA_TOOL_OPTIONS` never pass: they can load code into the child.
+- **A proxy URL with a login** (`http://user:password@proxy:8080` in any of the
+  proxy URL variables) is a secret: agents, scripts, run-start checks and
+  plugins then get no proxy URL at all (one alone would half-route the
+  child), only `NO_PROXY` and the CA paths, and the run log says so once.
+  Turn on **Use a corporate proxy** in Settings instead: Worca keeps
+  the login and points every child at its local proxy, which needs none. A
+  run's environment allowlist that names the variable still passes it, as an
+  explicit choice. Your terminal, Actions and git keep the URL.
 - Env scrub failing a pipeline that needed an unlisted var fails visibly
   (tool errors in the transcript) — add the var to the allowlist; there is no
   silent fallback. Common cases: a corporate TLS-intercepting proxy already
@@ -200,11 +225,9 @@ not seen; the fixed keys and hooks have no such window. `http.sslCAInfo` is left
   `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` marker: on current CLIs setting it forces
   the child's permission mode back to `default`, overriding Worca's
   `--permission-mode acceptEdits` and breaking scrubbed pipeline runs.
-- Not setting that marker is not the same as blocking it: if **your own shell**
-  exports `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, it survives the scrub (the
-  `CLAUDE_*` keep-rule passes it through) and inflicts exactly the breakage
-  above on every spawned `claude` — unset it before launching Worca, or expect
-  degraded runs.
+- `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` exported by **your own shell** is not in
+  Claude's catalog names, so the allowlist withholds it (the run log names it);
+  allowlisting it brings back exactly the breakage above.
 - Strict denies `curl`, which the manual web-UI-testing agent uses to poll a
   dev server — it falls back to the `browser_*` MCP tools (not denied), so that
   flow degrades rather than breaks. `.env*` also matches `.env.example` /

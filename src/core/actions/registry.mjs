@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import net from 'node:net';
-import { spawnSync } from 'node:child_process';
+import { spawnChildSync } from '../spawn.mjs';
 import { spawnActionProcess, stopProcess, actionBaseEnv } from './spawn.mjs';
 import { allocatePort, DEFAULT_PORT_RANGE } from './ports.mjs';
 import { expandPlaceholders, resolveCwd } from './model.mjs';
@@ -253,11 +253,11 @@ const defaultAlive = (pid) => { try { process.kill(pid, 0); return true; } catch
 /** POSIX: a detached action is its own group leader; refuse to kill a recycled pid that is not. */
 async function defaultGroupLeader(pid, platform = process.platform) {
   if (platform === 'win32') return true;
-  const r = spawnSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' });
+  const r = spawnChildSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' });
   return r.status === 0 && Number(r.stdout.trim()) === pid;
 }
 function defaultKill(pid, platform = process.platform) {
-  if (platform === 'win32') { spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); return; }
+  if (platform === 'win32') { spawnChildSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); return; }
   try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
 }
 

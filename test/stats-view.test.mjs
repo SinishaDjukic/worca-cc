@@ -10,6 +10,7 @@ import {
   renderGroupsCard, groupsToCsv, statsQuery, renderStatsView,
   renderSpendChart, renderPeopleCard, renderShapingCard,
 } from '../ui/public/stats-view.mjs';
+import { brokerSlotLabel } from '../src/shared/engine-switch.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -221,6 +222,14 @@ test('people, groups and Shaper tables are the shared table inside a table-wrap'
       assert.ok(td.classList.contains('table-main') || td.dataset.label, `${card.querySelector('h2').textContent}: "${td.textContent}" is labelled`);
     }
   }
+});
+
+test('renderPeopleCard names an engine\'s own broker slot from the ENGINES catalog', () => {
+  const slots = [{ slot: 'copilot-pat', plan: 'api' }, { slot: 'cursor', plan: 'api' }, { slot: 'anthropic', plan: 'subscription' }];
+  const card = renderPeopleCard({ people: [{ person: 'ada@example.com', usd: 1, requests: 1, inputTokens: 1, outputTokens: 1, slots }] }, 'x', { doc });
+  assert.equal(card.querySelector('td.people-slots').textContent, 'Copilot (token), Cursor, Anthropic (subscription)');
+  assert.equal(brokerSlotLabel('copilot-pat'), 'Copilot (token)');
+  assert.equal(brokerSlotLabel('anthropic'), null);
 });
 
 test('renderGroupsCard: no rows → empty hint and a disabled export', () => {

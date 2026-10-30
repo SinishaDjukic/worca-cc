@@ -9,8 +9,9 @@ import { join } from 'node:path';
 import {
   buildCursorArgs, createCursorNormalizer, classifyCursorError, cursorChatOf, CURSOR_SESSION_PREFIX,
   cursorRulePlan, cursorCapabilities, cursorPreflight, runCursorProcess, CURSOR_ASK_LOCKDOWN, cursorMcpDocument,
-  cursorOwns, excludeLine, parseCursorStatus,
+  cursorOwns, excludeLine, parseCursorStatus, brokeredCursorHome,
 } from '../src/core/engines/cursor.mjs';
+import { CURSOR_CLI_CONFIG } from '../src/core/exec-env/relay-route.mjs';
 import { EVENT_TYPES, isNormalized } from '../src/core/engines/events.mjs';
 import { CAPABILITY_KEYS } from '../src/core/engines/capabilities.mjs';
 import { fakeCursor } from './helpers/fake-cursor.mjs';
@@ -307,6 +308,22 @@ test('a failed rewrite keeps the old file worca\'s and leaves no temp file', POS
   } finally { chmodSync(dir, 0o755); }
   assert.equal(cursorOwns(join(dir, 'cli.json')), true, 'the old content is still in the ledger');
   assert.deepEqual(readdirSync(dir), ['cli.json']);
+});
+
+test('brokered config dir: one per person whose work it runs, 0700, holding the HTTP/1.1 agent stream config', POSIX, () => {
+  const root = tmp();
+  const local = brokeredCursorHome(null, root);
+  assert.equal(local, join(root, 'local'), 'no person (a local install): the local dir');
+  assert.equal(brokeredCursorHome('local', root), local);
+  const ada = brokeredCursorHome('Ada@Acme.dev', root);
+  const bob = brokeredCursorHome('bob@acme.dev', root);
+  assert.notEqual(ada, bob, "one person's chats never land beside another's");
+  assert.equal(brokeredCursorHome('ada@acme.dev', root), ada, 'the same person, the same dir');
+  for (const d of [local, ada, bob]) {
+    assert.equal(statSync(d).mode & 0o777, 0o700, d);
+    assert.equal(readFileSync(join(d, 'cli-config.json'), 'utf8'), CURSOR_CLI_CONFIG);
+  }
+  assert.ok(!ada.includes('ada'), 'the dir name does not spell the email');
 });
 
 test('status: "not authenticated" reads as signed out', () => {

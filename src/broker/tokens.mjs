@@ -105,8 +105,11 @@ export function resolveToken(store, token, now = Date.now()) {
 
 /** The token a request carries: `x-api-key`, or `Authorization: Bearer`. */
 export function tokenFromHeaders(headers) {
-  const k = headers['x-api-key'];
-  if (typeof k === 'string' && k.trim()) return k.trim();
+  // x-goog-api-key: a Gemini client (Gemini CLI, Qwen Code's, Goose's and OpenCode's google provider) sends its key there.
+  for (const name of ['x-api-key', 'x-goog-api-key']) {
+    const k = headers[name];
+    if (typeof k === 'string' && k.trim()) return k.trim();
+  }
   const a = headers.authorization;
   if (typeof a === 'string') {
     const m = /^Bearer\s+(\S+)\s*$/i.exec(a);

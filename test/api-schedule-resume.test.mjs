@@ -169,7 +169,21 @@ test('engine: a scheduled resume on another engine stores it, fires on it, and a
   const body = await refused.json();
   assert.equal(body.code, 'engine-refused');
   assert.doesNotMatch(body.error, /--allow-unguarded-engine/, 'worded for the UI');
+  assert.doesNotMatch(body.error, /--guardrails/, 'the UI never names the CLI flag');
+  assert.match(body.error, /start a new run with the Permissive set, or tick Allow unguarded/);
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM scheduled_runs WHERE json_extract(request, \'$.internal.resumePipelineId\') = ?').get(guarded.id).n, 0);
+});
+
+test('engine: a scheduled resume onto Claude is refused at once when Claude cannot hold the run\'s rules (no Claude exemption)', async () => {
+  const { writeGuardrailSet } = await import('../src/core/guardrail-store.mjs');
+  const set = await writeGuardrailSet({ name: `Claude Grep ${Math.random().toString(36).slice(2, 8)}`,
+    settings: { honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: ['Grep(secrets/**)'] } });
+  const { id } = await pausedFixture({ pauseReason: 'usage_limit', guardrailsId: set.id });
+  const r = await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(60_000), engine: 'claude' });
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'engine-refused');
+  assert.match(body.error, /engine claude: .*cannot enforce \(Grep\(secrets\/\*\*\)\)/);
 });
 
 test('fire skips when the run was resumed meanwhile (ticket skipped, feed entry, run untouched)', async () => {

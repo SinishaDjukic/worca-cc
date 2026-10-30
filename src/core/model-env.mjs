@@ -12,26 +12,24 @@
 // import contract; that is why the constant does NOT live next to
 // SPAWN_ENV_BASE in claude-runner.mjs.
 
-import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES } from '../shared/engine-switch.mjs';
+import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, HELPER_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineEntry } from '../shared/engine-switch.mjs';
 
-/** Reasoning-effort vocabulary. Canonical home is HERE (not config.mjs, which
- *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
- *  without importing the core graph. */
-export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
-export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
-/** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
-export const CURSOR_EFFORTS = [];
-/** Goose's GOOSE_THINKING_EFFORT values (engines/goose.mjs); the provider decides what each one does. */
-export const GOOSE_EFFORTS = ['low', 'medium', 'high', 'max'];
-/** OpenCode's `--variant` values (engines/opencode.mjs): the union of its providers' reasoning variants. */
-export const OPENCODE_EFFORTS = ['minimal', 'low', 'medium', 'high', 'max'];
-/** Qwen Code's `model.reasoningEffort` tiers (engines/qwen.mjs), set in worca's system settings per spawn. */
-export const QWEN_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
-/** Gemini CLI's thinking, set per spawn in its settings' model config overrides (engines/gemini.mjs GEMINI_THINKING): a
- *  thinking level on Gemini 3, a thinking budget on Gemini 2.5. */
-export const GEMINI_EFFORTS = ['low', 'medium', 'high'];
-/** Copilot's `--reasoning-effort` values (engines/copilot.mjs COPILOT_EFFORTS; kept equal by a test). */
-export const COPILOT_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+/** Reasoning-effort vocabularies: each engine's catalog `efforts` (src/shared/engine-switch.mjs ENGINES), named here
+ *  (not config.mjs, which re-exports them) so settings.mjs can validate a catalog entry's `efforts` without importing
+ *  the core graph. Cursor has no effort flag (engines/cursor.mjs capability `effort: false`); Copilot's are its
+ *  `--reasoning-effort` values (engines/copilot.mjs COPILOT_EFFORTS); Goose's its GOOSE_THINKING_EFFORT values
+ *  (engines/goose.mjs; the provider decides what each one does); OpenCode's its `--variant` values (engines/opencode.mjs:
+ *  the union of its providers' reasoning variants); Qwen Code's its `model.reasoningEffort` tiers (engines/qwen.mjs, set
+ *  in worca's system settings per spawn); Gemini CLI's its thinking, set per spawn in its settings' model config
+ *  overrides (engines/gemini.mjs GEMINI_THINKING: a thinking level on Gemini 3, a thinking budget on Gemini 2.5). */
+export const EFFORTS = ENGINES.claude.efforts;
+export const CODEX_EFFORTS = ENGINES.codex.efforts;
+export const CURSOR_EFFORTS = ENGINES.cursor.efforts;
+export const GOOSE_EFFORTS = ENGINES.goose.efforts;
+export const OPENCODE_EFFORTS = ENGINES.opencode.efforts;
+export const QWEN_EFFORTS = ENGINES.qwen.efforts;
+export const GEMINI_EFFORTS = ENGINES.gemini.efforts;
+export const COPILOT_EFFORTS = ENGINES.copilot.efforts;
 /** A Copilot built-in's catalog id is `copilot/<the id copilot --model takes>`: the bare ids clash with Codex's built-ins
  *  (gpt-5.5) and look like Claude's, and the catalog holds one row per id. A bridge import of the Copilot API uses
  *  `copilot-<id>` (connections.mjs suggestModelHandle), so the two never meet. */
@@ -45,7 +43,7 @@ export const MODEL_ENGINES = [...MODEL_ENGINE_NAMES];
 /** The engines a run's agent nodes can run on (engines/index.mjs). */
 export const RUN_ENGINES = [...ENGINE_NAMES];
 /** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
-export const HELPER_ENGINES = ['claude', 'codex'];
+export const HELPER_ENGINES = [...HELPER_ENGINE_NAMES];
 /** The engine a run's helper jobs run on. A run on an own-sign-in engine (OWN_SIGNIN_ENGINES: Cursor, Gemini CLI, Goose,
  *  OpenCode, Qwen Code) hands them to Claude: they read untrusted text, and those engines' shells cannot be switched off (no verified read-only mode). Copilot runs its own on its default model (no helper slots). The memory defrag and
  *  the workspace scan are agent nodes of the run, not helper jobs. */
@@ -62,8 +60,8 @@ export function aModelOf(engine) { return `${/^[aeiou]/i.test(String(engine)) ? 
 /** How an OWN_SIGNIN_ENGINES model connects, for the messages that refuse its env or upstream. */
 export function ownSignInNote(engine) { return OWN_SIGNIN_NOTE[engine] || ''; }
 /** A Goose or OpenCode model id is `provider/model`: goose's --provider and --model, split at the first `/`; OpenCode's as
- *  `opencode models` lists it (`-m` takes nothing else). */
-const PROVIDER_MODEL_ID_RE = /^[^/\s]+\/\S+$/;
+ *  `opencode models` lists it (`-m` takes nothing else). Neither half starts with `-` (it would read as a flag). */
+const PROVIDER_MODEL_ID_RE = /^(?!-)[^/\s]+\/(?!-)\S+$/;
 const MODEL_ID_HINT = Object.freeze({ goose: 'a goose model id is provider/model (for example google/gemini-2.5-flash)',
   opencode: 'an opencode model id is provider/model (as `opencode models` lists it)' });
 /** Why `id` cannot be a model of `engine`, or null. */
@@ -81,11 +79,9 @@ export const ASK_ENGINES = [...CHAT_ENGINE_NAMES];
 /** A chat engine that runs locked down: every Ask engine but Claude. Its chat reads through worca's read_file / grep /
  *  glob and starts no registry MCP server. */
 export const lockedChatEngine = (engine) => engine !== 'claude' && ASK_ENGINES.includes(engine);
-export function effortsForEngine(engine) {
-  return engine === 'codex' ? CODEX_EFFORTS : engine === 'copilot' ? COPILOT_EFFORTS : engine === 'goose' ? GOOSE_EFFORTS : engine === 'opencode' ? OPENCODE_EFFORTS
-    : engine === 'qwen' ? QWEN_EFFORTS : engine === 'gemini' ? GEMINI_EFFORTS : OWN_SIGNIN_ENGINES.includes(engine) ? CURSOR_EFFORTS : EFFORTS;
-}
-export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS, ...COPILOT_EFFORTS])];
+/** The efforts `engine` takes (its catalog list); an unknown or missing engine takes Claude's. */
+export function effortsForEngine(engine) { return engineEntry(engine)?.efforts ?? EFFORTS; }
+export const ALL_EFFORTS = [...new Set(ENGINE_NAMES.flatMap((e) => ENGINES[e].efforts))];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models
 // view Test button). Deliberately BELOW the pipeline list: the CLI accepts
@@ -201,7 +197,7 @@ export function withStreamTimeouts(env) {
 // mode, the claude binary path, the effort flag name). Everything else —
 // including all other ANTHROPIC_* / CLAUDE_* — is allowed: routing them is the
 // point. CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is the CLI-2.1.220 permission-mode
-// landmine documented at claude-runner.mjs#buildSpawnEnv.
+// landmine documented at child-env.mjs#composeChildEnv.
 // CLAUDE_CODE_SUBAGENT_MODEL is reserved too: the per-node `subagentModel`
 // prompt policy is the only sanctioned wire for a child's model, and a catalog
 // entry silently flooring every fan-out child would contradict the per-node
@@ -221,7 +217,7 @@ export function isReservedModelEnvKey(key) {
     || RESERVED_MODEL_ENV_PREFIXES.some((p) => typeof key === 'string' && key.startsWith(p));
 }
 
-// A registry spawn's own env names (MCP registry §5.5.6): composeSpawnEnv (engines/spawn.mjs) merges the model env over the run env, so a
+// A registry spawn's own env names (MCP registry §5.5.6): childEnv (src/core/spawn.mjs) merges the model env over the run env, so a
 // model entry that set one would replace a copy's secret. Refused by prepareModelEnv and the plugin manifest —
 // deliberately NOT reserved: cleanRunEnv shares isReservedModelEnvKey and must keep the registry env.
 export function isMcpRegistryEnvKey(key) {

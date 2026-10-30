@@ -1,5 +1,6 @@
 // Model roles (plans/setup-assistant-design.md D1–D5): three kinds of work every model slot falls back to.
 // Pure: shared by src/core (resolution) and ui/public (the Roles card and the Engines rows' "From …" text).
+import { HELPER_ENGINE_NAMES } from './engine-switch.mjs';
 
 export const MODEL_ROLES = Object.freeze(['deep', 'everyday', 'quick']);
 export const ROLE_LABELS = Object.freeze({ deep: 'Deep thinking', everyday: 'Everyday coding', quick: 'Quick jobs' });
@@ -8,8 +9,8 @@ export const ROLE_HINTS = Object.freeze({
   everyday: 'Writes the code and answers in Chat.',
   quick: 'Short, frequent helper calls. Cheap and fast.',
 });
-// The harnesses the Models page shows roles for (the helper engines, src/core/model-env.mjs HELPER_ENGINES).
-export const ROLE_HARNESSES = Object.freeze(['claude', 'codex']);
+// The harnesses the Models page shows roles for: the helper engines (the catalog's helperSlots).
+export const ROLE_HARNESSES = HELPER_ENGINE_NAMES;
 
 // D4 judgement steps by agent key; "Bug Root Cause" ships only in plugins, so it is matched by its display name.
 const DEEP_STEP_KEYS = new Set(['planner', 'planReviewer', 'refiner', 'reviewer', 'deckReviewer']);

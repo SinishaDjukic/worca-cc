@@ -114,7 +114,7 @@ export function validateMemoryScope({ workflowId, memoryScope, isWorkspace = fal
  * A dir with `only` (a Set of note names) copies just those notes: a project whose team memory loads team notes only
  * (memory-team.mjs memoryLoadPlan). The baseline then holds only them, so sync-back never reads a note left out as deleted.
  */
-export async function mountMemory({ root, mount, dirs, onError, gitIgnore = false }) {
+export async function mountMemory({ root, mount, dirs, onError, gitIgnore = false, ownSource = null }) {
   // (Windows: an indexer/AV may hold a handle for a moment.)
   await rm(mount, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   await mkdir(mount, { recursive: true });
@@ -124,7 +124,7 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
   for (const d of dirs) {
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true });
-    for (const e of await listMemory(root, d.scope, { onError, hashOf: syncHash })) {
+    for (const e of await listMemory(root, d.scope, { onError, hashOf: syncHash, forAgents: true, ownSource })) {   // never another run's held files
       if (d.only && !d.only.has(e.name)) continue;
       await cp(join(scopeDir(root, d.scope), `${e.name}.md`), join(dest, `${e.name}.md`));
       baseline[baselineKey(d.rel, e.name)] = e.hash;
@@ -147,13 +147,13 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
  * `only` on a dir: as in mountMemory — the other notes are not written, and a copy of one already there is unlinked.
  * `dirMode` / `fileMode`: the modes new folders and files are made with (the Ask mount: never group-writable).
  */
-export async function refreshMount({ root, mount, dirs, onError, dirMode, fileMode }) {
+export async function refreshMount({ root, mount, dirs, onError, dirMode, fileMode, ownSource = null }) {
   let files = 0;
   const failed = [];
   for (const d of dirs) {
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true, mode: dirMode });
-    const entries = (await listMemory(root, d.scope, { onError })).filter((e) => !d.only || d.only.has(e.name));
+    const entries = (await listMemory(root, d.scope, { onError, forAgents: true, ownSource })).filter((e) => !d.only || d.only.has(e.name));   // a held file is swept like a gone one
     // `keep` is built from what we actually WROTE or deliberately kept — an entry that vanished
     // between the listing and the read is not in it, so its stale mount copy is swept THIS call.
     const keep = new Set();

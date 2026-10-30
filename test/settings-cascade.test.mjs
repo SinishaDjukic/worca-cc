@@ -3,14 +3,17 @@
 // warning, and no project (or a workspace run) skipping the project layer.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { ENGINES, setCatalogForTest } from '../src/shared/engine-switch.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { resolveSetting, resolveAll, settingIds, settingEntry, utilityModelFor } from '../src/core/settings-cascade.mjs';
+import { resolveSetting, resolveAll, settingIds, settingEntry, utilityModelFor, resolveRunExecEnv } from '../src/core/settings-cascade.mjs';
 import { writeTeamPolicyPrefs } from '../src/core/config.mjs';
 import { getDb, prepare } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
+import { _registerExecBackendForTests } from '../src/core/exec-env/registry.mjs';
+import { createLoopbackBackend } from './helpers/loopback-backend.mjs';
 
 useTempHome(after);
 const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, ALLOW: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK };
@@ -134,7 +137,7 @@ test('helper slots: Claude reads today\'s keys; Codex reads utilityModels.codex'
 
 test('the registry: curated keys only, user-only keys refused, unknown ids throw', () => {
   const ids = settingIds({ roles: ['planner'] });
-  for (const id of ['run.engine', 'pipelineCostLimitUsd', 'humanRateUsdPerHour', 'askMaxTurns', 'askMaxBudgetUsd', 'askWeb',
+  for (const id of ['run.engine', 'run.execEnv', 'pipelineCostLimitUsd', 'humanRateUsdPerHour', 'askMaxTurns', 'askMaxBudgetUsd', 'askWeb',
     'contextMaxBytesPerFile', 'contextMaxBytesTotal', 'skillMount', 'watchNewPrs', 'memory.softBytesPerFile', 'memory.defrag.bytesPct',
     'nightMode.strategy', 'models.claude.steps.planner', 'models.codex.steps.planner', 'models.claude.utility.title',
     'models.codex.utility.prDescription', 'models.claude.memoryDefrag', 'models.codex.memoryDefrag', 'models.codex.workspaceScan']) {
@@ -183,4 +186,43 @@ test('Gemini CLI and Qwen Code: step slots only, like Cursor', () => {
     assert.deepEqual(ids.filter((id) => id.startsWith(`models.${e}.`)), [`models.${e}.steps.plan`]);
     assert.deepEqual(utilityModelFor(e, 'title'), { model: null, effort: null, source: 'default' });
   }
+});
+
+test('run.execEnv: user default, project override, the run wins, an invalid stored value is skipped', () => {
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir }), { execEnv: 'local', source: 'default' });
+  writeUser({ execEnv: 'e2b' });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir }), { execEnv: 'e2b', source: 'user' });
+  writeProjectRow({ extra: { settings: { execEnv: 'local' } } });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir }), { execEnv: 'local', source: 'project' });
+  assert.deepEqual(resolveRunExecEnv({ explicit: ' e2b ', projectDir: dir }), { execEnv: 'e2b', source: 'run' });
+  writeProjectRow({ extra: { settings: { execEnv: 'docker' } } });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir }), { execEnv: 'e2b', source: 'user' });
+  // A saved e2b default does not reach a run e2b cannot take: it stays local and says why.
+  assert.deepEqual(resolveRunExecEnv({ workspace: true }),
+    { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to a workspace run; it runs locally' });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'codex' }), { execEnv: 'e2b', source: 'user' });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'gemini' }), { execEnv: 'e2b', source: 'user' }, 'every catalog engine runs in a sandbox');
+  // An engine the catalog marks local (one added later) keeps a saved default off it.
+  setCatalogForTest({ ...ENGINES, gemini: { ...ENGINES.gemini, remote: false } });
+  try {
+    assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'gemini' }),
+      { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to the gemini engine; it runs locally' });
+  } finally { setCatalogForTest(null); }
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'claude' }), { execEnv: 'e2b', source: 'user' });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, workMode: 'folder' }),
+    { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to a Folder project; it runs locally' });
+  assert.deepEqual(resolveRunExecEnv({ workMode: 'none' }),
+    { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to a run without a project; it runs locally' });
+  // An explicit per-run e2b is never rewritten: the start's preflight refuses it with a reason.
+  assert.deepEqual(resolveRunExecEnv({ explicit: 'e2b', workspace: true }), { execEnv: 'e2b', source: 'run' });
+});
+
+test('run.execEnv: a saved default naming another registered backend falls back for workspace runs (generic refusal)', () => {
+  const unregister = _registerExecBackendForTests(createLoopbackBackend({ root: home }).backend);
+  try {
+    writeUser({ execEnv: 'loopback' });
+    assert.deepEqual(resolveRunExecEnv({ workspace: true }),
+      { execEnv: 'local', source: 'user', fallback: 'the saved Loopback default does not apply to a workspace run; it runs locally' });
+    assert.deepEqual(resolveRunExecEnv({ projectDir: dir }), { execEnv: 'loopback', source: 'user' });
+  } finally { unregister(); writeUser({}); }
 });

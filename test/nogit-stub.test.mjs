@@ -10,7 +10,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { withNoGit } from './helpers/git-off.mjs';
 import { _testing as cap } from '../src/core/git-available.mjs';
 import { NOGIT_STUB, noGitBinDir, ensureNoGitStub, withNoGitPath, _testing as stub } from '../src/core/nogit-stub.mjs';
-import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
+import { childEnv } from '../src/core/spawn.mjs';
 import { scriptBaseEnv } from '../src/core/graph/script-runner.mjs';
 import { terminalEnv } from '../src/core/terminal/context.mjs';
 import { actionBaseEnv } from '../src/core/actions/spawn.mjs';
@@ -54,11 +54,11 @@ test('the no-git stub', async (t) => {
       const env = withNoGitPath({ PATH: '/usr/bin:/bin', HOME: '/h' }, { home, platform: 'darwin', available: false });
       assert.deepEqual(env, { PATH: `${join(home, 'nogit-bin')}:/usr/bin:/bin`, HOME: '/h' });
     } },
-    { name: 'composeSpawnEnv (every engine, runs and Ask turns) carries it while git is missing on darwin', run: () => {
+    { name: 'childEnv (every engine, runs and Ask turns) carries it while git is missing on darwin', run: () => {
       stub.setPlatform('darwin');
-      assert.ok(composeSpawnEnv({}).env.PATH.startsWith(`${noGitBinDir()}:`), 'the default home is worcaHome() = <WORCA_HOME>/.worca-cc');
+      assert.ok(childEnv({ engine: 'claude' }).env.PATH.startsWith(`${noGitBinDir()}:`), 'the default home is worcaHome() = <WORCA_HOME>/.worca-cc');
       stub.setPlatform('linux');
-      assert.ok(!String(composeSpawnEnv({}).env.PATH).includes('nogit-bin'));
+      assert.ok(!String(childEnv({ engine: 'claude' }).env.PATH).includes('nogit-bin'));
     } },
     { name: 'worca terminal (S66): run_command / agent terminals / launchers carry it once on darwin; Linux unchanged', run: () => {
       const dir = noGitBinDir();

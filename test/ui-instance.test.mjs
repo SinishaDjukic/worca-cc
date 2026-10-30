@@ -13,7 +13,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import {
   DEFAULT_UI_PORT, UI_HEALTH_NAME, uiInstanceFile, writeUiInstance, readUiInstance, removeUiInstance,
-  probeUi, stopUi, uiUrl, urlHost, waitForUiState, newUiToken,
+  probeUi, stopUi, uiUrl, urlHost, waitForUiState, newUiToken, callUi,
 } from '../src/core/ui-instance.mjs';
 
 useTempHome(after);
@@ -122,6 +122,24 @@ test('probeUi classifies a port: free, worca (with info), busy (other program / 
       } finally { await close(); }
     } },
   ]);
+});
+
+test('callUi: null with no instance file or a closed port; a live Worca UI gets the JSON call with its body', async () => {
+  removeUiInstance();
+  assert.equal(await callUi('/api/health'), null, 'no instance file');
+  const closed = await freePort();
+  await writeUiInstance({ pid: 1, host: '127.0.0.1', port: closed, token: 'x', version: '0', startedAt: 't' });
+  assert.equal(await callUi('/api/health'), null, 'a closed port is null, not an ECONNREFUSED rejection');
+  const { port, close } = await serve((req, res) => {
+    if (req.url === '/api/health') return json(res, 200, { name: UI_HEALTH_NAME });
+    let body = ''; req.on('data', (d) => { body += d; });
+    req.on('end', () => json(res, 200, { method: req.method, url: req.url, got: JSON.parse(body || 'null') }));
+  });
+  try {
+    await writeUiInstance({ pid: 1, host: '127.0.0.1', port, token: 'x', version: '0', startedAt: 't' });
+    assert.deepEqual(await callUi('/api/echo', { method: 'POST', body: { backend: 'e2b' } }),
+      { status: 200, ok: true, data: { method: 'POST', url: '/api/echo', got: { backend: 'e2b' } } });
+  } finally { await close(); removeUiInstance(); }
 });
 
 test('stopUi: free port -> not-running (idempotent) and clears a stale instance file', async () => {

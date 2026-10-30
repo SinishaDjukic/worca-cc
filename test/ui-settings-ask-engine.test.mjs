@@ -25,6 +25,13 @@ test('renderAskEngineSection: the engine row and one model row per engine, each 
   // Value first, and the Model names the model only: the Effort beside it says its own inherited value.
   assert.equal(host.querySelector('[data-setting="models.claude.ask"] .inherit-model option').textContent, 'Opus 5.5 (default)');
   assert.equal(host.querySelector('[data-setting="models.claude.ask"] .inherit-effort option').textContent, 'high (default)');
+  // Each engine's row says how the per-turn cost cap treats it: the same rule on every engine (ask/chat-price.mjs).
+  const tip = (h, id) => h.querySelector(`[data-setting="${id}"] .label-row label`).getAttribute('title');
+  assert.equal(tip(host, 'models.claude.ask'), null);
+  assert.equal(tip(host, 'models.codex.ask'), 'On Codex the per-turn cost cap is checked when a reply ends, and needs a model worca can price (its Models page price, or a list price worca knows).');
+  const both = dom.window.document.createElement('div');
+  renderAskEngineSection(both, { catalog: [...CATALOG, { id: 'copilot/gpt-5', label: 'GPT-5', engine: 'copilot', efforts: [] }] });
+  assert.equal(tip(both, 'models.copilot.ask'), 'On Copilot the per-turn cost cap is checked when a reply ends, and needs a model worca can price (its Models page price, or a list price worca knows).');
 });
 
 test('renderAskEngineSection: with no Codex model offered, Codex is marked unavailable and gets no empty model row', () => {

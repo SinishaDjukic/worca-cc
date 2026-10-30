@@ -13,7 +13,7 @@ import { pauseConsequences, describePauseReason, giveUpOption } from '../failure
 import { projectForm } from '../../shared/forms/project.mjs';
 import { CHAT_PROJECTION_MAX } from '../ask-projection.mjs';
 import { awayAnswersSummary } from '../../shared/away-mode/labels.mjs';
-import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel } from '../../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel, costKnownOf } from '../../shared/engine-switch.mjs';
 import { readyEnginesCached } from '../engines/ready-cache.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
@@ -31,9 +31,10 @@ export function fmtUsd(usd) {
   return `$${Number(usd).toFixed(2)}`;
 }
 
-/** A run's cost: fmtUsd (null when unset), or "cost unknown" on an engine that reports no cost — never $0.00. */
-export function fmtRunCost(engine, usd) {
-  return engineReportsCost(engine) ? fmtUsd(usd) : runCostLabel(engine, usd, fmtUsd);
+/** A run's cost: fmtUsd (null when unset); "cost unknown" on an engine that reports no cost, "≥ $x (part unknown)" when
+ *  a step's cost could not be priced (`known` false, costKnownOf) — never $0.00. */
+export function fmtRunCost(engine, usd, known = true) {
+  return engineReportsCost(engine) && known !== false ? fmtUsd(usd) : runCostLabel(engine, usd, fmtUsd, known);
 }
 
 function mdMsg(text, severity) {
@@ -97,7 +98,7 @@ export function renderDone(meta, payload = {}) {
   parts.push('   **Status:** completed');
   const dur = fmtMs(meta.totalActiveMs);
   if (dur) parts.push(`   **Duration:** ${dur}`);
-  const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd);
+  const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd, costKnownOf(meta));
   if (cost) parts.push(`   **Cost:** ${cost}`);
   pushPending(parts, meta);
   pushAway(parts, meta);

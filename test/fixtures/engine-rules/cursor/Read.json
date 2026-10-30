@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "deny": [
+      "Read(./secrets/**)"
+    ]
+  },
+  "expected": {
+    "deny": [
+      "Read(./secrets/**)"
+    ],
+    "partial": [
+      "Read(./secrets/**)"
+    ],
+    "unenforced": []
+  }
+}

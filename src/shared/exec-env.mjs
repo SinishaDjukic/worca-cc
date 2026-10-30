@@ -1,0 +1,34 @@
+// src/shared/exec-env.mjs
+// Which runs a SAVED remote default (E2B or any registered backend) applies to (plans/e2b-execution-design.md §12).
+// One rule for the server's run-start cascade (settings-cascade.mjs resolveRunExecEnv, through exec-env/policy.mjs)
+// and the New run dialog (ui/public/app.js), so the dialog shows the environment the run really gets.
+import { ENGINES, ENGINE_NAMES, engineLabel, engineEntry } from './engine-switch.mjs';
+
+/** The engines a remote sandbox runs: the catalog entries marked `remote` (src/shared/engine-switch.mjs). Each one's
+ *  env, sign-in and host-only names are its catalog `env`, which exec-env/policy.mjs ENGINE_SANDBOX reads; an engine
+ *  without the flag runs locally only for now. */
+export const REMOTE_ENGINES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].remote));
+
+/** The engines a sandbox runs as the owners read the catalog (engineEntry: a test's catalog too). */
+const remoteNow = () => ENGINE_NAMES.filter((e) => engineEntry(e)?.remote);
+/** "claude", or "claude, codex and cursor", for messages. */
+export const remoteEnginesText = () => { const r = remoteNow(); return r.length > 1 ? `${r.slice(0, -1).join(', ')} and ${r.at(-1)}` : r[0]; };
+
+/** The run-start refusal of a remote run on `engine`, or null when a sandbox runs it. `title` names the backend ('E2B'). */
+export function remoteEngineRefusal(title, engine) {
+  const e = engine || 'claude';
+  if (engineEntry(e)?.remote) return null;
+  return `${title} execution runs the ${remoteEnginesText()} engine${remoteNow().length > 1 ? 's' : ''} only (this run uses ${e}): ${engineLabel(e)} runs locally only for now. Pick Local, or switch the engine.`;
+}
+
+/** Why a saved remote default does not apply to a run (a workspace run, a Folder project, a run without a project, or
+ *  an engine no sandbox runs (REMOTE_ENGINES): the generic remote layer moves one git worktree in), or
+ *  null when it does. An explicit per-run pick is not judged here: the start refuses it. A backend's own extra
+ *  reasons are its `refusesDefault` (server side). `workMode` is the run's: 'git' (default), 'folder' or 'none'. */
+export function remoteRefusesDefault({ engine = null, workspace = false, workMode = 'git' } = {}) {
+  if (workspace) return 'a workspace run';
+  if (workMode === 'folder') return 'a Folder project';
+  if (workMode === 'none') return 'a run without a project';
+  if (engine && !engineEntry(engine)?.remote) return `the ${engine} engine`;
+  return null;
+}

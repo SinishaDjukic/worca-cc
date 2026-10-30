@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { cmdContainer, boxProxyEnv, boxCaCert, isLoopbackProxy, dotenvValue, initDir } from '../src/cli/container.mjs';
-import { SPAWN_ENV_BASE } from '../src/core/engines/spawn.mjs';
+import { SPAWN_ENV_BASE } from '../src/core/spawn.mjs';
 
 useTempHome(after);
 

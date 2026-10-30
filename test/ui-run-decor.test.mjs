@@ -441,6 +441,14 @@ test('a $0 review (mock / free model) keeps its chip and band at $0.00; several 
     'no booked band for a review that never booked; an unpriced lower bound stays blank');
 });
 
+test('a step whose cost could not be counted is a lower bound on its row and in the node total', () => {
+  const d = decorFromState(S({ steps: [impl(1, { costUsd: 0.6, costKnown: false }), impl(2, { costUsd: 0.2 })] }));
+  assert.deepEqual(d.footers.n_impl.rows.map((r) => r.cost), ['≥ $0.60', '$0.20']);
+  assert.equal(d.footers.n_impl.rows[0].costKnown, false);
+  assert.equal('costKnown' in d.footers.n_impl.rows[1], false);
+  assert.equal(d.totals.n_impl.cost, '≥ $0.80');
+});
+
 test('a run on an engine that reports no cost (Cursor): no $0.00 pill, no $ in totals or the strip; Claude unchanged', () => {
   const steps = [impl(1, { activeMs: 63000, costUsd: 0.6 }), impl(2, { costUsd: 0 })];
   const d = decorFromState(S({ steps, runEngine: 'cursor' }));

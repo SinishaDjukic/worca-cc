@@ -341,9 +341,10 @@ function decorateExecutions(decor, ctx) {
         ordinal: Number(row.ordinal ?? row.cycle) || 1,
         label: rowLabel(node, row), led: ledOf(row.status),
         dur: !flow && row.activeMs != null ? fmtDur(durMs) : '',
-        cost: flow || script || unpriced ? '' : fmtUsd(costUsd),
+        cost: flow || script || unpriced ? '' : (row.costKnown === false ? `≥ ${fmtUsd(costUsd)}` : fmtUsd(costUsd)),
         exit: script && row.exitCode != null ? `exit ${row.exitCode}` : '',
         durMs, costUsd, flow,
+        ...(row.costKnown === false ? { costKnown: false } : {}),
         ...(away ? { away } : {}),
       };
     });
@@ -365,7 +366,7 @@ function decorateExecutions(decor, ctx) {
       const durMs = rows.reduce((a, r) => a + r.durMs, 0);
       const costUsd = sumUsd(rows);
       decor.totals[node.id] = {
-        durMs, dur: fmtDur(durMs), costUsd, cost: script || unpriced ? '' : fmtUsd(costUsd),
+        durMs, dur: fmtDur(durMs), costUsd, cost: script || unpriced ? '' : (rows.some((r) => r.costKnown === false) ? `≥ ${fmtUsd(costUsd)}` : fmtUsd(costUsd)),
         hasStep: rows.some((r) => r.dur !== ''),
       };
       // The node's Away mode share, kept apart from (and already inside) `cost`. Booked reviews show

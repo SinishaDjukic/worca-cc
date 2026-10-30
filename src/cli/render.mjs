@@ -17,7 +17,7 @@
 // executions render nothing; `token` events are never rendered.
 import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { awayAnswersSummary } from '../shared/away-mode/labels.mjs';
-import { usageLimitSwitches, engineLabel, runCostLabel, engineReportsCost } from '../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineLabel, runCostLabel, engineReportsCost, costKnownOf } from '../shared/engine-switch.mjs';
 import { readyEnginesCached } from '../core/engines/ready-cache.mjs';
 import { shortHelp } from '../shared/forms/project.mjs';
 
@@ -138,9 +138,10 @@ export function formatResumeHints(result, pipelineId, { color = (n, s) => s } = 
   return lines;
 }
 
-/** `9 executions · 12m00s active · $1.23` (`cost unknown` on an engine that reports no cost, never $0.00). */
-export function formatTotals({ executions = 0, activeMs = 0, costUsd = 0, engine = 'claude' } = {}) {
-  return `${executions} execution${executions === 1 ? '' : 's'} · ${fmtDur(activeMs)} active · ${runCostLabel(engine, costUsd, usd)}`;
+/** `9 executions · 12m00s active · $1.23` (`cost unknown` on an engine that reports no cost, `≥ $x (part unknown)` when a
+ *  step's cost could not be priced, never $0.00). */
+export function formatTotals({ executions = 0, activeMs = 0, costUsd = 0, engine = 'claude', known = true } = {}) {
+  return `${executions} execution${executions === 1 ? '' : 's'} · ${fmtDur(activeMs)} active · ${runCostLabel(engine, costUsd, usd, known)}`;
 }
 
 /** The count-only twin of formatRunSummary's execution rows: v2 stepper rows that
@@ -188,6 +189,7 @@ export function formatRunSummary(state) {
     activeMs: rows.reduce((a, s) => a + (Number(s.activeMs) || 0), 0),
     costUsd: st.totalCostUsd,
     engine: st.runEngine,
+    known: costKnownOf(st),
   }));
   if (Array.isArray(st.directions?.pending) && st.directions.pending.length) {
     lines.push(`${st.directions.pending.length} direction(s) never applied: ${st.directions.pending.map((d) => `${d.id} "${d.text}"`).join('; ')}`);

@@ -18,6 +18,10 @@ import { withBillTo } from '../src/core/billing.mjs';
 import { probeClaudeAuth } from '../src/core/preflight.mjs';
 import { classifyError } from '../src/core/recoverable-error.mjs';
 import { startFakeUpstream, GOOD_KEY } from './helpers/fake-model-upstream.mjs';
+import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
+import { E2bExecEnv } from '../src/core/exec-env/e2b-env.mjs';
+import { scratchDirs, fixture, makeEnvOpts } from './helpers/e2b-fixture.mjs';
+import { STREAM_TIMEOUT_ENV, STREAM_TIMEOUT_ENV_KEYS } from '../src/core/model-env.mjs';
 
 const POSIX = { skip: process.platform === 'win32' ? 'the stub CLI is a POSIX script' : false };
 const SECRET = 'r'.repeat(48);
@@ -25,7 +29,8 @@ let up; let single; let multi; let dir; let stub;
 const saved = {};
 const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN',
     'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER'];
-const ENV_KEYS = ['WORCA_MOCK', 'ORCH_MOCK', 'WORCA_BROKER_URL', 'WORCA_BROKER_SECRET', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'WORCA_HOST_GUARD', 'WORCA_BROKER_SYSTEM_BILL_TO', ...ADO_KEYS];
+const ENV_KEYS = ['WORCA_MOCK', 'ORCH_MOCK', 'WORCA_BROKER_URL', 'WORCA_BROKER_SECRET', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'WORCA_HOST_GUARD', 'WORCA_BROKER_SYSTEM_BILL_TO', ...ADO_KEYS,
+  'ANTHROPIC_BASE_URL', 'ENABLE_TOOL_SEARCH', ...STREAM_TIMEOUT_ENV_KEYS];
 
 async function brokerFor(mode) {
   const env = { WORCA_BROKER_MODE: mode, WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1', WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '0' };
@@ -139,6 +144,86 @@ test('a model routed straight to a provider is refused (keys must not bypass the
   const err = await runClaude({ bin: stub, prompt: 'hi', model: 'gw', modelEnv: { ANTHROPIC_BASE_URL: 'https://gw.example.com' } }).catch((e) => e);
   assert.match(err.message, /routes to gw\.example\.com directly/);
   assert.equal(classifyError(err), 'auth');
+});
+
+// A remote spawn (plans/model-relay-design.md §4, §7): an E2B env on the loopback fake whose `claude`
+// calls the model through the relay the way the CLI does. Records every route opened and closed.
+const scratch = scratchDirs(); after(scratch.cleanup);
+async function remoteEnv(t, { serverEnv = {}, call = true } = {}) {
+  const seen = [];
+  const init = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' });
+  const sdk = createFakeE2b({ root: scratch.tmp('worca-broker-e2b-root-'), onCommand: async (cmd, o) => {
+    if (!cmd.startsWith("'claude'")) return null;
+    if (!call) { seen.push({ envs: o.envs }); return { lines: [init, JSON.stringify({ type: 'result', result: 'done', total_cost_usd: 0 })], exitCode: 0 }; }
+    const r = await fetch(`${o.envs.ANTHROPIC_BASE_URL}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json',
+      authorization: `Bearer ${o.envs.ANTHROPIC_AUTH_TOKEN || ''}`, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] }) });
+    const body = await r.text();
+    seen.push({ envs: o.envs, status: r.status });
+    if (!r.ok) return { lines: [init, JSON.stringify({ type: 'result', is_error: true, result: `API Error: ${r.status} ${body}` })], exitCode: 1 };
+    return { lines: [init, JSON.stringify({ type: 'result', result: 'done', total_cost_usd: 0 })], exitCode: 0 };
+  } });
+  const f = fixture(scratch.tmp);
+  const env = new E2bExecEnv(makeEnvOpts(scratch.tmp, sdk, f, { env: serverEnv }));
+  await env.start();
+  t.after(() => env.close('test'));
+  const opened = []; const closed = [];
+  const open = env.openRoute.bind(env); const close = env.closeModelRoute.bind(env);
+  env.openRoute = (d, o) => { const r = open(d, o); opened.push({ args: o, route: r }); return r; };
+  env.closeModelRoute = (id) => { closed.push(id); close(id); };
+  return { env, f, seen, opened, closed };
+}
+
+test('a remote spawn goes through the broker', POSIX, async (t) => {
+  useBroker(single);
+  const { env, f, seen, opened, closed } = await remoteEnv(t);
+  up.requests.length = 0;
+  const events = [];
+  const r = await runClaude({ cwd: f.repo, prompt: 'hi', model: 'claude-sonnet-5', execEnv: env, onEvent: (e) => events.push(e) });
+  assert.equal(r.text, 'done');
+  assert.equal(opened.length, 1, 'one route for the spawn');
+  const { args, route } = opened[0];
+  assert.equal(args.modelEnv.ANTHROPIC_BASE_URL, `${process.env.WORCA_BROKER_URL}/p/anthropic`, 'the route goes to the broker slot');
+  assert.match(args.modelEnv.ANTHROPIC_AUTH_TOKEN, /^wbt_/, 'a token was minted for the spawn');
+  assert.ok(route.secrets.includes(args.modelEnv.ANTHROPIC_AUTH_TOKEN));
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].status, 200);
+  assert.doesNotMatch(JSON.stringify(seen[0].envs), /wbt_/, 'the sandbox holds no broker token');
+  assert.equal(seen[0].envs.ANTHROPIC_AUTH_TOKEN, route.id);
+  assert.equal(seen[0].envs.ANTHROPIC_BASE_URL, route.env.ANTHROPIC_BASE_URL);
+  assert.equal(up.requests.at(-1).headers['x-api-key'], GOOD_KEY, 'the broker added the real key');
+  assert.deepEqual(closed, [route.id], 'the route is closed when the spawn ends');
+  assert.equal(env.relay.routes.has(route.id), false);
+  assert.doesNotMatch(JSON.stringify(events), /wbt_[A-Za-z0-9_-]{20,}/);
+  await new Promise((res) => setTimeout(res, 50));
+  const row = single.store.db.prepare('SELECT revoked_at FROM tokens ORDER BY created_at DESC LIMIT 1').get();
+  assert.ok(row.revoked_at, 'the token is revoked after the spawn exited');
+});
+
+test('a remote spawn with no broker on a first-party model: tool search and the stream ceilings, no credential', POSIX, async (t) => {
+  delete process.env.WORCA_BROKER_URL; delete process.env.ANTHROPIC_BASE_URL;
+  for (const k of ['ENABLE_TOOL_SEARCH', ...STREAM_TIMEOUT_ENV_KEYS]) delete process.env[k];
+  resetBrokerClient();
+  const { env, f, seen, opened } = await remoteEnv(t, { serverEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'server-oauth-0123456789' }, call: false });
+  const r = await runClaude({ cwd: f.repo, prompt: 'hi', model: 'claude-sonnet-5', execEnv: env });
+  assert.equal(r.text, 'done');
+  assert.equal(opened.length, 1);
+  const { envs } = seen[0];
+  assert.equal(envs.ANTHROPIC_BASE_URL, opened[0].route.env.ANTHROPIC_BASE_URL, 'the relay URL, which the CLI takes for a custom endpoint');
+  assert.equal(envs.ENABLE_TOOL_SEARCH, 'true', 'so tool search stays on, as a local first-party spawn has it');
+  for (const [k, v] of Object.entries(STREAM_TIMEOUT_ENV)) assert.equal(envs[k], v, k);
+  assert.doesNotMatch(JSON.stringify(envs), /server-oauth/, 'the server credential stays in worca');
+});
+
+test('remote subscription isolation follows the run owner', POSIX, async (t) => {
+  useBroker(single);
+  const { env, f } = await remoteEnv(t);
+  const isolatedOf = async (billTo, owner) => {
+    await withBillTo(billTo, () => runClaude({ cwd: f.repo, prompt: 'hi', model: 'claude-sonnet-5', execEnv: env, asAgent: true }), { owner });
+    return single.store.db.prepare('SELECT bill_to, isolated FROM tokens ORDER BY created_at DESC, rowid DESC LIMIT 1').get();
+  };
+  assert.deepEqual({ ...await isolatedOf('a@x', 'a@x') }, { bill_to: 'a@x', isolated: 1 }, 'the owner pays: the sandbox is theirs alone');
+  assert.deepEqual({ ...await isolatedOf('b@x', 'a@x') }, { bill_to: 'b@x', isolated: 0 }, 'a teammate resumes: not isolated');
 });
 
 test('routing: broker slot URLs, the loopback bridge, and everything else', () => {

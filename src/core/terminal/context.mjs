@@ -2,11 +2,10 @@
 // starts with (issue #573). A running run: its live worktree (with a warning: the pipeline is still
 // changing it). A finished run: its Actions checkout, or "needs-checkout". A workspace run: one per member.
 import { existsSync } from 'node:fs';
-import { delimiter, dirname } from 'node:path';
 import { membersOfRow, checkoutPathFor } from '../checkout.mjs';
 import { checkoutRecordsFor } from '../artifacts.mjs';
-import { actionBaseEnv } from '../actions/spawn.mjs';
-import { withNoGitPath } from '../nogit-stub.mjs';
+import { pickBackendSecrets } from '../host-credentials.mjs';
+import { childEnv } from '../spawn.mjs';
 import { RUN_ROOT_REMOVE as FINISHED } from '../worktree.mjs';   // done | stopped | error
 import { workModeOfRow } from '../project-kind.mjs';
 import { isNoProjectKey, noProjectWorkDir } from '../store.mjs';
@@ -49,6 +48,9 @@ export function terminalTargets(row, { isLive = () => false, exists = existsSync
   return { runId: row.id, status: row.status, live, finished, workspace: row.target === 'workspace', members };
 }
 
+/** What a terminal never inherits from the server: its home, run root and host pid (the run's own facts are set below). */
+const TERMINAL_STRIPPED = ['WORCA_HOME', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID'];
+
 /** An env-name part: upper-case, anything but A-Z/0-9 becomes `_`. */
 const envPart = (s) => String(s).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
@@ -60,18 +62,23 @@ const envPart = (s) => String(s).toUpperCase().replace(/[^A-Z0-9]+/g, '_').repla
  */
 export function terminalEnv({ base = process.env, sessionId, mode, runId = null, member = null, projectKey = null, branch = null,
   cwd, workspace = false, actionSnaps = [], shellEnv = {}, agent = false }) {
-  const env = withNoGitPath({ ...actionBaseEnv(base), ...shellEnv,
-    TERM: mode === 'pty' ? 'xterm-256color' : 'dumb', COLORTERM: 'truecolor',
-    WORCA_TERMINAL: '1', WORCA_TERMINAL_SESSION: sessionId, WORCA_WORKTREE: cwd });
-  delete env.PORT;                   // worca's own port (`worca ui`, the Docker image): an app started here must not bind it
+  // The person's own pane keeps the backend keys (they type `worca run --exec-env e2b`, `worca e2b sweep` here);
+  // the Ask agent terminal does not (host-credentials.mjs strips them from every other child).
+  // The child-process owner builds it (childEnv kind 'terminal': the server's env, as before, minus every credential and
+  // the broker's secret). PORT is worca's own port (`worca ui`, the Docker image): an app started here must not bind it.
+  // P3-D20: a no-project run's terminal opens in its work/, so its git never walks up into a repository that holds
+  // worcaHome (root: the ceiling is dirname(cwd)).
+  const { env } = childEnv({ kind: 'terminal', base, strip: [...TERMINAL_STRIPPED, 'PORT'],
+    keep: agent ? [] : Object.keys(pickBackendSecrets(base)), cwd,
+    root: isNoProjectKey(projectKey) && cwd ? cwd : null,
+    overlay: { ...shellEnv, TERM: mode === 'pty' ? 'xterm-256color' : 'dumb', COLORTERM: 'truecolor',
+      WORCA_TERMINAL: '1', WORCA_TERMINAL_SESSION: sessionId, WORCA_WORKTREE: cwd } });
   if (mode !== 'pty' || agent) { env.PAGER = 'cat'; env.GIT_PAGER = 'cat'; }   // no tty, or a program reading it: a pager would wait forever
   if (agent) { env.GIT_TERMINAL_PROMPT = '0'; env.WORCA_TERMINAL_NORC = '1'; }  // Ask (#574): no password prompt, none of the person's rc
   if (runId) env.WORCA_RUN_ID = runId;
   if (branch) env.WORCA_BRANCH = branch;
   if (projectKey) env.WORCA_PROJECT_KEY = projectKey;
   if (member) env.WORCA_MEMBER = member;
-  // P3-D20: a no-project run's terminal opens in its work/: its git never walks up into a repository that holds worcaHome.
-  if (isNoProjectKey(projectKey) && cwd) env.GIT_CEILING_DIRECTORIES = [dirname(cwd), env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(delimiter);
   for (const s of actionSnaps) {
     const who = workspace && s.member ? envPart(s.member) : null;
     for (const [name, port] of Object.entries(s.ports || {})) {

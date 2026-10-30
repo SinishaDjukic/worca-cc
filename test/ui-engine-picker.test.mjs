@@ -4,7 +4,9 @@
 // starting again resends with allowUnguardedEngine: true. Boot copied from test/ui-sync-row.test.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -39,7 +41,7 @@ const freshBody = (dir, over = {}) => {
 };
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
-async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [] } = {}) {
+async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [], runDefaults = null, execEnvs = null, appUrl = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -56,9 +58,10 @@ async function boot({ fresh = null, syncGet = null, syncPost = null, run = null,
     const method = opts.method || 'GET';
     calls.push({ url: u, method, body: opts.body ? JSON.parse(opts.body) : null });
     // The server always answers the run defaults; Claude with nothing set (Plan 2a).
-    if (u.includes('/api/run-defaults')) return Promise.resolve(ok({ engine: { value: 'claude', source: 'default' }, steps: { claude: {}, codex: {} } }));
+    if (u.includes('/api/run-defaults')) return Promise.resolve(ok({ engine: { value: 'claude', source: 'default' }, steps: { claude: {}, codex: {} }, ...(runDefaults || {}) }));
     if (u.includes('/api/projects')) return Promise.resolve(ok({ projects: PROJECTS }));
     if (u.includes('/api/workspaces')) return Promise.resolve(ok({ workspaces }));
+    if (execEnvs && u.includes('/api/exec-envs')) return Promise.resolve(ok({ execEnvs }));
     if (u.includes('/api/branches')) {
       const q = new URL(u, 'http://x').searchParams;
       const dir = q.get('projectDir') || '';
@@ -93,7 +96,7 @@ async function boot({ fresh = null, syncGet = null, syncPost = null, run = null,
   window.localStorage.clear();
   window.localStorage.setItem('worca-cc.runTarget', 'project');
   window.localStorage.setItem('worca-cc.lastProject', 'web');
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
+  await import((appUrl || pathToFileURL(appPath).href) + `?b=${Date.now()}_${Math.random()}`);
   await tick();
   lastWs._l.open?.forEach((fn) => fn());
   const recv = (obj) => lastWs._l.message.forEach((fn) => fn({ data: JSON.stringify(obj) }));
@@ -133,6 +136,39 @@ test('engine: Claude is the default and sends nothing', async () => {
   assert.equal('allowUnguardedEngine' in first, false);
 });
 
+/** A copy of app.js whose engine-switch import is a shim: its engineOptions labels codex `label`, everything else is
+ *  the real module. Every other relative import is made absolute, so the copy runs from a temp folder on the real
+ *  modules. (The catalog is frozen and engineLabel reads it directly, so a label with markup needs this seam.) */
+function appWithEngineLabel(label) {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-engine-label-'));
+  const real = new URL('../src/shared/engine-switch.mjs', import.meta.url).href;
+  const shim = join(dir, 'engine-switch-shim.mjs');
+  writeFileSync(shim, `export * from ${JSON.stringify(real)};\nimport { engineOptions as realOptions } from ${JSON.stringify(real)};\n`
+    + `export function engineOptions(o) { return realOptions(o).map((x) => (x.value === 'codex' ? { ...x, label: ${JSON.stringify(label)} } : x)); }\n`);
+  const appUrl = pathToFileURL(appPath).href;
+  let swapped = 0;
+  const src = readFileSync(appPath, 'utf8').replace(/(\bfrom\s*|\bimport\s+)(['"])(\.{1,2}\/[^'"]+)\2/g, (_m, kw, q, spec) => {
+    const abs = new URL(spec, appUrl).href;
+    if (abs === real) { swapped += 1; return `${kw}${q}${pathToFileURL(shim).href}${q}`; }
+    return `${kw}${q}${abs}${q}`;
+  });
+  assert.equal(swapped, 1, 'app.js imports engine-switch once');
+  writeFileSync(join(dir, 'app.mjs'), src);
+  return { url: pathToFileURL(join(dir, 'app.mjs')).href, dir };
+}
+
+test('engine: an engine\'s label is text in its <option>, never parsed as markup', async () => {
+  const label = '<img src="x" onerror="window.__labelRan = 1">Codex';
+  const app = appWithEngineLabel(label);
+  try {
+    const ctx = await boot({ appUrl: app.url });
+    const opt = [...ctx.doc.getElementById('engineSelect').options].find((o) => o.value === 'codex');
+    assert.ok(opt.textContent.startsWith(label), opt.textContent);
+    assert.equal(opt.children.length, 0, 'no element was parsed out of the label');
+    assert.equal(ctx.doc.querySelector('#engineSelect img'), null);
+  } finally { rmSync(app.dir, { recursive: true, force: true }); }
+});
+
 test('engine: Codex sends engine only, and shows the hint', async () => {
   // Its own boot: a second start after a successful one would depend on what beginRun
   // leaves behind, which is not what this test is about.
@@ -155,7 +191,8 @@ test('engine: Copilot sends engine copilot, says it runs on its default model, a
   pick(ctx, 'copilot');
   assert.equal(doc.getElementById('engineSelect').value, 'copilot');
   assert.equal(doc.getElementById('engine-hint').hidden, false);
-  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries \(on its default model\)\. Step models: Models › Copilot\./);
+  // The hint is built from the catalog: an engine with helpers of its own but no helper slots runs them on its default model.
+  assert.equal(doc.getElementById('engine-hint').textContent, 'Copilot runs this pipeline, including titles and summaries (on its default model). Step models: Models › Copilot.');
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'copilot');
   await waitFor(() => !doc.getElementById('engineRefusal').hidden);
@@ -233,6 +270,7 @@ test('engine: the hint and the checkbox row really hide (explicit [hidden] rules
   const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
   assert.match(css, /#engine-hint\[hidden\]/);
   assert.match(css, /#engineAllowRow\[hidden\]/);
+  assert.match(css, /#exec-env-hint\[hidden\]/);
 });
 
 test('engine: the Codex hint says the whole pipeline runs on Codex and where its models live', async () => {
@@ -245,7 +283,10 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
+  // The page holds no engine <option>: app.js builds them from the catalog (engineOptions), a beta one saying so.
   assert.deepEqual([...doc.querySelectorAll('#engineSelect option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
+  assert.deepEqual([...doc.querySelectorAll('#engineSelect option')].map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Goose (Beta)', 'OpenCode (Beta)', 'Qwen Code (Beta)']);
+  assert.doesNotMatch(readFileSync(htmlPath, 'utf8'), /<option value="(claude|codex|copilot|cursor|gemini|goose|opencode|qwen)"/);
   pick(ctx, 'cursor');
   assert.equal(doc.getElementById('engineSelect').value, 'cursor');
   const hint = doc.getElementById('engine-hint');
@@ -314,3 +355,90 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
   });
 }
+
+const pickExecEnv = (ctx, v) => { const s = ctx.doc.getElementById('execEnvSelect'); s.value = v; s.dispatchEvent(new ctx.doc.defaultView.Event('change', { bubbles: true })); };
+
+test('execution environment: a server without the field, or a local default, sends nothing', async () => {
+  for (const runDefaults of [null, { execEnv: { value: 'local', source: 'default' } }]) {
+    const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults });
+    assert.equal(ctx.doc.getElementById('execEnvSelect').value, 'local');
+    assert.equal(ctx.doc.getElementById('exec-env-row').dataset.minLevel, 'advanced');
+    await submit(ctx);
+    assert.equal('execEnv' in ctx.posted.at(-1), false, JSON.stringify(runDefaults));
+  }
+});
+
+test('execution environment: an Ask card\'s Runs in pick survives the target change and the defaults that load after it', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'local', source: 'default' } } });
+  ctx.window.__np.openNewPipeline({ target: 'project', projectDir: PROJECTS[1].path, workflowId: 'wf_default', guardrailsId: 'normal',
+    prompt: 'x', title: 'X', featureBranch: '', execEnv: 'e2b' });
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  for (let i = 0; i < 12; i++) await tick();
+  assert.equal(ctx.doc.getElementById('execEnvSelect').value, 'e2b');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'e2b');
+});
+
+test('execution environment: picking E2B sends execEnv e2b', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
+  pickExecEnv(ctx, 'e2b');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'e2b');
+});
+
+test('execution environment: an e2b default preselects E2B; choosing Local sends execEnv local', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  await waitFor(() => ctx.doc.getElementById('execEnvSelect').value === 'e2b');
+  assert.equal(ctx.doc.getElementById('exec-env-row').dataset.levelKeep !== undefined, true, 'Simple still shows a non-local default');
+  pickExecEnv(ctx, 'local');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'local');
+});
+
+test('execution environment: an e2b default applies to every remote engine; a workspace run falls back to Local with a hint', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  const select = ctx.doc.getElementById('execEnvSelect');
+  const hint = ctx.doc.getElementById('exec-env-hint');
+  const row = ctx.doc.getElementById('exec-env-row');
+  await waitFor(() => select.value === 'e2b');
+  assert.equal(hint.hidden, true);
+  pick(ctx, 'codex');
+  assert.equal(select.value, 'e2b', 'codex takes the saved E2B default');
+  assert.equal(hint.hidden, true);
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false, 'unsent: the run gets the saved default');
+  ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
+  await waitFor(() => select.value === 'local');
+  assert.equal(hint.hidden, false, 'a workspace run cannot take the E2B default');
+  assert.match(hint.textContent, /saved E2B default does not apply to a workspace run/);
+  assert.notEqual(row.dataset.levelKeep, undefined, 'Simple still shows the row with its hint');
+});
+
+test('execution environment: codex takes the saved E2B default: an explicit E2B pick equals it, so nothing is sent', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  await waitFor(() => ctx.doc.getElementById('execEnvSelect').value === 'e2b');
+  pick(ctx, 'codex');
+  pickExecEnv(ctx, 'e2b');
+  assert.equal(ctx.doc.getElementById('exec-env-hint').hidden, true);
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false);
+});
+
+test('execution environment: a saved default of another backend follows the same rule, and the hint names it', async () => {
+  const execEnvs = [{ name: 'local', label: 'Local', title: 'Local' }, { name: 'e2b', label: 'E2B sandbox', title: 'E2B' },
+    { name: 'loopback', label: 'Loopback sandbox', title: 'Loopback' }];
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), execEnvs, runDefaults: { execEnv: { value: 'loopback', source: 'user' } } });
+  const select = ctx.doc.getElementById('execEnvSelect');
+  const hint = ctx.doc.getElementById('exec-env-hint');
+  await waitFor(() => select.value === 'loopback');
+  assert.equal(hint.hidden, true);
+  ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
+  await waitFor(() => select.value === 'local');
+  assert.equal(hint.hidden, false);
+  assert.match(hint.textContent, /saved Loopback default does not apply to a workspace run/);
+  // Back to a project before any submit: no workspace is selected, so the workspace target cannot start.
+  ctx.doc.querySelector('#target-seg button[data-target="project"]').click();
+  await waitFor(() => select.value === 'loopback');
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false, 'the run gets the saved default: nothing to send');
+});

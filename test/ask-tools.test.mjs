@@ -263,7 +263,7 @@ test('isProtectedBasename: the normal-tier patterns (* prefix/suffix), slash pat
       for (const hit of ['.env', '.env.local', '.envrc', 'server.pem', 'id_rsa', 'id_ed25519', 'x.key', 'bundle.p12', 'cert.pfx']) {
         assert.ok(isProtectedBasename(hit, pats), hit);
       }
-      for (const miss of ['env', 'environment.md', 'key.txt', 'id_rsa.pub', 'README.md', 'pem']) assert.ok(!isProtectedBasename(miss, pats), miss);
+      for (const miss of ['env', 'environment.md', 'key.txt', 'rsa.pub', 'identity.ts', 'README.md', 'pem']) assert.ok(!isProtectedBasename(miss, pats), miss);
       assert.ok(isProtectedBasename('a-secret-b', ['*secret*']));
       assert.ok(!isProtectedBasename('x', []));
       // slash-less patterns match the basename at ANY depth, as the CLI does
@@ -574,6 +574,13 @@ test('get_run_diff: the protected floor is the secure preset, not normal', async
   const d = await t.call('get_run_diff', { id: '4e1f2a9b' });
   assert.deepEqual(d.files.map((f) => f.path), ['ok.md'], 'every secure-tier credential file is omitted');
   assert.ok(!d.text.includes('TOP_SECRET_VALUE'));
+});
+
+test('the real bundle passes the engine catalog the tool descriptions name (tools.mjs imports nothing)', async () => {
+  const { ENGINES, DEFAULT_ENGINE } = await import('../src/shared/engine-switch.mjs');
+  const deps = defaultToolDeps({ threadId: 'ask_00000001' });
+  assert.equal(deps.engineCatalog.engines, ENGINES);
+  assert.equal(deps.engineCatalog.defaultEngine, DEFAULT_ENGINE);
 });
 
 test('get_run_diff: a prefix-less patch is filtered per file, not swallowed whole', async () => {
@@ -1005,6 +1012,14 @@ test('list_run_artifacts / read_run_artifact / get_run_progress over real deps',
   assert.doesNotMatch(t1.title, /ghp_abcdefghijklmnopqrstuvwxyz0123456789/, 'task title redacted');
 });
 
+// tools.mjs imports one module only: the secret-path owner (src/core/secret-paths.mjs), which holds the matcher
+// tools.mjs re-exports as isProtectedBasename and itself only reads the file system.
+const foreignImports = (src) => src.split('\n').filter((l) => /^import /.test(l) && !/ from '\.\.\/secret-paths\.mjs';$/.test(l));
+test('the secret-path owner tools.mjs imports never writes', () => {
+  const src = readFileSync(new URL('../src/core/secret-paths.mjs', import.meta.url), 'utf8');
+  assert.deepEqual(src.split('\n').filter((l) => /^import /.test(l)), ["import { lstat, readdir } from 'node:fs/promises';", "import { join } from 'node:path';"]);
+});
+
 // The one repo guard for the read-only chat tool layer (§6.1): tools.mjs, tool-deps.mjs and every
 // src/core/ask/*-deps.mjs / *-proposal.mjs. Each row was a per-module source scan in that module's
 // own test file (named in the row); their mcp-stdio wiring regexes are not carried.
@@ -1043,14 +1058,14 @@ test('ask tool layer stays write-free (table-driven source scan over tools.mjs, 
       const tools = readFileSync(new URL('../src/core/ask/tools.mjs', import.meta.url), 'utf8');
       assert.doesNotMatch(tools, /\b(INSERT|UPDATE|DELETE)\b/);
       assert.doesNotMatch(tools, /from '\.\.\/db\.mjs'|getDb\(|\btx\(|node:sqlite/);
-      assert.equal(tools.split('\n').filter((l) => /^import /.test(l)).length, 0, 'tools.mjs stays import-free');
+      assert.deepEqual(foreignImports(tools), [], 'tools.mjs imports only the secret-path owner');
       const deps = readFileSync(new URL('../src/core/ask/comment-deps.mjs', import.meta.url), 'utf8');
       assert.doesNotMatch(deps, /node:sqlite|from '\.\.\/db\.mjs'/);
       assert.ok(deps.includes("from '../diff-comments.mjs'"), 'writes go through the one mutation module');
     } },
     { name: 'test/ask-memory-tools.test.mjs > source scans: tools.mjs still has no imports and no SQL verbs; memory-deps.mjs is the ONE Ask module that imports the store; the MCP child spreads it', run: () => {
       const tools = readFileSync(new URL('../src/core/ask/tools.mjs', import.meta.url), 'utf8');
-      assert.doesNotMatch(tools, /^import /m, 'tools.mjs imports nothing');
+      assert.deepEqual(foreignImports(tools), [], 'tools.mjs imports only the secret-path owner');
       assert.doesNotMatch(tools, /\b(INSERT|UPDATE|DELETE)\b/);
       const deps = readFileSync(new URL('../src/core/ask/memory-deps.mjs', import.meta.url), 'utf8');
       assert.match(deps, /from '\.\.\/memory-store\.mjs'/);
@@ -1073,7 +1088,7 @@ test('ask tool layer stays write-free (table-driven source scan over tools.mjs, 
     } },
     { name: 'test/ask-script-tools.test.mjs > source scans: tools.mjs stays import-free and write-free; script-deps.mjs is the ONE Ask module that imports the store and the bench', run: () => {
       const tools = readFileSync(new URL('../src/core/ask/tools.mjs', import.meta.url), 'utf8');
-      assert.doesNotMatch(tools, /^import /m, 'tools.mjs imports nothing');
+      assert.deepEqual(foreignImports(tools), [], 'tools.mjs imports only the secret-path owner');
       assert.doesNotMatch(tools, /\b(INSERT|UPDATE|DELETE)\b/);
       assert.doesNotMatch(tools, /script-store|script-bench/, 'the store and the bench are reachable only through deps.scripts');
       const deps = readFileSync(new URL('../src/core/ask/script-deps.mjs', import.meta.url), 'utf8');
@@ -1203,7 +1218,7 @@ test('read_run_artifact refuses byte kinds and still reads text kinds', async ()
   ]);
 });
 
-// tools.mjs is import-free by contract (two source scans assert it), so its byte
+// tools.mjs imports only the secret-path owner (source scans assert it), so its byte
 // extensions are restated rather than imported. This pins the two sets together:
 // every extension the SHARED table decodes as bytes must be refused here, and
 // nothing else may be. An extension added to one side and not the other fails.
@@ -1229,7 +1244,7 @@ test('propose_run: shape and assess exist only with the perspective keys', async
   const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
   const today = schemaOf({});
   assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'noProject', 'workflowId', 'presetId', 'brief', 'source', 'title', 'guardrailsId', 'tags', 'memoryScope',
-    'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
+    'engine', 'execEnv', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds',
     'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
   assert.deepEqual(today.required, ['brief']);
   await checkRows([

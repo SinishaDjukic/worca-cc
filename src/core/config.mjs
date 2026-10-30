@@ -18,7 +18,7 @@ import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, COPILOT_MODEL_PREFIX, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
-import { engineLabel } from '../shared/engine-switch.mjs';
+import { engineLabel, engineEntry } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
@@ -27,6 +27,7 @@ import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels,
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
 import { brokerEnabled } from './broker-client.mjs';
+import { setModelEngineReader } from './broker-routing.mjs';
 // Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
 import { policyCatalogModels, teamDefault, cachedFieldsFor } from './policy/cache.mjs';
 import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-prices.mjs';
@@ -790,6 +791,8 @@ export function engineOfModel(modelId, { projectDir = null } = {}) {
 setCascadeModelOwnerReader((id, { projectDir = null } = {}) => enginesOfModel(id, { projectDir }));
 // Roles check their model with the same reader (a role on a model a failed import never created falls back, D3).
 setRoleModelOwnerReader((id) => enginesOfModel(id));
+// The broker's slot for a model another engine runs (broker-routing.mjs modelSlot): it reads the model's engine.
+setModelEngineReader((id) => engineOfModel(id));
 
 /** Why a run-level model cannot run on `engine` (no harness of its connection is that engine), else null. */
 export function foreignRunModel(model, engine, projectDir = null) {
@@ -1541,17 +1544,45 @@ export function writeActionsMeta(key, patch) {
   writeExtraKey(key, ACTIONS_META_KEY, { ...readActionsMeta(key), ...patch });
 }
 
-function writeExtraKey(key, name, value) {
+/** Read-modify-write ONE extra key in a single transaction: `mutate(current)` returns the new value. */
+function mutateExtraKey(key, name, mutate) {
+  let next;
   tx(() => {
     const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
     const extra = row ? parseJson(row.extra, {}) : {};
-    extra[name] = value;
+    next = mutate(extra[name]);
+    extra[name] = next;
     prepare(`
       INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
       VALUES (?, '{}', '[]', NULL, ?)
       ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
     `).run(key, JSON.stringify(extra));
   });
+  return next;
+}
+function writeExtraKey(key, name, value) { mutateExtraKey(key, name, () => value); }
+
+// ── Execution environment (project_config.extra.execEnvProject) ─────────────
+// The project's execution-environment record (src/core/exec-env/project-env.mjs; plans/e2b-execution-design.md §18):
+// per-backend project fields (e.g. { e2b: { template } }), the environment spec, and the last SUCCESSFUL build per
+// backend. Lives in worca's DB, never in the repo. Same KEY-taking contract as the team-metrics pair.
+const EXEC_ENV_KEY = 'execEnvProject';
+const emptyExecEnv = () => ({ config: {}, spec: null, builds: {} });
+function execEnvOf(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return emptyExecEnv();
+  const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  return { config: obj(v.config), spec: v.spec && typeof v.spec === 'object' ? v.spec : null, builds: obj(v.builds) };
+}
+export function readProjectExecEnv(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  return execEnvOf((row ? parseJson(row.extra, {}) : {})[EXEC_ENV_KEY]);
+}
+/** Read-modify-write in ONE transaction: a template Save, a spec change and a finished build can race.
+ *  `mutate(record)` edits the record in place; it must never call another config writer (tx is not re-entrant). */
+export function updateProjectExecEnv(key, mutate) {
+  assertProjectKey(key);
+  return mutateExtraKey(key, EXEC_ENV_KEY, (cur) => { const next = execEnvOf(cur); mutate(next); return next; });
 }
 
 // ── Team-policy preferences (project_config.extra.teamPolicy) ──────────────

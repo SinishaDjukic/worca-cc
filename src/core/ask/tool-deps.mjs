@@ -17,6 +17,7 @@ import { readAttachmentText, readAttachmentRaw, getAttachment, attachmentPath, g
 import { redactAskText } from './redact.mjs';
 import { htmlToText } from './html-text.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { ENGINES, DEFAULT_ENGINE } from '../../shared/engine-switch.mjs';
 import { askProgress } from '../ask-projection.mjs';
 import { getDb } from '../db.mjs';
 import { listProjects, displayPath } from '../projects.mjs';
@@ -181,5 +182,8 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     protectedPaths: [...GUARDRAIL_PRESETS.secure.protectedPaths],
     redact: redactAskText,
     limits: ASK_LIMITS,
+    // The engine catalog the tool descriptions name (propose_run's engine, list_models, add_model). Injected: tools.mjs
+    // stays import-free.
+    engineCatalog: { engines: ENGINES, defaultEngine: DEFAULT_ENGINE },
   };
 }

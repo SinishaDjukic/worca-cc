@@ -12,6 +12,7 @@ import {
 } from '../src/core/engines/codex.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
+import { buildRelayRoute } from '../src/core/exec-env/relay-route.mjs';
 
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX fake bin' } : {};
 const dirs = [];
@@ -141,9 +142,9 @@ test('runCodexProcess: an Ask lockdown spawn reads the MCP config, keeps its env
   const fake = fakeCodex(dir, 'ok');
   const cfg = join(dir, 'mcp.json');
   writeFileSync(cfg, JSON.stringify({ mcpServers: { worca: { type: 'stdio', command: process.execPath, args: ['/s.mjs'], env: { WORCA_ASK_RELAY_TOKEN: 'tok-SECRET', WORCA_ASK_ENGINE: 'codex' } } } }));
-  process.env.CODEX_TEST_MARK = '1';   // codex's own prefix rides even a scrubbed env
+  const prevOrg = process.env.OPENAI_ORG_ID; process.env.OPENAI_ORG_ID = 'org-test';   // a catalog name of codex rides every spawn
   try { await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', sandbox: 'read-only', askLockdown: CANDIDATE_LOCKDOWN, mcpConfigPath: cfg, images: ['/img/a.png'], envScrub: true, envAllowlist: [], usageDir: dir }); }
-  finally { delete process.env.CODEX_TEST_MARK; }
+  finally { if (prevOrg === undefined) delete process.env.OPENAI_ORG_ID; else process.env.OPENAI_ORG_ID = prevOrg; }
   const args = fake.args();
   assert.ok(args.includes('mcp_servers.worca.required=true'));
   assert.deepEqual(args.slice(0, 3), ['exec', '-i', '/img/a.png']);
@@ -153,8 +154,8 @@ test('runCodexProcess: an Ask lockdown spawn reads the MCP config, keeps its env
   // codex gives an MCP server a short default env plus env_vars: every name codex itself got is listed, so the worca
   // server sees the same env a Claude chat's child inherits.
   const names = JSON.parse(args.find((a) => a.startsWith('mcp_servers.worca.env_vars=')).slice('mcp_servers.worca.env_vars='.length));
-  for (const k of ['PATH', 'HOME', 'CODEX_TEST_MARK']) assert.ok(names.includes(k), k);
-  assert.equal(fake.env().CODEX_TEST_MARK, '1');
+  for (const k of ['PATH', 'HOME', 'OPENAI_ORG_ID']) assert.ok(names.includes(k), k);
+  assert.equal(fake.env().OPENAI_ORG_ID, 'org-test');
 });
 
 test('runCodexProcess: a pipeline spawn attaches its stdio servers, fills ${VAR} refs from the spawn env, redacts the secrets, skips remote ones', POSIX, async () => {
@@ -194,7 +195,8 @@ test('runCodexProcess: ${VAR} in a server\'s command and args reaches codex fill
   const cfg = join(dir, 'mcp.json');
   writeFileSync(cfg, JSON.stringify({ mcpServers: { fs: { command: '${CODEX_TEST_BIN}', args: ['--root', '${CODEX_TEST_ROOT:-/fallback}'] } } }));
   const prev = process.env.CODEX_TEST_BIN; process.env.CODEX_TEST_BIN = '/usr/bin/true';
-  try { await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', mcpConfigPath: cfg, usageDir: dir }); }
+  // A reference expands from the spawn's own env: the allowlist names what of worca's env that holds.
+  try { await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', mcpConfigPath: cfg, usageDir: dir, envAllowlist: ['CODEX_TEST_BIN'] }); }
   finally { if (prev === undefined) delete process.env.CODEX_TEST_BIN; else process.env.CODEX_TEST_BIN = prev; }
   const args = fake.args();
   assert.ok(args.includes('mcp_servers.fs.command="/usr/bin/true"'));
@@ -236,6 +238,18 @@ test('runCodexProcess: no model names CODEX_DEFAULT_MODEL, so the turn is priced
   const args = fake.args();
   assert.equal(args[args.indexOf('-m') + 1], CODEX_DEFAULT_MODEL);
   assert.ok(events.find((e) => e.type === 'result').costUsd > 0);
+});
+
+test('runCodexProcess in a sandbox: a step with no model opens a relay route pinned to CODEX_DEFAULT_MODEL (audit 2.8)', async () => {
+  // The relay refuses a call whose body names any model but the route's (model-relay.mjs, modelCheck 'body'): with an
+  // empty `models` it would check nothing, and a sandbox could spend on any model the key reaches, priced or not.
+  let route = null;
+  const execEnv = { remote: true, label: 'test sandbox', env: { OPENAI_API_KEY: 'sk-test' },
+    openRoute(decision, o) { route = buildRelayRoute(decision, { ...o, serverEnv: this.env, label: this.label }); throw new Error('stop at the route'); } };
+  await assert.rejects(runCodexProcess({ cwd: tmp(), prompt: 'P', execEnv }), /stop at the route/);
+  assert.deepEqual(route.models, [CODEX_DEFAULT_MODEL]);
+  assert.equal(route.modelCheck, 'body');
+  assert.equal(route.stepModel, CODEX_DEFAULT_MODEL);
 });
 
 test('runCodexProcess: maxTurns caps the main agent\'s tool calls with a turnCap error', POSIX, async () => {

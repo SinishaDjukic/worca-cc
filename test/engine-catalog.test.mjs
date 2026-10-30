@@ -182,6 +182,10 @@ test('a custom OpenCode model: provider/model id, OpenCode\'s variants as effort
   const some = await addGlobalModel({ id: 'openai/gpt-5', engine: 'opencode', efforts: ['high', 'low'] });
   assert.deepEqual(some.efforts, ['low', 'high']);
   await assert.rejects(() => addGlobalModel({ id: 'oc-1', engine: 'opencode' }), /an opencode model id is provider\/model/);
+  // An id that reads as a flag in argv (`-m -oX`, goose's --provider/--model halves) is no model id.
+  for (const [engine, id] of [['opencode', '-oProxy/x'], ['opencode', 'x/-y'], ['goose', '-p/x'], ['goose', 'google/-m']]) {
+    await assert.rejects(() => addGlobalModel({ id, engine }), /model id is provider\/model/, `${engine} ${id}`);
+  }
   await assert.rejects(() => addGlobalModel({ id: 'x/oc-2', engine: 'opencode', env: { X: '1' } }), /an opencode model takes no env/);
   await assert.rejects(() => addGlobalModel({ id: 'x/oc-3', engine: 'opencode', upstream: { provider: 'openai', api: 'openai-responses', model: 'm' } }), /no upstream/);
   await assert.rejects(() => addGlobalModel({ id: 'x/oc-4', engine: 'opencode', efforts: ['xhigh'] }), /unknown effort "xhigh"/);

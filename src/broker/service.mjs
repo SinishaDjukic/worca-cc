@@ -7,9 +7,11 @@ import { seal, open, suffixOf, keyId } from './vault.mjs';
 import { isAllowedPath, pathIssue, validatePluginSlots, PLUGIN_SLOT_PREFIX } from './slots.mjs';
 import { resolveToken, tokenFromHeaders, parseMintRequest, mintToken, safeEqual, normalizeBillTo } from './tokens.mjs';
 import { createUsageTap, priceUsage, listRatesFor, requestWithUsage, UNPRICED_RATES } from './usage.mjs';
-import { scrubText } from './scrub.mjs';
+import { scrubText, createByteScrubber, createConnectScrubber, connectReplyProblem, isConnectStream, CONNECT_IDENTITY } from './scrub.mjs';
 import { createLimits } from './limits.mjs';
-import { createCopilotExchange, parseGithubSecret, refreshGithubToken } from './copilot.mjs';
+import { createCopilotExchange, parseGithubSecret, refreshGithubToken, isCopilotHost } from './copilot.mjs';
+import { cursorAccessToken, invalidateCursorToken, CONNECT_CODES } from './cursor.mjs';
+import { copilotTokenProblem, COPILOT_PAT_HEADERS, COPILOT_CLI_API_VERSION } from './copilot-token.mjs';
 import { fetchUpstream } from './upstream-request.mjs';
 
 export const MAX_REQUEST_BYTES = 32 << 20;
@@ -21,7 +23,7 @@ export const INFLIGHT_BODY_BYTES = 64 << 20;
 const MAX_SCRUBBED_BODY = 8 << 20;
 const MAX_ERROR_BODY = 64 << 10;
 const CRED_CACHE_MS = 30_000;
-const UPSTREAM_IDLE_MS = 10 * 60_000;
+export const UPSTREAM_IDLE_MS = 10 * 60_000;
 // A request body must keep arriving (idle) and be all there in time (total): see readBody.
 export const BODY_IDLE_MS = 15_000;
 export const BODY_TOTAL_MS = 120_000;
@@ -58,13 +60,31 @@ export function agentResponseHeaders(incoming) {
   return out;
 }
 
+/** google.rpc status names for the HTTP statuses the broker refuses with (a Gemini client reads `status`). */
+const GOOGLE_STATUS = Object.freeze({ 400: 'INVALID_ARGUMENT', 403: 'PERMISSION_DENIED', 404: 'NOT_FOUND', 408: 'DEADLINE_EXCEEDED',
+  413: 'INVALID_ARGUMENT', 429: 'RESOURCE_EXHAUSTED', 502: 'UNAVAILABLE', 503: 'UNAVAILABLE' });
 /** The error body a client of `protocol` understands, with a `worca-broker:` message. */
 export function brokerError(protocol, status, type, message) {
   const msg = `worca-broker: ${message}`;
   const body = protocol === 'openai'
     ? { error: { message: msg, type, code: type } }
-    : { type: 'error', error: { type, message: msg } };
+    : protocol === 'gemini'
+      ? { error: { code: status, message: msg, status: GOOGLE_STATUS[status] || 'UNKNOWN' } }
+      : protocol === 'connect'
+      ? { code: CONNECT_CODES[status] || 'unknown', message: msg }
+      : { type: 'error', error: { type, message: msg } };
   return { status, body };
+}
+
+/** The headers of `incoming` a slot lists in `names` (its responseHeaders), minus any whose value holds a secret. */
+function pickHeaders(incoming, names, secrets = []) {
+  if (!Array.isArray(names) || !names.length) return {};
+  const values = secrets.map((x) => String(x || '')).filter((x) => x.length >= 8);
+  const out = {};
+  for (const [k, v] of Object.entries(incoming || {})) {
+    if (names.includes(k.toLowerCase()) && !values.some((x) => String(v).includes(x))) out[k.toLowerCase()] = v;
+  }
+  return out;
 }
 
 function sendJson(res, status, body, extra = {}) {
@@ -126,6 +146,9 @@ export function mergeBetas(...lists) {
   return out.join(',');
 }
 
+/** The slot auth styles whose derived token can expire early: a 401 gets one retry with a fresh one (send/onResponse). */
+const RETRY_ON_401 = Object.freeze(['copilot', 'copilot-pat', 'cursor-exchange']);
+
 /**
  * @param {{config:object, slots:object[], store:object, log?:(line:string)=>void, now?:()=>number,
  *          requestImpl?:(url:URL, opts:object)=>import('node:http').ClientRequest}} o
@@ -181,11 +204,49 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     return exchanges.get(slot.id);
   };
 
-  /** Where a request for `slot` goes and the credential headers it carries. May throw (Copilot exchange). */
+  const cursorCache = new Map();   // Cursor access tokens, per API key (src/broker/cursor.mjs)
+  const patHosts = new Map();      // the Copilot API host GitHub names for each fine-grained PAT
+
+  /** The Copilot API host for a fine-grained PAT, as the CLI finds it: `endpoints.api` of GET copilot_internal/user
+   *  (lookupUrl, else api.github.com), a GitHub host only (isCopilotHost); else the slot's own upstream. Cached per PAT
+   *  in `cache` (successes only). A 401/403 throws with `.status`. */
+  async function copilotPatHost(slot, pat, cache = patHosts) {
+    if (cache.has(pat)) return cache.get(pat);
+    const r = await fetchImpl(`${(slot.lookupUrl || 'https://api.github.com').replace(/\/+$/, '')}/copilot_internal/user`, {
+      headers: { authorization: `Bearer ${pat}`, accept: 'application/json', 'x-github-api-version': COPILOT_CLI_API_VERSION },
+      redirect: 'manual', signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) {
+      const denied = r.status === 401 || r.status === 403;
+      throw Object.assign(new Error(`GitHub answered ${r.status} to the Copilot account lookup${denied ? ': check that the token has the Copilot Requests permission' : ''}`), denied ? { status: r.status } : {});
+    }
+    let api = '';
+    try { api = String((await r.json())?.endpoints?.api || '').replace(/\/+$/, ''); } catch { api = ''; }
+    const origin = api && isCopilotHost(api) ? new URL(api).origin : new URL(slot.upstream).origin;
+    cache.set(pat, origin);
+    return origin;
+  }
+
+  /** Where a request for `slot` goes and the credential headers it carries. May throw (Copilot exchange, Cursor's key
+   *  exchange, the PAT check and lookup: a refused one with `.status`). */
   async function upstreamAuth(slot, secret, { force = false, incoming = {} } = {}) {
     if (slot.auth === 'copilot') {
       const t = await copilotFor(slot).token(secret, { force });
       return { origin: t.host, headers: { authorization: `Bearer ${t.token}` }, secrets: [t.token] };
+    }
+    if (slot.auth === 'cursor-exchange') {
+      const origin = new URL(slot.upstream).origin;
+      if (force) invalidateCursorToken(cursorCache, secret);
+      const secrets = [];
+      const t = await cursorAccessToken({ apiKey: secret, origin, fetchImpl, now, cache: cursorCache, secrets, keyName: 'your Cursor API key' });
+      return { origin, headers: { authorization: `Bearer ${t}` }, secrets };
+    }
+    if (slot.auth === 'copilot-pat') {
+      // Checked at use too: a single-mode key (WORCA_BROKER_KEY_COPILOT_PAT) never passes saveCredential.
+      const problem = copilotTokenProblem(secret, { name: 'This token', where: 'the broker signs Copilot calls' });
+      if (problem) throw Object.assign(new Error(problem), { status: 403 });
+      if (force) patHosts.delete(secret);
+      const origin = await copilotPatHost(slot, secret);
+      return { origin, headers: { authorization: `Bearer ${secret}`, ...COPILOT_PAT_HEADERS }, secrets: [secret] };
     }
     return { origin: new URL(slot.upstream).origin, headers: authHeaders(slot, secret, incoming), secrets: [] };
   }
@@ -261,6 +322,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       return { authorization: `Bearer ${secret}`, 'anthropic-beta': mergeBetas(incoming['anthropic-beta'], OAUTH_BETA) };
     }
     if (slot.auth === 'x-api-key') return { 'x-api-key': secret };
+    if (slot.auth === 'x-goog-api-key') return { 'x-goog-api-key': secret };
     if (slot.auth === 'github-user') return { authorization: `token ${parseGithubSecret(secret).token}` };
     return { authorization: `Bearer ${secret}` };
   }
@@ -270,6 +332,17 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     if (!slot.verify) return Promise.resolve({ ok: true });
     if (slot.auth === 'copilot') {
       return copilotFor(slot).token(secret, { force: true }).then(() => ({ ok: true }), (err) => ({ ok: false, status: err.status, error: scrubText(err.message, [secret]) }));
+    }
+    // A refused exchange or lookup (401/403) means the key is wrong: "rejected"; anything else says why it failed.
+    const refused = (err) => ({ ok: false, status: err.status, error: scrubText(err.status === 401 || err.status === 403 ? `rejected (${err.message})` : err.message, [secret]) });
+    if (slot.auth === 'cursor-exchange') {
+      return cursorAccessToken({ apiKey: secret, origin: new URL(slot.upstream).origin, fetchImpl, now, cache: new Map(), secrets: [], keyName: 'your Cursor API key' })
+        .then(() => ({ ok: true }), refused);
+    }
+    if (slot.auth === 'copilot-pat') {
+      const problem = copilotTokenProblem(secret, { name: 'This token', where: 'the broker signs Copilot calls' });
+      if (problem) return Promise.resolve({ ok: false, status: 422, error: problem });
+      return copilotPatHost(slot, secret, new Map()).then(() => ({ ok: true }), refused);
     }
     // What to ask: the slot's verify request; a Claude subscription can't list models, so it
     // gets the smallest possible message (one output token of the smallest model); GitHub: /user.
@@ -311,6 +384,11 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     if (!config.vaultKey) return { ok: false, status: 500, error: 'the broker has no vault key' };
     const s = String(secret || '').trim();
     if (s.length < 8 || s.length > 4096 || /\s/.test(s)) return { ok: false, status: 422, error: 'that does not look like a key: paste the whole value, without spaces' };
+    // Only a fine-grained PAT is ever stored for the copilot-pat slot: said before anything is sent anywhere.
+    if (slot.auth === 'copilot-pat') {
+      const problem = copilotTokenProblem(s, { name: 'This token', where: 'the broker signs Copilot calls' });
+      if (problem) return { ok: false, status: 422, error: problem };
+    }
     const v = await verifyCredential(slot, s);
     if (!v.ok) return { ok: false, status: 422, error: `${slotName(slot)} was not accepted: ${v.error}` };
     const kind = credentialKind(slot, s);
@@ -472,14 +550,20 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       return;
     }
 
-    const baseHeaders = { ...upstreamRequestHeaders(req.headers, slot.headers), 'content-length': String(body.length) };
-    // Copilot's gateway answers from a Chat Completions or a Messages endpoint on one slot.
-    const tapProtocol = /\/v1\/messages$/.test(rest) ? 'anthropic' : slot.protocol;
+    // A Connect slot asks for uncompressed messages (the reply scrub reads gzip too: a server may mirror the request's).
+    const baseHeaders = { ...upstreamRequestHeaders(req.headers, slot.headers), ...(slot.protocol === 'connect' ? CONNECT_IDENTITY : {}),
+      'content-length': String(body.length) };
+    // Copilot's gateway answers from a Chat Completions or a Messages endpoint on one slot. Cursor's turn stream
+    // (RunSSE) carries its usage; its unary calls carry none (as the relay meters them, relay-usage.mjs).
+    const tapProtocol = /\/v1\/messages$/.test(rest) ? 'anthropic'
+      : slot.protocol === 'connect' && rest !== '/agent.v1.AgentService/RunSSE' ? 'none' : slot.protocol;
 
     // Calls with no per-call price record tokens and book no dollars: a Claude subscription,
-    // Copilot (billed per seat and premium request, not per token) and a keyless slot (local
-    // models). Everything else is priced, an unlisted model at the fallback rate.
-    const plan = subscription ? 'subscription' : (slot.auth === 'copilot' ? 'copilot' : null);
+    // Copilot and Cursor (billed per seat and premium request, not per token) and a keyless slot
+    // (local models). Everything else is priced, an unlisted model at the fallback rate.
+    const plan = subscription ? 'subscription'
+      : slot.auth === 'copilot' || slot.auth === 'copilot-pat' ? 'copilot'
+        : slot.auth === 'cursor-exchange' ? 'cursor' : null;
     // A slot that sends no key (auth or credential 'none') is keyless, as resolveCredential treats it (V12).
     const priced = !plan && slot.credential !== 'none' && slot.auth !== 'none';
     let settled = false;
@@ -514,7 +598,8 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     let clientGone = false;
     res.on('close', () => { if (!res.writableFinished) clientGone = true; });
 
-    /** One attempt. Copilot gets exactly one retry with a fresh exchange on a 401 (its token expired early). */
+    /** One attempt. Copilot and Cursor (RETRY_ON_401) get exactly one retry with a fresh exchange (or host lookup) on a
+     *  401: a derived token expired early. Only a 401 after the retry marks the person's key rejected. */
     const send = async (attempt) => {
       let auth;
       try { auth = await upstreamAuth(slot, cred.secret, { force: attempt > 0, incoming: req.headers }); }
@@ -541,15 +626,15 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       up.end(body);
       // The body is forwarded: its bytes leave the shared budget now, not when a long stream ends (V13),
       // and the reference goes with them, so a long stream does not keep an uncounted Buffer alive.
-      // Copilot may send it again after a 401, so its bytes stay until the answer is past that.
-      if (slot.auth !== 'copilot') { body = null; hold.release(); }
+      // A slot that may send it again after a 401 (RETRY_ON_401) keeps its bytes until the answer is past that.
+      if (attempt > 0 || !RETRY_ON_401.includes(slot.auth)) { body = null; hold.release(); }
     };
 
     const onResponse = (ur, attempt) => {
       const status = ur.statusCode || 502;
-      if (status === 401 && slot.auth === 'copilot' && attempt === 0) {
+      if (status === 401 && attempt === 0 && RETRY_ON_401.includes(slot.auth)) {
         ur.resume();
-        copilotFor(slot).invalidate(cred.secret);
+        if (slot.auth === 'copilot') copilotFor(slot).invalidate(cred.secret);
         send(1);
         return;
       }
@@ -574,7 +659,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
             refuseAuth(`your ${slotName(slot)} was rejected by the provider (${String(detail).slice(0, 200)}). Replace it: ${whereToAdd(slot)}`);
             return;
           }
-          const h = agentResponseHeaders(ur.headers);
+          const h = { ...agentResponseHeaders(ur.headers), ...pickHeaders(ur.headers, slot.responseHeaders, [cred.secret, ...authSecrets]) };
           h['content-length'] = String(Buffer.byteLength(text));
           if (!res.headersSent) { res.writeHead(status, h); res.end(text); }
         });
@@ -601,7 +686,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
         ur.on('end', () => {
           const text = scrubText(Buffer.concat(parts).toString('utf8'), [cred.secret, ...authSecrets]);
           finish(status, null);
-          const h = agentResponseHeaders(ur.headers);
+          const h = { ...agentResponseHeaders(ur.headers), ...pickHeaders(ur.headers, slot.responseHeaders, [cred.secret, ...authSecrets]) };
           h['content-length'] = String(Buffer.byteLength(text));
           res.writeHead(status, h); res.end(text);
         });
@@ -609,7 +694,24 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
         return;
       }
       tap = createUsageTap(tapProtocol, ur.headers['content-type']); tapStatus = status;
-      res.writeHead(status, agentResponseHeaders(ur.headers));
+      // A Cursor reply can echo the access token the broker derived (or the key): scrubbed on the way out, as the relay
+      // does (model-relay.mjs), a streamed reply message by message (a gzip message inflated first). A reply the broker
+      // cannot read is refused before anything reaches the client; the tap still reads and books it. The tap reads the
+      // raw bytes. Model output of the other slots streams untouched.
+      const scrubbed = slot.auth === 'cursor-exchange';
+      const unreadable = scrubbed ? connectReplyProblem(ur.headers) : null;
+      if (unreadable) {
+        tapStatus = 502;
+        ur.on('data', (c) => tap.write(c));
+        ur.on('end', () => finish(502, tap.end()));
+        ur.on('error', () => finish(502, tap.end()));
+        fail(502, 'api_error', `Cursor sent ${unreadable}, which the broker cannot check for credentials`);
+        return;
+      }
+      res.writeHead(status, { ...agentResponseHeaders(ur.headers), ...pickHeaders(ur.headers, slot.responseHeaders, [cred.secret, ...authSecrets]) });
+      const secrets = [cred.secret, ...authSecrets];
+      const scrub = !scrubbed ? null
+        : isConnectStream(ur.headers['content-type']) ? createConnectScrubber(secrets, { maxMessage: MAX_REQUEST_BYTES }) : createByteScrubber(secrets);
       // A client that stops reading (never hangs up) would pause the upstream until its idle timeout, which
       // books nothing: after CLIENT_DRAIN_MS it counts as gone, and the rest is read and booked as for a hang-up.
       let drainTimer = null;
@@ -618,12 +720,15 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       ur.on('data', (c) => {
         tap.write(c);
         if (clientGone) return;
-        if (!res.write(c)) {
+        const out = scrub ? scrub.push(c) : c;
+        // A message the scrub cannot read: the client's stream is cut (as for a hang-up, the rest is read and booked).
+        if (out === null) { clientGone = true; log(`${tok.bill_to} ${slot.id}: cut a reply with a message the broker cannot check for credentials`); res.destroy(); return; }
+        if (!res.write(out)) {
           ur.pause(); res.once('drain', resume);
           drainTimer = setTimeout(() => { clientGone = true; res.destroy(); resume(); }, config.clientDrainMs ?? CLIENT_DRAIN_MS);
         }
       });
-      ur.on('end', () => { if (!clientGone) res.end(); finish(status, tap.end()); });
+      ur.on('end', () => { if (!clientGone) res.end(scrub ? scrub.flush() : undefined); finish(status, tap.end()); });
       ur.on('error', () => { finish(status, tap.end()); res.destroy(); });
     };
     await send(0);

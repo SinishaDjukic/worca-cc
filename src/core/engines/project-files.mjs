@@ -5,12 +5,12 @@
 // The harness (run-harness.mjs _registerEngineConfig, _injectedFor, _engineConfigState) reads ALL_PROJECT_FILES and
 // worcaOwnsProjectFile, so a file an earlier segment of a run wrote on another engine is still cleaned up.
 import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, appendFileSync, chmodSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join, dirname, isAbsolute, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { gitAvailable } from '../git-available.mjs';
-import { guardedGitEnvSync } from '../git-guard.mjs';
+import { gitOutputSync } from '../git-guard.mjs';
+import { childEnv } from '../spawn.mjs';
 
 /** Per engine: the dir its files sit in, the files (relative to the cwd), and its display name. */
 const ENGINES = Object.freeze({
@@ -31,10 +31,15 @@ const engineOf = (name) => {
 /** The engine whose project file `rel` is, or null. */
 const engineOfFile = (rel) => Object.keys(ENGINES).find((k) => ENGINES[k].files.includes(rel)) ?? null;
 
-const git = (cwd, args) => { if (!gitAvailable()) return null; try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: guardedGitEnvSync(cwd) }).trim(); } catch { return null; } };
+/** git in `cwd` under the child-process owner's git env: it never walks above dirname(`root`), the run's work root. */
+const git = (cwd, args, root) => (gitAvailable() ? gitOutputSync(cwd, args, { env: childEnv({ kind: 'git', root }).env }) : null);
 const excludeNote = (engine) => `# worca: ${engineOf(engine).label} engine config written into run checkouts (engines/project-files.mjs)`;
-/** Whether `dir` or a parent holds a `.git` (so a failed `git rev-parse` is a git failure, not "no repository"). */
-const gitAbove = (dir) => { for (let d = resolve(dir); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (dirname(d) === d) return false; } };
+/** Whether `dir` or a parent up to `root` (every parent without one) holds a `.git` (so a failed `git rev-parse` is a git
+ *  failure, not "no repository"). */
+const gitAbove = (dir, root = null) => {
+  const top = root ? resolve(root) : null;
+  for (let d = resolve(dir); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (d === top || dirname(d) === d) return false; }
+};
 /** The info/exclude line for `rel` under the cwd's work-tree prefix: anchored, with gitignore glob characters escaped. */
 export const excludeLine = (prefix, rel) => `/${`${prefix}${rel}`.replace(/[\\[\]*?!#]/g, '\\$&')}`;
 
@@ -91,9 +96,10 @@ const forgetOwned = (engine, abs) => rmSync(ownedEntry(engine, abs), { force: tr
  *   home config included, and every check above would pass on the far side of it (throws when files are given).
  * - Atomic per file, idempotent. A failed write leaves the ledger on the file's previous content and no temp file.
  * The exclude line is `/<cwd's prefix in the work tree><rel>`, from `git rev-parse --show-prefix`: never computed from
- * absolute paths, which differ by realpath on macOS (/var → /private/var).
+ * absolute paths, which differ by realpath on macOS (/var → /private/var). `root` (the run's work root): worca's own git
+ * here never walks above dirname(root), and neither does the `.git` search that tells a git failure from no repository.
  */
-export function writeProjectFiles(engine, cwd, files, { git: useGit = true } = {}) {
+export function writeProjectFiles(engine, cwd, files, { git: useGit = true, root = null } = {}) {
   const { dir, files: known, label } = engineOf(engine);
   const entries = Object.entries(files);
   for (const [rel] of entries) if (!known.includes(rel)) throw new Error(`${rel} is not a ${label} project file`);
@@ -107,19 +113,19 @@ export function writeProjectFiles(engine, cwd, files, { git: useGit = true } = {
   if (!entries.length) return;
   if (linked) throw new Error(`${join(cwd, dir)} is a symlink — worca will not write ${label}'s config through it (it may point outside the checkout)`);
   // { git: false } (a non-git run's copy): no rev-parse, no gitAbove refusal, no ls-files, no info/exclude.
-  const inside = useGit ? git(cwd, ['rev-parse', '--is-inside-work-tree']) : null;
-  if (useGit && inside === null && gitAvailable() && gitAbove(cwd)) throw new Error(`git cannot read the repository around ${cwd} — worca will not write ${label}'s config blind`);
+  const inside = useGit ? git(cwd, ['rev-parse', '--is-inside-work-tree'], root) : null;
+  if (useGit && inside === null && gitAvailable() && gitAbove(cwd, root)) throw new Error(`git cannot read the repository around ${cwd} — worca will not write ${label}'s config blind`);
   const inTree = useGit && inside === 'true';
   if (inTree) {
-    const tracked = git(cwd, ['ls-files', '--', ...entries.map(([rel]) => `:(icase)${rel}`)]);
+    const tracked = git(cwd, ['ls-files', '--', ...entries.map(([rel]) => `:(icase)${rel}`)], root);
     if (tracked === null) throw new Error(`cannot tell whether the checkout tracks ${entries.map(([rel]) => rel).join(' or ')} — worca will not write ${label}'s config blind`);
     if (tracked) throw new Error(`the checkout tracks ${tracked.split('\n')[0]} — worca cannot add its ${label} config without changing your file`);
   }
   const foreign = entries.map(([rel]) => rel).filter((rel) => !projectFileOwned(engine, join(cwd, rel)));
   if (foreign.length) throw new Error(`${foreign.join(' and ')} already exists in ${cwd} and worca did not write it — worca will not overwrite it (move it away to run this on ${label})`);
   if (inTree) {
-    const prefix = git(cwd, ['rev-parse', '--show-prefix']) ?? '';
-    const exclude = git(cwd, ['rev-parse', '--git-path', 'info/exclude']);
+    const prefix = git(cwd, ['rev-parse', '--show-prefix'], root) ?? '';
+    const exclude = git(cwd, ['rev-parse', '--git-path', 'info/exclude'], root);
     // The exclude line is what keeps these files out of every `git add -A` (the harness's commit included: it uses no
     // exclude pathspec for them, because git refuses one that names an ignored path). No line, no write.
     if (!exclude) throw new Error(`cannot find the repository's info/exclude around ${cwd} — worca will not write ${label}'s config where git would stage it`);

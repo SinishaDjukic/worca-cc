@@ -3,9 +3,15 @@
 // credential with ONE pinned destination. A request names a slot, never a host, so
 // nothing on worca's side (the catalog, an Ask proposal, an agent's env) can send a
 // key anywhere else (guarantee K2). Pure.
+import { CURSOR_PATHS, CURSOR_FORWARD } from './cursor.mjs';
 
-export const PROTOCOLS = Object.freeze(['anthropic', 'openai', 'github']);
-export const AUTH_STYLES = Object.freeze(['x-api-key', 'bearer', 'copilot', 'github-user', 'none']);
+export const PROTOCOLS = Object.freeze(['anthropic', 'openai', 'github', 'connect', 'gemini']);
+export const AUTH_STYLES = Object.freeze(['x-api-key', 'bearer', 'copilot', 'github-user', 'none', 'copilot-pat', 'cursor-exchange', 'x-goog-api-key']);
+/** A slot that carries an engine's own sign-in (never a catalog model's base URL): routing, the boot guard and plugin
+ *  slot origins skip it. One copy for broker-routing.mjs, broker-boot.mjs and plugin-broker-slots.mjs. */
+export const engineOnlyAuth = (slot) => ['copilot', 'github-user', 'copilot-pat', 'cursor-exchange'].includes(slot?.auth);
+// Response headers a slot may pass back to the agent beyond the common set: never a credential, a cookie or routing.
+const FORBIDDEN_RESPONSE_HEADER = /^(authorization|cookie|set-cookie|host|proxy-.*)$/i;
 const HEADER_NAME_RE = /^[a-z0-9-]{1,64}$/;
 /** Request headers Copilot's gateway needs beyond the common allowlist (the editor identity). */
 const COPILOT_HEADERS = Object.freeze([
@@ -20,6 +26,8 @@ const ANTHROPIC_PATHS = Object.freeze([
   ['POST', '/v1/messages/count_tokens'],
   ['GET', '/v1/models'],
 ]);
+/** The Gemini API's generate calls (the model is in the path: /v1beta/models/{model}:method). */
+export const GEMINI_CALLS = /^\/v1beta\/models\/[^/:]+:(streamGenerateContent|generateContent|countTokens)$/;
 const OPENAI_PATHS = Object.freeze([
   ['POST', '/v1/chat/completions'],
   ['POST', '/v1/responses'],
@@ -54,12 +62,38 @@ export function builtinSlots({ localUrl = null, github = null } = {}) {
       keyHint: 'sk-or-…',
     },
     {
+      // A Gemini API key (AIza…): Gemini CLI's key mode and the google provider of Qwen Code, Goose and OpenCode. Its
+      // calls name the model in the path, so they are admitted by the built-in pattern.
+      id: 'google', label: 'Google Gemini API key', protocol: 'gemini',
+      upstream: 'https://generativelanguage.googleapis.com', auth: 'x-goog-api-key', credential: 'per-person',
+      paths: Object.freeze([['GET', '/v1beta/models']]), pathPattern: GEMINI_CALLS, headers: Object.freeze(['x-goog-api-client']),
+      verify: { method: 'GET', path: '/v1beta/models' }, keyHint: 'AIza…',
+    },
+    {
       // The upstream is where the token exchange says Copilot's API lives (always a
       // *.githubcopilot.com host, src/broker/copilot.mjs); this is only the fallback.
       id: 'copilot', label: 'GitHub Copilot', protocol: 'openai',
       upstream: 'https://api.githubcopilot.com', auth: 'copilot', credential: 'per-person',
       paths: Object.freeze([['POST', '/chat/completions'], ['POST', '/responses'], ['POST', '/v1/messages'], ['GET', '/models']]),
       headers: COPILOT_HEADERS, verify: { exchange: true }, keyHint: '', signIn: 'github-device',
+    },
+    {
+      // Copilot CLI's own calls with a fine-grained personal access token (Copilot Requests only): Codex-style key mode
+      // for the copilot engine. The device-flow `copilot` slot above stays for bridged Copilot models.
+      id: 'copilot-pat', label: 'GitHub Copilot (fine-grained token)', protocol: 'openai',
+      upstream: 'https://api.githubcopilot.com', auth: 'copilot-pat', credential: 'per-person',
+      paths: Object.freeze([['POST', '/chat/completions'], ['POST', '/responses'], ['POST', '/v1/messages']]),
+      headers: Object.freeze(['x-initiator', 'x-interaction-type']), verify: { exchange: true },
+      keyHint: 'github_pat_… with only the Copilot Requests permission',
+    },
+    {
+      // cursor-agent's API key: the broker exchanges it for an access token (src/broker/cursor.mjs) and signs each
+      // Connect call with that.
+      id: 'cursor', label: 'Cursor API key', protocol: 'connect', upstream: 'https://api2.cursor.sh', auth: 'cursor-exchange',
+      credential: 'per-person', paths: CURSOR_PATHS, headers: CURSOR_FORWARD,
+      responseHeaders: Object.freeze(['connect-content-encoding']), verify: { exchange: true }, keyHint: '',
+      // A turn makes many BidiAppend calls: the 240 rpm per-person default would throttle one agent.
+      limits: { rpmPerPerson: 1200 },
     },
   ];
   if (github && github.clientId) {
@@ -129,8 +163,12 @@ export function mergeSlots(builtins, extra) {
       if (!SLOT_ID_RE.test(String(e.id || ''))) throw new Error(`${where}: id must match ${SLOT_ID_RE}`);
       if (e.id.startsWith(PLUGIN_SLOT_PREFIX)) throw new Error(`${where}: ids starting with "${PLUGIN_SLOT_PREFIX}" belong to plugin slots`);
       const base = byId.get(e.id) || {};
+      // A path pattern (Gemini's model calls) is the built-in slot's own: an operator lists exact paths.
+      if (e.pathPattern !== undefined) throw new Error(`${where}: pathPattern is built-in only`);
       const s = { ...base, ...e };
       if (!PROTOCOLS.includes(s.protocol)) throw new Error(`${where}: protocol must be one of ${PROTOCOLS.join(', ')}`);
+      // A Connect or Gemini slot needs its built-in slot's own exchange, scrubbing and paths: an operator-defined one could never.
+      if ((s.protocol === 'connect' || s.protocol === 'gemini') && base.protocol !== s.protocol) throw new Error(`${where}: protocol ${s.protocol} is built-in only`);
       if (!AUTH_STYLES.includes(s.auth)) throw new Error(`${where}: auth must be one of ${AUTH_STYLES.join(', ')}`);
       if (!CREDENTIAL_KINDS.includes(s.credential)) throw new Error(`${where}: credential must be one of ${CREDENTIAL_KINDS.join(', ')}`);
       const issue = upstreamIssue(s.upstream);
@@ -145,12 +183,20 @@ export function mergeSlots(builtins, extra) {
         if (s.headers.some((x) => /^(authorization|x-api-key|cookie|host|proxy-.*)$/i.test(x))) throw new Error(`${where}: headers may not include credential or routing headers`);
         s.headers = Object.freeze(s.headers.map((x) => String(x).toLowerCase()));
       }
-      for (const k of ['exchangeUrl', 'deviceBaseUrl']) {
-        if ((s.auth !== 'copilot' && s.auth !== 'github-user') || s[k] === undefined) continue;
+      if (s.responseHeaders !== undefined) {
+        if (!Array.isArray(s.responseHeaders) || !s.responseHeaders.every((x) => HEADER_NAME_RE.test(String(x).toLowerCase()))) throw new Error(`${where}: responseHeaders must be a list of header names`);
+        if (s.responseHeaders.some((x) => FORBIDDEN_RESPONSE_HEADER.test(x))) throw new Error(`${where}: responseHeaders may not include credential, cookie or routing headers`);
+        s.responseHeaders = Object.freeze(s.responseHeaders.map((x) => String(x).toLowerCase()));
+      }
+      // Where a GitHub-signed slot talks besides its upstream: the token exchange, the device sign-in, and (copilot-pat)
+      // the account lookup that names the Copilot API host (copilot_internal/user). Each an allowed origin.
+      for (const k of ['exchangeUrl', 'deviceBaseUrl', 'lookupUrl']) {
+        if (!['copilot', 'github-user', 'copilot-pat'].includes(s.auth) || s[k] === undefined) continue;
         let origin;
         try { origin = new URL(s[k]).origin; } catch { throw new Error(`${where}: ${k} is not a URL`); }
         const issue = upstreamIssue(origin);
         if (issue) throw new Error(`${where}: ${k}: ${issue}`);
+        if (k === 'lookupUrl') s.lookupUrl = String(s.lookupUrl).replace(/\/+$/, '');
       }
       byId.set(s.id, s);
     }
@@ -222,5 +268,6 @@ export function pathIssue(path) {
 export function isAllowedPath(slot, method, path) {
   if (pathIssue(path)) return false;
   const m = String(method || '').toUpperCase();
-  return slot.paths.some(([pm, pp]) => pm === m && pp === path);
+  return slot.paths.some(([pm, pp]) => pm === m && pp === path)
+    || (m === 'POST' && slot.pathPattern instanceof RegExp && slot.pathPattern.test(path));
 }

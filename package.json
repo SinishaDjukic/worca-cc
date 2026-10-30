@@ -53,6 +53,9 @@
     "docker/compose*.yml",
     "docker/.env.example",
     "npm-shrinkwrap.json",
+    "docker/e2b/e2b.Dockerfile",
+    "docker/e2b/engine-clis.json",
+    "docker/CLAUDE_CODE_VERSION",
     "README.md"
   ],
   "scripts": {
@@ -69,6 +72,7 @@
     "smoke:plugin": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning tools/smoke-plugin.mjs",
     "docker:build": "node tools/docker-build.mjs",
     "docker:smoke": "node tools/docker-smoke.mjs",
+    "e2b:build": "node docker/e2b/build.mjs",
     "ask:fixtures": "node --disable-warning=ExperimentalWarning tools/ask-capture-fixtures.mjs",
     "verify:composer": "node --disable-warning=ExperimentalWarning tools/verify-composer-cdp.mjs",
     "verify:run-monitor": "node --disable-warning=ExperimentalWarning tools/verify-run-monitor-cdp.mjs",
@@ -133,6 +137,7 @@
     }
   },
   "optionalDependencies": {
+    "e2b": "2.56.0",
     "ffmpeg-static": "5.3.0",
     "node-pty": "1.1.0"
   }

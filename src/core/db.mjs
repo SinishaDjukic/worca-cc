@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 81;
+export const SCHEMA_VERSION = 82;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -861,16 +861,20 @@ const INCREMENTAL_COLUMNS = {
                             release_target: 'TEXT',   // v66: the branch the tag points at (the PR's base)
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
-                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
+                            release_error: 'TEXT',    // v66: why creating it failed (not retried)
+                            provider: 'TEXT' },       // v82 (core protection layer, part 2): who serves the run's model calls; NULL = before v82
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
-                            human_hours: 'REAL', human_signals: 'TEXT' },   // v33: per-execution human-hours credit + its signals JSON
+                            human_hours: 'REAL', human_signals: 'TEXT',   // v33: per-execution human-hours credit + its signals JSON
+                            provider: 'TEXT',                             // v82: who serves the step's model calls; NULL = unknown / not an agent
+                            cost_known: 'INTEGER NOT NULL DEFAULT 1' },   // v82: 0 when the step's cost could not be counted (never a known $0)
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
+  ask_messages:           { cost_known: 'INTEGER NOT NULL DEFAULT 1' },   // v82: 0 when a chat turn's cost could not be counted (never a known $0)
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
                             mime: 'TEXT',                 // v27: sniffed mime; NULL on pre-v27 rows (= text)
@@ -2635,6 +2639,7 @@ export function migrate(db) {
     // INCREMENTAL_TABLES creates them for a DB stamped past this rung without them.
     if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
     if (current < 81) applySchemaV81(db, { existing: current >= 1 });  // v81 (G13) guardrail default
+    // v82: pipelines.provider, pipeline_steps.provider / cost_known, ask_messages.cost_known (core protection layer, part 2) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

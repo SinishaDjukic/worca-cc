@@ -1,7 +1,7 @@
 // src/core/engines/opencode.mjs
 // The OpenCode CLI adapter (sst/opencode): `opencode run --format json` argv, the JSON event stream normalized into
 // worca's event vocabulary, the cost and tokens OpenCode prices per step, error classes, the run-start preflight, the
-// guardrail rule plan, and the spawn path on the shared supervisor (engines/spawn.mjs). Everything worca configures
+// guardrail rule plan, and the spawn path on the shared supervisor (src/core/spawn.mjs). Everything worca configures
 // rides the OPENCODE_CONFIG_CONTENT env var: worca writes nothing into the run checkout.
 //
 // Facts this module builds on, checked against opencode 1.18.23 (test/fixtures/opencode/README.md has the captures):
@@ -24,9 +24,13 @@
 // - OpenCode Zen's free models refuse a request whose tool list lacks the shell ("OpenCode's free tier can only be
 //   used from within OpenCode", 403): a set that denies the whole shell cannot run them.
 // - OPENCODE_CONFIG_CONTENT is inline config, merged over the user's ~/.config/opencode config; `{env:NAME}` in it
-//   expands from the process env. OPENCODE_DISABLE_PROJECT_CONFIG=1 ignores the checkout's opencode.json, its
-//   `.opencode/` folder (plugin(s)/*.js included: none load, and nothing is written there) and its AGENTS.md /
-//   CLAUDE.md (worca names those again as absolute `instructions`).
+//   expands from the process env. OPENCODE_DISABLE_PROJECT_CONFIG=1 ignores the checkout's opencode.json, the MCP
+//   servers and tool(s)/*.js of its `.opencode/` folder, and its AGENTS.md / CLAUDE.md (worca names those again as
+//   absolute `instructions`).
+// - Neither that switch nor `--pure` stops `.opencode/plugin/*.js` and `.opencode/plugins/*.js`: OpenCode loads them
+//   into its own process (the provider key in its env) from its project folder (PWD) and each folder above it, up to
+//   the first one holding `.git`, or up to `/` outside a repository. So a spawn is refused while any of them exists
+//   (opencodePluginDirs; test/fixtures/opencode/README.md has the probe).
 // - Plugins from the user's ~/.config/opencode (plugin/*.js, npm plugins its config names) still load; `--pure` turns
 //   them off. OpenCode's built-in default plugins (provider sign-in) are a separate switch and stay on.
 // - An agent's `steps` caps its loop: at step `steps` OpenCode takes the tools away and asks for a text reply, so
@@ -40,7 +44,10 @@
 // - OpenCode's project folder is $PWD, not its process cwd (an inherited PWD sends the agent to another folder).
 // - `opencode providers list` counts stored credentials and provider env vars. Zen's free models need neither.
 // - With no `-m`, OpenCode picks its own default model, which can be a free OpenCode Zen model: the checkout's code
-//   then goes to opencode.ai. worca refuses that unless WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1.
+//   then goes to opencode.ai. Its catalog entry says requiresExplicitModel, so the run gate refuses a step with no
+//   model before anything spawns (again once an Auto run adopts its graph), and runOpencodeProcess refuses one too.
+// - `step_finish` says `cost: 0` for a model its table has no price for: a step that used tokens and costs 0 is
+//   unpriced (cost unknown), never free.
 // - OpenCode writes only its own folders (~/.local/share/opencode, ~/.config/opencode, ~/.cache/opencode): its
 //   snapshots are git objects there, never in the checkout, and nothing under Worca's home.
 // - No Worca state protection beyond the rules: OpenCode has no sandbox, so the Normal and Secure sets' rules for
@@ -58,29 +65,26 @@
 // - `--pure` keeps the user's plugins out (none ran); OPENCODE_DISABLE_PROJECT_CONFIG the checkout's config. The
 //   user's own MCP servers still start (their tools are denied); their instructions files still reach the prompt.
 // - OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so a chat never runs on them.
-import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, lstatSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit, abandonRoute } from '../spawn.mjs';
+import { ENGINES } from '../../shared/engine-switch.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
-import { envFlag } from '../model-env.mjs';
-import { makeChatDescriptor, providerEnvPrefixes, providerListRates } from './chat-descriptor.mjs';
+import { makeChatDescriptor, providerListRates } from './chat-descriptor.mjs';
 import { chatSelfTest } from './chat-selftest.mjs';
+import { resolveModelRoute, pointAtSlot } from '../exec-env/relay-route.mjs';
+import { sandboxMcpConfig } from '../exec-env/policy.mjs';
+import { brokerEnabled } from '../broker-client.mjs';
+import { brokerLease } from '../broker-lease.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const opencodeDefaultBin = () => process.env.WORCA_OPENCODE_BIN || 'opencode';
 export const OPENCODE_SESSION_PREFIX = 'opencode:';
-/** The only env names besides the base set that survive scrub on OpenCode: provider keys need the allowlist. */
-const OPENCODE_ENV_PREFIXES = ['OPENCODE_'];
-/** The opt-in that lets a spawn without a model run on OpenCode's own default (possibly a free OpenCode Zen model). */
-export const OPENCODE_DEFAULT_MODEL_OPT_IN = 'WORCA_OPENCODE_ALLOW_DEFAULT_MODEL';
-const defaultModelAllowed = () => envFlag(OPENCODE_DEFAULT_MODEL_OPT_IN);
-const DEFAULT_MODEL_RISK = `OpenCode would pick its own default model, which can be a free OpenCode Zen model that sends the code to opencode.ai — set a model, or set ${OPENCODE_DEFAULT_MODEL_OPT_IN}=1 in worca's environment to allow it`;
 
 /** The OpenCode session in a stored session id, or null when the id is not OpenCode's. */
 export function opencodeSessionOf(sessionId) {
@@ -234,10 +238,23 @@ const envRefNames = (mcp) => [...new Set([...JSON.stringify(mcp).matchAll(/\{env
 /** `opencode run --format json --auto --pure --print-logs --log-level ERROR [--agent A] [-m M] [--variant E] [-s S]`;
  *  the prompt goes on stdin. `--pure`: no user-level or npm plugins. Error logs on stderr carry the cause an
  *  `UnknownError` event hides. */
+/** The plugin folders OpenCode would load code from for project folder `cwd`, whatever worca's switches: `.opencode/plugin`
+ *  and `.opencode/plugins` in `cwd` and each folder above it, up to the first holding `.git` (the repository's top) or
+ *  the filesystem root. A link counts, dangling or not. Probed on opencode 1.18.23. */
+export function opencodePluginDirs(cwd) {
+  const found = [];
+  const there = (p) => { try { lstatSync(p); return true; } catch { return false; } };
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    for (const sub of ['plugin', 'plugins']) { const p = join(dir, '.opencode', sub); if (there(p)) found.push(p); }
+    if (there(join(dir, '.git')) || dirname(dir) === dir) break;
+  }
+  return found;
+}
+
 export function buildOpencodeArgs({ agent, model, effort, sessionId } = {}) {
   const args = ['run', '--format', 'json', '--auto', '--pure', '--print-logs', '--log-level', 'ERROR'];
   if (agent) args.push('--agent', String(agent));
-  if (model) args.push('-m', String(model));
+  if (model) args.push('-m', argValue(String(model), 'model'));
   if (effort) args.push('--variant', String(effort));
   if (sessionId) args.push('-s', String(sessionId));
   return args;
@@ -257,6 +274,8 @@ export function claudeStyleUsage(t) {
     cache_read_input_tokens: num(tk.cache?.read), cache_creation_input_tokens: num(tk.cache?.write) };
 }
 const addUsage = (a, b) => Object.fromEntries(Object.keys(a).map((k) => [k, a[k] + (b[k] || 0)]));
+/** Whether a usage spent any token. */
+const spent = (u) => Object.values(u).some((n) => n > 0);
 const ZERO_USAGE = Object.freeze(claudeStyleUsage({}));
 
 /** A tool call in Claude's vocabulary: `filePath` becomes `file_path`, an attached MCP server's `<server>_<tool>`
@@ -285,7 +304,8 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
   const seen = new Set();
   const subSessions = [];   // {sessionId, toolUseId}: a sub-agent's session and the `task` call that ran it
   let sessionId = null; let error = null; let errorName = null; let statusCode = null;
-  let costUsd = 0; let priced = false; let usage = { ...ZERO_USAGE }; let steps = 0;
+  let costUsd = 0; let priced = false; let unpriced = false; let usage = { ...ZERO_USAGE }; let steps = 0;
+  let stopped = false;   // the last step finished with reason `stop` and no step started after it: the turn is over
 
   function push(line) {
     let evt = line;
@@ -303,7 +323,7 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
     const part = evt.part && typeof evt.part === 'object' ? evt.part : {};
     switch (evt.type) {
       case 'step_start':
-        steps++;
+        steps++; stopped = false;
         break;
       case 'text': {
         const t = str(part.text);
@@ -339,9 +359,10 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
         break;
       }
       case 'step_finish': {
+        stopped = part.reason === 'stop';
         const u = claudeStyleUsage(part.tokens);
         usage = addUsage(usage, u);
-        if (Number.isFinite(part.cost)) { costUsd += part.cost; priced = true; }
+        if (Number.isFinite(part.cost) && (part.cost > 0 || !spent(u))) { costUsd += part.cost; priced = true; } else if (spent(u)) unpriced = true;
         out.push({ type: 'usage', messageId: str(part.messageID) || null, parentId: null, phase: 'message', model: model || null, usage: u });
         break;
       }
@@ -358,22 +379,25 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
     }
     return out;
   }
-  return { push, finish: () => ({ text: texts.join(''), error, errorName, statusCode, sessionId, costUsd: priced ? costUsd : null, usage, subSessions: [...subSessions], steps }) };
+  return { push, finish: () => ({ text: texts.join(''), error, errorName, statusCode, sessionId, costUsd: priced && !unpriced ? costUsd : null,
+    usage, subSessions: [...subSessions], steps }), over: () => stopped };
 }
 
 /**
- * A sub-session from `opencode export <id>` output, or null: its assistant messages' cost and tokens, and its tool
- * calls and results as worca events under `parentId` (the `task` call), so the audit sees what the sub-agent did.
+ * A sub-session from `opencode export <id>` output, or null: its assistant messages' cost and tokens (`unpriced`: one
+ * used tokens and says cost 0, as on a model OpenCode has no price for), and its tool calls and results as worca events
+ * under `parentId` (the `task` call), so the audit sees what the sub-agent did.
  */
 export function readSubsession(text, { parentId = null, mcpServers = [] } = {}) {
   let doc;
   try { const t = String(text); doc = JSON.parse(t.slice(t.indexOf('{'))); } catch { return null; }
   if (!doc || !Array.isArray(doc.messages)) return null;
-  let costUsd = 0; let usage = { ...ZERO_USAGE }; const events = [];
+  let costUsd = 0; let unpriced = false; let usage = { ...ZERO_USAGE }; const events = [];
   for (const m of doc.messages) {
     if (m?.info?.role !== 'assistant') continue;
-    if (Number.isFinite(m.info.cost)) costUsd += m.info.cost;
-    usage = addUsage(usage, claudeStyleUsage(m.info.tokens));
+    const u = claudeStyleUsage(m.info.tokens);
+    if (Number.isFinite(m.info.cost) && (m.info.cost > 0 || !spent(u))) costUsd += m.info.cost; else if (spent(u)) unpriced = true;
+    usage = addUsage(usage, u);
     for (const part of Array.isArray(m.parts) ? m.parts : []) {
       if (part?.type !== 'tool' || !str(part.callID)) continue;
       const st = part.state && typeof part.state === 'object' ? part.state : {};
@@ -384,7 +408,7 @@ export function readSubsession(text, { parentId = null, mcpServers = [] } = {}) 
       }
     }
   }
-  return { costUsd, usage, events };
+  return { costUsd, unpriced, usage, events };
 }
 
 // ── errors and preflight ─────────────────────────────────────────────────────
@@ -420,17 +444,18 @@ export const OPENCODE_SIGNED_OUT_HINT = 'run `opencode auth login`, or set a pro
 
 /**
  * The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. The binary must run.
- * `defaultModel`: whether some spawn of the run names no model (true), every one names one (false), or unknown
- * (undefined: the readiness check). A spawn without a model refuses without the opt-in. The credential check runs with
- * the env the agent gets (`envScrub`, `envAllowlist`): a key only worca has does not count. With no credential, only
- * OpenCode Zen's free models run: a refusal unless every spawn names its model or the user opted in.
+ * The credential check runs with the env the agent gets (src/core/spawn.mjs execCheck: the catalog allowlist plus
+ * `envAllowlist`): a key only worca has does not count. With no credential, only OpenCode Zen's free models run: a
+ * warning, since every step names its model (the catalog's requiresExplicitModel).
  */
-export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 15000, envScrub, envAllowlist, defaultModel } = {}) {
-  const allowed = defaultModelAllowed();
-  const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: OPENCODE_ENV_PREFIXES });
-  const run = (args) => new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, env: { ...env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
-  });
+export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 15000, envAllowlist = [], env = process.env } = {}) {
+  let signInMode;
+  try { signInMode = opencodeSignInMode(null, env); } catch (err) { return Promise.resolve({ refusal: err.message }); }
+  const spec = { ...opencodeSpawnSpec({ envAllowlist, signInMode }), base: env, overlay: { OPENCODE_DISABLE_AUTOUPDATE: '1' } };
+  const run = async (args) => {
+    const r = await execCheck(bin, args, { spec, timeoutMs });
+    return { err: r.error || (r.code !== 0 ? { code: r.code } : null), stdout: r.stdout, stderr: r.stderr };
+  };
   return (async () => {
     const v = await run(['--version']);
     if (v.err) {
@@ -442,16 +467,32 @@ export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 1500
     // service that does not read the spawn's config env, `--variant` is gone, and its events and permissions changed.
     const major = Number(/(\d+)\.\d+\.\d+/.exec(String(v.stdout))?.[1]);
     if (major >= 2) return { refusal: `OpenCode 2 is not supported yet (${bin} is ${String(v.stdout).trim()}) — install OpenCode 1.x (npm opencode-ai), or point WORCA_OPENCODE_BIN at one` };
-    if (defaultModel === true && !allowed) return { refusal: `a step of this run names no model: ${DEFAULT_MODEL_RISK}` };
     const p = await run(['providers', 'list']);
     const counts = p.err ? null : parseOpencodeProviders(`${p.stdout}\n${p.stderr}`);
     if (!counts) return { warning: `could not tell whether ${bin} has provider credentials (\`${bin} providers list\` said nothing recognizable)` };
-    if (!counts.credentials && !counts.env) {
-      const why = `no provider credentials in the agent's environment — only OpenCode Zen's free models (opencode.ai) will run; ${OPENCODE_SIGNED_OUT_HINT}`;
-      return allowed || defaultModel === false ? { warning: why } : { refusal: `${why}, or set ${OPENCODE_DEFAULT_MODEL_OPT_IN}=1 to allow it` };
-    }
+    if (!counts.credentials && !counts.env) return { warning: `no provider credentials in the agent's environment — only OpenCode Zen's free models (opencode.ai) will run; ${OPENCODE_SIGNED_OUT_HINT}` };
     return {};
   })();
+}
+
+/** The childEnv spec an OpenCode run spawns with (engine, its one sign-in mode, the run's allowlist, cwd and work root,
+ *  the host pid): run and preflight build their env from it, so the check sees the run's env. */
+export function opencodeSpawnSpec({ envAllowlist = [], signInMode = null, cwd = null, workRoot = null, hostPid = null } = {}) {
+  return { engine: 'opencode', signInMode, allowlist: envAllowlist, cwd, root: workRoot, hostPid };
+}
+
+/** The one sign-in mode an OpenCode spawn keeps (credentials.mjs resolveModelRoute): the step model's provider (catalog
+ *  signIn.byModel), else the catalog order. Throws (errorClass 'config') on a refusal: the broker holds no OpenCode key. */
+export function opencodeSignInMode(model = null, env = process.env) {
+  return opencodeRoute(model, { env, checkModel: false }).signInMode;
+}
+
+/** How an OpenCode spawn signs its model calls (credentials.mjs resolveModelRoute): locally as opencodeSignInMode says;
+ *  under the broker the slot of the model's provider; in a sandbox (`remote`) the relay's route for it. Throws the refusal. */
+function opencodeRoute(model, { env = process.env, remote = null, checkModel = true } = {}) {
+  const d = resolveModelRoute({ engine: 'opencode', remote: !!remote, serverEnv: remote ? remote.env : env, model: model || null, broker: { on: brokerEnabled() }, checkModel });
+  if (d.refusal) throw Object.assign(new Error(`OpenCode: ${d.refusal}`), { errorClass: 'config' });
+  return d;
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
@@ -472,22 +513,34 @@ const instructionFiles = (cwd) => ['AGENTS.md', 'CLAUDE.md'].map((f) => join(cwd
  * Error with `errorClass` on failure. Options OpenCode has no lever for (allowedTools, maxBudgetUsd, writableDirs,
  * addDirs — OpenCode has no sandbox) are ignored; the run start logs each as a degradation. `maxTurns` caps the main
  * agent's tool steps with the agent's `steps` (OpenCode's own cap), and its tool calls, counted as codex counts them.
+ * Under the credential broker its provider block points at the slot of the provider its model names (relay-route.mjs
+ * pointAtSlot). A remote run (exec-env, e2b): the template's pinned opencode, its calls through worca's model relay,
+ * which signs them with the server's key for that provider (relay-route.mjs MODE_ROUTES: the relay URL and a dummy key
+ * in its inline config); no host guard; the run's url MCP servers only; the prompt files uploaded. What the relay
+ * measured is booked, never OpenCode's own figures there; its sub-agents' sessions stay in the sandbox.
  */
 export async function runOpencodeProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
-  bin = opencodeDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
+  bin = opencodeDefaultBin(), resumeSessionId, sandbox, askLockdown, envAllowlist, asAgent,
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, allowedTools, appendSubagentSystemPrompt,
-  scratchBase = null, probe = null,
+  scratchBase = null, probe = null, workRoot = null, subagentsOff = false, execEnv = null,
+  billTo, spawnKind, permissionMode, runId, threadId, maxBudgetUsd,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   // A chat (askLockdown): OPENCODE_ASK_LOCKDOWN, on a model it names (never OpenCode's default, never OpenCode Zen).
   const ask = !!askLockdown;
   if (sandbox === 'read-only' && !ask) throw new Error(`${bin}: OpenCode has no verified read-only mode — a read-only job runs on Claude instead`);
   if (ask && !(typeof model === 'string' && model.trim())) throw new Error(`${bin}: a chat on OpenCode needs a model`);
+  // A run step too (catalog requiresExplicitModel): the run gate refuses it at start, and this holds for any graph that
+  // gate did not see. With no `-m` OpenCode runs its own default, which can send the checkout to OpenCode Zen.
+  if (!(typeof model === 'string' && model.trim())) throw new Error(`${bin}: OpenCode needs a model; pick one for this step`);
   if (ask && ZEN_PROVIDER_RE.test(model)) throw new Error(`${bin}: OpenCode Zen's free models refuse a chat (it has no shell) — pick a model of another provider`);
-  if (!(typeof model === 'string' && model.trim()) && !defaultModelAllowed()) throw new Error(`${bin}: refusing to start OpenCode without a model: ${DEFAULT_MODEL_RISK}`);
+  // Code OpenCode loads into its own process although every project switch is off (opencodePluginDirs): checked at each
+  // spawn, so a folder an earlier step made is caught too.
+  { const plugins = opencodePluginDirs(cwd);
+    if (plugins.length) throw new Error(`${bin}: refusing to start OpenCode: it would load the plugin code in ${plugins.join(', ')}, which worca cannot switch off. Remove ${plugins.length === 1 ? 'that folder' : 'those folders'}, or run this step on another engine.`); }
   const secrets = Array.isArray(redactValues) ? redactValues : [];
-  const redactor = secrets.length ? createRedactor(secrets) : null;
+  let redactor = secrets.length ? createRedactor(secrets) : null;
   const sniffed = { cause: null };
   { const emit = onEvent; onEvent = (e) => {
     if (e?.type === 'stderr' && typeof e.text === 'string') { const m = LOG_CAUSE_RE.exec(e.text); if (m) sniffed.cause = m[1]; }
@@ -501,6 +554,9 @@ export async function runOpencodeProcess({
 
   let session = opencodeSessionOf(resumeSessionId);
   if (resumeSessionId && !session) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: stored session ${JSON.stringify(String(resumeSessionId).slice(0, 12))}… is not an OpenCode session — starting a fresh one` });
+  const remote = execEnv?.remote && !ask ? execEnv : null;
+  // How this spawn signs its model calls, before anything is written or staged.
+  const decision = opencodeRoute(model, { remote });
 
   let realCwd = cwd;
   try { realCwd = realpathSync(cwd); } catch { /* not there: the spawn says so */ }
@@ -511,6 +567,8 @@ export async function runOpencodeProcess({
   if (mcpConfigPath) {
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
+    // In a sandbox only the run's url servers exist (the env logged each dropped one at sandbox start).
+    if (remote) doc = sandboxMcpConfig(doc).config;
     let servers = doc && typeof doc.mcpServers === 'object' && doc.mcpServers ? doc.mcpServers : {};
     if (ask) {
       // The chat's MCP child gets the spawn env (the command bridge token, SSH_AUTH_SOCK, the web search key) by
@@ -528,9 +586,13 @@ export async function runOpencodeProcess({
     if (!Object.keys(mcp).length) mcp = null;
   }
 
-  const guardOn = hostGuardEnabled();
+  if (remote && bin !== 'opencode') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned opencode` });
+  const exe = remote ? 'opencode' : bin;
+  const guardOn = hostGuardEnabled() && !remote;
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
-  const fanOut = !ask && Array.isArray(allowedTools) && allowedTools.some((t) => t === 'Agent' || t === 'Task');
+  // Decision 11: with the run's sub-agents off (their keeping the rules is unproven), no node reaches a sub-agent; a chat
+  // has none either.
+  const fanOut = !ask && !subagentsOff && Array.isArray(allowedTools) && allowedTools.some((t) => t === 'Agent' || t === 'Task');
   // A chat's agent has a name no user config can know (its permission would merge into one it did know).
   const nodeAgent = ask ? `worca-chat-${rand()}${rand()}` : OPENCODE_NODE_AGENT;
 
@@ -567,20 +629,48 @@ export async function runOpencodeProcess({
   const config = { agent, ...(Object.keys(rules.permission).length ? { permission: rules.permission } : {}), ...(mcp ? { mcp } : {}),
     ...(instructions.length ? { instructions } : {}), ...(provider ? { provider } : {}) };
 
-  // OPENCODE_ vars and the provider keys in worca's env survive no scrub but their own prefix; the MCP servers'
-  // {env:…} values join from the run env.
-  // A chat keeps its model's provider env too (its key in worca's environment): it has no shell to read it.
-  const envOpts = { envScrub, envAllowlist, prefixes: [...OPENCODE_ENV_PREFIXES, ...(ask ? providerEnvPrefixes(model) : [])], hostPid: guardOn ? process.pid : null };
+  // The catalog allowlist (src/core/spawn.mjs childEnv: OpenCode's own names, the one provider key the step's model signs
+  // in with); the MCP servers' {env:…} values join from the run env. P3-D20: the run env itself stays out, but the git
+  // ceiling of a run without a project is no secret and must reach the agent's git (childEnv merges its own `root` over
+  // it). OpenCode takes its project folder from PWD, not from its process cwd: childEnv sets it to the cwd. A chat keeps
+  // the same one key: it has no shell to read it.
+  const spec = opencodeSpawnSpec({ envAllowlist, signInMode: decision.signInMode, cwd, workRoot, hostPid: guardOn ? process.pid : null });
   const refEnv = {};
   if (mcp) {
-    const from = { ...composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env, ...(ask ? Object.fromEntries((envAllowlist || []).filter((k) => typeof process.env[k] === 'string').map((k) => [k, process.env[k]])) : {}) };
+    const from = childEnv({ ...spec, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     for (const n of envRefNames(mcp)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(refEnv).length ? { runEnv: refEnv } : {}) });
-  // OpenCode takes its project folder from PWD, not from its process cwd: an inherited PWD (worca's own) would put the
-  // agent in the wrong folder.
-  Object.assign(env, { PWD: cwd, OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_SHARE: '1' },
-    probe ? probe.env : {});
+  const ceiling = typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string' ? { GIT_CEILING_DIRECTORIES: runSpawnEnv.GIT_CEILING_DIRECTORIES } : {};
+  const overlay = { OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_AUTOUPDATE: '1',
+    OPENCODE_DISABLE_SHARE: '1', ...(probe ? probe.env : {}) };
+  const { env } = childEnv({ ...spec, runEnv: { ...refEnv, ...ceiling }, overlay });
+  /** worca's config with a pointing's provider block (the relay's, or a broker slot's) merged in. */
+  const pointedConfig = (pointed) => JSON.stringify({ ...config, ...(pointed.config || {}), provider: { ...(config.provider || {}), ...(pointed.config?.provider || {}) } });
+  // The broker token, taken late (a refusal above leaves none behind) and released in the finally. Local brokered: the
+  // provider block calls the slot of its model's provider with it; no ambient provider key survives.
+  let lease = null;
+  try {
+    if (decision.slot) {
+      lease = await brokerLease({ billTo, spawnKind, permissionMode, askLockdown, runId, threadId, maxBudgetUsd, asAgent, execEnv }, decision.slot);
+      redactor = createRedactor([...secrets, ...lease.secrets]);
+    }
+    if (decision.kind === 'brokered' && !remote) {
+      const pointed = pointAtSlot(decision, lease, model);
+      for (const k of ENGINES.opencode.env.relayOwned) delete env[k];
+      Object.assign(env, pointed.env, { OPENCODE_CONFIG_CONTENT: pointedConfig(pointed) });
+    }
+  } catch (err) { lease?.release(); cleanup(); throw redacted(err); }
+  /** One attempt's env and route: in a sandbox its own relay route (each spawn's end closes its route), its provider
+   *  block in the config, and the config names worca sets kept. */
+  const attemptEnv = async () => {
+    if (!remote) return { env, route: null };
+    const route = remote.openRoute(decision, { spawnEnv: env, lease });
+    try {
+      await remote.ensureCli(exe);
+      return { env: { ...remote.envFor(env, { engine: 'opencode', keep: [...remote.mcpEnvRefs, ...Object.keys(overlay)], route }),
+        OPENCODE_CONFIG_CONTENT: pointedConfig(route) }, route };
+    } catch (err) { await abandonRoute(remote, route, onEvent); throw err; }
+  };
 
   const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} turns (the turn cap)`), { turnCap: true });
   const attempt = async (sessionId) => {
@@ -589,8 +679,10 @@ export async function runOpencodeProcess({
     let toolCalls = 0; let capped = false; let sawSession = false;
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
     const args = buildOpencodeArgs({ agent: nodeAgent, model, effort, sessionId });
+    const { env: spawnEnv, route } = await attemptEnv();
     const res = await superviseSpawn({
-      file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent, stagedDir: asAgent ? scratch : null, onEvent,
+      file: exe, args, displayBin: bin, cwd, env: spawnEnv, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent: remote ? false : asAgent,
+      stagedDir: remote || asAgent ? scratch : null, onEvent, execEnv: remote, route,
       cleanup: () => {},
       isBenignStderr,
       stdoutErrorDetail: () => normalizer.finish().error || '',
@@ -606,7 +698,10 @@ export async function runOpencodeProcess({
           if (e.type === 'session') { sawSession = true; safeEmit(onEvent, { type: 'session', sessionId: e.sessionId }); }
         }
       },
-    }).catch((err) => {
+      // The last step's `stop`: what the step leaves running after it is killed (superviseSpawn, R15).
+      turnOver: () => normalizer.over(),
+    }).catch(async (err) => {
+      await spendOnExit(normalizer.finish());
       if (capped && !signal?.aborted) throw turnCap();
       const f = normalizer.finish();
       if (err?.name !== 'AbortError') {
@@ -620,26 +715,38 @@ export async function runOpencodeProcess({
     });
     const final = normalizer.finish();
     // Past `cap` steps the last one was OpenCode's forced text reply: the agent was stopped, not finished.
-    if ((capped || (cap && final.steps > cap)) && !signal?.aborted) throw turnCap();
+    const stopped = (capped || (cap && final.steps > cap)) && !signal?.aborted;
+    if (stopped || final.error) await spendOnExit(final);
+    if (stopped) throw turnCap();
     if (final.error) throw Object.assign(new Error(`${bin}: ${final.error}`), { errorClass: classifyOpencodeError({ name: final.errorName, statusCode: final.statusCode, message: final.error }), sawSession });
     return { final, exitCode: res.code };
   };
 
   // A sub-agent's steps are not in the stream: its session's export carries its tool calls (emitted under the `task`
-  // call, for the audit), cost and tokens.
+  // call, for the audit), cost and tokens. One that cannot be read leaves the cost unknown.
   const subSpend = async (subs) => {
-    let costUsd = 0; let usage = { ...ZERO_USAGE }; const missed = [];
+    let costUsd = 0; let unpriced = false; let usage = { ...ZERO_USAGE }; const missed = [];
     for (const { sessionId: id, toolUseId } of subs) {
-      const text = await new Promise((resolve) => {
-        execFile(bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
-      });
+      const r = await runCapture(bin, ['export', id], { env, cwd, timeoutMs: 20000, maxBuffer: 64 * 1024 * 1024 });
+      const text = r.code === 0 ? r.stdout : null;
       const s = text == null ? null : readSubsession(text, { parentId: toolUseId, mcpServers: Object.keys(mcp || {}) });
       if (!s) { missed.push(id); continue; }
       for (const e of s.events) safeEmit(onEvent, e);
-      costUsd += s.costUsd; usage = addUsage(usage, s.usage);
+      costUsd += s.costUsd; usage = addUsage(usage, s.usage); unpriced ||= s.unpriced;
     }
     if (missed.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: could not read sub-agent session(s) ${missed.join(', ')} — their tool calls and cost are not counted` });
-    return { costUsd, usage };
+    return { costUsd, usage, unpriced: unpriced || missed.length > 0 };
+  };
+  /** The spend of a spawn that ends without its result (an error, the turn cap, a stop): what OpenCode priced so far and
+   *  its sub-agents' sessions, booked as the engine's own figure (no figure: cost unknown, never $0). */
+  const spendOnExit = async (final) => {
+    // A sandbox's figures are the sandbox's word: the route's close booked what the relay measured.
+    if (remote) return;
+    const sub = final.subSessions.length ? await subSpend(final.subSessions) : null;
+    const usage = sub ? addUsage(final.usage, sub.usage) : final.usage;
+    const costUsd = final.costUsd == null || sub?.unpriced ? null : final.costUsd + (sub ? sub.costUsd : 0);
+    if (!spent(usage) && !(costUsd > 0)) return;
+    safeEmit(onEvent, { type: 'spend', source: 'engine', ...(costUsd != null ? { costUsd } : {}), usage });
   };
 
   try {
@@ -655,29 +762,40 @@ export async function runOpencodeProcess({
       out = await attempt(null);
     }
     const { final } = out;
-    const sub = final.subSessions.length ? await subSpend(final.subSessions) : null;
-    const costUsd = final.costUsd == null && !sub ? undefined : (final.costUsd || 0) + (sub ? sub.costUsd : 0);
-    const usage = sub ? addUsage(final.usage, sub.usage) : final.usage;
     const text = redactor ? redactor.text(final.text) : final.text;
-    safeEmit(onEvent, { type: 'result', text, isError: false, ...(final.sessionId ? { sessionId: OPENCODE_SESSION_PREFIX + final.sessionId } : {}),
-      usage, ...(costUsd !== undefined ? { costUsd } : {}) });
+    const sessionId = final.sessionId ? { sessionId: OPENCODE_SESSION_PREFIX + final.sessionId } : {};
+    if (remote) {
+      // The sandbox's sub-agent sessions stay there: their model calls are in the relay's count, their tool calls are not
+      // in the run log. The result carries no figure of OpenCode's: the route's close already booked the relay's measure.
+      if (final.subSessions.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: the sub-agent session(s) ${final.subSessions.map((x) => x.sessionId).join(', ')} ran in the ${remote.label}; their tool calls are not in the run log (their model calls are in the relay's count)` });
+      safeEmit(onEvent, { type: 'result', text, isError: false, ...sessionId, relay: { messages: 0, byModel: {} } });
+      return { text, exitCode: out.exitCode };
+    }
+    const sub = final.subSessions.length ? await subSpend(final.subSessions) : null;
+    // No price for a step or a sub-agent's message: the result carries no cost (the ledger books it unknown).
+    const costUsd = final.costUsd == null || sub?.unpriced ? undefined : final.costUsd + (sub ? sub.costUsd : 0);
+    const usage = sub ? addUsage(final.usage, sub.usage) : final.usage;
+    safeEmit(onEvent, { type: 'result', text, isError: false, ...sessionId, usage, ...(costUsd !== undefined ? { costUsd } : {}) });
     return { text, exitCode: out.exitCode };
   } catch (err) {
     throw redacted(err);
   } finally {
     cleanup();
+    lease?.release();
   }
 }
 
 // ── chat ─────────────────────────────────────────────────────────────────────
 
 /** The oldest OpenCode the chat lockdown was verified on; OpenCode 2 is refused by the preflight. */
-export const OPENCODE_ASK_MIN_VERSION = '1.19.4';
+export const OPENCODE_ASK_MIN_VERSION = ENGINES.opencode.chat.minVersion;
 
 /** Can this opencode be locked down for a chat? OpenCode 1.x at least OPENCODE_ASK_MIN_VERSION. Never rejects. */
 export function opencodeAskSupport({ bin = opencodeDefaultBin(), timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout) => {
+    // Through the owner, under OpenCode's own catalog allowlist (never worca's whole env).
+    execCheck(bin, ['--version'], { spec: { ...opencodeSpawnSpec(), overlay: { OPENCODE_DISABLE_AUTOUPDATE: '1' } }, timeoutMs }).then(({ error, code, stdout }) => {
+      const err = error || (code !== 0 ? Object.assign(new Error(`${bin} --version exited ${code}`), { code }) : null);
       if (err) { resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? `cannot run ${bin} (${err.code}) — install OpenCode 1.x (npm i -g opencode-ai), or point WORCA_OPENCODE_BIN at it` : `could not ask ${bin} its version (${err.message})` }); return; }
       const v = /(\d+)\.(\d+)\.(\d+)/.exec(String(stdout));
       const n = v ? v.slice(1).map(Number) : null;
@@ -716,7 +834,7 @@ export const opencodeChat = makeChatDescriptor({
   preflight: (_ctx, impl = opencodePreflight) => impl({ defaultModel: false, envScrub: true, envAllowlist: [] }),
   resumeNotFound: (err) => OPENCODE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   modelProblem: (id) => (ZEN_PROVIDER_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
-  signIn: (model) => ['OPENCODE_', ...providerEnvPrefixes(model)],
+  // The one its spawn keeps (opencodeSignInMode); none when the route is refused, as the spawn itself is.
+  signInMode: (model) => { try { return opencodeSignInMode(model); } catch { return ''; } },
   listRates: providerListRates,
-  prompt: { cli: "OpenCode with OpenCode's own providers" },
 });

@@ -1,0 +1,14 @@
+{
+  "rules": {
+    "deny": [
+      "Edit(./b.txt)"
+    ]
+  },
+  "expected": {
+    "deny": [
+      "Edit(./b.txt)"
+    ],
+    "partial": [],
+    "unenforced": []
+  }
+}

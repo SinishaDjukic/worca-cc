@@ -1,0 +1,14 @@
+{
+  "rules": {
+    "deny": [
+      "mcp__spike__echo"
+    ]
+  },
+  "expected": {
+    "deny": [
+      "mcp__spike__echo"
+    ],
+    "partial": [],
+    "unenforced": []
+  }
+}

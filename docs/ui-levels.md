@@ -163,6 +163,7 @@ be skipped by forgetting it.
 | Task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
 | "Not sure what to build yet? Try Shaper" under the Markdown source (Shaper, gated) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
+| Runs in (execution environment: Local or E2B sandbox), its live E2B status chip (connected · N of cap in use, unreachable, key refused, not set up) and the note when a saved E2B default does not apply | A — stays visible at every level while a non-Local value is picked (rule 2) |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as defaults"; memory scope | E |
 
@@ -195,6 +196,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
 | Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them, the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
 | Run progress: the bar under the status line (Plan · Build · Review · Ready, blue / amber / green), its text ("Build · task 2 of 4") in place of "Step: …", the chain's overall bar ("Run 2 of 3"), the Runs list's group bar and group row with its ⌄ | S |
+| Run page: the execution environment in the status line (E2B sandbox, or waiting for an E2B slot) and a waiting question's "Answer by HH:MM" line on a sandbox run | all (rule 1) |
 | Run progress hover breakdown: stages with their agents and states, review pass count | A |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
@@ -216,6 +218,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 
 | Element | Level |
 |---|---|
+| The E2B sandbox chip on a run that executed in a sandbox | S |
 | List, project filter, Refresh; Overview (verdict, findings, duration, cost, task); Clarify tab; Resume | S |
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | "Answered for you", as on the run page | S |
@@ -305,6 +308,7 @@ inside the view.
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
 | Project page Actions tab | A |
+| Project page Settings › Execution environment: where this project's runs execute, its E2B template field, the environment spec (read-only), the last build and Build / Rebuild environment with its log | A |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, the Remove confirm's re-scan choice and recommendation, description, re-scan, delete) | A |
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
@@ -325,6 +329,7 @@ inside the view.
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab: Wait for the network | A |
+| Runs tab: Execution environment (default execution environment, Sandboxes at once, Max wait for an answer), its status chip and "Server: …" line | E |
 | Guardrails tab (list, details); Memory tab (files) | A |
 | Presets tab (every preset: Use, Rename, Duplicate, Edit scope, Delete) | A |
 | General: spawn diagnostics; Memory tab: the line linking to Helper jobs | E |
@@ -404,6 +409,7 @@ missing (`data-needs-git`), at every level.
 | Ask: live run card, the feature strip of a sliced plan: progress, each slice's state and PR, Review plan / Answer / Open / Resume slice / Re-plan the rest / Cancel the rest / Open the re-plan, "Approve each slice's plan" | S |
 | Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create PR / View PR | A — as on the run page |
+| Ask: the run card's Runs in field (where the proposed run executes) | A — shown at every level when the chat chose a non-Local value |
 | Ask: a run without a project's file list on its run card (Artifacts · n; each file's name, size and Download; "All artifacts") | S — its Artifacts tab is Simple too |
 | Ask: the pull-request card's Watch PR state, as its PR link tooltip (read-only; the switch stays on the run page) | all |
 | Ask: the run card's stopped-watch line (`Watch stopped · …`, View PR, Ask for changes) | all (rule 1) |

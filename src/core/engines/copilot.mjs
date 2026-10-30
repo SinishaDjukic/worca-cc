@@ -2,7 +2,7 @@
 // The GitHub Copilot CLI adapter: `copilot --output-format json` argv, the JSONL session-event
 // stream normalized into worca's event vocabulary (src/core/engines/events.mjs), token usage from
 // the CLI's cumulative per-session usage file, error classification, and the spawn path on the
-// shared supervisor (engines/spawn.mjs).
+// shared supervisor (src/core/spawn.mjs).
 //
 // Facts this module encodes (checked against @github/copilot 1.0.92, its shipped
 // schemas/session-events.schema.json, and a stand-in OpenAI Responses endpoint in BYOK mode):
@@ -41,17 +41,23 @@
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { execFile } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, argValue, cleanRunEnv, safeEmit, writableRootsInWorcaHome, abandonRoute } from '../spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
+import { sandboxMcpConfig } from '../exec-env/policy.mjs';
+import { removeSessionEntries } from './sessions.mjs';
+import { brokerEnabled } from '../broker-client.mjs';
+import { brokerLease } from '../broker-lease.mjs';
+import { resolveModelRoute, localServerEnv } from '../exec-env/credentials.mjs';
+import { CLI_POINTING, POINTING_NAMES } from '../exec-env/relay-route.mjs';
+import { ENGINES, engineEntry } from '../../shared/engine-switch.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
 
@@ -238,6 +244,24 @@ export function mcpEnvRefNames(servers) {
   return [...names];
 }
 
+/**
+ * Archive (catalog `sessions: 'user-store'`): a run's Copilot sessions are `<COPILOT_HOME or ~/.copilot>/session-state/
+ * <uuid>` (a folder or a .jsonl), plus worca's usage file per session. Removes exactly those of `sessionIds`
+ * (`copilot:<uuid>`), never the sign-in.
+ * @returns {Promise<{removed: string[], failed: {path: string, error: string}[]}>}
+ */
+export async function removeCopilotSessions({ sessionIds = [], env = process.env, usageDir = defaultUsageDir() } = {}) {
+  const ids = new Set(sessionIds.map((id) => copilotSessionOf(id)).filter(Boolean));
+  const out = { removed: [], failed: [] };
+  if (!ids.size) return out;
+  const home = (env.COPILOT_HOME && env.COPILOT_HOME.trim()) || join(env.HOME || homedir(), '.copilot');
+  for (const r of [
+    await removeSessionEntries(join(home, 'session-state'), (n) => ids.has(n) || (n.endsWith('.jsonl') && ids.has(n.slice(0, -6)))),
+    await removeSessionEntries(usageDir, (n) => n.endsWith('.json') && ids.has(n.slice(0, -5))),
+  ]) { out.removed.push(...r.removed); out.failed.push(...r.failed); }
+  return out;
+}
+
 /** The names of the user's own Copilot MCP servers (~/.copilot/mcp-config.json), which a spawn turns off:
  *  worca's guardrails never saw them. Never throws. */
 export function userCopilotMcpNames(env = process.env) {
@@ -315,7 +339,7 @@ export function buildCopilotArgs({ sessionId, resume = false, model, effort, age
   if (ask) args.push('--no-custom-instructions');
   if (sessionId) args.push(resume ? `--resume=${sessionId}` : `--session-id=${sessionId}`);
   // A catalog id names a Copilot built-in as copilot/<id>: copilot is given its own id (model-env.mjs).
-  if (model) args.push('--model', copilotWireModel(String(model)));
+  if (model) args.push('--model', argValue(copilotWireModel(String(model)), 'model'));
   if (effort && COPILOT_EFFORTS.includes(effort)) args.push('--reasoning-effort', effort);
   if (agent) args.push('--agent', agent);
   for (const d of [...new Set((Array.isArray(addDirs) ? addDirs : []).filter((x) => typeof x === 'string' && x))]) args.push('--add-dir', d);
@@ -407,6 +431,7 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
   let errorType = null;
   let sessionId = null;
   let exitCode = null;
+  let resulted = false;   // the closing `result` frame was seen: the turn is over
 
   const parentOf = (evt) => {
     const d = evt.data || {};
@@ -476,6 +501,7 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
         errorType = text(d.errorType) || null;
         return [{ type: 'stderr', stream: 'err', text: `copilot: ${error}` }];
       case 'result':
+        resulted = true;
         if (typeof evt.sessionId === 'string') sessionId = evt.sessionId;
         if (Number.isFinite(evt.exitCode)) exitCode = evt.exitCode;
         return [];
@@ -485,7 +511,7 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
   }
 
   const finalError = () => error || (exitCode != null && exitCode !== 0 ? `copilot exited with code ${exitCode}` : null);
-  return { push, finish: () => ({ text: texts.join('\n'), error: finalError(), errorType, sessionId, exitCode, model }) };
+  return { push, finish: () => ({ text: texts.join('\n'), error: finalError(), errorType, sessionId, exitCode, model }), over: () => resulted };
 }
 
 // ── errors and preflight ─────────────────────────────────────────────────────
@@ -512,24 +538,42 @@ export function classifyCopilotError(err) {
 export const COPILOT_RESUME_NOT_FOUND_RE = /no session, task, or name matched/i;
 export function copilotResumeNotFound(err) { return COPILOT_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')); }
 
+/** The oldest copilot a run accepts: older CLIs may still need `--allow-all-tools` in -p mode, which worca no longer
+ *  passes (G14, checked on 1.0.100). */
+export const COPILOT_MIN_VERSION = '1.0.100';
+/** `a` compared with `b`, both `x.y.z`: negative when `a` is older. */
+const compareVersions = (a, b) => {
+  const pa = a.split('.').map(Number); const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  return 0;
+};
+
 /**
- * The engine's run-start check (engines/index.mjs `preflight`): the binary runs. Copilot has no
- * sign-in status command, so a signed-out CLI shows on the first spawn (an auth-class failure).
- * Never rejects: `{refusal}` when the binary cannot run, `{warning}` when the check itself failed, `{}` otherwise.
+ * The engine's run-start check (engines/index.mjs `preflight`): the binary runs, and is COPILOT_MIN_VERSION or newer.
+ * Copilot has no sign-in status command, so a signed-out CLI shows on the first spawn (an auth-class failure).
+ * Never rejects: `{refusal}` when the binary cannot run or is too old, `{warning}` when the check itself failed, `{}`
+ * otherwise.
  */
-export function copilotPreflight({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
-  return new Promise((resolve) => {
-    execFile(bin, ['--version', '--no-auto-update'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' } }, (err, stdout) => {
-      if (err && typeof err.code !== 'number') {
-        resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it` }
-          : { warning: `could not check ${bin} (${err.message})` });
-        return;
-      }
-      if (err) { resolve({ warning: `${bin} --version exited with code ${err.code}` }); return; }
-      resolve(/copilot/i.test(String(stdout)) ? {} : { warning: `${bin} --version did not name GitHub Copilot CLI` });
-    });
-  });
+export async function copilotPreflight({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000, envAllowlist = [], spec = null } = {}) {
+  spec ??= copilotSpawnSpec({ envAllowlist, signInMode: resolveModelRoute({ engine: 'copilot', broker: { on: brokerEnabled() }, checkModel: false }).signInMode });
+  const { code, stdout, error } = await execCheck(bin, ['--version', '--no-auto-update'], { spec, timeoutMs });
+  if (error) {
+    return /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
+      ? { refusal: `cannot run ${bin} (${error.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it` }
+      : { warning: `could not check ${bin} (${error.message})` };
+  }
+  if (code) return { warning: `${bin} --version exited with code ${code}` };
+  if (!/copilot/i.test(String(stdout))) return { warning: `${bin} --version did not name GitHub Copilot CLI` };
+  const version = /\b(\d+\.\d+\.\d+)\b/.exec(String(stdout))?.[1];
+  return version && compareVersions(version, COPILOT_MIN_VERSION) < 0
+    ? { refusal: `${bin} is GitHub Copilot CLI ${version}; worca needs ${COPILOT_MIN_VERSION} or newer — update it (npm i -g @github/copilot)` }
+    : {};
+}
+
+/** The childEnv spec a copilot run spawns with (engine, the route resolver's sign-in mode, the run's allowlist, cwd and
+ *  work root, the host pid, and no auto-update): run and preflight build their env from it. */
+export function copilotSpawnSpec({ envAllowlist = [], cwd = null, workRoot = null, hostPid = null, signInMode = null } = {}) {
+  return { engine: 'copilot', signInMode, allowlist: envAllowlist, cwd, root: workRoot, hostPid, overlay: { COPILOT_AUTO_UPDATE: 'false' } };
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
@@ -545,9 +589,9 @@ function storeUsage(dir, session, usage) {
 }
 
 /** The flags an Ask chat's lockdown needs (COPILOT_ASK_LOCKDOWN): every one must be in the installed copilot's --help. */
-export const COPILOT_ASK_FLAGS = Object.freeze(['--available-tools', '--disable-builtin-mcps', '--disallow-temp-dir', '--no-custom-instructions', '--additional-mcp-config']);
+export const COPILOT_ASK_FLAGS = ENGINES.copilot.chat.flags;
 /** The oldest copilot the Ask lockdown was verified on. */
-export const COPILOT_ASK_MIN_VERSION = '1.0.100';
+export const COPILOT_ASK_MIN_VERSION = ENGINES.copilot.chat.minVersion;
 /** Ask Worca on Copilot: the lockdown is the read-only spawn (only the MCP servers it is handed — worca's own — and a
  *  scrubbed env) plus no custom instructions. A flag, not a list: the adapter builds it (runCopilotProcess askLockdown). */
 export const COPILOT_ASK_LOCKDOWN = true;
@@ -556,22 +600,18 @@ export const COPILOT_ASK_LOCKDOWN = true;
  * Can this copilot be locked down for an Ask chat? Every flag in COPILOT_ASK_FLAGS must exist: an older copilot
  * without `--available-tools` would leave the chat its shell. Never rejects: `{refusal}` or `{}`.
  */
-export function copilotAskSupport({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
-  return new Promise((resolve) => {
-    execFile(bin, ['--help'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' }, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
-      if (err && typeof err.code !== 'number') {
-        resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it`
-          : `could not ask ${bin} which flags it has (${err.message})` });
-        return;
-      }
-      const help = String(stdout || '');
-      const missing = COPILOT_ASK_FLAGS.filter((f) => !new RegExp(`(^|\\s)${f.replace(/-/g, '\\-')}(\\s|=|$)`, 'm').test(help));
-      resolve(missing.length
-        ? { refusal: `this copilot has no ${missing.join(', ')} to lock a chat down — update the GitHub Copilot CLI to ${COPILOT_ASK_MIN_VERSION} or newer` }
-        : {});
-    });
-  });
+export async function copilotAskSupport({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000, spec = copilotSpawnSpec() } = {}) {
+  const { stdout, error } = await execCheck(bin, ['--help'], { spec, timeoutMs });
+  if (error) {
+    return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
+      ? `cannot run ${bin} (${error.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it`
+      : `could not ask ${bin} which flags it has (${error.message})` };
+  }
+  const help = String(stdout || '');
+  const missing = COPILOT_ASK_FLAGS.filter((f) => !new RegExp(`(^|\\s)${f.replace(/-/g, '\\-')}(\\s|=|$)`, 'm').test(help));
+  return missing.length
+    ? { refusal: `this copilot has no ${missing.join(', ')} to lock a chat down — update the GitHub Copilot CLI to ${COPILOT_ASK_MIN_VERSION} or newer` }
+    : {};
 }
 
 /**
@@ -585,12 +625,14 @@ export async function runCopilotProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = COPILOT_DEFAULT_BIN, resumeSessionId, addDirs, writableDirs, sandbox, envScrub, envAllowlist, asAgent, usageDir = defaultUsageDir(),
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, askLockdown,
-  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'),
+  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'), execEnv, workRoot = null, subagentsOff = false,
+  billTo, spawnKind, runId, threadId, maxBudgetUsd, permissionMode,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   const secrets = Array.isArray(redactValues) ? redactValues : [];
-  const redactor = secrets.length ? createRedactor(secrets) : null;
-  if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
+  // A broker token, once taken, is redacted too (the redactor is rebuilt then).
+  let redactor = secrets.length ? createRedactor(secrets) : null;
+  { const emit = onEvent; onEvent = (e) => emit(redactor ? redactor.deep(e) : e); }
   const redacted = (err) => {
     if (redactor && err && typeof err.message === 'string') err.message = redactor.text(err.message);
     if (redactor && err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
@@ -612,16 +654,35 @@ export async function runCopilotProcess({
     const inHome = writableRootsInWorcaHome({ cwd, roots: [...(addDirs || []), ...(writableDirs || [])] });
     if (inHome.length) throw new Error(`${bin}: refusing to start copilot — it would be able to write ${inHome.join(', ')}, inside Worca's home (${worcaHome()}), where Worca keeps its database, settings and plugins; copilot cannot hold the rules that protect them`);
   }
-  const guardOn = hostGuardEnabled();
+  // A remote run (exec-env, e2b): the template's pinned copilot in offline mode, its model calls through worca's model
+  // relay, which signs them with the server's fine-grained token (no GitHub token in the sandbox); no host guard, the
+  // run's url MCP servers only (sandboxMcpConfig), the scratch dir uploaded and its sandbox copy removed. Offline mode
+  // has no default model and no GitHub MCP server, web tools or updater.
+  const remote = execEnv?.remote ? execEnv : null;
+  // How this spawn's model calls are signed (credentials.mjs resolveModelRoute), before anything is staged. Pointed at
+  // the relay or a broker slot, copilot runs offline with no default model of its own: a step with none is refused here
+  // (catalog relay.needsModel), never given a hidden default. The model is the id copilot puts in its request body.
+  const wireModel = model ? copilotWireModel(String(model)) : null;
+  const decision = resolveModelRoute({ engine: 'copilot', remote: !!remote, serverEnv: remote ? remote.env : localServerEnv(cleanRunEnv(runSpawnEnv)),
+    model: wireModel, broker: { on: brokerEnabled() } });
+  if (decision.refusal) throw Object.assign(new Error(decision.refusal), { errorClass: 'config' });
+  const upstream = engineEntry('copilot').relay.upstream;
+  if (remote && bin !== 'copilot') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] copilot: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned copilot` });
+  const exe = remote ? 'copilot' : bin;
+  const guardOn = hostGuardEnabled() && !remote;
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
 
   // MCP: the spawn's --mcp-config servers in Copilot's shape. `${VAR}` references stay references; their values
   // (the run's MCPSECRET_* names) join the copilot env, filled from this spawn's env plus the run's spawn env.
-  const envOpts = { envScrub: envScrub || readOnly, envAllowlist, prefixes: ['COPILOT_'], hostPid: guardOn ? process.pid : null };
+  // The catalog allowlist (childEnv); a read-only spawn (a helper job over untrusted text) gets no project allowlist.
+  // A chat (ask) has no shell: it keeps its allowlist (its sign-in and the names its MCP child needs, ask/spawn.mjs).
+  const spec = copilotSpawnSpec({ envAllowlist: readOnly && !ask ? [] : envAllowlist, cwd, workRoot, hostPid: guardOn ? process.pid : null, signInMode: decision.signInMode });
   let mcpServers = null;
   if (mcpConfigPath) {
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
+    // In a sandbox only its url servers exist (the env logged each dropped one at sandbox start).
+    if (remote) doc = sandboxMcpConfig(doc).config;
     const all = doc && typeof doc.mcpServers === 'object' ? doc.mcpServers : {};
     const skipped = copilotMcpProblems(all);
     if (skipped.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] MCP servers not attached on copilot — ${describeUnattachableMcp('copilot', skipped)}` });
@@ -629,30 +690,49 @@ export async function runCopilotProcess({
   }
   const refEnv = {};
   if (mcpServers) {
-    const from = composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env;
+    const from = childEnv({ ...spec, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     for (const n of mcpEnvRefNames(mcpServers)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
   // An Ask chat hands its spawn env to its MCP servers the way a Claude chat does (the agent-mode command token,
   // ask/spawn.mjs): a local server inherits copilot's env, and the chat has no shell to read it there.
   const askEnv = ask ? cleanRunEnv(runSpawnEnv) : null;
   const runEnv = { ...refEnv, ...(askEnv ?? {}) };
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(runEnv).length ? { runEnv } : {}) });
   // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
-  // of a run without a project is no secret and must reach the agent's own git.
-  if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
-  env.COPILOT_AUTO_UPDATE = 'false';
-  // Either would widen the allow list buildCopilotArgs sets (see the notes at the top).
-  delete env.COPILOT_ALLOW_ALL;
-  delete env.COPILOT_ASSISTED_APPROVAL;
+  // of a run without a project is no secret and must reach the agent's own git (childEnv merges its own `root` over it).
+  // COPILOT_ALLOW_ALL and COPILOT_ASSISTED_APPROVAL, either of which would widen the allow list buildCopilotArgs sets,
+  // are in no catalog list: childEnv withholds them.
+  const ceiling = typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string' ? { GIT_CEILING_DIRECTORIES: runSpawnEnv.GIT_CEILING_DIRECTORIES } : {};
+  const { env } = childEnv({ ...spec, runEnv: { ...runEnv, ...ceiling } });
+  // The broker token, the relay route, the sandbox env and the template's copilot, BEFORE anything is staged or the
+  // session is named: a refusal or a template without copilot leaves nothing behind. Local brokered: copilot runs
+  // offline against the broker's copilot-pat slot with this spawn's token as its provider key.
+  let spawnEnv = env;
+  let relayRoute = null; let lease = null;
+  try {
+    lease = decision.slot && (decision.kind === 'brokered' || remote)
+      ? await brokerLease({ billTo, spawnKind, permissionMode, askLockdown, runId, threadId, maxBudgetUsd, asAgent, execEnv }, decision.slot)
+      : null;
+    if (lease) redactor = createRedactor([...secrets, ...lease.secrets]);
+    if (remote) {
+      relayRoute = remote.openRoute(decision, { spawnEnv: { ...env, ...cleanRunEnv(runSpawnEnv) }, lease });
+      spawnEnv = remote.envFor(env, { engine: 'copilot', keep: Object.keys(refEnv), route: relayRoute });
+      await remote.ensureCli(exe);
+    } else if (lease) {
+      const pointed = CLI_POINTING[upstream].spawn(lease.baseUrl + CLI_POINTING[upstream].suffix, lease.token, wireModel);
+      for (const k of POINTING_NAMES[upstream]) delete env[k];
+      Object.assign(env, pointed.env);
+    }
+  } catch (err) { await abandonRoute(remote, relayRoute, onEvent); lease?.release(); throw redacted(err); }
+  if (relayRoute) onEvent = remote.meteredEvents(relayRoute.id, onEvent);
 
   // Scratch folder: the node agent (system prompt), the investigator, the MCP config and the usage file.
   const scratch = join(scratchBase, `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   const agentsDir = join(scratch, '.github', 'agents');
-  mkdirSync(agentsDir, { recursive: true });
   const cleanup = () => { try { rmSync(scratch, { recursive: true, force: true }); } catch { /* best effort */ } };
   let mcpConfigFile = null;
   let usageFile = null;
   try {
+    mkdirSync(agentsDir, { recursive: true });
     writeFileSync(join(agentsDir, `${COPILOT_NODE_AGENT}.agent.md`), copilotAgentFile({ name: COPILOT_NODE_AGENT, description: 'The worca pipeline agent for this call.', prompt: sys }), { mode: 0o600 });
     const fanOut = !readOnly && Array.isArray(allowedTools) && allowedTools.some((t) => t === 'Agent' || t === 'Task');
     if (fanOut) writeFileSync(join(agentsDir, `${COPILOT_INVESTIGATOR_AGENT}.agent.md`), copilotInvestigatorAgent({ agents, subagentSystemPrompt: appendSubagentSystemPrompt }), { mode: 0o600 });
@@ -663,24 +743,37 @@ export async function runCopilotProcess({
     usageFile = join(scratch, 'usage.json');
   } catch (err) {
     cleanup();
+    await abandonRoute(remote, relayRoute, onEvent);
+    lease?.release();
     throw new Error(`${bin}: cannot prepare the spawn: ${err.message}`);
   }
 
   // Guardrails and the tool set: deny rules worca can express, the per-role tool list, read-only.
   const rules = copilotRulePlan(permissionRules);
   const tools = readOnly ? { deny: [], excluded: [] } : copilotToolPlan(allowedTools);
-  const args = buildCopilotArgs({
-    sessionId: session, resume, model, effort, agent: COPILOT_NODE_AGENT,
-    addDirs: [scratch, ...(readOnly ? [] : [...(addDirs || []), ...(writableDirs || [])])],
-    // Off: the user's own Copilot servers, and the project's `.mcp.json` servers Copilot would load itself in a trusted
-    // folder, but never a server worca hands it (an approved one of the same name stays on).
-    mcpConfigFile, disableMcp: [...new Set([...userCopilotMcpNames(env), ...projectCopilotMcpNames(cwd).filter((n) => !Object.hasOwn(mcpServers || {}, n))])],
-    // Read-only: no built-in tool at all (the shell and file tools would read the whole checkout's secrets);
-    // only the MCP servers it was handed (worca's own read_file/grep/glob behind the secret-path denies).
-    availableTools: readOnly ? Object.keys(mcpServers || {}) : undefined,
-    excludedTools: [...rules.excluded, ...tools.excluded], deny: [...rules.deny, ...tools.deny], usageFile, readOnly, ask,
-    allowMcp: Object.keys(mcpServers || {}),
-  });
+  // Decision 11: no `task` sub-agents unless the catalog proves they keep the rules (engines/index.mjs subagentPolicy).
+  if (subagentsOff && !tools.excluded.includes('task')) tools.excluded.push('task');
+  // An argv value refused (argValue) after the route opened: the route, the token and the scratch dir go with it.
+  let args;
+  try {
+    args = buildCopilotArgs({
+      sessionId: session, resume, model, effort, agent: COPILOT_NODE_AGENT,
+      addDirs: [scratch, ...(readOnly ? [] : [...(addDirs || []), ...(writableDirs || [])])],
+      // Off: the user's own Copilot servers, and the project's `.mcp.json` servers Copilot would load itself in a trusted
+      // folder, but never a server worca hands it (an approved one of the same name stays on).
+      mcpConfigFile, disableMcp: [...new Set([...(remote ? [] : userCopilotMcpNames(env)), ...projectCopilotMcpNames(cwd).filter((n) => !Object.hasOwn(mcpServers || {}, n))])],
+      // Read-only: no built-in tool at all (the shell and file tools would read the whole checkout's secrets);
+      // only the MCP servers it was handed (worca's own read_file/grep/glob behind the secret-path denies).
+      availableTools: readOnly ? Object.keys(mcpServers || {}) : undefined,
+      excludedTools: [...rules.excluded, ...tools.excluded], deny: [...rules.deny, ...tools.deny], usageFile, readOnly, ask,
+      allowMcp: Object.keys(mcpServers || {}),
+    });
+  } catch (err) {
+    cleanup();
+    await abandonRoute(remote, relayRoute, onEvent);
+    lease?.release();
+    throw redacted(err);
+  }
   const normalizer = createCopilotNormalizer({ model: model || null, sessionId });
   const priorUsage = resume ? loadUsage(usageDir, session) : null;
   // Pause/Resume: the session is named before copilot starts, so a step paused at any point resumes it. (The init
@@ -699,41 +792,63 @@ export async function runCopilotProcess({
     if (total) storeUsage(usageDir, session, total);
     return total ? diffUsage(total, priorUsage) : null;
   };
-  const res = await superviseSpawn({
-    file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent,
-    // Copilot writes its usage file into the scratch folder, so an agent user gets it writable.
-    stagedDir: asAgent ? { dir: scratch, writable: true } : null, onEvent,
-    cleanup: () => {},
-    redactText: redactor ? (t) => redactor.text(t) : null,
-    stdoutErrorDetail: () => normalizer.finish().error || '',
-    classify: (m) => classifyCopilotError(m),
-    spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
-    onDone: (code) => ({ code }),
-    onStdoutLine: (line) => {
-      for (const e of normalizer.push(line)) {
-        safeEmit(onEvent, e);
-        if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += Array.isArray(e.calls) ? e.calls.length : 1) > cap) {
-          capped = true; capCtrl.abort();
+  // Remote: the staged scratch dir (system prompt, MCP config) must not outlive the spawn there. The usage file stays in
+  // the sandbox: the sandbox writes it, so the result's tokens are what the relay measured (meteredEvents).
+  const settleRemote = async () => {
+    if (!remote) return;
+    await remote.removeUploaded(scratch);
+  };
+  // A local spawn that ended without its result (a failure, the turn cap) still spent what the session's usage file
+  // counts: booked as the engine's own figure (in a sandbox the relay's close books it instead).
+  const spendOnExit = (delta) => { if (!remote && delta) safeEmit(onEvent, { type: 'spend', source: 'engine', usage: claudeStyleUsage(delta) }); };
+  // The broker token (when taken) lives as long as the spawn: revoked once it settles, whatever way it ended.
+  let res;
+  try {
+    res = await superviseSpawn({
+      file: exe, args, displayBin: bin, cwd, env: spawnEnv, stdin: String(prompt ?? ''), signal: spawnSignal,
+      // Copilot writes its usage file into the scratch folder, so an agent user gets it writable.
+      asAgent: remote ? false : asAgent, stagedDir: remote ? scratch : (asAgent ? { dir: scratch, writable: true } : null), onEvent, execEnv: remote,
+      // The relay route closes with the spawn on every way out (superviseSpawn), booking what the relay measured.
+      route: relayRoute,
+      cleanup: () => {},
+      redactText: redactor ? (t) => redactor.text(t) : null,
+      stdoutErrorDetail: () => normalizer.finish().error || '',
+      classify: (m) => classifyCopilotError(m),
+      spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
+      onDone: (code) => ({ code }),
+      onStdoutLine: (line) => {
+        for (const e of normalizer.push(line)) {
+          safeEmit(onEvent, e);
+          if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += Array.isArray(e.calls) ? e.calls.length : 1) > cap) {
+            capped = true; capCtrl.abort();
+          }
         }
+      },
+      // The closing `result` frame: what the step leaves running after it is killed (superviseSpawn, R15).
+      turnOver: () => normalizer.over(),
+    }).catch(async (err) => {
+      await settleRemote();
+      spendOnExit(settleUsage());
+      cleanup();
+      const f = normalizer.finish();
+      if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
+      // The session's own error (session.error on stdout) leads, and its class counts too.
+      if (f.error && err?.name !== 'AbortError') {
+        if (!String(err.message).includes(f.error)) err.message = `${bin}: ${f.error} — ${err.message}`;
+        err.errorClass = strongestClass(err.errorClass ?? null, classifyCopilotError({ errorType: f.errorType, message: f.error }));
       }
-    },
-  }).catch((err) => {
-    settleUsage();
-    cleanup();
-    const f = normalizer.finish();
-    if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
-    // The session's own error (session.error on stdout) leads, and its class counts too.
-    if (f.error && err?.name !== 'AbortError') {
-      if (!String(err.message).includes(f.error)) err.message = `${bin}: ${f.error} — ${err.message}`;
-      err.errorClass = strongestClass(err.errorClass ?? null, classifyCopilotError({ errorType: f.errorType, message: f.error }));
-    }
-    throw redacted(err);
-  });
+      throw redacted(err);
+    });
+  } finally {
+    lease?.release();
+  }
+  await settleRemote();
   const delta = settleUsage();
   cleanup();
   const final = normalizer.finish();
-  if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
+  if (capped && !signal?.aborted) { spendOnExit(delta); throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true })); }
   if (final.error) {
+    spendOnExit(delta);
     const err = new Error(`${bin}: ${final.error}`);
     err.errorClass = classifyCopilotError({ errorType: final.errorType, message: final.error });
     throw redacted(err);
@@ -751,23 +866,7 @@ export async function runCopilotProcess({
 export const copilotChat = makeChatDescriptor({
   engine: 'copilot',
   lockdown: () => COPILOT_ASK_LOCKDOWN,
-  noLockdownMessage: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.',
   askSupport: (o, impl = copilotAskSupport) => impl(o),
   preflight: (_ctx, impl = copilotPreflight) => impl(),
   resumeNotFound: copilotResumeNotFound,
-  docsAnchor: 'github-copilot-cli',
-  shellTrippedMessage: 'Copilot tried to run a shell command although it was given none — worca stopped the turn.',
-  titles: true,
-  // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
-  // costs no premium request there (one on the free plan).
-  suggestionModel: 'gpt-5-mini',
-  signIn: () => ['COPILOT_', 'GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST'],
-  prompt: {
-    cli: "the GitHub Copilot CLI with Copilot's own sign-in",
-    webOff: "Copilot's own web tools stay off.",
-    // Copilot hands an MCP image on only to a model that declares vision, and a PDF only on the Responses and Anthropic
-    // APIs; otherwise it drops the block without a word (plans/ask-on-qwen-gemini-spike.md, "Open topics").
-    attachments: 'Image and PDF attachments are different: read_attachment returns the image or PDF itself, as a block of its result beside its kind and size, and Copilot hands it to your model right after the result only when the model can view that kind — read one to look at it; when it does not reach you, tell the user this Copilot model cannot view it.',
-    composerBinary: 'For an image or PDF, read_attachment returns the image or PDF itself as a block of its result, which Copilot hands on only to a model that can view that kind: read it to look at it; when it does not reach you, say this Copilot model cannot view it.',
-  },
 });

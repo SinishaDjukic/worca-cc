@@ -102,7 +102,8 @@ export function createClaudeNormalizer() {
       text: typeof raw.result === 'string' ? raw.result : (e.text || ''),
       costUsd: priced ? costUsd : undefined,
       cumulativeCost: priced ? true : undefined,
-      usage: raw.usage && typeof raw.usage === 'object' ? raw.usage : undefined,
+      // A remote spawn's envelope carries the relay's token totals (remote-env meteredEvents): the sandbox's are a claim.
+      usage: e.usage && typeof e.usage === 'object' ? e.usage : raw.usage && typeof raw.usage === 'object' ? raw.usage : undefined,
       subtype: str(raw.subtype),
       isError: !!raw.is_error,
       terminalReason: str(raw.terminal_reason),
@@ -111,6 +112,7 @@ export function createClaudeNormalizer() {
       sessionId: str(raw.session_id),
       errors: Array.isArray(raw.errors) ? raw.errors.map(String) : undefined,
       modelUsage: raw.modelUsage && typeof raw.modelUsage === 'object' ? raw.modelUsage : undefined,
+      relay: e.relay && typeof e.relay === 'object' ? e.relay : undefined,   // a remote spawn: what worca's relay measured
     })];
   }
 

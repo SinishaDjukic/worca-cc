@@ -2,7 +2,7 @@
 // The Cursor CLI adapter: `cursor-agent -p --output-format stream-json` argv, the stream normalized into worca's
 // event vocabulary (no cost: Cursor bills by subscription and reports none), error classes, the run-start preflight,
 // the guardrail rule plan written to `<cwd>/.cursor/cli.json`, MCP servers written to `<cwd>/.cursor/mcp.json`, and
-// the spawn path on the shared supervisor (engines/spawn.mjs).
+// the spawn path on the shared supervisor (src/core/spawn.mjs).
 //
 // Facts this module builds on. NONE IS VERIFIED: the Cursor CLI was not installed where this adapter was written and
 // no capture exists (test/fixtures/cursor is hand-written). Each line is a lead from Cursor's CLI docs. Check it
@@ -32,19 +32,29 @@
 // - assumed absent (capability false): a system-prompt flag, an effort flag, a per-spawn tool allowlist, sub-agents,
 //   hooks, a skills folder, a turn or spend cap, and any switch that turns the shell or file tools off — so an Ask
 //   chat (CURSOR_ASK_LOCKDOWN) and a read-only spawn refuse.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { removeSessionEntries } from './sessions.mjs';
+import { superviseSpawn, childEnv, execCheck, argValue, cleanRunEnv, safeEmit, abandonRoute } from '../spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { ENGINE_PROJECT_FILES, projectFileOwned, writeProjectFiles, restoreProjectFiles } from './project-files.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 export { excludeLine } from './project-files.mjs';
+import { sandboxMcpConfig } from '../exec-env/policy.mjs';
+import { CURSOR_CLI_CONFIG, CLI_POINTING, POINTING_NAMES } from '../exec-env/relay-route.mjs';
+import { brokerEnabled } from '../broker-client.mjs';
+import { brokerLease } from '../broker-lease.mjs';
+import { currentOwner, normalizeBillTo } from '../billing.mjs';
+import { agentIdentityFor } from '../agent-pool.mjs';
+import { resolveModelRoute, localServerEnv } from '../exec-env/credentials.mjs';
+import { engineEntry } from '../../shared/engine-switch.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const cursorDefaultBin = () => process.env.WORCA_CURSOR_BIN || 'cursor-agent';
@@ -54,6 +64,18 @@ export const CURSOR_SESSION_PREFIX = 'cursor:';
 export function cursorChatOf(sessionId) {
   return typeof sessionId === 'string' && sessionId.startsWith(CURSOR_SESSION_PREFIX) && sessionId.length > CURSOR_SESSION_PREFIX.length
     ? sessionId.slice(CURSOR_SESSION_PREFIX.length) : null;
+}
+
+/**
+ * Archive (catalog `sessions: 'user-store'`): cursor-agent keeps a chat as `<CURSOR_CONFIG_DIR or ~/.cursor>/chats/
+ * <workspace>/<chatId>/`. Removes exactly those of `sessionIds` (`cursor:<chatId>`), never the sign-in.
+ * @returns {Promise<{removed: string[], failed: {path: string, error: string}[]}>}
+ */
+export function removeCursorSessions({ sessionIds = [], env = process.env } = {}) {
+  const ids = new Set(sessionIds.map((id) => cursorChatOf(id)).filter(Boolean));
+  if (!ids.size) return Promise.resolve({ removed: [], failed: [] });
+  const home = (env.CURSOR_CONFIG_DIR && env.CURSOR_CONFIG_DIR.trim()) || join(env.HOME || homedir(), '.cursor');
+  return removeSessionEntries(join(home, 'chats'), (n) => ids.has(n), { depth: 1 });
 }
 
 const CURSOR_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
@@ -152,7 +174,7 @@ export const restoreCursorProjectFiles = (cwd, files, opts) => restoreProjectFil
 export function buildCursorArgs({ prompt = '', model, resumeChatId, approveMcps = false } = {}) {
   const args = ['-p', '--output-format', 'stream-json', '--force'];
   if (approveMcps) args.push('--approve-mcps');
-  if (model) args.push('--model', String(model));
+  if (model) args.push('--model', argValue(String(model), 'model'));
   if (resumeChatId) args.push('--resume', String(resumeChatId));
   args.push(String(prompt));
   return args;
@@ -248,11 +270,15 @@ export function createCursorNormalizer({ model } = {}) {
         return [{ type: 'stderr', stream: 'err', text: `cursor: ${lastError}` }];
       case 'result': {
         resulted = true;
-        if (evt.is_error || evt.subtype === 'error') { failed = str(evt.result) || str(evt.error?.message) || lastError || 'cursor run failed'; return []; }
         // Only the Claude-style token keys worca's cost overrides read (resolveModelCost), and only numbers: an
         // unverified Cursor usage shape must not be misread as tokens (codex converts its own: claudeStyleUsage).
         const u = evt.usage && typeof evt.usage === 'object' ? evt.usage : {};
         const usage = Object.fromEntries(['input_tokens', 'output_tokens'].filter((k) => Number.isFinite(u[k])).map((k) => [k, u[k]]));
+        if (evt.is_error || evt.subtype === 'error') {
+          failed = str(evt.result) || str(evt.error?.message) || lastError || 'cursor run failed';
+          // A failed turn still spent its tokens: a `result` (in a sandbox the relay's measure rides it instead).
+          return Object.keys(usage).length ? [{ type: 'result', text: '', isError: true, usage }] : [];
+        }
         return [{ type: 'result', text: str(evt.result) || texts.join('\n'), isError: false, ...(Object.keys(usage).length ? { usage } : {}) }];
       }
       default:
@@ -290,22 +316,43 @@ export const CURSOR_SIGNED_OUT_HINT = 'run `cursor-agent login`, or set CURSOR_A
 
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. A CURSOR_API_KEY
  *  in worca's environment stands in for the login; the binary must still run. */
-export function cursorPreflight({ bin = cursorDefaultBin(), timeoutMs = 10000, env = process.env } = {}) {
-  return new Promise((resolve) => {
-    execFile(bin, ['status'], { timeout: timeoutMs, env: { ...process.env, ...env } }, (err, stdout, stderr) => {
-      if (err && typeof err.code !== 'number') {
-        resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install the Cursor CLI (cursor-agent), or point WORCA_CURSOR_BIN at it` }
-          : { warning: `could not check the Cursor sign-in (${err.message})` });
-        return;
-      }
-      if (typeof env.CURSOR_API_KEY === 'string' && env.CURSOR_API_KEY.trim()) { resolve({}); return; }
-      const signedIn = parseCursorStatus({ code: err ? err.code : 0, stdout, stderr });
-      if (signedIn === false) resolve({ refusal: `${bin} is not signed in — ${CURSOR_SIGNED_OUT_HINT}` });
-      else if (signedIn === null) resolve({ warning: `could not tell whether ${bin} is signed in (\`${bin} status\` said nothing recognizable)` });
-      else resolve({});
-    });
-  });
+export async function cursorPreflight({ bin = cursorDefaultBin(), timeoutMs = 10000, env = process.env, envAllowlist = [], spec: given = cursorSpawnSpec({ envAllowlist }) } = {}) {
+  // Its own `env` (never a hard-coded process.env) plus the run env: a key there, or the broker's cursor slot, signs in
+  // instead of `cursor-agent login`.
+  const d = resolveModelRoute({ engine: 'cursor', serverEnv: { ...env, ...(given.runEnv || {}) }, broker: { on: brokerEnabled() }, checkModel: false });
+  const spec = { ...given, signInMode: given.signInMode ?? d.signInMode, base: env };
+  const { code, stdout, stderr, error } = await execCheck(bin, ['status'], { spec, timeoutMs });
+  if (error) {
+    return /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
+      ? { refusal: `cannot run ${bin} (${error.code}) — install the Cursor CLI (cursor-agent), or point WORCA_CURSOR_BIN at it` }
+      : { warning: `could not check the Cursor sign-in (${error.message})` };
+  }
+  if (d.kind !== 'own') return {};
+  const signedIn = parseCursorStatus({ code, stdout, stderr });
+  if (signedIn === false) return { refusal: `${bin} is not signed in — ${CURSOR_SIGNED_OUT_HINT}` };
+  if (signedIn === null) return { warning: `could not tell whether ${bin} is signed in (\`${bin} status\` said nothing recognizable)` };
+  return {};
+}
+
+/** The childEnv spec a cursor run spawns with (engine, the route resolver's sign-in mode, the run's allowlist and env,
+ *  cwd and work root, the host pid): run and preflight build their env from it, so a CURSOR_API_KEY the run gets counts
+ *  for the check too. */
+export function cursorSpawnSpec({ envAllowlist = [], cwd = null, workRoot = null, hostPid = null, runEnv = null, signInMode = null } = {}) {
+  return { engine: 'cursor', signInMode, allowlist: envAllowlist, cwd, root: workRoot, hostPid, runEnv };
+}
+
+/** A brokered local cursor-agent's config dir (CURSOR_CONFIG_DIR): worca's own, one per person whose work it runs
+ *  (`owner`, currentOwner(): one person's chats never land beside another's), 0700, holding the HTTP/1.1 agent stream
+ *  config the broker can carry (CURSOR_CLI_CONFIG). The user's ~/.cursor is never written. */
+export function brokeredCursorHome(owner = currentOwner(), root = join(worcaHome(), 'engines', 'cursor', 'broker-home')) {
+  const who = normalizeBillTo(owner) || 'local';
+  const base = join(root, who === 'local' ? who : createHash('sha256').update(who).digest('hex').slice(0, 16));
+  mkdirSync(base, { recursive: true, mode: 0o700 });
+  chmodSync(base, 0o700);
+  const file = join(base, 'cli-config.json');
+  let current = null; try { current = readFileSync(file, 'utf8'); } catch { /* first use */ }
+  if (current !== CURSOR_CLI_CONFIG) writeFileSync(file, CURSOR_CLI_CONFIG, { mode: 0o600 });
+  return base;
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
@@ -322,14 +369,16 @@ export const CURSOR_RESUME_NOT_FOUND_RE = /(?:chat|conversation|session)[^.\n]*n
 export async function runCursorProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, onEvent = () => {}, signal,
   bin = cursorDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
-  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false,
+  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false, execEnv, workRoot = null,
+  billTo, spawnKind, runId, threadId, maxBudgetUsd, permissionMode,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   if (askLockdown) throw new Error(`${bin}: Cursor cannot be locked down for a chat (no switch for its shell or file tools) — Chat on Cursor is unavailable`);
   if (sandbox === 'read-only') throw new Error(`${bin}: Cursor has no read-only mode — a read-only job runs on Claude instead`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
-  const redactor = secrets.length ? createRedactor(secrets) : null;
-  if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
+  // A broker token, once taken, is redacted too (the redactor is rebuilt then).
+  let redactor = secrets.length ? createRedactor(secrets) : null;
+  { const emit = onEvent; onEvent = (e) => emit(redactor ? redactor.deep(e) : e); }
   const redacted = (err) => {
     if (redactor && err && typeof err.message === 'string') err.message = redactor.text(err.message);
     if (redactor && err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
@@ -339,6 +388,22 @@ export async function runCursorProcess({
   let chat = cursorChatOf(resumeSessionId);
   if (resumeSessionId && !chat) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: stored session ${JSON.stringify(String(resumeSessionId).slice(0, 12))}… is not a Cursor chat — starting a fresh one` });
 
+  // A remote run (exec-env, e2b): the template's cursor-agent, its calls through worca's model relay, which signs them
+  // with an access token worca exchanges for the server's CURSOR_API_KEY (neither enters the sandbox); no host guard;
+  // the run's url MCP servers only; the .cursor files written here as always (every ownership check holds), then
+  // mirrored into the sandbox checkout (the harness keeps them out of the sync tree, syncEngineFiles out of its git).
+  const remote = execEnv?.remote ? execEnv : null;
+  // How this spawn's model calls are signed (credentials.mjs resolveModelRoute), before anything is staged (the .cursor
+  // files included).
+  const decision = resolveModelRoute({ engine: 'cursor', remote: !!remote, serverEnv: remote ? remote.env : localServerEnv(cleanRunEnv(runSpawnEnv)),
+    model: model || null, broker: { on: brokerEnabled() } });
+  if (decision.refusal) throw Object.assign(new Error(decision.refusal), { errorClass: 'config' });
+  // A brokered local cursor-agent keeps its config and chats in worca's own dir (brokeredCursorHome), which an agent
+  // user (another uid, agent-user.mjs) can neither read nor write.
+  if (decision.kind === 'brokered' && !remote && asAgent && agentIdentityFor(currentOwner())) {
+    throw Object.assign(new Error(`${bin}: Cursor under the credential broker cannot run as an agent user yet (its config dir is worca's own) — run Cursor in a sandbox`), { errorClass: 'config' });
+  }
+  const upstream = engineEntry('cursor').relay.upstream;
   // The checkout's .cursor files: deny rules and MCP servers (D3). Written before the spawn; a tracked file throws.
   const plan = cursorRulePlan(permissionRules);
   const files = {};
@@ -347,64 +412,116 @@ export async function runCursorProcess({
   if (mcpConfigPath) {
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
+    if (remote) doc = sandboxMcpConfig(doc).config;
     servers = doc && typeof doc.mcpServers === 'object' && doc.mcpServers && Object.keys(doc.mcpServers).length ? doc.mcpServers : null;
     if (servers) files['.cursor/mcp.json'] = `${JSON.stringify(cursorMcpDocument(servers), null, 2)}\n`;
   }
-  writeCursorProjectFiles(cwd, files, { git: !noGit });
+  writeCursorProjectFiles(cwd, files, { git: !noGit, root: workRoot });
 
-  const guardOn = hostGuardEnabled();
+  if (remote && bin !== 'cursor-agent') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned cursor-agent` });
+  const exe = remote ? 'cursor-agent' : bin;
+  const guardOn = hostGuardEnabled() && !remote;
+  // The catalog allowlist (childEnv: CURSOR_API_KEY, its config dir); the run env carries the MCP servers' ${env:…} values.
+  const { env } = childEnv(cursorSpawnSpec({ envAllowlist, cwd, workRoot, hostPid: guardOn ? process.pid : null, runEnv: cleanRunEnv(runSpawnEnv), signInMode: decision.signInMode }));
+  // In a sandbox only the kept MCP servers' ${env:…} values ride along (the run env holds every registry secret).
+  // The relay route and the template's cursor-agent come first, then its config dir (CURSOR_CONFIG_DIR: the HTTP/1.1
+  // agent stream the relay can carry) and the .cursor files: a refusal leaves nothing in the sandbox.
+  // The broker token is taken here, late (a refusal above leaves none behind), and released in the outer finally: a
+  // resumed chat Cursor no longer knows is retried under the same token. Local brokered: cursor-agent calls the broker's
+  // cursor slot with it, from worca's own config dir.
+  // A route per attempt (a retry is a second spawn, and each spawn's end closes its own route): the first is opened
+  // here, with the sandbox's engine home kept apart so the retry's env is the same but for its route.
+  let relayRoute = null; let lease = null; let homeEnv = {};
+  try {
+    lease = decision.slot && (decision.kind === 'brokered' || remote)
+      ? await brokerLease({ billTo, spawnKind, permissionMode, askLockdown, runId, threadId, maxBudgetUsd, asAgent, execEnv }, decision.slot)
+      : null;
+    if (lease) redactor = createRedactor([...secrets, ...lease.secrets]);
+    if (remote) {
+      relayRoute = remote.openRoute(decision, { spawnEnv: env, lease });
+      await remote.ensureCli(exe);
+      homeEnv = await remote.engineHome('cursor', { files: [{ rel: 'cli-config.json', data: CURSOR_CLI_CONFIG }] });
+      await remote.syncEngineFiles(Object.keys(files).map((rel) => join(cwd, rel)));
+    } else if (lease) {
+      const pointed = CLI_POINTING[upstream].spawn(lease.baseUrl + CLI_POINTING[upstream].suffix, lease.token, model);
+      for (const k of POINTING_NAMES[upstream]) delete env[k];
+      Object.assign(env, pointed.env, { CURSOR_CONFIG_DIR: brokeredCursorHome() });
+    }
+  } catch (err) { await abandonRoute(remote, relayRoute, onEvent); lease?.release(); throw redacted(err); }
+  const spawnEnv = env;
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : systemPrompt;
   // No system-prompt flag (capability false): the system prompt is folded into the prompt behind a delimiter.
   const full = sys ? `=== SYSTEM ===\n${sys}\n=== END SYSTEM ===\n\n${String(prompt ?? '')}` : String(prompt ?? '');
   let stagedDir = null;
   let positional = full;
   if (Buffer.byteLength(full, 'utf8') > CURSOR_ARGV_LIMIT) {
-    // One fresh dir per spawn: superviseSpawn shares it with the agent user (stagedDir) when the spawn runs as one.
-    const base = join(worcaHome(), 'tmp', 'cursor-prompts');
-    mkdirSync(base, { recursive: true });
-    stagedDir = mkdtempSync(join(base, `prompt-${process.pid}-`));
-    const staged = join(stagedDir, 'prompt.md');
-    writeFileSync(staged, full, { mode: 0o600 });
-    positional = `Your complete instructions are too long for the command line: read the whole file ${staged} first, then follow it exactly as if it were this message.`;
+    try {
+      // One fresh dir per spawn: superviseSpawn shares it with the agent user (stagedDir) when the spawn runs as one.
+      const base = join(worcaHome(), 'tmp', 'cursor-prompts');
+      mkdirSync(base, { recursive: true });
+      stagedDir = mkdtempSync(join(base, `prompt-${process.pid}-`));
+      const staged = join(stagedDir, 'prompt.md');
+      writeFileSync(staged, full, { mode: 0o600 });
+      positional = `Your complete instructions are too long for the command line: read the whole file ${staged} first, then follow it exactly as if it were this message.`;
+    } catch (err) {
+      if (stagedDir) rmSync(stagedDir, { recursive: true, force: true });
+      await abandonRoute(remote, relayRoute, onEvent);
+      lease?.release();
+      throw redacted(err);
+    }
   }
 
-  // CURSOR_API_KEY (and any CURSOR_ var) survives scrub; the run env carries the MCP servers' ${env:…} values.
-  const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: ['CURSOR_'], runEnv: cleanRunEnv(runSpawnEnv) ?? undefined, hostPid: guardOn ? process.pid : null });
-
   // G14: what the agent changed in worca's .cursor files during a spawn is put back before the next one (or a retry).
-  const restore = () => {
+  // A remote spawn changed the sandbox's mirror, not this checkout: worca's copy is mirrored there again.
+  const restore = async () => {
     let changed;
-    try { changed = restoreCursorProjectFiles(cwd, files, { git: !noGit }); } catch (err) {
+    try { changed = restoreCursorProjectFiles(cwd, files, { git: !noGit, root: workRoot }); } catch (err) {
       safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: could not restore worca's .cursor files: ${err.message}` });
       return;
+    }
+    if (remote) {
+      try { await remote.syncEngineFiles(Object.keys(files).map((rel) => join(cwd, rel))); } catch (err) {
+        safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: could not restore worca's .cursor files in the ${remote.label}: ${redacted(err).message}` });
+      }
     }
     if (changed.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: the agent changed ${changed.join(' and ')} during the spawn — worca put its own copy back` });
   };
 
   const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
   const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true });
-  const attempt = async (resumeChatId) => {
+  /** One spawn of cursor-agent. `route`: this attempt's own relay route (remote; null locally): metered, and closed by
+   *  the spawn's end, booking what the relay measured that no result covered. */
+  const attempt = async (resumeChatId, route) => {
     const normalizer = createCursorNormalizer({ model });
     const capCtrl = new AbortController();
     let toolCalls = 0; let capped = false; let sawSession = false;
+    let turnDone = false;   // the closing `result`: what the step leaves running after it is killed (R15)
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
-    const args = buildCursorArgs({ prompt: positional, model, resumeChatId, approveMcps: !!servers });
+    const ev = route ? remote.meteredEvents(route.id, onEvent) : onEvent;
+    let args; let env2 = spawnEnv;
+    try {
+      args = buildCursorArgs({ prompt: positional, model, resumeChatId, approveMcps: !!servers });
+      if (route) env2 = { ...remote.envFor(env, { engine: 'cursor', keep: remote.mcpEnvRefs, route }), ...homeEnv };
+    } catch (err) { await abandonRoute(remote, route, onEvent); throw err; }
     let res;
     try {
       res = await superviseSpawn({
-        file: bin, args, displayBin: bin, cwd, env, stdin: null, signal: spawnSignal, asAgent, stagedDir, onEvent,
+        file: exe, args, displayBin: bin, cwd, env: env2, stdin: null, signal: spawnSignal, asAgent: remote ? false : asAgent, stagedDir, onEvent: ev,
+        execEnv: remote, route,
         cleanup: () => {},
         stdoutErrorDetail: () => normalizer.finish().error || '',
         classify: (m) => classifyCursorError(m),
         redactText: redactor ? (t) => redactor.text(t) : null,
         spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
         onDone: (code) => ({ code }),
+        turnOver: () => turnDone,
         onStdoutLine: (line) => {
           for (const e of normalizer.push(line)) {
-            safeEmit(onEvent, e);
+            safeEmit(ev, e);
+            if (e.type === 'result') turnDone = true;
             if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += e.calls.length) > cap) { capped = true; capCtrl.abort(); }
             // Pause/Resume: the runner's own session event (no `init`) is the one the harness stamps on the step.
-            if (e.type === 'session') { sawSession = true; safeEmit(onEvent, { type: 'session', sessionId: e.sessionId }); }
+            if (e.type === 'session') { sawSession = true; safeEmit(ev, { type: 'session', sessionId: e.sessionId }); }
           }
         },
       }).catch((err) => {
@@ -418,7 +535,7 @@ export async function runCursorProcess({
         throw err;
       });
     } finally {
-      restore();
+      await restore();
     }
     const final = normalizer.finish();
     if (capped && !signal?.aborted) throw turnCap();
@@ -429,19 +546,20 @@ export async function runCursorProcess({
   try {
     let out;
     try {
-      out = await attempt(chat);
+      out = await attempt(chat, relayRoute);
     } catch (err) {
       // A resumed chat Cursor no longer knows (before any session started): one fresh attempt, said out loud.
       if (!chat || err?.sawSession || err?.name === 'AbortError' || !CURSOR_RESUME_NOT_FOUND_RE.test(String(err?.message || ''))) throw err;
       safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: chat ${chat.slice(0, 12)}… is gone — starting a fresh one` });
       chat = null;
-      out = await attempt(null);
+      out = await attempt(null, remote ? remote.openRoute(decision, { spawnEnv: env, lease }) : null);
     }
     return { text: redactor ? redactor.text(out.text) : out.text, exitCode: out.exitCode };
   } catch (err) {
     throw redacted(err);
   } finally {
     if (stagedDir) rmSync(stagedDir, { recursive: true, force: true });
+    lease?.release();
   }
 }
 
@@ -457,9 +575,7 @@ export const CURSOR_NO_SELF_TEST = 'cursor-agent has no setting worca knows that
 export const cursorChat = makeChatDescriptor({
   engine: 'cursor',
   lockdown: () => CURSOR_ASK_LOCKDOWN,
-  noLockdownMessage: 'Chat on Cursor is unavailable: no switch that turns off its shell and file tools has been verified, and a chat must stay inside its own files. Use a Claude chat.',
   selfTest: async () => ({ refusal: CURSOR_NO_SELF_TEST }),
   preflight: (_ctx, impl = cursorPreflight) => impl(),
   resumeNotFound: (err) => CURSOR_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  prompt: { cli: "Cursor's CLI agent with Cursor's own sign-in" },
 });

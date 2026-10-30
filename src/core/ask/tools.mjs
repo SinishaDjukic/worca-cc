@@ -5,8 +5,11 @@
 // no import of the db module and no direct database handle of any kind. Every reader is injected through
 // `deps` (tool-deps.mjs builds the real bundle). Handler failures are
 // AskToolError → the MCP child returns them as isError:true text so the model
-// can self-correct; they are never JSON-RPC errors. No imports at all: diff paths
-// are repo-relative POSIX, so path handling here is plain string work.
+// can self-correct; they are never JSON-RPC errors. One import only, the secret-path owner
+// (../secret-paths.mjs, read-only): diff paths are repo-relative POSIX, so path handling here
+// is plain string work.
+
+import { isSecretPath as isProtectedBasename } from '../secret-paths.mjs';
 
 export class AskToolError extends Error {
   constructor(message) { super(message); this.name = 'AskToolError'; }
@@ -262,27 +265,12 @@ export function splitUnifiedDiff(text) {
   return sections;
 }
 
-const RE_SPECIAL = new Set(['.', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\']);
-const globCache = new Map();
-/** A guardrails.mjs pattern → anchored regex: a leading double-star + slash = any dirs, double-star = anything, one star = within one segment. */
-function globRe(pattern) {
-  let re = globCache.get(pattern);
-  if (re) return re;
-  let body = '';
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i];
-    if (c !== '*') { body += RE_SPECIAL.has(c) ? `\\${c}` : c; continue; }
-    if (pattern[i + 1] !== '*') { body += '[^/]*'; continue; }
-    if (pattern[i + 2] === '/') { body += '(?:.*/)?'; i += 2; } else { body += '.*'; i += 1; }
-  }
-  re = new RegExp(`^${body}$`);
-  globCache.set(pattern, re);
-  return re;
-}
+// The guardrail match for a diff section path is the secret-path owner's matcher (secret-paths.mjs isSecretPath).
+export { isProtectedBasename };
 
 /** Extensions whose bytes must never be UTF-8 decoded. The shared table in
  *  src/shared/artifact-kinds.mjs is the authority for the raw route and the
- *  viewer; this module stays import-free by contract (two source scans assert
+ *  viewer; this module imports only the secret-path owner (source scans assert
  *  it), so the byte extensions are restated here and
  *  test/ask-tools.test.mjs cross-checks the two sets against viewerKindFor. */
 const BYTE_EXTENSIONS = new Set([
@@ -298,23 +286,6 @@ export function isByteArtifact(relPath) {
   const base = String(relPath || '').split('/').pop() || '';
   const dot = base.lastIndexOf('.');
   return dot > 0 && BYTE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
-}
-
-/**
- * Guardrail match for a diff section path (repo-relative, POSIX). Mirrors the CLI
- * semantics guardrails.mjs:16-18 documents: slash-LESS patterns (`*x*`, `*x`, `x*`,
- * `x`) match the basename at any depth; slash-containing ones match the whole path.
- * `~/…` and `//…` are absolute and can never name a file inside a run diff, so they
- * are skipped rather than silently mis-matched.
- */
-export function isProtectedBasename(path, patterns = []) {
-  const full = String(path ?? '').replace(/^\.\//, '');
-  const base = full.slice(full.lastIndexOf('/') + 1);
-  for (const p of patterns) {
-    if (typeof p !== 'string' || !p || p.startsWith('~/') || p.startsWith('//')) continue;
-    if (globRe(p).test(p.includes('/') ? full : base)) return true;
-  }
-  return false;
 }
 
 /** Byte-offset paging: cut at the last newline inside the window; never inside a UTF-8 sequence, never zero progress. */
@@ -473,6 +444,26 @@ export function createAskTools(deps) {
   // No perspective keys means no shape fields: an empty enum would accept no perspective at all.
   const shapeOn = Array.isArray(deps.perspectiveKeys) && deps.perspectiveKeys.length > 0;
   const PERSPECTIVE_LIST = { type: 'array', items: { type: 'string', enum: [...(deps.perspectiveKeys || [])] } };
+  // The engines the descriptions name, from the catalog the bundle passes (tool-deps.mjs: src/shared/engine-switch.mjs
+  // ENGINES; this module imports nothing), so a new engine needs no edit here. A bundle without it (a unit fake) names none.
+  const engineText = (() => {
+    const cat = deps.engineCatalog?.engines || {};
+    const def = Object.hasOwn(cat, deps.engineCatalog?.defaultEngine) ? deps.engineCatalog.defaultEngine : null;
+    const where = (pick) => Object.keys(cat).filter((e) => pick(cat[e]));
+    const listOf = (l, conj) => (l.length < 2 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} ${conj} ${l.at(-1)}`);
+    const all = where(() => true); const beta = where((x) => x.beta); const remote = where((x) => x.remote);
+    const models = where((x) => x.models).join(' | ');
+    const others = all.filter((e) => e !== def).map((e) => (cat[e].beta ? `${e} (beta)` : e));
+    return {
+      who: def ? ` — ${def} (${cat[def].harness})${others.length ? `, or ${listOf(others, 'or')}` : ''}` : '',
+      field: `${all.length ? `${all.join(' | ')} — ` : ''}only when the user asked for that engine; omit for the default.${beta.length ? ` ${listOf(beta, 'and')} ${beta.length === 1 ? 'is' : 'are'} beta: never pick one on your own` : ''}`,
+      remote: remote.length ? ` on the ${listOf(remote, 'or')} engine` : '',
+      models: models ? `${models}: ` : '',
+      add: models ? `: ${models}` : '',
+      // Each engine whose catalog models connect one fixed way says how an add_model of it is written (`modelRule`).
+      rules: where((x) => x.models && x.modelRule).map((e) => `${cat[e].modelRule}; `).join(''),
+    };
+  })();
   const SHAPE_PROPS = shapeOn ? {
     shape: { type: 'object', additionalProperties: false,
       description: 'Shaper: the run asks at most 3 questions, writes the plan for these perspectives and waits for the user to approve it before anything is built. The workflow is picked for you: leave workflowId out. Never with when, every or after.',
@@ -530,7 +521,7 @@ export function createAskTools(deps) {
       description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
-      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId / noProject: true (a run with no project works in its own empty folder: its files are the result; no git, branch or pull request; it cannot be scheduled or chained yet); omitting all three targets the chat\'s scope — in a No-project chat, a run with no project; use that only for work that belongs to no project. A project or workspace outside the chat\'s scope is refused (rule 2). guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. engine: who runs the agents — claude (Claude Code), or codex, copilot, cursor (all three in beta); omit it and the run starts on the default engine (the project\'s, else the user\'s, else the team\'s), which is what you want unless the user names an engine. nodes: per-agent model picks for this run only (rule 18) — a saved workflow\'s agent node ids (list_workflows steps[].nodeId) to { model, effort?, subagentModel?, reason }; the card shows each beside the project default and saves nothing. presetId starts from one of the user\'s run presets (list_presets). Returns {ok:true, card} or {ok:false, errors}; a card may carry warnings (the team policy\'s allowed models, a premium-tier pick) — relay them.',
+      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId / noProject: true (a run with no project works in its own empty folder: its files are the result; no git, branch or pull request; it cannot be scheduled or chained yet); omitting all three targets the chat\'s scope — in a No-project chat, a run with no project; use that only for work that belongs to no project. A project or workspace outside the chat\'s scope is refused (rule 2). guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. engine: who runs the agents' + engineText.who + '; omit it and the run starts on the default engine (the project\'s, else the user\'s, else the team\'s), which is what you want unless the user names an engine. nodes: per-agent model picks for this run only (rule 18) — a saved workflow\'s agent node ids (list_workflows steps[].nodeId) to { model, effort?, subagentModel?, reason }; the card shows each beside the project default and saves nothing. presetId starts from one of the user\'s run presets (list_presets). Returns {ok:true, card} or {ok:false, errors}; a card may carry warnings (the team policy\'s allowed models, a premium-tier pick) — relay them.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'),
         noProject: SCHEMA.b('true = a run with no project, in its own empty folder (never with projectKey / workspaceId)'),
         workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto)'),
@@ -544,7 +535,8 @@ export function createAskTools(deps) {
         tags: { type: 'array', items: { type: 'string' },
           description: 'run tags for cost allocation, always "key:value" (client:acme, team:web). Only when the user names them.' },
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
-        engine: SCHEMA.s('claude | codex | copilot | cursor | gemini | goose | opencode | qwen — only when the user asked for that engine; omit for the default. Every engine but claude is beta: never pick one on your own'),
+        engine: SCHEMA.s(engineText.field),
+        execEnv: SCHEMA.s('local | e2b — where the run\'s agents and scripts execute; e2b runs them in one remote sandbox per run while commits, pushes and PRs stay on this machine, and needs a project target (one git project)' + engineText.remote + '. Only when the user asks for it; omit for the default'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
         sameAsSource: SCHEMA.b('commit straight onto the source branch instead of a separate feature branch: the run fast-forwards the source to its work when it finishes. Only when the user asks for it.'),
         note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),
@@ -837,7 +829,7 @@ export function createAskTools(deps) {
     // tool-list pin stays byte-identical. Every change is a card the user applies.
     ...(deps.models ? [
       { name: 'list_models',
-        description: 'The model catalog every picker, workflow node and Ask chat draws from: id, label, source (built-in | user | plugin | team policy), editable (a user entry — the only kind propose_model_change edits or removes), engine (claude | codex | cursor | copilot | goose | opencode: the engine it belongs to; a copilot built-in\'s id is copilot/<the id the Copilot CLI takes>), harnesses (every engine that can run it, preferred first — a run\'s models must be ones its engine runs), efforts, connection ("default" = the CLI\'s own login; "env" = the entry\'s ANTHROPIC_BASE_URL/… env points the claude CLI at an endpoint that speaks the Messages API; "provider" = worca\'s bridge forwards to a provider, or on a codex model, codex connects to the OpenAI-compatible endpoint itself), and for a bridged model its provider, upstreamApi (anthropic passes through; openai-chat and openai-responses are translated), upstreamModel, capabilities (maxPromptTokens / maxOutputTokens / reasoningEfforts …) and ready / notReady. A user entry adds its own config under entry: env (credential values masked; ${VAR} references readable), upstream (baseUrl, apiKey masked or ${VAR}, headers, capabilities) and cost. Every model also carries its picking facts (docs/models.md "Per-agent models for one run"): vendor (anthropic | openai | other — who makes it), tier (its price tier by output list price per million tokens: premium from $40, top from $20, strong from $8, mid from $2, else economy; null when unpriced), price ({input, output} USD per million tokens: the list price, or the entry\'s own cost), free (a Copilot import is not: it carries billing "copilot" — Copilot bills premium requests — with no price and no tier unless the entry sets its own cost), and context (its prompt window in tokens: the pinned maxPromptTokens, a built-in\'s known window, else the CLI\'s 200k). Read-only.',
+        description: 'The model catalog every picker, workflow node and Ask chat draws from: id, label, source (built-in | user | plugin | team policy), editable (a user entry — the only kind propose_model_change edits or removes), engine (' + engineText.models + 'the engine it belongs to; a copilot built-in\'s id is copilot/<the id the Copilot CLI takes>), harnesses (every engine that can run it, preferred first — a run\'s models must be ones its engine runs), efforts, connection ("default" = the CLI\'s own login; "env" = the entry\'s ANTHROPIC_BASE_URL/… env points the claude CLI at an endpoint that speaks the Messages API; "provider" = worca\'s bridge forwards to a provider, or on a codex model, codex connects to the OpenAI-compatible endpoint itself), and for a bridged model its provider, upstreamApi (anthropic passes through; openai-chat and openai-responses are translated), upstreamModel, capabilities (maxPromptTokens / maxOutputTokens / reasoningEfforts …) and ready / notReady. A user entry adds its own config under entry: env (credential values masked; ${VAR} references readable), upstream (baseUrl, apiKey masked or ${VAR}, headers, capabilities) and cost. Every model also carries its picking facts (docs/models.md "Per-agent models for one run"): vendor (anthropic | openai | other — who makes it), tier (its price tier by output list price per million tokens: premium from $40, top from $20, strong from $8, mid from $2, else economy; null when unpriced), price ({input, output} USD per million tokens: the list price, or the entry\'s own cost), free (a Copilot import is not: it carries billing "copilot" — Copilot bills premium requests — with no price and no tier unless the entry sets its own cost), and context (its prompt window in tokens: the pinned maxPromptTokens, a built-in\'s known window, else the CLI\'s 200k). Read-only.',
         inputSchema: SCHEMA.obj({}) },
       { name: 'get_providers',
         description: 'The providers that bridged models share (the Providers page): copilot (connected, login, accountType, termsCurrent — the notice acknowledgement, maxConcurrent), openai and anthropic (baseUrl, keySet, keySource "env" | "stored", keyRef when it is a ${VAR} reference, keyOptional — a local OpenAI-compatible endpoint needs no key, configured — the key resolves now, maxConcurrent). Never a key. Read-only.',
@@ -853,7 +845,7 @@ export function createAskTools(deps) {
         inputSchema: SCHEMA.obj({ baseUrl: SCHEMA.s('the endpoint\'s OpenAI base URL, e.g. http://127.0.0.1:11434/v1 (default: the openai provider\'s)'),
           apiKey: SCHEMA.s('the endpoint\'s own key, as a ${VAR} reference (never the key itself) — e.g. ${GEMINI_API_KEY}') }) },
       { name: 'propose_model_change',
-        description: 'Propose a model catalog or provider change for the user to confirm — it never changes anything itself; the user sees a card with the before → after and applies or declines it. kind: "add_model" (model: {id, label?, engine?: claude | codex | cursor | goose | opencode (fixed once added), efforts?, env?, cost?, upstream?} — a cursor model takes no env, no upstream and no efforts (cursor-agent\'s own sign-in); a goose model\'s id is provider/model, it takes no env and no upstream (Goose\'s own providers), and its efforts are GOOSE_THINKING_EFFORT values; an opencode model\'s id is provider/model, it takes no env and no upstream (OpenCode\'s own providers), and its efforts are OpenCode variants; a codex model takes no env, and as upstream only an OpenAI-compatible Responses endpoint {provider: openai, api: openai-responses, model, baseUrl?, apiKey?: "${VAR}", headers?}, which codex reaches directly with no sign-in of its own; a Messages-API endpoint by env: {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN:"${VAR}", …}; through a provider by upstream: {provider: openai | anthropic | copilot, api: anthropic | openai-chat | openai-responses, model: <the id the endpoint expects>, baseUrl?, apiKey?: "${VAR}", headers?, capabilities?: {maxPromptTokens, maxOutputTokens, reasoning, reasoningEfforts?: the effort levels the model lists, …}}; cost: {free:true} or {perMtok:{input, output, …}}), "edit_model" (id + model: the fields to change — env merges per key, null deletes a key; upstream merges into the current block, a null field removes it, capabilities merge per key; upstream:null drops the bridge), "remove_model" (id — workflow nodes that name it fall back to the default model), "provider" (provider + set: {baseUrl?, apiKey?: "${VAR}", maxConcurrent?, accountType?: individual | business | enterprise (copilot)}; null or "" clears a field), "import_copilot" (ids from list_copilot_models), "import_endpoint" (ids from list_endpoint_models, with its baseUrl and apiKey when you passed them — each becomes an entry carrying the window the server reports: free and keyless from a server the user runs, unpriced and with that ${VAR} key from Gemini or Qwen). Credentials are ${VAR} references to variables in worca\'s environment, never the value: a literal key is refused — the user pastes one on the Providers page. The Copilot sign-in and its notice are the user\'s, on the Providers page. Returns {ok:true, card} (card.warnings: what will still stop the model working) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
+        description: 'Propose a model catalog or provider change for the user to confirm — it never changes anything itself; the user sees a card with the before → after and applies or declines it. kind: "add_model" (model: {id, label?, engine?' + engineText.add + ' (fixed once added), efforts?, env?, cost?, upstream?} — ' + engineText.rules + 'a codex model takes no env, and as upstream only an OpenAI-compatible Responses endpoint {provider: openai, api: openai-responses, model, baseUrl?, apiKey?: "${VAR}", headers?}, which codex reaches directly with no sign-in of its own; a Messages-API endpoint by env: {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN:"${VAR}", …}; through a provider by upstream: {provider: openai | anthropic | copilot, api: anthropic | openai-chat | openai-responses, model: <the id the endpoint expects>, baseUrl?, apiKey?: "${VAR}", headers?, capabilities?: {maxPromptTokens, maxOutputTokens, reasoning, reasoningEfforts?: the effort levels the model lists, …}}; cost: {free:true} or {perMtok:{input, output, …}}), "edit_model" (id + model: the fields to change — env merges per key, null deletes a key; upstream merges into the current block, a null field removes it, capabilities merge per key; upstream:null drops the bridge), "remove_model" (id — workflow nodes that name it fall back to the default model), "provider" (provider + set: {baseUrl?, apiKey?: "${VAR}", maxConcurrent?, accountType?: individual | business | enterprise (copilot)}; null or "" clears a field), "import_copilot" (ids from list_copilot_models), "import_endpoint" (ids from list_endpoint_models, with its baseUrl and apiKey when you passed them — each becomes an entry carrying the window the server reports: free and keyless from a server the user runs, unpriced and with that ${VAR} key from Gemini or Qwen). Credentials are ${VAR} references to variables in worca\'s environment, never the value: a literal key is refused — the user pastes one on the Providers page. The Copilot sign-in and its notice are the user\'s, on the Providers page. Returns {ok:true, card} (card.warnings: what will still stop the model working) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
         inputSchema: SCHEMA.obj({ kind: SCHEMA.s('add_model | edit_model | remove_model | provider | import_copilot'),
           id: SCHEMA.s('edit_model / remove_model: the catalog model id'),
           model: { type: 'object', description: 'add_model: the entry; edit_model: the fields to change', additionalProperties: true },
@@ -1706,12 +1698,8 @@ export function createAskTools(deps) {
     if (!(bytes <= MCP_MEDIA_MAX_BYTES)) return { ...meta, note: `too large to view in this chat (${Math.ceil(bytes / 1048576)} MB; the limit is ${MCP_MEDIA_MAX_BYTES / 1048576} MB)` };
     const buf = body();
     if (!buf) throw new AskToolError(tool === 'read_file' ? `read_file: ${name} could not be read` : 'read_attachment: attachment not found');
-    // Copilot sends the block on only to a model that takes that kind, and drops it silently otherwise.
-    const where = deps.engine === 'codex'
-      ? `it is content[1] of this result: called directly, it is attached to the result — look at it there; called from exec, pass that block to image() to look at it`
-      : deps.engine === 'copilot'
-        ? `Copilot attaches it right after this result when your model can view ${pdf ? 'PDFs' : 'images'}: look at it there; if it did not reach you, tell the user this model cannot view it`
-        : 'it is attached to this result: look at it there';
+    // Where the block reaches the model: the engine's own words (engine-switch.mjs `chat.media`, deps.mediaNote).
+    const where = deps.mediaNote?.(pdf ? 'PDFs' : 'images') || 'it is attached to this result: look at it there';
     return { ...meta, note: `${pdf ? 'the PDF' : 'the image'} — ${where}`,
       [MCP_CONTENT]: [mediaBlock({ mime, data: Buffer.from(buf).toString('base64'), uri })] };
   };

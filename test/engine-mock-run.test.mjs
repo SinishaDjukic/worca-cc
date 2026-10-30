@@ -19,4 +19,5 @@ test('a mock Codex run sends every spawn to codex — the title too, read-only',
   assert.deepEqual([...new Set(mockSpawnLog.map((s) => s.engine))], ['codex']);
   assert.ok(mockSpawnLog.some((s) => s.sandbox === 'read-only'), 'the title spawn is read-only');
   assert.equal(orch.getState().runEngine, 'codex');
+  assert.equal(orch.getState().provider, 'openai', 'the run records who served its model calls');
 });

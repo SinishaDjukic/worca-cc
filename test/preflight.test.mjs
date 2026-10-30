@@ -8,8 +8,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { detectTools, buildInstruction, _resetToolProbeCache } from '../src/core/preflight.mjs';
+import { detectTools, buildInstruction, _resetToolProbeCache, probeClaudeCapabilities } from '../src/core/preflight.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { writeFileSync, chmodSync } from 'node:fs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
@@ -64,6 +65,18 @@ test('buildInstruction: wording per install kind (skill → Skill tool, cli → 
       }
     } },
   ]);
+});
+
+test('probeClaudeCapabilities runs `claude --help` and `--version` under Claude\'s run env, never worca\'s whole env', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = join(dir, 'claude');
+  // Answers like a capable CLI only when a server-only variable is absent from its env.
+  writeFileSync(bin, '#!/bin/sh\n[ -n "$WORCA_TEST_SERVER_SECRET" ] && exit 3\ncase "$1" in --help) echo "--mcp-config <f> --plugin-dir <d>" ;; --version) echo "2.1.300 (Claude Code)" ;; esac\n');
+  chmodSync(bin, 0o755);
+  process.env.WORCA_TEST_SERVER_SECRET = 'server-only';
+  try {
+    assert.deepEqual(await probeClaudeCapabilities(bin), { mcpConfig: true, pluginDir: true, version: '2.1.300' });
+  } finally { delete process.env.WORCA_TEST_SERVER_SECRET; }
 });
 
 test('detectTools: no tooling → null tool; a graphify-out/ dir → output-cached with "read" wording', async () => {

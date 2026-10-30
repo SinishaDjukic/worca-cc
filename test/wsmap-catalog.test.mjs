@@ -151,7 +151,7 @@ test('the candidate scan skips every file the normal guardrail protects (parity 
       for (const rel of [sample, `deep/dir/${sample}`]) assert.equal(isScanSkipped(rel), true, `${p} → ${rel}`);
     }
   }
-  for (const rel of ['src/api.ts', 'src/environment.ts', 'docs/keynote.md', 'keys/id_rsa.pub']) assert.equal(isScanSkipped(rel), false, rel);
+  for (const rel of ['src/api.ts', 'src/environment.ts', 'docs/keynote.md', 'keys/rsa.pub', 'src/identity.ts']) assert.equal(isScanSkipped(rel), false, rel);
 });
 
 test('static consumes of one (dir, norm): an exact observation wins over a heuristic one — unless it is test code', async () => {

@@ -15,8 +15,9 @@ export const MODEL_CREDENTIAL_ENV_KEYS = Object.freeze([
   'CODEX_API_KEY', 'CURSOR_API_KEY',
 ]);
 
-// ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, … — but not *_MAX_OUTPUT_TOKENS (same rule as ask/model-proposal.mjs).
-const SECRET_ENV_RE = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
+// ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, … — but not *_MAX_OUTPUT_TOKENS (same rule as ask/model-proposal.mjs; child-env.mjs
+// keeps every such name out of the children that inherit worca's env).
+export const SECRET_ENV_RE = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
 const SECRET_HEADER_RE = /authorization|api[-_]?key|token|secret|cookie|password/i;
 const LOOPBACK_RE =/^https?:\/\/(127\.\d+\.\d+\.\d+|localhost|\[::1\])(:\d+)?(\/|$)/i;
 

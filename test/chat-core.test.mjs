@@ -224,6 +224,8 @@ test('renderDone/renderError: severity per outcome, truncation, unread direction
       assert.match(text, /12m34s/);
       assert.match(text, /\$1\.23/);
       assert.match(renderDone({ ...META, runEngine: 'cursor', totalCostUsd: 0 }, { status: 'done' }).body[0].value, /\*\*Cost:\*\* cost unknown/, 'Cursor: never $0.00');
+      assert.match(renderDone({ ...META, steps: [{ costKnown: false }] }, { status: 'done' }).body[0].value, /\*\*Cost:\*\* ≥ \$1\.23 \(part unknown\)/, 'a step cost unknown: a lower bound');
+      assert.match(renderDone({ ...META, totalCostUsd: 0, costKnown: false }, { status: 'done' }).body[0].value, /\*\*Cost:\*\* cost unknown/, 'never $0.00');
       const longTitle = renderDone({ ...META, title: 'T'.repeat(70) }, { status: 'done' });
       assert.match(longTitle.body[0].value, new RegExp(`T{60}…`), 'title truncated at 60');
 

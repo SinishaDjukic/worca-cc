@@ -8,11 +8,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildCodexArgs, tomlString, createCodexNormalizer, estimateCodexCostUsd, classifyCodexError,
-  parseLoginStatus, codexThreadOf, CODEX_SESSION_PREFIX, runCodexProcess, codexCapabilities, codexPreflight,
+  parseLoginStatus, codexThreadOf, CODEX_SESSION_PREFIX, runCodexProcess, codexCapabilities, codexPreflight, CODEX_ASK_LOCKDOWN,
 } from '../src/core/engines/codex.mjs';
 import { EVENT_TYPES } from '../src/core/engines/events.mjs';
 import { fakeCodex as fakeCodexBin } from './helpers/fake-codex.mjs';
 import { CAPABILITY_KEYS } from '../src/core/engines/capabilities.mjs';
+import { clearCredentialEnv } from './helpers/credential-env.mjs';
 
 const FIX = new URL('./fixtures/codex/', import.meta.url);
 const frames = (name) => readFileSync(new URL(name, FIX), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -326,6 +327,17 @@ test('codexPreflight: signed in passes; signed out and a missing binary refuse; 
   assert.match((await codexPreflight({ bin: bin('mute', 'exit 0') })).warning, /could not tell whether/);
 });
 
+test('codexPreflight: brokered (its key in the broker\'s openai slot), the sign-in check is skipped; the binary must still run', POSIX, async (t) => {
+  const dir = tmp();
+  const bin = (name, body) => { const p = join(dir, name); writeFileSync(p, `#!/bin/sh\n${body}\n`); chmodSync(p, 0o755); return p; };
+  const prev = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://127.0.0.1:9';
+  t.after(() => { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; });
+  // Under the broker the K1 boot guard refuses a stored ChatGPT login, so `codex login status` always says signed out.
+  assert.deepEqual(await codexPreflight({ bin: bin('out', 'echo "Not logged in"; exit 1') }), {});
+  assert.match((await codexPreflight({ bin: join(dir, 'no-such-codex') })).refusal, /cannot run .*no-such-codex \(ENOENT\)/);
+});
+
 test('read-only sandbox: --sandbox read-only, the shell off and no writable dirs; resume rides -c; unknown modes never pass', () => {
   assert.deepEqual(buildCodexArgs({ sandbox: 'read-only', addDirs: ['/mem'] }),
     ['exec', '--json', '--skip-git-repo-check', '--ignore-user-config', '--sandbox', 'read-only', '--disable', 'shell_tool', '--disable', 'unified_exec', '-']);
@@ -336,7 +348,8 @@ test('read-only sandbox: --sandbox read-only, the shell off and no writable dirs
   assert.deepEqual(buildCodexArgs({}).slice(4, 6), ['--sandbox', 'workspace-write'], 'the default is unchanged');
 });
 
-test('a read-only codex spawn (a utility job over untrusted input) gets a scrubbed env; a node spawn keeps the host env', { skip: process.platform === 'win32' }, async () => {
+test('every codex spawn gets the catalog allowlist; a read-only one (a utility job over untrusted input) not even the project allowlist', { skip: process.platform === 'win32' }, async (t) => {
+  clearCredentialEnv(t);   // a CODEX_API_KEY in the developer's shell would be the resolver's pick
   const dir = mkdtempSync(join(tmpdir(), 'worca-codex-env-'));
   const keys = { AWS_SECRET_ACCESS_KEY: 'aws-secret', ANTHROPIC_API_KEY: 'anthropic-secret', OPENAI_API_KEY: 'openai-key' };
   const prev = Object.fromEntries(Object.keys(keys).map((k) => [k, process.env[k]]));
@@ -347,13 +360,57 @@ test('a read-only codex spawn (a utility job over untrusted input) gets a scrubb
     const env = ro.env();
     assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined, 'no cloud credentials for an injected instruction to read');
     assert.equal(env.ANTHROPIC_API_KEY, undefined);
-    assert.equal(env.OPENAI_API_KEY, 'openai-key', 'codex keeps its own sign-in');
+    assert.equal(env.OPENAI_API_KEY, 'openai-key', 'codex keeps its own sign-in (the one key set, the resolver\'s pick)');
     assert.ok(env.PATH && env.HOME, 'the base env survives');
     const rw = fakeCodexBin(mkdtempSync(join(tmpdir(), 'worca-codex-env-rw-')), 'ok');
     await runCodexProcess({ cwd: dir, bin: rw.bin, prompt: 'P', usageDir: dir });
-    assert.equal(rw.env().AWS_SECRET_ACCESS_KEY, 'aws-secret', 'an agent node spawn is unchanged (its guardrails decide)');
+    assert.equal(rw.env().AWS_SECRET_ACCESS_KEY, undefined, 'an agent node spawn gets the allowlist too (decision 3)');
+    assert.equal(rw.env().ANTHROPIC_API_KEY, undefined, "never another engine's credential");
+    const al = fakeCodexBin(mkdtempSync(join(tmpdir(), 'worca-codex-env-al-')), 'ok');
+    await runCodexProcess({ cwd: dir, bin: al.bin, prompt: 'P', usageDir: dir, envAllowlist: ['AWS_SECRET_ACCESS_KEY'] });
+    assert.equal(al.env().AWS_SECRET_ACCESS_KEY, 'aws-secret', "the project's allowlist adds a name");
+    const ral = fakeCodexBin(mkdtempSync(join(tmpdir(), 'worca-codex-env-ral-')), 'ok');
+    await runCodexProcess({ cwd: dir, bin: ral.bin, prompt: 'P', sandbox: 'read-only', usageDir: dir, envAllowlist: ['AWS_SECRET_ACCESS_KEY'] });
+    assert.equal(ral.env().AWS_SECRET_ACCESS_KEY, undefined, 'not for a read-only spawn');
+    // Both keys set: codex prefers CODEX_API_KEY, and the child holds exactly that one (the route resolver's pick).
+    process.env.CODEX_API_KEY = 'codex-key';
+    const both = fakeCodexBin(mkdtempSync(join(tmpdir(), 'worca-codex-env-both-')), 'ok');
+    await runCodexProcess({ cwd: dir, bin: both.bin, prompt: 'P', usageDir: dir });
+    assert.equal(both.env().CODEX_API_KEY, 'codex-key');
+    assert.equal(both.env().OPENAI_API_KEY, undefined, 'the unpicked key stays out');
   } finally {
     for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('under the broker, a codex spawn refused before its route (an unreadable MCP config) leaves no broker token behind', POSIX, async (t) => {
+  const { startEngineUpstream, CODEX_KEY } = await import('./helpers/engine-upstream.mjs');
+  const { startTestBroker } = await import('./helpers/test-broker.mjs');
+  const { resetBrokerClient } = await import('../src/core/broker-client.mjs');
+  clearCredentialEnv(t);
+  const upstream = await startEngineUpstream();
+  const broker = await startTestBroker({ upstream, keys: { WORCA_BROKER_KEY_OPENAI: CODEX_KEY } });
+  const prev = { url: process.env.WORCA_BROKER_URL, secret: process.env.WORCA_BROKER_SECRET };
+  t.after(async () => {
+    for (const [k, v] of [['WORCA_BROKER_URL', prev.url], ['WORCA_BROKER_SECRET', prev.secret]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    resetBrokerClient(); await broker.close(); await upstream.close();
+  });
+  broker.on();
+  const dir = tmp();
+  await assert.rejects(runCodexProcess({ cwd: dir, bin: join(dir, 'never-runs'), prompt: 'P', usageDir: dir, mcpConfigPath: join(dir, 'missing-mcp.json') }),
+    /cannot read the MCP config/);
+  assert.deepEqual(broker.tokens(), [], 'the token is taken late: none was minted for a spawn that never got that far');
+  // An Ask chat locks codex down without permissionMode 'dontAsk': its token is still an Ask token (D16).
+  const ask = fakeCodexBin(tmp(), 'ok');
+  await runCodexProcess({ cwd: dir, bin: ask.bin, prompt: 'P', sandbox: 'read-only', usageDir: dir, askLockdown: CODEX_ASK_LOCKDOWN });
+  assert.deepEqual(broker.tokens().map((r) => r.kind), ['ask']);
+  // An argv value refused after the lease (a flag-shaped model): the token is revoked, not left to its TTL.
+  await assert.rejects(runCodexProcess({ cwd: dir, bin: join(dir, 'never-runs'), prompt: 'P', usageDir: dir, model: '-oProxyCommand=x' }),
+    (e) => e.errorClass === 'config');
+  let minted = broker.tokens();
+  assert.equal(minted.length, 2, 'the token was taken before the argv was built');
+  // release() revokes in the background (revokeSpawnToken is not awaited).
+  for (let i = 0; i < 250 && !minted.every((r) => r.revoked_at); i++) { await new Promise((r) => setTimeout(r, 20)); minted = broker.tokens(); }
+  assert.ok(minted.every((r) => r.revoked_at), 'every token this test minted is revoked');
 });

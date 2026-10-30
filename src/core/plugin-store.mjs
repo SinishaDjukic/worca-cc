@@ -6,8 +6,7 @@
 // no .git. Any failure before the swap+lock lands removes versions/<sha7> and
 // leaves prior state untouched (§6.1 step 4).
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync, childEnv, proxyHasCredentials } from './spawn.mjs';
 import { createHash } from 'node:crypto';
 import {
   existsSync, readdirSync, readFileSync, readlinkSync,
@@ -45,9 +44,7 @@ import { agentIdentity } from './agent-user.mjs';
 import { gitAvailable } from './git-available.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 
-const execFileP = promisify(execFile);
-const defaultExec = (cmd, args, opts = {}) =>
-  execFileP(cmd, args, { maxBuffer: 16 * 1024 * 1024, ...opts });
+const defaultExec = (cmd, args, opts = {}) => execFileAsync(cmd, args, opts);
 
 const IS_WINDOWS = process.platform === 'win32';
 
@@ -283,9 +280,30 @@ export function ignoredContributions(name, dir, opts = {}) {
   return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
-// Without git, setup runs with worca's git stub first on PATH on macOS (SEAMS S6): a lockfile with a git dependency
-// makes npm run `git`, and the /usr/bin/git shim opens the install-developer-tools dialog. With git: unchanged.
-const setupEnv = () => (gitAvailable() ? {} : { env: withNoGitPath(process.env) });
+// Setup runs the plugin's own tooling: npm reads the plugin's .npmrc and expands `${VAR}` in it (a registry token line
+// sends that var to any host the lockfile names, --ignore-scripts or not), and `uv sync` builds the project with its own
+// build backend. So it gets the plugin child env (childEnv kind 'plugin', audit 3.5: PATH, HOME, the proxy and CA
+// names, npm's proxy and cafile names among them), plus the names npm and uv read for their temp, cache, package index
+// and TLS trust; one whose value carries credentials ('@', as in https://user:token@host/) stays out. Without git,
+// worca's git stub goes first on PATH on macOS (SEAMS S6): a lockfile with a git dependency makes npm run `git`, and
+// the /usr/bin/git shim opens the install-developer-tools dialog.
+const SETUP_NAMES = Object.freeze(['TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
+  'npm_config_cache', 'NPM_CONFIG_CACHE', 'npm_config_registry', 'NPM_CONFIG_REGISTRY',
+  'UV_CACHE_DIR', 'UV_PYTHON_INSTALL_DIR', 'UV_INDEX_URL', 'UV_DEFAULT_INDEX', 'UV_EXTRA_INDEX_URL', 'UV_INDEX', 'UV_NATIVE_TLS']);
+function setupEnv(base = process.env) {
+  const keep = SETUP_NAMES.filter((k) => typeof base[k] === 'string' && !base[k].includes('@'));
+  const { env } = childEnv({ kind: 'plugin', base, keep });
+  return { env: gitAvailable() ? env : withNoGitPath(env) };
+}
+/** The setup command, its failure told why it may have had no proxy: the plugin env withholds a proxy URL with a login. */
+async function setupExec(exec, cmd, args, opts) {
+  try { return await exec(cmd, args, opts); } catch (err) {
+    if (!proxyHasCredentials() || !(err instanceof Error)) throw err;
+    err.message += ' (the proxy URL carries a login, which plugin setup never receives, so it ran without a proxy: '
+      + 'turn on "Use a corporate proxy" so Worca keeps the login and setup goes through its local proxy)';
+    throw err;
+  }
+}
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
  *  required, scripts ignored); setup.python 'pyproject' -> uv sync. */
@@ -300,12 +318,12 @@ export async function runSetup(versionDir, manifest, { exec = defaultExec } = {}
     // execFile of a `.cmd` -> EINVAL on modern Node), and shell:true does NOT
     // quote args — a `--prefix C:\…` path would be mangled. With the dir as cwd
     // the only args left are flag literals, safe through the shell.
-    await exec('npm', ['ci', '--ignore-scripts', '--omit=dev'],
+    await setupExec(exec, 'npm', ['ci', '--ignore-scripts', '--omit=dev'],
       { cwd: versionDir, shell: IS_WINDOWS, ...setupEnv() });
     commands.push('npm ci');
   }
   if (manifest?.setup?.python === 'pyproject') {
-    await exec('uv', ['sync'], { cwd: versionDir, ...setupEnv() });
+    await setupExec(exec, 'uv', ['sync'], { cwd: versionDir, ...setupEnv() });
     commands.push('uv sync');
   }
   return { commands };

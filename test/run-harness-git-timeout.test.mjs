@@ -5,6 +5,10 @@
 // held `npm test` until CI's 30-minute job limit killed it.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { RunHarness } from '../src/core/run-harness.mjs';
 
 function bareHarness() {
@@ -34,4 +38,21 @@ test('_git with ignoreAbort still honours timeoutMs (the teardown path is bounde
   const r = await h._git(HANG, { ignoreAbort: true, timeoutMs: 300 });
   assert.equal(r.ok, false);
   assert.match(r.stderr, /git timed out/);
+});
+
+test('_git never walks above the run\'s work root (the git ceiling); a project checkout still answers', { skip: process.platform === 'win32' }, async () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'worca-harness-ceil-')));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    const work = join(repo, 'runs', 'r1', 'work'); mkdirSync(work, { recursive: true });
+    const h = bareHarness();
+    h.projectDir = repo; h.workMode = 'none'; h.workDirs = new Map([['_none', work]]);
+    const inner = await h._git(['rev-parse', '--show-toplevel'], { cwd: work });
+    assert.equal(inner.ok, false, `a run's work/ never borrows the repository around it (${inner.stdout.trim()})`);
+    const sub = join(repo, 'src'); mkdirSync(sub);
+    assert.equal((await h._git(['rev-parse', '--show-toplevel'], { cwd: sub })).stdout.trim(), repo, 'outside the run, no ceiling');
+    // A git run's checkout may sit below its repository's top (a project in a subfolder): its git still walks up.
+    h.workMode = 'git'; h.workDirs = new Map([['pk', sub]]);
+    assert.equal((await h._git(['rev-parse', '--show-toplevel'], { cwd: sub })).stdout.trim(), repo, 'a git work root gets no ceiling');
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });

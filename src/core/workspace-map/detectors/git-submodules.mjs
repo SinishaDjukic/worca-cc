@@ -4,24 +4,19 @@
 // 'git-remote'), and this detector normalises with the SAME P1 `remoteSlug`, so both sides agree.
 // Relative submodule URLs ('../billing.git') resolve against this member's origin — git runs only
 // then; without an origin they are unresolved.
-import { spawnSync } from 'node:child_process';
-import { dirname } from 'node:path';
 import { splitLines, fact, onePerKey, cleanUnresolved } from './lib/text.mjs';
 import { resolveRelativeRemote } from './lib/git-remote.mjs';
 import { remoteSlug } from '../../../shared/workspace-map/keys.mjs';
 import { gitAvailable } from '../../git-available.mjs';
+import { gitOutputSync } from '../../git-guard.mjs';
+import { childEnv } from '../../spawn.mjs';
 
 /** This checkout's origin URL, or null. git never looks above the member (GIT_CEILING_DIRECTORIES:
  *  a non-repo member inside another repo must not borrow that repo's origin), and an inherited
  *  GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR never points it at another repo. */
 function originOf(dir) {
   if (!gitAvailable()) return null;
-  try {
-    const env = { ...process.env, GIT_CEILING_DIRECTORIES: dirname(dir) };
-    for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
-    const r = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: dir, env, encoding: 'utf8', timeout: 10000, windowsHide: true });
-    return r.status === 0 ? r.stdout.trim() : null;
-  } catch { return null; }
+  return gitOutputSync(dir, ['remote', 'get-url', 'origin'], { env: childEnv({ kind: 'git', root: dir }).env }) || null;
 }
 
 function detect({ rel, text }, ctx) {

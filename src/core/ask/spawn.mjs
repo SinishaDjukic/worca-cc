@@ -233,8 +233,9 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
  * only the worca MCP server, no custom instructions; Gemini CLI and Qwen Code: plans/ask-on-qwen-gemini-spike.md), the
  * worca MCP server from the same per-turn config file, a scrubbed env, and NO writable dir: memory is read through
  * read_file, never an --add-dir root. This turn's images ride along only on an engine that takes them (Codex, `-i`).
- * An engine that keeps its sessions and settings per folder (`ownFolder`: Gemini CLI) runs in the chat's own folder under
- * the scratch dir, the same every turn. Claude's levers (tool lists, permission rules, --max-turns/--max-budget-usd,
+ * An engine that keeps its sessions and settings per folder, or runs code it finds in its cwd (`ownFolder`: Gemini CLI,
+ * Goose, OpenCode), runs in the chat's own folder under the scratch dir, the same every turn (turn.mjs makes and checks
+ * it: ask/chat-folder.mjs). Claude's levers (tool lists, permission rules, --max-turns/--max-budget-usd,
  * routing env) do not exist there; the caps are turn.mjs's watchdog (D14). The host-guard preamble is prepended by the
  * adapter.
  */

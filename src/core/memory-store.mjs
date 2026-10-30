@@ -183,11 +183,20 @@ function assertName(name) {
   if (!isValidMemoryName(name)) throw new MemoryError('ENAME', `memory: invalid name ${JSON.stringify(name)} — letters, digits, ".", "_" and "-" only, no extension`);
 }
 
+// ── held files (security evaluation 2026-10-21, E5) ───────────────────────────
+/** The source prefix of a file a sandbox run wrote (`sandbox:<run id>`, run-harness _memorySource). What runs in a
+ *  sandbox is untrusted, so such a file is HELD: it stays in the store and the Memory view lists it, but no agent
+ *  loads it (other runs, local ones included, Chat, the house brief, night analysis) until a person approves it —
+ *  the Memory view's Save, which re-stamps it `user`. The run that wrote it still reads it back (`ownSource`). */
+export const SANDBOX_SOURCE_PREFIX = 'sandbox:';
+export const isHeldSource = (source) => typeof source === 'string' && source.startsWith(SANDBOX_SOURCE_PREFIX);
+
 // ── listing / reading ────────────────────────────────────────────────────────
 /** @param {string} dir any directory holding <name>.md files (a store scope dir OR a run-mount dir)
- *  @param {{onError?: Function, hashOf?: (text: string) => string}} [o] `hashOf`: the `hash` each entry carries (hashText
- *  by default; a run's sync passes memory-sync.mjs syncHash) */
-export async function listMemoryDir(dir, { onError, hashOf = hashText } = {}) {
+ *  @param {{onError?: Function, hashOf?: (text: string) => string, forAgents?: boolean, ownSource?: string|null}} [o]
+ *  `hashOf`: the `hash` each entry carries (hashText by default; a run's sync passes memory-sync.mjs syncHash).
+ *  `forAgents`: only the files an agent may load — no held file but those of `ownSource` (see isHeldSource). */
+export async function listMemoryDir(dir, { onError, hashOf = hashText, forAgents = false, ownSource = null } = {}) {
   const out = [];
   for (const e of await readdirMaybe(dir, onError)) {
     if (!e.isFile() || !e.name.endsWith('.md')) continue;
@@ -197,10 +206,12 @@ export async function listMemoryDir(dir, { onError, hashOf = hashText } = {}) {
     const text = await readTextMaybe(path, onError);
     if (text === null) continue;
     const { meta, body, hasFrontmatter } = parseMemoryFile(text);
+    const held = isHeldSource(meta.source);
+    if (forAgents && held && meta.source !== ownSource) continue;
     out.push({
       // §2: a broken/missing fence is still SERVED — the hook falls back to the first non-empty body line.
       name, description: meta.description || deriveHook(body), paths: meta.paths, source: meta.source, updated: meta.updated,
-      bytes: bytesOf(text), hasFrontmatter, hash: hashOf(text),
+      bytes: bytesOf(text), hasFrontmatter, hash: hashOf(text), held,
     });
   }
   return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

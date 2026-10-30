@@ -1,0 +1,17 @@
+{
+  "rules": {
+    "deny": [
+      "Glob"
+    ]
+  },
+  "expected": {
+    "rules": [
+      {
+        "toolName": "glob",
+        "rule": "Glob"
+      }
+    ],
+    "partial": [],
+    "unenforced": []
+  }
+}

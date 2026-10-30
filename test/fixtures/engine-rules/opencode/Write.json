@@ -1,0 +1,19 @@
+{
+  "rules": {
+    "deny": [
+      "Write(./b.txt)"
+    ]
+  },
+  "expected": {
+    "permission": {
+      "edit": {
+        "b.txt": "deny"
+      }
+    },
+    "enforced": [],
+    "partial": [
+      "Write(./b.txt)"
+    ],
+    "unenforced": []
+  }
+}

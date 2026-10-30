@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { runOpencodeProcess, createOpencodeNormalizer, opencodeChat, OPENCODE_ASK_LOCKDOWN } from '../src/core/engines/opencode.mjs';
 import { runGooseProcess, buildGooseArgs, gooseChat, gooseChatModelProblem, GOOSE_ASK_LOCKDOWN } from '../src/core/engines/goose.mjs';
-import { providerEnvPrefixes } from '../src/core/engines/chat-descriptor.mjs';
+import { chatSignInEnv } from '../src/core/engines/chat-descriptor.mjs';
 import { fakeOpencode } from './helpers/fake-opencode.mjs';
 import { fakeGoose } from './helpers/fake-goose.mjs';
 
@@ -94,11 +94,13 @@ test('Goose chat spawn: a home of its own, the real HOME and the spawn env for w
   assert.equal(rec.env.XDG_CONFIG_HOME, join(chatHome, '.config'));
   assert.equal(rec.env.GOOGLE_API_KEY, 'g-key', 'its provider\'s key');
   assert.equal(rec.env.OPENAI_API_KEY, undefined, 'never another provider\'s');
-  const wrapper = Object.values(rec.wrappers)[0];
-  assert.match(wrapper, /HOME="\$WORCAMCP1_HOME"; export HOME/);
-  assert.match(wrapper, /ASK_COMMAND_TOKEN="\$WORCAMCP1_ASK_COMMAND_TOKEN"/);
-  assert.equal(rec.env.WORCAMCP1_HOME, realHome);
-  assert.equal(rec.env.WORCAMCP1_ASK_COMMAND_TOKEN, 'tok-1');
+  // worca's child gets the real HOME and the spawn env from the file beside its wrapper (0600), never goose's own env.
+  const [file] = Object.keys(rec.wrappers);
+  assert.match(rec.wrappers[file], /^\. "\$\{0%\/\*\}\/[^"]+\.env"$/m);
+  assert.match(rec.envFiles[file].text, new RegExp(`^HOME='${realHome}'; export HOME$`, 'm'));
+  assert.match(rec.envFiles[file].text, /^ASK_COMMAND_TOKEN='tok-1'; export ASK_COMMAND_TOKEN$/m);
+  assert.equal(rec.envFiles[file].mode, 0o600);
+  assert.equal(rec.env.ASK_COMMAND_TOKEN, undefined, 'the token is not in goose\'s env');
 });
 
 test('a relayed Goose chat (the agent user): its home is a worca folder in the agent\'s own home, made by goose; its MCP children get the agent\'s HOME', POSIX, async () => {
@@ -119,14 +121,17 @@ test('a relayed Goose chat (the agent user): its home is a worca folder in the a
   const home = join(agentHome, '.worca', 'goose-chat-home');
   assert.equal(rec.env.HOME, home, 'not the agent\'s own HOME: none of its goose config, skills or hints');
   assert.equal(rec.env.XDG_DATA_HOME, join(home, '.local', 'share'));
-  assert.equal(rec.env.WORCAMCP1_HOME, agentHome, 'an allowlisted HOME reference never brings the server\'s back');
+  const [file] = Object.keys(rec.wrappers);
+  assert.match(rec.envFiles[file].text, new RegExp(`^HOME='${agentHome}'; export HOME$`, 'm'), 'an allowlisted HOME reference never brings the server\'s back');
 });
 
 test('Goose chat: an agent-CLI provider is refused; a model provider is not', () => {
   for (const id of ['claude-acp/default', 'codex/gpt-5', 'cursor-agent/auto', 'gemini-cli/pro', 'amp-acp/x']) assert.match(gooseChatModelProblem(id), /agent CLI/, id);
   for (const id of ['google/gemini-3-flash', 'openai/gpt-5.5', 'anthropic/claude-sonnet-5-5', 'openrouter/qwen/qwen3', 'ollama/llama3']) assert.equal(gooseChatModelProblem(id), null, id);
-  assert.deepEqual(providerEnvPrefixes('openrouter/qwen/qwen3'), ['OPENROUTER_']);
-  assert.deepEqual(providerEnvPrefixes('aws_bedrock/x'), ['AWS_BEDROCK_', 'AWS_']);
+  // The provider's catalog sign-in names, exact (decision 3): never another provider's key, never a prefix family.
+  const env = { OPENROUTER_API_KEY: 'r', OPENAI_API_KEY: 'o', AWS_SECRET_ACCESS_KEY: 's', AWS_BEDROCK_X: 'b', GOOSE_PROVIDER: 'p' };
+  assert.deepEqual(chatSignInEnv(gooseChat, 'openrouter/qwen/qwen3', env), ['GOOSE_PROVIDER', 'OPENROUTER_API_KEY']);
+  assert.deepEqual(chatSignInEnv(gooseChat, 'aws_bedrock/x', env), ['GOOSE_PROVIDER'], 'a provider with no catalog sign-in mode keeps no key');
 });
 
 test('Goose chat: a session goose no longer knows is the turn\'s to handle', POSIX, async () => {

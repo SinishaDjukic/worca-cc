@@ -12,7 +12,7 @@ import {
   codexRulePlan, codexRulesFile, unenforcedRules, partialRules, guardedCodexHome, codexInvestigatorRole, runCodexProcess, CODEX_INVESTIGATOR_ROLE,
   bringCodexThreadHome, findCodexRollout,
 } from '../src/core/engines/codex.mjs';
-import { writableRootsInWorcaHome } from '../src/core/engines/spawn.mjs';
+import { writableRootsInWorcaHome } from '../src/core/spawn.mjs';
 import { fanOutDirective } from '../src/core/phases.mjs';
 import { assembleSkills, skillsRelFor } from '../src/core/run-context.mjs';
 import { renderMemoryBlock, MEMORY_BLOCK_INTRO } from '../src/core/memory-store.mjs';

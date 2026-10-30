@@ -38,7 +38,9 @@ test('a Folder member is listed by walking, never through an enclosing repositor
   await checkRows([
     { name: 'listMemberFiles({ git: false }) walks the folder', run: async () => {
       assert.deepEqual(await listMemberFiles(copy, { git: false }), { files: ['.gitmodules', 'package.json', 'src/index.js'], truncated: false, via: 'walk' });
-      assert.deepEqual((await listMemberFiles(copy)).files, [], 'today\'s git listing honours the outer ignore rule');
+      // git never walks above the member (GIT_CEILING_DIRECTORIES): the outer repository is not asked, so its ignore rule
+      // no longer hides the copy.
+      assert.deepEqual((await listMemberFiles(copy)).files, ['.gitmodules', 'package.json', 'src/index.js'], 'git stops at the member');
     } },
     { name: 'extractWorkspace: a Folder member gets no git-remote alias and no graph head', run: async () => {
       // Every git spawn of the extraction writes to GIT_TRACE: a Folder member's extraction makes none.

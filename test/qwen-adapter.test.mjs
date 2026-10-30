@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import {
   buildQwenArgs, createQwenNormalizer, classifyQwenError, QWEN_SESSION_PREFIX, qwenRulePlan, qwenSystemSettings,
   qwenCapabilities, qwenPreflight, runQwenProcess, QWEN_ASK_LOCKDOWN, QWEN_RESUME_NOT_FOUND_RE, qwenSignedIn,
-  qwenEnvPrefixes,
+  qwenConfiguredMode, removeQwenSessions,
 } from '../src/core/engines/qwen.mjs';
 import { NO_MCP_SERVER } from '../src/core/engines/gemini-family.mjs';
 import { EVENT_TYPES, isNormalized } from '../src/core/engines/events.mjs';
@@ -31,6 +31,20 @@ test('argv: stream-json, yolo, a named session; model, system prompt, folders an
   assert.deepEqual(buildQwenArgs({ sessionId: 's-1', resume: true, model: 'qwen3-coder-plus', systemPrompt: 'Be terse.', includeDirs: ['/a'], mcpNames: ['gh'] }),
     ['--output-format', 'stream-json', '--approval-mode', 'yolo', '--resume', 's-1', '--model', 'qwen3-coder-plus',
       '--append-system-prompt', 'Be terse.', '--include-directories', '/a', '--allowed-mcp-server-names', 'gh']);
+});
+
+test('archive: the run\'s chats and checkpoints leave ~/.qwen; another run\'s and the sign-in stay', POSIX, async () => {
+  const dir = join(tmp(), '.qwen');
+  const id = '8f1c0000-0000-4000-8000-000000000001'; const other = '9a2d0000-0000-4000-8000-000000000002';
+  const put = (p, d = 'x') => { mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, d); return p; };
+  const mine = [put(join(dir, 'projects', 'proj', 'chats', `${id}.jsonl`)), put(join(dir, 'tmp', 'proj', id, 'checkpoint.json'))];
+  const theirs = put(join(dir, 'projects', 'proj', 'chats', `${other}.jsonl`)); const creds = put(join(dir, 'oauth_creds.json'), 'secret');
+  assert.deepEqual((await removeQwenSessions({ sessionIds: ['qwen:../proj', `gemini:${id}`], env: { QWEN_HOME: dir } })).removed, []);
+  const r = await removeQwenSessions({ sessionIds: [`qwen:${id}`], env: { QWEN_HOME: dir } });
+  assert.equal(r.removed.length, 2, JSON.stringify(r));
+  for (const p of mine) assert.equal(existsSync(p), false, p);
+  assert.equal(existsSync(theirs), true);
+  assert.equal(readFileSync(creds, 'utf8'), 'secret');
 });
 
 test('normalizer (capture): the Claude normalizer reads Qwen\'s frames; tools in Claude\'s names, tool_call unwrapped', () => {
@@ -86,13 +100,14 @@ test('capabilities: the system prompt flag is the one Gemini lacks; cost is fals
   assert.ok(QWEN_ASK_LOCKDOWN, 'Chat runs on Qwen Code, locked down (plans/ask-on-qwen-gemini-spike.md)');
 });
 
-test('rule plan: Qwen reads Claude\'s rule syntax; command rules and file-write path rules are partial; unknown tools unenforced', () => {
+test('rule plan: Qwen reads Claude\'s rule syntax; command rules are partial; unknown tools unenforced', () => {
   const p = qwenRulePlan({ deny: ['Bash', 'Bash(git push:*)', 'Read(./.env)', 'MultiEdit(./x)', 'WebFetch(domain:x.com)', 'mcp__gh__del', 'Frobnicate', 'Bash(*)',
     'Write(~/.worca-cc/**)', 'NotebookEdit(./n.ipynb)', 'Edit'] });
   assert.deepEqual(p.deny, ['Bash', 'Bash(git push:*)', 'Read(./.env)', 'Edit(./x)', 'WebFetch(domain:x.com)', 'mcp__gh__del', 'Bash(*)',
     'Write(~/.worca-cc/**)', 'NotebookEdit(./n.ipynb)', 'Edit']);
-  // The shell writes what an Edit / Write path rule keeps from the file tools; a Read rule stops the shell too.
-  assert.deepEqual(p.partial, ['Bash(git push:*)', 'MultiEdit(./x)', 'Write(~/.worca-cc/**)', 'NotebookEdit(./n.ipynb)']);
+  // A path rule binds Qwen's own file tools; its shell reaching the path is the one baseline line of every shell engine
+  // (decision 10), not a partial rule.
+  assert.deepEqual(p.partial, ['Bash(git push:*)']);
   assert.deepEqual(p.unenforced, ['Frobnicate']);
 });
 
@@ -118,26 +133,47 @@ test('sign-in: a chosen auth type, or env naming a whole provider (also from .en
   assert.equal(qwenSignedIn({ HOME: home, QWEN_HOME: chosen }), true);
 });
 
-test('env prefixes: Qwen\'s own, plus only the provider it is set to — never another provider\'s key', () => {
+test('sign-in: the auth type Qwen\'s settings choose wins; else env naming a whole provider; the child keeps that one key', POSIX, async () => {
   const home = tmp();
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home }), ['QWEN_'], 'no sign-in: no provider\'s names');
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home, QWEN_OAUTH: '1', ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' }), ['QWEN_']);
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home, OPENAI_API_KEY: 'k', OPENAI_MODEL: 'm', OPENAI_BASE_URL: 'https://x', ANTHROPIC_API_KEY: 'k' }),
-    ['QWEN_', 'OPENAI_', 'DASHSCOPE_']);
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home, GEMINI_API_KEY: 'k', GEMINI_MODEL: 'g' }), ['QWEN_', 'GEMINI_']);
+  assert.equal(qwenConfiguredMode({ HOME: home }), null, 'no setting: the catalog order decides (credentials.mjs)');
   const chosen = tmp();
   writeFileSync(join(chosen, 'settings.json'), JSON.stringify({ security: { auth: { selectedType: 'anthropic' } } }));
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home, QWEN_HOME: chosen, OPENAI_API_KEY: 'k', OPENAI_MODEL: 'm', OPENAI_BASE_URL: 'https://x' }),
-    ['QWEN_', 'ANTHROPIC_'], 'the chosen sign-in wins over env');
+  assert.equal(qwenConfiguredMode({ HOME: home, QWEN_HOME: chosen }), 'anthropic');
+  // The spawn: worca holds three providers' keys and a whole OpenAI env; the setting picks Anthropic.
+  const fake = fakeQwen(tmp(), 'ok');
+  const keys = { OPENAI_API_KEY: 'o', OPENAI_MODEL: 'm', OPENAI_BASE_URL: 'https://x', ANTHROPIC_API_KEY: 'a', GEMINI_API_KEY: 'g' };
+  const keep = { ...process.env };
+  try {
+    Object.assign(process.env, { HOME: home, QWEN_HOME: chosen, ...keys });
+    await runQwenProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go' });
+    assert.deepEqual(['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY'].filter((k) => k in fake.env()), ['ANTHROPIC_API_KEY']);
+    // No setting: the env names a whole OpenAI provider, so OpenAI's key, and no other.
+    delete process.env.QWEN_HOME;
+    await runQwenProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go' });
+    assert.deepEqual(['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY'].filter((k) => k in fake.env()), ['OPENAI_API_KEY']);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in keep)) delete process.env[k];
+    Object.assign(process.env, keep);
+  }
 });
 
-test('spawn with scrub on: worca\'s other provider keys stay out of the agent\'s env', POSIX, async () => {
+test('sub-agents: their tools (agent, send_message, cron_create) are excluded when the run switches them off', POSIX, async () => {
+  const fake = fakeQwen(tmp(), 'ok');
+  await runQwenProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go', subagentsOff: true });
+  const a = fake.args();
+  const excluded = a.flatMap((x, i) => (x === '--exclude-tools' ? [a[i + 1]] : []));
+  assert.deepEqual(excluded, ['agent', 'send_message', 'cron_create']);
+  await runQwenProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go' });
+  assert.equal(fake.args().includes('--exclude-tools'), false, 'proven inheritance (or no run gate) keeps them');
+});
+
+test('spawn: worca\'s other provider keys stay out of the agent\'s env, scrub or not', POSIX, async () => {
   const fake = fakeQwen(tmp(), 'ok');
   const keep = { ...process.env };
   Object.assign(process.env, { HOME: tmp(), QWEN_OAUTH: '1', ANTHROPIC_API_KEY: 'worca-anthropic', OPENAI_API_KEY: 'worca-openai', GEMINI_API_KEY: 'g' });
   delete process.env.QWEN_HOME;
   try {
-    await runQwenProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go', envScrub: true });
+    await runQwenProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go' });
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in keep)) delete process.env[k];
     Object.assign(process.env, keep);
@@ -175,7 +211,7 @@ test('spawn: rules and MCP servers ride a system settings file outside the check
   const fake = fakeQwen(tmp(), 'ok');
   const mcp = join(tmp(), 'mcp.json');
   writeFileSync(mcp, JSON.stringify({ mcpServers: { gh: { command: 'gh-mcp', env: { GITHUB_TOKEN: '${MCPSECRET_GH}' } } } }));
-  await runQwenProcess({ cwd, bin: fake.bin, prompt: 'go', mcpConfigPath: mcp, permissionRules: { deny: ['Bash(curl:*)'] }, spawnEnv: { MCPSECRET_GH: 's3cret' } });
+  await runQwenProcess({ cwd, bin: fake.bin, prompt: 'go', mcpConfigPath: mcp, permissionRules: { deny: ['Bash(curl:*)'] }, spawnEnv: { MCPSECRET_GH: 's3cret', MCPSECRET_OTHER: 'other' } });
   const rec = fake.record();
   const file = rec.env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
   assert.ok(file && !file.startsWith(cwd));
@@ -183,6 +219,7 @@ test('spawn: rules and MCP servers ride a system settings file outside the check
   assert.deepEqual(doc.mcpServers.gh.env, { GITHUB_TOKEN: '${MCPSECRET_GH}' }, 'no secret value on disk');
   assert.ok(doc.permissions.deny.includes('Bash(curl:*)'));
   assert.equal(rec.env.MCPSECRET_GH, 's3cret');
+  assert.equal(rec.env.MCPSECRET_OTHER, undefined, 'only the values its own servers reference: never the whole run env');
   assert.ok(!existsSync(file), 'removed after the spawn');
   assert.ok(!existsSync(join(cwd, '.qwen')), 'nothing written into the checkout');
 });
@@ -201,11 +238,13 @@ test('a read-only spawn refuses (an Ask spawn is test/qwen-ask-adapter.test.mjs)
 
 test('resume: a qwen: session resumes it; one Qwen no longer knows starts fresh and says so', POSIX, async () => {
   const ok = fakeQwen(tmp(), 'ok');
-  await runQwenProcess({ cwd: tmp(), bin: ok.bin, prompt: 'x', resumeSessionId: 'qwen:s-9' });
-  assert.equal(ok.args()[ok.args().indexOf('--resume') + 1], 's-9');
+  await runQwenProcess({ cwd: tmp(), bin: ok.bin, prompt: 'x', resumeSessionId: 'qwen:8f1c0000-0000-4000-8000-000000000009' });
+  assert.equal(ok.args()[ok.args().indexOf('--resume') + 1], '8f1c0000-0000-4000-8000-000000000009');
+  await runQwenProcess({ cwd: tmp(), bin: ok.bin, prompt: 'x', resumeSessionId: 'qwen:--x' });
+  assert.ok(!ok.args().includes('--resume') && !ok.args().includes('--x'), 'a stored id that is not a uuid is never resumed');
   const gone = fakeQwen(tmp(), 'fresh', { resumeError: fixture('resume-unknown.stderr.txt').trim(), resumeExit: 1 });
   const events = [];
-  const r = await runQwenProcess({ cwd: tmp(), bin: gone.bin, prompt: 'x', resumeSessionId: 'qwen:gone', onEvent: (e) => events.push(e) });
+  const r = await runQwenProcess({ cwd: tmp(), bin: gone.bin, prompt: 'x', resumeSessionId: 'qwen:8f1c0000-0000-4000-8000-000000000009', onEvent: (e) => events.push(e) });
   assert.equal(r.text, 'fresh');
   assert.ok(events.some((e) => e.type === 'stderr' && /is gone/.test(e.text)));
 });

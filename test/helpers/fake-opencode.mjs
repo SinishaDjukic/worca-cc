@@ -17,9 +17,10 @@ export function opencodeReplyLines(text, sessionID = 'ses_fake000000000000000000
 /**
  * @param {string} dir
  * @param {string|null} reply
- * @param {{lines?:object[]|null, exit?:number, stderr?:string, providersText?:string, exportDoc?:object|null, version?:string|null}} [o]
+ * @param {{lines?:object[]|null, exit?:number, stderr?:string, providersText?:string, exportDoc?:object|null, version?:string|null,
+ *   hold?:boolean}} [o]  hold: wait to be stopped after the lines
  */
-export function fakeOpencode(dir, reply, { lines: given = null, exit = 0, stderr = '', providersText = '1 credentials\n0 environment variables', exportDoc = null, version = '1.18.23' } = {}) {
+export function fakeOpencode(dir, reply, { lines: given = null, exit = 0, stderr = '', providersText = '1 credentials\n0 environment variables', exportDoc = null, version = '1.18.23', hold = false } = {}) {
   const bin = join(dir, 'opencode');
   const rec = join(dir, 'opencode-record.json');
   const exports = join(dir, 'opencode-exports.txt');
@@ -35,7 +36,7 @@ export function fakeOpencode(dir, reply, { lines: given = null, exit = 0, stderr
     (version === null ? 'if [ "$1" = "--version" ]; then exit 127; fi\n' : `if [ "$1" = "--version" ]; then echo ${JSON.stringify(version)}; exit 0; fi\n`) +
     `if [ "$1" = "providers" ]; then printf '%s\\n' ${JSON.stringify(providersText)}; exit 0; fi\n` +
     `if [ "$1" = "export" ]; then echo "$2" >> ${JSON.stringify(exports)}; cat ${JSON.stringify(exp)}; exit 0; fi\n` +
-    `node -e '${record}' -- "$@"\ncat ${JSON.stringify(out)}\ncat ${JSON.stringify(err)} >&2\nexit ${exit}\n`);
+    `node -e '${record}' -- "$@"\ncat ${JSON.stringify(out)}\ncat ${JSON.stringify(err)} >&2\n${hold ? 'exec sleep 600\n' : ''}exit ${exit}\n`);
   chmodSync(bin, 0o755);
   const read = () => (existsSync(rec) ? JSON.parse(readFileSync(rec, 'utf8')) : null);
   return {

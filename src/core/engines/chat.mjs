@@ -10,7 +10,6 @@ import { listEngines } from './index.mjs';
 import { ASK_ENGINES } from '../model-env.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
 
-export { chatCostCapRefusal } from './chat-descriptor.mjs';
 
 const DESCRIPTORS = new Map(listEngines().filter((a) => a.chat).map((a) => [a.name, a.chat]));
 

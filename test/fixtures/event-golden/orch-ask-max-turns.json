@@ -90,6 +90,12 @@
   "sessionCosts": {
    "00000000-0000-4000-8000-000000000001": 0.0049465
   },
+  "usage": {
+   "input": 10,
+   "output": 148,
+   "cacheRead": 10205,
+   "cacheWrite": 1100
+  },
   "costUsd": 0.0049
  },
  "totalCost": 0.0049

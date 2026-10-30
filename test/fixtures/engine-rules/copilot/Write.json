@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "deny": [
+      "Write(./out/**)"
+    ]
+  },
+  "expected": {
+    "deny": [],
+    "excluded": [],
+    "enforced": [],
+    "partial": [],
+    "unenforced": [
+      "Write(./out/**)"
+    ]
+  }
+}

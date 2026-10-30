@@ -9,6 +9,7 @@
 // Names no agent key (D23). tools.mjs may not import anything, hence every reader/spawner lives here.
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
+import { holdScratchEntries } from './chat-folder.mjs';
 import { loadAgentRegistry } from '../agent-registry.mjs';
 import { listProjects, worcaHome } from '../projects.mjs';
 import { readWorkspace, workspaceMembers } from '../workspaces.mjs';
@@ -217,6 +218,7 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
         if (mode === 'task') {
           const cwd = join(worcaHome(), 'tmp', 'ask');           // the ask scratch dir — never the user's checkout (spec §4.5)
           await mkdir(cwd, { recursive: true });
+          holdScratchEntries(cwd);                                // its held .claude/ and CLAUDE.md (chat-folder.mjs, audit 3.2b)
           // D6 amendment: the classifier may Read/Grep/Glob a throwaway detached checkout of the
           // project's HEAD to SIZE the change. Mock never spawns, so it never borrows one; a project
           // without git (or a failed `git worktree add`) classifies text-only, exactly as before.

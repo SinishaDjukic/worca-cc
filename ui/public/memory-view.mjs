@@ -48,9 +48,10 @@ export function formatWhen(iso) {
 // Plain words for a memory source (docs/design-system.md › Patterns: ids in a tooltip).
 const SLUG_RE = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(.+?)(?:-(\d{2}))?$/;
 
-/** Where a write came from, as { kind: 'run'|'user'|'chat'|'other', ref }. `defrag:` is a run too. */
+/** Where a write came from, as { kind: 'run'|'user'|'chat'|'other', ref }. `defrag:` and `sandbox:` (a remote
+ *  run's write, held for review) are runs too. */
 export function memorySource(src) {
-  const m = /^(run|defrag|ask):(.+)$/.exec(String(src || ''));
+  const m = /^(run|defrag|sandbox|ask):(.+)$/.exec(String(src || ''));
   if (m) return m[1] === 'ask' ? { kind: 'chat', ref: m[2] } : { kind: 'run', ref: m[2] };
   return String(src || '') === 'user' ? { kind: 'user', ref: '' } : { kind: 'other', ref: '' };
 }
@@ -61,7 +62,7 @@ export function parseSnapshotId(id) {
   if (!m) return { iso: '', source: { kind: 'other', ref: '' } };
   const [, y, mo, d, hh, mi, ss, slug] = m;
   const iso = new Date(Date.UTC(+y, +mo - 1, +d, +hh, +mi, +ss)).toISOString();
-  const s = /^(run|defrag|ask)-(.+)$/.exec(slug);
+  const s = /^(run|defrag|sandbox|ask)-(.+)$/.exec(slug);
   const source = s ? (s[1] === 'ask' ? { kind: 'chat', ref: s[2] } : { kind: 'run', ref: s[2] })
     : slug === 'user' ? { kind: 'user', ref: '' } : { kind: 'other', ref: '' };
   return { iso, source };
@@ -201,15 +202,23 @@ export function renderFileList(files, { doc = globalThis.document, selected = ''
       meta.append(when ? ' · ' : '', sourceNode(memorySource(f.source), { doc, runInfo }));
     }
     if (f.hasFrontmatter === false) meta.append(' · no frontmatter');
+    if (f.held) {
+      const b = h(doc, 'span', 'badge amber mem-held', 'Held for review');
+      b.title = HELD_HINT;
+      meta.append(' ', b);
+    }
     row.appendChild(meta);
     wrap.appendChild(row);
   }
   return wrap;
 }
 
+const HELD_HINT = 'A run in a sandbox wrote this file. No agent loads it until you approve it: read it, then Approve (it becomes yours) or Delete it.';
+
 /** The editor: the whole file (frontmatter included) as text. A NEW file has an editable name and
  *  no Delete; `locked` (a live defragment run on this scope) disables Save and Delete — Cancel
- *  always closes. */
+ *  always closes. A `held` file (a sandbox run's, security evaluation E5) says so, and its Save reads Approve:
+ *  saving re-stamps it as the user's, and agents load it from then on. */
 export function renderEditor(file, { doc = globalThis.document, isNew = false, msg = '', msgErr = false, locked = false } = {}) {
   const wrap = h(doc, 'div', 'mem-editor');
   const nameField = h(doc, 'div', 'field field-compact');
@@ -229,6 +238,7 @@ export function renderEditor(file, { doc = globalThis.document, isNew = false, m
   textField.appendChild(ta);
   textField.appendChild(h(doc, 'small', 'hint', 'Keep name, description (one line on when the file matters, shown here and to Chat) and optional paths (the file loads only when a matching file is read) in the frontmatter; worca stamps source and updated.'));
   wrap.appendChild(textField);
+  if (file?.held && !isNew) wrap.appendChild(h(doc, 'div', 'hint mem-held-hint', HELD_HINT));
   const text = msg || (locked ? 'A defragment run is live on this scope. Save and Delete resume when it finishes.' : '');
   const status = h(doc, 'div', `hint mem-msg${msgErr ? ' err' : ''}`, text);
   status.setAttribute('role', 'status');
@@ -240,7 +250,7 @@ export function renderEditor(file, { doc = globalThis.document, isNew = false, m
     actions.appendChild(d);
   }
   const cancel = h(doc, 'button', 'btn btn-sm mem-cancel', 'Cancel'); cancel.type = 'button';
-  const save = h(doc, 'button', 'btn btn-primary btn-sm mem-save', 'Save'); save.type = 'button'; save.disabled = !!locked;
+  const save = h(doc, 'button', 'btn btn-primary btn-sm mem-save', file?.held && !isNew ? 'Approve' : 'Save'); save.type = 'button'; save.disabled = !!locked;
   actions.append(cancel, save);
   wrap.appendChild(actions);
   return wrap;

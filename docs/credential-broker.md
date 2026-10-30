@@ -56,7 +56,8 @@ key.
 
 ## Support matrix
 
-Every container setup runs Linux containers, so the broker behaves the same on every host.
+Every container setup runs Linux containers, so the broker behaves the same on every container host. An E2B
+sandbox runs the agent remotely; what matters there is the worca host, which must be macOS or Linux.
 
 | Setup | macOS (Apple silicon) | Linux | Windows | Windows + WSL2 |
 | --- | --- | --- | --- | --- |
@@ -64,9 +65,13 @@ Every container setup runs Linux containers, so the broker behaves the same on e
 | Local container, one person, no broker | Supported | Supported | Supported (Linux containers) | Supported |
 | Local container, one person, broker **single** mode | Supported | Supported | Supported (Linux containers) | Supported |
 | Hosted, a team, broker **multi** mode | **Target** (local model on the host, Metal) | **Target** (Compose, Kubernetes, Railway) | Works, not a target | Works, not a target |
+| Runs in an E2B sandbox, broker on (any mode) | Works | Works | Not supported (E2B needs a macOS or Linux worca host) | Works (WSL2 counts as Linux) |
 
 - The broker is never used natively: the agent runs as your OS user and can read everything
   you can, so there is no boundary to enforce.
+- An E2B sandbox ([E2B](e2b.md)) works with the broker: no key and no broker token ever enters the
+  sandbox. worca carries the sandbox's model calls to the broker over the command's stdin and stdout and
+  attaches the spawn's token on its own side. Bedrock, Vertex and Foundry models are refused for sandbox runs.
 - Windows containers (as opposed to Linux containers on Windows) aren't supported.
 - On macOS a container has no GPU (no Metal passthrough). A local model server (Ollama, LM
   Studio, llama-server, MLX) runs on the host, and the broker reaches it.
@@ -143,7 +148,10 @@ A slot is one kind of credential with one fixed destination.
 | `anthropic` | `https://api.anthropic.com` | An API key as `x-api-key`, or a Claude subscription token as a Bearer ([below](#claude-subscriptions)) |
 | `openai` | `https://api.openai.com` | `Authorization: Bearer` |
 | `openrouter` | `https://openrouter.ai` | `Authorization: Bearer` |
+| `google` | `https://generativelanguage.googleapis.com` | A Gemini API key (`AIza…`) as `x-goog-api-key`. Only the generate and token-count calls of `/v1beta/models/{model}:…` pass. Gemini CLI signs in here, and so does the google provider of Qwen Code, Goose and OpenCode |
 | `copilot` | `*.githubcopilot.com` | Copilot's short-lived token, exchanged from the person's GitHub sign-in |
+| `copilot-pat` | `*.githubcopilot.com` (the host GitHub names for the token) | A fine-grained personal access token (`github_pat_…`; give it only the Copilot Requests permission) as a Bearer, with the Copilot CLI's headers. The broker checks the token's shape, not its permissions: a classic or OAuth token is refused. The Copilot engine signs in here |
+| `cursor` | `https://api2.cursor.sh` | An access token the broker exchanges for the person's Cursor API key (and exchanges again on a 401). Replies are scrubbed of both, message by message: the broker asks for uncompressed replies, reads a gzip message before it scrubs it, and refuses a reply it cannot read (502, or a cut stream). The Cursor engine signs in here |
 | `local` | `WORCA_BROKER_LOCAL_URL` | none (keyless), or an operator-held key |
 | `github` | `https://api.github.com` | Only with `WORCA_BROKER_GITHUB_CLIENT_ID`. Never proxied: its token goes to worca for one push ([Push as me](#push-as-me)) |
 
@@ -409,15 +417,30 @@ hook. With agents under their own users, worca does not start while that file is
 its group or by others: make it `0600`, owned by the user worca runs as (a compose secret keeps
 the host file's mode).
 
-### Only Claude runs
+### Which engines run
 
-Only Claude Code spends through the broker. Codex, Cursor and Copilot sign in with their own
-credentials (a ChatGPT, Cursor or GitHub sign-in, or a key in their environment), which the broker
-can neither charge to a person nor keep from the agent. So with the broker on:
+Every engine runs through the broker with a key a slot can hold: Claude Code (`anthropic`), Codex
+with an OpenAI API key (`openai`), Copilot with a fine-grained token (`copilot-pat`) and Cursor
+with a Cursor API key (`cursor`), locally and in an E2B sandbox. Each spawn gets its own token and
+the CLI calls the slot with it; no engine sees the person's key. An engine's own login (a ChatGPT
+sign-in, Copilot's or Cursor's keychain sign-in) never goes through the broker. An engine that has
+only such a login is refused before a run starts, Chat offers no chats on it, and every engine
+picker shows it greyed out. Copilot and Cursor are billed per seat: their usage rows record tokens
+and book $0, so a person's dollar budget does not cover them.
 
-- a pipeline run on any other engine is refused before it starts;
-- Chat offers no Codex chats, and a Codex chat started before the broker was turned on is refused;
-- every engine picker shows the other engines greyed out, and the Models page says why.
+Gemini CLI, Qwen Code, Goose and OpenCode take the slot of the sign-in their step resolves to:
+
+- **Gemini CLI**: a Gemini API key, in `google`. Its Google login, Vertex AI and an access token stay refused.
+- **Qwen Code**: the sign-in its own settings choose, else the first one with a slot: OpenAI (`openai`, OpenAI's own
+  API), Gemini (`google`) or Anthropic (`anthropic`). Under the broker a step names its model. Qwen OAuth and Vertex AI
+  stay refused.
+- **Goose** and **OpenCode**: the provider the step's `provider/model` id names, in `openai`, `anthropic`, `google` or
+  `openrouter`. A provider with no slot (Azure OpenAI, Databricks, OpenCode Zen, and every provider that signs in from
+  the CLI's own config) is refused with the providers that have one.
+
+Each CLI is pointed at the slot where it takes its endpoint, with the spawn's token where it takes its key; no other
+endpoint, key or sign-in setting of that engine reaches it from worca's environment, the guardrail set's allowlist or
+the run's environment.
 
 ### People
 
@@ -476,6 +499,9 @@ on purpose.
 | `block` (default with the broker) | The server is left out of that run, and the run's log says which and why (never the value) |
 | `warn` (default without the broker) | The server stays; the run's log says agents can read its secret |
 | `off` | No check |
+
+In `warn` mode the secret also sits in the run's `mcp.json` while the run lasts; worca deletes that file when the
+run ends, even when the run folder is kept (a retained checkout), and a resume writes it again.
 
 The check makes the exposure visible; it can't make an MCP secret safe. Prefer MCP servers
 that need no secret, or accept the risk with `warn`.
@@ -568,7 +594,7 @@ otherwise pick what it costs:
   (`no list price for model … booked at the fallback rate`), so an operator can see which
   models to price, or set a fallback that suits their gateways.
 - **No dollars** for a Claude subscription, for Copilot (billed per seat and premium request,
-  not per token; Copilot's own limits apply) and for a keyless slot such as `local`. These
+  not per token; Copilot's own limits apply), for Cursor (billed per seat) and for a keyless slot such as `local`. These
   calls record tokens only, and dollar budgets don't apply to them.
 - **A hang-up doesn't end the bill.** When an agent drops a streaming call, the broker keeps
   reading the response to its end and books every token, so aborting mid-stream can't hide
@@ -642,6 +668,9 @@ The broker holds each request body in memory until its call ends. A body is at m
 in flight, across every agent, share 64 MiB, sized for the broker container's 256 MB memory
 limit. A call that doesn't fit gets a 503 `overloaded_error` with `retry-after: 2`, which the
 agents' clients retry.
+
+A sandbox run in E2B holds no broker token either: the relay on worca's side attaches the spawn's token, so an
+agent there can spend credits through its run's relay (within the budgets) but cannot take a token away.
 
 Not built: Amazon Bedrock and Google Vertex (the broker would have to sign requests with the
 person's cloud credentials), and plugin model keys sent any way but one `Authorization` or

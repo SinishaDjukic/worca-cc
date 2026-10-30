@@ -182,6 +182,8 @@ test('createAskTools: the file tools exist only with deps.files; reader errors r
 });
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+/** The file bundle's media note for a chat on `engine` (file-deps.mjs defaultFileDeps), as the MCP child builds it. */
+const mediaNoteOf = (engine) => defaultFileDeps({ env: { WORCA_ASK_ENGINE: engine } }).mediaNote;
 const mediaTools = (over = {}) => createAskTools({ limits: ASK_LIMITS, redact: (s) => s, engine: 'gemini', chatImages: true, chatPdfs: true, files: reader,
   mediaElsewhere: (w) => `${w}: X chats can`,
   readAttachment: (id) => (id === 'att_00000003'
@@ -194,7 +196,8 @@ test('read_attachment in a locked-down chat: an image comes back as an MCP image
   assert.equal(r.path, undefined);
   assert.deepEqual(r[MCP_CONTENT], [{ type: 'image', data: PNG.toString('base64'), mimeType: 'image/png' }]);
   assert.match(r.note, /attached to this result/);
-  const codex = await mediaTools({ engine: 'codex', chatPdfs: false }).call('read_attachment', { id: 'att_00000002' });
+  // The engine's own words come from the catalog (engine-switch.mjs `chat.media`), through the file bundle.
+  const codex = await mediaTools({ engine: 'codex', chatPdfs: false, mediaNote: mediaNoteOf('codex') }).call('read_attachment', { id: 'att_00000002' });
   assert.match(codex.note, /content\[1\].*image\(\)/, 'a Codex chat is told to forward the block with image() in exec');
 });
 
@@ -210,7 +213,7 @@ test('read_attachment in a locked-down chat: a PDF rides as an embedded resource
 });
 
 test('read_attachment in a Copilot chat: the block rides, and the note says Copilot hands it on only to a model that can view it', async () => {
-  const tools = mediaTools({ engine: 'copilot' });
+  const tools = mediaTools({ engine: 'copilot', mediaNote: mediaNoteOf('copilot') });
   const img = await tools.call('read_attachment', { id: 'att_00000002' });
   assert.deepEqual(img[MCP_CONTENT], [{ type: 'image', data: PNG.toString('base64'), mimeType: 'image/png' }]);
   assert.match(img.note, /Copilot attaches it right after this result when your model can view images: .*if it did not reach you, tell the user this model cannot view it/);

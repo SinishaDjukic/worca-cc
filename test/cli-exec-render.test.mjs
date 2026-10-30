@@ -128,6 +128,9 @@ test('gate header, result line, totals and fmtDur', () => {
   assert.equal(formatTotals({ executions: 2, activeMs: 0, costUsd: 0, engine: 'cursor' }), '2 executions · 0s active · cost unknown', 'Cursor: never $0.00');
   assert.equal(formatTotals({ executions: 2, activeMs: 0, costUsd: 0.1, engine: 'cursor' }), "2 executions · 0s active · cost unknown (worca's own calls: $0.10)");
   assert.match(formatRunSummary({ stepper: { version: 2 }, steps: [], runEngine: 'cursor', totalCostUsd: 0 })[1], /· cost unknown$/, 'the end-of-run summary reads the run engine');
+  assert.equal(formatTotals({ executions: 2, activeMs: 0, costUsd: 1.5, known: false }), '2 executions · 0s active · ≥ $1.50 (part unknown)');
+  assert.match(formatRunSummary({ stepper: { version: 2 }, steps: [{ executionId: 'x:n_impl:1', costKnown: false }], totalCostUsd: 1.5 })[1],
+    /^1 execution · 0s active · ≥ \$1\.50 \(part unknown\)$/, 'the end-of-run summary reads costKnownOf(state)');
   assert.deepEqual([fmtDur(12000), fmtDur(63000), fmtDur(3660000), fmtDur(0), fmtDur(-5)], ['12s', '1m03s', '1h01m', '0s', '0s']);
 });
 

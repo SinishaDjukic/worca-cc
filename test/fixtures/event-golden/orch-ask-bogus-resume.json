@@ -8,6 +8,12 @@
   "sessionCosts": {
    "00000000-0000-0000-0000-000000000000": 0
   },
+  "usage": {
+   "input": 0,
+   "output": 0,
+   "cacheRead": 0,
+   "cacheWrite": 0
+  },
   "costUsd": 0
  },
  "totalCost": 0

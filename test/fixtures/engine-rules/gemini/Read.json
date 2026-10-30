@@ -1,0 +1,21 @@
+{
+  "rules": {
+    "deny": [
+      "Read(./secret.txt)"
+    ]
+  },
+  "expected": {
+    "rules": [
+      {
+        "toolName": [
+          "read_file",
+          "read_many_files"
+        ],
+        "argsPattern": "\"(?:[^\"]*/)?secret\\.txt\"",
+        "rule": "Read(./secret.txt)"
+      }
+    ],
+    "partial": [],
+    "unenforced": []
+  }
+}

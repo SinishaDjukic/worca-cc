@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000ca","model":"Auto"}
+{"type":"tool_call","subtype":"started","call_id":"c1","tool_call":{"shellToolCall":{"args":{"command":"ls"}}},"session_id":"00000000-0000-4000-8000-0000000000ca"}
+{"type":"tool_call","subtype":"completed","call_id":"c1","tool_call":{"shellToolCall":{"args":{"command":"ls"},"result":{"success":{"stdout":"a"}}}},"session_id":"00000000-0000-4000-8000-0000000000ca"}
+{"type":"tool_call","subtype":"started","call_id":"c2","tool_call":{"shellToolCall":{"args":{"command":"ls"}}},"session_id":"00000000-0000-4000-8000-0000000000ca"}
+{"type":"tool_call","subtype":"completed","call_id":"c2","tool_call":{"shellToolCall":{"args":{"command":"ls"},"result":{"success":{"stdout":"a"}}}},"session_id":"00000000-0000-4000-8000-0000000000ca"}

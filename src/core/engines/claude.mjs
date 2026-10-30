@@ -1,7 +1,7 @@
 // src/core/engines/claude.mjs
 // The Claude Code adapter: argv (buildClaudeArgs and the --settings seam), the
 // GH #380 staging plan, the model env and wire model, the host-guard preamble,
-// and the stream-json line parser. Process supervision is engines/spawn.mjs;
+// and the stream-json line parser. Process supervision is src/core/spawn.mjs;
 // the public entry point stays runClaude in src/core/claude-runner.mjs.
 import { prepareModelEnv, envFlag, describeModelEnv, withProviderModesOff, withStreamTimeouts } from '../model-env.mjs';
 import { effectiveDebugSpawn } from '../settings.mjs';
@@ -13,17 +13,17 @@ import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { agentIdentity } from '../agent-user.mjs';
-import { agentIdentityFor } from '../agent-pool.mjs';
-import { brokerEnabled, brokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, slotOfBaseUrl } from '../broker-client.mjs';
-import { resolveBillTo, normalizeBillTo, currentOwner } from '../billing.mjs';
+import { tmpdir, homedir } from 'node:os';
+import { brokerEnabled, brokerInfo, slotBaseUrl, slotOfBaseUrl } from '../broker-client.mjs';
+import { brokerLease, brokerSpawnError } from '../broker-lease.mjs';
 import { redactSecrets, redactDeep, createRedactor } from '../redact.mjs';
-import { MODEL_CREDENTIAL_ENV_KEYS } from '../broker-guard.mjs';
+import { resolveModelRoute, localServerEnv } from '../exec-env/credentials.mjs';
+import { engineEntry } from '../../shared/engine-switch.mjs';
 import { modelSlot } from '../broker-routing.mjs';
 import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { superviseSpawn, childEnv, cleanRunEnv, safeEmit, argValue, abandonRoute } from '../spawn.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
+import { removeSessionEntries } from './sessions.mjs';
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -281,6 +281,42 @@ export function isHookEvent(evt) {
 }
 
 /**
+ * Whether a Claude Code step's turn is over for good (superviseSpawn turnOver, R15): no more turn can come. A step with
+ * background sub-agents gives a `result` per turn (test/fixtures/hooks/subagent-background.jsonl): its main turn's, and
+ * after an agent's `system/task_notification` another `init` and a turn of its own whose `result` carries
+ * `origin.kind: "task-notification"`. So the turn is over at a `result` only when every agent launched
+ * (`tool_use_result.status: "async_launched"`) has sent its notification and every notification has had its turn (a
+ * notification-origin result after an `init` that came once it arrived); a notification is matched to its launch by
+ * `tool_use_id`, since a foreground agent sends one too. A later `init` opens a turn again. One that
+ * never reports either keeps the turn open, so its leftovers wait for its own exit, as before R15. A `result` that says
+ * more turns are queued (`queued_turn_count`) does not end it either.
+ * `see(evt)` each parsed stdout frame; `over()` the answer.
+ */
+export function claudeTurnTracker() {
+  // Background agents by the id of the tool call that launched them: a foreground agent sends a task_notification too,
+  // but no turn follows it.
+  const launched = new Set(); const notifiedIds = new Set();
+  let notified = 0; let answered = 0; let seenAtInit = 0; let done = false;
+  return {
+    see(evt) {
+      if (evt?.type === 'system' && evt.subtype === 'init') { done = false; seenAtInit = notified; }
+      else if (evt?.type === 'system' && evt.subtype === 'task_notification') {
+        const id = evt.tool_use_id;
+        if (launched.has(id) && !notifiedIds.has(id)) { notifiedIds.add(id); notified++; }
+      } else if (evt?.type === 'user' && evt.tool_use_result?.status === 'async_launched') {
+        const id = (Array.isArray(evt.message?.content) ? evt.message.content : []).find((c) => c?.type === 'tool_result')?.tool_use_id;
+        launched.add(typeof id === 'string' && id ? id : `unnamed-${launched.size}`);
+      } else if (evt?.type === 'result') {
+        if (evt.origin?.kind === 'task-notification') answered = Math.max(answered, seenAtInit);
+        // A turn Claude Code has queued already (`queued_turn_count`) comes next.
+        done = !(Number(evt.queued_turn_count) > 0);
+      }
+    },
+    over: () => done && notified >= launched.size && answered >= notified,
+  };
+}
+
+/**
  * The ONE --settings seam. Telemetry hook settings (gated, default off) and the
  * guardrails `permissions` rules merge into a SINGLE inline JSON — two --settings
  * flags would be last-wins at the CLI, silently dropping one payload.
@@ -359,7 +395,7 @@ export function buildClaudeArgs({
     else args.push(replace ? '--system-prompt' : '--append-system-prompt', systemPrompt);
   }
   if (model) {
-    args.push('--model', model);
+    args.push('--model', argValue(model, 'model'));
   }
   for (const a of buildEffortArgs(effort)) args.push(a);
   // The ONE --settings seam: gated, default-off per-sub-agent telemetry
@@ -487,18 +523,20 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir, ...(o.readGuardLog ? { readGuardLog: o.readGuardLog } : {}) };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, execEnv, workRoot = null, subagentsOff = false }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
-  const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
-  if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
+  // A remote spawn's model route adds its upstream credential to the list below (once it is open).
+  const baseRedactValues = Array.isArray(redactValues) ? redactValues : [];
+  let redactor = baseRedactValues.length ? createRedactor(baseRedactValues) : null;
+  if (redactor || execEnv?.remote) { const emit = onEvent; onEvent = (e) => emit(redactor ? redactor.deep(e) : e); }
   return new Promise((resolveRaw, rejectRaw) => {
-    const resolveP = redactor ? (r) => resolveRaw({ ...r, text: redactor.text(r.text) }) : resolveRaw;
-    const rejectP = redactor ? (err) => {
-      if (err && typeof err.message === 'string') err.message = redactor.text(err.message);
-      if (err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
+    const resolveP = (r) => resolveRaw(redactor ? { ...r, text: redactor.text(r.text) } : r);
+    const rejectP = (err) => {
+      if (redactor && err && typeof err.message === 'string') err.message = redactor.text(err.message);
+      if (redactor && err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
       rejectRaw(err);
-    } : rejectRaw;
+    };
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
     // a drop means a hand-edited settings file — and the surviving map is also
@@ -560,6 +598,15 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // ARGV_INLINE_LIMIT). The staging dir, when any, is removed on every
     // terminal path below (finish) and on a failed spawn.
     const limit = Number.isFinite(argvInlineLimit) && argvInlineLimit > 0 ? argvInlineLimit : ARGV_INLINE_LIMIT;
+    // How this spawn's model calls are signed (credentials.mjs resolveModelRoute), before anything is staged. The server
+    // env is the sandbox env's for a remote spawn (never this adapter's `remote` flag, a boolean), else worca's plus the
+    // run env; the broker is a property of the worca server. Under the broker runViaBroker already put the slot URL and
+    // token (or a keyless bridge URL) in the model env, so a Claude decision never names a slot of its own here.
+    const serverEnv = execEnv?.remote ? execEnv.env : localServerEnv(cleanRunEnv(runSpawnEnv));
+    const decision = resolveModelRoute({ engine: 'claude', remote: !!execEnv?.remote, serverEnv, modelEnv: safeModelEnv,
+      model: wireModel ?? null, broker: { on: brokerEnabled() } });
+    if (decision.refusal) { rejectP(Object.assign(new Error(decision.refusal), { errorClass: 'config' })); return; }
+    if (decision.slot) { rejectP(new Error('worca: a Claude spawn under the credential broker reached runClaudeProcess without its broker token')); return; }
     // Host guard (host-guard.mjs, 2026-08-31 incident): every REAL spawn — any
     // role, custom agent, plugin agent, ask chat — carries the protection
     // preamble, the PreToolUse hook (hostGuard -> the --settings payload), and
@@ -567,7 +614,9 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // nothing, so runMock stays untouched. The preamble heads the system prompt
     // whether it is appended or (systemPromptMode replace, Requirements A1.1) replaces
     // Claude Code's own.
-    const guardOn = hostGuardEnabled();
+    // In an E2B sandbox (exec-env) no worca server runs to protect: no guard there.
+    const remote = !!execEnv?.remote;
+    const guardOn = hostGuardEnabled() && !remote;
     const guardedSystemPrompt = guardOn
       ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n')
       : systemPrompt;
@@ -578,11 +627,14 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
+        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs,
+        // Decision 11: no sub-agent tool when the catalog does not prove sub-agents keep the rules.
+        disallowedTools: subagentsOff ? [...new Set([...(disallowedTools || []), 'Agent', 'Task'])] : disallowedTools, agents,
         pluginDirs, extraSettings, memoryLoadLog, systemPromptMode, readGuard, noSessionPersistence,
       }, { bin: resolved.bin, limit });
     } catch (err) {
-      rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
+      // An argv value refused before staging (argValue: errorClass 'config') keeps its class.
+      rejectP(err?.errorClass === 'config' ? err : new Error(`Failed to stage the claude prompt files: ${err.message}`));
       return;
     }
     const { args } = plan;
@@ -594,25 +646,19 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       console.warn(`[worca] claude argv would be ${plan.inlineLength} chars (limit ${limit}): prompt on stdin, system prompt/settings as files`);
     }
 
-    // Scrub (guardrails), then the run-level env (wsmap D9: a fan-out node's
-    // concurrency cap; it survives scrub and replaces an ambient value), then the
-    // model env merged LAST (it survives scrub and wins collisions: explicit
-    // operator config outranks ambient-env hygiene, and a catalog entry that sets
-    // the cap wins too), then WORCA_HOST_PID on every guarded spawn (scrub would
-    // drop it — WORCA_ is not an allowlisted prefix), then no GitHub or Azure DevOps
-    // credential in any tier (src/core/host-credentials.mjs): pushes and PRs are worca's own
-    // calls, and no broker secret (composeSpawnEnv).
-    const { env: composedEnv, scrubbed } = composeSpawnEnv({
-      envScrub, envAllowlist, prefixes: ['ANTHROPIC_', 'CLAUDE_'],
+    // The catalog allowlist (childEnv: exact names, always on), then the run-level env (wsmap D9: a fan-out node's
+    // concurrency cap; it replaces an ambient value), then the model env merged LAST (it wins collisions: explicit
+    // operator config outranks ambient-env hygiene, and a catalog entry that sets the cap wins too), then
+    // WORCA_HOST_PID on every guarded spawn, then no GitHub or Azure DevOps credential in any tier
+    // (src/core/host-credentials.mjs): pushes and PRs are worca's own calls, and no broker secret.
+    // The resolver's sign-in mode: exactly one credential of Claude's in direct/own mode; with the broker on, no ambient
+    // model credential at all (the boot guard refuses them; this is the second line): the spawn's broker token is the
+    // only one it holds.
+    const { env: composedEnv } = childEnv({
+      engine: 'claude', signInMode: decision.signInMode, allowlist: envAllowlist, cwd, root: workRoot,
       runEnv: cleanRunEnv(runSpawnEnv), overlay: safeModelEnv, hostPid: guardOn ? process.pid : null,
     });
     let spawnEnv = composedEnv;
-    // With the broker on, no ambient model credential reaches the agent either (the
-    // boot guard refuses them; this is the second line): the spawn's broker token
-    // is the only one it holds, and it wins over nothing.
-    if (brokerEnabled()) {
-      for (const k of MODEL_CREDENTIAL_ENV_KEYS) if (k !== 'ANTHROPIC_AUTH_TOKEN' || !safeModelEnv?.ANTHROPIC_AUTH_TOKEN) delete spawnEnv[k];
-    }
     // Routed off first party, a long turn behind a stream-buffering gateway must
     // not hit Bun's ~5-min fetch timeout or the CLI's first-byte watchdog
     // (model-env.mjs#withStreamTimeouts).
@@ -635,13 +681,14 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         `[worca] spawn-debug: bin=${JSON.stringify(resolved.bin)} `
         + `argv=${JSON.stringify(redactArgvForLog(args))} `
         + `promptViaStdin=${plan.stdin != null} staged=${plan.staged} `
-        + `envScrub=${scrubbed ? 'on' : 'off'} childEnvKeys=${Object.keys(spawnEnv).length} `
+        + `envScrub=${envScrub ? 'on' : 'off'} childEnvKeys=${Object.keys(spawnEnv).length} `
         + `routingEnv=[${safeModelEnv ? describeModelEnv(safeModelEnv) : '(none)'}]`;
       safeEmit(onEvent, { type: 'stderr', stream: 'err', text: summary });
     }
 
     let resultText = '';
     let assistantText = '';
+    const turn = claudeTurnTracker();   // whether its last turn is over: what the step leaves running after it is killed (R15)
     // In stream-json mode claude reports failures (auth, unknown/unavailable
     // model, API errors) as a terminal `result` event with is_error:true on
     // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
@@ -661,9 +708,36 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     };
     if (bridgeKey) bridgeEvents.on('failure', onBridgeFailure);
 
+    // argv (`args`) is unchanged in both modes: paths are mirrored into the sandbox.
+    const exe = remote ? 'claude' : resolved.bin;          // the template's pinned CLI on PATH
+    // MCP registry secrets (MCPSECRET_*) only for the servers the sandbox keeps; model-env keys always, except
+    // the relay-owned ones: the model's base URL and credential stay in worca, behind a model route
+    // (plans/model-relay-design.md §4). The route is built from the FINAL env, what a local spawn would use
+    // (with the broker on, runViaBroker's slot URL and spawn token), and refused when a relay cannot carry it.
+    let finalEnv = spawnEnv;
+    let modelRoute = null;
+    if (remote) {
+      try {
+        modelRoute = execEnv.openRoute(decision, { spawnEnv, modelEnv: safeModelEnv });
+        const relayOwned = engineEntry('claude').env.relayOwned;
+        const keep = Object.keys(safeModelEnv || {}).filter((k) => !relayOwned.includes(k));
+        finalEnv = execEnv.envFor(spawnEnv, { keep: [...keep, ...execEnv.mcpEnvRefs], route: modelRoute });
+      } catch (err) {
+        // A route opened but never spawned with: closed (and what it measured booked) before the step fails.
+        abandonRoute(execEnv, modelRoute, onEvent).finally(() => { if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure); cleanupStaged(); rejectP(err); });
+        return;
+      }
+      if (modelRoute.secrets?.length) redactor = createRedactor([...baseRedactValues, ...modelRoute.secrets]);
+      // A remote result frame is the sandbox's word (security evaluation E4): every one carries what the relay itself
+      // measured since the previous one, and the harness books that.
+      onEvent = execEnv.meteredEvents(modelRoute.id, onEvent);
+    }
     superviseSpawn({
-      file: resolved.bin, args, displayBin: bin, cwd, env: spawnEnv, stdin: plan.stdin ?? null,
-      signal, asAgent, stagedDir: plan.dir || null, onEvent,
+      file: exe, args, displayBin: bin, cwd, env: finalEnv, stdin: plan.stdin ?? null,
+      signal, asAgent: remote ? false : asAgent, stagedDir: plan.dir || null, onEvent, execEnv: remote ? execEnv : null,
+      // The model route closes with the spawn on every way out (superviseSpawn): the calls no `result` frame covered
+      // (a spawn stopped mid-turn, or one whose sandbox printed none) are booked from the relay all the same.
+      route: modelRoute,
       cleanup: () => {
         if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
         cleanupStaged();
@@ -676,6 +750,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
       // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
       onDone: (code) => ({ text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) }),
+      turnOver: () => turn.over(),
       onStdoutLine: (trimmed) => {
         let evt;
         try {
@@ -695,6 +770,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           assistantText += text;
           if (API_ERROR_TEXT_RE.test(text.trim())) apiErrorText = text.trim();
         }
+        turn.see(evt);
         if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
         // Remember the most specific error text we see, for the non-zero-exit path.
         if (evt?.type === 'result' && evt.is_error) {
@@ -781,12 +857,6 @@ export function extractResultCost(evt) {
 // out. The token is revoked when the process exits, and never survives in anything
 // worca stores: events and error text pass through redactSecrets.
 
-/** Error in the recovery classes the orchestrator already knows (auth pauses, never retries blindly). */
-function brokerSpawnError(message, errorClass = 'auth') {
-  const err = new Error(`worca-broker: ${message}`);
-  err.errorClass = errorClass;
-  return err;
-}
 
 function isLoopbackUrl(v) {
   try {
@@ -809,8 +879,6 @@ export function brokerRouteFor(modelEnv, env = process.env) {
   return { error: `this model routes to ${host} directly; with the credential broker on, a model must use a broker slot (set its credential on the Models page)` };
 }
 
-const SPAWN_TTL_SEC = { aux: 600, test: 600, ask: 7200, phase: 86400 };
-
 async function runViaBroker(opts) {
   // An env-style plugin model spends from its plugin's own slot, at the plugin's base path;
   // the plugin's secrets were never resolved into its env (config.mjs).
@@ -824,8 +892,8 @@ async function runViaBroker(opts) {
   const onEvent = opts.onEvent;
   const redactingOnEvent = (e) => onEvent(redactDeep(e));
 
-  let info;
-  try { info = await brokerInfo(); }
+  // The broker must be reachable even for a keyless bridge (which takes no token).
+  try { await brokerInfo(); }
   catch (err) { throw brokerSpawnError(err.message, 'network'); }
 
   // A bridged model (OpenAI, OpenRouter, Copilot, a gateway): the CLI still talks to worca's
@@ -843,42 +911,17 @@ async function runViaBroker(opts) {
     }
     bridgeSlot = ms.slot;
   }
-  let billTo = resolveBillTo(opts.billTo);
-  if (info.mode === 'multi' && (!billTo || billTo === 'local')) {
-    billTo = normalizeBillTo(process.env.WORCA_BROKER_SYSTEM_BILL_TO);
-    if (!billTo) throw brokerSpawnError('this action has no signed-in person to bill it to. Start it from the web UI, or set WORCA_BROKER_SYSTEM_BILL_TO for work nobody in particular starts');
-  }
-  const kind = ['aux', 'test', 'ask', 'phase'].includes(opts.spawnKind) ? opts.spawnKind
-    : (opts.permissionMode === 'dontAsk' ? 'ask' : 'phase');
-  // Whether this spawn runs where no other person's agent can read it: an agent spawn under
-  // the paying person's own pool user (not a resumed run's starter's), or a server-side spawn
-  // when agents run under their own users (they can't read the server's processes). The
-  // broker uses a personal Claude subscription only for such spawns.
-  const owner = normalizeBillTo(currentOwner()) || billTo;
-  const isolated = opts.asAgent
-    ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
-    : !!agentIdentity();
-  // A spawn with its own cost cap (an Ask turn's) gets the same cap as its token's budget: the
-  // CLI's --max-budget-usd is the agent's own bookkeeping, the broker's holds whatever it does.
-  const budgetUsd = typeof opts.maxBudgetUsd === 'number' && Number.isFinite(opts.maxBudgetUsd) && opts.maxBudgetUsd > 0 ? opts.maxBudgetUsd : undefined;
-  let minted;
-  try {
-    minted = await mintSpawnToken({
-      billTo: billTo || 'local', slots: [bridgeSlot || route.slot], kind, ttlSec: SPAWN_TTL_SEC[kind],
-      runId: opts.runId || null, threadId: opts.threadId || null, isolated, budgetUsd,
-    });
-  } catch (err) {
-    throw brokerSpawnError(`cannot get a token for this spawn: ${err.message}`, err.status === 401 ? 'auth' : 'network');
-  }
+  // Who pays, which slot, how long, isolated or not: broker-lease.mjs (every brokered adapter takes its token there).
+  const lease = await brokerLease(opts, bridgeSlot || route.slot);
   const modelEnv = bridgeSlot
     // Bridged: keep the bridge URL (and the rest of the resolved env); swap the bridge's own
     // secret for the spawn token.
-    ? { ...opts.modelEnv, ANTHROPIC_AUTH_TOKEN: minted.token }
+    ? { ...opts.modelEnv, ANTHROPIC_AUTH_TOKEN: lease.token }
     : withProviderModesOff({
       ENABLE_TOOL_SEARCH: 'true',
       ...(opts.modelEnv || {}),
       ANTHROPIC_BASE_URL: `${slotBaseUrl(route.slot)}${route.prefix || ''}`,
-      ANTHROPIC_AUTH_TOKEN: minted.token,
+      ANTHROPIC_AUTH_TOKEN: lease.token,
     });
   try {
     const r = await runClaudeProcess({ ...opts, modelEnv, onEvent: redactingOnEvent });
@@ -887,16 +930,63 @@ async function runViaBroker(opts) {
     if (err && typeof err.message === 'string') err.message = redactSecrets(err.message);
     throw err;
   } finally {
-    revokeSpawnToken(minted.spawnId);
+    lease.release();
   }
 }
 
 /** Claude Code declares every capability worca uses. */
 export const claudeCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, true])));
 
-/** The adapter's run(): every spawn goes through the credential broker when it is
- *  on (WORCA_BROKER_URL, runViaBroker), else straight to runClaudeProcess. Raw
- *  stream-json envelopes; engines/index.mjs normalizes them. */
+/** The adapter's run(): every spawn, local or remote, goes through the credential broker
+ *  when it is on (WORCA_BROKER_URL, runViaBroker), else straight to runClaudeProcess. A
+ *  remote spawn reaches the broker through its sandbox's model relay. Raw stream-json
+ *  envelopes; engines/index.mjs normalizes them. */
+/**
+ * The tool calls a deny rule refused in a captured stream-json stream (`lines`, the JSON lines claude printed): a
+ * tool_result marked is_error whose text says permission was denied, or that the tool is not there (`removed`: a deny
+ * rule on an MCP tool takes it out of the session), and the final result's `permission_denials`.
+ * `subagent`: the refusal happened inside a sub-agent (its event carries parent_tool_use_id). The catalog's 'held'
+ * proof (test/fixtures/engine-rules/claude/). PURE.
+ * @returns {{tool: string, subagent: boolean}[]}
+ */
+export function claudeDenials(lines) {
+  const names = new Map(); const out = []; const seen = new Set();
+  for (const raw of lines || []) {
+    let e; try { e = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { continue; }
+    const content = Array.isArray(e?.message?.content) ? e.message.content : [];
+    if (e?.type === 'assistant') for (const b of content) if (b?.type === 'tool_use' && b.id) names.set(b.id, b.name);
+    if (e?.type === 'user') {
+      for (const b of content) {
+        if (b?.type !== 'tool_result' || !b.is_error) continue;
+        const text = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map((x) => x?.text || '').join(' ') : '';
+        // A deny rule on an MCP tool removes it from the session: a call to it is refused as a tool that is not there.
+        const removed = /No such tool available: (\S+?)[.\s<]/.exec(text);
+        if (!removed && !/permission to use .* has been denied|denied by your permission settings|has been denied/i.test(text)) continue;
+        seen.add(b.tool_use_id);
+        out.push({ tool: names.get(b.tool_use_id) || removed?.[1] || 'unknown', subagent: !!e.parent_tool_use_id, ...(removed ? { removed: true } : {}) });
+      }
+    }
+    if (e?.type === 'result' && Array.isArray(e.permission_denials)) {
+      for (const d of e.permission_denials) if (!seen.has(d?.tool_use_id)) { seen.add(d?.tool_use_id); out.push({ tool: d?.tool_name || 'unknown', subagent: false }); }
+    }
+  }
+  return out;
+}
+
+const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Archive (catalog `sessions: 'user-store'`): a run's Claude Code sessions are `<id>.jsonl` (and the `<id>/` folder of
+ * its sub-agents and tool results) under `<CLAUDE_CONFIG_DIR or ~/.claude>/projects/<cwd>/`. Removes exactly those of
+ * `sessionIds` (bare uuids: another engine's ids are qualified, `codex:…`), never the sign-in.
+ * @returns {Promise<{removed: string[], failed: {path: string, error: string}[]}>}
+ */
+export function removeClaudeSessions({ sessionIds = [], env = process.env } = {}) {
+  const ids = new Set(sessionIds.filter((id) => typeof id === 'string' && CLAUDE_SESSION_ID.test(id)));
+  if (!ids.size) return Promise.resolve({ removed: [], failed: [] });
+  const home = (typeof env.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim()) || join(env.HOME || homedir(), '.claude');
+  return removeSessionEntries(join(home, 'projects'), (n) => ids.has(n) || (n.endsWith('.jsonl') && ids.has(n.slice(0, -6))), { depth: 1 });
+}
+
 export function runClaudeAdapter(opts) {
   return (brokerEnabled() ? runViaBroker : runClaudeProcess)(opts);
 }

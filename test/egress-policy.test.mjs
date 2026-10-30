@@ -19,7 +19,7 @@ import {
   startEgressPolicy, egressChildEnv, inheritsEgressProxy, egressNotice, egressSummary, EGRESS_PROXY_VAR,
 } from '../src/core/egress-policy.mjs';
 import { deploymentFacts } from '../src/core/deployment.mjs';
-import { buildSpawnEnv } from '../src/core/claude-runner.mjs';
+import { childEnv } from '../src/core/spawn.mjs';
 
 const PLATFORM_ALLOW = 'app.worca.dev,worca-run-broker.railway.internal';
 
@@ -244,7 +244,7 @@ test('child env: a scrubbed agent spawn keeps the proxy variables and the corpor
   const saved = {};
   for (const k of Object.keys(vars)) { saved[k] = process.env[k]; process.env[k] = vars[k]; }
   try {
-    const env = buildSpawnEnv(true, []);
+    const env = childEnv({ engine: 'claude' }).env;
     for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY', 'no_proxy', 'WORCA_CORPORATE_PROXY_URL']) assert.equal(env[k], vars[k], k);
   } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
@@ -782,7 +782,7 @@ test('fixedPort: the local proxy listens on 127.0.0.1:fixedPort and `worca proxy
 });
 
 test('WORCA_CORPORATE_PROXY_URL: one value in proxy-credentials, spawn.mjs and the promo-kit cdp helper', async () => {
-  const { SPAWN_ENV_BASE } = await import('../src/core/engines/spawn.mjs');
+  const { SPAWN_ENV_BASE } = await import('../src/core/spawn.mjs');
   assert.equal(CORPORATE_PROXY_VAR, 'WORCA_CORPORATE_PROXY_URL');
   assert.ok(SPAWN_ENV_BASE.includes(CORPORATE_PROXY_VAR), 'a scrubbed agent spawn keeps the marker');
   const cdp = readFileSync(fileURLToPath(new URL('../assets/promo-kit/tools/cdp.mjs', import.meta.url)), 'utf8');
@@ -1186,4 +1186,67 @@ test('opted out at boot: clearing networkProxy.enabled auto-starts without a res
     assert.equal(live.current().autoStarted, true);
     for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /Password/, `${k} carries no password`);
   } finally { await live.close(); await fake.close(); o.server.close(); }
+});
+
+// ── sandbox egress (plan Task 13, core-3): the E2B allowlist an `allow` project gets, from the same list ──
+// Kept in its own block with its own import so the catalog work on this file rebases cleanly.
+const sandboxPolicy = () => import('../src/core/sandbox-egress.mjs');
+const ALL = ['0.0.0.0/0'];
+
+test('sandbox egress: open by default, and for anything but allow', async () => {
+  const { sandboxEgress } = await sandboxPolicy();
+  assert.equal(sandboxEgress({}), null);
+  assert.equal(sandboxEgress(null), null);
+  assert.equal(sandboxEgress({ egress: 'open' }), null);
+  assert.equal(sandboxEgress({ egress: 'ALLOW ' }), null, 'only the exact value opts in');
+});
+
+test('sandbox egress: allow uses the shared list, apex and subdomains for a leading dot', async () => {
+  const { sandboxEgress } = await sandboxPolicy();
+  assert.deepEqual(sandboxEgress({ egress: 'allow' }, {}), {
+    allowOut: ['api.anthropic.com', 'github.com', '*.github.com', 'githubusercontent.com', '*.githubusercontent.com', 'registry.npmjs.org'],
+    denyOut: ALL,
+  });
+  assert.deepEqual(sandboxEgress({ egress: 'allow' }, { WORCA_EGRESS_ALLOW: 'pypi.org, .pythonhosted.org,10.0.0.0/8, 1.1.1.1' }), {
+    allowOut: ['pypi.org', 'pythonhosted.org', '*.pythonhosted.org', '10.0.0.0/8', '1.1.1.1'], denyOut: ALL });
+});
+
+test('sandbox egress: a denied host name leaves allowOut; IP and CIDR denies go into denyOut as they are', async () => {
+  const { sandboxEgress } = await sandboxPolicy();
+  const env = { WORCA_EGRESS_ALLOW: 'github.com,.github.com,registry.npmjs.org,1.1.1.1', WORCA_EGRESS_DENY: 'registry.npmjs.org, .github.com, 9.9.9.0/24, .invalid' };
+  assert.deepEqual(sandboxEgress({ egress: 'allow' }, env), { allowOut: ['github.com', '1.1.1.1'], denyOut: [...ALL, '9.9.9.0/24'] });
+  // A name under a wildcard cannot be carved out of it in E2B: the wildcard stays, and the caller hears which.
+  assert.deepEqual(sandboxEgress({ egress: 'allow' }, { WORCA_EGRESS_ALLOW: '.github.com', WORCA_EGRESS_DENY: 'gist.github.com' }),
+    { allowOut: ['github.com', '*.github.com'], denyOut: ALL, unheldDeny: ['gist.github.com'] });
+  // An exactly allowed name under a denied wildcard leaves allowOut too.
+  assert.deepEqual(sandboxEgress({ egress: 'allow' }, { WORCA_EGRESS_ALLOW: 'api.github.com', WORCA_EGRESS_DENY: '.github.com' }), { denyOut: ALL });
+});
+
+test('sandbox egress: an empty list is deny-all', async () => {
+  const { sandboxEgress, toE2bNetwork } = await sandboxPolicy();
+  assert.deepEqual(toE2bNetwork([]), { denyOut: ALL });
+  assert.deepEqual(sandboxEgress({ egress: 'allow' }, { WORCA_EGRESS_ALLOW: 'registry.npmjs.org', WORCA_EGRESS_DENY: 'registry.npmjs.org' }), { denyOut: ALL });
+});
+
+test('importing the sandbox allow list leaves a piped stdin blocking: readFileSync(0) still reads a slow writer (no node:process facade)', async () => {
+  const { spawn } = await import('node:child_process');
+  const mod = new URL('../src/core/sandbox-egress.mjs', import.meta.url).href;
+  const script = `await import(${JSON.stringify(mod)}); const { readFileSync } = await import('node:fs'); process.stdout.write(String(readFileSync(0, 'utf8').length));`;
+  const out = await new Promise((resolve, reject) => {
+    const c = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = ''; let stderr = '';
+    c.stdout.on('data', (d) => { stdout += d; });
+    c.stderr.on('data', (d) => { stderr += d; });
+    c.on('error', reject);
+    c.on('exit', (code) => (code === 0 ? resolve(stdout) : reject(new Error(`child exited ${code}: ${stderr}`))));
+    c.stdin.write('x'.repeat(1024));
+    setTimeout(() => c.stdin.end('y'.repeat(1024)), 300);   // the child reads an empty pipe in between
+  });
+  assert.equal(out, '2048');
+});
+
+test('toE2bAllow: .x is x and *.x; names, IPs and CIDRs pass through once', async () => {
+  const { toE2bAllow } = await sandboxPolicy();
+  assert.deepEqual(toE2bAllow(['.x.com', 'x.com', 'a.b', '1.2.3.4', '10.0.0.0/8', '.x.com']), ['x.com', '*.x.com', 'a.b', '1.2.3.4', '10.0.0.0/8']);
+  assert.deepEqual(toE2bAllow([]), []);
 });

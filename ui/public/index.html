@@ -437,24 +437,34 @@
                   <div class="field field-compact" id="engine-row" data-min-level="advanced">
                     <label for="engineSelect">Engine</label>
                     <div class="select-wrap">
-                      <select id="engineSelect" class="select" aria-label="Engine">
-                        <option value="claude" selected>Claude</option>
-                        <option value="codex">Codex</option>
-                        <option value="copilot">Copilot</option>
-                        <option value="cursor">Cursor</option>
-                        <option value="gemini">Gemini CLI</option>
-                        <option value="goose">Goose</option>
-                        <option value="opencode">OpenCode</option>
-                        <option value="qwen">Qwen Code</option>
-                      </select>
+                      <!-- The engines come from the catalog (src/shared/engine-switch.mjs engineOptions): app.js fills them. -->
+                      <select id="engineSelect" class="select" aria-label="Engine"></select>
+                    </div>
+                  </div>
+
+                  <!-- Execution environment (docs/e2b.md): where the run's agent and script steps execute. Local
+                       is the default and adds nothing to the run body; E2B runs them in one sandbox per run while
+                       commits, pushes and PRs stay here. Per run; same level as the engine. -->
+                  <div class="field field-compact" id="exec-env-row" data-min-level="advanced">
+                    <label for="execEnvSelect">Runs in</label>
+                    <!-- The chosen backend's live status (exec-env-status.mjs), hidden on Local. -->
+                    <div class="exec-env-pick">
+                      <div class="select-wrap">
+                        <select id="execEnvSelect" class="select" aria-label="Execution environment">
+                          <option value="local" selected>Local</option>
+                          <option value="e2b">E2B sandbox</option>
+                        </select>
+                      </div>
+                      <span class="exec-env-status" id="exec-env-status" role="status" hidden></span>
                     </div>
                   </div>
 
                   <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
                   <div class="wf-engine-hints">
-                    <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Codex</small>
+                    <small class="hint" id="engine-hint" hidden></small>
                     <small class="hint" id="engine-default-hint" hidden></small>
                     <small class="hint warn" id="engine-mcpjson-hint" hidden></small>
+                    <small class="hint" id="exec-env-hint" hidden>Runs locally: the saved E2B default does not apply to this run.</small>
                   </div>
                 </div>
 
@@ -2414,6 +2424,24 @@
               <div class="add-project-actions" style="margin-top:14px">
                 <button id="chatSettingsSave" class="btn btn-primary btn-sm" type="button">Save</button>
               </div>
+            </section>
+            <!-- Execution environment (docs/e2b.md): the user default of run.execEnv and the e2b mode's two limits. -->
+            <section class="card settings-card" id="e2b-settings-card" data-min-level="expert">
+              <div class="card-head"><div class="label-row"><h2>Execution environment</h2>
+                <span class="exec-env-status" id="e2b-status-chip" role="status" hidden></span></div></div>
+              <p class="hint">Where a run's agents and scripts execute. E2B runs each run in its own self-hosted sandbox; commits, pushes and PRs stay here. See docs/e2b.md.</p>
+              <p class="hint exec-env-status-server" id="e2b-status-server" hidden></p>
+              <div class="drows">
+              <div class="field drow"><label class="drow-label" for="e2b-exec-env">Default execution environment</label>
+                <div class="drow-control"><div class="select-wrap"><select id="e2b-exec-env" class="select" data-setting="execEnv">
+                  <option value="local">Local</option><option value="e2b">E2B sandbox</option></select></div></div></div>
+              <div class="field drow"><label class="drow-label" for="e2b-max-sandboxes">Sandboxes at once</label>
+                <div class="drow-control"><input id="e2b-max-sandboxes" class="input" type="number" min="1" max="64" step="1" placeholder="4" data-setting="e2bMaxSandboxes"></div></div>
+              <div class="field drow"><label class="drow-label" for="e2b-max-wait">Max wait for an answer (min)</label>
+                <div class="drow-control"><input id="e2b-max-wait" class="input" type="number" min="5" max="1440" step="1" placeholder="240" data-setting="e2bMaxWaitMin"></div></div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px"><small class="hint" id="e2b-settings-msg"></small>
+                <button type="button" class="btn btn-primary btn-sm" id="e2b-settings-save">Save</button></div>
             </section>
           </section>
           <!-- /pane runs -->

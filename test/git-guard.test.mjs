@@ -5,7 +5,7 @@
 // local install (documented), never under agent isolation.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -16,7 +16,7 @@ import { commitStagedWork, createWorktree, createDetachedWorktree } from '../src
 import { openBranchWorktree } from '../src/core/terminal/worktrees.mjs';
 import { pushBranch, diffPatch, diffNumstat } from '../src/core/git-info.mjs';
 import { fetchRemote, fastForward } from '../src/core/git-sync.mjs';
-import { guardEntries, parseConfigList, safeLocalSshCommand, guardedGitEnv, guardedGitEnvSync, guardedWorktreeAdd } from '../src/core/git-guard.mjs';
+import { guardEntries, parseConfigList, safeLocalSshCommand, guardedGitEnv, guardedGitEnvSync, guardedWorktreeAdd, gitOutputSync } from '../src/core/git-guard.mjs';
 import { existsSync } from 'node:fs';
 
 useTempHome(after);
@@ -103,6 +103,45 @@ test('Apply to branch (commitStagedWork) runs no planted config command; hooks o
     assert.deepEqual(configFired(marks), [], `isolated=${isolated}`);
     if (isolated) assert.deepEqual(fired(marks), []);
   }
+});
+
+// Audit 3.4: the project's commit hook (an agent may have rewritten it) runs with the person's machine, never worca's
+// secrets or config: model keys, the heartbeat token, cloud and registry tokens all stay out; ssh and git's own names
+// stay in.
+const SECRETS = { WORCA_HEARTBEAT_TOKEN: 'hb', ANTHROPIC_API_KEY: 'ak', OPENAI_API_KEY: 'ok', CLAUDE_CODE_OAUTH_TOKEN: 'ct',
+  AWS_SECRET_ACCESS_KEY: 'aws', NPM_TOKEN: 'npm', WORCA_RELAY_KEY: 'rk', WORCA_CODEX_PROVIDER_KEY: 'pk', CURSOR_API_KEY: 'cu' };
+const KEPT = { SSH_AUTH_SOCK: '/tmp/agent.sock', GNUPGHOME: '/tmp/gnupg', WORCA_CORPORATE_PROXY_URL: 'http://proxy:3128' };
+function plantEnvHook(repo) {
+  const out = join(tmp('worca-cc-g2-env-'), 'env.txt');
+  const f = join(repo, git(repo, 'rev-parse', '--git-common-dir'), 'hooks', 'pre-commit');
+  mkdirSync(join(f, '..'), { recursive: true });
+  writeFileSync(f, `#!/bin/sh\nenv > '${out}'\nexit 0\n`);
+  chmodSync(f, 0o755);
+  return () => Object.fromEntries(readFileSync(out, 'utf8').split('\n').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+}
+function assertHookEnv(env, where) {
+  for (const k of Object.keys(SECRETS)) assert.equal(env[k], undefined, `${where}: ${k}`);
+  for (const [k, v] of Object.entries(KEPT)) assert.equal(env[k], v, `${where}: ${k}`);
+  assert.ok(env.PATH, `${where}: PATH`);
+}
+
+test('the project commit hook gets no secret and none of worca\'s config (end-of-run commit, Apply to branch)', POSIX, async () => {
+  await withEnv({ ...SECRETS, ...KEPT }, async () => {
+    const a = repoWithOrigin();
+    writeFileSync(join(a.repo, 'work.txt'), 'agent work\n');
+    const teardown = plantEnvHook(a.repo);
+    const orch = createOrchestrator({ projectDir: a.repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' } });
+    const res = await orch._commitWork({ worktreeDir: a.repo, branch: 'main' });
+    assert.equal(res.committed, true, JSON.stringify(res));
+    assertHookEnv(teardown(), 'end-of-run commit');
+
+    const b = repoWithOrigin();
+    writeFileSync(join(b.repo, 'work.txt'), 'agent work\n');
+    const apply = plantEnvHook(b.repo);
+    const r = await commitStagedWork(b.repo, { message: 'worca: t' });
+    assert.equal(r.committed, true, JSON.stringify(r));
+    assertHookEnv(apply(), 'Apply to branch');
+  });
 });
 
 test('push (git-info pushBranch) runs no planted hook or config command', POSIX, async () => {
@@ -326,4 +365,22 @@ test('guardedGitEnv refuses a repository whose config sets a first-wins command 
   assert.throws(() => guardedGitEnvSync(repo), { code: 'GIT_CONFIG_REFUSED' });
   const missing = guardedGitEnvSync(join(repo, 'no-such-dir'));
   assert.ok(Number(missing.GIT_CONFIG_COUNT) > 0);
+});
+
+// The caller's timeout bounds the guard's config listing too: a git slower than the budget gives up within it (a
+// PATH shim that waits 3 s, as test/worktree.test.mjs does for the async callers). POSIX only (a script shim).
+test('gitOutputSync gives up within its timeout when git is slow, the config listing included', { skip: process.platform === 'win32' }, () => {
+  const repo = tmp('worca-guard-slow-');
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const shim = tmp('worca-slow-git-');
+  writeFileSync(join(shim, 'git'), `#!/bin/sh\nsleep 3\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${shim}:${process.env.PATH}` };
+  const PATH = process.env.PATH;
+  process.env.PATH = env.PATH;
+  try {
+    const t0 = Date.now();
+    assert.equal(gitOutputSync(repo, ['rev-parse', '--git-dir'], { env, timeoutMs: 200 }), null);
+    assert.ok(Date.now() - t0 < 2_500, `gave up within the budget (${Date.now() - t0} ms)`);
+  } finally { process.env.PATH = PATH; }
 });

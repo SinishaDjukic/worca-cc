@@ -298,7 +298,7 @@ member's checkout — `.env` and `.env.*` files such as `.env.example` included,
 protects from agents. Checking a line an agent cites (a survey fact in the catalog, a reported
 use in the join) reads that file whatever its name, inside the member's checkout. The
 catalog's search for literal mentions skips the files Normal protects (`.env*`, `*.pem`,
-`*.key`, `id_rsa`, `id_ed25519`, `*.p12`, `*.pfx`). What the stages record (a URL, a topic, a
+`*.key`, `.npmrc`, `.netrc`, `id_*`, `*.p12`, `*.pfx`). What the stages record (a URL, a topic, a
 table name, with its file and line) is stored in the map, shown on the Map tab, and given to
 the scan's agents in their briefs. Credentials in what they read — URL passwords, password,
 token and API-key values, a token used as a URL's user name (`https://<token>@github.com/…`,

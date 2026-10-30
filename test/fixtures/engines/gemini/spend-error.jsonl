@@ -1,0 +1,3 @@
+{"type":"init","session_id":"00000000-0000-4000-8000-0000000000e1","model":"gemini-3.8-flash"}
+{"type":"message","role":"assistant","content":"working","delta":true}
+{"type":"result","status":"error","error":{"type":"FatalError","message":"gemini run failed"},"stats":{"total_tokens":12,"input_tokens":10,"output_tokens":2,"tool_calls":0}}

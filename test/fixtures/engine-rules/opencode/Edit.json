@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "deny": [
+      "Edit(./b.txt)",
+      "Edit(//etc/**)"
+    ]
+  },
+  "expected": {
+    "permission": {
+      "edit": {
+        "b.txt": "deny",
+        "../../etc/**": "deny"
+      }
+    },
+    "enforced": [],
+    "partial": [
+      "Edit(./b.txt)",
+      "Edit(//etc/**)"
+    ],
+    "unenforced": []
+  }
+}

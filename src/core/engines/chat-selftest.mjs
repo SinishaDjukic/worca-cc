@@ -14,11 +14,11 @@
 // chat-selftest.json); a failure is never kept, so the next turn runs the test again. The turn's watchdog (turn.mjs
 // _watch) stays the backstop for what a test run cannot show.
 import { createServer } from 'node:http';
-import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { worcaHome } from '../projects.mjs';
+import { runCapture } from '../spawn.mjs';
 import { PROBE_TOOLS } from './chat-probe-mcp.mjs';
 
 export const PROBE_MCP_PATH = fileURLToPath(new URL('./chat-probe-mcp.mjs', import.meta.url));
@@ -45,13 +45,13 @@ function writeCache(file, key, at) {
   } catch { /* best effort: the test runs again after a restart */ }
 }
 
-/** `bin --version`'s first line, or throws. */
-export function binaryVersion(bin, { timeoutMs = 15000 } = {}) {
-  return new Promise((resolve, reject) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs }, (err, stdout) => {
-      if (err) reject(err); else resolve(String(stdout || '').trim().split('\n')[0] || 'unknown');
-    });
-  });
+/** `bin --version`'s first line, or throws. Run through the child-process owner with the base env only (no engine
+ *  names, no credential): a version answer needs none. */
+export async function binaryVersion(bin, { timeoutMs = 15000 } = {}) {
+  const r = await runCapture(bin, ['--version'], { spec: {}, timeoutMs });
+  if (r.error) throw r.error;
+  if (r.code !== 0) throw Object.assign(new Error(`${bin} --version exited ${r.code}`), { code: r.code });
+  return r.stdout.trim().split('\n')[0] || 'unknown';
 }
 
 /** What the files a CLI reads its user config from look like now (path, size, mtime): a change re-runs the test. */

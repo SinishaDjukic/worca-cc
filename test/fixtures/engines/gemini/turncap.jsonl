@@ -1,0 +1,6 @@
+{"type":"init","session_id":"00000000-0000-4000-8000-0000000000e1","model":"gemini-3.8-flash"}
+{"type":"tool_use","tool_name":"run_shell_command","tool_id":"call_1","parameters":{"command":"ls"}}
+{"type":"tool_result","tool_id":"call_1","status":"success","output":"a"}
+{"type":"tool_use","tool_name":"run_shell_command","tool_id":"call_2","parameters":{"command":"ls"}}
+{"type":"tool_result","tool_id":"call_2","status":"success","output":"a"}
+{"type":"result","status":"success","stats":{"total_tokens":12,"input_tokens":10,"output_tokens":2,"tool_calls":2}}

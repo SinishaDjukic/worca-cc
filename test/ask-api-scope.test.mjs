@@ -375,14 +375,20 @@ test('P4 the scope card: a pick switches the chat and continues the same message
       assert.deepEqual(store.listMessages(t.id).map((m) => m.role), ['user', 'user', 'assistant'], 'no divider row for the same scope');
     } },
     { name: 'no model can continue the message: the pick still switches the chat (CONTRACT §4) — at once, or after the running reply — and the chat says the reply failed', run: async () => {
-      // A chat locked to Codex whose model left the catalog, with the credential broker on (it refuses Codex): askEventPick
-      // finds no model. The env is set only around the answer: the model is picked when the card is answered.
+      // A chat locked to Codex whose model left the catalog, with the credential broker on and holding no openai slot (it
+      // refuses Codex): askEventPick finds no model. The env is set only around the answer: the model is picked when the
+      // card is answered.
+      const { setBrokerInfoForTest } = await import('../src/core/broker-client.mjs');
       const noModel = async (t, body) => {
         store.updateThread(t.id, { engine: 'codex', model: 'gpt-retired-9', effort: 'low' });
         const prev = process.env.WORCA_BROKER_URL;
         process.env.WORCA_BROKER_URL = 'http://127.0.0.1:9';
+        setBrokerInfoForTest({ slots: [{ id: 'anthropic' }] });
         try { const r = await answer(t, body); assert.equal(r.status, 200); return await r.json(); }
-        finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
+        finally {
+          setBrokerInfoForTest(null);
+          if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev;
+        }
       };
       const FAILED = 'Chat could not reply to an event: no model available';
       await idle();

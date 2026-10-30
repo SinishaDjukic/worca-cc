@@ -5,6 +5,7 @@
 // purpose: the adapters import it.
 import { ENGINES, engineLabel, chatEnginesTaking } from '../../shared/engine-switch.mjs';
 import { CODEX_PRICES, codexCachedRate, listPriceFor } from '../list-prices.mjs';
+import { resolveModelRoute } from '../exec-env/credentials.mjs';
 
 const DOCS = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md';
 /** A descriptor's `suggestionModel` that means "the chat's own model". */
@@ -13,11 +14,11 @@ const never = () => false;
 const ready = async () => ({});
 
 /**
- * A chat descriptor with every field filled.
+ * A chat descriptor with every field filled: the adapter's code hooks, and the catalog's chat data (engine-switch.mjs
+ * ENGINES[engine].chat), the one source of the data fields.
+ * From the adapter (code):
  *   engine              the adapter's name
- *   label               the engine's display name (engine-switch.mjs)
  *   lockdown()          truthy when worca has a verified lockdown for this engine (null/false: Chat is unavailable)
- *   noLockdownMessage   the turn's error when lockdown() is falsy
  *   askSupport(o)       the installed binary has every flag the lockdown needs: resolves {refusal} or {} (never rejects)
  *   selfTest(o)         null, or the runtime proof that the lockdown holds on this binary and this user's config
  *                       (engines/chat-selftest.mjs): resolves {refusal} or {}
@@ -25,54 +26,63 @@ const ready = async () => ({});
  *   listRates(model)    the list price (per-million-token rates) the engine's provider bills `model` at, or null; the
  *                       Models page price wins over it (ask/chat-price.mjs chatModelRates)
  *   resumeNotFound(err) the turn's error says the stored session is gone (the turn retries once from history)
- *   notReady            {code, docsUrl, setupLabel, flag}: the not-ready notice and its error code; `flag` is the notice's
- *                       marker the panel opens the setup docs from
+ *   modelProblem(id)    why a model of this engine cannot run a chat (a provider that is itself an agent CLI, one that
+ *                       refuses a request without the shell), or null; the picker leaves such a model out
+ *   signInMode(model, env)  the catalog sign-in mode (engine-switch.mjs `signIn.modes[].id`) a chat on `model` signs in
+ *                       with (default: the route resolver's pick, as for a pipeline spawn), or null for every mode's: its exact names, and the engine's endpoint names, are handed on
+ *                       to worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
+ * From the catalog (data):
+ *   label               the engine's display name
+ *   noLockdownMessage   the turn's error when lockdown() is falsy
+ *   notReady            {code, docsUrl, setupLabel, flag}: the not-ready notice and its error code (docsUrl from the
+ *                       catalog's `docsAnchor`); `flag` is the notice's marker the panel opens the setup docs from
  *   shellTrippedMessage the error when the watchdog saw a shell call
- *   images, pdfs        what a chat takes (engine-switch.mjs `chat`): read_attachment and read_file send an image / a PDF
- *                       as an MCP content block of their result, which this engine forwards to its model
+ *   images, pdfs        what a chat takes: read_attachment and read_file send an image / a PDF as an MCP content block
+ *                       of their result, which this engine forwards to its model
  *   turnImages          the user's images also ride the turn that carried them (Codex: `exec -i`)
  *   titles              the chat's title is a call on this engine (else it is the prompt's own words); like the
  *                       suggestion, it runs locked down with no MCP server (title.mjs auxTextCall askLockdown)
  *   suggestionModel     the model of the next-prompt suggestion: a model id, CHAT_MODEL (the chat's own), or null (none)
  *   prompt              the system prompt's words for this engine: {cli, attachments, composerBinary, webOff}
+ *   media               where a media block of a tool result reaches the model ({kind}: 'images' or 'PDFs'), or null
  *   metaTools           the engine's own tools a chat keeps (named and justified in plans/), as the stream names them:
  *                       the watchdog and the self-test allow them beside worca's (Goose: load_skill)
- *   modelProblem(id)    why a model of this engine cannot run a chat (a provider that is itself an agent CLI, one that
- *                       refuses a request without the shell), or null; the picker leaves such a model out
- *   ownFolder           a chat runs in a folder of its own under the scratch dir (the engine keeps sessions per folder)
- *   signIn(model, env)  the env names (a trailing `_` = a prefix) the engine signs in with for `model`: handed on to
- *                       worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
+ *   ownFolder           a chat runs in a folder of its own under the scratch dir (ask/chat-folder.mjs): the engine
+ *                       keeps sessions per folder (Gemini CLI), or runs code it finds in its cwd (Goose, OpenCode)
+ *   minVersion, flags   the oldest CLI the lockdown was verified on, and the --help flags it needs (askSupport)
  */
 export function makeChatDescriptor({
   engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, listRates = null, resumeNotFound = never,
-  docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
-  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, signIn = () => [],
+  modelProblem = null, signInMode = null,
 }) {
   const label = engineLabel(engine);
   const chat = ENGINES[engine]?.chat || { images: false, pdfs: false };
-  const short = setupLabel || label;
+  // A prompt word's {images} / {pdfs}: the chat engines that view that kind, as words (chatEnginesTaking).
+  const fill = (t) => (typeof t === 'string' && t ? t.replace(/\{(images|pdfs)\}/g, (_, w) => chatEnginesTaking(w)) : null);
+  const prompt = chat.prompt || {};
   return Object.freeze({
     engine, label,
     lockdown: typeof lockdown === 'function' ? lockdown : () => lockdown,
-    noLockdownMessage: noLockdownMessage || `Chat on ${label} is unavailable: worca cannot lock this ${label} down for a chat. Use a Claude chat.`,
+    noLockdownMessage: chat.noLockdownMessage || `Chat on ${label} is unavailable: worca cannot lock this ${label} down for a chat. Use a Claude chat.`,
     askSupport, selfTest, preflight,
     reportsCost: ENGINES[engine]?.cost === true,
     listRates: typeof listRates === 'function' ? listRates : () => null,
     resumeNotFound,
-    notReady: Object.freeze({ code: `${engine}-not-ready`, docsUrl: `${DOCS}#${docsAnchor || engine}`, prefix: `${short} isn't ready`, setupLabel: `${short} setup`, flag: notReadyFlag || `${engine}Setup` }),
-    shellTrippedMessage: shellTrippedMessage || `${label} tried to run a shell command although it was given none — worca stopped the turn.`,
-    images: chat.images === true, pdfs: chat.pdfs === true, turnImages: turnImages === true,
-    titles: titles === true,
-    metaTools: Object.freeze([...metaTools]),
+    notReady: Object.freeze({ code: `${engine}-not-ready`, docsUrl: `${DOCS}#${chat.docsAnchor || engine}`, prefix: `${label} isn't ready`, setupLabel: `${label} setup`, flag: `${engine}Setup` }),
+    shellTrippedMessage: chat.shellTrippedMessage || `${label} tried to run a shell command although it was given none — worca stopped the turn.`,
+    images: chat.images === true, pdfs: chat.pdfs === true, turnImages: chat.turnImages === true,
+    titles: chat.titles !== false,
+    metaTools: Object.freeze([...(chat.metaTools || [])]),
     modelProblem: typeof modelProblem === 'function' ? modelProblem : () => null,
-    ownFolder: ownFolder === true,
-    signIn: typeof signIn === 'function' ? signIn : () => [],
-    suggestionModel: typeof suggestionModel === 'string' && suggestionModel ? suggestionModel : null,
+    ownFolder: chat.ownFolder === true,
+    signInMode: typeof signInMode === 'function' ? signInMode : (model, env) => routeSignInMode(engine, model, env),
+    suggestionModel: chat.suggestionModel === undefined ? CHAT_MODEL : (typeof chat.suggestionModel === 'string' && chat.suggestionModel ? chat.suggestionModel : null),
+    media: typeof chat.media === 'string' ? chat.media : null,
     prompt: Object.freeze({
-      cli: prompt.cli || `${label} with its own sign-in`,
-      attachments: prompt.attachments || attachmentWords(label, chat),
-      composerBinary: prompt.composerBinary || composerBinaryWords(label, chat),
-      webOff: prompt.webOff || `${label}'s own web tools stay off.`,
+      cli: fill(prompt.cli) || `${label} with its own sign-in`,
+      attachments: fill(prompt.attachments) || attachmentWords(label, chat),
+      composerBinary: fill(prompt.composerBinary) || composerBinaryWords(label, chat),
+      webOff: fill(prompt.webOff) || `${label}'s own web tools stay off.`,
     }),
   });
 }
@@ -92,18 +102,27 @@ export function composerBinaryWords(label, { images = false, pdfs = false } = {}
   return `A ${label} chat cannot view images or PDFs: read_attachment returns only their kind and size.`;
 }
 
-/** The names in `env` that a chat on `d` signs in with for `model` (its descriptor's `signIn`; never a WORCA_ name). */
-export function chatSignInEnv(d, model, env = process.env) {
-  const want = d ? d.signIn(model, env) : [];
-  return Object.keys(env).filter((k) => !/^WORCA_/.test(k) && typeof env[k] === 'string' && env[k] !== ''
-    && want.some((w) => (w.endsWith('_') ? k.startsWith(w) : k === w))).sort();
+/** The sign-in mode the route resolver picks for a spawn of `engine` on `model` (credentials.mjs resolveModelRoute, the
+ *  rule every spawn's childEnv follows); '' (no names) when the route is refused, as the spawn itself is. */
+function routeSignInMode(engine, model, env = process.env) {
+  try {
+    const d = resolveModelRoute({ engine, serverEnv: env, model: model || null, checkModel: false });
+    return d.refusal ? '' : d.signInMode;
+  } catch { return ''; }
 }
 
-/** The error a per-turn cost cap gives a chat on `d` for `model`, or null when worca can keep the turn under it:
- *  `modelPriced(model)` says worca has a price for it (ask/chat-price.mjs chatModelRates), the same rule on every engine. */
-export function chatCostCapRefusal(d, model, modelPriced) {
-  if (!modelPriced(model)) return `A per-turn cost cap is set, and worca has no price for ${model || `${d.label}'s default model`}, so it cannot keep this turn under it. Set the model's price on the Models page, pick a priced model, or turn the cap off (Settings › Chat).`;
-  return null;
+/** The names in `env` that a chat on `d` signs in with for `model`, exact names only (decision 3): the catalog sign-in
+ *  mode its descriptor's `signInMode` names (null: every mode's), plus the engine's endpoint names (its `env.relayOwned`
+ *  that no mode holds as a credential). Never a WORCA_ name. */
+export function chatSignInEnv(d, model, env = process.env) {
+  const entry = d ? ENGINES[d.engine] : null;
+  if (!entry?.signIn) return [];
+  const modes = entry.signIn.modes;
+  const id = d.signInMode(model, env);
+  const creds = new Set(modes.filter((m) => m.kind !== 'own').flatMap((m) => m.env));
+  const want = new Set([...(id == null ? modes : modes.filter((m) => m.id === id)).flatMap((m) => m.env),
+    ...entry.env.relayOwned.filter((k) => !creds.has(k))]);
+  return Object.keys(env).filter((k) => want.has(k) && !/^WORCA_/.test(k) && typeof env[k] === 'string' && env[k] !== '').sort();
 }
 
 /** OpenAI's list price of a model id as per-million-token rates (list-prices.mjs CODEX_PRICES), or null. */
@@ -120,20 +139,4 @@ export function providerListRates(id) {
   if (p === 'anthropic') return listPriceFor(m[2]);
   if (p === 'openai') return openaiListRates(m[2]);
   return null;
-}
-
-/** Extra env prefixes a provider's key and settings go by, beyond its own upper-cased name. */
-const PROVIDER_ENV_EXTRA = Object.freeze({
-  google: ['GEMINI_'], gemini: ['GOOGLE_'], gcp_vertex_ai: ['GOOGLE_', 'GCP_'], 'google-vertex': ['GOOGLE_', 'GCP_'], vertex: ['GOOGLE_', 'GCP_'],
-  aws_bedrock: ['AWS_'], 'amazon-bedrock': ['AWS_'], bedrock: ['AWS_'], azure_openai: ['AZURE_'], azure: ['AZURE_OPENAI_'],
-});
-/**
- * The env prefixes of a chat model's provider (`provider/model`): the ones a chat on Goose or OpenCode keeps through its
- * env scrub, so a key in worca's environment reaches that provider and no other's. A chat has no shell, so the engine
- * reads them only to call its provider (and worca's MCP child inherits them).
- */
-export function providerEnvPrefixes(modelId) {
-  const p = String(modelId || '').split('/')[0].trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_.-]*$/.test(p) || !String(modelId).includes('/')) return [];
-  return [...new Set([`${p.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_`, ...(PROVIDER_ENV_EXTRA[p] || [])])];
 }
