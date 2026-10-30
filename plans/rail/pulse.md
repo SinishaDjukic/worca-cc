@@ -16,7 +16,7 @@ among them).
 | Desktop switches in Settings › General › Alerts, chat switches in Settings › Chat | One page, **Settings › Notifications**: one row per group, one sentence per row |
 | A usage limit is known only when a run hits it and pauses | Usage is visible before it stops anything: **rings on the avatar**, a **Limits** row in Now when one is near, and an update when it crosses the warning line, is reached or resets |
 | The avatar ring shows spend against a budget | The avatar shows every window that can stop a run: **session**, the **long window** (week, day or month), and **spend** when a budget has a limit; each ring shades along its arc |
-| The account menu opens on the spend card | The menu keeps its rows; the spend card moves into one row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
+| The account menu opens on the spend card | The menu keeps its rows; the spend card moves into its last row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
 | A run starts and pauses at the limit | Before it starts, New run says the limit is near and offers a harness with room or a start after the reset; slices and scheduled runs follow a setting |
 
 ## 2. The rule that places everything
@@ -134,7 +134,8 @@ as fresh as the last turn that used the harness (`as of 14:28`). A harness no ru
 
 ### 4.3 The account menu and its Usage and costs side menu
 The account menu stays as it is today (`#acct-menu`: Interface mode, Settings, Away, Keep awake, Appearance). Only its
-first card changes: the spend card becomes one row, the way Interface mode is one row.
+spend card changes: it becomes one row, the way Interface mode is one row, and that row is the **last** in the menu,
+under Appearance (the corner it opens from is right below it).
 - **Usage and costs ›**: the small ring of the tightest window, the label, its share as the value (`86%`, or `Reached`;
   the spend when no limit is reported), the chevron. Tooltip: `Closest to its limit: Session 86% · Claude Code · resets 16:40`.
 - It opens a **side menu** beside the menu, as Interface mode does (`side-flyout.mjs`, mode `beside`). On a narrow
@@ -144,8 +145,8 @@ first card changes: the spend card becomes one row, the way Interface mode is on
     row per window: the small ring, the window (Session, Week, Day, Month), the share or the count (`48%`,
     `212 of 300`, amber or red text with the `-strong` inks), and `resets 16:40`. An API key reads `Billed per token: no
     session or weekly limit`. Each row's tooltip names its source (`Reported by Claude Code at 14:28`).
-  - **The spend card**, unchanged (`renderSpendCard`): `Spend this week`, Spent and Saved, or Limit and Spent with its
-    ring; **Details** opens Statistics. OpenRouter's free-request row leaves the card: it is a block in Limits now.
+  - **The spend card** (`renderSpendCard`): Spent and Saved, or Limit and Spent with its ring. Its title, `Spend this
+    week`, is the link to Statistics (a text link, `--blue-ink-strong`, 600); the Details button goes. OpenRouter's free-request row leaves the card: it is a block in Limits now.
   - **Limit settings**: opens Settings › Notifications.
 
 ### 4.4 Usage notifications

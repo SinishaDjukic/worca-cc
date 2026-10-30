@@ -57,7 +57,11 @@
 .pz-fly{left:calc(8px + 258px + 4px);bottom:64px;width:296px;max-height:none;gap:0;padding:6px;}
 .pz-fly.lvl-menu{width:236px;gap:1px;}
 .pz-subback{display:none;}
-.pz-fly .nav-fly-k{color:var(--ink-2);}   /* style.css's --ink-3 caption is under 4.5:1 on the menu */
+.pz-fly .nav-fly-k{color:var(--ink-2);}
+/* The spend card's title is its link to Statistics (a text link: --blue-ink-strong, 600), in place of Details. */
+.pz-mc-link{flex:none;padding:0;border:0;background:none;text-align:left;cursor:pointer;color:var(--blue-ink-strong);}
+.pz-mc-link:hover{text-decoration:underline;text-underline-offset:3px;}
+.pz-mc-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}   /* style.css's --ink-3 caption is under 4.5:1 on the menu */
 .pz-ublocks{display:flex;flex-direction:column;gap:10px;padding:2px 9px 10px;}
 .pz-fly > .msect{position:relative;margin-top:9px;}
 .pz-fly > .msect::before{content:"";position:absolute;top:-5px;left:6px;right:6px;height:1px;background:var(--line);}

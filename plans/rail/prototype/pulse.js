@@ -150,7 +150,7 @@ function popover() {
   </div>`;
 }
 
-// ---- the account menu: Worca's own menu (index.html #acct-menu), its spend card moved into Usage and costs ----
+// ---- the account menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
 const LEVELS_UI = [['simple', 'Simple', 'The essentials: start runs, answer them, see what shipped'], ['standard', 'Standard', 'Also workflows, schedules and costs'], ['expert', 'Expert', 'Everything: agents, engines, Labs']];
 const cap = (w) => w[0].toUpperCase() + w.slice(1);
 function acctMenu() {
@@ -161,9 +161,6 @@ function acctMenu() {
   const sub = (id) => `data-sub="${id}" aria-haspopup="menu" aria-expanded="${ui.sub === id}"`;
   return `<div class="menu nav-fly acct-menu${ui.sub ? ' has-sub' : ''}" role="menu" aria-label="Account">
     <div class="msect" role="group">
-      <button type="button" class="mi menu-item" role="menuitem" ${sub('usage')} title="${esc(top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend')}">${top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic')}<span class="mi-lbl">Usage and costs</span><span class="mi-val">${esc(val)}</span>${svg('chevR', 14, 'mi-chev')}</button>
-    </div>
-    <div class="msect" role="group">
       <button type="button" class="mi menu-item" role="menuitem" ${sub('lvl')} title="How much of Worca you see">${svg('sliders', 16, 'mi-ic')}<span class="mi-lbl">Interface mode</span><span class="mi-val">${lvl[1]}</span>${svg('chevR', 14, 'mi-chev')}</button>
       <button type="button" class="mi menu-item" role="menuitem" data-go="settings" title="Settings › Notifications (the only settings page in this prototype)">${svg('gear', 16, 'mi-ic')}<span class="mi-lbl">Settings</span></button>
     </div>
@@ -172,6 +169,9 @@ function acctMenu() {
       <button type="button" class="mi menu-item sw-item" role="menuitemcheckbox" aria-checked="${ui.keep}" data-sw="keep" title="Keeps the computer awake while runs are working. The display may still turn off.">${svg('cup', 16, 'mi-ic')}<span class="mi-lbl">Keep awake</span><span class="switch" aria-hidden="true"></span></button>
     </div>
     <div class="msect theme-sect" role="group" aria-labelledby="pz-theme-k"><span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => `<button type="button" class="theme-ic${appearance === m ? ' on' : ''}" role="menuitemradio" aria-checked="${appearance === m}" data-appearance="${m}" aria-label="${cap(m)}" title="${cap(m)}">${svg(ic, 14, 'mi-ic')}</button>`).join('')}</div></div>
+    <div class="msect" role="group">
+      <button type="button" class="mi menu-item" role="menuitem" ${sub('usage')} title="${esc(top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend')}">${top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic')}<span class="mi-lbl">Usage and costs</span><span class="mi-val">${esc(val)}</span>${svg('chevR', 14, 'mi-chev')}</button>
+    </div>
   </div>${usageFly()}${lvlFly()}`;
 }
 // The side menus open beside the account menu (side-flyout.mjs 'beside'); on a narrow screen in its place, with a way back.
@@ -198,7 +198,7 @@ function spendCard(c) {
   const b = c.budget; if (!b) return '';
   const pct = M.spendPct(b), t = pct == null ? '' : M.tone(pct, ui.s.warnAt);
   const rows = b.limit ? `<dt>Limit</dt><dd>${M.usd(b.limit)}</dd><dt>Spent</dt><dd class="${t}">${M.usd(b.spent)}</dd>` : `<dt>Spent</dt><dd>${M.usd(b.spent)}</dd><dt>Saved</dt><dd class="pos">${M.usd(b.saved)}</dd>`;
-  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. Claude Code client-side estimate, not authoritative billing"><div class="mc-head">${pct != null ? mini(pct, t) : ''}<span class="mc-title">Spend ${b.period}</span><button type="button" class="btn btn-sm mc-btn" role="menuitem" data-details title="Opens Statistics">Details</button></div><dl class="mc-rows">${rows}</dl></div>`;
+  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. Claude Code client-side estimate, not authoritative billing"><div class="mc-head">${pct != null ? mini(pct, t) : ''}<button type="button" class="mc-title pz-mc-link" role="menuitem" data-details title="Opens Statistics: spend per run, model and day">Spend ${b.period}</button></div><dl class="mc-rows">${rows}</dl></div>`;
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
