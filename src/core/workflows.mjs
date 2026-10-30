@@ -28,6 +28,7 @@ import { readPluginsLock } from './plugins-lock.mjs';                 // a DISAB
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
@@ -209,8 +210,9 @@ function parseArr(text) {
 }
 
 /** Map a workflows row to the template object shape. Version-aware: `graph`
- *  carries {nodes, wires, canvas?} ONLY — id/name/domain/origin stay row columns,
- *  so a rename can never drift. */
+ *  carries {nodes, wires} plus the template extras (pickTemplateExtras: canvas?,
+ *  codeGraph?, sessions?) ONLY — id/name/domain/origin stay row columns, so a
+ *  rename can never drift. */
 function rowToTpl(r) {
   const base = {
     id: r.id,
@@ -227,8 +229,7 @@ function rowToTpl(r) {
     try { graph = JSON.parse(r.graph || '{}') || {}; } catch { graph = {}; }
     base.nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
     base.wires = Array.isArray(graph.wires) ? graph.wires : [];
-    if (graph.canvas && typeof graph.canvas === 'object') base.canvas = graph.canvas;
-    if (graph.codeGraph === false) base.codeGraph = false;
+    Object.assign(base, pickTemplateExtras(graph, base.nodes));
     return base;
   }
   base.steps = parseArr(r.steps);
@@ -299,7 +300,7 @@ export async function writeWorkflow(tpl) {
  * because the importers/seeders that re-write a row by design must keep the
  * upsert; the API's save path is the one caller that turns it on.
  *
- * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object}} tpl
+ * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object, codeGraph?:false, sessions?:object}} tpl
  * @param {{rejectCollision?:boolean}} [opts]
  * @throws {Error} code 'RESERVED_NAME' (the name slugs onto wf_default) or,
  *   with rejectCollision, code 'ID_TAKEN' + `.id` (the minted id is in use)
@@ -330,8 +331,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   const domain = normDomain(tpl && tpl.domain);
   const origin = typeof tpl?.origin === 'string' && tpl.origin ? tpl.origin : null;
   const graph = { nodes: Array.isArray(tpl?.nodes) ? tpl.nodes : [], wires: Array.isArray(tpl?.wires) ? tpl.wires : [] };
-  if (tpl?.canvas && typeof tpl.canvas === 'object') graph.canvas = tpl.canvas;
-  if (tpl?.codeGraph === false) graph.codeGraph = false;
+  Object.assign(graph, pickTemplateExtras(tpl, graph.nodes));
 
   getDb();
   const existing = prepare('SELECT created_at, archived_at FROM workflows WHERE id = ?').get(id);
@@ -518,7 +518,7 @@ export async function setWorkflowNodeDefaults(id, map) {
     const now = new Date().toISOString();
     tx(() => {
       prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?')
-        .run(JSON.stringify({ nodes, wires: tpl.wires, ...(tpl.canvas ? { canvas: tpl.canvas } : {}) }), now, id);
+        .run(JSON.stringify({ nodes, wires: tpl.wires, ...pickTemplateExtras(tpl, nodes) }), now, id);
     });
     return { ...tpl, nodes, updatedAt: now };
   }

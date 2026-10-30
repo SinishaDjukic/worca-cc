@@ -182,7 +182,7 @@ async function emitMockSubAgents(role, onEvent, signal) {
 // ── Ask Worca mock role (ask-worca-design.md §6.7) ───────────────────────────
 
 /** Emit a raw stream-json frame through the SAME envelope runClaudeProcess uses (the rl 'line' handler above). */
-function emitRaw(onEvent, raw) {
+export function emitRaw(onEvent, raw) {
   const cost = extractResultCost(raw);
   const text = extractText(raw);
   safeEmit(onEvent, { type: raw.type, raw, text: text || undefined, ...(cost != null ? { costUsd: cost } : {}) });

@@ -29,7 +29,11 @@ import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
 import { sanitizeIcon } from '../../../src/shared/graph/manifest.mjs';
 import { KEYED_KINDS, DEFAULT_MAX_CYCLES } from '../../../src/shared/graph/constants.mjs';
+import { sessionsOf, sessionHeads, sessionRects, sessionRowSegments } from '../../../src/shared/graph/sessions.mjs';
+import { engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../../../src/shared/engine-switch.mjs';
 import { AWAY_GLYPH } from '../away-glyph.mjs';
+import { createSessionLayer, sessionWords } from './session-layer.mjs';
+import { flagOn } from '../flags.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -107,6 +111,9 @@ export function createGraphView(host, {
   modelLabel = null,          // (modelId) => display label for the label row's meta ('' hides it)
   modelOf = null,             // (node) => the model id the label row names (default: the authored node.config.model)
   onTransform = null,         // called after EVERY transform write (the composer re-tiles its dot grid off it)
+  engine = 'claude',          // the engine a session tray names (the composer: the default engine; run hosts: the run's)
+  sessionVerified = SESSION_SUBAGENTS_VERIFIED,   // the sub-agents gate per engine (tests open it)
+  sessionsOn = null,          // the Labs flag sessionGroups as a boolean; null reads it per render (Task 24)
 } = {}) {
   const win = doc.defaultView || globalThis;
   const clamps = MODE_ZOOM[mode] || MODE_ZOOM.edit;
@@ -156,6 +163,9 @@ export function createGraphView(host, {
   let ctx = null;                 // last render context (ports, loops, wired inputs)
   let curves = new Map();         // wireId -> {d, pts, mid} (lanes.mjs; a flow host: curves.mjs)
   let portMap = null;             // wireId -> the OR / AND input it is DRAWN into (lanes.mjs), null = solve
+  let sessSpecs = [];             // sessionsOf(current) — [] for an ungrouped template (then nothing below runs)
+  let sessLayer = null;           // the .gv-sessions layer, created by the first render that has a session
+  let sessLive = false;           // sessionsLive() at the last render: a drag frame keeps the words and chips in step
   const stats = { wireDUpdates: 0, ghostUpdates: 0, rectReads: 0 };
 
   const h = (tag, cls, text) => {
@@ -200,6 +210,8 @@ export function createGraphView(host, {
         sizeOf, anchorOf: (node, port, dir) => portAnchor(node, portsAt(node), port, dir, geo),
         loopWireIds: ctx.loopWireIds, pill: (w) => Number.isInteger(w.config && w.config.maxCycles),
         portMap: solve ? null : portMap, scale: S,
+        // A session's header strip is an obstacle every lane clears (Task 19); [] routes exactly as before.
+        obstacles: sessSpecs.length ? sessionHeads(sessSpecs, ctx.byId, sizeOf, { scale: S }) : [],
       });
       curves = out.routes;
       portMap = out.portMap;
@@ -227,6 +239,50 @@ export function createGraphView(host, {
   function rerouteAll() {
     reroute();
     for (const id of wireEls.keys()) paintWire(id);
+    paintSessions(false);
+  }
+
+  /** Sub-agents are not promised while the Labs flag is off (C14). Read per render, so a Labs flip shows on the next one. */
+  const sessionsLive = () => (sessionsOn === null ? flagOn('sessionGroups', doc) : sessionsOn === true);
+
+  /** The trays (Task 22), after the routes: a tray holds its internal wires' routes. `chips`: also re-seat the member
+   *  chips (a render; a drag frame moves no chip). */
+  function paintSessions(chips = true) {
+    if (!ctx || (!sessSpecs.length && !sessLayer)) return;          // ungrouped: no layer, no work
+    if (!sessLayer) { sessLayer = createSessionLayer(doc, { mode }); world.insertBefore(sessLayer.el, wiresEl); }
+    if (chips) sessLive = sessionsLive();            // a render (or repaintMeta) reads the flag; a drag frame keeps it
+    const live = sessLive;
+    const sub = sessionSupport(engine, { verified: sessionVerified }).subagents;
+    const engineText = engineLabel(engine);
+    // Separate sessions (C14): the Labs flag off, a lone step (V26: it runs on its own), or sub-agents the engine lacks.
+    const fallsBack = (spec) => !live || spec.members.length < 2 || (spec.settings.mode !== 'shared' && !sub);
+    const labelsOf = (spec) => spec.members.map((id) => labelOf(ctx.byId.get(id)).title);
+    if (isFlow) {
+      // Flow hosts (05 §4.8): one headerless segment per (session, row), no chip; `open` marks where it continues.
+      const bySid = new Map(sessSpecs.map((sp) => [sp.sid, sp]));
+      sessLayer.paint((flowLay ? sessionRowSegments(sessSpecs, flowLay) : []).map((g) => {
+        const sp = bySid.get(g.sid);
+        const fallback = fallsBack(sp);                   // the same rule as the lanes hosts: flag, lone step, gate
+        return { sid: g.sid, key: `${g.sid}:${g.row}`, rect: { x: g.x, y: g.y, w: g.w, h: g.h, head: null },
+          ...sessionWords(sp, { engineText, fallback, labels: labelsOf(sp) }), fallback, lone: sp.members.length < 2, open: g.open };
+      }));
+      if (chips) sessLayer.chips(nodeEls, []);
+      return;
+    }
+    const rects = sessionRects(sessSpecs, ctx.byId, sizeOf, curves, { scale: S });
+    const items = [];
+    const chipList = [];
+    for (const spec of sessSpecs) {
+      const rect = rects.get(spec.sid);
+      if (!rect) continue;
+      const fallback = fallsBack(spec);
+      items.push({ sid: spec.sid, rect, ...sessionWords(spec, { engineText, fallback, labels: labelsOf(spec) }), fallback, lone: spec.members.length < 2 });
+      // The chip is for the hosts that show a card's label row in full: edit and monitor (05 §4.8). Its kind is passed
+      // even when the paint falls back: a run decor's fallback (setSessionChrome) can bring it back.
+      chipList.push({ sid: spec.sid, members: spec.members, chip: mode === 'static' ? null : spec.settings.mode === 'shared' ? 'shared' : 'sub-agent', fallback, label: spec.settings.label });
+    }
+    sessLayer.paint(items);
+    if (chips) sessLayer.chips(nodeEls, chipList);
   }
 
   /** The label row ABOVE the card: family tile + title + quiet meta (agent: its model; script: its runtime). */
@@ -344,6 +400,7 @@ export function createGraphView(host, {
       const row = h('div', execRowClass(band));
       row.dataset.executionId = band.executionId || '';
       row.dataset.nodeId = nodeId;
+      if (band.title) row.title = band.title;      // a session member's row: where it ran (Task 59)
       row.append(h('i', 'led'), h('span', 'xl', band.label || ''), h('span', 'xr', band.right || ''));
       return row;
     }
@@ -440,6 +497,8 @@ export function createGraphView(host, {
       const rt = band.right || '';
       if (l && l.textContent !== lt) l.textContent = lt;
       if (r && r.textContent !== rt) r.textContent = rt;
+      if (band.title) { if (el.title !== band.title) el.title = band.title; }   // a row stamped into its session later
+      else if (el.hasAttribute('title')) el.removeAttribute('title');            // a plain row keeps no attribute
       return true;
     }
     const a = el.querySelector(':scope > a');            // kind: 'result'
@@ -653,11 +712,15 @@ export function createGraphView(host, {
     const errBy = new Map();
     const warnBy = new Map();
     const badWires = new Set();
+    const sessErr = new Map();      // an issue naming a session pips its header, not a card (V25 carries sessionId null)
+    const sessWarn = new Map();
     for (const e of (report && report.errors) || []) {
+      if (e.sessionId) { if (!sessErr.has(e.sessionId)) sessErr.set(e.sessionId, e.message || e.code); continue; }
       if (e.nodeId && !errBy.has(e.nodeId)) errBy.set(e.nodeId, e.message || e.code);
       if (e.wireId) badWires.add(e.wireId);
     }
     for (const w of (report && report.warnings) || []) {
+      if (w.sessionId) { if (!sessWarn.has(w.sessionId)) sessWarn.set(w.sessionId, w.message || w.code); continue; }
       if (!CANVAS_WARNING_CODES.includes(w.code)) continue;
       // V19 names only a wire ({wireId}): its pip goes on the wire's TARGET card (D15).
       const wire = !w.nodeId && w.wireId ? current.wires.find((x) => x && x.id === w.wireId) : null;
@@ -669,6 +732,7 @@ export function createGraphView(host, {
       setPip(el, id, 'nwarn', errBy.has(id) ? null : warnBy.get(id));
     }
     for (const [id, el] of wireEls) el.classList.toggle('bad', badWires.has(id));
+    if (sessLayer) sessLayer.setIssues(sessErr, sessWarn);
   }
 
   /** flow: lay the caller's template out in rows and return a POSITIONED COPY (never mutate the caller's). */
@@ -682,15 +746,18 @@ export function createGraphView(host, {
     source = template;
     current = isFlow ? layoutFlow(template) : template;
     // ALL FOUR ctx fields read `current`: in flow mode `template` still carries the caller's x/y.
+    const loops = classifyLoops(current, portsFn);
     ctx = {
       byId: new Map(current.nodes.map((n) => [n.id, n])),
       wireById: new Map(current.wires.map((w) => [w.id, w])),
       wiredInputs: new Set(current.wires.filter((w) => w && w.to).map((w) => `${w.to.node}.${w.to.port}`)),
       wiredOutputs: new Set(current.wires.filter((w) => w && w.from).map((w) => `${w.from.node}.${w.from.port}`)),
-      loopWireIds: classifyLoops(current, portsFn).loopWireIds,
+      loopWireIds: loops.loopWireIds,
     };
+    sessSpecs = sessionsOf(current, portsFn, { loops });
     renderNodes();
     renderWires();
+    paintSessions();
     view.setSelection(state.selection || null);
     applyReport(state.report || null);
     // (No decor here: run-decor.mjs's applyDecor(view, decor) — P6 — is the ONE
@@ -735,6 +802,8 @@ export function createGraphView(host, {
       for (const p of c.pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
       y1 = Math.max(y1, c.mid.y + 12);                 // a pill hangs below its wire
     }
+    // A tray's header strip rides above its cards: a fit must not clip it (`ids` framing adds it itself, Task 26).
+    if (sessLayer) for (const r of sessLayer.rects().values()) { x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); }
     return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
   }
   /** `fitBounds` → `{z, tx, ty}` mapped onto this view's `{x, y, z}` transform. */
@@ -799,6 +868,21 @@ export function createGraphView(host, {
       for (const [id, el] of nodeEls) el.classList.toggle('sel', Boolean(sel && sel.kind === 'node' && sel.id === id));
       for (const [id, el] of wireEls) el.classList.toggle('sel', Boolean(sel && sel.kind === 'wire' && sel.id === id));
       for (const [id, el] of badgeEls) el.classList.toggle('sel', Boolean(sel && sel.kind === 'wire' && sel.id === id));
+      if (sessLayer) sessLayer.select(sel && sel.kind === 'session' ? sel.id : null);
+    },
+    /** The painted tray rects by sid (the composer hit-tests these, so paint and hit cannot diverge); a flow host has
+     *  one headerless rect per row segment, keyed `<sid>:<row>`. */
+    sessionRects: () => new Map(sessLayer ? sessLayer.rects() : []),
+    /** The sessions the last render drew (sessionsOf over the rendered template). */
+    sessionSpecs: () => sessSpecs,
+    /** Run hosts: a tray's status, text, right side, title and aria label (class and text toggles only). */
+    setSessionChrome(sid, chrome) { if (sessLayer) sessLayer.setChrome(sid, chrome); },
+    /** A batched move (a session header drag): one transform write per card, then ONE full re-route. */
+    moveNodes(ids) {
+      if (!ctx) return;
+      markMoving();
+      for (const id of ids || []) { const node = ctx.byId.get(id); if (node) placeCard(node); }
+      rerouteAll();
     },
     // (no applyDecor on the view: run-decor.mjs's applyDecor(view, decor) — P6 — owns the decor pass)
     /** Statuses the monitor sets; every one is a class toggle, never a rebuild. */
@@ -899,7 +983,10 @@ export function createGraphView(host, {
       if (!totals) { if (run) run.remove(); return; }
       if (!run) { run = h('span', 'nrun'); run.append(h('span', 'dur'), h('span', 'cost')); lab.appendChild(run); }
       run.querySelector('.dur').textContent = totals.dur || '';
-      run.querySelector('.cost').textContent = totals.cost || '';
+      const cost = run.querySelector('.cost');
+      cost.textContent = totals.cost || '';
+      if (totals.title) { if (cost.title !== totals.title) cost.title = totals.title; }   // a session member's hand-offs (Task 61)
+      else if (cost.hasAttribute('title')) cost.removeAttribute('title');
       const awayText = (totals.away && totals.away.text) || '';
       let away = run.querySelector(':scope > .away');
       if (!awayText) { if (away) away.remove(); return; }
@@ -1140,6 +1227,7 @@ export function createGraphView(host, {
         const node = ctx.byId.get(id);
         if (node) { paintLabel(el, node); paintFoot(el, node); }
       }
+      paintSessions();                                // paintLabel rebuilt the label rows: re-seat the member chips
     },
     destroy() {
       for (const n of navs.splice(0)) n.destroy();
@@ -1148,6 +1236,7 @@ export function createGraphView(host, {
       nodeEls.clear(); wireEls.clear(); badgeEls.clear(); incident.clear(); dCache.clear(); footers.clear(); curves.clear(); portMap = null;
       current = null; ctx = null;
       source = null; flowLay = null; bandOverride = null;
+      sessSpecs = []; sessLayer = null;
     },
   };
   // Internals the later tasks' fast paths close over.

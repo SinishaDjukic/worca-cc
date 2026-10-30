@@ -14,6 +14,7 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
+import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { NOT_GRAPH_V2 } from './plugin-manifest.mjs';
 import { pluginCurrentDir } from './plugins-lock.mjs';
 
@@ -89,13 +90,13 @@ export function readPluginWorkflows(name, versionDir, { registry = null, scripts
     // hand-composed one. Warnings never block an import (they do not block a
     // save either); they are logged so a template that will misbehave at run
     // time says so at install.
-    const { errors, warnings } = validateGraph({ id, name: rowName, version: 2, domain, nodes, wires }, portsFn);
+    const extras = pickTemplateExtras(raw, nodes);
+    const { errors, warnings } = validateGraph({ id, name: rowName, version: 2, domain, nodes, wires, ...extras }, portsFn);
     if (errors.length) { skip(f, errors.map((e) => `${e.code}: ${e.message}`)); continue; }
     for (const w of warnings) warn(`[plugin-workflows] ${name}/${f}: ${w.code}: ${w.message}`);
-    // graph holds {nodes, wires, canvas?} ONLY — id/name/domain/origin are row
-    // columns, so a rename can never drift between the two.
-    const graph = { nodes, wires };
-    if (raw.canvas && typeof raw.canvas === 'object') graph.canvas = raw.canvas; // accepted, engine-ignored
+    // graph holds {nodes, wires} plus the template extras (canvas?, codeGraph?, sessions?) ONLY — id/name/domain/origin
+    // are row columns, so a rename can never drift between the two.
+    const graph = { nodes, wires, ...extras };
     ready.push({ file: f, id, rowName, domain, graph, origin });
   }
   return { ready, skipped };

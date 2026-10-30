@@ -15,6 +15,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import { pipeline } from 'node:stream';
 import process from 'node:process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -70,6 +71,7 @@ import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
 import { TELEMETRY_FILE } from '../src/core/telemetry/recorder.mjs';
 import { summarizeTelemetry } from '../src/core/telemetry/summary.mjs';
+import { sessionsReport, openTraceFile } from '../src/core/session-trace.mjs';
 import { modelFacts } from '../src/core/model-tiers.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
@@ -455,7 +457,7 @@ import {
 } from '../src/core/script-store.mjs';
 
 import { createBench, sweepBenchDirs, benchRoot } from '../src/core/script-bench.mjs';
-import { PORT_ID_RE } from '../src/shared/graph/constants.mjs';
+import { PORT_ID_RE, SESSION_ID_RE } from '../src/shared/graph/constants.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin, pythonNoticeFor,
   setPluginEnabled, doctorPlugin, linkPlugin,
@@ -795,7 +797,7 @@ function liveRunIds() {
 // engine AND for the v2 shim until the graph cut-over retires it.
 // `artifact-gone` is this branch's: an indexed artifact whose file the run later
 // removed, so the client can drop the row instead of leaving one that 404s.
-const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'artifact-gone', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title', 'night-decision', 'recovery-auto'];
+const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'artifact-gone', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title', 'night-decision', 'recovery-auto', 'sessionHost'];
 // The agentgen-* WS family (Agent Platform, Phase 2): a NEW family in the SAME
 // runs Map. createAgentGen emits many agentgen-progress then exactly one terminal
 // agentgen-done OR agentgen-error. (The scan-* family is gone: dev made a
@@ -6137,6 +6139,36 @@ app.get('/api/runs/:id/telemetry', requireFlag('runTelemetry'), async (req, res)
       return f ? { tokens: f.context, from: f.contextFrom } : null;
     };
     res.json(summarizeTelemetry(text, { windowOf }));
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/runs/:id/sessions -> every session of the run (session groups, Task 54): its Summary, per-turn rows, history,
+// failed cost checks and the reader's skip counts, rebuilt from <runDir>/sessions/<sid>/trace.ndjson. Not flag-gated: a
+// run made while the flag was on stays inspectable after it goes off. A run without a session -> { sessions: [] }.
+app.get('/api/runs/:id/sessions', async (req, res) => {
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    res.json(await sessionsReport(await runDirForRow(row)));
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/runs/:id/sessions/:sid/trace -> the raw trace, streamed as NDJSON. The sid must be a session id (path safety).
+app.get('/api/runs/:id/sessions/:sid/trace', async (req, res) => {
+  if (!SESSION_ID_RE.test(String(req.params.sid || ''))) return badRequest(res, 'bad session id');
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    const fh = await openTraceFile(await runDirForRow(row), req.params.sid);   // a real file of this run, never a planted link
+    if (!fh) return res.status(404).json({ error: 'no trace' });
+    res.type('application/x-ndjson');
+    // The handle the checks saw. pipeline closes it on every end: done, a read error, or a client that left while the
+    // checks above were awaited (its close already fired, so a res.on('close') registered here would never run).
+    pipeline(fh.createReadStream(), res, () => {});
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

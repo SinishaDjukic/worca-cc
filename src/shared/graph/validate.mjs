@@ -1,12 +1,14 @@
 // src/shared/graph/validate.mjs
-// THE authority on v2 graph legality (base spec §2, V1-V24; V22 (script config)
+// THE authority on v2 graph legality (base spec §2, V1-V24, sessions V25-V30; V22 (script config)
 // reuses the number the retired single-wire rule freed). Server save (422), plugin import, the composer's
 // live report, the run-time check and the seed drift guard all come through
 // here, so it is pure, never throws on a malformed template, and every lookup
 // guards: a dangling endpoint or an unknown key is an issue to COLLECT.
-import { KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS, PARAMS_PORT } from './constants.mjs';
+import { KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS, PARAMS_PORT, SESSION_ID_RE, SESSION_MODES, SESSION_LABEL_MAX,
+  SESSION_SETTING_KEYS, MAX_SESSION_MEMBERS, SESSION_MIN_MEMBERS } from './constants.mjs';
 import { portsOf, findPort, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
+import { sessionsOf, consecutiveIssue } from './sessions.mjs';
 import { paramValueError, mockErrors, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, pythonMissingSentence, wirableParams, WIRABLE_PARAM_TYPES } from './script-meta.mjs';
 
 const ARITY_SET = new Set(['and', 'or', 'combine']);
@@ -19,7 +21,7 @@ const AWAIT_PORT_ID = 'await';
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
   agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort',
-    'approve', 'maxQuestions', 'promptHints', 'roleReview']),
+    'approve', 'maxQuestions', 'promptHints', 'roleReview', 'session']),
   script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock', 'paramsPort']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
@@ -38,6 +40,7 @@ export const AGENT_TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions', 'sub
 export const SCRIPT_TUNABLES = ['params', 'timeoutMs'];
 
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;   // the same set canvas-ops' isStr refuses
 
 /**
  * @param {object} tpl v2 template
@@ -118,7 +121,8 @@ function buildContext(template, portsFn, limits) {
     if (!inboundByInput.has(key)) inboundByInput.set(key, w);
   }
 
-  const { loopWireIds, loopInputs, sccOf } = classifyLoops(template, portsFn);
+  const loops = classifyLoops(template, portsFn);
+  const { loopWireIds, loopInputs, sccOf } = loops;
   const components = [];
   for (const [id, i] of sccOf) { (components[i] = components[i] || []).push(id); }
   const selfWired = new Set(wires
@@ -128,9 +132,13 @@ function buildContext(template, portsFn, limits) {
   const cycles = components.filter(Boolean).map((c) => [...c].sort())
     .filter((c) => c.length > 1 || selfWired.has(c[0]));
 
+  // Sessions (V25–V30 and the V17 settings branch), derived ONCE from the same loop classification. [] on a template
+  // without a session, so the ungrouped path walks nothing new.
+  const sessions = sessionsOf(template, portsFn, { loops });
+
   return {
     template, portsFn, limits, nodes, wires, nodeById, metaOf, inputsOf, outputsOf,
-    inputPort, outputPort, liveWires, loopWireIds, cycles,
+    inputPort, outputPort, liveWires, loopWireIds, cycles, loops, sessions,
     portsFor,
     isWired: (id, port) => inboundByInput.has(`${id}.${port}`),
     inboundOf: (id, port) => inboundByInput.get(`${id}.${port}`) || null,
@@ -432,12 +440,12 @@ export const RULES = [
     }
   } },
 
-  { code: 'V17', level: 'W', check({ nodes, wires }, add) {
+  { code: 'V17', level: 'W', check({ nodes, wires, template, sessions }, add) {
     for (const n of nodes) {
       const known = KNOWN_CONFIG[n.kind];
       if (!known) continue;                                            // unknown kind — V3's error
       for (const key of Object.keys(n.config || {})) {
-        if (known.has(key)) continue;
+        if (known.has(key) || key === 'session') continue;   // V25 speaks for a session on a non-agent
         add(`node '${n.id}' has unknown config key '${key}' for kind '${n.kind}' — preserved and ignored`, { nodeId: n.id });
       }
     }
@@ -445,6 +453,15 @@ export const RULES = [
       for (const key of Object.keys(w.config || {})) {
         if (KNOWN_WIRE_CONFIG.has(key)) continue;
         add(`wire '${w.id}' has unknown config key '${key}' — preserved and ignored`, { wireId: w.id });
+      }
+    }
+    // The sparse session settings map: unknown keys are preserved and ignored, like node config (spec §4).
+    const map = isObject(template?.sessions) ? template.sessions : {};
+    for (const s of sessions) {
+      const raw = Object.hasOwn(map, s.sid) && isObject(map[s.sid]) ? map[s.sid] : {};
+      for (const key of Object.keys(raw)) {
+        if (SESSION_SETTING_KEYS.includes(key)) continue;
+        add(`session '${s.sid}' has unknown setting '${key}' — preserved and ignored`, { nodeId: s.members[0], sessionId: s.sid });
       }
     }
   } },
@@ -602,7 +619,110 @@ export const RULES = [
       if (!loopWireIds.has(w.id)) add(`wire '${w.id}' carries onExhausted but is not a loop wire`, { wireId: w.id });
     }
   } },
+
+  // ── Sessions (spec §4, 05 §2.1): 2–4 consecutive agent cards run as sub-agents of one harness session. Issues carry
+  // `sessionId`, so a canvas can pip the tray instead of a card (Task 22); `nodeId` is the card the issue is about.
+  // V25 is card-level, so its sessionId is always null. ──
+  { code: 'V25', level: 'E', check({ nodes }, add) {
+    for (const n of nodes) {
+      const v = isObject(n.config) ? n.config.session : undefined;
+      if (v === undefined || v === null) continue;                       // not in a session (a chat op's null removes it)
+      if (typeof v !== 'string' || !SESSION_ID_RE.test(v)) {
+        add(`node '${n.id}' config.session must be an id like 's_k3f9a2b1' (got ${JSON.stringify(v)})`, { nodeId: n.id, sessionId: null });
+      } else if (n.kind === 'script') {
+        add(`script node '${n.id}' cannot join session '${v}' — only agent steps can run in a session`, { nodeId: n.id, sessionId: null });
+      } else if (n.kind !== 'agent' && KINDS.includes(n.kind)) {
+        add(`${n.kind} node '${n.id}' cannot join session '${v}' — flow cards ride along, they are never members`, { nodeId: n.id, sessionId: null });
+      }
+    }
+  } },
+
+  { code: 'V26', level: 'E', check({ sessions }, add) {
+    for (const s of sessions) {
+      if (s.members.length <= MAX_SESSION_MEMBERS) continue;
+      add(`session '${s.sid}' has ${s.members.length} steps — a session holds ${SESSION_MIN_MEMBERS} to ${MAX_SESSION_MEMBERS}`, { nodeId: s.members[0], sessionId: s.sid });
+    }
+  } },
+
+  // A lone member is harmless: it runs as its own session (no host is created).
+  { code: 'V26', level: 'W', check({ sessions }, add) {
+    for (const s of sessions) {
+      if (s.members.length >= SESSION_MIN_MEMBERS) continue;
+      add(`session '${s.sid}' has one step ('${s.members[0]}') — it runs as its own session`, { nodeId: s.members[0], sessionId: s.sid });
+    }
+  } },
+
+  { code: 'V27', level: 'E', check({ template, portsFn, loops, sessions }, add) {
+    for (const s of sessions) {
+      if (s.members.length < SESSION_MIN_MEMBERS) continue;              // V26 speaks for it
+      const i = consecutiveIssue(template, portsFn, s.members, { loops });
+      if (!i) continue;
+      add(i.kind === 'disconnected'
+        ? `session '${s.sid}' is not consecutive — '${i.a}' and '${i.b}' are not wired together inside it`
+        : `session '${s.sid}' is not consecutive — '${i.via}' runs between '${i.a}' and '${i.b}' but is outside the session`,
+      { nodeId: s.members[0], sessionId: s.sid });
+    }
+  } },
+
+  // A loop between members that runs through an outside agent or script: the scheduler still routes it, and the host
+  // session simply idles until the outside step is done. A warning, never an error (spec §4).
+  { code: 'V28', level: 'W', check({ wires, nodeById, sessions }, add) {
+    for (const s of sessions) {
+      if (s.members.length < SESSION_MIN_MEMBERS) continue;
+      const members = new Set(s.members);
+      const inC = new Set(s.closure);
+      const reach = new Set(s.members);                                  // what a member reaches over ANY wire
+      const todo = [...s.members];
+      while (todo.length) {
+        const id = todo.pop();
+        for (const w of wires) {
+          if (w?.from?.node !== id || !nodeById.has(w?.to?.node) || reach.has(w.to.node)) continue;
+          reach.add(w.to.node);
+          todo.push(w.to.node);
+        }
+      }
+      for (const wid of s.crossingLoops) {
+        const w = wires.find((x) => x?.id === wid && nodeById.has(x?.from?.node) && nodeById.has(x?.to?.node));   // a duplicate id may be malformed (V6)
+        const src = w ? nodeById.get(w.from.node) : null;
+        if (!src || !members.has(w.to.node) || inC.has(src.id) || (src.kind !== 'agent' && src.kind !== 'script') || !reach.has(src.id)) continue;
+        add(`loop wire '${w.id}' runs '${src.id}' outside session '${s.sid}' — the session waits for it`, { nodeId: w.to.node, sessionId: s.sid });
+      }
+    }
+  } },
+
+  // ×N fan-out (an `expands` input that is wired, e.g. Implementation's `task`) and role reviews: their slices run
+  // outside the host in v1 (D2); the member's own fix rounds still run inside.
+  { code: 'V29', level: 'W', check({ nodeById, inputsOf, isWired, sessions }, add) {
+    for (const s of sessions) {
+      if (s.members.length < SESSION_MIN_MEMBERS) continue;
+      for (const m of s.members) {
+        const fans = inputsOf(m).some((p) => p?.expands === true && isWired(m, p.id)) || nodeById.get(m)?.config?.roleReview === true;
+        if (fans) add(`node '${m}' fans out ×N in session '${s.sid}' — its tasks run outside the session; fix rounds run inside`, { nodeId: m, sessionId: s.sid });
+      }
+    }
+  } },
+
+  // Setting values, read RAW (sessionsOf fills defaults, which would hide a bad value). null or absent = the default.
+  { code: 'V30', level: 'E', check({ template, sessions }, add) {
+    const map = isObject(template?.sessions) ? template.sessions : {};
+    for (const s of sessions) {
+      const raw = Object.hasOwn(map, s.sid) && isObject(map[s.sid]) ? map[s.sid] : null;
+      if (!raw) continue;
+      const at = { nodeId: s.members[0], sessionId: s.sid };
+      const set = (k) => raw[k] !== undefined && raw[k] !== null;
+      if (set('mode') && !SESSION_MODES.includes(raw.mode)) add(`session '${s.sid}' mode must be 'subagents' or 'shared' (got ${JSON.stringify(raw.mode)})`, at);
+      if (set('label') && !(typeof raw.label === 'string' && raw.label.length >= 1 && raw.label.length <= SESSION_LABEL_MAX && !CONTROL_RE.test(raw.label))) {
+        add(`session '${s.sid}' label must be 1 to ${SESSION_LABEL_MAX} characters with no control characters`, at);
+      }
+      for (const k of ['hostModel', 'hostEffort']) {
+        if (set(k) && !(typeof raw[k] === 'string' && raw[k].trim())) add(`session '${s.sid}' ${k} must be a non-empty string`, at);
+      }
+    }
+  } },
 ];
 
 /** The warnings the editor surfaces on a card (D15). V15 (unreachable) is left to the "ports to wire" chip. */
 export const CANVAS_WARNING_CODES = Object.freeze(['V16', 'V17', 'V18', 'V19']);
+
+/** The session rules (spec §4). Their issues carry `sessionId` (always null on V25, which is card-level). */
+export const SESSION_ISSUE_CODES = Object.freeze(['V25', 'V26', 'V27', 'V28', 'V29', 'V30']);

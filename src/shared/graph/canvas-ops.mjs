@@ -19,7 +19,8 @@ import { canWire, newNode, newWire, normalizeTemplate } from './template.mjs';
 import { autoLayout, RANK_DX } from './layout.mjs';
 import { snap, nodeSize, NODE_W, LABEL_H, SNAP } from './geometry.mjs';
 import { portsOf } from './ports.mjs';
-import { KINDS, KEYED_KINDS, NODE_ID_RE, WIRE_ID_RE, LIMITS } from './constants.mjs';
+import { KINDS, KEYED_KINDS, NODE_ID_RE, WIRE_ID_RE, LIMITS, SESSION_ID_RE } from './constants.mjs';
+import { pruneSessions, remintSessions } from './sessions.mjs';
 import { MIN_TIMEOUT_MS, MAX_TIMEOUT_MS } from './script-meta.mjs';
 
 export const CANVAS_OPS = Object.freeze(['add_node', 'remove_node', 'connect', 'disconnect', 'set_node', 'set_wire', 'move_node', 'layout']);
@@ -39,7 +40,8 @@ const isInt = (lo, hi) => (v) => Number.isInteger(v) && v >= lo && v <= hi;
 
 /** The settings a batch may write, per kind (FACTS-graph "config keys per kind"), with their value checks. */
 export const NODE_CONFIG = Object.freeze({
-  agent: { model: isStr, effort: isStr, fanOut: isBool, askQuestions: isBool, awaitAll: isBool, subagentModel: isStr, subagentEffort: isStr },
+  agent: { model: isStr, effort: isStr, fanOut: isBool, askQuestions: isBool, awaitAll: isBool, subagentModel: isStr, subagentEffort: isStr,
+    session: (v) => typeof v === 'string' && SESSION_ID_RE.test(v) },
   script: { params: isObj, timeoutMs: isInt(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS), awaitAll: isBool, paramsPort: isBool, ports: isObj },
   task: { planStoreSeed: isBool },
   end: {},
@@ -202,13 +204,17 @@ export function applyCanvasOps(tpl, ops, { portsFn = null, maxOps = MAX_OPS } = 
     if (err instanceof OpError) return { ok: false, error: `op ${i + 1} (${isObj(ops[i]) ? ops[i].op : '?'}): ${err.message}`, index: i };
     throw err;
   }
-  return { ok: true, tpl: t, applied, added, removed };
+  // A removed member can leave its session with one step: prune in the SAME batch (05 §1.7), as the composer's own
+  // Delete does. Contiguity is never repaired here — a gap is V27's to show.
+  return { ok: true, tpl: removed.length ? pruneSessions(t) : t, applied, added, removed };
 }
 
 /** A whole workflow from {nodes:[{ref, kind, key?, config?}], wires:[{from:{node:ref, port}, to:{node:ref, port}, maxCycles?}]}
  *  (refs may omit the leading `$`), laid out. Validation is the caller's. */
 export function buildGraph(spec, { portsFn = null } = {}) {
-  const nodes = Array.isArray(spec && spec.nodes) ? spec.nodes : [];
+  // A spec's session ids are the model's own labels: each distinct one becomes ONE fresh minted id (paste semantics),
+  // so a built graph never shares an id with a canvas it lands on.
+  const nodes = remintSessions(Array.isArray(spec && spec.nodes) ? spec.nodes : [], new Set());
   const wires = Array.isArray(spec && spec.wires) ? spec.wires : [];
   if (!nodes.length) return { ok: false, error: 'nodes is required' };
   const ref = (r) => (typeof r === 'string' && r ? (r.startsWith('$') ? r : `$${r}`) : r);

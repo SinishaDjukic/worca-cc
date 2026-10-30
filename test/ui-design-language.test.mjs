@@ -165,7 +165,7 @@ const GRADIENT_OK = new Set(['.wf-pop-canvas', '.run-flow-wrap', '.ask-wfcard-gr
   '.chat-home-wf-tb', '.skel', '.ws-sum-pending', '.shipit-desc-field.is-generating .shipit-desc-busy::before',
   '.shipit-desc-busy-label', '.ask-thinking-label', '.ask-wfcard-step.is-live .st-label', '.wfc-act-l', '.pp-shimmer',
   '.ask-ctx-bar-buffer', '.ask-ctx-stat[data-stat="buffer"] .ask-ctx-swatch', '.chat-dock::before',
-  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input']);
+  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input', '.rs-hand']);
 test('gradients only as functional textures (D15)', () => {
   const bad = ALL.flatMap((r) => decls(r.body, 'background(?:-image)?')
     .filter(([, v]) => /gradient\(/.test(v) && !GRADIENT_OK.has(r.sel)).map(([, v]) => where(r, v.slice(0, 40))));

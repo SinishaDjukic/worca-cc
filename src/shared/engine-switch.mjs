@@ -10,6 +10,8 @@
  *   label     its display name
  *   models    it owns catalog models (step, helper and Ask slots; a switch falls back to its catalog default)
  *   cost      its runs report a cost (adapter capability `cost`); where not, a cost shows as unknown, never $0.00
+ *   subagents its adapter can run native sub-agents (adapter capability `subagents`; a test keeps them equal). A
+ *             session's "Sub-agents" mode also needs the engine's SESSION_SUBAGENTS_VERIFIED gate below
  *   helpers   it runs a run's helper jobs itself (title, overview, PR description, Auto classifier, night decider);
  *             else they run on Claude
  *   beta      still in beta: every engine picker marks it (taking it out of beta is this one flag)
@@ -22,14 +24,14 @@
  *             the adapters, because the browser and src/core/model-env.mjs read it and neither may import an adapter.
  */
 export const ENGINES = Object.freeze({
-  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
-  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }) }),
-  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
-  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }) }),
-  gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
-  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: false }) }),
-  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
-  qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
+  claude: Object.freeze({ label: 'Claude', models: true, cost: true, subagents: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
+  codex: Object.freeze({ label: 'Codex', models: true, cost: true, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }) }),
+  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
+  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }) }),
+  gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
+  goose: Object.freeze({ label: 'Goose', models: true, cost: true, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: false }) }),
+  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, subagents: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
+  qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
 });
 
 /** The run engines. */
@@ -86,6 +88,19 @@ export function engineLabel(engine) {
 
 /** Whether runs on `engine` report a cost. Where not, a cost shows as unknown, never $0.00. An unknown engine does. */
 export function engineReportsCost(engine) { const e = engine || 'claude'; return !Object.hasOwn(ENGINES, e) || ENGINES[e].cost; }
+
+/** The engines whose sub-agent hosting the Phase 0 spikes verified (Claude: S1–S4, S6, S7, S9; the others: S10). Every
+ *  gate starts closed: a session runs as separate sessions until its engine's entry is flipped (Tasks 53, 69). The mock
+ *  engine is the parity reference; the runtime treats it as verified on its own (C13). */
+export const SESSION_SUBAGENTS_VERIFIED = Object.freeze({ claude: false, codex: false, copilot: false, opencode: false });
+
+/** What a session can do on `engine`: `subagents` needs the adapter capability AND the verified gate; `shared` (one
+ *  conversation) works on every engine that resumes. A missing engine is Claude; an unknown one has no sub-agents. */
+export function sessionSupport(engine, { verified = SESSION_SUBAGENTS_VERIFIED } = {}) {
+  const e = engine || 'claude';
+  const capable = Object.hasOwn(ENGINES, e) && ENGINES[e].subagents === true;
+  return { subagents: capable && verified?.[e] === true, shared: true, label: engineLabel(e) };
+}
 
 /** A run's cost as text for the CLI and chat: `fmt(costUsd)`, or "cost unknown" on an engine that reports none. A
  *  total above 0 on such a run is worca's own calls alone (helper jobs on Claude), named as that. */

@@ -11,6 +11,7 @@ import { rankNodes } from './layout.mjs';
 import { classifyLoops } from './loops.mjs';
 import { portsOf } from './ports.mjs';
 import { KEYED_KINDS } from './constants.mjs';
+import { sessionsOf } from './sessions.mjs';
 
 export const FLOW_SCALE = 0.65;
 export const FLOW_PAD = 20;            // host padding on X, NOT scaled
@@ -32,9 +33,11 @@ const portsAt = (portsFn, node) => portsOf(portsFn, node);   // never null: {kno
  * Dispatch order: Task cards → agents and the gates ranked among them → gates fed
  * ONLY by loop wires (the valves) → End. Inside the middle class the key is the
  * graph rank FIRST (so a combine/and gate stays inside its parallel group), then the
- * host-given index (a proposal's `order[]`, rank-consistent by construction), then id.
+ * host-given index (a proposal's `order[]`, rank-consistent by construction), then id. `keepSessions`: each session's
+ * closure (its members and the flow cards between them) then sits side by side, at its first card's slot, in the
+ * order above (a drawing rule: one tray per row, and a combine stays before the step it feeds).
  */
-export function flowOrder(tpl, portsFn, { agentOrder = null } = {}) {
+export function flowOrder(tpl, portsFn, { agentOrder = null, keepSessions = true } = {}) {
   const nodes = (Array.isArray(tpl?.nodes) ? tpl.nodes : []).filter(isNode);
   const loops = classifyLoops(tpl, portsFn);
   const rank = rankNodes(tpl, loops);                       // plain object {[id]: number}
@@ -46,10 +49,48 @@ export function flowOrder(tpl, portsFn, { agentOrder = null } = {}) {
   const given = new Map((Array.isArray(agentOrder) ? agentOrder : []).map((id, i) => [id, i]));
   const cls = (n) => (n.kind === 'task' ? 0 : n.kind === 'end' ? 3 : (!KEYED_KINDS.includes(n.kind) && !nonLoopIn.get(n.id) ? 2 : 1));
   const key = (n) => [cls(n), rank[n.id] ?? 0, given.has(n.id) ? given.get(n.id) : Number.MAX_SAFE_INTEGER, n.id];
-  return nodes.map((n) => ({ n, k: key(n) })).sort((a, b) => {
+  const ids = nodes.map((n) => ({ n, k: key(n) })).sort((a, b) => {
     for (let i = 0; i < 4; i += 1) if (a.k[i] !== b.k[i]) return a.k[i] < b.k[i] ? -1 : 1;
     return 0;
   }).map((x) => x.n.id);
+  if (!keepSessions) return ids;
+  const nextOf = new Map();                                   // the non-loop wires, forward: what a block feeds
+  for (const w of Array.isArray(tpl?.wires) ? tpl.wires : []) {
+    if (!w?.from?.node || !w?.to?.node || loops.loopWireIds.has(w.id)) continue;
+    if (!nextOf.has(w.from.node)) nextOf.set(w.from.node, []);
+    nextOf.get(w.from.node).push(w.to.node);
+  }
+  let out = ids;
+  const placed = new Map();                                   // card → the block an earlier session's pass placed it in
+  for (const spec of sessionsOf(tpl, portsFn, { loops })) {
+    if (spec.members.filter((id) => out.includes(id)).length < 2) continue;
+    const keep = new Set(spec.closure);
+    const block = out.filter((id) => keep.has(id));          // members and their flow cards, in today's relative order
+    const first = out.indexOf(block[0]);
+    const last = out.indexOf(block[block.length - 1]);
+    // A card between them that the block feeds goes after it; any other (a branch into a later member) goes before
+    // it, so no wire of a legal session runs backwards. An earlier session's block in the gap moves as ONE unit (after
+    // the block when any of its cards is fed): split by card, its tray would span this block and enclose its tray. So
+    // the trace marks such a block fed WHOLE and goes on from all its cards: what it feeds then follows it too. The one
+    // exception is two sessions that each feed the other's later member: no order keeps both trays whole with every
+    // wire forward, and the trays win (one wire runs backwards).
+    const fed = new Set();
+    const todo = [...block];
+    while (todo.length) for (const o of nextOf.get(todo.pop()) || []) if (!keep.has(o) && !fed.has(o)) for (const x of placed.get(o) || [o]) if (!fed.has(x)) { fed.add(x); todo.push(x); }
+    const units = new Map();                                  // the gap in today's order, an earlier block as one entry
+    for (const id of out.slice(first, last + 1)) {
+      if (keep.has(id)) continue;
+      const u = placed.get(id) || id;
+      if (!units.has(u)) units.set(u, []);
+      units.get(u).push(id);
+    }
+    const before = [];
+    const after = [];
+    for (const u of units.values()) (u.some((id) => fed.has(id)) ? after : before).push(...u);
+    out = [...out.slice(0, first), ...before, ...block, ...after, ...out.slice(last + 1)];
+    for (const id of block) placed.set(id, block);
+  }
+  return out;
 }
 
 /** perRow for a host width: max(1, ⌊(W − 2·pad + gap) / (cardW + gap)⌋). */

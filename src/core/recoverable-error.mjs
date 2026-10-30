@@ -17,7 +17,7 @@ import { isValidTimeZone, zonedParts, zonedToUtc } from '../shared/schedule/recu
 // recoverable and retried. Structured error-code detection is out of scope.
 //
 // @param {Error|string|unknown} err
-// @returns {'auth'|'model'|'usage_limit'|'rate_limit'|'quota'|'network'|null}
+// @returns {'auth'|'model'|'usage_limit'|'rate_limit'|'quota'|'network'|'session_host'|null}
 export function classifyError(err) {
   // A producer that saw MORE evidence than the message carries stamps the
   // verdict directly: claude-runner classifies the FULL stderr stream line-by-

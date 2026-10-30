@@ -131,6 +131,6 @@ test('probeClaudeCapabilities: pluginDir is whether --help advertises --plugin-d
   };
   const withFlag = await probeClaudeCapabilities(fake('  --mcp-config <configs...>\n  --plugin-dir <path>  Load a plugin'));
   const without = await probeClaudeCapabilities(fake('  --mcp-config <configs...>'));
-  assert.deepEqual(withFlag, { mcpConfig: true, pluginDir: true, version: '2.1.291' });
-  assert.deepEqual(without, { mcpConfig: true, pluginDir: false, version: '2.1.291' });
+  assert.deepEqual(withFlag, { mcpConfig: true, pluginDir: true, version: '2.1.291', forwardSubagentText: false, agentsFile: true });
+  assert.deepEqual(without, { mcpConfig: true, pluginDir: false, version: '2.1.291', forwardSubagentText: false, agentsFile: true });
 });

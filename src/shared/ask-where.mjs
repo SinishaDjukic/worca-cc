@@ -33,7 +33,7 @@ export const WHERE_PAGES = Object.freeze({
 /** A run page's part (prompt.mjs RUN_PAGE_PARTS) as the caption names it; the glance has none. */
 export const RUN_PART_LABELS = Object.freeze({
   overview: 'Overview', diff: 'Diff', changes: 'Changes', artifacts: 'Artifacts', actions: 'Actions', workflow: 'Workflow',
-  qa: 'Q&A', clarify: 'Q&A', logs: 'Logs', agents: 'Agents',
+  qa: 'Q&A', clarify: 'Q&A', logs: 'Logs', sessions: 'Sessions', agents: 'Agents',
 });
 
 const RUN_VIEWS = new Set(['running', 'history-detail']);

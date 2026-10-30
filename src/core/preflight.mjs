@@ -17,6 +17,7 @@ import { constants as FS, existsSync, statSync, openSync, readSync, closeSync, m
 import { gitAvailable } from './git-available.mjs';
 import { guardedGitEnvSync } from './git-guard.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
+import { cmpVersions } from './preflight-node.mjs';
 
 const _probeChildren = new Set();
 /** Test seam: kill the probes still running (each resolves null), so a stopped run's preflight cannot hold a test process open. */
@@ -515,7 +516,12 @@ export async function probeClaudeCapabilities(bin = 'claude') {
   const raw = await execSafe(exe, ['--version'], { timeout: 8000 });
   const version = raw ? (/(\d+\.\d+\.\d+)/.exec(raw)?.[1] ?? raw.split(/\s+/)[0] ?? null) : null;
   // pluginDir (skills registry §4.1): a set's skills reach a spawn only through --plugin-dir.
-  return { mcpConfig: !!help && help.includes('--mcp-config'), pluginDir: !!help && help.includes('--plugin-dir'), version };
+  // Session groups (Task 29): a host spawn needs --forward-subagent-text (by --help) and `--agents <file>` (by version,
+  // 2.1.281). Never probe --max-turns or --append-subagent-system-prompt by --help: both are hidden there on 2.1.308 but
+  // accepted by the binary (verify suggestion 9).
+  return { mcpConfig: !!help && help.includes('--mcp-config'), pluginDir: !!help && help.includes('--plugin-dir'), version,
+    forwardSubagentText: !!help && help.includes('--forward-subagent-text'),
+    agentsFile: !!version && cmpVersions(version, '2.1.281') >= 0 };
 }
 
 // ── Is the Claude Code CLI signed in? ─────────────────────────────────────────

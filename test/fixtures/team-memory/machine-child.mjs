@@ -2,14 +2,17 @@
 // test/memory-team-lifecycle.test.mjs: its own WORCA_HOME (store, DB, team-memory state), a clone of the same bare
 // origin. Reads its command as JSON on stdin (a note can be past Linux's 128 KiB per-argument cap), prints ONE JSON line
 // and exits.
-import { readFileSync } from 'node:fs';
 import { addProject } from '../../../src/core/projects.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
 import { writeProjectSettings } from '../../../src/core/settings-cascade.mjs';
 import { memoryRoot, projectScope, writeMemory, readMemory, removeMemory, listMemory } from '../../../src/core/memory-store.mjs';
 import { queueTeamChanges, flushTeamMemory, refreshTeamLayer, deleteTeamNote, TEAM_MARKER_KEY } from '../../../src/core/memory-team.mjs';
 
-const cmd = JSON.parse(readFileSync(0, 'utf8'));
+// Read to the end asynchronously: a sync read of fd 0 throws EAGAIN when the parent has not written the whole command
+// yet (a note over the 256 KiB reader cap, seen on macOS).
+const chunks = [];
+for await (const c of process.stdin) chunks.push(c);
+const cmd = JSON.parse(Buffer.concat(chunks).toString('utf8'));
 const key = projectKey(cmd.dir);
 const scope = projectScope(key);
 const push = () => flushTeamMemory(key, { projectDir: cmd.dir, sleep: async () => {} });

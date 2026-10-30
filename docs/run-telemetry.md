@@ -26,6 +26,7 @@ to the database. Deleting the run deletes the file.
 | `compact` | The CLI compacts the conversation | Trigger, tokens before |
 | `agent` | A sub-agent spawns or finishes | Type, model, tokens, duration |
 | `result` | A session ends | The session's usage and cost as the engine reports it |
+| `host` | A step that ran inside a [session](sessions.md) is booked | The session id and turn, the main agent's own input, cache and output tokens summed over its calls that turn (`ctx` = input + cache: a sum, not a context size), the turn's cost and the step's share of it, the turn's time; `cut` when a cut turn was booked later (a turn cut by a pause or a crash and booked after the resume has none; a session in One conversation has no main agent and writes none). The session's own trace (`sessions/<sid>/trace.ndjson`) is written whether or not this flag is on |
 | `harness` | Every 10 seconds with activity | State saves (count, total and max time, step rows written), live `state` updates (count, total and max size), event loop delay (p50, p99, max) |
 | `end` | The run ends | Size of the database, the telemetry file (before its last lines) and the run log |
 

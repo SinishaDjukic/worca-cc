@@ -574,7 +574,10 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
 // APPROXIMATION ONLY: it feeds the chat footer's live "≈" estimate while a turn
 // streams (ask/events.mjs `estimatedCostUsd`). The CLI's result.total_cost_usd,
 // re-priced by resolveModelCost, stays the ONLY figure any message row, thread
-// total, ledger or budget ever books — nothing here is read by those paths.
+// total, ledger or budget ever books. The one ledger path that reads these rates is a
+// session turn (session groups, session-cost.mjs): it only DIVIDES the CLI's own
+// figure between the step and the main agent at these list rates (listCostRates), and
+// prices a turn cut before its result as an estimate (C9).
 // Ids missing here get no estimate (null), which is the pre-existing behaviour;
 // `[1m]` twins and dated ids resolve to their base row (the long-context premium
 // is not modelled). cacheWrite = 1.25× input (5-minute TTL), cacheWrite1h = 2×
@@ -599,6 +602,15 @@ export function liveCostRates(modelId) {
   try { cfg = modelCostConfig(id); } catch { cfg = null; }
   if (cfg && cfg.free === true) return FREE_RATES;
   if (cfg && cfg.perMtok && typeof cfg.perMtok === 'object') return cfg.perMtok;
+  return listCostRates(id);
+}
+
+/** The built-in list price of `modelId` ([1m] twins and dated ids at their base row), IGNORING any operator override:
+ *  the rates the CLI's own figure is priced at. A session turn's split takes the main agent's share out of that figure
+ *  at these rates, then re-prices each part with its override (session groups, Task 42). Null when no table knows it. */
+export function listCostRates(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return null;
   const base = id.toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
   if (PREDEFINED_LIST_PRICES[base]) return PREDEFINED_LIST_PRICES[base];
   const cx = CODEX_PRICES[id.toLowerCase()];

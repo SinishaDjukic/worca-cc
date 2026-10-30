@@ -667,6 +667,31 @@ export const RESUME_HEADER =
   'state of your previous work (files/artifacts you already wrote), then continue the\n' +
   'ORIGINAL task below to completion. Do not redo work that is already done.\n\n';
 
+export const COLD_REDISPATCH_HEADER =
+  '## Earlier attempt interrupted\n\n' +
+  'An earlier attempt of this step was interrupted before it finished. Its files may already\n' +
+  'exist: check them first, keep what is correct, then complete the ORIGINAL task below.\n' +
+  'Do not redo work that is already done.\n\n';
+
+export const COLD_FOLLOWUP_HEADER =
+  '## Earlier attempt asked for input\n\n' +
+  'An earlier attempt of this step stopped to ask for input; the answers are below. Its files may\n' +
+  'already exist: check them first, keep what is correct, then complete the ORIGINAL task below.\n' +
+  'Do not redo work that is already done.\n\n';
+
+/** Which header a prompt starts with (C38, C42). Pure; '' = none. A ctx with neither `sessionMode` nor
+ *  `coldRedispatch` (every ungrouped run) gets exactly today's `ctx.resumeSessionId ? RESUME_HEADER : ''`. */
+export function promptHeaderFor(ctx) {
+  const c = ctx || {};
+  if (c.sessionMode === 'subagents' && (c.resumeSessionId || c.coldRedispatch)) {
+    const followUp = c.questionsAnswered?.length || c.formAnswers?.length || c.formRepair || c.shapeOutlineNote;
+    return followUp ? COLD_FOLLOWUP_HEADER : COLD_REDISPATCH_HEADER;
+  }
+  if (c.coldRedispatch) return COLD_REDISPATCH_HEADER;
+  if (c.resumeSessionId) return RESUME_HEADER;
+  return '';
+}
+
 /**
  * The per-agent forms section (spec §4): every form the agent may ask with, its
  * data schema, its answer schema and its example. Returns '' for an agent that
@@ -829,7 +854,7 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   return {
     cwd: ctx.projectDir,
     systemPrompt,
-    prompt: (ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt)
+    prompt: promptHeaderFor(ctx) + prompt
       + questionsPromptBlock(ctx) + formRepairBlock(ctx) + directionsPromptBlock(ctx),
     resumeSessionId: ctx.resumeSessionId,
     // Grant the role's baseline tools PLUS whatever the agent declared in its

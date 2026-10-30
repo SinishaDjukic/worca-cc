@@ -95,6 +95,9 @@ export const FAILURE_POLICY = Object.freeze({
     quota:       cell(pause(REASON.RECOVERABLE), prompt(pause(REASON.ERROR))),
     rate_limit:  cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.RECOVERABLE)), prompt(pause(REASON.ERROR))),
     network:     cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.RECOVERABLE)), prompt(pause(REASON.ERROR))),
+    // Session groups C1: a main agent that did not dispatch as told (SessionHostError). The same retry budget as
+    // network, on the same host; then the run parks as an error. Both modes: a person has nothing to fix mid-turn.
+    session_host: both(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.ERROR))),
     '*':         both(pause(REASON.ERROR)),
   }),
   // A flow card, the questions loop, _afterExecution, a composite shell mode, an

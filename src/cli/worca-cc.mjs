@@ -34,6 +34,7 @@ import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
+import { formatSessionHostLine, manifestLabelOf } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
 // statement, not a longer first one); the field-by-field asker lives in forms.mjs.
 import { formatFormErrors, FORM_REPROMPT_MAX } from './render.mjs';
@@ -48,6 +49,7 @@ import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
+import { cmdSessions } from './sessions.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
@@ -322,6 +324,7 @@ Subcommands:
                               (any unique prefix; --json for machines). See: worca runs help
   logs <id> [-f]              Tail a run's live log (--tail N, --component, --level,
                               --json). -f follows; Ctrl-C detaches, the run continues. See: worca logs help
+  sessions <id> [--json]      A run's sessions: host, turns, the cost split and its reconcile. See: worca sessions help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
   doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper.
@@ -700,6 +703,14 @@ async function attachAndDrive(orch, flags, start) {
       }
     }
     const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c, engine: orch.claude?.engine || null });
+    if (line) out(line);
+  });
+
+  // Session groups (Task 55): one line per transition that matters (open, degrade, dispatch, rotate, restart, resume,
+  // a failed dispatch, close); formatSessionHostLine gives null for the rest.
+  orch.on('sessionHost', (ev) => {
+    if (answering) return; // avoid interleaving with an open question prompt
+    const line = formatSessionHostLine(ev, { labelOf: manifestLabelOf(orch.state && orch.state.stepper), color: c });
     if (line) out(line);
   });
 
@@ -3485,7 +3496,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'sessions']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3608,6 +3619,7 @@ async function main() {
     if (sub === 'run') return cmdRun(rest, { out, c, fail });
     if (sub === 'runs') return cmdRuns(rest, { out, c, fail });
     if (sub === 'logs') return cmdLogs(rest, { out, c, fail });
+    if (sub === 'sessions') return flushed(cmdSessions(rest, { out, c, fail }));   // --json can pass 64 KiB on a pipe
     if (sub === 'stop' || sub === 'pause') return cmdControl(sub, rest, { out, c, fail });
     if (sub === 'doctor') return cmdDoctor();
     if (sub === 'plugin') return cmdPlugin(rest);

@@ -84,6 +84,7 @@ const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', 
 
 import { icon } from './icons.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
+import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
@@ -191,7 +192,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -230,6 +231,7 @@ import { renderAutoProposal, proposalBands } from './auto-proposal.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
+import { SESSION_DEFAULT_LABEL, sessionStartNotices } from '../../src/shared/graph/sessions.mjs';
 import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 // artifact-view-media.mjs re-exports artifact-view.mjs's whole surface and widens
 // dispatch to the byte kinds, so upstream's module stays byte-identical;
@@ -2111,6 +2113,10 @@ function handleServerMessage(msg) {
     case 'error':
       onError(r, msg);
       break;
+    case 'sessionHost':
+      // A session trace record was written (session groups): the Sessions tab's report is stale (Task 58).
+      r.sessionSeq = (r.sessionSeq || 0) + 1;
+      break;
     default:
       break;
   }
@@ -2996,7 +3002,8 @@ function onState(r, msg) {
   r.subAgents = msg.subAgents || r.subAgents;
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
   // roleReviews: the role-review rounds runModel's live role rows read (review A12).
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews']) {
+  // sessionHosts: each session's summary (session groups), read by the tray decor and the Sessions tab.
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -4084,6 +4091,7 @@ if (typeof window !== 'undefined') {
     applyRunLogFilter,
     focusLogExecution,
     openStepLog,
+    openSessionLog,
     paintLogFilters,
     readLogFilterFrom,
     repaintFilteredLog,
@@ -4439,6 +4447,9 @@ async function loadGuardrailsInto(selectId) {
 // node row per node and a cycle input per feedback.
 async function renderWorkflowConfig(workflowId) {
   const isAuto = workflowId === AUTO_WORKFLOW_ID;
+  const notesGen = (state.sessionNotesGen = (state.sessionNotesGen || 0) + 1);   // only the newest call paints the notice
+  // A newly picked workflow's notice waits for its own fetch: the last one's never stands in for it meanwhile.
+  if (state.sessionNoteArgs && state.sessionNoteArgs.workflowId !== workflowId) paintSessionNotes(null);
   if (el.agentsConfig) el.agentsConfig.hidden = isAuto;
   if (el.hitlRow) el.hitlRow.hidden = !isAuto;
   // Memory defragment (agent memory §7.3 / B11): the ONE run option that workflow needs. Every
@@ -4448,6 +4459,7 @@ async function renderWorkflowConfig(workflowId) {
   // once; the policy-line repaint at the end refetches the preview for every other workflow.
   if (el.mcpRunsField) renderMcpRuns();
   if (isAuto) {
+    paintSessionNotes(null);   // Auto picks its workflow per run: no sessions to tell about yet
     // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch. On a project target
     // the switch is per PROJECT like the accordion's rows, read from the project config, and
     // saveHumanInLoop drops the write with no project selected — so disable it there instead of
@@ -4484,6 +4496,7 @@ async function renderWorkflowConfig(workflowId) {
   const wf = isDefault ? (fetchedWf || DEFAULT_WF_TOPOLOGY) : fetchedWf;
   const registry = isDefault ? defaultWorkflowRegistry(fetchedReg) : fetchedReg;
   if (!wf || !Object.keys(registry).length) {
+    if (notesGen === state.sessionNotesGen) paintSessionNotes(null);
     if (el.agentRows) el.agentRows.innerHTML = '<div class="hint">Could not load this workflow.</div>';
     if (el.wfFeedbackConfig) { el.wfFeedbackConfig.innerHTML = ''; el.wfFeedbackConfig.hidden = true; }
     setAgentsHeader(null, '');
@@ -4497,6 +4510,13 @@ async function renderWorkflowConfig(workflowId) {
   const rows = buildNodeConfigRows(wf, registry, runConfig,
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
+  const wfNodes = Array.isArray(wf.nodes) ? wf.nodes : [];
+  // A slower fetch for a workflow picked earlier never paints over a newer pick (Auto included).
+  if (notesGen === state.sessionNotesGen) paintSessionNotes({ workflowId, wf, portsFn: panelPortsFn(registry, scripts), labelOf: (id) => {   // the Composer's card label
+    const n = wfNodes.find((x) => x && x.id === id);
+    const m = n && registry[n.key];
+    return (m && m.displayName) || (n && (n.key || n.id)) || id;
+  } });
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig, scripts));
   // The cycle inputs write through a different endpoint shape per engine
   // (v1 `feedbacks:{…}` vs v2 `wires:{…}`); stamp which one this row set is.
@@ -4910,6 +4930,7 @@ function setRunEngine(engine) {
   if (el.engineSelect) el.engineSelect.value = state.engine;
   keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
+  paintSessionNotes();
   showEngineRefusal(null);
   // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
   // picker too: another engine names set skills as its .agents/skills mount would.
@@ -4928,6 +4949,22 @@ fetch('/api/engine-locks').then((r) => (r.ok ? r.json() : null)).catch(() => nul
 });
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
+/** The run-start notice (session groups, Task 62; 05 §6.6): one line per session of the workflow the form shows, saying
+ *  how its steps run on the chosen engine. `next` = { workflowId, wf, portsFn, labelOf } from renderWorkflowConfig (null: none);
+ *  the engine, the Mock switch and the Labs flag repaint it with the last one. A mock run counts as verified (C13). */
+function paintSessionNotes(next) {
+  if (next !== undefined) state.sessionNoteArgs = next;
+  const box = document.getElementById('engine-session-notes');
+  if (!box) return;
+  const a = state.sessionNoteArgs || null;
+  const mock = !!(el.mock && el.mock.checked);
+  const notes = a ? sessionStartNotices(a.wf, a.portsFn, { engine: state.engine, labelOf: a.labelOf, flagOn: flagOn('sessionGroups', document),
+    verified: mock ? { [state.engine]: true } : SESSION_SUBAGENTS_VERIFIED }) : [];
+  box.replaceChildren(...notes.map((t) => Object.assign(document.createElement('p'), { className: 'rs-session-note', textContent: t })));
+  box.hidden = !notes.length;
+  keepVisible(box, state.engine !== 'claude' && notes.length > 0);   // Simple keeps a non-Claude engine on screen: and why its steps run apart
+}
+onFlagChange('sessionGroups', () => paintSessionNotes());
 function paintEngineHints() {
   if (el.engineHint) {
     el.engineHint.hidden = state.engine === 'claude';
@@ -5709,6 +5746,7 @@ function onLog(r, msg) {
     ...(msg.path != null ? { path: msg.path } : {}),
     ...(msg.kind != null ? { kind: msg.kind } : {}),
     ...(typeof msg.desc === 'string' && msg.desc ? { desc: msg.desc } : {}),
+    ...(typeof msg.session === 'string' && msg.session ? { session: msg.session } : {}),   // a session's main-agent line (Task 60)
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
@@ -5779,6 +5817,7 @@ function paintLogFilters(r, root = r.el) {
     fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
   }
   paintExecChip(r, root);
+  paintSessionChip(r, root);   // not reconciled below either: it reads back what this wrote, and has no facets
   // Cycles are the loop's own 1-based counter, so unlike steps they are NOT
   // shifted for display.
   fillFilterSelect(selCycle, 'all cycles', facets.cycles, r.logFilter.cycle, (c) => `cycle ${c}`);
@@ -5847,6 +5886,42 @@ function wireExecChip(bar, { read, write }) {
     if (!(e.target.closest && e.target.closest('.log-f-step, .log-f-cycle'))) return;
     if (!read().execution) return;
     write({ ...readLogFilterFrom(bar, read().search), execution: '' });
+  });
+}
+
+/** `Showing one session · Implementation + Review` (Task 60): the session's steps by their card labels. */
+function sessionChipText(r, members) {
+  const labelOf = nodeLabelLookup(r.stepper);
+  return `Showing one session · ${members.map((id) => labelOf(id)).join(' + ')}`;
+}
+
+/** Mirror r.logFilter.session (a sid) and its members into the session chip on one bar: the chip's dataset is what
+ *  readLogFilterFrom reads back, as the execution chip's is. */
+function paintSessionChip(r, root) {
+  const chip = root && root.querySelector('.log-f-session');
+  if (!chip) return;
+  const sid = r.logFilter.session || '';
+  const members = sid && Array.isArray(r.logFilter.sessionMembers) ? r.logFilter.sessionMembers.map(String) : [];
+  chip.hidden = !sid;
+  chip.dataset.sessionId = sid;
+  chip.dataset.members = members.join(' ');
+  if (sid) chip.querySelector('.lfe-text').textContent = sessionChipText(r, members);
+}
+
+/** The session chip's rules, bound ONCE per bar (as wireExecChip): a click on it clears the session axis, and so does a
+ *  manual node/step pick (another scope than the session's). */
+function wireSessionChip(bar, { read, write }) {
+  bar.addEventListener('click', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-session'))) return;
+    e.stopPropagation();
+    const had = bar.ownerDocument.activeElement === e.target.closest('.log-f-session');
+    write({ session: '', sessionMembers: [] });
+    if (had) bar.querySelector('.log-search')?.focus();   // the chip hides: the focus moves on, not to the page
+  });
+  bar.addEventListener('change', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-step'))) return;
+    if (!read().session) return;
+    write({ ...readLogFilterFrom(bar, read().search), session: '', sessionMembers: [] });
   });
 }
 
@@ -7303,6 +7378,7 @@ function paintMock(on) {
   el.mock.checked = on;
   mockSwitch.classList.toggle('on', on);
   mockSwitch.setAttribute('aria-checked', String(on));
+  paintSessionNotes();   // a mock run's sessions run as sub-agents (C13)
 }
 function toggleMock() {
   if (serverMock.on) return;                 // locked on: the server mocks every run anyway
@@ -20862,6 +20938,8 @@ function readLogFilterFrom(root, prevSearch = '') {
   const nodeAxis = stepSel && stepSel.dataset.axis === 'node';
   const stepVal = stepSel ? stepSel.value : '';
   const chip = root.querySelector('.log-f-exec');
+  const sChip = root.querySelector('.log-f-session');
+  const sid = sChip ? (sChip.dataset.sessionId || '') : '';
   return {
     source: root.querySelector('.log-f-source')?.value || '',
     level: root.querySelector('.log-f-level')?.value || '',
@@ -20869,6 +20947,8 @@ function readLogFilterFrom(root, prevSearch = '') {
     node: nodeAxis ? stepVal : '',
     execution: chip ? (chip.dataset.executionId || '') : '',
     cycle: root.querySelector('.log-f-cycle')?.value || '',
+    session: sid,
+    sessionMembers: sid ? (sChip.dataset.members || '').split(' ').filter(Boolean) : [],
     search: searchEl ? searchEl.value : prevSearch,
   };
 }
@@ -23448,9 +23528,11 @@ async function loadLiveLogs(panel, logUrl, st = null) {
         hStepSel.value = want;
       }
       paintExecChip(hist, bar);
+      paintSessionChip(hist, bar);
       paint();
     };
     wireExecChip(bar, { read: () => filter, write: (patch) => panel.__setLogFilter(patch) });
+    wireSessionChip(bar, { read: () => filter, write: (patch) => panel.__setLogFilter(patch) });
 
     paint();
 
@@ -23791,7 +23873,9 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   // column painter, as a thunk.
   paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
     decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id), modelLabel: graphModelLabel }),
-    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, st.steps);
+    // `logs`: the run saved a log (HD_TABS' Logs tab shows), so a tray header has a log to open; its cards link the same way.
+    { run: st, runId: parsed.id, mode: 'monitor', record: rec, logs: Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log') })
+    : null, st.steps);
   if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
@@ -27156,6 +27240,8 @@ const HD_TAB_ICONS = {
   artifacts: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M3 8v8l9 4 9-4V8" stroke-linejoin="round"/><path d="M12 12v8" stroke-linecap="round"/></svg>',
   actions: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"></path></svg>',
   changes: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/><path d="M12 11v6M9 14h6" stroke-linecap="round"/></svg>',
+  // Sessions (session groups): the tray's own glyph, a terminal prompt in a frame.
+  sessions: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7.5 10l3 2.5-3 2.5M12.5 15.5h4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 
 // Per-screen tab state, keyed by the SCREEN element. The cells + activate() pair
@@ -27340,6 +27426,8 @@ const HD_TABS = [
   { key: 'logs', label: 'Logs', level: 'expert', badge: () => null,
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
     build: (...a) => buildHdLogs(...a) },
+  // Session groups (Task 58): only on a run that has a session (its summaries, or a session in its manifest).
+  { key: 'sessions', label: 'Sessions', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
   { key: 'agents', label: 'Agents', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
     visible: () => true, build: (...a) => buildHdAgents(...a) },
@@ -27447,7 +27535,7 @@ function wireHdGraphLogLinks(screen) {
       // A v2 graph card drives the NODE axis (v2 lines carry nodeId, and one
       // agent key may back several nodes). Same park-or-apply contract as the
       // source path below; the drain lives beside __pendingLogSource's.
-      const patch = { node: node.dataset.nodeId };
+      const patch = { node: node.dataset.nodeId, execution: '', session: '', sessionMembers: [] };   // a card is one step: not a session, not one run of it
       if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
       else cell.sec.__pendingLogFilter = patch;
       tabs.activate('logs');
@@ -29412,6 +29500,11 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdLogs(sec, ctx),
   },
   {
+    key: 'sessions', label: 'Sessions', icon: HD_TAB_ICONS.sessions, level: 'advanced',
+    badge: (ctx) => sessionsBadge(ctx.run), visible: (ctx) => sessionsTabVisible(ctx.run),
+    build: (sec, ctx) => buildRdSessions(sec, ctx),
+  },
+  {
     key: 'agents', label: 'Agents', icon: HD_TAB_ICONS.agents, level: 'expert',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.subAgents) ? ctx.run.subAgents.length : 0;
@@ -29460,6 +29553,7 @@ function buildRdWorkflow(sec, ctx) {
     if (sec.__drawer && c.run.logDrawer) {
       sec.__drawer.setLive(!RD_TERMINAL.includes(c.run.status));
       markLogTarget(sec, c.run.logDrawer);   // a repaint may have rebuilt the cards
+      paintDrawerSessionLine(sec.__drawer, c.run.steps, c.run.sessionHosts, c.run.logDrawer);   // a member stamped mid-step
     }
   };
 }
@@ -29874,7 +29968,7 @@ function buildRdQa(sec, ctx) {
 function ensureRdTabs(screen, r) {
   if (!screen || !r) return;
   const mode = workModeOf(r);
-  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}`;   // P5: Folder members learned later rebuild the tabs
+  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}${sessionsTabVisible(r) ? '|sessions' : ''}`;   // P5: Folder members learned later rebuild the tabs; so does a session (its manifest can come after the first paint)
   const built = !!screen.querySelector('.rd-tab');
   if (built && screen.dataset.tabsMode === sig) return;
   if (built) {
@@ -29972,9 +30066,6 @@ function rdMaybePaintLogFilters(sec, r, rec) {
 
 // The four control listeners, bound once per section element (see buildRdLogs).
 function rdWireLogControls(sec, r) {
-  // The execution chip on THIS bar (applyRunLogFilter is the setter), bound on the bar so it fires before
-  // the section-level change handler below re-reads the (then consistent) DOM.
-  wireExecChip(sec.querySelector('.log-filters'), { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
   sec.addEventListener('change', (e) => {
     if (!(e.target.closest && e.target.closest('select.log-f'))) return;
     r.logFilter = readLogFilterFrom(sec, r.logFilter.search || '');
@@ -30037,6 +30128,11 @@ function buildRdLogs(sec, ctx) {
   // visible bar matches the filter the hydration below actually applies.
   const searchBox = bar.querySelector('.log-search');
   if (searchBox) searchBox.value = r.logFilter.search || '';
+  // The execution and session chips (applyRunLogFilter is the setter), bound on THIS bar so they fire before the
+  // section-level change handler below re-reads the (then consistent) DOM. The bar is a new element on every build (a
+  // re-activated tab rebuilds it), so they bind here, not once per section with the handlers below.
+  wireExecChip(bar, { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
+  wireSessionChip(bar, { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
   syncAutoscrollSwitch(r, sec);
   rdRepaintLog(sec, r);
   rdPaintLogFilters(sec, r);
@@ -30612,6 +30708,67 @@ function rdAgentsBody(sec, r) {
   hydrateRunArtifacts(r).then((added) => {
     if (added) attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
   });
+}
+
+// ── Sessions tab (session groups, Task 58) ───────────────────────────────────
+// One card per session from GET /api/runs/:id/sessions (the pipeline id); a live run refetches after a sessionHost frame
+// (r.sessionSeq counts them), at most every 2 s. `seq` undefined (History, no frames): every open past 2 s asks again.
+const sessionsTabArgs = (st, runId, live, logLevel, seq, trays) => ({ runId, state: st, live, engine: st && st.runEngine, logLevel,
+  seq, trays, labelOf: st && st.stepper ? nodeLabelLookup(st.stepper) : (id) => id });
+
+/** The tab's buttons, delegated once per section: copy an id, a step's log, its sub-agent (the Agents tab). */
+function wireSessionsClicks(sec, ctxOf) {
+  if (sec.__sessionsWired) return;
+  sec.__sessionsWired = true;
+  sec.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('button[data-copy], button[data-transcript], button[data-log-exec], button[data-subagent]');
+    if (!b || !sec.contains(b)) return;
+    const ctx = ctxOf();
+    if (b.dataset.copy || b.dataset.transcript) {
+      copyText(b.dataset.copy || b.dataset.transcript).then((ok) => flashCopyBtn(b, ok ? 'Copied' : 'Copy failed'));
+    } else if (b.dataset.logExec) {
+      focusLogExecution(ctx, b.dataset.logExec, b.dataset.nodeId || '');
+    } else if (b.dataset.subagent) {
+      openDetailsTab(ctx, 'agents');
+    }
+  });
+}
+
+/** A Details tab of the open run page (Running, or History when `ctx.record`), if the level shows it: its pill's own
+ *  click (the address follows), then the focus on the pill, as a click on it leaves it. */
+function openDetailsTab(ctx, key) {
+  const r = ctx && ctx.run;
+  if (!r) return;
+  const screen = ctx.record ? (histDetailState && histDetailState.screen) : (runDetailState.runId === r.runId ? runDetailState.screen : null);
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const cell = tabs && tabs.cells.get(key);
+  if (!cell || !levelAtLeast(cell.tab.level || 'simple')) return;
+  cell.btn.click();
+  cell.btn.focus({ preventScroll: true });
+}
+
+function buildRdSessions(sec, ctx) {
+  const paint = (c) => {
+    const r = c.run;
+    // No id before the first state frame. The count is 0 before the first sessionHost frame: only a trace record is news,
+    // so a page that opened after the run's first frames (or a run without a host) does not poll on every frame.
+    // The trays are the run page's own decor (memoised per state frame): a card says what its tray says.
+    if (r && r.pipelineId) paintSessionsTab(sec, sessionsTabArgs(r, r.pipelineId, isLive(r), 'advanced', r.sessionSeq || 0, isGraphRun(r) ? runDecorFor(r).sessions : null));
+  };
+  wireSessionsClicks(sec, () => rdCtx(ctx.run));
+  paint(ctx);
+  sec.__update = paint;
+}
+
+function buildHdSessions(sec, record, data) {
+  wireSessionsClicks(sec, () => ({ run: data.state, record: hdCurrentRecord(record) }));
+  // History's Logs tab is Expert and exists only with a saved log. History gets no live frames: the report is the one
+  // fetched when the tab opened (a run still going shows it as live). A failed load un-stamps the tab (as History's Logs
+  // tab does, after initDetailTabs' stamp), so reopening the tab asks again, as its message says.
+  const logs = Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log');
+  const trays = data.state && isGraphManifest(data.state.stepper) ? decorFromState(data.state, { live: false, now: 0 }).sessions : null;   // History's graph decor
+  paintSessionsTab(sec, sessionsTabArgs(data.state, record.id, !isTerminalStatus(data.state && data.state.status), logs ? 'expert' : null, undefined, trays))
+    .then((report) => { if (!report) sec.dataset.loaded = ''; });
 }
 
 function buildRdAgents(sec, ctx) {
@@ -32116,6 +32273,8 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
       modelLabel: graphModelLabel,
+      // History without a saved log has nothing to open: its header stays inert like its cards (wireHdGraphLogLinks).
+      onSessionClick: decor.record && !decor.logs ? null : (sid) => openSessionLog(host, slot.ctx, sid),
     });
     GRAPH_MOUNTS.set(host, slot);
   }
@@ -32205,6 +32364,11 @@ function revealLogDrawer(sec) {
 }
 function newLogDrawer(sec, { onClose, onOpenInLogs }) {
   const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs, tools: cloneLogViewSeg() });
+  // The session line's copy button (Task 59): the sub-agent id.
+  d.el.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.wf-log-sub button[data-copy]');
+    if (b) copyText(b.dataset.copy).then((ok) => flashCopyBtn(b, ok ? 'Copied' : 'Copy failed'));
+  });
   // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
   d.body.addEventListener('scroll', () => {
     d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
@@ -32219,16 +32383,34 @@ function newLogDrawer(sec, { onClose, onOpenInLogs }) {
 function rdMountLogDrawer(sec, r) {
   newLogDrawer(sec, {
     onClose: () => { r.logDrawer = null; markLogTarget(sec, null); },
-    onOpenInLogs: () => { const t = r.logDrawer; if (t) focusLogExecution(rdCtx(r), t.execution, t.node); },
+    onOpenInLogs: () => {
+      const t = r.logDrawer;
+      if (t && t.session) focusLogSession(rdCtx(r), t);
+      else if (t) focusLogExecution(rdCtx(r), t.execution, t.node);
+    },
   });
   if (r.logDrawer) rdPaintLogDrawer(sec, r);
+}
+/** The drawer's "Inside session …" line (Task 59) for its target's row: the target execution's row, else the node's
+ *  newest. Rebuilt only when its words change, so a frame never takes the focus off its copy button. */
+function paintDrawerSessionLine(d, steps, sessionHosts, t) {
+  if (!d || typeof d.setSub !== 'function') return;
+  const rows = Array.isArray(steps) ? steps : [];
+  const row = !t || !t.node ? null
+    : (t.execution ? rows.find((x) => x && x.executionId === t.execution) : rows.filter((x) => x && x.nodeId === t.node).at(-1)) || null;
+  const line = row ? sessionRowLine(row, sessionHosts) : '';
+  const key = line ? `${line}|${row.session.memberAgentId || ''}` : '';
+  if (d.__subKey === key) return;
+  d.__subKey = key;
+  d.setSub(key ? sessionRowEl(document, row, sessionHosts) : null);
 }
 function rdPaintLogDrawer(sec, r, opener = null) {
   const d = sec.__drawer;
   const t = r.logDrawer;
   if (!d || !t) return;
   sec._drawerCycle = fillLogDrawerBody(d.body, r.logLines, t);
-  d.open({ label: stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  d.open({ label: t.session ? t.label || SESSION_DEFAULT_LABEL : stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  paintDrawerSessionLine(d, r.steps, r.sessionHosts, t);
   markLogTarget(sec, t);
   if (opener) revealLogDrawer(sec);   // a click, not a rebuild on tab re-activation
 }
@@ -32266,6 +32448,35 @@ function openStepLog(host, ctx, executionId, nodeId) {
   rdPaintLogDrawer(sec, r, logTargetCard(sec, r.logDrawer));
 }
 
+/** A session tray's header (Task 57; Task 60): the drawer filtered to the whole session — its main agent's lines
+ *  (source `session`) and every member's own, each cycle and ×N slice included (05 §6.5). Returns the drawer's target
+ *  `{ session, sessionMembers, label }`, or null when no member ran yet (the header is inert then). History opens it
+ *  under its graph; a page without the drawer opens the Logs tab with the session chip. */
+function openSessionLog(host, ctx, sid) {
+  const s = ctx && ctx.sessions && ctx.sessions[sid];
+  const r = ctx && ctx.run;
+  if (!s || !r) return null;
+  const mine = new Set(s.members);
+  if (!(Array.isArray(r.steps) ? r.steps : []).some((x) => x && x.executionId && mine.has(x.nodeId))) return null;
+  const labelOf = nodeLabelLookup(r.stepper);
+  const t = { session: sid, sessionMembers: [...s.members], label: `${s.label || SESSION_DEFAULT_LABEL} · ${s.members.map((id) => labelOf(id)).join(' + ')}` };
+  const toLogs = () => focusLogSession(ctx, t);
+  if (ctx.record) {
+    const screen = histDetailState && histDetailState.screen;
+    if (screen && host && host.closest('.hd-graph')) openHdStepLog(screen, t, toLogs);
+    else toLogs();
+    return t;
+  }
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const sec = host && host.closest('.rd-sec[data-sec="workflow"]');
+  if (!logsTabShown(tabs)) return t;   // below the Logs tab's level nothing opens, as for a card
+  if (!sec || !sec.__drawer) { toLogs(); return t; }
+  r.logDrawer = t;
+  rdPaintLogDrawer(sec, r, host.querySelector(`.gv-sess-head[data-session-id="${sid}"]`));
+  return t;
+}
+
 // History: the saved NDJSON log, fetched once per screen and shared by every drawer target.
 function hdLogRecs(screen) {
   if (!screen.__logRecs) {
@@ -32300,14 +32511,19 @@ function openHdStepLog(screen, target, openInLogs) {
   const graph = screen.querySelector('.hd-graph');
   const t = { ...target, openInLogs };
   sec.__logTarget = t;
-  d.open({ label: target.label || '', isLive: false, opener: logTargetCard(graph, target) });
+  // A session target has no card: focus returns to its tray header.
+  const opener = logTargetCard(graph, target) || (target.session && graph ? graph.querySelector(`.gv-sess-head[data-session-id="${target.session}"]`) : null);
+  d.open({ label: target.label || '', isLive: false, opener });
+  const st = histDetailState && histDetailState.data ? histDetailState.data.state : null;
+  paintDrawerSessionLine(d, st && st.steps, st && st.sessionHosts, target);
   markLogTarget(graph, target);
   revealLogDrawer(sec);
   d.body.textContent = 'Loading…';
   hdLogRecs(screen).then((recs) => {
     if (sec.__logTarget !== t) return;   // retargeted while the log loaded
     let filter;
-    if (target.node) filter = { node: target.node, execution: target.execution || '' };
+    if (target.session) filter = { session: target.session, sessionMembers: target.sessionMembers || [] };   // a tray header (Task 60)
+    else if (target.node) filter = { node: target.node, execution: target.execution || '' };
     else {
       const seen = new Set(recs.map((x) => x.source));
       filter = { source: target.sources.find((src) => seen.has(src)) || target.sources[0] };
@@ -32320,9 +32536,15 @@ function openHdStepLog(screen, target, openInLogs) {
  *  P6b lands the node/execution axes in log-filter.mjs and the History panel's
  *  `__setLogFilter`; until then the keys are carried, not applied. */
 function focusLogExecution(ctx, executionId, nodeId) {
+  focusLogFilter(ctx, { execution: executionId, node: nodeId, session: '', sessionMembers: [] });   // a step, not a session
+}
+/** A session tray's "Open in Logs" (Task 60): the Logs tab narrowed to the session, its chip shown. */
+function focusLogSession(ctx, t) {
+  focusLogFilter(ctx, { session: t.session, sessionMembers: [...(t.sessionMembers || [])], execution: '', node: '' });
+}
+function focusLogFilter(ctx, patch) {
   const r = ctx && ctx.run;
   if (!r) return;
-  const patch = { execution: executionId, node: nodeId };
   if (ctx.record) {
     // History: the Logs tab is lazily built — hand the patch to the panel when it
     // exists, else park it for the panel's first paint (mirrors __pendingLogSource).
@@ -35999,9 +36221,9 @@ function rdSrowValue(text) {
 // previews its content: `values[key]`, else the tab's own badge with a unit.
 const ACTIVITY_GROUPS = [
   ['Results', ['overview', 'diff', 'changes', 'artifacts', 'actions']],
-  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'agents']],
+  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'sessions', 'agents']],
 ];
-const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', agents: 'agent' };
+const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', sessions: 'session', agents: 'agent' };
 function rdActivityGroups(screen, values = {}) {
   const tabs = detailTabsOf(screen);
   if (!tabs) return [];
