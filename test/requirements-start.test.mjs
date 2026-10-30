@@ -91,7 +91,7 @@ test('a Ready project feature starts through the run handler with the D6 body; v
   assert.match(body.promptMarkdown, new RegExp(`# FEAT-${f.seq} v1: Cancel order`));
   assert.match(body.promptMarkdown, /R-po-1/);
   assert.match(body.promptMarkdown, /R-po-2/);
-  assert.equal(body.title, `FEAT-${f.seq}: Cancel order`);
+  assert.equal(body.title, 'Cancel order', 'the run title is the feature title alone: FEAT-n is worca-only');
   assert.equal(body.projectDir, projDir);
   assert.equal(body.workflowId, 'wf_auto');
   assert.equal(body.guardrailsId, 'normal');

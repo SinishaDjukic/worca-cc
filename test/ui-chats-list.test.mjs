@@ -2,8 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildChatsModel, chatRow, chatArchivePlan, chatRowMenuItems, chatsViewChip, loadChatsView, CHATS_VIEW_KEY,
-  chatGroupRow, chatGroupMenuItems } from '../ui/public/chats-list.mjs';
+  chatGroupRow, chatGroupMenuItems, CHAT_KINDS } from '../ui/public/chats-list.mjs';
 import { CHAT_BUSY, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
+import { checkRows } from './helpers/rows.mjs';
 
 const NOW = new Date(2026, 9, 25, 12, 0, 0).getTime();
 const HOUR = 3600e3;
@@ -61,6 +63,54 @@ test('row: state column and sub line; busy rows carry their reason', () => {
   assert.equal(needs.busy, 'following');
   assert.equal(chatRow(thread('d', { scope: null }), { now: NOW }).model.line.split(' · ')[0], 'No project');
   assert.equal(chatRow(thread('e', { commands: 1 }), { now: NOW }).busy, 'command');
+});
+
+// What the chat did, first match wins: Needs you · Started a run · Follows a run · Proposed a workflow · Chat.
+const dotOf = (r) => ({ state: r.model.state, kind: r.model.kind, dot: r.model.dot, pulse: r.model.pulse, symbol: r.model.symbol,
+  icon: r.model.icon, dotLabel: r.model.dotLabel });
+
+test('row: the state column draws what the chat did, first match wins; history facts count on an idle chat', async () => {
+  const idle = (kind, icon, dotLabel) => ({ state: 'idle', kind, dot: 'grey', pulse: false, symbol: null, icon, dotLabel });
+  const needs = { state: 'needs-you', kind: 'needs-you', dot: 'amber', pulse: false, symbol: 'question', icon: null, dotLabel: 'Run needs you' };
+  await checkRows([
+    ['plain chat', {}, idle('chat', 'chat', 'Chat')],
+    ['proposed a workflow', { hasWorkflowCard: true }, idle('workflow', 'workflow', 'Proposed a workflow')],
+    ['tracks a run it did not start', { trackedRuns: 1 }, idle('tracks', 'track', 'Follows a run')],
+    ['started a run from its card', { startedRuns: 2 }, idle('started', 'run', 'Started a run')],
+    ['a run it follows needs you', { waiting: true }, needs],
+    ['needs you beats every history fact', { waiting: true, startedRuns: 1, trackedRuns: 1, hasWorkflowCard: true, trackingRuns: 1 }, needs],
+    ['started beats tracks and a workflow', { startedRuns: 1, trackedRuns: 3, hasWorkflowCard: true }, idle('started', 'run', 'Started a run')],
+    ['tracks beats a workflow', { trackedRuns: 1, hasWorkflowCard: true }, idle('tracks', 'track', 'Follows a run')],
+  ].map(([name, o, want]) => ({ name, run: () => {
+    const r = chatRow(thread('k', o), { now: NOW });
+    assert.deepEqual(dotOf(r), want);
+    assert.equal(r.needs, want.state === 'needs-you');
+  } })));
+});
+
+test('row: Replying and Running a command keep the green pulse; Following draws the run icon in its colour, pulsing', async () => {
+  const green = (state, kind) => ({ state, kind, dot: 'green', pulse: true, symbol: null, icon: null, dotLabel: null });
+  const follow = (kind, icon, dotLabel) => ({ state: 'following', kind, dot: 'peach', pulse: true, symbol: null, icon, dotLabel });
+  await checkRows([
+    ['replying over a started run', { inFlight: true, startedRuns: 1, trackingRuns: 1 }, green('replying', 'started')],
+    ['running a command in a workflow chat', { commands: 1, hasWorkflowCard: true }, green('command', 'workflow')],
+    ['following a run it started', { trackingRuns: 1, startedRuns: 1 }, follow('started', 'run', 'Started a run')],
+    ['following a run it tracked', { trackingRuns: 1, trackedRuns: 1, hasWorkflowCard: true }, follow('tracks', 'track', 'Follows a run')],
+    ['following with no link counted yet still draws the tracked-run icon', { trackingRuns: 1 }, follow('chat', 'track', 'Follows a run')],
+    ['following never draws the workflow icon', { trackingRuns: 1, hasWorkflowCard: true }, follow('workflow', 'track', 'Follows a run')],
+  ].map(([name, o, want]) => ({ name, run: () => {
+    const r = chatRow(thread('b', o), { scopeName: () => 'worka-cc', now: NOW });
+    assert.deepEqual(dotOf(r), want);
+    if (want.state === 'following') assert.equal(r.model.line, 'worka-cc · Following a run · $0.40 · 11:00', 'the sub line keeps its word');
+  } })));
+});
+
+test('every chat kind has its own line icon from ICONS and a name', () => {
+  assert.deepEqual(Object.keys(CHAT_KINDS), ['needs-you', 'started', 'tracks', 'workflow', 'chat'], 'the user\'s priority order');
+  assert.deepEqual(Object.values(CHAT_KINDS).map((k) => k.label), ['Run needs you', 'Started a run', 'Follows a run', 'Proposed a workflow', 'Chat']);
+  const icons = Object.values(CHAT_KINDS).map((k) => k.icon).filter(Boolean);
+  assert.equal(new Set(icons).size, 4, 'Needs you keeps its "?" symbol; the other four differ');
+  for (const ic of icons) assert.ok(ICONS[ic], `${ic} is an ICONS name`);
 });
 
 test('bulk Archive counts only idle chats and names the skipped ones; unarchive counts all', () => {
@@ -178,6 +228,27 @@ test('chatGroupRow: a chat with no project adds none; the server count wins; a p
   assert.equal(g.pinned, false);
   const none = chatGroupRow(G(GID, 'x'), [chatRow(thread('c', { scope: null }))], { now: NOW });
   assert.match(none.model.line, /^No project/);
+});
+
+test('chatGroupRow: the group takes its highest-priority kind among its members, as it takes its most urgent state', async () => {
+  const rowsOf = (...os) => os.map((o, i) => chatRow(thread(`m${i}`, o), { now: NOW }));
+  await checkRows([
+    ['plain chats only', [{}, {}], { state: 'idle', kind: 'chat', dot: 'grey', pulse: false, symbol: null, icon: 'chat', dotLabel: 'Chat' }],
+    ['a workflow chat beside a plain one', [{}, { hasWorkflowCard: true }],
+      { state: 'idle', kind: 'workflow', dot: 'grey', pulse: false, symbol: null, icon: 'workflow', dotLabel: 'Proposed a workflow' }],
+    ['tracks beats a workflow in another member', [{ hasWorkflowCard: true }, { trackedRuns: 1 }],
+      { state: 'idle', kind: 'tracks', dot: 'grey', pulse: false, symbol: null, icon: 'track', dotLabel: 'Follows a run' }],
+    ['started beats tracks', [{ trackedRuns: 1 }, {}, { startedRuns: 1 }],
+      { state: 'idle', kind: 'started', dot: 'grey', pulse: false, symbol: null, icon: 'run', dotLabel: 'Started a run' }],
+    ['a member that needs you wins', [{ startedRuns: 1 }, { waiting: true }],
+      { state: 'needs-you', kind: 'needs-you', dot: 'amber', pulse: false, symbol: 'question', icon: null, dotLabel: 'Run needs you' }],
+    ['a following member pulses with the group\'s run icon', [{ trackingRuns: 1, trackedRuns: 1 }, { startedRuns: 1 }],
+      { state: 'following', kind: 'started', dot: 'peach', pulse: true, symbol: null, icon: 'run', dotLabel: 'Started a run' }],
+    ['a replying member keeps the green pulse', [{ inFlight: true }, { trackedRuns: 1 }],
+      { state: 'replying', kind: 'tracks', dot: 'green', pulse: true, symbol: null, icon: null, dotLabel: null }],
+  ].map(([name, members, want]) => ({ name, run: () => {
+    assert.deepEqual(dotOf(chatGroupRow(G(GID, 'Release prep'), rowsOf(...members), { now: NOW })), want);
+  } })));
 });
 
 test('a group whose chat needs you opens by default; the person\'s toggle wins; Needs you stays flat', () => {
