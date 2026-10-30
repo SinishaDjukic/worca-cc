@@ -1,0 +1,107 @@
+// test/readiness-report.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildReport, validateReport, missingEvidence, renderMarkdown, commentBody, CHECKS, SECTIONS, ROLLBACK_NOTE, GATE_NOTE, cell, code } from '../tools/readiness/report.mjs';
+
+const SHA = '04370c0f6cc31ae00f53c3b4c286211b970c3084';
+const ev = (id) => [{ label: `${id}.log`, href: `evidence/${id}.log` }];
+const all = (status = 'pass') => Object.keys(CHECKS).map((id) => ({ id, title: id, status, detail: 'ok', evidence: ev(id) }));
+const make = (checks = all(), openPrs = []) => buildReport({ repo: 'SinishaDjukic/worca-cc', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks, openPrs });
+
+test('a full passing report validates, is go, and links the dev commit on GitHub', () => {
+  const r = make();
+  assert.deepEqual(validateReport(r), []);
+  assert.equal(r.verdict.value, 'go');
+  assert.equal(r.devCommit.evidence[0].href, `https://github.com/SinishaDjukic/worca-cc/commit/${SHA}`);
+});
+
+test('validateReport rejects an unclear row, a row without evidence and a missing check', () => {
+  const checks = all(); checks[0].status = 'unclear'; checks[1].evidence = []; checks.pop();
+  const p = validateReport(make(checks));
+  assert.ok(p.some((x) => /status must be pass or fail, not unclear/.test(x)));
+  assert.ok(p.some((x) => /no evidence link/.test(x)));
+  assert.ok(p.some((x) => /missing check gh-auth/.test(x)));
+});
+
+test('one failing row makes the verdict no-go, and the verdict section names it with its detail', () => {
+  const checks = all(); Object.assign(checks.find((c) => c.id === 'split-check'), { status: 'fail', detail: 'spike gate FAILED: 9972 > 9000' });
+  const r = make(checks);
+  assert.deepEqual(r.verdict.failing, ['split-check']);
+  const md = renderMarkdown(r);
+  assert.match(md, /^- split-check: spike gate FAILED: 9972 &gt; 9000$/m);
+  assert.ok(md.includes(`The rollback rehearsal proves the revert ${GATE_NOTE}.`));
+  assert.ok(!renderMarkdown(make()).includes(GATE_NOTE));
+});
+
+test('a thrown step\'s error detail is a code span in the row and the verdict list: no live mention or link', () => {
+  const checks = all(); Object.assign(checks.find((c) => c.id === 'open-prs'), { status: 'fail', detail: 'error: gh pr list failed: @someone see [x](https://e.vil)' });
+  const md = renderMarkdown(make(checks));
+  assert.match(md, /^- open-prs: error: `gh pr list failed: @someone see \[x\]\(https:\/\/e\.vil\)`$/m);
+  assert.ok(md.includes('| open-prs | ✖ fail | error: `gh pr list failed: @someone see [x](https://e.vil)` |'));
+});
+
+test('missingEvidence names each relative href with no file and skips GitHub URLs', () => {
+  const r = make();
+  assert.deepEqual(missingEvidence(r, () => true), []);
+  const p = missingEvidence(r, (h) => h !== 'evidence/open-prs.log');
+  assert.deepEqual(p, ['evidence file missing: evidence/open-prs.log']);
+});
+
+test('renderMarkdown writes the ten sections in order, the rollback note, and an empty PR list says so', () => {
+  const md = renderMarkdown(make());
+  const heads = [...md.matchAll(/^## (\d+)\. (.+)$/gm)].map((m) => `${m[1]} ${m[2]}`);
+  assert.deepEqual(heads, SECTIONS.map((s, i) => `${i + 1} ${s.title}`));
+  assert.ok(md.includes(ROLLBACK_NOTE));
+  assert.match(md, /No open PRs or dependabot branches\./);
+});
+
+test('PR titles, branches and files render as code spans: no table break, no link, no @mention', () => {
+  assert.equal(code('a | [x](https://e.vil) @team `y`'), "`a \\| [x](https://e.vil) @team 'y'`");
+  assert.equal(code(''), '—');
+  assert.equal(cell('a | <b>'), 'a \\| &lt;b&gt;');
+  const t = { number: 7, url: 'https://github.com/o/r/pull/7', branch: 'feat/x', title: 'see [x](https://e.vil) @team',
+    dev: { conflict: false }, split: { conflict: true, files: ['ui/server.mjs'] }, action: 'catch up after the freeze (runbook recipe)' };
+  const row = renderMarkdown(make(all(), [t])).split('\n').find((l) => l.startsWith('| [#7]'));
+  assert.ok(row.includes('`see [x](https://e.vil) @team`'), row);
+  assert.ok(!row.replace(/`[^`]*`/g, '').includes('](https://e.vil)'), row);   // no bare link outside code spans
+  assert.ok(row.includes('`ui/server.mjs`'));
+});
+
+test('commentBody starts with the marker, turns evidence and parity-reverted links into anchors and stays under 60 000 characters', () => {
+  const checks = all(); checks.find((c) => c.id === 'rollback').evidence.push({ label: 'parity', href: 'parity-reverted/report.md' });
+  checks.find((c) => c.id === 'open-prs').evidence = [{ label: 'open-prs.json', href: 'evidence/open-prs.json' }];
+  const r = make(checks); const md = renderMarkdown(r);
+  // one 70 000-character line: the last-40-lines cut keeps it whole, so only the size cap can omit it
+  const read = (h) => (h === 'evidence/suite-migrated.log' ? 'x'.repeat(70000) : `tail of ${h}`);
+  const { marker, text, omitted } = commentBody(r, md, read);
+  assert.equal(text.split('\n')[0], marker);
+  assert.match(marker, /^\*\*Readiness dry run\*\* · dev 04370c0f6 · /);
+  assert.match(text, /\]\(#ev-evidence-suite-migrated-log\)/);
+  assert.match(text, /\]\(#ev-parity-reverted-report-md\)/);
+  assert.match(text, /```text\ntail of evidence\/open-prs\.json\n```/);       // .json evidence gets its tail too
+  assert.ok(text.length <= 60000, String(text.length));
+  assert.match(text, /tail omitted: too long; see \$OUT\/evidence\/suite-migrated\.log/);
+  assert.deepEqual(omitted, [{ href: 'evidence/suite-migrated.log', reason: 'too long' }]);
+});
+
+test('commentBody: every #ev- link has exactly one <a id> target, a missing file included', () => {
+  const r = make(); const md = renderMarkdown(r);
+  const { text, omitted } = commentBody(r, md, (h) => (h === 'evidence/baseline.log' ? null : 'ok'));
+  const links = new Set([...text.matchAll(/\]\(#(ev-[a-z0-9-]+)\)/g)].map((m) => m[1]));
+  const ids = [...text.matchAll(/<a id="(ev-[a-z0-9-]+)"><\/a>/g)].map((m) => m[1]);
+  assert.ok(links.size >= Object.keys(CHECKS).length);
+  assert.deepEqual([...links].sort(), [...ids].sort());                       // each link resolves, no id twice
+  assert.match(text, /tail not attached: no such file; see \$OUT\/evidence\/baseline\.log/);
+  assert.deepEqual(omitted, [{ href: 'evidence/baseline.log', reason: 'no such file' }]);
+});
+
+test('commentBody omits a tail the scan flags and keeps its anchor', () => {
+  const r = make();
+  const read = (h) => (h === 'evidence/split-check.log' ? 'fine\nbad line\n' : 'ok');
+  const { text, omitted } = commentBody(r, renderMarkdown(r), read,
+    { flag: (s) => (s.includes('bad') ? [{ line: 2, label: 'a home-directory path' }] : []) });
+  assert.match(text, /<a id="ev-evidence-split-check-log"><\/a>/);
+  assert.match(text, /tail omitted: the secret scan flagged line 2 \(a home-directory path\); see \$OUT\/evidence\/split-check\.log/);
+  assert.ok(!text.includes('bad line'));
+  assert.equal(omitted.length, 1);
+});

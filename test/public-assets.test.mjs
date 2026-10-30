@@ -149,7 +149,8 @@ const ALLOW = new Map([
   ['test/house-brief.test.mjs', "writes a fixture project's own ui/public/style.css and ui/server.mjs"],
   ['test/parity.test.mjs', "edits a copied tree's ui/server.mjs and style.css to prove the parity gates catch a change"],
 ]);
-const ALLOW_PREFIX = ['tools/split-by-feature/', 'test/split-by-feature'];   // the tool and its fixture strings
+const ALLOW_PREFIX = ['tools/split-by-feature/', 'test/split-by-feature',   // the tool and its fixture strings
+  'tools/readiness/', 'test/readiness'];   // the readiness dry run compares a scratch tree's monoliths with its split
 test('no test or tool reaches style.css, index.html or ui/server.mjs on disk directly', () => {
   const root = new URL('../', import.meta.url);
   const offenders = [];

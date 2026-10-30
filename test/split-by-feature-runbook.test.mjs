@@ -1,0 +1,45 @@
+// test/split-by-feature-runbook.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
+
+const doc = readFileSync(new URL('../docs/split-by-feature.md', import.meta.url), 'utf8');
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const STEPS = ['1. Prepare', '2. Keep ready', '3. Readiness', '4. Freeze day', '5. After the freeze', '6. Before the next release'];
+const section = (h) => { const i = doc.indexOf(`\n${h}`); assert.ok(i >= 0, h); const j = doc.indexOf('\n## ', i + 1); return doc.slice(i, j < 0 ? undefined : j); };
+
+test('the Inputs table records the owner and the freeze window', () => {
+  assert.match(doc, /^\| Go\/no-go owner \|/m); assert.match(doc, /^\| Freeze window \|/m);
+});
+
+test('the runbook table has the six steps in order, each with what to run, who and what pass means', () => {
+  const rows = doc.split('\n').filter((l) => /^\| \d\. /.test(l));
+  assert.deepEqual(rows.map((r) => r.split('|')[1].trim()), STEPS);
+  for (const r of rows) assert.equal(r.split('|').slice(1, -1).filter((c) => c.trim()).length, 4, r);
+});
+
+test('both rollback procedures and the PR catch-up recipe are there, each ending with a Pass: line', () => {
+  for (const h of ['## Rollback A', '## Rollback B', '## PR catch-up recipe']) {
+    const last = section(h).split('\n').filter((l) => l.trim()).at(-1);
+    assert.ok(last.startsWith('Pass: '), `${h} ends with: ${last}`);
+  }
+});
+
+test('the catch-up recipe lets the tool make its scratch clones: nobody writes the marker by hand', () => {
+  assert.doesNotMatch(doc, /touch\s+\S*worca-readiness-scratch/);
+  assert.match(section('## PR catch-up recipe'), /readiness\.mjs split --rev \S+ --splitter-rev M\^ --out /);
+});
+
+test('every tool file and npm script the runbook names exists', () => {
+  for (const [, f] of doc.matchAll(/\b(tools\/[\w./-]+\.(?:mjs|json))/g)) assert.ok(existsSync(new URL(`../${f}`, import.meta.url)), f);
+  for (const [, s] of doc.matchAll(/npm run ([\w:-]+)/g)) assert.ok(s in pkg.scripts, s);
+});
+
+test('every parity run command names --a, --b and --out with a known target kind', () => {
+  const cmds = [...doc.matchAll(/npm run parity -- run ([^`;\n]+)/g)].map((m) => m[1]);
+  assert.ok(cmds.length >= 3);
+  for (const c of cmds) {
+    assert.match(c, /--out \S+/, c);
+    for (const k of ['--a', '--b']) assert.match(c, new RegExp(`${k} (?:tree|package|docker):\\S+`), c);
+  }
+});

@@ -131,5 +131,8 @@ of the same commit. Once a split tree exists, run:
 npm run parity -- run --a tree:. --b tree:/path/to/split-tree --out /tmp/p-split
 ```
 
+`npm run readiness -- run` (see [split-by-feature.md](split-by-feature.md)) builds the split tree in a scratch clone and
+runs this comparison as its `parity` row.
+
 The CLAUDE.md feature-index step was skipped: `docs/INDEX.md` and `tools/docs-index.mjs` are absent at this
 checkpoint.
