@@ -97,7 +97,11 @@ const FORGE_VERBS = new Set(['pr', 'mr', 'issue', 'release', 'repo', 'api', 'gis
  *  update` pass. */
 const FORGE_ACTIONS = new Set(['create', 'edit', 'merge', 'comment', 'set', 'run', 'delete', 'upload', 'close', 'reopen', 'review', 'approve']);
 const FORGE_GLOBAL_VALUE = new Set(['-R', '--repo', '--hostname', '-g', '--group']);
-function forgeVerbSends(w) {
+/** Fix 6: a name that says gh / glab (`$GH`, `$GLAB_BIN`, `$env:GH`, `$(which gh)`): then any second word that only reads
+ *  is the exception, not the rule. */
+const FORGE_NAME_RE = /(^|[^a-z])(gh|glab|github|gitlab)([^a-z]|$)/i;
+const FORGE_READS = new Set([...READ_VERBS, 'clone', 'browse', 'checkout', 'ls', 'search', 'watch', 'download']);
+function forgeVerbSends(w, name = '') {
   const pos = [];
   for (let i = 0; i < w.length; i += 1) {
     const x = String(w[i]);
@@ -105,17 +109,22 @@ function forgeVerbSends(w) {
     if (x.startsWith('-')) continue;
     pos.push(x);
   }
-  if (!FORGE_VERBS.has(pos[0] ?? '')) return false;
   if (pos[0] === 'api') {
     return w.some((x, k) => (/^(-X|--method)$/.test(x) && isWriteMethod(w[k + 1]))
       || (/^(-X|--method=)[A-Za-z]+$/.test(x) && isWriteMethod(x.replace(/^(-X|--method=)/, '')))
       || /^(-f|-F|--field|--raw-field|--input)$/.test(x) || /^(--field|--raw-field|--input)=/.test(x));
   }
-  return FORGE_ACTIONS.has(pos[1] ?? '');
+  // Named gh / glab: any command group (pr, repo, cache, …) whose second word does more than read sends; the local
+  // ones (help, completion, auth, config, alias, version) do not.
+  if (FORGE_NAME_RE.test(String(name).replace(/^[$"'`&\s]+/, ''))) {
+    return pos[0] != null && !FORGE_LOCAL.has(pos[0]) && pos[1] != null && !FORGE_READS.has(pos[1]);
+  }
+  return FORGE_VERBS.has(pos[0] ?? '') && FORGE_ACTIONS.has(pos[1] ?? '');
 }
-const EXPANSION_SENDS = (w) => {
+const FORGE_LOCAL = new Set(['help', 'completion', 'auth', 'config', 'alias', 'version', 'status', 'search', 'browse']);
+const EXPANSION_SENDS = (w, name = '') => {
   if (w.some((x) => ['push', 'publish', 'send-email'].includes(x))) return true;
-  if (forgeVerbSends(w)) return true;
+  if (forgeVerbSends(w, name)) return true;
   if (!w.some((x) => /^https?:\/\//i.test(x))) return false;
   return w.some((x) => /^(-X.*|--request(=.*)?|-Method(:.*)?|--method(=.*)?)$/i.test(x)
     || /^(-d.*|--data.*|-F|--form(=.*)?|-T|--upload-file(=.*)?|--json(=.*)?)$/.test(x)
@@ -224,10 +233,16 @@ export function parseShell(command) {
   while (i < n) {
     const ch = s[i];
     if (quote) {
-      // "…$(git push)…" and "…`git push`…" run inside double quotes too.
+      // "…$(git push)…" and "…`git push`…" run inside double quotes too. Fix 6: the whole span is stepped over, so a
+      // double quote inside it ("$(echo "git push")") does not end the outer string.
       if (quote === '"' && ((ch === '$' && s[i + 1] === '(') || ch === '`')) {
-        const inner = substitutions(s.slice(i))[0];
-        if (inner != null) subs.push(inner);
+        const e = enclosed(s, i);
+        if (e) {
+          if (!(ch === '$' && e.inner.startsWith('('))) subs.push(e.inner);
+          cur += s.slice(i, e.end);
+          i = e.end;
+          continue;
+        }
       }
       if (ch === quote) quote = null;
       else if (ch === '\\' && quote === '"' && i + 1 < n && DQ_ESCAPES.has(s[i + 1])) cur += s[++i];
@@ -506,6 +521,9 @@ function wslCommand(args) {
 }
 
 const DOCKER_GLOBAL_VALUE = new Set(['--context', '-c', '--host', '-H', '--config', '--log-level', '-l', '--tlscacert', '--tlscert', '--tlskey', '--url', '--connection', '--root', '--runroot']);
+/** npm / yarn / pnpm / bun and cargo options before the subcommand that take a value (`npm --prefix $DIR test`). */
+const NPM_GLOBAL_VALUE = new Set(['--prefix', '-C', '--dir', '--cwd', '-w', '--workspace', '--filter', '-F', '--registry', '--cache', '--userconfig', '--loglevel']);
+const CARGO_GLOBAL_VALUE = new Set(['--manifest-path', '--config', '-Z', '--color', '--target-dir']);
 const COMPOSE_VALUE = new Set(['-f', '--file', '-p', '--project-name', '--env-file', '--profile', '--project-directory', '--ansi', '--progress', '--parallel']);
 /** docker / podman: `push`, `image push`, `manifest push`, `compose push`, `build` / `buildx build|bake` with `--push`
  *  or a registry output. Each sends an image to a registry. */
@@ -644,7 +662,21 @@ function commandDecision(w, depth, ctx = {}) {
   if (LAUNCHER_RE.test(b)) return args[0] === 'run' || args[0] === '-c' ? reparse(args.slice(1), depth) : null;
   if (b === 'eval' || b === 'iex' || b === 'invoke-expression') return reparse(args, depth);
   if (b === 'git') { const d = gitDecision(args); return d ? { ...d, readOnly: false } : null; }
-  if (FORGE_CLIS[b]) return { server: FORGE_CLIS[b], tool: cliTool(args), argv: args, readOnly: READ_VERBS.has(nonOptions(args)[1] || '') };
+  if (FORGE_CLIS[b]) {
+    // Fix 6: `cat x | xargs gh`, `gh $SUB`: a forge command whose subcommand cannot be read, named as one.
+    if (/[$`]/.test(nonOptions(args)[0] ?? '')) return deny(FORGE_CLIS[b], 'unreadable', `${FORGE_CLIS[b]} command, whose subcommand Worca cannot read`, args);
+    return { server: FORGE_CLIS[b], tool: cliTool(args), argv: args, readOnly: READ_VERBS.has(nonOptions(args)[1] || '') };
+  }
+  // Fix 6: npm / yarn / pnpm / bun, the other publishers and the image tools with an expanded subcommand (`npm $X`,
+  // `docker $SUB x/y`, `cat x | xargs npm`) cannot be read: they may publish or push.
+  if (NPM_LIKE.has(b) || PUBLISH_OTHER[b] || IMAGE_SERVERS.includes(b)) {
+    let i = 0;
+    while (i < args.length && args[i].startsWith('-')) {
+      i += (DOCKER_GLOBAL_VALUE.has(args[i]) && ['docker', 'podman', 'nerdctl'].includes(b)) || (NPM_GLOBAL_VALUE.has(args[i]) && NPM_LIKE.has(b))
+        || (CARGO_GLOBAL_VALUE.has(args[i]) && b === 'cargo') ? 2 : 1;
+    }
+    if (/[$`]/.test(args[i] ?? '')) return unreadable(`${b} command, whose subcommand Worca cannot read`, args);
+  }
   if (NPM_LIKE.has(b)) {
     // `publish` anywhere among the words (npm --registry x publish, yarn npm publish, pnpm -r publish), unless the
     // command is `npm run …`: that runs the project's own script, whatever its name.
@@ -713,8 +745,16 @@ const XARGS_VALUE = new Set(['-L', '-n', '-P', '-s', '-d', '-E', '-a', '--arg-fi
 function xargsDecision(args, depth, ctx) {
   let repl = null;
   let start = args.length;
+  let fromFile = null;   // Fix 6: -a / --arg-file / a `<` redirect: the words come from a file the guard cannot read
+  const redirect = args.findIndex((a) => a === '<' || /^<[^<(]/.test(a));
+  if (redirect >= 0) {
+    fromFile = args[redirect] === '<' ? (args[redirect + 1] ?? '') : args[redirect].slice(1);
+    args = [...args.slice(0, redirect), ...args.slice(redirect + (args[redirect] === '<' ? 2 : 1))];
+  }
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
+    if (a === '-a' || a === '--arg-file') { fromFile = args[i + 1] ?? ''; i += 1; continue; }
+    if (/^--arg-file=/.test(a) || /^-a./.test(a)) { fromFile = a.replace(/^(--arg-file=|-a)/, ''); continue; }
     if (a === '--') { start = i + 1; break; }
     if (a === '-I') { repl = args[i + 1] ?? null; i += 1; continue; }
     if (/^-I./.test(a)) { repl = a.slice(2); continue; }
@@ -727,7 +767,7 @@ function xargsDecision(args, depth, ctx) {
     break;
   }
   const cmd = args.slice(start);
-  const input = ctx.input;
+  const input = fromFile != null ? { text: null, raw: fromFile, decoded: false } : ctx.input;
   if (!cmd.length || !input) return null;
   const shell = SHELLS.has(bin(cmd[0])) || POWERSHELLS.has(bin(cmd[0]));
   const c = cmd.findIndex((x) => /^-[A-Za-z]*c[A-Za-z]*$/.test(x) || /^-command$/i.test(x));
@@ -891,7 +931,7 @@ function inputDecision(segs, metas, idx, kind, depth) {
   const sources = [];
   for (const h of m.here) {
     const x = expandSubs(h);   // sh <<< "$(printf '…')": the substituted text
-    sources.push({ text: /[$`]/.test(x.text) ? null : x.text, raw: h, decoded: false, encoded: x.encoded });
+    sources.push({ text: /[$`]/.test(x.text) ? null : x.text, raw: h, decoded: !!x.opaque, encoded: x.encoded });
   }
   for (const p of m.procs) {
     const r = parseShell(p);
@@ -931,23 +971,38 @@ function chainSource(segs, metas, from, to) {
 function substitutionText(inner) {
   const r = parseShell(inner);
   if (!r.segments.length) return null;
+  // Fix 6: `cat <<EOF … EOF` writes its heredoc (a quoted one as is; an unquoted one only when it expands nothing).
+  const first = r.segments[0];
+  if (r.segments.length === 1 && bin(first[leading(first)] ?? '') === 'cat' && first.length - leading(first) === 1 && r.heredocs.length === 1) {
+    const h = r.heredocs[0];
+    return h.quoted || !/[$`]/.test(h.body) ? { text: h.body, encoded: false } : { text: null, opaque: false };
+  }
   const src = chainSource(r.segments, r.meta, 0, r.segments.length);
-  return src.text != null ? { text: src.text, encoded: !!src.encoded } : null;
+  if (src.text != null) return { text: src.text, encoded: !!src.encoded };
+  // Fix 6: not a literal. Through a decoder or from a download (curl, wget, Invoke-WebRequest, httpie): what it writes is
+  // hidden. Narrower than the pipe rule (any guarded word): `$(npm bin)/eslint`, `$(git rev-parse --show-toplevel)` are
+  // common and write paths; `$(ssh-agent -s)`, `$(pyenv init -)` are neither.
+  return { text: null, opaque: !!(src.decoded || DOWNLOAD_RE.test(src.raw) || ACTION_RE.test(src.raw)) };
 }
+const DOWNLOAD_RE = /(^|[^\w.:/-])(curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|http|https|xh|xhs)(\.exe)?(?=$|[^\w:/-])/i;
 /** A word with each readable $( ) / backtick replaced by the text it writes (trailing newlines dropped, as the shell
  *  does). `changed` when one was replaced, `encoded` when that text was escape-encoded. */
 function expandSubs(word) {
   const s = String(word);
-  if (!/\$\(|`/.test(s)) return { text: s, changed: false, encoded: false };
+  if (!/\$\(|`/.test(s)) return { text: s, changed: false, encoded: false, opaque: false };
   let out = '';
   let changed = false;
   let encoded = false;
+  let opaque = false;
   for (let i = 0; i < s.length;) {
     if ((s[i] === '$' && s[i + 1] === '(' && s[i + 2] !== '(') || s[i] === '`') {
       const e = enclosed(s, i);
       if (e) {
         const lit = substitutionText(e.inner);
-        if (lit) { out += lit.text.replace(/\n+$/, ''); changed = true; encoded = encoded || lit.encoded; } else out += s.slice(i, e.end);
+        if (lit && lit.text != null) { out += lit.text.replace(/\n+$/, ''); changed = true; encoded = encoded || lit.encoded; } else {
+          out += s.slice(i, e.end);
+          opaque = opaque || !!(lit && lit.opaque);
+        }
         i = e.end;
         continue;
       }
@@ -955,7 +1010,7 @@ function expandSubs(word) {
     out += s[i];
     i += 1;
   }
-  return { text: out, changed, encoded };
+  return { text: out, changed, encoded, opaque };
 }
 
 /** NAME=value words set earlier in the line ($NAME and ${NAME} are read with them); `export`/`declare`/… too. */
@@ -996,20 +1051,31 @@ export function guardDecision(command, depth = 0) {
     const exp = w.map(expandSubs);
     if (exp.some((x) => x.changed)) {
       const we = exp.map((x) => x.text);
-      const split = we.flatMap((x, k) => (exp[k].changed ? x.split(/\s+/).filter(Boolean) : [x]));
+      // Fix 6: only the command word is split (`$(printf 'git push') origin`); an argument stays one word, as a quoted
+      // one does (`npm test -- --grep "$(echo git push)"` names no push).
+      const split = exp[0].changed ? [...we[0].split(/\s+/).filter(Boolean), ...we.slice(1)] : we;
       const ctx = { piped: meta[s].piped, input };
-      const de = (we[0] ? commandDecision(we, depth + 1, ctx) : null) || (split.length ? commandDecision(split, depth + 1, ctx) : null);
+      const de = (we[0] ? commandDecision(we, depth + 1, ctx) : null) || (split.length && split !== we ? commandDecision(split, depth + 1, ctx) : null);
       if (de) return de;
-      const runner = bin(split[0] ?? '');
-      const runs = exp[0].encoded || (exp.some((x) => x.encoded) && (['eval', 'iex', 'invoke-expression', 'cmd'].includes(runner) || SHELLS.has(runner) || POWERSHELLS.has(runner) || WSLS.has(runner)));
-      if (runs && !fallback) fallback = unreadable('command, which runs escape-encoded text', w);
+    }
+    // Hidden text that runs: escape-encoded, or from a decoder or a sending command (curl …), as the command word, an
+    // eval / iex argument, a shell's -c / /c / -Command text, or anything wsl runs.
+    const hidden = (x) => x.encoded || x.opaque;
+    if (!fallback && exp.some(hidden)) {
+      const runner = bin(exp[0].changed ? exp[0].text.split(/\s+/)[0] : w[0]);
+      const c = w.findIndex((x, k) => k > 0 && (/^-[A-Za-z]*c[A-Za-z]*$/.test(x) || /^\/\/?[ck]$/i.test(x) || /^-(command|c)$/i.test(x)));
+      const runs = hidden(exp[0])
+        || (['eval', 'iex', 'invoke-expression'].includes(runner) && exp.slice(1).some(hidden))
+        || ((SHELLS.has(runner) || POWERSHELLS.has(runner) || runner === 'cmd') && c > 0 && exp.slice(c + 1).some(hidden))
+        || ((WSLS.has(runner) || LAUNCHER_RE.test(runner)) && exp.slice(1).some(hidden));
+      if (runs) fallback = unreadable(exp.some((x) => x.encoded) ? 'command, which runs escape-encoded text' : 'command, which runs text Worca cannot read', w);
     }
     // A command whose name is an expansion (`$(which git) push`, `"$G" push`): unreadable when its own words push,
     // publish or send mail, or name a method with a URL. A bare `push` / `publish` as a command is what is left of
     // `` `which git` push `` once split: unreadable when a sending command is in the line.
     // Kept as a fallback: a command later in the line that can be read names what it does better.
     if (/[$`]/.test(w[0])) {
-      if (!fallback && EXPANSION_SENDS(w.slice(1))) fallback = unreadable('command, whose name Worca cannot read', w);
+      if (!fallback && EXPANSION_SENDS(w.slice(1), w[0])) fallback = unreadable('command, whose name Worca cannot read', w);
     } else if (!fallback && ACTION_WORDS.has(w[0]) && GUARD_CMD_RE.test(text)) fallback = unreadable('command, whose name Worca cannot read', w);
     const kind = stdinReader(words);
     if (kind && (meta[s].piped || meta[s].here.length || meta[s].procs.length)) {

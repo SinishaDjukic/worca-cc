@@ -74,7 +74,7 @@ export function guardCall(e, { forgeOf = () => null } = {}) {
   if (IMAGE_SERVERS.includes(server) && tool === 'push') return row({ tool: 'push an image', noun: 'image', preview: clip(cmd, 80), cap: STOPPED, full: cmd });
   if (PUBLISH_SERVERS.includes(server)) return row({ tool: 'publish a package', noun: 'package', preview: clip(cmd, 80), cap: STOPPED, full: cmd });
   // Task 5b: what the guard could not read (nested too deep, a shell fed unreadable input, an encoded PowerShell command).
-  if (server === 'shell' || (server === 'PowerShell' && tool === 'shell')) {
+  if (server === 'shell' || (server === 'PowerShell' && tool === 'shell') || tool === 'unreadable') {   // fix 6: `xargs gh`, `npm $X`
     return row({ tool: 'run a command Worca could not read', noun: 'command', preview: clip(cmd, 80), cap: STOPPED, full: cmd });
   }
   if (server === 'web') {

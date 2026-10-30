@@ -105,10 +105,11 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  *   forge / CI: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN, GH_PAT, GITHUB_PAT, GITLAB_TOKEN,
  *   GLAB_TOKEN, GL_TOKEN, CI_JOB_TOKEN, GITEA_TOKEN, BITBUCKET_TOKEN, BITBUCKET_APP_PASSWORD, AZURE_DEVOPS_EXT_PAT,
  *   SYSTEM_ACCESSTOKEN, ACTIONS_ID_TOKEN_REQUEST_TOKEN / _URL, ACTIONS_RUNTIME_TOKEN;
- *   publish-only: CARGO_REGISTRY_TOKEN, TWINE_PASSWORD, TWINE_USERNAME, UV_PUBLISH_TOKEN, UV_PUBLISH_PASSWORD,
- *   GEM_HOST_API_KEY, HELM_REGISTRY_PASSWORD, DOCKER_AUTH_CONFIG, POETRY_PYPI_TOKEN_*;
- *   install-side: NPM_TOKEN, NODE_AUTH_TOKEN, YARN_NPM_AUTH_TOKEN, YARN_NPM_AUTH_IDENT, npm_config_*_auth* / *_password /
- *   *_username, CARGO_REGISTRIES_*_TOKEN, POETRY_HTTP_BASIC_*_PASSWORD.
+ *   publish / deploy: CARGO_REGISTRY_TOKEN, TWINE_PASSWORD, TWINE_USERNAME, UV_PUBLISH_TOKEN, UV_PUBLISH_PASSWORD,
+ *   GEM_HOST_API_KEY, HELM_REGISTRY_PASSWORD, DOCKER_AUTH_CONFIG, PYPI_API_TOKEN, CR_PAT, QUAY_TOKEN, JFROG_ACCESS_TOKEN,
+ *   HEX_API_KEY, SONATYPE_PASSWORD, VERCEL_TOKEN, NETLIFY_AUTH_TOKEN, POETRY_PYPI_TOKEN_*;
+ *   install-side: NPM_TOKEN, NODE_AUTH_TOKEN, YARN_NPM_AUTH_TOKEN, YARN_NPM_AUTH_IDENT, NUGET_AUTH_TOKEN (a private
+ *   NuGet feed), npm_config_*_auth* / *_password / *username, CARGO_REGISTRIES_*_TOKEN, POETRY_HTTP_BASIC_*_PASSWORD.
  *   The setup step ("Before each try, run") alone passes `tryGuard.keepRegistryAuth`: it keeps the install-side ones,
  *   never a forge, CI or publish-only one. Setup is trusted: it is the person's own command and runs before the agent
  *   changed anything; a setup command that itself publishes is the person's own choice. The agents and the checks (the
@@ -116,6 +117,13 @@ const pathKeyOf = (env) => Object.keys(env).find((k) => k.toUpperCase() === 'PAT
  * What the guard covers (with the hook, try-guard.mjs): Bash and the CLI's PowerShell tool, nested shells, WSL (wsl,
  * wslg, distro launchers, System32 bash.exe; WSLENV for WSL's git and gh), pipes and here-strings into a shell, and a
  * structured deny with an exit-2 fallback.
+ * The hook's parser is best-effort recording: what stops a send is these env layers (no sign-in for git, the forge
+ * CLIs and the stripped tokens) and the try's remote-less copy. Parser limits (read as plain commands, not stopped by
+ * the hook): a `$( )` / backtick of any program other than a literal writer, a decoder or a download landing in eval /
+ * a shell (e.g. `eval "$(cat cmds.txt)"`); names and values set outside the command line (variables, aliases,
+ * functions); interpreters and scripts (`node -e`, `python -c`, make, npm scripts); word building the shell does that
+ * the parser does not (brace expansion `{g,}it`, `${x:0:3}`, `${x//a/b}`, arrays); encodings other than \x / octal /
+ * \u / \c (rev, a variable's value); PowerShell string building (`'gi'+'t'`, `&('g'+'it')`, `-join`).
  * Stated limits (not covered, no network block yet): a web call with a token typed into the command; `npm publish` run
  * from inside a script (npm run …, make, a test); web calls from `node -e` / `python -c` / any program; shell aliases,
  * Set-Alias or a git alias configured in an earlier, separate command; tokens a WSL profile sets (GH_TOKEN in
@@ -173,14 +181,15 @@ export function withTryGuardEnv(env, tryGuard, { home = worcaHome(), platform = 
 export const TRY_FORGE_TOKEN_KEYS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_PAT', 'GITHUB_PAT',
   'GITLAB_TOKEN', 'GLAB_TOKEN', 'GL_TOKEN', 'CI_JOB_TOKEN', 'GITEA_TOKEN', 'BITBUCKET_TOKEN', 'BITBUCKET_APP_PASSWORD', 'AZURE_DEVOPS_EXT_PAT', 'SYSTEM_ACCESSTOKEN',
   'ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_RUNTIME_TOKEN']);
-/** Publish-only registry credentials: never in a try, the setup step included (installing needs none of them). */
+/** Publish / deploy credentials: never in a try, the setup step included (installing needs none of them). */
 export const TRY_PUBLISH_TOKEN_KEYS = Object.freeze(['CARGO_REGISTRY_TOKEN', 'TWINE_PASSWORD', 'TWINE_USERNAME', 'UV_PUBLISH_TOKEN', 'UV_PUBLISH_PASSWORD',
-  'GEM_HOST_API_KEY', 'HELM_REGISTRY_PASSWORD', 'DOCKER_AUTH_CONFIG']);
+  'GEM_HOST_API_KEY', 'HELM_REGISTRY_PASSWORD', 'DOCKER_AUTH_CONFIG', 'PYPI_API_TOKEN', 'CR_PAT', 'QUAY_TOKEN', 'JFROG_ACCESS_TOKEN', 'HEX_API_KEY',
+  'SONATYPE_PASSWORD', 'VERCEL_TOKEN', 'NETLIFY_AUTH_TOKEN']);
 const PUBLISH_TOKEN_RE = /^POETRY_PYPI_TOKEN_/i;
 /** Install-side registry auth: dropped for the agents and the checks; the setup step keeps it (`keepRegistryAuth`).
  *  Also by pattern: npm_config_*_auth* / *_password / *_username, CARGO_REGISTRIES_<NAME>_TOKEN and
  *  POETRY_HTTP_BASIC_<NAME>_PASSWORD (a private registry `cargo fetch` / `poetry install` reads from). */
-export const TRY_REGISTRY_TOKEN_KEYS = Object.freeze(['NPM_TOKEN', 'NODE_AUTH_TOKEN', 'YARN_NPM_AUTH_TOKEN', 'YARN_NPM_AUTH_IDENT']);
+export const TRY_REGISTRY_TOKEN_KEYS = Object.freeze(['NPM_TOKEN', 'NODE_AUTH_TOKEN', 'YARN_NPM_AUTH_TOKEN', 'YARN_NPM_AUTH_IDENT', 'NUGET_AUTH_TOKEN']);
 const INSTALL_AUTH_RES = [/^npm_config_(.*[_:])?(auth|password|username)/i, /^CARGO_REGISTRIES_.+_TOKEN$/i, /^POETRY_HTTP_BASIC_.+_PASSWORD$/i];
 export const TRY_STRIPPED_KEYS = Object.freeze([...TRY_FORGE_TOKEN_KEYS, ...TRY_PUBLISH_TOKEN_KEYS, ...TRY_REGISTRY_TOKEN_KEYS]);
 const ALWAYS = new Set([...TRY_FORGE_TOKEN_KEYS, ...TRY_PUBLISH_TOKEN_KEYS]);
