@@ -177,15 +177,16 @@ session and the sessions to the run.
   its own `cost` record with `carriedBy` (the turn that carried it); the rest is the current step's. When no later turn
   of that host session can carry it (a rotation, a restart, an engine switch, the session's close), the cut turn is
   booked at once as an `estimate`, its `cost` record marked `cut`.
-- **One conversation.** No main agent, so no hand-off: all of a turn's cost is its step's (`hostOverheadUsd` is 0 and
-  there is no **Session hand-offs** line). On Claude Code and Goose it is the Δ of the conversation's running total; on
-  Codex and OpenCode, whose result is the turn's own cost, that figure. A cost override on the step's model prices the
-  turn from its own usage, as it prices the step without a session (on Goose, whose usage is the session's sum, a
-  per-Mtok price cannot be applied, and the run log says so). A cut turn, or a result without its figure, that its usage
-  cannot price books nothing: the row stays blank, never $0.00. A step on a bridged model is booked at what its upstream
-  reported, a stopped turn too, and a result of a turn that never ran (a refusal before the CLI starts, the answer to a
-  lost conversation) books nothing. With no hook, and a step usage that leaves out what its
-  investigators spent, its turns are checked only per conversation: the bookings against the running total.
+- **One conversation.** No main agent, so no hand-off: all of a turn's cost is its step's (`hostOverheadUsd` is 0, blank
+  when the turn's share is unknown, and there is no **Session hand-offs** line). On Claude Code and Goose it is the Δ of
+  the conversation's running total; on Codex and OpenCode, whose result is the turn's own cost, that figure. A cost
+  override on the step's model prices the turn from its own usage, as it prices the step without a session (on Goose,
+  whose usage is the session's sum, a per-Mtok price cannot be applied, and the run log says so). A cut turn, or a
+  result without its figure, that its usage cannot price books nothing: the row stays blank, never $0.00. A step on a
+  bridged model is booked at what its upstream reported, a stopped turn too, and a result of a turn that never ran (a
+  refusal before the CLI starts, the answer to a lost conversation) books nothing. With no hook, and a step usage that
+  leaves out what its investigators spent, its turns are checked only per conversation: the bookings against the running
+  total.
 - **Checks.** After every turn: the hook figure against the booked step cost within `max($0.001, 2%)`, and the step's
   own token estimate within `max($0.01, 15%)`. Per host session (on rotate, restart and close): the bookings against
   the harness's own total within `max($0.001, 2%)`. A mismatch is shown and audited once; it never changes a booking.

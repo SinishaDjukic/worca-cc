@@ -51,10 +51,14 @@ const SESSION_SUM_USAGE_ENGINES = new Set(['goose']);
 /** What each engine says when a `--resume` finds no conversation (C20), where its adapter does not start a fresh one
  *  itself: Claude Code, Codex, Copilot. (Goose, OpenCode, Cursor, Gemini and Qwen retry fresh and name the new id.) */
 const LOST_CONVERSATION_RES = [VANISHED_RE, CODEX_RESUME_NOT_FOUND_RE, COPILOT_RESUME_NOT_FOUND_RE];
-/** A result of a turn that never ran: an error with no model turn. Claude Code answers a `--resume` of a lost conversation
- *  with one (`error_during_execution`, `num_turns: 0`, `errors: ["No conversation found …"]`, $0) before it exits 1
- *  (test/fixtures/ask/bogus-resume.jsonl), so it is no sign the conversation answered (C20). */
-const noTurnResult = (e) => e.isError === true && !(e.numTurns > 0);
+/** A result of a turn that never ran: an error with no model turn. Claude Code answers a `--resume` of a lost
+ *  conversation with one (`error_during_execution`, `num_turns: 0`, `errors: ["No conversation found …"]`, $0) before
+ *  it exits 1 (test/fixtures/ask/bogus-resume.jsonl), so it is no sign the conversation answered (C20). Only Claude
+ *  Code's result counts its turns (claude-events.mjs `numTurns`; the offline host plays Claude Code): every other
+ *  engine's is a turn's, an error one too. Codex settles a turn that ended without `turn.completed` (it failed, hit its
+ *  cap, was stopped or paused) with an error result and no count, its usage and cost read from the thread's rollout
+ *  (codex.mjs `settleUsage`). */
+const noTurnResult = (e, turnCounted) => turnCounted && e.isError === true && !(e.numTurns > 0);
 /** C30: this many consecutive watchdog failures in one session degrade it to `separate` for the rest of the run. */
 export const HOST_DEGRADE_AFTER = RECOVERY_MAX_AUTO_ATTEMPTS;
 /** `--max-budget-usd` never goes below a cent (C10). */
@@ -740,7 +744,8 @@ export class SessionHost {
    * figure, never a cut beside it (C34). Failures are the runner's, unchanged (C20, C41), except a `--resume` that found no
    * conversation before it answered, in the engine's own words, which restarts it once (C20). A result of a turn that
    * never ran (no model turn, $0: Claude Code's answer to a lost conversation, or to a refusal before it starts) is no
-   * answer, and nothing of it is booked or handed on.
+   * answer, and nothing of it is booked or handed on. Another engine's error result is a turn's (Codex's settled spend
+   * of a failed or cut turn): booked as a result is, then the runner's failure goes on.
    */
   async _sharedTurn(opts, member, { queueMs = 0 } = {}) {
     const executionId = String(member.executionId);
@@ -766,9 +771,10 @@ export class SessionHost {
     let named = false;                          // the row says where the turn runs
     let answered = false;                       // the conversation answered: its init, the model's output, a turn's result
     const said = [];                            // the runner's plain and stderr lines, where a lost conversation says so (C20)
+    const turnCounted = this._turnCountingEngine();
     const onEvent = (e) => {
       if (!e || typeof e !== 'object') return;
-      if (['usage', 'text', 'tool'].includes(e.type) || (e.type === 'session' && e.init === true) || (e.type === 'result' && !noTurnResult(e))) answered = true;
+      if (['usage', 'text', 'tool'].includes(e.type) || (e.type === 'session' && e.init === true) || (e.type === 'result' && !noTurnResult(e, turnCounted))) answered = true;
       if (e.type === 'result') { got = e; return; }
       if (e.type === 'session' && typeof e.sessionId === 'string' && e.sessionId) {
         // Adopted when named, and again when the engine names another: an adapter that starts a fresh session itself
@@ -802,7 +808,7 @@ export class SessionHost {
     // A result of a turn that never ran is not this turn's (a lost conversation's, a refusal before the CLI starts, which
     // the sideload retry runs again): it spent nothing, and its $0 is no running total. Booked, it would reset the
     // conversation's baseline (the next result's Δ would then book every earlier turn again) and give a held cut a $0 share.
-    const r = got && !noTurnResult(got) ? got : null;
+    const r = got && !noTurnResult(got, turnCounted) ? got : null;
 
     const usd = fin(r?.costUsd) ? r.costUsd : null;
     const cumulative = this._cumulativeEngine();
@@ -862,6 +868,12 @@ export class SessionHost {
    *  offline host plays Claude Code. */
   _cumulativeEngine() {
     return this.port.mock === true || CUMULATIVE_COST_ENGINES.has(this.engine ?? 'claude');
+  }
+
+  /** Does this engine's result count its model turns, so an error result with none is a turn that never ran
+   *  (`noTurnResult`)? Claude Code's alone; the offline host plays it. */
+  _turnCountingEngine() {
+    return this.port.mock === true || (this.engine ?? 'claude') === 'claude';
   }
 
   _onWarn(w, { turnId, dispatchId, label, attr }) {

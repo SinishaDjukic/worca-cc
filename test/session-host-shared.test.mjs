@@ -17,6 +17,7 @@ import { _testing as mockT } from '../src/core/engines/mock-session.mjs';
 import { createSessionHosts, defaultTransport } from '../src/core/session-host.mjs';
 import { sharedTurnOpts, SHARED_SESSION_PREAMBLE, SHARED_ROLE_HEADING } from '../src/core/engines/session-dispatch.mjs';
 import { createClaudeNormalizer } from '../src/core/engines/claude-events.mjs';
+import { createCodexNormalizer } from '../src/core/engines/codex.mjs';
 import { priceUsage } from '../src/core/session-cost.mjs';
 import { listCostRates } from '../src/core/config.mjs';
 import { spec, decisions, fakePort, member } from './helpers/session-host-fakes.mjs';
@@ -161,6 +162,22 @@ const turnEvents = ({ id = 'C1', usd = null, cumulative = true } = {}) => [
   { type: 'result', text: 'REPORT', usage: { ...U }, subtype: 'success', isError: false, numTurns: 3, sessionId: id,
     ...(usd == null ? {} : { costUsd: usd, ...(cumulative ? { cumulativeCost: true } : {}) }) },
 ];
+const CU = Object.freeze({ input_tokens: 4000, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0, output_tokens: 300 });
+/** One Codex turn as its adapter hands it on (codex.mjs `createCodexNormalizer`): the thread named at `thread.started` (an
+ *  init), the agent's message and `turn.completed`'s result, which has no turn count, no subtype and no session id. Codex
+ *  emits no `usage` events. `usd`: the turn's figure (none: a model no list prices, e.g. one on its own endpoint). */
+const codexTurn = ({ thread = 'T1', usd = null, model = M } = {}) => {
+  const n = createCodexNormalizer({ model });
+  const out = [{ type: 'thread.started', thread_id: thread }, { type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: 'REPORT' } },
+    { type: 'turn.completed', usage: { input_tokens: 5000, cached_input_tokens: 1000, output_tokens: 300 } }].flatMap((l) => n.push(l));
+  if (usd != null) out.at(-1).costUsd = usd;
+  return out;
+};
+/** A Codex turn that ended without `turn.completed` (it failed, hit its cap, was stopped or paused) still ran: codex.mjs
+ *  `settleUsage` reads its spend from the thread's rollout and hands it on as an error result, again with no turn count,
+ *  before the spawn throws (test/codex-ask-adapter.test.mjs pins that side). */
+const codexSettled = ({ thread = 'T1', usd = null } = {}) => [...codexTurn({ thread }).slice(0, 2),
+  { type: 'result', subtype: 'error_during_execution', isError: true, text: '', usage: { ...CU }, ...(usd == null ? {} : { costUsd: usd }) }];
 /** `play(hostOpts, i)` → the events of call i; `hang(i)`: then wait for the kill; `fail(i)`: then reject with it. */
 function sharedTransport(play, { fail = () => null, hang = () => false } = {}) {
   const calls = [];
@@ -262,11 +279,11 @@ test('a resumed turn that reports another conversation id is adopted; the next t
 
 test('turnUsd: an engine whose result is the turn\'s own cost books that figure; the epoch check sums the turns', async () => {
   const port = fakePort({ mock: false, engine: 'codex' });
-  const { transport } = sharedTransport((h, i) => turnEvents({ usd: [0.3, 0.2][i], cumulative: false }));
+  const { transport } = sharedTransport((h, i) => codexTurn({ usd: [0.3, 0.2][i] }));
   const host = sharedHost(port, transport);
   await host.run(memberOpts(), member('n_a'));
   await host.run(memberOpts(), member('n_b'));
-  assert.deepEqual(port.booked.map((b) => [b.turnUsd, 'cumulativeUsd' in b, 'carried' in b]), [[0.3, false, false], [0.2, false, false]]);
+  assert.deepEqual(port.booked.map((b) => [b.turnUsd, 'cumulativeUsd' in b, 'carried' in b, b.memberUsage]), [[0.3, false, false, CU], [0.2, false, false, CU]]);
   assert.deepEqual(port.records.filter((r) => r.kind === 'turn_end').map((r) => [r.cumulativeUsd, r.deltaUsd]), [[null, 0.3], [null, 0.2]]);
   near(host.lastCumulativeUsd, 0.5);
   await host.close('done');
@@ -298,9 +315,9 @@ test('a result without its figure on Claude Code is held: the next running total
 
 test('no figure where none follows: a turn-cost engine books the turn\'s usage as an estimate now; Copilot books nothing (C24)', async () => {
   const codex = fakePort({ mock: false, engine: 'codex' });
-  const a = sharedHost(codex, sharedTransport(() => turnEvents({ usd: null })).transport);
+  const a = sharedHost(codex, sharedTransport(() => codexTurn()).transport);
   await a.run(memberOpts(), member('n_a'));
-  near(codex.booked[0].cutEstimateUsd, turnPrice(), 'its own messages and its investigator\'s');
+  near(codex.booked[0].cutEstimateUsd, priceUsage(M, CU), 'its result\'s usage (Codex reports no message usage)');
   assert.deepEqual(pick(codex.records.find((r) => r.kind === 'cost'), ['executionId', 'costSource', 'cut']), { executionId: 'x:n_a:1', costSource: 'estimate', cut: true });
   assert.equal(a.openCut, null);
   const copilot = fakePort({ mock: false, engine: 'copilot', engineCost: false });
@@ -519,9 +536,9 @@ test('v2 — only the runner\'s plain lines say a conversation is lost, and only
 });
 
 test('v2 — a $0 figure is a figure, on both kinds of engine; with no model anywhere the member\'s model is null', async () => {
-  for (const [engine, cumulative, key] of [['claude', true, 'cumulativeUsd'], ['codex', false, 'turnUsd']]) {
+  for (const [engine, play, key] of [['claude', () => turnEvents({ usd: 0 }), 'cumulativeUsd'], ['codex', () => codexTurn({ usd: 0 }), 'turnUsd']]) {
     const port = fakePort({ mock: false, engine });
-    await sharedHost(port, sharedTransport(() => turnEvents({ usd: 0, cumulative })).transport).run(memberOpts(), member('n_a'));
+    await sharedHost(port, sharedTransport(play).transport).run(memberOpts(), member('n_a'));
     assert.equal(port.booked[0][key], 0, engine);
     assert.equal(port.records.find((r) => r.kind === 'turn_end').deltaUsd, 0, engine);
     assert.deepEqual(pick(port.records.find((r) => r.kind === 'cost'), ['memberUsd', 'costSource']), { memberUsd: 0, costSource: 'harness' }, engine);
@@ -572,19 +589,22 @@ test('v3 — a lost conversation in each engine\'s own words (C20); a name given
   ];
   for (const [engine, before, msg] of cases) {
     const port = fakePort({ mock: false, engine });
-    const { transport, calls } = sharedTransport((h, i) => (i === 1 ? before : turnEvents({ id: ['C1', null, 'C2'][i], usd: 0.1 })),
+    // Codex's turns as its adapter gives them (its ids `codex:<thread>`), the others' as before.
+    const play = engine === 'codex' ? (id) => codexTurn({ thread: id, usd: 0.1 }) : (id) => turnEvents({ id, usd: 0.1 });
+    const id = (x) => (engine === 'codex' ? `codex:${x}` : x);
+    const { transport, calls } = sharedTransport((h, i) => (i === 1 ? before : play(['C1', null, 'C2'][i])),
       { fail: (i) => (i === 1 ? new Error(msg) : null) });
     const host = sharedHost(port, transport);
     await host.run(memberOpts(), member('n_a'));
     assert.deepEqual(await host.run(memberOpts(), member('n_b')), { text: 'R2', exitCode: 0 }, engine);
-    assert.deepEqual(calls.map((h) => h.resumeSessionId), [undefined, 'C1', undefined], engine);
+    assert.deepEqual(calls.map((h) => h.resumeSessionId), [undefined, id('C1'), undefined], engine);
     assert.equal(port.records.filter((r) => r.kind === 'restart').length, 1, engine);
   }
   // Answered first (its init, or the model's own words), it is the runner's failure, unchanged.
-  for (const said of [[{ type: 'session', sessionId: 'C1', init: true }], [{ type: 'text', text: 'hi', parentId: null, from: 'assistant' }]]) {
+  for (const said of [codexTurn({ thread: 'C1' }).slice(0, 1), codexTurn({ thread: 'C1' }).slice(1, 2)]) {
     const port = fakePort({ mock: false, engine: 'codex' });
     const err = new Error('codex: no rollout found for thread id C1');
-    const t = sharedTransport((h, i) => (i === 1 ? said : turnEvents({ usd: 0.1 })), { fail: (i) => (i === 1 ? err : null) });
+    const t = sharedTransport((h, i) => (i === 1 ? said : codexTurn({ thread: 'C1', usd: 0.1 })), { fail: (i) => (i === 1 ? err : null) });
     const host = sharedHost(port, t.transport);
     await host.run(memberOpts(), member('n_a'));
     await assert.rejects(host.run(memberOpts(), member('n_b')), (e) => e === err);
@@ -718,9 +738,7 @@ test('v4 — nothing priceable is no estimate: the turn books nothing and its ro
   const X = 'acme/unpriced-1';                                          // no operator price, no list price
   // A result without its figure on a turn-cost engine, its usage at a model nothing prices: booked as it is (none).
   const codex = fakePort({ mock: false, engine: 'codex' });
-  const a = sharedHost(codex, sharedTransport(() => [{ type: 'session', sessionId: 'C1', init: true },
-    { type: 'usage', phase: 'message', parentId: null, messageId: 'm1', model: X, usage: { ...U } },
-    { type: 'result', text: 'R', usage: { ...U }, subtype: 'success', isError: false, numTurns: 1, sessionId: 'C1' }]).transport);
+  const a = sharedHost(codex, sharedTransport(() => codexTurn({ model: X })).transport);
   await a.run(memberOpts([], { model: X }), member('n_a'));
   assert.deepEqual(codex.booked.map((b) => [Object.hasOwn(b, 'cutEstimateUsd'), Number.isNaN(b.turnUsd)]), [[false, true]]);
   assert.deepEqual(pick(codex.records.find((r) => r.kind === 'cost'), ['costSource', 'memberUsd', 'cut']), { costSource: 'none', memberUsd: null, cut: undefined });
@@ -746,4 +764,90 @@ test('v4 — nothing priceable is no estimate: the turn books nothing and its ro
   assert.equal(c.openCut, null);
   await c.close('stopped');
   assert.deepEqual([claude.booked.length, claude.records.filter((r) => r.kind === 'cost').length], [0, 0]);
+});
+
+// ── impl review, cycle 1: only Claude Code's result counts its turns; Codex's error result is a turn's (codex.mjs) ──
+test('a Codex turn that failed books the spend codex settled from its rollout, then its error goes on unchanged; the next turn and the epoch check count it', async () => {
+  const port = fakePort({ mock: false, engine: 'codex' });
+  const boom = Object.assign(new Error('codex: turn failed: boom'), { errorClass: 'rate_limit' });
+  const ev = [];
+  const { transport, calls } = sharedTransport((h, i) => [codexSettled({ usd: 0.4 }), codexTurn({ usd: 0.2 })][i], { fail: (i) => (i === 0 ? boom : null) });
+  const host = sharedHost(port, transport);
+  await assert.rejects(host.run(memberOpts(ev), member('n_a')), (e) => e === boom && e.message === 'codex: turn failed: boom' && e.errorClass === 'rate_limit');
+  assert.deepEqual(port.booked.map((b) => pick(b, ['stepKey', 'shared', 'turnUsd', 'memberUsage', 'hostSessionId'])),
+    [{ stepKey: 'x:n_a:1', shared: true, turnUsd: 0.4, memberUsage: CU, hostSessionId: 'codex:T1' }]);
+  assert.deepEqual(pick(port.records.find((r) => r.kind === 'cost'), ['executionId', 'memberUsd', 'hostOverheadUsd', 'costSource']),
+    { executionId: 'x:n_a:1', memberUsd: 0.4, hostOverheadUsd: 0, costSource: 'harness' });
+  assert.deepEqual(pick(port.records.find((r) => r.kind === 'turn_end'), ['exit', 'deltaUsd', 'cumulativeUsd', 'numTurns', 'subtype']),
+    { exit: 'error', deltaUsd: 0.4, cumulativeUsd: null, numTurns: null, subtype: 'error_during_execution' });
+  assert.deepEqual(ev.filter((e) => e.type === 'result').map((e) => [e.isError, e.sessionBooked, 'costUsd' in e]), [[true, true, false]], 'handed on as booked');
+  assert.deepEqual([host.openCut, port.records.some((r) => r.kind === 'restart')], [null, false]);
+  await host.run(memberOpts(), member('n_a', 2));
+  assert.deepEqual(calls.map((h) => h.resumeSessionId), [undefined, 'codex:T1']);
+  assert.deepEqual(port.booked.map((b) => b.turnUsd), [0.4, 0.2]);
+  near(host.lastCumulativeUsd, 0.6);
+  await host.close('done');
+  const close = port.records.at(-1);
+  assert.deepEqual([close.kind, close.reconciled, close.epochChecks[0].ok], ['close', true, true]);
+  near(close.epochChecks[0].harnessTotalUsd, 0.6, 'the failed turn\'s spend is in the books\' total');
+});
+
+test('a Codex turn stopped or paused books what codex settled as the spawn died; the Stop still throws the AbortError, the pause the PauseError', async () => {
+  for (const [how, name] of [['stop', 'AbortError'], ['pause', 'PauseError']]) {
+    const port = fakePort({ mock: false, engine: 'codex' });
+    const [init, said, settled] = codexSettled({ usd: 0.4 });
+    // As runCodexProcess does: the kill ends the spawn, settleUsage hands on the turn's spend, then the spawn throws.
+    const transport = (h) => new Promise((_, reject) => {
+      h.onEvent(init);
+      h.onEvent(said);
+      h.signal.addEventListener('abort', () => { h.onEvent(settled); reject(abortErr()); }, { once: true });
+    });
+    const host = sharedHost(port, transport);
+    const ac = new AbortController();
+    const done = assert.rejects(host.run(memberOpts([], { signal: ac.signal }), member('n_a')), { name });
+    await tick();
+    if (how === 'stop') ac.abort();
+    else await host.close('paused');
+    await done;
+    assert.deepEqual(port.booked.map((b) => [b.stepKey, b.turnUsd, Object.hasOwn(b, 'cutEstimateUsd')]), [['x:n_a:1', 0.4, false]], how);
+    assert.deepEqual(pick(port.records.find((r) => r.kind === 'cost'), ['memberUsd', 'costSource', 'cut']), { memberUsd: 0.4, costSource: 'harness', cut: undefined }, how);
+    assert.equal(port.records.find((r) => r.kind === 'turn_end').exit, 'aborted', how);
+    assert.equal(host.openCut, null, `${how}: nothing held for a running total Codex never reports`);
+    near(host.lastCumulativeUsd, 0.4, how);
+  }
+});
+
+test('a Codex turn on a model no list prices that ended without turn.completed: its settled usage books an estimate now, the error goes on', async () => {
+  const port = fakePort({ mock: false, engine: 'codex' });
+  const boom = new Error('codex: turn failed: boom');
+  const host = sharedHost(port, sharedTransport(() => codexSettled(), { fail: () => boom }).transport);
+  await assert.rejects(host.run(memberOpts(), member('n_a')), (e) => e === boom);
+  assert.equal(port.booked.length, 1);
+  near(port.booked[0].cutEstimateUsd, priceUsage(M, CU), 'priced from the result\'s usage');
+  assert.deepEqual(pick(port.records.find((r) => r.kind === 'cost'), ['executionId', 'costSource', 'cut']), { executionId: 'x:n_a:1', costSource: 'estimate', cut: true });
+  assert.deepEqual([host.openCut, host.lastCumulativeUsd], [null, 0]);
+});
+
+test('the same no-count error result is still no turn on Claude Code (no engine named: Claude; the offline host plays it): unbooked, no answer, the lost conversation restarts (C20)', async () => {
+  const [, , settled] = codexSettled({ usd: 0 });
+  const lostResult = { ...settled, sessionId: 'C1', errors: ['No conversation found with session ID: C1'] };
+  for (const over of [{ mock: false, engine: 'claude' }, { mock: false, engine: null }, { mock: true, engine: 'codex' }]) {
+    const port = fakePort(over);
+    const { transport, calls } = sharedTransport((h, i) => [turnEvents({ usd: 0.4 }), [lostResult], turnEvents({ id: 'C2', usd: 0.3 })][i],
+      { fail: (i) => (i === 1 ? new Error('claude exited with code 1') : null) });
+    const host = sharedHost(port, transport);
+    await host.run(memberOpts(), member('n_a'));
+    await host.run(memberOpts(), member('n_b'));
+    assert.deepEqual(calls.map((h) => h.resumeSessionId), [undefined, 'C1', undefined], JSON.stringify(over));
+    assert.deepEqual(port.booked.map((b) => [b.stepKey, b.cumulativeUsd]), [['x:n_a:1', 0.4], ['x:n_b:1', 0.3]], JSON.stringify(over));
+  }
+  // On Codex the same frame is a turn's: an answer (no restart, whatever the error says) and booked, both.
+  const p2 = fakePort({ mock: false, engine: 'codex' });
+  const err = new Error('codex: no rollout found for thread id T1');
+  const t2 = sharedTransport((h, i) => [codexTurn({ usd: 0.1 }), [codexSettled({ usd: 0.4 })[2]]][i], { fail: (i) => (i === 1 ? err : null) });
+  const h2 = sharedHost(p2, t2.transport);
+  await h2.run(memberOpts(), member('n_a'));
+  await assert.rejects(h2.run(memberOpts(), member('n_b')), (e) => e === err);
+  assert.deepEqual([t2.calls.length, p2.records.some((r) => r.kind === 'restart')], [2, false]);
+  assert.deepEqual(p2.booked.map((b) => [b.stepKey, b.turnUsd]), [['x:n_a:1', 0.1], ['x:n_b:1', 0.4]]);
 });
