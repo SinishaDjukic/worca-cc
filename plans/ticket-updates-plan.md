@@ -20,10 +20,10 @@
 - **Legacy byte for byte (D4):** with no record for a profile and source, write-back passes no `move` and each plugin does exactly what it does today (Jira's comment order included); every existing `test/jira-source-connector.test.mjs` `reportResult` row passes unchanged. The host never parses a ticket id (D6).
 - **Storage (D3, §4):** `<plugins>/<name>/data/ticket-updates.json`, `{ "$format": "profiles/1", "profiles": { "<profile>": { "<sourceId>": { projects, rules, savedAt, savedBy } } } }`; no secrets, no SQLite table, no schema migration.
 - **Limits (§4):** at most 200 projects and 200 project rules; values and labels at most 200 characters; one rule per (project, moment); exactly one All projects rule (project `''`); All projects only `none`, `category` or `typed`; moments only `finished`.
-- **Timeouts (§3):** `listProjects` 60 s; `listStatuses`, `legacyMove` and `capabilities` the `callSource` default (30 s). A tracker failure answers 502 `{ error, kind }` with A6-D11's sentence through `reachSentence` (moved to `src/core/source-reach.mjs`, re-exported from `requirements/export.mjs`, unchanged).
+- **Timeouts (§3):** `listProjects` 60 s; `listStatuses`, `legacyMove` and `capabilities` the `callSource` default (30 s). A tracker failure answers 502 `{ error, kind }` with A6-D11's sentence through `reachSentence` (moved to `src/core/source-reach.mjs`, re-exported from `requirements/export.mjs`); a timeout names its real limit ("did not answer within 30 seconds" for a 30 s call, "within a minute" for 60 s; decided 2026-10-30).
 - **Copy:** every user-facing string is design §9 verbatim, with "Jira" being the source's `displayName`, "Acme" the profile label, "SHOP"/"CRM" the tracker project key. Strings the design does not name are listed in the report under "invented copy" and in Appendix B.
-- **CSS:** every new rule is an `mk-tu-*` rule in a new block `/* ── marketplace ticket updates ── */` placed right before `/* ── marketplace P7 ── */` in `ui/public/style.css` (the Marketplace block), tokens only (no hex, no `rgba(`), font sizes `var(--fs-*)`, so board 2 (dark) needs nothing more. Phone (board 6) at `max-width: 600px`.
-- **Accessibility (§11):** the section is a `section` labelled by its header; the rules a `role="list"`; the move select a `button` with `role="combobox"`, `aria-haspopup="listbox"`, `aria-expanded`, `aria-controls`, labelled "<KEY>: move to", focus kept on it while open with `aria-activedescendant`; options `role="option"` with `aria-selected`; group labels and the separator `role="presentation"`; dots `aria-hidden`; the projects popover a `role="dialog"` labelled "Projects you work on" with a multi-select listbox; loading and failure lines `aria-live="polite"`; the gone line tied by `aria-describedby`; 44 px targets on a phone.
+- **CSS:** every new rule is an `mk-tu-*` rule in a new block `/* ── marketplace ticket updates ── */` placed right before `/* ── marketplace P7 ── */` in `ui/public/style.css` (the Marketplace block), tokens only (no hex, no `rgba(`), font sizes `var(--fs-*)`, so board 2 (dark) needs nothing more. Phone (board 6) at `@media (max-width:600px)` (house style, no space).
+- **Accessibility (§11):** the section is a `section` labelled by its header; the rules a `role="list"`; the move select a `button` with `role="combobox"`, `aria-haspopup="listbox"`, `aria-expanded`, `aria-controls`, labelled "<KEY>: move to", focus kept on it while open with `aria-activedescendant`; options `role="option"` with `aria-selected`; each status group a `role="group"` with an `aria-label` naming its category (as `group-picker.mjs` does; decided 2026-10-30), its visible label and the separator `role="presentation"`; dots `aria-hidden`; the projects popover a `role="dialog"` labelled "Projects you work on" with a multi-select listbox; loading and failure lines `aria-live="polite"`; the gone line tied by `aria-describedby`; 44 px targets on a phone, popover rows and listbox options included (decided 2026-10-30).
 - **Level:** Advanced, with the Marketplace page; no new level.
 - **Platforms:** Windows and Linux. Files keep their line endings (the repo stores LF; a Windows checkout has CRLF in the working tree: edit with the Edit tool, never rewrite a whole file).
 - **Tests are hermetic:** one file at a time with `node tools/test.mjs test/<file>.test.mjs` (it sets an isolated `WORCA_HOME`); no real Claude, no real Jira: every tracker call goes to the mock shim (`WORCA_MOCK=1`, `setMockSourceResponses`), an injected fake `fetch`, or `test/helpers/fake-jira.mjs` on `127.0.0.1`. A test that turns the flag on sets `process.env.WORCA_FLAGS` and restores it.
@@ -33,9 +33,11 @@
 
 1. **`GET …/ticket-updates` calls `legacyMove` whenever the connection is saved, not only while nothing is saved (§5).** After the first save the sheet must still replace the old field's control with "Moved to Ticket updates." (D4), and only `legacyMove` names that field. One extra child spawn per sheet opening; the answer's `target` is used only while `saved` is false.
 2. **`GET …/ticket-updates` accepts no `profile` for a multi-profile source whose roster is empty (§5's guard).** That is the only time the manage sheet shows the profile id field (board 5 A, "a new profile (the id field)"); the route then answers `{ available, connection: 'new', profile: null, … }`, probing `capabilities` through the default bucket (`allowLegacyDefault`), with no other call. Every other request keeps the guard exactly.
-3. **A non-400 `plugin` failure of the transition `POST` is also a "Not moved" line (D10 vs §7).** D10 says any failed move other than auth, network, rate limit or timeout still posts the comment; §7 says a 400 is a line and "any other failure throws". Reconciled: Jira's `plugin`-kind failures (400, 403, 409, 500…) give `Not moved: Jira refused the move to <status>: <Jira's message>.`; `auth`, `network` and `rate-limit` throw as today.
+3. **Every Jira 4xx refusal of the transition `POST` (other than 401 and 429) is a "Not moved" line, not only a 400 (D10 vs §7; narrowed, decided 2026-10-30).** D10 says any failed move other than auth, network, rate limit or timeout still posts the comment; §7 says a 400 is a line and "any other failure throws". Reconciled: a `plugin`-kind failure with a status from 400 to 499 (400, 403, 404, 409…) gives `Not moved: Jira refused the move to <status>: <Jira's message>.` (`Jira gave no reason.` when Jira sends no message). A 5xx, a network error, a timeout, a 401 (`auth`) or a 429 (`rate-limit`) throws, so the write-back fails and Report result retries ("Already in …" covers a move that went through). When Jira refuses to let Worca read the ticket's status or transitions (403 or 404), the line is `Not moved: Jira did not let Worca read <KEY>'s transitions (<Jira's message, or "Jira gave no reason">).` and the comment is still posted.
 4. **Two existing `listProjects` assertions in `test/jira-source-connector.test.mjs` gain `name` (§12 says every existing connector test is unchanged).** §7 adds `name` to every `listProjects` item, so a `deepEqual` on the old shape must change; no `reportResult` row changes.
-5. **The old field's help line goes with its control (D4).** D4 replaces the control by "Moved to Ticket updates." and keeps the label; the help under it ("Optional. A transition or status name … to move the issue to …") describes the control that left, so it is removed too.
+5. **The old field's help line goes with its control (D4).** D4 replaces the control by "Moved to Ticket updates." and keeps the label; the help under it ("Optional. A transition or status name … to move the issue to …") describes the control that left, so it is removed too. Task 16's D4 test asserts the help is gone (S14), and the label loses its `for`, so it names no control that is gone (it stays a `label` so it keeps the field's styling).
+
+**Decided 2026-10-30 (the lead, on the plan review's 12 questions):** a Jira 4xx refusal is a "Not moved" line and a 5xx, network error, timeout, 401 or 429 throws (Q1, Deviation 3); "only Won't Do leads to a Done status" for one, "only Won't Do and Duplicate lead …" for several, and "Jira gave no reason." when Jira sends no message (Q2); the audit line and the ticket's comment carry the note in PR 1, and the results view's "reported · <note>" is out of scope, because the Report result control has no caller in the UI today; the route still returns `{ note, moved }` (Q3, D11); Report back's hint for a carried-over typed value reads "Resolve (as typed)" (Q4); 30 s calls keep 30 s and their sentence says "did not answer within 30 seconds"; `listProjects` stays 60 s (Q5); runs record `meta.project` even with the flag off (Q6); the flag's `since: '1.16.0'` (Q7); each status group is a `role="group"` with an `aria-label` (Q8, design §11 updated); a successful Test connection that saves a new connection turns state A into the live section at once (Q9, S13); the new rule's project option reads "OPS · Operations" (Q10); the popover stays right-aligned under Add projects… (Q11); at 600 px and narrower popover rows and listbox options are at least 44 px tall (Q12).
 
 ## File structure
 
@@ -45,26 +47,25 @@
 | `src/shared/flags/registry.mjs` | 2, 19 | the `ticketUpdates` flag (its `docs` in Task 19) |
 | `src/core/ticket-updates.mjs` (new) | 2 | pure rules: `toMove`, `moveFor`, `validateTicketUpdates`, `projectFilter`, `filterProjects`, `describeMove` |
 | `src/core/source-reach.mjs` (new) | 3 | `reachReason`, `reachSentence` (moved from `requirements/export.mjs`, re-exported there) |
-| `src/core/plugin-shim.mjs` | 4 | D17 mock answers: `capabilities`, `listProjects`, `listStatuses`, `legacyMove`, `reportResult` by `move` |
+| `src/core/plugin-shim.mjs` | 4, 5, 21 | D17 mock answers: `capabilities`, `listProjects`, `listStatuses`, `legacyMove`, `reportResult` by `move`; the `allowLegacyDefault` comments (5); the mock `searchTickets`' `projects` (21) |
 | `src/core/ticket-updates-routes.mjs` (new) | 5 | the four routes of §5 |
 | `ui/server.mjs` | 5, 6 | registers the routes; filters `/api/sources/call`'s `listProjects` |
-| `src/core/requirements/export.mjs` | 3, 6, 10 | re-exports the reach helpers; `exportOptions` filters `projects`; `exportView` gains `move` |
-| `src/core/sources.mjs` | 7, 8 | `meta.project` pinned into `sourceMeta.project`; `move` in `reportResult`'s args; `{ note, moved }` returned |
+| `src/core/requirements/export.mjs` | 3, 6, 11 | re-exports the reach helpers; `exportOptions` filters `projects`; the export probe remembers `ticketUpdates`; `exportView` gains `move` |
+| `src/core/sources.mjs` | 7, 8 | `meta.project` pinned into `sourceMeta.project` (flag on or off); `move` in `reportResult`'s args (also when the probe failed: S1); `{ note, moved }` returned, one line each |
 | `src/core/requirements/start.mjs`, `src/core/run-harness.mjs` | 7, 8 | `reportTo.project` from the link's tracker project into `reportMeta`; the audit line's note |
-| `ui/public/results-view.mjs` | 8 | Report result's "reported · <note>" |
 | `plugins/jira-source/connector/index.mjs`, `worca-cc-plugin.json`, `README.md` | 9, 10 | the contract, §7, 0.2.0, the README section |
 | `test/helpers/fake-jira.mjs` | 9, 10 | a project's statuses; seeded issues, transitions and a transition POST |
 | `ui/public/requirements-view.mjs` | 11 | Report back's hint from `move` (D14) |
 | `ui/public/marketplace/move-select.mjs` (new) | 12 | the move select (board 4) |
 | `ui/public/marketplace/projects-popover.mjs` (new) | 13 | the projects popover (board 3) |
-| `ui/public/marketplace/ticket-updates-section.mjs` (new) | 14, 15 | the section: states A–E, chips, rules, dirty, PUT body |
+| `ui/public/marketplace/ticket-updates-section.mjs` (new) | 14a, 14b, 15 | the section: states A–E, chips, rules, dirty, PUT body |
 | `ui/public/marketplace/manage-sheet.mjs` | 16 | mounts the section; dirty; Save order; "Moved to Ticket updates." |
 | `ui/public/style.css` | 17 | the `mk-tu-*` block, phone rules |
-| `tools/verify-ticket-updates-cdp.mjs` (new), `package.json` | 18 | the browser proof, `npm run verify:ticket-updates` |
+| `tools/verify-ticket-updates-cdp.mjs` (new), `package.json`, `.github/workflows/ci.yml` | 18 | the browser proof, `npm run verify:ticket-updates`, in CI's `cdp` proofs |
 | `docs/ticket-updates.md` (new), `docs/feature-flags.md`, `docs/storage.md`, `docs/ui-levels.md`, `docs/requirements.md`, `docs/changelog/unreleased.md`, `.claude/skills/creating-worca-cc-plugins/SKILL.md`, `src/core/plugin-api.mjs` | 19 | docs and the contract table |
 | `src/core/requirements/import.mjs`, jira-source `searchTickets` | 21 (conditional) | the import filter, only if #1041 is on `dev` |
 
-Tests: `test/plugin-config.test.mjs` (1), `test/ticket-updates.test.mjs` (2), `test/flags-api.test.mjs`, `test/index-html.test.mjs` (2), `test/source-reach.test.mjs` (3), `test/plugin-shim.test.mjs` (4), `test/api-ticket-updates.test.mjs` (5, 6), `test/requirements-export.test.mjs` (6, 10), `test/sources.test.mjs`, `test/requirements-start.test.mjs`, `test/requirements-run-link.test.mjs` (7), `test/writeback.test.mjs`, `test/results-view-helpers.test.mjs` (8), `test/jira-source-ticket-updates.test.mjs`, `test/jira-source-export.test.mjs`, `test/jira-source-connector.test.mjs` (9, 10), `test/requirements-export.test.mjs`, `test/requirements-view-export.test.mjs` (11), `test/marketplace-move-select.test.mjs` (12), `test/marketplace-projects-popover.test.mjs` (13), `test/helpers/ticket-updates-fixtures.mjs`, `test/marketplace-ticket-updates.test.mjs` (14–16), `test/marketplace-ticket-updates-css.test.mjs` (17), `test/requirements-import-ticket-updates.test.mjs` (21, conditional).
+Tests: `test/plugin-config.test.mjs` (1), `test/ticket-updates.test.mjs` (2), `test/flags-api.test.mjs`, `test/index-html.test.mjs` (2), `test/source-reach.test.mjs` (3), `test/plugin-shim.test.mjs` (4), `test/api-ticket-updates.test.mjs` (5, 6), `test/requirements-export.test.mjs` (6, 10), `test/sources.test.mjs`, `test/requirements-start.test.mjs`, `test/requirements-run-link.test.mjs` (7), `test/writeback.test.mjs` (8), `test/jira-source-ticket-updates.test.mjs`, `test/jira-source-export.test.mjs`, `test/jira-source-connector.test.mjs` (9, 10), `test/requirements-export.test.mjs`, `test/requirements-view-export.test.mjs` (11), `test/marketplace-move-select.test.mjs` (12), `test/marketplace-projects-popover.test.mjs` (13), `test/helpers/ticket-updates-fixtures.mjs`, `test/marketplace-ticket-updates.test.mjs` (14a, 14b, 15, 16), `test/marketplace-ticket-updates-css.test.mjs` (17), `test/requirements-import-ticket-updates.test.mjs` (21, conditional).
 
 ## Review Focus
 
@@ -73,7 +74,7 @@ Tests: `test/plugin-config.test.mjs` (1), `test/ticket-updates.test.mjs` (2), `t
 3. **The host never parses an id.** The project comes from `getTask`'s `meta.project` or the export link's tracker project (Task 7).
 4. **Jira never closes a ticket as cancelled, fills a Resolution, and the line is last.** §7 against the fake Jira on Cloud and Data Center; legacy unchanged (Tasks 9, 10).
 5. **The sheet's Save:** config `PUT` first, a refusal stops the ticket-updates `PUT`; the carried-over state is not dirty; the old field's control is gone after the first save (Task 16).
-6. **Accessibility and phone** (Tasks 12, 13, 14, 17, 18).
+6. **Accessibility and phone** (Tasks 12, 13, 14a, 14b, 17, 18).
 
 ---
 
@@ -129,6 +130,7 @@ test('ticket updates: null until saved; one record per profile and source, in th
   assert.throws(() => writeTicketUpdates(P, 'acme', '', TU_REC), /task source/);
   assert.throws(() => writeTicketUpdates(P, '../x', 'jira', TU_REC), /invalid profile id/);
   assert.throws(() => writeTicketUpdates(P, 'acme', 'jira', null), /must be an object/);
+  assert.equal(readTicketUpdates(P, 'acme', '__proto__'), null, 'own keys only');
 });
 
 test("ticket updates: deleteProfile drops that profile's records and keeps the others", () => {
@@ -185,6 +187,12 @@ In `deleteProfile`, change the loop's file list:
 
 and the first line of its doc comment to `Delete a profile and everything stored under it (config, secrets, state, ticket updates).`
 
+In the file's header comment, add a line after the `state.json` line of the file list:
+
+```js
+//   ticket-updates.json { "$format": "profiles/1", "profiles": { "<id>": { "<sourceId>": { … } } } }   Worca's own
+```
+
 Append at the end of the file:
 
 ```js
@@ -196,7 +204,10 @@ Append at the end of the file:
 
 /** One profile's record for one task source, or null when nothing is saved (the plugin's old setting applies, D4). */
 export function readTicketUpdates(name, profile, sourceId) {
-  const rec = readBucket(files(name).ticketUpdates, profileId(profile))[String(sourceId ?? '')];
+  const bucket = readBucket(files(name).ticketUpdates, profileId(profile));
+  const sid = String(sourceId ?? '');
+  // Own keys only: a source id such as "__proto__" must not read Object.prototype.
+  const rec = Object.hasOwn(bucket, sid) ? bucket[sid] : null;
   return isBag(rec) ? rec : null;
 }
 
@@ -329,6 +340,8 @@ test('validateTicketUpdates: the limits and shapes of §4; the clean record, All
     { name: 'at most 200 projects', run: () => refused({ projects: Array.from({ length: TU_LIMITS.projects + 1 }, (_, i) => ({ value: `P${i}` })), rules: [NONE_ALL] }, /200 projects/) },
     { name: 'at most 200 project rules', run: () => refused({ projects: [],
       rules: [NONE_ALL, ...Array.from({ length: TU_LIMITS.rules + 1 }, (_, i) => RULE(`P${i}`, '', { kind: 'none' }))] }, /200 project rules/) },
+    { name: 'a list longer than 201 rules is refused before any rule is read', run: () => refused({ projects: [],
+      rules: Array.from({ length: TU_LIMITS.rules + 2 }, () => ({})) }, /200 project rules/) },
     { name: 'values and labels at most 200 characters', run: () => {
       refused({ projects: [{ value: 'X'.repeat(201) }], rules: [NONE_ALL] }, /200 characters/);
       refused({ projects: [], rules: [NONE_ALL, RULE('SHOP', 'n'.repeat(201), { kind: 'none' })] }, /200 characters/);
@@ -369,7 +382,8 @@ test('describeMove (D14): the words Report back uses', () => {
   assert.equal(describeMove(undefined), null);
   assert.deepEqual(describeMove({ category: 'done' }, { project: 'SHOP' }), { kind: 'category', label: 'a Done status' });
   assert.deepEqual(describeMove({ status: '10012', name: 'Resolved' }, { project: 'SHOP' }), { kind: 'status', label: 'Resolved' });
-  assert.deepEqual(describeMove({ status: 'Resolve' }, { project: 'SHOP' }), { kind: 'status', label: 'Resolve' });
+  assert.deepEqual(describeMove({ status: 'Resolve' }, { project: 'SHOP' }), { kind: 'status', label: 'Resolve (as typed)' },
+    'a carried-over typed value reads as the sheet shows it (decided 2026-10-30)');
   assert.deepEqual(describeMove({ none: true }, { project: 'SHOP' }), { kind: 'none', label: 'SHOP' });
 });
 ```
@@ -406,7 +420,7 @@ Expected: FAIL — `ticket-updates.test.mjs`: `Cannot find module '…/src/core/
 
 - [ ] **Step 3: Implement**
 
-In `src/shared/flags/registry.mjs`, after the `runTelemetry` entry (the `docs` field comes in Task 19, with the page):
+In `src/shared/flags/registry.mjs`, after the `runTelemetry` entry (the `docs` field comes in Task 19, with the page). `since: '1.16.0'` is the next release (package.json is 1.15.0; confirmed 2026-10-30):
 
 ```js
   entry({
@@ -516,6 +530,9 @@ export function validateTicketUpdates(body) {
   if (!Array.isArray(b.projects)) throw new TicketUpdatesError('projects must be a list.');
   if (!Array.isArray(b.rules)) throw new TicketUpdatesError('rules must be a list.');
   if (b.projects.length > TU_LIMITS.projects) throw new TicketUpdatesError(`Pick at most ${TU_LIMITS.projects} projects.`);
+  // Before the loop: the server accepts bodies up to 8 MB, so a huge list is refused without walking it. The All projects
+  // rule is the one extra; the exact count of project rules is checked again after the loop.
+  if (b.rules.length > TU_LIMITS.rules + 1) throw new TicketUpdatesError(`Keep at most ${TU_LIMITS.rules} project rules.`);
   const projects = [];
   const seen = new Set();
   for (const p of b.projects) {
@@ -561,12 +578,15 @@ export function filterProjects(options, filter, keep = []) {
 }
 
 /** Report back's words for a move (D14): { kind, label }, where label is what the hint names (the status, "a Done status",
- *  or for Don't move the project whose tickets stay); null for no move (the old two lines). */
+ *  or for Don't move the project whose tickets stay); null for no move (the old two lines). A status without a name is a
+ *  carried-over typed value and reads "<text> (as typed)", as the sheet shows it (decided 2026-10-30). */
 export function describeMove(move, { project = '' } = {}) {
   if (!isBag(move)) return null;
   if (move.none === true) return { kind: 'none', label: String(project || '') };
   if (move.category === 'done') return { kind: 'category', label: 'a Done status' };
-  if (typeof move.status === 'string' && move.status) return { kind: 'status', label: String(move.name || move.status) };
+  if (typeof move.status === 'string' && move.status) {
+    return { kind: 'status', label: move.name ? String(move.name) : `${move.status} (as typed)` };
+  }
   return null;
 }
 ```
@@ -589,7 +609,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 3: `src/core/source-reach.mjs`: the reach sentence moves out of Requirements
 
-§5: `reachReason` and `reachSentence` move to a shared module and are re-exported from `requirements/export.mjs`, unchanged.
+§5: `reachReason` and `reachSentence` move to a shared module and are re-exported from `requirements/export.mjs`. One wording change (decided 2026-10-30): a timeout names its real limit, so a 30 s call says "it did not answer within 30 seconds".
 
 **Files:**
 - Create: `src/core/source-reach.mjs`
@@ -597,7 +617,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: create `test/source-reach.test.mjs`
 
 **Interfaces:**
-- Produces: `reachReason(err: {kind?, message?}, name?: string) → string`, `reachSentence(name: string, err) → string` ("Worca could not reach Jira: the API token was refused."), byte-identical to A6's. `requirements/export.mjs` still exports both names (the same function objects).
+- Produces: `reachReason(err: {kind?, message?}, name?: string) → string`, `reachSentence(name: string, err) → string` ("Worca could not reach Jira: the API token was refused."), A6's sentences except a timeout's limit (60 s or unnamed: "within a minute"; 30 s: "within 30 seconds"). `requirements/export.mjs` still exports both names (the same function objects).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -616,9 +636,19 @@ test('the reach helpers live in source-reach.mjs; requirements/export.mjs re-exp
   assert.equal(exportMod.reachSentence, reachSentence);
 });
 
-test("the sentences are A6's, unchanged", () => {
+test("the sentences are A6's", () => {
   assert.equal(reachSentence('Jira', new PluginOpError('auth', 'x')), 'Worca could not reach Jira: the API token was refused.');
-  assert.equal(reachReason(new PluginOpError('timeout', 'plugin "jira-source" op "listStatuses" exceeded 30000ms (child killed)')), 'it did not answer within a minute');
+  assert.equal(reachReason(new PluginOpError('timeout', 'plugin "jira-source" op "listProjects" exceeded 60000ms (child killed)')), 'it did not answer within a minute');
+  assert.equal(reachReason(new PluginOpError('timeout', 'op exceeded')), 'it did not answer within a minute', 'no limit named: as A6 wrote it');
+});
+
+test('a timeout names the real limit: a 30 s call says 30 seconds (decided 2026-10-30)', () => {
+  assert.equal(reachReason(new PluginOpError('timeout', 'plugin "jira-source" op "listStatuses" exceeded 30000ms (child killed)')), 'it did not answer within 30 seconds');
+  assert.equal(reachSentence('Jira', new PluginOpError('timeout', 'plugin "jira-source" op "legacyMove" exceeded 30000ms (child killed)')),
+    'Worca could not reach Jira: it did not answer within 30 seconds.');
+});
+
+test('the other sentences are unchanged', () => {
   assert.equal(reachReason(new PluginOpError('network', 'Jira unreachable: fetch failed.')), 'Jira unreachable: fetch failed');
   assert.equal(reachReason(new PluginOpError('protocol', 'non-JSON'), 'Jira'), 'the Jira plugin gave an answer Worca could not read');
   assert.equal(reachReason(new PluginOpError('plugin', 'TypeError: x is not a function'), 'Jira'), 'the Jira plugin stopped unexpectedly');
@@ -633,18 +663,25 @@ Expected: FAIL — `Cannot find module '…/src/core/source-reach.mjs'`.
 
 - [ ] **Step 3: Implement**
 
-Create `src/core/source-reach.mjs` (the five definitions moved verbatim from `requirements/export.mjs`):
+Create `src/core/source-reach.mjs` (the five definitions moved from `requirements/export.mjs`, verbatim except the timeout phrase: it names the limit the shim's timeout message carries, so a 30 s call says "within 30 seconds"; 60 s and a message without a limit keep A6's "within a minute", so every existing A6 assertion holds; decided 2026-10-30):
 
 ```js
 // src/core/source-reach.mjs — why a task source could not be reached, in product words (plans/requirements-a6-design.md D11).
 // Shared by Requirements' export and the Ticket updates routes (plans/ticket-updates-design.md §5); requirements/export.mjs
-// re-exports both functions unchanged.
+// re-exports both functions.
 
 /** Kinds whose message is the connector's own sentence ("Jira unreachable: fetch failed.", "Jira refused the request: …"). */
 const SENTENCE_KINDS = new Set(['network', 'rate-limit', 'plugin']);
 /** Not product copy: more than one line, a stack frame, a path or URL scheme of a file, the shim's own words, a JS error. */
 const NOT_COPY = /[\r\n]|\bat\s+\S+\s+\(|\b(?:file|node):|[A-Za-z]:\\|(?:^|[\s'"(=])\/[\w.-]+\/|^plugin "|^\w*Error\b|^Cannot read propert|is not (?:a function|defined)/;
 const isSentence = (m) => typeof m === 'string' && !!m.trim() && m.length <= 300 && !NOT_COPY.test(m);
+/** The limit a shim timeout names ("… exceeded 30000ms (child killed)") in words; 60 s or none named read "a minute" (A6). */
+function limitWords(message) {
+  const ms = Number((/exceeded (\d+)ms/.exec(String(message || '')) || [])[1]);
+  if (!ms || ms === 60000) return 'a minute';
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s === 1 ? '1 second' : `${s} seconds`;
+}
 
 /** D11: why a tracker could not be reached, in product words. A message that is not product copy (a connector that crashed,
  *  an answer the shim could not read, a kind the host does not know) becomes a fixed phrase; callers log the first line of the raw text. */
@@ -653,7 +690,7 @@ export function reachReason(err, name) {
   const message = err && err.message;
   const plugin = name ? `the ${name} plugin` : "the tracker's plugin";
   if (kind === 'auth') return 'the API token was refused';
-  if (kind === 'timeout') return 'it did not answer within a minute';
+  if (kind === 'timeout') return `it did not answer within ${limitWords(message)}`;
   if (kind === 'protocol') return `${plugin} gave an answer Worca could not read`;
   if (kind && !(SENTENCE_KINDS.has(kind) && isSentence(message))) return `${plugin} stopped unexpectedly`;
   return String(message || 'it did not answer').trim().replace(/\.+$/, '');
@@ -670,7 +707,7 @@ import { reachReason, reachSentence } from '../source-reach.mjs';
 and after `export { isExporting };`:
 
 ```js
-// D11's reach sentences live in src/core/source-reach.mjs (shared with Ticket updates); re-exported unchanged.
+// D11's reach sentences live in src/core/source-reach.mjs (shared with Ticket updates); re-exported.
 export { reachReason, reachSentence };
 ```
 
@@ -683,7 +720,7 @@ Expected: PASS.
 
 ```bash
 git add src/core/source-reach.mjs src/core/requirements/export.mjs test/source-reach.test.mjs
-git commit -m "Ticket updates: move the reach sentence to source-reach.mjs, re-exported unchanged
+git commit -m "Ticket updates: move the reach sentence to source-reach.mjs; a timeout names its limit
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -818,16 +855,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/core/ticket-updates-routes.mjs`
-- Modify: `ui/server.mjs` (one import beside the `plugin-config.mjs` import; one registration right after the `app.put('/api/plugins/:name/config', …)` handler)
+- Modify: `ui/server.mjs` (one import beside the `plugin-config.mjs` import; one registration right after the `app.put('/api/plugins/:name/config', …)` handler); `src/core/plugin-shim.mjs` (the `allowLegacyDefault` comments only)
 - Test: create `test/api-ticket-updates.test.mjs`
 
 **Interfaces:**
 - Consumes: `validateTicketUpdates`, `TU_CATEGORIES`, `TU_LIMITS` (Task 2); `readTicketUpdates`, `writeTicketUpdates` (Task 1); `reachSentence` (Task 3); mock answers (Task 4); the server's `requirePlugin(req, res) → name|null`, `readInstalledManifest(name) → manifest|null`, `emitPluginsChanged(action)`.
-- Produces: `registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, onChanged, callSource })`; `LIST_PROJECTS_TIMEOUT_MS = 60_000`; `CANNOT_UPDATE = 'This plugin cannot update tickets.'`.
+- Produces: `registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, onChanged, callSource })`; `LIST_PROJECTS_TIMEOUT_MS = 60_000`; `CANNOT_UPDATE = 'This plugin cannot update tickets.'`; `isProjectKey(v) → boolean` (S9: 1–100 characters, not `.`/`..`, no `/`, `\`, `?`, `#`). Every handler is wrapped by `safe()` (F29: a throw answers 500, never escapes).
   - `GET /api/plugins/:name/ticket-updates?sourceId=&profile=` → `{ available, connection: 'saved'|'new', profile: { id, label }|null, saved, projects, rules, legacy: { field, label, target }|null }` (`target`: `{ category: 'done' }` | `{ typed }` | null)
   - `GET …/projects?sourceId=&profile=` → `{ projects: [{ value, label, name? }] }` (unfiltered)
   - `GET …/statuses?sourceId=&profile=&project=` → `{ statuses: [{ value, label, category }] }`
-  - `PUT …` `{ sourceId, profile, projects, rules }` → `{ ok: true }`; 400 (§4, guards), 409 `CANNOT_UPDATE`, 502 `{ error, kind }`; emits `plugins-changed` (`config`).
+  - `PUT …` `{ sourceId, profile, projects, rules }` → `{ ok: true }`; 400 (§4 checked first, before any child; guards; a profile removed during the save), 409 `CANNOT_UPDATE` or board 5 A's line when the connection is not saved (D12), 502 `{ error, kind }`; emits `plugins-changed` (`config`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -839,7 +876,6 @@ Create `test/api-ticket-updates.test.mjs`:
 // with no profile yet. Guards, 502 with A6's sentence, 409 without the capability, 404 with the flag off.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -849,6 +885,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { linkPlugin } from '../src/core/plugin-store.mjs';
 import { createProfile, writePluginConfig, readTicketUpdates } from '../src/core/plugin-config.mjs';
 import { setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
+import { WebSocket } from 'ws';
 
 useTempHome(after, 'worca-tu-api-');
 const prev = { flags: process.env.WORCA_FLAGS, mock: process.env.WORCA_MOCK };
@@ -859,7 +896,8 @@ const SCHEMA = JSON.parse(readFileSync(join(JIRA, 'worca-cc-plugin.json'), 'utf8
 const FIXTURE = { name: 'tu-fixture', version: '0.1.0', taskSources: [{ id: 'main', displayName: 'Fixture', module: './connector/index.mjs',
   multiProfile: true, configSchema: [{ key: 'token', type: 'text', label: 'Token', secret: true, required: true }],
   inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }] }] };
-let srv; let base; let fixtureDir;
+let srv; let base; let fixtureDir; let ws;
+const frames = [];
 
 before(async () => {
   await linkPlugin('jira-source', JIRA);
@@ -872,12 +910,15 @@ before(async () => {
   await writeFile(join(fixtureDir, 'connector', 'index.mjs'),
     'export default () => ({ async validateConfig() { return { ok: true }; }, async listTasks() { return { tasks: [] }; }, async getTask(id) { return { id }; }, async reportResult() {} });\n');
   await linkPlugin('tu-fixture', fixtureDir);
-  const { app } = await import('../ui/server.mjs');   // imported: no port bound
-  srv = http.createServer(app);
+  ({ server: srv } = await import('../ui/server.mjs'));   // the server with its WebSocket, as api-plugins-detail does
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
+  ws = new WebSocket(`ws://127.0.0.1:${srv.address().port}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  ws.on('message', (d) => { try { frames.push(JSON.parse(String(d))); } catch { /* not JSON */ } });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
 });
 after(async () => {
+  ws?.close();
   srv?.closeAllConnections?.();
   if (srv) await new Promise((r) => srv.close(r));
   for (const [k, v] of [['WORCA_FLAGS', prev.flags], ['WORCA_MOCK', prev.mock]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
@@ -969,6 +1010,10 @@ test('projects and statuses: through the saved profile, unfiltered; a missing pr
   const s = await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`);
   assert.deepEqual(s.json.statuses[2], { value: '10012', label: 'Resolved', category: 'done' });
   assert.equal((await call('GET', `${TU}/statuses${Q('acme')}`)).status, 400);
+  for (const bad of ['..', '.', 'A/B', 'A%5CB', 'A%3FB', 'X'.repeat(101)]) {
+    assert.deepEqual(await call('GET', `${TU}/statuses${Q('acme', `&project=${bad}`)}`).then((x) => [x.status, x.json]),
+      [400, { error: 'project is not a project key' }], `project=${bad} never reaches another Jira endpoint`);
+  }
   setMockSourceResponses({ listStatuses: [{ value: '1', label: 'Odd', category: 'closed' }, { value: '2', label: 'Open', category: 'todo' }] });
   assert.deepEqual((await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`)).json.statuses, [{ value: '2', label: 'Open', category: 'todo' }],
     'a category outside the four is left out');
@@ -978,17 +1023,32 @@ test('projects and statuses: through the saved profile, unfiltered; a missing pr
   setMockSourceResponses({ listProjects: () => { throw new PluginOpError('network', 'Jira unreachable: fetch failed.'); } });
   const g = await call('GET', `${TU}/projects${Q('acme')}`);
   assert.deepEqual([g.status, g.json], [502, { error: 'Worca could not reach Jira: Jira unreachable: fetch failed.', kind: 'network' }]);
+  setMockSourceResponses({ listProjects: () => { throw new PluginOpError('plugin', 'plugin "jira-source" is disabled — enable it on the Marketplace page'); } });
+  assert.deepEqual((await call('GET', `${TU}/projects${Q('acme')}`)).json,
+    { error: 'Worca could not reach Jira: the Jira plugin is disabled.', kind: 'plugin' }, 'not "stopped unexpectedly"');
   setMockSourceResponses({ listStatuses: undefined });
   assert.deepEqual((await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`)).json, { error: 'This plugin cannot update tickets.' });
   setMockSourceResponses(null);
 });
 
 test('PUT: §4\'s checks, the record on disk with who and when, then GET answers it; 409 without the capability', async () => {
-  setMockSourceResponses(null);
+  let probed = 0;
+  setMockSourceResponses({ capabilities: () => { probed += 1; throw new PluginOpError('auth', 'Jira token invalid or expired'); } });
   const bad = await call('PUT', TU, { ...VALID, rules: [VALID.rules[1]] });
   assert.deepEqual([bad.status, bad.json], [400, { error: 'All projects needs exactly one rule.' }]);
+  assert.equal(probed, 0, 'a bad body is refused before any child is spawned');
+  setMockSourceResponses(null);
+  const unsaved = await call('PUT', TU, { ...VALID, profile: 'beta' });
+  assert.deepEqual([unsaved.status, unsaved.json],
+    [409, { error: "Save this connection first. Ticket updates read Jira's projects and statuses through it." }], 'D12: board 5 A');
+  assert.equal(readTicketUpdates('jira-source', 'beta', 'jira'), null);
+  const before = frames.filter((f) => f.type === 'plugins-changed' && f.action === 'config').length;
   const r = await call('PUT', TU, VALID);
   assert.deepEqual([r.status, r.json], [200, { ok: true }]);
+  for (let i = 0; i < 50 && frames.filter((f) => f.type === 'plugins-changed' && f.action === 'config').length === before; i += 1) {
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  assert.equal(frames.filter((f) => f.type === 'plugins-changed' && f.action === 'config').length, before + 1, 'the save emits plugins-changed (config)');
   const rec = readTicketUpdates('jira-source', 'acme', 'jira');
   assert.deepEqual([rec.projects, rec.rules, rec.savedBy], [VALID.projects, VALID.rules, 'local']);
   assert.match(rec.savedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
@@ -1012,7 +1072,7 @@ test('POST /api/sources/call still refuses listStatuses and legacyMove (D8)', as
 - [ ] **Step 2: Run the test and see it fail**
 
 Run: `node tools/test.mjs test/api-ticket-updates.test.mjs`
-Expected: FAIL — every `/api/plugins/jira-source/ticket-updates*` request answers 404 (`no route`), so the GET, guard, projects and PUT tests fail; the flag-off and `/api/sources/call` tests pass.
+Expected: FAIL — every `/api/plugins/jira-source/ticket-updates*` request answers Express's HTML 404 ("Cannot GET …", so `json` is null), so the flag-off test (it wants the gate's JSON `{ error: 'not found' }`), the GET, guard, projects and PUT tests fail; only the `/api/sources/call` test passes.
 
 - [ ] **Step 3: Implement**
 
@@ -1035,7 +1095,13 @@ export const CANNOT_UPDATE = 'This plugin cannot update tickets.';
 
 const isBag = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v : []);
-const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+/** The shim's answer for a disabled plugin (plugin-shim.mjs): `plugin "<name>" is disabled — …`. */
+const DISABLED = /^plugin "[^"]+" is disabled\b/;
+/** A project key as a tracker names it: 1 to 100 characters, never "." or "..", no slash, backslash, "?" or "#" (it lands in
+ *  a URL path in the plugin). jira-source checks the same in statusesOf. */
+export const isProjectKey = (v) => typeof v === 'string' && v.length > 0 && v.length <= 100 && !/^\.+$/.test(v) && !/[/\\?#]/.test(v);
+/** Board 5 A's line, the answer to a save while the connection is not saved (D12). */
+const notSaved = (tracker) => `Save this connection first. Ticket updates read ${tracker}'s projects and statuses through it.`;
 
 /**
  * The task source and profile a request names, guarded as PUT /api/plugins/:name/config guards them: an unknown source 400,
@@ -1119,8 +1185,19 @@ export function registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, 
     if (kind === 'unimplemented') return res.status(409).json({ error: CANNOT_UPDATE });
     const first = String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);   // never a plugin's whole output
     console.error(`ticket updates: ${op} via ${ctx.name}/${ctx.source.id} failed (${kind}):`, first);
-    return res.status(502).json({ error: reachSentence(ctx.tracker, { kind, message: err && err.message }), kind });
+    // The shim's own `plugin "x" is disabled` is not product copy (source-reach's NOT_COPY), so it would read "stopped
+    // unexpectedly"; say what is true instead.
+    const error = DISABLED.test(first) ? `Worca could not reach ${ctx.tracker}: the ${ctx.tracker} plugin is disabled.`
+      : reachSentence(ctx.tracker, { kind, message: err && err.message });
+    return res.status(502).json({ error, kind });
   }
+  /** F29 (ui/server.mjs): an async handler never lets a throw escape (Express 4, no unhandledRejection handler). */
+  const safe = (handler) => async (req, res) => {
+    try { await handler(req, res); } catch (err) {
+      console.error('ticket updates: route failed:', String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200));
+      if (!res.headersSent) res.status(500).json({ error: err && err.message ? String(err.message) : String(err) });
+    }
+  };
   /** Does the connector say ticketUpdates? An absent capabilities op is "no"; any other failure throws. With no profile yet
    *  (Deviation 2) the probe runs against the default bucket: capabilities needs no connection. */
   async function capable(ctx) {
@@ -1134,25 +1211,26 @@ export function registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, 
     }
   }
 
-  // GET: what the sheet paints. No tracker call: capabilities, and legacyMove for a saved connection (Deviation 1).
-  app.get(P, gate, async (req, res) => {
+  // GET: what the sheet paints. No tracker call: capabilities, and legacyMove for a saved connection (Deviation 1), in parallel.
+  app.get(P, gate, safe(async (req, res) => {
     const ctx = start(req, res, { allowNew: true });
     if (!ctx) return;
-    let ok;
-    try { ok = await capable(ctx); } catch (err) { return failed(res, ctx, 'capabilities', err); }
     const connection = connectionOf(ctx);
     const profile = profileOf(ctx);
+    const legacyP = connection === 'saved'
+      ? run(ctx, 'legacyMove', {}).then((a) => legacyOf(a, ctx.source), () => null) : Promise.resolve(null);
+    let ok;
+    try { ok = await capable(ctx); } catch (err) { await legacyP; return failed(res, ctx, 'capabilities', err); }
+    const legacy = await legacyP;
     const empty = { saved: false, projects: [], rules: [], legacy: null };
     if (!ok) return res.json({ available: false, connection, profile, ...empty });
     if (connection !== 'saved') return res.json({ available: true, connection, profile, ...empty });
     const rec = readTicketUpdates(ctx.name, ctx.bucket, ctx.source.id);
-    let legacy = null;
-    try { legacy = legacyOf(await run(ctx, 'legacyMove', {}), ctx.source); } catch { legacy = null; }
     res.json({ available: true, connection, profile, saved: !!rec, projects: rec ? list(rec.projects) : [], rules: rec ? list(rec.rules) : [], legacy });
-  });
+  }));
 
   // GET projects: the tracker's projects, unfiltered (D9: the section's own picker sees them all).
-  app.get(`${P}/projects`, gate, async (req, res) => {
+  app.get(`${P}/projects`, gate, safe(async (req, res) => {
     const ctx = start(req, res);
     if (!ctx) return;
     try {
@@ -1160,40 +1238,46 @@ export function registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, 
       res.json({ projects: list(r).filter((o) => isBag(o) && o.value != null).map((o) => ({ value: String(o.value), label: String(o.label ?? o.value),
         ...(typeof o.name === 'string' && o.name.trim() ? { name: o.name.trim() } : {}) })) });
     } catch (err) { failed(res, ctx, 'listProjects', err); }
-  });
+  }));
 
   // GET statuses: one project's statuses with their category (D1); a category outside the four is left out.
-  app.get(`${P}/statuses`, gate, async (req, res) => {
+  app.get(`${P}/statuses`, gate, safe(async (req, res) => {
     const ctx = start(req, res);
     if (!ctx) return;
-    const project = text(req.query.project, TU_LIMITS.text);
+    const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';
     if (!project) return res.status(400).json({ error: 'project is required' });
+    // A project is a key, never a path: "..", "." or a slash would let the plugin's URL reach another tracker endpoint.
+    if (!isProjectKey(project)) return res.status(400).json({ error: 'project is not a project key' });
     try {
       const r = await run(ctx, 'listStatuses', { project });
       res.json({ statuses: list(r).filter((s) => isBag(s) && s.value != null && TU_CATEGORIES.includes(s.category))
         .map((s) => ({ value: String(s.value), label: String(s.label ?? s.value), category: s.category })) });
     } catch (err) { failed(res, ctx, 'listStatuses', err); }
-  });
+  }));
 
-  // PUT: §4's checks, then the record with who saved it and when.
-  app.put(P, gate, async (req, res) => {
+  // PUT: §4's checks first (a bad body never spawns a child), then the connection and the capability, then the record with
+  // who saved it and when.
+  app.put(P, gate, safe(async (req, res) => {
     const ctx = start(req, res, { body: true });
     if (!ctx) return;
+    let clean;
+    try { clean = validateTicketUpdates(req.body); } catch (err) {
+      if (err && err.code === 'BAD_REQUEST') return res.status(400).json({ error: err.message });
+      throw err;
+    }
+    // D12: a connection that is not saved has no Ticket updates (board 5 A).
+    if (connectionOf(ctx) !== 'saved') return res.status(409).json({ error: notSaved(ctx.tracker) });
     let ok;
     try { ok = await capable(ctx); } catch (err) { return failed(res, ctx, 'capabilities', err); }
     if (!ok) return res.status(409).json({ error: CANNOT_UPDATE });
-    let clean;
-    try { clean = validateTicketUpdates(req.body); } catch (err) {
-      return res.status(err && err.code === 'BAD_REQUEST' ? 400 : 500).json({ error: err && err.message ? err.message : String(err) });
+    // The capability probe awaited: a profile removed meanwhile must not get a record back.
+    if (ctx.profile && !listProfiles(ctx.name).some((p) => p.id === ctx.profile)) {
+      return res.status(400).json({ error: `plugin "${ctx.name}" has no profile "${ctx.profile}". Create it first` });
     }
-    try {
-      writeTicketUpdates(ctx.name, ctx.bucket, ctx.source.id, { ...clean, savedAt: new Date().toISOString(), savedBy: actorOf(req) });
-    } catch (err) {
-      return res.status(500).json({ error: err && err.message ? err.message : String(err) });
-    }
+    writeTicketUpdates(ctx.name, ctx.bucket, ctx.source.id, { ...clean, savedAt: new Date().toISOString(), savedBy: actorOf(req) });
     onChanged();
     res.json({ ok: true });
-  });
+  }));
 }
 ```
 
@@ -1211,6 +1295,17 @@ Right after the closing `});` of `app.put('/api/plugins/:name/config', …)`:
 registerTicketUpdatesRoutes(app, { requirePlugin, readManifest: readInstalledManifest, onChanged: () => emitPluginsChanged('config') });
 ```
 
+In `src/core/plugin-shim.mjs`, the `callSource` doc comment's `allowLegacyDefault` sentence names its second host-internal use (Deviation 2):
+
+```js
+ * `allowLegacyDefault` (host-internal, never surfaced to CLI or a request) lets the
+ * legacy write-back path name DEFAULT_PROFILE on a multiProfile source, and lets the
+ * Ticket updates GET probe `capabilities` for a source whose roster is still empty
+ * (plans/ticket-updates-plan.md Deviation 2) — see assertProfileInvariant.
+```
+
+and `assertProfileInvariant`'s comment changes "`allowLegacyDefault` is the ONE host-internal exception:" to "`allowLegacyDefault` is the host-internal exception, used twice:" and adds, after "… the instance the task actually came from (sources.mjs).", the sentence "The Ticket updates GET also uses it to ask `capabilities` before the first profile exists (ticket-updates-routes.mjs)."
+
 - [ ] **Step 4: Run the tests and see them pass**
 
 Run: `node tools/test.mjs test/api-ticket-updates.test.mjs test/api-sources.test.mjs test/flags-usage.test.mjs`
@@ -1219,7 +1314,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/core/ticket-updates-routes.mjs ui/server.mjs test/api-ticket-updates.test.mjs
+git add src/core/ticket-updates-routes.mjs ui/server.mjs src/core/plugin-shim.mjs test/api-ticket-updates.test.mjs
 git commit -m "Ticket updates: the four host routes behind the flag
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1294,8 +1389,11 @@ test("Ticket updates (D9): exportOptions lists the connection's picked projects;
     assert.deepEqual(await values('acme'), ['SHOP', 'OPS'], "the setup's SHOP stays; OPS is picked");
     assert.deepEqual(await values('beta'), ['OPS'], 'another connection: only its picks');
   });
+  const was = process.env.WORCA_FLAGS;
   process.env.WORCA_FLAGS = '-ticketUpdates';
-  try { assert.deepEqual(await values('beta'), ['SHOP', 'OPS'], 'flag off: all'); } finally { delete process.env.WORCA_FLAGS; }
+  try { assert.deepEqual(await values('beta'), ['SHOP', 'OPS'], 'flag off: all'); } finally {
+    if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was;
+  }
 });
 ```
 
@@ -1355,6 +1453,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 D6: `resolveTaskInput` copies `getTask`'s `meta.project` into `sourceMeta.project`; a Requirements start carries the link's tracker project as `reportTo.project`, which the harness copies into `reportMeta`. The host never parses an id.
 
+The project is pinned whether the flag is on or off (decided 2026-10-30): it is harmless metadata on the row, and a rule saved after the flag is turned on then applies to runs started before. Nothing reads it while the flag is off (`moveFor` answers `undefined`), so D16's "nothing changes" holds for behaviour. The tests below run with the flag off on purpose.
+
 **Files:**
 - Modify: `src/core/sources.mjs` (`resolveTaskInput`'s `sourceMeta`), `src/core/requirements/start.mjs` (`reportTo`), `src/core/run-harness.mjs` (`reportMeta`)
 - Test: `test/sources.test.mjs` (one test), `test/requirements-start.test.mjs` (the A6 D15 `deepEqual`), `test/requirements-run-link.test.mjs` (one assertion)
@@ -1368,6 +1468,7 @@ In `test/sources.test.mjs`, after the test `'plugin source: getTask -> …'`, ad
 
 ```js
 test('Ticket updates (D6): getTask\'s meta.project is pinned as sourceMeta.project; anything else leaves no key', async () => {
+  // The flag is off here: the project is pinned regardless (decided 2026-10-30).
   process.env.WORCA_MOCK = '1';
   const task = (meta) => ({ getTask: (args) => ({ id: args.id, title: 'T', url: 'https://tracker.test/SHOP-7', state: 'open', updatedAt: 'x', body: 'b', meta }) });
   try {
@@ -1447,24 +1548,27 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Write-back passes the move; the note reaches the audit line and the results view
+### Task 8: Write-back passes the move; the note reaches the audit line
 
-D7 and D11: after the existing capabilities probe, `move` joins `reportResult`'s args when the flag is on, the connector says `ticketUpdates` and a record exists; the plugin's `{ moved, note }` comes back to the audit line and Report result.
+D7 and D11: `move` joins `reportResult`'s args when the flag is on, a record exists and the connector says `ticketUpdates` (or the capabilities probe failed for another reason than `unimplemented`: S1, fail closed); the plugin's `{ moved, note }` comes back to the audit line and to `POST /api/pipelines/:id/report-result`'s answer.
+
+**D11 scope (decided 2026-10-30):** the results view's "reported · <note>" is out of PR 1. `reportResultControl` (`ui/public/results-view.mjs`) has had no caller in the UI since the card accordion was retired (ui/public/app.js:126-129), and nothing in `ui/public` posts to `/report-result`, so the line would reach nobody. The audit line and the ticket's comment carry the note; the route still returns `{ note, moved }` for a future control. `ui/public/results-view.mjs` is not touched.
 
 **Files:**
-- Modify: `src/core/sources.mjs` (`reportResultForPipeline`; one import), `src/core/run-harness.mjs` (`_reportToSource`'s audit line), `ui/public/results-view.mjs` (`reportResultControl`'s status)
-- Test: `test/writeback.test.mjs` (import; two tests), `test/results-view-helpers.test.mjs` (imports; one test)
+- Modify: `src/core/sources.mjs` (`reportResultForPipeline`; one import), `src/core/run-harness.mjs` (`_reportToSource`'s audit line)
+- Test: `test/writeback.test.mjs` (imports; three tests)
 
 **Interfaces:**
 - Consumes: `moveFor` (Task 2); `ref.project` (Task 7); the mock `reportResult` answer (Task 4).
-- Produces: `reportResultForPipeline(row, bundle) → { ok: true, note?: string, moved?: { from, to } } | { ok: true, skipped: true } | { ok: false, error }` (`note` only when the plugin answered a non-empty one, so every existing `{ ok: true }` assertion holds); `retryWriteback` and `POST /api/pipelines/:id/report-result` pass it on; audit line `Result reported back to the task source. <note>`; results view `reported · <note>`.
+- Produces: `reportResultForPipeline(row, bundle) → { ok: true, note?: string, moved?: { from, to } } | { ok: true, skipped: true } | { ok: false, error }` (`note` only when the plugin answered a non-empty one, so every existing `{ ok: true }` assertion holds; `note`, `moved.from` and `moved.to` are third-party text, so each is collapsed to one line and capped at 300 characters: S8); `retryWriteback` and `POST /api/pipelines/:id/report-result` pass it on; audit line `Result reported back to the task source. <note>`.
 
 - [ ] **Step 1: Write the failing tests**
 
-In `test/writeback.test.mjs`, change the `plugin-config.mjs` import to:
+In `test/writeback.test.mjs`, change the `plugin-config.mjs` and `plugin-shim.mjs` imports to:
 
 ```js
 import { createProfile, readPluginState, writeTicketUpdates } from '../src/core/plugin-config.mjs';
+import { setMockSourceResponses, callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 ```
 
 and append:
@@ -1519,6 +1623,41 @@ test('Ticket updates: a move only with ticketUpdates and a record; project rule,
   setMockSourceResponses(null);
 });
 
+test('Ticket updates (S1): a capabilities probe that fails for another reason still passes the move; the old setting never runs', async () => {
+  const calls = [];
+  const report = (args) => { calls.push(args); return { moved: null, note: '' }; };
+  writeTicketUpdates('tu-gh', 'default', 'issues', TU_RULES);
+  await withFlag(true, async () => {
+    setMockSourceResponses({ capabilities: () => { throw new PluginOpError('rate-limit', 'Jira rate limit: try again later.'); }, reportResult: report });
+    let p = await seedDonePluginPipeline(tuMeta('SHOP'));
+    assert.deepEqual(await retryWriteback(p.id), { ok: true });
+    assert.deepEqual(calls.at(-1).move, { status: '10012', name: 'Resolved' }, 'fail closed: the saved rule, not the old setting');
+    setMockSourceResponses({ capabilities: () => { throw new PluginOpError('timeout', 'op exceeded'); }, reportResult: report });
+    p = await seedDonePluginPipeline(tuMeta('SHOP', 'tu-none'));
+    await retryWriteback(p.id);
+    assert.equal('move' in calls.at(-1), false, 'no record: still legacy');
+    setMockSourceResponses({ capabilities: () => { throw new PluginOpError('unimplemented', 'no capabilities op'); }, reportResult: report });
+    p = await seedDonePluginPipeline(tuMeta('SHOP'));
+    await retryWriteback(p.id);
+    assert.equal('move' in calls.at(-1), false, 'a connector without a capabilities op cannot hear a move');
+  });
+  setMockSourceResponses(null);
+});
+
+test('Ticket updates (S8): the note and the move are one line of at most 300 characters', async () => {
+  setMockSourceResponses({ reportResult: () => ({ moved: { from: 'In\nProgress', to: `R${'e'.repeat(400)}` },
+    note: `Not moved: Jira refused the move to Done:\n  ${'x'.repeat(500)}.` }) });
+  writeTicketUpdates('tu-gh', 'default', 'issues', TU_RULES);
+  await withFlag(true, async () => {
+    const out = await retryWriteback((await seedDonePluginPipeline(tuMeta('SHOP'))).id);
+    assert.equal(out.note.includes('\n'), false);
+    assert.ok(out.note.startsWith('Not moved: Jira refused the move to Done: xxx'), out.note.slice(0, 60));
+    assert.equal(out.note.length, 300);
+    assert.deepEqual([out.moved.from, out.moved.to.length], ['In Progress', 300]);
+  });
+  setMockSourceResponses(null);
+});
+
 test("e2e (D6, D11): the task's meta.project picks the rule; the audit line ends with the plugin's note", async () => {
   setMockSourceResponses({ getTask: { id: 'SHOP-9', title: 'Demo', url: 'https://x.test/SHOP-9', state: 'open', updatedAt: '2026-07-12T00:00:00Z',
     body: 'demo body', meta: { key: 'SHOP-9', project: 'SHOP' } } });   // reportResult: the mock's (D17), it answers by the move
@@ -1539,35 +1678,10 @@ test("e2e (D6, D11): the task's meta.project picks the rule; the audit line ends
 });
 ```
 
-In `test/results-view-helpers.test.mjs`, change the imports to:
-
-```js
-import { JSDOM } from 'jsdom';
-import { summaryChips, mergeFindings, statusChip, diffBadges, memoryChangesRows, reportResultControl } from '../ui/public/results-view.mjs';
-```
-
-and append:
-
-```js
-test('Report result says what happened to the ticket (Ticket updates D11)', async () => {
-  const { window } = new JSDOM('<!doctype html><body></body>');
-  const doc = window.document;
-  const answers = [{ ok: true, note: 'Moved to Resolved.' }, { ok: true }, { ok: true, skipped: true }, { ok: false, error: 'tracker down' }];
-  const ctl = reportResultControl('p1', { doc, post: async () => answers.shift() });
-  doc.body.append(ctl);
-  const press = async () => { ctl.querySelector('button').click(); await ctl._pending; return ctl.querySelector('.src-report-status').textContent; };
-  assert.equal(await press(), 'reported · Moved to Resolved.');
-  assert.equal(await press(), 'reported');
-  assert.equal(await press(), 'nothing to report');
-  assert.equal(await press(), 'failed: tracker down');
-  window.close();
-});
-```
-
 - [ ] **Step 2: Run the tests and see them fail**
 
-Run: `node tools/test.mjs test/writeback.test.mjs test/results-view-helpers.test.mjs`
-Expected: FAIL — `retryWriteback` answers `{ ok: true }` without `note`; `calls.at(-1).move` is `undefined`; the audit line has no note; the results view says `reported`.
+Run: `node tools/test.mjs test/writeback.test.mjs`
+Expected: FAIL — `retryWriteback` answers `{ ok: true }` without `note`; `calls.at(-1).move` is `undefined` (S1's row too); the audit line has no note; S8's `out.note` is `undefined`.
 
 - [ ] **Step 3: Implement**
 
@@ -1580,27 +1694,33 @@ import { moveFor } from './ticket-updates.mjs';
 In `reportResultForPipeline`, replace from `let writeBack = true;` to the end of the `try` block (`return { ok: true };`) with:
 
 ```js
+    // Ticket updates (D7): the move by the rule of the ticket's project (pinned at fetch, D6), else All projects; undefined with
+    // the flag off or nothing saved for the row's profile and source (the plugin's old setting applies, D4). Decided before the
+    // probe, so a failed probe cannot let the old setting run over a saved rule (S1).
+    const status = statusToResult(pipelineRow.status);
+    const ruled = moveFor({ plugin: ref.plugin, sourceId: ref.sourceId, profile: callRef.profile || DEFAULT_PROFILE,
+      project: typeof ref.project === 'string' ? ref.project : '', status });
+
     let writeBack = true;
     let caps = null;
+    let probeFailed = false;
     try {
       caps = await callSource({ ...callRef, op: 'capabilities', args: { inputs } });
       if (caps && caps.writeBack === false) writeBack = false;
     } catch (err) {
-      if ((err?.kind || 'plugin') !== 'unimplemented' && 'writeBack' in inputs) {
+      const kind = err?.kind || 'plugin';
+      if (kind !== 'unimplemented' && 'writeBack' in inputs) {
         return { ok: false, error: `write-back capability probe failed: ${err?.message || String(err)}` };
       }
+      probeFailed = kind !== 'unimplemented';
       writeBack = true;
     }
     if (!writeBack) return { ok: true, skipped: true };
 
-    // Ticket updates (D7): the move by the rule of the ticket's project (pinned at fetch, D6), else All projects. Only when the
-    // connector can hear it (capabilities().ticketUpdates, the probe above: no extra spawn) and a record exists for the row's
-    // profile and source; otherwise no `move` and the plugin's old setting applies (D4).
-    const status = statusToResult(pipelineRow.status);
-    const move = caps && caps.ticketUpdates === true
-      ? moveFor({ plugin: ref.plugin, sourceId: ref.sourceId, profile: callRef.profile || DEFAULT_PROFILE,
-        project: typeof ref.project === 'string' ? ref.project : '', status })
-      : undefined;
+    // The move goes only to a connector that can hear it (capabilities().ticketUpdates, the probe above: no extra spawn). A probe
+    // that failed for another reason (a rate limit, a timeout) cannot say; with a saved rule the move is passed anyway (fail
+    // closed: a plugin ignores an arg it does not know, while no move would let its old setting run, D4).
+    const move = ruled && ((caps && caps.ticketUpdates === true) || probeFailed) ? ruled : undefined;
     const answer = await callSource({
       ...callRef,
       op: 'reportResult',
@@ -1613,10 +1733,12 @@ In `reportResultForPipeline`, replace from `let writeBack = true;` to the end of
         ...(move ? { move } : {}),
       },
     });
-    // D11: what happened, for the audit line and the results view; nothing is added when the plugin says nothing.
+    // D11: what happened, for the audit line and the route's answer; nothing is added when the plugin says nothing. The note
+    // and the move are the plugin's text (Jira's own message, D10): one line, at most 300 characters each (S8).
+    const line = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
     const out = { ok: true };
-    if (answer && typeof answer.note === 'string' && answer.note.trim()) out.note = answer.note.trim();
-    if (answer && answer.moved && typeof answer.moved === 'object') out.moved = { from: String(answer.moved.from ?? ''), to: String(answer.moved.to ?? '') };
+    if (answer && typeof answer.note === 'string' && line(answer.note)) out.note = line(answer.note);
+    if (answer && answer.moved && typeof answer.moved === 'object') out.moved = { from: line(answer.moved.from), to: line(answer.moved.to) };
     return out;
 ```
 
@@ -1629,24 +1751,16 @@ In `src/core/run-harness.mjs` `_reportToSource`, replace the audit call with:
         await appendAudit(this.pipeline.dir, `Result reported back to the task source.${outcome.note ? ` ${outcome.note}` : ''}`).catch(() => {});
 ```
 
-In `ui/public/results-view.mjs` `reportResultControl`, replace the status line with:
-
-```js
-        status.textContent = out && out.ok
-          ? (out.skipped ? 'nothing to report' : (out.note ? `reported · ${out.note}` : 'reported'))   // Ticket updates D11
-          : `failed: ${out?.error || 'unknown'}`;
-```
-
 - [ ] **Step 4: Run the tests and see them pass**
 
-Run: `node tools/test.mjs test/writeback.test.mjs test/results-view-helpers.test.mjs test/requirements-run-link.test.mjs test/api-sources.test.mjs`
+Run: `node tools/test.mjs test/writeback.test.mjs test/requirements-run-link.test.mjs test/api-sources.test.mjs`
 Expected: PASS (every earlier `{ ok: true }` assertion holds: their connectors answer no note).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/core/sources.mjs src/core/run-harness.mjs ui/public/results-view.mjs test/writeback.test.mjs test/results-view-helpers.test.mjs
-git commit -m "Ticket updates: write-back passes the move; the outcome reaches the audit line and Report result
+git add src/core/sources.mjs src/core/run-harness.mjs test/writeback.test.mjs
+git commit -m "Ticket updates: write-back passes the move; the outcome reaches the audit line
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1739,8 +1853,16 @@ test('listStatuses: every status of the project once, in Jira\'s order, its cate
       { value: '10012', label: 'Resolved', category: 'done' }, { value: '10011', label: 'Won’t Fix', category: 'cancelled' },
       { value: '10013', label: 'Duplicate', category: 'cancelled' }, { value: '10014', label: 'Not planned', category: 'cancelled' }], deployment);
     assert.ok(jira.requests.some((r) => r.path === '/rest/api/2/project/SHOP/statuses'));
-    await assert.rejects(src.listStatuses({ project: 'NOPE' }), (e) => e.kind === 'plugin');
-    await assert.rejects(src.listStatuses({}), (e) => e.kind === 'plugin' && /project is required/.test(e.message));
+    // S3: a refusal carries Jira's own words (exportOp), never jira-api's status and REST path, which reachReason would hide
+    await assert.rejects(src.listStatuses({ project: 'NOPE' }), (e) => e.kind === 'plugin'
+      && e.message === "Jira refused the request: No project could be found with key 'NOPE'." && !/rest\/api/.test(e.message));
+    await assert.rejects(src.listStatuses({}), (e) => e.kind === 'plugin' && e.message === 'a project is required');
+    // S9: a project key is never a path: no request leaves for "..", ".", a slash or an over-long key
+    const before = jira.requests.length;
+    for (const project of ['..', '.', 'A/B', 'A\\B', 'X'.repeat(101)]) {
+      await assert.rejects(src.listStatuses({ project }), (e) => e.kind === 'plugin' && e.message === 'a project key cannot be a path', project);
+    }
+    assert.equal(jira.requests.length, before, 'no request reached Jira');
   }
 });
 
@@ -1781,7 +1903,7 @@ In `test/jira-source-connector.test.mjs` (**Deviation 4**), the two `listProject
 - [ ] **Step 2: Run the tests and see them fail**
 
 Run: `node tools/test.mjs test/jira-source-ticket-updates.test.mjs test/jira-source-export.test.mjs test/jira-source-connector.test.mjs`
-Expected: FAIL — `SyntaxError: The requested module '../plugins/jira-source/connector/index.mjs' does not provide an export named 'isCancelledName'`; the capabilities and `listProjects` `deepEqual`s differ.
+Expected: FAIL — `SyntaxError: The requested module '../plugins/jira-source/connector/index.mjs' does not provide an export named 'categoryOf'` (Node names the first missing export it checks); the capabilities and `listProjects` `deepEqual`s differ.
 
 - [ ] **Step 3: Implement**
 
@@ -1814,10 +1936,19 @@ export function categoryOf(status) {
 Inside `createTaskSource`, after `const lastLine = …;` (just before `return {`):
 
 ```js
-  // Ticket updates: every status of a project once by id, in Jira's order (one list per issue type), with its category (D1)
-  async function statusesOf(project) {
+  // Ticket updates: a project key, never a path (S9): `..` would turn /project/../statuses into another REST endpoint
+  function projectKeyOf(project) {
     const key = String(project ?? '').trim();
     if (!key) throw Object.assign(new Error('a project is required'), { kind: 'plugin' });
+    if (key.length > 100 || /^\.+$/.test(key) || /[/\\?#]/.test(key)) {
+      throw Object.assign(new Error('a project key cannot be a path'), { kind: 'plugin' });
+    }
+    return key;
+  }
+  // Every status of a project once by id, in Jira's order (one list per issue type), with its category (D1). Unwrapped: applyMove
+  // (Task 10) reads jira-api's own failure kinds and status.
+  async function statusesOf(project) {
+    const key = projectKeyOf(project);
     const types = await jiraFetch(jira, `/rest/api/2/project/${enc(key)}/statuses`);
     const seen = new Set();
     const out = [];
@@ -1831,6 +1962,13 @@ Inside `createTaskSource`, after `const lastLine = …;` (just before `return {`
     }
     return out;
   }
+```
+
+and, right after `const exportOp = …;`:
+
+```js
+  // Ticket updates (S3): listStatuses through exportOp, so a 403 or 404 carries Jira's own words to the host's reach sentence
+  const listStatusesOp = exportOp(async ({ project }) => statusesOf(project));
 ```
 
 Replace `listProjects`:
@@ -1847,7 +1985,10 @@ Replace `capabilities`:
 ```js
     capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true, ticketUpdates: true }; },
     // ---- Ticket updates (plans/ticket-updates-design.md §3, §7) ----
-    async listStatuses({ project } = {}) { return statusesOf(project); },
+    async listStatuses({ project } = {}) {
+      projectKeyOf(project);   // its own words pass unchanged: plainFailure would turn them into "no reason given"
+      return listStatusesOp({ project });   // S3: a refusal says Jira's words, not the REST path
+    },
     legacyMove() {
       const text = String(ctx.config?.transitionOnComplete || '').trim();
       return { field: 'transitionOnComplete', target: text ? { typed: text } : null };
@@ -1881,11 +2022,11 @@ The transition goes first, then one comment: summary, links, the outcome line la
 **Interfaces:**
 - Consumes: `statusesOf`, `isCancelledName` (Task 9); `issue`, `jiraFetch`, `markdownToWiki`, `wikiLink`, `log` (existing).
 - Produces: `reportResult(id, { status, summary, links, inputs, move })`: with `move` → `{ commented: true, transitioned: boolean, moved: { from, to } | null, note: string }`; without → `{ commented: true, transitioned }` exactly as before.
-- `startFakeJira({ seed: [{ key, project, status, transitions }], refuseTransition: { status, body } | null })`: a transition is `{ id, name, to: status, fields? }`; the issue read answers `status` and `project`; `GET …/transitions` answers `{ transitions }`; `POST …/transitions` moves the issue (or answers `refuseTransition`).
+- `startFakeJira({ seed: [{ key, project, status, transitions }], refuseTransition: { status, body } | null, refuseTransitionsRead: { status, body } | null })`: a transition is `{ id, name, to: status, fields? }`; the issue read answers `status` and `project`; `GET …/transitions` answers `{ transitions }` (or `refuseTransitionsRead`); `POST …/transitions` moves the issue (or answers `refuseTransition`).
 
 - [ ] **Step 1: Write the failing tests**
 
-In `test/helpers/fake-jira.mjs`, add `seed: [], refuseTransition: null,` to the `opt` defaults; after `let next = 101;` add:
+In `test/helpers/fake-jira.mjs`, add `seed: [], refuseTransition: null, refuseTransitionsRead: null,` to the `opt` defaults; after `let next = 101;` add:
 
 ```js
   // Ticket updates: issues that exist from the start, each with a status and the transitions it offers
@@ -1902,7 +2043,10 @@ Right before `m = /^\/rest\/api\/2\/issue\/([^/]+)\/comment$/.exec(p);` add:
     if (m) {
       const i = issues.get(m[1]);
       if (!i) return gone(res);
-      if (req.method === 'GET') return send(res, 200, { transitions: i.transitions || [] });
+      if (req.method === 'GET') {
+        if (opt.refuseTransitionsRead) return send(res, opt.refuseTransitionsRead.status, opt.refuseTransitionsRead.body);
+        return send(res, 200, { transitions: i.transitions || [] });
+      }
       if (opt.refuseTransition) return send(res, opt.refuseTransition.status, opt.refuseTransition.body);
       const t = (i.transitions || []).find((x) => x.id === body?.transition?.id);
       if (!t) return send(res, 400, { errorMessages: ['Transition id is not valid for this issue.'], errors: {} });
@@ -1956,6 +2100,8 @@ test('Any Done status never takes a cancelled one; with none it does not move an
   assert.deepEqual([only.posts.length, only.out.moved, only.out.transitioned], [0, null, false]);
   assert.equal(only.out.note, 'Not moved: from "In Review" only Won\'t Do and Duplicate lead to a Done status.');
   assert.equal(only.comment, `done\n\n${LINK}\n\nNot moved: from "In Review" only Won't Do and Duplicate lead to a Done status.`);
+  const one = await report({ category: 'done' }, { from: S.review, transitions: [tr('81', "Won't do", S.wontdo)] });
+  assert.equal(one.out.note, 'Not moved: from "In Review" only Won\'t Do leads to a Done status.', 'one: leads (decided 2026-10-30)');
   const none = await report({ category: 'done' }, { from: S.review, transitions: [tr('11', 'Start', S.prog)] });
   assert.equal(none.out.note, 'Not moved: from "In Review" no transition leads to a Done status.');
   const already = await report({ category: 'done' }, { from: S.closed, transitions: [tr('71', 'Finish', S.done)] });
@@ -1991,6 +2137,10 @@ test('a status move: by id, a typed name, already there, gone from the project, 
   assert.equal(typed.out.note, 'Moved to Resolved.', 'typed: by transition name, case-insensitive');
   const toName = await report({ status: 'resolved' }, { transitions: [tr('51', 'Wrap up', S.resolved)] });
   assert.equal(toName.out.note, 'Moved to Resolved.', "typed: by the target status's name");
+  // S2: as legacy, a transition's name wins over another transition's target name (plugins/jira-source/connector/index.mjs:274)
+  const order = await report({ status: 'Done' }, { transitions: [tr('61', 'Close', S.done), tr('62', 'Done', S.closed)] });
+  assert.deepEqual([order.posts[0].body, order.out.note], [{ transition: { id: '62' } }, 'Moved to Closed.'],
+    'typed "Done": the transition named Done, not the one leading to Done');
   const already = await report({ status: '3', name: 'In Progress' }, { transitions: [tr('51', 'Resolve', S.resolved)] });
   assert.deepEqual([already.out.note, already.reads.length], ['Already in In Progress.', 0]);
   const gone = await report({ status: '10099', name: 'Shipped' }, { transitions: [tr('11', 'Start', S.prog)] });
@@ -2002,7 +2152,7 @@ test('a status move: by id, a typed name, already there, gone from the project, 
   assert.ok(legacyTyped.logs.some((l) => /^warn SHOP-12: Could not move/.test(l)));
 });
 
-test("a refused transition still comments with Jira's reason (D10, Deviation 3); a refused token still throws", async () => {
+test("a 4xx refusal of the transition still comments with Jira's reason (D10, Deviation 3); 401, 429 and 5xx throw", async () => {
   const r = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
     refuseTransition: { status: 400, body: { errorMessages: ['Field Assignee is required.'], errors: {} } } });
   assert.deepEqual([r.out.transitioned, r.out.moved], [false, null]);
@@ -2011,9 +2161,31 @@ test("a refused transition still comments with Jira's reason (D10, Deviation 3);
   const forbidden = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
     refuseTransition: { status: 403, body: { errorMessages: [], errors: { status: 'You may not move this issue.' } } } });
   assert.equal(forbidden.out.note, 'Not moved: Jira refused the move to Done: You may not move this issue.');
+  const silent = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
+    refuseTransition: { status: 409, body: {} } });
+  assert.equal(silent.out.note, 'Not moved: Jira refused the move to Done: Jira gave no reason.', 'no message (decided 2026-10-30)');
   const { jira, src } = await site({ projectStatuses: STATUSES, seed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [] }], refuseToken: true });
   await assert.rejects(src.reportResult('SHOP-12', { ...RESULT, move: { category: 'done' } }), (e) => e.kind === 'auth');
   assert.deepEqual(jira.issues.get('SHOP-12').comments, [], 'no comment after a refused token');
+  // S4: the boundary is the transition POST itself: these throw there, so the write-back fails and Report result retries
+  for (const [refusal, kind] of [[{ status: 429, body: {} }, 'rate-limit'], [{ status: 401, body: {} }, 'auth'],
+    [{ status: 500, body: { errorMessages: ['Internal server error'] } }, 'plugin']]) {
+    const site2 = await site({ projectStatuses: STATUSES, refuseTransition: refusal,
+      seed: [{ key: 'SHOP-12', project: 'SHOP', status: S.prog, transitions: [tr('71', 'Finish', S.done)] }] });
+    await assert.rejects(site2.src.reportResult('SHOP-12', { ...RESULT, move: { category: 'done' } }), (e) => e.kind === kind, String(refusal.status));
+    assert.ok(site2.jira.requests.some((q) => q.method === 'POST' && /\/transitions$/.test(q.path)), `${refusal.status}: the POST was tried`);
+    assert.deepEqual(site2.jira.issues.get('SHOP-12').comments, [], `${refusal.status}: no comment`);
+  }
+});
+
+test("Jira does not let Worca read the ticket's status or transitions (403, 404): a Not moved line, the comment still posted", async () => {
+  const hidden = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
+    refuseTransitionsRead: { status: 403, body: { errorMessages: ['You do not have the permission to see the specified issue.'] } } });
+  assert.deepEqual([hidden.posts.length, hidden.out.transitioned, hidden.out.moved], [0, false, null]);
+  assert.equal(hidden.out.note, "Not moved: Jira did not let Worca read SHOP-12's transitions (You do not have the permission to see the specified issue).");
+  assert.equal(hidden.comment.split('\n').at(-1), hidden.out.note);
+  const silent = await report({ status: '10012', name: 'Resolved' }, { refuseTransitionsRead: { status: 404, body: {} } });
+  assert.equal(silent.out.note, "Not moved: Jira did not let Worca read SHOP-12's transitions (Jira gave no reason).");
 });
 
 test("Don't move: no read, no transition, no line; a failed run passes none and only comments", async () => {
@@ -2050,9 +2222,14 @@ In `plugins/jira-source/connector/index.mjs`, inside `createTaskSource`, after `
   const lc = (s) => String(s ?? '').trim().toLowerCase();
   /** "A", "A and B", "A, B and C". */
   const andList = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
-  /** Jira's own words for a refusal, without a trailing full stop. */
+  /** Jira's own words for a refusal, without a trailing full stop; "Jira gave no reason" when it sends none (decided 2026-10-30). */
   const jiraSaid = (e) => ([...(e?.body?.errorMessages || []), ...Object.values(e?.body?.errors || {})]
-    .map((m) => String(m).trim()).filter(Boolean).join('; ') || 'no reason given').replace(/\.+$/, '');
+    .map((m) => String(m).trim()).filter(Boolean).join('; ') || 'Jira gave no reason').replace(/\.+$/, '');
+  /** Deviation 3 (decided 2026-10-30): a 4xx refusal of the transition, other than 401 (auth) and 429 (rate limit), is a line;
+   *  a 5xx, network, timeout, 401 or 429 throws, so the write-back fails and Report result retries. */
+  const refusedMove = (e) => !!e && e.kind === 'plugin' && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429;
+  /** Jira would not let Worca read the ticket's status or transitions (403, 404): a line; anything else throws. */
+  const unreadable = (e) => !!e && e.kind === 'plugin' && (e.status === 403 || e.status === 404);
   /** What a transition still needs: its Resolution (undefined when not required; the first allowed value named Done, Fixed,
    *  Complete or Completed; null when none fits), and its other required fields without a default (Worca fills none). */
   function needs(t) {
@@ -2066,13 +2243,19 @@ In `plugins/jira-source/connector/index.mjs`, inside `createTaskSource`, after `
   const needLine = (t, n) => (n.other.length ? `Not moved: the move to ${nameOf(t)} asks for fields Worca does not fill (${n.other.join(', ')}).`
     : `Not moved: the move to ${nameOf(t)} needs a Resolution, and none is named Done, Fixed or Complete.`);
   const transitionsOf = async (key) => ((await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/transitions?expand=transitions.fields`)) || {}).transitions || [];
-  /** §7: one move, before the comment. Answers { note, moved, transitioned }. A refused transition (any `plugin` failure:
-   *  Deviation 3) is a "Not moved" line; auth, network and rate limit throw, so the write-back fails and Report result retries
-   *  (a retry after a failed comment finds the ticket moved: "Already in …"). */
+  /** §7: one move, before the comment. Answers { note, moved, transitioned }. A 4xx refusal of the transition (Deviation 3) or
+   *  of reading the ticket's status or transitions (403, 404) is a "Not moved" line; auth, network, rate limit, timeout and a
+   *  5xx throw, so the write-back fails and Report result retries (a retry after a failed comment finds the ticket moved:
+   *  "Already in …"). */
   async function applyMove(key, move) {
     const none = { note: '', moved: null, transitioned: false };
     if (!move || move.none === true) return none;
-    const fields = (await issue(key, ['status', 'project']))?.fields || {};
+    const notRead = (e) => ({ ...none, note: `Not moved: Jira did not let Worca read ${key}'s transitions (${jiraSaid(e)}).` });
+    let fields;
+    try { fields = (await issue(key, ['status', 'project']))?.fields || {}; } catch (e) { if (unreadable(e)) return notRead(e); throw e; }
+    const readTransitions = async () => {
+      try { return { list: await transitionsOf(key) }; } catch (e) { if (unreadable(e)) return { refused: notRead(e) }; throw e; }
+    };
     const now = fields.status || {};
     const from = now.name || '?';
     const go = async (t, resolution) => {
@@ -2080,7 +2263,7 @@ In `plugins/jira-source/connector/index.mjs`, inside `createTaskSource`, after `
         await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/transitions`, { method: 'POST',
           body: { transition: { id: t.id }, ...(resolution ? { fields: { resolution: { id: resolution.id } } } : {}) } });
       } catch (e) {
-        if (e && e.kind === 'plugin') return { ...none, note: `Not moved: Jira refused the move to ${nameOf(t)}: ${jiraSaid(e)}.` };
+        if (refusedMove(e)) return { ...none, note: `Not moved: Jira refused the move to ${nameOf(t)}: ${jiraSaid(e)}.` };
         throw e;
       }
       return { note: resolution ? `Moved to ${nameOf(t)}, Resolution: ${resolution.name}.` : `Moved to ${nameOf(t)}.`,
@@ -2088,11 +2271,14 @@ In `plugins/jira-source/connector/index.mjs`, inside `createTaskSource`, after `
     };
     if (move.category === 'done') {
       if (now.statusCategory?.key === 'done') return { ...none, note: `Already in ${from}.` };
-      const done = (await transitionsOf(key)).filter((t) => t?.to?.statusCategory?.key === 'done');
+      const read = await readTransitions();
+      if (read.refused) return read.refused;
+      const done = read.list.filter((t) => t?.to?.statusCategory?.key === 'done');
       const usable = done.filter((t) => !isCancelledName(t.to?.name));
       if (!usable.length) {
         const names = [...new Set(done.map((t) => t.to?.name).filter(Boolean))];
-        return { ...none, note: names.length ? `Not moved: from "${from}" only ${andList(names)} lead to a Done status.`
+        // "only Won't Do leads", "only Won't Do and Duplicate lead" (decided 2026-10-30)
+        return { ...none, note: names.length ? `Not moved: from "${from}" only ${andList(names)} ${names.length === 1 ? 'leads' : 'lead'} to a Done status.`
           : `Not moved: from "${from}" no transition leads to a Done status.` };
       }
       const rank = (t) => { const i = PREFERRED.indexOf(lc(t.to?.name)); return i < 0 ? PREFERRED.length : i; };
@@ -2106,9 +2292,13 @@ In `plugins/jira-source/connector/index.mjs`, inside `createTaskSource`, after `
     const want = String(move.status ?? '').trim();
     const named = typeof move.name === 'string' && move.name.trim() ? move.name.trim() : null;
     if (String(now.id ?? '') === want || lc(from) === lc(want) || (named && lc(from) === lc(named))) return { ...none, note: `Already in ${from}.` };
-    const transitions = await transitionsOf(key);
+    const read = await readTransitions();
+    if (read.refused) return read.refused;
+    const transitions = read.list;
+    // By the status id; else, as legacy does (S2), a transition's name across all transitions first, then a target's name.
     const t = transitions.find((x) => String(x?.to?.id ?? '') === want)
-      || transitions.find((x) => lc(x?.name) === lc(want) || lc(x?.to?.name) === lc(want));
+      || transitions.find((x) => lc(x?.name) === lc(want))
+      || transitions.find((x) => lc(x?.to?.name) === lc(want));
     if (!t) {
       const project = fields.project?.key;
       if (named && project) {
@@ -2169,11 +2359,19 @@ project's statuses). The plugin answers `capabilities()` with `ticketUpdates: tr
   Completed, and never a cancelled one. A required Resolution is filled with the first allowed value named Done, Fixed,
   Complete or Completed. Last lines:
   - `Moved to Resolved.` / `Moved to Done, Resolution: Done.` / `Already in Closed.`
-  - `Not moved: from "In Review" only Won't Do and Duplicate lead to a Done status.`
+  - `Not moved: from "In Review" only Won't Do and Duplicate lead to a Done status.` (one: `only Won't Do leads`)
+  - `Not moved: from "In Review" no transition leads to a Done status.`
   - `Not moved: the move to Done needs a Resolution, and none is named Done, Fixed or Complete.`
   - `Not moved: the move to Done asks for fields Worca does not fill (Fix versions).`
   - `Not moved: CRM has no status named Shipped any more.`
-  - `Not moved: Jira refused the move to Done: <Jira's message>.` — the comment is still posted.
+  - `Could not move to "Shipped" from "In Progress" (available: Start, Review).` — a status the ticket cannot reach from where it is.
+  - `Not moved: Jira refused the move to Done: <Jira's message>.` — Jira refused the transition (a 4xx other than 401 and 429).
+  - `Not moved: Jira did not let Worca read SHOP-12's transitions (<Jira's message>).` — Jira refused to show the ticket's
+    status or transitions (403 or 404).
+
+  When Jira sends no message, the line says `Jira gave no reason`. In every case above the comment is still posted. A refused
+  API token (401), a rate limit (429), a Jira server error (5xx), a network error or a timeout still fails the write-back,
+  so it can be tried again; a ticket that moved before the failure then reads `Already in …`.
 
 Until Ticket updates is saved for a connection, write-back works exactly as described above.
 ```
@@ -2196,23 +2394,25 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 11: Report back says the rule's move (D14)
 
-`exportView` gains `move`, resolved from the link's connection and tracker project with the same `moveFor` as write-back; the Report back hint uses it when it is not null.
+`exportView` gains `move`, resolved from the link's connection and tracker project with the same `moveFor` as write-back; the Report back hint uses it when it is not null. Like write-back, the hint promises a move only when the connector can hear one: the export probe (already cached per plugin, source and install) also remembers `capabilities().ticketUpdates`, and a connector that answered without it (a downgrade that kept the record) gets `move: null`. A probe that failed counts as heard, as write-back then passes the move too (S1).
 
 **Files:**
-- Modify: `src/core/requirements/export.mjs` (`exportView`, its fallback; the `ticket-updates.mjs` import), `ui/public/requirements-view.mjs` (`reportRow`'s hint)
+- Modify: `src/core/requirements/export.mjs` (`probe`, `canExport`, `_resetExportCaches`, a `heardMove` helper; `exportView`, its fallback; the `ticket-updates.mjs` import), `ui/public/requirements-view.mjs` (`reportRow`'s hint)
 - Test: `test/requirements-export.test.mjs` (one test at the end), `test/requirements-view-export.test.mjs` (one test at the end)
 
 **Interfaces:**
 - Consumes: `moveFor`, `describeMove` (Task 2); the link's `plugin`, `sourceId`, `profile`, `trackerProject`.
-- Produces: `exportView(f, turns, d).move: { kind: 'category'|'status'|'none', label: string } | null` (null without a link, with the flag off or with nothing saved; `label` is "a Done status", the status's name, or for `none` the tracker project).
+- Produces: `exportView(f, turns, d).move: { kind: 'category'|'status'|'none', label: string } | null` (null without a link, with the flag off, with nothing saved, or when the connector's capabilities lack `ticketUpdates`; `label` is "a Done status", the status's name, "<text> (as typed)" for a carried-over typed value, or for `none` the tracker project).
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `test/requirements-export.test.mjs` (after Task 6's test, which re-saved the acme setup on SHOP and defined `TU_NONE` and `withTicketUpdates`):
+Append to `test/requirements-export.test.mjs` (after Task 6's test, which defined `TU_NONE` and `withTicketUpdates`; this test saves its own setup, so it does not depend on the order of the tests; `_resetExportCaches` and `setMockSourceResponses` are already imported there):
 
 ```js
 test("Ticket updates (D14): exportView's move is the rule of the link's connection and project", async () => {
   reset();
+  await saveSetup(SCOPE, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', project: 'SHOP', projectName: 'SHOP — Shop web',
+    issueType: '10001', issueTypeName: 'Story', labels: ['worca'] }, { by: 'po' }, d);
   const f = readyFeature('Report move');
   await exportNow(f.seq);   // a link on acme, project SHOP
   const move = async () => (await exportView(getFeature(f.seq), listTurns(f.seq), d)).move;
@@ -2225,10 +2425,19 @@ test("Ticket updates (D14): exportView's move is the rule of the link's connecti
     assert.deepEqual(await move(), { kind: 'category', label: 'a Done status' });
     writeTicketUpdates('jira-source', 'acme', 'jira', { projects: [], rules: TU_NONE });
     assert.deepEqual(await move(), { kind: 'none', label: 'SHOP' });
+    writeTicketUpdates('jira-source', 'acme', 'jira', { projects: [], rules: [{ ...ALL_DONE, target: { kind: 'typed', value: 'Resolve' } }] });
+    assert.deepEqual(await move(), { kind: 'status', label: 'Resolve (as typed)' }, 'as the sheet shows it (decided 2026-10-30)');
     assert.equal((await exportView(readyFeature('No link'), [], d)).move, null, 'no link');
+    // A connector that cannot hear a move (a downgrade that kept the record): no promise write-back would not keep
+    _resetExportCaches();
+    setMockSourceResponses({ capabilities: { writeBack: true, export: true } });
+    try { assert.equal(await move(), null, 'no ticketUpdates: the old lines'); } finally { setMockSourceResponses(null); _resetExportCaches(); }
   });
+  const was = process.env.WORCA_FLAGS;
   process.env.WORCA_FLAGS = '-ticketUpdates';
-  try { assert.equal(await move(), null, 'flag off: the old lines'); } finally { delete process.env.WORCA_FLAGS; }
+  try { assert.equal(await move(), null, 'flag off: the old lines'); } finally {
+    if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was;
+  }
 });
 ```
 
@@ -2264,14 +2473,41 @@ In `src/core/requirements/export.mjs`, extend the Task 6 import:
 import { projectFilter, filterProjects, moveFor, describeMove } from '../ticket-updates.mjs';
 ```
 
+Beside the probe caches, remember what each probe said about Ticket updates (the same key and lifetime as `capCache`):
+
+```js
+// Ticket updates (D14): capabilities().ticketUpdates per plugin, source id and install, from the same probe (no extra spawn)
+const capTicketUpdates = new Map();
+```
+
+`_resetExportCaches` also clears it (`capTicketUpdates.clear();`). In `probe`, the kept answers carry it:
+
+```js
+    return { keep: true, ok: !!(caps && caps.export === true), ticketUpdates: !!(caps && caps.ticketUpdates === true) };
+  } catch (err) {
+    // A connector without the op cannot export (kept); any other failure stands for PROBE_RETRY_MS (D3)
+    return { keep: (err && err.kind) === 'unimplemented', ok: false, ticketUpdates: false };
+  }
+```
+
+and in `canExport`'s `.then`, `if (r.keep) { capCache.set(key, r.ok); capTicketUpdates.set(key, r.ticketUpdates); capFailed.delete(failKey); } else …`. Below `canExport`:
+
+```js
+/** D14: can this connection's connector hear a move? Only a kept probe answer that lacks ticketUpdates says no; an unknown
+ *  (a probe that failed) counts as yes, as write-back then passes the move anyway (S1). */
+const heardMove = (c) => capTicketUpdates.get(`${c.plugin}/${c.sourceId}@${installOf(c.plugin)}`) !== false;
+```
+
 In `exportView`, after the `doneStatus: …,` line add:
 
 ```js
       // Ticket updates (D14): what Report back will do, by the rule of the link's connection and tracker project (write-back's
-      // own moveFor); null with the flag off or nothing saved, and the hint keeps its two lines
-      move: link ? describeMove(moveFor({ plugin: link.plugin, sourceId: link.sourceId, profile: link.profile || DEFAULT_PROFILE,
+      // own moveFor), when its connector can hear a move; null with the flag off or nothing saved, and the hint keeps its two lines
+      move: link && heardMove(link) ? describeMove(moveFor({ plugin: link.plugin, sourceId: link.sourceId, profile: link.profile || DEFAULT_PROFILE,
         project: link.trackerProject || '', status: 'completed' }), { project: link.trackerProject || '' }) : null,
 ```
+
+(`exportTrackers` runs first in `exportView`, so the probe answer is there; the shape `exportTrackers` returns does not change.)
 
 and in its `catch` fallback add `move: null`:
 
@@ -2298,7 +2534,7 @@ In `ui/public/requirements-view.mjs` `reportRow`, replace the `h('p', { class: '
 
 - [ ] **Step 4: Run the tests and see them pass**
 
-Run: `node tools/test.mjs test/requirements-export.test.mjs test/requirements-view-export.test.mjs test/requirements-export-api.test.mjs`
+Run: `node tools/test.mjs test/requirements-export.test.mjs test/requirements-view-export.test.mjs test/requirements-export-api.test.mjs test/requirements-export-trackers.test.mjs`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2327,7 +2563,9 @@ D13 and §8, §10 C/D, §11: a select-only combobox. No generic combobox exists 
   - `sameTarget(a, b) → boolean`
   - `CATEGORY_GROUPS` (the four groups, in §9's order), `FALLBACK_ERROR = 'Worca could not finish that. Try again.'`
   - `createMoveSelect({ doc, project, value, general, label, loadStatuses, onChange, host, now }) → { el, button, get(), set(target), describe(id|null), open(), close(), isOpen(), destroy() }`. `general: true` = the All projects row (and a new row before its project is chosen): only Don't move and Any Done status (plus a carried-over typed value while it is selected), no load. `loadStatuses()` → array of `{ value, label, category }` or a rejection whose `message` is the sentence to show. `host` is where the listbox is appended (the sheet panel; default `doc.body`).
-  - Class hooks: `mk-tu-movewrap`, `mk-tu-move`, `mk-tu-move-t`, `mk-tu-move-ic`, `mk-tu-pop`, `mk-tu-movepop`, `mk-tu-list`, `mk-tu-opt` (`is-active`), `mk-tu-opt-b`, `mk-tu-opt-t`, `mk-tu-opt-s`, `mk-tu-opt-check`, `mk-tu-dot`, `mk-tu-dot-{none|category|typed|done|in_progress|todo|cancelled}`, `mk-tu-sep`, `mk-tu-group`, `mk-tu-live`, `mk-tu-retry`.
+  - Class hooks: `mk-tu-movewrap`, `mk-tu-move`, `mk-tu-move-t`, `mk-tu-move-ic`, `mk-tu-pop`, `mk-tu-movepop`, `mk-tu-list`, `mk-tu-opt` (`is-active`), `mk-tu-opt-b`, `mk-tu-opt-t`, `mk-tu-opt-s`, `mk-tu-opt-check`, `mk-tu-dot`, `mk-tu-dot-{none|category|typed|done|in_progress|todo|cancelled}`, `mk-tu-sep`, `mk-tu-optgroup` (a status group, `role="group"`), `mk-tu-group` (its visible label), `mk-tu-live`, `mk-tu-retry`.
+  - The active option (`aria-activedescendant`) opens on the selected option. A repaint (the statuses arriving, `set()`) keeps the active option only after the person moved it with the keys or type-ahead (the review's Must: the first paint runs before the statuses load, so keeping it unconditionally would open every status rule on Don't move).
+  - Each status group is a `role="group"` with an `aria-label` naming its category, as `group-picker.mjs` does (decided 2026-10-30; design §11); its visible label is `role="presentation"` and `aria-hidden`, the separator `role="presentation"`. The separator is drawn only when a group follows it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2378,6 +2616,8 @@ test('board 4: the combobox and the listbox "CRM statuses": the two options, a s
   assert.deepEqual([b.tagName, b.type, b.getAttribute('role'), b.getAttribute('aria-haspopup'), b.getAttribute('aria-expanded'), b.textContent],
     ['BUTTON', 'button', 'combobox', 'listbox', 'false', 'Released']);
   assert.equal(m.doc.getElementById(b.getAttribute('aria-labelledby')).textContent, 'CRM: move to');
+  assert.equal(b.hasAttribute('aria-controls'), false, 'closed: aria-controls names no missing element');
+  b.focus();
   b.click();
   await settle();
   assert.equal(b.getAttribute('aria-expanded'), 'true');
@@ -2387,6 +2627,11 @@ test('board 4: the combobox and the listbox "CRM statuses": the two options, a s
   assert.equal(m.options()[1].querySelector('.mk-tu-opt-s').textContent, 'One this ticket can reach');
   assert.deepEqual([...m.list().querySelectorAll('[role="presentation"]')].map((n) => n.textContent),
     ['', "Done · CRM's workflow", 'In progress', 'To do', 'Cancelled']);
+  // §11 (decided 2026-10-30): a screen reader hears each status's category from its group
+  const groups = [...m.list().querySelectorAll('[role="group"]')];
+  assert.deepEqual(groups.map((g) => [g.getAttribute('aria-label'), [...g.querySelectorAll('[role="option"]')].map((o) => o.querySelector('.mk-tu-opt-t').textContent)]),
+    [["Done · CRM's workflow", ['Done', 'Released']], ['In progress', ['In Progress', 'Waiting for customer']], ['To do', ['Open']], ['Cancelled', ["Won't Fix"]]]);
+  assert.ok(groups.every((g) => g.querySelector('.mk-tu-group').getAttribute('aria-hidden') === 'true'));
   assert.deepEqual(m.options().map((o) => o.querySelector('.mk-tu-dot').className.split(' ')[1]),
     ['mk-tu-dot-none', 'mk-tu-dot-category', 'mk-tu-dot-done', 'mk-tu-dot-done', 'mk-tu-dot-in_progress', 'mk-tu-dot-in_progress', 'mk-tu-dot-todo', 'mk-tu-dot-cancelled']);
   assert.ok(m.options().every((o) => o.querySelector('.mk-tu-dot').getAttribute('aria-hidden') === 'true'));
@@ -2394,7 +2639,37 @@ test('board 4: the combobox and the listbox "CRM statuses": the two options, a s
   assert.deepEqual(sel.map((o) => o.querySelector('.mk-tu-opt-t').textContent), ['Released']);
   assert.ok(sel[0].querySelector('.mk-tu-opt-check'), 'the selected option has a check');
   assert.equal(m.active(), 'Released', 'the list opens on the selected option');
-  assert.equal(m.doc.activeElement === b || m.doc.activeElement === m.doc.body, true, 'the focus never moves into the list');
+  assert.equal(m.doc.activeElement, b, 'the focus never moves into the list');
+  m.key('Escape');
+  assert.equal(b.hasAttribute('aria-controls'), false, 'closed again: aria-controls removed');
+});
+
+test('the active option survives the statuses arriving only after the person moved it (the review\'s Must)', async () => {
+  let resolve;
+  const m = mount({ value: RELEASED, loadStatuses: () => new Promise((r) => { resolve = r; }) });
+  m.ms.button.focus();
+  m.ms.button.click();
+  assert.equal(m.active(), "Don't move", 'before the load the selected status is not listed yet');
+  resolve(CRM);
+  await settle();
+  assert.equal(m.active(), 'Released', 'not moved: the repaint opens on the selected option');
+  m.key('Escape');
+  m.ms.button.click();   // the statuses are cached now; open again and move before a repaint
+  m.key('Home');
+  m.key('ArrowDown');
+  assert.equal(m.active(), 'Any Done status');
+  m.ms.set(RELEASED);   // a repaint while open
+  assert.equal(m.active(), 'Any Done status', 'moved: the repaint keeps it');
+  m.key('Escape');
+  let resolve2;
+  const n = mount({ value: RELEASED, loadStatuses: () => new Promise((r) => { resolve2 = r; }) });
+  n.ms.button.focus();
+  n.ms.button.click();
+  n.key('ArrowDown');
+  assert.equal(n.active(), 'Any Done status');
+  resolve2(CRM);
+  await settle();
+  assert.equal(n.active(), 'Any Done status', 'moved before the load: kept across it');
 });
 
 test('All projects: only the two general options, labelled "All projects: move to"; a carried-over typed value while selected; no load', async () => {
@@ -2463,6 +2738,7 @@ test("C: the list opens at once with \"Getting CRM's statuses…\"; D: A6's sent
   const live = () => m.doc.querySelector('.mk-tu-live');
   const retry = () => m.doc.querySelector('.mk-tu-retry');
   assert.deepEqual(m.titles(), ["Don't move", 'Any Done status'], "the two general options at once");
+  assert.equal(m.list().querySelector('.mk-tu-sep'), null, 'no separator with nothing under it');
   assert.deepEqual([live().textContent, live().getAttribute('aria-live'), retry().hidden], ["Getting CRM's statuses…", 'polite', true]);
   reject(new Error('Worca could not reach Jira: the API token was refused.'));
   await settle();
@@ -2562,6 +2838,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
   let retry = null;
   let active = null;
   const targets = new Map();   // option element → its target
+  let moved = false;   // the person moved the active option since the list opened (keys, type-ahead)
   let typed = '';
   let typedAt = -Infinity;
 
@@ -2574,8 +2851,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
   btn.setAttribute('role', 'combobox');
   btn.setAttribute('aria-haspopup', 'listbox');
   btn.setAttribute('aria-expanded', 'false');
-  btn.setAttribute('aria-controls', `${uid}-list`);
-  btn.setAttribute('aria-labelledby', lab.id);
+  btn.setAttribute('aria-labelledby', lab.id);   // aria-controls only while the list exists (set in open, removed in close)
   const txt = mk('span', 'mk-tu-move-t', targetText(current));
   btn.append(txt, icon(doc, 'chevron', 14, 'ic mk-tu-move-ic'));
   wrap.append(lab, btn);
@@ -2614,22 +2890,33 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
   }
 
   function paintList() {
-    const keep = active && targets.has(active) ? keyOf(targets.get(active)) : null;
+    // Keep the active option across a repaint only once the person moved it; else open on the selected option (the first
+    // paint runs before the statuses load, so an unconditional keep would leave every status rule on Don't move).
+    const keep = moved && active && targets.has(active) ? keyOf(targets.get(active)) : null;
     targets.clear();
     let i = 0;
     const general2 = [{ kind: 'none', label: "Don't move" }, { kind: 'category', value: 'done', label: 'Any Done status', sub: 'One this ticket can reach' }];
     if (current.kind === 'typed') general2.push({ kind: 'typed', value: String(current.value), label: targetText(current) });
     const nodes = general2.map((o) => optionEl(o, i++));
     if (!general) {
-      const sep = mk('div', 'mk-tu-sep');
-      sep.setAttribute('role', 'presentation');
-      nodes.push(sep);
+      const groups = [];
       for (const [cat, title] of CATEGORY_GROUPS) {
         const items = (loaded || []).filter((s) => s && s.category === cat);
         if (!items.length) continue;
+        // §11: the group says the category to a screen reader (aria-label, as group-picker.mjs); its visible label is not read twice
+        const grp = mk('div', 'mk-tu-optgroup');
+        grp.setAttribute('role', 'group');
+        grp.setAttribute('aria-label', title(project));
         const g = mk('div', 'mk-tu-group', title(project));
         g.setAttribute('role', 'presentation');
-        nodes.push(g, ...items.map((s) => optionEl({ kind: 'status', value: String(s.value), label: String(s.label ?? s.value), category: cat }, i++)));
+        g.setAttribute('aria-hidden', 'true');
+        grp.append(g, ...items.map((s) => optionEl({ kind: 'status', value: String(s.value), label: String(s.label ?? s.value), category: cat }, i++)));
+        groups.push(grp);
+      }
+      if (groups.length) {   // no separator with nothing under it (loading, a failure, an empty workflow)
+        const sep = mk('div', 'mk-tu-sep');
+        sep.setAttribute('role', 'presentation');
+        nodes.push(sep, ...groups);
       }
     }
     listEl.replaceChildren(...nodes);
@@ -2678,6 +2965,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     pop.addEventListener('click', (e) => { const o = e.target.closest?.('[role="option"]'); if (o && targets.has(o)) pick(o); });
     (host || doc.body).append(pop);
     btn.setAttribute('aria-expanded', 'true');
+    btn.setAttribute('aria-controls', listEl.id);
     paintList();
     paintState();
     pop.style.minWidth = `${btn.offsetWidth}px`;
@@ -2690,9 +2978,10 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     if (!pop) return;
     doc.removeEventListener('pointerdown', onDown, true);
     pop.remove();
-    pop = null; listEl = null; liveEl = null; retry = null; active = null;
+    pop = null; listEl = null; liveEl = null; retry = null; active = null; moved = false;
     targets.clear();
     btn.setAttribute('aria-expanded', 'false');
+    btn.removeAttribute('aria-controls');
     btn.removeAttribute('aria-activedescendant');
   }
 
@@ -2715,7 +3004,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     if (typed.length > 1 && active && titleOf(active).startsWith(typed)) return;   // a longer word stays while it still matches
     const i = opts.indexOf(active);
     const hit = [...opts.slice(i + 1), ...opts.slice(0, i + 1)].find((o) => titleOf(o).startsWith(typed));
-    if (hit) setActive(hit);
+    if (hit) { moved = true; setActive(hit); }
   }
 
   btn.addEventListener('click', () => (pop ? close() : open()));
@@ -2730,10 +3019,10 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     const i = opts.indexOf(active);
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
     if (e.key === 'Tab') { close(); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(opts[Math.min(opts.length - 1, i + 1)] || opts[0]); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); setActive(opts[Math.max(0, i - 1)] || opts[0]); return; }
-    if (e.key === 'Home') { e.preventDefault(); setActive(opts[0]); return; }
-    if (e.key === 'End') { e.preventDefault(); setActive(opts[opts.length - 1]); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); moved = true; setActive(opts[Math.min(opts.length - 1, i + 1)] || opts[0]); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); moved = true; setActive(opts[Math.max(0, i - 1)] || opts[0]); return; }
+    if (e.key === 'Home') { e.preventDefault(); moved = true; setActive(opts[0]); return; }
+    if (e.key === 'End') { e.preventDefault(); moved = true; setActive(opts[opts.length - 1]); return; }
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (active) pick(active); return; }
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); typeAhead(e.key); }
   });
@@ -2778,7 +3067,7 @@ D13 and §8, §10 C/D, §11: `label-picker.mjs`'s `openLabelPicker` pattern; not
 
 **Interfaces:**
 - Consumes: `placeFlyout`.
-- Produces: `openProjectsPopover({ doc, anchor, host, profileLabel, tracker, isPicked(value) → boolean, pickedCount() → number, loadProjects() → Promise<[{ value, label, name? }]>, onToggle(project, on), onClose() }) → { el, close }`. Class hooks: `mk-tu-pop`, `mk-tu-projpop`, `mk-tu-search`, `mk-tu-plist`, `mk-tu-prow` (`is-active`), `mk-tu-pcheck`, `mk-tu-key`, `mk-tu-pname`, `mk-tu-live`, `mk-tu-retry`, `mk-tu-pfoot`, `mk-tu-pcount`, `mk-tu-done`.
+- Produces: `openProjectsPopover({ doc, anchor, host, profileLabel, tracker, isPicked(value) → boolean, pickedCount() → number, loadProjects() → Promise<[{ value, label, name? }]>, onToggle(project, on), onClose() }) → { el, close }`. The search box is a `role="combobox"` with `aria-expanded="true"`, `aria-autocomplete="list"` and `aria-controls`, as `group-picker.mjs`'s search (S12). The anchor gets `aria-expanded` while the popover is open. Focus that Tabs out of both the popover and the anchor closes it without pulling the focus back. The popover stays right-aligned under Add projects… (`placeFlyout`'s `'down'`, board 3; decided 2026-10-30). Class hooks: `mk-tu-pop`, `mk-tu-projpop`, `mk-tu-search`, `mk-tu-plist`, `mk-tu-prow` (`is-active`), `mk-tu-pcheck`, `mk-tu-key`, `mk-tu-pname`, `mk-tu-live`, `mk-tu-retry`, `mk-tu-pfoot`, `mk-tu-pcount`, `mk-tu-done`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2798,8 +3087,8 @@ const SIX = [['SHOP', 'Shop'], ['CRM', 'Customer portal'], ['OPS', 'Operations']
   ['DATA', 'Data platform']].map(([value, name]) => ({ value, label: `${name} (${value})`, name }));
 
 function mount({ picked = ['SHOP'], loader = async () => SIX } = {}) {
-  const { window } = trackDom(new JSDOM('<!doctype html><body><button id="add" type="button">Add projects…</button><p id="away">x</p></body>',
-    { url: 'http://localhost/' }));
+  const { window } = trackDom(new JSDOM('<!doctype html><body><button id="add" type="button">Add projects…</button><p id="away">x</p>'
+    + '<button id="next" type="button">next</button></body>', { url: 'http://localhost/' }));
   const doc = window.document;
   const set = new Set(picked);
   const toggles = [];
@@ -2823,6 +3112,10 @@ test('board 3: a dialog with the search, the multi-select listbox "Jira projects
   const dlg = m.$('.mk-tu-projpop');
   assert.deepEqual([dlg.getAttribute('role'), dlg.getAttribute('aria-label')], ['dialog', 'Projects you work on']);
   assert.equal(m.doc.activeElement, m.q(), 'the focus is in the search box');
+  // S12: the search box carries the combobox the active row hangs on, as group-picker.mjs's search
+  assert.deepEqual(['role', 'aria-expanded', 'aria-autocomplete', 'aria-controls'].map((a) => m.q().getAttribute(a)),
+    ['combobox', 'true', 'list', m.$('.mk-tu-plist').id]);
+  assert.equal(m.anchor.getAttribute('aria-expanded'), 'true', 'Add projects… says its popover is open');
   assert.equal(m.q().placeholder, 'Find a project by key or name');
   assert.equal(m.doc.querySelector(`label[for="${m.q().id}"]`).textContent, 'Find a project');
   const list = m.$('.mk-tu-plist');
@@ -2896,6 +3189,20 @@ test('Done and a press outside close it and focus Add projects…', async () => 
   await settle();
   m.doc.getElementById('away').dispatchEvent(new m.window.MouseEvent('pointerdown', { bubbles: true }));
   assert.deepEqual([m.$('.mk-tu-projpop'), m.doc.activeElement, m.closed()], [null, m.anchor, 1]);
+  assert.equal(m.anchor.getAttribute('aria-expanded'), 'false');
+});
+
+test('Tab out of the popover and Add projects… closes it and leaves the focus where it went', async () => {
+  const m = mount();
+  await settle();
+  m.row('OPS').querySelector('input').focus();
+  assert.ok(m.$('.mk-tu-projpop'), 'focus inside: still open');
+  m.anchor.focus();
+  assert.ok(m.$('.mk-tu-projpop'), 'focus on Add projects…: still open');
+  m.q().focus();
+  const next = m.doc.getElementById('next');
+  next.focus();
+  assert.deepEqual([m.$('.mk-tu-projpop'), m.doc.activeElement, m.closed(), m.anchor.getAttribute('aria-expanded')], [null, next, 1, 'false']);
 });
 ```
 
@@ -2944,6 +3251,10 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
   q.id = `${uid}-q`;
   q.placeholder = 'Find a project by key or name';
   q.autocomplete = 'off';
+  // S12: the box the active row hangs on (aria-activedescendant) is a combobox, as group-picker.mjs's search
+  q.setAttribute('role', 'combobox');
+  q.setAttribute('aria-expanded', 'true');
+  q.setAttribute('aria-autocomplete', 'list');
   q.setAttribute('aria-controls', `${uid}-list`);
   const listEl = mk('div', 'mk-tu-plist');
   listEl.id = `${uid}-list`;
@@ -3010,15 +3321,19 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     if (open) paint();
   }
 
-  function close() {
+  /** `refocus` false: the focus already went somewhere else (Tab out), so it is left there. */
+  function close(refocus = true) {
     if (!open) return;
     open = false;
     doc.removeEventListener('pointerdown', onDown, true);
     el.remove();
+    anchor.setAttribute('aria-expanded', 'false');
     onClose();
-    if (anchor && anchor.isConnected) anchor.focus();
+    if (refocus && anchor && anchor.isConnected) anchor.focus();
   }
   const onDown = (e) => { if (!el.contains(e.target) && !anchor.contains(e.target)) close(); };
+  // Tab away from both the popover and Add projects… closes it (a repaint that drops the focused row has no relatedTarget)
+  const onFocusOut = (e) => { const to = e.relatedTarget; if (to && !el.contains(to) && !anchor.contains(to)) close(false); };
 
   q.addEventListener('input', paint);
   q.addEventListener('keydown', (e) => {
@@ -3038,10 +3353,13 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     boxes[e.key === 'ArrowDown' ? Math.min(boxes.length - 1, i + 1) : Math.max(0, i - 1)].focus();
   });
   el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } });
+  el.addEventListener('focusout', onFocusOut);
   retry.addEventListener('click', () => { void load(); q.focus(); });
   done.addEventListener('click', () => close());
 
   (host || doc.body).append(el);
+  anchor.setAttribute('aria-expanded', 'true');
+  // Right-aligned under Add projects… (placeFlyout 'down', board 3; decided 2026-10-30)
   placeFlyout(el, anchor, { mode: 'down', gap: 4, margin: 8, win: doc.defaultView });
   doc.addEventListener('pointerdown', onDown, true);
   q.focus();
@@ -3066,9 +3384,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 14: The section: header, states A and B, the projects you work on, the rules
+### Task 14a: The section: header, states A and B, the projects you work on, the saved rules
 
-Boards 1, 3, 4 and 5 A/B; D2 (a removed project keeps its rule), D4 (carried over, not dirty), D12 (the sheet's Save takes `body()`).
+Boards 1, 3 and 5 A/B; D2 (a removed project keeps its rule), D4 (carried over, not dirty), D12 (the sheet's Save takes `body()`). The rules list shows the saved rules with their move selects; adding and removing rules is Task 14b (split from one task for the review gate: S10).
 
 **Files:**
 - Create: `ui/public/marketplace/ticket-updates-section.mjs`, `test/helpers/ticket-updates-fixtures.mjs`
@@ -3082,8 +3400,7 @@ Boards 1, 3, 4 and 5 A/B; D2 (a removed project keeps its rule), D4 (carried ove
   - `body() → { sourceId, profile?, projects: [{ value, label }], rules: [{ project, label?, moment: 'finished', target }] }` (a new row without a project is left out)
   - `markSaved(sent)`: `sent` is what `body()` gave; the section is clean and the carried-over note goes.
   - `TU_COPY`, `notSavedLine(tracker)`, `STATUS_LOADS = 4` (used in Task 15), `goneLine(key, name)` (Task 15).
-  - Class hooks: `mk-tu`, `mk-tu-head`, `mk-tu-new`, `mk-tu-sub`, `mk-tu-block`, `mk-tu-projects`, `mk-tu-h`, `mk-tu-chiprow`, `mk-tu-chips`, `mk-tu-chip`, `mk-tu-key`, `mk-tu-cname`, `mk-tu-x`, `mk-tu-add-projects`, `mk-tu-carried`, `mk-tu-rulesblock`, `mk-tu-rules`, `mk-tu-rule`, `mk-tu-all`, `mk-tu-newrow`, `mk-tu-name`, `mk-tu-rname`, `mk-tu-rsub`, `mk-tu-pwrap`, `mk-tu-project`, `mk-tu-remove`, `mk-tu-add-rule`, `mk-tu-add-hint`, `mk-tu-newrow-hint`, `mk-tu-hint`.
-  - Invented copy (not on the boards): the new row's move select label "New rule: move to"; the new row's project select placeholder is its label, "Project".
+  - Class hooks: `mk-tu`, `mk-tu-head`, `mk-tu-new`, `mk-tu-sub`, `mk-tu-block`, `mk-tu-projects`, `mk-tu-h`, `mk-tu-chiprow`, `mk-tu-chips`, `mk-tu-chip`, `mk-tu-key`, `mk-tu-cname`, `mk-tu-x`, `mk-tu-add-projects`, `mk-tu-carried`, `mk-tu-rulesblock`, `mk-tu-rules`, `mk-tu-rule`, `mk-tu-all`, `mk-tu-name`, `mk-tu-rname`, `mk-tu-rsub`, `mk-tu-hint` (Task 14b adds `mk-tu-newrow`, `mk-tu-pwrap`, `mk-tu-project`, `mk-tu-plive`, `mk-tu-remove`, `mk-tu-add-rule`, `mk-tu-add-hint`, `mk-tu-newrow-hint`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3159,11 +3476,10 @@ test('board 1: a saved connection: header and meta, the projects as chips, the r
   assert.ok(m.$$('.mk-tu-projects .hint').some((n) => n.textContent === 'New run, Requirements export and import list only these. None picked = all projects.'));
   assert.equal(m.$('.mk-tu-rules').getAttribute('role'), 'list');
   assert.deepEqual(m.rows().map((r) => [r.getAttribute('role'), r.querySelector('.mk-tu-key, .mk-tu-rname').textContent,
-    r.querySelector('.mk-tu-move').textContent, r.querySelector('.mk-tu-remove')?.getAttribute('aria-label') ?? null]),
-  [['listitem', 'All projects', 'Any Done status', null], ['listitem', 'SHOP', 'Resolved', 'Remove the SHOP rule'], ['listitem', 'CRM', "Don't move", 'Remove the CRM rule']]);
+    r.querySelector('.mk-tu-move').textContent]),
+  [['listitem', 'All projects', 'Any Done status'], ['listitem', 'SHOP', 'Resolved'], ['listitem', 'CRM', "Don't move"]]);
   assert.equal(m.rows()[0].querySelector('.mk-tu-rsub').textContent, 'Unless a project below says otherwise');
   assert.equal(m.doc.getElementById(m.rowFor('SHOP').querySelector('.mk-tu-move').getAttribute('aria-labelledby')).textContent, 'SHOP: move to');
-  assert.equal(m.$('.mk-tu-add-rule').textContent, 'Add a project rule');
   assert.equal(m.$('.mk-tu-hint').textContent, "Any Done status: one the ticket can reach, never Won't Do, Rejected or Duplicate. When a move asks for a Resolution, Worca fills in Done, Fixed or Complete. Every update is the last line of Worca's comment on the ticket.");
   assert.equal(m.$('.mk-tu-carried'), null);
   assert.equal(m.tu.dirty(), false);
@@ -3221,8 +3537,10 @@ test('D2: removing a project keeps its rule; focus goes to Add projects…', asy
 
 test('board 3 from the section: a toggle adds a chip at once; the footer counts the picks', async () => {
   const m = await section();
+  assert.deepEqual(['aria-haspopup', 'aria-expanded'].map((a) => m.$('.mk-tu-add-projects').getAttribute(a)), ['dialog', 'false']);
   m.$('.mk-tu-add-projects').click();
   await settle();
+  assert.equal(m.$('.mk-tu-add-projects').getAttribute('aria-expanded'), 'true');
   assert.equal(m.doc.querySelector('.mk-tu-pcount').textContent, '2 picked · 6 projects on Acme');
   m.pick('OPS');
   assert.deepEqual(m.$$('.mk-tu-chip').map((c) => [c.dataset.value, c.querySelector('.mk-tu-cname').textContent]),
@@ -3230,57 +3548,6 @@ test('board 3 from the section: a toggle adds a chip at once; the footer counts 
   assert.equal(m.doc.querySelector('.mk-tu-pcount').textContent, '3 picked · 6 projects on Acme');
   m.$('.mk-tu-add-projects').click();
   assert.equal(m.doc.querySelector('.mk-tu-projpop'), null, 'a second press closes it');
-});
-
-test('board 4: Add a project rule: a Project select of the projects you work on without a rule; the move starts at Any Done status', async () => {
-  const m = await section();
-  assert.deepEqual([m.$('.mk-tu-add-rule').disabled, m.$('.mk-tu-add-hint').hidden, m.$('.mk-tu-add-hint').textContent],
-    [true, false, 'Every project you work on has a rule.'], 'SHOP and CRM have rules');
-  assert.equal(m.$('.mk-tu-add-rule').getAttribute('aria-describedby'), m.$('.mk-tu-add-hint').id);
-  m.$('.mk-tu-add-projects').click();
-  await settle();
-  m.pick('OPS');
-  m.doc.querySelector('.mk-tu-done').click();
-  assert.deepEqual([m.$('.mk-tu-add-rule').disabled, m.$('.mk-tu-add-hint').hidden], [false, true]);
-  m.$('.mk-tu-add-rule').click();
-  await settle();
-  const row = m.rows().at(-1);
-  const sel = row.querySelector('select.mk-tu-project');
-  assert.equal(m.doc.activeElement, sel);
-  assert.equal(sel.getAttribute('aria-label'), 'Project');
-  assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent, o.disabled]), [['', 'Project', true], ['OPS', 'OPS — Operations', false]]);
-  assert.equal(row.querySelector('.mk-tu-move').textContent, 'Any Done status');
-  assert.equal(m.doc.getElementById(row.querySelector('.mk-tu-move').getAttribute('aria-labelledby')).textContent, 'New rule: move to');
-  assert.equal(row.querySelector('.mk-tu-remove').getAttribute('aria-label'), 'Remove the new rule');
-  assert.equal(m.$('.mk-tu-newrow-hint').hidden, false);
-  assert.equal(m.$('.mk-tu-newrow-hint').textContent, 'A project rule lists that project\'s own statuses. The project list is the projects you work on (all projects when none are picked).');
-  assert.deepEqual(m.tu.body().rules.length, 3, 'a row without a project is not sent');
-  sel.value = 'OPS';
-  sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
-  const ops = m.rowFor('OPS');
-  assert.deepEqual([ops.querySelector('.mk-tu-key').textContent, ops.querySelector('.mk-tu-rname').textContent, ops.querySelector('.mk-tu-move').textContent],
-    ['OPS', 'Operations', 'Any Done status']);
-  assert.equal(m.doc.activeElement, ops.querySelector('.mk-tu-move'));
-  assert.deepEqual(m.tu.body().rules.at(-1), { project: 'OPS', label: 'Operations', moment: 'finished', target: { kind: 'category', value: 'done' } });
-  assert.equal(m.$('.mk-tu-newrow-hint').hidden, true);
-});
-
-test('none picked: the new row lists all projects (loaded once), minus those with a rule', async () => {
-  const m = await section(tuRoutes(tuGet({ saved: true, rules: [ALL_DONE, SHOP_RULE] })));
-  m.$('.mk-tu-add-rule').click();
-  const sel = m.rows().at(-1).querySelector('select.mk-tu-project');
-  assert.deepEqual([...sel.options].map((o) => o.textContent), ["Getting Acme's projects…"]);
-  await settle();
-  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'CRM', 'OPS', 'SUP', 'MKT', 'DATA']);
-  assert.equal(m.calls.filter((c) => c[1] === `${TU}/projects${TU_Q}`).length, 1);
-});
-
-test('removing a rule: the row goes, focus to Add a project rule', async () => {
-  const m = await section();
-  m.rowFor('CRM').querySelector('.mk-tu-remove').click();
-  assert.equal(m.rowFor('CRM'), undefined);
-  assert.equal(m.doc.activeElement, m.$('.mk-tu-add-rule'));
-  assert.deepEqual(m.tu.body().rules.map((r) => r.project), ['', 'SHOP']);
 });
 
 test("picking a status: the project's statuses load once per opening; the body takes its id, name and category; markSaved cleans", async () => {
@@ -3453,6 +3720,7 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     refs.addProjects = mk('button', 'btn btn-sm mk-tu-add-projects', TU_COPY.addProjects);
     refs.addProjects.type = 'button';
     refs.addProjects.setAttribute('aria-haspopup', 'dialog');
+    refs.addProjects.setAttribute('aria-expanded', 'false');   // the popover sets it while open
     refs.addProjects.addEventListener('click', () => (popover ? popover.close() : openPopover()));
     const row = mk('div', 'mk-tu-chiprow');
     row.append(refs.chips, refs.addProjects);
@@ -3461,49 +3729,8 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     return b;
   }
 
-  // ---- the rules ----
+  // ---- the rules (Task 14b adds Add a project rule, the new row and remove) ----
   const rowOf = (r) => (refs.listEl ? refs.listEl.querySelector(`[data-uid="${r.uid}"]`) : null);
-  const option = (value, text, { name = '', placeholder = false } = {}) => {
-    const o = mk('option', '', text);
-    o.value = value;
-    if (name) o.dataset.name = name;
-    if (placeholder) { o.disabled = true; o.selected = true; }
-    return o;
-  };
-  async function fillPicker(sel) {
-    const taken = new Set(rules.map((x) => x.project).filter(Boolean));
-    const choices = (src) => src.filter((p) => !taken.has(p.value))
-      .map((p) => option(p.value, p.label && p.label !== p.value ? `${p.value} — ${p.label}` : p.value, { name: p.label }));
-    delete sel.dataset.failed;
-    if (projects.length) { sel.replaceChildren(option('', TU_COPY.project, { placeholder: true }), ...choices(projects)); return; }
-    sel.replaceChildren(option('', `Getting ${profileLabel()}'s projects…`, { placeholder: true }));
-    try {
-      const all = (await projectList()).map((p) => ({ value: String(p.value), label: String(p.name || p.label || p.value) }));
-      if (destroyed || !refs.listEl || !refs.listEl.contains(sel)) return;
-      sel.replaceChildren(option('', TU_COPY.project, { placeholder: true }), ...choices(all));
-    } catch (e) {
-      if (destroyed || !refs.listEl || !refs.listEl.contains(sel)) return;
-      sel.replaceChildren(option('', (e && e.message) || FALLBACK_ERROR, { placeholder: true }));
-      sel.dataset.failed = '1';   // asked again when the select takes focus
-    }
-  }
-  function projectPicker(r) {
-    const wrap = mk('div', 'select-wrap mk-tu-pwrap');
-    const sel = mk('select', 'select mk-tu-project');
-    sel.setAttribute('aria-label', TU_COPY.project);
-    sel.addEventListener('change', () => {
-      const o = sel.selectedOptions[0];
-      if (!o || !o.value) return;
-      r.project = o.value;
-      r.label = o.dataset.name || o.value;
-      replaceRow(r, true);
-      refreshRules();
-    });
-    sel.addEventListener('focus', () => { if (sel.dataset.failed === '1') void fillPicker(sel); });
-    wrap.append(sel);
-    void fillPicker(sel);
-    return wrap;
-  }
   function ruleRow(r) {
     const row = mk('div', 'mk-tu-rule');
     row.setAttribute('role', 'listitem');
@@ -3512,66 +3739,20 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     if (r.project === '') {
       row.classList.add('mk-tu-all');
       name.append(mk('span', 'mk-tu-rname', TU_COPY.all), mk('span', 'hint mk-tu-rsub', TU_COPY.allSub));
-    } else if (r.project) {
+    } else {
       row.dataset.project = r.project;
       name.append(mk('span', 'mk-mono mk-tu-key', r.project));
       if (r.label && r.label !== r.project) name.append(mk('span', 'mk-tu-rname', r.label));
-    } else {
-      row.classList.add('mk-tu-newrow');
-      name.append(projectPicker(r));
     }
-    const ms = createMoveSelect({ doc, project: r.project || '', value: r.target, general: !r.project,
-      label: r.project === null ? TU_COPY.newRuleLabel : null, host: popHost || doc.body,
+    const ms = createMoveSelect({ doc, project: r.project || '', value: r.target, general: !r.project, host: popHost || doc.body,
       loadStatuses: () => statuses(r.project),
       onChange: (t) => { r.target = t; } });
     selects.set(r.uid, ms);
     row.append(name, ms.el);
-    if (r.project !== '') {
-      const rm = mk('button', 'btn btn-quiet btn-icon mk-tu-remove');
-      rm.type = 'button';
-      rm.setAttribute('aria-label', r.project ? `Remove the ${r.project} rule` : 'Remove the new rule');
-      rm.append(icon(doc, 'x', 16));
-      rm.addEventListener('click', () => removeRule(r));
-      row.append(rm);
-    }
     return row;
   }
-  function replaceRow(r, focusMove) {
-    const old = rowOf(r);
-    selects.get(r.uid)?.destroy();
-    const fresh = ruleRow(r);
-    old.replaceWith(fresh);
-    if (focusMove) fresh.querySelector('.mk-tu-move').focus();
-  }
-  function removeRule(r) {
-    rules = rules.filter((x) => x !== r);
-    selects.get(r.uid)?.destroy();
-    selects.delete(r.uid);
-    rowOf(r)?.remove();
-    refreshRules();
-    refs.addRule.focus();
-  }
-  function addRule() {
-    const pending = rules.find((x) => x.project === null);
-    if (pending) { rowOf(pending)?.querySelector('.mk-tu-project')?.focus(); return; }
-    const r = { uid: uid(), project: null, label: '', target: { kind: 'category', value: 'done' } };   // board 4: starts at Any Done status
-    rules.push(r);
-    refs.listEl.append(ruleRow(r));
-    refreshRules();
-    rowOf(r).querySelector('.mk-tu-project').focus();
-  }
-  function refreshRules() {
-    if (!refs.addRule) return;
-    const taken = new Set(rules.map((x) => x.project).filter(Boolean));
-    const hasNew = rules.some((x) => x.project === null);
-    const full = !hasNew && projects.length > 0 && projects.every((p) => taken.has(p.value));
-    refs.addRule.disabled = full;
-    refs.addHint.hidden = !full;
-    if (full) refs.addRule.setAttribute('aria-describedby', refs.addHint.id); else refs.addRule.removeAttribute('aria-describedby');
-    refs.newHint.hidden = !hasNew;
-    const sel = refs.listEl.querySelector('.mk-tu-project');
-    if (sel) void fillPicker(sel);
-  }
+  /** After the projects you work on change. Task 14b gives it Add a project rule's state and the new row's picker. */
+  function refreshRules() {}
   function rulesBlock() {
     const b = mk('div', 'mk-tu-block mk-tu-rulesblock');
     const hid = `mk-tu-rh-${sid}`;
@@ -3581,14 +3762,7 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     refs.listEl.setAttribute('role', 'list');
     refs.listEl.setAttribute('aria-labelledby', hid);
     for (const r of rules) refs.listEl.append(ruleRow(r));
-    refs.addRule = mk('button', 'btn btn-sm mk-tu-add-rule', TU_COPY.addRule);
-    refs.addRule.type = 'button';
-    refs.addRule.addEventListener('click', addRule);
-    refs.addHint = mk('p', 'hint mk-tu-add-hint', TU_COPY.allHaveRules);
-    refs.addHint.id = `mk-tu-ah-${sid}`;
-    refs.newHint = mk('p', 'hint mk-tu-newrow-hint', TU_COPY.newRowHint);
-    b.append(h, refs.listEl, refs.addRule, refs.addHint, refs.newHint, mk('p', 'hint mk-tu-hint', TU_COPY.hint));
-    refreshRules();
+    b.append(h, refs.listEl, mk('p', 'hint mk-tu-hint', TU_COPY.hint));
     return b;
   }
 
@@ -3662,7 +3836,278 @@ Expected: PASS.
 
 ```bash
 git add ui/public/marketplace/ticket-updates-section.mjs test/helpers/ticket-updates-fixtures.mjs test/marketplace-ticket-updates.test.mjs
-git commit -m "Ticket updates: the section (projects you work on, the rules, carried over, not saved)
+git commit -m "Ticket updates: the section (projects you work on, the saved rules, carried over, not saved)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 14b: The section's rules: Add a project rule, the new row's project select, remove
+
+Board 4 and D2 (§8): **Add a project rule** adds a row whose first control is a project select (the projects you work on, all projects when none are picked, minus those with a rule) and whose move select starts at Any Done status; each project rule has a remove button; the focus never falls to `<body>` (S11).
+
+**Files:**
+- Modify: `ui/public/marketplace/ticket-updates-section.mjs` (the block from `// ---- the rules` up to `// ---- the section ----`)
+- Test: `test/marketplace-ticket-updates.test.mjs` (five tests)
+
+**Interfaces:**
+- Consumes: Task 14a's section (`rules`, `projects`, `refs`, `selects`, `statuses`, `projectList`, `profileLabel`, `rowOf`).
+- Produces: `refreshRules()` (Add a project rule's state, the new row's picker), `addRule`, `removeRule`, `replaceRow`, `projectPicker`, `fillPicker`. Class hooks: `mk-tu-newrow`, `mk-tu-pwrap`, `mk-tu-project`, `mk-tu-plive` (the new row's polite loading line), `mk-tu-remove`, `mk-tu-add-rule`, `mk-tu-add-hint`, `mk-tu-newrow-hint`.
+- Option text "OPS · Operations" (key, middle dot, name; decided 2026-10-30).
+- Invented copy (not on the boards): the new row's move select label "New rule: move to"; the new row's project select placeholder is its label, "Project".
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `test/marketplace-ticket-updates.test.mjs`:
+
+```js
+test('board 1: each project rule has its remove button, All projects none; then Add a project rule', async () => {
+  const m = await section();
+  assert.deepEqual(m.rows().map((r) => r.querySelector('.mk-tu-remove')?.getAttribute('aria-label') ?? null),
+    [null, 'Remove the SHOP rule', 'Remove the CRM rule']);
+  assert.equal(m.$('.mk-tu-add-rule').textContent, 'Add a project rule');
+  assert.ok(m.$('.mk-tu-add-rule').compareDocumentPosition(m.$('.mk-tu-hint')) & 4, 'the hint comes last');
+});
+
+test('board 4: Add a project rule: a Project select of the projects you work on without a rule; the move starts at Any Done status', async () => {
+  const m = await section();
+  assert.deepEqual([m.$('.mk-tu-add-rule').disabled, m.$('.mk-tu-add-hint').hidden, m.$('.mk-tu-add-hint').textContent],
+    [true, false, 'Every project you work on has a rule.'], 'SHOP and CRM have rules');
+  assert.equal(m.$('.mk-tu-add-rule').getAttribute('aria-describedby'), m.$('.mk-tu-add-hint').id);
+  m.$('.mk-tu-add-projects').click();
+  await settle();
+  m.pick('OPS');
+  m.doc.querySelector('.mk-tu-done').click();
+  assert.deepEqual([m.$('.mk-tu-add-rule').disabled, m.$('.mk-tu-add-hint').hidden], [false, true]);
+  m.$('.mk-tu-add-rule').click();
+  await settle();
+  const row = m.rows().at(-1);
+  const sel = row.querySelector('select.mk-tu-project');
+  assert.equal(m.doc.activeElement, sel);
+  assert.equal(sel.getAttribute('aria-label'), 'Project');
+  assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent, o.disabled]), [['', 'Project', true], ['OPS', 'OPS · Operations', false]],
+    'key, middle dot, name, as the boards (decided 2026-10-30)');
+  assert.equal(row.querySelector('.mk-tu-move').textContent, 'Any Done status');
+  assert.equal(m.doc.getElementById(row.querySelector('.mk-tu-move').getAttribute('aria-labelledby')).textContent, 'New rule: move to');
+  assert.equal(row.querySelector('.mk-tu-remove').getAttribute('aria-label'), 'Remove the new rule');
+  assert.equal(m.$('.mk-tu-newrow-hint').hidden, false);
+  assert.equal(m.$('.mk-tu-newrow-hint').textContent, 'A project rule lists that project\'s own statuses. The project list is the projects you work on (all projects when none are picked).');
+  assert.deepEqual(m.tu.body().rules.length, 3, 'a row without a project is not sent');
+  sel.value = 'OPS';
+  sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+  const ops = m.rowFor('OPS');
+  assert.deepEqual([ops.querySelector('.mk-tu-key').textContent, ops.querySelector('.mk-tu-rname').textContent, ops.querySelector('.mk-tu-move').textContent],
+    ['OPS', 'Operations', 'Any Done status']);
+  assert.equal(m.doc.activeElement, ops.querySelector('.mk-tu-move'));
+  assert.deepEqual(m.tu.body().rules.at(-1), { project: 'OPS', label: 'Operations', moment: 'finished', target: { kind: 'category', value: 'done' } });
+  assert.equal(m.$('.mk-tu-newrow-hint').hidden, true);
+});
+
+test('none picked: the new row lists all projects (loaded once), minus those with a rule', async () => {
+  const m = await section(tuRoutes(tuGet({ saved: true, rules: [ALL_DONE, SHOP_RULE] })));
+  m.$('.mk-tu-add-rule').click();
+  const sel = m.rows().at(-1).querySelector('select.mk-tu-project');
+  const live = m.rows().at(-1).querySelector('.mk-tu-plive');
+  assert.deepEqual([...sel.options].map((o) => o.textContent), ["Getting Acme's projects…"]);
+  assert.deepEqual([live.getAttribute('aria-live'), live.textContent], ['polite', "Getting Acme's projects…"], '§10 C: said, not only shown');
+  await settle();
+  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'CRM', 'OPS', 'SUP', 'MKT', 'DATA']);
+  assert.equal(live.textContent, '');
+  assert.equal(m.calls.filter((c) => c[1] === `${TU}/projects${TU_Q}`).length, 1);
+});
+
+test('removing a rule: the row goes, focus to Add a project rule', async () => {
+  const m = await section();
+  m.rowFor('CRM').querySelector('.mk-tu-remove').click();
+  assert.equal(m.rowFor('CRM'), undefined);
+  assert.equal(m.doc.activeElement, m.$('.mk-tu-add-rule'));
+  assert.deepEqual(m.tu.body().rules.map((r) => r.project), ['', 'SHOP']);
+});
+
+test('S11: removing a rule while Add a project rule stays disabled moves the focus to the row above, never to <body>', async () => {
+  // OPS is no longer a project you work on, but its rule stays (D2); SHOP, the only pick, has a rule, so Add stays disabled
+  const m = await section(tuRoutes(tuGet({ saved: true, projects: [{ value: 'SHOP', label: 'Shop' }],
+    rules: [ALL_DONE, SHOP_RULE, { project: 'OPS', label: 'Operations', moment: 'finished', target: { kind: 'none' } }] })));
+  assert.equal(m.$('.mk-tu-add-rule').disabled, true);
+  m.rowFor('OPS').querySelector('.mk-tu-remove').click();
+  assert.equal(m.$('.mk-tu-add-rule').disabled, true);
+  assert.equal(m.doc.activeElement, m.rowFor('SHOP').querySelector('.mk-tu-remove'), "the SHOP row's remove button");
+  m.rowFor('SHOP').querySelector('.mk-tu-remove').click();
+  assert.equal(m.$('.mk-tu-add-rule').disabled, false, 'SHOP has no rule now');
+  assert.equal(m.doc.activeElement, m.$('.mk-tu-add-rule'));
+});
+```
+
+- [ ] **Step 2: Run the tests and see them fail**
+
+Run: `node tools/test.mjs test/marketplace-ticket-updates.test.mjs`
+Expected: FAIL — no `.mk-tu-remove` and no `.mk-tu-add-rule` (`m.$('.mk-tu-add-rule')` is null); Task 14a's tests still pass.
+
+- [ ] **Step 3: Implement**
+
+In `ui/public/marketplace/ticket-updates-section.mjs`, replace the block from `  // ---- the rules (Task 14b adds Add a project rule, the new row and remove) ----` up to (not including) `  // ---- the section ----` with:
+
+```js
+  // ---- the rules ----
+  const rowOf = (r) => (refs.listEl ? refs.listEl.querySelector(`[data-uid="${r.uid}"]`) : null);
+  const option = (value, text, { name = '', placeholder = false } = {}) => {
+    const o = mk('option', '', text);
+    o.value = value;
+    if (name) o.dataset.name = name;
+    if (placeholder) { o.disabled = true; o.selected = true; }
+    return o;
+  };
+  async function fillPicker(sel) {
+    const taken = new Set(rules.map((x) => x.project).filter(Boolean));
+    // "OPS · Operations": key, middle dot, name, as the boards (decided 2026-10-30)
+    const choices = (src) => src.filter((p) => !taken.has(p.value))
+      .map((p) => option(p.value, p.label && p.label !== p.value ? `${p.value} · ${p.label}` : p.value, { name: p.label }));
+    // §10 C: an option's text is not announced when it changes, so the loading and failure lines are also said (aria-live)
+    const live = sel.parentElement ? sel.parentElement.querySelector('.mk-tu-plive') : null;
+    const say = (t) => { if (live) live.textContent = t; };
+    delete sel.dataset.failed;
+    if (projects.length) { say(''); sel.replaceChildren(option('', TU_COPY.project, { placeholder: true }), ...choices(projects)); return; }
+    const getting = `Getting ${profileLabel()}'s projects…`;
+    sel.replaceChildren(option('', getting, { placeholder: true }));
+    say(getting);
+    try {
+      const all = (await projectList()).map((p) => ({ value: String(p.value), label: String(p.name || p.label || p.value) }));
+      if (destroyed || !refs.listEl || !refs.listEl.contains(sel)) return;
+      sel.replaceChildren(option('', TU_COPY.project, { placeholder: true }), ...choices(all));
+      say('');
+    } catch (e) {
+      if (destroyed || !refs.listEl || !refs.listEl.contains(sel)) return;
+      const msg = (e && e.message) || FALLBACK_ERROR;
+      sel.replaceChildren(option('', msg, { placeholder: true }));
+      say(msg);
+      sel.dataset.failed = '1';   // asked again when the select takes focus
+    }
+  }
+  function projectPicker(r) {
+    const wrap = mk('div', 'select-wrap mk-tu-pwrap');
+    const sel = mk('select', 'select mk-tu-project');
+    sel.setAttribute('aria-label', TU_COPY.project);
+    sel.addEventListener('change', () => {
+      const o = sel.selectedOptions[0];
+      if (!o || !o.value) return;
+      r.project = o.value;
+      r.label = o.dataset.name || o.value;
+      replaceRow(r, true);
+      refreshRules();
+    });
+    sel.addEventListener('focus', () => { if (sel.dataset.failed === '1') void fillPicker(sel); });
+    const live = mk('span', 'sr-only mk-tu-plive');
+    live.setAttribute('aria-live', 'polite');
+    wrap.append(sel, live);
+    void fillPicker(sel);
+    return wrap;
+  }
+  function ruleRow(r) {
+    const row = mk('div', 'mk-tu-rule');
+    row.setAttribute('role', 'listitem');
+    row.dataset.uid = r.uid;
+    const name = mk('div', 'mk-tu-name');
+    if (r.project === '') {
+      row.classList.add('mk-tu-all');
+      name.append(mk('span', 'mk-tu-rname', TU_COPY.all), mk('span', 'hint mk-tu-rsub', TU_COPY.allSub));
+    } else if (r.project) {
+      row.dataset.project = r.project;
+      name.append(mk('span', 'mk-mono mk-tu-key', r.project));
+      if (r.label && r.label !== r.project) name.append(mk('span', 'mk-tu-rname', r.label));
+    } else {
+      row.classList.add('mk-tu-newrow');
+      name.append(projectPicker(r));
+    }
+    const ms = createMoveSelect({ doc, project: r.project || '', value: r.target, general: !r.project,
+      label: r.project === null ? TU_COPY.newRuleLabel : null, host: popHost || doc.body,
+      loadStatuses: () => statuses(r.project),
+      onChange: (t) => { r.target = t; } });
+    selects.set(r.uid, ms);
+    row.append(name, ms.el);
+    if (r.project !== '') {
+      const rm = mk('button', 'btn btn-quiet btn-icon mk-tu-remove');
+      rm.type = 'button';
+      rm.setAttribute('aria-label', r.project ? `Remove the ${r.project} rule` : 'Remove the new rule');
+      rm.append(icon(doc, 'x', 16));
+      rm.addEventListener('click', () => removeRule(r));
+      row.append(rm);
+    }
+    return row;
+  }
+  function replaceRow(r, focusMove) {
+    const old = rowOf(r);
+    selects.get(r.uid)?.destroy();
+    const fresh = ruleRow(r);
+    old.replaceWith(fresh);
+    if (focusMove) fresh.querySelector('.mk-tu-move').focus();
+  }
+  function removeRule(r) {
+    const prev = rules[rules.indexOf(r) - 1];
+    rules = rules.filter((x) => x !== r);
+    selects.get(r.uid)?.destroy();
+    selects.delete(r.uid);
+    rowOf(r)?.remove();
+    refreshRules();
+    if (!refs.addRule.disabled) { refs.addRule.focus(); return; }
+    // S11: Add a project rule may be disabled now; the focus never falls to <body>, where Tab would leave the sheet
+    // (manage-sheet.mjs's focus trap): the row above takes it, its remove button, else its move select (All projects)
+    const above = prev ? rowOf(prev) : null;
+    (above?.querySelector('.mk-tu-remove') || above?.querySelector('.mk-tu-move') || refs.addProjects).focus();
+  }
+  function addRule() {
+    const pending = rules.find((x) => x.project === null);
+    if (pending) { rowOf(pending)?.querySelector('.mk-tu-project')?.focus(); return; }
+    const r = { uid: uid(), project: null, label: '', target: { kind: 'category', value: 'done' } };   // board 4: starts at Any Done status
+    rules.push(r);
+    refs.listEl.append(ruleRow(r));
+    refreshRules();
+    rowOf(r).querySelector('.mk-tu-project').focus();
+  }
+  function refreshRules() {
+    if (!refs.addRule) return;
+    const taken = new Set(rules.map((x) => x.project).filter(Boolean));
+    const hasNew = rules.some((x) => x.project === null);
+    const full = !hasNew && projects.length > 0 && projects.every((p) => taken.has(p.value));
+    refs.addRule.disabled = full;
+    refs.addHint.hidden = !full;
+    if (full) refs.addRule.setAttribute('aria-describedby', refs.addHint.id); else refs.addRule.removeAttribute('aria-describedby');
+    refs.newHint.hidden = !hasNew;
+    const sel = refs.listEl.querySelector('.mk-tu-project');
+    if (sel) void fillPicker(sel);
+  }
+  function rulesBlock() {
+    const b = mk('div', 'mk-tu-block mk-tu-rulesblock');
+    const hid = `mk-tu-rh-${sid}`;
+    const h = mk('h5', 'mk-tu-h', TU_COPY.rules);
+    h.id = hid;
+    refs.listEl = mk('div', 'mk-tu-rules');
+    refs.listEl.setAttribute('role', 'list');
+    refs.listEl.setAttribute('aria-labelledby', hid);
+    for (const r of rules) refs.listEl.append(ruleRow(r));
+    refs.addRule = mk('button', 'btn btn-sm mk-tu-add-rule', TU_COPY.addRule);
+    refs.addRule.type = 'button';
+    refs.addRule.addEventListener('click', addRule);
+    refs.addHint = mk('p', 'hint mk-tu-add-hint', TU_COPY.allHaveRules);
+    refs.addHint.id = `mk-tu-ah-${sid}`;
+    refs.newHint = mk('p', 'hint mk-tu-newrow-hint', TU_COPY.newRowHint);
+    b.append(h, refs.listEl, refs.addRule, refs.addHint, refs.newHint, mk('p', 'hint mk-tu-hint', TU_COPY.hint));
+    refreshRules();
+    return b;
+  }
+
+```
+
+- [ ] **Step 4: Run the tests and see them pass**
+
+Run: `node tools/test.mjs test/marketplace-ticket-updates.test.mjs`
+Expected: PASS (Task 14a's tests and these five).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add ui/public/marketplace/ticket-updates-section.mjs test/marketplace-ticket-updates.test.mjs
+git commit -m "Ticket updates: add, pick and remove a project rule
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -3678,7 +4123,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `test/marketplace-ticket-updates.test.mjs` (two tests)
 
 **Interfaces:**
-- Consumes: `statuses(key)` (Task 14's cache, so an open select does not ask again), `STATUS_LOADS`, `goneLine`, the move select's `describe(id)`.
+- Consumes: `statuses(key)` (Task 14a's cache, so an open select does not ask again), `STATUS_LOADS`, `goneLine`, the move select's `describe(id)`.
 - Produces: `.mk-tu-gone` (`id` = `<rule uid>-gone`) under a rule row whose status is gone.
 
 - [ ] **Step 1: Write the failing tests**
@@ -3795,14 +4240,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 16: The section in the manage sheet: mount, dirty, Save order, the old field
 
-D12 and D4: mounted in a task-source group after the Test connection row when the flag is on and the GET says `available`; it joins the group's dirty check and the sheet's Save (the config `PUT` first, then the ticket-updates `PUT`; a refused config save sends nothing more); it repaints with the group on a profile switch, Add profile and Remove profile; after the first save the old field's control is replaced by "Moved to Ticket updates.".
+D12 and D4: mounted in a task-source group after the Test connection row when the flag is on and the GET says `available`; it joins the group's dirty check and the sheet's Save (the config `PUT` first, then the ticket-updates `PUT`; a refused config save sends nothing more); it repaints with the group on a profile switch, Add profile and Remove profile; after the first save the old field's control is replaced by "Moved to Ticket updates.". A Test connection whose config `PUT` saved the connection mounts the section again, so state A turns into the live section without reopening the sheet (S13; decided 2026-10-30).
 
 **Files:**
-- Modify: `ui/public/marketplace/manage-sheet.mjs` (imports; `isDirty`; the sheet's `onClose`; `fillGroup`; new `mountTicketUpdates`, `movedField`; `switchProfile`'s check; `save`)
-- Test: `test/marketplace-ticket-updates.test.mjs` (imports; five tests)
+- Modify: `ui/public/marketplace/manage-sheet.mjs` (imports; `isDirty`; the sheet's `onClose`; `open`; `fillGroup`; new `mountTicketUpdates`, `movedField`; `testConnection`; `switchProfile`'s check; `save`)
+- Test: `test/marketplace-ticket-updates.test.mjs` (imports; seven tests)
 
 **Interfaces:**
-- Consumes: `createTicketUpdates` (Tasks 14–15); `flagOn(key, doc)` from `ui/public/flags.mjs`; the routes (Task 5).
+- Consumes: `createTicketUpdates` (Tasks 14a, 14b, 15); `flagOn(key, doc)` from `ui/public/flags.mjs`; the routes (Task 5).
 - Produces: each source group `g` gains `g.tu` (the section, or null); `PUT /api/plugins/:name/ticket-updates` with `g.tu.body()` after the group's config `PUT`; `.mk-tu-moved` ("Moved to Ticket updates.") in place of the old field's control.
 
 - [ ] **Step 1: Write the failing tests**
@@ -3857,7 +4302,9 @@ test('D4: after the first save the old field reads "Moved to Ticket updates.", i
   let m = await sheet();
   const row = m.field('transitionOnComplete');
   assert.equal(row.querySelector('label').textContent, 'Transition on completion');
+  assert.equal(row.querySelector('label').hasAttribute('for'), false, 'the label names no control that is gone');
   assert.equal(row.querySelector('[data-key]'), null);
+  assert.equal(row.querySelector('small.hint'), null, 'Deviation 5 (S14): the help went with its control');
   assert.equal(row.querySelector('.mk-tu-moved').textContent, 'Moved to Ticket updates.');
   m.$('[data-act="save"]').click();
   await settle();
@@ -3921,6 +4368,46 @@ test('D12: a profile switch repaints the section for that profile; a section cha
   assert.equal(m.$('.mk-tu-new').textContent, "Save this connection first. Ticket updates read Jira's projects and statuses through it.");
   assert.equal(m.doc.querySelectorAll('.mk-tu').length, 1, 'the old section is gone');
 });
+
+test('S13: a Test connection that saves the connection turns state A into the live section without reopening', async () => {
+  let saved = false;
+  const m = await sheet({ 'PUT /api/plugins/jira-source/config': async () => { saved = true; return ok({ ok: true }); },
+    [`GET ${TU}${TU_Q}`]: async () => ok(saved ? SAVED : tuGet({ connection: 'new', legacy: null })),
+    'POST /api/sources/call': ok({ ok: true, result: { ok: true } }) });
+  assert.ok(m.$('.mk-tu-new'), 'state A');
+  m.type('baseUrl', 'https://acme2.atlassian.net');
+  m.$('.mk-test').click();
+  await settle();
+  assert.deepEqual([m.$('.mk-tu-new'), !!m.$('.mk-tu-rules'), m.doc.querySelectorAll('#mk-sheet .mk-tu').length], [null, true, 1]);
+  assert.ok(m.$('.mk-tu').previousElementSibling.classList.contains('mk-test-row'), 'still right after Test connection');
+});
+
+test('D4: a value typed into the old field before the section answered is kept, not dropped silently; a profile switch mid-save leaves the new section alone', async () => {
+  const gate = deferred();
+  let m = await sheet({ [`GET ${TU}${TU_Q}`]: async () => { await gate.p; return ok(SAVED); } });
+  m.type('transitionOnComplete', 'Close');
+  gate.resolve();
+  await settle();
+  const c = m.field('transitionOnComplete').querySelector('[data-key="transitionOnComplete"]');
+  assert.deepEqual([c && c.value, m.field('transitionOnComplete').querySelector('.mk-tu-moved')], ['Close', null], 'the edit stays and is saved as typed');
+  const put = deferred();
+  const BETA_Q = '?sourceId=jira&profile=beta';
+  m = await sheet({ [`PUT ${TU}`]: async () => { await put.p; return ok({ ok: true }); },
+    'GET /api/plugins/jira-source/config?profile=beta': jconfig('beta'),
+    [`GET ${TU}${BETA_Q}`]: ok(tuGet({ profile: { id: 'beta', label: 'Beta' }, legacy: { ...LEGACY, target: { typed: 'Resolve' } } })) });
+  m.$('.mk-tu-chip[data-value="CRM"] .mk-tu-x').click();
+  m.$('[data-act="save"]').click();
+  await settle();
+  const sel = m.$('.mk-profile-sel');
+  sel.value = 'beta';
+  sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+  await settle();
+  const beta = m.$('.mk-tu');
+  assert.equal(beta.querySelector('.mk-tu-head .mk-meta').textContent, 'Beta (beta)');
+  put.resolve();
+  await settle();
+  assert.ok(beta.querySelector('.mk-tu-carried'), "acme's save is not marked on beta's section: its carried-over note stays");
+});
 ```
 
 - [ ] **Step 2: Run the tests and see them fail**
@@ -3935,6 +4422,12 @@ In `ui/public/marketplace/manage-sheet.mjs`, add to the imports:
 ```js
 import { flagOn } from '../flags.mjs';
 import { createTicketUpdates } from './ticket-updates-section.mjs';
+```
+
+In `open`, right before `view = { head, body, settings: null, groups: [], names: {} };`:
+
+```js
+    for (const g of view?.groups || []) g.tu?.destroy();   // Ticket updates: a sheet opened over another one drops its lists
 ```
 
 Replace `const isDirty = () => !!view && view.groups.some(changed);` with:
@@ -3962,6 +4455,7 @@ Add after `fillGroup`:
   // flag is on and the plugin can update tickets; it repaints with the group (a profile switch, Add or Remove profile reread it).
   function mountTicketUpdates(g) {
     g.tu?.destroy();
+    g.tu?.el.remove();   // a remount in place (S13) leaves one section
     g.tu = null;
     if (!flagOn('ticketUpdates', doc)) return;
     const t = token;
@@ -3980,8 +4474,16 @@ Add after `fillGroup`:
   function movedField(g, key) {
     const row = g.setup ? [...g.setup.querySelectorAll('.field[data-field]')].find((r) => r.dataset.field === key) : null;
     if (!row || row.querySelector('.mk-tu-moved')) return;
+    // A value typed into the old field before the GET answered is not dropped silently: the control stays this time, Save sends
+    // the edit as typed, and the next opening shows the line.
+    try {
+      const was = JSON.parse(g.baseline).values?.[key];
+      const now = collectSetupFields(g.setup).values?.[key];
+      if (now !== undefined && now !== was) return;
+    } catch { /* no baseline yet: nothing was typed */ }
     for (const c of [...row.querySelectorAll('[data-key]')]) (c.closest('.select-wrap, .mk-secret, .mk-secret-set') || c).remove();
-    row.querySelector(':scope > small.hint')?.remove();   // the help described the control that left
+    row.querySelector(':scope > small.hint')?.remove();   // the help described the control that left (Deviation 5)
+    row.querySelector(':scope > label')?.removeAttribute('for');   // its control is gone: the label names nothing
     row.append(make(doc, 'p', 'hint mk-tu-moved', 'Moved to Ticket updates.'));
     try {
       const b = JSON.parse(g.baseline);
@@ -3989,6 +4491,14 @@ Add after `fillGroup`:
       g.baseline = JSON.stringify(b);   // typed edits elsewhere in the group stay changes
     } catch { g.baseline = baselineOf(g); }
   }
+```
+
+In `testConnection`, right after `g.baseline = JSON.stringify(c);   // what was sent: …` (inside `if (changed(g))`):
+
+```js
+      // S13 (decided 2026-10-30): the PUT may have just saved the connection (D12), so the section reads it again and state A
+      // turns into the live section without reopening; a section with unsaved changes is left as it is
+      if (g.tu && !g.tu.dirty()) mountTicketUpdates(g);
 ```
 
 In `switchProfile`, change the first `if` condition to:
@@ -4036,14 +4546,17 @@ Replace `save` with:
           sent = true;
           g.baseline = JSON.stringify(c);   // what was sent, never what was typed meanwhile
         }
-        if (g.tu?.dirty()) {
-          const body = g.tu.body();
+        const tu = g.tu;   // a profile switch while the PUT is out repaints g.tu: only the section that was sent is marked
+        if (tu?.dirty()) {
+          const body = tu.body();
           const put = await deps.api('PUT', url('/ticket-updates'), body);
           if (!live(t)) return { ok: false };
           if (!put?.ok) { refused(put?.data?.error || 'save failed'); return { ok: false, sent }; }
           sent = true;
-          g.tu.markSaved(body);
-          if (g.tu.legacyField()) movedField(g, g.tu.legacyField());
+          if (g.tu === tu) {
+            tu.markSaved(body);
+            if (tu.legacyField()) movedField(g, tu.legacyField());
+          }
         }
       }
       return { ok: true, sent };
@@ -4093,7 +4606,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: create `test/marketplace-ticket-updates-css.test.mjs`
 
 **Interfaces:**
-- Consumes: every class hook listed in Tasks 12–16.
+- Consumes: every class hook listed in Tasks 12–16 (14a and 14b).
 - Produces: the block `/* ── marketplace ticket updates ── */` (it also ends P6's block for `test/marketplace-sheets-css.test.mjs`, which reads to the next `/* ── marketplace ` marker).
 
 - [ ] **Step 1: Write the failing test**
@@ -4117,7 +4630,8 @@ const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'ut
 const at = css.indexOf('/* ── marketplace ticket updates ── */');
 const block = css.slice(at, css.indexOf('/* ── marketplace P7 ── */'));
 // JS and test hooks with no rule of their own.
-const HOOKS = new Set(['mk-tu-add-projects', 'mk-tu-add-rule', 'mk-tu-projects', 'mk-tu-rulesblock', 'mk-tu-movepop', 'mk-tu-done', 'mk-tu-pcheck', 'mk-tu-newrow']);
+const HOOKS = new Set(['mk-tu-add-projects', 'mk-tu-add-rule', 'mk-tu-projects', 'mk-tu-rulesblock', 'mk-tu-movepop', 'mk-tu-done', 'mk-tu-pcheck', 'mk-tu-newrow',
+  'mk-tu-plive']);   // mk-tu-plive is .sr-only
 
 test('every mk-tu- class the three modules and the sheet emit has a rule in the Ticket updates block', async () => {
   const h = sheetHarness({ trackDom, routes: tuRoutes(tuGet({ saved: false, legacy: { ...LEGACY, target: { typed: 'Resolve' } }, projects: [{ value: 'SHOP', label: 'Shop' }],
@@ -4134,7 +4648,7 @@ test('every mk-tu- class the three modules and the sheet emit has a rule in the 
   tu.el.querySelector('.mk-tu-add-projects').click();
   await settle();
   for (const c of [...h.doc.querySelectorAll('*')].flatMap((n) => [...n.classList])) if (c.startsWith('mk-tu-')) used.add(c);
-  for (const c of ['mk-tu-moved', 'mk-tu-new', 'mk-tu-dot-in_progress', 'mk-tu-dot-todo', 'mk-tu-dot-cancelled', 'mk-tu-dot-none', 'mk-tu-dot-typed']) used.add(c);
+  for (const c of ['mk-tu-moved', 'mk-tu-new', 'mk-tu-dot-in_progress', 'mk-tu-dot-todo', 'mk-tu-dot-cancelled', 'mk-tu-dot-none', 'mk-tu-dot-typed', 'mk-tu-optgroup']) used.add(c);
   const missing = [...used].filter((c) => !HOOKS.has(c) && !new RegExp(`\\.${c}(?![\\w-])`).test(block));
   assert.deepEqual(missing, []);
 });
@@ -4149,14 +4663,17 @@ test('the block sits after P6 and before P7 (the Marketplace block); tokens only
   assert.match(block, /\.mk-tu-dot-cancelled\{background:var\(--red\);\}/);
 });
 
-test('board 6: at 600 px and narrower each rule stacks, chips 36 px with 32 px ×, every button and select 44 px', () => {
-  const phone = block.slice(block.indexOf('@media (max-width: 600px)'));
-  assert.ok(block.includes('@media (max-width: 600px)'));
+test('board 6: at 600 px and narrower each rule stacks, chips 36 px with 32 px ×, every button, select, option and row 44 px', () => {
+  // House style writes the query without a space (17 uses in style.css)
+  const phone = block.slice(block.indexOf('@media (max-width:600px)'));
+  assert.ok(block.includes('@media (max-width:600px)'));
   assert.match(phone, /\.mk-tu-rule\{grid-template-columns:minmax\(0,1fr\) 44px;\}/);
   assert.match(phone, /\.mk-tu-rule>\.mk-tu-movewrap\{grid-column:1 \/ -1;grid-row:2;\}/);
   assert.match(phone, /\.mk-tu-chip\{min-height:36px;\}/);
   assert.match(phone, /\.mk-tu-x\{width:32px;height:32px;\}/);
   assert.match(phone, /\.mk-tu \.btn,\.mk-tu-move,\.mk-tu-project,\.mk-tu-remove,\.mk-tu-pop \.btn\{min-height:44px;\}/);
+  // decided 2026-10-30: the listbox options and the popover's rows are phone targets too
+  assert.match(phone, /\.mk-tu-opt,\.mk-tu-prow\{min-height:44px;\}/);
 });
 ```
 
@@ -4204,6 +4721,8 @@ In `ui/public/style.css`, insert right before the line `/* ── marketplace P7
 .mk-tu-move:hover{border-color:var(--hover-outline);}
 .mk-tu-move-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .mk-tu-move-ic{flex:none;transform:rotate(90deg);color:var(--ink-2);}
+/* box-shadow:var(--shadow-menu) as the group-picker and label-picker popovers; the P6 and P7 blocks ban it for their own sheets,
+   and their tests read only those blocks */
 .mk-tu-pop{position:fixed;z-index:60;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;padding:4px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);box-shadow:var(--shadow-menu);}
 .mk-tu-projpop{width:320px;padding:8px;display:flex;flex-direction:column;gap:6px;}
 .mk-tu-list,.mk-tu-plist{display:flex;flex-direction:column;}
@@ -4222,6 +4741,7 @@ In `ui/public/style.css`, insert right before the line `/* ── marketplace P7
 .mk-tu-dot-typed{background:var(--slate);}
 .mk-tu-dot-cancelled{background:var(--red);}
 .mk-tu-sep{height:1px;margin:4px 0;background:var(--line);}
+.mk-tu-optgroup{display:flex;flex-direction:column;}
 .mk-tu-group{padding:8px 8px 2px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
 .mk-tu-live{margin:0;padding:4px 8px;font-size:var(--fs-meta);color:var(--ink-2);}
 .mk-tu-live:empty{display:none;}
@@ -4233,14 +4753,15 @@ In `ui/public/style.css`, insert right before the line `/* ── marketplace P7
 .mk-tu-pfoot{display:flex;align-items:center;gap:8px;padding-top:6px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
 .mk-tu-pcount{flex:1;min-width:0;}
 /* Board 6: a rule stacks (its name and remove button on one line, the select below at full width), chips are 36 px with 32 px
-   × buttons, and every button and select is 44 px tall. */
-@media (max-width: 600px){
+   × buttons, and every button, select, listbox option and popover row is 44 px tall (decided 2026-10-30). */
+@media (max-width:600px){
 .mk-tu-rule{grid-template-columns:minmax(0,1fr) 44px;}
 .mk-tu-rule>.mk-tu-movewrap{grid-column:1 / -1;grid-row:2;}
 .mk-tu-remove{grid-column:2;grid-row:1;width:44px;}
 .mk-tu-chip{min-height:36px;}
 .mk-tu-x{width:32px;height:32px;}
 .mk-tu .btn,.mk-tu-move,.mk-tu-project,.mk-tu-remove,.mk-tu-pop .btn{min-height:44px;}
+.mk-tu-opt,.mk-tu-prow{min-height:44px;}
 .mk-tu-projpop{width:calc(100vw - 16px);}
 }
 
@@ -4264,15 +4785,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 18: The browser proof and `npm run verify:ticket-updates`
 
-§12 Browser: mock mode, jira-source linked with `linkPlugin` and one profile, as `verify-requirements-cdp.mjs`: pick projects, add a project rule, pick a status, Save, reopen; New run's project list holds only the picked ones; a mock run's `lastReport` carries the move; light, dark and 390 px. Not part of `npm test`.
+§12 Browser: mock mode, jira-source linked with `linkPlugin` and one profile, as `verify-requirements-cdp.mjs`: pick projects, add a project rule, pick a status, Save, reopen; New run's project select holds only the picked ones; a mock run's `lastReport` carries the move; light, dark and 390 px. Not part of `npm test`.
+
+S15: contrast is measured with `verify-requirements-cdp.mjs`'s `lowContrast` (it composites translucent layers, skips hidden text and disabled buttons, and fails when the selectors reach no visible text) on the section, on the open move listbox and on the open projects popover, light and dark; at 390 px the listbox options and the popover rows are 44 px too (decided 2026-10-30). Every run writes screenshots of boards 1, 3, 4 and 6 in light and dark into a folder (`TU_SHOTS`, else a new temp folder) that is kept and printed at the end, to compare with the approved canvas. `shutdown` calls `db.mjs`'s `_resetForTests()` before removing the temp home, as the requirements proof does: the open SQLite file otherwise blocks the removal on Windows.
 
 **Files:**
 - Create: `tools/verify-ticket-updates-cdp.mjs`
-- Modify: `package.json` (`scripts`: `"verify:ticket-updates"` after `"verify:requirements"`)
+- Modify: `package.json` (`scripts`: `"verify:ticket-updates"` after `"verify:requirements"`), `.github/workflows/ci.yml` (the `cdp` job's second group runs it, after `verify:requirements`; its CDP port 9351 is outside the 9333–9343 the other proofs use)
 
 **Interfaces:**
 - Consumes: everything above; `linkPlugin`, `createProfile`, `writePluginConfig`, `readTicketUpdates`, `readPluginState`, `setUiLevel`, `createPipeline`, `retryWriteback`, `getDb`.
-- Produces: exit code 0 and "all checks passed" on stderr, or 1 with each failing check named.
+- Produces: exit code 0 and "all checks passed" on stderr, or 1 with each failing check named; then "screenshots: <folder>".
 
 - [ ] **Step 1: Write the proof (it is the test)**
 
@@ -4282,12 +4805,14 @@ Create `tools/verify-ticket-updates-cdp.mjs`:
 #!/usr/bin/env node
 // tools/verify-ticket-updates-cdp.mjs — headless-Chrome proof of Ticket updates (plans/ticket-updates-design.md §12 Browser):
 // mock mode (WORCA_MOCK=1), the ticketUpdates flag on, jira-source linked with one profile. Pick projects, add a project rule,
-// pick a status, Save, reopen; the New run project list (POST /api/sources/call listProjects) holds only the picked ones; a mock
-// write-back carries the move; the section in light, dark and at 390 px. NOT part of `npm test`.
+// pick a status, Save, reopen; New run's project select (source-pane.mjs's remote select, over POST /api/sources/call) holds
+// only the picked ones; a mock write-back carries the move; contrast of the section, the open listbox and the open popover in
+// light and dark; 390 px. Screenshots of boards 1, 3, 4 and 6, light and dark, go to TU_SHOTS (else a new temp folder), kept
+// and printed at the end. NOT part of `npm test`.
 // Run: node tools/verify-ticket-updates-cdp.mjs   (or: npm run verify:ticket-updates)
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -4302,13 +4827,16 @@ const PORT = Number(process.env.CDP_PORT || 9351);
 const T0 = Date.now();
 const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
 
-let chrome = null; let srv = null; let home = null; let profile = null; let failed = 0;
+let chrome = null; let srv = null; let home = null; let profile = null; let failed = 0; let SHOTS = '';
 const sockets = [];
 async function shutdown(code) {
   for (const s of sockets) { try { s.close(); } catch {} }
   try { if (chrome) chrome.kill('SIGKILL'); } catch {}
   try { if (srv) { srv.closeAllConnections?.(); await new Promise((r) => srv.close(r)); } } catch {}
+  // The open SQLite file would block removing the temp home on Windows (verify-requirements-cdp.mjs does the same)
+  try { (await import(new URL('../src/core/db.mjs', import.meta.url).href))._resetForTests(); } catch {}
   for (const dir of [home, profile]) { try { if (dir) await rm(dir, { recursive: true, force: true, maxRetries: 3 }); } catch {} }
+  if (SHOTS) log(`screenshots: ${SHOTS}`);
   process.exit(code);
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection']) {
@@ -4319,6 +4847,9 @@ const check = (name, ok, detail = '') => {
   if (ok) log(`ok   ${name}`);
   else { failed += 1; log(`FAIL ${name}${detail ? ` - ${detail}` : ''}`); }
 };
+
+// Screenshots for a human look against the approved canvas: always written, never removed by shutdown
+SHOTS = process.env.TU_SHOTS || await mkdtemp(path.join(tmpdir(), 'worca-tu-shots-'));
 
 // ---- an isolated home + the app server (env BEFORE the import, the house pattern) ----
 home = await mkdtemp(path.join(tmpdir(), 'worca-tu-home-'));
@@ -4406,19 +4937,73 @@ const openSheet = async () => {
   await click('button.mk-name[data-name="jira-source"]');
   return until(() => js(`const s = document.querySelector('#mk-sheet .mk-tu'); return !!s && !s.hidden && !!s.querySelector('.mk-tu-rules');`), 10000);
 };
-/** WCAG contrast of every visible text node under `sel`, against the first opaque background up the tree: the lowest ratio. */
-const lowestContrast = (sel) => js(`
+/** A screenshot of the viewport into SHOTS. */
+const shot = async (name) => {
+  await mkdir(SHOTS, { recursive: true });
+  const { data } = await A.send('Page.captureScreenshot', { format: 'png' });
+  writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(data, 'base64'));
+};
+/** The theme the page shows ('' = the system's), once its colours have finished changing. */
+const setTheme = async (t) => {
+  await A.evalJs(`(() => { const r = document.documentElement; if (${JSON.stringify(t)}) r.dataset.theme = ${JSON.stringify(t)}; else delete r.dataset.theme; })()`);
+  await sleep(150);
+  await until(() => A.evalJs(`document.getAnimations().length === 0`), 3000);
+};
+/** verify-requirements-cdp.mjs's lowContrast: the text in `sels` below WCAG AA against what is drawn under it (4.5:1; 3:1 for
+ *  large text): [text, ratio, ink, ground]. Translucent layers are composited; disabled controls and hidden text are skipped.
+ *  Selectors that reach no visible text are a failure too (a renamed class, or a list that did not open, never passes unseen). */
+const lowContrast = (sels) => A.evalJs(`(() => {
   const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
-  const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1); const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
-  const ground = (el) => { for (let n = el; n; n = n.parentElement) { const c = rgba(getComputedStyle(n).backgroundColor); if (c[3] >= 1) return c; } return [255, 255, 255, 1]; };
-  const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
-  let low = 99;
-  for (const root of document.querySelectorAll(${JSON.stringify(sel)})) for (const el of [root, ...root.querySelectorAll('*')]) {
-    if (![...el.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim()) || !el.getClientRects().length) continue;
-    const a = lum(rgba(getComputedStyle(el).color)); const b = lum(ground(el));
-    low = Math.min(low, (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05));
+  const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
+    const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const over = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+  const ground = (el) => { const layers = [];
+    for (let n = el; n; n = n.parentElement) { const c = rgba(getComputedStyle(n).backgroundColor); if (c[3] > 0) layers.push(c); if (c[3] >= 1) break; }
+    let g = [255, 255, 255, 1]; for (const l of layers.reverse()) g = over(l, g); return g; };
+  const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+  const out = [];
+  let seen = 0;
+  for (const root of document.querySelectorAll(${JSON.stringify(sels.join(', '))})) {
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (![...el.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
+      if (!el.getClientRects().length || el.closest('[hidden], [aria-hidden="true"], button:disabled')) continue;
+      const cs = getComputedStyle(el); if (cs.visibility === 'hidden') continue;
+      seen += 1;
+      const bg = ground(el); const ink = over(rgba(cs.color), bg);
+      const [a, b] = [lum(ink), lum(bg)]; const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      const px = parseFloat(cs.fontSize); const large = px >= 24 || (px >= 18.66 && Number(cs.fontWeight) >= 700);
+      if (ratio < (large ? 3 : 4.5)) out.push([el.textContent.trim().slice(0, 40), Math.round(ratio * 100) / 100, cs.color, 'rgb(' + bg.slice(0, 3).map(Math.round).join(', ') + ')']);
+    }
   }
-  return low;`);
+  if (!seen) out.push(['no visible text matched', ${JSON.stringify(sels.join(', '))}]);
+  return out; })()`);
+/** lowContrast in light and dark, a screenshot of each as `<board>-light` / `<board>-dark`; the theme is put back after. */
+const contrastBoth = async (sels, board) => {
+  const was = await A.evalJs(`document.documentElement.dataset.theme || ''`);
+  await setTheme('light');
+  const light = await lowContrast(sels);
+  await shot(`${board}-light`);
+  await setTheme('dark');
+  const dark = await lowContrast(sels);
+  await shot(`${board}-dark`);
+  await setTheme(was);
+  return { light, dark };
+};
+const aa = (name, r) => {
+  check(`light: ${name} is AA`, r.light.length === 0, JSON.stringify(r.light));
+  check(`dark: ${name} is AA`, r.dark.length === 0, JSON.stringify(r.dark));
+};
+const openMoveList = async () => {
+  await click('#mk-sheet .mk-tu-rule[data-project="SHOP"] .mk-tu-move');
+  return until(() => js(`return [...document.querySelectorAll('.mk-tu-movepop [role="option"]')].some((o) => o.textContent === 'Resolved');`));
+};
+const closeMoveList = () => js(`const b = document.querySelector('#mk-sheet .mk-tu-rule[data-project="SHOP"] .mk-tu-move');
+  b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); return !document.querySelector('.mk-tu-movepop');`);
+const openPopover = async () => {
+  await click('#mk-sheet .mk-tu-add-projects');
+  return until(() => js(`return document.querySelectorAll('.mk-tu-projpop .mk-tu-prow').length === 6;`));
+};
 
 // ---- pick projects (board 3) ----
 check('the manage sheet shows Ticket updates', await openSheet());
@@ -4441,14 +5026,16 @@ check("SHOP's statuses load into the listbox", await until(() => js(`return [...
 await js(`[...document.querySelectorAll('.mk-tu-movepop [role="option"]')].find((o) => o.textContent === 'Resolved').click(); return true;`);
 check('the select shows Resolved', (await textOf('#mk-sheet .mk-tu-rule[data-project="SHOP"] .mk-tu-move')) === 'Resolved');
 
-// ---- light, dark, 390 px ----
-const setTheme = async (t) => { await js(`document.documentElement.dataset.theme = ${JSON.stringify(t)}; return true;`); await sleep(200); };
-await setTheme('light');
-const light = await lowestContrast('#mk-sheet .mk-tu');
-check(`light: the section's text is AA (${light.toFixed(2)}:1)`, light >= 4.5);
-await setTheme('dark');
-const dark = await lowestContrast('#mk-sheet .mk-tu');
-check(`dark: the section's text is AA (${dark.toFixed(2)}:1)`, dark >= 4.5);
+// ---- contrast, light and dark: the section (boards 1, 2), the open listbox (board 4), the open popover (board 3) ----
+aa('the section', await contrastBoth(['#mk-sheet .mk-tu'], 'board1-section'));
+check('the move listbox opens with the statuses', await openMoveList());
+aa('the open move listbox', await contrastBoth(['.mk-tu-movepop'], 'board4-listbox'));
+check('Esc closes the listbox', await closeMoveList());
+check('the projects popover opens', await openPopover());
+aa('the open projects popover', await contrastBoth(['.mk-tu-projpop'], 'board3-popover'));
+await click('.mk-tu-done');
+
+// ---- 390 px (board 6) ----
 await setTheme('light');
 await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await sleep(300);
@@ -4461,6 +5048,17 @@ const phone = await js(`const row = document.querySelector('#mk-sheet .mk-tu-rul
 check('390 px: the select sits below the name at full width', phone.below && phone.wide, JSON.stringify(phone));
 check('390 px: every button and select is 44 px tall; the chip × is 32 px', phone.tall && phone.x === 32, JSON.stringify(phone));
 check('390 px: no sideways scroll', phone.scroll);
+await contrastBoth(['#mk-sheet .mk-tu'], 'board6-phone');
+check('390 px: the listbox opens', await openMoveList());
+const optH = await js(`return [...document.querySelectorAll('.mk-tu-movepop [role="option"]')].map((o) => Math.round(o.getBoundingClientRect().height));`);
+check('390 px: every listbox option is 44 px tall', optH.length > 0 && optH.every((h) => h >= 44), JSON.stringify(optH));
+await contrastBoth(['.mk-tu-movepop'], 'board6-phone-listbox');
+await closeMoveList();
+check('390 px: the popover opens', await openPopover());
+const rowH = await js(`return [...document.querySelectorAll('.mk-tu-projpop .mk-tu-prow')].map((r) => Math.round(r.getBoundingClientRect().height));`);
+check('390 px: every popover row is 44 px tall', rowH.length === 6 && rowH.every((h) => h >= 44), JSON.stringify(rowH));
+await contrastBoth(['.mk-tu-projpop'], 'board6-phone-popover');
+await click('.mk-tu-done');
 await A.send('Emulation.clearDeviceMetricsOverride');
 await sleep(200);
 
@@ -4474,10 +5072,21 @@ check('reopened: the sheet shows the saved rule', await openSheet()
   && (await until(async () => (await textOf('#mk-sheet .mk-tu-rule[data-project="SHOP"] .mk-tu-move')) === 'Resolved')));
 check('the old setting reads "Moved to Ticket updates."', await until(() => has('#mk-sheet .field[data-field="transitionOnComplete"] .mk-tu-moved')));
 
-// ---- New run's project list; a mock write-back ----
-const listed = await js(`return fetch('/api/sources/call', { method: 'POST', headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ plugin: 'jira-source', sourceId: 'jira', op: 'listProjects', profile: 'acme' }) }).then((r) => r.json()).then((j) => j.result.map((p) => p.value).join());`);
-check('New run lists only SHOP and CRM', listed === 'SHOP,CRM', listed);
+// ---- New run's project select (§12): source-pane.mjs's own remote select over the real route; a mock write-back ----
+const listed = await A.evalJs(`(async () => {
+  const { renderSourcePane } = await import('/source-pane.mjs');
+  const call = (op, args) => fetch('/api/sources/call', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ plugin: 'jira-source', sourceId: 'jira', op, profile: 'acme', args }) }).then((r) => r.json()).then((j) => j.result);
+  const pane = renderSourcePane({ plugin: 'jira-source', sourceId: 'jira', displayName: 'Jira',
+    inputs: [{ key: 'project', type: 'remote-select', label: 'Project', optionsFrom: 'listProjects' }] }, { call, doc: document });
+  document.body.append(pane);
+  const s = pane.querySelector('select.sp-remote');
+  s.dispatchEvent(new FocusEvent('focus'));   // the select loads on its first focus (a headless page may not take real focus)
+  await s._load;
+  const values = [...s.options].map((o) => o.value).join();
+  pane.remove();
+  return values; })()`);
+check("New run's project select lists only SHOP and CRM", listed === 'SHOP,CRM', listed);
 const projectDir = path.join(home, 'shop');
 await mkdir(projectDir, { recursive: true });
 const p = await createPipeline(projectDir, { promptText: '# Ship it', sourceType: 'plugin', title: 'Ship it',
@@ -4499,12 +5108,18 @@ In `package.json` `scripts`, after `"verify:requirements": …,`:
     "verify:ticket-updates": "node --disable-warning=ExperimentalWarning tools/verify-ticket-updates-cdp.mjs",
 ```
 
+In `.github/workflows/ci.yml`, the `cdp` job's second group's `proofs` gains it after `verify:requirements`:
+
+```yaml
+            proofs: "verify:composer verify:run-monitor verify:feature-page verify:memory verify:scripts verify:ask-forms verify:workspace-map verify:flags verify:requirements verify:ticket-updates verify:chat-layout"
+```
+
 - [ ] **Step 2: Run the proof**
 
 The proof exercises Tasks 1–17 end to end in a real browser (it is the red/green step for this task: a check that fails names the behaviour).
 
 Run: `npm run verify:ticket-updates`
-Expected: every check `ok`, ending `all checks passed` (exit 0). A failing check is fixed in the task that owns the behaviour, its test first, and the proof run again.
+Expected: every check `ok`, ending `all checks passed` (exit 0), then `screenshots: <folder>`. Open the light and dark screenshots of boards 1, 3, 4 and 6 beside the approved canvas. A failing check is fixed in the task that owns the behaviour, its test first, and the proof run again.
 
 - [ ] **Step 3: Check it syntax-only on a machine without Chrome**
 
@@ -4514,8 +5129,8 @@ Expected: no output (exit 0).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tools/verify-ticket-updates-cdp.mjs package.json
-git commit -m "Ticket updates: the browser proof (npm run verify:ticket-updates)
+git add tools/verify-ticket-updates-cdp.mjs package.json .github/workflows/ci.yml
+git commit -m "Ticket updates: the browser proof (npm run verify:ticket-updates), in CI's cdp proofs
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -4562,7 +5177,12 @@ the Marketplace page.
 
 The run's ticket moves by the rule of its project, else All projects, and Worca's one comment on the ticket ends with what
 happened: `Moved to Resolved.`, `Already in Closed.`, `Moved to Done, Resolution: Done.`, or a `Not moved: …` line saying
-why. A run that did not finish successfully does not move its ticket.
+why (Jira's own reason when Jira refused the move, or "Jira gave no reason."). A run that did not finish successfully does
+not move its ticket. A refused API token, a rate limit, a Jira server error, a network error or a timeout fails the
+write-back instead, so it can be tried again.
+
+Every run records its ticket's project when it starts, even with the flag off, so a rule saved later also applies to runs
+that started before.
 
 **Any Done status** is one the ticket can reach, never a cancelled one (Won't Do, Won't Fix, Rejected, Duplicate, Cancelled,
 Declined, Invalid, Obsolete, Abandoned, Not planned). When a move asks for a Resolution, Worca fills in Done, Fixed or
@@ -4619,7 +5239,7 @@ In `docs/requirements.md`, replace the **Report back** bullet with:
   run ends, Worca comments on the ticket with the result and the pull request link, and moves it to the status named in
   the Jira connection (**Transition on completion**), if any. With [Ticket updates](ticket-updates.md) (Labs) saved for that
   connection, the hint says what its rule for the ticket's project does instead: "moves the ticket to a Done status", "moves
-  the ticket to Resolved", or "leave SHOP tickets where they are".
+  the ticket to Resolved" ("Resolve (as typed)" for an old setting carried over), or "leave SHOP tickets where they are".
 ```
 
 and after the **Setup** bullet add:
@@ -4666,9 +5286,11 @@ and after the table:
 **Ticket updates (`move`).** With `capabilities().ticketUpdates`, Worca decides what a finished run does to its ticket and
 passes it as `reportResult`'s `move`: `{category: 'done'}` (any status of the done category the ticket can reach, never a
 cancelled one), `{status: '<listStatuses value>', name?}` (one status; without `name` it is the typed text of your old
-setting, matched as before) or `{none: true}`. Without `move`, keep doing exactly what your old setting does. Move first,
-then post one comment ending with `note`, the line saying what happened (`''` when nothing was to be done), and answer
-`{moved, note}`. `getTask`'s `meta.project` names the ticket's project as a `listProjects` value, so Worca can pick the
+setting, matched as before: a transition's name first, then a target status's name) or `{none: true}`. Without `move`, keep
+doing exactly what your old setting does. Move first, then post one comment ending with `note`, the line saying what happened
+(`''` when nothing was to be done), and answer `{moved, note}`. A move the tracker refuses (Jira: a 4xx other than 401 and
+429) is a `note`, and the comment is still posted; throw on a refused token, a rate limit, a server error, a network error or
+a timeout, so the write-back fails and can be retried. `getTask`'s `meta.project` names the ticket's project as a `listProjects` value, so Worca can pick the
 project's rule without parsing your ids.
 ```
 
@@ -4711,12 +5333,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 21 (conditional): The import's project filter and its All projects word search (D9, with #1041)
 
-**Only if PR #1041 (`origin/feat/requirements-import`) has merged into `dev` when you reach this task.** Check: `git fetch origin && git merge-base --is-ancestor origin/feat/requirements-import origin/dev && echo merged`. If it prints nothing, skip this task and write in the pull request: "The `importOptions` filter and the `searchTickets` `projects` list land in #1041's follow-up (design D9, §14)." If it merged, merge `dev` first (Task 20 step 1); the code below is written against #1041 as it stands (`src/core/requirements/import.mjs` `importOptions`, `searchTickets`; jira-source `searchTickets`), so read those two functions before editing and keep their other lines as they are.
+**Only if PR #1041 (`origin/feat/requirements-import`) has merged into `dev` when you reach this task.** Check by what `dev` holds, not by the branch (a pruned branch would make an ancestry check print nothing and skip the task wrongly): `git fetch origin && git cat-file -e origin/dev:src/core/requirements/import.mjs && echo merged`. If it prints nothing, skip this task and write in the pull request: "The `importOptions` filter and the `searchTickets` `projects` list land in #1041's follow-up (design D9, §14)." If it merged, merge `dev` first (Task 20 step 1); the code below is written against #1041 as it stands (`src/core/requirements/import.mjs` `importOptions`, `searchTickets`; jira-source `searchTickets`), so read those two functions before editing and keep their other lines as they are. In that merge, `src/core/plugin-shim.mjs`'s mock `capabilities` conflicts: keep both sides (Task 4's `ticketUpdates: true` and #1041's import capability) in the one answer, and update `test/plugin-shim.test.mjs`'s `capabilities` assertion to match. After this task, run Task 20's steps 2–6 again.
 
 D9 and "Decided by the user (2026-10-29)": `importOptions` lists the connection's picked projects (a saved choice stays); A6.1's **All projects** word search looks only in the picked projects: `searchTickets` gains an optional `projects` list and jira-source adds `project in (…)`; a pasted key or link is unaffected.
 
 **Files:**
-- Modify: `src/core/requirements/import.mjs` (`importOptions`, `searchTickets`; imports), `plugins/jira-source/connector/index.mjs` (`searchTickets`), `src/core/plugin-shim.mjs` (the mock `searchTickets` honours `projects`)
+- Modify: `src/core/requirements/import.mjs` (`importOptions`, `searchTickets`; imports), `plugins/jira-source/connector/index.mjs` (`searchTickets`), `src/core/plugin-shim.mjs` (the mock `searchTickets` honours `projects`), `.claude/skills/creating-worca-cc-plugins/SKILL.md` and `src/core/plugin-api.mjs` (the `projects` argument), `docs/requirements.md`
 - Test: create `test/requirements-import-ticket-updates.test.mjs`
 
 **Interfaces:**
@@ -4739,7 +5361,7 @@ import { linkPlugin } from '../src/core/plugin-store.mjs';
 import { createProfile, writeTicketUpdates } from '../src/core/plugin-config.mjs';
 import { callSource, setMockSourceResponses } from '../src/core/plugin-shim.mjs';
 import { importOptions, searchTickets } from '../src/core/requirements/import.mjs';
-import { _resetExportCaches } from '../src/core/requirements/export.mjs';
+import { _resetExportCaches, saveSetup } from '../src/core/requirements/export.mjs';
 import createTaskSource from '../plugins/jira-source/connector/index.mjs';
 
 useTempHome(after, 'worca-tu-import-');
@@ -4765,6 +5387,13 @@ test('importOptions lists only the picked projects; the flag off lists all', asy
   process.env.WORCA_FLAGS = 'requirements,-ticketUpdates';
   try { assert.deepEqual((await importOptions(SCOPE, CONN, d)).projects.map((p) => p.value), ['SHOP', 'OPS']); }
   finally { process.env.WORCA_FLAGS = 'requirements,ticketUpdates'; }
+});
+
+test("importOptions: a saved choice stays listed: the export setup's SHOP on this connection, with only OPS picked (D9, S5)", async () => {
+  // If saveSetup needs the scope to exist, create it as test/requirements-export.test.mjs's `before` does.
+  await saveSetup(SCOPE, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', project: 'SHOP', projectName: 'SHOP — Shop web',
+    issueType: '10001', issueTypeName: 'Story', labels: ['worca'] }, { by: 'po' }, d);
+  assert.deepEqual((await importOptions(SCOPE, CONN, d)).projects.map((p) => p.value), ['SHOP', 'OPS']);
 });
 
 test('All projects searches only the picked projects; a picked project or the flag off sends no list', async () => {
@@ -4809,7 +5438,7 @@ test("jira-source: project in (…) for All projects; a pasted key reads that is
 - [ ] **Step 2: Run the test and see it fail**
 
 Run: `node tools/test.mjs test/requirements-import-ticket-updates.test.mjs`
-Expected: FAIL — `importOptions` answers `['SHOP', 'OPS']`; `searchTickets`' args have no `projects`; the JQL has no `project in`.
+Expected: FAIL — `importOptions` answers `['SHOP', 'OPS']` with nothing kept (the first test); `searchTickets`' args have no `projects`; the JQL has no `project in`. (The S5 test passes before the change too, since nothing is filtered yet; it guards the `keep`.)
 
 - [ ] **Step 3: Implement**
 
@@ -4878,6 +5507,8 @@ In `src/core/plugin-shim.mjs`, the mock `searchTickets` keeps only tickets of `a
   },
 ```
 
+In `.claude/skills/creating-worca-cc-plugins/SKILL.md`, the `searchTickets` row's args gain `projects?` and its text: "`projects` (optional, Ticket updates): with no `project`, search only these project values; a pasted key or link is read whatever the list". In `src/core/plugin-api.mjs`, the Ticket updates comment (Task 19) gains "and searchTickets' `projects`" after "getTask's meta.project".
+
 In `docs/requirements.md`'s **Start from a ticket** section add: "With [Ticket updates](ticket-updates.md) (Labs), From a ticket… lists only the projects you work on, and All projects searches only them; a pasted key or link finds a ticket in any project."
 
 - [ ] **Step 4: Run the tests and see them pass**
@@ -4888,7 +5519,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/core/requirements/import.mjs plugins/jira-source/connector/index.mjs src/core/plugin-shim.mjs docs/requirements.md test/requirements-import-ticket-updates.test.mjs
+git add src/core/requirements/import.mjs plugins/jira-source/connector/index.mjs src/core/plugin-shim.mjs docs/requirements.md .claude/skills/creating-worca-cc-plugins/SKILL.md src/core/plugin-api.mjs test/requirements-import-ticket-updates.test.mjs
 git commit -m "Ticket updates: the import lists and searches only the projects you work on
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -4901,46 +5532,53 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 | Spec point | Task(s) |
 |---|---|
 | D1 four categories; Jira's mapping and the cancelled names (Azure Boards, GitHub, Linear: PR 2 and later) | 2 (`TU_CATEGORIES`), 9 (`categoryOf`, `isCancelledName`), 12 (groups and dots) |
-| D2 per connection, stored by Worca; projects, rules by (project, moment); All projects once, Don't move / Any Done status / typed; a removed project keeps its rule | 1, 2, 5, 14 |
+| D2 per connection, stored by Worca; projects, rules by (project, moment); All projects once, Don't move / Any Done status / typed; a removed project keeps its rule | 1, 2, 5, 14a, 14b |
 | D3 the file in `data/`, `profiles/1`, `deleteProfile`, uninstall keeps / purge removes; no migration | 1 |
-| D4 legacy until the first save; `legacyMove`; filled in with the note; "Moved to Ticket updates."; typed passed as `{status}` | 2, 4, 5 (Deviation 1), 9, 14, 16 |
+| D4 legacy until the first save; `legacyMove`; filled in with the note; "Moved to Ticket updates." (Deviation 5); typed passed as `{status}`, matched by transition name first, then status name (S2) | 2, 4, 5 (Deviation 1), 9, 10, 14a, 16 |
 | D5 optional contract, API 5; the comment in `plugin-api.mjs` | 4, 9, 10, 19 |
-| D6 `meta.project` pinned; `reportTo.project`; a row without project uses All projects | 7, 8 |
-| D7 the move after the probe; none for a run that did not finish; no extra spawn | 2, 8 |
+| D6 `meta.project` pinned (flag on or off, decided 2026-10-30); `reportTo.project`; a row without project uses All projects | 7, 8 |
+| D7 the move with the probe; none for a run that did not finish; no extra spawn; a failed probe still passes a saved move (S1) | 2, 8 |
 | D8 four host routes, flag-gated, server-side only; allowlist unchanged | 5 (Deviation 2) |
 | D9 the filter at New run, export setup, import; a saved choice stays; a pasted key unaffected; All projects word search | 2, 6, 21 (conditional) |
-| D10 Jira's choice, preference, never cancelled, Resolution, a failed move still comments | 10 (Deviation 3) |
-| D11 the line last; `{ moved, note }`; the audit line; "reported · <note>" | 8, 10 |
-| D12 the section in the manage sheet, dirty, Save order, profile switch, "connection saved", Advanced | 5, 14, 16, 19 |
+| D10 Jira's choice, preference, never cancelled, Resolution, a refused move (4xx) still comments; 5xx, 401, 429, network and timeout throw | 10 (Deviation 3, narrowed 2026-10-30) |
+| D11 the line last; `{ moved, note }`; the audit line; the route's answer (the results view's "reported · <note>" is out of PR 1, decided 2026-10-30) | 8, 10 |
+| D12 the section in the manage sheet, dirty, Save order, profile switch, "connection saved" (a save refused while not saved), Test connection that saves (S13), Advanced | 5, 14a, 16, 19 |
 | D13 the move select and the projects popover as small modules | 12, 13 |
-| D14 Report back's `move` and hint | 2, 11 |
+| D14 Report back's `move` and hint ("Resolve (as typed)"; no move promised to a connector without `ticketUpdates`) | 2, 11 |
 | D15 New run gets no new line | nothing built |
 | D16 the Labs flag; off = hidden, 404, no filter, no move; the file kept | 2, 5, 6, 8, 16, 19 |
 | D17 the mock answers | 4 |
 | D18 jira-source 0.2.0 | 9 |
-| §3 the contract table, timeouts | 4, 5, 9, 10 |
+| §3 the contract table, timeouts ("within 30 seconds" for 30 s calls, decided 2026-10-30) | 3, 4, 5, 9, 10 |
 | §4 storage and limits | 1, 2 |
-| §5 the routes, guards, 502, 409 | 3, 5 |
+| §5 the routes, guards, 502, 409; a project key never a path (S9); F29 | 3, 5 |
 | §6 host resolution | 2, 8 |
 | §7 the Jira connector | 9, 10 |
-| §8 screens, CSS tokens only, phone | 12–17 |
-| §10 states A–E, Save refused, a project no longer listed stays a chip | 14 (A, B), 12–13 (C, D), 15 (E), 16 (Save refused), 14 (chips keep their stored label) |
-| §11 accessibility | 12, 13, 14 |
+| §8 screens, CSS tokens only, phone (44 px options and rows too); the popover right-aligned (board 3) | 12, 13, 14a, 14b, 15, 16, 17 |
+| §10 states A–E, Save refused, a project no longer listed stays a chip | 14a (A, B), 12–13 and 14b (C, D), 15 (E), 16 (Save refused), 14a (chips keep their stored label) |
+| §11 accessibility (status groups `role="group"` with `aria-label`, decided 2026-10-30) | 12, 13, 14a, 14b, 18 |
 | §12 tests | every task; 18 (browser); 20 (whole branch, real Jira) |
 | §13 docs | 10 (README), 19 |
-| §14 PR 1 scope; #1041's piece | 1–20; 21 |
+| §14 PR 1 scope; #1041's piece | 1–20 (14a and 14b); 21 |
 
-§9 strings → tasks: header, meta, sub, "Projects you work on", "Add projects…", "Remove SHOP", the projects hint (14); popover placeholder, label, "Jira projects", footer, "Done" (13); "When a run finishes successfully", "All projects", "Unless a project below says otherwise", "Add a project rule", "Remove the SHOP rule", "Remove the new rule", "Project" (14); move select label, "Don't move", "Any Done status", "One this ticket can reach", the four group labels, "CRM statuses", "All projects: move to" (12); the hint, the new-row hint, "Save this connection first…", the carried-over note, "Resolve (as typed)" (12, 14); "Getting CRM's statuses…", the unreachable sentence and **Try again** (5, 12, 13); the gone line (15); the comment lines (10); "Getting Acme's projects…", "No project matches.", "None picked · 6 projects on Acme" (13); "Every project you work on has a rule." (14); "Moved to Ticket updates." (16); the four extra Jira lines (10); "reported · Moved to Resolved.", the audit line (8); the three Report back hints (11).
+§9 strings → tasks: header, meta, sub, "Projects you work on", "Add projects…", "Remove SHOP", the projects hint (14a); popover placeholder, label, "Jira projects", footer, "Done" (13); "When a run finishes successfully", "All projects", "Unless a project below says otherwise" (14a); "Add a project rule", "Remove the SHOP rule", "Remove the new rule", "Project" (14b); move select label, "Don't move", "Any Done status", "One this ticket can reach", the four group labels, "CRM statuses", "All projects: move to" (12); the hint, "Save this connection first…" (also the PUT's 409, Task 5), the carried-over note, "Resolve (as typed)" (12, 14a); the new-row hint (14b); "Getting CRM's statuses…", the unreachable sentence and **Try again** (5, 12, 13); the gone line (15); the comment lines (10); "Getting Acme's projects…" (13, and the new row's polite line, 14b), "No project matches.", "None picked · 6 projects on Acme" (13); "Every project you work on has a rule." (14b); "Moved to Ticket updates." (16); the four extra Jira lines (10); the audit line (8; "reported · Moved to Resolved." is out of PR 1, decided 2026-10-30); the three Report back hints (11).
 
 ## Appendix B: copy this plan adds (not in the design)
 
 - The new row's move select label (before a project is chosen): "New rule: move to".
 - §4's refusals (400 bodies the sheet shows in its error wash): "projects must be a list." · "rules must be a list." · "Pick at most 200 projects." · "Keep at most 200 project rules." · "<What> is longer than 200 characters." · "Each project needs its key." · "Each rule needs a project and a move." · "Each rule needs a move." · "A rule can only apply when a run finishes." · "<KEY> has more than one rule." / "All projects has more than one rule." · "All projects needs exactly one rule." · "All projects can only be Don't move or Any Done status." · "Only All projects can keep the old setting." · "A status needs a name." · "A status needs its id and name." · "A status needs its category." · "A category move can only be Any Done status."
 - A list that failed without the server's sentence: A6's existing "Worca could not finish that. Try again."
+- Jira's lines (Task 10): `Not moved: Jira did not let Worca read SHOP-12's transitions (<Jira's message>).` and "Jira gave no reason" when Jira sends no message (both decided 2026-10-30); "only Won't Do **leads**" for one cancelled target and "lead" for several (decided 2026-10-30); `from "?"` when Jira names no current status; "(available: none)" when the ticket offers no transition.
+- The reach sentence for a 30 s call: "Worca could not reach Jira: it did not answer within 30 seconds." (Task 3; decided 2026-10-30).
+- The routes (Task 5): "Worca could not reach Jira: the Jira plugin is disabled." (502, instead of "stopped unexpectedly"); "project is not a project key" (400). jira-source (Task 9): "a project key cannot be a path".
+- The new rule's project option: "OPS · Operations" (key, middle dot, name; decided 2026-10-30).
+- The section's header without a profile id: a single-profile source's meta is its label alone (no "(default)"), and the tracker's name falls back to "the tracker" when the sheet passes none (Task 14a).
 - `docs/ticket-updates.md`, the changelog entry, the `docs/feature-flags.md` row and the flag's description (product docs, in the boards' voice).
 
-## Self-review (done while writing)
+## Self-review (done while writing; redone after the plan review, 2026-10-30)
 
-- **Spec coverage:** every decision D1–D18 and every §9 string maps to a task (Appendix A); D15 builds nothing by design; PR 2's plugins (Azure Boards, GitHub) and the out-of-scope list are not built. Gaps found and fixed: the GET's need of `legacyMove` after the first save (Deviation 1), the empty-roster new profile (Deviation 2), D10 against §7 (Deviation 3).
-- **Placeholders:** none; Task 21 is conditional on #1041 and written against that branch as it stands, with a skip note when #1041 has not merged.
-- **Names across tasks:** `readTicketUpdates` / `writeTicketUpdates` (1) → 2, 5, 6, 8, 11, 18, 21; `moveFor`, `toMove`, `validateTicketUpdates`, `projectFilter`, `filterProjects`, `describeMove`, `TU_CATEGORIES`, `TU_LIMITS` (2) → 5, 6, 8, 11, 21; `reachSentence` (3) → 5; `registerTicketUpdatesRoutes`, `CANNOT_UPDATE`, `LIST_PROJECTS_TIMEOUT_MS` (5); `sourceMeta.project` / `reportTo.project` / `ref.project` (7) → 8; `{ note, moved }` (8, 10); `statusesOf`, `isCancelledName`, `categoryOf` (9) → 10; `exportView().move` (11); `createMoveSelect`, `targetText`, `sameTarget`, `FALLBACK_ERROR` (12) → 14; `openProjectsPopover` (13) → 14; `createTicketUpdates` with `load`, `dirty`, `body`, `markSaved`, `legacyField`, `destroy` (14) → 15, 16, 17; `checkGone`, `markGone`, `clearGone`, `STATUS_LOADS`, `goneLine` (15); `g.tu`, `mountTicketUpdates`, `movedField` (16); the `mk-tu-*` classes (12–16) → 17.
+- **Spec coverage:** every decision D1–D18 and every §9 string maps to a task (Appendix A); D15 builds nothing by design; PR 2's plugins (Azure Boards, GitHub) and the out-of-scope list are not built. D11's results view line is out of PR 1 by decision (2026-10-30), so Task 8 no longer touches `ui/public/results-view.mjs`. Gaps found and fixed while writing: the GET's need of `legacyMove` after the first save (Deviation 1), the empty-roster new profile (Deviation 2), D10 against §7 (Deviation 3, narrowed after the review to Jira's 4xx refusals).
+- **The review's fixes:** the Must (Task 12, the active option across the statuses' repaint) and S1–S15 are in their tasks, each with a test; Task 14 is split into 14a (shell, states A and B, projects, the saved rules) and 14b (Add a project rule, the new row, remove), each with its own tests and commit. The twelve questions are decided in "Decided 2026-10-30" above and in the design's end section.
+- **Tested while revising (scratch mirror, not committed):** Task 12's test (7 of 7, the Must's assertion included); Task 13's (6 of 6); Task 14a alone (7 of 7), 14b's five tests red against 14a and green against 14b; 14a + 14b + 15 + 16 together (21 of 21) with the existing `marketplace-manage-sheet.test.mjs` still 47 of 47 against Task 16's `manage-sheet.mjs`; the new mid-save profile-switch check fails on the old `save` and passes on the new; Task 17's CSS test (3 of 3) with `marketplace-sheets-css.test.mjs` still green. `node --check` passes on the code of Tasks 2, 3, 5, 10, 12 and 18 as extracted from the plan.
+- **Placeholders:** none. Task 14a's `refreshRules()` is an intentional empty step that 14b replaces (it says so); Task 21 is conditional on #1041 and written against that branch as it stands, with a skip note when #1041 has not merged.
+- **Names across tasks:** `readTicketUpdates` / `writeTicketUpdates` (1) → 2, 5, 6, 8, 11, 18, 21; `moveFor`, `toMove`, `validateTicketUpdates`, `projectFilter`, `filterProjects`, `describeMove`, `TU_CATEGORIES`, `TU_LIMITS` (2) → 5, 6, 8, 11, 21; `reachSentence`, `limitWords` (3) → 5; `registerTicketUpdatesRoutes`, `CANNOT_UPDATE`, `LIST_PROJECTS_TIMEOUT_MS`, `isProjectKey`, `safe` (5); `sourceMeta.project` / `reportTo.project` / `ref.project` (7) → 8; `{ note, moved }` (8, 10); `statusesOf`, `projectKeyOf`, `listStatusesOp`, `isCancelledName`, `categoryOf` (9) → 10; `refusedMove`, `unreadable`, `refuseTransitionsRead` (10); `exportView().move`, `heardMove` (11); `createMoveSelect`, `targetText`, `sameTarget`, `FALLBACK_ERROR` (12) → 14a, 14b; `openProjectsPopover` (13) → 14a; `createTicketUpdates` with `load`, `dirty`, `body`, `markSaved`, `legacyField`, `destroy` (14a) → 15, 16, 17; `rowOf`, `refreshRules` (14a) → 14b, 15; `fillPicker`, `addRule`, `removeRule` (14b); `checkGone`, `markGone`, `clearGone`, `STATUS_LOADS`, `goneLine` (15); `g.tu`, `mountTicketUpdates`, `movedField` (16); the `mk-tu-*` classes (12–16, `mk-tu-optgroup` and `mk-tu-plive` included) → 17; `lowContrast`, `contrastBoth`, `shot`, `SHOTS` (18).

@@ -46,11 +46,11 @@ when a run finishes**, per connection and per project, and the plugins only tran
 | D8 | **Routes: host routes under `/api/plugins/:name/ticket-updates`, server-side calls only.** The sheet reads and saves through four routes (§5) beside the config routes, each `requireFlag('ticketUpdates')`. `listProjects` and `listStatuses` run in the server through `callSource` with the saved profile, never from the browser: `POST /api/sources/call`'s allowlist is unchanged (it never gains `listStatuses` or `legacyMove`). |
 | D9 | **The projects filter is applied where each list is built, server-side.** New run: `POST /api/sources/call` filters the result of `op: 'listProjects'` by the call's profile (the source pane's project remote-select); github-source's `listRepos` joins in PR 2. Requirements export: `exportOptions` (`src/core/requirements/export.mjs`) filters `projects` by the connection's profile. Requirements import (A6.1, #1041): `importOptions` does the same; whichever of #1041 and this PR merges second adds that line. Two rules everywhere: a saved choice outside the filter stays listed (an export setup's tracker project), and the filter only shortens lists, so a pasted key or link still finds a ticket in any project (jira-source's `pastedKey`, A6.1-D3). A6.1's **All projects** word search looks only in the picked projects: `searchTickets` gains an optional `projects` list, and jira-source adds `project in (…)` to its query; a pasted key or link is unaffected (user, 2026-10-29). The Ticket updates section's own picker calls `listProjects` unfiltered. |
 | D10 | **Jira chooses the transition itself (§7).** Any Done status: a transition whose target is done and not cancelled-named, preferring "Done", then Closed, Resolved, Complete, Completed, then any other, in Jira's order. Never a cancelled one: if only those are reachable it does not move and says so. A required Resolution is filled with the first allowed value named Done, Fixed, Complete or Completed; if none fits, the next candidate is tried, and if none can be completed it does not move and says so. The same Resolution rule applies to a status move. A failed move (other than auth, network, rate limit, timeout) still posts the comment, with the reason as its last line. |
-| D11 | **What happened is the last line of the one comment, and Worca hears it too.** With `move`, Jira transitions first, then posts one comment: the run summary, its links, then the outcome line (board 7). `reportResult` answers `{ moved: { from, to } \| null, note }`. `reportResultForPipeline` returns them; the run's audit line becomes "Result reported back to the task source. <note>" and the results view's Report result status "reported · <note>". |
+| D11 | **What happened is the last line of the one comment, and Worca hears it too.** With `move`, Jira transitions first, then posts one comment: the run summary, its links, then the outcome line (board 7). `reportResult` answers `{ moved: { from, to } \| null, note }`. `reportResultForPipeline` returns them (so `POST /api/pipelines/:id/report-result` answers `{ note, moved }`); the run's audit line becomes "Result reported back to the task source. <note>". The results view's Report result status "reported · <note>" is not in PR 1: that control has no caller in the UI today, so the audit line and the ticket's comment carry the note (decided 2026-10-30). |
 | D12 | **One host-drawn section in the manage sheet, saved with its Save.** `ui/public/marketplace/manage-sheet.mjs` mounts **Ticket updates** in a task-source group after the Test connection row, when the flag is on and `GET …/ticket-updates` says `available`. It joins the group's dirty check and the sheet's Save: the group's config `PUT` goes first, then the ticket-updates `PUT`; a refused config save sends nothing more. A profile switch, Add profile and Remove profile repaint it with the group. The connection counts as saved when the profile is in the roster and every required config field has a stored value (the server answers `connection`); before that the section shows only board 5 A's line. Level: Advanced with the Marketplace page; no new level. |
 | D13 | **Controls reuse the closest upstream patterns; there is no generic combobox to take.** The rule select is a button (`role="combobox"`, `aria-haspopup="listbox"`) opening a listbox placed by `placeFlyout` (`side-flyout.mjs`), with `aria-activedescendant` on the button as in `group-picker.mjs` `openGroupPicker` and `topnav-search.mjs`, and group labels and sub-lines as in `cost-dimension-picker.mjs`. The projects popover follows `label-picker.mjs` `openLabelPicker`: a search box over a multi-select listbox of checkbox rows that stays open across toggles. Both are new small modules in `ui/public/marketplace/` (§8); neither is made generic in this PR. |
 | D14 | **Report back says the rule's move.** A6's Report back hint (`requirements-view.mjs` `reportRow`) reads `exportView`'s `doneStatus` today. `exportView` gains `move` (`{ kind: 'category' \| 'status' \| 'none', label }` or null), resolved from the link's connection and tracker project with the same function as write-back; when it is not null the hint uses it (§9), else the current two lines stay. |
-| D15 | **New run gets no new line.** The only write-back control there is jira-source's own "Write result back" input; the move is a property of the connection, shown where the connection is set. The outcome reaches the person in the ticket's comment, the run's audit line and the results view (D11). |
+| D15 | **New run gets no new line.** The only write-back control there is jira-source's own "Write result back" input; the move is a property of the connection, shown where the connection is set. The outcome reaches the person in the ticket's comment and the run's audit line (D11). |
 | D16 | **Behind a Labs flag `ticketUpdates`, off by default** (user, 2026-10-29). It changes what Worca writes to external trackers, and CONTRIBUTING puts new experimental UI behind a flag. Off: the section is hidden, the routes answer 404, no filter applies, and write-back ignores saved rules (the plugins' old settings apply, D4). The file is kept, so turning the flag on again restores the rules. Owner TomicaB; `requires` nothing (the Requirements parts apply when both flags are on). |
 | D17 | **Mock mode answers the new ops.** `plugin-shim.mjs` `MOCK_DEFAULTS`: `capabilities` adds `ticketUpdates: true`; `listProjects` SHOP Shop, CRM Customer portal, OPS Operations, SUP Support desk, MKT Marketing site, DATA Data platform (board 3); `listStatuses` board 4's CRM workflow (Done, Released; In Progress, Waiting for customer; Open; Won't Fix) for any project, with SHOP adding Resolved; `legacyMove` `{ field: 'transitionOnComplete', target: null }`; `reportResult` answers by `move`: category → `{ moved: { from: 'In Progress', to: 'Done' }, note: 'Moved to Done.' }`, status → the same to its name, none or absent → `{ moved: null, note: '' }`, and still records its args in `lastReport`. |
 | D18 | **jira-source goes to 0.2.0.** The Marketplace offers an update only for a higher manifest version; A6's ops shipped without a bump, and this adds more. |
@@ -220,7 +220,8 @@ Not on the boards (the smallest wording, in the boards' voice):
 - Jira lines: `Not moved: from "In Review" no transition leads to a Done status.` / `Not moved: CRM has no status named
   Shipped any more.` (a picked status whose id the project no longer has) / `Not moved: the move to Done asks for fields
   Worca does not fill (Fix versions).` / `Not moved: Jira refused the move to Done: <Jira's message>.`
-- Results view: "reported · Moved to Resolved."; audit: "Result reported back to the task source. Moved to Resolved."
+- Audit: "Result reported back to the task source. Moved to Resolved." (The results view's "reported · Moved to Resolved." is
+  out of PR 1, D11; decided 2026-10-30.)
 - Report back hint (D14), with Jira as the connection's tracker and SHOP the ticket's project: "When the run ends, Worca
   comments with the result and the pull request link, and moves the ticket to a Done status (Ticket updates in the Jira
   connection)." / "…, and moves the ticket to Resolved (Ticket updates in the Jira connection)." / "When the run ends,
@@ -247,9 +248,11 @@ Not on the boards (the smallest wording, in the boards' voice):
 - The section is a `section` labelled by its header; the rules a `role="list"`.
 - Move select: a `button` with `role="combobox"`, `aria-haspopup="listbox"`, `aria-expanded`, `aria-controls` and the
   label "<KEY>: move to"; focus stays on it while open and `aria-activedescendant` names the active option. Options
-  `role="option"` with `aria-selected`; group labels and the separator `role="presentation"`. Keys: ↑ ↓ Home End move,
-  Enter or Space picks and closes, Esc closes without change and keeps focus, type-ahead jumps to the next option starting
-  with the typed letters. The dots are `aria-hidden`; the group label says the category.
+  `role="option"` with `aria-selected`; each status group is a `role="group"` with an `aria-label` naming its category
+  ("Done · CRM's workflow", "In progress", "To do", "Cancelled"), as `group-picker.mjs` does, so a screen reader hears a
+  status's category; the group's visible label and the separator are `role="presentation"` (decided 2026-10-30). Keys:
+  ↑ ↓ Home End move, Enter or Space picks and closes, Esc closes without change and keeps focus, type-ahead jumps to the
+  next option starting with the typed letters. The dots are `aria-hidden`; the group says the category.
 - Projects popover: `role="dialog"` labelled "Projects you work on"; focus in the search box; the listbox
   `aria-multiselectable="true"`; ↑ ↓ and Space toggle, Enter on the search toggles the active row, Esc closes and focuses
   **Add projects…**.
@@ -309,3 +312,24 @@ team policy for these settings.
 **Decided by the user (2026-10-29):** the Labs flag (D16); A6.1's All projects word search looks only in the picked
 projects (D9; lands with the `importOptions` filter); Azure Boards' Resolved counts as in progress, so Any Done status
 means Completed (D1).
+
+**Decided 2026-10-30 (the lead, on the plan review's questions; the plan's "Decided 2026-10-30" and its tasks carry them):**
+1. Jira's transition `POST`: a 4xx refusal other than 401 and 429 is the "Not moved: Jira refused the move to <status>: …"
+   line; a 5xx, network error, timeout, 401 or 429 throws, so the write-back fails and Report result retries (§7, D10). When
+   Jira refuses to let Worca read the status or the transitions (403 or 404): "Not moved: Jira did not let Worca read <KEY>'s
+   transitions (<Jira's message, or "Jira gave no reason">)."
+2. Copy: "only Won't Do leads to a Done status" for one, "only Won't Do and Duplicate lead …" for several; "Jira gave no
+   reason." when Jira sends no message.
+3. D11: the audit line and the ticket's comment are enough for PR 1; the results view's "reported · <note>" is out of scope
+   (the control has no caller in the UI). The route still returns `{ note, moved }`.
+4. Report back's hint for a carried-over typed value reads "Resolve (as typed)", as the sheet.
+5. Timeouts stay (30 s, and 60 s for `listProjects`); the reach sentence names the real limit: "it did not answer within 30
+   seconds" for a 30 s call.
+6. Runs record `meta.project` even with the flag off: harmless metadata, and rules then apply to runs started before the
+   flag was turned on.
+7. The flag's `since: '1.16.0'`.
+8. §11: each status group is a `role="group"` with an `aria-label`, as group-picker; the dots stay `aria-hidden`.
+9. A successful Test connection that saves a new connection turns state A into the live section without reopening.
+10. The new rule's project option reads "OPS · Operations" (key, middle dot, name).
+11. The projects popover stays right-aligned under Add projects… (board 3).
+12. At 600 px and narrower, popover rows and listbox options are at least 44 px tall too.
