@@ -71,9 +71,13 @@ Pause, Resume, Copy link and Terminal do not confirm.
 - A disabled control says why in its tooltip.
 - Progress cells stay neutral; colour sits only on the dot and the state word.
 - No emoji and no exclamation marks in the interface.
+- In a list you can select, the tick box takes the mark's place on the rail (on hover, focus, or while anything is
+  selected; always on a touch screen), so the list keeps one text edge.
+- Usage is rings around the avatar, outside in: session, week, spend (when a budget is set). Each ring shows its
+  tightest provider: neutral, amber at the warning line, red and full when reached. Never violet.
 
 ### The gate
-Every Rail page passes `plans/rail/prototype/sweep.mjs` in every case, at 900 and 375px, in both themes: no sideways
+Every Rail page passes its gate (`plans/rail/prototype/sweep.mjs` for the run page, `pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways
 scroll, no clipped text without a tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and
 dialog inside the window, no page jump on any click; and every control does something.
 
