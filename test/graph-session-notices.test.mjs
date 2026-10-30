@@ -23,6 +23,16 @@ test('one line per session, per engine and gate', () => {
   const shared = { ...t, sessions: { s_aaaaaaaa: { mode: 'shared' } } };
   assert.deepEqual(sessionStartNotices(shared, realPortsFn(), { engine: 'cursor', verified: {}, labelOf, sharedReady: true }), ['Refine Plan and Decompose share one conversation.']);
   assert.deepEqual(sessionStartNotices(SEED_TEMPLATES[0], realPortsFn(), { engine: 'claude', labelOf }), []);
+  // A one-step session is V26's warning, not an error: it saves, and runs as its own step, so it gets no line.
+  const lone = structuredClone(SEED_TEMPLATES.find((s) => s.id === 'wf_no-clarify'));
+  lone.nodes.find((n) => n.id === 'n_refine').config.session = 's_aaaaaaaa';
+  for (const opts of [{ engine: 'claude', verified: { claude: true }, labelOf }, { engine: 'cursor', labelOf }, { engine: 'claude', verified: { claude: true }, labelOf, flagOn: false }]) {
+    assert.deepEqual(sessionStartNotices(lone, realPortsFn(), opts), [], `one step: no line (${opts.engine}, flag ${opts.flagOn !== false})`);
+  }
+  const plus = structuredClone(t);
+  plus.nodes.find((n) => n.id === 'n_plan').config.session = 's_bbbbbbbb';
+  assert.deepEqual(sessionStartNotices(plus, realPortsFn(), { engine: 'claude', verified: { claude: true }, labelOf }), ['2 steps share one session (Refine Plan + Decompose).'],
+    'beside a two-step session, only the two-step one has a line');
 });
 
 // ── v2: the Labs flag, One conversation before its runtime, three steps, a label-less card, the shipped gate ──

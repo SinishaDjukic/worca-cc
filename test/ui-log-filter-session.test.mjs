@@ -114,7 +114,9 @@ test('v2 — the run page: the tray header opens the drawer on the session; a st
   ctx.go('#running/r1/details/workflow');
   await ctx.settle(6);
   const screen = window.document.querySelector('#run-detail');
+  screen.querySelector('.rd-graph .node[data-node-id="n_plan"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));   // the drawer's opener is now the card
   const head = screen.querySelector('.rd-graph .gv-sess-head');
+  head.focus();
   head.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const drawer = screen.querySelector('.rd-sec[data-sec="workflow"] .wf-log-drawer');
   assert.equal(drawer.hidden, false);
@@ -123,6 +125,13 @@ test('v2 — the run page: the tray header opens the drawer on the session; a st
   assert.ok(only(drawer, SESSION_TEXTS));
   assert.equal(drawer.querySelector('.wf-log-sub'), null, 'the "Inside session" line is a step\'s, not the session\'s');
   assert.equal(screen.querySelector('.rd-graph [aria-current="true"]'), null, 'no card is marked: the drawer shows the session');
+  const body = drawer.querySelector('.wf-log-body');
+  body.focus();   // the focus leaves the header, or the assert below holds without the opener
+  body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(drawer.hidden, true);
+  assert.equal(window.document.activeElement, head, 'Esc returns the focus to the tray header, not to the card opened before');
+  head.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(drawer.hidden, false, 'the header opens it again');
   ctx.dispatch({ type: 'log', runId: 'r1', ts: Date.now(), source: 'session', level: 'info', text: 'Review returned', session: FIX_SID, nodeId: 'n_review' });
   ctx.dispatch({ type: 'log', runId: 'r1', ts: Date.now(), source: 'planner', level: 'info', text: 'late plan line', nodeId: 'n_plan' });
   await ctx.settle(2);
@@ -211,15 +220,20 @@ test('v3 — History: a card\'s Open in Logs is one step, so it clears the sessi
   doc.documentElement.dataset.level = 'expert';
   await openDetail(ctx, 'details/workflow');
   await settleHd(window, 6);
+  doc.querySelector('#hist-detail .hd-graph .node[data-node-id="n_plan"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));   // the drawer's opener is now the card (correction 17)
+  await settleHd(window, 4);
   const head = doc.querySelector('#hist-detail .gv-sess-head');
   head.focus();
   head.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   await settleHd(window, 4);
   const drawer = doc.querySelector('#hist-detail .wf-log-drawer');
   assert.equal(drawer.hidden, false);
-  drawer.querySelector('.wf-log-body').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(drawer.querySelector('.wf-log-title').textContent, T.label);
+  const body = drawer.querySelector('.wf-log-body');
+  body.focus();   // the focus leaves the header, or the assert below holds without the opener
+  body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(drawer.hidden, true);
-  assert.equal(doc.activeElement, head, 'a session target has no card: the focus returns to its header');
+  assert.equal(doc.activeElement, head, 'a session target has no card: the focus returns to its header, not to the card opened before');
   head.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await settleHd(window, 4);
   drawer.querySelector('.wf-log-full').click();
