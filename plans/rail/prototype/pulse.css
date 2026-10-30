@@ -21,9 +21,6 @@
 .pz-top{height:48px;flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px 0 24px;border-bottom:1px solid var(--line);}
 .pz-top-l{min-width:0;}
 .pz-top-r{display:flex;align-items:center;gap:8px;flex:none;}
-.pz-crumb{display:flex;align-items:center;gap:6px;min-width:0;font-weight:600;color:var(--ink);white-space:nowrap;}
-.pz-crumb-p{color:var(--ink-2);font-weight:400;}
-.pz-sep{color:var(--ink-3);font-weight:400;}
 .pz-pulse-b[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
 .pz-page{padding:24px 24px 40px;min-width:0;max-width:760px;}
 
@@ -91,10 +88,12 @@
 .pz-advice-t{margin:0;font-size:var(--fs-meta);line-height:1.5;color:var(--ink-2);}
 .pz-advice-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
 
-/* The popover under the Pulse button: Now and Updates, then the foot. */
-.pz-popover{position:absolute;top:52px;right:8px;z-index:44;display:flex;flex-direction:column;width:min(400px,calc(100% - 16px));max-height:520px;
+/* The panel under the Pulse button is all of Pulse: Now and Updates with ⋯ beside them; the body scrolls. */
+.pz-popover{position:absolute;top:52px;right:8px;z-index:44;display:flex;flex-direction:column;width:min(420px,calc(100% - 16px));max-height:560px;
   border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}
-.pz-ptabs{flex:none;padding:0 16px;}
+.pz-phead{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 16px;box-shadow:inset 0 -1px 0 var(--line);}
+.pz-ptabs{min-width:0;box-shadow:none;}
+.pz-popover .pz-bar{margin-top:4px;}
 .pz-pbody{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 16px 8px;}
 .pz-pfoot{flex:none;display:flex;justify-content:space-between;gap:8px;padding:8px;border-top:1px solid var(--line);}
 .pz-popover .pz-sec{margin-top:12px;}
@@ -106,6 +105,7 @@
 .pz-meta{display:flex;flex-wrap:wrap;gap:0 8px;margin:4px 0 0 var(--edge);font-size:var(--fs-meta);color:var(--ink-2);}
 .pz-dotsep{color:var(--ink-3);}
 .pz-tabs{margin:16px 0 0 var(--edge);}
+.pz-meta.pz-tabmeta{margin-top:12px;}
 .tab .n{font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
 .pz-panel{min-width:0;}
 

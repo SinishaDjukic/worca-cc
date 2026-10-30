@@ -76,7 +76,10 @@ Pause, Resume, Copy link and Terminal do not confirm.
 - Usage is rings around the avatar, outside in: session, the long window (week, day or month), spend (when a budget
   has a limit). Each ring shows its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at the
   warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in one
-  place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run and Resume.
+  place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run and Resume,
+  and only when the run's estimate does not fit in what is left (with no estimate, at the warning line).
+- Pulse is the panel under its top-bar button, with no page of its own. Every notification setting lives in one
+  Settings tab, Notifications.
 
 ### The gate
 Every Rail page passes its gate (`plans/rail/prototype/sweep.mjs` for the run page, `pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways

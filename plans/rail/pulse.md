@@ -12,12 +12,12 @@ among them).
 
 | Today | With Pulse |
 |---|---|
-| Activity popover (live state), Schedules' notification log, desktop alerts, chat notices and toasts, each with its own switches | One hub, **Pulse**, under one top-bar button: **Now** (live state, today's Activity) and **Updates** (what happened, stored, read and cleared) |
-| Desktop switches in Settings › General › Alerts, chat switches in Settings › Chat | One page, **Settings › Notifications**: one row per group, one sentence per row |
+| Activity popover (live state), Schedules' notification log, desktop alerts, chat notices and toasts, each with its own switches | One hub, **Pulse**: the panel under one top-bar button, with no page of its own: **Now** (live state, today's Activity) and **Updates** (what happened, stored, read and cleared) |
+| Desktop switches in Settings › General › Alerts, resume after a limit in Settings › Runs, chat switches in Settings › Chat | One tab, **Settings › Notifications** (after General): every notification setting and what a start does near a limit, one sentence per row |
 | A usage limit is known only when a run hits it and pauses | Usage is visible before it stops anything: **rings on the avatar**, a **Limits** row in Now when one is near, and an update when it crosses the warning line, is reached or resets |
 | The avatar ring shows spend against a budget | The avatar shows every window that can stop a run: **session**, the **long window** (week, day or month), and **spend** when a budget has a limit; each ring shades along its arc |
 | The account menu opens on the spend card | The menu keeps its rows; the spend card moves into its last row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
-| A run starts and pauses at the limit | Before it starts, New run says the limit is near and offers a harness with room or a start after the reset; slices and scheduled runs follow a setting |
+| A run starts and pauses at the limit | Before it starts, Pulse checks the run's **estimate** (its size, and what runs like it used) against what is left: New run warns only when it will not fit and offers a harness with room or a start after the reset; slices, queued and scheduled runs move, wait, or let a smaller start that fits go first |
 
 ## 2. The rule that places everything
 
@@ -36,31 +36,35 @@ Usage follows the same rule:
   else nothing. Running runs do not badge it (they are not news); the button's tooltip says "2 running".
 - Tooltip: what the badge counts, in words ("2 need you · 5 unread · 2 running").
 
-### 3.2 The popover (a glance)
-- Tabs **Now** and **Updates**, each with its count as a caption (Rail: a count is a caption, never a chip).
+### 3.2 The Pulse panel (all of Pulse)
+Pulse is the panel under its button, over whatever page is open; there is no Pulse page (a page would hold the same
+two lists twice). On a narrow screen the panel is the window's width.
+- Head: tabs **Now** and **Updates**, each with its count as a caption (Rail: a count is a caption, never a chip), and
+  ⋯ at the right: Mark all read, Clear read, Notification settings. The body scrolls; the head stays.
 - **Now**: the groups that have rows, in this order: Needs you (amber dot), Limits (amber or red), Running (peach,
-  pulses), Scheduled (hollow). Empty: "Nothing needs you. Nothing is running."
-- **Updates**: the latest unread rows, newest first. Empty: "You are up to date."
-- Foot: **Open Pulse** on the left; **Mark all read** on Updates, on the right.
-- A row opens its one target (Pulse Center §6.5) and marks it read. The popover is a view; it holds no fact of its own.
-
-### 3.3 The Pulse page
-One rail, as every Rail page:
-- Title **Pulse**; the metadata line `2 need you · 1 limit near · 2 running · 5 unread` (each figure once; the
-  popover links here).
-- One action: **Mark all read**; ⋯ holds Clear read, Notification settings.
-- Tabs **Now** and **Updates**.
-- **Updates** is a divided list grouped by day (Today, Yesterday, Earlier), on the 20px rail: the unread dot, a title
+  pulses), Scheduled (hollow; a slice, queued or scheduled run says what it will do near a limit, §4.5). Empty:
+  "Nothing needs you. Nothing is running."
+- **Updates**: a divided list grouped by day (Today, Yesterday, Earlier), on the 20px rail: the unread dot, a title
   line, a meta line (group · project · detail), the time at the right. A `needs` row still open has the amber dot; once
   answered it reads Resolved.
 - The list's sentence picks what it shows: `Showing [unread ▾] from [all groups ▾]`. Shows: Unread, All, Needs you,
-  Problems, Cleared.
+  Problems, Cleared. Empty: "You are up to date."
 - Selection as the Runs list: tick boxes; the bar `2 selected · Mark read · Clear · ✕` replaces the sentence while
   anything is ticked. Clear is a soft dismiss with Undo in the toast; it does not confirm (it can be taken back).
   Clearing an open `needs` row leaves the run waiting; the bar's tooltip says so.
+- A row opens its one target (Pulse Center §6.5) and marks it read; a Limits row opens Usage and costs. A desktop or
+  chat notice opens the panel at its row.
 
-### 3.4 Settings › Notifications
-Two sections, one rail. Every choice is a **picker in its sentence** (Rail: never a toggle row or radio cards).
+### 3.3 Settings › Notifications
+A tab of its own in Settings, after General, at every interface level. It holds every setting about what reaches you
+and what a start does near a limit, so nothing about notifications stays elsewhere:
+- **Alerts** leaves Settings › General: its Desktop notifications and Badge switches and Send test become the Desktop
+  and Badge rows below (the same `alerts.mjs` values, per browser).
+- **Resume runs automatically when a usage limit resets** leaves Settings › Runs › Budget & cost limits: it becomes the
+  After a pause row. The cost limits themselves stay in Runs (they set spend; they do not notify).
+- Chat channels stay in Settings › Chat (they are chat's own setup); the Chat row links there.
+
+Three sections, one rail. Every choice is a **picker in its sentence** (Rail: never a toggle row or radio cards).
 
 **How Worca reaches you** (the channels)
 | Row | Sentence | Notes |
@@ -91,11 +95,12 @@ Two sections, one rail. Every choice is a **picker in its sentence** (Rail: neve
 - Usage and spend has one more picker in its sentence: `warn at [80% ▾]` (70, 80, 90%). It sets the line for the
   rings' amber, the Limits row in Now, the `usage.near` update and what "near" means below.
 
-**When a limit is near** (the last section): what a start does when its harness is at or over the warning line (§4.5).
+**When a limit is near** (the last section): what a start does when the run will not fit in what is left (§4.5).
 | Row | Sentence | Choices (default first) |
 |---|---|---|
 | You start it | `New run and Resume near a limit [suggest one with room ▾]` | suggest one with room · pick one with room · start after the reset · start as chosen |
 | Worca starts it | `A slice or scheduled run near a limit [moves to one with room ▾]` | moves to one with room (else waits) · waits for the reset · starts anyway |
+| After a pause | `A run paused at a limit [resumes after the reset ▾]` | resumes after the reset (5 minutes after, `limit-resume.mjs`) · waits for you |
 
 ## 4. Usage: any harness, any window
 
@@ -162,36 +167,55 @@ under Appearance (the corner it opens from is right below it).
 `usage.reached` is the one notice for the harness; each paused run keeps its own pause notice on its page
 (`limit-notice.mjs`, unchanged) and does not raise its own `run.paused` update for the same limit.
 
-### 4.5 When a limit is near: warn before it starts, and give the run to a harness with room
-A run that starts on a harness near its limit may pause halfway; the time to say so is before it starts. "Near" is at
-or over the warning line; the setting is Settings › Notifications › When a limit is near (§3.4).
+### 4.5 When a limit is near: check the estimate, warn before it starts, give the run to a harness with room
+A run that starts on a harness without room for it may pause halfway; the time to say so is before it starts. Pulse
+does not guess from the share alone: a small run at 86% still fits, a large one at 70% may not.
+
+**The estimate.** Each run has one before it starts, from two things Worca already has:
+- its **size**: Shaper's assessment (`small`, `medium`, `large`; `shape/nudge.mjs`), shown in New run as a picker in
+  its sentence (`A [large ▾] task`) so a wrong size is corrected where it is read;
+- **what runs like it used**: the median, per window, of done runs with the same agents and size in the last 60 days
+  (`shape/estimate.mjs` medians, split by size), read from the harness's usage before and after each run. A harness's
+  own figures, since a Codex session is not a Claude session. Fewer than 3 such runs: no estimate.
+
+**Near** is then: the run's share plus what is used is over 100% in any window of the harness (`needs about 28% of
+Claude Code's session; 14% is left`). With no estimate, it falls back to the warning line (at or over it). A harness
+with room is one where the run fits.
 
 **A harness with room**: set up, able to run every agent of the run's workflow (the engine locks of
-`engine-locks.mjs` hold), and every window under the warning line; the one with the most room first. Each agent runs
-the same tier on it (`model-tiers.mjs`), so the switch keeps the run's shape. With none, the only offer is the reset.
+`engine-locks.mjs` hold), and the run fits there (with no estimate: every window under the warning line); the one with
+the most room first. Each agent runs the same tier on it (`model-tiers.mjs`), so the switch keeps the run's shape.
+With none, the only offer is the reset.
 
-**You start it** (New run, Resume). The sentence that picks the harness stays where it is (`Runs on [Claude Code ▾]`,
-each choice showing its windows: `session 86%, week 52%`). Under it, on the rail with an amber dot, one note, by the
+**You start it** (New run, Resume). Two sentences under the task: `A [large ▾] task · about 12% of Claude Code's
+session, 52% left` (the figures only while it fits; the note says them when it does not, one place per fact), and
+`Runs on [Claude Code ▾]`, each choice showing its windows and what this run adds: `session 86% +28, week 52% +7`.
+When it fits, nothing more (quiet until needed). When it does not, on the rail with an amber dot, one note, by the
 setting:
-- *suggest one with room* (default): `Claude Code's session is at 86% and resets 16:40. This run may pause before it
-  finishes. Codex has room.` · **Run on Codex** · **Start at 16:40**. Run on Codex changes the sentence; Start at turns
+- *suggest one with room* (default): `This run needs about 28% of Claude Code's session; 14% is left until 16:40. It
+  may pause before it finishes. Codex has room.` · **Run on Codex** · **Start at 16:40**. Run on Codex changes the sentence; Start at turns
   the start button into **Start at 16:40** and the note says when, with **Start now instead**.
-- *pick one with room*: the sentence opens on Codex, and a grey line says why: `Worca picked Codex: Claude Code's
-  session is at 86%.` Changing it back is the sentence.
+- *pick one with room*: the sentence opens on Codex, and a grey line says why: `Worca picked Codex: this run needs
+  about 28% of Claude Code's session and 14% is left.` Changing it back is the sentence.
 - *start after the reset*: the start button is **Start at 16:40** from the start, with Start now instead.
 - *start as chosen*: the note alone, no buttons.
 - Used up (red dot): `Codex's weekly limit is used up until Mon 09:00. It starts at Mon 09:00, when that resets.` A
   harness with room is still offered; Start now is not (it would only pause).
 
-**Worca starts it** (a Shaper slice, a scheduled run): nobody is there to ask, so it follows the setting and says what
-it did:
+**Worca starts it** (a Shaper slice, a queued run, a scheduled run): nobody is there to ask, so each start is checked
+against its own estimate when its turn comes, follows the setting, and says what it did:
 - *moves to one with room* (default): it starts on the harness with the most room and **keeps it to the end** (a run
   never changes harness halfway); an update `usage.moved` says so. With none, it waits.
 - *waits for the reset*: it starts when the window resets; `usage.held`.
 - *starts anyway*: as today; it may pause and resumes by itself after the reset (`limit-resume.mjs`).
+- **Reprioritise**: a start that waits does not hold up the line. The next start that fits goes ahead of it on that
+  harness (`Rename the config flag · Goes ahead of slice 3 of 4 on Claude Code: it fits, about 4% of its session`), so
+  the window left before the reset is used by work that can finish in it. Order is otherwise kept, and a slice still
+  waits for the slice before it.
 - **Slices**: slice k starts when slice k-1 is done (`shape-it-first.md`); the rule applies at that moment, per slice.
   Moving a slice does not touch its branch (it still starts from slice k-1's branch). Before it starts, its row in Now ›
-  Scheduled says what it will do: `Will start on Codex: Claude Code's session is at 86%`, or `Waits for 16:40: …`. With
+  Scheduled says what it will do: `Will start on Codex: it needs about 28% of Claude Code's session, 14% is left`, or
+  `Waits for 16:40: …`. With
   **Ask me before each run** on, the plan stop shows the same note as New run.
 - A run already running is not moved; its Running row and the Limits row say it may pause.
 
@@ -211,3 +235,7 @@ it did:
 - Gemini's daily window sits in the **Week** ring (the long window); the ring carries no label of its own, and the
   avatar's tooltip and the usage card call it **Day** (`Day 84% · Gemini · resets 02:00`) (30 Oct).
 - One warning line for all providers: the `warn at [80% ▾]` picker in Usage and spend, not one per provider (30 Oct).
+- No Pulse page: the panel under the button is all of Pulse (30 Oct).
+- Settings › Notifications is a tab of its own, after General; Alerts and resume after a limit move into it (30 Oct).
+- A start near a limit is judged by its estimate (size and history), not the share alone; a start that waits lets the
+  next one that fits go first (30 Oct).

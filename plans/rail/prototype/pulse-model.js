@@ -48,10 +48,23 @@
   };
   const WIN = { session: 'Session', week: 'Week', day: 'Day', month: 'Month' };
   const LONG = ['week', 'day', 'month'];
+  const WHAT = { day: 'daily requests', week: 'weekly limit', month: 'monthly requests', session: 'session' };
+
+  // What a run uses of each window, per harness and Shaper's size: the median of done runs with the same agents and size
+  // in the last 60 days (estimate.mjs, read against the harness's usage before and after each run). `N`: how many runs
+  // it comes from. A harness with no history has no estimate, and the warning line decides alone.
+  const SIZES = ['small', 'medium', 'large'];
+  const EST = {
+    claude: { small: { session: 4, week: 1 }, medium: { session: 12, week: 3 }, large: { session: 28, week: 7 } },
+    codex: { small: { session: 3, week: 1 }, medium: { session: 10, week: 3 }, large: { session: 24, week: 6 } },
+    copilot: { small: { month: 1 }, medium: { month: 3 }, large: { month: 8 } },
+    gemini: { small: { day: 2 }, medium: { day: 6 }, large: { day: 15 } },
+  };
+  const N = { small: 21, medium: 12, large: 5 };
 
   const run = (title, project, detail, time) => ({ title, project, detail, time });
   const CASES = [
-    { id: 'afternoon', label: 'A busy afternoon', desktop: 'on',
+    { id: 'afternoon', label: 'A busy afternoon', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
       needs: [run('Add CSV export to billing', 'billing-api', 'Plan asks 2 questions', '14:32'), run('Migrate cron parser', 'worca-cc', 'Gate: approve the plan', '13:40')],
       running: [run('Fix flaky login test', 'web-app', 'Build · step 3 of 5', '12 min'), run('Rename settings keys', 'worca-cc', 'Review · checks running', '4 min')],
       scheduled: [run('Nightly dependency bump', 'web-app', 'Every day at 03:00', '03:00')],
@@ -70,10 +83,12 @@
         { id: 'u6', g: 'usage', sev: 'info', title: 'Claude Code session reset · 1 run resumed', meta: 'Claude · Max · Session', time: '17:05', day: 'Yesterday', unread: false, to: 'the resumed run' },
         { id: 'u7', g: 'runs', sev: 'needs', resolved: true, title: 'Needs you · Split the auth module', meta: 'worca-cc · answered at 11:20', time: '11:02', day: 'Yesterday', unread: false, to: 'the run page' },
         { id: 'u8', g: 'projects', sev: 'info', title: 'Clone finished · acme/design-tokens', meta: 'Projects · 2.1 MB', time: '10:15', day: 'Yesterday', unread: false, to: 'the project page' }] },
-    { id: 'near', label: 'Session near its limit', desktop: 'on',
+    { id: 'near', label: 'Session near its limit', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'large' },
       needs: [],
       running: [run('Fix flaky login test', 'web-app', 'Build · step 3 of 5 · Claude Code', '12 min'), run('Rate limiting · slice 2 of 4', 'web-app', 'Build · Codex · moved from Claude Code at the start', '6 min')],
-      scheduled: [{ title: 'Rate limiting · slice 3 of 4', project: 'web-app', slice: true, on: 'claude', time: 'next' }],
+      // Worca starts these with nobody there to ask: each is checked against its own estimate when its turn comes.
+      scheduled: [{ title: 'Rate limiting · slice 3 of 4', project: 'web-app', slice: true, on: 'claude', size: 'large', time: 'next' },
+        { title: 'Rename the config flag', project: 'worca-cc', queued: true, on: 'claude', size: 'small', time: 'next' }],
       usage: [
         { p: 'claude', plan: 'Max', asOf: '14:28', win: [{ k: 'session', pct: 86, resets: '16:40' }, { k: 'week', pct: 52, resets: 'Mon 09:00' }] },
         { p: 'codex', plan: 'Plus', asOf: '14:24', win: [{ k: 'session', pct: 20, resets: '15:10' }, { k: 'week', pct: 44, resets: 'Sun 22:00' }] }],
@@ -83,7 +98,7 @@
         { id: 'n1', g: 'usage', sev: 'problem', title: 'Claude Code session at 80% · resets 16:40', meta: 'Claude · Max · runs on it may pause before it resets', time: '14:20', day: 'Today', unread: true, to: 'the usage card' },
         { id: 'n2', g: 'runs', sev: 'info', title: 'Run finished · Tidy the settings page', meta: 'worca-cc · 18 min · $1.42', time: '13:40', day: 'Today', unread: true, to: 'the run page' },
         { id: 'n3', g: 'prs', sev: 'info', title: 'Fix started · #962 Retry on 502', meta: 'web-app · watched PR · 2 checks failing', time: '11:30', day: 'Today', unread: false, to: 'the fix run' }] },
-    { id: 'reached', label: 'Weekly limit reached', desktop: 'on',
+    { id: 'reached', label: 'Weekly limit reached', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
       needs: [],
       running: [run('Rename settings keys', 'worca-cc', 'Review · checks running', '4 min')],
       scheduled: [run('Nightly dependency bump', 'web-app', 'Every day at 03:00', '03:00')],
@@ -95,7 +110,7 @@
         { id: 'r1', g: 'usage', sev: 'problem', title: 'Codex weekly limit reached · 2 runs paused', meta: 'OpenAI · Plus · they resume by themselves Mon 09:05', time: '11:05', day: 'Today', unread: true, to: 'Runs, filtered to the paused runs' },
         { id: 'r2', g: 'runs', sev: 'problem', title: 'Run failed · Update Node to 24', meta: 'web-app · Test step · 3 tests failed', time: '09:58', day: 'Today', unread: true, to: 'the run page, on the step that stopped' },
         { id: 'r3', g: 'usage', sev: 'problem', title: 'Codex week at 80% · resets Mon 09:00', meta: 'OpenAI · Plus', time: '16:12', day: 'Yesterday', unread: false, to: 'the usage card' }] },
-    { id: 'budget', label: 'Spend near its budget', desktop: 'off',
+    { id: 'budget', label: 'Spend near its budget', desktop: 'off', task: { title: 'Add rate limiting to the public API', size: 'medium' },
       needs: [run('Add CSV export to billing', 'billing-api', 'Cost cap reached at $5.00', '10:12')],
       running: [],
       scheduled: [],
@@ -104,7 +119,7 @@
       updates: [
         { id: 'b1', g: 'runs', sev: 'needs', open: true, title: 'Cost cap reached · Add CSV export to billing', meta: 'billing-api · paused at $5.00 · raise the cap or stop', time: '10:12', day: 'Today', unread: true, to: 'the run page at its cost cap' },
         { id: 'b2', g: 'usage', sev: 'problem', title: 'Spend at 80% of $100 in October', meta: 'Budget · $80.40 of $100', time: '09:30', day: 'Today', unread: true, to: 'Costs' }] },
-    { id: 'gemini', label: 'Gemini only', desktop: 'on',
+    { id: 'gemini', label: 'Gemini only', desktop: 'on', task: { title: 'Write the API reference for v2', size: 'large' },
       needs: [],
       running: [run('Write the API reference', 'docs-site', 'Build · step 2 of 4', '7 min')],
       scheduled: [],
@@ -112,7 +127,7 @@
       budget: null,
       updates: [
         { id: 'g1', g: 'usage', sev: 'problem', title: 'Gemini daily requests at 80% · resets 02:00', meta: 'Gemini · Free · 800 of 1,000 requests', time: '13:44', day: 'Today', unread: true, to: 'the usage card' }] },
-    { id: 'quiet', label: 'All quiet', desktop: 'blocked',
+    { id: 'quiet', label: 'All quiet', desktop: 'blocked', task: { title: 'Add rate limiting to the public API', size: 'small' },
       needs: [], running: [], scheduled: [],
       usage: [{ p: 'claude', plan: 'Pro', asOf: '09:15', win: [{ k: 'session', pct: 5, resets: '13:30' }, { k: 'week', pct: 12, resets: 'Thu 08:00' }] }],
       budget: { period: 'this week', spent: 18.2, saved: 402.1 },
@@ -160,17 +175,24 @@
     return out;
   }
 
-  // A provider's tightest window at or over the warning line, or null: what a start on it would run into.
-  function near(c, p, warnAt) {
+  // What a run of this size uses of each window on a harness, or null when it has no history.
+  const est = (p, size) => (size && EST[p] && EST[p][size]) || null;
+  // The window a start on this harness would run into, or null. With an estimate: one whose use plus the run's share is
+  // over 100%, so a small run near a limit still starts. With none: one at or over the warning line.
+  function near(c, p, warnAt, size) {
     const u = c.usage.find((x) => x.p === p); if (!u) return null;
-    const w = u.win.filter((x) => x.pct >= warnAt).sort((a, b) => b.pct - a.pct)[0];
-    return w ? { ...w, p, name: PROVIDER[p].name, what: { day: 'daily requests', week: 'weekly limit', month: 'monthly requests', session: 'session' }[w.k] } : null;
+    const e = est(p, size);
+    const hit = u.win.map((w) => ({ ...w, need: e && e[w.k] != null ? e[w.k] : null }))
+      .filter((w) => (w.need != null ? w.pct + w.need > 100 : w.pct >= warnAt))
+      .sort((a, b) => b.pct + (b.need || 0) - (a.pct + (a.need || 0)))[0];
+    return hit ? { ...hit, p, name: PROVIDER[p].name, what: WHAT[hit.k], left: Math.max(0, 100 - hit.pct) } : null;
   }
-  // The harnesses with room: set up, able to run the run, every window under the warning line; the most room first.
-  function room(c, warnAt, except) {
-    return c.usage.filter((u) => u.p !== except && PROVIDER[u.p].runs && u.win.length && u.win.every((w) => w.pct < warnAt))
+  // The harnesses with room: set up, able to run the run, and the run fits (or, with no estimate, every window under the
+  // warning line); the most room first.
+  function room(c, warnAt, except, size) {
+    return c.usage.filter((u) => u.p !== except && PROVIDER[u.p].runs && u.win.length && !near(c, u.p, warnAt, size))
       .sort((a, b) => Math.max(...a.win.map((w) => w.pct)) - Math.max(...b.win.map((w) => w.pct))).map((u) => u.p);
   }
 
-  window.PulseModel = { GROUPS, LEVELS, WHERE, PROVIDER, CASES, qualifies, tone, rings, limits, near, room, winWord, fig, usd, spendPct };
+  window.PulseModel = { GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
 })();
