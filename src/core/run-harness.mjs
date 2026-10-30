@@ -1544,7 +1544,9 @@ export class RunHarness extends EventEmitter {
       // row says plugin, with the same source_ref a run started from that ticket would have, so write-back reports to it.
       const reportTo = source.type !== 'plugin' && this.opts.reportTo && typeof this.opts.reportTo === 'object' ? this.opts.reportTo : null;
       const reportMeta = reportTo ? { plugin: reportTo.plugin, sourceId: reportTo.sourceId, taskId: reportTo.taskId, profile: reportTo.profile || null,
-        inputs: reportTo.inputs && typeof reportTo.inputs === 'object' ? reportTo.inputs : null, url: reportTo.url ?? null, title: reportTo.title ?? null } : null;
+        inputs: reportTo.inputs && typeof reportTo.inputs === 'object' ? reportTo.inputs : null, url: reportTo.url ?? null, title: reportTo.title ?? null,
+        // Ticket updates (D6): a Requirements start names the link's tracker project, so write-back picks that project's rule
+        ...(typeof reportTo.project === 'string' && reportTo.project ? { project: reportTo.project } : {}) } : null;
       this.pipeline = await createPipeline(this.projectDir, {
         promptText: input.promptText,
         // ?? keeps the legacy both-set corner byte-identical: inline prompt wins the

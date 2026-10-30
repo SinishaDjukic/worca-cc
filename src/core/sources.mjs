@@ -157,6 +157,9 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
         inputs: src.inputs && typeof src.inputs === 'object' ? src.inputs : null,
         url: task.url ?? null,
         title: task.title ?? null,
+        // Ticket updates (D6): the ticket's project as the tracker names it (a listProjects value), pinned now so write-back
+        // picks its rule; the host never parses an id. Left out when the connector does not say.
+        ...(typeof task.meta?.project === 'string' && task.meta.project.trim() ? { project: task.meta.project.trim() } : {}),
       },
     };
   }
