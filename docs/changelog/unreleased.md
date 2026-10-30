@@ -30,7 +30,7 @@ Workflow tests (Labs, flag `workflowTests`) add a Tests page to a workflow.
 - Compare shows the tries passed, the cost and time per try, what got better or worse per example, and each example side by side.
 - Connectors: by default a test's tries use stand-ins for your connectors, so nothing is posted or sent, and one example's page shows what would have been sent. Choose Real to use your real connectors.
 - A test of a workflow runs one at a time; while it runs, Test a version and Try it once now wait.
-- Tests work for workflows without a project for now. Their runs stay out of the Runs list, Statistics and team metrics, but count in the spending limit.
+- Their runs stay out of the Runs list, Statistics and team metrics, but count in the spending limit.
 
 Chips: Tests · Test a version · Compare · experimental: turn it on in Settings › Labs
 
@@ -39,6 +39,26 @@ Read it: [Where Worca keeps its state](../storage.md)
 Pull requests (add each number when it opens):
 
 - Workflow tests (#<PR>)
+
+## Workflow tests on a project (Labs, Part 3a)
+
+**Test workflows that change a project's code, without touching your folder.**
+
+- An example can name a Git project and a start point: a commit, kept the same until you change it, so two versions start from exactly the same code. Keep your changes that are not committed yet with it if you want. Worca says when the project has moved on, and Start from the latest moves the example.
+- Each try works in Worca's own copy of the project. Your folder and your branches are never touched, and the copy of each try is deleted after its checks. The list of changes and the full diff stay to look at.
+- Before each try, Worca can run a setup command (filled in from the project's setup, such as `npm ci`). If it fails, the test stops and no try counts as failed.
+- A new automatic check: The command passes (such as `npm test`), with its summary line. Text checks can read a file of the project.
+- Nothing leaves a try, with any engine and also with Real connectors: pushes, pull requests, issues and publishing are stopped and listed under Would have sent. It is not a network block yet: a program's own web calls are not stopped.
+- Test a version says how much disk and time a test needs, and refuses to start when the disk is too full.
+- Add from a past run takes project runs too: the example starts where the run started.
+
+Chips: Tests · Where it starts · The command passes · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests on a project (#<PR>)
 
 ## Requirements (experimental)
 

@@ -231,6 +231,45 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
 - `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
   Test a version can name the ones a pretend try switches off.
 
+### Workflow tests on a project (v81)
+
+Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
+
+- `wf_test_example_projects`: one row per example that works on a project:
+  - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer
+    registered, never the key), the commit the example starts from (`start_sha`), the branch it was taken from
+    (`start_ref`) and that commit's date;
+  - the person's uncommitted changes at save time, as a binary patch (`changes`, at most 5 MB, with its sha256), when they
+    chose to keep them;
+  - `start_commit`: the commit tries start from. It is `start_sha` itself, or, with changes, Worca's own commit of `start_sha`
+    plus the patch, made in Worca's copy with a fixed identity and date so it is the same every time;
+  - the "Before each try, run" command (`setup_cmd`, one line of at most 4000 characters; NULL = no setup).
+- `wf_test_tries` gains `start_commit`, `disk_bytes` (the checkout's size after its setup, measured once per example and start),
+  `setup` (JSON: the command, ok, exit code, whether it ran out of time, how long it took and the last 40 lines of its output,
+  at most 8 KB) and `changes` (JSON: the first 50 changed files with their status and line counts, and the totals).
+- **Worca's copy of a project** (`<worcaHome>/workflow-tests/repos/<projectKey>`): a `git clone --local --no-checkout` of
+  the project with no remote, `core.longpaths` on and automatic gc and maintenance off. Start points are pinned as
+  `refs/worca-tests/<sha>`. Each try is a worktree of it under its run folder (`<worcaHome>/runs/<pipelineId>/repos/<projectKey>`),
+  on its own branch (`worca-cc/…`). Worca removes the checkout, the branch and the run folder after the try's checks. At boot,
+  it also removes what a restart left. `projectKey()` answers the real project's key for the copy and its worktrees, so a try
+  reads the real project's settings and its row carries the real key. The person's own repository is only ever read.
+- A try's pipeline folder keeps `results.json` and `diff-patch.patch` (what it changed), `try-setup.json` (its setup run,
+  the same record as the row's `setup`), and in `connector-calls.ndjson` every push, pull request, issue, publish, image push
+  or writing web request the outward guard stopped (`guard: true`), beside a pretend try's connector calls.
+- **The outward guard** (every try, with or without a project, Pretend or Real) lives in each try's environment and
+  settings; it stores nothing beyond the folders below and the calls above:
+  - every engine gets the env layers: the stand-ins first on PATH, git that cannot sign in (no terminal prompt, no SSH, no
+    credential helper), the forge CLIs' config folders pointed at empty ones, and the forge, CI and publish tokens removed
+    from the environment. On Windows, `WSLENV` carries the same into WSL. The setup step alone keeps the install-side
+    registry tokens (`NPM_TOKEN` and the like), never a forge, CI or publish one; the agents and the checks get the full strip;
+  - Claude Code also gets a `PreToolUse` hook on its Bash and PowerShell tools and the `TRY_DENY` deny rules for both. The
+    hook answers with a structured deny when the probed Claude Code is 2.1.304 or later, else with exit 2;
+  - it is not a network block yet: a program's own web calls are not stopped, nor, with an engine other than Claude Code, a
+    publish that signs in with a token kept in a file such as `~/.npmrc` (the 3a plan's D56 lists every limit).
+- `<worcaHome>/workflow-tests/bin`: the `gh`, `glab` and `az` stand-ins a try finds first on its PATH (sh and `.cmd`). They
+  write the call down and answer "Not sent: this is a test.".
+  `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
+
 ### Run groups (v65)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:

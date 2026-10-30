@@ -32,11 +32,11 @@
 | D9 | Everything visible and every new route is behind the experimental flag `workflowTests`. Snapshots (D3) are always taken; they are data only. While the flag is off, runs ignore `live_version_no` and use the row. |
 | D10 | UI words, for domain experts: Versions, version, draft, "Save version", "Use v5 for new runs", "New runs use this", "Restore into draft". Never "revision", "rev", "fingerprint" or "live". |
 | D11 | UI level: Simple, as #721 argues: the way back must be at every level that can edit. |
-| D12 | Examples travel with an export (Part 4). Tests count in the normal spending limit, with an optional test share and their own Statistics tile (Part 5). Colleague reviews use a review file until Worca has login (Part 4). Real use is measured only where Worca sees the kept result, per version, team setting off by default (Part 5). The checking model is chosen per example (Part 3). There is no sharing gate (Part 2 shows the latest test; the person decides). |
+| D12 | Examples travel with an export (Part 5). Tests count in the normal spending limit, with an optional test share and their own Statistics tile (Part 6). Colleague reviews use a review file until Worca has login (Part 5). Real use is measured only where Worca sees the kept result, per version, team setting off by default (Part 6). The checking model is chosen per example (Part 4). There is no sharing gate (Part 2 shows the latest test; the person decides). |
 | D13 | A workflow's **Tests** page (Part 2) runs versions with `workflowUse: 'draft' \| <versionNo>` through the same run path. Part 1 adds that option so Part 2 needs no engine change. |
 | D15 | Every screen that shows or matches what a workflow will run reads what the run uses, `readRunnableWorkflow(id, { use: 'live' })`: the New run form and the Ask run card (`GET /api/workflows/:id?use=live`), and Auto and Ask twin matching (`autoCandidates`). The Composer opens the draft. An Auto run records `manifest.workflowVersion` like any run (D8). |
 | D16 | The Use dialog lists only graph changes (`changesFromInUse`): every version runs today's Library text (D6), so a Library edit is no difference between versions. When a version recorded older agent or script text, the dialog says once: "Agents and scripts edited in the Library since are used by every version." The draft status and Save version keep "changed in the Library", where it is true. |
-| D14 | Unreliable criteria (Part 3) still run and show, but do not decide better or worse. A criterion becomes unreliable only after ≥ 10 answers. |
+| D14 | Unreliable criteria (Part 4) still run and show, but do not decide better or worse. A criterion becomes unreliable only after ≥ 10 answers. |
 | D17 | Export picks what it exports (decided 2026-10-26, canvas board 21 "Version" field). Every export path (JSON file, Claude Code skill, Worca plugin to a folder or a marketplace) takes `use`: 'draft' or a version number; omitted = 'draft' (today's behaviour, API and CLI unchanged). The Export dialog shows a Version field only with the flag on and at least one version; it defaults to the version new runs use. |
 | D18 | Automatic checks are built-in exact checks anyone can fill in (length in words, sections, must or must not mention, a file in the result) plus Library scripts for developers; no AI. See [workflow-tests-part2-plan.md](workflow-tests-part2-plan.md) D18. |
 | D19 | Test tries use no memory: nothing is mounted, nothing is written back. See [workflow-tests-part2-plan.md](workflow-tests-part2-plan.md) D19. |
@@ -2127,7 +2127,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Parts 2–5 (outline; detailed tasks are written when the part before is merged)
+## Parts 2–6 (outline; detailed tasks are written when the part before is merged)
 
 ### Part 2 — Examples and testing a version: the detailed plan is [workflow-tests-part2-plan.md](workflow-tests-part2-plan.md) (it supersedes this outline)
 
@@ -2160,7 +2160,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Add from a past run, without AI-suggested criteria
   - Test a version, while it runs, Compare (by example), and one example side by side
 
-### Part 3 — Your criteria, checked by Worca (boards 2, 10–13)
+### Part 3 — Project workflows: the detailed plans are [workflow-tests-part3a-plan.md](workflow-tests-part3a-plan.md) (3a: git projects, Worca's copy, the outward guard, the command check) and the 3b plan to come (plugins off in Pretend, the file-scope checks, the before-and-after command run)
+
+### Part 4 — Your criteria, checked by Worca (boards 2, 10–13)
 
 - **Judge:** a helper call shaped like `callModel` (src/core/requirements/interview.mjs:227): no tools, a replaced system prompt, the model chosen per example (D12). It returns yes/no + reason + proof quote; the proof is checked by text search.
 - **Spend:** recorded in a new `test_cost_ledger`, counted in `totalWindowSpendUsd` (cost-budget.mjs:114).
@@ -2172,13 +2174,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - **Trust marks:** D14 (≥ 10 answers).
 - **UI:** Add a check, Check the checker, Compare by criterion, the trust report, AI-suggested criteria in "Add from a past run".
 
-### Part 4 — Colleagues, harder examples, export (boards 14–18, 21)
+### Part 5 — Colleagues, harder examples, export (boards 14–18, 21)
 
 - **Review file:** a self-contained HTML (inline CSS/JS, no network) with pairs labelled A/B. The version key is kept on the author's machine in `wf_test_reviews`. The answers file is JSON with a review id and a checksum; Add answers validates both.
 - **Harder examples:** generated by a model call from existing examples (conflict, gap, hidden instruction, rewording, size). The person picks which to keep.
 - **Export:** "Include the test examples" in `exportWorkflowPlugin` (workflow-export.mjs:1048) and the JSON export (workflow-share.mjs:118). Files and liked results are a second box. For a marketplace plugin, examples are off by default.
 
-### Part 5 — Real use and the test share (boards 7, 22, 23)
+### Part 6 — Real use and the test share (boards 7, 22, 23)
 
 - **Test share:** an optional setting (percent of the spending limit) enforced at a test run's start and between tries, plus the Statistics Tests tile (stats.mjs:484, stats-view.mjs:164 `renderKpiRow`).
 - **Real use:** a team setting, off by default.
@@ -2191,7 +2193,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Ideas from other eval tools (added 2026-10-29)
 
-From the survey in [workflow-tests-eval-frameworks.md](workflow-tests-eval-frameworks.md) (deepeval, promptfoo, autoevals, openevals, Inspect, Ragas, SWE-bench, tau-bench and others). The user agreed on 2026-10-29: no eval framework becomes a Worca dependency; we borrow ideas and, where the licence allows, judge prompt texts. Part numbers below are the current ones (Part 3 = project workflows; the criteria part is Part 4).
+From the survey in [workflow-tests-eval-frameworks.md](workflow-tests-eval-frameworks.md) (deepeval, promptfoo, autoevals, openevals, Inspect, Ragas, SWE-bench, tau-bench and others). The user agreed on 2026-10-29: no eval framework becomes a Worca dependency; we borrow ideas and, where the licence allows, judge prompt texts. Part numbers below are the current ones (Part 3 = project workflows; the criteria part is Part 4; Part 5 = colleagues, harder examples and export; Part 6 = real use and the test share).
 
 - **Part 2 follow-ups (examples and testing a version):**
   - Show "passed every try" (tau-bench's pass^k) next to the pass rate.
