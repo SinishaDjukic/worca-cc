@@ -279,7 +279,11 @@ test('progress (board 35): a running project try shows its phase; an example wit
   store.updateTry(tp.id, { status: 'stopped', setup: { cmd: 'npm ci', ok: false, exitCode: 1, timedOut: false, ms: 10, tail: 'npm ERR! missing' } });
   store.updateTestRun(run.id, { status: 'stopped', stopReason: 'setup', finishedAt: new Date().toISOString() });
   const q = service.progressOf('wf_pt', run.id);
-  assert.deepEqual(q.project.setupStop, { cmd: 'npm ci', tail: 'npm ERR! missing', exampleId: withP.id, exampleName: 'Ticket 600', label: 'Your draft', tryNo: 1 });
+  assert.deepEqual(q.project.setupStop, { cmd: 'npm ci', tail: 'npm ERR! missing', exampleId: withP.id, exampleName: 'Ticket 600', label: 'Your draft', tryNo: 1, edited: false });
+  // P36: once an example of the test is edited, Finish the rest would be refused, so the page says so (edited: true).
+  const put = await call('PUT', `${WF}/examples/${withP.id}`, { request: 'a different request' });
+  assert.equal(put.status, 200, JSON.stringify(put.body));
+  assert.equal(service.progressOf('wf_pt', run.id).project.setupStop.edited, true);
   const none = store.createTestRun({ workflowId: 'wf_pt', kind: 'once', b: 'draft', bFp: 'fp', exampleIds: [without.id], tries: 1 });
   store.updateTestRun(none.id, { status: 'stopped', finishedAt: new Date().toISOString() });
   assert.equal(service.progressOf('wf_pt', none.id).project, null, 'Part 2: no project block');

@@ -59,7 +59,7 @@ test('board 35: while the test runs', () => {
   assert.equal(t.SETUP_STOP_REST, ' The test stopped, and no try counts as failed.');
   assert.equal(t.SETUP_STOP_HINT, "Setup gets the project ready before the workflow starts, so a problem there is not the workflow's fault. Cost: ");
   assert.deepEqual([t.SEE_SETUP_OUTPUT, t.SETUP_FIX_HINT, t.EDIT_EXAMPLE, t.TRY_AGAIN],
-    ['See the setup output', 'Fix the setup in the example, or in the project, then try again.', 'Edit the example', 'Try again']);
+    ['See the setup output', 'Fix the setup in the project, then try again. To change the example, start a new test.', 'Edit the example', 'Try again']);
 });
 
 test('boards 36 and 37: what changed, what would have been sent', () => {

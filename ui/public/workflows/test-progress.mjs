@@ -6,7 +6,7 @@ import { fmtUsd, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs'
 import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
 import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
-  SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, EDIT_EXAMPLE, TRY_AGAIN } from '../../../src/shared/workflow-tests/project-text.mjs';
+  SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, SETUP_EDITED_HINT, START_NEW_TEST, SETUP_NO_OUTPUT, EDIT_EXAMPLE, TRY_AGAIN } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const DOT = { passed: 'ok', failed: 'no', running: 'run' };
 /** A stored detail is one line with no full stop (runner.mjs pauseVerdict, quickCheck); a server refusal may have one. */
@@ -80,7 +80,7 @@ function setupStopCard(doc, root, runId, ss, costUsd) {
   box.append(icon(doc, 'stop', 16), words);
   const hint = el(doc, 'p', 'hint wft-setup-hint', SETUP_STOP_HINT);
   hint.append(el(doc, 'span', 'code', fmtUsd(costUsd)), doc.createTextNode('.'));
-  const log = el(doc, 'pre', 'wft-outlog', ss.tail || '');
+  const log = el(doc, 'pre', 'wft-outlog', ss.tail || SETUP_NO_OUTPUT);
   log.id = 'wft-pg-setup-log';
   log.hidden = LOG_OPEN.get(root) !== runId;
   const see = btn(doc, SEE_SETUP_OUTPUT, () => {
@@ -93,7 +93,7 @@ function setupStopCard(doc, root, runId, ss, costUsd) {
   see.dataset.focusKey = 'wft-pg-setup-see';
   const line = el(doc, 'div', 'wft-setup-line');
   line.append(see, el(doc, 'span', 'hint wft-setup-where', setupWhere(ss.exampleName, ss.label, ss.tryNo)));
-  card.append(box, hint, line, log, el(doc, 'p', 'hint wft-setup-fix', SETUP_FIX_HINT));
+  card.append(box, hint, line, log, el(doc, 'p', 'hint wft-setup-fix', ss.edited ? SETUP_EDITED_HINT : SETUP_FIX_HINT));
   return card;
 }
 
@@ -192,7 +192,9 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
   else if (p.run.stopReason === 'setup') {   // board 35: the setup failed: edit the example or try again; no cost limit to change
     const where = p.project && p.project.setupStop;
     if (where && actions.editExample) acts.append(act(EDIT_EXAMPLE, () => actions.editExample(where.exampleId), 'btn', 'wft-pg-edit'));
-    acts.append(act(TRY_AGAIN, () => actions.continue(null), 'btn btn-primary', 'wft-pg-finish'));   // Finish the rest (it checks the disk again)
+    // P36: Try again is Finish the rest, which is refused once an example of the test was edited: then a new test instead.
+    if (where && where.edited && actions.startNew) acts.append(act(START_NEW_TEST, () => actions.startNew(), 'btn btn-primary', 'wft-pg-new'));
+    else acts.append(act(TRY_AGAIN, () => actions.continue(null), 'btn btn-primary', 'wft-pg-finish'));   // Finish the rest (it checks the disk again)
   } else if (p.run.stopReason !== 'changed') {   // N5: after a change, Finish the rest would only be refused
     let capInput = null;
     // Board 27: the start dialog's cost limit beside Finish the rest, raised when the cap stopped it. Try it once now

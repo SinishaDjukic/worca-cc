@@ -2723,7 +2723,7 @@ export function migrate(db) {
     // the hoisted repairSchemaGaps (current < SCHEMA_VERSION) creates req_attachments, req_helper_messages, ledger.attachment_id /
     // helper_message_id and starts.files_json from INCREMENTAL_TABLES / INCREMENTAL_COLUMNS; the v79 and v80 DDL are IF NOT EXISTS.
     if (current < 80) db.exec(WORKFLOW_TESTS_DDL);   // v80 workflow tests; pipelines.is_test comes from INCREMENTAL_COLUMNS
-    // v81 workflow tests 3a. The repair runs again: wf_test_tries is created at v78, after the hoisted repair, so a DB
+    // v81 workflow tests 3a. The repair runs again: wf_test_tries is created at v80, after the hoisted repair, so a DB
     // coming from below 78 gets its v81 columns only from this call (v74's pattern).
     if (current < 81) { db.exec(WORKFLOW_TEST_PROJECTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);

@@ -103,7 +103,7 @@ test('board 35: the test stopped because the setup step failed', () => {
     run: { id: 9, kind: 'compare', status: 'stopped', stopReason: 'setup', stopDetail: 'The setup step failed: npm ci ended with an error.', tries: 3, a: 2, b: 'draft', exampleIds: [1] },
     done: 0, costUsd: 0, takenMs: 60000,
     rows: [{ exampleId: 1, name: 'Ticket 482', label: 'v2', dots: ['stopped', 'waiting', 'waiting'], summary: 'Not finished · 0 of 3 tried', now: null }],
-    project: { phases: null, disk: null, setupStop: { cmd: 'npm ci', tail: '> npm ci\nnpm error code EUSAGE', exampleId: 1, exampleName: 'Ticket 482', label: 'v2', tryNo: 1 } },
+    project: { phases: null, disk: null, setupStop: { cmd: 'npm ci', tail: '> npm ci\nnpm error code EUSAGE', exampleId: 1, exampleName: 'Ticket 482', label: 'v2', tryNo: 1, edited: false } },
   });
   const { root, calls } = page({ ...p, project: { ...p.project, disk: { inUseBytes: 0, needBytes: 1.2 * GB, freeBytes: 48 * GB } } });
   assert.equal(root.querySelector('.wft-pill').textContent, 'Stopped · 0 of 30 tries done');
@@ -123,10 +123,27 @@ test('board 35: the test stopped because the setup step failed', () => {
   assert.equal(root.querySelector('.wft-outlog').hidden, false);
   assert.equal(root.querySelector('.wft-outlog').textContent, '> npm ci\nnpm error code EUSAGE');
   assert.equal(root.querySelector('.wft-setup-where').textContent, 'Ticket 482, v2, try 1');
-  assert.equal(root.querySelector('.wft-setup-fix').textContent, 'Fix the setup in the example, or in the project, then try again.');
+  assert.equal(root.querySelector('.wft-setup-fix').textContent, 'Fix the setup in the project, then try again. To change the example, start a new test.');
   click([...root.querySelectorAll('button')].find((b) => b.textContent === 'Edit the example'));
   click([...root.querySelectorAll('button')].find((b) => b.textContent === 'Try again'));
   assert.deepEqual(calls, [['edit', 1], ['continue', null]]);
+});
+
+test('P36: the setup failed and an example was edited since: Start a new test replaces Try again, and the copy never points at a refused path', () => {
+  const p = progress({
+    run: { id: 9, kind: 'compare', status: 'stopped', stopReason: 'setup', stopDetail: 'The setup step failed: npm ci ended with an error.', tries: 3, a: 2, b: 'draft', exampleIds: [1] },
+    done: 0, costUsd: 0, takenMs: 60000, rows: [],
+    project: { phases: null, disk: null, setupStop: { cmd: 'npm ci', tail: '', exampleId: 1, exampleName: 'Ticket 482', label: 'v2', tryNo: 1, edited: true } },
+  });
+  const { root, calls } = page(p, { startNew: () => calls.push(['new']) });
+  assert.deepEqual(texts(root, '.wft-acts button'), ['Edit the example', 'Start a new test']);
+  assert.equal(root.querySelector('.wft-setup-fix').textContent, 'The example was edited since this test started. Start a new test to try it again.');
+  click([...root.querySelectorAll('button')].find((b) => b.textContent === 'Start a new test'));
+  assert.deepEqual(calls, [['new']]);
+  // The command printed nothing: a sentence, not an empty box.
+  const see = [...root.querySelectorAll('button')].find((b) => b.textContent === 'See the setup output');
+  click(see);
+  assert.equal(root.querySelector('.wft-outlog').textContent, 'The command printed nothing.');
 });
 
 test('board 35: a just-started test uses no disk yet; a Part 2 example keeps its So far column', () => {
@@ -235,4 +252,12 @@ test('Fix 1: "for N minutes" repaints once a minute while a try works; a newer p
     mock.timers.tick(60000);
     assert.equal(quiet.root.querySelector('.wft-progress'), before, 'nothing working: no timer');
   } finally { mock.timers.reset(); }
+});
+
+test('P36: Test a version opens with the tries of the stopped test', async () => {
+  const { window } = new JSDOM('<!doctype html><body></body>');
+  openTestVersionDialog({ doc: window.document, win: window, options: [{ use: 2, label: 'v2' }, { use: 'draft', label: 'v3 draft' }], a: 2, b: 'draft', tries: 1,
+    examples: [{ id: 1, name: 'A', tries: 3, ready: true }], dateText: () => '', loadPlan: async () => plan(), onStart: async () => ({ ok: true }) });
+  await tick(); await tick();
+  assert.equal(window.document.querySelector('.seg .on, [role=radio][aria-checked=true]').dataset.value, '1');
 });

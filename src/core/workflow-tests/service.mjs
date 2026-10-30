@@ -665,7 +665,9 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null } 
   if (run.stopReason === 'setup') {
     const bad = own.find((t) => t.setup && t.setup.ok === false);
     const ex = bad ? store.readExample(workflowId, bad.exampleId) : null;
-    if (bad) setupStop = { cmd: bad.setup.cmd, tail: bad.setup.tail || '', exampleId: bad.exampleId, exampleName: ex ? ex.name : '', label: useLabel(bad.use, ctx), tryNo: bad.tryNo };
+    if (bad) setupStop = { cmd: bad.setup.cmd, tail: bad.setup.tail || '', exampleId: bad.exampleId, exampleName: ex ? ex.name : '', label: useLabel(bad.use, ctx), tryNo: bad.tryNo,
+      // P36: what continueRun checks: an example edited since the test started means Finish the rest is refused.
+      edited: own.some((t) => { const e = store.readExample(workflowId, t.exampleId); return !!e && e.fingerprint !== t.exampleFp; }) };
   }
   const phases = (() => {
     const ex = firstNow ? store.readExample(workflowId, firstNow.exampleId) : null;

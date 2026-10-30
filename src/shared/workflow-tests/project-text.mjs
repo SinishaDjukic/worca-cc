@@ -130,7 +130,10 @@ export const SETUP_STOP_REST = ' The test stopped, and no try counts as failed.'
 export const SETUP_STOP_HINT = "Setup gets the project ready before the workflow starts, so a problem there is not the workflow's fault. Cost: ";
 export const SEE_SETUP_OUTPUT = 'See the setup output';
 export const setupWhere = (name, label, tryNo) => `${name}, ${label}, try ${tryNo}`;
-export const SETUP_FIX_HINT = 'Fix the setup in the example, or in the project, then try again.';
+export const SETUP_FIX_HINT = 'Fix the setup in the project, then try again. To change the example, start a new test.';
+export const SETUP_EDITED_HINT = 'The example was edited since this test started. Start a new test to try it again.';
+export const START_NEW_TEST = 'Start a new test';
+export const SETUP_NO_OUTPUT = 'The command printed nothing.';
 export const EDIT_EXAMPLE = 'Edit the example';
 export const TRY_AGAIN = 'Try again';
 

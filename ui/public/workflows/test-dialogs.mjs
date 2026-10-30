@@ -189,7 +189,7 @@ function optInRow(doc, box, lead, rest) {
  * 3a (board 34, D60, D62, P13, P14, P27, P28): `examples[].ready` false = left out (named under Examples, by `reason`), `projectName` = the
  * example's project; a plan with a project adds the disk and time rows and the lock line, and refuses too little free disk.
  */
-export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'draft', examples = [], exampleIds = null, connectors = 'pretend',
+export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'draft', examples = [], exampleIds = null, tries: wantTries = null, connectors = 'pretend',
   dateText, loadPlan, onStart }) {
   const versions = options.filter((o) => o.use !== 'draft');
   const selA = el(doc, 'select');
@@ -217,7 +217,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   leftHint.setAttribute('aria-live', 'polite');
   leftHint.hidden = true;
   const startTries = () => { const t = Math.max(1, ...chosen().map((e) => e.tries || 3)); return [1, 3, 5].includes(t) ? t : 3; };   // G10
-  let tries = startTries();
+  let tries = [1, 3, 5].includes(wantTries) ? wantTries : startTries();   // a new test from a stopped one keeps its tries
   let triesTouched = false;
   const triesSeg = seg(doc, 'Tries per example', [[1, '1 · quick look'], [3, '3'], [5, '5']], tries, (v) => { tries = Number(v); triesTouched = true; void refresh(); });
   const setTries = (v) => { for (const x of triesSeg.children) { const on = x.dataset.value === String(v); x.classList.toggle('on', on); x.setAttribute('aria-checked', on ? 'true' : 'false'); } };

@@ -250,8 +250,7 @@ Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
 - **Worca's copy of a project** (`<worcaHome>/workflow-tests/repos/<projectKey>`): a `git clone --local --no-checkout` of
   the project with no remote, `core.longpaths` on and automatic gc and maintenance off. Start points are pinned as
   `refs/worca-tests/<sha>`. Each try is a worktree of it under its run folder (`<worcaHome>/runs/<pipelineId>/repos/<projectKey>`),
-  on its own branch, named as a normal run's would be (`worca-cc/…`, or the Smart run naming pattern such as
-  `feat/test-…`). Worca removes the checkout, the branch and the run folder after the try's checks. At boot,
+  on its own branch, always named `worca-cc/…` (Smart run naming never applies to a try). Worca removes the checkout, the branch and the run folder after the try's checks. At boot,
   it also removes what a restart left. `projectKey()` answers the real project's key for the copy and its worktrees, so a try
   reads the real project's settings and its row carries the real key. The person's own repository is only ever read.
 - A try's pipeline folder keeps `results.json` and `diff-patch.patch` (what it changed), `try-setup.json` (its setup run,

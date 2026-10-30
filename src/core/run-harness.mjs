@@ -2519,7 +2519,9 @@ export class RunHarness extends EventEmitter {
    *  keep failing loudly. */
   async _resolveSingleBranches({ replay = false } = {}) {
     const source = this.branchOpts.source || (await resolveDefaultBranch(this.projectDir));
-    const legacy = this.branchOpts.legacy === true;
+    // P35: a workflow-test try always gets the plain worca-cc/ name (it lives only in Worca's copy, which the boot sweep
+    // cleans by that prefix), so Smart run naming never applies to it.
+    const legacy = this.branchOpts.legacy === true || this.opts.workflowTest === true;
     const derived = !this.branchOpts.feature || this.branchOpts.suggested === true;
     const args = { prompt: this.pipeline.promptText, title: this.opts.title || null, pipelineId: this.pipeline.id };
     let featureRaw = legacy ? suggestBranchName(args)

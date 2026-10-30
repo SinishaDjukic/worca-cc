@@ -3780,6 +3780,7 @@ function wftProgressActions() {
       if (run && run.kind === 'once') wftShow('detail', { runId, exampleId: run.exampleIds[0], tryIndex: 0 });   // G2
       else wftShow('compare', { runId });
     },
+    startNew: () => wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds, tries: run.tries }),   // P36: the same versions, examples and tries
     editExample: (exampleId) => void wftOpenExample(exampleId),   // board 35: a setup that failed is fixed in the example
   };
 }
@@ -3884,7 +3885,7 @@ function wftRunMenuItems(record, data) {
 }
 /** Board 4. `a`/`b`/`exampleIds` prefill it (Compare's Test again). The workflow is read before any await: the dialog
  *  opens, and Start shows the progress page, only while that workflow's Tests page still shows. */
-async function wftTestVersion({ a, b = 'draft', exampleIds = null } = {}) {
+async function wftTestVersion({ a, b = 'draft', exampleIds = null, tries = null } = {}) {
   const id = wftWorkflowId();
   if (!id) return;
   const live = () => currentView() === 'workflows' && wftWorkflowId() === id && !wfvEls().tests?.hidden;
@@ -3900,7 +3901,7 @@ async function wftTestVersion({ a, b = 'draft', exampleIds = null } = {}) {
   const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select') }];
   openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : (o.ctx.liveVersionNo || nos.at(-1) || null), b,
     examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries, ready: e.ready !== false, reason: e.reason || null, projectName: e.project ? e.project.name : null })),
-    exampleIds, dateText: wftDate,
+    exampleIds, tries, dateText: wftDate,
     loadPlan: async (q) => { const r = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q).toString()}`); return r.ok ? r.data : null; },
     onStart: async (body) => {
       const r = await wftCall('POST', `${wftBase(id)}/runs`, body);

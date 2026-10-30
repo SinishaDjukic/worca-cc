@@ -9020,7 +9020,7 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-chg-head .hint{margin:0;}
 .wft-files-list{list-style:none;margin:0 0 12px;padding:0;border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:hidden;}
 .wft-files-list li + li{border-top:1px solid var(--line);}
-.wft-fbtn{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:center;width:100%;padding:8px 12px;border:0;border-radius:0;background:none;color:var(--ink);text-align:left;font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+.wft-fbtn{display:grid;grid-template-columns:4.75rem minmax(0,1fr);gap:10px;align-items:center;width:100%;padding:8px 12px;border:0;border-radius:0;background:none;color:var(--ink);text-align:left;font:inherit;font-size:var(--fs-meta);cursor:pointer;}
 .wft-fbtn:hover{background:var(--hover);}
 .wft-fbtn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .wft-fbtn.is-sel{background:var(--field);font-weight:600;}
