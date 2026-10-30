@@ -95,6 +95,7 @@ test('boards 36 and 37: what changed, what would have been sent', () => {
 
 test('boards 38 and 39: the list, a past run, the empty and refused states', () => {
   assert.equal(t.PICK_FIRST_TEXT, 'Pick a project first');
+  assert.equal(t.CANT_TRY_TEXT, "Can't be tried yet");   // P33
   assert.equal(t.NO_PROJECT_YET_HINT, 'Request only · no project yet, so it is left out of tests');
   assert.equal(t.WITH_CHANGES_HINT, ' · with changes not committed yet');
   assert.equal(t.LIST_FOOT_HINT, 'Each example keeps its start point. Open an example and pick "Start from the latest" to move it to the newest commit. Both versions are then tried again from there.');

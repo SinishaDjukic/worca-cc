@@ -36,6 +36,20 @@ export function runStatusBadge(doc, r) {
   return el(doc, 'span', 'badge', 'Stopped');
 }
 
+/** Board 39: a past run that cannot become an example stays listed, but its box or radio is disabled and says why in text
+ *  (`.wft-pick-why`), never by colour alone. aria-disabled plus aria-describedby, so a screen reader in browse mode reads
+ *  the reason with it. `row` is the label it sits in (greyed through `.is-refused`). */
+export function refusedRun(doc, { row, input, text, reason, id }) {
+  const why = el(doc, 'span', 'wft-pick-why', reason || '');
+  why.id = id;
+  text.append(why);
+  input.disabled = true;
+  input.checked = false;
+  input.setAttribute('aria-disabled', 'true');
+  input.setAttribute('aria-describedby', id);
+  row.classList.add('is-refused');
+}
+
 /** A server reason as a sentence: "the name must be …" → "The name must be ….". */
 export const sentence = (s) => {
   const t = String(s || '').trim();

@@ -144,10 +144,11 @@ test('first use: past runs to start from, ticked newest first, then Add N exampl
   assert.equal(root.querySelector('.wft-first-foot .hint').textContent, '3 to 10 examples are a good start. You add what a good result needs in the next step. Or write an example yourself');
 });
 
-test('a workflow that needs a project, loading and errors (D20, C8)', () => {
-  const np = boot(overview({ testable: false, reason: 'needs-project' }));
-  assert.deepEqual(texts(np.root, '.wft-not-testable h2, .wft-not-testable p'), ['Tests are for workflows without a project, for now',
-    "This workflow works on a project's code. Worca can test workflows that run without a project today; testing workflows that change a project comes next."]);
+test('a workflow that needs a project (3a D62, replaces D20 / C8), loading and errors', () => {
+  const np = boot(overview({ needsProject: true }));
+  assert.equal(np.root.querySelector('.wft-not-testable'), null, 'D62: a workflow that needs a project is testable');
+  assert.ok(np.root.querySelector('.wft-table'), 'it shows the list, not a refusal');
+  assert.doesNotMatch(np.root.textContent, /without a project/);
   assert.equal(boot(null, { loading: true }).root.textContent, 'Reading the tests…');
   assert.match(boot(null, { error: 'Save the workflow first: tests belong to a saved workflow.' }).root.textContent, /Save the workflow first: tests belong to a saved workflow\./);
   assert.equal(exampleHint({ hasRequest: true, files: [], fromAt: null, note: null }), 'Request only');
@@ -155,7 +156,7 @@ test('a workflow that needs a project, loading and errors (D20, C8)', () => {
 
 test('first use with no past run (board 29): the sentence, and Add 0 examples is disabled', () => {
   const { root } = boot(overview({ examples: [], latest: null, pastRuns: [] }));
-  assert.equal(root.querySelector('.wft-pick > .hint').textContent, 'Worca found no runs of Product brief writer without a project yet. Write an example yourself, or run the workflow once and come back.');
+  assert.equal(root.querySelector('.wft-pick > .hint').textContent, 'Worca found no runs of Product brief writer yet. Write an example yourself, or run the workflow once and come back.');
   assert.equal(root.querySelectorAll('.wft-pick-row').length, 0);
   const add = root.querySelector('.wft-first-foot .btn-primary');
   assert.deepEqual([add.textContent, add.disabled], ['Add 0 examples', true]);

@@ -31,8 +31,7 @@ import { mainResult } from './result.mjs';
 import { DIFF_PATCH_FILE } from '../results.mjs';
 import { connectorNotes, userScopeServerNames, seenClaudeAiServers, wouldHaveSent, stepEngines, scriptSteps, readConnectorCalls } from './connectors.mjs';
 
-/** Part 2's D20 sentence. 3a (D62) tests every workflow, so nothing produces it any more; kept for old callers. */
-export const NOT_TESTABLE_TEXT = 'This workflow works on a project, and tests work for workflows without a project for now.';
+/** Why a past run cannot become an example (3a D62 removed Part 2's D20 "needs a project": every workflow can be tested). */
 export const NOT_TESTABLE_REASONS = Object.freeze({
   'test-try': 'A test try cannot become an example.',
   'not-finished': 'Wait until the run has finished.',
@@ -400,7 +399,7 @@ const exampleName = (name, past) => (typeof name === 'string' && name.trim() ? n
 async function usablePastRun(workflowId, pipelineId, registry) {
   const past = await pastRunSummary(pipelineId, registry ? { registry } : {});
   if (past.workflowId !== workflowId) throw err('this run is of another workflow', 'BAD_REQUEST');
-  if (!past.testable) throw err(NOT_TESTABLE_REASONS[past.reason] || NOT_TESTABLE_TEXT, 'BAD_REQUEST');
+  if (!past.testable) throw err(NOT_TESTABLE_REASONS[past.reason], 'BAD_REQUEST');
   return past;
 }
 

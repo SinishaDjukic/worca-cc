@@ -9053,6 +9053,24 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-dev-card > .hint{margin:0 0 10px;}
 .wft-dev-facts{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:var(--fs-body);}
 .wft-dev-facts > span{min-width:0;}
+.wft-ex .hint .code,.wft-startbox .code{font-family:var(--mono);overflow-wrap:anywhere;}
+.wft-moved-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-moved-line .badge.amber{color:var(--amber-ink-strong);}
+.wft-moved-line > span:last-child{min-width:0;}
+.wft-left-line{overflow-wrap:anywhere;}
+.wft-foot-start{margin:0;}
+.wft-pick-top{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.wft-pick-top b{font-weight:600;}
+.wft-pick-sub,.wft-pick-why{display:block;font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-pick-list .wft-pick-row:has(.wft-pick-top),.wft-pick-row:has(.wft-pick-why){align-items:flex-start;}
+.wft-pick-list .wft-pick-row:has(.wft-pick-top) input,.wft-pick-row:has(.wft-pick-why) input{margin-top:2px;}
+.wft-pick-row.is-refused,.wft-pick-list .wft-pick-row.is-refused{cursor:default;}
+.wft-pick-row.is-refused b{color:var(--ink-2);}
+.wft-startbox{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-body);line-height:1.45;}
+.wft-startbox > *{min-width:0;}
+.wft-startbox .label,.wft-startbox .hint{margin:0;}
+.wft-startbox b{font-weight:600;}
+.mk-dialog-body > .wft-dev{margin-top:0;}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}

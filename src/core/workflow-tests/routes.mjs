@@ -11,7 +11,7 @@ import { useFingerprint } from './uses.mjs';
 import { dirBytes, freeDiskBytes } from './project-copy.mjs';
 import { listProjects } from '../projects.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_TESTABLE: 422, NOT_READY: 422, NO_DISK: 422 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_VERSIONABLE: 400, NOT_FOUND: 404, BUSY: 409, NOT_READY: 422, NO_DISK: 422 });
 const W = '/api/workflows/:id/tests';
 /** Every route, in registration order: the flag-off test walks it, so no route can skip the gate unnoticed. */
 export const WORKFLOW_TEST_ROUTES = Object.freeze([

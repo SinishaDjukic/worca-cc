@@ -179,3 +179,47 @@ test('G6: no Use as test example with the flag off, or for a built-in workflow',
   const auto2 = await moreItems({ flags: 'workflowTests', detail: { ...WF_DETAIL, state: { ...WF_DETAIL.state, stepper: { template: { id: 'wf_auto', name: 'Auto' } } } } });
   assert.equal(auto2.items.some((b) => b.textContent.trim() === 'Use as test example'), false, 'an Auto run of no saved workflow');
 });
+
+// Workflow tests 3a Task 13 (D65, board 38): a single-project git run is offered too; a Folder or a workspace run is not.
+const GIT_DETAIL = { ...DETAIL, state: { ...DETAIL.state, status: 'done', workMode: 'git', stepper: { template: { id: 'wf_b', name: 'Fix a bug from a ticket' } } } };
+const PAST_PROJ = { pipelineId: ROW.id, workflowId: 'wf_b', workflowName: 'Fix a bug from a ticket', title: ROW.title, request: 'Fix it.', files: [], qa: [],
+  use: 4, useLabel: 'v4', testable: true, reason: null, reasonText: null,
+  project: { key: ROW.projectKey, name: 'Alpha', startSha: 'abc1234'.padEnd(40, '0'), short: 'abc1234', startRef: 'feat/log-ux', startAt: '2026-08-17T20:54:42Z', setupCmd: 'npm ci' } };
+async function gitMoreItems({ row = ROW, detail = GIT_DETAIL } = {}) {
+  const reads = [];
+  const ctx = await boot({ fetchHandler: (u) => {
+    if (u.endsWith('/diff') || u.endsWith('/log')) return { ok: false, status: 404, json: async () => ({ error: 'none' }) };
+    if (u.endsWith(`/api/history/${row.projectKey}/${row.id}`)) return ok(detail);
+    if (u.endsWith('/api/history')) return ok({ pipelines: [row], ghAvailable: false });
+    if (u.includes(`/api/workflow-tests/past-run/${row.id}`)) { reads.push(u); return ok(PAST_PROJ); }
+    return ok({});
+  } });
+  ctx.window.document.documentElement.dataset.flags = 'workflowTests';
+  go(ctx.window, `history/${row.projectKey}/${row.id}/details`);
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  click(ctx.window, doc.querySelector('#hist-detail .hd-bar-more'));
+  await settle(ctx.window);
+  return { ctx, doc, reads, items: [...doc.querySelectorAll('body > .wfv-menu .menu-item')] };
+}
+
+test('G6 (3a, D65): a finished single-project git run offers Use as test example; its dialog shows where it starts and the setup', async () => {
+  const { ctx, doc, reads, items } = await gitMoreItems();
+  const use = items.find((b) => b.textContent.trim() === 'Use as test example');
+  assert.ok(use, 'a git run of a saved workflow');
+  click(ctx.window, use);
+  await settle(ctx.window, 6);
+  assert.equal(reads.length, 1);
+  assert.equal(doc.querySelector('#mk-dialog .wft-fr-intro').textContent, 'Worca keeps the request and where the run started, so every new version of Fix a bug from a ticket can be tried on exactly the same thing.');
+  assert.match(doc.querySelector('#mk-dialog .wft-startbox').textContent, /^Where it startsStarts from where this run started: feat\/log-ux at abc1234 · /);
+  assert.equal(doc.querySelector('#wft-fr-setup').value, 'npm ci');
+  [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === 'Cancel').click();
+  await settle(ctx.window);
+});
+
+test('G6 (3a): no Use as test example for a Folder run or a workspace run', async () => {
+  const folder = await gitMoreItems({ row: { ...ROW, workMode: 'folder' }, detail: { ...GIT_DETAIL, state: { ...GIT_DETAIL.state, workMode: 'folder' } } });
+  assert.equal(folder.items.some((b) => b.textContent.trim() === 'Use as test example'), false, 'a Folder run');
+  const ws = await gitMoreItems({ row: { ...ROW, target: 'workspace' } });
+  assert.equal(ws.items.some((b) => b.textContent.trim() === 'Use as test example'), false, 'a workspace run');
+});

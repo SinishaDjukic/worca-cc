@@ -1,10 +1,13 @@
 // ui/public/workflows/tests-view.mjs — the Tests page of a workflow (plans/workflow-tests-part2-plan.md Task 10): the list
-// of examples (canvas board 1), first use (board 19) and the sentence for a workflow that needs a project (D20, C8).
+// of examples (canvas board 1) and first use (board 19). 3a (boards 38, 39; D62): every workflow can be tested, so an
+// example's row says which project it works on, where it starts and whether a test leaves it out.
 // Pure DOM: app.js owns data and actions.
-import { el, btn, iconBtn, BUSY_HINT, runStatusBadge } from './test-ui.mjs';
+import { el, btn, iconBtn, BUSY_HINT, runStatusBadge, refusedRun } from './test-ui.mjs';
 import { withButton } from '../feedback.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.mjs';
+import { NO_PROJECT_YET_HINT, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText }
+  from '../../../src/shared/workflow-tests/project-text.mjs';
 
 export const HOW_HIDDEN_KEY = 'worca.workflowTests.howHidden';
 const HOW = Object.freeze({
@@ -56,6 +59,17 @@ export function exampleHint(e, { dateText = defaultDate } = {}) {
   return parts.join(' · ');
 }
 
+/** Board 38: the hint under an example's name, with its project and start point; an example left out says so. */
+export function exampleHintEl(doc, e, { dateText = defaultDate } = {}) {
+  const h = el(doc, 'span', 'hint');
+  if (e.reason === 'pick-project') { h.textContent = NO_PROJECT_YET_HINT; return h; }
+  if (!e.project) { h.textContent = exampleHint(e, { dateText }); return h; }
+  const lead = !e.hasRequest ? 'No request yet' : e.files && e.files.length ? `Request + ${e.files.join(', ')}` : 'Request';
+  h.append(doc.createTextNode(`${lead} · ${e.project.name} · from `), el(doc, 'span', 'code', e.project.short));
+  if (e.project.changes) h.append(doc.createTextNode(WITH_CHANGES_HINT));
+  return h;
+}
+
 /** A result cell (C14): "3 of 3 passed" with a dot (green all, grey some, red none), a past verdict (D29), "Not tried". */
 export function cellView(doc, cell) {
   const span = el(doc, 'span', 'wft-res');
@@ -98,7 +112,16 @@ function table(doc, o, actions, dateText) {
   for (const e of o.examples) {
     const row = el(doc, 'div', 'wft-row');
     const name = el(doc, 'span', 'wft-ex');
-    name.append(btn(doc, e.name, () => actions.openExample(e.id), 'wft-ex-open'), el(doc, 'span', 'hint', exampleHint(e, { dateText })));
+    name.append(btn(doc, e.name, () => actions.openExample(e.id), 'wft-ex-open'), exampleHintEl(doc, e, { dateText }));
+    if (e.project && e.project.behind > 0 && e.project.startRef) {   // board 38: the branch moved on (D63)
+      const moved = el(doc, 'span', 'wft-moved-line');
+      moved.append(el(doc, 'span', 'badge amber', MOVED_BADGE), el(doc, 'span', '', behindText(e.project.behind, e.project.startRef)));
+      name.append(moved);
+    }
+    // P27, P33: left out for another reason than "no project yet" (its folder is missing, a Folder project, no longer
+    // registered): the row says why, in the server's words (board 39's cards).
+    const blocked = e.ready === false && e.reason !== 'pick-project';
+    if (blocked && e.readyText) name.append(el(doc, 'span', 'hint wft-left-line', e.readyText));
     const kinds = el(doc, 'span', 'wft-kinds');
     kinds.append(el(doc, 'span', 'wft-kind', `Basics ${e.basics}`));
     if (e.checks) kinds.append(el(doc, 'span', 'wft-kind', `Automatic ${e.checks}`));
@@ -106,7 +129,11 @@ function table(doc, o, actions, dateText) {
     more.setAttribute('aria-haspopup', 'menu');
     more.addEventListener('click', () => actions.exampleMenu(more, e));
     // H1: each result names its column, for the stacked phone layout (style.css .wft-row [data-label]).
-    const results = o.columns.map((c) => { const v = cellView(doc, e.cells[String(c.use)] || null); v.dataset.label = c.label; return v; });
+    const results = o.columns.map((c) => {   // D62, board 38: an example a test leaves out has no result
+      const v = e.ready === false ? el(doc, 'span', 'wft-res is-none', blocked ? CANT_TRY_TEXT : PICK_FIRST_TEXT) : cellView(doc, e.cells[String(c.use)] || null);
+      v.dataset.label = c.label;
+      return v;
+    });
     row.append(name, kinds, ...results, more);
     grid.append(row);
   }
@@ -151,6 +178,7 @@ function list(doc, page, o, actions, { root, storage, dateText, now }) {
   const foot = el(doc, 'p', 'hint wft-foot');
   foot.append(el(doc, 'b', '', 'Why 3 tries?'), doc.createTextNode(' AI can give a different answer each time, so one good try can be luck. A try passes when everything checked is met.'));
   page.append(foot);
+  if (o.examples.some((e) => e.project)) page.append(el(doc, 'p', 'hint wft-foot-start', LIST_FOOT_HINT));   // board 38
 }
 
 function firstUse(doc, page, o, actions, { dateText }) {
@@ -165,7 +193,7 @@ function firstUse(doc, page, o, actions, { dateText }) {
   const runs = o.pastRuns || [];
   pick.append(h, el(doc, 'p', 'hint', runs.length
     ? `Worca found ${runs.length} recent ${runs.length === 1 ? 'run' : 'runs'} of ${o.name}. Pick different kinds of requests, and include ones where the result was not good: they show what must improve.`
-    : `Worca found no runs of ${o.name} without a project yet. Write an example yourself, or run the workflow once and come back.`));
+    : firstUseNoneText(o.name, { needsProject: !!o.needsProject })));   // board 39 (P16)
   const boxes = [];
   let ticked = 0;
   for (const r of runs) {
@@ -173,12 +201,14 @@ function firstUse(doc, page, o, actions, { dateText }) {
     const box = el(doc, 'input', 'wft-pick-box');   // test/ui-shared-controls.test.mjs JS_CHECKBOX_OK: picks runs
     box.type = 'checkbox';
     box.value = r.pipelineId;
-    box.checked = !r.sameAs && ticked < 3;
+    box.checked = !r.refusal && !r.sameAs && ticked < 3;
     if (box.checked) ticked += 1;
     const text = el(doc, 'span', 'wft-pick-text');
-    const detail = [dateText(r.at), r.files ? (r.files === 1 ? '1 file' : `${r.files} files`) : null,
+    const detail = [r.project, dateText(r.at), r.files ? (r.files === 1 ? '1 file' : `${r.files} files`) : null,
       r.sameAs ? `the same request as "${r.sameAs}"` : null].filter(Boolean).join(' · ');
     text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${detail}`));
+    // Board 39: a Folder or workspace run is listed, but cannot be picked.
+    if (r.refusal) refusedRun(doc, { row, input: box, text, reason: r.refusalText, id: `wft-pick-why-${boxes.length}` });
     row.append(box, text, runStatusBadge(doc, r));
     pick.append(row);
     boxes.push(box);
@@ -188,7 +218,7 @@ function firstUse(doc, page, o, actions, { dateText }) {
   const hint = el(doc, 'span', 'hint');
   hint.append(doc.createTextNode('3 to 10 examples are a good start. You add what a good result needs in the next step. '),
     btn(doc, 'Or write an example yourself', () => actions.newExample(), 'wft-linkbtn'));
-  const picked = () => boxes.filter((b) => b.checked).map((b) => b.value);
+  const picked = () => boxes.filter((b) => b.checked && !b.disabled).map((b) => b.value);
   // One post at a time: busy (disabled) until the action answers {ok}; a refusal gives the button back (feedback.mjs).
   const add = btn(doc, '', async () => {
     await withButton(add, () => actions.addPastRuns(picked()), { busy: 'Adding…', done: 'Added', idleDisabled: () => !picked().length });
@@ -196,7 +226,7 @@ function firstUse(doc, page, o, actions, { dateText }) {
   }, 'btn btn-primary');
   const paint = () => {
     if (add.dataset.fbState) return;   // busy or done: withButton owns the label, and paint() runs again after
-    const n = boxes.filter((b) => b.checked).length;
+    const n = picked().length;
     add.textContent = n === 1 ? 'Add 1 example' : `Add ${n} examples`;
     add.disabled = n === 0;
   };
@@ -220,11 +250,6 @@ export function renderTestsPage(root, o, actions, { doc, storage = null, loading
   } else if (!o) {
     const box = el(doc, 'div', 'card wft-empty');
     box.append(el(doc, 'h2', '', 'Tests are not available'), el(doc, 'p', 'hint', error || 'Worca did not answer.'));
-    page.append(box);
-  } else if (!o.testable) {
-    const box = el(doc, 'div', 'card wft-empty wft-not-testable');
-    box.append(el(doc, 'h2', '', 'Tests are for workflows without a project, for now'),
-      el(doc, 'p', 'hint', "This workflow works on a project's code. Worca can test workflows that run without a project today; testing workflows that change a project comes next."));
     page.append(box);
   } else if (!o.examples.length) {
     firstUse(doc, page, o, actions, { dateText });

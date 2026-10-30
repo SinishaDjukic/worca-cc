@@ -1,30 +1,32 @@
 // ui/public/workflows/test-dialogs.mjs — the workflow tests dialogs (plans/workflow-tests-part2-plan.md Tasks 12–13):
 // pick a past run (G7), use this run as a test example (board 3), and test a version with its connectors (boards 4, 30). Pure DOM.
-import { el, seg, field, testDialog, runStatusBadge } from './test-ui.mjs';
+import { el, seg, field, testDialog, runStatusBadge, refusedRun } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
-import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest }
+import { allOnProject, leftOutText, leftOutBlockedText, NONE_READY_TEXT, LOCK_LEAD, LOCK_REST, REAL_BLOCKED_HINT, DISK_KEY, TIME_KEY, diskRow, aboutDuration, SETUP_TAKES_LEAD, setupTakesRest,
+  pickerNoneText, fromRunIntro, WHERE_TITLE, STARTS_FROM_RUN, pastRunProjectNote, DEV_CAPTION, SETUP_LABEL, SETUP_HINT_PAST }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
 /** Auto's id (src/core/graph/builtin-workflows.mjs AUTO_WORKFLOW_ID; the browser cannot load /src/core, and the dialogs
  *  test pins this to the server's constant). An Auto run that matched no saved workflow keeps it (auto/proposal.mjs). */
 const AUTO_WORKFLOW_ID = 'wf_auto';
 
-/** G6: the run page's More menu offers "Use as test example" for a finished no-project run of a saved user workflow. A
- *  plugin's workflow (`wfp_<plugin>_<slug>`, plugin-workflows.mjs) has no tests (review M7), nor has Auto when it matched no
- *  saved workflow: the item would only be refused. */
-export function canUseAsExample({ flag, noProject, status, templateId, reserved }) {
-  return !!flag && !!noProject && ['done', 'stopped', 'error'].includes(String(status || '')) && !!templateId && !reserved
+/** G6 (3a: a project run too): the run page's More menu offers "Use as test example" for a finished run without a project
+ *  or a finished single-project git run (D65) of a saved user workflow. Folder and workspace runs are refused by the server,
+ *  so the item is not offered for them. A plugin's workflow (`wfp_<plugin>_<slug>`, plugin-workflows.mjs) has no tests
+ *  (review M7), nor has Auto when it matched no saved workflow: the item would only be refused. */
+export function canUseAsExample({ flag, noProject, projectRun = false, status, templateId, reserved }) {
+  return !!flag && (!!noProject || !!projectRun) && ['done', 'stopped', 'error'].includes(String(status || '')) && !!templateId && !reserved
     && templateId !== AUTO_WORKFLOW_ID && !/^wfp_/.test(String(templateId));
 }
 
 /** G7: the Tests list's "Add from a past run" — which run, then board 3. */
-export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText, onPick }) {
+export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText, onPick, needsProject = false }) {
   const body = [];
   if (!runs.length) {
-    body.push(el(doc, 'p', 'hint', `Worca found no runs of ${workflowName} without a project yet. Run the workflow once, or write an example yourself.`));
+    body.push(el(doc, 'p', 'hint', pickerNoneText(workflowName, { needsProject })));   // board 39 (P16)
   } else {
     body.push(el(doc, 'p', 'hint', `Pick a run of ${workflowName} to keep as an example.`));
     const list = el(doc, 'div', 'wft-pick-list');
@@ -35,8 +37,16 @@ export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText,
       const radio = el(doc, 'input');
       radio.type = 'radio'; radio.name = 'wft-pick-run'; radio.value = r.pipelineId;
       const text = el(doc, 'span', 'wft-pick-text');
-      text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${dateText(r.at)} · `), runStatusBadge(doc, r));   // C11: an exactly equal request says so, as on the Tests page
+      if (r.project || r.refusal) {   // boards 38, 39: the title and its badge, then the project and the date
+        const top = el(doc, 'span', 'wft-pick-top');
+        top.append(el(doc, 'b', '', r.title), runStatusBadge(doc, r));
+        text.append(top, el(doc, 'span', 'wft-pick-sub', [r.project, dateText(r.at)].filter(Boolean).join(' · ')));
+      } else {
+        text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${dateText(r.at)} · `), runStatusBadge(doc, r));   // C11: an exactly equal request says so, as on the Tests page
+      }
       row.append(radio, text);
+      // Board 39: a Folder or workspace run is listed, disabled, with its reason.
+      if (r.refusal) refusedRun(doc, { row, input: radio, text, reason: r.refusalText, id: `wft-pick-run-why-${list.children.length}` });
       list.append(row);
     }
     body.push(list);
@@ -44,7 +54,7 @@ export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText,
   const dlg = testDialog({
     doc, win, title: 'Add from a past run', confirmLabel: 'Next', body,
     onConfirm: () => {
-      const hit = [...doc.querySelectorAll('input[name="wft-pick-run"]')].find((x) => x.checked);
+      const hit = [...doc.querySelectorAll('input[name="wft-pick-run"]')].find((x) => x.checked && !x.disabled);
       if (!hit) return { ok: false, error: 'Pick a run first.' };
       onPick(hit.value);
       return { ok: true };
@@ -64,8 +74,9 @@ function keepRow(doc, id, text, detail = null) {
   return { row: l, box };
 }
 
-/** Board 3: "Use this run as a test example" (C4: the verdict is the version's result until it is tested, D29). */
-export function openFromRunDialog({ doc, win, past, onSubmit }) {
+/** Board 3: "Use this run as a test example" (C4: the verdict is the version's result until it is tested, D29). Board 38
+ *  (D65): a project run's example starts where the run started, and its setup is filled in from the project's. */
+export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => s }) {
   const name = el(doc, 'input');
   name.type = 'text'; name.id = 'wft-fr-name'; name.maxLength = 120; name.value = past.title || '';
   const nf = past.files.length;
@@ -97,11 +108,26 @@ export function openFromRunDialog({ doc, win, past, onSubmit }) {
   const how = seg(doc, 'How was this result', [['good', 'Good: keep it like this'], ['not-good', 'Not good enough']], null, (v) => { verdict = v; paintHint(); });
   const note = el(doc, 'textarea');
   note.id = 'wft-fr-note'; note.rows = 3; note.maxLength = 2000;
+  let startBox = null;
+  let setup = null;
+  let devBox = null;
+  if (past.project) {
+    startBox = el(doc, 'div', 'wft-startbox');
+    const where = el(doc, 'span');
+    where.append(doc.createTextNode(STARTS_FROM_RUN), el(doc, 'b', '', past.project.startRef || past.project.short), doc.createTextNode(' at '),
+      el(doc, 'span', 'code', past.project.short), doc.createTextNode(` · ${dateText(past.project.startAt)}`));
+    startBox.append(el(doc, 'span', 'label', WHERE_TITLE), where, el(doc, 'span', 'hint', pastRunProjectNote(past.project.name)));
+    setup = el(doc, 'input');
+    setup.type = 'text'; setup.id = 'wft-fr-setup'; setup.className = 'wft-mono'; setup.maxLength = 4000; setup.value = past.project.setupCmd || '';
+    devBox = el(doc, 'div', 'wft-dev');
+    devBox.append(el(doc, 'span', 'wft-dev-cap', DEV_CAPTION), field(doc, SETUP_LABEL, setup, { id: setup.id, hint: SETUP_HINT_PAST }));
+  }
   return testDialog({
     doc, win, title: 'Use this run as a test example', confirmLabel: 'Add example',
     body: [
-      el(doc, 'p', 'wft-fr-intro', `Worca keeps the request and files, so every new version of ${past.workflowName} can be tried on exactly the same thing.`),
-      field(doc, 'Name of the example', name, { id: name.id }), keep,
+      el(doc, 'p', 'wft-fr-intro', past.project ? fromRunIntro(past.workflowName)
+        : `Worca keeps the request and files, so every new version of ${past.workflowName} can be tried on exactly the same thing.`),
+      field(doc, 'Name of the example', name, { id: name.id }), ...(startBox ? [startBox] : []), keep, ...(devBox ? [devBox] : []),
       field(doc, 'How was this result?', how),
       field(doc, 'What should a good result have?', note, { id: note.id, opt: 'in your own words' }),
       hint,
@@ -109,7 +135,7 @@ export function openFromRunDialog({ doc, win, past, onSubmit }) {
     onConfirm: () => {
       if (!name.value.trim()) return { ok: false, error: 'Give the example a name.' };
       return onSubmit({ name: name.value.trim(), keepRequest: req.box.checked, keepAnswers: ans ? ans.box.checked : false, verdict,
-        note: note.value.trim() || null });
+        note: note.value.trim() || null, ...(setup ? { setupCmd: setup.value.trim() || null } : {}) });
     },
   });
 }

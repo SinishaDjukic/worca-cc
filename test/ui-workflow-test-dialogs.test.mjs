@@ -77,14 +77,15 @@ test('G7: pick a past run, then Next', async () => {
   assert.deepEqual(picked, ['p2']);
   const empty = dom();
   openPickRunDialog({ doc: empty.doc, win: empty.win, workflowName: 'Product brief writer', runs: [], dateText: () => '', onPick: () => {} });
-  assert.equal(empty.doc.querySelector('.mk-dialog-body > .hint').textContent, 'Worca found no runs of Product brief writer without a project yet. Run the workflow once, or write an example yourself.');
+  assert.equal(empty.doc.querySelector('.mk-dialog-body > .hint').textContent, 'Worca found no runs of Product brief writer yet. Run the workflow once, or write an example yourself.');
   assert.equal(empty.doc.querySelector('.wft-dlg-ok').disabled, true, 'board 25: nothing to pick, Next is disabled');
 });
 
-test('G6: only a finished no-project run of a saved user workflow, with the flag on', () => {
+test('G6: only a finished no-project run (3a: or a single-project git run, D65) of a saved user workflow, with the flag on', () => {
   const ok = { flag: true, noProject: true, status: 'done', templateId: 'wf_b', reserved: false };
   assert.equal(canUseAsExample(ok), true);
   assert.equal(canUseAsExample({ ...ok, status: 'error' }), true);
+  assert.equal(canUseAsExample({ ...ok, noProject: false, projectRun: true }), true, '3a: a single-project git run');
   for (const bad of [{ flag: false }, { noProject: false }, { status: 'running' }, { templateId: null }, { reserved: true }, { templateId: 'wfp_acme_brief' }, { templateId: AUTO_WORKFLOW_ID }]) {
     assert.equal(canUseAsExample({ ...ok, ...bad }), false, JSON.stringify(bad));
   }

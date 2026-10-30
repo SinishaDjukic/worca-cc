@@ -3847,7 +3847,7 @@ function wftPickRun() {
   const id = wftWorkflowId();
   if (!o || !id) return;
   const live = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'list' && !wfvEls().tests?.hidden;
-  openPickRunDialog({ doc: document, win: window, workflowName: o.name, runs: o.pastRuns || [], dateText: wftDate,
+  openPickRunDialog({ doc: document, win: window, workflowName: o.name, runs: o.pastRuns || [], dateText: wftDate, needsProject: !!o.needsProject,
     onPick: (pid) => void wftAddFromRun(pid, { live }) });
 }
 /** Board 3 from a run page or the picker: read what the run keeps, ask, create, then open the example in the editor.
@@ -3858,7 +3858,7 @@ async function wftAddFromRun(pipelineId, { live = () => true } = {}) {
   if (!r.ok) { notify({ tone: 'err', title: 'Could not read the run', detail: r.error }); return; }
   const past = r.data;
   if (!past.testable) { notify({ tone: 'err', title: 'This run cannot become a test example', detail: past.reasonText || '' }); return; }
-  openFromRunDialog({ doc: document, win: window, past, onSubmit: async (body) => {
+  openFromRunDialog({ doc: document, win: window, past, dateText: wftDate, onSubmit: async (body) => {
     const s = await wftCall('POST', `${wftBase(past.workflowId)}/examples/from-run`, { pipelineId: past.pipelineId, ...body });
     if (!s.ok) return s;
     if (s.data.skipped.length) notify({ tone: 'info', title: 'Some files were left out', detail: `${s.data.skipped.join(', ')}: larger than 5 MB, or more than 8 files.` });
@@ -3869,11 +3869,14 @@ async function wftAddFromRun(pipelineId, { live = () => true } = {}) {
     return { ok: true };
   } });
 }
-/** G6: the saved run page's ⋯ item. `data.state.stepper` is the run's manifest (artifacts.mjs rowToState). */
+/** G6: the saved run page's ⋯ item. `data.state.stepper` is the run's manifest (artifacts.mjs rowToState). 3a (D65): a
+ *  single-project git run too; never a Folder or workspace run (the server would only refuse it). */
 function wftRunMenuItems(record, data) {
   const st = data && data.state;
   const tpl = st && st.stepper && st.stepper.template;
-  const ok = !!record && canUseAsExample({ flag: flagOn('workflowTests'), noProject: !!st && isNoProjectRun({ ...record, state: st }),
+  const noProject = !!st && !!record && isNoProjectRun({ ...record, state: st });
+  const projectRun = !!st && !!record && !noProject && record.target !== 'workspace' && st.target !== 'workspace' && isGitRun({ ...record, state: st });
+  const ok = !!record && canUseAsExample({ flag: flagOn('workflowTests'), noProject, projectRun,
     status: st && st.status, templateId: tpl && tpl.id, reserved: !!(tpl && tpl.id && isReservedWorkflowId(tpl.id)) });
   if (!ok) return [];
   const pid = record.id;
