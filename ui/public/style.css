@@ -1019,6 +1019,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .wf-engine-hints{grid-column:1 / -1;margin:-7px 0 12px;}
 .wf-engine-hints:not(:has(.hint:not([hidden]))){display:none;}
 .wf-engine-hints .hint{margin-top:0;font-size:var(--fs-meta);}
+/* Session groups (Task 62): one notice per session under the engine — ink-2, never amber (information, not a warning). */
+.rs-session-notes{grid-column:1 / -1;display:grid;gap:2px;margin:-7px 0 12px;}
+.rs-session-notes[hidden]{display:none;}
+.rs-session-note{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
 @media (max-width:760px){ .wf-engine-row{grid-template-columns:1fr;} }
 
 /* Two fields sharing one row (New pipeline: source + feature branch). Equal

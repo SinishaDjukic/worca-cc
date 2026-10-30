@@ -191,7 +191,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -230,7 +230,7 @@ import { renderAutoProposal, proposalBands } from './auto-proposal.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
-import { SESSION_DEFAULT_LABEL } from '../../src/shared/graph/sessions.mjs';
+import { SESSION_DEFAULT_LABEL, sessionStartNotices } from '../../src/shared/graph/sessions.mjs';
 import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 // artifact-view-media.mjs re-exports artifact-view.mjs's whole surface and widens
 // dispatch to the byte kinds, so upstream's module stays byte-identical;
@@ -4389,6 +4389,9 @@ async function loadGuardrailsInto(selectId) {
 // node row per node and a cycle input per feedback.
 async function renderWorkflowConfig(workflowId) {
   const isAuto = workflowId === AUTO_WORKFLOW_ID;
+  const notesGen = (state.sessionNotesGen = (state.sessionNotesGen || 0) + 1);   // only the newest call paints the notice
+  // A newly picked workflow's notice waits for its own fetch: the last one's never stands in for it meanwhile.
+  if (state.sessionNoteArgs && state.sessionNoteArgs.workflowId !== workflowId) paintSessionNotes(null);
   if (el.agentsConfig) el.agentsConfig.hidden = isAuto;
   if (el.hitlRow) el.hitlRow.hidden = !isAuto;
   // Memory defragment (agent memory §7.3 / B11): the ONE run option that workflow needs. Every
@@ -4398,6 +4401,7 @@ async function renderWorkflowConfig(workflowId) {
   // once; the policy-line repaint at the end refetches the preview for every other workflow.
   if (el.mcpRunsField) renderMcpRuns();
   if (isAuto) {
+    paintSessionNotes(null);   // Auto picks its workflow per run: no sessions to tell about yet
     // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch. On a project target
     // the switch is per PROJECT like the accordion's rows, read from the project config, and
     // saveHumanInLoop drops the write with no project selected — so disable it there instead of
@@ -4434,6 +4438,7 @@ async function renderWorkflowConfig(workflowId) {
   const wf = isDefault ? (fetchedWf || DEFAULT_WF_TOPOLOGY) : fetchedWf;
   const registry = isDefault ? defaultWorkflowRegistry(fetchedReg) : fetchedReg;
   if (!wf || !Object.keys(registry).length) {
+    if (notesGen === state.sessionNotesGen) paintSessionNotes(null);
     if (el.agentRows) el.agentRows.innerHTML = '<div class="hint">Could not load this workflow.</div>';
     if (el.wfFeedbackConfig) { el.wfFeedbackConfig.innerHTML = ''; el.wfFeedbackConfig.hidden = true; }
     setAgentsHeader(null, '');
@@ -4447,6 +4452,13 @@ async function renderWorkflowConfig(workflowId) {
   const rows = buildNodeConfigRows(wf, registry, runConfig,
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
+  const wfNodes = Array.isArray(wf.nodes) ? wf.nodes : [];
+  // A slower fetch for a workflow picked earlier never paints over a newer pick (Auto included).
+  if (notesGen === state.sessionNotesGen) paintSessionNotes({ workflowId, wf, portsFn: panelPortsFn(registry, scripts), labelOf: (id) => {   // the Composer's card label
+    const n = wfNodes.find((x) => x && x.id === id);
+    const m = n && registry[n.key];
+    return (m && m.displayName) || (n && (n.key || n.id)) || id;
+  } });
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig, scripts));
   // The cycle inputs write through a different endpoint shape per engine
   // (v1 `feedbacks:{…}` vs v2 `wires:{…}`); stamp which one this row set is.
@@ -4860,6 +4872,7 @@ function setRunEngine(engine) {
   if (el.engineSelect) el.engineSelect.value = state.engine;
   keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
+  paintSessionNotes();
   showEngineRefusal(null);
   // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
   // picker too: another engine names set skills as its .agents/skills mount would.
@@ -4878,6 +4891,22 @@ fetch('/api/engine-locks').then((r) => (r.ok ? r.json() : null)).catch(() => nul
 });
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
+/** The run-start notice (session groups, Task 62; 05 §6.6): one line per session of the workflow the form shows, saying
+ *  how its steps run on the chosen engine. `next` = { workflowId, wf, portsFn, labelOf } from renderWorkflowConfig (null: none);
+ *  the engine, the Mock switch and the Labs flag repaint it with the last one. A mock run counts as verified (C13). */
+function paintSessionNotes(next) {
+  if (next !== undefined) state.sessionNoteArgs = next;
+  const box = document.getElementById('engine-session-notes');
+  if (!box) return;
+  const a = state.sessionNoteArgs || null;
+  const mock = !!(el.mock && el.mock.checked);
+  const notes = a ? sessionStartNotices(a.wf, a.portsFn, { engine: state.engine, labelOf: a.labelOf, flagOn: flagOn('sessionGroups', document),
+    verified: mock ? { [state.engine]: true } : SESSION_SUBAGENTS_VERIFIED }) : [];
+  box.replaceChildren(...notes.map((t) => Object.assign(document.createElement('p'), { className: 'rs-session-note', textContent: t })));
+  box.hidden = !notes.length;
+  keepVisible(box, state.engine !== 'claude' && notes.length > 0);   // Simple keeps a non-Claude engine on screen: and why its steps run apart
+}
+onFlagChange('sessionGroups', () => paintSessionNotes());
 function paintEngineHints() {
   if (el.engineHint) {
     el.engineHint.hidden = state.engine === 'claude';
@@ -7291,6 +7320,7 @@ function paintMock(on) {
   el.mock.checked = on;
   mockSwitch.classList.toggle('on', on);
   mockSwitch.setAttribute('aria-checked', String(on));
+  paintSessionNotes();   // a mock run's sessions run as sub-agents (C13)
 }
 function toggleMock() {
   if (serverMock.on) return;                 // locked on: the server mocks every run anyway

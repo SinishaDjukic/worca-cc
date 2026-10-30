@@ -4,6 +4,7 @@
 // canvas host and the runtime read THIS; nothing keeps a second copy. Pure (browser + Node) and crash-free: a bad
 // template is the validator's to report, so this filters and never throws.
 import { classifyLoops } from './loops.mjs';
+import { portsOf } from './ports.mjs';
 import { SESSION_ID_RE, SESSION_MODES, MAX_SESSION_MEMBERS, SESSION_MIN_MEMBERS } from './constants.mjs';
 import { mintId, normalizeSessions } from './template.mjs';
 import { LABEL_H } from './geometry.mjs';
@@ -310,6 +311,51 @@ export function sessionNotes(spec, { engine = 'claude', verified = SESSION_SUBAG
   }
   if (mode === 'shared' && (s.hostModel || s.hostEffort)) add('warn', 'shared-ignores', 'One conversation has no main agent: the main-agent model and effort are not used.');
   return notes;
+}
+
+/** The run-start sheet's notices (Task 62; 05 §6.6): one line per session of `tpl`, saying how its steps will run on
+ *  `engine`, by the rules chooseSessionMode (src/core/session-mode.mjs) decides with, as far as the page knows them: the
+ *  Labs flag (`flagOn`, read by the caller), whether One conversation runs yet (`sharedReady`; Task 66 flips
+ *  SESSION_SHARED_SELECTABLE when Task 65 builds its runtime), the engine and its sub-agents gate (`verified`; a mock run
+ *  counts as verified, C13). The CLI version, the model endpoints and the kill switch are the server's to know: the run
+ *  log and the tray say those. Information, never a warning. */
+export function sessionStartNotices(tpl, portsFn, { engine = 'claude', verified = SESSION_SUBAGENTS_VERIFIED, labelOf = (id) => id, flagOn = true,
+  sharedReady = SESSION_SHARED_SELECTABLE } = {}) {
+  const e = engine || 'claude';
+  const name = engineLabel(e);
+  const out = [];
+  for (const spec of sessionsOf(tpl, portsFn)) {
+    if (spec.members.length < SESSION_MIN_MEMBERS) continue;            // V26's to report; it runs as its one step
+    const names = spec.members.map((id) => labelOf(id) || id);
+    const both = `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+    const separate = (why) => out.push(`${why}: ${both} run as separate sessions.`);
+    const outside = outsideNote(tpl, portsFn, spec.members, labelOf);   // only after a line that shares the session
+    if (!flagOn) separate('One session is off in Settings › Labs');
+    else if (spec.settings.mode === 'shared') {
+      if (sharedReady) out.push(`${both} share one conversation.${outside}`);
+      else separate('One conversation is not available yet');
+    } else if (Object.hasOwn(ENGINES, e) && ENGINES[e].subagents === false) separate(`${name} has no sub-agents`);
+    else if (!sessionSupport(e, { verified }).subagents) separate(`Sub-agents are not available on ${name} yet`);
+    else out.push(`${names.length} steps share one session (${names.join(' + ')}).${outside}`);
+  }
+  return out;
+}
+
+/** The members whose work leaves the host (D2; V29's test): a wired ×N input runs its tasks one session each, a role
+ *  review its reviews. `' Implementation's ×N tasks run outside the session.'` per such member, '' for none. */
+function outsideNote(tpl, portsFn, members, labelOf) {
+  const byId = new Map();
+  for (const n of Array.isArray(tpl?.nodes) ? tpl.nodes : []) if (isObj(n) && typeof n.id === 'string' && !byId.has(n.id)) byId.set(n.id, n);
+  const wires = (Array.isArray(tpl?.wires) ? tpl.wires : []).filter((w) => isObj(w) && byId.has(w.from?.node));
+  const wired = (id, port) => wires.some((w) => w.to?.node === id && w.to?.port === port);
+  let note = '';
+  for (const id of members) {
+    const n = byId.get(id);
+    const name = labelOf(id) || id;
+    if (n && isObj(n.config) && n.config.roleReview === true) note += ` ${name}'s role reviews run outside the session.`;
+    else if (n && portsOf(portsFn, n).inputs.some((p) => p?.expands === true && wired(id, p.id))) note += ` ${name}'s ×N tasks run outside the session.`;
+  }
+  return note;
 }
 
 /** A sub-agent record that is a session MEMBER's own dispatch, not a research investigator: its type carries the
