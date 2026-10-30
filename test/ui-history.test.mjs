@@ -5,6 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { liveRowState } from '../ui/public/runs-list.mjs';
+import { runModel } from '../src/shared/run-model.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -176,6 +178,32 @@ test('Runs list rows: status dot + line + title per finished run; interrupted re
       assert.equal(doc.querySelector('#runs-list .runs-sec[data-section="needs"]'), null, 'an interrupted run is not Needs you (D5)');
     } },
   ]);
+});
+
+test('S2: a finished-unsuccessful run renders the unsuccessful dot, word and reason line', async () => {
+  const REASON = 'Implement produced no changes to the worktree.';
+  const ctx = await boot({
+    fetchHandler: armsFor([
+      row({ id: 'p-bad', title: 'Did nothing', status: 'done', successful: false, outcomeReason: REASON, startedAt: '2026-01-03T00:00:00Z' }),
+    ]),
+  });
+  ctx.showRuns();
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = ctx.window.document;
+  const r = doc.querySelector('#runs-list .runs-row[data-pipeline-id="p-bad"]');
+  assert.equal(dotOf(r).dataset.state, 'unsuccessful');
+  assert.equal(dotOf(r).dataset.symbol, 'alert');
+  assert.equal(r.closest('.runs-item').dataset.stateWord, 'Unsuccessful', 'the rendered row word, not just the dot');
+  const sub = r.querySelector('.runs-row-sub').textContent;
+  assert.match(sub, /Done · unsuccessful/);
+  assert.ok(sub.includes(REASON), 'the reason sentence is on the subline');
+});
+
+test('S2: a LIVE done run flagged unsuccessful reads the unsuccessful word and dot', () => {
+  // The live list item (runsLiveItem) carries the outcome at top level and on its model run.
+  const it = { status: 'done', successful: false, outcomeReason: 'r', run: { status: 'done', successful: false, outcomeReason: 'r' } };
+  assert.equal(liveRowState(it).word, 'Unsuccessful');
+  assert.equal(runModel(it.run).state, 'unsuccessful');
 });
 
 // ---------------------------------------------------------------------------

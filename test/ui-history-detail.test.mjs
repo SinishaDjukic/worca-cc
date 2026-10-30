@@ -22,6 +22,25 @@ import { checkRows } from './helpers/rows.mjs';
 // Header meta
 // ---------------------------------------------------------------------------
 
+test('S2: a finished-unsuccessful run shows the Unsuccessful word, the reason note and the Outcome fact', async () => {
+  const REASON = 'Implement produced no changes to the worktree.';
+  const ctx = await bootDetail({
+    rows: [{ ...ROW, successful: false, outcomeReason: REASON }],
+    detail: { ...DETAIL, state: { ...DETAIL.state, successful: false, outcomeReason: REASON } },
+  });
+  await openDetail(ctx, '');   // the glance carries the status block, reason note and facts
+  const doc = ctx.window.document;
+  const word = doc.querySelector('#hist-detail .hd-status-word');
+  assert.equal(word.textContent, 'Unsuccessful');
+  assert.ok(word.classList.contains('st-unsuccessful'), 'the status word wears the amber family class');
+  const reason = doc.querySelector('#hist-detail .run-status-reason');
+  assert.ok(reason && reason.hidden === false, 'the shared status block shows the reason note');
+  assert.equal(reason.textContent, REASON);
+  const fact = doc.querySelector('#hist-detail [data-fact="outcome"]');
+  assert.equal(fact.hidden, false, 'the Outcome fact row is visible');
+  assert.equal(fact.querySelector('.rd-kv-v').textContent, 'Unsuccessful');
+});
+
 test('header meta: status word · day · clock · duration · cost · +A −R, falling back to list counts, omitting day/clock without timestamps', async () => {
   await checkRows([
     { name: 'header meta renders status word · day · clock · duration · cost · +A −R', run: async () => {

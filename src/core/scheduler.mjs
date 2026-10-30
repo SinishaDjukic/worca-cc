@@ -436,7 +436,7 @@ export function setTicketPipeline(id, pipelineId, { now = Date.now() } = {}) {
 
 /** Pipeline statuses that mean "still going" for a predecessor (LIVE_PIPELINE + a parked run). */
 const OPEN_PIPELINE = [...LIVE_PIPELINE, 'paused'];
-const PIPELINE_REF_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, workspace_meta, updated_at, archived_at FROM pipelines WHERE id = ?';
+const PIPELINE_REF_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, workspace_meta, updated_at, archived_at, outcome FROM pipelines WHERE id = ?';
 const BAD_TICKET_REASON = { canceled: 'was canceled', missed: 'was missed', failed: 'could not start', skipped: 'was skipped' };
 const BAD_PIPELINE_REASON = { error: 'ended with an error', stopped: 'was stopped', interrupted: 'was interrupted' };
 
@@ -486,7 +486,13 @@ function pipelineGate(row, { policy, isLive, now = Date.now() }) {
   // A run on its source branch is not finished until its merge back is: a dependent started now would
   // branch off the source before that run's work lands on it.
   if (mergeBackPending(row, now)) return { state: 'waiting', ...base };
-  if (row.status === 'done') return { state: 'ok', ...base };
+  if (row.status === 'done') {
+    // S1: a run that finished unsuccessfully gates like a failure unless policy is 'any'.
+    if (parseJson(row.outcome, null)?.successful === false) {
+      return policy === 'any' ? { state: 'ok', ...base } : { state: 'bad', reason: 'finished unsuccessfully', ...base };
+    }
+    return { state: 'ok', ...base };
+  }
   if (BAD_PIPELINE_REASON[row.status]) return policy === 'any' ? { state: 'ok', ...base } : { state: 'bad', reason: BAD_PIPELINE_REASON[row.status], ...base };
   return { state: 'waiting', ...base };   // an unknown status: keep waiting rather than guess
 }
@@ -1277,12 +1283,16 @@ export async function runDueTickets({
  * quiet item; `error` counts towards the streak; a forced `paused` (it carries a
  * reason) notifies but does not count; `stopped` (by the user) is silent.
  */
-export function recordOutcome(ticketId, { status, pipelineId = null, reason = null, detail = null, limitEngine = null, now = Date.now() } = {}) {
+export function recordOutcome(ticketId, { status, successful = true, pipelineId = null, reason = null, detail = null, limitEngine = null, now = Date.now() } = {}) {
   const t = getTicket(ticketId);
   if (!t || t.status !== 'fired') return;
   if (pipelineId) setTicketPipeline(ticketId, pipelineId, { now });
   const base = { scheduleId: t.scheduleId, ticketId, pipelineId: pipelineId || t.pipelineId, projectDir: t.projectDir, title: t.title, now: new Date(now) };
-  if (status === 'done') {
+  if (status === 'done' && successful === false) {
+    // S1: a run that finished unsuccessfully counts towards the failure streak (error-shaped arm).
+    addNotification({ ...base, kind: 'run_error', message: `finished unsuccessfully${detail ? `: ${detail}` : '.'}` });
+    if (t.scheduleId) { setLastResult(t.scheduleId, 'error', now); bumpFailure(t.scheduleId, now); }
+  } else if (status === 'done') {
     addNotification({ ...base, kind: 'completed', severity: 'info', message: 'finished.' });
     setLastResult(t.scheduleId, 'completed', now, { resetStreak: true });
   } else if (status === 'error') {

@@ -93,15 +93,18 @@ export function renderDone(meta, payload = {}) {
   pushAway(parts, meta);
     return mdMsg(parts.join('\n'), 'warning');
   }
-  const parts = head('✅', meta);
-  parts.push('   **Status:** completed');
+  // S2: a run can finish `done` yet be flagged unsuccessful (slice 1). Absent-safe: a legacy/successful done is unchanged.
+  const ok = payload.successful !== false;
+  const parts = head(ok ? '✅' : '⚠️', meta);
+  parts.push(`   **Status:** ${ok ? 'completed' : 'finished unsuccessfully'}`);
+  if (!ok && payload.reason) parts.push(`   **Reason:** ${String(payload.reason).slice(0, 300)}`);
   const dur = fmtMs(meta.totalActiveMs);
   if (dur) parts.push(`   **Duration:** ${dur}`);
   const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd);
   if (cost) parts.push(`   **Cost:** ${cost}`);
   pushPending(parts, meta);
   pushAway(parts, meta);
-  return mdMsg(parts.join('\n'), 'success');
+  return mdMsg(parts.join('\n'), ok ? 'success' : 'warning');
 }
 
 /** An unread direction, on EVERY terminal outcome. _finalizeDirections was moved

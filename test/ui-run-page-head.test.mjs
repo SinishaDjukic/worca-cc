@@ -47,7 +47,15 @@ test('facts block: one row per fact, hidden while empty', () => {
   assert.equal(kv.querySelector('[data-fact="project"]').hidden, false);
   assert.equal(kv.querySelector('[data-fact="cost"]').hidden, true);
   assert.equal(kv.querySelector('[data-fact="labels"]').hidden, true);
-  assert.deepEqual(RUN_FACTS.map(([k]) => k), ['project', 'branch', 'labels', 'tags', 'group']);
+  assert.deepEqual(RUN_FACTS.map(([k]) => k), ['project', 'branch', 'outcome', 'labels', 'tags', 'group']);
+  // S2: the Outcome fact stays hidden for a successful/legacy run (empty value).
+  const rk = buildFacts(d, RUN_FACTS);
+  syncFacts(rk);
+  assert.equal(rk.querySelector('[data-fact="outcome"]').hidden, true, 'Outcome hidden when empty');
+  setFactText(rk, 'outcome', 'Unsuccessful');
+  syncFacts(rk);
+  assert.equal(rk.querySelector('[data-fact="outcome"]').hidden, false);
+  assert.equal(rk.querySelector('[data-fact="outcome"] .rd-kv-v').textContent, 'Unsuccessful');
 });
 
 const INDEX = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
@@ -73,7 +81,7 @@ test('run head: no kind chip in either template; the h1 stays the focus target',
 test('facts block: Group is the last row in both templates', () => {
   for (const id of ['run-detail-tpl', 'hist-detail-tpl']) {
     const kv = tpl(id).querySelector('dl.rd-kv[aria-label="Run facts"]');
-    assert.deepEqual([...kv.children].map((r) => r.dataset.fact), ['project', 'labels', 'tags', 'group'], id);
+    assert.deepEqual([...kv.children].map((r) => r.dataset.fact), ['project', 'outcome', 'labels', 'tags', 'group'], id);
     assert.ok(kv.lastElementChild.querySelector('.rd-group-line'), `${id}: the group line is in the last row`);
   }
 });

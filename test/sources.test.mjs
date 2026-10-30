@@ -11,7 +11,7 @@ import { getDb } from '../src/core/db.mjs';
 import { artifactPaths, createPipeline } from '../src/core/artifacts.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { setMockSourceResponses } from '../src/core/plugin-shim.mjs';
-import { listTaskSources, resolveTaskInput, ticketRunTitle, sourcePlaceholderTitle } from '../src/core/sources.mjs';
+import { listTaskSources, resolveTaskInput, statusToResult, ticketRunTitle, sourcePlaceholderTitle } from '../src/core/sources.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -231,4 +231,28 @@ test('MAJ-9: an unnamed file still degrades to the empty prompt (no file, no err
   assert.deepEqual(input, { promptText: '', promptFile: null, sourceMeta: null });
   const p = await createPipeline(projectDir, { promptText: '', sourceType: 'markdown' });
   assert.equal(await readFile(join(p.dir, 'prompt.md'), 'utf8'), '');
+});
+
+// ── statusToResult (§7.1) — S1: a done run that did no work maps to 'failed' ──────
+
+test('statusToResult: successful option gates done → completed | failed', async () => {
+  await checkRows([
+    { name: "done + successful:false ⇒ 'failed'", run: () => {
+      assert.equal(statusToResult('done', { successful: false }), 'failed');
+    } },
+    { name: "done + successful:true ⇒ 'completed'", run: () => {
+      assert.equal(statusToResult('done', { successful: true }), 'completed');
+    } },
+    { name: "done with no option ⇒ 'completed' (default)", run: () => {
+      assert.equal(statusToResult('done'), 'completed');
+    } },
+    { name: "error / stopped ⇒ 'failed' regardless of successful", run: () => {
+      assert.equal(statusToResult('error', { successful: true }), 'failed');
+      assert.equal(statusToResult('stopped'), 'failed');
+    } },
+    { name: "paused / interrupted ⇒ 'needs-human'", run: () => {
+      assert.equal(statusToResult('paused'), 'needs-human');
+      assert.equal(statusToResult('interrupted'), 'needs-human');
+    } },
+  ]);
 });

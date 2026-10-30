@@ -912,6 +912,10 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     bin: c.bin,
     engine: c.engine,
     mock: c.mock,
+    // S3: pipeline nodes route a zero-exit is_error result through _recover instead of finishing
+    // 'done'. Only this node-runner options object sets it, so ask/turn, title, and the best-effort
+    // callers of runClaude keep resolving on is_error exactly as today.
+    rejectOnErrorResult: true,
     signal: ctx.signal,
     onEvent: (e) => {
       if (typeof ctx.onEvent === 'function') ctx.onEvent({ ...e, role });

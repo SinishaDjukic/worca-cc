@@ -179,8 +179,12 @@ export function glanceState(run) {
  * `progress` is runProgress's result: while the run runs or waits for you, its `text` ("Build · task 2 of 4")
  * is line 2, in place of the step names. An open preflight with nothing running still names itself.
  */
-export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null, limitNote = '', progress = null, changes = null, gitChrome = true, workMode = 'git' } = {}) {
+export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null, limitNote = '', progress = null, changes = null, gitChrome = true, workMode = 'git', successful = undefined, outcomeReason = undefined } = {}) {
   const state = glanceState(run);
+  // S2: the outcome. opts win; else read the run object (the live run page passes its run, not these opts).
+  const rr = run || {};
+  const succ = successful !== undefined ? successful : (rr.successful != null ? rr.successful : null);
+  const reason = outcomeReason !== undefined ? outcomeReason : (rr.outcomeReason || null);
   const now = nowRows(run);
   const names = now.map((x) => x.label);
   const join = (a) => (a.length <= 2 ? a.join(' and ') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
@@ -219,6 +223,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       const p = String(pr || '').toUpperCase();
       const nFiles = (n) => `${n} file${n === 1 ? '' : 's'} changed`;
       const fin = (icon, lead, sub) => line(lead, '', sub, { icon });
+      if (succ === false) return fin('unsuccessful', 'Unsuccessful', reason || 'Finished without delivering the work');   // S2: outcome outranks PR/checks/files
       if (changes) { const w = folderDoneWords(changes.state, files); return fin('finished', w.lead, w.sub); }
       if (p === 'MERGED') return fin('merged', 'Merged', 'The pull request was merged');
       if (p === 'IN_BASE') return fin('merged', 'Merged', 'Its work is already in the base branch');

@@ -3951,6 +3951,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hist-sic.st-done{background:var(--green-bg);color:var(--green-ink);}
 .hist-sic.st-stopped,.hist-sic.st-error{background:var(--red-bg);color:var(--red-ink);}
 .hist-sic.st-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.hist-sic.st-unsuccessful{background:var(--amber-bg);color:var(--amber);}   /* S2: a finished-unsuccessful run (amber, the alert glyph) */
 
 /* ---------- History detail: meta line, branch row, actions, banners ---------- */
 /* .diff-add/.diff-del exist ONLY as `.hist-diff .diff-add|.diff-del` (837-838).
@@ -4035,6 +4036,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-status-word.st-done{color:var(--green-ink);}
 .hd-status-word.st-stopped,.hd-status-word.st-error{color:var(--red-ink);}
 .hd-status-word.st-paused{color:var(--amber-ink);}
+.hd-status-word.st-unsuccessful{color:var(--amber-ink);}   /* S2 */
 /* 14px -> 6px: the branch chip and the Resume/Archive buttons carry ~8px of their
    own vertical padding, so the row reads far further from the meta line than the
    number says. 6px + that padding lands on the same optical gap as row1->row2. */
@@ -10172,6 +10174,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .run-status-detail{grid-area:2 / 2;min-width:0;margin-top:2px;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);
   overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .run-status-detail[hidden]{display:none;}   /* display:-webkit-box beats the UA [hidden] rule */
+/* S2: the finished-unsuccessful reason note, a quiet amber line under the status line. */
+.run-status-reason{margin-top:-2px;font-size:12px;color:var(--amber-ink);}
 /* A12: live role-review rows under the status line, divider rows, no box. */
 .run-status-roles{display:flex;flex-direction:column;}
 .run-role-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px;color:var(--ink-2);}

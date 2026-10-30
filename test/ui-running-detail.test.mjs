@@ -863,6 +863,69 @@ test('a run that finished while open moves to its saved run on the same tab once
   ]);
 });
 
+test('S2: an unsuccessful done is amber in the pill/avatar/history family, and a live done frame captures the outcome', async () => {
+  const ctx = await bootRunning();
+  const np = ctx.window.__np;
+  // statusPill: {family,text} — amber BEFORE the green done branch.
+  assert.deepEqual(np.statusPill({ status: 'done', successful: false }), { family: 'amber', text: 'Done · unsuccessful' });
+  assert.deepEqual(np.statusPill({ status: 'done' }), { family: 'green', text: 'Done' });
+  // runStatusMeta: {family,word,glyph} mirrors the pill's position; the word comes from statusPill.
+  const meta = np.runStatusMeta({ status: 'done', successful: false });
+  assert.deepEqual([meta.family, meta.glyph, meta.word], ['amber', 'bang', 'Done · unsuccessful']);
+  assert.equal(np.runStatusMeta({ status: 'done' }).glyph, 'check');
+  // histStatusMeta: a new 'unsuccessful' family + word.
+  assert.deepEqual(np.histStatusMeta({ status: 'done', successful: false }), { family: 'unsuccessful', word: 'Unsuccessful' });
+  assert.equal(np.histStatusMeta({ status: 'done' }).family, 'done');
+
+  // Live-frame capture: a done frame flagged unsuccessful sets the outcome and keeps pauseReason null; a success frame reverts it.
+  await openRun(ctx);
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done', successful: false, reason: 'Implement produced no changes to the worktree.' });
+  await settle(ctx.window, 6);
+  const r = np.getRun('r1');
+  assert.equal(r.successful, false);
+  assert.equal(r.outcomeReason, 'Implement produced no changes to the worktree.');
+  assert.ok(!r.pauseReason, 'the outcome sentence did not leak into pauseReason');
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done', successful: true });
+  await settle(ctx.window, 6);
+  assert.equal(r.successful, null, 'a later successful done reverts the object');
+  assert.equal(r.outcomeReason, null);
+});
+
+test('S2: an unsuccessful run re-hydrated from a hello snapshot stays amber on the run page, with its reason note and Outcome fact (reload path)', async () => {
+  const REASON = 'Review Plan produced no changes to the worktree.';
+  // The reload/reconnect path: the run arrives via a hello SNAPSHOT (not a done frame),
+  // so it is re-materialised through upsertRun. upsertRun must carry the outcome, or every
+  // live surface reads r.successful === undefined and silently reverts to green "Done".
+  const ctx = await openDetail({ run: { status: 'done', successful: false, outcomeReason: REASON } });
+  const { window } = ctx;
+  const np = window.__np;
+
+  const r = np.getRun(ID);
+  assert.equal(r.successful, false, 'hello ingestion carried successful:false onto the run');
+  assert.equal(r.outcomeReason, REASON, 'hello ingestion carried the outcomeReason onto the run');
+
+  const screen = window.document.querySelector('#run-detail');
+  // The run-page pill reads amber "Done · unsuccessful", not green "Done".
+  const pill = screen.querySelector('.rd-status');
+  assert.ok(pill.classList.contains('amber'), 'the run-page pill is amber, not green');
+  assert.equal(pill.querySelector('.rd-status-word').textContent, 'Done · unsuccessful');
+  // ...and the shared status block's reason note is visible with the reason sentence.
+  const reason = screen.querySelector('.run-status-reason');
+  assert.ok(reason && !reason.hidden, 'the reason note is visible on the reload path');
+  assert.equal(reason.textContent, REASON);
+
+  // The Outcome fact row appears on the run page too (a DIFFERENT painter from History detail).
+  const outcome = screen.querySelector('.rd-glance .rd-kv [data-fact="outcome"]');
+  assert.ok(outcome && !outcome.hidden, 'the Outcome fact row is visible on the run page');
+  assert.equal(outcome.querySelector('.rd-kv-v').textContent, 'Unsuccessful');
+
+  // A later successful/legacy hello reverts a reused run object (upsertRun assigns unconditionally).
+  frame(ctx, { type: 'hello', runs: [live(ID, { status: 'done' })] });
+  await settle(window, 6);
+  assert.equal(np.getRun(ID).successful, null, 'a later successful/legacy hello reverts the object');
+  assert.equal(np.getRun(ID).outcomeReason, null);
+});
+
 test('opening a finished run goes straight to its saved run (glance or tab); with no saved row it stays on the Running page', async () => {
   await checkRows([
     { name: 'opening a finished run goes straight to its saved run (glance or tab)', run: async () => {

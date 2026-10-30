@@ -55,6 +55,7 @@ import { withRole } from './model-roles.mjs';
 import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { blockingIssues } from '../shared/graph/verdict.mjs';
+import { stepExpectations } from './outcome.mjs';
 import { RECIPE_SHAPES } from './auto/recipes.mjs';
 import { fingerprintProject, fingerprintWorkspace } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
@@ -142,6 +143,8 @@ export class GraphOrchestrator extends RunHarness {
       tokens: {},                // {'<node>.<port>': {seq,type,path,firedAt}}
       gate: null,                // {wireId, fromNode, toNode, askId} | null
       progressFacts: { tasks: {}, reviews: {} },   // run progress (P2): {tasks:{[nodeId]: total}, reviews:{[nodeId]: {pass, blocking}}}
+      unmet: [],                 // S1: per-node unmet-expectation facts (nodeId-keyed, replaced per re-exec)
+      codeSteps: [],             // S1: [{nodeId, step}] sideEffect:code nodes that ran (finalize's no-code-change check)
     });
   }
 
@@ -1131,6 +1134,13 @@ export class GraphOrchestrator extends RunHarness {
     // undefined for it (costUsd 0); every later marker finds the row.
     const step = this.state.steps.find((s) => s.key === payload.executionId);
     this._syncSchedulerState();
+    // S1 partial-fanout: a slice event carries a taskId; count only terminal 'done' slices.
+    // The tally is keyed by the composite PARENT id (payload.nodeId) and reset per expansion.
+    if (payload.taskId != null && payload.status === 'done') {
+      this._fanoutTally ||= {};
+      const t = (this._fanoutTally[payload.nodeId] ||= { done: 0, total: payload.taskTotal ?? 0 });
+      t.done += 1;
+    }
     // The bound End payload is exec-only, and the step row IS the durable ledger
     // — without this History has no result to anchor the End card on.
     if (step && payload.result !== undefined) step.result = payload.result;
@@ -2283,6 +2293,10 @@ export class GraphOrchestrator extends RunHarness {
     for (const port of ctx.ports?.outputs || []) {
       if (Array.isArray(port?.extraFiles) && port.extraFiles.length) await this._indexExtraFiles(ctx, port);
     }
+    // S1: unmet-expectation facts for THIS execution, before the script early-return
+    // so a script node that declares a required output is covered too. Node-keyed so a
+    // later good re-run of the node supersedes an earlier miss.
+    this._recordNodeUnmet(ctx.nodeId, await this._collectStepUnmet(nc, ctx, result));
     if (nc.kind === 'script') {
       // The envelope audit copy is an artifact under scripts/ (§6.5); the row gets the runtime facts (D17).
       if (result?.envelopePath) {
@@ -2297,7 +2311,47 @@ export class GraphOrchestrator extends RunHarness {
     }
     // Agent memory (§5): sync the mount back after EVERY execution, slices included.
     await this._syncMemory(nc, ctx);
-    if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
+    if (nc.meta?.sideEffect === 'code' && !ctx.slice) {
+      await this._stageWorkingTree();
+      this._noteCodeStep(ctx.nodeId, this._stepLabel(nc, ctx));
+    }
+  }
+
+  /** Human label for a step. `nc` carries no title — use slice title / meta.displayName / key / id.
+   *  Remembers the label by nodeId so finalize (which has no `nc`) can name the step. */
+  _stepLabel(nc, ctx) {
+    const label = (ctx?.slice?.title) || nc?.meta?.displayName || nc?.key || ctx?.nodeId || nc?.nodeId || 'A step';
+    const id = ctx?.nodeId || nc?.nodeId;
+    if (id) { this._nodeLabels ||= {}; this._nodeLabels[id] = label; }
+    return label;
+  }
+
+  /**
+   * Per-step unmet facts for one (non-slice) execution. Slices roll up into partial-fanout,
+   * so we do not raise per-slice missing-output/verdict here.
+   * Returns the list; the caller records it node-keyed so a later good re-run supersedes it.
+   */
+  async _collectStepUnmet(nc, ctx, result) {
+    if (ctx?.slice) return [];
+    const step = this._stepLabel(nc, ctx);
+    const requiredMissing = [];
+    for (const port of ctx.ports?.outputs || []) {
+      if (!port || port.type === 'void') continue;
+      if (port.when && port.when !== 'always') continue;   // conditional ports never flag
+      const path = ctx.outputs?.[port.id]?.path;
+      if (!path) continue;
+      let empty = true, absent = false;
+      try { empty = (await stat(path)).size === 0; } catch { absent = true; }
+      if (absent || empty) requiredMissing.push({ port: port.id, empty: !absent });
+    }
+    const verdictMissing = !!(ctx.verdict?.path && (!result?.verdict || result.verdict.missing));
+    return stepExpectations({ nodeId: ctx.nodeId, step, requiredMissing, verdictMissing });
+  }
+
+  /** De-duped record that a sideEffect:code node ran (used by the finalize diff check). */
+  _noteCodeStep(nodeId, step) {
+    this.state.codeSteps ||= [];
+    if (!this.state.codeSteps.some((c) => c.nodeId === nodeId)) this.state.codeSteps.push({ nodeId, step });
   }
 
   /** Deterministic delivery: read the inbox at step start and hang the pending
@@ -2723,6 +2777,8 @@ export class GraphOrchestrator extends RunHarness {
     // Run progress (P2): the decomposition's whole size. A slice row's taskTotal is its phase's only.
     this.state.progressFacts ||= { tasks: {}, reviews: {} };
     this.state.progressFacts.tasks[node.id] = count;
+    this._fanoutTally ||= {};
+    this._fanoutTally[node.id] = { done: 0, total: count };   // S1: reset the slice tally per expansion (supersede)
     await appendAudit(this.pipeline.dir,
       `${node.id}: expanded into ${resolved.length} phase(s), ${count} task(s).`).catch(() => {});
     return { phases: resolved };
@@ -2828,9 +2884,20 @@ export class GraphOrchestrator extends RunHarness {
    * live case, `implementer.done` — that is byte-identical to an ordinary execution.
    */
   async _finishComposite(nc, args) {
-    if (nc.meta?.sideEffect === 'code') await this._stageWorkingTree();
     const label = nc.meta?.displayName || nc.key || args.node.id;
+    if (nc.meta?.sideEffect === 'code') {
+      await this._stageWorkingTree();
+      this._noteCodeStep(args.node.id, label);
+    }
+    this._nodeLabels ||= {}; this._nodeLabels[args.node.id] = label;
     const n = Array.isArray(args.phases) ? args.phases.length : 0;
+    // S1 partial-fanout: total from the decomposition; done from the exec tally (Step 4).
+    const total = this.state.progressFacts?.tasks?.[args.node.id] ?? this._fanoutTally?.[args.node.id]?.total ?? 0;
+    const done = this._fanoutTally?.[args.node.id]?.done ?? 0;
+    const fanoutUnmet = (total > 0 && Number.isFinite(done) && done < total)
+      ? [{ nodeId: args.node.id, step: label, kind: 'partial-fanout', detail: `${done} of ${total} tasks` }]
+      : [];
+    this._recordNodeUnmet(args.node.id, fanoutUnmet);
     return { summary: `${label}: composite execution complete (${n} phase(s)).`, outputs: {}, verdict: null };
   }
   // ── hook 4: rehydrate (PURE — runs before the shell restores anything) ────

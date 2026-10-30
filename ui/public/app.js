@@ -109,7 +109,7 @@ import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.m
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
-import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
+import { pageModel, runCrumbs, paintCrumbs, syncFacts, setFactText } from './run-page-head.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
@@ -2190,6 +2190,13 @@ function onHello(msg) {
       pipelineId: r0.pipelineId || null,
       pauseReason: r0.pauseReason || null,
       pauseDetail: r0.pauseDetail || null,
+      // S2: carry slice-1's outcome through the hello re-materialisation. Assigned
+      // unconditionally (reset value when absent) so a reload/reconnect keeps an
+      // unsuccessful run amber — and a later successful/legacy snapshot reverts a
+      // reused run object — mirroring onDone. Without this the field is dropped on
+      // every hello and the run page silently falls back to green "Done".
+      successful: r0.successful === false ? false : null,
+      outcomeReason: r0.successful === false ? (r0.outcomeReason || null) : null,
       limitEngine: r0.limitEngine || null,
       limitResetAt: r0.limitResetAt || null,
       runEngine: r0.runEngine || undefined,
@@ -2356,7 +2363,7 @@ function makeRun({
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
-  shaping = null, networkWait = null, workMode = undefined,
+  shaping = null, networkWait = null, workMode = undefined, successful = null, outcomeReason = null,
 }) {
   return {
     runId,
@@ -2408,6 +2415,10 @@ function makeRun({
                        // recovery-patch link (paintWorktreeNotice).
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
+    // S2: slice-1's finished-outcome, materialised from the hello snapshot so a reload
+    // keeps an unsuccessful run amber (onDone writes the same two fields on the live frame).
+    successful,           // false => finished-unsuccessful; null/true => ok
+    outcomeReason,        // the one-line "why" for an unsuccessful finish, or null
     // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
     active: [], endReached: undefined, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null,
     el: null,
@@ -6967,11 +6978,16 @@ function finishRun(r, status) {
 }
 
 function onDone(r, msg) {
+  // S2: a done frame flagged unsuccessful carries a `reason` that is the OUTCOME sentence, not a pause
+  // reason — capture it as the outcome and keep pauseReason clean. Assigned unconditionally so a later
+  // successful done frame reverts a reused run object.
+  r.successful = msg.successful === false ? false : null;
+  r.outcomeReason = msg.successful === false ? (msg.reason || null) : null;
   // A cost pause carries the reason code ('cost_pipeline' | 'cost_total') that
   // drives the card banner, the status pill, and the resume gating. Assigned
   // unconditionally so a later reasonless done clears it, matching the server's
-  // own entry.pauseReason reset in wireRun.
-  r.pauseReason = msg.reason || null;
+  // own entry.pauseReason reset in wireRun. An unsuccessful-done reason is NOT a pause reason.
+  r.pauseReason = msg.successful === false ? null : (msg.reason || null);
   // An 'error' pause also carries the cause it parked on; assigned unconditionally
   // for the same reason as the code above — a later reasonless done must clear it.
   r.pauseDetail = msg.detail || null;
@@ -23857,6 +23873,7 @@ const HIST_STATUS_FAMILY = {
 };
 function histStatusMeta(p) {
   const s = String((p && p.status) || '').toLowerCase();
+  if (s === 'done' && p && p.successful === false) return { family: 'unsuccessful', word: 'Unsuccessful' };   // S2
   const family = HIST_STATUS_FAMILY[s]
     || ((p && p.live) || s === 'running' || s === 'starting' ? 'paused' : '');
   const word = s === 'pausing' ? 'Pausing…'
@@ -25219,8 +25236,9 @@ function paintHdGlance(screen, record, data) {
   if (!glance || !data || !data.state) return;
   void loadHdAwayAnswers(screen, record && record.id, data.state.steps);   // `st` is declared below (TDZ)
   const st = data.state;
-  const run = { status: st.status, steps: st.steps, stepper: st.stepper, pendingQuestion: null, active: st.active };
-  const meta = histStatusMeta({ status: st.status });
+  const run = { status: st.status, steps: st.steps, stepper: st.stepper, pendingQuestion: null, active: st.active,
+    successful: st.successful, outcomeReason: st.outcomeReason };   // S2: the outcome the glance/model read
+  const meta = histStatusMeta({ status: st.status, successful: st.successful });
   const results = data.results || null;
   const checks = results ? hdChecks(results) : [];
   const s = results && results.summary;
@@ -25230,6 +25248,7 @@ function paintHdGlance(screen, record, data) {
     pill: { text: meta.word }, checks: results ? checks.length : null, lastLine: '',
     pr, files: folder ? (fc ? fc.total : null) : (s ? (s.filesNew || 0) + (s.filesChanged || 0) + (s.filesDeleted || 0) : null),
     changes, gitChrome: folder || gitChrome,
+    successful: st.successful, outcomeReason: st.outcomeReason,   // S2
   });
   screen.dataset.glance = copy.state;
 
@@ -25248,6 +25267,8 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
   paintRunPlace(screen, home);
   paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
+  // S2: the Outcome fact — "Unsuccessful" when slice 1 flagged it, else blank so syncFacts hides the row.
+  setFactText(glance.querySelector('.rd-kv'), 'outcome', st.successful === false ? 'Unsuccessful' : '');
   syncFacts(glance.querySelector('.rd-kv'));
 
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
@@ -25964,7 +25985,7 @@ function paintHdHeaderMeta(screen, record, data) {
   const meta = screen.querySelector('.hd-meta');
   const costFocus = costTriggerFocused(meta);
   meta.innerHTML = '';
-  const { family, word } = histStatusMeta({ status: st.status });
+  const { family, word } = histStatusMeta({ status: st.status, successful: st.successful });   // S2: the amber family for an unsuccessful done
   const doneWord = st.status === 'done' ? doneStatusWord(hdDoneState(record, data)) : '';
   const w = document.createElement('span');
   w.className = `hd-status-word st-${family}`;
@@ -31762,6 +31783,7 @@ function statusPill(r) {
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (r.pendingQuestion != null) return { family: 'amber', text: r.pendingQuestion.kind === 'workflow' ? 'Paused · your decision' : 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
+  if (r.status === 'done' && r.successful === false) return { family: 'amber', text: 'Done · unsuccessful' };   // S2: before the green done branch
   if (r.status === 'done') return { family: 'green', text: 'Done' };
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
@@ -31792,6 +31814,7 @@ function runStatusMeta(r) {
     return { family: 'amber', word, glyph: 'pause' };
   }
   if (r.pendingQuestion != null) return { family: 'amber', word, glyph: 'ask' };
+  if (r.status === 'done' && r.successful === false) return { family: 'amber', word, glyph: 'bang' };   // S2: mirror statusPill's amber branch
   if (r.status === 'done') return { family: 'green', word, glyph: 'check' };
   if (r.status === 'stopped') return { family: 'red', word, glyph: 'square' };
   if (r.status === 'error') return { family: 'red', word, glyph: 'bang' };
@@ -33238,6 +33261,8 @@ function runsLiveItem(r) {
     files: folder ? (ffc ? ffc.total : null) : (rec && typeof rec.files === 'number' ? rec.files : null),
     tags: r.tags || [],
     labels: flagOn('runLabels') ? (r.labels || []) : [],
+    // S2: top-level so doneWord(it) / liveRowState read the outcome; rdModelRun spreads ...r so the model sees it too.
+    ...(r.successful === false ? { successful: false, outcomeReason: r.outcomeReason || null } : {}),
     // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run. A finished
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
@@ -33602,6 +33627,9 @@ const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st
   round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
   // An interrupted run that can never resume (no resume point, its project gone): the model offers Archive instead.
   ...((p && p.resumable === false) || (st && st.resumable === false) ? { resumable: false } : {}),
+  // S2: slice 1's persisted outcome, threaded in explicitly (histRun hand-picks fields, so a spread of ...p would not carry it).
+  ...((p && p.successful === false) || (st && st.successful === false)
+    ? { successful: false, outcomeReason: (p && p.outcomeReason) || (st && st.outcomeReason) || null } : {}),
   // Projects, any way: a Folder run's changes and a run without a project word the finished line; no git here, no git chrome.
   ...(modelWorkMode(p, st) !== 'git' ? { workMode: modelWorkMode(p, st) } : {}),
   ...((p && p.changes) || (st && st.changes) ? { changes: (p && p.changes) || st.changes } : {}),
@@ -33625,6 +33653,8 @@ function runsHistItem(p) {
     base: gitOn() ? baseRowNote(p.baseCheck) : '',
     tags: p.tags || [],
     labels: flagOn('runLabels') ? (p.labels || []) : [],
+    // S2: top-level so doneWord(p) / histRowState read the outcome; histRun threads it into the model's raw run.
+    ...(p.successful === false ? { successful: false, outcomeReason: p.outcomeReason || null } : {}),
     run: histRun(p),
     cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
   };
@@ -37481,6 +37511,10 @@ function paintRdHeader(screen, r) {
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
   paintRunLabels(screen.querySelector('.rd-glance .rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
   paintRunKindChip(screen.querySelector('.rd-page-meta'), workModeOf(r));
+  // S2: the Outcome fact row — the run page is a DIFFERENT painter from History detail
+  // (paintHdGlance fills its own .hd .rd-kv), so it must be filled here too or syncFacts
+  // leaves the row hidden. Empty value for a successful/legacy run hides it again.
+  setFactText(screen.querySelector('.rd-glance .rd-kv'), 'outcome', r.successful === false ? 'Unsuccessful' : '');
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 
   // Meta: project · started · elapsed · cost · step n/m · step name.

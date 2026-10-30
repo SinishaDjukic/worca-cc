@@ -1324,6 +1324,10 @@ function summarizeRuns() {
     // 'cost_pipeline'/'cost_total') instead of showing a plain "Paused" card
     // until the next event.
     pauseReason: r.pauseReason || null,
+    // S2: slice 1's outcome, read entry-first (survives a GC'd/resumed orch); the conditional spread keeps the
+    // snapshot byte-identical for a successful/legacy run (both fields absent unless successful===false).
+    ...(((r.successful ?? r.orch?.state?.successful) === false)
+      ? { successful: false, outcomeReason: (r.outcomeReason ?? r.orch?.state?.outcomeReason) || null } : {}),
     // The clipped failure message behind reason 'error', or null — so a
     // reload/reconnect restores the "Paused · error" detail, not a bare card.
     pauseDetail: r.pauseDetail || null,
@@ -1445,9 +1449,15 @@ function wireRun(entry) {
       }
       if (name === 'done') {
         entry.status = (payload && payload.status) || 'done';
+        // S2: slice 1 flags an unsuccessful done with { successful:false, reason } — stash the outcome for
+        // summarizeRuns (hello / live card) and keep the sentence OUT of pauseReason.
+        const succ = payload && payload.successful != null ? payload.successful : null;
+        entry.successful = succ;
+        entry.outcomeReason = succ === false ? ((payload && payload.reason) || null) : null;
         // Remember the pause reason for summarizeRuns (hello). Reset on every
-        // done so a later reasonless finish cannot leave a stale cost banner.
-        entry.pauseReason = (payload && payload.reason) || null;
+        // done so a later reasonless finish cannot leave a stale cost banner. An unsuccessful-done
+        // `reason` is the outcome sentence, NOT a pause reason — don't let it pollute pauseReason.
+        entry.pauseReason = succ === false ? null : ((payload && payload.reason) || null);
         // ...and WHAT went wrong for an error-pause, reset alongside it.
         entry.pauseDetail = (payload && payload.detail) || null;
         entry.limitEngine = (payload && payload.limitEngine) || null;
@@ -1514,6 +1524,7 @@ function wireRun(entry) {
         try {
           recordOutcome(entry.ticketId, {
             status: name === 'error' ? 'error' : ((payload && payload.status) || 'done'),
+            successful: payload ? payload.successful : undefined,          // S1: the done emit carries it
             pipelineId: entry.pipelineId || null,
             reason: (payload && payload.reason) || null,
             detail: (payload && (payload.detail || payload.message)) || null,
