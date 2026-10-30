@@ -83,7 +83,7 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch, repo
     const spec = structuredClone(f.spec);
     const body = {
       promptMarkdown: renderTaskMarkdown(f, { spec, targetName: target.name || null, version }),
-      title: `${f.id}: ${f.title}`,
+      title: f.title,   // the branch, commit and pull request come from it: FEAT-n stays inside Worca (the start row links the run)
       ...(f.scopeType === 'workspace' ? { workspaceId: f.scopeKey } : { projectDir: target.path }),
       workflowId: wf,
       guardrailsId: 'normal',
