@@ -97,6 +97,7 @@ export const FLAGS = Object.freeze([
     since: '1.16.0',
     added: '2026-10-29',
     reviewBy: '2027-01-27',
+    docs: 'docs/ticket-updates.md',
   }),
 ]);
 

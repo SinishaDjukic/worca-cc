@@ -152,7 +152,10 @@ project's statuses). The plugin answers `capabilities()` with `ticketUpdates: tr
 
   When Jira sends no message, the line says `Jira gave no reason`. In every case above the comment is still posted. A refused
   API token (401), a rate limit (429), a Jira server error (5xx), a network error or a timeout still fails the write-back,
-  so it can be tried again; a ticket that moved before the failure then reads `Already in …`.
+  so it can be tried again. A retry after a failed comment finds a ticket that already moved and reads `Already in …` for
+  **Any Done status** and for a rule that names one of the project's statuses. For a typed transition name carried over from
+  the old setting it does so only when that text is also the name of the ticket's current status (a transition "Resolve"
+  leading to "Resolved" is not recognised), so the retry reads `Could not move to …`.
 
 Until Ticket updates is saved for a connection, write-back works exactly as described above.
 
