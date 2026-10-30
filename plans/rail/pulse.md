@@ -146,7 +146,9 @@ Nowhere else: not in the runs list, not on the run card (its own pause notice co
 - Clear, Mark read and pickers do not confirm; Reset to defaults does (the strip).
 - The gate (`prototype/pulse-sweep.mjs`) holds for every case and view at 900 and 375px in both themes.
 
-## 6. Open
-1. Name: Pulse (from Pulse Center); keep it or call it Hub.
-2. Whether Gemini's daily window belongs in the Week ring or gets its own label on the ring.
-3. Whether the warning line is one setting for all providers (proposed) or one per provider.
+## 6. Decided
+- Name: **Pulse** (from Pulse Center), not Hub (30 Oct).
+
+## 7. Open
+1. Whether Gemini's daily window belongs in the Week ring or gets its own label on the ring.
+2. Whether the warning line is one setting for all providers (proposed) or one per provider.
