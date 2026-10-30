@@ -4,7 +4,8 @@
 // keys: the focus stays in the popover's search box, Enter toggles the active row), add a project rule, pick a status, Save,
 // reopen; New run's project select (source-pane.mjs's remote select, over POST /api/sources/call) holds only the picked ones;
 // a mock write-back carries the move; contrast of the section, the open listbox and the open popover in light and dark;
-// 390 px. Screenshots of boards 1, 3, 4 and 6, light and dark, go to TU_SHOTS (else a new temp folder), kept and printed at
+// 390 px. After every open of the move listbox and the projects popover (desktop and 390 px) the popup must not cover its
+// button and must stay inside the viewport. Screenshots of boards 1, 3, 4 and 6, light and dark, go to TU_SHOTS (else a new temp folder), kept and printed at
 // the end. NOT part of `npm test`.
 // Run: node tools/verify-ticket-updates-cdp.mjs   (or: npm run verify:ticket-updates; set CHROME_BIN to a Chrome/Chromium
 // binary if it is not auto-found, CDP_PORT when 9351 is taken)
@@ -28,7 +29,7 @@ const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const PORT = Number(process.env.CDP_PORT || 9351);
 // The whole proof is bounded: a CDP call that never answers (Chrome gone) ends in a named failure and a cleanup, not a hang.
-const WATCHDOG_MS = Number(process.env.TU_WATCHDOG_MS || 10 * 60_000);
+const WATCHDOG_MS = Number(process.env.TU_WATCHDOG_MS || 3 * 60_000);
 const T0 = Date.now();
 const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
 
@@ -139,7 +140,12 @@ const A = await openPage(`${base}/#marketplace/installed`);
 const until = async (fn, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(60); } return false; };
 const js = (body) => A.evalJs(`(() => { ${body} })()`);
 const has = (sel) => js(`return !!document.querySelector(${JSON.stringify(sel)});`);
-const click = (sel) => js(`const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false; n.click(); return true;`);
+/** Clicks `sel`; a missing element is a named failure (not a silent no-op the next check trips over). */
+const click = async (sel) => {
+  const ok = await js(`const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false; n.click(); return true;`);
+  if (!ok) check(`click: ${sel} is on the page`, false);
+  return ok;
+};
 const textOf = (sel) => js(`return document.querySelector(${JSON.stringify(sel)})?.textContent ?? null;`);
 /** Opens jira-source's manage sheet; true once a fresh section (not one left from an earlier opening) shows its rules. */
 const openSheet = async () => {
@@ -211,27 +217,48 @@ const aa = (name, r) => {
 };
 const SHOP_MOVE = '#mk-sheet .mk-tu-rule[data-project="SHOP"] .mk-tu-move';
 const resolvedShown = () => js(`return [...document.querySelectorAll('.mk-tu-movepop [role="option"] .mk-tu-opt-t')].some((o) => o.textContent === 'Resolved');`);
-const openMoveList = async () => {
+/** An open popup never covers its button and stays inside the viewport (the Task 18 review: the move list slid up over its
+ *  select). Two named checks; a missing popup or button fails both with its selector. */
+const geometry = async (where, popSel, btnSel) => {
+  const g = await js(`const p = document.querySelector(${JSON.stringify(popSel)}); const b = document.querySelector(${JSON.stringify(btnSel)});
+    if (!p || !b) return { missing: !p ? ${JSON.stringify(popSel)} : ${JSON.stringify(btnSel)} };
+    const pr = p.getBoundingClientRect(); const br = b.getBoundingClientRect(); const r = (x) => Math.round(x);
+    return { pop: [r(pr.top), r(pr.bottom)], btn: [r(br.top), r(br.bottom)], vh: innerHeight,
+      clear: pr.top >= br.bottom - 1 || pr.bottom <= br.top + 1, inside: pr.bottom <= innerHeight + 1 && pr.top >= -1 };`);
+  check(`${where}: it does not cover its button`, !g.missing && g.clear, JSON.stringify(g));
+  check(`${where}: it stays inside the viewport`, !g.missing && g.inside, JSON.stringify(g));
+};
+const openMoveList = async (where) => {
   await reveal('#mk-sheet .mk-tu-rule[data-project="SHOP"]');
-  await click(SHOP_MOVE);
-  return until(resolvedShown, 15000);
+  if (!(await click(SHOP_MOVE))) return false;
+  const shown = await until(resolvedShown, 15000);
+  if (shown) await geometry(`${where}: the move listbox`, '.mk-tu-movepop', SHOP_MOVE);
+  return shown;
 };
-const closeMoveList = () => js(`const b = document.querySelector(${JSON.stringify(SHOP_MOVE)});
-  b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); return !document.querySelector('.mk-tu-movepop');`);
+/** Esc on the SHOP select: true once the list is gone, else why not. */
+const closeMoveList = () => js(`const b = document.querySelector(${JSON.stringify(SHOP_MOVE)}); if (!b) return 'no SHOP move select';
+  b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  return !document.querySelector('.mk-tu-movepop') || 'the listbox is still open';`);
 const sixRows = () => js(`return document.querySelectorAll('.mk-tu-projpop .mk-tu-prow').length === 6;`);
-const openPopover = async () => {
+const openPopover = async (where) => {
   await reveal('#mk-sheet .mk-tu-add-projects');
-  await click('#mk-sheet .mk-tu-add-projects');
-  return until(sixRows, 15000);
+  if (!(await click('#mk-sheet .mk-tu-add-projects'))) return false;
+  const shown = await until(sixRows, 15000);
+  if (shown) await geometry(`${where}: the projects popover`, '.mk-tu-projpop', '#mk-sheet .mk-tu-add-projects');
+  return shown;
 };
-/** A key pressed in the popover's search box (the focus stays there, §11 listbox model). */
-const keyInSearch = (key) => js(`const q = document.querySelector('.mk-tu-projpop .mk-tu-search');
-  q.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true })); return true;`);
+/** A key pressed in the popover's search box (the focus stays there, §11 listbox model); false when the box is gone. */
+const keyInSearch = async (key) => {
+  const ok = await js(`const q = document.querySelector('.mk-tu-projpop .mk-tu-search'); if (!q) return false;
+    q.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true })); return true;`);
+  if (!ok) check(`${key} in the popover's search box: the box is on the page`, false);
+  return ok;
+};
 
 // ---- pick projects (board 3): SHOP with a click on its row, CRM with the keys ----
 check('the manage sheet shows Ticket updates', await openSheet());
 check('its header names the connection', (await textOf('#mk-sheet .mk-tu-head .mk-meta')) === 'Acme (acme)');
-check('the projects popover lists the six projects', await openPopover());
+check('the projects popover lists the six projects', await openPopover('desktop, picking'));
 check('the focus is in the popover\'s search box', await js(`return document.activeElement === document.querySelector('.mk-tu-projpop .mk-tu-search');`));
 await click('.mk-tu-projpop .mk-tu-prow[data-value="SHOP"]');   // a click toggles the row and makes it the active one
 await keyInSearch('ArrowDown');   // CRM, the row after SHOP
@@ -250,19 +277,22 @@ check('the new row has a Project select', await until(() => has('#mk-sheet .mk-t
 check('its Project select offers only SHOP and CRM', await until(() => js(`const s = document.querySelector('#mk-sheet .mk-tu-project');
   return [...s.options].filter((o) => o.value).map((o) => o.value).join() === 'SHOP,CRM';`)));
 // a mouse pick (no key before the change) commits at once; a pick with the keys would wait for Enter or blur
-await js(`const s = document.querySelector('#mk-sheet .mk-tu-project'); s.value = 'SHOP'; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+check('the Project select takes SHOP', await js(`const s = document.querySelector('#mk-sheet .mk-tu-project'); if (!s) return false;
+  s.value = 'SHOP'; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`));
 check('the row became the SHOP rule', await until(() => has('#mk-sheet .mk-tu-rule[data-project="SHOP"]')));
-check("SHOP's statuses load into the listbox", await openMoveList());
-await js(`[...document.querySelectorAll('.mk-tu-movepop [role="option"]')].find((o) => o.querySelector('.mk-tu-opt-t')?.textContent === 'Resolved').click(); return true;`);
+check("SHOP's statuses load into the listbox", await openMoveList('desktop, picking'));
+check('the listbox has a Resolved option to click', await js(`const o = [...document.querySelectorAll('.mk-tu-movepop [role="option"]')]
+  .find((n) => n.querySelector('.mk-tu-opt-t')?.textContent === 'Resolved'); if (!o) return false; o.click(); return true;`));
 check('the select shows Resolved', await until(async () => (await textOf(`${SHOP_MOVE} .mk-tu-move-t`)) === 'Resolved'), await textOf(`${SHOP_MOVE} .mk-tu-move-t`));
 
 // ---- contrast, light and dark: the section (boards 1, 2), the open listbox (board 4), the open popover (board 3) ----
 await reveal('#mk-sheet .mk-tu', 'start');
 aa('the section', await contrastBoth(['#mk-sheet .mk-tu'], 'board1-section'));
-check('the move listbox opens with the statuses', await openMoveList());
+check('the move listbox opens with the statuses', await openMoveList('desktop'));
 aa('the open move listbox', await contrastBoth(['.mk-tu-movepop'], 'board4-listbox'));
-check('Esc closes the listbox', await closeMoveList());
-check('the projects popover opens', await openPopover());
+let closed = await closeMoveList();
+check('Esc closes the listbox', closed === true, closed);
+check('the projects popover opens', await openPopover('desktop'));
 aa('the open projects popover', await contrastBoth(['.mk-tu-projpop'], 'board3-popover'));
 await click('.mk-tu-projpop .mk-tu-done');
 
@@ -270,27 +300,32 @@ await click('.mk-tu-projpop .mk-tu-done');
 await setTheme('light');
 await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await sleep(400);
-const phone = await js(`const row = document.querySelector('#mk-sheet .mk-tu-rule[data-project="SHOP"]'); const sel = row.querySelector('.mk-tu-movewrap');
-  const r = row.getBoundingClientRect(); const s = sel.getBoundingClientRect(); const name = row.querySelector('.mk-tu-name').getBoundingClientRect();
-  const x = document.querySelector('#mk-sheet .mk-tu-x').getBoundingClientRect();
+const phone = await js(`const row = document.querySelector('#mk-sheet .mk-tu-rule[data-project="SHOP"]'); const sel = row?.querySelector('.mk-tu-movewrap');
+  const nameEl = row?.querySelector('.mk-tu-name'); const xEl = document.querySelector('#mk-sheet .mk-tu-x');
+  const missing = [[row, 'the SHOP rule'], [sel, 'its .mk-tu-movewrap'], [nameEl, 'its .mk-tu-name'], [xEl, 'a chip ×']].filter(([n]) => !n).map(([, w]) => w);
+  if (missing.length) return { missing };
+  const r = row.getBoundingClientRect(); const s = sel.getBoundingClientRect(); const name = nameEl.getBoundingClientRect();
+  const x = xEl.getBoundingClientRect();
   const buttons = [...document.querySelectorAll('#mk-sheet .mk-tu .btn, #mk-sheet .mk-tu-move')].filter((b) => b.getClientRects().length);
   return { below: s.top >= name.bottom - 1, wide: s.width >= r.width - 40, tall: buttons.every((b) => b.getBoundingClientRect().height >= 44),
     short: buttons.filter((b) => b.getBoundingClientRect().height < 44).map((b) => b.className + ' ' + Math.round(b.getBoundingClientRect().height)),
     x: Math.round(x.width), scroll: document.documentElement.scrollWidth <= window.innerWidth };`);
 check('390 px: the select sits below the name at full width', phone.below && phone.wide, JSON.stringify(phone));
 check('390 px: every button and select is 44 px tall; the chip × is 32 px', phone.tall && phone.x === 32, JSON.stringify(phone));
-check('390 px: no sideways scroll', phone.scroll);
+check('390 px: no sideways scroll', phone.scroll, JSON.stringify(phone));
 await reveal('#mk-sheet .mk-tu-rule[data-project="SHOP"]');
 aa('390 px: the section', await contrastBoth(['#mk-sheet .mk-tu'], 'board6-phone'));
-check('390 px: the listbox opens', await openMoveList());
+check('390 px: the listbox opens', await openMoveList('390 px'));
 const optH = await js(`return [...document.querySelectorAll('.mk-tu-movepop [role="option"]')].map((o) => Math.round(o.getBoundingClientRect().height));`);
 check('390 px: every listbox option is 44 px tall', optH.length > 0 && optH.every((h) => h >= 44), JSON.stringify(optH));
 aa('390 px: the open move listbox', await contrastBoth(['.mk-tu-movepop'], 'board6-phone-listbox'));
-check('390 px: Esc closes the listbox', await closeMoveList());
-check('390 px: the popover opens', await openPopover());
+closed = await closeMoveList();
+check('390 px: Esc closes the listbox', closed === true, closed);
+check('390 px: the popover opens', await openPopover('390 px'));
 const rowH = await js(`return [...document.querySelectorAll('.mk-tu-projpop .mk-tu-prow')].map((r) => Math.round(r.getBoundingClientRect().height));`);
 check('390 px: every popover row is 44 px tall', rowH.length === 6 && rowH.every((h) => h >= 44), JSON.stringify(rowH));
-check('390 px: the popover fits the screen', await js(`const b = document.querySelector('.mk-tu-projpop').getBoundingClientRect(); return b.left >= 0 && b.right <= window.innerWidth;`));
+check('390 px: the popover fits the screen', await js(`const p = document.querySelector('.mk-tu-projpop'); if (!p) return false;
+  const b = p.getBoundingClientRect(); return b.left >= 0 && b.right <= window.innerWidth;`));
 aa('390 px: the open projects popover', await contrastBoth(['.mk-tu-projpop'], 'board6-phone-popover'));
 await click('.mk-tu-projpop .mk-tu-done');
 await A.send('Emulation.clearDeviceMetricsOverride');
@@ -316,6 +351,7 @@ const listed = await A.evalJs(`(async () => {
     inputs: [{ key: 'project', type: 'remote-select', label: 'Project', optionsFrom: 'listProjects' }] }, { call, doc: document });
   document.body.append(pane);
   const s = pane.querySelector('select.sp-remote');
+  if (!s) { pane.remove(); return 'no select.sp-remote in the source pane'; }
   s.dispatchEvent(new FocusEvent('focus'));   // the select loads on its first focus (a headless page may not take real focus)
   await s._load;
   const values = [...s.options].map((o) => o.value).join();
