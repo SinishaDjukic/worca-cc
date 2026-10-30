@@ -97,7 +97,7 @@ export const FLAGS = Object.freeze([
     since: '1.15.0',
     added: '2026-10-28',
     reviewBy: '2027-01-26',
-    docs: 'docs/feature-flags.md',   // Task 64 switches this to docs/sessions.md
+    docs: 'docs/sessions.md',
   }),
 ]);
 
