@@ -233,7 +233,7 @@ jobs:
           - group: theme
             proofs: "verify:theme"
           - group: composer + run-monitor + the rest
-            proofs: "verify:composer verify:run-monitor verify:feature-page verify:memory verify:scripts verify:ask-forms verify:workspace-map verify:flags verify:requirements verify:chat-layout"
+            proofs: "verify:composer verify:run-monitor verify:feature-page verify:memory verify:scripts verify:ask-forms verify:workspace-map verify:flags verify:requirements verify:ticket-updates verify:chat-layout"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
