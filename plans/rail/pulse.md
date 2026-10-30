@@ -150,6 +150,4 @@ Nowhere else: not in the runs list, not on the run card (its own pause notice co
 - Name: **Pulse** (from Pulse Center), not Hub (30 Oct).
 - Gemini's daily window sits in the **Week** ring (the long window); the ring carries no label of its own, and the
   avatar's tooltip and the usage card call it **Day** (`Day 84% · Gemini · resets 02:00`) (30 Oct).
-
-## 7. Open
-1. Whether the warning line is one setting for all providers (proposed) or one per provider.
+- One warning line for all providers: the `warn at [80% ▾]` picker in Usage and spend, not one per provider (30 Oct).
