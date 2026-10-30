@@ -87,6 +87,17 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-23',
     docs: 'docs/run-telemetry.md',
   }),
+  entry({
+    key: 'ticketUpdates',
+    title: 'Ticket updates',
+    description: 'Marketplace › Installed › a tracker plugin › Settings gets Ticket updates: the projects you work on, and per project what a finished run does to its tickets (Don\'t move, Any Done status, or one of that project\'s statuses). New run and Requirements list only those projects. Off: each plugin\'s old setting applies.',
+    stage: 'experimental',
+    default: false,
+    owner: 'TomicaB',
+    since: '1.16.0',
+    added: '2026-10-29',
+    reviewBy: '2027-01-27',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));
