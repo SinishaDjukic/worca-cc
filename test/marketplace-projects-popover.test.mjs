@@ -10,9 +10,10 @@ const trackDom = useDomRelease(afterEach);
 const SIX = [['SHOP', 'Shop'], ['CRM', 'Customer portal'], ['OPS', 'Operations'], ['SUP', 'Support desk'], ['MKT', 'Marketing site'],
   ['DATA', 'Data platform']].map(([value, name]) => ({ value, label: `${name} (${value})`, name }));
 
-function mount({ picked = ['SHOP'], loader = async () => SIX } = {}) {
+function mount({ picked = ['SHOP'], loader = async () => SIX, prep = () => {} } = {}) {
   const { window } = trackDom(new JSDOM('<!doctype html><body><button id="add" type="button">Add projects…</button><p id="away">x</p>'
     + '<button id="next" type="button">next</button></body>', { url: 'http://localhost/' }));
+  prep(window);
   const doc = window.document;
   const set = new Set(picked);
   const toggles = [];
@@ -46,8 +47,9 @@ test('board 3: a dialog with the search, the multi-select listbox "Jira projects
   assert.deepEqual([list.getAttribute('role'), list.getAttribute('aria-multiselectable'), list.getAttribute('aria-label')], ['listbox', 'true', 'Jira projects']);
   assert.deepEqual(m.rows().map((r) => [r.getAttribute('role'), r.querySelector('.mk-tu-key').textContent, r.querySelector('.mk-tu-pname').textContent]),
     SIX.map((p) => ['option', p.value, p.name]));
-  assert.deepEqual(m.rows().map((r) => [r.getAttribute('aria-selected'), r.querySelector('input[type="checkbox"]').checked]),
-    [['true', true], ...Array(5).fill(['false', false])]);
+  assert.deepEqual(m.rows().map((r) => r.getAttribute('aria-selected')), ['true', ...Array(5).fill('false')]);
+  assert.equal(m.$('.mk-tu-plist input, .mk-tu-plist [tabindex]'), null, 'no focusable control inside the options');
+  assert.deepEqual([...m.doc.querySelectorAll('.mk-tu-pcheck')].map((c) => c.getAttribute('aria-hidden')), Array(6).fill('true'));
   assert.equal(m.$('.mk-tu-pcount').textContent, '1 picked · 6 projects on Acme');
   assert.equal(m.$('.mk-tu-done').textContent, 'Done');
 });
@@ -55,12 +57,15 @@ test('board 3: a dialog with the search, the multi-select listbox "Jira projects
 test('toggles apply at once and the popover stays open; None picked; the search finds by key or name', async () => {
   const m = mount();
   await settle();
-  m.row('CRM').querySelector('input').click();
+  m.row('CRM').click();
   assert.deepEqual(m.toggles, [['CRM', true]]);
   assert.equal(m.row('CRM').getAttribute('aria-selected'), 'true');
+  assert.equal(m.q().getAttribute('aria-activedescendant'), m.row('CRM').id, 'a click makes the row the active one');
+  assert.ok(m.row('CRM').classList.contains('is-active'));
   assert.equal(m.$('.mk-tu-pcount').textContent, '2 picked · 6 projects on Acme');
-  m.row('SHOP').querySelector('input').click();
-  m.row('CRM').querySelector('input').click();
+  m.row('SHOP').click();
+  m.row('CRM').click();
+  assert.equal(m.row('CRM').getAttribute('aria-selected'), 'false');
   assert.equal(m.$('.mk-tu-pcount').textContent, 'None picked · 6 projects on Acme');
   assert.ok(m.$('.mk-tu-projpop'), 'still open');
   m.type('cust');
@@ -80,9 +85,14 @@ test('keyboard (§11): ↑ ↓ move the active row; Enter on the search toggles 
   assert.equal(m.doc.getElementById(m.q().getAttribute('aria-activedescendant')).dataset.value, 'CRM');
   assert.equal(m.key(m.q(), 'Enter'), false);
   assert.deepEqual(m.toggles, [['CRM', true]]);
-  m.row('OPS').querySelector('input').focus();
-  m.key(m.row('OPS').querySelector('input'), 'ArrowDown');
-  assert.equal(m.doc.activeElement, m.row('SUP').querySelector('input'), '↓ on a row moves to the next row');
+  assert.equal(m.row('CRM').getAttribute('aria-selected'), 'true', 'Enter flipped aria-selected');
+  m.key(m.q(), 'End');
+  assert.equal(m.q().getAttribute('aria-activedescendant'), m.row('DATA').id);
+  m.key(m.q(), 'Home');
+  assert.equal(m.q().getAttribute('aria-activedescendant'), m.row('SHOP').id);
+  assert.equal(m.key(m.q(), ' '), true, 'Space is left to the search box as a typed character');
+  assert.equal(m.doc.activeElement, m.q(), 'the focus stays in the search box');
+  assert.equal(m.toggles.length, 1);
   assert.equal(m.key(m.doc.activeElement, 'Escape'), false);
   assert.deepEqual([m.$('.mk-tu-projpop'), m.doc.activeElement, m.closed()], [null, m.anchor, 1]);
 });
@@ -119,7 +129,7 @@ test('Done and a press outside close it and focus Add projects…', async () => 
 test('Tab out of the popover and Add projects… closes it and leaves the focus where it went', async () => {
   const m = mount();
   await settle();
-  m.row('OPS').querySelector('input').focus();
+  m.$('.mk-tu-done').focus();
   assert.ok(m.$('.mk-tu-projpop'), 'focus inside: still open');
   m.anchor.focus();
   assert.ok(m.$('.mk-tu-projpop'), 'focus on Add projects…: still open');
@@ -127,4 +137,36 @@ test('Tab out of the popover and Add projects… closes it and leaves the focus 
   const next = m.doc.getElementById('next');
   next.focus();
   assert.deepEqual([m.$('.mk-tu-projpop'), m.doc.activeElement, m.closed(), m.anchor.getAttribute('aria-expanded')], [null, next, 1, 'false']);
+});
+
+test('the popover is placed again once the rows arrive, so it stays right-aligned under Add projects…', async () => {
+  const prep = (window) => {
+    // the width follows the content: narrow while only the loading line is there, wide once the rows are in
+    Object.defineProperty(window.HTMLElement.prototype, 'offsetWidth', {
+      configurable: true, get() { return this.classList.contains('mk-tu-projpop') ? (this.querySelector('.mk-tu-prow') ? 300 : 100) : 0; } });
+    window.HTMLElement.prototype.getBoundingClientRect = () => ({ left: 400, right: 500, top: 10, bottom: 40, width: 100, height: 30 });
+  };
+  const m = mount({ prep });
+  assert.equal(m.$('.mk-tu-projpop').style.left, '400px', 'first placed while loading');
+  await settle();
+  assert.equal(m.$('.mk-tu-projpop').style.left, '200px', 'placed again with the rows: right edge on the anchor');
+});
+
+test('Esc closes it also when the focus is on Add projects…; close() drops the document listeners and a late load paints nothing', async () => {
+  let m = mount();
+  await settle();
+  m.anchor.focus();
+  assert.equal(m.key(m.anchor, 'Escape'), false);
+  assert.deepEqual([m.$('.mk-tu-projpop'), m.closed()], [null, 1]);
+  const late = deferred();
+  m = mount({ loader: () => late.p });
+  const { el, close } = m.pop;
+  close();
+  assert.equal(m.closed(), 1);
+  m.doc.getElementById('away').dispatchEvent(new m.window.MouseEvent('pointerdown', { bubbles: true }));
+  m.key(m.doc.body, 'Escape');
+  assert.equal(m.closed(), 1, 'no second close from a listener left on the document');
+  late.resolve(SIX);
+  await settle();
+  assert.equal(el.querySelectorAll('.mk-tu-prow').length, 0, 'a load that resolves after close does not repaint');
 });

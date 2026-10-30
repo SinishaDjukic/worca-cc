@@ -1,8 +1,8 @@
 // ui/public/marketplace/projects-popover.mjs — "Projects you work on" (plans/ticket-updates-design.md §8 board 3, §10 C/D, §11).
 // label-picker.mjs's openLabelPicker pattern: a search box over a multi-select listbox of checkbox rows that stays open across
 // toggles. Toggles apply at once (onToggle); Done, Esc or a press outside closes it and focuses the anchor (Add projects…).
-// The focus starts in the search box; ↑ ↓ there move the active row and Enter toggles it; on a row ↑ ↓ move between rows and
-// Space toggles it (a checkbox). Pure DOM; `doc` is injected.
+// The focus stays in the search box (§11 listbox model): ↑ ↓ Home End move the active row (aria-activedescendant), Enter or a
+// click toggles it; Space stays a typed character. Each row is the option (aria-selected); its tick is decorative. Pure DOM.
 import { placeFlyout } from '../side-flyout.mjs';
 
 export const FALLBACK_ERROR = 'Worca could not finish that. Try again.';
@@ -66,21 +66,23 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     if (active) { active.classList.add('is-active'); q.setAttribute('aria-activedescendant', active.id); active.scrollIntoView?.({ block: 'nearest' }); }
     else q.removeAttribute('aria-activedescendant');
   }
+  function toggle(r, p) {
+    const on = r.getAttribute('aria-selected') !== 'true';
+    r.setAttribute('aria-selected', String(on));
+    onToggle(p, on);
+    paintFoot();
+  }
+  const place = () => placeFlyout(el, anchor, { mode: 'down', gap: 4, margin: 8, win: doc.defaultView });
   function rowFor(p, i) {
-    const r = mk('label', 'mk-tu-prow');
+    const r = mk('div', 'mk-tu-prow');
     r.id = `${uid}-r${i}`;
     r.setAttribute('role', 'option');
     r.dataset.value = String(p.value);
     const on = isPicked(String(p.value));
     r.setAttribute('aria-selected', String(on));
-    const box = mk('input', 'mk-tu-pcheck');
-    box.type = 'checkbox';
-    box.checked = on;
-    box.addEventListener('change', () => {
-      r.setAttribute('aria-selected', String(box.checked));
-      onToggle(p, box.checked);
-      paintFoot();
-    });
+    const box = mk('span', 'mk-tu-pcheck');
+    box.setAttribute('aria-hidden', 'true');
+    r.addEventListener('click', () => { setActive(r); toggle(r, p); });
     r.append(box, mk('span', 'mk-mono mk-tu-key', String(p.value)), mk('span', 'mk-tu-pname', nameOf(p)));
     return r;
   }
@@ -100,7 +102,7 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     paint();
     try { const r = await loadProjects(); all = Array.isArray(r) ? r : []; }
     catch (e) { failure = String((e && e.message) || FALLBACK_ERROR); }
-    if (open) paint();
+    if (open) { paint(); place(); }   // the width changed with the rows: stay right-aligned under the anchor
   }
 
   /** `refocus` false: the focus already went somewhere else (Tab out), so it is left there. */
@@ -108,11 +110,13 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     if (!open) return;
     open = false;
     doc.removeEventListener('pointerdown', onDown, true);
+    doc.removeEventListener('keydown', onEsc, true);
     el.remove();
     anchor.setAttribute('aria-expanded', 'false');
     onClose();
     if (refocus && anchor && anchor.isConnected) anchor.focus();
   }
+  const onEsc = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); e.stopPropagation(); close(); } };
   const onDown = (e) => { if (!el.contains(e.target) && !anchor.contains(e.target)) close(); };
   // Tab away from both the popover and Add projects… closes it (a repaint that drops the focused row has no relatedTarget)
   const onFocusOut = (e) => { const to = e.relatedTarget; if (to && !el.contains(to) && !anchor.contains(to)) close(false); };
@@ -122,19 +126,15 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     if (e.isComposing) return;
     const list = rows();
     const i = list.indexOf(active);
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(list[Math.min(list.length - 1, i + 1)] || null); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(list[Math.max(0, i - 1)] || null); }
-    else if (e.key === 'Enter') { e.preventDefault(); active?.querySelector('.mk-tu-pcheck')?.click(); }
+    const go = (r) => { e.preventDefault(); setActive(r || null); };
+    if (e.key === 'ArrowDown') go(list[Math.min(list.length - 1, i + 1)]);
+    else if (e.key === 'ArrowUp') go(list[Math.max(0, i - 1)]);
+    else if (e.key === 'Home' && list.length) go(list[0]);
+    else if (e.key === 'End' && list.length) go(list[list.length - 1]);
+    else if (e.key === 'Enter') { e.preventDefault(); active?.click(); }
   });
-  listEl.addEventListener('keydown', (e) => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-    const boxes = rows().map((r) => r.querySelector('.mk-tu-pcheck'));
-    const i = boxes.indexOf(doc.activeElement);
-    if (i < 0) return;
-    e.preventDefault();
-    boxes[e.key === 'ArrowDown' ? Math.min(boxes.length - 1, i + 1) : Math.max(0, i - 1)].focus();
-  });
-  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } });
+  // a press on a row must not pull the focus out of the search box
+  listEl.addEventListener('mousedown', (e) => e.preventDefault());
   el.addEventListener('focusout', onFocusOut);
   retry.addEventListener('click', () => { void load(); q.focus(); });
   done.addEventListener('click', () => close());
@@ -142,8 +142,9 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
   (host || doc.body).append(el);
   anchor.setAttribute('aria-expanded', 'true');
   // Right-aligned under Add projects… (placeFlyout 'down', board 3; decided 2026-10-30)
-  placeFlyout(el, anchor, { mode: 'down', gap: 4, margin: 8, win: doc.defaultView });
+  place();
   doc.addEventListener('pointerdown', onDown, true);
+  doc.addEventListener('keydown', onEsc, true);
   q.focus();
   void load();
   return { el, close };
