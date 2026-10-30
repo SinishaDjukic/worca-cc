@@ -71,6 +71,25 @@ const mockFingerprints = new Map();
 function resetMockTickets() { mockTicketNo = 123; mockFingerprints.clear(); }
 const mockFingerprint = (text) => createHash('sha256').update(String(text ?? '')).digest('hex');
 const mockUrl = (key) => `https://mock.test/browse/${key}`;
+// Ticket updates (plans/ticket-updates-design.md D17): board 3's projects, board 4's CRM workflow (SHOP adds Resolved), and a
+// reportResult that answers by its move, so the Marketplace section and its browser proof run offline.
+const MOCK_PROJECTS = [['SHOP', 'Shop'], ['CRM', 'Customer portal'], ['OPS', 'Operations'], ['SUP', 'Support desk'],
+  ['MKT', 'Marketing site'], ['DATA', 'Data platform']].map(([value, name]) => ({ value, label: `${name} (${value})`, name }));
+function mockStatuses(project) {
+  const done = [{ value: '10001', label: 'Done', category: 'done' }, { value: '10002', label: 'Released', category: 'done' },
+    ...(project === 'SHOP' ? [{ value: '10012', label: 'Resolved', category: 'done' }] : [])];
+  return [...done, { value: '3', label: 'In Progress', category: 'in_progress' },
+    { value: '10003', label: 'Waiting for customer', category: 'in_progress' }, { value: '1', label: 'Open', category: 'todo' },
+    { value: '10004', label: "Won't Fix", category: 'cancelled' }];
+}
+function mockReport(move) {
+  if (move && move.category === 'done') return { moved: { from: 'In Progress', to: 'Done' }, note: 'Moved to Done.' };
+  if (move && typeof move.status === 'string' && move.status) {
+    const to = move.name || move.status;
+    return { moved: { from: 'In Progress', to }, note: `Moved to ${to}.` };
+  }
+  return { moved: null, note: '' };
+}
 const MOCK_DEFAULTS = {
   listTasks: () => ({ tasks: MOCK_TASKS.map((t) => ({ ...t })) }),
   getTask: (args) => ({
@@ -79,10 +98,14 @@ const MOCK_DEFAULTS = {
     body: 'Mock task body.\n\n1. reproduce\n2. fix\n3. verify',
     meta: { mock: true },
   }),
-  reportResult: () => ({ ok: true }),
+  reportResult: (args = {}) => mockReport(args.move),
   validateConfig: () => ({ ok: true }),
-  // Write-back stays on (what a missing capabilities op defaulted to before A6), and the mock source can export.
-  capabilities: () => ({ writeBack: true, export: true }),
+  // Write-back stays on (what a missing capabilities op defaulted to before A6), the mock source can export, and it answers
+  // Ticket updates' ops (D17).
+  capabilities: () => ({ writeBack: true, export: true, ticketUpdates: true }),
+  listProjects: () => MOCK_PROJECTS.map((p) => ({ ...p })),
+  listStatuses: (args = {}) => mockStatuses(args.project),
+  legacyMove: () => ({ field: 'transitionOnComplete', target: null }),
   exportOptions: (args = {}) => ({
     projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }],
     ...(args.project ? { issueTypes: [{ value: '10001', label: 'Story' }, { value: '10002', label: 'Task' }, { value: '10003', label: 'Bug' }] } : {}),
