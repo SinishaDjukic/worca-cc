@@ -1,7 +1,6 @@
 // test/marketplace-installed-view.test.mjs — the Installed tab's pure renderers (board 3.1, 4.2 third panel).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   renderInstalledHeader, renderPolicyCard, renderAttention, renderAllInstalled, renderLeftover, renderNothingInstalled, renderInstalledTab,
@@ -11,6 +10,7 @@ import { kindTile, glyphTile, KINDS } from '../ui/public/marketplace/kinds.mjs';
 import { channelBadge } from '../ui/public/plugins-view.mjs';
 import { renderRemoveDialog, renderBlockedDialog, renderPurgeDialog } from '../ui/public/marketplace/remove-view.mjs';
 import { BUTTON_SPEC, STRAY_SPEC } from '../tools/button-audit.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const ZERO = { taskSources: 0, chatChannels: 0, mcpServers: 0, models: 0, agents: 0, scripts: 0, skills: 0, workflows: 0 };
@@ -286,7 +286,7 @@ test('Purge dialog (L11): neutral tile, "Purge {plugin}?", what goes + Cannot be
 });
 
 test('style.css P5 block: tokens only; one divider between rows; the name button; the dot; P4’s shared classes not restated', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const at = css.indexOf('/* ── marketplace P5 ── */');
   assert.ok(at > 0, 'the P5 block marker');
   const next = css.indexOf('/* ── marketplace', at + 8);   // SM69: to the next marketplace marker or EOF

@@ -17,6 +17,7 @@ import {
 } from './helpers/history-detail-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // ---------------------------------------------------------------------------
 // Header meta
@@ -712,7 +713,7 @@ test('checkout row: a workspace with two local copies; at Simple one Discard per
   assert.deepEqual([...row.querySelectorAll('.rd-srow-acts button')].map((b) => b.textContent), ['Discard app', 'Discard api']);
   // At 375px the buttons wrap under the text: the text keeps a basis instead of shrinking into a narrow column.
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.rd-srow-checkout \.rd-srow-tx\{flex:1 1 \d+em;\}/);
 });
 
@@ -957,7 +958,7 @@ test('F-11: a finished run with no PR reads Ready to ship; an open PR reads In r
 
 test('F-1 / F-10 style rules: the header row wraps, the meta line is sans', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.hd-row1,\.pd-row1\{[^}]*flex-wrap:wrap/);
   assert.match(css, /@media \(max-width:640px\)\{\.hd-row1 > \.hd-title,\.pd-row1 > \.pd-title\{flex:1 1 100%;\}\}/);
   assert.match(css, /\.hd-meta\{[^}]*var\(--sans\)/);

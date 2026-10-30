@@ -3,10 +3,10 @@
 // moves the toasts only while it pushes, and spends tokens only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { cssRules } from './helpers/css-rules.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 const ALL = cssRules(css);
 const rule = (sel, media = '') => ALL.find((r) => r.sel === sel && r.media === media);
 const decl = (r, prop) => {

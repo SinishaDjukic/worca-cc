@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
 const app = read('app.js');
@@ -108,7 +109,7 @@ test('every guide hop has at least one target that exists in the page', async ()
 // scrim (z 44) unless the hop also lifts each of them (`.guide-lift`). Chrome then sends the click to the scrim and
 // the tour sticks on that hop ("Leave the editor" never leaves); jsdom has no cascade, so this pins the hop text.
 test('a hop ringing a control inside the Workflows stage lifts every stacking context around it', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.wfv-float\{[^}]*position:absolute;[^}]*z-index:\d+/, 'the floating bars are a stacking context');
   assert.match(css, /\.wfv-stage\{[^}]*isolation:isolate/, 'the stage is a stacking context');
   const rows = [];

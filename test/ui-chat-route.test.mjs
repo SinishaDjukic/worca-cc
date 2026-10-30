@@ -4,16 +4,15 @@
 // and openChat routes to Chat and stacks text in the composer.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { pageTitle } from '../ui/public/topnav.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 const THREAD_URL = /^\/api\/ask\/threads\/(ask_[0-9a-f]{8})$/;
 
 const settle = async (n = 6) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };

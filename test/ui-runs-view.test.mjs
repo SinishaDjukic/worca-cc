@@ -5,18 +5,18 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { auditRunsLayout } from '../tools/runs-layout-audit.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const htmlPath = join(__dir, '..', 'ui', 'public', 'index.html');
 const appPath = join(__dir, '..', 'ui', 'public', 'app.js');
 const PROJECT = '/tmp/proj';
 const KEY = 'proj-0000abcd';
@@ -68,7 +68,7 @@ async function pickView(window, doc, label) {
 // /api/run-groups* (logged in `groupPosts`); `bulk(body)` answers POST /api/runs/bulk (bodies logged in `posts`).
 async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [],
   runGroups = [], onGroupCall = () => {}, bulk = () => ({ ok: true, done: [], cancelled: [], skipped: [] }), setup, tickets = [], labels = [] } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   windows.push(window);
   window.Element.prototype.scrollIntoView = function () {};
@@ -662,7 +662,7 @@ test('keyboard (§5a.4): Space toggles the focused row, ⌘A selects every visib
 });
 
 test('A11: no checkbox on hover; ⌘-click selects without navigating, Shift-click adds the range, Esc ends it', async () => {
-  const css = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+  const css = readStyleCss();
   assert.doesNotMatch(css, /:has\(> \.runs-pick:hover/, 'checkboxes show only while selecting');
   const { window, doc, recv } = await boot();
   recv({ type: 'hello', runs: [live('r1'), live('r2'), live('r3'), live('r4')] });
@@ -1395,7 +1395,7 @@ test('slice 2: side by side (split) the group Back shows the list, with the grou
 // Dividers (running rows lost their line?): jsdom drops `border-bottom:1px solid var(--line)` from getComputedStyle,
 // so the cascade's inputs are checked instead. Every style.css rule that declares a border (top-level or inside any
 // @media, so the 375px rules count too) is matched against the rendered row with el.matches().
-const STYLE_CSS = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+const STYLE_CSS = readStyleCss();
 const BORDER_DECL = /(^|[;{\s])border(-bottom|-top)?(-(color|width|style))?\s*:/;
 function borderRules(doc) {
   const st = doc.createElement('style');

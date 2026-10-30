@@ -4,9 +4,9 @@
 // ruleBody() is the house helper (first rule written exactly as `selector{…}`; no comments inside rule bodies).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
 const P1 = '/* ===== Chat P1: shell ===== */';
 

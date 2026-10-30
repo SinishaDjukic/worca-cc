@@ -4,16 +4,15 @@
 // Run under `timeout 60` while red: app.js timers keep the process alive.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 
 const INSTALL = {
   remoteMode: false, version: '1.12.0', releaseUrl: 'https://github.com/acme/worca/releases/tag/worca-app-v1.12.0', buildCommand: 'npm run ext:build',

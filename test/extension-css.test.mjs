@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 // test/extension-css.test.mjs — needs nothing but style.css. Class coverage, shadow CSS and colour literals live in
 // test/extension-css-coverage.test.mjs, which imports the sidebar sources.
 import { SIDEBAR_PIECES, SHADOW_PIECES, cutPiece, tokenMap, sidebarCss } from '../tools/extension-css.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const style = readFileSync('ui/public/style.css', 'utf8');
+const style = readStyleCss();
 test('every declared piece exists in style.css (a renamed marker or rule fails here, not in a browser)', () => {
   for (const p of [...SIDEBAR_PIECES, ...SHADOW_PIECES]) assert.ok(cutPiece(style, p).text.length > 20, p.name);
   assert.throws(() => cutPiece(style, { name: 'x', from: '/* nope */', to: ':root{' }), /marker not found/);

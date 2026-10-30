@@ -2,10 +2,9 @@
 // line, no chip rules: the kind chip is P1b's, SEAMS S11).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const css = readStyleCss();
 function ruleBody(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const m = css.match(new RegExp('(?:^|[\\s,}])' + escaped + '\\s*\\{([^}]*)\\}'));

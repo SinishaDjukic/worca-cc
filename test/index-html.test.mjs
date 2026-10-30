@@ -2,11 +2,11 @@
 // lists what is on, #flag-gates hides what is off, and omitting flags is today's output byte for byte.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const shell = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+const shell = readIndexHtml();
 const mini = `<!DOCTYPE html>\n${INDEX_THEME_ANCHOR}<head>${FLAG_GATES_ANCHOR}</head><body>x</body></html>`;
 
 test('renderIndexHtml with flags', async () => {

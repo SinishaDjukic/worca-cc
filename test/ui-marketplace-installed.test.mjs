@@ -2,14 +2,13 @@
 // the row menu's Remove dialog, Check health's interim dialog, and trusted-home auto-install (S2 risks 2, 11).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 10) => { for (let i = 0; i < n; i++) await tick(); };
@@ -32,7 +31,7 @@ const SCOPES = { projects: [], workspaces: [], scopes: { projects: [], workspace
 const ok = (body) => ({ status: 200, body });
 
 async function boot(over = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0);

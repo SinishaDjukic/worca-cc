@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { renderPlanBody, SEND_FAILED } from '../ui/public/shape/plan-body.mjs';
 import { fixAllFeedback, perspectiveChangeFeedback } from '../ui/public/shape/plan-text.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -476,7 +477,7 @@ test('plan-body draws no check row itself and has no local fold (one check-row c
 });
 
 test('slice 4 CSS: 2px/4px radii only, light-dark colour tokens only, 1px dividers, the finding line wraps', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /plan-(sev|finding|check-show)/.test(m[1]));
   assert.ok(rules.length >= 7);
   for (const [, sel, body] of rules) {

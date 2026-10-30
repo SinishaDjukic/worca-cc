@@ -1,0 +1,527 @@
+{
+  "version": 1,
+  "docless": {
+    "runs": "the Runs list and live run page have no docs page yet",
+    "history": "History has no docs page yet",
+    "settings": "Settings has no docs page yet",
+    "new-run": "the New run page has no docs page yet",
+    "projects": "the Projects page has no docs page yet"
+  },
+  "features": [
+    {
+      "name": "shell",
+      "doc": null,
+      "routes": [
+        "/api/app",
+        "/api/shutdown",
+        "/api/install",
+        "/api/health",
+        "/api/whoami",
+        "/api/fs"
+      ],
+      "css": [
+        "^self\\-hosted webfonts",
+        "^base reset",
+        "^App shell",
+        "^Sidebar",
+        "^Main",
+        "^Top bar \\(\\#topnav\\)",
+        "^Views",
+        "^Grid",
+        "^Form",
+        "^scrollbars",
+        "^reduced motion$",
+        "^responsive",
+        "^The account corner",
+        "^Collapsible sidebar",
+        "^Responsive nav tiers"
+      ],
+      "html": [
+        "<!-- ===================== Sidebar",
+        "<!-- ===================== Main column",
+        "</main>",
+        "<!-- Action results"
+      ]
+    },
+    {
+      "name": "design-system",
+      "doc": "docs/design-system.md",
+      "routes": [],
+      "css": [
+        "^Design system: shared components",
+        "^buttons",
+        "^Action feedback",
+        "^Card lists",
+        "^viewer modal",
+        "^Dialog anatomy",
+        "^native control skins",
+        "^checkbox rows inside a \\.field",
+        "^selectable rows",
+        "^chips",
+        "^confirm/prompt modal internals",
+        "^the rest of the UA chrome"
+      ],
+      "html": [
+        "<!-- ===== Reusable confirmation modal"
+      ]
+    },
+    {
+      "name": "chat",
+      "doc": "docs/chat-home.md",
+      "routes": [
+        "/api/ask",
+        "/api/chat",
+        "/api/chat-home",
+        "/api/pinpoint"
+      ],
+      "css": [
+        "^Ask Worca",
+        "^run proposal card v2",
+        "^workflow card chrome",
+        "^metrics card chrome",
+        "^Auto proposal body",
+        "^the canvas well",
+        "^workflow card build",
+        "^run progress card",
+        "^Chat P",
+        "^Chat:",
+        "^Chat scope",
+        "^Chat Pinpoint"
+      ],
+      "html": [
+        "<!-- ===== VIEW: CHAT"
+      ]
+    },
+    {
+      "name": "new-run",
+      "doc": null,
+      "routes": [
+        "/api/run-defaults",
+        "/api/source-bindings",
+        "/api/sources"
+      ],
+      "css": [
+        "^Pipeline config",
+        "^Agents accordion \\(New pipeline\\)",
+        "^Advanced disclosure \\(New pipeline\\)",
+        "^Pluggable source pane"
+      ],
+      "html": [
+        "<!-- ===== VIEW: NEW PIPELINE"
+      ]
+    },
+    {
+      "name": "runs",
+      "doc": null,
+      "routes": [
+        "/api/run",
+        "/api/runs",
+        "/api/stop",
+        "/api/answer",
+        "/api/pause",
+        "/api/resume",
+        "/api/drain",
+        "/api/run-groups",
+        "/api/run-links",
+        "/api/chains",
+        "/api/pipelines",
+        "/api/labels",
+        "/api/tags",
+        "/api/tag-dimensions",
+        "/api/counts",
+        "/api/night-decisions",
+        "/api/engine-locks",
+        "/api/naming",
+        "/api/budget"
+      ],
+      "css": [
+        "^Live log",
+        "^Questions panel",
+        "^run\\-detail variant",
+        "^the `workflow` question arm",
+        "^Ask forms",
+        "^Gate \\(cycle gate\\)",
+        "^the run page: gate and recovery",
+        "^Cost\\-pause banner",
+        "^Running redesign: shared keyframes",
+        "^Runs: one list",
+        "^Running detail",
+        "^\"Stop this run\\?\" confirm modal",
+        "^reduced motion for the Running redesign",
+        "^Report this run modal"
+      ],
+      "html": [
+        "<!-- ===== VIEW: RUNS",
+        "<!-- ===== Report this run",
+        "<!-- ===== \"Stop this run?\""
+      ]
+    },
+    {
+      "name": "history",
+      "doc": null,
+      "routes": [
+        "/api/history",
+        "/api/pr",
+        "/api/diff-comments",
+        "/api/branches",
+        "/api/push",
+        "/api/sync",
+        "/api/git"
+      ],
+      "css": [
+        "^History detail",
+        "^end diff comments",
+        "^focus visibility \\(History redesign\\)"
+      ],
+      "html": [
+        "<!-- ===== \"Create PR\" confirm modal",
+        "<!-- ===== Publish branch modal"
+      ]
+    },
+    {
+      "name": "settings",
+      "doc": null,
+      "routes": [
+        "/api/settings",
+        "/api/config",
+        "/api/onboarding",
+        "/api/away-mode",
+        "/api/notifications",
+        "/api/memory",
+        "/api/credentials",
+        "/api/engines"
+      ],
+      "css": [
+        "^Info tooltips \\(settings\\)",
+        "^Settings cards",
+        "^Budget readout \\(Settings\\)"
+      ],
+      "html": [
+        "<!-- ===== VIEW: SETTINGS",
+        "<!-- ===== Update Worca"
+      ]
+    },
+    {
+      "name": "artifacts",
+      "doc": null,
+      "routes": [],
+      "css": [
+        "^Saved\\-markdown viewer",
+        "^typed artifact viewer",
+        "^per\\-step artifacts"
+      ],
+      "html": [
+        "<!-- ===== Saved-markdown viewer"
+      ]
+    },
+    {
+      "name": "workflows",
+      "doc": null,
+      "routes": [
+        "/api/workflows",
+        "/api/agents"
+      ],
+      "css": [
+        "^Agents view",
+        "^Agents\\-view port editor",
+        "^Agent ask forms",
+        "^inspector panels",
+        "^save dialog"
+      ],
+      "html": [
+        "<!-- ===== VIEW: WORKFLOWS",
+        "<!-- ===== Export workflow"
+      ]
+    },
+    {
+      "name": "scripts",
+      "doc": "docs/scripts.md",
+      "routes": [
+        "/api/scripts"
+      ],
+      "css": [
+        "^Scripts view",
+        "^Scripts detail",
+        "^Test bench",
+        "^Script wizard",
+        "^past\\-run artifact picker",
+        "^shared code editor"
+      ],
+      "html": []
+    },
+    {
+      "name": "projects",
+      "doc": null,
+      "routes": [
+        "/api/projects"
+      ],
+      "css": [
+        "^Projects management view",
+        "^Projects two\\-screen shell",
+        "^Confirm \\+ add\\-project modals",
+        "^list head \\+ list"
+      ],
+      "html": [
+        "<!-- ===== VIEW: PROJECTS",
+        "<!-- ===== Folder browser",
+        "<!-- ===== Add-project modal",
+        "<!-- ===== Use git / Link remote modal",
+        "<!-- ===== Add several projects"
+      ]
+    },
+    {
+      "name": "workspace-map",
+      "doc": "docs/workspace-map.md",
+      "routes": [
+        "/api/workspaces"
+      ],
+      "css": [
+        "^Workspaces two\\-screen shell"
+      ],
+      "html": [
+        "<!-- ===== VIEW: WORKSPACE",
+        "<!-- ===== Choose a scan model"
+      ]
+    },
+    {
+      "name": "marketplace",
+      "doc": null,
+      "routes": [
+        "/api/marketplaces",
+        "/api/plugins"
+      ],
+      "css": [
+        "^Plugins view",
+        "^Plugin provenance"
+      ],
+      "html": [
+        "<!-- ===== VIEW: MARKETPLACE",
+        "<!-- ===== Plugin modal"
+      ]
+    },
+    {
+      "name": "guardrails",
+      "doc": "docs/guardrails.md",
+      "routes": [
+        "/api/guardrails"
+      ],
+      "css": [
+        "^Guardrails view",
+        "^Guardrail wizard"
+      ],
+      "html": []
+    },
+    {
+      "name": "statistics",
+      "doc": "docs/statistics.md",
+      "routes": [
+        "/api/stats"
+      ],
+      "css": [
+        "^Statistics view"
+      ],
+      "html": [
+        "<!-- ===== VIEW: STATISTICS"
+      ]
+    },
+    {
+      "name": "team-metrics",
+      "doc": "docs/team-metrics.md",
+      "routes": [
+        "/api/team-metrics"
+      ],
+      "css": [
+        "^Team metrics page"
+      ],
+      "html": [
+        "<!-- ===== VIEW: TEAM METRICS"
+      ]
+    },
+    {
+      "name": "team-policy",
+      "doc": "docs/team-policy.md",
+      "routes": [
+        "/api/policy"
+      ],
+      "css": [
+        "^Team policy"
+      ],
+      "html": [
+        "<!-- ===== VIEW: TEAM POLICY"
+      ]
+    },
+    {
+      "name": "browser-extension",
+      "doc": "docs/browser-extension.md",
+      "routes": [
+        "/api/extension"
+      ],
+      "css": [
+        "^Browser extension pairings"
+      ],
+      "html": []
+    },
+    {
+      "name": "models",
+      "doc": "docs/models.md",
+      "routes": [
+        "/api/models",
+        "/api/providers",
+        "/api/openrouter"
+      ],
+      "css": [
+        "^Models view",
+        "^Model bridge",
+        "^Model plugins"
+      ],
+      "html": [
+        "<!-- ===== VIEW: MODELS",
+        "<!-- ===== VIEW: PROVIDERS",
+        "<!-- ===== Model editor",
+        "<!-- ===== Import models"
+      ]
+    },
+    {
+      "name": "speech",
+      "doc": "docs/speech.md",
+      "routes": [
+        "/api/speech"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "network-proxy",
+      "doc": "docs/network-proxy.md",
+      "routes": [
+        "/api/proxy"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "getting-started",
+      "doc": "docs/getting-started.md",
+      "routes": [],
+      "css": [
+        "^Getting started",
+        "^Welcome \\+ Connect Claude Code dialogs",
+        "^Spotlight guide"
+      ],
+      "html": [
+        "<!-- ===== VIEW: GETTING STARTED"
+      ]
+    },
+    {
+      "name": "scheduled-runs",
+      "doc": "docs/scheduled-runs.md",
+      "routes": [
+        "/api/schedules"
+      ],
+      "css": [
+        "^Run rows \\(\\.rc\\-\\*\\)",
+        "^Scheduled runs"
+      ],
+      "html": []
+    },
+    {
+      "name": "ui-levels",
+      "doc": "docs/ui-levels.md",
+      "routes": [],
+      "css": [
+        "^Interface mode"
+      ],
+      "html": [
+        "<!-- ===== Interface mode"
+      ]
+    },
+    {
+      "name": "feature-flags",
+      "doc": "docs/feature-flags.md",
+      "routes": [
+        "/api/flags"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "requirements",
+      "doc": "docs/requirements.md",
+      "routes": [],
+      "css": [],
+      "html": [
+        "<!-- ===== VIEW: REQUIREMENTS"
+      ]
+    },
+    {
+      "name": "shape",
+      "doc": "docs/shape-it-first.md",
+      "routes": [
+        "/api/shape"
+      ],
+      "css": [
+        "^Shape it first"
+      ],
+      "html": [
+        "<!-- ===== VIEW: FEATURE"
+      ]
+    },
+    {
+      "name": "mcp-servers",
+      "doc": "docs/mcp-servers.md",
+      "routes": [
+        "/api/mcp",
+        "/api/sets"
+      ],
+      "css": [],
+      "html": [
+        "<!-- ===== VIEW: CONNECTORS"
+      ]
+    },
+    {
+      "name": "skills",
+      "doc": "docs/skills.md",
+      "routes": [
+        "/api/skills"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "terminal",
+      "doc": "docs/terminal.md",
+      "routes": [
+        "/api/terminal"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "actions",
+      "doc": "docs/actions.md",
+      "routes": [
+        "/api/actions"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "run-presets",
+      "doc": "docs/run-presets.md",
+      "routes": [
+        "/api/presets"
+      ],
+      "css": [],
+      "html": []
+    },
+    {
+      "name": "setup-assistant",
+      "doc": "docs/setup-assistant.md",
+      "routes": [
+        "/api/setup"
+      ],
+      "css": [],
+      "html": []
+    }
+  ]
+}
