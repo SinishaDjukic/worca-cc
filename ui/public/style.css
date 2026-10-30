@@ -11323,6 +11323,7 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .mk-tu-sub,.mk-tu-new,.mk-tu-hint,.mk-tu-add-hint,.mk-tu-newrow-hint,.mk-tu-moved{margin:0;}
 .mk-tu-add-hint[hidden],.mk-tu-newrow-hint[hidden]{display:none;}
 .mk-tu-block{display:flex;flex-direction:column;gap:8px;}
+.mk-tu-add-rule{align-self:flex-start;}
 .mk-tu-h{margin:0;font:600 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);}
 .mk-tu-chiprow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .mk-tu-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}

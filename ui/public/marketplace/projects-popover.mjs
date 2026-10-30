@@ -72,7 +72,7 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     onToggle(p, on);
     paintFoot();
   }
-  const place = () => placeFlyout(el, anchor, { mode: 'down', gap: 4, margin: 8, win: doc.defaultView });
+  const place = () => placeFlyout(el, anchor, { mode: 'down', gap: 4, margin: 8, fit: true, win: doc.defaultView });   // never over Add projects…
   function rowFor(p, i) {
     const r = mk('div', 'mk-tu-prow');
     r.id = `${uid}-r${i}`;

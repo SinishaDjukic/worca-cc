@@ -140,6 +140,7 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     refs.chips.setAttribute('role', 'list');
     refs.chips.setAttribute('aria-labelledby', hid);
     refs.addProjects = mk('button', 'btn btn-sm mk-tu-add-projects', TU_COPY.addProjects);
+    refs.addProjects.prepend(icon(doc, 'plus', 12));   // board 1: a 12 px + before the words (as app.js's Add to group…)
     refs.addProjects.type = 'button';
     refs.addProjects.setAttribute('aria-haspopup', 'dialog');
     refs.addProjects.setAttribute('aria-expanded', 'false');   // the popover sets it while open
@@ -259,7 +260,7 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
       const rm = mk('button', 'btn btn-quiet btn-icon mk-tu-remove');
       rm.type = 'button';
       rm.setAttribute('aria-label', r.project ? `Remove the ${r.project} rule` : 'Remove the new rule');
-      rm.append(icon(doc, 'x', 16));
+      rm.append(icon(doc, 'trash', 16));   // board 1: a trash can, not ×
       rm.addEventListener('click', () => removeRule(r));
       row.append(rm);
     }
@@ -316,6 +317,7 @@ export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null
     refs.listEl.setAttribute('aria-labelledby', hid);
     for (const r of rules) refs.listEl.append(ruleRow(r));
     refs.addRule = mk('button', 'btn btn-sm mk-tu-add-rule', TU_COPY.addRule);
+    refs.addRule.prepend(icon(doc, 'plus', 12));
     refs.addRule.type = 'button';
     refs.addRule.addEventListener('click', addRule);
     refs.addHint = mk('p', 'hint mk-tu-add-hint', TU_COPY.allHaveRules);

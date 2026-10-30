@@ -197,3 +197,41 @@ test('a press outside closes; describe() ties a line to the select; set() repain
   m.ms.destroy();
   assert.deepEqual([m.ms.isOpen(), m.doc.querySelector('.mk-tu-pop')], [false, null]);
 });
+
+test('board 1: the closed select shows the target\'s dot before its name (aria-hidden), following every change', async () => {
+  const m = mount({ value: RELEASED });
+  const dot = () => m.ms.button.querySelector('.mk-tu-dot');
+  assert.equal(m.ms.button.firstElementChild, dot(), 'the dot comes first');
+  assert.deepEqual([dot().className, dot().getAttribute('aria-hidden'), m.ms.button.textContent], ['mk-tu-dot mk-tu-dot-done', 'true', 'Released']);
+  m.ms.button.click();
+  await settle();
+  m.options().find((o) => o.textContent === 'In Progress').click();
+  assert.equal(dot().className, 'mk-tu-dot mk-tu-dot-in_progress', 'a pick repaints it');
+  const seen = [];
+  for (const t of [{ kind: 'status', value: '1', label: 'Open', category: 'todo' }, { kind: 'status', value: '10004', label: "Won't Fix", category: 'cancelled' },
+    { kind: 'category', value: 'done' }, { kind: 'typed', value: 'Resolve' }, { kind: 'none' }]) {
+    m.ms.set(t);
+    seen.push(dot().className.split(' ')[1]);
+  }
+  assert.deepEqual(seen, ['mk-tu-dot-todo', 'mk-tu-dot-cancelled', 'mk-tu-dot-category', 'mk-tu-dot-typed', 'mk-tu-dot-none'],
+    "grey to do, red cancelled, green Any Done status; Don't move an empty dot");
+});
+
+test('the list is placed again once the statuses arrive: never over the select (above it near the bottom), the active option in view', async () => {
+  const scrolled = [];
+  const m = mount({ value: RELEASED });
+  const { window } = m;
+  // the select sits near the bottom of a 768 px window; the list is 80 px while loading, 300 px with the statuses
+  Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', {
+    configurable: true, get() { return this.classList.contains('mk-tu-movepop') ? (this.querySelectorAll('[role="option"]').length > 2 ? 300 : 80) : 0; } });
+  window.HTMLElement.prototype.getBoundingClientRect = () => ({ left: 400, right: 620, top: 700, bottom: 732, width: 220, height: 32 });
+  window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { scrolled.push([this.textContent, this.closest('.mk-tu-pop')?.style.top]); };
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 });
+  m.ms.button.click();
+  const pop = () => m.doc.querySelector('.mk-tu-movepop');
+  assert.equal(pop().style.top, '616px', 'while loading: 80 px above the select (700 - 4 - 80)');
+  await settle();
+  assert.equal(pop().style.top, '396px', 'with the statuses: placed again, 300 px above it (700 - 4 - 300), not left at 616');
+  assert.ok(parseFloat(pop().style.top) + 300 <= 700, 'its bottom stays over the select\'s top');
+  assert.deepEqual(scrolled.at(-1), ['Released', '396px'], 'the active option is scrolled into view after the last placement');
+});

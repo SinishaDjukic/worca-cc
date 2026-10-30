@@ -14,7 +14,7 @@ const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'ut
 const at = css.indexOf('/* ── marketplace ticket updates ── */');
 const block = css.slice(at, css.indexOf('/* ── marketplace P7 ── */'));
 // JS and test hooks with no rule of their own.
-const HOOKS = new Set(['mk-tu-add-projects', 'mk-tu-add-rule', 'mk-tu-projects', 'mk-tu-rulesblock', 'mk-tu-movepop', 'mk-tu-done', 'mk-tu-pcheck', 'mk-tu-newrow',
+const HOOKS = new Set(['mk-tu-add-projects', 'mk-tu-projects', 'mk-tu-rulesblock', 'mk-tu-movepop', 'mk-tu-done', 'mk-tu-pcheck', 'mk-tu-newrow',
   'mk-tu-plive']);   // mk-tu-plive is .sr-only
 
 test('every mk-tu- class the three modules and the sheet emit has a rule in the Ticket updates block', async () => {
@@ -45,6 +45,8 @@ test('the block sits after P6 and before P7 (the Marketplace block); tokens only
   assert.match(block, /\.mk-tu-dot-done\{background:var\(--green\);\}/);
   assert.match(block, /\.mk-tu-dot-in_progress\{background:var\(--peach\);\}/);
   assert.match(block, /\.mk-tu-dot-cancelled\{background:var\(--red\);\}/);
+  // approved board 1: Add a project rule is as wide as its words, not the column (a direct child of the flex column .mk-tu-block)
+  assert.match(block, /\.mk-tu-add-rule\{align-self:flex-start;\}/);
 });
 
 test('board 6: at 600 px and narrower each rule stacks, chips 36 px with 32 px ×, every button, select, option and row 44 px', () => {

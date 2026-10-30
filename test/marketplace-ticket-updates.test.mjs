@@ -6,6 +6,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { sheetHarness, ok, fail, settle, deferred } from './helpers/marketplace-sheet-harness.mjs';
 import { createTicketUpdates } from '../ui/public/marketplace/ticket-updates-section.mjs';
 import { createManageSheet } from '../ui/public/marketplace/manage-sheet.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 import { ROW, DETAIL, INVENTORY } from './helpers/marketplace-manage-fixtures.mjs';
 import { TU, TU_Q, RESOLVED, LEGACY, ALL_DONE, SHOP_RULE, tuGet, SAVED, tuRoutes } from './helpers/ticket-updates-fixtures.mjs';
 
@@ -153,6 +154,11 @@ test('board 1: each project rule has its remove button, All projects none; then 
     [null, 'Remove the SHOP rule', 'Remove the CRM rule']);
   assert.equal(m.$('.mk-tu-add-rule').textContent, 'Add a project rule');
   assert.ok(m.$('.mk-tu-add-rule').compareDocumentPosition(m.$('.mk-tu-hint')) & 4, 'the hint comes last');
+  // approved board 1: a trash can on each remove button; a 12 px + before Add projects… and Add a project rule
+  const glyph = (el) => [el.className, el.getAttribute('aria-hidden'), el.querySelector('svg').getAttribute('width'), el.querySelector('svg').innerHTML];
+  assert.deepEqual(m.$$('.mk-tu-remove').map((b) => glyph(b.firstElementChild)), [['ic', 'true', '16', ICONS.trash], ['ic', 'true', '16', ICONS.trash]]);
+  assert.deepEqual(['.mk-tu-add-projects', '.mk-tu-add-rule'].map((q) => glyph(m.$(q).firstChild)), [['ic', 'true', '12', ICONS.plus], ['ic', 'true', '12', ICONS.plus]],
+    'the icon comes first, before the words');
 });
 
 test('board 4: Add a project rule: a Project select of the projects you work on without a rule; the move starts at Any Done status', async () => {

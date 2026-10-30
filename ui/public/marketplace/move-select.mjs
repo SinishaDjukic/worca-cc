@@ -33,6 +33,8 @@ export function sameTarget(a, b) {
 }
 
 const keyOf = (t) => `${t.kind}:${t.value ?? ''}`;
+/** The dot class of a target: a status by its category, Any Done status green, a typed value grey, Don't move an empty dot. */
+const dotOf = (t) => `mk-tu-dot mk-tu-dot-${t.kind === 'status' ? (t.category || 'todo') : t.kind}`;
 
 /**
  * @param {{doc:Document, project?:string, value?:object|null, general?:boolean, label?:string|null,
@@ -67,8 +69,12 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
   btn.setAttribute('aria-haspopup', 'listbox');
   btn.setAttribute('aria-expanded', 'false');
   btn.setAttribute('aria-labelledby', lab.id);   // aria-controls only while the list exists (set in open, removed in close)
+  // board 1: the closed select shows the chosen target's dot before its name, as the options do
+  const dotEl = mk('span', dotOf(current));
+  dotEl.setAttribute('aria-hidden', 'true');
   const txt = mk('span', 'mk-tu-move-t', targetText(current));
-  btn.append(txt, icon(doc, 'chevron', 14, 'ic mk-tu-move-ic'));
+  btn.append(dotEl, txt, icon(doc, 'chevron', 14, 'ic mk-tu-move-ic'));
+  const paintButton = () => { dotEl.className = dotOf(current); txt.textContent = targetText(current); };
   wrap.append(lab, btn);
 
   const options = () => (listEl ? [...listEl.querySelectorAll('[role="option"]')] : []);
@@ -84,7 +90,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     targets.set(n, t);
     const selected = sameTarget(t, current);
     n.setAttribute('aria-selected', String(selected));
-    const dot = mk('span', `mk-tu-dot mk-tu-dot-${o.kind === 'status' ? o.category : o.kind}`);
+    const dot = mk('span', dotOf(t));
     dot.setAttribute('aria-hidden', 'true');
     const body = mk('span', 'mk-tu-opt-b');
     body.append(mk('span', 'mk-tu-opt-t', o.label));
@@ -157,7 +163,14 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
       failure = String((e && e.message) || FALLBACK_ERROR);
     }
     loading = false;
-    if (pop) { paintList(); paintState(); }
+    if (pop) { paintList(); paintState(); place(); }   // the list grew with the statuses: fit it again
+  }
+
+  /** Under the select, or above it when only above has room; never over it (placeFlyout fit). The active option stays in view. */
+  function place() {
+    pop.style.minWidth = `${btn.offsetWidth}px`;
+    placeFlyout(pop, btn, { mode: 'down', gap: 4, margin: 8, fit: true, win: doc.defaultView });
+    active?.scrollIntoView?.({ block: 'nearest' });
   }
 
   const onDown = (e) => { if (pop && !pop.contains(e.target) && !btn.contains(e.target)) close(); };
@@ -183,8 +196,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     btn.setAttribute('aria-controls', listEl.id);
     paintList();
     paintState();
-    pop.style.minWidth = `${btn.offsetWidth}px`;
-    placeFlyout(pop, btn, { mode: 'down', gap: 4, margin: 8, win: doc.defaultView });
+    place();
     doc.addEventListener('pointerdown', onDown, true);
     if (!general && !loaded && !loading) void load();
   }
@@ -206,7 +218,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     btn.focus();
     if (t && !sameTarget(t, current)) {
       current = t;
-      txt.textContent = targetText(current);
+      paintButton();
       onChange(current);
     }
   }
@@ -246,7 +258,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     el: wrap,
     button: btn,
     get: () => current,
-    set(t) { current = t || { kind: 'none' }; txt.textContent = targetText(current); if (pop) paintList(); },
+    set(t) { current = t || { kind: 'none' }; paintButton(); if (pop) { paintList(); place(); } },
     describe(id) { if (id) btn.setAttribute('aria-describedby', id); else btn.removeAttribute('aria-describedby'); },
     open,
     close,
