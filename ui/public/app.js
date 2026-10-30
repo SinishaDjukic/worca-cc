@@ -3735,11 +3735,17 @@ function wftDetailActions() {
       const cache = wft.patches || (wft.patches = new Map());
       let patch = cache.get(tryId);
       if (typeof patch !== 'string') {
+        if (patch === null) cache.delete(tryId);                       // Fix 1: a failed read is tried again, here and in the card
         const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/changes`);
-        if (!r.ok) { notify({ tone: 'err', title: CHANGES_NOT_READ_TITLE, detail: r.error }); return; }
+        if (!r.ok) {
+          if (wftWorkflowId() === id && !cache.has(tryId)) cache.set(tryId, null);
+          notify({ tone: 'err', title: CHANGES_NOT_READ_TITLE, detail: r.error });
+          return;
+        }
         patch = String(r.data.patch || '');
         if (r.data.cut) wftPatchCut.add(tryId);
         if (wftWorkflowId() === id) cache.set(tryId, patch);
+        if (still()) wftRender();                                       // the card shows the diff it could not read before
       }
       if (!still()) return;
       // Text, never markup: the diff is the project's data (openWholeResult shows it in a <pre> without a renderer).

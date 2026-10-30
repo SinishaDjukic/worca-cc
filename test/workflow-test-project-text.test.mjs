@@ -74,6 +74,8 @@ test('boards 36 and 37: what changed, what would have been sent', () => {
   assert.equal(t.changesLine('v3 draft', { total: 1, added: 1, removed: 0 }), 'v3 draft: 1 file, 1 line added, 0 removed');
   assert.equal(t.notMetFor('v3 draft'), 'Not met for v3 draft:');
   assert.equal(t.COMMAND_ENDED, ' the command ended with an error.');
+  assert.equal(t.COMMAND_TIMED_OUT, ' the command ran longer than its time limit and was stopped.');   // P32
+  assert.equal(t.EACH_STOPPED_ANSWERED_TEXT, 'Each one Worca stopped answered "Not sent: this is a test."');   // P32
   assert.equal(t.SEE_COMMAND_OUTPUT, 'See the command output');
   assert.equal(t.NOTHING_PUSHED_TEXT, "The changes stayed in Worca's own copy of the project: nothing was pushed.");
   assert.equal(t.REAL_BLOCKED_TEXT, ' Pushes, pull requests and issues stay blocked in every test, also with Real connectors.');
@@ -81,13 +83,13 @@ test('boards 36 and 37: what changed, what would have been sent', () => {
   // P30, P31 (not drawn; decided 2026-10-30 by the controller): the change card's other states, Read all the changes.
   assert.equal(t.READING_CHANGES, 'Reading the changes…');
   assert.equal(t.NO_FILE_DIFF_TEXT, 'No changes to show for this file.');
-  assert.equal(t.BINARY_FILE_TEXT, 'A binary file: its changes are not shown.');
-  assert.equal(t.CHANGES_UNREAD_TEXT, 'Worca could not read the changes of this try.');
+  assert.equal(t.BINARY_FILE_TEXT, 'This file is not text, so its changes are not shown.');
+  assert.equal(t.CHANGES_UNREAD_TEXT, 'Worca could not read the changes of this try. Read all the changes to try again.');
   assert.equal(t.DIFF_SHORTENED_TEXT, 'Shortened here: read all the changes.');
   assert.equal(t.moreFilesText(1), 'And 1 more file: read all the changes.');
   assert.equal(t.moreFilesText(7), 'And 7 more files: read all the changes.');
   assert.equal(t.CHANGES_NOT_READ_TITLE, 'Could not read the changes');
-  assert.equal(t.NO_DIFF_TEXT, 'Worca kept no diff of this try.');
+  assert.equal(t.NO_DIFF_TEXT, 'Worca kept no record of what this try changed.');
   assert.equal(t.PATCH_CUT_TEXT, 'The changes are longer than 5 MB: only the first 5 MB are shown.');
 });
 

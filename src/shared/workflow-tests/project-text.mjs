@@ -153,20 +153,24 @@ const n1 = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 export const changesLine = (label, c) => `${label}: ${n1(c.total, 'file', 'files')}, ${n1(c.added, 'line', 'lines')} added, ${c.removed} removed`;
 export const notMetFor = (label) => `Not met for ${label}:`;
 export const COMMAND_ENDED = ' the command ended with an error.';
+// P32 (not drawn; decided 2026-10-30 by the controller): a command its time limit stopped.
+export const COMMAND_TIMED_OUT = ' the command ran longer than its time limit and was stopped.';
 export const SEE_COMMAND_OUTPUT = 'See the command output';
 export const NOTHING_PUSHED_TEXT = "The changes stayed in Worca's own copy of the project: nothing was pushed.";
 export const REAL_BLOCKED_TEXT = ' Pushes, pull requests and issues stay blocked in every test, also with Real connectors.';
 export const EACH_ANSWERED_TEXT = 'Each one answered "Not sent: this is a test."';
+// P32 (not drawn; decided 2026-10-30 by the controller): a Real try the guard stopped; only the stopped ones answered.
+export const EACH_STOPPED_ANSWERED_TEXT = 'Each one Worca stopped answered "Not sent: this is a test."';
 // P30 (not drawn; decided 2026-10-30 by the controller): the change card's other states.
 export const READING_CHANGES = 'Reading the changes…';
 export const NO_FILE_DIFF_TEXT = 'No changes to show for this file.';
-export const BINARY_FILE_TEXT = 'A binary file: its changes are not shown.';
-export const CHANGES_UNREAD_TEXT = 'Worca could not read the changes of this try.';
+export const BINARY_FILE_TEXT = 'This file is not text, so its changes are not shown.';
+export const CHANGES_UNREAD_TEXT = 'Worca could not read the changes of this try. Read all the changes to try again.';
 export const DIFF_SHORTENED_TEXT = 'Shortened here: read all the changes.';
 export const moreFilesText = (n) => `And ${n1(n, 'more file', 'more files')}: read all the changes.`;
 // P31 (not drawn; decided 2026-10-30 by the controller): Read all the changes.
 export const CHANGES_NOT_READ_TITLE = 'Could not read the changes';
-export const NO_DIFF_TEXT = 'Worca kept no diff of this try.';
+export const NO_DIFF_TEXT = 'Worca kept no record of what this try changed.';
 export const PATCH_CUT_TEXT = 'The changes are longer than 5 MB: only the first 5 MB are shown.';
 
 // ── Board 38: the Tests list and a past project run ──────────────────────────

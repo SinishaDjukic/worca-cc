@@ -9012,9 +9012,9 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-outlog{margin:0;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-family:var(--mono);font-size:var(--fs-meta);line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:auto;}
 .wft-outlog[hidden]{display:none;}
 /* Boards 36, 37: one example side by side on a project: what changed (the picked file's diff), the command, what the guard
-   stopped, For developers. .card.wft-chg undoes Part 2's .wft-chg line (Compare's "What you changed") for the card. */
+   stopped, For developers. */
 .wft-modes{display:flex;flex-direction:column;gap:6px;}
-.card.wft-chg{align-items:stretch;gap:0;padding:18px 20px;line-height:inherit;}
+.wft-chgcard{gap:0;padding:18px 20px;}
 .wft-chg-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:6px 12px;margin-bottom:12px;}
 .wft-chg-head h2{margin:0;font-size:var(--fs-section);}
 .wft-chg-head .hint{margin:0;}
@@ -9042,8 +9042,9 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-chg-foot{margin-top:12px;}
 .wft-chg-foot .wft-linkbtn{font-weight:600;text-decoration:none;}
 .wft-chg-foot .wft-linkbtn:hover{text-decoration:underline;}
+.wft-sent > .wft-mode{padding:0 18px 10px;}
 .wft-call-cmd{display:block;margin-top:8px;font-family:var(--mono);font-size:var(--fs-meta);white-space:pre-wrap;overflow-wrap:anywhere;}
-.wft-why-cmd{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;padding:10px 12px;border-radius:var(--r-sm);background:var(--red-bg);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
+.wft-why-cmd{grid-column:1 / -1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;padding:10px 12px;border-radius:var(--r-sm);background:var(--red-bg);color:var(--ink);font-size:var(--fs-body);line-height:1.45;}
 .wft-why-cmd b{font-weight:600;}
 .wft-why-cmd > span{flex:1 1 240px;min-width:0;}
 .wft-pg-head .code,.wft-dev-facts .code{font-family:var(--mono);overflow-wrap:anywhere;}

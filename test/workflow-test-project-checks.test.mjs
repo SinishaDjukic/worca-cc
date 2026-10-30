@@ -115,7 +115,7 @@ test('a time limit stops a command; a file outside the checkout is never read', 
   const dir = join(home, 'slow');
   mkdirSync(dir, { recursive: true });
   const r = await runCommandCheck({ kind: 'command', cmd: 'node -e "setTimeout(() => {}, 60000)"', timeoutMin: 1 }, { cwd: dir, run: async (o) => ({ ok: false, exitCode: null, timedOut: true, ms: o.timeoutMs, tail: '' }) });
-  assert.deepEqual([r.met, r.value], [false, 'Stopped after 1 minute']);
+  assert.deepEqual([r.met, r.value, r.timedOut], [false, 'Stopped after 1 minute', true]);
   assert.equal(await readCheckFile(outcome(dir), '../outside.md'), null);
 });
 
@@ -130,6 +130,16 @@ test('a file reached through a linked folder that leads outside the checkout is 
   assert.equal(await readCheckFile(outcome(dir), 'out/secret.md'), null);
   assert.equal(await readCheckFile(outcome(dir), 'docs/ok.md'), 'fine');
   for (const bad of ['/etc/passwd', 'C:/x.md', 'C:\\x.md']) assert.equal(await readCheckFile(outcome(dir), bad), null, bad);
+});
+
+test('Fix 1: the verdict item of a command its time limit stopped carries timedOut; any other command item has no such key', async () => {
+  const example = { basics: { noError: true, noHelp: false, maxCostUsd: null, maxSentBack: null }, checks: [
+    { id: 'c_1', ...check({ kind: 'command', cmd: 'node slow.mjs' }) }, { id: 'c_2', ...check({ kind: 'command', cmd: 'node fail.mjs' }) }] };
+  const runCommand = async (c) => (c.cmd === 'node slow.mjs' ? { met: false, value: 'Stopped after 5 minutes', output: 'ℹ pass 3', timedOut: true }
+    : { met: false, value: '2 passed, 1 failed', output: 'ℹ fail 1' });
+  const v = await checkTry(example, outcome(home), { runCommand });
+  assert.deepEqual(v.checks[0], { id: 'c_1', label: 'The command node slow.mjs passes', met: false, value: 'Stopped after 5 minutes', output: 'ℹ pass 3', timedOut: true });
+  assert.deepEqual(Object.keys(v.checks[1]), ['id', 'label', 'met', 'value', 'output'], 'the Part 2 shape otherwise');
 });
 
 test('a command that throws is "Ended with an error"; the other checks keep their verdict', async () => {

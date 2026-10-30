@@ -11,7 +11,8 @@ import { agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, 
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
-  changesLine, notMetFor, COMMAND_ENDED, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT, READING_CHANGES,
+  changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
+  EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES,
   NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
@@ -93,9 +94,10 @@ const modeNote = (doc, name, text) => {
 function sentCard(doc, v, key, { project = false } = {}) {
   if (!v) return null;
   const sent = v.wouldHaveSent || [];
+  const realNote = () => modeNote(doc, 'plug', 'Connectors: real. This try used your real connectors.');
   if (v.connectors === 'real' && !sent.length) {   // a real try that the guard never had to stop: Part 2's note
     const c = el(doc, 'section', 'card wft-sent-real');
-    c.append(modeNote(doc, 'plug', 'Connectors: real. This try used your real connectors.'));
+    c.append(realNote());
     return c;
   }
   const c = el(doc, 'section', 'card wft-sent');
@@ -106,6 +108,7 @@ function sentCard(doc, v, key, { project = false } = {}) {
   head.append(h);
   if (sent.length) head.append(el(doc, 'span', 'hint', sentCount(sent)));
   c.append(head);
+  if (v.connectors === 'real') c.append(realNote());   // Fix 1: a Real try the guard stopped still says it used real connectors
   for (const call of sent) {
     const d = el(doc, 'details', 'wft-call');
     const sum = el(doc, 'summary');
@@ -130,7 +133,7 @@ function sentCard(doc, v, key, { project = false } = {}) {
     c.append(d);
   }
   if (!sent.length) c.append(el(doc, 'p', 'wft-sent-foot', project ? `Nothing would have been sent. ${NOTHING_PUSHED_TEXT}` : 'Nothing would have been sent.'));
-  else if (project) c.append(el(doc, 'p', 'wft-sent-foot', EACH_ANSWERED_TEXT));   // board 37
+  else if (project) c.append(el(doc, 'p', 'wft-sent-foot', v.connectors === 'real' ? EACH_STOPPED_ANSWERED_TEXT : EACH_ANSWERED_TEXT));   // board 37
   for (const r of v.answeredReads || []) {
     c.append(el(doc, 'p', 'wft-sent-foot', `Worca also answered ${r.n === 1 ? '1 request' : `${r.n} requests`} in ${serverName(r.server)}: ${r.n === 1 ? 'it' : 'they'} came back empty.`));
   }
@@ -418,7 +421,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
   // Board 36: what one project try changed. The files are buttons; the picked one's diff shows below the list (read once
   // per try through actions.loadChanges; the page repaints when it lands).
   const changesCard = (label, v, key) => {
-    const c = el(doc, 'section', 'card wft-card wft-chg');
+    const c = el(doc, 'section', 'card wft-card wft-chgcard');
     const h = el(doc, 'h2', '', changesTitle(label));
     h.id = `wft-chg-${key}`;
     c.setAttribute('aria-labelledby', h.id);
@@ -534,12 +537,12 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
       if (key === 'checks') {
         for (const [side, vl, v] of [['a', s.labels.a, once ? null : cur.a], ['b', s.labels.b, cur.b]]) {
           const it = v && v.verdict ? (v.verdict.checks || []).find((x) => x.label === label) : null;
-          if (!it || it.met || typeof it.output !== 'string') continue;
-          const why = el(doc, 'div', 'wft-why wft-why-cmd');
+          if (!it || it.met || (typeof it.output !== 'string' && !it.timedOut)) continue;
+          const why = el(doc, 'div', 'wft-why-cmd');
           const words = el(doc, 'span');
-          words.append(el(doc, 'b', '', notMetFor(inSentence(vl))), doc.createTextNode(COMMAND_ENDED));
+          words.append(el(doc, 'b', '', notMetFor(inSentence(vl))), doc.createTextNode(it.timedOut ? COMMAND_TIMED_OUT : COMMAND_ENDED));
           why.append(words);
-          if (it.output.trim()) {
+          if (typeof it.output === 'string' && it.output.trim()) {
             why.append(act(doc, root, runId, SEE_COMMAND_OUTPUT, () => actions.commandOutput(`${it.label} · ${vl}`, it.output), 'btn btn-sm',
               `wft-cmd-out-${side}-${it.id || label}`));
           }

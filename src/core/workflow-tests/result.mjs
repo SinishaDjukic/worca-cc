@@ -196,7 +196,7 @@ export async function readCheckFile(outcome, rel) {
 export async function runCommandCheck(check, { cwd, logFile = null, run = runShellStep } = {}) {
   const n = check.timeoutMin;
   const r = await run({ command: check.cmd, cwd, env: tryShellEnv({ logFile }), timeoutMs: n * 60_000 });
-  if (r.timedOut) return { met: false, value: `Stopped after ${n} ${n === 1 ? 'minute' : 'minutes'}`, output: r.tail };
+  if (r.timedOut) return { met: false, value: `Stopped after ${n} ${n === 1 ? 'minute' : 'minutes'}`, output: r.tail, timedOut: true };
   return { met: r.ok, value: commandSummary(r.tail) || (r.ok ? 'Met' : 'Ended with an error'), output: r.tail };
 }
 
@@ -234,7 +234,8 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       onCommand(check.cmd);
       let r;
       try { r = await runCommand(check, { cwd: cwdDir, logFile: outcome.logFile }); } catch { r = { met: false, value: 'Ended with an error' }; }
-      results[i] = { id: check.id, label, met: !!r.met, value: r.value, ...(r.output ? { output: r.output } : {}) };
+      // Board 36: a command its time limit stopped says so in the side by side (timedOut), not "ended with an error".
+      results[i] = { id: check.id, label, met: !!r.met, value: r.value, ...(r.output ? { output: r.output } : {}), ...(r.timedOut ? { timedOut: true } : {}) };
       continue;
     }
     const r = await runScript(check, { pipelineId: outcome.pipelineId, cwdDir });
