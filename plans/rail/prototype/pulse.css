@@ -39,16 +39,16 @@
 
 /* A ring that shades along its arc: --ink-2 at the start, --amber at the warning line (--w), --red at the limit; it
    shows the first --p percent. Used up: full and solid red. The track is --line-2. Never violet, never green. */
-.pz-gring{--s:18px;--t:2.5px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
+.pz-gring{--s:18px;--t:2px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
   -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
   mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
 .pz-gring::before{content:"";position:absolute;inset:0;border-radius:50%;
   background:conic-gradient(var(--ink-2) 0%,var(--amber) calc(var(--w) * 1%),var(--red) 100%);
   -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}
 .pz-gring.is-over::before{background:var(--red);}
-.pz-ava-wrap .pz-gring{position:absolute;inset:0;margin:auto;}
+.pz-ava-wrap .pz-gring{--t:1.5px;position:absolute;inset:0;margin:auto;}
 .pz-ring-0{--s:44px;} .pz-ring-1{--s:37px;} .pz-ring-2{--s:30px;}
-.pz-mi-ring{--s:16px;--t:2px;}
+.pz-mi-ring{--s:16px;--t:1.5px;}
 
 /* The account menu is Worca's own (#acct-menu, style.css › .acct-menu); here it sits in the mock window, not the viewport.
    Its side menus open beside it, bottom-aligned; on a narrow screen in its place, with a row back. */
