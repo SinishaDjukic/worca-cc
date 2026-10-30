@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { sheetHarness, ok, fail, settle, deferred } from './helpers/marketplace-sheet-harness.mjs';
 import { createTicketUpdates } from '../ui/public/marketplace/ticket-updates-section.mjs';
+import { createManageSheet } from '../ui/public/marketplace/manage-sheet.mjs';
+import { ROW, DETAIL, INVENTORY } from './helpers/marketplace-manage-fixtures.mjs';
 import { TU, TU_Q, RESOLVED, LEGACY, ALL_DONE, SHOP_RULE, tuGet, SAVED, tuRoutes } from './helpers/ticket-updates-fixtures.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -359,4 +361,190 @@ test('board 5 E: four projects at a time; a project that cannot be read marks no
   await settle(30);
   assert.equal(most, 4);
   assert.deepEqual(keys.map((k) => !!m.rowFor(k).querySelector('.mk-tu-gone')), [true, true, true, true, true, false]);
+});
+
+// ---- inside the manage sheet (D12) ----
+const JROW = { ...ROW, name: 'jira-source', subdir: 'plugins/jira-source', latest: null };
+const JDETAIL = { ...DETAIL, plugin: JROW, inventory: { ...INVENTORY, taskSources: [{ id: 'jira', displayName: 'Jira', secrets: ['token'] }] } };
+const JSCHEMA = [
+  { key: 'baseUrl', type: 'text', label: 'Jira URL', secret: false, required: true, default: null, help: null, options: [] },
+  { key: 'email', type: 'text', label: 'Account email', secret: false, required: false, default: null, help: null, options: [] },
+  { key: 'token', type: 'text', label: 'API token', secret: true, required: true, default: null, help: null, options: [] },
+  { key: 'transitionOnComplete', type: 'text', label: 'Transition on completion', secret: false, required: false, default: null,
+    help: 'Optional. A transition or status name (e.g. Done) to move the issue to.', options: [] }];
+const jconfig = (profile = 'acme') => ok({ sources: [{ id: 'jira', multiProfile: true, profile, profiles: [{ id: 'acme', label: 'Acme' }, { id: 'beta', label: 'Beta' }],
+  schema: JSCHEMA, values: { baseUrl: 'https://acme.atlassian.net', email: 'ann@example.test', token: { set: true }, transitionOnComplete: 'Resolve' } }], channels: [] });
+async function sheet(routes = {}, { flags = 'ticketUpdates', get = SAVED } = {}) {
+  const h = sheetHarness({ trackDom, plugins: [JROW], routes: { 'GET /api/plugins/jira-source': ok(JDETAIL), 'GET /api/plugins/jira-source/config': jconfig(),
+    ...tuRoutes(get), ...routes } });
+  h.doc.documentElement.dataset.flags = flags;
+  const manage = createManageSheet({ doc: h.doc, win: h.window, page: h.page, deps: h.deps, wait: h.wait, now: h.now });
+  await manage.open('jira-source', { opener: h.doc.getElementById('opener') });
+  await settle();
+  const $ = (s) => h.doc.querySelector(`#mk-sheet ${s}`);
+  const field = (key) => [...h.doc.querySelectorAll('#mk-sheet .field[data-field]')].find((r) => r.dataset.field === key);
+  const type = (key, value) => { const c = $(`[data-key="${key}"]`); c.value = value; c.dispatchEvent(new h.window.Event('input', { bubbles: true })); };
+  const puts = () => h.calls.filter((c) => c[0] === 'PUT').map((c) => c[1]);
+  return { ...h, manage, $, field, type, puts };
+}
+
+test('D12: the section sits after Test connection when the flag is on; off, nothing and no call', async () => {
+  let m = await sheet();
+  const tu = m.$('[data-group="source:jira"] .mk-tu');
+  assert.ok(tu && !tu.hidden);
+  assert.ok(tu.previousElementSibling.classList.contains('mk-test-row'));
+  assert.equal(m.$('.mk-tu-head .mk-meta').textContent, 'Acme (acme)');
+  m = await sheet({}, { flags: '' });
+  assert.equal(m.$('.mk-tu'), null);
+  assert.equal(m.calls.some((c) => String(c[1]).includes('/ticket-updates')), false);
+});
+
+test('D4: after the first save the old field reads "Moved to Ticket updates.", its label stays, and Save never sends it', async () => {
+  let m = await sheet();
+  const row = m.field('transitionOnComplete');
+  assert.equal(row.querySelector('label').textContent, 'Transition on completion');
+  assert.equal(row.querySelector('label').hasAttribute('for'), false, 'the label names no control that is gone');
+  assert.equal(row.querySelector('[data-key]'), null);
+  assert.equal(row.querySelector('small.hint'), null, 'Deviation 5 (S14): the help went with its control');
+  assert.equal(row.querySelector('.mk-tu-moved').textContent, 'Moved to Ticket updates.');
+  m.$('[data-act="save"]').click();
+  await settle();
+  assert.deepEqual([m.manage.isOpen(), m.puts()], [false, []], 'nothing changed: the sheet just closes');
+  m = await sheet();
+  m.type('baseUrl', 'https://acme2.atlassian.net');
+  m.$('[data-act="save"]').click();
+  await settle();
+  const put = m.calls.find((c) => c[0] === 'PUT');
+  assert.equal(put[1], '/api/plugins/jira-source/config');
+  assert.equal('transitionOnComplete' in put[2].values, false);
+  m = await sheet({}, { get: tuGet() });
+  assert.ok(m.field('transitionOnComplete').querySelector('[data-key="transitionOnComplete"]'), 'nothing saved yet: the old field stays');
+});
+
+test('D12: Save sends the config PUT first, then the ticket-updates PUT; a refused config save sends nothing more', async () => {
+  let m = await sheet({ 'PUT /api/plugins/jira-source/config': ok({ ok: true }), [`PUT ${TU}`]: ok({ ok: true }) });
+  m.type('baseUrl', 'https://acme2.atlassian.net');
+  m.$('.mk-tu-chip[data-value="CRM"] .mk-tu-x').click();
+  m.$('[data-act="save"]').click();
+  await settle();
+  assert.deepEqual(m.puts(), ['/api/plugins/jira-source/config', TU]);
+  const body = m.calls.find((c) => c[1] === TU)[2];
+  assert.deepEqual([body.sourceId, body.profile, body.projects], ['jira', 'acme', [{ value: 'SHOP', label: 'Shop' }]]);
+  assert.deepEqual([m.manage.isOpen(), m.notified.map((n) => n.title)], [false, ['Settings saved.']]);
+  m = await sheet({ 'PUT /api/plugins/jira-source/config': fail(400, { error: 'the Jira URL must start with https://' }) });
+  m.type('baseUrl', 'ftp://x');
+  m.$('.mk-tu-chip[data-value="CRM"] .mk-tu-x').click();
+  m.$('[data-act="save"]').click();
+  await settle();
+  assert.deepEqual(m.puts(), ['/api/plugins/jira-source/config'], 'no ticket-updates PUT after a refused config save');
+  assert.equal(m.$('.mk-save-err .mk-wash-text').textContent, 'the Jira URL must start with https://');
+  assert.equal(m.manage.isOpen(), true);
+});
+
+test('D12: only the section changed: one PUT; a refused one shows the error wash under Settings and the sheet stays', async () => {
+  let m = await sheet({ [`PUT ${TU}`]: fail(400, { error: 'All projects needs exactly one rule.' }) });
+  m.$('.mk-tu-chip[data-value="CRM"] .mk-tu-x').click();
+  m.$('[data-act="save"]').click();
+  await settle();
+  assert.deepEqual(m.puts(), [TU]);
+  assert.equal(m.$('[data-sec="settings"] .mk-save-err .mk-wash-text').textContent, 'All projects needs exactly one rule.');
+  assert.equal(m.manage.isOpen(), true);
+  m = await sheet({ [`PUT ${TU}`]: ok({ ok: true }) }, { get: tuGet({ legacy: { ...LEGACY, target: { typed: 'Resolve' } } }) });
+  m.doc.getElementById('mk-sheet').dispatchEvent(new m.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle();
+  assert.deepEqual([m.manage.isOpen(), m.doc.querySelector('dialog.discard-modal')], [false, null], 'carried over is not a change: closing asks nothing');
+});
+
+test('D12: a profile switch repaints the section for that profile; a section change asks before switching', async () => {
+  const BETA_Q = '?sourceId=jira&profile=beta';
+  const m = await sheet({ 'GET /api/plugins/jira-source/config?profile=beta': jconfig('beta'),
+    [`GET ${TU}${BETA_Q}`]: ok(tuGet({ connection: 'new', profile: { id: 'beta', label: 'Beta' }, legacy: null })) });
+  m.$('.mk-tu-chip[data-value="CRM"] .mk-tu-x').click();
+  const sel = m.$('.mk-profile-sel');
+  sel.value = 'beta';
+  sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+  await settle();
+  assert.ok(m.calls.some((c) => c[0] === 'confirm' && c[1] === 'Discard unsaved changes?'), 'the section was dirty');
+  assert.equal(m.$('.mk-tu-head .mk-meta').textContent, 'Beta (beta)');
+  assert.equal(m.$('.mk-tu-new').textContent, "Save this connection first. Ticket updates read Jira's projects and statuses through it.");
+  assert.equal(m.doc.querySelectorAll('.mk-tu').length, 1, 'the old section is gone');
+});
+
+test('S13: a Test connection that saves the connection turns state A into the live section without reopening', async () => {
+  let saved = false;
+  const m = await sheet({ 'PUT /api/plugins/jira-source/config': async () => { saved = true; return ok({ ok: true }); },
+    [`GET ${TU}${TU_Q}`]: async () => ok(saved ? SAVED : tuGet({ connection: 'new', legacy: null })),
+    'POST /api/sources/call': ok({ ok: true, result: { ok: true } }) });
+  assert.ok(m.$('.mk-tu-new'), 'state A');
+  m.type('baseUrl', 'https://acme2.atlassian.net');
+  m.$('.mk-test').click();
+  await settle();
+  assert.deepEqual([m.$('.mk-tu-new'), !!m.$('.mk-tu-rules'), m.doc.querySelectorAll('#mk-sheet .mk-tu').length], [null, true, 1]);
+  assert.ok(m.$('.mk-tu').previousElementSibling.classList.contains('mk-test-row'), 'still right after Test connection');
+});
+
+test('D4: a value typed into the old field before the section answered is kept, not dropped silently; a profile switch mid-save leaves the new section alone', async () => {
+  const gate = deferred();
+  let m = await sheet({ [`GET ${TU}${TU_Q}`]: async () => { await gate.p; return ok(SAVED); } });
+  m.type('transitionOnComplete', 'Close');
+  gate.resolve();
+  await settle();
+  const c = m.field('transitionOnComplete').querySelector('[data-key="transitionOnComplete"]');
+  assert.deepEqual([c && c.value, m.field('transitionOnComplete').querySelector('.mk-tu-moved')], ['Close', null], 'the edit stays and is saved as typed');
+  const put = deferred();
+  const BETA_Q = '?sourceId=jira&profile=beta';
+  m = await sheet({ [`PUT ${TU}`]: async () => { await put.p; return ok({ ok: true }); },
+    'GET /api/plugins/jira-source/config?profile=beta': jconfig('beta'),
+    [`GET ${TU}${BETA_Q}`]: ok(tuGet({ profile: { id: 'beta', label: 'Beta' }, legacy: { ...LEGACY, target: { typed: 'Resolve' } } })) });
+  m.$('.mk-tu-chip[data-value="CRM"] .mk-tu-x').click();
+  m.$('[data-act="save"]').click();
+  await settle();
+  const sel = m.$('.mk-profile-sel');
+  sel.value = 'beta';
+  sel.dispatchEvent(new m.window.Event('change', { bubbles: true }));
+  await settle();
+  const beta = m.$('.mk-tu');
+  assert.equal(beta.querySelector('.mk-tu-head .mk-meta').textContent, 'Beta (beta)');
+  put.resolve();
+  await settle();
+  assert.ok(beta.querySelector('.mk-tu-carried'), "acme's save is not marked on beta's section: its carried-over note stays");
+});
+
+test('14b review: a section change no DOM change event reports (a keyboard pick committed on Enter) makes the sheet dirty, and Save sends it', async () => {
+  const m = await sheet({ [`PUT ${TU}`]: ok({ ok: true }) }, { get: tuGet({ saved: true, rules: [ALL_DONE, SHOP_RULE] }) });
+  m.$('.mk-tu-add-rule').click();
+  await settle();
+  const sel = m.$('.mk-tu-newrow select.mk-tu-project');
+  const key = (k) => sel.dispatchEvent(new m.window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  key('ArrowDown');
+  sel.value = 'CRM';   // no change or input event: the pick commits on Enter alone
+  key('Enter');
+  assert.ok(m.$('.mk-tu-rule[data-project="CRM"]'), 'committed');
+  m.doc.getElementById('mk-sheet').dispatchEvent(new m.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle();
+  assert.ok(m.doc.querySelector('dialog.discard-modal'), 'the sheet counts it as a change: closing asks');
+  m.doc.querySelector('dialog.discard-modal .discard-keep').click();
+  await settle();
+  assert.equal(m.manage.isOpen(), true);
+  m.$('[data-act="save"]').click();
+  await settle();
+  assert.deepEqual(m.puts(), [TU]);
+  assert.deepEqual(m.calls.find((c) => c[1] === TU)[2].rules.at(-1),
+    { project: 'CRM', label: 'Customer portal', moment: 'finished', target: { kind: 'category', value: 'done' } });
+  assert.equal(m.manage.isOpen(), false);
+});
+
+test('D12: Add profile and Remove profile repaint the section with the group', async () => {
+  const GAMMA_Q = '?sourceId=jira&profile=gamma';
+  const gamma = ok({ sources: [{ ...jconfig().data.sources[0], profile: 'gamma', profiles: [{ id: 'acme', label: 'Acme' }, { id: 'gamma', label: 'Gamma' }] }], channels: [] });
+  const m = await sheet({ 'POST /api/plugins/jira-source/profiles': ok({ ok: true }), 'GET /api/plugins/jira-source/config?profile=gamma': gamma,
+    [`GET ${TU}${GAMMA_Q}`]: ok(tuGet({ connection: 'new', profile: { id: 'gamma', label: 'Gamma' }, legacy: null })),
+    'DELETE /api/plugins/jira-source/profiles/gamma?sourceId=jira': ok({ ok: true }) });
+  m.deps.promptModal = async () => ({ id: 'gamma', label: 'Gamma' });
+  m.$('.mk-profile-add').click();
+  await settle();
+  assert.deepEqual([m.$('.mk-tu-head .mk-meta').textContent, !!m.$('.mk-tu-new'), m.doc.querySelectorAll('.mk-tu').length], ['Gamma (gamma)', true, 1]);
+  m.$('.mk-profile-del').click();
+  await settle();
+  assert.deepEqual([m.$('.mk-tu-head .mk-meta').textContent, !!m.$('.mk-tu-rules'), m.doc.querySelectorAll('.mk-tu').length], ['Acme (acme)', true, 1]);
 });
