@@ -6969,7 +6969,8 @@ export class RunHarness extends EventEmitter {
       if (outcome?.ok === false) {
         this._log('writeback', 'warn', `task-source write-back failed: ${outcome.error} — use "Report result" in the results view to retry`);
       } else if (outcome?.ok && !outcome.skipped) {
-        await appendAudit(this.pipeline.dir, 'Result reported back to the task source.').catch(() => {});
+        // Ticket updates (D11): the plugin's outcome line ends the audit line ("… Moved to Resolved.")
+        await appendAudit(this.pipeline.dir, `Result reported back to the task source.${outcome.note ? ` ${outcome.note}` : ''}`).catch(() => {});
       }
     } catch (err) {
       this._log('writeback', 'warn', `task-source write-back failed: ${err?.message || err}`);

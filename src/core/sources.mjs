@@ -16,6 +16,7 @@ import { getDb } from './db.mjs';
 import { runDirForRow, readStoreMeta, readPromptFile } from './artifacts.mjs';
 import { RESULTS_FILE } from './results.mjs';
 import { anyPrHost, findPrForBranch } from './git-info.mjs';
+import { moveFor } from './ticket-updates.mjs';
 
 /** Profile roster for a plugin; never throws — the pane must render even when a
  *  plugin's data dir is unreadable (it degrades to "no profiles yet"). */
@@ -208,7 +209,7 @@ function buildResultLinks(bundle) {
  * for prompt/markdown rows and refs that cannot be parsed.
  * @param {object} pipelineRow  raw pipelines row (source_type/source_ref/status/title)
  * @param {{results:object|null, branch:string|null, prUrl:string|null}} resultsBundle
- * @returns {Promise<{ok:true, skipped?:true} | {ok:false, error:string}>}
+ * @returns {Promise<{ok:true, skipped?:true, note?:string, moved?:{from:string,to:string}} | {ok:false, error:string}>}
  */
 export async function reportResultForPipeline(pipelineRow, resultsBundle) {
   try {
@@ -251,30 +252,52 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
     // and we could not hear it; writing would violate it) — the caller
     // surfaces the error and the results-view retry re-probes.
     const inputs = ref.inputs && typeof ref.inputs === 'object' ? ref.inputs : {};
+    // Ticket updates (D7): the move by the rule of the ticket's project (pinned at fetch, D6), else All projects; undefined with
+    // the flag off or nothing saved for the row's profile and source (the plugin's old setting applies, D4). Decided before the
+    // probe, so a failed probe cannot let the old setting run over a saved rule (S1).
+    const status = statusToResult(pipelineRow.status);
+    const ruled = moveFor({ plugin: ref.plugin, sourceId: ref.sourceId, profile: callRef.profile || DEFAULT_PROFILE,
+      project: typeof ref.project === 'string' ? ref.project : '', status });
+
     let writeBack = true;
+    let caps = null;
+    let probeFailed = false;
     try {
-      const caps = await callSource({ ...callRef, op: 'capabilities', args: { inputs } });
+      caps = await callSource({ ...callRef, op: 'capabilities', args: { inputs } });
       if (caps && caps.writeBack === false) writeBack = false;
     } catch (err) {
-      if ((err?.kind || 'plugin') !== 'unimplemented' && 'writeBack' in inputs) {
+      const kind = err?.kind || 'plugin';
+      if (kind !== 'unimplemented' && 'writeBack' in inputs) {
         return { ok: false, error: `write-back capability probe failed: ${err?.message || String(err)}` };
       }
+      probeFailed = kind !== 'unimplemented';
       writeBack = true;
     }
     if (!writeBack) return { ok: true, skipped: true };
 
-    await callSource({
+    // The move goes only to a connector that can hear it (capabilities().ticketUpdates, the probe above: no extra spawn). A probe
+    // that failed for another reason (a rate limit, a timeout) cannot say; with a saved rule the move is passed anyway (fail
+    // closed: a plugin ignores an arg it does not know, while no move would let its old setting run, D4).
+    const move = ruled && ((caps && caps.ticketUpdates === true) || probeFailed) ? ruled : undefined;
+    const answer = await callSource({
       ...callRef,
       op: 'reportResult',
       args: {
         id: ref.taskId,
-        status: statusToResult(pipelineRow.status),
+        status,
         summary: buildResultSummary(pipelineRow, resultsBundle),
         links: buildResultLinks(resultsBundle),
         inputs,
+        ...(move ? { move } : {}),
       },
     });
-    return { ok: true };
+    // D11: what happened, for the audit line and the route's answer; nothing is added when the plugin says nothing. The note
+    // and the move are the plugin's text (Jira's own message, D10): one line, at most 300 characters each (S8).
+    const line = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const out = { ok: true };
+    if (answer && typeof answer.note === 'string' && line(answer.note)) out.note = line(answer.note);
+    if (answer && answer.moved && typeof answer.moved === 'object') out.moved = { from: line(answer.moved.from), to: line(answer.moved.to) };
+    return out;
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
