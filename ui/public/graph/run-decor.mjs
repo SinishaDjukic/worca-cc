@@ -316,6 +316,17 @@ function awayOf(row, reviewModels, modelLabel) {
 const awayTitle = (a, floorShown) => ['Away mode', a.calls ? fmtAuxCalls('away', a.calls) : '', a.stopped ? `${a.stopped} stopped` : '',
   floorShown ? 'not in total' : ''].filter(Boolean).join(' · ');
 
+/** Σ a node's rows' `auxCosts.session` (the main agent's share of each of its turns), null when none was booked. */
+function handOffs(list) {
+  let usd = 0;
+  let calls = 0;
+  for (const row of list) {
+    const s = stepAux(row).session;
+    if (s) { usd += s.usd; calls += s.calls; }
+  }
+  return calls > 0 ? { usd, calls } : null;
+}
+
 function decorateExecutions(decor, ctx) {
   const { nodes, wires, grouped, activeList, rowFor, state, now, live, subsOf, lastLines, status, modelLabel } = ctx;
   const unpriced = !engineReportsCost(state?.runEngine);   // Cursor: no $0.00 pill
@@ -376,6 +387,10 @@ function decorateExecutions(decor, ctx) {
         durMs, dur: fmtDur(durMs), costUsd, cost: script || unpriced ? '' : fmtUsd(costUsd),
         hasStep: rows.some((r) => r.dur !== ''),
       };
+      // A session member's hand-off share (Task 61; 05 §6.3), already inside `cost`: named in the cost's tooltip, "incl.
+      // $0.02 session hand-off". Only where the cost shows and a hand-off was booked; a plain card gets no key.
+      const hand = script || unpriced ? null : handOffs(list);
+      if (hand) decor.totals[node.id].title = `incl. ${fmtUsd(hand.usd)} session ${hand.calls === 1 ? 'hand-off' : 'hand-offs'}`;
       // The node's Away mode share, kept apart from (and already inside) `cost`. Booked reviews show
       // their cost — $0.00 included (mock / a free model); a node whose reviews were ALL stopped shows
       // their lower bound (≥$x, not in total); unpriced, {free} or sub-cent shows no chip (never $0.00).

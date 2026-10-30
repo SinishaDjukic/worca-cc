@@ -983,7 +983,10 @@ export function createGraphView(host, {
       if (!totals) { if (run) run.remove(); return; }
       if (!run) { run = h('span', 'nrun'); run.append(h('span', 'dur'), h('span', 'cost')); lab.appendChild(run); }
       run.querySelector('.dur').textContent = totals.dur || '';
-      run.querySelector('.cost').textContent = totals.cost || '';
+      const cost = run.querySelector('.cost');
+      cost.textContent = totals.cost || '';
+      if (totals.title) { if (cost.title !== totals.title) cost.title = totals.title; }   // a session member's hand-offs (Task 61)
+      else if (cost.hasAttribute('title')) cost.removeAttribute('title');
       const awayText = (totals.away && totals.away.text) || '';
       let away = run.querySelector(':scope > .away');
       if (!awayText) { if (away) away.remove(); return; }
