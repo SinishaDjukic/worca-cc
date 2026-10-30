@@ -137,22 +137,39 @@ test('projects and statuses: through the saved profile, unfiltered; a missing pr
   const s = await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`);
   assert.deepEqual(s.json.statuses[2], { value: '10012', label: 'Resolved', category: 'done' });
   assert.equal((await call('GET', `${TU}/statuses${Q('acme')}`)).status, 400);
-  for (const bad of ['..', '.', 'A/B', 'A%5CB', 'A%3FB', 'X'.repeat(101)]) {
+  // %252e%252e arrives as "%2e%2e" (Express decodes the query once), which a URL parser reads as "..": a key never has "%"
+  // or a control character.
+  for (const bad of ['..', '.', 'A/B', 'A%5CB', 'A%3FB', 'X'.repeat(101), '%252e%252e', '.%252e', 'A%01B', 'A%7FB']) {
     assert.deepEqual(await call('GET', `${TU}/statuses${Q('acme', `&project=${bad}`)}`).then((x) => [x.status, x.json]),
       [400, { error: 'project is not a project key' }], `project=${bad} never reaches another Jira endpoint`);
   }
   setMockSourceResponses({ listStatuses: [{ value: '1', label: 'Odd', category: 'closed' }, { value: '2', label: 'Open', category: 'todo' }] });
   assert.deepEqual((await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`)).json.statuses, [{ value: '2', label: 'Open', category: 'todo' }],
     'a category outside the four is left out');
-  setMockSourceResponses({ listStatuses: () => { throw new PluginOpError('auth', 'Jira token invalid or expired'); } });
-  const f = await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`);
-  assert.deepEqual([f.status, f.json], [502, { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' }]);
-  setMockSourceResponses({ listProjects: () => { throw new PluginOpError('network', 'Jira unreachable: fetch failed.'); } });
-  const g = await call('GET', `${TU}/projects${Q('acme')}`);
-  assert.deepEqual([g.status, g.json], [502, { error: 'Worca could not reach Jira: Jira unreachable: fetch failed.', kind: 'network' }]);
-  setMockSourceResponses({ listProjects: () => { throw new PluginOpError('plugin', 'plugin "jira-source" is disabled — enable it on the Marketplace page'); } });
-  assert.deepEqual((await call('GET', `${TU}/projects${Q('acme')}`)).json,
-    { error: 'Worca could not reach Jira: the Jira plugin is disabled.', kind: 'plugin' }, 'not "stopped unexpectedly"');
+  // A tracker failure is logged on the server, first line only and at most 200 characters; the test captures the lines.
+  const logged = [];
+  const realError = console.error;
+  console.error = (...a) => { logged.push(a.map(String).join(' ')); };
+  try {
+    setMockSourceResponses({ listStatuses: () => { throw new PluginOpError('auth', 'Jira token invalid or expired'); } });
+    const f = await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`);
+    assert.deepEqual([f.status, f.json], [502, { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' }]);
+    setMockSourceResponses({ listProjects: () => { throw new PluginOpError('network', 'Jira unreachable: fetch failed.'); } });
+    const g = await call('GET', `${TU}/projects${Q('acme')}`);
+    assert.deepEqual([g.status, g.json], [502, { error: 'Worca could not reach Jira: Jira unreachable: fetch failed.', kind: 'network' }]);
+    setMockSourceResponses({ listProjects: () => { throw new PluginOpError('plugin', 'plugin "jira-source" is disabled — enable it on the Marketplace page'); } });
+    assert.deepEqual((await call('GET', `${TU}/projects${Q('acme')}`)).json,
+      { error: 'Worca could not reach Jira: the Jira plugin is disabled.', kind: 'plugin' }, 'not "stopped unexpectedly"');
+    setMockSourceResponses({ listProjects: () => { throw new PluginOpError('plugin', `${'Y'.repeat(300)}\nsecond line at x (C:\\a.mjs:1:1)`); } });
+    const h = await call('GET', `${TU}/projects${Q('acme')}`);
+    assert.deepEqual([h.status, h.json], [502, { error: 'Worca could not reach Jira: the Jira plugin stopped unexpectedly.', kind: 'plugin' }]);
+  } finally { console.error = realError; }
+  assert.deepEqual(logged, [
+    'ticket updates: listStatuses via jira-source/jira failed (auth): Jira token invalid or expired',
+    'ticket updates: listProjects via jira-source/jira failed (network): Jira unreachable: fetch failed.',
+    'ticket updates: listProjects via jira-source/jira failed (plugin): plugin "jira-source" is disabled — enable it on the Marketplace page',
+    `ticket updates: listProjects via jira-source/jira failed (plugin): ${'Y'.repeat(200)}`,
+  ], 'the first line of each failure, at most 200 characters');
   setMockSourceResponses({ listStatuses: undefined });
   assert.deepEqual((await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`)).json, { error: 'This plugin cannot update tickets.' });
   setMockSourceResponses(null);

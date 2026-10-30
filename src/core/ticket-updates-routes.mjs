@@ -16,9 +16,11 @@ const isBag = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v : []);
 /** The shim's answer for a disabled plugin (plugin-shim.mjs): `plugin "<name>" is disabled — …`. */
 const DISABLED = /^plugin "[^"]+" is disabled\b/;
-/** A project key as a tracker names it: 1 to 100 characters, never "." or "..", no slash, backslash, "?" or "#" (it lands in
- *  a URL path in the plugin). jira-source checks the same in statusesOf. */
-export const isProjectKey = (v) => typeof v === 'string' && v.length > 0 && v.length <= 100 && !/^\.+$/.test(v) && !/[/\\?#]/.test(v);
+/** A project key as a tracker names it: 1 to 100 characters, never "." or "..", no slash, backslash, "?", "#", "%" or control
+ *  character (it lands in a URL path in the plugin, where "%2e%2e" or ".%2e" reads as ".."; Jira keys are [A-Z][A-Z0-9_]*).
+ *  jira-source checks the same in statusesOf. */
+export const isProjectKey = (v) => typeof v === 'string' && v.length > 0 && v.length <= 100 && !/^\.+$/.test(v)
+  && !/[/\\?#%\u0000-\u001f\u007f]/.test(v);
 /** Board 5 A's line, the answer to a save while the connection is not saved (D12). */
 const notSaved = (tracker) => `Save this connection first. Ticket updates read ${tracker}'s projects and statuses through it.`;
 
