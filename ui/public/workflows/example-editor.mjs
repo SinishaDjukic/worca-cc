@@ -14,7 +14,9 @@ import {
   PICK_PROJECT_TITLE, pickProjectText, PICK_THE_FOLDER, FOLDER_MISSING_TITLE, folderMissingText, FOLDER_PROJECT_TITLE, folderProjectText,
   UNSUPPORTED_TITLE, START_DIALOG_TITLE, START_DIALOG_HINT, START_DIALOG_OK, CHECK_DIALOG_HINT_PROJECT, GROUP_RESULT, GROUP_PROJECT,
   COMMAND_LABEL, COMMAND_HINT, TIMEOUT_LABEL, TIMEOUT_HINT, timeoutText, READ_FROM_LEGEND, READ_FROM_RESULT, READ_FROM_RESULT_SUB,
-  READ_FROM_FILE, ADD_CHECK,
+  READ_FROM_FILE, ADD_CHECK, lfsText, submodulesText, MISSING_FOLDER_ADD_AGAIN, notRegisteredText, PROJECTS_UNREAD_TEXT,
+  NOT_ON_BRANCH_TEXT, changesMovesText, FILE_NAME_NEEDED, NO_BRANCHES_TEXT, startNowText, PICK_BRANCH_FIRST, BRANCHES_UNREAD_TEXT,
+  START_NOT_MOVED_TEXT, FILE_IN_PROJECT_LABEL,
 } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 export const BLANK_EXAMPLE = Object.freeze({
@@ -63,7 +65,7 @@ export function openStartDialog({ doc, win, branches = [], current = null, dateT
     doc, win, title: START_DIALOG_TITLE, confirmLabel: START_DIALOG_OK, body: [el(doc, 'p', 'hint', START_DIALOG_HINT), list],
     onConfirm: () => {
       const hit = [...list.querySelectorAll('input[name="wft-start-ref"]')].find((x) => x.checked);
-      if (!hit) return { ok: false, error: 'Pick a branch first.' };
+      if (!hit) return { ok: false, error: PICK_BRANCH_FIRST };
       onPick(branches.find((b) => b.name === hit.value));
       return { ok: true };
     },
@@ -117,6 +119,7 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
   preview.setAttribute('aria-live', 'polite');
   const scriptName = (k) => (scripts.find((s) => s.key === k) || {}).displayName || k;
   let read = () => ({ kind: kind.value });
+  let refuse = () => null;   // a refusal the check's own rules do not make (paintFields sets it)
   const paintPreview = () => {
     const { check: ok } = normaliseCheck(read());
     preview.replaceChildren();
@@ -131,6 +134,7 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
   };
   const paintFields = () => {
     fields.replaceChildren();
+    refuse = () => null;
     const c = check && check.kind === kind.value ? check : {};
     if (kind.value === 'words') {
       const min = input('wft-ck-min', 'number', c.min ?? '', { min: '0' });
@@ -175,7 +179,7 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
       const rads = el(doc, 'fieldset', 'wft-rads');
       rads.append(el(doc, 'legend', '', READ_FROM_LEGEND));
       const from = input('wft-ck-from-file', 'text', c.file ?? '', { maxLength: 200, className: 'wft-mono' });
-      from.setAttribute('aria-label', 'File in the project');
+      from.setAttribute('aria-label', FILE_IN_PROJECT_LABEL);
       const rad = (value, label, sub = null) => {
         const l = el(doc, 'label', 'wft-rad');
         const r = el(doc, 'input'); r.type = 'radio'; r.name = 'wft-ck-from'; r.value = value;
@@ -192,6 +196,7 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
       fields.append(rads, from);
       const base = read;
       read = () => ({ ...base(), ...(fil.r.checked && from.value.trim() ? { file: from.value.trim() } : {}) });
+      refuse = () => (fil.r.checked && !from.value.trim() ? FILE_NAME_NEEDED : null);   // P24: "A file in the project" needs its name
     } else if (c.file && TEXT_KIND_SET.has(kind.value)) {   // the project was unpicked: an edited check keeps the file it reads
       const base = read;
       read = () => ({ ...base(), file: c.file });
@@ -205,6 +210,8 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
     body: [el(doc, 'p', 'hint', project ? CHECK_DIALOG_HINT_PROJECT : 'Counted exactly, without AI.'), field(doc, 'What to check', skinned(doc, kind), { id: kind.id }), fields, preview],
     onRemove: check && onRemove ? onRemove : null,
     onConfirm: () => {
+      const own = refuse();
+      if (own) return { ok: false, error: own };
       const { check: ok, error } = normaliseCheck({ ...read(), ...(check && check.id ? { id: check.id } : {}) });
       if (!ok) return { ok: false, error: sentence(error) };
       onSave(ok);
@@ -253,17 +260,21 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   const page = el(doc, 'div', 'wft-page wft-editor');
   const error = el(doc, 'p', 'hint err wft-error');
   error.setAttribute('aria-live', 'polite');
-  const failed = (r, fallback) => { if (!r || !r.ok) error.textContent = (r && r.error) || fallback; };
+  const failed = (r, fallback) => { if (!r || !r.ok) error.textContent = sentence((r && r.error) || fallback); };
 
   // One editor action at a time: Save, Try it once now and the file controls wait while one runs (no second post).
   let busyN = 0;
-  let usableProject = false;   // a Git project whose folder is there, with a start point (paintWhere)
+  let tryBlocked = false;   // board 39: the example's project cannot be tried, or the workflow needs one (paintWhere)
   const paintBusy = () => {
     const on = busyN > 0;
     saveBtn.disabled = on;
-    tryBtn.disabled = on || testRunning || (needsProject && !usableProject);   // board 39
+    tryBtn.disabled = on || testRunning || tryBlocked;
+    // G19 pattern: a Try that waits says why (the busy hint, or the notice of "Where it starts").
+    const why = testRunning ? 'wft-busy' : tryBlocked && !notice.hidden ? notice.id : null;
+    if (why) tryBtn.setAttribute('aria-describedby', why); else tryBtn.removeAttribute('aria-describedby');
     picker.disabled = on;
     for (const b of files.querySelectorAll('button')) b.disabled = on;
+    for (const b of startField.querySelectorAll('button')) b.disabled = on;   // Change, Start from the latest
   };
   const busyWhile = async (fn) => {
     busyN += 1;
@@ -288,11 +299,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     const problem = limitsProblem();
     if (problem) { error.textContent = problem; return; }
     const r = await busyWhile(() => fn(value()));
-    failed(r, 'That did not work. Try again.');
-    if (r && !r.ok && /so tries could go wrong\.$/.test(String(r.error || ''))) {   // board 39: LFS or submodules
-      notice.replaceChildren(el(doc, 'p', 'wft-notice-title', UNSUPPORTED_TITLE), el(doc, 'p', 'hint', r.error));
-      notice.hidden = false;
-    }
+    if (!unsupported(r)) failed(r, 'That did not work. Try again.');
   };
   const tryBtn = btn(doc, 'Try it once now', () => void run(actions.tryOnce), 'btn');
   const saveBtn = btn(doc, 'Save example', () => void run(actions.save), 'btn btn-primary');
@@ -377,13 +384,22 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   projectSel.id = 'wft-ex-project';
   const startField = el(doc, 'div', 'field wft-start-field');
   const notice = el(doc, 'div', 'wft-notice');
+  notice.id = 'wft-ex-notice';
   notice.setAttribute('role', 'note');
+  notice.setAttribute('aria-live', 'polite');
+  const status = el(doc, 'p', 'hint wft-start-status');   // "The start point is now …" after Change or Start from the latest (P26)
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  let changeBtn = null;
+  let latestBtn = null;
   const changesRow = el(doc, 'label', 'wft-uncommitted');   // not .wft-chk: on this page every .wft-chk is a switch (Part 2)
   const changesBox = el(doc, 'input', 'wft-changes-box');   // test/ui-shared-controls.test.mjs JS_CHECKBOX_OK: opts in to keeping uncommitted changes
   changesBox.type = 'checkbox';
   changesBox.checked = !!(stored && stored.changesSha256);
   changesRow.append(changesBox, el(doc, 'span', '', CHANGES_LABEL));
   const changesHint = el(doc, 'span', 'hint wft-changes-hint', CHANGES_HINT);
+  const changesMoves = el(doc, 'span', 'wft-changes-moves');   // P23: said only when switching on would move the start
+  changesHint.append(changesMoves);
   const setup = el(doc, 'input');
   setup.type = 'text'; setup.id = 'wft-ex-setup'; setup.className = 'wft-mono'; setup.maxLength = 4000;
   setup.addEventListener('input', () => { setup.dataset.touched = '1'; });
@@ -400,13 +416,28 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (pick.key && !reg(pick.key)) { const o = el(doc, 'option', '', nameOf(pick.key)); o.value = pick.key; projectSel.append(o); }   // it stays picked
     projectSel.value = pick.key;
   };
-  /** The start point the row shows: a branch picked in Change, the stored pin, else the branch the folder is on. */
+  /** The start point the row shows: a branch picked in Change, the stored pin, else the branch the folder is on (none
+   *  when the folder is not on a branch: P22). */
   const startShown = () => {
     if (pick.branch) return { ref: pick.branch.name, short: pick.branch.short, at: pick.branch.at };
     if (stored && stored.key === pick.key) return { ref: stored.startRef, short: stored.startSha.slice(0, 7), at: stored.startAt };
     const r = reg(pick.key);
-    return r && r.current ? { ref: r.current.branch, short: r.current.short, at: r.current.at } : null;
+    return r && r.current && r.current.branch ? { ref: r.current.branch, short: r.current.short, at: r.current.at } : null;
   };
+  /** Board 39: a save or Start from the latest refused because the project keeps files with Git LFS or holds submodules.
+   *  Said in the notice only (not also on the error line). Matched on the shared sentences, not on a pattern. */
+  function unsupported(r) {
+    if (!r || r.ok || !pick.key) return false;
+    const name = (reg(pick.key) || {}).name || nameOf(pick.key);
+    const said = sentence(r.error);   // app.js's wftCall already makes it a sentence ("Worca-cc keeps …")
+    const text = [lfsText(name), submodulesText(name)].find((t) => sentence(t) === said);
+    if (!text) return false;
+    // The shared sentence itself, so the project's name keeps its own case.
+    notice.replaceChildren(el(doc, 'p', 'wft-notice-title', UNSUPPORTED_TITLE), el(doc, 'p', 'hint', text));
+    notice.hidden = false;
+    paintBusy();
+    return true;
+  }
   /** "Worca can't find gone in /code/gone. …" with the folder in code (board 39); the words stay project-text's. */
   const missingEl = (r) => {
     const p = el(doc, 'p', 'hint');
@@ -423,20 +454,31 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     startField.replaceChildren();
     notice.replaceChildren();
     notice.hidden = true;
-    const say = (title, textEl, button = null) => {
+    changeBtn = null;
+    latestBtn = null;
+    const say = (title, parts, button = null) => {
       notice.hidden = false;
-      notice.append(el(doc, 'p', 'wft-notice-title', title), textEl);
+      if (title) notice.append(el(doc, 'p', 'wft-notice-title', title));
+      notice.append(...parts);
       if (button) { const foot = el(doc, 'div', 'wft-notice-foot'); foot.append(button); notice.append(foot); }
     };
-    if (!pick.key) { if (needsProject) say(PICK_PROJECT_TITLE, el(doc, 'p', 'hint', pickProjectText(workflowName))); }
-    else if (r && !r.exists) say(FOLDER_MISSING_TITLE, missingEl(r), btn(doc, PICK_THE_FOLDER, () => projectSel.focus()));   // P4
-    else if (r && r.vcs !== 'git') say(FOLDER_PROJECT_TITLE, el(doc, 'p', 'hint', folderProjectText(r.name)));
-    usableProject = !!(pick.key && r && r.exists && r.vcs === 'git' && st);
+    const only = (text) => [el(doc, 'p', 'wft-notice-text', text)];   // a notice the boards draw no title for (P20–P22)
+    if (!Array.isArray(projects)) say(null, only(PROJECTS_UNREAD_TEXT));   // P21
+    else if (!pick.key) { if (needsProject) say(PICK_PROJECT_TITLE, [el(doc, 'p', 'hint', pickProjectText(workflowName))]); }
+    else if (!r) say(null, only(notRegisteredText(nameOf(pick.key))));   // P20
+    else if (!r.exists) {   // board 39, P4, P19
+      say(FOLDER_MISSING_TITLE, [missingEl(r), el(doc, 'p', 'hint', MISSING_FOLDER_ADD_AGAIN)], btn(doc, PICK_THE_FOLDER, () => projectSel.focus()));
+    } else if (r.vcs !== 'git') say(FOLDER_PROJECT_TITLE, [el(doc, 'p', 'hint', folderProjectText(r.name))]);
+    else if (!st) say(null, only(NOT_ON_BRANCH_TEXT));   // P22
+    const usableProject = !!(pick.key && r && r.exists && r.vcs === 'git' && st);
+    tryBlocked = pick.key ? !usableProject : needsProject;
     if (usableProject) {
       const row = el(doc, 'div', 'wft-start');
       const words = el(doc, 'span');
       words.append(el(doc, 'b', '', st.ref || st.short), doc.createTextNode(' at '), el(doc, 'span', 'code', st.short), doc.createTextNode(` · ${dateText(st.at)}`));
-      row.append(words, btn(doc, CHANGE_BUTTON, () => void changeStart()));
+      changeBtn = btn(doc, CHANGE_BUTTON, () => void changeStart());
+      changeBtn.dataset.focusKey = 'wft-start-change';   // the start point dialog's focusBack finds the repainted twin
+      row.append(words, changeBtn);
       startField.append(el(doc, 'span', 'label', START_LABEL), row, el(doc, 'span', 'hint', START_HINT));
       // D63: the overview counted the drift of this very pin; a pin moved since then has none to show.
       const samePin = !!(view && stored && stored.key === pick.key && !pick.branch && (!view.startSha || view.startSha === stored.startSha));
@@ -447,7 +489,9 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
         const top = el(doc, 'span', 'wft-moved-top');
         top.append(icon(doc, 'alert', 14), el(doc, 'span', '', behindText(behind, view.startRef)));
         const act = el(doc, 'span', 'wft-moved-act');
-        act.append(btn(doc, LATEST_BUTTON, () => void latest()), el(doc, 'span', 'hint', LATEST_HINT));
+        latestBtn = btn(doc, LATEST_BUTTON, () => void latest());
+        latestBtn.dataset.focusKey = 'wft-start-latest';
+        act.append(latestBtn, el(doc, 'span', 'hint', LATEST_HINT));
         moved.append(top, act);
         startField.append(moved);
       }
@@ -456,40 +500,59 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     const onCurrent = usableProject && !!(r.current && st.ref && st.ref === r.current.branch);   // P3
     changesRow.hidden = !onCurrent;
     changesHint.hidden = !onCurrent;
+    // P23: switching the changes on pins again from the branch's newest commit; say so when that is not the kept start.
+    const moves = onCurrent && !pick.branch && !!stored && stored.key === pick.key && !stored.changesSha256 && r.current.sha !== stored.startSha;
+    changesMoves.textContent = moves ? ` ${changesMovesText(r.current.branch)}` : '';
     dev.hidden = !usableProject;
-    if (usableProject && !setup.dataset.touched) setup.value = stored && stored.key === pick.key && stored.setupCmd != null ? stored.setupCmd : (r.setupCmd || '');
+    // The kept pin's setup (null: none, as cleared); a project picked anew starts with the project's own.
+    if (usableProject && !setup.dataset.touched) setup.value = stored && stored.key === pick.key ? (stored.setupCmd || '') : (r.setupCmd || '');
     c1Hint.textContent = pick.key ? CARD1_HINT_PROJECT : P2_CARD1_HINT;
     if (checksHint) checksHint.textContent = pick.key ? CHECKS_HINT_PROJECT : P2_CHECKS_HINT;
     paintBusy();
   };
+  /** A start button's load: disabled by paintBusy (busyWhile), and aria-busy while it runs. */
+  const loading = async (button, fn) => {
+    if (button) button.setAttribute('aria-busy', 'true');
+    try { return await busyWhile(fn); } finally { if (button) button.removeAttribute('aria-busy'); }
+  };
+  /** After a new start point: say it (P26) and keep the focus on Change. */
+  const startMoved = () => {
+    const st = startShown();
+    status.textContent = st ? startNowText(st.ref || st.short, st.short) : '';
+    if (changeBtn) changeBtn.focus();
+  };
   async function changeStart() {
     if (busyN) return;
     error.textContent = '';
-    const r = await busyWhile(() => actions.branches(pick.key));
-    if (!r || !r.ok) { failed(r, 'Worca could not read the branches of the project.'); return; }
+    const r = await loading(changeBtn, () => actions.branches(pick.key));
+    if (!r || !r.ok) { failed(r, BRANCHES_UNREAD_TEXT); return; }
+    const branches = r.data && Array.isArray(r.data.branches) ? r.data.branches : [];
+    if (!branches.length) { error.textContent = NO_BRANCHES_TEXT; return; }   // P25: no dialog with nothing to pick
     const st = startShown();
-    openStartDialog({ doc, win, branches: r.data.branches, current: st ? st.ref : null, dateText,
-      onPick: (b) => { pick.branch = b; pick.ref = b.name; pick.repin = true; paintWhere(); } });
+    openStartDialog({ doc, win, branches, current: st ? st.ref : null, dateText,
+      onPick: (b) => { pick.branch = b; pick.ref = b.name; pick.repin = true; paintWhere(); startMoved(); } });
   }
   async function latest() {
     if (busyN) return;
     error.textContent = '';
-    const r = await busyWhile(() => actions.startLatest());
-    if (!r || !r.ok) { failed(r, 'The start point did not move.'); return; }
+    const r = await loading(latestBtn, () => actions.startLatest());
+    if (!r || !r.ok) { if (!unsupported(r)) failed(r, START_NOT_MOVED_TEXT); return; }
     stored = r.example.project;
     draft.project = stored;
     view = view ? { ...view, behind: 0 } : view;
     pick.branch = null; pick.ref = undefined; pick.repin = false;
     paintWhere();
+    startMoved();
   }
   projectSel.addEventListener('change', () => {
     pick.key = projectSel.value; pick.ref = undefined; pick.branch = null; pick.repin = false;
     setup.dataset.touched = '';
+    status.textContent = '';
     paintWhere();
   });
   fillProjects();
   where.append(el(doc, 'p', 'wft-grp', WHERE_TITLE), el(doc, 'p', 'wft-grp-hint', WHERE_HINT),
-    field(doc, PROJECT_LABEL, skinned(doc, projectSel), { id: projectSel.id }), notice, startField, changesRow, changesHint, dev);
+    field(doc, PROJECT_LABEL, skinned(doc, projectSel), { id: projectSel.id }), notice, startField, status, changesRow, changesHint, dev);
   c1.append(where);
 
   // ── 2. Your answers to Worca's questions ──
@@ -611,8 +674,9 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       },
       checks: draft.checks, tries: draft.tries, note: draft.note,
       // D41, P2–P4: the server keeps the pin unless the key, the branch (`ref`), `repin` or the changes switch say otherwise.
+      // The setup only while "For developers" shows: '' clears it; left out, the server keeps the pin's.
       project: !pick.key ? null : {
-        key: pick.key, setupCmd: setup.value.trim() || null,
+        key: pick.key, ...(!dev.hidden ? { setupCmd: setup.value.trim() } : {}),
         ...(pick.ref !== undefined ? { ref: pick.ref } : {}), ...(pick.repin ? { repin: true } : {}),
         ...(!changesRow.hidden ? { includeChanges: changesBox.checked } : {}),
       },

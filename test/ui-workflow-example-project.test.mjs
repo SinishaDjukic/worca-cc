@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderExampleEditor, openCheckDialog } from '../ui/public/workflows/example-editor.mjs';
+import { renderExampleEditor, openCheckDialog, openStartDialog } from '../ui/public/workflows/example-editor.mjs';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
@@ -21,7 +21,7 @@ const PIN = { key: 'worca-cc-1a2b3c4d', startSha: SHA, startRef: 'main', startAt
 const example = (over = {}) => ({ id: 7, name: 'Ticket 482, invoice totals round wrong', request: 'Ticket 482: invoice totals round wrong.', answers: [],
   otherwise: 'pick', basics: { noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null },
   checks: [{ id: 'c_1', kind: 'command', cmd: 'npm test', timeoutMin: 10 }], tries: 3, files: [], note: null, project: PIN, ...over });
-function boot(ex = example(), { needsProject = false, projectView = { state: 'ok', behind: 14, startRef: 'main' }, over = {} } = {}) {
+function boot(ex = example(), { needsProject = false, projectView = { state: 'ok', behind: 14, startRef: 'main' }, over = {}, projects = PROJECTS } = {}) {
   const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
   const calls = [];
   const actions = {
@@ -35,7 +35,7 @@ function boot(ex = example(), { needsProject = false, projectView = { state: 'ok
   };
   const root = window.document.getElementById('root');
   const ed = renderExampleEditor(root, ex, actions, { doc: window.document, win: window, scripts: [], perTryUsd: 0.95, draftLabel: 'v3 draft',
-    projects: PROJECTS, needsProject, workflowName: 'Fix a bug from a ticket', projectView, dateText: () => '28 Oct' });
+    projects, needsProject, workflowName: 'Fix a bug from a ticket', projectView, dateText: () => '28 Oct' });
   return { root, doc: window.document, win: window, calls, ed };
 }
 
@@ -115,7 +115,8 @@ test('board 39: no project picked for a workflow that changes a project; a missi
   const sel = none.root.querySelector('#wft-ex-project');
   sel.value = 'gone-1a2b3c4f'; sel.dispatchEvent(new none.doc.defaultView.Event('change'));
   assert.deepEqual(texts(none.root, '.wft-notice > p'), ['The project folder is missing',
-    "Worca can't find gone in /code/gone. Move the folder back, or pick where it is now. The start point is kept."]);
+    "Worca can't find gone in /code/gone. Move the folder back, or pick where it is now. The start point is kept.",
+    'If the folder moved, add it again under Projects, then pick it here.']);   // P19
   click(byText(none.root, '.wft-notice button', 'Pick the folder'));
   assert.equal(none.doc.activeElement, sel, 'P4: the folder is picked in the Project select');
   assert.equal(none.root.querySelector('.wft-notice .code').textContent, '/code/gone', 'board 39: the folder in code');
@@ -166,4 +167,133 @@ test('board 33: the project checks, the command, read from a file; without a pro
   const k3 = [...doc.querySelectorAll('#wft-ck-kind')].at(-1);
   assert.equal(k3.querySelectorAll('optgroup').length, 0);
   assert.ok(![...k3.options].some((o) => o.value === 'command'), 'no command without a project');
+});
+
+// ── Task 10 review ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+test('review 2: the setup is sent only while "For developers" shows; cleared it is \'\'; the kept setup fills the box', () => {
+  const { root, doc, ed } = boot();
+  const setup = root.querySelector('#wft-ex-setup');
+  setup.value = '  '; setup.dispatchEvent(new doc.defaultView.Event('input'));
+  assert.equal(ed.value().project.setupCmd, '', "cleared: '' (no setup), never null (keep)");
+  const cleared = boot(example({ project: { ...PIN, setupCmd: null } }));
+  assert.equal(cleared.root.querySelector('#wft-ex-setup').value, '', "a kept pin with no setup stays empty, not the project's own");
+  const away = boot(example({ project: { ...PIN, key: 'gone-1a2b3c4f' } }));
+  assert.deepEqual(away.ed.value().project, { key: 'gone-1a2b3c4f' }, 'no box shown: the setup is left out (kept)');
+});
+
+test('review 3, 12: Change is busy while it loads; a pick says the new start and keeps the focus on Change', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { root, doc } = boot(example(), { over: { branches: async () => { await gate; return { ok: true, data: { branches: [
+    { name: 'main', sha: SHA, short: 'abc1234', at: '2026-10-28T09:00:00.000Z', current: true },
+    { name: 'release', sha: 'e9f2c47'.padEnd(40, '0'), short: 'e9f2c47', at: '2026-10-20T09:00:00.000Z', current: false }] } }; } } });
+  const change = byText(root, '.wft-start button', 'Change');
+  assert.equal(change.dataset.focusKey, 'wft-start-change');
+  assert.equal(byText(root, '.wft-moved button', 'Start from the latest').dataset.focusKey, 'wft-start-latest');
+  click(change);
+  assert.deepEqual([change.disabled, change.getAttribute('aria-busy')], [true, 'true'], 'busy while the branches load');
+  release();
+  await tick(); await tick();
+  assert.equal(change.getAttribute('aria-busy'), null);
+  doc.querySelector('input[name="wft-start-ref"][value="release"]').checked = true;
+  click(byText(doc, '.mk-dialog button', 'Use this start point'));
+  await tick(); await tick();
+  const status = root.querySelector('.wft-start-status');
+  assert.deepEqual([status.getAttribute('role'), status.getAttribute('aria-live'), status.textContent],
+    ['status', 'polite', 'The start point is now release at e9f2c47.']);
+  assert.equal(doc.activeElement, byText(root, '.wft-start button', 'Change'));
+});
+
+test('review 3, 12, 14: Start from the latest is busy, then says the new start; LFS refusal shows the notice only', async () => {
+  const { root, doc } = boot();
+  const latestBtn = byText(root, '.wft-moved button', 'Start from the latest');
+  click(latestBtn);
+  assert.deepEqual([latestBtn.disabled, latestBtn.getAttribute('aria-busy')], [true, 'true']);
+  await tick(); await tick();
+  assert.equal(root.querySelector('.wft-start-status').textContent, 'The start point is now main at fffffff.');
+  assert.equal(doc.activeElement, byText(root, '.wft-start button', 'Change'));
+  const lfs = "worca-cc keeps large files with Git LFS. Worca's own copy of the project would not have them, so tries could go wrong.";
+  const subs = "worca-cc holds other projects inside it (submodules). Worca's own copy of the project would not have them, so tries could go wrong.";
+  const refused = boot(example(), { over: { startLatest: async () => ({ ok: false, error: subs }), save: async () => ({ ok: false, error: lfs }) } });
+  click(byText(refused.root, '.wft-moved button', 'Start from the latest'));
+  await tick(); await tick();
+  assert.deepEqual(texts(refused.root, '.wft-notice > p'), ["This project can't be tested yet", subs]);
+  assert.equal(refused.root.querySelector('.wft-error').textContent, '', 'the notice only, not also the error line');
+  click(byText(refused.root, '.wft-acts button', 'Save example'));
+  await tick(); await tick();
+  assert.deepEqual(texts(refused.root, '.wft-notice > p'), ["This project can't be tested yet", lfs]);
+  assert.equal(refused.root.querySelector('.wft-error').textContent, '');
+});
+
+test('review 9, 13, 15: server words as sentences; no branches, no dialog; the fallbacks', async () => {
+  const raw = boot(example(), { over: { save: async () => ({ ok: false, error: 'the request is too long' }), branches: async () => ({ ok: true, data: { branches: [] } }) } });
+  click(byText(raw.root, '.wft-acts button', 'Save example'));
+  await tick(); await tick();
+  assert.equal(raw.root.querySelector('.wft-error').textContent, 'The request is too long.');
+  click(byText(raw.root, '.wft-start button', 'Change'));
+  await tick(); await tick();
+  assert.equal(raw.root.querySelector('.wft-error').textContent, 'Worca found no branches in this project.');
+  assert.equal(raw.doc.querySelector('.mk-dialog'), null, 'no dialog with nothing to pick');
+  const down = boot(example(), { over: { branches: async () => ({ ok: false }), startLatest: async () => ({ ok: false }) } });
+  click(byText(down.root, '.wft-start button', 'Change'));
+  await tick(); await tick();
+  assert.equal(down.root.querySelector('.wft-error').textContent, 'Worca could not read the branches of the project.');
+  click(byText(down.root, '.wft-moved button', 'Start from the latest'));
+  await tick(); await tick();
+  assert.equal(down.root.querySelector('.wft-error').textContent, 'The start point did not move.');
+  const { window } = new JSDOM('<!doctype html><body></body>');
+  openStartDialog({ doc: window.document, win: window, branches: [{ name: 'main', short: 'abc1234', at: 'x' }], current: null, onPick: () => {} });
+  click(byText(window.document, '.mk-dialog button', 'Use this start point'));
+  await tick();
+  assert.equal(window.document.querySelector('.wft-dlg-error').textContent, 'Pick a branch first.');
+});
+
+test('review 5, 6, 7, 10: no longer registered, projects not read, not on a branch; a blocked Try points at the notice', () => {
+  const ok = boot();
+  const okTry = byText(ok.root, '.wft-acts button', 'Try it once now');
+  assert.deepEqual([okTry.disabled, okTry.getAttribute('aria-describedby')], [false, null]);
+  assert.equal(ok.root.querySelector('.wft-notice').getAttribute('aria-live'), 'polite');
+  const gone = boot(example({ project: { ...PIN, key: 'old-00000000', name: 'billing' } }));
+  assert.deepEqual(texts(gone.root, '.wft-notice > p'), ["billing is no longer one of Worca's projects. Add it again under Projects, or pick another project."]);
+  const goneTry = byText(gone.root, '.wft-acts button', 'Try it once now');
+  assert.deepEqual([goneTry.disabled, goneTry.getAttribute('aria-describedby')], [true, 'wft-ex-notice']);
+  assert.equal(gone.root.querySelector('#wft-ex-project').selectedOptions[0].textContent, 'billing', 'its name, never the key');
+  const unread = boot(example(), { projects: null });
+  assert.deepEqual(texts(unread.root, '.wft-notice > p'), ['Worca could not read your projects. Reload the page to try again.']);
+  assert.equal(byText(unread.root, '.wft-acts button', 'Try it once now').getAttribute('aria-describedby'), 'wft-ex-notice');
+  const detached = [{ ...PROJECTS[0], key: 'det-1', name: 'detached', current: { branch: null, sha: SHA, short: 'abc1234', at: '2026-10-28T09:00:00.000Z' } }];
+  const det = boot(example({ project: null }), { projects: detached, projectView: null });
+  const sel = det.root.querySelector('#wft-ex-project');
+  sel.value = 'det-1'; sel.dispatchEvent(new det.doc.defaultView.Event('change'));
+  assert.deepEqual(texts(det.root, '.wft-notice > p'), ['The project folder is not on a branch. Check out a branch in it, then come back.']);
+  assert.equal(det.root.querySelector('.wft-start-field').hidden, true);
+  assert.equal(byText(det.root, '.wft-acts button', 'Try it once now').disabled, true);
+});
+
+test('review 8: switching the changes on says it moves the start, only when it would', () => {
+  const same = boot();
+  assert.equal(same.root.querySelector('.wft-changes-hint').textContent, 'Off: the example starts from the commit only. On: your changes are saved with the example.');
+  const ahead = [{ ...PROJECTS[0], current: { ...PROJECTS[0].current, sha: 'f'.repeat(40), short: 'fffffff' } }];
+  const moved = boot(example(), { projects: ahead });
+  assert.equal(moved.root.querySelector('.wft-changes-hint').textContent,
+    'Off: the example starts from the commit only. On: your changes are saved with the example. Turning this on also moves the start point to the newest commit on main.');
+  const withChanges = boot(example({ project: { ...PIN, changesSha256: 'a'.repeat(64) } }), { projects: ahead });
+  assert.ok(!withChanges.root.querySelector('.wft-changes-hint').textContent.includes('Turning this on'), 'already on: nothing to say');
+});
+
+test('review 9, 15: "A file in the project" with no file name is refused; its box is labelled', async () => {
+  const { window } = new JSDOM('<!doctype html><body></body>');
+  const doc = window.document;
+  const saved = [];
+  openCheckDialog({ doc, win: window, scripts: [], project: true, onSave: (c) => saved.push(c) });
+  const kind = doc.querySelector('#wft-ck-kind');
+  kind.value = 'mentions'; kind.dispatchEvent(new window.Event('change'));
+  doc.querySelector('#wft-ck-text').value = 'rounding';
+  doc.querySelector('input[name="wft-ck-from"][value="file"]').checked = true;
+  assert.equal(doc.querySelector('#wft-ck-from-file').getAttribute('aria-label'), 'File in the project');
+  click(byText(doc, '.mk-dialog button', 'Add check'));
+  await tick();
+  assert.equal(doc.querySelector('.wft-dlg-error').textContent, 'Write the file name.');
+  assert.deepEqual(saved, []);
 });

@@ -5,7 +5,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, renameSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -132,6 +132,44 @@ test('uncommitted changes are kept with the example; a Folder project and a miss
   const folder = await call('POST', `${WF}/examples`, { name: 'Docs', request: 'r', project: { key: folderKey } });
   assert.equal(folder.status, 422);
   assert.match(folder.body.error, /is a Folder project\. Worca can test examples on Git projects for now\. Pick a Git project\.$/);
+});
+
+test('Task 10 review: the setup is cleared with "", kept with null or left out; a kept pin saves while its folder is missing', async () => {
+  const moved = templateRepo('wftpmove', { branch: 'main', user: true, files: { 'README.md': '# m\n' } });
+  const { insertProject } = await import('../src/core/projects.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  insertProject({ name: 'moving', path: moved });
+  const mk = projectKey(moved);
+  const c = await call('POST', `${WF}/examples`, { name: 'Moves', request: 'r', project: { key: mk, setupCmd: 'npm ci' } });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const id = c.body.example.id;
+  const put = async (project, extraFields = {}) => call('PUT', `${WF}/examples/${id}`, { ...extraFields, project });
+  assert.equal((await put({ key: mk })).body.example.project.setupCmd, 'npm ci', 'left out: kept');
+  assert.equal((await put({ key: mk, setupCmd: null })).body.example.project.setupCmd, 'npm ci', 'null: kept');
+  assert.equal((await put({ key: mk, setupCmd: '' })).body.example.project.setupCmd, null, "'': no setup");
+  assert.equal((await put({ key: mk })).body.example.project.setupCmd, null, 'cleared stays cleared, not the project\'s own');
+  const pinned = (await put({ key: mk, setupCmd: 'npm ci' })).body.example.project;
+  const away = `${moved}-away`;
+  renameSync(moved, away);
+  extra.push(away);
+  const edit = await put({ key: mk }, { request: 'edited while the folder is away' });
+  assert.equal(edit.status, 200, JSON.stringify(edit.body));
+  assert.deepEqual([edit.body.example.request, edit.body.example.project.startSha, edit.body.example.project.setupCmd],
+    ['edited while the folder is away', pinned.startSha, 'npm ci']);
+  const cleared = await put({ key: mk, setupCmd: '' });
+  assert.equal(cleared.body.example.project.setupCmd, null, 'the setup is cleared without the folder too');
+  const repin = await put({ key: mk, repin: true });
+  assert.equal(repin.status, 422, 'a new start point needs the folder');
+  assert.match(repin.body.error, /^Worca can't find moving in /);
+  const changes = await put({ key: mk, includeChanges: true });
+  assert.equal(changes.status, 422, 'switching the changes on pins again: checked');
+  // A pinned project that left the registry: the kept pin saves under its stored name.
+  const service = await import('../src/core/workflow-tests/service.mjs');
+  const was = { id, project: { ...pinned, key: 'gone-00000000', name: 'moving' } };
+  const kept = await service.resolveProjectInput(was, { key: 'gone-00000000' });
+  assert.deepEqual([kept.key, kept.name, kept.startSha], ['gone-00000000', 'moving', pinned.startSha]);
+  await assert.rejects(service.resolveProjectInput(was, { key: 'gone-00000000', repin: true }), /pick a project/);
+  await call('DELETE', `${WF}/examples/${id}`);
 });
 
 test('a workflow that needs a project: its example without one is left out, and the start says so', async () => {

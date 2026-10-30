@@ -8965,6 +8965,13 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-rad input{width:16px;height:16px;accent-color:var(--ink);margin:2px 0 0;}
 .wft-rad-sub{color:var(--ink-2);}
 .wft-ck-time{max-width:200px;}
+/* A long command, path or branch breaks at a phone's width (Task 10 review) */
+.wft-start .code,.wft-line-text .code,.wft-ck-preview .code,.wft-notice .code{overflow-wrap:anywhere;}
+.wft-start > span{min-width:0;}
+.wft-notice-text{margin:0;font-size:var(--fs-body);line-height:1.45;color:var(--ink);}
+.wft-notice .hint + .hint{margin-top:6px;}
+.wft-start-status{margin:6px 0 0;}
+.wft-start-status:empty{display:none;}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}

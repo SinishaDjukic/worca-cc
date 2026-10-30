@@ -214,18 +214,22 @@ export async function resolveProjectInput(was, input) {
   if (input === null) return null;
   if (typeof input !== 'object' || Array.isArray(input)) throw err('pick a project', 'BAD_REQUEST');
   const key = String(input.key || '');
-  const { state, reg } = await projectStateOf({ key });
-  if (state === 'not-registered') throw err('pick a project', 'BAD_REQUEST');
-  if (state === 'missing') throw err(folderMissingText(reg.name, reg.path), 'NOT_READY');
-  if (state === 'folder') throw err(folderProjectText(reg.name), 'NOT_READY');
   if (input.ref !== undefined && input.ref !== null && typeof input.ref !== 'string') throw err('pick a branch of the project', 'BAD_REQUEST');
   const ref = input.ref == null ? undefined : input.ref;   // null = no change, as undefined
   const prev = was && was.project ? was.project : null;
-  const setupCmd = typeof input.setupCmd === 'string' ? input.setupCmd : prev ? prev.setupCmd : setupOf(key);
+  const samePrev = !!prev && prev.key === key;
+  // The setup: a string is the person's ('' = no setup; the store keeps null); null or left out keeps the pin's, and a
+  // project picked anew starts with the project's own setup.
+  const setupCmd = typeof input.setupCmd === 'string' ? input.setupCmd : samePrev ? prev.setupCmd : setupOf(key);
   const wantsChanges = input.includeChanges === undefined ? !!(prev && prev.changesSha256) : !!input.includeChanges;
-  const same = prev && prev.key === key && input.repin !== true && (ref === undefined || ref === prev.startRef)
-    && wantsChanges === !!prev.changesSha256;
-  if (same) return { ...prev, name: reg.name, changes: store.readExampleChanges(was.id), setupCmd };
+  const same = samePrev && input.repin !== true && (ref === undefined || ref === prev.startRef) && wantsChanges === !!prev.changesSha256;
+  const { state, reg } = await projectStateOf({ key });
+  // Task 10 review: the kept pin needs no ready project, so a request-only edit saves while the folder is missing, the
+  // project is a Folder project or left the registry. A try refuses it (prepareProject); a new key or start is checked.
+  if (same) return { ...prev, name: reg ? reg.name : prev.name, changes: store.readExampleChanges(was.id), setupCmd };
+  if (state === 'not-registered') throw err('pick a project', 'BAD_REQUEST');
+  if (state === 'missing') throw err(folderMissingText(reg.name, reg.path), 'NOT_READY');
+  if (state === 'folder') throw err(folderProjectText(reg.name), 'NOT_READY');
   // P4: the same start, when the project's repository (re-added under another key, say) still has that commit.
   const keepSha = prev && ref === undefined && input.repin !== true && !wantsChanges && prev.key !== key
     && await commitExists(reg.path, prev.startSha) ? prev.startSha : null;

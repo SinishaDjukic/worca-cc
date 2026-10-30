@@ -54,6 +54,21 @@ export const PICK_PROJECT_OPTION = 'Pick a project';
 export const START_DIALOG_TITLE = 'Start point';
 export const START_DIALOG_HINT = 'Pick the branch this example starts from. Worca takes its newest commit.';
 export const START_DIALOG_OK = 'Use this start point';
+// Task 10 review (not drawn; decided 2026-10-29 by the controller, plan P19–P26): the editor's other states and lines.
+export const MISSING_FOLDER_ADD_AGAIN = 'If the folder moved, add it again under Projects, then pick it here.';   // P19
+export const notRegisteredText = (name) => `${name} is no longer one of Worca's projects. Add it again under Projects, or pick another project.`;   // P20
+export const PROJECTS_UNREAD_TEXT = 'Worca could not read your projects. Reload the page to try again.';   // P21
+export const NOT_ON_BRANCH_TEXT = 'The project folder is not on a branch. Check out a branch in it, then come back.';   // P22
+export const changesMovesText = (branch) => `Turning this on also moves the start point to the newest commit on ${branch}.`;   // P23
+export const FILE_NAME_NEEDED = 'Write the file name.';   // P24
+export const NO_BRANCHES_TEXT = 'Worca found no branches in this project.';   // P25
+export const startNowText = (ref, short) => `The start point is now ${ref} at ${short}.`;   // P26
+// The editor's fallbacks and labels (Task 10 review, item 15).
+export const PICK_BRANCH_FIRST = 'Pick a branch first.';
+export const BRANCHES_UNREAD_TEXT = 'Worca could not read the branches of the project.';
+export const START_NOT_MOVED_TEXT = 'The start point did not move.';
+export const FILE_IN_PROJECT_LABEL = 'File in the project';
+export const SAVE_FIRST_TEXT = 'Save the example first.';
 
 // ── Board 33: the project checks ─────────────────────────────────────────────
 export const CHECK_DIALOG_HINT_PROJECT = "Counted exactly, without AI. Project checks look at what a try changed in Worca's own copy of the project.";

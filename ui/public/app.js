@@ -218,6 +218,7 @@ import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workf
 import { renderTestsPage } from './workflows/tests-view.mjs';
 import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
+import { SAVE_FIRST_TEXT } from '../../src/shared/workflow-tests/project-text.mjs';
 import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog } from './workflows/test-dialogs.mjs';
 import { renderTestProgress } from './workflows/test-progress.mjs';
 import { renderCompare, renderSideBySide, openWholeResult } from './workflows/test-compare.mjs';
@@ -3919,7 +3920,7 @@ function wftEditorActions(session) {
     // 3a: the start point dialog's branches (P2) and "Start from the latest" (D63, board 32)
     branches: (key) => wftCall('GET', `/api/workflow-tests/projects/${encodeURIComponent(key)}/branches`),
     startLatest: async () => {
-      if (!session.exampleId) return { ok: false, error: 'Save the example first.' };
+      if (!session.exampleId) return { ok: false, error: SAVE_FIRST_TEXT };
       const r = await wftCall('POST', `${base}/examples/${session.exampleId}/project/latest`, {});
       if (!r.ok) return r;
       keep(r.data.example);
