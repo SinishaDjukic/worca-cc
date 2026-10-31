@@ -50,17 +50,25 @@ The built-in **Default** workflow hands your task to five agents:
    recommended pick), and asks none when the task is clear. The planner records your
    answers in the plan's `## Clarifications (Q&A)` section, so every later step
    sees them.
-2. **Plan** — the planner explores the codebase and writes an implementation
-   plan with concrete code snippets.
-3. **Refine Plan** — the refiner reviews and rewrites the plan (`-v2`, `-v3`, …)
-   until no critical/major issues remain.
-4. **Implementation** — the implementer follows the approved plan with no
-   deviation (recording any it is forced into), using TDD (red-green-refactor).
+2. **Plan** — the planner explores the codebase and writes a design-level
+   implementation plan: contracts (files, signatures, data and error shapes),
+   invariants, the acceptance mapping and the test list, without full code bodies.
+3. **Refine Plan** — the refiner checks the plan against the real code in one
+   read-only pass (no replay, no test runs) and writes `-v2`, at most 1.3× the
+   size of the input.
+4. **Implementation** — the implementer follows the plan's contracts with no
+   deviation (recording any it is forced into) and writes the code itself, using
+   TDD (red-green-refactor).
 5. **Review Implementation** — the code reviewer reviews the git diff against the
-   plan and hands blocking findings back to the implementer, looping Implement →
-   Review until clean.
+   plan's contracts and invariants, runs an adversarial pass (races, refusal paths,
+   partial writes, trust boundaries) with severity floors, and hands blocking
+   findings back to the implementer, looping Implement → Review until clean.
 
-Each loop has a cycle cap (default 3, adjustable per loop). A loop that hits it with
+The built-in **Lean** workflow skips Refine: Clarify → Plan → Implementation →
+Review, with one fix pass.
+
+Refine runs once and continues with whatever it leaves open; the review loop has a
+cycle cap (default 3, adjustable per loop). A loop that hits it with
 blocking findings left pauses the run and lists the open issues: **I approve another
 cycle**, or **Don't approve another cycle and continue** with what you have. Only
 `critical`/`major` findings block; `minor` findings and suggestions never do. A
@@ -593,8 +601,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   this run: worca may answer for me* on New pipeline, or with `--night` on the CLI. A marked run is also
   answered by day once a question has waited 30 minutes. On the run page, *Away mode on this run*
   (*As set up*, *Answer for me now*, *Never on this run*) overrides one run.
-- **Bounded on purpose** — while critical or major issues remain, a review loop gets at most one
-  extra fix round (configurable), then continues with a flag. A failed step is retried up to 3
+- **Bounded on purpose** — while critical or major issues remain at a spent review loop, Away mode
+  continues with a flag; it buys no extra fix round unless you configure one. A failed step is retried up to 3
   times, then the run pauses. A run pauses after 20 answers by default. An optional spend cap,
   counted across all projects from the start of the away stretch, pauses runs that reach it. Your
   own cost caps always hold; Worca passes the team's soft cap only if you allow it.

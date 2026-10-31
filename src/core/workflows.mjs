@@ -31,12 +31,13 @@ import { KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
+  GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID,
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
   GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_PR_FIX_WORKFLOW, PR_FIX_WORKFLOW_ID,
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
+export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { resolveRoleModel, roleOf } from './model-roles.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
@@ -376,6 +377,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
 export async function readWorkflow(id, opts = {}) {
   // `wf_default` IS the graph: the v1 default died with the v1 engine.
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return GRAPH_DEFAULT_WORKFLOW;
+  if (id === LEAN_WORKFLOW_ID) return GRAPH_LEAN_WORKFLOW;
   if (id === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return GRAPH_MEMORY_DEFRAG_WORKFLOW;
   if (id === WORKSPACE_SCAN_WORKFLOW_ID) return GRAPH_WORKSPACE_SCAN_WORKFLOW;
@@ -499,6 +501,9 @@ export async function setWorkflowNodeDefaults(id, map) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) {
     throw new Error('the built-in Default workflow cannot store defaults — save a copy in the Workflows view first');
   }
+  if (id === LEAN_WORKFLOW_ID) {
+    throw new Error('the built-in Lean workflow cannot store defaults — save a copy in the Workflows view first');
+  }
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) {
     throw new Error('the built-in Memory defragment workflow cannot store defaults — save a copy in the Workflows view first');
   }
@@ -547,6 +552,7 @@ export async function setWorkflowNodeDefaults(id, map) {
 export async function deleteWorkflow(id) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
   if (id === AUTO_WORKFLOW_ID) return false;    // never a row
+  if (id === LEAN_WORKFLOW_ID) return false;    // a constant, never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
   if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return false; // constants, never rows

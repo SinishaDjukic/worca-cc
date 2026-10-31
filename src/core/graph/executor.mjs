@@ -51,6 +51,7 @@ import {
 } from '../phases.mjs';
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
+import { withRecheck } from '../../shared/graph/verdict.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
 import { roleBriefBlock, roleItems, houseBriefBlock } from '../../shared/shape/role-review.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
@@ -831,7 +832,7 @@ export async function runAgentExecution(ctx) {
   // attempt's files. A resumed SESSION continues the same attempt: its own earlier writes stand.
   if (!ctx.resumeSessionId) await clearAllocated({ outputs, verdict, bindings: ctx.bindings });
   const { text, sessionId, outside = [] } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
-  const review = verdict?.path ? await readVerdict(verdict.path) : null;
+  const review = verdict?.path ? withRecheck(await readVerdict(verdict.path), ctx.ordinal ?? 1) : null;
   // Non-fatal problems the scheduler folds into state.warnings + the run log.
   const warnings = [];
   const away = outsideWarning(ctx, outside);                       // E9: on the run log, not only in the manifest

@@ -286,27 +286,18 @@ const REJECT_VERDICTS = new Set(['reject', 'rejected', 'fail', 'failed', 'change
 
 /**
  * Coerce arbitrary parsed data into the canonical review shape:
- *   { issues: [ { severity, title, detail, location } ], summary, checklist?, closed? }
+ *   { issues: [ { severity, title, detail, location } ], summary, fixed?, checklist?, closed? }
  * `closed` holds the issues marked fixed/resolved/wontfix; they never block.
  * Always returns { issues: [], summary: '' } on bad input.
  */
 export function normalizeReview(data) {
   if (!data || typeof data !== 'object') return { issues: [], summary: '' };
-  const list = Array.isArray(data.issues) ? data.issues : [];
   const issues = [];
   const closed = [];
-  for (const it of list) {
-    if (!it || typeof it !== 'object') continue;
-    const issue = {
-      severity: normalizeSeverity(it.severity),
-      title: asString(it.title).trim(),
-      detail: asString(it.detail).trim(),
-      location: asString(it.location).trim(),
-    };
+  for (const issue of normalizeIssueList(data.issues, true)) {
     // An issue the agent lists for the record as fixed/resolved/wontfix is not open: it must not
     // block a loop (the engine half of the rule #996 states in the refine prompt).
-    const status = asString(it.status).trim().toLowerCase();
-    if (CLOSED_STATUSES.has(status)) closed.push({ ...issue, status });
+    if (issue.status) closed.push(issue);
     else issues.push(issue);
   }
   // `{"verdict": "reject", "issues": []}` is a rejection, not an approval.
@@ -315,8 +306,28 @@ export function normalizeReview(data) {
     issues.push({ severity: 'major', title: `Verdict "${asString(data.verdict).trim()}" with no blocking issue listed`,
       detail: asString(data.summary).trim(), location: '' });
   }
+  // `fixed`: the refiner's issues found in its input and fixed in its output — information only, never blocking.
+  const fixed = normalizeIssueList(data.fixed);
   const checklist = normalizeReviewChecklist(data.checklist);
-  return { issues, summary: asString(data.summary).trim(), ...(checklist ? { checklist } : {}), ...(closed.length ? { closed } : {}) };
+  return { issues, summary: asString(data.summary).trim(),
+    ...(fixed.length ? { fixed } : {}), ...(checklist ? { checklist } : {}), ...(closed.length ? { closed } : {}) };
+}
+
+/** Normalised issues; with `withStatus`, a closed issue keeps its status (see CLOSED_STATUSES). */
+function normalizeIssueList(list, withStatus = false) {
+  const out = [];
+  for (const it of Array.isArray(list) ? list : []) {
+    if (!it || typeof it !== 'object') continue;
+    const issue = {
+      severity: normalizeSeverity(it.severity),
+      title: asString(it.title).trim(),
+      detail: asString(it.detail).trim(),
+      location: asString(it.location).trim(),
+    };
+    const status = asString(it.status).trim().toLowerCase();
+    out.push(withStatus && CLOSED_STATUSES.has(status) ? { ...issue, status } : issue);
+  }
+  return out;
 }
 
 /**
