@@ -22,7 +22,7 @@ import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir } from './agent-pool.mjs';
-import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
+import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
@@ -2441,7 +2441,10 @@ async function runDirIndex(pipelinesDir) {
  * @param {string} [workspaceKey] route to the workspace store + filter on it
  * @returns {Promise<Array>}
  */
-export async function listPipelines(projectDir, opts = {}, workspaceKey) {
+export function listPipelines(projectDir, opts = {}, workspaceKey) {
+  return withRefSnapshot(() => listPipelinesNow(projectDir, opts, workspaceKey));
+}
+async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
@@ -2487,7 +2490,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
  *  active rows only, so existing callers see exactly what they saw before. Workspace
  *  rows also carry `members[]` (per-member facts, tri-state `pr`; omitted in `lite`)
  *  — see rowToHistoryEntry. */
-export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
+export function listAllPipelines(opts = {}, cfg = {}) {
+  return withRefSnapshot(() => listAllPipelinesNow(opts, cfg));
+}
+async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url, archived_at,

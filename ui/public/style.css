@@ -2322,7 +2322,12 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .tel-figs{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:var(--fs-caption);color:var(--ink-2);}
 .tel-fig.is-warn{color:var(--amber-ink);}
 .tel-fig.is-high{color:var(--red-ink);}
-.tel-chart{display:block;width:100%;height:48px;}
+.tel-chart-box{margin:0;display:flex;flex-direction:column;gap:2px;}
+.tel-chart{display:block;width:100%;height:64px;}
+.tel-chart .tel-sub{fill:none;stroke:var(--ink-3);stroke-width:3;stroke-linecap:round;opacity:.55;vector-effect:non-scaling-stroke;}
+.tel-cap{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:var(--fs-caption);color:var(--ink-3);}
+.tel-cap .tel-cap-peak{color:var(--ink-2);}
+.tel-cap .tel-cap-end{margin-left:auto;}
 .tel-chart .tel-line{fill:none;stroke:var(--blue);stroke-width:1.5;vector-effect:non-scaling-stroke;}
 .tel-chart .tel-win{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;}
 .tel-chart .tel-trig{stroke:var(--amber);stroke-width:1;stroke-dasharray:1 3;vector-effect:non-scaling-stroke;}

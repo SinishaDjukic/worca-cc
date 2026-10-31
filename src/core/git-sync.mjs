@@ -207,13 +207,14 @@ async function remoteFetchedMs(dir, key, urls) {
 async function shownFetchedMs(dir, key, urls) {
   return (await remoteFetchedMs(dir, key, urls)) ?? lastGood.get(key) ?? null;
 }
-async function lastFetchedMs(dir, remote) {
-  const info = await remoteInfo(dir, remote);
+async function lastFetchedMs(dir, remote, info = null) {
+  if (!info?.ok || info.name !== remote) info = await remoteInfo(dir, remote);
   return info.ok ? shownFetchedMs(dir, await repoKey(dir, remote), info.fetchUrls) : null;
 }
-/** ISO time `remote` was last fetched into `dir` (any process, or a person), or null. No network. */
-export async function lastFetchedAt(dir, { remote = 'origin' } = {}) {
-  return dir && isSafeRemoteName(remote) ? iso(await lastFetchedMs(dir, remote)) : null;
+/** ISO time `remote` was last fetched into `dir` (any process, or a person), or null. No network.
+ *  `info` is remoteInfo's answer for that remote when the caller already has it (one git call fewer). */
+export async function lastFetchedAt(dir, { remote = 'origin', info = null } = {}) {
+  return dir && isSafeRemoteName(remote) ? iso(await lastFetchedMs(dir, remote, info)) : null;
 }
 /** { sha, at } of a ref's tip commit, or null. */
 export async function commitInfo(dir, ref) {

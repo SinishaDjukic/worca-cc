@@ -20,9 +20,13 @@
 //    …) cannot be named in advance: they come from `git config --list --show-scope`, read just before the
 //    call. A config rewritten in the moment between that read and the call is not seen (a narrow race that
 //    needs an agent process still running; making .git/config not agent-writable on hosted setups closes it).
-//    The listing is never cached: a cache would widen that race to its whole lifetime, and what it lists can
-//    change without any file worca could watch changing (an `includeIf.onbranch` flips with HEAD, an include
-//    can point at any agent-writable file, and an agent sets mtimes). One short extra spawn per call is the price.
+//    The listing is reused for a short window (listingMemo below) only while nothing it depends on changed: every
+//    config file it read or could read (the repository's, the worktree's, the global ones, every include and
+//    includeIf target, present or not), HEAD (an `includeIf.onbranch` flips with it) and each `.git` from the cwd
+//    up. A file is compared by inode, size, mtime and ctime in nanoseconds: an agent can set an mtime, but not a
+//    ctime, which any write or utimes call moves. A file changed within the last RACY_MS when listed is never
+//    reused (a write in the same timestamp tick would look unchanged), and anything the memo cannot account for
+//    (no `.git` found, an origin or include it cannot resolve) is listed again on every call, as before.
 //  - Keys git reads first-wins (remote.<x>.uploadpack/receivepack, core.gitProxy) cannot be overridden at all:
 //    a repository that sets them locally is refused.
 //  - core.worktree moves the work tree, so checkout and reset write files wherever it points, as worca. Git reads
@@ -46,11 +50,11 @@
 
 import { execFile, execFileSync } from 'node:child_process';
 import { devNull, homedir } from 'node:os';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { agentIdentity } from './agent-user.mjs';
 
-const LIST_ARGS = ['config', '--list', '--show-scope', '-z'];
+const LIST_ARGS = ['config', '--list', '--show-scope', '--show-origin', '-z'];
 const LIST_TIMEOUT_MS = 10_000;
 /** The listing's timeout: its own 10 s, or the caller's smaller budget for the whole git call. */
 const listTimeout = (budget) => (budget > 0 ? Math.min(budget, LIST_TIMEOUT_MS) : LIST_TIMEOUT_MS);
@@ -62,14 +66,18 @@ export function noHooksPath(platform = process.platform) {
   return join(process.env.WORCA_HOME || join(homedir(), '.worca-cc'), 'no-hooks');
 }
 
-/** `git config --list --show-scope -z` → [{ scope, key, value }]; a key given without `=` has value null. */
-export function parseConfigList(out) {
+/** `git config --list --show-scope [--show-origin] -z` → [{ scope, key, value[, origin] }]; a key given without `=`
+ *  has value null. With `origin` true every row has three fields: scope, origin ("file:<path>", "command line:", …),
+ *  then key and value. */
+export function parseConfigList(out, { origin = false } = {}) {
   const parts = String(out || '').split('\0');
   const list = [];
-  for (let i = 0; i + 1 < parts.length; i += 2) {
-    const kv = parts[i + 1];
+  const step = origin ? 3 : 2;
+  for (let i = 0; i + step - 1 < parts.length; i += step) {
+    const kv = parts[i + step - 1];
     const nl = kv.indexOf('\n');
-    list.push({ scope: parts[i], key: nl < 0 ? kv : kv.slice(0, nl), value: nl < 0 ? null : kv.slice(nl + 1) });
+    list.push({ scope: parts[i], ...(origin ? { origin: parts[i + 1] } : {}),
+      key: nl < 0 ? kv : kv.slice(0, nl), value: nl < 0 ? null : kv.slice(nl + 1) });
   }
   return list;
 }
@@ -223,13 +231,99 @@ export function worktreeIsOwnCheckout(cwd, value, scope = 'local', worktreeConfi
 
 function finish(cwd, env, opts, listed) {
   if (listed.error) throw Object.assign(new Error(`git config could not be read in ${cwd}: ${listed.error}`), { code: 'GIT_CONFIG_UNREADABLE' });
-  const { entries, refused, worktrees, worktreeConfig } = guardEntries(parseConfigList(listed.stdout), { env, hooks: opts.hooks });
+  const { entries, refused, worktrees, worktreeConfig } = guardEntries(listed.list || parseConfigList(listed.stdout, { origin: true }), { env, hooks: opts.hooks });
   if (refused) throw refusal(cwd, refused);
   if (worktrees.some((w) => !worktreeIsOwnCheckout(cwd, w.value, w.scope, worktreeConfig))) throw refusal(cwd, 'core.worktree');
   return withGitConfig(env, entries);
 }
 // A cwd that does not exist cannot be listed; git itself then fails the same way, so list nothing.
 const listFailure = (err, stderr) => (err?.code === 'ENOENT' || err?.code === 'ENOTDIR' ? null : (String(stderr || '').trim() || err.message));
+
+// ── listingMemo: one listing per repository for a short window, while nothing it reads changed ──────────────
+const MEMO_TTL_MS = 30_000;
+const MEMO_MAX = 256;
+let RACY_MS = 2_000;
+const memo = new Map();   // key (cwd + the env git reads config locations from) -> { list, files, stamps, at }
+let listings = 0;         // listings actually run (tests)
+
+// The env that picks which config files git reads, or adds config rows: part of the memo key.
+const memoKey = (cwd, env) => [resolve(cwd), ...Object.keys(env).filter((k) => /^GIT_/.test(k)
+  || ['HOME', 'XDG_CONFIG_HOME', 'USERPROFILE', 'PREFIX'].includes(k)).sort().map((k) => `${k}=${env[k]}`)].join('\0');
+
+/** A file's identity and change stamp; '-' when it does not exist, 'dir' for a directory (a `.git` folder, whose
+ *  mtime moves with every lock file); null when it cannot be read (no memo). */
+function stampOf(p) {
+  try {
+    const s = statSync(p, { bigint: true });
+    if (s.isDirectory()) return { id: 'dir', ns: 0n };
+    return { id: `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`, ns: s.mtimeNs > s.ctimeNs ? s.mtimeNs : s.ctimeNs };
+  } catch (err) {
+    return err?.code === 'ENOENT' || err?.code === 'ENOTDIR' ? { id: '-', ns: 0n } : null;
+  }
+}
+
+/** Every file the listing in `cwd` read or could read; null when one cannot be named (the call lists every time). */
+function dependsOn(cwd, env, list) {
+  if (env.GIT_DIR || env.GIT_WORK_TREE || env.GIT_COMMON_DIR) return null;   // not the repository the walk below finds
+  const files = new Set();
+  let top = resolve(cwd);
+  for (;;) {
+    files.add(join(top, '.git'));
+    if (existsSync(join(top, '.git'))) break;
+    const up = dirname(top);
+    if (up === top) return null;
+    top = up;
+  }
+  try {
+    const dotGit = join(top, '.git');
+    const pointer = existsSync(join(dotGit, 'HEAD')) ? null : /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, 'utf8'));
+    if (!pointer && !existsSync(join(dotGit, 'HEAD'))) return null;
+    const gitDir = pointer ? resolve(top, pointer[1]) : dotGit;
+    const commondir = existsSync(join(gitDir, 'commondir')) ? resolve(gitDir, readFileSync(join(gitDir, 'commondir'), 'utf8').trim()) : gitDir;
+    for (const d of new Set([gitDir, commondir])) for (const f of ['config', 'config.worktree', 'HEAD', 'commondir']) files.add(join(d, f));
+  } catch { return null; }
+  const home = env.HOME || homedir();
+  if (env.GIT_CONFIG_GLOBAL) files.add(resolve(env.GIT_CONFIG_GLOBAL));
+  else { files.add(join(env.XDG_CONFIG_HOME || join(home, '.config'), 'git', 'config')); files.add(join(home, '.gitconfig')); }
+  if (env.GIT_CONFIG_SYSTEM) files.add(resolve(env.GIT_CONFIG_SYSTEM));
+  for (const e of list) {
+    let from = null;
+    if (e.origin?.startsWith('file:')) {
+      from = e.origin.slice(5);
+      from = isAbsolute(from) ? from : resolve(top, from);
+      files.add(from);
+    } else if (e.origin !== 'command line:') return null;   // a blob, stdin, …: not a file to watch
+    if (!/^include(if\..*)?\.path$/i.test(e.key)) continue;
+    const v = String(e.value ?? '');
+    if (!v || !from || v.startsWith('%') || (v.startsWith('~') && !v.startsWith('~/'))) return null;
+    files.add(v.startsWith('~/') ? join(home, v.slice(2)) : isAbsolute(v) ? v : resolve(dirname(from), v));
+  }
+  return [...files];
+}
+
+function memoGet(key) {
+  const m = memo.get(key);
+  if (!m) return null;
+  if (Date.now() - m.at >= MEMO_TTL_MS || m.files.some((f, i) => stampOf(f)?.id !== m.stamps[i])) { memo.delete(key); return null; }
+  return m.list;
+}
+function memoPut(key, cwd, env, list, listedAtMs) {
+  const files = dependsOn(cwd, env, list);
+  if (!files) return;
+  const stamps = files.map(stampOf);
+  // Changed close to the listing (or after it started): a write in the same timestamp tick would look unchanged.
+  const floor = BigInt(Math.floor(listedAtMs - RACY_MS)) * 1_000_000n;
+  if (stamps.some((s) => !s || s.ns >= floor)) return;
+  if (memo.size >= MEMO_MAX) memo.delete(memo.keys().next().value);
+  memo.set(key, { list, files, stamps: stamps.map((s) => s.id), at: listedAtMs });
+}
+const listed = (key, cwd, env, startedAt, stdout, err, stderr) => {
+  listings += 1;
+  if (err) return { error: listFailure(err, stderr) };
+  const list = parseConfigList(stdout, { origin: true });
+  memoPut(key, cwd, env, list, startedAt);
+  return { list };
+};
 
 /**
  * The env for one git call in `cwd` (a project, run or retained checkout): `env` (default process.env) plus the
@@ -238,10 +332,17 @@ const listFailure = (err, stderr) => (err?.code === 'ENOENT' || err?.code === 'E
  * `timeout` (ms) is the caller's budget for its whole git call: the listing never takes longer than it.
  */
 export function guardedGitEnv(cwd, { env = process.env, hooks = false, timeout = 0 } = {}) {
+  const key = cwd ? memoKey(cwd, env) : null;
+  const hit = key && memoGet(key);
+  if (hit) {
+    try { return Promise.resolve(finish(cwd, env, { hooks }, { list: hit })); } catch (e) { return Promise.reject(e); }
+  }
+  const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     execFile('git', LIST_ARGS, { cwd, env, timeout: listTimeout(timeout), killSignal: 'SIGKILL', windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
       (err, stdout, stderr) => {
-        try { resolve(finish(cwd, env, { hooks }, { stdout: err ? '' : stdout, error: err ? listFailure(err, stderr) : null })); }
+        try { resolve(finish(cwd, env, { hooks }, key ? listed(key, cwd, env, startedAt, stdout, err, stderr)
+          : { stdout: err ? '' : stdout, error: err ? listFailure(err, stderr) : null })); }
         catch (e) { reject(e); }
       });
   });
@@ -249,13 +350,24 @@ export function guardedGitEnv(cwd, { env = process.env, hooks = false, timeout =
 
 /** guardedGitEnv, synchronously (for the sync git callers). Throws instead of rejecting. */
 export function guardedGitEnvSync(cwd, { env = process.env, hooks = false, timeout = 0 } = {}) {
+  const key = cwd ? memoKey(cwd, env) : null;
+  const hit = key && memoGet(key);
+  if (hit) return finish(cwd, env, { hooks }, { list: hit });
+  const startedAt = Date.now();
   let stdout = '', error = null;
   try {
     stdout = execFileSync('git', LIST_ARGS, { cwd, env, timeout: listTimeout(timeout), killSignal: 'SIGKILL', windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 }).toString();
-  } catch (err) { error = listFailure(err, err?.stderr); }
-  return finish(cwd, env, { hooks }, { stdout, error });
+  } catch (err) { error = err; }
+  return finish(cwd, env, { hooks }, key ? listed(key, cwd, env, startedAt, stdout, error, error?.stderr)
+    : { stdout, error: error ? listFailure(error, error?.stderr) : null });
 }
+
+export const _testing = {
+  listings: () => listings,
+  clearMemo: () => { memo.clear(); },
+  setRacyMs: (ms) => { const prev = RACY_MS; RACY_MS = ms; return prev; },
+};
 
 /**
  * `git worktree add` with the guard listed where the files are checked out (security G2). A plain

@@ -10,6 +10,7 @@ import { readWorkspace } from './workspaces.mjs';
 import { currentBranch, unbornBranch, resolveDefaultBranch } from './worktree.mjs';
 import { mapWithCap, fanoutCap } from './fanout.mjs';
 import { gitAvailable, onGitChange } from './git-available.mjs';
+import { prepare } from './db.mjs';
 import {
   syncRepo, remoteInfo, incomingCommits, commitInfo, isSafeBranchName, isSafeRemoteName, lastFetchedAt,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
@@ -17,6 +18,28 @@ import {
 import { branchTips, tipsRelation } from './git-info.mjs';
 
 export const projectSyncEvents = new EventEmitter();
+
+// A project nobody opened (no sync chip or branch read of its own, no run) for QUIET_AFTER_MS is a quiet one: the
+// background refresh fetches it every QUIET_REFRESH_MINUTES at most, and again at its own pace once it is opened.
+export const QUIET_AFTER_MS = 24 * 3600_000;
+export const QUIET_REFRESH_MINUTES = 60;
+let bootAt = Date.now();       // a restart knows no history: every project starts as recently opened
+const openedAt = new Map();    // projectKey -> ms of the last read a person asked for
+const activity = new EventEmitter();
+/** A person looked at `projectKey` (its chip, its branches, a sync): it is not quiet. */
+export function noteProjectActive(projectKey) {
+  if (!projectKey) return;
+  openedAt.set(projectKey, Date.now());
+  activity.emit('active', projectKey);
+}
+/** projectKey -> ms of its last run (started or updated); empty when the database cannot say. */
+function lastRunAt() {
+  try {
+    const rows = prepare(`SELECT project_key AS k, MAX(COALESCE(updated_at, started_at)) AS at FROM pipelines
+      WHERE project_key IS NOT NULL GROUP BY project_key`).all();
+    return new Map(rows.map((r) => [r.k, Date.parse(r.at) || 0]));
+  } catch { return new Map(); }
+}
 
 /** Project over instance over built-in. Never throws (an unregistered dir has no prefs row). */
 export function effectiveSyncSettings(projectKey) {
@@ -64,7 +87,9 @@ export async function chipBase(dir) {
  * `details` adds local/remote tip facts and the incoming commits (≤ 20).
  */
 export async function projectSyncBlock({ dir, projectKey = null, base = null, mode = 'status', details = false,
-  maxAgeMs = INTERACTIVE_TTL_MS, timeoutMs = INTERACTIVE_TIMEOUT_MS } = {}) {
+  maxAgeMs = INTERACTIVE_TTL_MS, timeoutMs = INTERACTIVE_TIMEOUT_MS, opened = true } = {}) {
+  // `opened: false` for reads no person asked for of this project (the background refresh, the all-projects list).
+  if (opened) noteProjectActive(projectKey);
   const settings = effectiveSyncSettings(projectKey);
   // An explicit base that is not syncable (a tag, a SHA, 'plus+branch') describes THAT ref as
   // unknown; it is never swapped for HEAD's branch, which would report another branch's state.
@@ -136,35 +161,53 @@ const syncLoopCanRun = () => gitAvailable();
 
 /**
  * Scheduled background fetch (NOT per page load): one project at a time, each only when its
- * FETCH_HEAD is older than its refreshMinutes (0 = never). Emits 'changed' {projectKey} when a
- * project's chip facts changed. WORCA_SYNC_BACKGROUND=0 disables it. Returns a stop function.
+ * FETCH_HEAD is older than its refreshMinutes (0 = never), or QUIET_REFRESH_MINUTES for a quiet project.
+ * Emits 'changed' {projectKey} when a project's chip facts changed. WORCA_SYNC_BACKGROUND=0 disables it.
+ * Returns a stop function. `now` is the clock (tests).
  */
-export function startProjectSyncBackground({ log = (m) => console.warn(m), tickMs = 60_000, listProjectsFn = listProjects } = {}) {
+export function startProjectSyncBackground({ log = (m) => console.warn(m), tickMs = 60_000, listProjectsFn = listProjects,
+  now = () => Date.now() } = {}) {
   if (process.env.WORCA_SYNC_BACKGROUND === '0') return async () => {};
   const seen = new Map();
-  const retryAt = new Map();   // projectKey -> ms: a failed fetch never touches FETCH_HEAD, so back off
+  // projectKey -> { at, every }: no git until `at`, while the project's interval is still `every` (ms). An outside
+  // fetch only makes a project fresher, so a check at the remembered time is never late. A failed fetch never
+  // touches FETCH_HEAD, so it backs off the same way.
+  const nextCheck = new Map();
   let busy = null;             // the running tick's promise
   let stopped = false;
-  // Decide "due" from FETCH_HEAD alone (one rev-parse + a stat) BEFORE building a block: a full
-  // block (≈12 git spawns incl. `git status`) per project per tick is far too much for a
-  // feature that is on by default.
-  const due = async (p, s) => {
-    if ((retryAt.get(p.key) || 0) > Date.now()) return false;
-    if (!(await remoteInfo(p.path, s.remote)).ok) return false;   // local-only project: one spawn a tick
-    const at = await lastFetchedAt(p.path, { remote: s.remote });
-    return !at || Date.now() - Date.parse(at) >= s.refreshMinutes * 60_000;
+  const intervalMs = (p, s, runs) => {
+    const last = Math.max(bootAt, openedAt.get(p.key) || 0, runs.get(p.key) || 0);
+    const quiet = now() - last >= QUIET_AFTER_MS;
+    return (quiet ? Math.max(s.refreshMinutes, QUIET_REFRESH_MINUTES) : s.refreshMinutes) * 60_000;
+  };
+  // Decide "due" from FETCH_HEAD alone (get-url, one rev-parse + a stat) BEFORE building a block, and only once the
+  // remembered time has come: a full block (≈12 git spawns incl. `git status`) per project per tick, or even the
+  // check itself every tick, is far too much for a feature that is on by default.
+  const due = async (p, s, every) => {
+    const memo = nextCheck.get(p.key);
+    if (memo && memo.every === every && memo.at > now()) return false;
+    const info = await remoteInfo(p.path, s.remote);
+    // A local-only project: looked at again once per interval (a remote added meanwhile waits that long).
+    if (!info.ok) { nextCheck.set(p.key, { at: now() + every, every }); return false; }
+    const at = Date.parse(await lastFetchedAt(p.path, { remote: s.remote, info })) || 0;
+    if (at && now() - at < every) { nextCheck.set(p.key, { at: at + every, every }); return false; }
+    return true;
   };
   const runTick = async () => {
     if (!syncLoopCanRun()) return;
     try {
+      const runs = lastRunAt();
       for (const p of await listProjectsFn()) {
         if (stopped) return;                       // stop() lands between projects
         if (!p || !p.exists) continue;
         const s = effectiveSyncSettings(p.key);
-        if (!s.refreshMinutes || !(await due(p, s))) continue;
-        const b = await projectSyncBlock({ dir: p.path, projectKey: p.key, mode: 'fetch',
-          maxAgeMs: s.refreshMinutes * 60_000, timeoutMs: RUN_TIMEOUT_MS });
-        if (b.stale) retryAt.set(p.key, Date.now() + s.refreshMinutes * 60_000); else retryAt.delete(p.key);
+        if (!s.refreshMinutes) continue;
+        const every = intervalMs(p, s, runs);
+        if (!(await due(p, s, every))) continue;
+        const b = await projectSyncBlock({ dir: p.path, projectKey: p.key, mode: 'fetch', opened: false,
+          maxAgeMs: every, timeoutMs: RUN_TIMEOUT_MS });
+        const fetched = !b.stale && Date.parse(b.fetchedAt);
+        nextCheck.set(p.key, { at: (fetched || now()) + every, every });
         if (stopped || !b.remote) continue;
         const fp = JSON.stringify([b.state, b.ahead, b.behind, b.headSha, b.remoteSha, b.dirty, b.stale, b.fetchedAt]);
         if (seen.get(p.key) !== fp) { seen.set(p.key, fp); projectSyncEvents.emit('changed', { projectKey: p.key }); }
@@ -181,9 +224,12 @@ export function startProjectSyncBackground({ log = (m) => console.warn(m), tickM
   void tick();
   const timer = setInterval(() => { void tick(); }, tickMs);
   timer.unref?.();
-  const offGit = onGitChange((s) => { if (s.available) void tick(); });
+  // Git came back: every project is looked at again. A quiet project opened: at its own pace from the next tick.
+  const offGit = onGitChange((s) => { if (s.available) { nextCheck.clear(); void tick(); } });
+  const onActive = (key) => { const m = nextCheck.get(key); if (m && m.every > effectiveSyncSettings(key).refreshMinutes * 60_000) nextCheck.delete(key); };
+  activity.on('active', onActive);
   /** Stop the timer; resolves once a tick already in flight has finished (tests await it). */
-  return async () => { offGit(); stopped = true; clearInterval(timer); await (busy || null); };
+  return async () => { offGit(); activity.off('active', onActive); stopped = true; clearInterval(timer); await (busy || null); };
 }
 
-export const _testing = { RANK };
+export const _testing = { RANK, openedAt, setBootAt: (ms) => { bootAt = ms; } };

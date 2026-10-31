@@ -2,7 +2,7 @@
 // harness work in, compact NDJSON records out; never throws into the run.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTelemetryRecorder, usageFields } from '../src/core/telemetry/recorder.mjs';
+import { createTelemetryRecorder, usageFields, shellKind } from '../src/core/telemetry/recorder.mjs';
 
 function setup({ pushThrows = false } = {}) {
   const lines = [];
@@ -63,7 +63,7 @@ test('a Claude-shaped step: one call per message id, its tools, tool time, sub-a
   assert.equal(sub.ctx, 5003);
   const m2 = calls.find((c) => c.msg === 'm2');
   assert.equal(m2.gapMs, 1000, 'from the tool result to the next call');
-  assert.deepEqual(lines.find((r) => r.t === 'tool'), { t: 'tool', ts: 3500, step: 'x:n_impl:1', sub: null, name: 'Bash', ms: 1000, err: true });
+  assert.deepEqual(lines.find((r) => r.t === 'tool'), { t: 'tool', ts: 3500, step: 'x:n_impl:1', sub: null, name: 'Bash', ms: 1000, err: true, kind: 'other' });
   assert.equal(lines.find((r) => r.t === 'retry').status, 529);
   assert.equal(lines.find((r) => r.t === 'compact').preTokens, 150000);
   assert.equal(lines.find((r) => r.t === 'agent').type, 'Explore');
@@ -156,4 +156,49 @@ test('a failing writer never throws into the run', async () => {
     rec.stateEmitted({ a: 1n });   // BigInt: JSON.stringify throws
   });
   await assert.doesNotReject(() => Promise.resolve(rec.close()));
+});
+
+test('shellKind: a fixed label per shell call, never the command; other tools get none', () => {
+  const k = (command, name = 'Bash') => shellKind(name, { command });
+  assert.equal(k('npm test'), 'test');
+  assert.equal(k('cd ui && npm run test:fast -- x'), 'test');
+  assert.equal(k('node --test test/a.test.mjs'), 'test');
+  assert.equal(k('node tools/test.mjs --related'), 'test');
+  assert.equal(k('pytest -q'), 'test');
+  assert.equal(k('npm run build'), 'build');
+  assert.equal(k('git status --short'), 'git');
+  assert.equal(k('sleep 30; tail -n 5 out.log'), 'poll');
+  assert.equal(k('ls -la'), 'other');
+  assert.equal(shellKind('exec_command', { cmd: ['go', 'test', './...'] }), 'test');
+  assert.equal(shellKind('Read', { file_path: '/x' }), null);
+});
+
+test('a shell call records its kind and background flag, never its command text', async () => {
+  const { rec, lines, tick } = setup();
+  rec.bind('/d');
+  const secret = 'npm test -- --token=sk-live-123';
+  rec.observe({ type: 'tool', parentId: null, messageId: 'm', calls: [{ name: 'Bash', toolUseId: 'b1', input: { command: secret, run_in_background: true } }] }, ATTR);
+  tick(400);
+  rec.observe({ type: 'toolResult', parentId: null, results: [{ toolUseId: 'b1' }] }, ATTR);
+  await rec.close();
+  const t = lines.find((r) => r.t === 'tool');
+  assert.deepEqual({ kind: t.kind, bg: t.bg, ms: t.ms }, { kind: 'test', bg: true, ms: 400 });
+  assert.ok(!JSON.stringify(lines).includes('sk-live'), 'no command text in any record');
+});
+
+test('a harness window carries the machine load (where the OS reports one) and GC pauses', async () => {
+  const lines = [];
+  const writer = { bind() {}, push(r) { lines.push(r); }, close() { return Promise.resolve(); } };
+  const rec = createTelemetryRecorder({ writer, windowMs: 60_000 });
+  rec.bind('/d');
+  rec.persisted(1, 1);
+  const junk = [];
+  for (let i = 0; i < 200_000; i++) junk.push({ i, s: `x${i}` });   // enough garbage for a GC
+  junk.length = 0;
+  if (globalThis.gc) globalThis.gc();
+  await new Promise((r) => setTimeout(r, 50));   // the observer reports asynchronously
+  await rec.close();
+  const h = lines.find((r) => r.t === 'harness');
+  if (process.platform !== 'win32') assert.ok(h.load1 > 0, `load1 ${h.load1}`);
+  if (h.gcs) assert.ok(h.gcMs >= 0 && h.gcMaxMs <= h.gcMs + 1);
 });
