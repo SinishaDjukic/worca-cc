@@ -17,6 +17,7 @@ import { worcaHome } from '../projects.mjs';
 import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { withoutProxyLogin } from '../env-proxy.mjs';
+import { testWorkerCap } from '../settings.mjs';
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -98,8 +99,8 @@ export function cleanRunEnv(env) {
  * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
  * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, and no
  * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
- * goes direct rather than get the password). With
- * no run env and no overlay the env is byte-identical to the scrub result.
+ * goes direct rather than get the password), and WORCA_TEST_CONCURRENCY (testWorkerCap) unless set. With
+ * no run env and no overlay the env is otherwise identical to the scrub result.
  * @returns {{env: Record<string,string>, scrubbed: boolean}}
  */
 export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid } = {}) {
@@ -112,6 +113,9 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
   env = withNoGitPath(withoutProxyLogin(env));
+  // The per-run test-worker cap (Settings › Runs › Machine load): a test runner that reads it (this repo's
+  // tools/test-run.mjs) leaves cores for the run's other work and for other runs. A value already set wins.
+  if (!env.WORCA_TEST_CONCURRENCY) env = { ...env, WORCA_TEST_CONCURRENCY: String(testWorkerCap()) };
   return { env, scrubbed: !!scrubbedEnv };
 }
 

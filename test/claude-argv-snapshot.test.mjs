@@ -193,7 +193,8 @@ function envDelta(childEnv, scrub, secrets = []) {
   const out = {};
   for (const [k, v] of Object.entries(childEnv).sort(([a], [b]) => a.localeCompare(b))) {
     if (process.env[k] === v) continue;
-    out[k] = secrets.includes(v) ? '<SECRET>' : v === String(process.pid) ? '<PID>' : scrub(v);
+    // WORCA_TEST_CONCURRENCY defaults to half this machine's cores: the snapshot records that it is set, not the count.
+    out[k] = secrets.includes(v) ? '<SECRET>' : v === String(process.pid) ? '<PID>' : k === 'WORCA_TEST_CONCURRENCY' ? '<N>' : scrub(v);
   }
   return out;
 }

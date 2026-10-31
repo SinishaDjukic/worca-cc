@@ -12,6 +12,7 @@ import { entryId, edgeId } from '../src/shared/workspace-map/ids.mjs';
 import { LIMITS } from '../src/shared/workspace-map/limits.mjs';
 import { makeRepos } from './helpers/wsmap-p1-repos.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const ws = await makeRepos({
   api: { 'src/routes.ts': "router.get('/invoices/:id', h)\n" },
@@ -407,7 +408,7 @@ test('rule (b) compares a topic consume only with the topics that share its firs
     usage: { version: 1, members: {} }, now: NOW });
   const ms = performance.now() - t0;
   assert.deepEqual(m.edges, []);
-  assert.ok(ms < 5000, `took ${Math.round(ms)} ms (every consume against every topic: ~17 s)`);
+  assert.ok(ms < loadBudget(5000), `took ${Math.round(ms)} ms (every consume against every topic: ~17 s)`);
 });
 
 test('rule (b) compares a consume only with the routes it aligns with: 20 members × 300 consumes against 20 000 routes', async () => {
@@ -425,7 +426,7 @@ test('rule (b) compares a consume only with the routes it aligns with: 20 member
     usage: { version: 1, members: {} }, now: NOW });
   const ms = performance.now() - t0;
   assert.deepEqual(m.edges, []);
-  assert.ok(ms < 5000, `took ${Math.round(ms)} ms (every consume against every route: ~30 s)`);
+  assert.ok(ms < loadBudget(5000), `took ${Math.round(ms)} ms (every consume against every route: ~30 s)`);
 });
 
 // Stand-in P3/P4 detector: { memberKey: { rel: [facts] } } → static facts of the file it is handed.
@@ -541,7 +542,7 @@ test('rule (b) stays linear when every route shares a prefix: 20 members × 300 
     usage: { version: 1, members: {} }, now: NOW });
   const ms = performance.now() - t0;
   assert.deepEqual(m.edges, []);
-  assert.ok(ms < 5000, `took ${Math.round(ms)} ms (the distance|segment union: ~57 s)`);
+  assert.ok(ms < loadBudget(5000), `took ${Math.round(ms)} ms (the distance|segment union: ~57 s)`);
 });
 
 test('a null consume or candidate in a corrupt catalog costs only itself, never the other edges', async () => {
@@ -638,7 +639,7 @@ test('rule (b) stays linear for wildcard topics that share a prefix: 20 members 
     usage: { version: 1, members: {} }, now: NOW });
   const ms = performance.now() - t0;
   assert.equal(m.edges.length, 1000, "acme.m1.* still meets every topic of m01");
-  assert.ok(ms < 5000, `took ${Math.round(ms)} ms (a first-segment index: ~17 s)`);
+  assert.ok(ms < loadBudget(5000), `took ${Math.round(ms)} ms (a first-segment index: ~17 s)`);
 });
 
 test('crossed parameters never join: /api/users/{} is not /api/{tenant}/invoices, so the real owner keeps the edge (C24)', async () => {

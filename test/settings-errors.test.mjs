@@ -13,6 +13,7 @@ const cases = [
   ['actions.portLow must be a whole number from 1024 to 65535', 'actions', 'actions.portLow', '“Low port” must be a whole number from 1024 to 65535.'],
   ['actions.maxCheckouts must be a whole number from 1 to 100', 'actions', 'actions.maxCheckouts', '“Keep at most” must be a whole number from 1 to 100.'],
   ['The editor command must be text of at most 2000 characters', 'actions', 'actions.editor', 'The editor command must be at most 2000 characters.'],
+  ['runLimits.maxConcurrentRuns must be a whole number from 1 to 20', 'runLimits', 'runLimits.maxConcurrentRuns', '“Runs at once” must be a whole number from 1 to 20.'],
   ['askMaxTurns must be an integer between 1 and 500', 'askMaxTurns', 'askMaxTurns', '“Turn limit” must be an integer between 1 and 500.'],
   ['askMaxBudgetUsd must be null (no cap) or a number between 0.1 and 100', 'askMaxBudgetUsd', 'askMaxBudgetUsd', '“Per-turn cost cap” must be a number from 0.1 to 100, or tick No cap.'],
   ['pipelineCostLimitUsd must be a positive number of USD', 'pipelineCostLimitUsd', 'pipelineCostLimitUsd', '“Per-pipeline cost limit” must be a positive number of USD.'],

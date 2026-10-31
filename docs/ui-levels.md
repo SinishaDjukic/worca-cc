@@ -327,6 +327,7 @@ inside the view.
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab: Wait for the network | A |
+| Runs tab: Machine load (runs at once, test workers per run, archive finished runs after) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
 | Presets tab (every preset: Use, Rename, Duplicate, Edit scope, Delete) | A |
 | Automations tab (flag gitAutomations: the overview — delivery, the projects and workspaces that automate something with Open, Waiting across them with Start now and Remove, Recent across them with Approve and Open run) | A |

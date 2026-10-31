@@ -26,6 +26,7 @@ import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { committedMcpStatus, approveCommittedMcp } from '../src/core/mcpjson-approval.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
+import { pruneOldRuns } from '../src/core/run-retention.mjs';
 import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, releaseLinks,
   createVersionLister, fetchNpmVersions, fakeVersionList, annotateVersions, findListedVersion, canonicalVersion,
   canAutoRestart, compareVersions, AUTO_RESTART_MIN } from '../src/core/update-check.mjs';
@@ -104,6 +105,7 @@ import {
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
+  runLimits, assertRunLimitsInput, setRunLimits, autoTestWorkers,
   networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
@@ -4143,6 +4145,32 @@ export async function schedulerTick({ now = Date.now() } = {}) {
   } finally {
     _schedulerBusy = false;
   }
+}
+
+// Run retention (run-retention.mjs, runLimits.keepRunsDays): a sweep a minute after boot, then daily, and a
+// few seconds after the setting is saved. Off while the setting is unset.
+const RETENTION_EVERY_MS = 24 * 3600_000;
+let _retentionTimer = null;
+let _retentionBusy = false;
+function scheduleRunRetention(delayMs = 5000) {
+  clearTimeout(_retentionTimer);
+  _retentionTimer = setTimeout(async () => {
+    _retentionTimer = null;
+    const days = runLimits().keepRunsDays;
+    if (days && !_retentionBusy) {
+      _retentionBusy = true;
+      try {
+        const { archived, skipped } = await pruneOldRuns({ days });
+        if (archived.length) {
+          console.log(`[worca-ui] retention: archived ${archived.length} run(s) older than ${days} day(s)${skipped.length ? `, kept ${skipped.length}` : ''}`);
+          emitChanged('pipelines-changed', 'updated');
+        }
+      } catch (err) { console.warn(`[worca-ui] retention: ${err?.message || err}`); }
+      finally { _retentionBusy = false; }
+    }
+    scheduleRunRetention(RETENTION_EVERY_MS);
+  }, delayMs);
+  _retentionTimer.unref?.();
 }
 
 let _schedulerTimer = null;
@@ -12120,6 +12148,8 @@ const settingsState = () => ({
   enforceTags: userEnforceTags(),                         // Settings › Tags (local; a team policy's runs.enforceTags wins)
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   networkWait: networkWaitSettings(),                     // Settings › Runs › Wait for the network
+  runLimits: runLimits(),                                 // Settings › Runs › Machine load
+  testWorkersAuto: autoTestWorkers(),                     // what an unset runLimits.testWorkers means here
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
   git: (({ available, version }) => ({ available, version }))(currentGitState()),   // is git usable here (CONTRACT §0)
@@ -12695,7 +12725,8 @@ app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   // D4: actions.editor / actions.terminal are command paths the built-ins route spawns as the server user.
-  if (has('actions') && agentMayBeCaller(req)) return refuseAgentCaller(res);
+  // runLimits.keepRunsDays archives (deletes the files of) old runs: an agent never sets it either.
+  if ((has('actions') || has('runLimits')) && agentMayBeCaller(req)) return refuseAgentCaller(res);
   // Hosted with browsing limited: the Worca root and projects root move only within Worca's own
   // folders (both widen what can be browsed, and the setters probe the path). Clearing is fine.
   if (!(await requireFsAllowed(req, res, [has('root') ? normalizeProjectPath(body.root) : null,
@@ -12785,6 +12816,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasRequirementsInterviewKey = has('requirementsInterview') && flagEnabled('requirements');   // ignored while the flag is off
   const hasActionsKey = has('actions');
   const hasNetworkWaitKey = has('networkWait');
+  const hasRunLimitsKey = has('runLimits');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
@@ -12886,6 +12918,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasKeepAwakeKey) asSettingsField('keepAwake', () => assertKeepAwakeInput(body.keepAwake));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
+    if (hasRunLimitsKey) asSettingsField('runLimits', () => assertRunLimitsInput(body.runLimits));
     if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
     if (has('tagDimensions')) asSettingsField('tagDimensions', () => {
       const { errors } = normaliseDimensions(body.tagDimensions ?? []);
@@ -12946,6 +12979,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
     if (has('sync')) await setSyncDefaults(body.sync);
     if (hasNetworkWaitKey) await setNetworkWait(body.networkWait);
+    if (hasRunLimitsKey) { await setRunLimits(body.runLimits); scheduleRunRetention(); }
     if (has('tagDimensions')) await asSettingsField('tagDimensions', () => setUserTagDimensions(body.tagDimensions));
     if (has('enforceTags')) await asSettingsField('enforceTags', () => setUserEnforceTags(body.enforceTags));
     // Live runs re-evaluate their open question against the new night settings.
@@ -12955,7 +12989,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -19847,6 +19881,7 @@ if (isMain) {
     } catch (err) { console.warn(`[worca-ui] team policy background: ${err?.message || err}`); }
     // Scheduled runs: boot catch-up + the 30 s tick (the server IS the scheduler).
     try { startScheduler(); } catch (err) { console.warn(`[worca-ui] scheduler: ${err?.message || err}`); }
+    scheduleRunRetention(60_000);
     if (startPlatformHeartbeat({ collect: collectPlatformHeartbeat, log: (m) => console.warn(m) })) {
       console.log('[worca-ui] heartbeat: reporting to WORCA_HEARTBEAT_URL every 60 s');
     }

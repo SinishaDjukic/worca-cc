@@ -7,6 +7,7 @@ import { scanSecrets, describeFindings, SECRET_SCAN_MAX_CHARS } from '../src/cor
 import { redactSecrets as redactWorkspace } from '../src/shared/workspace-map/redact.mjs';
 import { redactAskText } from '../src/core/ask/redact.mjs';
 import { redactSecrets as redactBroker } from '../src/core/redact.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 // Built at run time: no token-shaped literal sits in the repo (push protection scans sources).
 const T = (prefix, n, ch = 'a1') => prefix + ch.repeat(Math.ceil(n / ch.length)).slice(0, n);
@@ -169,7 +170,7 @@ test('linear on long single-line input (ReDoS guard); an over-size text is refus
     const t0 = performance.now();
     scanSecrets(s);
     const ms = performance.now() - t0;
-    assert.ok(ms < 3000, `${JSON.stringify(s.slice(0, 16))}… (${s.length} chars) took ${Math.round(ms)} ms`);
+    assert.ok(ms < loadBudget(3000), `${JSON.stringify(s.slice(0, 16))}… (${s.length} chars) took ${Math.round(ms)} ms`);
   }
   assert.deepEqual(scanSecrets('a'.repeat(SECRET_SCAN_MAX_CHARS + 1)).map((f) => f.rule), ['too-large']);
 });

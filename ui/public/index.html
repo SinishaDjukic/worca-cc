@@ -2291,6 +2291,70 @@
               </div>
             </section>
 
+            <!-- Machine load (runLimits; run-slots.mjs, run-retention.mjs): how many runs work at once, the
+                 test-worker cap every agent gets, and when finished runs are archived. -->
+            <section class="card settings-card" id="run-limits-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Machine load</h2>
+                  <button type="button" class="info-tip" aria-label="About machine load">i<span class="tip-content hidden">
+                    Runs past the limit wait for a free slot, then start by themselves. Every agent gets the test-worker cap as WORCA_TEST_CONCURRENCY, which test runners that read it (Worca's own) use instead of all cores. Archiving a finished run removes its files, checkout and local branch and keeps its record and cost; a run whose branch has commits on no other branch, or with work still kept, is never archived.
+                  </span></button>
+                </div>
+              </div>
+              <div class="drows">
+              <div class="field drow">
+                <label class="drow-label" for="runLimitsMaxRuns">Runs at once</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="runLimitsMaxRuns" data-setting="runLimits.maxConcurrentRuns" class="select">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="6">6</option>
+                    <option value="8">8</option>
+                    <option value="12">12</option>
+                    <option value="20">20</option>
+                  </select>
+                </div></div>
+              </div>
+              <div class="field drow">
+                <label class="drow-label" for="runLimitsTestWorkers">Test workers per run</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="runLimitsTestWorkers" data-setting="runLimits.testWorkers" class="select">
+                    <option value="">Half the cores</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="6">6</option>
+                    <option value="8">8</option>
+                    <option value="12">12</option>
+                    <option value="16">16</option>
+                  </select>
+                </div></div>
+              </div>
+              <div class="field drow">
+                <label class="drow-label" for="runLimitsKeepDays">Archive finished runs after</label>
+                <div class="drow-control"><div class="select-wrap">
+                  <select id="runLimitsKeepDays" data-setting="runLimits.keepRunsDays" class="select">
+                    <option value="">Never</option>
+                    <option value="7">7 days</option>
+                    <option value="14">14 days</option>
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days</option>
+                    <option value="365">1 year</option>
+                  </select>
+                </div></div>
+              </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="runLimitsReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="runLimitsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
             <!-- Network proxy (docs/network-proxy.md, networkProxy.enabled): the corporate proxy Worca's local
                  proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
                  settings-network-proxy.mjs; timeouts and the local port fold under "More". -->
