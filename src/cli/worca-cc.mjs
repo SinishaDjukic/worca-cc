@@ -2758,7 +2758,8 @@ worca script test options:
 Lines stream to stderr; the result goes to stdout.
 worca script test exit codes: with an expectation 0 all passed, 1 any failed; without
 one 0 clean, 1 blocking; 2 an execution error, a timeout, bad arguments or an unknown
-key. Every other verb: 0 ok, 1 failure, 2 usage/validation errors.
+key. --all is also 1 when the cases file dropped a case (each reason goes to stderr).
+Every other verb: 0 ok, 1 failure, 2 usage/validation errors.
 `;
 }
 
@@ -2855,8 +2856,8 @@ function printBenchResult(key, r) {
   for (const w of r.warnings || []) out(`  ${c('yellow', 'warn')}\t${w}`);
 }
 
-/** --all: one line per case, then the tally. */
-function printCaseRun(key, r) {
+/** --all: one line per case, then the tally (and how many problems the cases file had). */
+function printCaseRun(key, r, problems = []) {
   for (const row of r.cases || []) {
     const ok = benchExitCode(row.result) === 0;
     out(`${ok ? c('green', '✓') : c('red', '✗')} ${key}/${row.caseId}\t${row.result.status}`
@@ -2875,7 +2876,8 @@ function printCaseRun(key, r) {
     else continue;                                   // already counted as failed
     failed += 1;
   }
-  out(`${passed} passed, ${failed} failed, ${unchecked} unchecked`);
+  const dropped = problems.length ? `; ${problems.length} problem${problems.length === 1 ? '' : 's'} in the cases file` : '';
+  out(`${passed} passed, ${failed} failed, ${unchecked} unchecked${dropped}`);
 }
 
 // Ctrl+C, a CI cancel (SIGTERM) and a closed terminal (SIGHUP) all STOP a bench
@@ -2928,16 +2930,21 @@ async function scriptTest(rest, store) {
     return 2;
   }
   const meta = data.meta;
+  // What the cases files dropped (a bad row, an over-long name, invalid JSON). The
+  // store reads them leniently, so without this a CI gate runs FEWER cases, green.
+  const problems = byCase ? (data.caseProblems || []) : [];
+  for (const p of problems) process.stderr.write(`worca script test: ${p}\n`);
 
   let request;
   if (a.all) {
     // The bench REFUSES a Run all with nothing to run (the page never offers the
     // button then). On the CLI "no cases" is a green no-op, so `worca script test
-    // --all` and `worca plugin validate --run-cases` agree on an empty set (E8).
+    // --all` and `worca plugin validate --run-cases` agree on an empty set (E8) —
+    // unless the file HAD cases and every one was dropped: that is a failure.
     if (!((data.cases || []).length + (data.userCases || []).length)) {
-      process.stderr.write(`no saved cases for "${key}"\n`);
-      if (a.json) process.stdout.write(JSON.stringify({ cases: [], passed: 0, failed: 0, unchecked: 0 }, null, 2) + '\n');
-      return 0;
+      if (!problems.length) process.stderr.write(`no saved cases for "${key}"\n`);
+      if (a.json) process.stdout.write(JSON.stringify({ cases: [], passed: 0, failed: 0, unchecked: 0, problems }, null, 2) + '\n');
+      return problems.length ? 1 : 0;
     }
     request = { key, all: true };
   } else if (a.case !== undefined) {
@@ -3010,11 +3017,12 @@ async function scriptTest(rest, store) {
   }
 
   const multi = Array.isArray(result.cases);
-  const code = multi
-    ? (result.cases || []).reduce((worst, row) => Math.max(worst, benchExitCode(row.result)), 0)
+  const worst = multi
+    ? (result.cases || []).reduce((w, row) => Math.max(w, benchExitCode(row.result)), 0)
     : benchExitCode(result);
-  if (a.json) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-  else if (multi) printCaseRun(key, result);
+  const code = multi && problems.length ? Math.max(worst, 1) : worst;   // a dropped case fails the run
+  if (a.json) process.stdout.write(JSON.stringify(multi ? { ...result, problems } : result, null, 2) + '\n');
+  else if (multi) printCaseRun(key, result, problems);
   else printBenchResult(key, result);
   return code;
 }
