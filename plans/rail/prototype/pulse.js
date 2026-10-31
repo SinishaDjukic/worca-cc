@@ -178,7 +178,7 @@ function acctMenu() {
       <button type="button" class="mi menu-item" role="menuitem" ${sub('lvl')} title="How much of Worca you see">${svg('sliders', 16, 'mi-ic')}<span class="mi-lbl">Interface mode</span><span class="mi-val">${lvl[1]}</span>${svg('chevR', 14, 'mi-chev')}</button>
       <button type="button" class="mi menu-item" role="menuitem" data-go="settings" title="Settings › Notifications (the only settings page in this prototype)">${svg('gear', 16, 'mi-ic')}<span class="mi-lbl">Settings</span></button>
     </div>
-    <div class="msect sw-sect" role="group" aria-label="Switches">
+    <div class="msect" role="group" aria-label="Switches">
       <button type="button" class="mi menu-item away-item sw-item" role="menuitemcheckbox" aria-checked="${ui.away}" data-state="${ui.away ? 'away' : 'here'}" data-sw="away" title="worca answers waiting run questions for you while you're away.">${svg('away', 16, 'mi-ic')}<span class="mi-lbl">Away</span><span class="switch" aria-hidden="true"></span></button>
       <button type="button" class="mi menu-item sw-item" role="menuitemcheckbox" aria-checked="${ui.keep}" data-sw="keep" title="Keeps the computer awake while runs are working. The display may still turn off.">${svg('cup', 16, 'mi-ic')}<span class="mi-lbl">Keep awake</span><span class="switch" aria-hidden="true"></span></button>
     </div>
@@ -243,7 +243,7 @@ function newRun() {
   const hint = (p) => { const u = c.usage.find((x) => x.p === p), e = M.est(p, sz); return u.win.length ? u.win.map((x) => `${M.winWord(x.k).toLowerCase()} ${x.pct}%${e && e[x.k] != null ? ` +${e[x.k]}` : ''}`).join(', ') : 'billed per token'; };
   const items = c.usage.filter((u) => M.PROVIDER[u.p].runs).map((u) => ({ id: u.p, text: pname(u.p), hint: hint(u.p), checked: u.p === h, help: `${M.PROVIDER[u.p].vendor} · ${u.plan}: used, and +what this run needs` }));
   const reached = !!lim && lim.pct >= 100, waits = !!lim && (ui.nr.wait || reached);
-  const note = (dot, text, acts) => `<div class="pz-advice"><span class="pz-rail">${dot ? `<span class="status-dot ${dot}" aria-hidden="true"></span>` : ''}</span><div class="pz-advice-b"><p class="pz-advice-t">${esc(text)}</p>${acts ? `<div class="pz-advice-acts">${acts}</div>` : ''}</div></div>`;
+  const note = (dot, text, acts) => `<div class="pz-advice"><span class="pz-rail">${dot ? `<span class="status-dot ${dot}" aria-hidden="true"></span>` : ''}</span><div><p class="pz-advice-t">${esc(text)}</p>${acts ? `<div class="pz-advice-acts">${acts}</div>` : ''}</div></div>`;
   // the estimate in the size's sentence: what it needs of the tightest window, and what is left there; the advice says it
   // instead when the run does not fit (one place per fact)
   const e = M.est(h, sz), u = c.usage.find((x) => x.p === h);

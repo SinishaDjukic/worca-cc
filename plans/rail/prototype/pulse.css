@@ -30,7 +30,7 @@
 .pz-acct:hover,.pz-acct[aria-expanded="true"]{background:var(--field);}
 .pz-acct:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .pz-ava-wrap{position:relative;display:grid;place-items:center;width:44px;height:44px;flex:none;}
-.pz-ava{position:relative;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--line-2);color:var(--ink);font:600 9px/1 var(--sans);letter-spacing:.02em;}
+.pz-ava{position:relative;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--line-2);color:var(--ink);font:600 var(--fs-caption)/1 var(--sans);}
 .pz-acct-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
 .pz-updown{flex:none;color:var(--ink-3);}
 

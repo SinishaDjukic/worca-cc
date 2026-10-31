@@ -413,7 +413,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ch-notes:not(:empty)::before{content:'';display:inline-block;width:6px;height:6px;margin-right:4px;border-radius:50%;background:var(--blue);vertical-align:1px;}
 .ch-row .ct{justify-content:flex-end;min-width:88px;}
 .ch-blocks{display:inline-flex;gap:2px;}
-.ch-blocks i{width:7px;height:7px;border-radius:1px;background:var(--line-2);}
+.ch-blocks i{width:7px;height:7px;border-radius:1px;/* ds-ok: 7px diff squares, r-xs would round them */background:var(--line-2);}
 .ch-diff{margin:0 0 12px 32px;padding:8px 12px;background:var(--field);border-radius:var(--r-sm);display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;}
 .ch-at{margin:0;font:500 var(--fs-caption)/1.4 var(--mono);color:var(--ink-2);}
 .ch-diff pre{margin:0;max-width:100%;overflow-x:auto;font:400 var(--fs-meta)/1.6 var(--mono);color:var(--ink-2);}
@@ -448,7 +448,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-confirm-t{color:var(--ink);font-weight:500;}
 .rc-confirm-acts{display:flex;gap:8px;}
 .rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,8px);max-width:calc(100vw - 32px);padding:8px 14px;border-radius:var(--r-md);
-  background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:0 4px 16px rgb(0 0 0 / .18);opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;}
+  background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;}
 .rc-toast.is-on{opacity:1;transform:translate(-50%,0);}
 .rc-toast:empty{display:none;}
 @media (prefers-reduced-motion: reduce){.rc-toast{transition:none;}}
@@ -623,7 +623,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-tag.is-tag{box-shadow:none;background:color-mix(in srgb,var(--ink) 8%,transparent);}   /* a tint of the ink: darker than the page in light, lighter in dark */
 .rc-tags:hover .rc-tag.is-tag{box-shadow:none;}
 /* × on hover or keyboard focus; its room is always there, so nothing moves */
-.rc-tag-x{display:inline-grid;place-items:center;width:12px;height:12px;margin-left:-1px;padding:0;border:0;border-radius:2px;background:none;color:var(--ink-2);cursor:pointer;opacity:0;}
+.rc-tag-x{display:inline-grid;place-items:center;width:12px;height:12px;margin-left:-1px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;opacity:0;}
 .rc-tag:hover .rc-tag-x,.rc-tag-x:focus-visible{opacity:1;}
 .rc-tag-x:hover{background:var(--hover);color:var(--ink);}
 .rc-tag-x:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
@@ -649,7 +649,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .pd-adorn:has(> .input) .pd-act{top:50%;transform:translateY(-50%);}
 .pd-ai,.pd-stop{display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-xs);cursor:pointer;}
 .pd-ai{background:var(--violet-bg);color:var(--violet-ink);}
-.pd-stop{background:var(--line-2);color:var(--ink-2);font:600 14px/1 var(--sans);}
+.pd-stop{background:var(--line-2);color:var(--ink-2);}
 .pd-ai:focus-visible,.pd-stop:focus-visible,.pd-eye:focus-visible,.pd-base:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 .pd-adorn.is-writing :is(.input,.textarea){background:linear-gradient(90deg,var(--field),var(--violet-wash),var(--field));background-size:200% 100%;animation:pd-wash 1.4s linear infinite;}
 @keyframes pd-wash{from{background-position:100% 0}to{background-position:-100% 0}}

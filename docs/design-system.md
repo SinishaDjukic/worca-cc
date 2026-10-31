@@ -35,20 +35,50 @@ The type scale below, named by what it does on a Rail page.
 | Meta | `--fs-meta` 12 | 400, `--ink-2` | the metadata line, times, figure labels, details |
 | Caption | `--fs-caption` 11 | 400 | chips, hints; `--ink-3` only for marks and separators |
 
-### One component per kind of interaction
-| Kind | Component | Used for |
+### Which component: one per need
+A Rail page is built by naming needs, not looks. Find the need, use its component as its page in the Design System
+shows it; sizes, colours and spacing come with the component. Names are the Design System's pages; "page to come"
+means the rule is here and its page is not drawn yet.
+| Need | Component | For example |
 |---|---|---|
-| A choice or a list of actions | the compact menu (Menu): one line per item, a leading check for a choice, hints at the right, help in the tooltip, danger last | ▾, ⋯, pickers in a sentence (`dev ▾`, `3 stacked PRs ▾`, `starts by itself ▾`) |
-| A yes or no, or a one-line answer | the strip under the top bar | confirms, Run after, a change request |
-| A form | the dialog (Modals) | Create PR |
-| Picking and adding names | the list editor: one field (find or create) over checked lists | labels and cost tags, groups |
-| Worca writing text for you | the suggestion: a sparkle inside the field, a Suggested chip, the violet shimmer while it writes, Stop | run title and branch, PR title and description, a drafted answer, a change request |
-| A setting that is on or off | the switch (Switch): takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR, resume after a limit |
-| Two or three views of the same thing | the segmented control | Light and Dark, Summaries and Raw |
-| Something done, nothing to answer | the toast (Toasts); a failure with a place on the page says it there instead | PR merged, Link copied |
-A choice is never a full-width toggle or radio cards: it is a picker in the sentence it changes. Rail pages use no
-radios; the prototype's one-line ink toast (`.rc-toast`) is a stand-in for the shared toast.
-A yes or no never covers the page: it is the strip, in place; the dialog is only for a form.
+| **Acting** | | |
+| The one next step of a state | the split button in the StatusLine: Button primary, its ▾ the alternatives | Merge PR ▾, Resume now ▾ |
+| Supporting actions | ⋯ next to it, a CompactMenu, danger last after a rule | Terminal, Copy link, Archive |
+| A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar | Merge #959 into dev?, Run after |
+| A step that needs fields first | Dialog, the only one for a form | Create PR |
+| Going to another page or place | Text link, or a List row you open (page to come) | Changes +358 −144, a file, a step |
+| **Choosing** | | |
+| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu | `dev ▾`, `3 stacked PRs ▾` |
+| Answering Worca's question | Option list: one line per answer, a radio dot on the rail, Your own answer under it (page to come) | the asking step's answers |
+| A setting that is on or off | Switch: takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR |
+| Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
+| Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |
+| Sections of a page | Tabs | Overview, Changes, Decisions |
+| Narrowing a list | Chip › filter chip | Running 4 |
+| Picking and adding names | ListEditor | labels and cost tags, groups |
+| **Entering** | | |
+| Text, a number, a pick from a long list in a form | Field | Branch, Budget, Base branch |
+| Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
+| **Showing** | | |
+| What is happening | StatusLine: the status dot and the state word | Ready to merge, Paused |
+| How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
+| Time, cost, changes | Figures | Cost $84.10 of $120 |
+| Labels and cost tags | TagGroup | ui, team: web, +2 |
+| A list of things | List row: divided rows, never a box per item (page to come) | runs, files, decisions |
+| A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
+| Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
+| **Telling** | | |
+| Something done, nothing to answer | Toast | PR merged |
+| Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
+| Nothing here, loading, could not load | Empty, loading, error: one line and one quiet action (page to come) | No runs yet |
+
+Building from it:
+- A page sets no look of its own: no colour, type size, corner or shadow that is not a token, no inline style but
+  layout and data, no control that is not in the table. `plans/rail/prototype/ds-check.mjs` checks it.
+- A spec names the need and the component (`the step's primary in the strip, destructive`), never a size or a colour.
+- When no row fits, stop and propose the addition here (a row, then its Design System page) before building it.
+- A choice is never a full-width toggle or radio cards, and a yes or no never covers the page.
+- The prototype's one-line ink toast (`.rc-toast`) is a stand-in for the shared Toast.
 
 ### Violet, kept apart
 Violet has two meanings that never meet: the merged status dot (a state), and Worca writing for you inside a field
@@ -88,7 +118,8 @@ Pause, Resume, Copy link and Terminal do not confirm.
 ### The gate
 Every Rail page passes its gate (`plans/rail/prototype/sweep.mjs` for the run page, `pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways
 scroll, no clipped text without a tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and
-dialog inside the window, no page jump on any click; and every control does something.
+dialog inside the window, no page jump on any click; and every control does something. Every Rail page also passes
+`plans/rail/prototype/ds-check.mjs`: everything on it comes from the design system.
 
 ## Foundations
 
