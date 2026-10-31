@@ -39,7 +39,7 @@ export const CARDS = Object.freeze([
   card('runs', 'schedule-settings-card', 'Scheduled runs', { min: 'advanced', alts: ['schedule', 'cron', 'timer', 'recurring', 'repeat'] }),
   card('runs', 'network-proxy-settings-card', 'Network proxy', { alts: ['proxy', 'corporate proxy', 'ntlm', 'firewall', 'network'] }),
   card('runs', 'network-wait-settings-card', 'Wait for the network', { min: 'advanced', alts: ['offline', 'internet', 'connection', 'retry', 'wifi'] }),
-  card('runs', 'run-limits-settings-card', 'Machine load', { min: 'advanced', alts: ['queue', 'concurrent', 'parallel', 'cpu', 'workers', 'retention', 'archive', 'disk', 'cleanup'] }),
+  card('runs', 'run-limits-settings-card', 'Machine load', { min: 'advanced', alts: ['queue', 'concurrent', 'parallel', 'cpu', 'workers', 'retention', 'prune', 'disk', 'cleanup'] }),
   card('runs', 'actions-settings-card', 'Actions', { min: 'advanced', alts: ['ci', 'checks', 'github actions'] }),
   card('runs', 'pr-settings-card', 'Pull requests', { alts: ['pr', 'merge', 'github', 'review', 'draft'] }),
   card('runs', 'ws-scan-models-card', 'Workspaces', { min: 'advanced', alts: ['scan', 'workspace', 'monorepo'] }),
