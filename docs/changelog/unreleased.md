@@ -203,3 +203,11 @@ Read it: [Corporate proxy and CA](../docker.md#corporate-proxy-and-ca)
 Pull requests (add each number when it opens):
 
 - Container: a reachable proxy and the corporate CA (#1015)
+
+## Plugin answers survive a crash on exit
+
+On Windows with Node 24, a plugin call that made one web request (such as Jira's issue list or a single issue) failed with `child exited 3221226505`, although the plugin had answered. Node crashed while the plugin's process was exiting. Worca now keeps an answer that arrived in full and logs a warning, and the plugin's process ends in a way that avoids the crash.
+
+Pull requests (add each number when it opens):
+
+- Plugins: keep a plugin's answer when its process crashes on exit (#1051)

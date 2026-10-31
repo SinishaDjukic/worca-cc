@@ -266,6 +266,16 @@ function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacy
   }
 }
 
+/** stdout parsed as one whole frame (an object with a boolean `ok`), or null. */
+function completeFrame(stdout) {
+  try {
+    const frame = JSON.parse(stdout);
+    return frame && typeof frame === 'object' && !Array.isArray(frame) && typeof frame.ok === 'boolean' ? frame : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Run ONE connector op in an ephemeral child. Resolves with the op result;
  * rejects with PluginOpError. `logger(level, msg)` is optional — connector
@@ -330,11 +340,33 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
     child.stdout.setEncoding('utf8').on('data', (c) => { stdout += c; });
     child.stderr.setEncoding('utf8').on('data', (c) => { stderr += c; });
     child.on('error', (err) => settle(rejectFrame, new PluginOpError('protocol', `plugin "${plugin}": spawn failed — ${err.message}`)));
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       if (timedOut) {
+        // A frame written just before the deadline can still be followed by a
+        // slow exit (leftover handle, grace period): the answer wins. An op
+        // that never answers has no frame and still ends as a timeout.
+        const answered = completeFrame(stdout);
+        if (answered) {
+          log('warn', `plugin "${plugin}" op "${op}": the child was killed after answering `
+            + `(timeout ${timeoutMs}ms); its answer is kept`);
+          return settle(resolveFrame, answered);
+        }
         return settle(rejectFrame, new PluginOpError('timeout', `plugin "${plugin}" op "${op}" exceeded ${timeoutMs}ms (child killed)`));
       }
       if (code !== 0) {
+        // The child can die AFTER its frame is fully written: Node 24 on Windows
+        // asserts in libuv during process.exit(0) once a connector made one HTTPS
+        // fetch (exit 0xC0000409). A complete frame on stdout is the answer; keep
+        // it and say so. Anything less is still "crashed before the frame".
+        const answered = completeFrame(stdout);
+        if (answered) {
+          // The crash line is usually the last one, not the first.
+          const lines = stderr.split(/\r?\n/).filter((l) => l.trim());
+          const line = lines.length ? lines[lines.length - 1] : '';
+          log('warn', `plugin "${plugin}" op "${op}": the child crashed on exit after answering `
+            + `(exit ${code ?? signal})${line ? ` — ${line.trim().slice(0, 160)}` : ''}; its answer is kept`);
+          return settle(resolveFrame, answered);
+        }
         return settle(rejectFrame, new PluginOpError('protocol',
           `plugin "${plugin}" op "${op}": child exited ${code}${stderr ? ` — ${stderr.slice(0, 400)}` : ''}`));
       }
