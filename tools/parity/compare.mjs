@@ -4,7 +4,7 @@ import { PAGES, FLOWS } from './flows.mjs';
 import { THEMES } from './visual.mjs';
 
 export const EXPECTED_SHOTS = PAGES.length * THEMES.length;   // 18
-export const FLOW_NAMES = FLOWS.map((f) => f.name);           // the 5 flows every snapshot must carry
+export const FLOW_NAMES = FLOWS.map((f) => f.name);           // the 6 flows every snapshot must carry
 const key = (r) => `${r.method} ${r.path}`;
 
 export function compareRoutes(a, b) {

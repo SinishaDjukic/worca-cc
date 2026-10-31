@@ -1,13 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, symlinkSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadMap, featureForRoute } from '../tools/split-by-feature/plan.mjs';
-import { planSplit, main, nextCaps, SPIKE_GATE } from '../tools/split-by-feature.mjs';
+import { planSplit, main, nextCaps, spikeGate, serverCeiling, writeFiles, codeLineCounts, SPIKE_GATE } from '../tools/split-by-feature.mjs';
 
 const ROOT = new URL('../', import.meta.url).pathname;
+// After the freeze-day migration this checkout is itself split: the tests that split the real tree then check the
+// post-split invariants instead (nothing left to move, --apply changes 0 files), so the migrated suite stays green.
+const SPLIT = planSplit({ root: ROOT }).alreadySplit === true;
+const UNSPLIT_ONLY = SPLIT && 'this checkout is already split (ui/public/parts.json): there is no unsplit tree to refuse';
 const map = (features, docless = {}) => JSON.stringify({ version: 1, docless, features });
 const F = (name, routes = [], css = [], doc = null) => ({ name, doc, routes, css, html: [] });
 const MINI = map([F('shell', [], ['.*']), F('runs', ['/api/runs'])], { runs: 'test' });
@@ -61,14 +65,51 @@ test('every mode refuses Express 5 and names the version', async () => {
   }
 });
 
-test('--apply refuses on the real tree and writes nothing, until the gate and the equivalence check exist', async () => {
-  const before = execFileSync('git', ['-C', ROOT, 'status', '--porcelain'], { encoding: 'utf8' });
-  const errs = []; const outs = [];
-  const code = await main(['--apply', '--root', ROOT], { err: (m) => errs.push(m), out: (m) => outs.push(m) });
-  assert.equal(code, 1);
-  assert.match(errs.join('\n'), /--apply is not built yet/);
-  assert.deepEqual(outs, []);
-  assert.equal(execFileSync('git', ['-C', ROOT, 'status', '--porcelain'], { encoding: 'utf8' }), before);
+function plannerCopy(t) {
+  const d = mkdtempSync(join(tmpdir(), 'sbf-apply-')); t.after(() => rmSync(d, { recursive: true, force: true }));
+  // docs/ whole: loadMap checks every feature name against a docs/*.md basename (plan.mjs, slice 1 D1)
+  for (const p of ['ui/server.mjs', 'ui/public', 'tools/split-by-feature', 'package.json', 'docs'])
+    cpSync(join(ROOT, p), join(d, p), { recursive: true });
+  symlinkSync(join(ROOT, 'node_modules'), join(d, 'node_modules'), 'dir');
+  return d;
+}
+
+test('--apply writes the split; a second --apply changes 0 files; a fresh plan of the original changes nothing', async (t) => {
+  const d = plannerCopy(t);
+  const outs = []; const errs = [];
+  if (SPLIT) {                                                                    // the migrated tree: a no-op
+    assert.equal(await main(['--apply', '--root', d], { out: (m) => outs.push(m), err: (m) => errs.push(m) }), 0, errs.join('\n'));
+    assert.deepEqual(outs, ['already split (parts manifest v1 present): 0 files changed']);
+    assert.deepEqual(writeFiles(d, planSplit({ root: d }).files), []);
+    return;
+  }
+  const pristine = plannerCopy(t);
+  assert.equal(await main(['--apply', '--root', d], { out: (m) => outs.push(m), err: (m) => errs.push(m) }), 0, errs.join('\n'));
+  assert.match(outs[0], /^applied split-by-feature v1 on no-git: \d+ files changed$/);
+  assert.ok(existsSync(join(d, 'ui/public/parts.json')) && existsSync(join(d, 'ui/routes/index.mjs')));
+  assert.equal(existsSync(join(d, 'ui/public/style.css')), false);
+  const server = readFileSync(join(d, 'ui/server.mjs'), 'utf8');
+  assert.ok(server.includes('res.send(Buffer.from(entry.text))'), 'serveStyleCss must send a Buffer: res.send(string) lower-cases charset=UTF-8');
+  assert.equal(await main(['--apply', '--root', d], { out: (m) => outs.push(m), err: (m) => errs.push(m) }), 0);
+  assert.equal(outs[1], 'already split (parts manifest v1 present): 0 files changed');
+  assert.deepEqual(writeFiles(d, planSplit({ root: pristine }).files), []);      // idempotent without the shortcut too
+  assert.equal(JSON.parse(readFileSync(join(d, 'tools/split-by-feature/size-caps.json'), 'utf8'))['ui/server.mjs'], 9972);
+});
+
+test('--apply refuses a git checkout with uncommitted changes and writes nothing', { skip: UNSPLIT_ONLY }, async (t) => {
+  const d = plannerCopy(t);
+  execFileSync('git', ['init', '-q'], { cwd: d });
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A'], { cwd: d });
+  const errs = [];
+  assert.equal(await main(['--apply', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);   // staged, uncommitted
+  assert.match(errs.join('\n'), /refusing --apply: .* uncommitted changes/);
+  assert.equal(existsSync(join(d, 'ui/public/parts.json')), false);
+});
+
+test('--dry-run outside a git checkout says why and exits 1', async (t) => {
+  const d = plannerCopy(t); const errs = [];
+  assert.equal(await main(['--dry-run', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);
+  assert.match(errs.join('\n'), /--dry-run needs a git checkout/);
 });
 
 test('--write-caps only lowers, drops or adds; it never raises', () => {
@@ -80,6 +121,36 @@ test('--write-caps only lowers, drops or adds; it never raises', () => {
 test('the real tree is fully covered, the pins match the baseline and the spike gate passes', () => {
   const r = planSplit({ root: ROOT });
   assert.deepEqual(r.problems, []);
-  assert.ok(r.stats.movedShare >= SPIKE_GATE.movedShare, JSON.stringify(r.stats));
-  assert.ok(r.stats.serverLinesAfter <= SPIKE_GATE.serverLinesAfter, JSON.stringify(r.stats));
+  if (SPLIT) {                                         // nothing left to move; the residual server holds its ceiling
+    assert.ok(codeLineCounts(ROOT)['ui/server.mjs'] <= serverCeiling(ROOT), `ui/server.mjs over its ceiling ${serverCeiling(ROOT)}`);
+    return;
+  }
+  assert.deepEqual(spikeGate(r.stats, serverCeiling(ROOT)), { pass: true, reasons: [], ceiling: 9972 });
+});
+
+test('spike gate: >= 95% of route statements moved and ui/server.mjs within its size-cap ceiling', () => {
+  assert.equal(SPIKE_GATE.movedShare, 0.95);
+  const ok = { movedShare: 430 / 441, serverLinesAfter: 9972 };
+  assert.equal(spikeGate(ok, 9972).pass, true);
+  assert.deepEqual(spikeGate({ ...ok, movedShare: 0.94 }, 9972).reasons, ['moved 94% < 95%']);
+  assert.deepEqual(spikeGate({ ...ok, serverLinesAfter: 9973 }, 9972).reasons, ['ui/server.mjs 9973 lines > ceiling 9972']);
+  assert.deepEqual(spikeGate(ok, undefined).reasons, ['no size-cap ceiling for ui/server.mjs in tools/split-by-feature/size-caps.json']);
+});
+
+test('--check --stats prints the gate result with its reason, and exits 1 when it fails', async () => {
+  const outs = [];
+  assert.equal(await main(['--check', '--stats', '--root', ROOT], { out: (m) => outs.push(m), err: () => {} }), 0);
+  if (SPLIT) return assert.deepEqual(outs, ['already split (parts manifest v1 present): nothing left to move']);
+  assert.match(outs.at(-1), /^moved \d+\/\d+ route statements \(\d+%\), ui\/server\.mjs after the split: \d+ lines — spike gate passed \(>= 95% moved, ceiling 9972 lines\)$/);
+});
+
+test('docs/split-by-feature.md holds the tooling rollback (plain and two-part) next to procedures A and B', () => {
+  const doc = readFileSync(join(ROOT, 'docs/split-by-feature.md'), 'utf8');
+  assert.match(doc, /^## Rollback$/m);
+  const tooling = doc.slice(doc.indexOf('\n## Rollback\n'), doc.indexOf('\n## Rollback A'));   // the needles must sit in the new section
+  assert.ok(tooling.length > 0 && doc.indexOf('\n## Rollback\n') < doc.indexOf('\n## Rollback A'));
+  assert.match(tooling, /git revert -m 1/);        // also in the M paragraph, so search the section only
+  assert.match(tooling, /two-part revert/);
+  assert.match(tooling, /git diff origin\/dev/);
+  assert.match(tooling, /fail 0/);
 });

@@ -94,17 +94,36 @@ export const FLOWS = [
     await page.waitForFunction(() => /^#chat\/./.test(location.hash) && location.hash !== '#chat/new');
     await page.locator('.ask-msg-assistant').first().waitFor({ timeout: 30_000 });
   } },
-  { name: 'run-finish', async run({ page, t }) {
+  { name: 'run-finish', async run({ page, t, state }) {
     await go(page, '#new', 'new');
     await page.locator('#projectSelect').selectOption({ label: 'sandbox' });   // the form does not preselect the only project
     await page.locator('#prompt').fill(SEED_PROMPT);
     await page.locator('#start-btn').click();
     await page.waitForFunction(() => /^#running\//.test(location.hash), null, { timeout: 30_000 });
     const runId = decodeURIComponent(await page.evaluate(() => location.hash.split('/')[1]));
-    await finishRun(t, runId);   // answers the clarify stop through the API (D21)
+    const st = await finishRun(t, runId);   // answers the clarify stop through the API (D21)
+    if (state) state.finished = { runId, pipelineId: st.pipelineId };   // history-open opens this run
     await page.waitForFunction(() => /^#history\//.test(location.hash), null, { timeout: 60_000 });  // the live page's own hand-off
     const word = (await page.locator('.run-status-word:visible').first().textContent()).trim();
     if (!DONE_WORDS.includes(word)) throw new FlowError('History status word is not a done word');
+  } },
+  { name: 'history-open', async run({ page, state }) {
+    const pid = state?.finished?.pipelineId;
+    if (!pid) throw new FlowError('no finished run to open (run-finish failed)');
+    if (!/^[\w-]+$/.test(pid)) throw new FlowError('unexpected pipeline id');   // it goes into a selector below
+    const row = `a.runs-row[data-pipeline-id="${pid}"]:visible`;                 // the Chats column renders a.runs-row too
+    const done = async () => {
+      const word = (await page.locator('.run-status-word:visible').first().textContent()).trim();
+      if (!DONE_WORDS.includes(word)) throw new FlowError('History status word is not a done word');
+    };
+    await go(page, '#runs', 'runs', row);                                       // from the Runs list…
+    await page.locator(row).first().click();
+    await page.waitForFunction((p) => location.hash.startsWith('#history/') && decodeURIComponent(location.hash.split('/').at(-1)) === p, pid, { timeout: 30_000 });
+    await page.locator('.run-status-word:visible').first().waitFor();
+    await done();
+    await go(page, await page.evaluate(() => location.hash), 'runs', '.run-status-word');   // …and by a cold deep link
+    await done();
+    if (page.parityErrors.length || page.parityPageErrors) throw new FlowError(`${page.parityErrors.length} API 5xx, ${page.parityPageErrors} page errors`);
   } },
   { name: 'setting-persists', async run({ page, t }) {
     await go(page, '#settings', 'settings');

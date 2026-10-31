@@ -67,10 +67,11 @@ export async function snapshot(spec, out, { bootMs = [], samples = 1, log = () =
     browser = await openBrowser();
     const page = await newPage(browser, ui.t);
     snap.shots = await capture(page, ui.t, ui.seed, join(out, 'shots'), log);
+    const state = {};                                          // shared by the flows: run-finish's run for history-open
     for (const f of FLOWS) {
       const t0 = Date.now();
       page.parityErrors.length = 0; page.parityPageErrors = 0;   // per flow (open-pages revisits every captured page)
-      try { await f.run({ page, t: ui.t, seed: ui.seed }); snap.flows.push({ name: f.name, ok: true, ms: Date.now() - t0 }); }
+      try { await f.run({ page, t: ui.t, seed: ui.seed, state }); snap.flows.push({ name: f.name, ok: true, ms: Date.now() - t0 }); }
       catch (e) {
         const file = join(out, `fail-${f.name}.png`);
         const shot = await page.screenshot({ path: file }).then(() => file, () => null);

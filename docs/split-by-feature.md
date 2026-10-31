@@ -16,9 +16,30 @@ that the migration commit updates them.
 | 1. Prepare | `npm test`; `node tools/split-by-feature.mjs --check --stats` | any contributor | both exit 0; the spike gate line says `passed` |
 | 2. Keep ready | on every PR touching `ui/server.mjs`, `ui/public/style.css` or `ui/public/index.html`: CI (split-by-feature tests + `Parity (dev against itself)`); a new route gets a row in `tools/split-by-feature/feature-map.json` and `tools/parity/route-classes.json` | the PR author | CI green; `--check` prints `covered` |
 | 3. Readiness | `npm run readiness -- run --out DIR`; read `DIR/report.md`; `npm run readiness -- post --out DIR` | go/no-go owner | verdict `go`; the comment shows in `gh issue view 919 --comments`; every PR author with an action is told |
-| 4. Freeze day | announce the freeze on #919; rerun step 3 on the final dev commit; apply and merge the split as one squash commit M (slice 1's revised `--apply`) | go/no-go owner | readiness `go` on the exact commit the split is applied to |
+| 4. Freeze day | announce the freeze on #919; rerun step 3 on the final dev commit; on a clean checkout run `git fetch origin dev && git switch -c split/919-migration origin/dev && node tools/split-by-feature.mjs --apply && node tools/split-by-feature.mjs --apply && git add -A && git commit -m "Split large files by feature (#919)"` (the second `--apply` prints `0 files changed`); open its PR into dev and squash-merge it as M | go/no-go owner | readiness `go` on the exact commit the split is applied to |
 | 5. After the freeze | the PR catch-up recipe for each `catch up after the freeze` row; rebase the express 5 PR; rollback A or B if needed | PR authors; owner for rollback | `npm test` and `npm run parity -- run --a tree:. --b tree:. --out /tmp/p-dev` green on dev; no open PR conflicts only because of the split |
 | 6. Before the next release | `npm pack --dry-run` lists `ui/routes/` and every feature folder; `npm run parity -- run --a tree:. --b package:. --out /tmp/p-pack`; release per docs/RELEASING.md | release owner | 0 route, visual and flow differences between the tree and the package |
+
+The spike gate (`--check --stats`): at least 95% of the route statements between the static mount and the SPA
+fallback move, and the residual `ui/server.mjs` is at most its ceiling in `tools/split-by-feature/size-caps.json`
+(9,972 lines: the residual on `04370c0f6`, accepted as is). `--apply` and `--dry-run` refuse a failed gate. Raising
+the ceiling is a hand edit in a reviewed PR.
+
+## Rollback
+Two layers roll back separately. The tooling PRs (slices 1–3 and the #919 follow-up; T below is the one to undo)
+change no served output and no runtime path. The migration commit M has its own procedures, A and B below.
+
+Tooling, plain revert (T is still the newest commit on dev): `git switch -c revert/919-tooling origin/dev && git revert --no-edit T`
+(`git revert -m 1 T` if T is a merge commit). Check: `git diff origin/dev^ HEAD` prints nothing and `npm test` ends with `fail 0`.
+
+Tooling, two-part revert (later PRs landed on top of T, and their tests read the shell through
+`src/core/public-assets.mjs`): keep `src/core/public-assets.mjs`, `src/core/read-index-html.mjs`,
+`src/core/read-style-css.mjs`, `src/core/read-server-source.mjs` and the codemodded reads; `git rm -r` the splitter
+(`tools/split-by-feature.mjs` and its folder), the readiness command (`tools/readiness.mjs` and its folder), their tests
+(`test/split-by-feature*.test.mjs`, `test/readiness*.test.mjs`) and their entries in `test/tiers.json` and
+`.github/workflows/ci.yml`. Check: `npm test` ends with `fail 0` and `tools/split-by-feature.mjs` is gone.
+
+Pass: the check of the procedure used holds, and no file under `ui/` changed.
 
 M is the migration commit. The repo squash-merges, so M is one non-merge commit and `M^` is the dev commit it split.
 If M were ever a merge commit, use `git revert -m 1 M` below.
@@ -67,9 +88,9 @@ Pass: step 5's diff lists only P's own files, `npm test` has 0 failures outside 
 
 | Command | What it does | Exit |
 |---|---|---|
-| `run [--out DIR] [--keep]` | fetches `origin/dev`, builds and checks the migrated tree, rehearses the rollback, checks open PRs, writes `DIR/report.md` and `DIR/report.json` | 0 go, 1 no-go |
+| `run [--out DIR] [--keep] [--dev-ref REF]` | fetches `origin/dev`, builds and checks the migrated tree, rehearses the rollback, checks open PRs, writes `DIR/report.md` and `DIR/report.json`. `--dev-ref` rehearses on another commit (for example origin/dev merged with an unmerged branch); `post` refuses such a report | 0 go, 1 no-go |
 | `post --out DIR` | checks `gh auth status` and the `origin` URL, scans the comment, comments on #919 and confirms `gh issue view 919 --comments` shows it | 0 posted, 1 refused or failed |
-| `split --rev REV --splitter-rev REV --out DIR` | the catch-up recipe's split: clones both revisions as scratch clones under `DIR`, splits the first with the second's splitter, commits | 0 split |
+| `split --rev REV --splitter-rev REV --out DIR` | the catch-up recipe's split: clones both revisions as scratch clones under `DIR`, splits the first with the second's splitter, commits; a failed split removes the out dir it made, or empties the one it was given | 0 split |
 
 Exit 2 is a bad argument; exit 3 means the run could not start (the out dir is not empty, `git fetch origin dev`
 failed, or the report would link a file it did not write), and no report is written. Without `--out`, `run` writes
@@ -81,10 +102,13 @@ is given. Its 11 steps print a `[n/11]` line each; steps 1–10 each produce one
 anything else), step 11 writes the report:
 
 1. `gh-auth`: `gh auth status`.
-2. `split-check`: `node tools/split-by-feature.mjs --check --stats` on the dev commit; fails while the spike gate fails.
+2. `split-check`: `node tools/split-by-feature.mjs --check --stats` on the dev commit; fails while the spike gate fails, and names a missing splitter (`splitter missing: …`) when the dev
+   commit has no `tools/split-by-feature.mjs`.
 3. `dry-run-repeatable`: the split is built twice; both tree hashes must match. The result is committed as the
    migration commit.
-4. `equivalence`: the served CSS and `index.html` bytes and the ordered route table are identical on both trees.
+4. `equivalence`: the served CSS and `index.html` bytes and the ordered route table are identical on both trees, and
+   slice 1's served-output and route-table equivalence (`tools/split-by-feature/equivalence.mjs`) holds, whose
+   accepted deltas go to `evidence/accepted-deltas.json`.
 5. `docs-and-package`: the migration rewrites `docs/design-system.md`, lists every moved file in
    `docs/feature-files.md`, and `npm pack` lists `ui/routes/` and every feature folder.
 6. `suite-migrated`: `npm test` on the migrated tree has 0 failures outside `test/flaky-register.json`.
@@ -92,12 +116,16 @@ anything else), step 11 writes the report:
 8. `open-prs`: every open PR and `dependabot/*` branch is merge-checked against dev and the migration commit and
    gets one action. A head closed or deleted between the listing and the fetch is left out and named in the row.
 9. `rollback`: rollback A on the migrated clone (revert the migration commit); the diff to dev is empty, and the
-   suite and parity pass again. While `split-check` fails this proves the mechanics only.
+   suite, parity and every `e2e:*` suite in `package.json` (today `e2e:extension` and `e2e:firefox-smoke`; the
+   snapshot updater `e2e:extension:update-linux` is not a suite) pass again; a suite that prints SKIP is listed as
+   skipped. While `split-check` fails this proves the mechanics only.
 10. `baseline`: conflicted-merge share, boot and page-load medians and the dead-code count, dev against migrated.
     It fails when `open-prs` fails (no table to compare); no open PRs at all is a passing, empty comparison.
 
-`report.md` has 10 sections: Verdict, Dev commit, Migration checks, Test suite, Parity, Rollback rehearsal, Open PRs
-and dependabot branches, Baseline comparison, Files and lines moved per feature, Inputs and next steps. Each row links
+`report.md` has 11 sections: Verdict, Dev commit, Migration checks, Test suite, Parity, Rollback rehearsal, Open PRs
+and dependabot branches, Baseline comparison, Files and lines moved per feature, Risks and surprises (accepted deltas,
+the capped `ui/server.mjs`, the pinned routes), Inputs and next steps. The Verdict names the cause of a failed
+split-check: either the missing splitter or the spike gate. Each row links
 its evidence: a file inside `DIR` (`evidence/…`, `parity/…`, `parity-reverted/…`) or a GitHub URL. A step that throws
 is a `fail` row whose evidence is `evidence/ID.log` with the error.
 

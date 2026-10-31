@@ -11,8 +11,14 @@ test('the 9 main pages with their hashes and views', () => {
     ['settings', '#settings', 'settings'], ['labs', '#settings/experimental', 'settings'], ['stats', '#stats', 'stats']]);
 });
 
-test('the 5 flows', () => {
-  assert.deepEqual(FLOWS.map((f) => f.name), ['open-pages', 'chat-send', 'run-finish', 'setting-persists', 'labs-flag']);
+test('the 6 flows: the 5 of slice 2 plus opening the finished run in History', () => {
+  assert.deepEqual(FLOWS.map((f) => f.name), ['open-pages', 'chat-send', 'run-finish', 'history-open', 'setting-persists', 'labs-flag']);
+});
+
+test('history-open without a finished run fails with a fixed reason, and refuses an odd pipeline id', async () => {
+  const flow = FLOWS.find((f) => f.name === 'history-open');
+  await assert.rejects(flow.run({ page: {}, state: {} }), (e) => e instanceof FlowError && e.message === 'no finished run to open (run-finish failed)');
+  await assert.rejects(flow.run({ page: {}, state: { finished: { pipelineId: 'a"]b' } } }), (e) => e instanceof FlowError && /unexpected pipeline id/.test(e.message));
 });
 
 test('DONE_WORDS are the History words for a finished run', () => {

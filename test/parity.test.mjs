@@ -154,3 +154,15 @@ test('visual only: one colour on one element (the run status word) is a visual d
   assert.deepEqual([...new Set(r.visualDiffs.map((v) => v.page))].sort(), ['history', 'live-run']);   // both show the run status card
   assert.ok(r.visualDiffs.every((v) => v.pixels > 0 && v.pixels < 1280 * 800 * 0.01), 'a small region, not the whole page');
 });
+
+test('CI-image parity is its own workflow, on every PR into dev and every push to dev, with no paths filter', () => {
+  const wf = readFileSync(new URL('../.github/workflows/parity-docker.yml', import.meta.url), 'utf8');
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  assert.match(wf, /^on:\n {2}push:\n {4}branches: \[dev\]\n {2}pull_request:\n {4}branches: \[dev\]\n/m);
+  assert.doesNotMatch(wf, /^\s+paths(?:-ignore)?:/m);                       // a required check must never be skipped
+  assert.ok(wf.includes('npm run parity -- run --a tree:. --b docker:ghcr.io/sinishadjukic/worca:ci --out "$RUNNER_TEMP/parity-docker" --no-timing-gate'));
+  assert.ok(wf.includes('npm run parity -- run --a tree:. --b package:. --out "$RUNNER_TEMP/parity-pkg" --no-timing-gate'));
+  assert.ok(!ci.includes('--b docker:'), 'the docker parity runs in one place');
+  const pack = (y) => y.slice(y.indexOf('      - name: Pack @worca/app'), y.indexOf('      - uses: docker/setup-buildx-action'));
+  assert.ok(pack(wf).length > 100); assert.equal(pack(wf), pack(ci));      // same image inputs, same gha cache key
+});

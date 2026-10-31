@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 // tools/split-by-feature.mjs — #919: split ui/server.mjs routes, ui/public/style.css and ui/public/index.html
 // into per-feature files. Pure planner + writer; same input → same output (no clocks, sorted output).
-//   --check [--stats]          plan only; exit 1 on any problem (unmapped, new pin, over cap, missing part)
-//   --apply                    write the split into --root (default: cwd); a split tree is left as it is
-//   --dry-run                  not built yet: the spike gate (D22) failed after Step 3
+//   --check [--stats]          plan only; exit 1 on any problem (unmapped, new pin, over cap, missing part, gate)
+//   --apply                    write the split into --root (default: cwd) on a clean checkout; a split tree: 0 files changed
+//   --dry-run [--json F] [--tests safety|none]
+//                              git archive HEAD → temp dirs, apply in one, tree hash, second apply, equivalence, tests
 //   --write-caps               rewrite tools/split-by-feature/size-caps.json (only lowers, drops or adds)
-//   --root D                   the repo root to read, feature map and pin baseline included (default: cwd)
+//   --root D                   the repo root to read, feature map, pin baseline and size caps included (default: cwd)
 // Every mode checks Express 4 first (it reads app._router) and exits 1 otherwise.
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, realpathSync, mkdtempSync, symlinkSync } from 'node:fs';
+import { tmpdir, devNull } from 'node:os';
 import { join, dirname } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { loadMap } from './split-by-feature/plan.mjs';
@@ -17,9 +19,10 @@ import { planRoutes, emitRouteFile, orderFlips, leadStart, CAP, FALLBACK_ANCHOR 
 import { splitCss, lineCount } from './split-by-feature/css.mjs';
 import { splitHtml } from './split-by-feature/html.mjs';
 import { readPartsManifest } from '../src/core/public-assets.mjs';
+import { compareTrees, childEnv } from './split-by-feature/equivalence.mjs';
 
 export const MIGRATION_VERSION = 1;
-export const SPIKE_GATE = Object.freeze({ movedShare: 0.8, serverLinesAfter: 9000 });
+export const SPIKE_GATE = Object.freeze({ movedShare: 0.95 });   // and ui/server.mjs within its ceiling in size-caps.json
 const PINNED_REL = 'tools/split-by-feature/pinned.json';
 const CAPS_REL = 'tools/split-by-feature/size-caps.json';
 
@@ -199,7 +202,7 @@ app.use(function serveStyleCss(req, res, next) {
   res.set('Content-Type', 'text/css; charset=UTF-8');
   res.set('Cache-Control', 'public, max-age=0');
   res.set('Last-Modified', new Date(entry.mtimeMs).toUTCString());
-  return res.send(entry.text);                 // ETag and 304 via res.send / req.fresh
+  return res.send(Buffer.from(entry.text));    // a Buffer keeps the Content-Type set above; ETag and 304 via res.send / req.fresh
 });
 const serveStatic = express.static(PUBLIC_DIR, { extensions: ['html'] });
 app.use(function servePublic(req, res, next) {
@@ -303,6 +306,18 @@ export function codeLineCounts(root, out = new Map()) {
 const readCaps = (root) => (existsSync(join(root, CAPS_REL)) ? JSON.parse(readFileSync(join(root, CAPS_REL), 'utf8')) : {});
 const capsText = (caps) => JSON.stringify(caps, null, 2) + '\n';
 
+/** The size-cap ceiling recorded for the residual ui/server.mjs (undefined when there is none). */
+export function serverCeiling(root) { return readCaps(root)['ui/server.mjs']; }
+
+/** The spike gate: enough route statements moved, and the residual server no larger than its ceiling. */
+export function spikeGate(stats, ceiling) {
+  const reasons = [];
+  if (!(stats.movedShare >= SPIKE_GATE.movedShare)) reasons.push(`moved ${Math.floor(stats.movedShare * 100)}% < ${SPIKE_GATE.movedShare * 100}%`);
+  if (!Number.isInteger(ceiling)) reasons.push(`no size-cap ceiling for ui/server.mjs in ${CAPS_REL}`);
+  else if (stats.serverLinesAfter > ceiling) reasons.push(`ui/server.mjs ${stats.serverLinesAfter} lines > ceiling ${ceiling}`);
+  return { pass: reasons.length === 0, reasons, ceiling: Number.isInteger(ceiling) ? ceiling : null };
+}
+
 export function writeCaps(root) {
   writeFileSync(join(root, CAPS_REL), capsText(nextCaps(readCaps(root), codeLineCounts(root))));
 }
@@ -339,7 +354,7 @@ export function patchDocsAndPackage(root, cssParts, out, map) {
 }
 
 /** Writes only what differs, deletes null entries that exist; returns the changed paths.
- *  No caller while --apply refuses (main, below); it returns with the revised plan's --apply. */
+ *  Callers: --apply, the dry run, and readiness's applySplit (tools/readiness/trees.mjs). */
 export function writeFiles(root, files) {
   const changed = [];
   for (const [rel, text] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
@@ -351,6 +366,86 @@ export function writeFiles(root, files) {
     changed.push(rel);
   }
   return changed;
+}
+
+/** True when `root` is a git checkout with staged or unstaged changes to tracked files; false outside git. */
+function gitDirty(root) {
+  try { return execFileSync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() !== ''; }
+  catch { return false; }
+}
+
+const SAFETY_TESTS = ['test/public-assets.test.mjs', 'test/extension-css.test.mjs', 'test/index-html.test.mjs'];   // the shell readers that exist
+
+/** `git archive HEAD` of `repo` into `dir`: the dry run's input is the commit, never the working tree. */
+export const gitArchive = (repo) => (dir) => execFileSync('sh', ['-c', 'git -C "$1" archive --format=tar HEAD | tar -x -C "$2"', 'sh', repo, dir]);
+
+export function dryRun({ repo = process.cwd(), json, tests = 'safety', exportTree = gitArchive(repo) } = {}) {
+  assertExpress4(repo);
+  const head = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const dirty = gitDirty(repo);
+  const tmp = (p) => mkdtempSync(join(tmpdir(), p));
+  const before = tmp('split-before-'); const after = tmp('split-after-'); const homes = [];
+  const home = () => { const h = tmp('split-home-'); homes.push(h); return h; };
+  const finish = (report) => { if (json) writeFileSync(json, JSON.stringify(report, null, 2) + '\n'); return report; };
+  try {
+    for (const d of [before, after]) { exportTree(d); symlinkSync(join(repo, 'node_modules'), join(d, 'node_modules'), 'dir'); }
+    const plan = planSplit({ root: after });
+    if (plan.alreadySplit) return finish({ ok: false, head, dirty, problems: ['HEAD is already split (ui/public/parts.json exists)'] });
+    if (plan.problems.length) return finish({ ok: false, head, dirty, problems: plan.problems });
+    const gate = spikeGate(plan.stats, serverCeiling(after));
+    writeFiles(after, plan.files);
+    const treeHash = treeHashOf(after);
+    // a second apply, two ways: a fresh plan of the original over the split, and --apply's own already-split shortcut
+    const secondApply = writeFiles(after, planSplit({ root: before }).files);
+    if (!planSplit({ root: after }).alreadySplit) secondApply.push('ui/public/parts.json (the split tree is not seen as split)');
+    const hashAgain = treeHashOf(after);
+    const eq = compareTrees(before, after, { home });
+    const generated = [...plan.files].filter(([p, t]) => t !== null && p !== 'ui/server.mjs' && !p.endsWith('.json') && !p.startsWith('docs/'));
+    const overCap = generated.filter(([, t]) => lineCount(t) > CAP).map(([p, t]) => `${p}: ${lineCount(t)} lines`);
+    const testRuns = runTests(after, tests, home);
+    const problems = [...eq.problems, ...gate.reasons.map((x) => `spike gate: ${x}`), ...overCap.map((x) => `over cap: ${x}`),
+      ...(secondApply.length ? [`second --apply changed ${secondApply.join(', ')}`] : []),
+      ...(hashAgain !== treeHash ? [`tree hash changed after the second --apply: ${treeHash} → ${hashAgain}`] : []),
+      ...testRuns.filter((t) => !t.ok).map((t) => `tests failed in the split tree: ${t.files.join(' ')} (exit ${t.status})`)];
+    return finish({ ok: problems.length === 0, head, dirty, migrationVersion: MIGRATION_VERSION, treeHash, problems, gate, stats: plan.stats,
+      pins: plan.pins.map((p) => p.key), equivalence: { equal: eq.equal, probes: eq.probes, routes: eq.routes },
+      acceptedDeltas: eq.acceptedDeltas, secondApplyChanged: secondApply.length, generatedOverCap: overCap, tests: testRuns });
+  } finally {
+    for (const d of [before, after, ...homes]) rmSync(d, { recursive: true, force: true });
+  }
+}
+
+function runTests(dir, which, home) {
+  if (which === 'none') return [];
+  const r = spawnSync(process.execPath, ['tools/test.mjs', ...SAFETY_TESTS], { cwd: dir, env: childEnv(home()), encoding: 'utf8', maxBuffer: 256 << 20, timeout: 1_500_000 });
+  return [{ files: SAFETY_TESTS, ok: r.status === 0, status: r.status, tail: String(r.stdout).split('\n').slice(-30).join('\n') }];
+}
+
+/** git write-tree over a throwaway index: the hash depends only on file contents and modes, never on git config. */
+export function treeHashOf(dir, { env: extra = {} } = {}) {
+  const gitDir = join(dir, '.git-split');
+  const env = { ...extra, PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull,
+    GIT_CONFIG_SYSTEM: devNull, GIT_CONFIG_COUNT: '0', GIT_ATTR_NOSYSTEM: '1',
+    GIT_DIR: gitDir, GIT_WORK_TREE: dir, GIT_INDEX_FILE: join(gitDir, 'index') };
+  const git = (args) => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'core.filemode=true', '-c', 'core.symlinks=true',
+    '-c', 'core.ignorecase=false', '-c', 'core.safecrlf=false', ...args], { cwd: dir, env, encoding: 'utf8' });
+  try {
+    git(['init', '-q']);
+    git(['add', '-A', '--force', '--', '.', ':!node_modules', ':!.git-split']);
+    return git(['write-tree']).trim();
+  } finally { rmSync(gitDir, { recursive: true, force: true }); }
+}
+
+function dryRunMain(root, head, arg, { out, err }) {
+  const tests = arg('--tests') ?? 'safety';
+  if (!['safety', 'none'].includes(tests)) { err('--tests must be safety or none'); return 1; }
+  if (head === 'no-git') { err('--dry-run needs a git checkout: it splits the HEAD commit, not the working tree'); return 1; }
+  const r = dryRun({ repo: root, json: arg('--json'), tests });
+  if (r.dirty) err(`working tree has uncommitted changes; the dry run used HEAD ${r.head.slice(0, 9)}`);
+  if (!r.ok) { for (const p of r.problems.slice(0, 20)) err(p); err('NOT EQUIVALENT'); return 1; }
+  out(`HEAD ${r.head.slice(0, 9)} · treeHash ${r.treeHash} · served equal (${r.equivalence.probes} probes) · route table equal (${r.equivalence.routes} routes) · `
+    + `${r.acceptedDeltas.length} accepted deltas · spike gate passed (ceiling ${r.gate.ceiling}) · second --apply changed 0 files${tests === 'none' ? '' : ' · split-tree tests pass'}`);
+  return 0;
 }
 
 
@@ -365,24 +460,32 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
   const root = arg('--root') ?? process.cwd();
   try { assertExpress4(root); } catch (e) { err(e.message); return 1; }
   const head = gitHead(root);
-  // Not built: the spike gate (D22) failed after Step 3, so the dry run and the equivalence check wait for a new plan.
-  // --apply refuses too: without them nothing proves the split server answers like the original (sign-in included).
-  for (const mode of ['--dry-run', '--apply']) {
-    if (argv.includes(mode)) {
-      err(`split-by-feature v${MIGRATION_VERSION}: ${mode} is not built yet (the spike gate failed and there is no equivalence check; run --check --stats)`);
-      return 1;
-    }
-  }
+  if (argv.includes('--dry-run')) return dryRunMain(root, head, arg, { out, err });
   if (argv.includes('--write-caps')) { writeCaps(root); return 0; }
   const plan = planSplit({ root });
+  if (argv.includes('--apply')) {
+    if (plan.alreadySplit) {
+      if (plan.problems.length) { for (const p of plan.problems) err(p); return 1; }
+      out(`already split (parts manifest v${MIGRATION_VERSION} present): 0 files changed`); return 0;
+    }
+    if (plan.problems.length) { for (const p of plan.problems) err(p); return 1; }
+    if (gitDirty(root)) { err(`refusing --apply: ${root} has uncommitted changes; apply on a clean checkout`); return 1; }
+    const g = spikeGate(plan.stats, serverCeiling(root));
+    if (!g.pass) { err(`spike gate FAILED (${g.reasons.join('; ')}): nothing written`); return 1; }
+    const changed = writeFiles(root, plan.files);
+    out(`applied split-by-feature v${MIGRATION_VERSION} on ${head}: ${changed.length} files changed`);
+    return 0;
+  }
   // --check (default)
   if (plan.problems.length) { for (const p of plan.problems) err(p); return 1; }
-  if (!plan.alreadySplit) {
+  if (plan.alreadySplit) out(`already split (parts manifest v${MIGRATION_VERSION} present): nothing left to move`);
+  else {
     out(`split-by-feature v${MIGRATION_VERSION} on ${head}: ${plan.stats.regionRoutes} routes, ${plan.stats.pinnedRoutes} pinned, ${plan.css.length} CSS parts, ${plan.html.length} markup parts — covered`);
     if (argv.includes('--stats')) {
-      const pass = plan.stats.movedShare >= SPIKE_GATE.movedShare && plan.stats.serverLinesAfter <= SPIKE_GATE.serverLinesAfter;
-      out(`moved ${plan.stats.movedRoutes}/${plan.stats.regionRoutes} route statements (${Math.round(plan.stats.movedShare * 100)}%), ui/server.mjs after the split: ${plan.stats.serverLinesAfter} lines — spike gate ${pass ? 'passed' : 'FAILED'}`);
-      if (!pass) return 1;
+      const g = spikeGate(plan.stats, serverCeiling(root));
+      const why = g.pass ? `>= ${SPIKE_GATE.movedShare * 100}% moved, ceiling ${g.ceiling} lines` : g.reasons.join('; ');
+      out(`moved ${plan.stats.movedRoutes}/${plan.stats.regionRoutes} route statements (${Math.round(plan.stats.movedShare * 100)}%), ui/server.mjs after the split: ${plan.stats.serverLinesAfter} lines — spike gate ${g.pass ? 'passed' : 'FAILED'} (${why})`);
+      if (!g.pass) return 1;
     }
   }
   return 0;

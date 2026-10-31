@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readPartsManifest, isPublicPart, publicRelPath } from '../src/core/public-assets.mjs';
+import { readPartsManifest, isPublicPart, publicRelPath, assemble } from '../src/core/public-assets.mjs';
 import { readStyleCss, readStyleCssEntry } from '../src/core/read-style-css.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
@@ -163,4 +163,13 @@ test('no test or tool reaches style.css, index.html or ui/server.mjs on disk dir
     }
   }
   assert.deepEqual(offenders, [], 'use readStyleCss / readIndexHtml / readServerSource from src/core/read-style-css.mjs, read-index-html.mjs, read-server-source.mjs');
+});
+
+test('rollback B step 2: assemble is exported and gives the served bytes on both layouts', () => {
+  const dir = splitFixture();
+  assert.equal(assemble('css', 'style.css', dir).text, ':root{}\n.chat{}\n');
+  assert.equal(assemble('html', 'index.html', dir).text, '<html>\n');
+  if (existsSync(join(PUBLIC_DIR, 'parts.json'))) return;
+  assert.equal(assemble('css', 'style.css', PUBLIC_DIR).text, readFileSync(join(PUBLIC_DIR, 'style.css'), 'utf8'));
+  assert.equal(assemble('html', 'index.html', PUBLIC_DIR).text, readFileSync(join(PUBLIC_DIR, 'index.html'), 'utf8'));
 });

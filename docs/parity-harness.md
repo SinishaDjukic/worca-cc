@@ -51,9 +51,9 @@ app). No token, SSH agent or host config of the operator reaches a target.
    ingress webhook, which must answer a 4xx other than 401 without a valid token).
 4. **UI server** at fixed paths (`$TMPDIR/worca-parity/home` and `…/sandbox`, wiped per launch, mode `0700`, guarded
    by a lock dir) so both sides show the same paths. 9 pages (Chat home, a chat thread, New run, Runs list, a live
-   run, History detail, Settings, Labs, Statistics) are captured in light and dark (18 PNGs, 1280×800), then the 5
+   run, History detail, Settings, Labs, Statistics) are captured in light and dark (18 PNGs, 1280×800), then the 6
    flows run: open every page; send a chat message and see the reply; start a mock run from New run and see it hand
-   off to History; change the theme and see it after a reload; turn on the Labs "Flags demo" switch and see its note
+   off to History; open that run from the Runs list and by a fresh link to it in History; change the theme and see it after a reload; turn on the Labs "Flags demo" switch and see its note
    after a reload.
 
 The seed goes through the public API only (settings, onboarding, one project, one chat thread with one mock turn,
@@ -73,6 +73,8 @@ Boot time is spawn → the first `200` from `/api/health`; a page load is a fres
 app's boot marker (`window.__np.getRun`), for Chat home and the Runs list. The timing gate fails B when its median is more than 10% above A's AND more than the noise floor above it (100 ms
 for boot, 50 ms for a page load). A 10% gate alone fails identical trees on noise for ~1.4 s boots. CI runs parity
 with `--no-timing-gate` because shared runners are noisier than 10%; the owner can turn it on by removing the flag.
+The docker and package pairs run in `.github/workflows/parity-docker.yml`, on every PR into dev and every push to dev
+with no paths filter, meant as a required check.
 
 Structural problems also fail a run: no signed-in or signed-out routes, fewer signed-out rows than signed-in ones, a
 shot count other than 18, a missing flow, a crashed route.
@@ -121,14 +123,18 @@ failing hook), and only as `environment`. The register names flaky tests; it doe
 the register does not cover. Exit 0: none; 1: at least one; 2: the log could not be read (no `ℹ fail N` summary, or
 failures reported but none parsed).
 
-## Deferred acceptance
+## Against the split tree
 
-"dev vs the s1 dry-run tree" is **not met yet**: slice 1's `tools/split-by-feature.mjs` refuses both `--dry-run` and
-`--apply`, so no split tree exists. The harness was proved on this tree against itself and against a second checkout
-of the same commit. Once a split tree exists, run:
+`node tools/split-by-feature.mjs --apply` builds the split tree. Run it in a throwaway shared clone of a clean commit,
+never in this checkout, then compare:
 
 ```
-npm run parity -- run --a tree:. --b tree:/path/to/split-tree --out /tmp/p-split
+S=$(mktemp -d)/split
+git clone --shared --no-checkout . "$S"
+git -C "$S" checkout --detach HEAD
+ln -s "$PWD/node_modules" "$S/node_modules"
+node tools/split-by-feature.mjs --apply --root "$S"
+npm run parity -- run --a tree:. --b tree:"$S" --out /tmp/p-split
 ```
 
 `npm run readiness -- run` (see [split-by-feature.md](split-by-feature.md)) builds the split tree in a scratch clone and

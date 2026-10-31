@@ -1,8 +1,9 @@
 // tools/readiness/trees.mjs — #919 slice 3: the scratch trees of a readiness run. Shared clones (never worktrees: the
 // user's worktree list and refs stay as they are), detached at the dev SHA and marked as scratch. The split itself is
 // slice 1's planSplit + writeFiles, loaded from a scratch tree so it is that commit's own code.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
 export const MARKER = 'worca-readiness-scratch';   // in .git/: written by cloneAt, required by assertScratch
@@ -30,16 +31,29 @@ export function assertScratch(run, dir) {
   if (must(run('git', ['-C', dir, 'status', '--porcelain']), 'git status').trim()) throw new Error(`refusing to split ${dir}: the checkout has changes`);
 }
 
+export const hasSplitter = (dir) => existsSync(join(dir, 'tools/split-by-feature.mjs'));
+
 /** `splitter` is the tree whose tools/split-by-feature.mjs runs (default: dir itself). The catch-up recipe passes a
  *  clone at M^, so a PR branch's own copy of the splitter is never executed. */
 export async function applySplit(run, dir, { splitter = dir } = {}) {
   assertScratch(run, dir);
+  if (!hasSplitter(splitter)) throw new Error(`no splitter: tools/split-by-feature.mjs is not in ${splitter}`);
   const mod = await import(pathToFileURL(join(splitter, 'tools/split-by-feature.mjs')).href);
   mod.assertExpress4(dir);
   const plan = mod.planSplit({ root: dir });
   if (plan.alreadySplit) throw new Error(`${dir} is already split`);
   if (plan.problems.length) throw new Error(`the split plan has ${plan.problems.length} problem(s):\n${plan.problems.join('\n')}`);
-  return { plan, changed: mod.writeFiles(dir, plan.files) };
+  const ceiling = typeof mod.serverCeiling === 'function' ? (mod.serverCeiling(dir) ?? null) : null;   // before the write
+  return { plan, ceiling, changed: mod.writeFiles(dir, plan.files) };
+}
+
+/** Slice 1's served-output and route-table equivalence, from the migrated tree's own equivalence.mjs. */
+export async function sliceOneEquivalence(baseDir, migDir) {
+  const { compareTrees } = await import(pathToFileURL(join(migDir, 'tools/split-by-feature/equivalence.mjs')).href);
+  const homes = [];
+  const home = () => { const h = mkdtempSync(join(tmpdir(), 'readiness-eq-')); homes.push(h); return h; };
+  try { return compareTrees(baseDir, migDir, { home }); }
+  finally { for (const h of homes) rmSync(h, { recursive: true, force: true }); }
 }
 
 export function treeHash(run, dir) {

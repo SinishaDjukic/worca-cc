@@ -1,0 +1,106 @@
+name: Parity (CI image)
+
+# #919 parity harness (docs/parity-harness.md): this tree against the container image built from it, and against its
+# own npm pack. A required check: it runs on every pull request into dev and every push to dev, with NO paths filter,
+# so a docs-only PR reports it too (a required check that never runs stays pending forever; see ci.yml's header).
+# Routes, the signed-out pass and the 6 flows are gated for both pairs; visuals of the docker pair are reported, not
+# gated; timings are not gated on shared runners (--no-timing-gate).
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parity-docker-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  parity-docker:
+    name: parity (tree against the CI image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same step as ci.yml's cdp job "Locate Chrome": keep the two in sync.
+      - name: Locate Chrome
+        run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          if [ -z "$CHROME" ]; then
+            echo "::error::no Google Chrome on the runner — set CHROME_BIN"
+            exit 1
+          fi
+          echo "chrome: $CHROME ($("$CHROME" --version 2>/dev/null || echo 'version unavailable'))"
+
+      # The Pack step below is ci.yml's docker job Pack step byte for byte (test/parity.test.mjs pins it), so this job
+      # builds the same CI image and reads the same gha cache entry.
+      - name: Pack @worca/app
+        id: pack
+        run: |
+          mkdir -p docker/.pack
+          npm pack --silent --pack-destination docker/.pack
+          echo "tarball=$(ls docker/.pack/worca-app-*.tgz)" >> "$GITHUB_OUTPUT"
+          echo "claude_code=$(cat docker/CLAUDE_CODE_VERSION)" >> "$GITHUB_OUTPUT"
+          # Debian's own publish stamps: rebuilds the cached apt layer exactly when
+          # bookworm or bookworm-security changes, so new security fixes land (the
+          # layer text never changes, so the gha cache kept it forever). A UTC-date
+          # key was too coarse: a fix published at 17:39 UTC failed every PR's scan
+          # until midnight because an earlier run had cached that day's layer.
+          # Falls back to the UTC date when the mirrors are unreachable.
+          apt_refresh=
+          for d in debian-security/dists/bookworm-security debian/dists/bookworm; do
+            rel=$(curl -fsSL --max-time 20 "https://deb.debian.org/$d/InRelease") \
+              && stamp=$(grep -m1 '^Date:' <<<"$rel") \
+              && apt_refresh+="$stamp;" \
+              || { apt_refresh=$(date -u +%F); break; }
+          done
+          echo "apt_refresh=$apt_refresh" | tee -a "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build the CI image (slim, amd64)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: ghcr.io/sinishadjukic/worca:ci
+          build-args: |
+            WORCA_TARBALL=${{ steps.pack.outputs.tarball }}
+            CLAUDE_CODE_VERSION=${{ steps.pack.outputs.claude_code }}
+            VARIANT=slim
+            APT_REFRESH=${{ steps.pack.outputs.apt_refresh }}
+          cache-from: type=gha,scope=ci-slim   # read only: ci.yml's docker job writes this scope
+
+      - name: Parity (tree against the image)
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a tree:. --b docker:ghcr.io/sinishadjukic/worca:ci --out "$RUNNER_TEMP/parity-docker" --no-timing-gate
+
+      - name: Parity (tree against the package)
+        if: ${{ !cancelled() }}
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a tree:. --b package:. --out "$RUNNER_TEMP/parity-pkg" --no-timing-gate
+
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parity-docker-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/parity-docker
+            ${{ runner.temp }}/parity-pkg
+          if-no-files-found: ignore

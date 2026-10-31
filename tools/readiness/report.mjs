@@ -4,7 +4,8 @@ export const SECTIONS = Object.freeze([
   { id: 'verdict', title: 'Verdict' }, { id: 'dev-commit', title: 'Dev commit' }, { id: 'migration', title: 'Migration checks' },
   { id: 'suite', title: 'Test suite' }, { id: 'parity', title: 'Parity' }, { id: 'rollback', title: 'Rollback rehearsal' },
   { id: 'open-prs', title: 'Open PRs and dependabot branches' }, { id: 'baseline', title: 'Baseline comparison' },
-  { id: 'moved', title: 'Files and lines moved per feature' }, { id: 'inputs', title: 'Inputs and next steps' },
+  { id: 'moved', title: 'Files and lines moved per feature' }, { id: 'risks', title: 'Risks and surprises' },
+  { id: 'inputs', title: 'Inputs and next steps' },
 ]);
 /** Check id → section id. Every id must be present in a report. */
 export const CHECKS = Object.freeze({
@@ -13,6 +14,10 @@ export const CHECKS = Object.freeze({
 });
 export const ROLLBACK_NOTE = 'Mechanics rehearsal of procedure A on a clone with no later dev commits. Procedure B is not rehearsed.';
 export const GATE_NOTE = 'mechanics only; the split fails the spike gate';
+export const SPLITTER_MISSING = 'splitter missing: tools/split-by-feature.mjs is not in the dev commit';
+export const SPLITTER_NOTE = 'Cause: the dev commit has no `tools/split-by-feature.mjs`. The #919 tooling is not merged into dev, so no '
+  + 'migrated tree was built, and every row after split-check fails for that reason, not because of the split.';
+const NO_RISKS = { note: 'not measured: no migrated tree', evidence: [{ label: 'summary', href: 'evidence/summary.txt' }] };
 const COMMIT_URL = (repo, sha) => `https://github.com/${repo}/commit/${sha}`;
 
 /** Tool-written text in a table cell. */
@@ -24,14 +29,22 @@ export const code = (s) => {
   return t ? `\`${t}\`` : '—';
 };
 
-export function buildReport({ repo, sha, generatedAt, toolCommit, checks, openPrs = [], baseline = {}, moved = { features: [], largest: {} }, inputs = {} }) {
+/** Why split-check failed, from its detail: 'splitter-missing', 'spike-gate' or null. */
+export function verdictCause(checks) {
+  const sc = checks.find((c) => c.id === 'split-check');
+  if (sc?.status !== 'fail') return null;
+  if (String(sc.detail).startsWith(SPLITTER_MISSING)) return 'splitter-missing';
+  return /^spike gate FAILED/.test(String(sc.detail)) ? 'spike-gate' : null;
+}
+
+export function buildReport({ repo, sha, ref = 'origin/dev', generatedAt, toolCommit, checks, openPrs = [], baseline = {}, moved = { features: [], largest: {} }, risks = NO_RISKS, inputs = {} }) {
   const failing = checks.filter((c) => c.status !== 'pass').map((c) => c.id);
   return {
     schema: SCHEMA, generatedAt, toolCommit, repo,
-    verdict: { value: failing.length ? 'no-go' : 'go', failing, evidence: [{ label: 'summary', href: 'evidence/summary.txt' }] },
-    devCommit: { sha, url: COMMIT_URL(repo, sha), evidence: [{ label: sha.slice(0, 9), href: COMMIT_URL(repo, sha) }, { label: 'fetch.log', href: 'evidence/fetch.log' }] },
+    verdict: { value: failing.length ? 'no-go' : 'go', failing, cause: verdictCause(checks), evidence: [{ label: 'summary', href: 'evidence/summary.txt' }] },
+    devCommit: { sha, ref, url: COMMIT_URL(repo, sha), evidence: [{ label: sha.slice(0, 9), href: COMMIT_URL(repo, sha) }, { label: 'fetch.log', href: 'evidence/fetch.log' }] },
     sections: SECTIONS.map((s, i) => ({ n: i + 1, ...s })),
-    checks: checks.map((c) => ({ ...c, section: CHECKS[c.id] })), openPrs, baseline, moved, inputs,
+    checks: checks.map((c) => ({ ...c, section: CHECKS[c.id] })), openPrs, baseline, moved, risks, inputs,
   };
 }
 
@@ -42,6 +55,7 @@ export function validateReport(r) {
   if (!r.verdict?.evidence?.length) p.push('verdict has no evidence');
   if (!/^[0-9a-f]{40}$/.test(r.devCommit?.sha ?? '')) p.push('dev commit must be a 40-character SHA');
   if (!r.devCommit?.evidence?.length) p.push('dev commit has no evidence');
+  if (!r.risks?.evidence?.length) p.push('risks has no evidence');
   for (const id of Object.keys(CHECKS)) if (!r.checks.some((c) => c.id === id)) p.push(`missing check ${id}`);
   for (const c of r.checks) {
     if (!(c.id in CHECKS)) p.push(`unknown check ${c.id}`);
@@ -54,7 +68,7 @@ export function validateReport(r) {
 
 /** Every relative evidence href (verdict, dev commit, rows) must name a file under OUT. `exists(href)` checks one. */
 export function missingEvidence(r, exists) {
-  const hrefs = [...r.verdict.evidence, ...r.devCommit.evidence, ...r.checks.flatMap((c) => c.evidence ?? [])].map((e) => e.href);
+  const hrefs = [...r.verdict.evidence, ...r.devCommit.evidence, ...(r.risks?.evidence ?? []), ...r.checks.flatMap((c) => c.evidence ?? [])].map((e) => e.href);
   return [...new Set(hrefs.filter((h) => !/^https:\/\//.test(h) && !exists(h)))].map((h) => `evidence file missing: ${h}`);
 }
 
@@ -63,6 +77,8 @@ const links = (ev) => ev.map((e) => `[${cell(e.label)}](${e.href})`).join(' · '
 const detailCell = (d) => (/^error: /.test(d ?? '') ? `error: ${code(d.slice(7))}` : cell(d));
 const rowLine = (c) => `| ${c.id} | ${c.status === 'pass' ? '✔ pass' : '✖ fail'} | ${detailCell(c.detail)} | ${links(c.evidence)} |`;
 const yesNo = (b) => (b ? 'yes' : 'no');
+const deltaLine = (d) => (d.note ? cell(d.note)
+  : `${code(d.probe)}: ${d.before.status}${d.before.csp ? '' : ' without CSP'} → ${d.after.status}${d.after.csp ? ' with the rendered shell CSP' : ''}`);
 
 export function renderMarkdown(r) {
   const out = [`# #919 readiness dry run — ${r.verdict.value}`, '', `Generated ${r.generatedAt} by \`tools/readiness.mjs\` at ${r.toolCommit.slice(0, 9)}.`, ''];
@@ -73,9 +89,10 @@ export function renderMarkdown(r) {
       out.push(`**${r.verdict.value}**${r.verdict.failing.length ? '' : ' — every check passes'} · ${links(r.verdict.evidence)}`, '');
       for (const id of r.verdict.failing) out.push(`- ${id}: ${detailCell(r.checks.find((c) => c.id === id)?.detail)}`);
       if (r.verdict.failing.length) out.push('');
-      if (r.verdict.failing.includes('split-check')) out.push(`The rollback rehearsal proves the revert ${GATE_NOTE}.`, '');
+      if (r.verdict.cause === 'splitter-missing') out.push(SPLITTER_NOTE, '');
+      else if (r.verdict.cause === 'spike-gate') out.push(`The rollback rehearsal proves the revert ${GATE_NOTE}.`, '');
     }
-    if (s.id === 'dev-commit') out.push(`\`${r.devCommit.sha}\` (origin/dev) · ${links(r.devCommit.evidence)}`, '');
+    if (s.id === 'dev-commit') out.push(`\`${r.devCommit.sha}\` (${cell(r.devCommit.ref ?? 'origin/dev')}) · ${links(r.devCommit.evidence)}`, '');
     out.push(...rows(s.id));
     if (s.id === 'rollback') out.push(ROLLBACK_NOTE, '');
     if (s.id === 'open-prs') out.push(...(r.openPrs.length ? ['| # | Branch | Title | Conflicts with dev | Conflicts after the split | Action |', '|---|---|---|---|---|---|',
@@ -85,6 +102,11 @@ export function renderMarkdown(r) {
     if (s.id === 'moved') out.push('| Feature | Files | Lines |', '|---|---|---|', ...r.moved.features.map((f) => `| ${f.feature} | ${f.files.length} | ${f.lines} |`), '',
       '| Largest files on dev | Lines | Largest files after the split | Lines |', '|---|---|---|---|',
       ...(r.moved.largest.dev ?? []).map((d, i) => `| ${code(d.path)} | ${d.lines} | ${code(r.moved.largest.migrated?.[i]?.path)} | ${r.moved.largest.migrated?.[i]?.lines ?? ''} |`), '');
+    if (s.id === 'risks') out.push(...(r.risks.note ? [`${cell(r.risks.note)} · ${links(r.risks.evidence)}`] : [
+      `The owner signs these off on #919; a go without that sign-off is not a go. · ${links(r.risks.evidence)}`, '',
+      `- Accepted served deltas: ${r.risks.acceptedDeltas.length}`, ...r.risks.acceptedDeltas.map((d) => `  - ${deltaLine(d)}`),
+      `- Residual \`ui/server.mjs\`: ${r.risks.serverLines} lines, capped at ${r.risks.ceiling ?? 'no ceiling'} (\`tools/split-by-feature/size-caps.json\`), not under 1,000`,
+      `- Routes pinned in \`ui/server.mjs\`: ${r.risks.pins} (\`tools/split-by-feature/pinned.json\`)`]), '');
     if (s.id === 'inputs') out.push(`- Go/no-go owner: ${cell(r.inputs.owner ?? 'not recorded yet')}`, `- Freeze window: ${cell(r.inputs.freezeWindow ?? 'not recorded yet')}`,
       `- Known flaky failures seen: ${r.inputs.flaky?.length ?? 0}`, '');
   }

@@ -1,11 +1,11 @@
 // test/readiness.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSync, rmSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseArgs, runReadiness, postFrom, splitAt } from '../tools/readiness.mjs';
-import { validateReport, GATE_NOTE } from '../tools/readiness/report.mjs';
+import { parseArgs, runReadiness, postFrom, splitAt, e2eScripts } from '../tools/readiness.mjs';
+import { validateReport, GATE_NOTE, SPLITTER_NOTE } from '../tools/readiness/report.mjs';
 
 const SHA = 'a'.repeat(40);
 const PARITY = { pass: true, timingGated: true, routeDiffs: [], visualDiffs: [], failedFlows: [],
@@ -13,7 +13,7 @@ const PARITY = { pass: true, timingGated: true, routeDiffs: [], visualDiffs: [],
 const TARGET = { kind: 'PR', number: 1049, title: 'chore(deps): bump express from 4.22.3 to 5.3.0', branch: 'dependabot/npm_and_yarn/dev/express-5.3.0',
   head: 'd'.repeat(40), url: 'https://github.com/SinishaDjukic/worca-cc/pull/1049', ref: 'refs/readiness/pr/1049', src: 'refs/pull/1049/head' };
 
-function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFailed = false, targets = [TARGET], gone = [] } = {}) {
+function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFailed = false, splitterMissing = false, e2eFail = null, targets = [TARGET], gone = [] } = {}) {
   const run = (cmd, args) => {
     if (cmd === 'git' && args.includes('rev-parse')) return { code: 0, stdout: `${badSha ? 'nope' : SHA}\n`, stderr: '' };
     if (cmd === 'git' && args.includes('get-url')) return { code: 0, stdout: 'git@github.com:SinishaDjukic/worca-cc.git\n', stderr: '' };
@@ -23,17 +23,21 @@ function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFai
     mkdirSync(dirname(file), { recursive: true });
     const i = args.indexOf('--out');
     if (i >= 0) { mkdirSync(args[i + 1], { recursive: true }); writeFileSync(join(args[i + 1], 'report.json'), JSON.stringify(PARITY)); writeFileSync(join(args[i + 1], 'report.md'), 'PASS\n'); }
-    const stats = gateFailed ? '9972 lines — spike gate FAILED' : '8000 lines — spike gate passed';
+    const stats = gateFailed ? '9980 lines — spike gate FAILED (ui/server.mjs 9980 lines > ceiling 9972)' : '9972 lines — spike gate passed (>= 95% moved, ceiling 9972 lines)';
     const text = args.includes('tools/test.mjs') ? '✔ x\nℹ pass 1\nℹ fail 0\n'
       : args.includes('--stats') ? `moved 430/441 route statements (98%), ui/server.mjs after the split: ${stats}\n` : 'ok\n';
     writeFileSync(file, text);
-    return { code: gateFailed && args.includes('--stats') ? 1 : 0, text };
+    const failed = (gateFailed && args.includes('--stats')) || (cmd === 'npm' && args[0] === 'run' && args[1] === e2eFail);
+    return { code: failed ? 1 : 0, text };
   };
+  const SCRIPTS = { 'e2e:extension': 'x', 'e2e:extension:update-linux': 'y', 'e2e:firefox-smoke': 'z', test: 't' };
   return {
     run, runLogged,
-    cloneAt: (_r, _root, _sha, dir) => { mkdirSync(join(dir, 'test'), { recursive: true }); writeFileSync(join(dir, 'test/flaky-register.json'), '[]'); return dir; },
+    cloneAt: (_r, _root, _sha, dir) => { mkdirSync(join(dir, 'test'), { recursive: true }); writeFileSync(join(dir, 'test/flaky-register.json'), '[]'); writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: SCRIPTS })); return dir; },
     npmCi: () => {},
-    applySplit: async () => ({ plan: { files: new Map([['ui/routes/chat.mjs', 'a\n']]) }, changed: ['ui/routes/chat.mjs'] }),
+    hasSplitter: () => !splitterMissing,
+    applySplit: async () => ({ plan: { files: new Map([['ui/routes/chat.mjs', 'a\n']]), stats: { serverLinesAfter: 9972, pinnedRoutes: 11 } }, ceiling: 9972, changed: ['ui/routes/chat.mjs'] }),
+    sliceOneEquivalence: async () => ({ equal: true, problems: [], probes: 40, routes: 523, acceptedDeltas: [{ note: '/style.css: ETag value is a body hash instead of size-mtime' }] }),
     treeHash: () => 'f'.repeat(40), resetTree: () => {}, commitMigration: () => 'b'.repeat(40),
     rehearseRollback: () => ({ ok: true, reverted: 'c'.repeat(40), diff: '', status: '', cleaned: '' }),
     servedEquivalence: async () => ({ ok: true, css: true, html: true, routes: true, routeCount: [2, 2], firstDiff: null }),
@@ -56,13 +60,16 @@ test('parseArgs: run, post and split; anything else throws the usage line', () =
   assert.throws(() => parseArgs(['go']), /usage: readiness\.mjs run/);
 });
 
-test('runReadiness with every fake passing: 10 pass rows, go, a valid report, the rollback row has 4 links, trees removed', async () => {
+test('runReadiness with every fake passing: 10 pass rows, go, a valid report, the rollback row has 6 links, trees removed', async () => {
   const { out, report, lines } = await go(fakeDeps());
   assert.deepEqual(validateReport(report), []);
   assert.equal(report.checks.length, 10);
   assert.ok(report.checks.every((c) => c.status === 'pass'), JSON.stringify(report.checks.filter((c) => c.status !== 'pass')));
   assert.equal(report.verdict.value, 'go');
-  assert.equal(report.checks.find((c) => c.id === 'rollback').evidence.length, 4);
+  const rollback = report.checks.find((c) => c.id === 'rollback');
+  assert.equal(rollback.evidence.length, 6);
+  assert.match(rollback.detail, /e2e green \(e2e:extension, e2e:firefox-smoke\)/);
+  assert.equal(existsSync(join(out, 'evidence/rollback-e2e-extension-update-linux.log')), false);
   assert.equal(report.openPrs[0].action, 'rebase after the migration');
   assert.ok(existsSync(join(out, 'report.md')) && existsSync(join(out, 'report.json')));
   assert.ok(!existsSync(join(out, 'trees')));
@@ -128,7 +135,7 @@ test('a failed spike gate is a split-check fail row, and the rollback row and ve
   const { report, out } = await go(fakeDeps({ gateFailed: true }));
   const sc = report.checks.find((c) => c.id === 'split-check');
   assert.equal(sc.status, 'fail');
-  assert.match(sc.detail, /^spike gate FAILED: ui\/server\.mjs after the split 9972 lines > 9000/);
+  assert.match(sc.detail, /^spike gate FAILED: ui\/server\.mjs 9980 lines > ceiling 9972$/);
   assert.deepEqual(report.verdict.failing, ['split-check']);
   assert.ok(report.checks.find((c) => c.id === 'rollback').detail.includes(GATE_NOTE));
   assert.ok(readFileSync(join(out, 'report.md'), 'utf8').includes(GATE_NOTE));
@@ -172,4 +179,74 @@ test('splitAt clones both revisions as marked scratch trees, splits with the spl
   assert.deepEqual(seen.split, [join(out, 'tree'), join(out, 'splitter')]);
   assert.equal(r.commit, 'c'.repeat(40));
   await assert.rejects(() => splitAt({ root: '.', rev: 'nope', splitterRev: 'M^', out: outDir(), deps }), /unknown revision nope/);
+});
+
+test('a dev commit without the splitter: split-check names it, later rows say why, the verdict names the cause, not the gate', async () => {
+  const { report, out } = await go(fakeDeps({ splitterMissing: true }));
+  const sc = report.checks.find((c) => c.id === 'split-check');
+  assert.equal(sc.status, 'fail');
+  assert.equal(sc.detail, `splitter missing: tools/split-by-feature.mjs is not in the dev commit ${SHA.slice(0, 9)} (the #919 tooling is not merged into dev)`);
+  assert.equal(report.verdict.cause, 'splitter-missing');
+  for (const id of ['dry-run-repeatable', 'equivalence', 'rollback', 'baseline']) assert.match(report.checks.find((c) => c.id === id).detail, /no splitter on the dev commit/, id);
+  const md = readFileSync(join(out, 'report.md'), 'utf8');
+  assert.ok(md.includes(SPLITTER_NOTE)); assert.ok(!md.includes(GATE_NOTE));
+});
+
+test('a failing e2e suite fails the rollback row and names it', async () => {
+  const { report } = await go(fakeDeps({ e2eFail: 'e2e:extension' }));
+  const row = report.checks.find((c) => c.id === 'rollback');
+  assert.equal(row.status, 'fail'); assert.match(row.detail, /e2e FAIL \(e2e:extension\)/);
+});
+
+test('a suite that prints SKIP and exits 0 is named skipped, not green', async () => {
+  const deps = fakeDeps(); const inner = deps.runLogged;
+  deps.runLogged = (cmd, args, file, o) => (args[1] === 'e2e:firefox-smoke'
+    ? (writeFileSync(file, 'firefox-smoke: SKIP — no Firefox found\n'), { code: 0, text: 'firefox-smoke: SKIP — no Firefox found\n' })
+    : inner(cmd, args, file, o));
+  const { report } = await go(deps);
+  const row = report.checks.find((c) => c.id === 'rollback');
+  assert.equal(row.status, 'pass'); assert.match(row.detail, /e2e green \(e2e:extension\); skipped \(e2e:firefox-smoke\)/);
+});
+
+test('e2eScripts: every e2e:* suite, not the snapshot updaters, sorted', () => {
+  assert.deepEqual(e2eScripts({ 'e2e:firefox-smoke': '', 'e2e:extension:update-linux': '', 'e2e:extension': '', test: '' }), ['e2e:extension', 'e2e:firefox-smoke']);
+});
+
+test('the report carries accepted deltas, the residual server size with its ceiling and the pin count under Risks', async () => {
+  const { report, out } = await go(fakeDeps());
+  assert.deepEqual(report.risks.acceptedDeltas, [{ note: '/style.css: ETag value is a body hash instead of size-mtime' }]);
+  assert.equal(report.risks.serverLines, 9972); assert.equal(report.risks.ceiling, 9972); assert.equal(report.risks.pins, 11);
+  assert.ok(existsSync(join(out, 'evidence/accepted-deltas.json')));
+  assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /^- Residual `ui\/server\.mjs`: 9972 lines, capped at 9972 .*not under 1,000$/m);
+});
+
+test('without a migration commit the report still validates and Risks says it was not measured', async () => {
+  const deps = fakeDeps(); deps.commitMigration = () => { throw new Error('git commit: exit 1'); };
+  const { report, out } = await go(deps);
+  assert.deepEqual(validateReport(report), []);
+  assert.ok(existsSync(join(out, 'report.json')));
+  assert.equal(report.risks.note, 'not measured: no migrated tree');
+});
+
+test('--dev-ref: the run uses that commit, the report names it, and post refuses a rehearsal report', async () => {
+  assert.deepEqual(parseArgs(['run', '--out', 'x', '--dev-ref', 'abc']), { cmd: 'run', out: 'x', keep: false, devRef: 'abc' });
+  assert.throws(() => parseArgs(['run', '--dev-ref']), /run --dev-ref needs REF/);
+  const { out, report } = await go(fakeDeps(), { devRef: 'abc' });
+  assert.equal(report.devCommit.ref, 'abc');
+  assert.throws(() => postFrom({ root: '.', out, run: () => ({ code: 0, stdout: '', stderr: '' }), log: () => {} }), /refusing to post: the report is a rehearsal on abc, not origin\/dev/);
+});
+
+test('a failed split removes its half-built out dir, and an empty out dir it was given is left empty', async () => {
+  const deps = {
+    run: (cmd, args) => (args.includes('rev-parse') ? { code: 0, stdout: `${'a'.repeat(40)}\n`, stderr: '' } : { code: 0, stdout: '', stderr: '' }),
+    runLogged: () => ({ code: 0, text: '' }), npmCi: (_r, _dir, log) => writeFileSync(log, 'npm ci\n'),
+    cloneAt: (_r, _root, _sha, dir) => { mkdirSync(join(dir, '.git'), { recursive: true }); return dir; },
+    applySplit: async () => { throw new Error('the split plan has 1 problem(s)'); }, commitMigration: () => 'c'.repeat(40),
+  };
+  const out = outDir();
+  await assert.rejects(() => splitAt({ root: '.', rev: 'HEAD', splitterRev: 'HEAD', out, deps }), /the split plan has 1 problem/);
+  assert.equal(existsSync(out), false);
+  const given = mkdtempSync(join(tmpdir(), 'readiness-split-empty-'));
+  await assert.rejects(() => splitAt({ root: '.', rev: 'HEAD', splitterRev: 'HEAD', out: given, deps }));
+  assert.deepEqual(readdirSync(given), []);
 });

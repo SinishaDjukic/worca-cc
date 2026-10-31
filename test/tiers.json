@@ -12,7 +12,7 @@
     "test/cli-interactive.test.mjs", "test/cli-schedule-wait.test.mjs", "test/cli-auto.test.mjs", "test/cli-resume.test.mjs",
     "test/wsmap-detectors-p3-registry.test.mjs", "test/wsmap-detectors-p4-registry.test.mjs",
     "test/wsmap-http-client-shapes-slow.test.mjs", "test/wsmap-graphql-client-copy-slow.test.mjs",
-    "test/parity-launch.test.mjs", "test/parity-routes.test.mjs"
+    "test/parity-launch.test.mjs", "test/parity-routes.test.mjs", "test/split-by-feature.test.mjs"
   ],
   "keepFast": ["test/orchestrator-guardrails.test.mjs"]
 }

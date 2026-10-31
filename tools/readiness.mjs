@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // tools/readiness.mjs — #919 slice 3: readiness dry run of the split on the latest origin/dev.
-//   run   [--out DIR] [--keep]          fetch origin/dev, build + check the migrated tree, rehearse the rollback,
+//   run   [--out DIR] [--keep] [--dev-ref REF]
+//                                       fetch origin/dev (or rehearse on REF), build + check the migrated tree, rehearse the rollback,
 //                                       check open PRs, write DIR/report.md + DIR/report.json (exit 0 go, 1 no-go)
 //   post  --out DIR                     post DIR's report on #919 after gh auth + secret scan (exit 0 posted)
 //   split --rev REV --splitter-rev REV --out DIR
@@ -12,32 +13,37 @@ import { join, resolve, dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { run, runLogged } from './readiness/proc.mjs';
-import { cloneAt, npmCi, applySplit, treeHash, resetTree, commitMigration, rehearseRollback, servedEquivalence, docsAndPackage } from './readiness/trees.mjs';
+import { cloneAt, npmCi, hasSplitter, applySplit, sliceOneEquivalence, treeHash, resetTree, commitMigration, rehearseRollback, servedEquivalence, docsAndPackage } from './readiness/trees.mjs';
 import { listTargets, fetchHeads, mergeCheck, actionFor, openPrsProblems, keyOf, EXPRESS5 } from './readiness/open-prs.mjs';
 import { conflictShare, fmtShare, deadCode, codeFiles, parityTimings, featureNames, movedByFeature, largestFiles } from './readiness/baseline.mjs';
-import { buildReport, validateReport, missingEvidence, renderMarkdown, commentBody, ROLLBACK_NOTE, GATE_NOTE } from './readiness/report.mjs';
+import { buildReport, validateReport, missingEvidence, renderMarkdown, commentBody, ROLLBACK_NOTE, GATE_NOTE, SPLITTER_MISSING } from './readiness/report.mjs';
 import { authStatus, postReport, REPO } from './readiness/gh.mjs';
 import { scanSecrets } from '../src/core/secret-scan.mjs';
 import { parseFailures, unlistedFailures } from './flaky-register.mjs';
-import { SPIKE_GATE } from './split-by-feature.mjs';
 import { listRoutes } from './parity/routes.mjs';
 
 const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ev = (label, href) => ({ label, href });
 const SUITE_NOTE = 'about 15 min';
 const fatal = (msg) => Object.assign(new Error(msg), { fatal: true });
+/** Every e2e:* suite in package.json scripts, not the snapshot updaters (`:update-…`), sorted. */
+export const e2eScripts = (scripts = {}) => Object.keys(scripts).filter((k) => /^e2e:/.test(k) && !/:update(?:-|$)/.test(k)).sort();
 
 export function parseArgs(argv) {
   const [cmd, ...rest] = argv;
   const arg = (k) => { const i = rest.indexOf(k); return i >= 0 ? rest[i + 1] : undefined; };
-  if (cmd === 'run') return { cmd, out: arg('--out'), keep: rest.includes('--keep') };
+  if (cmd === 'run') {
+    const devRef = arg('--dev-ref');
+    if (rest.includes('--dev-ref') && (!devRef || devRef.startsWith('--'))) throw new Error('run --dev-ref needs REF');
+    return { cmd, out: arg('--out'), keep: rest.includes('--keep'), ...(devRef ? { devRef } : {}) };
+  }
   if (cmd === 'post') { const out = arg('--out'); if (!out) throw new Error('post needs --out DIR'); return { cmd, out }; }
   if (cmd === 'split') {
     const s = { cmd, rev: arg('--rev'), splitterRev: arg('--splitter-rev'), out: arg('--out') };
     if (!s.rev || !s.splitterRev || !s.out) throw new Error('split needs --rev REV --splitter-rev REV --out DIR');
     return s;
   }
-  throw new Error('usage: readiness.mjs run [--out DIR] [--keep] | post --out DIR | split --rev REV --splitter-rev REV --out DIR');
+  throw new Error('usage: readiness.mjs run [--out DIR] [--keep] [--dev-ref REF] | post --out DIR | split --rev REV --splitter-rev REV --out DIR');
 }
 
 /** The catch-up recipe's split: both trees are marked scratch clones made here, so nobody writes the marker by hand,
@@ -51,16 +57,24 @@ export async function splitAt({ root = process.cwd(), rev, splitterRev, out, dep
   };
   out = resolve(out);
   if (existsSync(out) && readdirSync(out).length) throw fatal(`${out} is not empty`);
-  const [treeSha, splitterSha] = [sha(rev), sha(splitterRev)];
-  const tree = d.cloneAt(d.run, root, treeSha, join(out, 'tree'));
-  const splitter = d.cloneAt(d.run, root, splitterSha, join(out, 'splitter'));
-  d.npmCi(d.runLogged, tree, join(out, 'npm-ci-tree.log')); d.npmCi(d.runLogged, splitter, join(out, 'npm-ci-splitter.log'));
-  const { changed } = await d.applySplit(d.run, tree, { splitter });
-  return { tree, commit: d.commitMigration(d.run, tree), changed };
+  const made = !existsSync(out);
+  try {
+    const [treeSha, splitterSha] = [sha(rev), sha(splitterRev)];
+    const tree = d.cloneAt(d.run, root, treeSha, join(out, 'tree'));
+    const splitter = d.cloneAt(d.run, root, splitterSha, join(out, 'splitter'));
+    d.npmCi(d.runLogged, tree, join(out, 'npm-ci-tree.log')); d.npmCi(d.runLogged, splitter, join(out, 'npm-ci-splitter.log'));
+    const { changed } = await d.applySplit(d.run, tree, { splitter });
+    return { tree, commit: d.commitMigration(d.run, tree), changed };
+  } catch (e) {
+    // nothing half-built stays behind: the dir this call made goes, an empty dir it was given is emptied again
+    if (made) rmSync(out, { recursive: true, force: true });
+    else for (const f of readdirSync(out)) rmSync(join(out, f), { recursive: true, force: true });
+    throw e;
+  }
 }
 
-export async function runReadiness({ root = process.cwd(), out, keep = false, now = () => new Date(), log = console.log, deps = {} } = {}) {
-  const d = { run, runLogged, cloneAt, npmCi, applySplit, treeHash, resetTree, commitMigration, rehearseRollback, servedEquivalence,
+export async function runReadiness({ root = process.cwd(), out, keep = false, devRef = null, now = () => new Date(), log = console.log, deps = {} } = {}) {
+  const d = { run, runLogged, cloneAt, npmCi, hasSplitter, applySplit, sliceOneEquivalence, treeHash, resetTree, commitMigration, rehearseRollback, servedEquivalence,
     docsAndPackage, listTargets, fetchHeads, mergeCheck, listRoutes, authStatus,
     codeFiles, deadCode, largestFiles, featureNames, movedByFeature, ...deps };
   const generatedAt = now().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -74,7 +88,10 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, no
     // 0. dev commit (fatal when it cannot be fetched: no report without a dev commit). Not a row.
     const fetch = d.runLogged('git', ['-C', root, 'fetch', '--no-tags', 'origin', 'dev'], E('fetch.log'));
     if (fetch.code !== 0) throw fatal(`git fetch origin dev failed (${E('fetch.log')})`);
-    const sha = d.run('git', ['-C', root, 'rev-parse', 'origin/dev']).stdout.trim();
+    const ref = devRef ?? 'origin/dev';
+    const shaRun = d.run('git', ['-C', root, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]);
+    if (shaRun.code !== 0) throw fatal(devRef ? `unknown --dev-ref ${ref}` : 'origin/dev does not resolve to a commit');
+    const sha = shaRun.stdout.trim();
     const toolCommit = d.run('git', ['-C', root, 'rev-parse', 'HEAD']).stdout.trim();
     const remoteUrl = d.run('git', ['-C', root, 'remote', 'get-url', 'origin']).stdout.trim();
 
@@ -111,32 +128,51 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, no
     let plan = null; let migration = null; let parityRep = null; let deadDev = null; let deadMig = null;
     let largest = {}; let features = []; let baselineRows = []; const openRows = []; const flaky = []; let gateFailed = false;
     await step(1, 'gh-auth', 'gh auth status', () => { const a = d.authStatus(d.run); writeFileSync(E('gh-auth.log'), `${a.detail}\n`); return { ...a, evidence: [ev('gh-auth.log', 'evidence/gh-auth.log')] }; });
+    let splitterMissing = false; let ceiling = null; let acceptedDeltas = null;
+    const noTree = () => (splitterMissing ? 'no migrated tree: no splitter on the dev commit (see split-check)' : 'no migrated tree (dry-run-repeatable failed)');
+    const needMigration = () => { if (!migration) throw new Error(noTree()); };
     await step(2, 'split-check', 'scratch clones; split-by-feature --check --stats on the dev commit', () => {
-      d.cloneAt(d.run, root, sha, base); d.npmCi(d.runLogged, base, E('npm-ci-base.log'));
+      d.cloneAt(d.run, root, sha, base);
+      if (!d.hasSplitter(base)) {
+        splitterMissing = true;
+        writeFileSync(E('split-check.log'), `tools/split-by-feature.mjs is not in ${sha}: the #919 tooling is not merged into dev\n`);
+        return { ok: false, detail: `${SPLITTER_MISSING} ${sha.slice(0, 9)} (the #919 tooling is not merged into dev)`, evidence: [ev('split-check.log', 'evidence/split-check.log')] };
+      }
+      d.npmCi(d.runLogged, base, E('npm-ci-base.log'));
       d.cloneAt(d.run, root, sha, mig); d.npmCi(d.runLogged, mig, E('npm-ci-migrated.log'));
       const r = d.runLogged(process.execPath, ['tools/split-by-feature.mjs', '--check', '--stats', '--root', base], E('split-check.log'), { cwd: base });
-      const gate = r.text.match(/after the split: (\d+) lines — spike gate (passed|FAILED)/);
+      // the reason in parentheses is optional: a dev commit's older splitter prints the line without it
+      const gate = r.text.match(/after the split: (\d+) lines — spike gate (passed|FAILED)(?: \(([^)]*)\))?/);
       gateFailed = gate?.[2] === 'FAILED';
-      const detail = gate?.[2] === 'FAILED' ? `spike gate FAILED: ui/server.mjs after the split ${gate[1]} lines > ${SPIKE_GATE.serverLinesAfter} (slice 1 follow-up)`
-        : gate ? `covered; spike gate passed (${gate[1]} lines)` : `exit ${r.code}`;
+      const why = gate?.[3] ?? 'no reason printed';
+      const detail = gateFailed ? `spike gate FAILED: ${why}` : gate ? `covered; spike gate passed (${gate[1]} lines; ${why})` : `exit ${r.code}`;
       return { ok: r.code === 0, detail, evidence: [ev('split-check.log', 'evidence/split-check.log')] };
     });
     await step(3, 'dry-run-repeatable', 'build the migrated tree twice', async () => {
-      plan = (await d.applySplit(d.run, mig)).plan; const h1 = d.treeHash(d.run, mig);
+      if (splitterMissing) throw new Error('not run: no splitter on the dev commit (see split-check)');
+      const first = await d.applySplit(d.run, mig); plan = first.plan; ceiling = first.ceiling ?? null; const h1 = d.treeHash(d.run, mig);
       d.resetTree(d.run, mig, sha); await d.applySplit(d.run, mig); const h2 = d.treeHash(d.run, mig);
       migration = d.commitMigration(d.run, mig);
-      writeFileSync(E('dry-run.log'), `tree hash 1: ${h1}\ntree hash 2: ${h2}\nmigration commit: ${migration}\nfiles:\n${[...plan.files.keys()].sort().join('\n')}\n`);
+      writeFileSync(E('dry-run.log'), `tree hash 1: ${h1}\ntree hash 2: ${h2}\nmigration commit: ${migration}\n`
+        + `ui/server.mjs after the split: ${plan.stats?.serverLinesAfter} lines (ceiling ${ceiling}); pinned routes: ${plan.stats?.pinnedRoutes}\n`
+        + `files:\n${[...plan.files.keys()].sort().join('\n')}\n`);
       deadDev = d.deadCode(d.codeFiles(base)); deadMig = d.deadCode(d.codeFiles(mig));
       largest = { dev: d.largestFiles(base), migrated: d.largestFiles(mig) };
       features = d.movedByFeature(plan.files, d.featureNames(plan.files));
       writeFileSync(E('moved.json'), JSON.stringify({ features, largest, deadDev, deadMig }, null, 2));
       return { ok: h1 === h2, detail: h1 === h2 ? `same tree hash ${h1.slice(0, 9)} both times` : `tree hashes differ: ${h1.slice(0, 9)} vs ${h2.slice(0, 9)}`, evidence: [ev('dry-run.log', 'evidence/dry-run.log')] };
     });
-    const needMigration = () => { if (!migration) throw new Error('no migrated tree (dry-run-repeatable failed)'); };
-    await step(4, 'equivalence', 'served CSS, index.html and route table', async () => {
+    await step(4, 'equivalence', 'served CSS, index.html, route table and slice 1 equivalence', async () => {
       needMigration();
-      const r = await d.servedEquivalence(base, mig, d.listRoutes); writeFileSync(E('equivalence.json'), JSON.stringify(r, null, 2));
-      return { ok: r.ok, detail: r.ok ? `CSS bytes, index.html bytes and ${r.routeCount[0]} routes identical` : `css ${r.css}, html ${r.html}, routes ${r.routes}`, evidence: [ev('equivalence.json', 'evidence/equivalence.json')] };
+      const r = await d.servedEquivalence(base, mig, d.listRoutes);
+      const eq = await d.sliceOneEquivalence(base, mig);
+      writeFileSync(E('equivalence.json'), JSON.stringify({ ...r, sliceOne: { equal: eq.equal, problems: eq.problems, probes: eq.probes, routes: eq.routes } }, null, 2));
+      writeFileSync(E('accepted-deltas.json'), JSON.stringify(eq.acceptedDeltas, null, 2) + '\n');
+      acceptedDeltas = eq.acceptedDeltas;     // only after its file exists: Risks links it whenever this is set
+      const ok = r.ok && eq.equal;
+      return { ok, detail: ok ? `CSS bytes, index.html bytes and ${r.routeCount[0]} routes identical; ${eq.probes} served probes and the route table equal; ${acceptedDeltas.length} accepted deltas (see Risks)`
+        : `css ${r.css}, html ${r.html}, routes ${r.routes}; slice 1: ${eq.problems.length} problems${eq.problems[0] ? ` (${eq.problems[0]})` : ''}`,
+        evidence: [ev('equivalence.json', 'evidence/equivalence.json'), ev('accepted-deltas.json', 'evidence/accepted-deltas.json')] };
     });
     await step(5, 'docs-and-package', 'design-system.md, feature-files.md and npm pack of the migrated tree', () => {
       needMigration();
@@ -164,16 +200,28 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, no
       writeFileSync(E('open-prs.json'), JSON.stringify({ targets: targets.length, gone: [...gone], problems, rows: openRows }, null, 2));
       return { ok: problems.length === 0, detail: problems.length ? problems[0] : `${openRows.length} PRs and branches, ${openRows.filter((t) => t.split.conflict).length} conflict after the split${vanished}${noExpress}`, evidence: [ev('open-prs.json', 'evidence/open-prs.json')] };
     });
-    await step(9, 'rollback', 'revert the migration; suite and parity again', () => {
+    // A suite that exits 0 after printing "SKIP" (firefox-smoke without Firefox, tools/firefox-smoke.mjs:15-17) did not
+    // run: it does not fail the row, but the detail names it as skipped, never green.
+    const e2e = (dir) => e2eScripts(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts).map((name) => {
+      const file = `rollback-${name.replace(/:/g, '-')}.log`;
+      const r = d.runLogged('npm', ['run', name], E(file), { cwd: dir });
+      return { name, ok: r.code === 0, skipped: r.code === 0 && /\bSKIP\b/.test(r.text ?? ''), evidence: ev(file, `evidence/${file}`) };
+    });
+    await step(9, 'rollback', 'revert the migration; suite, parity and the e2e suites again', () => {
       needMigration();
       const r = d.rehearseRollback(d.run, mig, sha, migration);
       writeFileSync(E('rollback-diff.log'), `left by the suite and parity, removed before the revert:\n${r.cleaned || '(nothing)'}\ngit revert ${migration} → ${r.reverted}\ngit diff --stat ${sha} ${r.reverted}:\n${r.diff || '(empty)'}\ngit status --porcelain:\n${r.status || '(clean)'}\n`);
-      const s = suite(mig, 'suite-reverted'); const p = parity(base, mig, 'parity-reverted');
-      return { ok: r.ok && s.ok && p.ok, detail: `diff ${r.diff ? 'NOT empty' : 'empty'}; suite ${s.ok ? 'green' : 'red'}; parity ${p.ok ? 'PASS' : 'FAIL'}${gateFailed ? ` (${GATE_NOTE})` : ''} — ${ROLLBACK_NOTE}`,
-        evidence: [ev('rollback-diff.log', 'evidence/rollback-diff.log'), ...s.evidence, ...p.evidence] };   // 4 links
+      const s = suite(mig, 'suite-reverted'); const p = parity(base, mig, 'parity-reverted'); const e = e2e(mig);
+      const bad = e.filter((x) => !x.ok).map((x) => x.name);
+      const ran = e.filter((x) => x.ok && !x.skipped).map((x) => x.name); const skipped = e.filter((x) => x.skipped).map((x) => x.name);
+      const e2eText = !e.length ? 'e2e none found' : bad.length ? `e2e FAIL (${bad.join(', ')})`
+        : `e2e green (${ran.join(', ') || 'none ran'})${skipped.length ? `; skipped (${skipped.join(', ')})` : ''}`;
+      return { ok: r.ok && s.ok && p.ok && e.length > 0 && !bad.length,
+        detail: `diff ${r.diff ? 'NOT empty' : 'empty'}; suite ${s.ok ? 'green' : 'red'}; parity ${p.ok ? 'PASS' : 'FAIL'}; ${e2eText}${gateFailed ? ` (${GATE_NOTE})` : ''} — ${ROLLBACK_NOTE}`,
+        evidence: [ev('rollback-diff.log', 'evidence/rollback-diff.log'), ...s.evidence, ...p.evidence, ...e.map((x) => x.evidence)] };   // 4 + one per e2e suite
     });
     await step(10, 'baseline', 'baseline comparison', () => {
-      if (!deadDev || !parityRep) throw new Error('needs the migrated tree and the parity report');
+      if (!deadDev || !parityRep) throw new Error(splitterMissing ? noTree() : 'needs the migrated tree and the parity report');
       const t = parityTimings(parityRep);
       baselineRows = [
         { measure: 'conflicted-merge share', dev: fmtShare(conflictShare(openRows, 'dev')), migrated: fmtShare(conflictShare(openRows, 'split')) },
@@ -191,8 +239,12 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, no
     // 11. report (not a row)
     say('[11/11] report…');
     writeFileSync(E('summary.txt'), checks.map((c) => `${c.status}\t${c.id}\t${c.detail}`).join('\n') + '\n');
-    const report = buildReport({ repo: REPO, sha, generatedAt, toolCommit, checks, openPrs: openRows, baseline: { rows: baselineRows },
-      moved: { features, largest }, inputs: { owner: null, freezeWindow: null, flaky } });
+    // only with a migration commit: dry-run.log is written after it, and Risks must never link a missing file
+    const risks = migration && plan?.stats ? { acceptedDeltas: acceptedDeltas ?? [], serverLines: plan.stats.serverLinesAfter, ceiling, pins: plan.stats.pinnedRoutes,
+      evidence: [...(acceptedDeltas ? [ev('accepted-deltas.json', 'evidence/accepted-deltas.json')] : []), ev('dry-run.log', 'evidence/dry-run.log')],
+      ...(acceptedDeltas ? {} : { note: 'accepted deltas not measured (the equivalence row failed)' }) } : undefined;
+    const report = buildReport({ repo: REPO, sha, ref, generatedAt, toolCommit, checks, openPrs: openRows, baseline: { rows: baselineRows },
+      moved: { features, largest }, risks, inputs: { owner: null, freezeWindow: null, flaky } });
     const problems = [...validateReport(report), ...missingEvidence(report, (href) => existsSync(join(out, href)))];
     if (problems.length) throw fatal(`report invalid:\n${problems.join('\n')}`);
     writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
@@ -207,6 +259,7 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, no
 export function postFrom({ root = process.cwd(), out, run: r = run, log = console.log }) {
   out = resolve(out);
   const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
+  if ((report.devCommit.ref ?? 'origin/dev') !== 'origin/dev') throw new Error(`refusing to post: the report is a rehearsal on ${report.devCommit.ref}, not origin/dev`);
   const md = readFileSync(join(out, 'report.md'), 'utf8');
   const pairs = [[out, '$OUT'], [realpathSync(out), '$OUT'], [resolve(root), '$REPO'], [realpathSync(root), '$REPO'], [homedir(), '~']];
   const clean = (s) => pairs.reduce((t, [from, to]) => t.replaceAll(from, to), s);
@@ -223,7 +276,7 @@ export async function main(argv = process.argv.slice(2), { log = console.log, er
   let a;
   try { a = parseArgs(argv); } catch (e) { err(e.message); return 2; }
   try {
-    if (a.cmd === 'run') return (await runReadiness({ out: a.out, keep: a.keep, log })).report.verdict.value === 'go' ? 0 : 1;
+    if (a.cmd === 'run') return (await runReadiness({ out: a.out, keep: a.keep, devRef: a.devRef, log })).report.verdict.value === 'go' ? 0 : 1;
     if (a.cmd === 'post') { postFrom({ out: a.out, log }); return 0; }
     const { tree, commit, changed } = await splitAt({ rev: a.rev, splitterRev: a.splitterRev, out: a.out });
     log(`readiness: split ${changed.length} files; ${tree} is at ${commit}`); return 0;

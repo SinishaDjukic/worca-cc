@@ -43,3 +43,9 @@ test('every parity run command names --a, --b and --out with a known target kind
     for (const k of ['--a', '--b']) assert.match(c, new RegExp(`${k} (?:tree|package|docker):\\S+`), c);
   }
 });
+
+test('freeze day names the exact apply command, run twice, and no "revised --apply" placeholder is left', () => {
+  assert.doesNotMatch(doc, /revised `?--apply/);
+  const row = doc.split('\n').find((l) => l.startsWith('| 4. Freeze day |'));
+  assert.ok(row.includes('`git fetch origin dev && git switch -c split/919-migration origin/dev && node tools/split-by-feature.mjs --apply && node tools/split-by-feature.mjs --apply && git add -A && git commit -m "Split large files by feature (#919)"`'), row);
+});

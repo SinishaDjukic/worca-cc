@@ -1,7 +1,7 @@
 // test/readiness-report.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildReport, validateReport, missingEvidence, renderMarkdown, commentBody, CHECKS, SECTIONS, ROLLBACK_NOTE, GATE_NOTE, cell, code } from '../tools/readiness/report.mjs';
+import { buildReport, validateReport, missingEvidence, renderMarkdown, commentBody, CHECKS, SECTIONS, ROLLBACK_NOTE, GATE_NOTE, SPLITTER_NOTE, cell, code } from '../tools/readiness/report.mjs';
 
 const SHA = '04370c0f6cc31ae00f53c3b4c286211b970c3084';
 const ev = (id) => [{ label: `${id}.log`, href: `evidence/${id}.log` }];
@@ -24,11 +24,11 @@ test('validateReport rejects an unclear row, a row without evidence and a missin
 });
 
 test('one failing row makes the verdict no-go, and the verdict section names it with its detail', () => {
-  const checks = all(); Object.assign(checks.find((c) => c.id === 'split-check'), { status: 'fail', detail: 'spike gate FAILED: 9972 > 9000' });
+  const checks = all(); Object.assign(checks.find((c) => c.id === 'split-check'), { status: 'fail', detail: 'spike gate FAILED: ui/server.mjs 9980 lines > ceiling 9972' });
   const r = make(checks);
   assert.deepEqual(r.verdict.failing, ['split-check']);
   const md = renderMarkdown(r);
-  assert.match(md, /^- split-check: spike gate FAILED: 9972 &gt; 9000$/m);
+  assert.match(md, /^- split-check: spike gate FAILED: ui\/server\.mjs 9980 lines &gt; ceiling 9972$/m);
   assert.ok(md.includes(`The rollback rehearsal proves the revert ${GATE_NOTE}.`));
   assert.ok(!renderMarkdown(make()).includes(GATE_NOTE));
 });
@@ -47,7 +47,7 @@ test('missingEvidence names each relative href with no file and skips GitHub URL
   assert.deepEqual(p, ['evidence file missing: evidence/open-prs.log']);
 });
 
-test('renderMarkdown writes the ten sections in order, the rollback note, and an empty PR list says so', () => {
+test('renderMarkdown writes the eleven sections in order, the rollback note, and an empty PR list says so', () => {
   const md = renderMarkdown(make());
   const heads = [...md.matchAll(/^## (\d+)\. (.+)$/gm)].map((m) => `${m[1]} ${m[2]}`);
   assert.deepEqual(heads, SECTIONS.map((s, i) => `${i + 1} ${s.title}`));
@@ -104,4 +104,31 @@ test('commentBody omits a tail the scan flags and keeps its anchor', () => {
   assert.match(text, /tail omitted: the secret scan flagged line 2 \(a home-directory path\); see \$OUT\/evidence\/split-check\.log/);
   assert.ok(!text.includes('bad line'));
   assert.equal(omitted.length, 1);
+});
+
+test('verdict cause: a missing splitter prints the splitter note, never the gate sentence; exit N prints neither', () => {
+  const miss = all(); Object.assign(miss.find((c) => c.id === 'split-check'), { status: 'fail', detail: 'splitter missing: tools/split-by-feature.mjs is not in the dev commit 5701cdee4 (the #919 tooling is not merged into dev)' });
+  const md = renderMarkdown(make(miss));
+  assert.equal(make(miss).verdict.cause, 'splitter-missing');
+  assert.ok(md.includes(SPLITTER_NOTE)); assert.ok(!md.includes(GATE_NOTE));
+  const other = all(); Object.assign(other.find((c) => c.id === 'split-check'), { status: 'fail', detail: 'exit 1' });
+  assert.equal(make(other).verdict.cause, null);
+  assert.ok(!renderMarkdown(make(other)).includes(GATE_NOTE));
+});
+
+test('Risks: every accepted delta, the capped server and the pins; its .json evidence resolves to an anchor in the comment', () => {
+  const risks = { acceptedDeltas: [{ probe: 'GET //index.html', before: { status: 200, csp: null }, after: { status: 200, csp: "default-src 'self'" } }, { note: '/style.css: a Range request gets 200 with the full body instead of 206' }],
+    serverLines: 9972, ceiling: 9972, pins: 11, evidence: [{ label: 'accepted-deltas.json', href: 'evidence/accepted-deltas.json' }, { label: 'dry-run.log', href: 'evidence/dry-run.log' }] };
+  const r = buildReport({ repo: 'SinishaDjukic/worca-cc', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks: all(), risks });
+  assert.deepEqual(validateReport(r), []);
+  const md = renderMarkdown(r);
+  assert.match(md, /^## 10\. Risks and surprises$/m);
+  assert.match(md, /^ {2}- `GET \/\/index\.html`: 200 without CSP → 200 with the rendered shell CSP$/m);
+  assert.match(md, /^- Routes pinned in `ui\/server\.mjs`: 11/m);
+  const { text } = commentBody(r, md, () => 'tail');
+  const links = new Set([...text.matchAll(/\]\(#(ev-[a-z0-9-]+)\)/g)].map((m) => m[1]));
+  const ids = new Set([...text.matchAll(/<a id="(ev-[a-z0-9-]+)"><\/a>/g)].map((m) => m[1]));
+  assert.ok(ids.has('ev-evidence-accepted-deltas-json'));
+  assert.deepEqual([...links].sort(), [...ids].sort());
+  assert.deepEqual(missingEvidence(r, (h) => h !== 'evidence/accepted-deltas.json'), ['evidence file missing: evidence/accepted-deltas.json']);
 });
