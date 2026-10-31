@@ -37,8 +37,7 @@ The type scale below, named by what it does on a Rail page.
 
 ### Which component: one per need
 A Rail page is built by naming needs, not looks. Find the need, use its component as its page in the Design System
-shows it; sizes, colours and spacing come with the component. Names are the Design System's pages; "page to come"
-means the rule is here and its page is not drawn yet.
+shows it; sizes, colours and spacing come with the component. Names are the Design System's pages.
 | Need | Component | For example |
 |---|---|---|
 | **Acting** | | |
@@ -46,10 +45,10 @@ means the rule is here and its page is not drawn yet.
 | Supporting actions | ⋯ next to it, a CompactMenu, danger last after a rule | Terminal, Copy link, Archive |
 | A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar | Merge #959 into dev?, Run after |
 | A step that needs fields first | Dialog, the only one for a form | Create PR |
-| Going to another page or place | Text link, or a List row you open (page to come) | Changes +358 −144, a file, a step |
+| Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu | `dev ▾`, `3 stacked PRs ▾` |
-| Answering Worca's question | Option list: one line per answer, a radio dot on the rail, Your own answer under it (page to come) | the asking step's answers |
+| Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it | the asking step's answers |
 | A setting that is on or off | Switch: takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR |
 | Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
 | Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |
@@ -64,13 +63,13 @@ means the rule is here and its page is not drawn yet.
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
 | Time, cost, changes | Figures | Cost $84.10 of $120 |
 | Labels and cost tags | TagGroup | ui, team: web, +2 |
-| A list of things | List row: divided rows, never a box per item (page to come) | runs, files, decisions |
+| A list of things | ListRow: divided rows on the rail, the whole row opens, never a box per item | runs, files, decisions |
 | A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
 | Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
 | **Telling** | | |
 | Something done, nothing to answer | Toast | PR merged |
 | Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
-| Nothing here, loading, could not load | Empty, loading, error: one line and one quiet action (page to come) | No runs yet |
+| Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
 
 Building from it:
 - A page sets no look of its own: no colour, type size, corner or shadow that is not a token, no inline style but
@@ -361,8 +360,9 @@ width, so chart text is never drawn in a fixed viewBox that is scaled to the car
 became 461px tall with 20px axis text). Tooltips are 12px. Bars and areas use the status and neutral tokens; blue is
 never a bar. Every chart card has a legend; a one-series chart's legend names the series and its total.
 ### Empty, loading, error
-Empty: one `.empty-line` (13px `--ink-2`) plus one quiet action. Loading: `aria-busy="true"` on the list, no spinner
-under 300ms. Error: a plain sentence plus a "Details" quiet button, never the raw error.
+Empty: one `.empty-line` (13px `--ink-2`) plus one quiet action. Loading: `aria-busy="true"` on the list, nothing for
+300ms, then one `--ink-2` line (`Loading runs…`); no spinner and no skeleton. Error: `Could not load …` in
+`--red-ink-strong`, the reason and `Nothing changed.`, then Try again and a quiet Details; never the raw error.
 ### Toasts
 `notify({ tone, title, detail, action, key })` (`ui/public/feedback.mjs`): ok and info close after 5s, warn and err
 stay, never move focus.

@@ -24,8 +24,8 @@ const CONTROLS = {
   SuggestionField: '.pd-ai, .pd-stop, .pd-eye, .pd-retry',
   Switch: '.switch, .sw-item',
   TagGroup: '.rc-tags-mark, .rc-tag-x',
-  'Option list': '.sc-ans-opt',
-  'List row': '.row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
+  OptionList: '.sc-ans-opt',
+  ListRow: '.row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
   'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name',
 };
 const CONTROL_SEL = Object.values(CONTROLS).join(', ');
