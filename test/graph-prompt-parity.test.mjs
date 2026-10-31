@@ -66,7 +66,7 @@ const V1_WEBUI_INSTRUCTION =
   'Execute the manual test checklist against the running web UI using the Playwright tools.';
 /** The three moved-bytes directive arms — now sidecar `directive` fields. */
 const V1_FIX_DIRECTIVE =
-  'Address EVERY critical and major issue in the review below, then re-run the tests. ' +
+  'Address EVERY critical and major issue in the review below, then run the tests that cover what you changed. ' +
   'Follow the plan; deviate only if something does not work at all.';
 const V1_SLICE_DIRECTIVE =
   'Implement the task below using TDD (red-green-refactor). The TASK file is a ' +
@@ -74,8 +74,8 @@ const V1_SLICE_DIRECTIVE =
   'nothing outside its scope. The plan is reference/context only; you do NOT need to ' +
   'read the whole plan.';
 const V1_IMPLEMENT_DIRECTIVE =
-  'Implement the plan using TDD (red-green-refactor). Follow it with NO deviation; ' +
-  'deviate slightly only if a step does not work at all.';
+  'Implement the plan using TDD (red-green-refactor). Follow its contracts with NO deviation; ' +
+  'deviate slightly only if a contract does not work at all.';
 const V1_REVISE_DIRECTIVE =
   '## Revise to address the review\n\n' +
   'A reviewer found issues with the previous plan. Re-plan from scratch (cold start) and ' +
@@ -88,14 +88,17 @@ const V1_REVIEWER_DIFF_REF =
   'checkpoint) and `git status` in your cwd. New/untracked files are intent-to-added, ' +
   'so they DO appear in that diff; use `git status` to cross-check.';
 const V1_PLANNER_INSTRUCTION =
-  'Write a complete, build-ready implementation plan. It MUST contain concrete code snippets ' +
-  'for the features and MUST end with a "## Clarifications (Q&A)" section';
+  'Write a complete, design-level implementation plan. It MUST name the contracts (files, signatures, ' +
+  'data and error shapes), the invariants, the acceptance mapping and the tests, without full code bodies, ' +
+  'and MUST end with a "## Clarifications (Q&A)" section';
 const V1_NO_ANSWERS = '_No clarifying questions were asked._';
 const V1_REFINER_INSTRUCTION =
-  'Read the current plan, critically review it INCLUDING its code snippets, then write an ' +
-  'improved version and a machine-readable review.';
+  'Read the current plan, critically review it INCLUDING its contracts, invariants and acceptance mapping ' +
+  '(read-only: no replay, no test runs), then write an improved version at most 1.3× the input size and a ' +
+  'machine-readable review.';
 const V1_REVIEWER_INSTRUCTION =
-  'Review the git diff of what was implemented against the plan.';
+  'Review the git diff of what was implemented against the plan\'s contracts and invariants, with an ' +
+  'adversarial pass and the severity floors.';
 const V1_WS_REVIEW_INSTRUCTION =
   'Review what was implemented across the member projects against the plan.';
 const V1_CHECKLIST_SINGLE =

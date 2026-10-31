@@ -75,7 +75,7 @@ test('both are reserved ids, in the server list and the composer twin', () => {
     assert.equal(isReservedWorkflowId(id), true, id);
     assert.ok(COMPOSER_RESERVED.has(id), `composer ${id}`);
   }
-  assert.deepEqual([...COMPOSER_RESERVED].sort(), [...['wf_default', 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']].sort());
+  assert.deepEqual([...COMPOSER_RESERVED].sort(), [...['wf_default', 'wf_lean_build', 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']].sort());
 });
 
 test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and loop only roles → refine, at most 2 rounds', () => {

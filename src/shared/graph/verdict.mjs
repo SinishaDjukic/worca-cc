@@ -21,11 +21,12 @@ export function normalizeSeverity(value) {
 }
 
 /**
- * True if a review contains any critical or major issue.
+ * True if a review contains any critical or major issue, or asks for a re-check (withRecheck).
  * @param {{issues: Array}} review
  * @returns {boolean}
  */
 export function hasBlocking(review) {
+  if (review?.recheck === true) return true;
   if (!review || !Array.isArray(review.issues)) return false;
   return review.issues.some((i) => BLOCKING.has(normalizeSeverity(i?.severity)));
 }
@@ -38,4 +39,16 @@ export function hasBlocking(review) {
 export function blockingIssues(review) {
   if (!review || !Array.isArray(review.issues)) return [];
   return review.issues.filter((i) => BLOCKING.has(normalizeSeverity(i?.severity)));
+}
+
+/**
+ * A loop's first verdict that lists critical or major items under `fixed` (the plan refiner's, which judges the
+ * plan it wrote itself) routes as blocking once, so a second cycle re-reads those fixes; later cycles gate on
+ * `issues` alone. The added `recheck` flag is what hasBlocking reads; blockingIssues stays the open issues.
+ * @param {{issues: Array, fixed?: Array}|null} review
+ * @param {number} ordinal  the execution's 1-based ordinal on its node
+ */
+export function withRecheck(review, ordinal) {
+  if (!review || ordinal !== 1 || !Array.isArray(review.fixed)) return review;
+  return review.fixed.some((i) => BLOCKING.has(normalizeSeverity(i?.severity))) ? { ...review, recheck: true } : review;
 }

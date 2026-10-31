@@ -34,7 +34,7 @@ const FLOW_DESC = {
   combine: 'Joins its md inputs into one document, in port order.',
 };
 const FLOW_PORT_LINE = { task: 'source · out task', end: 'in result · terminal', and: 'in in1..inN · out out', or: 'in in1..inN · out out', combine: 'in in1, in2 · out out' };
-const RESERVED = new Set(['wf_default', 'wf_memory_defrag']);
+const RESERVED = new Set(['wf_default', 'wf_lean_build', 'wf_memory_defrag']);
 const FLOW_ICON = {
   task: '<path d="M5.2 3.4h9.6v13.2H5.2z"/><path d="M7.6 7.2h4.8M7.6 10h4.8M7.6 12.8h3"/>',
   end: '<path d="M5.6 3.4v13.2"/><path d="M5.6 4.2h8.6l-2.4 3.4 2.4 3.4H5.6z"/>',

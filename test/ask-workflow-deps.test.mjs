@@ -38,9 +38,14 @@ test('propose (task mode): unknown project throws; a known one runs fingerprint 
       assert.equal(out.note, 'why this', 'note goes through cleanText'); assert.equal(out.thenRun, true);
       assert.equal(out.costUsd, 0); assert.match(out.fingerprint, /^top-level:/);
       assert.ok(out.shape.signals.some((s) => /agent cards read$/.test(s)), 'the classifier\'s cards signal survives');
-      // Write the FULL-NO-Decompose seed (what an upgraded home holds) ⇒ the same text now finds its twin (D8: reuse over clutter).
+      // The FULL-NO-Decompose seed as an upgraded home holds it keeps its v1-era 3-cycle refine, and budgets are topology
+      // (D8/D9), so it is no twin of a shape whose refine runs Default's one light cycle.
       const seed = SEED_TEMPLATES.find((t) => t.id === 'wf_full-no-decompose');
       await writeGraphWorkflow({ id: seed.id, name: seed.name, domain: seed.domain, nodes: seed.nodes, wires: seed.wires, createdAt: seed.createdAt });
+      assert.equal((await deps.workflow.propose({ mode: 'task', task: WEB_TASK, projectKey: p.key })).match, null);
+      // With the refine re-budgeted like Default's, the same text finds its twin (D8: reuse over clutter).
+      const wires = seed.wires.map((w) => (w.from.node === w.to.node ? { ...w, config: { maxCycles: 1, onExhausted: 'clean' } } : w));
+      await writeGraphWorkflow({ id: seed.id, name: seed.name, domain: seed.domain, nodes: seed.nodes, wires, createdAt: seed.createdAt });
       const again = await deps.workflow.propose({ mode: 'task', task: WEB_TASK, projectKey: p.key });
       assert.deepEqual(again.match, { id: 'wf_full-no-decompose', name: 'FULL-NO-Decompose' });
     } },

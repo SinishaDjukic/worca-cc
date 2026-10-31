@@ -33115,7 +33115,7 @@ const schedulesView = createSchedulesView({
     workflowLabel: (id) => {
       const opt = el.workflowSelect ? [...el.workflowSelect.options].find((o) => o.value === id) : null;
       if (opt) return opt.textContent.trim();
-      return { wf_default: 'Default', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
+      return { wf_default: 'Default', wf_lean_build: 'Lean', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
     },
     onCounts: (c) => paintScheduleCounts(c),
     // Who made / changed a schedule, under the same display rule as runs (shared sign-ins only).

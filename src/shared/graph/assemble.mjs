@@ -24,6 +24,10 @@ export const SIZES = Object.freeze(['small', 'medium', 'large']);
 export const SHAPE_LIMITS = Object.freeze({ maxStages: 24, maxGroupMembers: 8, maxNameLen: 60, maxReasoningLen: 500, maxCycles: 20, maxSignals: 8, maxSignalLen: 60 });
 
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+/** A bare `selfLoop: true` (or one with no maxCycles) is wf_default's refine loop: ONE pass that continues with
+ *  the open issues when spent, so an assembled clarify → plan → refine → implement ⇄ review stays Default's twin. */
+const SELF_LOOP_DEFAULT = Object.freeze({ maxCycles: 1, onExhausted: 'clean' });
+const ON_EXHAUSTED = ['clean', 'gate'];
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 // Model output and plugin-authored text are UNTRUSTED and end up in a terminal
@@ -109,7 +113,15 @@ export function normalizeShape(raw) {
     const id = idOf(entry.id, fallbackId, where);
     const stage = { id, agent, tunables: tunablesOf(entry), selfLoop: null, loop: entry.loop !== false };
     if (entry.selfLoop !== undefined && entry.selfLoop !== null && entry.selfLoop !== false) {
-      stage.selfLoop = { maxCycles: cycles(entry.selfLoop, issues, `${where}.selfLoop`) };
+      const v = entry.selfLoop;
+      if (v === true || (isObject(v) && (v.maxCycles === undefined || v.maxCycles === null))) stage.selfLoop = { ...SELF_LOOP_DEFAULT };
+      else {
+        stage.selfLoop = { maxCycles: cycles(v, issues, `${where}.selfLoop`) };
+        if (isObject(v) && v.onExhausted !== undefined) {
+          if (ON_EXHAUSTED.includes(v.onExhausted)) stage.selfLoop.onExhausted = v.onExhausted;
+          else issues.push({ code: 'BAD_ON_EXHAUSTED', message: `${where}.selfLoop: onExhausted must be ${ON_EXHAUSTED.join(' or ')}` });
+        }
+      }
     }
     return stage;
   };
@@ -360,14 +372,15 @@ export function assembleShape(rawShape, { registry = {}, portsFn = null, humanIn
   const groupOf = (stageId) => units.find((u) => u.parallel && u.parallel.some((s) => s.id === stageId)) || null;
   const bindsOutputOf = (srcStage, dstStage) => inbound(nodeOf.get(srcStage.id).id).some((w) => w.from.node === nodeOf.get(dstStage.id).id);
   const loopTargetOk = (fromSt, toSt) => !groupOf(toSt.id) || bindsOutputOf(fromSt, toSt);
-  const loopWires = [];   // { from:{node,port}, to:{node,port}, maxCycles }
+  const loopWires = [];   // { from:{node,port}, to:{node,port}, maxCycles, onExhausted? }
   const handled = new Set();
   for (const st of flat) {
     if (!st.selfLoop) continue;
     const b = blockingOut(st);
     const i = b ? loopInputs(st).find((p) => typeOk(b.type, p.type)) : null;
     if (!b || !i) { issues.push({ code: 'BAD_SELF_LOOP', message: `stage "${st.id}" (${st.agent}) cannot loop on itself`, stageId: st.id }); continue; }
-    loopWires.push({ from: { node: nodeOf.get(st.id).id, port: b.id }, to: { node: nodeOf.get(st.id).id, port: i.id }, maxCycles: st.selfLoop.maxCycles });
+    loopWires.push({ from: { node: nodeOf.get(st.id).id, port: b.id }, to: { node: nodeOf.get(st.id).id, port: i.id }, maxCycles: st.selfLoop.maxCycles,
+      ...(st.selfLoop.onExhausted ? { onExhausted: st.selfLoop.onExhausted } : {}) });
     handled.add(st.id);
   }
   for (const l of loops) {
@@ -435,9 +448,10 @@ export function assembleShape(rawShape, { registry = {}, portsFn = null, humanIn
   const stageIndexOfNode = new Map(flat.map((st, i) => [nodeOf.get(st.id).id, i]));
   for (const list of byTarget.values()) {
     list.sort((a, b) => (stageIndexOfNode.get(a.from.node) ?? 0) - (stageIndexOfNode.get(b.from.node) ?? 0));
-    if (list.length === 1) { addWire(list[0].from, list[0].to, { maxCycles: list[0].maxCycles }); continue; }
+    const budget = (lw) => ({ maxCycles: lw.maxCycles, ...(lw.onExhausted ? { onExhausted: lw.onExhausted } : {}) });
+    if (list.length === 1) { addWire(list[0].from, list[0].to, budget(list[0])); continue; }
     const or = addNode({ id: mintNode(`or${++gateSeq.or}`), kind: 'or', x: 0, y: 0, config: { arity: list.length } });
-    list.forEach((lw, i) => addWire(lw.from, { node: or.id, port: `in${i + 1}` }, { maxCycles: lw.maxCycles }));
+    list.forEach((lw, i) => addWire(lw.from, { node: or.id, port: `in${i + 1}` }, budget(lw)));
     addWire({ node: or.id, port: 'out' }, list[0].to);            // always-sourced: no budget (V13)
   }
 

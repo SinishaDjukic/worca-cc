@@ -68,6 +68,7 @@
   --violet-ink-strong:light-dark(#5B4BB0,#B3A8EE);   /* glyph on --violet-bg at tile size: 5.6:1 */
   --amber-bg:light-dark(#FCE8C8,#332715);  --amber:#E6962A;  --amber-ink:light-dark(#A66510,#F0B45A);
   --amber-ink-strong:light-dark(#8E550B,#F0B45A);
+  --peach-ink-strong:light-dark(#925A12,#F2B96A);   /* small text on --peach-bg: --peach-ink is 3.3:1 in light */
   /* Script, agent and Marketplace kind families (script-wizard plan S10; marketplace P3): the same lightness as the six above, both themes. */
   --teal-bg:light-dark(#DDF2EF,#1A2E2B);   --teal:#4FB3A9;   --teal-ink:light-dark(#2A8A80,#86D3CA);   --teal-ink-strong:light-dark(#1F6B63,#9FE0D8);   /* teal text on --teal-bg at chip size: 5.4:1 light, 9.6:1 dark (--teal-ink is 3.6:1) */
   --pink-bg:light-dark(#FBE4EE,#33202A);   --pink:#E27BA8;   --pink-ink:light-dark(#B84A7C,#F0A2C3);
@@ -1615,12 +1616,12 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .issue-head{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
 .issue-sev{padding:2px 8px;}
 .sev-critical .issue-sev{background:var(--red-bg);color:var(--red-ink);}
-.sev-major .issue-sev{background:var(--peach-bg);color:var(--peach-ink);}
+.sev-major .issue-sev{background:var(--peach-bg);color:var(--peach-ink-strong);}
 .sev-minor .issue-sev{background:var(--amber-bg);color:var(--amber-ink);}
 .sev-suggestion .issue-sev{background:var(--blue-bg);color:var(--blue-ink);}
 .issue-title{font-weight:600;font-size:13px;}
 .issue-detail{font-size:var(--fs-meta);color:var(--ink-2);margin:2px 0 0;}
-.issue-loc{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:4px;}
+.issue-loc{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-top:4px;}
 .gate-actions{display:flex;gap:10px;flex-wrap:wrap;}
 .gate-actions .btn{flex:1 1 auto;}
 
@@ -4420,7 +4421,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-ov-verdict.none{color:var(--ink-2);}   /* the class the results-less arm emits */
 .hd-ov-chip{padding:5px 12px;border-radius:var(--r-xs);font:600 var(--fs-caption) var(--sans);}
 .hd-ov-chip.clean,.hd-ov-chip.st-done{background:var(--green-bg);color:var(--green-ink);}
-.hd-ov-chip.warn,.hd-ov-chip.st-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.hd-ov-chip.warn,.hd-ov-chip.st-paused{background:var(--amber-bg);color:var(--amber-ink-strong);}
 .hd-ov-chip.st-stopped,.hd-ov-chip.st-error{background:var(--red-bg);color:var(--red-ink);}
 .hd-ov-grid,.pd-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
 /* The worktree: one full-width line (label · state · shortened copyable path), spanning

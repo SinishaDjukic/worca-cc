@@ -57,6 +57,47 @@ test('normalizeReview keeps a reviewer checklist as a conditional key (spec D7)'
   assert.equal(Object.hasOwn(protocol.normalizeReview({ issues: [], summary: 's', checklist: 'nope' }), 'checklist'), false);
 });
 
+test('a refine verdict with only `fixed` items is clean; fixed rides along normalized', async () => {
+  const { readVerdict } = await import('../src/core/graph/exec-io.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-verdict-fixed-'));
+  const file = join(dir, 'refine-review-cycle1.json');
+  await writeFile(file, JSON.stringify({ summary: 's', issues: [{ severity: 'minor', title: 'nit' }],
+    fixed: [{ severity: 'Critical', title: 'Wrong API' }, { severity: 'major', title: 'No error test', detail: 'd', location: 'x' }, 'junk'] }), 'utf8');
+  const r = await readVerdict(file);
+  assert.equal(verdict.hasBlocking(r), false);
+  assert.deepEqual(verdict.blockingIssues(r), []);
+  assert.deepEqual(r.fixed, [
+    { severity: 'critical', title: 'Wrong API', detail: '', location: '' },
+    { severity: 'major', title: 'No error test', detail: 'd', location: 'x' },
+  ]);
+  assert.equal(Object.hasOwn(protocol.normalizeReview({ issues: [], summary: 's', fixed: [] }), 'fixed'), false);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('withRecheck: a first verdict with blocking `fixed` items routes as blocking once; later cycles gate on issues', () => {
+  const fixedMajor = { issues: [{ severity: 'minor', title: 'nit' }], summary: 's', fixed: [{ severity: 'Major', title: 'x' }] };
+  const first = verdict.withRecheck(fixedMajor, 1);
+  assert.equal(first.recheck, true);
+  assert.equal(verdict.hasBlocking(first), true, 'cycle 1 runs a second cycle to re-check its own fixes');
+  assert.deepEqual(verdict.blockingIssues(first), [], 'nothing is reported as open');
+  assert.equal(Object.hasOwn(fixedMajor, 'recheck'), false, 'the read verdict is not mutated');
+  assert.equal(verdict.hasBlocking(verdict.withRecheck(fixedMajor, 2)), false, 'cycle 2 gates on issues alone');
+  assert.equal(verdict.hasBlocking(verdict.withRecheck({ ...fixedMajor, fixed: [{ severity: 'minor', title: 'y' }] }, 1)), false);
+  assert.equal(verdict.hasBlocking(verdict.withRecheck({ issues: [], summary: '' }, 1)), false, 'no `fixed`: unchanged');
+  assert.equal(verdict.withRecheck(null, 1), null);
+});
+
+test('refiner prompts list only open problems as issues and fixed ones under `fixed`', async () => {
+  const { readFile } = await import('node:fs/promises');
+  for (const p of ['agents/worca-cc-plan-refiner.md', '.claude/agents/worca-cc-plan-refiner.md']) {
+    const body = await readFile(new URL(`../${p}`, import.meta.url), 'utf8');
+    assert.match(body, /`issues` lists ONLY the problems still open/, p);
+    assert.match(body, /"fixed": \[/, p);
+    assert.match(body, /once more after a first cycle whose `fixed` holds a critical or major item/, p);
+    assert.doesNotMatch(body, /refined version addresses, plus any that remain open/, p);
+  }
+});
+
 test('readVerdict returns a checklist the file carries (spec D7)', async () => {
   const { readVerdict } = await import('../src/core/graph/exec-io.mjs');
   const dir = await mkdtemp(join(tmpdir(), 'worca-cc-verdict-cl-'));

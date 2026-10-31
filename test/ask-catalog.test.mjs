@@ -50,12 +50,13 @@ test('buildCatalog/shapeWorkflow: contract shape, wf_default first once, names f
       assert.deepEqual(cat.projects, [{ key: 'demo-00000001', name: 'Demo', path: '/p/demo' }, { key: 'gone-00000002', name: 'Gone', path: '/p/gone' }]);
       assert.deepEqual(cat.workspaces, [{ id: 'wks-team-0000abcd', name: 'Team', projectKeys: ['a-00000001', 'b-00000002'] }]);
       assert.notEqual(cat.workspaces[0].projectKeys, srcKeys, 'projectKeys is copied, never aliased to the reader\'s array');
-      assert.deepEqual(cat.workflows.map((w) => w.id), ['wf_default', 'wf_memory_defrag', 'wf_shape', 'wf_review'], 'built-ins first, a stored twin of a built-in id is dropped');
+      assert.deepEqual(cat.workflows.map((w) => w.id), ['wf_default', 'wf_lean_build', 'wf_memory_defrag', 'wf_shape', 'wf_review'], 'built-ins first, a stored twin of a built-in id is dropped');
       assert.equal(cat.workflows[0].name, 'Default');
       assert.equal(cat.workflows[0].steps.length, 5);
       assert.equal(cat.workflows[0].steps[1][0].key, 'planner');
       assert.equal(cat.workflows[0].steps[1][0].displayName, 'Planner');
-      assert.equal(cat.workflows[1].id, 'wf_memory_defrag');
+      assert.equal(cat.workflows[1].id, 'wf_lean_build');
+      assert.equal(cat.workflows[2].id, 'wf_memory_defrag');
     } },
     { name: 'buildCatalog survives a throwing registry loader (names fall back to keys)', run: async () => {
       const { buildCatalog: build } = createCatalog({

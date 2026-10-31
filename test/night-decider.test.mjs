@@ -39,6 +39,7 @@ test('form: defaults, then the strategy for enum fields without a default, else 
 });
 
 test('gate uses extra cycles from the counter', async () => {
+  const cfg = { ...NIGHT_DEFAULTS, strategy: 'weights', maxExtraCycles: 1 };
   const r = await decideAsk({ kind: 'gate', id: 'g', wireId: 'w', issues: [{ severity: 'critical' }] }, { config: cfg, gateCyclesUsed: () => 0 });
   assert.deepEqual(r.payload, { decision: 'another' });
   assert.equal(r.record.meta.wireId, 'w');
