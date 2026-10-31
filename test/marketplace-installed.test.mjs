@@ -14,7 +14,7 @@ const L = (version, access = []) => ({ version, sha: 'b'.repeat(40), marketplace
 const SECRET = { kind: 'secret', id: 'github.webhookSecret', red: true };
 const CANVAS = [
   row('atlassian-mcp', { contributions: { ...ZERO, mcpServers: 1 }, mcpSets: ['Havn'], latest: L('0.1.1') }),
-  row('discretestack-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 }, marketplace: 'bd', marketplaceName: 'BD-AI-SDLC/worca-marketplace' }),
+  row('discretestack-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 }, marketplace: 'example', marketplaceName: 'example/worca-marketplace' }),
   row('github-source', { version: '0.2.0', contributions: { ...ZERO, taskSources: 1 }, latest: L('0.3.0', [SECRET]) }),
   row('slack-chat', { contributions: { ...ZERO, chatChannels: 1 }, setup: { ok: false, missing: [{ kind: 'chatChannel', id: 'slack', keys: ['botToken'] }], noProfiles: [] } }),
 ];

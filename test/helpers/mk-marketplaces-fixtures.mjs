@@ -17,8 +17,8 @@ export const OFFICIAL = {
       installed: false, notes: [] },
   ],
 };
-export const BD = {
-  id: 'github.com-BD-AI-SDLC-worca-marketplace-8d59be17', name: 'BD-AI-SDLC/worca-marketplace', url: 'https://github.com/BD-AI-SDLC/worca-marketplace',
+export const EXAMPLE = {
+  id: 'github.com-example-worca-marketplace-a0d3e686', name: 'example/worca-marketplace', url: 'https://github.com/example/worca-marketplace',
   description: '', addedAt: '2026-09-01T12:00:00Z',
   lastSync: { sha: '16b6363deadbeef000000000000000000000000000', at: '2026-09-03T12:00:00Z' },
   lastError: { message: 'HTTP 403', code: 'UNREACHABLE', at: '2026-10-20T11:59:00Z' },

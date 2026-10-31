@@ -6,15 +6,15 @@ import { readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 import { phaseLines, createAddMarketplaceDialog, ADD_POLL_MS } from '../ui/public/marketplace/add-dialog.mjs';
 import { kindCounts, addsSummary, secretsSummary } from '../ui/public/marketplace/kinds.mjs';
-import { OFFICIAL, BD, NOTE0, row } from './helpers/mk-marketplaces-fixtures.mjs';
+import { OFFICIAL, EXAMPLE, NOTE0, row } from './helpers/mk-marketplaces-fixtures.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost/' });
 const doc = window.document;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
-const ADDED = { ...BD, lastError: null, warnings: [NOTE0] };
+const ADDED = { ...EXAMPLE, lastError: null, warnings: [NOTE0] };
 const JOB = 'mkt_0a1b2c3d';
-const job = (o = {}) => ({ id: JOB, url: 'BD-AI-SDLC/worca-marketplace', state: 'running', phase: 'resolving', resolvedUrl: null, sha: null,
+const job = (o = {}) => ({ id: JOB, url: 'example/worca-marketplace', state: 'running', phase: 'resolving', resolvedUrl: null, sha: null,
   done: 0, total: null, plugin: null, error: null, code: null, existing: null, marketplace: null, startedAt: '2026-10-20T12:00:00Z', endedAt: null, ...o });
 const R = (status, data) => ({ ok: status >= 200 && status < 300, status, data });
 const ACCEPTED = (o = {}) => R(202, { jobId: JOB, job: job(o) });
@@ -41,18 +41,18 @@ const foot = () => qa('.mk-add-secondary, .mk-add-primary').map((b) => [b.textCo
 const type = (v) => { const i = doc.getElementById('mk-add-url'); i.value = v; i.dispatchEvent(new window.Event('input', { bubbles: true })); };
 const submit = async () => { q('.mk-add-primary').click(); await settle(); };
 async function toResult(h, marketplace = ADDED) {
-  h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); await submit();
-  h.dlg.onJob(job({ state: 'done', phase: 'saved', resolvedUrl: BD.url, sha: BD.lastSync.sha, marketplace })); await settle();
+  h.dlg.open(); type('example/worca-marketplace'); await submit();
+  h.dlg.onJob(job({ state: 'done', phase: 'saved', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha, marketplace })); await settle();
 }
 
 test('phaseLines: four lines from the job phase (resolving · fetching · reading · checking); saved = all done', () => {
   assert.deepEqual(phaseLines(job()), [
-    { state: 'current', text: 'Found', value: 'BD-AI-SDLC/worca-marketplace' },
+    { state: 'current', text: 'Found', value: 'example/worca-marketplace' },
     { state: 'pending', text: 'Fetched', value: '' },
     { state: 'pending', text: 'Reading plugins…', value: '' },
     { state: 'pending', text: 'Checking what each plugin asks for', value: '' }]);
-  assert.deepEqual(phaseLines(job({ phase: 'reading', resolvedUrl: BD.url, sha: BD.lastSync.sha })).map((l) => [l.state, l.value]),
-    [['done', 'github.com/BD-AI-SDLC/worca-marketplace'], ['done', '16b6363'], ['current', ''], ['pending', '']]);
+  assert.deepEqual(phaseLines(job({ phase: 'reading', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha })).map((l) => [l.state, l.value]),
+    [['done', 'github.com/example/worca-marketplace'], ['done', '16b6363'], ['current', ''], ['pending', '']]);
   assert.deepEqual(phaseLines(job({ phase: 'saved' })).map((l) => l.state), ['done', 'done', 'done', 'done']);
 });
 
@@ -68,16 +68,16 @@ test('idle: lg dialog, title, own Close, field, placeholder; Add waits for a val
   assert.deepEqual([input.placeholder, input.value, input.readOnly, doc.activeElement === input], ['owner/repo, GitHub URL or folder', '', false, true]);
   assert.deepEqual(foot(), [['Cancel', false], ['Add', true]]);
   type('   '); assert.deepEqual(foot(), [['Cancel', false], ['Add', true]]);
-  type('BD-AI-SDLC/worca-marketplace'); assert.deepEqual(foot(), [['Cancel', false], ['Add', false]]);
+  type('example/worca-marketplace'); assert.deepEqual(foot(), [['Cancel', false], ['Add', false]]);
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await settle();
-  assert.deepEqual(h.calls[0], ['POST', '/api/marketplaces', { url: 'BD-AI-SDLC/worca-marketplace', progress: true }]);
+  assert.deepEqual(h.calls[0], ['POST', '/api/marketplaces', { url: 'example/worca-marketplace', progress: true }]);
   q('button.mk-dlg-close').click();
   assert.deepEqual([h.dlg.isOpen(), D()], [false, null], 'close removes the dialog (SM21)');
 });
 
 test('adding: real progress lines from the job (U3, board 2.1); done → the result lists the plugins (board 2.2)', async () => {
   const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() }, plugins: [row('discretestack-models')] });
-  h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); await submit();
+  h.dlg.open(); type('example/worca-marketplace'); await submit();
   assert.deepEqual([D().dataset.state, D().getAttribute('aria-busy'), doc.getElementById('mk-add-url').readOnly], ['adding', null, true]);
   assert.deepEqual(foot(), [['Cancel', false], ['Adding…', true]]);
   assert.equal(q('.mk-add-primary').getAttribute('aria-busy'), 'true');
@@ -86,19 +86,19 @@ test('adding: real progress lines from the job (U3, board 2.1); done → the res
   assert.deepEqual([ol.getAttribute('aria-label'), ol.getAttribute('aria-live')], ['Progress', 'polite']);
   assert.deepEqual([h.polls.length, h.polls[0].ms, ADD_POLL_MS], [1, 2000, 2000]);
   h.dlg.onJob(job({ id: 'mkt_ffffffff', phase: 'checking' }));                 // another dialog's job
-  assert.equal(q('li[aria-current="step"]').textContent, 'Found BD-AI-SDLC/worca-marketplace');
-  h.dlg.onJob(job({ phase: 'reading', resolvedUrl: BD.url, sha: BD.lastSync.sha }));
+  assert.equal(q('li[aria-current="step"]').textContent, 'Found example/worca-marketplace');
+  h.dlg.onJob(job({ phase: 'reading', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha }));
   assert.deepEqual(qa('ol.mk-progress > li').map((l) => [l.dataset.state, l.textContent]), [
-    ['done', 'Found github.com/BD-AI-SDLC/worca-marketplace'], ['done', 'Fetched 16b6363'],
+    ['done', 'Found github.com/example/worca-marketplace'], ['done', 'Fetched 16b6363'],
     ['current', 'Reading plugins…'], ['pending', 'Checking what each plugin asks for']]);
   assert.equal(q('li[aria-current="step"]').textContent, 'Reading plugins…');
-  h.dlg.onJob(job({ state: 'done', phase: 'saved', resolvedUrl: BD.url, sha: BD.lastSync.sha, marketplace: ADDED })); await settle();
+  h.dlg.onJob(job({ state: 'done', phase: 'saved', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha, marketplace: ADDED })); await settle();
   assert.deepEqual([h.loads(), h.polls.length, D().dataset.state, D().hasAttribute('aria-busy')], [1, 0, 'result', false]);
-  assert.equal(q('#mk-add-title').textContent, 'Added BD-AI-SDLC/worca-marketplace');
+  assert.equal(q('#mk-add-title').textContent, 'Added example/worca-marketplace');
   assert.ok(q('.mk-dialog-head > .mk-mt.mk-t-ok'), 'the success tile');
   assert.deepEqual([...q('.mk-add-meta').children].map((c) => c.textContent).filter(Boolean),
-    ['github.com/BD-AI-SDLC/worca-marketplace', '@ 16b6363', '·', '3 plugins']);
-  assert.equal(q('.mk-add-meta > .mk-add-path').textContent, 'github.com/BD-AI-SDLC/worca-marketplace', 'only the URL wraps');
+    ['github.com/example/worca-marketplace', '@ 16b6363', '·', '3 plugins']);
+  assert.equal(q('.mk-add-meta > .mk-add-path').textContent, 'github.com/example/worca-marketplace', 'only the URL wraps');
   assert.equal(q('ul.mk-list.mk-plist').getAttribute('aria-label'), 'Plugins in this marketplace');
   const bits = (li) => [li.querySelector('.mk-prow-name').textContent, li.querySelector('.mk-prow-ver').textContent,
     ...[...li.querySelectorAll('.mk-prow-main .badge')].map((b) => b.textContent)];
@@ -126,11 +126,11 @@ test('result: Install closes first and opens the plugin sheet; Browse these n fi
     { name: 'Install', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() } }); await toResult(h);
       q('button[aria-label="Install jira-source"]').click();
-      assert.deepEqual([h.dlg.isOpen(), h.acts[0][0], h.acts[0][1].key, h.acts[0][1].name], [false, 'openPlugin', `${BD.id}/jira-source`, 'jira-source']);
+      assert.deepEqual([h.dlg.isOpen(), h.acts[0][0], h.acts[0][1].key, h.acts[0][1].name], [false, 'openPlugin', `${EXAMPLE.id}/jira-source`, 'jira-source']);
     } },
     { name: 'Install acts on the page\'s own item when a read landed meanwhile (installed elsewhere: the sheet opens Manage) (cycle 6)', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() } }); await toResult(h);
-      const fresh = { key: `${BD.id}/jira-source`, name: 'jira-source', installed: true };
+      const fresh = { key: `${EXAMPLE.id}/jira-source`, name: 'jira-source', installed: true };
       h.page.state.catalog = [{ key: `${OFFICIAL.id}/jira-source`, name: 'jira-source' }, fresh];
       q('button[aria-label="Install jira-source"]').click();
       assert.deepEqual([h.dlg.isOpen(), h.acts[0][0]], [false, 'openPlugin']);
@@ -139,7 +139,7 @@ test('result: Install closes first and opens the plugin sheet; Browse these n fi
     { name: 'Browse these n', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() } }); await toResult(h);
       q('.mk-add-primary').click();
-      assert.deepEqual([h.dlg.isOpen(), h.acts], [false, [['browse', { from: BD.id }]]]);
+      assert.deepEqual([h.dlg.isOpen(), h.acts], [false, [['browse', { from: EXAMPLE.id }]]]);
     } },
     { name: 'Add another', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() } }); await toResult(h);
@@ -182,11 +182,11 @@ test('errors stay in the dialog: Already added, Can’t reach, Needs git, 400, a
       h.dlg.onJob(job({ state: 'error', code: 'EXISTS', error: EXISTS.error, existing: EXISTS.existing })); await settle(); sameAsExists(h);
     } },
     { name: 'EXISTS for a marketplace this page never read: Open it reads the page again (cycle 5)', run: async () => {
-      const h = harness({ answers: { 'POST /api/marketplaces': R(409, { error: `marketplace already added: ${BD.url}`, code: 'EXISTS', existing: { id: BD.id, name: BD.name } }) } });
-      h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); await submit();
-      assert.deepEqual([q('.mk-add-msg .mk-wash-text').textContent, q('.mk-add-msg .mk-chip-built')], [`Already added as ${BD.name}`, null]);
+      const h = harness({ answers: { 'POST /api/marketplaces': R(409, { error: `marketplace already added: ${EXAMPLE.url}`, code: 'EXISTS', existing: { id: EXAMPLE.id, name: EXAMPLE.name } }) } });
+      h.dlg.open(); type('example/worca-marketplace'); await submit();
+      assert.deepEqual([q('.mk-add-msg .mk-wash-text').textContent, q('.mk-add-msg .mk-chip-built')], [`Already added as ${EXAMPLE.name}`, null]);
       q('.mk-add-primary').click(); await settle();
-      assert.deepEqual([h.focused, h.dlg.isOpen(), h.loads()], [[BD.id], false, 1]);
+      assert.deepEqual([h.focused, h.dlg.isOpen(), h.loads()], [[EXAMPLE.id], false, 1]);
     } },
     { name: 'UNREACHABLE: red wash, field refocused, Try again re-adds', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED({ url: 'acme/worca-plugins' }) } });
@@ -281,9 +281,9 @@ test('Cancel closes while the add runs (L6); the poll is the fallback for a quie
       let n = 0;
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED(),
         [`GET /api/marketplaces/jobs/${JOB}`]: () => R(200, { job: (n += 1) === 1
-          ? job({ phase: 'checking', resolvedUrl: BD.url, sha: BD.lastSync.sha })
-          : job({ state: 'done', phase: 'saved', resolvedUrl: BD.url, sha: BD.lastSync.sha, marketplace: ADDED }) }) } });
-      h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); await submit();
+          ? job({ phase: 'checking', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha })
+          : job({ state: 'done', phase: 'saved', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha, marketplace: ADDED }) }) } });
+      h.dlg.open(); type('example/worca-marketplace'); await submit();
       const poll = h.polls[0].fn;
       await poll(); await settle();
       assert.equal(q('li[aria-current="step"]').textContent, 'Checking what each plugin asks for');
@@ -471,11 +471,11 @@ test('frames that land before the 202 are kept: the dialog starts from the furth
     { name: 'a fetching frame that beat the 202 is current at once, with its sha', run: async () => {
       const post = late(ACCEPTED());
       const h = harness({ answers: { 'POST /api/marketplaces': post.fn } });
-      h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); q('.mk-add-primary').click(); await settle();
+      h.dlg.open(); type('example/worca-marketplace'); q('.mk-add-primary').click(); await settle();
       h.dlg.onJob(job({ id: 'mkt_ffffffff', phase: 'checking' }));                 // another tab's job: never shown
-      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: BD.url, sha: BD.lastSync.sha }));
+      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha }));
       h.dlg.onJob(job({ phase: 'resolving' }));                                      // an older frame never steps back
-      assert.equal(q('li[aria-current="step"]').textContent, 'Found BD-AI-SDLC/worca-marketplace', 'nothing paints before the answer');
+      assert.equal(q('li[aria-current="step"]').textContent, 'Found example/worca-marketplace', 'nothing paints before the answer');
       post.release(); await settle();
       assert.deepEqual([q('li[aria-current="step"]').textContent, h.polls.length], ['Fetched 16b6363', 1]);
       h.dlg.close();
@@ -483,33 +483,33 @@ test('frames that land before the 202 are kept: the dialog starts from the furth
     { name: 'a job that ended before its 202 ends the dialog at once: no poll, one load', run: async () => {
       const post = late(ACCEPTED());
       const h = harness({ answers: { 'POST /api/marketplaces': post.fn } });
-      h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); q('.mk-add-primary').click(); await settle();
-      h.dlg.onJob(job({ phase: 'saved', resolvedUrl: BD.url, sha: BD.lastSync.sha }));   // core's last phase, still running
-      h.dlg.onJob(job({ state: 'done', phase: 'saved', resolvedUrl: BD.url, sha: BD.lastSync.sha, marketplace: ADDED }));
+      h.dlg.open(); type('example/worca-marketplace'); q('.mk-add-primary').click(); await settle();
+      h.dlg.onJob(job({ phase: 'saved', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha }));   // core's last phase, still running
+      h.dlg.onJob(job({ state: 'done', phase: 'saved', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha, marketplace: ADDED }));
       post.release(); await settle();
       assert.deepEqual([D().dataset.state, h.polls.length, h.loads()], ['result', 0, 1]);
       h.dlg.close();
     } },
     { name: 'a joined job: the 202 snapshot is further on than an early frame, so it wins', run: async () => {
-      const post = late(ACCEPTED({ phase: 'reading', resolvedUrl: BD.url, sha: BD.lastSync.sha }));
+      const post = late(ACCEPTED({ phase: 'reading', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha }));
       const h = harness({ answers: { 'POST /api/marketplaces': post.fn } });
-      h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); q('.mk-add-primary').click(); await settle();
-      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: BD.url }));
+      h.dlg.open(); type('example/worca-marketplace'); q('.mk-add-primary').click(); await settle();
+      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: EXAMPLE.url }));
       post.release(); await settle();
       assert.equal(q('li[aria-current="step"]').textContent, 'Reading plugins…');
       h.dlg.close();
     } },
     { name: 'a poll answer that lost the race with the socket never moves the lines back; a later phase still lands', run: async () => {
-      let polled = job({ phase: 'fetching', resolvedUrl: BD.url, sha: BD.lastSync.sha });
+      let polled = job({ phase: 'fetching', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha });
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED(), [`GET /api/marketplaces/jobs/${JOB}`]: () => R(200, { job: polled }) } });
-      h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); await submit();
-      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: BD.url }));
-      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: BD.url, sha: BD.lastSync.sha }));   // the same phase, with more: painted
+      h.dlg.open(); type('example/worca-marketplace'); await submit();
+      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: EXAMPLE.url }));
+      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha }));   // the same phase, with more: painted
       assert.equal(q('li[aria-current="step"]').textContent, 'Fetched 16b6363');
-      h.dlg.onJob(job({ phase: 'checking', resolvedUrl: BD.url, sha: BD.lastSync.sha, done: 1, total: 3 }));
+      h.dlg.onJob(job({ phase: 'checking', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha, done: 1, total: 3 }));
       await h.polls[0].fn(); await settle();
       assert.equal(q('li[aria-current="step"]').textContent, 'Checking what each plugin asks for');
-      polled = job({ state: 'done', phase: 'saved', resolvedUrl: BD.url, sha: BD.lastSync.sha, marketplace: ADDED });
+      polled = job({ state: 'done', phase: 'saved', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha, marketplace: ADDED });
       await h.polls[0].fn(); await settle();
       assert.equal(D().dataset.state, 'result');
       h.dlg.close();
@@ -574,7 +574,7 @@ test('a job ends once, late reloads, the fields and marks each view leaves, and 
       lk.dlg.close();
       const mk = harness({ answers: { 'POST /api/marketplaces': R(200, { ok: true, marketplace: ADDED }) } });
       mk.page.load = async () => { await tick(); mk.page.state.plugins = [row('jira-source')]; };
-      mk.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); await submit();
+      mk.dlg.open(); type('example/worca-marketplace'); await submit();
       const jira = qa('li.mk-prow').find((li) => li.dataset.name === 'jira-source');
       assert.deepEqual([jira.querySelector(':scope > .mk-chip-ok')?.textContent, jira.querySelector('button')], ['Installed', null]);
       mk.dlg.close();
@@ -610,11 +610,11 @@ test('a job ends once, late reloads, the fields and marks each view leaves, and 
     { name: 'progress marks: a check per done line, a spinner on the current one, a dot per pending one; a running "saved" frame marks all four done', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() } });
       h.dlg.open(); type('acme/m'); await submit();
-      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: BD.url }));
+      h.dlg.onJob(job({ phase: 'fetching', resolvedUrl: EXAMPLE.url }));
       const marks = () => qa('ol.mk-progress > li').map((li) => [li.dataset.state, li.firstElementChild.className]);
       assert.deepEqual(marks(), [['done', 'ic'], ['current', 'mk-phase-spin'], ['pending', 'mk-phase-dot'], ['pending', 'mk-phase-dot']]);
-      h.dlg.onJob(job({ phase: 'checking', resolvedUrl: BD.url }));
-      h.dlg.onJob(job({ phase: 'saved', resolvedUrl: BD.url }));
+      h.dlg.onJob(job({ phase: 'checking', resolvedUrl: EXAMPLE.url }));
+      h.dlg.onJob(job({ phase: 'saved', resolvedUrl: EXAMPLE.url }));
       assert.deepEqual([marks().map((m) => m[0]), q('li[aria-current="step"]')], [['done', 'done', 'done', 'done'], null]);
       h.dlg.close();
     } },
@@ -649,9 +649,9 @@ test('a job ends once, late reloads, the fields and marks each view leaves, and 
       assert.equal(v.polls.length, 0, 'the vanished job stops its poll');
       v.dlg.close();
       const loads = [];
-      const x = harness({ answers: { 'POST /api/marketplaces': R(409, { error: 'marketplace already added', code: 'EXISTS', existing: { id: BD.id, name: BD.name } }) } });
+      const x = harness({ answers: { 'POST /api/marketplaces': R(409, { error: 'marketplace already added', code: 'EXISTS', existing: { id: EXAMPLE.id, name: EXAMPLE.name } }) } });
       x.page.load = async (o) => { loads.push(o); };
-      x.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); await submit();
+      x.dlg.open(); type('example/worca-marketplace'); await submit();
       q('.mk-add-primary').click(); await settle();
       assert.deepEqual(loads, [{ background: true }]);
     } },
@@ -686,14 +686,14 @@ test('P7 CSS: progress lines stay readable and whole; long titles wrap; the card
 
 test('frames that change no line leave the progress list in place; Try again paints its own lines (fix cycle 1, m1)', async () => {
   const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() } });
-  h.dlg.open(); type('BD-AI-SDLC/worca-marketplace'); await submit();
-  const checking = (done) => job({ phase: 'checking', resolvedUrl: BD.url, sha: BD.lastSync.sha, done, total: 3, plugin: `p${done}` });
+  h.dlg.open(); type('example/worca-marketplace'); await submit();
+  const checking = (done) => job({ phase: 'checking', resolvedUrl: EXAMPLE.url, sha: EXAMPLE.lastSync.sha, done, total: 3, plugin: `p${done}` });
   h.dlg.onJob(checking(1));
   const before = qa('ol.mk-progress > li');
   h.dlg.onJob(checking(2));
   h.dlg.onJob(checking(2));   // the poll's copy of the socket frame
   assert.deepEqual(qa('ol.mk-progress > li').map((li, i) => li === before[i]), [true, true, true, true], 'the same li nodes');
-  h.dlg.onJob(job({ state: 'error', code: 'SYNC_FAILED', error: 'boom', resolvedUrl: BD.url })); await settle();
+  h.dlg.onJob(job({ state: 'error', code: 'SYNC_FAILED', error: 'boom', resolvedUrl: EXAMPLE.url })); await settle();
   q('.mk-add-primary').click(); await settle();   // Try again
   assert.equal(D().dataset.state, 'adding');
   assert.deepEqual(qa('ol.mk-progress > li').map((l) => l.dataset.state), ['current', 'pending', 'pending', 'pending'], 'a new attempt paints its own lines');

@@ -40,7 +40,7 @@ test('All installed: alphabetical calm rows — tile, name button, version, chip
   const el = renderAllInstalled(doc, [
     row('github-source', { version: '0.2.0', contributions: { ...ZERO, taskSources: 1 } }),
     row('atlassian-mcp', { contributions: { ...ZERO, mcpServers: 1 }, latest: L('0.1.1') }),
-    row('discretestack-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 }, marketplaceName: 'BD-AI-SDLC/worca-marketplace',
+    row('discretestack-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 }, marketplaceName: 'example/worca-marketplace',
       notes: [NOTE(0, 'discretestack-stable'), NOTE(1, 'discretestack-stable-fast')] }),
     row('jira-source', { version: null, pinnedSha: 'deadbeef99', enabled: false, broken: true, contributions: {} }),
     row('local-dev', { version: 'dev', pinnedSha: null, linked: true, marketplace: null, marketplaceName: null, contributions: { agents: ['a'], workflows: ['w'] } }),
@@ -66,7 +66,7 @@ test('All installed: alphabetical calm rows — tile, name button, version, chip
     ['atlassian-mcp', 'More actions for atlassian-mcp', 'menu', 'false']);
   assert.deepEqual([a.querySelector('button.mk-name').dataset.focusKey, sw.dataset.focusKey, more.dataset.focusKey],
     ['name:atlassian-mcp', 'enable:atlassian-mcp', 'more:atlassian-mcp'], 'P3 refocuses the same key after a re-render');
-  assert.equal(d.querySelector('.mk-meta').textContent, '2 models · BD-AI-SDLC/worca-marketplace');
+  assert.equal(d.querySelector('.mk-meta').textContent, '2 models · example/worca-marketplace');
   assert.equal(d.querySelector('.mk-meta a'), null);
   const notes = d.querySelector('.badge.mk-chip-n.mk-notes-chip');
   assert.deepEqual([notes.textContent, notes.title], ['2 manifest notes',

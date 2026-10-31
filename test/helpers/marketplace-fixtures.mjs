@@ -12,7 +12,7 @@ export const OFF = { id: 'off', name: 'Worca CC Official', url: 'https://github.
     { name: 'release-notes', subdir: 'plugins/release-notes', description: 'Release notes workflow with its agents and skill', version: '0.1.0', notes: [],
       inventory: { agents: [{ key: 'release-drafter' }, { key: 'changelog-checker' }], skills: ['release-style'], workflows: ['Release notes'] } },
   ] };
-export const BD = { id: 'bd', name: 'BD-AI-SDLC/worca-marketplace', url: 'https://github.com/BD-AI-SDLC/worca-marketplace',
+export const EXAMPLE = { id: 'example', name: 'example/worca-marketplace', url: 'https://github.com/example/worca-marketplace',
   lastSync: { sha: `16b6363${'b'.repeat(33)}`, at: '2026-09-03T12:00:00.000Z' },
   lastError: { message: 'HTTP 403', code: 'UNREACHABLE', at: '2026-10-20T09:57:00.000Z' }, warnings: [],
   plugins: [{ name: 'bmf-models', subdir: 'bmf-models', description: 'BMF Models', version: null, notes: [],
@@ -24,8 +24,8 @@ export const ROWS = [{ name: 'github-source', version: '0.2.0', marketplace: 'of
 /** deps for createMarketplacePage / mountMarketplace: api answers by "METHOD url" (a function returns the whole result). */
 export function fakeDeps(routes = {}) {
   const calls = []; const msgs = []; const navs = []; const seen = [];
-  const answers = { 'GET /api/plugins': { plugins: ROWS, orphans: [] }, 'GET /api/marketplaces': { marketplaces: [OFF, BD] },
-    'GET /api/chat/status': { channels: [] }, 'POST /api/marketplaces/refresh': { ok: true, marketplaces: [OFF, BD] } };
+  const answers = { 'GET /api/plugins': { plugins: ROWS, orphans: [] }, 'GET /api/marketplaces': { marketplaces: [OFF, EXAMPLE] },
+    'GET /api/chat/status': { channels: [] }, 'POST /api/marketplaces/refresh': { ok: true, marketplaces: [OFF, EXAMPLE] } };
   const api = async (method, url, body) => {
     calls.push(`${method} ${url}`);
     const r = routes[`${method} ${url}`];

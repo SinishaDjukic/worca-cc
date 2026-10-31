@@ -408,7 +408,7 @@ test('a marketplace with a ref discovers that branch, not HEAD; a missing branch
 
 test('marketplaceDisplayName: owner/repo on GitHub, the last two path segments of another URL (its host when it has none), else the folder name — never a credential; / and \\ both separate (G6)', async () => {
   await checkRows([
-    ['https://github.com/BD-AI-SDLC/worca-marketplace', 'BD-AI-SDLC/worca-marketplace'],
+    ['https://github.com/example/worca-marketplace', 'example/worca-marketplace'],
     ['git@github.com:acme/plugins', 'acme/plugins'],
     ['https://u:tok@gitlab.com/group/sub/market', 'sub/market'],
     ['ssh://git@git.acme.dev:2222/team/market', 'team/market'],
@@ -503,7 +503,7 @@ test('syncErrorOf: a failed sync as { message, code, at } — an HTTP status, ne
   const gitErr = (stderr) => Object.assign(new Error('Command failed: git clone'), { code: 128, stderr });
   const want = (message, code) => ({ message, code, at: AT });
   await checkRows([
-    { name: 'git HTTP 403 -> "HTTP 403"', run: () => assert.deepEqual(syncErrorOf(gitErr("Cloning into bare repository 'x'...\nfatal: unable to access 'https://github.com/BD-AI-SDLC/worca-marketplace/': The requested URL returned error: 403\n"), AT), want('HTTP 403', 'UNREACHABLE')) },
+    { name: 'git HTTP 403 -> "HTTP 403"', run: () => assert.deepEqual(syncErrorOf(gitErr("Cloning into bare repository 'x'...\nfatal: unable to access 'https://github.com/example/worca-marketplace/': The requested URL returned error: 403\n"), AT), want('HTTP 403', 'UNREACHABLE')) },
     { name: 'a lone user name in a URL git prints is masked', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: could not read Password for 'http://tok-secret-123@127.0.0.1:5': terminal prompts disabled\n"), AT), want("could not read Password for 'http://***@127.0.0.1:5': terminal prompts disabled", 'UNREACHABLE')) },
     { name: 'a raw @ in a password keeps no tail', run: () => assert.deepEqual(syncErrorOf(gitErr("fatal: repository 'https://u:p@ss@git.acme.dev/a/b/' not found\n"), AT), want("repository 'https://***@git.acme.dev/a/b/' not found", 'UNREACHABLE')) },
     { name: 'a timeout: no command line, no cache folder', run: () => assert.deepEqual(syncErrorOf(Object.assign(new Error(`Command failed: git clone --quiet --bare https://u:tok@git.acme.dev/a/b ${join(pluginsRoot(), '.cache', 'u-tok-git.acme.dev-a-b-1234abcd.git')}`), { killed: true, signal: 'SIGKILL', code: null, stderr: '' }), AT), want('timed out', 'UNREACHABLE')) },
