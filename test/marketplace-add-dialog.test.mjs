@@ -104,12 +104,12 @@ test('adding: real progress lines from the job (U3, board 2.1); done → the res
     ...[...li.querySelectorAll('.mk-prow-main .badge')].map((b) => b.textContent)];
   const adds = (i) => addsSummary(kindCounts(ADDED.plugins[i].inventory));
   assert.deepEqual(qa('li.mk-prow').map(bits), [
-    ['bmf-models', '0.2.0', adds(0)],
+    ['base-models', '0.2.0', adds(0)],
     ['example-models', '0.4.0', adds(1), '1 note'],
     ['jira-source', '1.0.0', adds(2), secretsSummary(['pat'])]]);
   assert.equal(qa('li.mk-prow .mk-prow-ver.mk-mono').length, 0, 'versions are sans (SM30)');
   assert.deepEqual(qa('li.mk-prow > button').map((b) => [b.textContent, b.getAttribute('aria-label')]),
-    [['Install', 'Install bmf-models'], ['Install', 'Install jira-source']]);
+    [['Install', 'Install base-models'], ['Install', 'Install jira-source']]);
   assert.equal(qa('li.mk-prow')[1].querySelector(':scope > .mk-chip-ok').textContent, 'Installed');
   const disc = q('button.mk-disc');
   const notes = doc.getElementById(disc.getAttribute('aria-controls'));

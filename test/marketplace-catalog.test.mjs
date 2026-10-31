@@ -6,12 +6,12 @@ import { OFF, EXAMPLE, ROWS } from './helpers/marketplace-fixtures.mjs';
 
 test('buildCatalog: one item per snapshot plugin in marketplace order; versions, install and update state, secrets, source', () => {
   const items = buildCatalog([OFF, EXAMPLE], ROWS);
-  assert.deepEqual(items.map((i) => i.key), ['off/github-source', 'off/slack-chat', 'off/release-notes', 'example/bmf-models']);
-  const [gh, slack, rn, bmf] = items;
+  assert.deepEqual(items.map((i) => i.key), ['off/github-source', 'off/slack-chat', 'off/release-notes', 'example/base-models']);
+  const [gh, slack, rn, base] = items;
   assert.deepEqual([gh.version, gh.installed, gh.update, gh.row, gh.iconKind, gh.secrets], ['0.2.0', true, { version: '0.3.0' }, ROWS[0], 'taskSources', ['token']]);
   assert.deepEqual([slack.version, slack.installed, slack.update, slack.row, slack.secrets], ['0.1.0', false, null, null, ['botToken', 'appToken']]);
   assert.deepEqual([rn.iconKind, rn.counts.agents, rn.counts.skills], ['mix', 2, 1]);
-  assert.deepEqual([bmf.version, bmf.marketplace], ['16b6363', { id: 'example', name: 'example/worca-marketplace', stale: true, snapshotAt: '2026-09-03T12:00:00.000Z' }]);
+  assert.deepEqual([base.version, base.marketplace], ['16b6363', { id: 'example', name: 'example/worca-marketplace', stale: true, snapshotAt: '2026-09-03T12:00:00.000Z' }]);
   assert.deepEqual(gh.source, { repoUrl: OFF.url, subdir: 'plugins/github-source', sha: OFF.lastSync.sha,
     webUrl: `https://github.com/SinishaDjukic/worca-cc/tree/${OFF.lastSync.sha}/plugins/github-source` });
   assert.equal(gh.entry, OFF.plugins[0]);
@@ -38,15 +38,15 @@ test('filterCatalog: search name and description, Adds includes mixed plugins, F
   assert.deepEqual(names({ q: '  SLACK ' }), ['slack-chat']);
   assert.deepEqual(names({ q: 'agents and skill' }), ['release-notes']);
   assert.deepEqual(names({ adds: 'skills' }), ['release-notes']);
-  assert.deepEqual(names({ from: 'example' }), ['bmf-models']);
-  assert.deepEqual(names({ hideInstalled: true }), ['slack-chat', 'release-notes', 'bmf-models']);
+  assert.deepEqual(names({ from: 'example' }), ['base-models']);
+  assert.deepEqual(names({ hideInstalled: true }), ['slack-chat', 'release-notes', 'base-models']);
   assert.deepEqual(names({ q: 'gitlab' }), []);
 });
 
 test('groupCatalog: kinds in KIND_ORDER, then Mixed, then Other; empty groups dropped; order kept inside a group', () => {
   const none = { ...OFF, id: 'z', plugins: [{ name: 'old-exporter', inventory: {} }] };
   assert.deepEqual(groupCatalog(buildCatalog([OFF, EXAMPLE, none], [])).map((g) => [g.key, g.title, g.items.map((i) => i.name)]), [
-    ['taskSources', 'Task sources', ['github-source']], ['chatChannels', 'Chat channels', ['slack-chat']], ['models', 'Models', ['bmf-models']],
+    ['taskSources', 'Task sources', ['github-source']], ['chatChannels', 'Chat channels', ['slack-chat']], ['models', 'Models', ['base-models']],
     ['mix', 'Mixed', ['release-notes']], ['none', 'Other', ['old-exporter']]]);
 });
 

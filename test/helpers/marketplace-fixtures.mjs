@@ -15,7 +15,7 @@ export const OFF = { id: 'off', name: 'Worca CC Official', url: 'https://github.
 export const EXAMPLE = { id: 'example', name: 'example/worca-marketplace', url: 'https://github.com/example/worca-marketplace',
   lastSync: { sha: `16b6363${'b'.repeat(33)}`, at: '2026-09-03T12:00:00.000Z' },
   lastError: { message: 'HTTP 403', code: 'UNREACHABLE', at: '2026-10-20T09:57:00.000Z' }, warnings: [],
-  plugins: [{ name: 'bmf-models', subdir: 'bmf-models', description: 'BMF Models', version: null, notes: [],
+  plugins: [{ name: 'base-models', subdir: 'base-models', description: 'Base Models', version: null, notes: [],
     inventory: { models: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, { id: 'e' }] } }] };
 export const ROWS = [{ name: 'github-source', version: '0.2.0', marketplace: 'off', enabled: true, linked: false,
   contributions: { taskSources: 1, chatChannels: 0, models: 0, mcpServers: 0, agents: 0, scripts: 0, skills: 0, workflows: 0 },

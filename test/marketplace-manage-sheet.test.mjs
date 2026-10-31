@@ -239,8 +239,8 @@ test('openManage with { section: "settings", seeds }: blank non-secret fields ta
 });
 
 test('model secrets: broker on and nothing saved → a chip and the key page link, no form; broker off → a normal group', async () => {
-  const MODELS = { schema: [{ key: 'BMF_KEY', type: 'text', label: 'BMF key', secret: true, required: false, default: null, help: null, options: [] }],
-    values: { BMF_KEY: { set: false } } };
+  const MODELS = { schema: [{ key: 'BASE_KEY', type: 'text', label: 'Base key', secret: true, required: false, default: null, help: null, options: [] }],
+    values: { BASE_KEY: { set: false } } };
   const m = mount({ routes: base({ 'GET /api/plugins/github-source/config': ok({ sources: [], channels: [], models: { ...MODELS, broker: { keyPage: 'https://keys.example.com/k' } } }) }) });
   await m.manage.open('github-source');
   const g = m.$('[data-group="models"]');
@@ -253,10 +253,10 @@ test('model secrets: broker on and nothing saved → a chip and the key page lin
   const m2 = mount({ routes: base({ 'GET /api/plugins/github-source/config': ok({ sources: [], channels: [], models: MODELS }),
     'PUT /api/plugins/github-source/config': ok({ ok: true }) }) });
   await m2.manage.open('github-source');
-  pick(m2, 'models', 'BMF_KEY', 'k-123');
+  pick(m2, 'models', 'BASE_KEY', 'k-123');
   m2.$('[data-act="save"]').click();
   await settle();
-  assert.deepEqual(puts(m2), [{ target: 'modelSecrets', values: { BMF_KEY: 'k-123' } }]);
+  assert.deepEqual(puts(m2), [{ target: 'modelSecrets', values: { BASE_KEY: 'k-123' } }]);
 });
 
 test('profiles: switching re-reads that profile, a changed form asks first, Add profile prompts, Remove profile… confirms', async () => {
@@ -391,8 +391,8 @@ test('a chat channel shows its live state — no Test connection — and the cha
 });
 
 test('model secrets: broker on with a value still saved → "Clear saved values" PUTs null for each saved key, then re-reads', async () => {
-  const KEYS = ['BMF_KEY', 'ALT_KEY'].map((key) => ({ key, type: 'text', label: key, secret: true, required: false, default: null, help: null, options: [] }));
-  const cfg = (set) => ({ sources: [], channels: [], models: { schema: KEYS, values: { BMF_KEY: { set }, ALT_KEY: { set: false } }, broker: { keyPage: null } } });
+  const KEYS = ['BASE_KEY', 'ALT_KEY'].map((key) => ({ key, type: 'text', label: key, secret: true, required: false, default: null, help: null, options: [] }));
+  const cfg = (set) => ({ sources: [], channels: [], models: { schema: KEYS, values: { BASE_KEY: { set }, ALT_KEY: { set: false } }, broker: { keyPage: null } } });
   let reads = 0;
   const m = mount({ routes: base({ 'GET /api/plugins/github-source/config': () => ok(cfg(++reads === 1)), 'PUT /api/plugins/github-source/config': ok({ ok: true }) }) });
   await m.manage.open('github-source');
@@ -403,7 +403,7 @@ test('model secrets: broker on with a value still saved → "Clear saved values"
   assert.deepEqual([clear.type, clear.textContent], ['button', 'Clear saved values']);
   clear.click();
   await settle();
-  assert.deepEqual(puts(m), [{ target: 'modelSecrets', values: { BMF_KEY: null } }], 'only the saved key, as null');
+  assert.deepEqual(puts(m), [{ target: 'modelSecrets', values: { BASE_KEY: null } }], 'only the saved key, as null');
   assert.equal(reads, 2, 'the group is re-read');
   assert.deepEqual([chipsOf(), m.$('.mk-clear-secrets')], [['Credential broker'], null]);
   assert.deepEqual([m.manage.isOpen(), m.notified], [true, []]);
@@ -797,8 +797,8 @@ test('while the Enabled switch\'s request is out the panel holds focus (a held s
 });
 
 test('Clear saved values holds focus inside the sheet (the button turns busy, then leaves); a refusal gives it back', async () => {
-  const KEY = { key: 'BMF_KEY', type: 'text', label: 'BMF key', secret: true, required: false, default: null, help: null, options: [] };
-  const cfg = (set) => ({ sources: [], channels: [], models: { schema: [KEY], values: { BMF_KEY: { set } }, broker: { keyPage: null } } });
+  const KEY = { key: 'BASE_KEY', type: 'text', label: 'Base key', secret: true, required: false, default: null, help: null, options: [] };
+  const cfg = (set) => ({ sources: [], channels: [], models: { schema: [KEY], values: { BASE_KEY: { set } }, broker: { keyPage: null } } });
   let reads = 0;
   const m = mount({ routes: base({ 'GET /api/plugins/github-source/config': () => ok(cfg(++reads === 1)), 'PUT /api/plugins/github-source/config': ok({ ok: true }) }) });
   await m.manage.open('github-source');

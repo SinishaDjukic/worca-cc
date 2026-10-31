@@ -26,14 +26,14 @@ test('What changes: access lines red first (a secret shows its key), then remove
   ]);
   const p = { ...MCP_PREVIEW,
     access: [{ kind: 'mcp', id: 'linear', red: false }, { kind: 'agent', id: 'reviewer', red: false },
-      { kind: 'channelSecret', id: 'slack.appToken', red: true }, { kind: 'modelSecret', id: 'BMF_KEY', red: true },
+      { kind: 'channelSecret', id: 'slack.appToken', red: true }, { kind: 'modelSecret', id: 'BASE_KEY', red: true },
       { kind: 'skill', id: 'grows', red: false }],
     manifestDelta: { ...EMPTY_DELTA, removedModels: ['old-fast'],
       mcpLines: [{ red: false, text: 'new MCP server: linear' }],
       skillLines: [{ red: true, text: 'SKILL CHANGED: grows — in Billing' }] } };
   assert.deepEqual(deltaLines(p), [
     { text: 'New secret: ', mono: 'appToken', red: true, glyph: 'key' },
-    { text: 'New secret: ', mono: 'BMF_KEY', red: true, glyph: 'key' },
+    { text: 'New secret: ', mono: 'BASE_KEY', red: true, glyph: 'key' },
     { text: 'New agent: ', mono: 'reviewer', red: false, glyph: 'agent' },
     { text: 'Removed model: ', mono: 'old-fast', red: false, glyph: 'cube' },
     { text: 'new MCP server: linear', mono: null, red: false, glyph: 'plug' },
@@ -84,8 +84,8 @@ test('footer: the canvas state, all ready, Include off, k>1 ready, nothing inclu
     { meta: '2 of 2 ready', only: null, primary: 'Update 2 plugins', enabled: true, finished: false });
   assert.deepEqual(footState([{ ...mcp, include: false }, src]),
     { meta: '0 of 1 ready', only: null, primary: 'Update github-source', enabled: false, finished: false });
-  const bmf = card({ ...MCP_ROW, name: 'bmf-models' }, MCP_PREVIEW);
-  assert.equal(footState([mcp, bmf, src]).only, 'Update 2 ready');
+  const base = card({ ...MCP_ROW, name: 'base-models' }, MCP_PREVIEW);
+  assert.equal(footState([mcp, base, src]).only, 'Update 2 ready');
   assert.deepEqual(footState([{ ...mcp, include: false }]),
     { meta: '', only: null, primary: 'Update', enabled: false, finished: false });
 });

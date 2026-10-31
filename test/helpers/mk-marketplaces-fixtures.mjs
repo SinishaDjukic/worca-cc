@@ -24,8 +24,8 @@ export const EXAMPLE = {
   lastError: { message: 'HTTP 403', code: 'UNREACHABLE', at: '2026-10-20T11:59:00Z' },
   warnings: ['last sync 2026-09-03; refresh failed: HTTP 403', NOTE0, SKIP],
   plugins: [
-    { name: 'bmf-models', subdir: 'plugins/bmf-models', version: '0.2.0', description: 'BMF Models',
-      inventory: inv({ models: [1, 2, 3, 4, 5].map((i) => ({ id: `bmf-${i}`, label: `BMF ${i}`, efforts: [], engine: 'claude', envKeys: [], baseUrl: null })) }),
+    { name: 'base-models', subdir: 'plugins/base-models', version: '0.2.0', description: 'Base Models',
+      inventory: inv({ models: [1, 2, 3, 4, 5].map((i) => ({ id: `base-${i}`, label: `Base ${i}`, efforts: [], engine: 'claude', envKeys: [], baseUrl: null })) }),
       installed: false, notes: [] },
     { name: 'example-models', subdir: 'plugins/example-models', version: '0.4.0', description: 'Example models',
       inventory: inv({ models: [{ id: 'example-stable' }, { id: 'example-stable-fast' }] }), installed: true, notes: [NOTE0] },
