@@ -21,11 +21,14 @@ export function copyIconsHtml(size = 14) {
 /**
  * A copy button. `name` is what it does ("Copy branch name"): its aria-label, and its title unless `title` is given.
  * `label` (optional) is the visible text, the copied value itself; without one the button is a square icon.
+ * `action: true` is the labelled-action exception (design-system.md › Copy button): a secondary button among other
+ * labelled actions that shows `name` after the glyph, and "Copied" in its place while the tick shows.
  */
-export function copyButton(doc, { name, label = null, title = name, cls = '' }) {
+export function copyButton(doc, { name, label = null, title = name, cls = '', action = false }) {
   const b = doc.createElement('button');
   b.type = 'button';
-  b.className = `btn btn-sm btn-quiet copy-btn ${label == null ? 'btn-icon' : 'mono'}${cls ? ` ${cls}` : ''}`;
+  const look = action ? 'btn btn-sm copy-btn copy-btn-action' : `btn btn-sm btn-quiet copy-btn ${label == null ? 'btn-icon' : 'mono'}`;
+  b.className = `${look}${cls ? ` ${cls}` : ''}`;
   b.title = title;
   b.setAttribute('aria-label', name);
   if (label != null) {
@@ -35,6 +38,12 @@ export function copyButton(doc, { name, label = null, title = name, cls = '' }) 
     b.append(t);
   }
   b.append(...copyIcons(doc));
+  if (action) {
+    const t = doc.createElement('span');
+    t.className = 'copy-btn-words';
+    t.textContent = name;
+    b.append(t);
+  }
   return b;
 }
 

@@ -113,8 +113,11 @@ glyphs). The branch name in the run head is the model.
 4. A failure the person must act on (the text is needed elsewhere: a command to run, a path, a sign-in code) also goes
    to the surface's status line, which outlasts the 1200 ms flash, and says what to do instead ("Type ABCD-1234 on
    GitHub instead", "select it and copy it by hand"). A failure with nothing to do (the Logs bar) needs only the flash.
-5. Not copy buttons: menu items ("Copy Markdown", "Copy PR link") and a dialog's labelled footer actions (the report
-   dialog's `Copy JSON`, the team policy's `Copy for PR`), which keep their words, in sentence case.
+5. Labelled actions. A copy that is one of a row of worded actions keeps its words: `copyButton(doc, { name,
+   action: true })` is a secondary `.btn-sm` reading glyph + name (Run Actions' `Copy command`, beside Check out,
+   VS Code, Terminal), and while the tick shows, `Copied` takes the words' place; the feedback and failure rules above
+   are unchanged. Not copy buttons at all: menu items ("Copy Markdown", "Copy PR link") and a dialog's footer actions
+   (the report dialog's `Copy JSON`, the team policy's `Copy for PR`), which keep their words, in sentence case.
 A copy-labelled `.btn` that is not a `.copy-btn`, or a `.copied` toggled outside `copy-button.mjs`, fails
 `test/ui-copy-button.test.mjs`.
 ### PR controls (checked)

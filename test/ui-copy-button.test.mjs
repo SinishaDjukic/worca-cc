@@ -107,6 +107,8 @@ const TYPED_COPY = [
   /\bbtn\(\s*doc\s*,\s*'([^']*)'\s*,\s*'copy\b[^']*'/gi,                // script-wizard's btn(doc, 'cls', 'Copy')
   /\.textContent\s*=\s*'(?:copy|copied)'/gi,                            // a label flashed to "Copied" and back
   /classList\.(?:toggle|add)\(\s*'copied'/g,                              // a hand-rolled tick outside copy-button.mjs
+  /\bbtn\(\s*doc\s*,\s*'copy\b[^']*'/gi,                                  // a view's btn(doc, 'Copy…', …) (label first)
+  /setAttribute\(\s*'aria-label'\s*,\s*'copy\b[^']*'/gi,                    // a hand-built icon copy (Run Actions had one)
 ];
 
 test('every Copy-labelled button is the one copy button', () => {

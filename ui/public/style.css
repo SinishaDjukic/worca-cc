@@ -847,6 +847,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .copy-btn.copied .copy-btn-msg{display:inline;color:var(--green-ink);}
 .copy-btn.copy-miss .copy-btn-msg{display:inline;color:var(--red-ink-strong);}
 .copy-btn.btn-icon:is(.copied,.copy-miss){width:auto;padding:0 8px;}
+.copy-btn-action:is(.copied,.copy-miss) .copy-btn-words{display:none;}   /* a labelled action: "Copied" takes its words' place */
 /* An icon from ui/public/icons.mjs (icon()): the span is sized inline, its svg fills it. */
 .ic{display:inline-flex;flex:none;align-items:center;justify-content:center;}
 .ic svg{display:block;}
@@ -6701,6 +6702,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-tk-flag{color:var(--ink-2);}
 .ask-cmd-tk-str{color:var(--hd-syntax-string);}
 .ask-cmd-cmd > .ask-cmd-copy{position:absolute;top:5px;right:5px;}
+/* It floats over the command: while the caption widens it, the box's own fill keeps the words under it from showing through. */
+.ask-cmd-cmd > .ask-cmd-copy:is(.copied,.copy-miss){background-color:var(--field);}
 .ask-cmd-ctx{display:flex;align-items:center;gap:8px;min-width:0;}
 .ask-cmd-dir{min-width:0;padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);
   font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -8437,7 +8440,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .info-bubble code{font-family:var(--mono);font-size:.92em}
 @media (max-width:560px){.act-launcher-row{flex-wrap:wrap}.act-launcher-row .input{flex-basis:100%}.act-choose-wrap{flex:1 1 auto}}
 .act-meta .badge.act-linked{background:var(--blue-bg);color:var(--blue-ink-strong);margin-left:4px}   /* a linked folder: the person's own */
-.act-copy{display:inline-grid;place-items:center;flex:none;}
+.act-copy{flex:none;}   /* layout only: the copy button's own inline-flex lays out the tick and its Copied caption */
 .act-copy:focus-visible{outline:2px solid var(--blue-ink-strong);outline-offset:1px}
 .act-log{max-height:280px;overflow:auto;background:var(--field);border:1px solid var(--line);border-radius:var(--r-ctrl);padding:8px 10px;font:12px/1.5 var(--mono);color:var(--ink)}
 .act-log .err{color:var(--red-ink)}
