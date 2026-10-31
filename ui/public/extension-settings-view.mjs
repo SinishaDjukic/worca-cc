@@ -1,6 +1,9 @@
 // ui/public/extension-settings-view.mjs — Settings → General → "Browser extension" (docs/browser-extension.md).
 // A detached element: no fetch, no listeners — app.js owns I/O and the Revoke clicks ([data-revoke]).
+import { copyButton } from './copy-button.mjs';
+
 const BROWSERS = Object.freeze({ chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox' });
+
 export const browserLabel = (b) => BROWSERS[b] || 'Browser';
 export function formatPairCode(code) {
   const s = String(code ?? '');
@@ -82,8 +85,7 @@ export function renderExtensionInstall(data, { doc = document, browser = 'chrome
     } else {
       const row = make('div', 'xi-path-row');
       row.append(make('code', 'xi-path', b.path));
-      const copy = make('button', 'btn xi-copy', 'Copy path');
-      copy.type = 'button';
+      const copy = copyButton(doc, { name: 'Copy path', cls: 'xi-copy' });
       copy.dataset.copyPath = b.path;
       row.append(copy);
       panel.append(row);

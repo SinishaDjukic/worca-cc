@@ -132,6 +132,21 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
     return { promptText: typeof src.promptText === 'string' ? src.promptText : '', promptFile: null, sourceMeta: null };
   }
 
+  // A Git event automation (#711): the issue or PR that triggered the run. The server built the task text from the
+  // event (quoted, framed as untrusted); the URL on the row is what write-back and the PR's `Closes #N` read.
+  // An Azure DevOps one (`azure`) is a work item or PR; its taskId is "org/project#id", the Boards source's form, so
+  // the run's draft PR links the work item (pr/azure.mjs workItemIdFromSourceRef).
+  if (type === 'github' || type === 'azure') {
+    const az = type === 'azure' ? /^dev\.azure\.com\/([^/]+)\/([^/]+)\//i.exec(String(src.repo || '')) : null;
+    const taskId = src.number == null ? null : az ? `${az[1]}/${az[2]}#${src.number}` : `${src.repo}#${src.number}`;
+    return {
+      promptText: typeof src.prompt === 'string' ? src.prompt : '',
+      promptFile: null,
+      sourceMeta: { forge: type, kind: src.kind === 'pr' ? 'pr' : 'issue', repo: src.repo || null, number: src.number ?? null,
+        taskId, url: src.url || null, title: src.title || null },
+    };
+  }
+
   if (type === 'plugin') {
     const task = await callSource({
       plugin: src.plugin, sourceId: src.sourceId, op: 'getTask',

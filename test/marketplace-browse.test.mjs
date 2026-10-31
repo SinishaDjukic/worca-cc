@@ -3,7 +3,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { OFF, BD, ROWS, pageHarness } from './helpers/marketplace-fixtures.mjs';
+import { OFF, EXAMPLE, ROWS, pageHarness } from './helpers/marketplace-fixtures.mjs';
 import { browseTab, browseAction, renderTile, renderNoMarketplaces } from '../ui/public/marketplace/browse.mjs';
 import { buildCatalog, shortDate } from '../ui/public/marketplace/catalog.mjs';
 
@@ -24,21 +24,21 @@ async function browse(routes = {}) {
 test('a tile is a button: kind tile, name, version · marketplace, description, chips, one of Install / Installed / Update x', () => {
   const { doc } = pageHarness({ trackDom });
   const rows = [...ROWS, { name: 'slack-chat', version: '0.1.0', marketplace: 'off', enabled: true, latest: null, contributions: { chatChannels: 1 } }];
-  const [gh, slack, rn, bmf] = buildCatalog([OFF, BD], rows).map((i) => renderTile(doc, i));
+  const [gh, slack, rn, base] = buildCatalog([OFF, EXAMPLE], rows).map((i) => renderTile(doc, i));
   assert.deepEqual([gh.tagName, gh.type, gh.className, gh.dataset.key], ['BUTTON', 'button', 'mk-tile', 'off/github-source']);
   assert.equal(gh.querySelector('.mk-tile-top > .mk-mt').className, 'mk-mt mk-mt-md mk-t-src');
   assert.deepEqual([gh.querySelector('.mk-tile-name').textContent, gh.querySelector('.mk-tile-meta').textContent, gh.querySelector('.mk-tile-desc').textContent],
     ['github-source', '0.2.0·Worca CC Official', 'Pull tasks from GitHub Issues, write results back']);
   assert.deepEqual([gh.querySelector('.mk-tile-meta > span.mk-ver').textContent, gh.querySelector('.mk-tile-meta .mono, .mk-tile-meta .mk-mono')],
     ['0.2.0', null], 'SM30 / SM57: the version in span.mk-ver, sans');
-  assert.deepEqual([gh.querySelector('.mk-ver').className, bmf.querySelector('.mk-ver').className], ['mk-ver', 'mk-ver mk-sha'],
+  assert.deepEqual([gh.querySelector('.mk-ver').className, base.querySelector('.mk-ver').className], ['mk-ver', 'mk-ver mk-sha'],
     'SM30: a sha standing in for a missing version is mono');
   const foot = (t) => [...t.querySelector('.mk-tile-foot').children].map((c) => [c.className, c.textContent]);
   assert.deepEqual(foot(gh), [['badge mk-chip mk-chip-n', 'Task source'], ['badge mk-chip mk-chip-n', 'Token'], ['badge mk-chip mk-chip-upd mk-tile-status', 'Update 0.3.0']]);
   assert.ok(gh.querySelector('.mk-tile-foot > .badge:nth-child(2) svg'), 'the key glyph on the secrets chip');
   assert.deepEqual(foot(slack).at(-1), ['badge mk-chip mk-chip-ok mk-tile-status', 'Installed']);
   assert.deepEqual(foot(rn), [['badge mk-chip mk-chip-n', '2 agents · 1 skill · 1 workflow'], ['btn btn-sm mk-tile-status', 'Install']]);
-  assert.deepEqual([bmf.querySelector('.mk-tile-meta').textContent, foot(bmf)], ['16b6363·BD-AI-SDLC/worca-marketplace', [['badge mk-chip mk-chip-n', '5 models'], ['btn btn-sm mk-tile-status', 'Install']]]);
+  assert.deepEqual([base.querySelector('.mk-tile-meta').textContent, foot(base)], ['16b6363·example/worca-marketplace', [['badge mk-chip mk-chip-n', '5 models'], ['btn btn-sm mk-tile-status', 'Install']]]);
   const [unsynced] = buildCatalog([{ id: 'n', name: 'n', plugins: [{ name: 'cc' }] }], []).map((i) => renderTile(doc, i));
   assert.equal(unsynced.querySelector('.mk-tile-status'), null, 'no snapshot sha: nothing to install yet');
   const [linked] = buildCatalog([OFF], [{ ...ROWS[0], linked: true }]).map((i) => renderTile(doc, i));
@@ -58,9 +58,9 @@ test('the rail: search, Adds (All + kinds that have plugins, with dots), From (s
     ['agents', 'mk-facet-dot mk-dot-agent', 'Agents', '1', 'false'], ['skills', 'mk-facet-dot mk-dot-skill', 'Skills', '1', 'false'],
     ['workflows', 'mk-facet-dot mk-dot-wf', 'Workflows', '1', 'false']]);
   const from = [...panel.querySelectorAll('button.mk-facet[data-from]')];
-  assert.deepEqual(from.map(row), [['off', null, 'Worca CC Official', '3', 'false'], ['bd', null, 'BD-AI-SDLC/worca-marketplace', '1', 'false']]);
+  assert.deepEqual(from.map(row), [['off', null, 'Worca CC Official', '3', 'false'], ['example', null, 'example/worca-marketplace', '1', 'false']]);
   assert.deepEqual([...from[1].querySelectorAll('.mk-facet-name > *')].map((n) => [n.className, n.textContent]),
-    [['mk-facet-label', 'BD-AI-SDLC/worca-marketplace'], ['badge mk-chip mk-chip-warn', `Snapshot from ${shortDate(BD.lastSync.at)}`]]);
+    [['mk-facet-label', 'example/worca-marketplace'], ['badge mk-chip mk-chip-warn', `Snapshot from ${shortDate(EXAMPLE.lastSync.at)}`]]);
   assert.equal(from[0].querySelector('.mk-chip-warn'), null);
   const hide = panel.querySelector('label.mk-hide');
   assert.deepEqual([hide.querySelector('input').id, hide.querySelector('input').type, hide.textContent], ['mk-hide-installed', 'checkbox', 'Hide installed']);
@@ -71,7 +71,7 @@ test('groups: one section per kind, then Mixed; title, count, tiles in marketpla
   assert.deepEqual([...panel.querySelectorAll('section.mk-group')].map((s) => [s.dataset.group, s.querySelector('h2.section-title').textContent,
     s.querySelector('.mk-count').textContent, [...s.querySelectorAll('.mk-tile')].map((t) => t.dataset.key)]), [
     ['taskSources', 'Task sources', '1', ['off/github-source']], ['chatChannels', 'Chat channels', '1', ['off/slack-chat']],
-    ['models', 'Models', '1', ['bd/bmf-models']], ['mix', 'Mixed', '1', ['off/release-notes']]]);
+    ['models', 'Models', '1', ['example/base-models']], ['mix', 'Mixed', '1', ['off/release-notes']]]);
   const s = panel.querySelector('section.mk-group[data-group="models"]');
   assert.equal(s.getAttribute('aria-labelledby'), s.querySelector('h2').id);
 });
@@ -90,9 +90,9 @@ test('search, Adds, From and Hide installed narrow the grid; the search field ke
   panel.querySelector('button.mk-facet[data-adds="models"]').click();
   assert.equal(doc.activeElement, panel.querySelector('button.mk-facet[data-adds="models"]'), 'focus stays on the pressed facet');
   assert.deepEqual([tiles(), panel.querySelector('button.mk-facet[data-adds="models"]').getAttribute('aria-pressed'),
-    panel.querySelector('button.mk-facet[data-adds="all"]').getAttribute('aria-pressed')], [['bd/bmf-models'], 'true', 'false']);
+    panel.querySelector('button.mk-facet[data-adds="all"]').getAttribute('aria-pressed')], [['example/base-models'], 'true', 'false']);
   panel.querySelector('button.mk-facet[data-adds="models"]').click();
-  assert.deepEqual(tiles(), ['bd/bmf-models'], 'Adds is single-select: a second click keeps it');
+  assert.deepEqual(tiles(), ['example/base-models'], 'Adds is single-select: a second click keeps it');
   panel.querySelector('button.mk-facet[data-adds="all"]').click();
   panel.querySelector('button.mk-facet[data-from="off"]').click();
   assert.deepEqual(tiles(), ['off/github-source', 'off/slack-chat', 'off/release-notes']);
@@ -100,7 +100,7 @@ test('search, Adds, From and Hide installed narrow the grid; the search field ke
   assert.equal(tiles().length, 4, 'From toggles off');
   const hide = panel.querySelector('#mk-hide-installed'); hide.focus(); hide.checked = true;
   hide.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
-  assert.deepEqual(tiles(), ['off/slack-chat', 'bd/bmf-models', 'off/release-notes']);
+  assert.deepEqual(tiles(), ['off/slack-chat', 'example/base-models', 'off/release-notes']);
   assert.equal(doc.activeElement, panel.querySelector('#mk-hide-installed'), 'Hide installed keeps focus');
 });
 
@@ -112,7 +112,7 @@ test('no results: “No plugins match”, the corpus line, Clear search; facets 
     ['mk-mt mk-mt-lg mk-t-n', 'No plugins match “gitlab”', '4 plugins in 2 marketplaces']);
   empty.querySelector('button.btn.mk-clear-search').click();
   assert.equal(tiles().length, 4);
-  panel.querySelector('button.mk-facet[data-from="bd"]').click();
+  panel.querySelector('button.mk-facet[data-from="example"]').click();
   panel.querySelector('button.mk-facet[data-adds="taskSources"]').click();
   const e2 = panel.querySelector('.mk-groups > .mk-empty');
   assert.deepEqual([e2.querySelector('h3'), e2.querySelector('button').className, e2.querySelector('button').textContent], [null, 'btn mk-clear-filters', 'Clear filters']);
@@ -156,7 +156,7 @@ test('renderNoMarketplaces is the same block on its own (SM20, P7\'s Marketplace
 
 test('header: “can’t be reached” chip → Marketplaces tab, Refresh marketplaces (busy while it runs), Add marketplace', async () => {
   let release; const gate = new Promise((r) => { release = r; });
-  const { doc, page, calls } = await browse({ 'POST /api/marketplaces/refresh': async () => { await gate; return { ok: true, status: 200, data: { ok: true, marketplaces: [OFF, BD] } }; } });
+  const { doc, page, calls } = await browse({ 'POST /api/marketplaces/refresh': async () => { await gate; return { ok: true, status: 200, data: { ok: true, marketplaces: [OFF, EXAMPLE] } }; } });
   const head = doc.querySelector('.mk-head-actions');
   const chip = head.querySelector('a.mk-health');
   assert.deepEqual([chip.className, chip.getAttribute('href'), chip.textContent, !!chip.querySelector('svg')],
@@ -182,7 +182,7 @@ test('header: healthy marketplaces read “Synced 3m ago”; two unreachable rea
   const at = new Date(Date.now() - 3 * 60 * 1000).toISOString();
   const ok = await browse(mkts([{ ...OFF, lastSync: { ...OFF.lastSync, at } }]));
   assert.equal(ok.doc.querySelector('.mk-head-actions .mk-synced').textContent, 'Synced 3m ago');
-  const two = await browse(mkts([BD, { ...BD, id: 'bd2' }]));
+  const two = await browse(mkts([EXAMPLE, { ...EXAMPLE, id: 'example2' }]));
   assert.deepEqual([two.doc.querySelector('.mk-head-actions .mk-health').textContent, two.doc.querySelector('.mk-head-actions .mk-synced')],
     ["2 marketplaces can't be reached", null], 'Synced only when nothing is unreachable');
   two.doc.querySelector('.mk-head-actions .mk-health').click();
@@ -261,8 +261,8 @@ test('From shows pressed; browse({ from }) filters by marketplace', async () => 
   const { page, panel, tiles } = await browse();
   panel.querySelector('button.mk-facet[data-from="off"]').click();
   assert.equal(panel.querySelector('button.mk-facet[data-from="off"]').getAttribute('aria-pressed'), 'true');
-  page.act('browse', { from: 'bd' });
-  assert.deepEqual([page.state.filters.from, tiles()], ['bd', ['bd/bmf-models']]);
+  page.act('browse', { from: 'example' });
+  assert.deepEqual([page.state.filters.from, tiles()], ['example', ['example/base-models']]);
 });
 test('the Browse count is the whole catalogue; a focused tile and Add marketplace keep focus through a render (M5)', async () => {
   const { doc, page, panel, type } = await browse();
@@ -279,14 +279,14 @@ test('no version → no dot; a real version is never set as a sha (SM30)', () =>
   const bare = renderTile(doc, buildCatalog([{ id: 'n', name: 'n', plugins: [{ name: 'cc' }] }], [])[0]);
   assert.deepEqual([bare.querySelector('.mk-ver'), bare.querySelector('.mk-tile-meta').textContent], [null, 'n']);
   assert.equal(renderTile(doc, buildCatalog([OFF], [])[2]).querySelector('.mk-ver').className, 'mk-ver');
-  assert.equal(renderTile(doc, buildCatalog([BD], [{ name: 'bmf-models', version: '1.0.0', marketplace: 'bd' }])[0]).querySelector('.mk-ver').className, 'mk-ver');
+  assert.equal(renderTile(doc, buildCatalog([EXAMPLE], [{ name: 'base-models', version: '1.0.0', marketplace: 'example' }])[0]).querySelector('.mk-ver').className, 'mk-ver');
 });
 test('Clear filters focuses the search; the no-results title quotes the trimmed query', async () => {
   const { doc, panel, type } = await browse();
   type(panel.querySelector('#mk-search'), '  gitlab ');
   assert.equal(panel.querySelector('.mk-empty-title').textContent, 'No plugins match “gitlab”');
   panel.querySelector('.mk-clear-search').click();
-  panel.querySelector('button.mk-facet[data-from="bd"]').click();
+  panel.querySelector('button.mk-facet[data-from="example"]').click();
   panel.querySelector('button.mk-facet[data-adds="taskSources"]').click();
   const b = panel.querySelector('.mk-clear-filters'); b.focus(); b.click();
   assert.equal(doc.activeElement, panel.querySelector('#mk-search'));

@@ -1369,6 +1369,55 @@ export async function checkConflictMerge(projectDir, { baseSha, from, to } = {})
 }
 
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.
+// ── Git event automations (#711): one REST call on github.com ───────────────
+
+/** Split `gh api --include` output into { status, headers, text }. gh prints the status line and headers first. */
+export function parseGhInclude(out) {
+  const s = String(out || '');
+  const m = /^HTTP\/[\d.]+ (\d{3})[^\n]*\r?\n((?:[^\r\n]+\r?\n)*)\r?\n([\s\S]*)$/.exec(s);
+  if (!m) return { status: null, headers: {}, text: s };
+  const headers = {};
+  for (const line of m[2].split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+  }
+  return { status: Number(m[1]), headers, text: m[3] };
+}
+
+/**
+ * One GitHub REST call through `gh api` with worca's credential for `role` (githubEnv: token, split, App or
+ * push-as-person modes alike). `etag` sends If-None-Match; `body` (an object) goes as the JSON request body.
+ * Never throws: { ok, status, json, etag, link, notModified? } | { ok:false, status, class: 'rate-limit'|'auth'|'failed', error }.
+ * `link` is the Link header (pagination), or null.
+ */
+export async function ghApi({ role = 'read', repo = null, method = 'GET', path, body = null, etag = null, timeout = 30_000 } = {}) {
+  if (!path) return { ok: false, status: null, class: 'failed', error: 'path is required' };
+  const cred = await githubEnv(role, { repo: ownerRepo(repo) });
+  if (cred.error) return { ok: false, status: null, class: 'auth', error: cred.error };
+  const args = ['api', '--include', '-X', method, '-H', 'Accept: application/vnd.github+json', path];
+  if (etag) args.push('-H', `If-None-Match: ${etag}`);
+  let dir = null;
+  if (body != null) {
+    dir = await mkdtemp(join(tmpdir(), 'worca-ghapi-'));
+    const file = join(dir, 'body.json');
+    await writeFile(file, JSON.stringify(body));
+    args.push('--input', file);
+  }
+  let r;
+  try { r = await _run('gh', args, { env: cred.env, timeout }); }
+  finally { if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {}); }
+  const res = parseGhInclude(r.stdout);
+  if (res.status === 304) return { ok: true, status: 304, notModified: true, json: null, etag };
+  if (r.ok && res.status && res.status < 300) {
+    let parsed = null;
+    try { parsed = res.text.trim() ? JSON.parse(res.text) : null; } catch { parsed = null; }
+    return { ok: true, status: res.status, json: parsed, etag: res.headers.etag || null, link: res.headers.link || null };
+  }
+  const err = (r.stderr || '').trim() || res.text.trim().slice(0, 300) || `gh exited ${r.code}`;
+  const limited = res.status === 429 || (res.status === 403 && res.headers['x-ratelimit-remaining'] === '0') || /rate limit/i.test(err);
+  return { ok: false, status: res.status, class: limited ? 'rate-limit' : ghFailureKind(err), error: err };
+}
+
 export const _testing = {
   defaultRun,
   setRunner(fn) { _runner = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },

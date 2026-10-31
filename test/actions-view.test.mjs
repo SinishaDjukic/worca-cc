@@ -7,6 +7,13 @@ import { memberViewState, renderActionsCard, renderOverviewStrip, renderRunPill,
   renderRunningActionRows, historyActionBadges, formatUptime, isSafeHref, createActionsController, releaseCheckout } from '../ui/public/actions-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
+/** Stub the clipboard; returns the writes. `fail` refuses every write (and jsdom has no execCommand fallback). */
+const stubClipboard = (fail = false) => {
+  const writes = [];
+  Object.defineProperty(doc.defaultView.navigator, 'clipboard', { configurable: true,
+    value: { writeText: async (t) => { if (fail) throw new Error('denied'); writes.push(t); } } });
+  return writes;
+};
 const member = (over = {}) => ({ projectKey: 'app-0cea65fb', projectName: 'app', branch: 'worca-cc/x', worktreeDir: '/h/runs/ab/repos/app-0cea65fb',
   checkout: null, copyCommand: 'cd "/p"\ngit switch worca-cc/x', setup: 'npm ci',
   actions: [{ id: 'run', label: 'Run', kind: 'service' }, { id: 'test', label: 'Test', kind: 'task' }],
@@ -104,15 +111,31 @@ test('pill, sidebar rows, history badges', () => {
 
 // ── Beyond the plan's pinned cases: the remaining renderers and the controller ──
 
-test('handlers receive the member and action ids', () => {
+test('handlers receive the member and action ids; Copy command copies by itself (the labelled-action copy button)', async () => {
   const calls = [];
+  const writes = stubClipboard();
   const handlers = { onStart: (m, a) => calls.push(['start', m, a]), onBuiltin: (m, k) => calls.push(['builtin', m, k]),
-    onCopy: (t) => calls.push(['copy', t]), onDiscard: (ms) => calls.push(['discard', ms]) };
+    onCopyFailed: (w, t) => calls.push(['copy-failed', w, t]), onDiscard: (ms) => calls.push(['discard', ms]) };
   const el = renderActionsCard(model(member({ checkout: { setup: { status: 'ok' } } })), { doc, handlers });
   const click = (label) => [...el.querySelectorAll('button')].find((b) => b.textContent === label).click();
   click('Test'); click('VS Code'); click('Copy command'); click('Discard');
-  assert.deepEqual(calls, [['start', 'app-0cea65fb', 'test'], ['builtin', 'app-0cea65fb', 'editor'],
-    ['copy', 'cd "/p"\ngit switch worca-cc/x'], ['discard', ['app-0cea65fb']]]);
+  await tick();
+  assert.deepEqual(calls, [['start', 'app-0cea65fb', 'test'], ['builtin', 'app-0cea65fb', 'editor'], ['discard', ['app-0cea65fb']]]);
+  assert.deepEqual(writes, ['cd "/p"\ngit switch worca-cc/x']);
+  const copy = el.querySelector('.copy-btn-action');
+  assert.ok(copy.classList.contains('copy-btn') && !copy.classList.contains('btn-quiet'), 'a secondary button like its row');
+  assert.ok(copy.classList.contains('copied'));
+  assert.equal(copy.querySelector('.copy-btn-msg').textContent, 'Copied');
+});
+
+test('a refused copy reaches the controller with what and the text (for the card notice)', async () => {
+  stubClipboard(true);
+  const calls = [];
+  const el = renderActionsCard(model(member({ checkout: { setup: { status: 'ok' } } })), { doc, handlers: { onCopyFailed: (w, t) => calls.push([w, t]) } });
+  el.querySelector('.act-copy[aria-label="Copy branch name"]').click();
+  await tick();
+  assert.deepEqual(calls, [['branch name', 'worca-cc/x']]);
+  assert.ok(el.querySelector('.act-copy[aria-label="Copy branch name"]').classList.contains('copy-miss'));
 });
 
 test('workspace: member checkboxes, "Check out selected", stack rows', () => {
@@ -456,16 +479,19 @@ test('releaseCheckout: the Actions tab\'s Discard / Unlink copy and DELETE, shar
   assert.equal(calls.length, 0);
 });
 
-test('checked out: Download patch sits before Discard; a linked folder before Unlink; the folder path has a copy button', () => {
+test('checked out: Download patch sits before Discard; a linked folder before Unlink; the folder path has a copy button', async () => {
   const calls = [];
-  const handlers = { onDiff: (k, b) => calls.push(['diff', k, b.tagName]), onDiscard: () => {}, onUnlink: () => {}, onCopy: (t) => calls.push(['copy', t]) };
+  const writes = stubClipboard();
+  const handlers = { onDiff: (k, b) => calls.push(['diff', k, b.tagName]), onDiscard: () => {}, onUnlink: () => {} };
   const own = renderActionsCard(model(member({ checkout: { setup: { status: 'ok' } } })), { doc, handlers });
   const ownLabels = labelsOf(own);
   assert.equal(ownLabels.at(-1), 'Discard');
   assert.equal(ownLabels.at(-2), 'Download patch');
   own.querySelector('.act-diff').click();
   own.querySelector('.act-copy[aria-label="Copy folder path"]').click();
-  assert.deepEqual(calls, [['diff', 'app-0cea65fb', 'BUTTON'], ['copy', '/h/runs/ab/repos/app-0cea65fb']]);
+  await tick();
+  assert.deepEqual(calls, [['diff', 'app-0cea65fb', 'BUTTON']]);
+  assert.deepEqual(writes, ['/h/runs/ab/repos/app-0cea65fb']);
   const linked = renderActionsCard(model(member({ checkout: { external: true, worktreeDir: '/Users/ada/dev/app', setup: { status: 'skipped' } } })), { doc, handlers });
   assert.deepEqual(labelsOf(linked).slice(-2), ['Download patch', 'Unlink']);
   assert.ok(!labelsOf(linked).includes('Discard'), 'a linked folder is never discarded');
