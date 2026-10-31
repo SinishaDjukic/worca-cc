@@ -14,7 +14,7 @@ const L = (version, access = []) => ({ version, sha: 'b'.repeat(40), marketplace
 const SECRET = { kind: 'secret', id: 'github.webhookSecret', red: true };
 const CANVAS = [
   row('atlassian-mcp', { contributions: { ...ZERO, mcpServers: 1 }, mcpSets: ['Havn'], latest: L('0.1.1') }),
-  row('discretestack-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 }, marketplace: 'bd', marketplaceName: 'BD-AI-SDLC/worca-marketplace' }),
+  row('example-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 }, marketplace: 'example', marketplaceName: 'example/worca-marketplace' }),
   row('github-source', { version: '0.2.0', contributions: { ...ZERO, taskSources: 1 }, latest: L('0.3.0', [SECRET]) }),
   row('slack-chat', { contributions: { ...ZERO, chatChannels: 1 }, setup: { ok: false, missing: [{ kind: 'chatChannel', id: 'slack', keys: ['botToken'] }], noProfiles: [] } }),
 ];
@@ -130,7 +130,7 @@ test('the switch acts at once; a refusal puts it back and says why', async () =>
 test('⋯ menu: Open in Connectors only with MCP servers, no Check for update on a linked plugin, Remove… last (danger)', () => {
   const { log, click } = world({ plugins: [...CANVAS, row('local-dev', { linked: true, pinnedSha: null, version: 'dev', marketplace: null, marketplaceName: null })] });
   const a = click('button.mk-more[data-name="atlassian-mcp"]');
-  click('button.mk-more[data-name="discretestack-models"]');
+  click('button.mk-more[data-name="example-models"]');
   click('button.mk-more[data-name="local-dev"]');
   const shape = (m) => m.items.map((i) => (i.sep ? '—' : `${i.label}${i.danger ? ' (danger)' : ''}`));
   assert.deepEqual(shape(log.menus[0]), ['Open in Connectors', 'Check health', 'Check for update', '—', 'Remove… (danger)']);
@@ -186,14 +186,14 @@ test('a diff without commits (a rollback, or a history the preview could not lis
 
 test('Check for update: up to date is a toast; anything newer (or needing git) opens the review sheet', async () => {
   let answer = ok({ preview: { pinnedSha: 'a'.repeat(40), candidateSha: 'a'.repeat(40), access: [] } });
-  const { log, click } = world({ api: { 'POST /api/plugins/discretestack-models/update': () => answer } });
-  click('button.mk-more[data-name="discretestack-models"]');
+  const { log, click } = world({ api: { 'POST /api/plugins/example-models/update': () => answer } });
+  click('button.mk-more[data-name="example-models"]');
   const check = () => log.menus[0].items.find((i) => i.label === 'Check for update').onSelect();
   await check();
-  assert.deepEqual(log.toasts, [{ tone: 'ok', title: 'discretestack-models is up to date.' }]);
+  assert.deepEqual(log.toasts, [{ tone: 'ok', title: 'example-models is up to date.' }]);
   answer = ok({ preview: { pinnedSha: 'a'.repeat(40), candidateSha: 'b'.repeat(40), access: [] } });
   await check();
-  assert.deepEqual(log.acts.at(-1), ['openUpdateReview', ['discretestack-models']]);
+  assert.deepEqual(log.acts.at(-1), ['openUpdateReview', ['example-models']]);
   answer = no(409, { error: 'git is not installed on this machine', code: 'GIT_MISSING' });
   await check();
   assert.equal(log.acts.filter((a) => a[0] === 'openUpdateReview').length, 2);
@@ -209,16 +209,16 @@ test('a monorepo marketplace moved its tip, not the plugin folder: no commits an
   assert.deepEqual(one.log.calls.map((c) => c[2]), [{}], 'no confirm POST');
   assert.deepEqual([one.log.toasts, one.log.acts, one.log.loads], [[{ tone: 'ok', title: 'atlassian-mcp is up to date.' }], [], []]);
   let answer = mono();
-  const two = world({ api: { 'POST /api/plugins/discretestack-models/update': () => answer } });
-  two.click('button.mk-more[data-name="discretestack-models"]');
+  const two = world({ api: { 'POST /api/plugins/example-models/update': () => answer } });
+  two.click('button.mk-more[data-name="example-models"]');
   const check = () => two.log.menus[0].items.find((i) => i.label === 'Check for update').onSelect();
   await check();
-  assert.deepEqual([two.log.toasts, two.log.acts], [[{ tone: 'ok', title: 'discretestack-models is up to date.' }], []]);
+  assert.deepEqual([two.log.toasts, two.log.acts], [[{ tone: 'ok', title: 'example-models is up to date.' }], []]);
   answer = mono({ commits: [{ sha: 'c'.repeat(40), subject: 'feat: x' }] });
   await check();
   answer = mono({ diffstat: ' 1 file changed, 1 insertion(+)' });
   await check();
-  assert.deepEqual([two.log.toasts.length, two.log.acts], [1, [['openUpdateReview', ['discretestack-models']], ['openUpdateReview', ['discretestack-models']]]],
+  assert.deepEqual([two.log.toasts.length, two.log.acts], [1, [['openUpdateReview', ['example-models']], ['openUpdateReview', ['example-models']]]],
     'a commit or a diffstat in the plugin folder is an update');
 });
 
@@ -252,15 +252,15 @@ test('Remove: Goes away and Changes from the installed detail; the box maps to ?
 
 test('Remove when something still uses it: the Blocked view — Used by rows, Open closes on its way, Remove disabled', async () => {
   const { doc, provided, log } = world({ api: {
-    'GET /api/plugins/discretestack-models': DETAIL({ models: [{ id: 'discretestack-stable' }, { id: 'discretestack-stable-fast' }] }),
-    'GET /api/plugins/discretestack-models/references': ok({ references: [sel('discretestack-stable', 2), sel('discretestack-stable-fast', 1)] }),
+    'GET /api/plugins/example-models': DETAIL({ models: [{ id: 'example-stable' }, { id: 'example-stable-fast' }] }),
+    'GET /api/plugins/example-models/references': ok({ references: [sel('example-stable', 2), sel('example-stable-fast', 1)] }),
   } });
-  await provided.openRemove('discretestack-models');
+  await provided.openRemove('example-models');
   const dlg = doc.getElementById('mk-dialog');
   assert.equal(dlg.dataset.kind, 'blocked');
-  assert.equal(doc.getElementById('mk-dialog-title').textContent, 'discretestack-models is still in use');
+  assert.equal(doc.getElementById('mk-dialog-title').textContent, 'example-models is still in use');
   assert.deepEqual([...dlg.querySelectorAll('.mk-used > li')].map((li) => [li.querySelector('.mk-row-title').textContent, li.querySelector('.mk-meta').textContent, li.querySelector('a.mk-open').getAttribute('href')]),
-    [['discretestack-stable', 'Model · 2 pipeline selections', '#models'], ['discretestack-stable-fast', 'Model · 1 pipeline selection', '#models']]);
+    [['example-stable', 'Model · 2 pipeline selections', '#models'], ['example-stable-fast', 'Model · 1 pipeline selection', '#models']]);
   assert.equal(dlg.querySelector('.mk-used-note').textContent, 'Clear those selections first.');
   assert.equal(dlg.querySelector('[data-dlg="remove"]').disabled, true);
   dlg.querySelector('a.mk-open').click();
@@ -339,18 +339,18 @@ test('a later Remove or Purge wins: a slower earlier Remove never replaces its d
   const { doc, log, provided, click } = world({ orphans: [{ name: 'telegram-chat', dataDir: '/x' }], catalog: [], api: {
     'GET /api/plugins/slack-chat': () => new Promise((r) => { release = r; }),
     'GET /api/plugins/slack-chat/references': ok({ references: [] }),
-    'GET /api/plugins/discretestack-models': DETAIL({ models: [{ id: 'm' }] }),
-    'GET /api/plugins/discretestack-models/references': ok({ references: [] }),
-    'DELETE /api/plugins/discretestack-models': ok({ ok: true }),
+    'GET /api/plugins/example-models': DETAIL({ models: [{ id: 'm' }] }),
+    'GET /api/plugins/example-models/references': ok({ references: [] }),
+    'DELETE /api/plugins/example-models': ok({ ok: true }),
   } });
   const a = provided.openRemove('slack-chat');
-  await provided.openRemove('discretestack-models');
+  await provided.openRemove('example-models');
   release(DETAIL({ chatChannels: [{ id: 'slack' }] }));
   await a;
-  assert.equal(doc.getElementById('mk-dialog-title').textContent, 'Remove discretestack-models?');
+  assert.equal(doc.getElementById('mk-dialog-title').textContent, 'Remove example-models?');
   doc.querySelector('#mk-dialog [data-dlg="remove"]').click();
   await settle();
-  assert.deepEqual(log.calls.filter((c) => c[0] === 'DELETE').map((c) => c[1]), ['/api/plugins/discretestack-models']);
+  assert.deepEqual(log.calls.filter((c) => c[0] === 'DELETE').map((c) => c[1]), ['/api/plugins/example-models']);
   const b = provided.openRemove('slack-chat');
   click('section.mk-leftover [data-act="purge"][data-name="telegram-chat"]');
   release(DETAIL({ chatChannels: [{ id: 'slack' }] }));

@@ -16,7 +16,7 @@ import { writePluginConfig } from '../src/core/plugin-config.mjs';
 import { modelSecretsSchema } from '../src/core/plugin-models.mjs';
 import { askCatalog, validateModelEffort } from '../src/core/ask/models.mjs';
 
-const PLUGIN = 'discretestack-models';
+const PLUGIN = 'example-models';
 let homeDir, worcaHomeDir;
 const prevEnv = {
   HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, WORCA_HOME: process.env.WORCA_HOME,

@@ -13484,7 +13484,7 @@ app.post('/api/models/export-plugin', async (req, res) => {
   const b = req.body || {};
   const name = typeof b.name === 'string' ? b.name.trim() : '';
   if (!MANIFEST_PLUGIN_NAME_RE.test(name) || name.length > 64) {
-    return badRequest(res, 'name must be kebab-case (e.g. "discretestack-models")');
+    return badRequest(res, 'name must be kebab-case (e.g. "team-models")');
   }
   const picks = Array.isArray(b.models) ? b.models : [];
   if (!picks.length) return badRequest(res, 'models must be a non-empty array');
