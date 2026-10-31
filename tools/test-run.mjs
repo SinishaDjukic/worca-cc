@@ -19,10 +19,17 @@ const TAIL_WARN_S = 2;
 // It decides exactly like `node --test` (a failing `todo` test emits test:fail yet stays
 // green), and a run that dies before its summary stays red.
 process.exitCode = 1;
+// Workers: --concurrency, else WORCA_TEST_CONCURRENCY (Worca sets it in every agent's env: Settings › Runs ›
+// Machine load), else all cores but one.
+const envWorkers = Number(process.env.WORCA_TEST_CONCURRENCY);
 const stream = run({
   files: files.map((f) => resolve(f)),
-  concurrency: concurrency || Math.max(1, availableParallelism() - 1),
+  concurrency: concurrency || (Number.isInteger(envWorkers) && envWorkers > 0 ? envWorkers : Math.max(1, availableParallelism() - 1)),
   timeout: 300_000,
+  // A test that hits its timeout is abandoned, not ended: a live server or child kept its file's process up
+  // forever, and the whole suite with it (process audit §8c, 18 h). forceExit ends each file once its tests
+  // are done. A measuring run keeps it off so the tail warnings below still see lingering processes.
+  forceExit: !timingsOut,
 });
 // realpath: on macOS one event names a temp file under /var and another under /private/var (a symlink).
 const real = (file) => { try { return realpathSync(file); } catch { return file; } };

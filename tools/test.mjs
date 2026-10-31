@@ -5,8 +5,11 @@
 // working-tree change can affect (tools/test-related.mjs). Replaces the POSIX-only shell one-liner
 // and node's index-modulo --test-shard. --timings-out writes the run's own per-file seconds to a file
 // (each CI shard uploads one; tools/test-timings-merge.mjs folds them into test/timings.json).
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+// A full suite takes a machine-wide lock (one full suite at a time, wherever it runs: two at once each
+// took 2-3x as long and tripped the timing budgets, perf audit T1), and every run has a whole-suite
+// timeout, so no test can hold `npm test` open forever (process audit §8c).
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +17,8 @@ import { changedFiles, relatedTests } from './test-related.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PER_FILE_S = 0.5; // process spawn + imports per file (measured 2026-10-04: ~0.54 s)
+const SUITE_TIMEOUT_MIN = 60; // the slowest suite seen took 23 min, at load 49 on 12 cores
+const LOCK_POLL_MS = 2000;
 
 const readJson = (rel, dflt) => { try { return JSON.parse(readFileSync(join(ROOT, rel), 'utf8')); } catch { return dflt; } };
 const globRe = (g) => new RegExp('^' + g.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*') + '$');
@@ -84,7 +89,76 @@ export function parseArgs(argv, env = process.env) {
   return o;
 }
 
-function main() {
+const alive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+};
+
+/**
+ * Take the full-suite lock file, or report who holds it. A holder whose process is gone, or a file nobody
+ * could parse for 10 s, is stale and is taken over.
+ * @returns {{ ok: true } | { ok: false, holder: { pid:number, cwd:string, at:number } | null }}
+ */
+export function tryFullSuiteLock(file, me = { pid: process.pid, cwd: ROOT, at: Date.now() }) {
+  for (let i = 0; i < 2; i++) {
+    try { writeFileSync(file, JSON.stringify(me), { flag: 'wx' }); return { ok: true }; } catch (e) { if (e.code !== 'EEXIST') return { ok: true }; }
+    let holder = null;
+    try { holder = JSON.parse(readFileSync(file, 'utf8')); } catch { /* mid-write, or junk */ }
+    let fresh = false;
+    try { fresh = Date.now() - statSync(file).mtimeMs < 10_000; } catch { continue; }   // gone already: retry
+    if (holder ? alive(holder.pid) : fresh) return { ok: false, holder };
+    rmSync(file, { force: true });
+  }
+  return { ok: false, holder: null };
+}
+
+/** Release the lock only when it is still ours (a takeover after a stale read must not be undone). */
+export function releaseFullSuiteLock(file, pid = process.pid) {
+  try { if (JSON.parse(readFileSync(file, 'utf8')).pid === pid) rmSync(file, { force: true }); } catch { /* gone */ }
+}
+
+/** Whether this run waits for the machine-wide full-suite lock: an unscoped run on a developer machine. */
+export function needsFullSuiteLock(o, env = process.env) {
+  return !o.files.length && !o.shard && !env.CI && !/^(1|true|yes)$/i.test(env.WORCA_TEST_NO_LOCK || '');
+}
+
+async function waitForFullSuiteLock(file) {
+  let told = false;
+  for (;;) {
+    const r = tryFullSuiteLock(file);
+    if (r.ok) return;
+    if (!told) {
+      const h = r.holder;
+      console.log(`waiting for another full test suite to finish${h ? ` (pid ${h.pid} in ${h.cwd}, started ${new Date(h.at).toTimeString().slice(0, 8)})` : ''}: one full suite runs at a time on this machine; WORCA_TEST_NO_LOCK=1 skips the wait`);
+      told = true;
+    }
+    await new Promise((r) => setTimeout(r, LOCK_POLL_MS));
+  }
+}
+
+/** Run test-run.mjs in its own process group, killed whole (every test file's process too) at the timeout. */
+function runSuite(args, opts, timeoutMs) {
+  return new Promise((resolveP) => {
+    const group = process.platform !== 'win32';
+    const child = spawn(process.execPath, args, { ...opts, stdio: 'inherit', detached: group });
+    const kill = (sig) => { try { if (group) process.kill(-child.pid, sig); else child.kill(sig); } catch { /* gone */ } };
+    const timer = setTimeout(() => {
+      console.error(`\nThe test suite ran past its ${Math.round(timeoutMs / 60000)} min limit (WORCA_TEST_SUITE_TIMEOUT_MIN): stopped it and every test process.`);
+      kill('SIGKILL');
+    }, timeoutMs);
+    // The child has its own process group, so a Ctrl-C at the terminal no longer reaches it: pass it on.
+    const forward = (sig) => () => kill(sig);
+    const onInt = forward('SIGINT'), onTerm = forward('SIGTERM');
+    process.on('SIGINT', onInt); process.on('SIGTERM', onTerm);
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      process.off('SIGINT', onInt); process.off('SIGTERM', onTerm);
+      resolveP(signal ? 1 : (code ?? 1));
+    });
+  });
+}
+
+async function main() {
   let o;
   try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
   if (o.related) {
@@ -109,6 +183,12 @@ function main() {
   }
   if (!files.length) { console.error('no test files selected'); process.exit(2); }
 
+  const lockFile = process.env.WORCA_TEST_LOCK_FILE || join(tmpdir(), 'worca-cc-full-suite.lock');
+  const locked = needsFullSuiteLock(o);
+  if (locked) {
+    await waitForFullSuiteLock(lockFile);
+    process.on('exit', () => releaseFullSuiteLock(lockFile));
+  }
   const home = mkdtempSync(join(tmpdir(), 'worca-cc-test-home-'));
   const work = mkdtempSync(join(tmpdir(), 'worca-cc-test-run-'));
   // A file subset gets its own WORCA_HOME: the shared .worca-cc-test may belong to a full run
@@ -136,8 +216,9 @@ function main() {
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
   env[pathKey] = join(ROOT, 'test', 'helpers', 'no-real-claude') + delimiter + (env[pathKey] || '');
 
-  const r = spawnSync(process.execPath, [join(ROOT, 'tools', 'test-run.mjs'), listFile], { cwd: ROOT, env, stdio: 'inherit' });
-  let code = r.status ?? 1;
+  const limitMin = Number(process.env.WORCA_TEST_SUITE_TIMEOUT_MIN);
+  const timeoutMs = (Number.isFinite(limitMin) && limitMin > 0 ? limitMin : SUITE_TIMEOUT_MIN) * 60_000;
+  let code = await runSuite([join(ROOT, 'tools', 'test-run.mjs'), listFile], { cwd: ROOT, env }, timeoutMs);
   const g = spawnSync(process.execPath, [join(ROOT, 'test', 'helpers', 'no-real-claude', 'assert-none.mjs')], { cwd: ROOT, env, stdio: 'inherit' });
   if (g.status !== 0) code = 1;
   if (measure && existsSync(timingsOut)) {
@@ -158,4 +239,4 @@ function main() {
 // /private/tmp on macOS; a symlinked checkout; a Windows junction), so a plain resolve()
 // mismatch would skip main() and exit 0 having run no tests.
 const isMain = () => { try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
-if (process.argv[1] && isMain()) main();
+if (process.argv[1] && isMain()) await main();

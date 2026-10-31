@@ -15746,6 +15746,7 @@ async function loadSettings() {
     paintNightSettings(data);
     paintSyncSettings(data);
     paintNetworkWaitSettings(data);
+    paintRunLimitsSettings(data);
     paintSmartNamingSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
@@ -16637,6 +16638,40 @@ document.getElementById('networkWaitSave')?.addEventListener('click', (e) => pos
 document.getElementById('networkWaitReset')?.addEventListener('click', (e) => postNetworkWait(
   { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('networkWaitSave');
+
+// Settings › Runs › Machine load (runLimits: run-slots.mjs, the agents' WORCA_TEST_CONCURRENCY, run-retention.mjs).
+function paintRunLimitsSettings(data) {
+  const d = data && data.runLimits;
+  const sel = { maxConcurrentRuns: 'runLimitsMaxRuns', testWorkers: 'runLimitsTestWorkers', keepRunsDays: 'runLimitsKeepDays' };
+  if (!d || !document.getElementById(sel.maxConcurrentRuns)) return;
+  for (const [k, id] of Object.entries(sel)) {
+    const el = document.getElementById(id);
+    const v = d[k] == null ? '' : String(d[k]);
+    if (![...el.options].some((o) => o.value === v)) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = k === 'keepRunsDays' ? `${v} days` : v;
+      el.append(opt);
+    }
+    el.value = v;
+  }
+  const auto = document.querySelector('#runLimitsTestWorkers option[value=""]');
+  if (auto && data.testWorkersAuto) auto.textContent = `Half the cores (${data.testWorkersAuto})`;
+  settingsCardPainted('runLimitsSave');
+}
+function postRunLimits(body, opts = {}) {
+  return postSettingsCard(body, { card: document.getElementById('run-limits-settings-card'), paint: paintRunLimitsSettings, dirty: settingsCardDirty('runLimitsSave'), ...opts });
+}
+document.getElementById('runLimitsSave')?.addEventListener('click', (e) => {
+  const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
+  postRunLimits({ runLimits: {
+    maxConcurrentRuns: num('runLimitsMaxRuns'),
+    testWorkers: num('runLimitsTestWorkers'),
+    keepRunsDays: num('runLimitsKeepDays'),
+  } }, { button: e.currentTarget });
+});
+document.getElementById('runLimitsReset')?.addEventListener('click', (e) => postRunLimits(
+  { runLimits: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('runLimitsSave');
 
 // Settings › Runs › Smart run naming (Labs, flag smartRunNaming). The rows stay editable while the flag is off (muted), so a
 // team can prepare them. The master switch is the flag itself (bindFlagSwitch, below).

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { validateMcpDefinition, mcpLiteralFindings, screenNonSecretValue } from '../src/core/mcp/definitions.mjs';
 import { looksLikeSecret } from '../src/core/policy/registry.mjs';
 import { TOKEN_SHAPE_RE, hasTokenShape } from '../src/core/mcp-secrets.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const GHP = 'ghp_' + 'a'.repeat(36);
 const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig';
@@ -92,7 +93,7 @@ test('the screens stay linear on long text (a PUT body, a policy value, a manife
       const t0 = performance.now();
       run();
       const ms = performance.now() - t0;
-      assert.ok(ms < 2000, `${long.slice(0, 4)}…: took ${Math.round(ms)} ms`);
+      assert.ok(ms < loadBudget(2000), `${long.slice(0, 4)}…: took ${Math.round(ms)} ms`);
     }
   }
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { makeWorkspace, runDetector, keysOf, assertEvidence } from './helpers/wsmap-fixtures.mjs';
 import detector from '../src/core/workspace-map/detectors/deploy-k8s.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const BILLING_K8S = `apiVersion: apps/v1
 kind: Deployment
@@ -334,7 +335,7 @@ test('deploy-k8s: Helm values stop at the walk budget — a values file of alias
   detector.finish(ctx);
   const ms = performance.now() - t0;
   assert.deepEqual(r?.unresolved?.map((u) => u.reason), ['yaml parse error: yaml too large']);
-  assert.ok(ms < 2000, `took ${ms.toFixed(0)} ms (every aliased value classified: ~2 s for 25 KB)`);
+  assert.ok(ms < loadBudget(2000), `took ${ms.toFixed(0)} ms (every aliased value classified: ~2 s for 25 KB)`);
   const two = `a: &v "http://h/${'x'.repeat(10240)}"\nb: [${Array.from({ length: 300 }, (_, i) => `{u${i}_url: *v}`).join(', ')}]\n`;
   const r2 = detector.detect({ rel: 'chart/values.yaml', text: `${two}---\n${two}` }, { ...ctx, state: {} });
   assert.deepEqual(r2?.unresolved?.map((u) => u.reason), ['yaml parse error: yaml too large'], 'one budget spans the documents of a file');

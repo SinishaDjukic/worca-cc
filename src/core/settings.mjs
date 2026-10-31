@@ -57,7 +57,7 @@ import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
@@ -1280,6 +1280,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'nightModeToggle',                         // night mode live switch: auto | on | off
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
+  'runLimits',                               // Settings › Runs › Machine load { maxConcurrentRuns, testWorkers, keepRunsDays }
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
@@ -2987,6 +2988,50 @@ export function effectiveNetworkWait(env = process.env) {
   const n = Number(raw);
   const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
   return { enabled, maxWaitMs };
+}
+
+// ── Machine load (Settings › Runs › Machine load) ────────────────────────────
+// maxConcurrentRuns: runs past it wait for a free slot (run-slots.mjs, shared by every Worca process on this
+// machine). testWorkers: WORCA_TEST_CONCURRENCY in every agent's env, the worker cap a test runner that reads
+// it uses (null = half the cores). keepRunsDays: finished runs older than this are archived by the daily
+// sweep (run-retention.mjs; null = never). A stored key that is absent follows the default.
+export const DEFAULT_RUN_LIMITS = Object.freeze({ maxConcurrentRuns: 3, testWorkers: null, keepRunsDays: null });
+const RUN_LIMIT_RANGES = Object.freeze({ maxConcurrentRuns: [1, 20], testWorkers: [1, 64], keepRunsDays: [1, 3650] });
+const inRunLimit = (k, v) => Number.isInteger(v) && v >= RUN_LIMIT_RANGES[k][0] && v <= RUN_LIMIT_RANGES[k][1];
+
+export function runLimits() {
+  const stored = readSettings().runLimits;
+  const o = isObj(stored) ? stored : {};
+  return Object.fromEntries(Object.keys(DEFAULT_RUN_LIMITS).map((k) => [k, inRunLimit(k, o[k]) ? o[k] : DEFAULT_RUN_LIMITS[k]]));
+}
+
+/** @throws {Error} on anything but a partial, valid runLimits object (null / '' resets; a null key resets that key). */
+export function assertRunLimitsInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!isObj(patch)) throw new Error('runLimits must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!Object.hasOwn(DEFAULT_RUN_LIMITS, k)) throw new Error(`unknown runLimits setting: ${k}`);
+    const [lo, hi] = RUN_LIMIT_RANGES[k];
+    if (v !== null && !inRunLimit(k, v)) throw new Error(`runLimits.${k} must be a whole number from ${lo} to ${hi}`);
+  }
+}
+
+/** What an unset runLimits.testWorkers means on this machine: half the cores. */
+export const autoTestWorkers = () => Math.max(1, Math.floor(availableParallelism() / 2));
+
+/** The test-worker cap every agent gets as WORCA_TEST_CONCURRENCY: the setting, else autoTestWorkers(). */
+export function testWorkerCap() {
+  return runLimits().testWorkers ?? autoTestWorkers();
+}
+
+export async function setRunLimits(patch) {
+  assertRunLimitsInput(patch);
+  const settings = readSettings();
+  const next = patch === null || patch === '' ? {} : { ...(isObj(settings.runLimits) ? settings.runLimits : {}) };
+  if (isObj(patch)) for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  if (Object.keys(next).length) settings.runLimits = next; else delete settings.runLimits;
+  await persistSettings(settings);
+  return runLimits();
 }
 
 // Settings › Network proxy (networkProxy.enabled; applied live by egress-policy.mjs startLiveEgress).

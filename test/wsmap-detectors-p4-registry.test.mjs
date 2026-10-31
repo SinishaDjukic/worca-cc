@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectorById } from '../src/core/workspace-map/detectors/index.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const P4 = ['db', 'http-clients', 'http-routes', 'messaging'];
 
@@ -148,7 +149,7 @@ test('registry: pathological inputs (1–4 MiB: lines, whitespace runs, nesting)
       assert.doesNotThrow(() => { d.detect({ rel, text }, ctx); if (d.finish) d.finish(ctx); }, `${id} INPUTS[${i}] ${rel}`);
       const ms = performance.now() - t0;
       const head = text.slice(text.startsWith('// ok\n') ? 4200 : 0).slice(0, 30); // past the JS padding
-      assert.ok(ms < 2000, `${id} took ${ms.toFixed(0)} ms on INPUTS[${i}] ${rel} (${(text.length / MB).toFixed(1)} MiB: ${head}…)`);
+      assert.ok(ms < loadBudget(2000), `${id} took ${ms.toFixed(0)} ms on INPUTS[${i}] ${rel} (${(text.length / MB).toFixed(1)} MiB: ${head}…)`);
     }
   }
 });

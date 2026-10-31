@@ -158,7 +158,9 @@ import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
 import { NIGHT_ACTOR, NIGHT_TOGGLES, nightNeverDecides } from './night/config.mjs';
-import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey, effectiveNetworkWait } from './settings.mjs';
+import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey, effectiveNetworkWait, runLimits } from './settings.mjs';
+import { acquireRunSlot } from './run-slots.mjs';
+import { seedNodeModules } from './dep-seed.mjs';
 import { probeTargetForModel, probeReachable, hostOf } from './upstream-probe.mjs';
 import { waitForNetwork, NETWORK_ACTOR } from './network-wait.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
@@ -740,6 +742,9 @@ export function autoAnswerPayload(q) {
 // budget (SLOW_GIT_TIMEOUT_MS): `diff --cached` on a large agent change is the
 // slowest command issued here, and it legitimately takes seconds, never minutes.
 const HARNESS_GIT_TIMEOUT_MS = 120_000;
+// Stamped by a finished background graph build (_startGraphBuild), inside graphify-out/ whose own `*`
+// .gitignore hides it; a killed build leaves none, so a resume never reuses half a graph.
+const GRAPH_DONE = join('graphify-out', '.worca-built');
 
 // MCP registry §10: a result error the first-party API gives a tool name over the limit, and the
 // run warning it maps to (put back after a resume re-assembly, like the mcpStatus lines). Bounded
@@ -1061,10 +1066,13 @@ export class RunHarness extends EventEmitter {
     this._ledgerSeq = 0;         // monotonic: two ledger writes must never share a temp name
     this._pendingAudits = [];    // audit lines an engine hook queued before the pipeline dir existed (_resolveTopology runs first); run() appends them right after "Pipeline created"
     this.toolInstruction = '';
-    // Cap for the in-worktree graphify build (macOS has no timeout(1)).
-    // Resolution order: constructor option → WORCA_GRAPH_TIMEOUT_MS env → 120s.
+    // Cap for the in-worktree graphify build (macOS has no timeout(1)). It runs in the background
+    // (_buildWorktreeGraph), so the cap only bounds its CPU, never the run's start.
+    // Resolution order: constructor option → WORCA_GRAPH_TIMEOUT_MS env → 10 min.
     const _gt = Number(this.opts.graphBuildTimeoutMs ?? process.env.WORCA_GRAPH_TIMEOUT_MS);
-    this.graphBuildTimeoutMs = Number.isFinite(_gt) && _gt > 0 ? _gt : 120000;
+    this.graphBuildTimeoutMs = Number.isFinite(_gt) && _gt > 0 ? _gt : 600000;
+    this._graphBuild = null;    // { abort: AbortController, done: Promise } while a background graph build runs
+    this._runSlot = null;       // the run-queue slot (run-slots.mjs) this run holds, released in run()/resume()'s finally
     this.checkpointRef = null;
     this.registry = null; // ▲ v3: set in run(); used by _dispatch's D4 validation
     this.extrasFiles = []; // attached files copied into <pipeline>/extras (set in _dispatch)
@@ -1649,6 +1657,9 @@ export class RunHarness extends EventEmitter {
       }
       for (const line of this._pendingAudits.splice(0)) await appendAudit(this.pipeline.dir, line);
 
+      // 2b) The run queue (Settings › Runs › Machine load): wait for a free slot before any heavy work.
+      await this._takeRunSlot();
+
       // 3) Ensure a git repo + checkpoint commit (per member on a workspace run).
       if (this.isWorkspace) await this._ensureGitCheckpointAll();
       else await this._ensureGitCheckpoint();
@@ -1851,6 +1862,8 @@ export class RunHarness extends EventEmitter {
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
       this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/launch-error/paused)
+      this._runSlot?.release(); this._runSlot = null;   // a paused run waits for a slot again on resume
+      await this._stopGraphBuild();   // before teardown removes the checkout it writes into (a resume rebuilds or reuses it)
       // C1: tear the run root + worktree(s) down on done/stopped/launch-error — the branch is
       // kept (except a workspace member's branch this run never changed, and every branch of
       // a read-only scan), only the disposable checkout is removed. But NEVER on a pause: the checkout (with any uncommitted agent
@@ -2037,6 +2050,7 @@ export class RunHarness extends EventEmitter {
       // skills gate and the context assembly below see the ADOPTED agent keys, not
       // the bootstrap's empty set. null for a saved workflow and for an Auto run
       // that already adopted (rp.workflowId is then the real id).
+      await this._takeRunSlot();   // the run queue, as in run(): a resume holds a slot too
       // A run that paused mid-setup resumes INSIDE its preflight: the bookend's clock
       // runs through the re-decision and the replay below (_endPreflight closes it).
       if (rp.setupIncomplete === true) {
@@ -2056,6 +2070,12 @@ export class RunHarness extends EventEmitter {
         replayedSkills = await this._replaySetup();
         // The replay (re)wrote the run manifest; the re-assembly below reads it.
         if (this.runRootMode === 'detached') resumeManifest = await readRunManifest(this.runRoot);
+      }
+      // A run paused while its graph was still building (the build stops with the run) gets it now:
+      // reused when that build had finished, else rebuilt in the background. The replay above did it already.
+      if (rp.setupIncomplete !== true) {
+        if (this.isWorkspace) { if ([...this.toolInstructions.values()].some((v) => !v)) await this._buildWorktreeGraphAll(); }
+        else if (!this.toolInstruction) await this._buildWorktreeGraph();
       }
       this._setupDone = true;
       this._endPreflight();
@@ -2164,6 +2184,8 @@ export class RunHarness extends EventEmitter {
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
       this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/launch-error/paused)
+      this._runSlot?.release(); this._runSlot = null;   // a paused run waits for a slot again on resume
+      await this._stopGraphBuild();   // before teardown removes the checkout it writes into (a resume rebuilds or reuses it)
       // Same teardown as run()'s finally — wiring only run()'s would keep legacy
       // teardown on every detached run that finishes after a resume (including every
       // crash-interrupted run, §8.12's primary scenario): run root leaked until the
@@ -2753,6 +2775,12 @@ export class RunHarness extends EventEmitter {
           await appendAudit(this.pipeline.dir,
             `Worktree \`${m.projectKey}\`: \`${info.branch}\` (off \`${keptStart ? `${source} @ ${keptStart.slice(0, 10)}` : source}\`)${reuseNote} at \`${info.worktreeDir}\`.`,
           ).catch(() => {});                                // per-member audit
+          // Dependencies (dep-seed.mjs): clone the project's node_modules so agents need not install. Mock runs skip it.
+          if (!this.claude.mock) {
+            const seed = await seedNodeModules({ projectDir: resolve(m.projectDir), worktreeDir: info.worktreeDir });
+            if (seed.seeded) await appendAudit(this.pipeline.dir, `Dependencies \`${m.projectKey}\`: cloned the project's node_modules into the checkout (${(seed.ms / 1000).toFixed(1)} s).`).catch(() => {});
+            else this._log('worktree', 'debug', `node_modules not cloned for ${m.projectKey}: ${seed.reason}`);
+          }
         } catch (err) {
           setupFailures.push(err);
         }
@@ -4809,9 +4837,15 @@ export class RunHarness extends EventEmitter {
    * .gitignore sentinel), so it never reaches the reviewer diff or the kept-branch
    * commit, and it does not survive teardown.
    *
+   * The build runs in the BACKGROUND (process audit §8a: a cold build of a large repo
+   * takes minutes): this returns at once, and the graph instruction reaches only the
+   * agents spawned after the build finished (_execCtx reads this.toolInstruction per
+   * spawn). Teardown stops a build still running (_stopGraphBuild). A resumed run whose
+   * checkout already holds a finished graph (GRAPH_DONE) reuses it without a rebuild.
+   *
    * Fail-safe — never throws. Skipped when: mock mode (keeps `npm run smoke`
    * offline); the workflow opts out (codeGraph: false); no worktree was created; or
-   * the graphify binary is not on PATH. On build failure/timeout the run proceeds
+   * the graphify binary is not on PATH. On build failure/timeout the run carries on
    * with no graph instruction.
    */
   async _buildWorktreeGraph() {
@@ -4827,26 +4861,14 @@ export class RunHarness extends EventEmitter {
       this._log('graph', 'info', 'graphify CLI not on PATH; skipping in-worktree graph build');
       return;
     }
-    this._log('graph', 'info', 'Building graphify graph in worktree (AST-only, no LLM)…');
-    const res = await runGraphifyUpdate({
-      dir: this.workDir,
-      cwd: this.workDir,
-      timeoutMs: this.graphBuildTimeoutMs,
-    });
-    if (res.ok) {
+    if (existsSync(join(this.workDir, GRAPH_DONE))) {
       this.toolInstruction = worktreeGraphInstruction();
-      this._log('graph', 'info', 'graphify graph built in worktree.');
-      await appendAudit(this.pipeline.dir, 'Preflight: built graphify graph in worktree (AST-only).').catch(() => {});
-    } else {
-      this.toolInstruction = '';
-      this._log(
-        'graph',
-        'warn',
-        `graphify build ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding`
-          + errDetail(res),
-        errStreamAttr(res?.stderr),
-      );
+      this._log('graph', 'info', 'graphify graph already built in this worktree; reusing it.');
+      return;
     }
+    this.toolInstruction = '';   // until the build finishes: the detect-time text promises a graph that is not there yet
+    this._log('graph', 'info', 'Building graphify graph in worktree in the background (AST-only, no LLM); agents started after it finishes get it.');
+    this._startGraphBuild([{ key: null, dir: this.workDir }]);
   }
 
   /** The run's workflow opted out of the code graph (`codeGraph: false` on the template, frozen
@@ -4859,47 +4881,81 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Workspace graph builds (D4): build a graphify graph inside EACH member worktree
-   * in parallel (cap 4), storing this.toolInstructions[projectKey]. Fail-safe per
-   * §5.8: a member whose detectTools.kind !== 'cli' or whose build fails/times out
-   * degrades to '' (source-reading) WITHOUT aborting the others. Skipped wholesale
-   * in mock mode (keeps `npm run smoke` offline + deterministic), matching the
-   * single-project _buildWorktreeGraph mock guard.
+   * in the background (cap 4), storing this.toolInstructions[projectKey] as each one
+   * finishes. Fail-safe per §5.8: a member whose detectTools.kind !== 'cli' or whose
+   * build fails/times out degrades to '' (source-reading) WITHOUT affecting the others.
+   * Skipped wholesale in mock mode (keeps `npm run smoke` offline + deterministic),
+   * matching the single-project _buildWorktreeGraph mock guard.
    */
   async _buildWorktreeGraphAll() {
     if (this.claude.mock) return; // mock runs never use the graph (intentionally silent)
     if (this._skipCodeGraph()) { for (const m of this.members) this.toolInstructions.set(m.projectKey, ''); return; }
     const dirs = this.members.map((m) => resolve(m.projectDir));
     const toolsByDir = await detectToolsPerProject(dirs); // never throws
-    await mapWithCap(this.members, 4, async (m) => {
+    const builds = [];
+    for (const m of this.members) {
+      this.toolInstructions.set(m.projectKey, '');
       if (this._memberWorkMode(m.projectKey) !== 'git') {
-        this.toolInstructions.set(m.projectKey, '');
         this._log('graph', 'info', `graphify skipped for ${m.projectKey} (Folder project).`);
-        return;
+        continue;
       }
       const workDir = this.workDirs.get(m.projectKey);
-      const info = toolsByDir.get(resolve(m.projectDir));
-      if (!workDir || workDir === resolve(m.projectDir)) {
-        this.toolInstructions.set(m.projectKey, '');
-        return;
-      }
-      if (info?.kind !== 'cli') {
-        this.toolInstructions.set(m.projectKey, '');
+      if (!workDir || workDir === resolve(m.projectDir)) continue;
+      if (toolsByDir.get(resolve(m.projectDir))?.kind !== 'cli') {
         this._log('graph', 'info', `graphify CLI not on PATH for ${m.projectKey}; skipping graph build`);
-        return;
+        continue;
       }
-      const res = await runGraphifyUpdate({ dir: workDir, cwd: workDir, timeoutMs: this.graphBuildTimeoutMs });
-      if (res.ok) {
+      if (existsSync(join(workDir, GRAPH_DONE))) {
         this.toolInstructions.set(m.projectKey, worktreeGraphInstruction());
-        this._log('graph', 'info', `graphify graph built in ${m.projectKey} worktree.`);
-        await appendAudit(this.pipeline.dir, `Preflight: built graphify graph for ${m.projectKey} (AST-only).`).catch(() => {});
+        continue;
+      }
+      builds.push({ key: m.projectKey, dir: workDir });
+    }
+    if (builds.length) {
+      this._log('graph', 'info', `Building graphify graphs in the background for ${builds.map((b) => b.key).join(', ')}; agents started after each one finishes get it.`);
+      this._startGraphBuild(builds);
+    }
+  }
+
+  /**
+   * Start the background graph builds (cap 4). Each finished build publishes its
+   * instruction (this.toolInstruction for key null, else toolInstructions[key]) and
+   * stamps GRAPH_DONE in the checkout so a resume reuses it. A build stopped by
+   * _stopGraphBuild publishes nothing.
+   * @param {Array<{key:string|null, dir:string}>} builds
+   */
+  _startGraphBuild(builds) {
+    const abort = new AbortController();
+    const started = Date.now();
+    const one = async ({ key, dir }) => {
+      const res = await runGraphifyUpdate({ dir, cwd: dir, timeoutMs: this.graphBuildTimeoutMs, signal: abort.signal });
+      if (abort.signal.aborted) return;
+      const who = key ? ` for ${key}` : '';
+      if (res.ok) {
+        // Only beside runGraphifyUpdate's self-ignoring sentinel: a repo that tracks graphify-out/ would commit it.
+        if (existsSync(join(dir, 'graphify-out', '.gitignore'))) await writeFile(join(dir, GRAPH_DONE), '', 'utf8').catch(() => {});
+        if (key) this.toolInstructions.set(key, worktreeGraphInstruction()); else this.toolInstruction = worktreeGraphInstruction();
+        const secs = Math.round((Date.now() - started) / 1000);
+        this._log('graph', 'info', `graphify graph built${who} in worktree after ${secs} s; agents started from now on get it.`);
+        await appendAudit(this.pipeline.dir, `Preflight: built graphify graph${who} in worktree (AST-only, ${secs} s, in the background).`).catch(() => {});
       } else {
-        this.toolInstructions.set(m.projectKey, '');
         this._log('graph', 'warn',
-          `graphify build for ${m.projectKey} ${res.timedOut ? 'timed out' : 'failed'}; degrading to source-reading`
-            + errDetail(res),
+          `graphify build${who} ${res.timedOut ? 'timed out' : 'failed'}; proceeding without graph grounding` + errDetail(res),
           errStreamAttr(res?.stderr));
       }
-    });
+    };
+    const done = mapWithCap(builds, 4, (b) => one(b).catch(() => {})).catch(() => {});
+    this._graphBuild = { abort, done };
+  }
+
+  /** Stop a background graph build still running and wait for its process to go (before teardown removes
+   *  the checkout it writes into). A no-op when none runs. */
+  async _stopGraphBuild() {
+    const b = this._graphBuild;
+    if (!b) return;
+    this._graphBuild = null;
+    b.abort.abort();
+    await b.done;
   }
 
   /**
@@ -8919,6 +8975,26 @@ export class RunHarness extends EventEmitter {
 
   /** Name what the open preflight is doing (`state.setupStage`): the run page's
    *  status line reads it while no workflow step runs yet. */
+  /**
+   * Hold a run-queue slot (run-slots.mjs) for the rest of run()/resume(); their finally releases it.
+   * While all runLimits.maxConcurrentRuns slots are taken the run waits, showing why on its setup line; a
+   * stop or pause ends the wait. Mock runs (tests, smoke) never queue.
+   */
+  async _takeRunSlot() {
+    if (this.claude.mock || this._runSlot) return;
+    const max = runLimits().maxConcurrentRuns;
+    const prev = this.state.setupStage;
+    this._runSlot = await acquireRunSlot({
+      id: this.pipeline.id, max, signal: this.abort.signal,
+      check: () => { this._checkAbort(); this._checkPause(); },
+      onWait: (inUse) => this._setupStage(`Waiting for a free run slot (${inUse} of ${max} in use)`),
+    });
+    if (this._runSlot.waited) {
+      this._setupStage(prev);
+      await appendAudit(this.pipeline.dir, `Waited for a free run slot (at most ${max} runs at once, Settings › Runs › Machine load).`).catch(() => {});
+    }
+  }
+
   _setupStage(label) {
     if (this.state.setupStage === label) return;
     this.state.setupStage = label;
