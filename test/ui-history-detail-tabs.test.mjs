@@ -698,7 +698,7 @@ test('Logs copy: huge logs tail-render but copy takes everything; a filtered-emp
       assert.equal(writes.length, 1);
       assert.equal(writes[0].split('\n').length, N, 'copy is the FULL filtered set, not the tail render');
     } },
-    { name: 'copy on a filtered-empty Logs pane flashes "nothing to copy" and leaves the clipboard alone', run: async () => {
+    { name: 'copy on a filtered-empty Logs pane shows the × and "Nothing to copy" and leaves the clipboard alone', run: async () => {
       const ctx = await bootDetail({ detail: LOGS_DETAIL, arms: logArm(LOG_NDJSON) });
       const sec = await openTab(ctx, 'logs');
       const writes = [];
@@ -715,10 +715,12 @@ test('Logs copy: huge logs tail-render but copy takes everything; a filtered-emp
         const copyBtn = sec.querySelector('.log-copy');
         click(ctx.window, copyBtn);
         await timers.settle();
-        assert.equal(copyBtn.textContent, 'nothing to copy');
+        assert.ok(copyBtn.classList.contains('copy-miss'), 'the × shows');
+        assert.equal(copyBtn.title, 'Nothing to copy');
         assert.deepEqual(writes, [], 'clipboard untouched');
-        await timers.advance(1300);   // > flashCopyBtn's 1200 ms
-        assert.equal(copyBtn.textContent, 'copy', 'label restored after the flash');
+        await timers.advance(1300);   // > the copy button's 1200 ms
+        assert.ok(!copyBtn.classList.contains('copy-miss'));
+        assert.equal(copyBtn.title, 'Copy the visible log lines', 'title restored after the flash');
       } finally {
         t.mock.timers.reset();
       }

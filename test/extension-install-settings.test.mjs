@@ -72,5 +72,7 @@ test('Settings shows the Install block; a tab switch and Copy path work', async 
   t.doc.querySelector('#xi-panel-firefox [data-copy-path]').click();
   await until(() => t.copied.length === 1, 'the clipboard write');
   assert.equal(t.copied[0], '/opt/worca/extension/dist/firefox');
-  await until(() => t.doc.querySelector('#xi-panel-firefox [data-copy-path]').textContent === 'Copied', 'the Copied flash');
+  const copyBtn = t.doc.querySelector('#xi-panel-firefox [data-copy-path]');
+  await until(() => copyBtn.classList.contains('copied') && copyBtn.title === 'Copied', 'the copied tick');
+  assert.equal(copyBtn.querySelector('.copy-btn-msg').textContent, 'Copied', 'the tick and its Copied caption');
 });

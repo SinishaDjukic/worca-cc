@@ -9,6 +9,7 @@
 // mono hints and error sentences only; the one caption the shared params form
 // carries (script-forms.mjs PARAMS_CAPTION) is the single exception.
 import { h } from './script-forms.mjs';
+import { copyFromButton } from './copy-button.mjs';
 import {
   renderRuntimeStep, renderWorkspace, renderInterfacePanel, renderEditorPanel, renderTile, collectScriptDraft, EDITOR_LANGUAGE,
   originLabel, commandText, joinCommand, shellMode, advSummary,
@@ -746,17 +747,11 @@ export function createScriptsController({
     paintDetail();
   }
 
-  /** The read-only path's Copy: the same 1.2 s "Copied" the Agents view uses. */
+  /** The read-only path's copy button (copy-button.mjs): the tick, or the × and a note to copy it by hand. */
   async function copyPath(btn) {
     const path = st.root.querySelector('.script-path');
     if (!path || !path.textContent) return;
-    const clip = doc.defaultView.navigator && doc.defaultView.navigator.clipboard;
-    if (!clip) { say('Clipboard unavailable. Select the path and copy it.', 'err'); return; }
-    try {
-      await clip.writeText(path.textContent);
-      btn.textContent = 'Copied';
-      doc.defaultView.setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
-    } catch (e) { say(`Copy failed: ${e.message}`, 'err'); }
+    if (!(await copyFromButton(btn, path.textContent))) say('Copy failed. Select the path and copy it.', 'err');
   }
 
   // ── events ────────────────────────────────────────────────────────────────

@@ -84,6 +84,7 @@ const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', 
 
 import { icon } from './icons.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
+import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
@@ -5494,76 +5495,25 @@ function buildLogLine({ source, level, text, ts, sub, path, kind, desc }) {
 // Keystroke-to-repaint delay for the log search box.
 const LOG_SEARCH_DEBOUNCE_MS = 120;
 
-// Copy already-filtered log records to the clipboard and flash the button.
+// Copy already-filtered log records through the copy button (copy-button.mjs).
 //
 // Serializes from the MODEL, never from the DOM: a log line spaces its
 // ts/src/msg spans with a flex `gap` rather than whitespace, so a native
 // selection-copy would run them together ("12:34:56[planner]text").
-// navigator.clipboard needs a secure context — localhost qualifies — but a
-// hidden-textarea fallback keeps the button working anywhere.
-async function copyLogToClipboard(btn, recs) {
-  const text = serializeLog(recs);
-  if (!text) {
-    // A filtered-empty pane: silence looks like a dead button, and the STALE
-    // clipboard content would pass for the filtered log on the next paste.
-    flashCopyBtn(btn, 'nothing to copy');
-    return;
-  }
-  let ok = true;
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-    else ok = legacyCopy(text);
-  } catch {
-    ok = legacyCopy(text);
-  }
-  flashCopyBtn(btn, ok ? 'copied' : 'copy failed');
+// A filtered-empty pane copies nothing and says so: silence looks like a dead
+// button, and the STALE clipboard would pass for the filtered log on the next paste.
+function copyLogToClipboard(btn, recs) {
+  return copyFromButton(btn, serializeLog(recs));
 }
 
-// Save/flash/restore a copy button's label. `dataset.label` survives repeated
-// clicks so a flash can never become the button's permanent label.
-function flashCopyBtn(btn, msg) {
+// Save/flash/restore a text button's label (the report dialog's footer actions).
+// `dataset.label` survives repeated clicks so a flash can never become the label.
+function flashLabel(btn, msg) {
   const prev = btn.dataset.label || btn.textContent;
   btn.dataset.label = prev;
   btn.textContent = msg;
   clearTimeout(btn._copyTimer);
-  btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label || 'copy'; }, 1200);
-}
-
-// Copy a branch name from a history-card head. The button is icon-only, so
-// feedback is a brief copy→check icon swap (class-driven) instead of the text
-// flash flashCopyBtn does; the title mirrors it for hover/AT users.
-async function copyBranchToClipboard(btn, branch, restTitle = 'Copy branch name') {
-  let ok = true;
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(branch);
-    else ok = legacyCopy(branch);
-  } catch {
-    ok = legacyCopy(branch);
-  }
-  btn.classList.toggle('copied', ok);
-  btn.title = ok ? 'Copied' : 'Copy failed';
-  clearTimeout(btn._copyTimer);
-  btn._copyTimer = setTimeout(() => {
-    btn.classList.remove('copied');
-    btn.title = restTitle;
-  }, 1200);
-}
-
-function legacyCopy(text) {
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
+  btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1200);
 }
 
 // A "── Cycle N ──" rule marking where a feedback loop rewound and re-ran the
@@ -13244,18 +13194,7 @@ function paintProjHeader(screen, p) {
   const copy = screen.querySelector('.pd-path-copy');
   if (copy && !copy.dataset.wired) {
     copy.dataset.wired = '1';
-    copy.addEventListener('click', async () => {
-      const text = (projectByKey(projDetail && projDetail.key) || p).path;
-      let ok = true;
-      try {
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-        else ok = legacyCopy(text);
-      } catch { ok = legacyCopy(text); }
-      copy.classList.toggle('copied', ok);
-      copy.setAttribute('aria-label', ok ? 'Path copied' : 'Copy failed');
-      clearTimeout(copy._t);
-      copy._t = setTimeout(() => { copy.classList.remove('copied'); copy.setAttribute('aria-label', 'Copy path'); }, 1200);
-    });
+    copy.addEventListener('click', () => copyFromButton(copy, (projectByKey(projDetail && projDetail.key) || p).path));
   }
   const fresh = screen.querySelector('.pd-new');
   fresh.disabled = !p.exists;
@@ -15707,13 +15646,9 @@ function paintAbout(info) {
 let versionStatusSeq = 0;
 // Manual update (#841): the About card's Update row, the version picker / confirm modal and the
 // updating overlay (update-view.mjs). GET /api/app/update says who may update and to what.
-async function copyText(text) {
-  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } return legacyCopy(text); }
-  catch { return legacyCopy(text); }
-}
 const updateGuards = new Map();
 const updateUi = createUpdateUi({
-  doc: document, fetchImpl: (...a) => fetch(...a), copyText,
+  doc: document, fetchImpl: (...a) => fetch(...a), copyFromButton,
   report: (msg, kind) => reportStatus(null, '', msg, kind),
   guardModal: (modal, opts) => { if (!updateGuards.has(modal)) updateGuards.set(modal, guardModal(modal)); updateGuards.get(modal).opened(opts); },
 });
@@ -15850,11 +15785,8 @@ document.getElementById('extensionInstallHost')?.addEventListener('click', async
   }
   const copy = e.target.closest('[data-copy-path]');
   if (!copy) return;
-  const text = copy.dataset.copyPath;
-  let ok = false;
-  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; } else ok = legacyCopy(text); } catch { ok = legacyCopy(text); }
-  if (ok) flashCopyBtn(copy, 'Copied');
-  else reportStatus(null, '', 'Could not copy the path: select it and copy it by hand.', 'err');
+  const ok = await copyFromButton(copy, copy.dataset.copyPath);
+  if (!ok) reportStatus(null, '', 'Could not copy the path: select it and copy it by hand.', 'err');
 });
 
 // Settings → Browser extension (docs/browser-extension.md).
@@ -19770,19 +19702,13 @@ async function copyModelEnvValue(btn) {
   const id = editor && editor.dataset.id;
   const key = row && row.dataset.key;
   if (!id || !key) return;
-  const flash = (name) => {
-    const prev = [...btn.childNodes];
-    btn.replaceChildren(icon(document, name, 14));
-    setTimeout(() => { btn.replaceChildren(...prev); }, 1200);
-  };
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value?key=${encodeURIComponent(key)}`);
     const data = await safeJson(res);
-    if (!res.ok) return flash('x');
-    await navigator.clipboard.writeText(data.value);
-    flash('check');
+    if (!res.ok) return flashCopy(btn, false, 'Could not read the value');
+    await copyFromButton(btn, data.value);
   } catch {
-    flash('x');
+    flashCopy(btn, false);
   }
 }
 
@@ -26110,7 +26036,7 @@ function paintHdHeaderMeta(screen, record, data) {
       // applied to a string instead of a record.
       copyBtn.addEventListener('click', () => {
         const name = screen.querySelector('.hd-branch-name').textContent || '';
-        if (name) copyBranchToClipboard(copyBtn, name);
+        if (name) copyFromButton(copyBtn, name);
       });
     }
   }
@@ -28824,17 +28750,8 @@ function hdWorktreeRow(word, dir) {
   }
   const segs = String(dir).split('/').filter(Boolean);
   const short = segs.length > 3 ? `…/${segs.slice(-3).join('/')}` : dir;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'btn btn-sm btn-quiet mono hd-branch-copy hd-ov-wt-path';
-  btn.title = dir;
-  btn.setAttribute('aria-label', 'Copy worktree path');
-  const name = document.createElement('span'); name.className = 'hd-branch-name'; name.textContent = short;
-  btn.appendChild(name);
-  btn.insertAdjacentHTML('beforeend',
-    '<svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>'
-    + '<svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>');
-  btn.addEventListener('click', () => copyBranchToClipboard(btn, dir, dir));
+  const btn = copyButton(document, { name: 'Copy worktree path', label: short, title: dir, cls: 'hd-branch-copy hd-ov-wt-path' });
+  btn.addEventListener('click', () => copyFromButton(btn, dir));
   row.appendChild(btn);
   return row;
 }
@@ -30989,14 +30906,8 @@ function closeReportModal() {
 const reportGuard = guardModal(el.reportModal, { kind: 'form', close: () => closeReportModal(), busy: () => reportState.filing });
 
 /** Best-effort clipboard write; returns whether it landed. Mirrors copyLogToClipboard. */
-async function reportCopyText() {
-  const text = el.reportPreview.textContent;
-  try {
-    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
-    return legacyCopy(text);
-  } catch {
-    return legacyCopy(text);
-  }
+function reportCopyText() {
+  return writeClipboard(window, el.reportPreview.textContent);
 }
 
 el.reportClose.addEventListener('click', () => reportGuard.cancel());
@@ -31022,8 +30933,8 @@ el.reportOptins.addEventListener('change', (e) => {
 });
 
 el.reportCopy.addEventListener('click', async (e) => {
-  if (!reportState.payload) return flashCopyBtn(e.currentTarget, 'nothing to copy');
-  flashCopyBtn(e.currentTarget, (await reportCopyText()) ? 'copied' : 'copy failed');
+  if (!reportState.payload) return flashLabel(e.currentTarget, 'Nothing to copy');
+  flashLabel(e.currentTarget, (await reportCopyText()) ? 'Copied' : 'Copy failed');
 });
 
 // D23: the issue body ASKS the reporter to paste the full JSON, so put it on the
@@ -31071,7 +30982,7 @@ function showFiledIssue(url) {
 el.reportCreate.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   // Same gate as the link's href (D24): never file a payload the preview is not showing.
-  if (!reportState.payload) return flashCopyBtn(btn, 'not ready yet');
+  if (!reportState.payload) return flashLabel(btn, 'Not ready yet');
 
   // Open the tab INSIDE the user gesture. A popup blocker only honours a synchronous
   // window.open, and filing is a network round-trip away; the tab is parked on blank
@@ -31080,7 +30991,7 @@ el.reportCreate.addEventListener('click', async (e) => {
   let tab = null;
   try { tab = window.open('', '_blank'); } catch { tab = null; }
 
-  // dataset.label is flashCopyBtn's convention: read it so a flash still in flight
+  // dataset.label is flashLabel's convention: read it so a flash still in flight
   // cannot become the restored label, and kill its timer so it cannot fire over us.
   const label = btn.dataset.label || btn.textContent;
   btn.dataset.label = label;
@@ -34760,7 +34671,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     // repaint that rewrites .rd-branch-name (same stale-capture class the History
     // header kills).
     const name = screen.querySelector('.rd-branch-name').textContent || '';
-    if (name) copyBranchToClipboard(screen.querySelector('.rd-branch-copy'), name);
+    if (name) copyFromButton(screen.querySelector('.rd-branch-copy'), name);
   });
   screen.querySelector('.rd-pause').addEventListener('click', (e) => {
     const btn = e.currentTarget;
@@ -36438,7 +36349,7 @@ function paintRunHead(screen, f, h) {
   renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
   if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
   // storage: app.js's guarded localStorage (reading window.localStorage throws with site data blocked).
-  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyBranchToClipboard(btn, name, name) });
+  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyFromButton(btn, name) });
   return head;
 }
 

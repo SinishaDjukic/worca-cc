@@ -281,7 +281,7 @@ test('editor: an imported Responses entry keeps its effort list on save, offers 
   assert.equal('reasoningEfforts' in collectConnection(conn).upstream.capabilities, false);
 });
 
-test('Copy code copies by itself (any page that mounts the box): copy icon, then a green tick and "Copied"; a refusal says so', async () => {
+test('Copy code copies by itself (any page that mounts the box): the code is the button, then a green tick and "Copied"; a refusal says so in the status line', async () => {
   const dom = new JSDOM('<!doctype html><body></body>');
   const d = dom.window.document;
   const copied = [];
@@ -289,14 +289,16 @@ test('Copy code copies by itself (any page that mounts the box): copy icon, then
   const box = renderCopilotSignIn({ userCode: 'ABCD-1234' }, { doc: d });
   const btn = box.querySelector('.mv-cp-copy');
   assert.ok(btn.querySelector('.ico-copy') && btn.querySelector('.ico-check'), 'the copy and tick icons');
-  assert.equal(btn.textContent, 'Copy code');
+  assert.ok(btn.classList.contains('copy-btn'), 'the one copy button');
+  assert.equal(btn.querySelector('.mv-cp-code').textContent, 'ABCD-1234', 'the code is its label');
   btn.click(); await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(copied, ['ABCD-1234']);
   assert.ok(btn.classList.contains('copied'));
-  assert.equal(btn.querySelector('.mv-cp-copy-label').textContent, 'Copied');
+  assert.equal(btn.querySelector('.copy-btn-msg').textContent, 'Copied');
   Object.defineProperty(dom.window.navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied'); } }, configurable: true });
   btn.click(); await new Promise((r) => setTimeout(r, 0));
   assert.equal(btn.classList.contains('copied'), false);
-  assert.equal(btn.querySelector('.mv-cp-copy-label').textContent, 'Copy failed: select the code');
+  assert.ok(btn.classList.contains('copy-miss'));
+  assert.equal(box.querySelector('.mv-cp-status').textContent, 'Could not copy the code. Type ABCD-1234 on GitHub instead.', 'it outlasts the 1.2 s flash');
   dom.window.close();
 });

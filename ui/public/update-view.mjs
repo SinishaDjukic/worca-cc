@@ -83,7 +83,7 @@ export async function waitForServer({ fetchImpl, bootStartedAt, sleep, now = Dat
 // sleep uses the WINDOW's timers, never Node's global setTimeout: under jsdom, closing the window
 // (useDomRelease) clears them, so the overlay's poll loop dies with the test instead of keeping
 // `node --test` alive for the 10-minute poll window.
-export function createUpdateUi({ doc, fetchImpl, copyText, report = () => {}, reload = () => doc.defaultView.location.reload(),
+export function createUpdateUi({ doc, fetchImpl, copyFromButton, report = () => {}, reload = () => doc.defaultView.location.reload(),
   sleep = (ms) => new Promise((r) => doc.defaultView.setTimeout(r, ms)), guardModal = null }) {
   const $ = (id) => doc.getElementById(id);
   let vs = null; let info = null; let chosen = null;
@@ -255,9 +255,7 @@ export function createUpdateUi({ doc, fetchImpl, copyText, report = () => {}, re
   function closeModal() { $('update-modal')?.classList.add('hidden'); }
 
   async function copyFrom(id, btn) {
-    const ok = await copyText($(id).textContent);
-    if (!ok) report('Could not copy the command: select it and copy it by hand.', 'err');
-    else { btn.textContent = 'Copied'; doc.defaultView.setTimeout(() => { btn.textContent = 'Copy'; }, 1200); }
+    if (!(await copyFromButton(btn, $(id).textContent))) report('Could not copy the command: select it and copy it by hand.', 'err');
   }
 
   function wire() {

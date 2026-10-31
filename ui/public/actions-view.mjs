@@ -1,5 +1,7 @@
 // ui/public/actions-view.mjs — Actions (issue #529): pure renderers + one live controller.
 // Every renderer takes `doc` explicitly and returns detached DOM; no colour literals, no innerHTML with data.
+import { copyButton, copyFromButton } from './copy-button.mjs';
+
 export const TERMINAL = new Set(['exited', 'failed', 'stopped']);
 const ACTIVE = new Set(['starting', 'running', 'ready']);
 const LOG_TAIL = 400;
@@ -125,20 +127,11 @@ function stopButton(doc, label, onClick) {
   b.append(stopGlyph(doc), h(doc, 'span', null, label));
   return b;
 }
-function copyIconButton(doc, label, onClick) {
-  const b = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon act-copy');
-  b.type = 'button';
-  b.setAttribute('aria-label', label);
-  b.title = label;
-  const svg = doc.createElementNS(SVG_NS, 'svg');
-  for (const [k, v] of [['width', '14'], ['height', '14'], ['viewBox', '0 0 24 24'], ['fill', 'none'], ['stroke', 'currentColor'], ['stroke-width', '2'], ['aria-hidden', 'true']]) svg.setAttribute(k, v);
-  const rect = doc.createElementNS(SVG_NS, 'rect');
-  for (const [k, v] of [['x', '9'], ['y', '9'], ['width', '12'], ['height', '12'], ['rx', '2.5']]) rect.setAttribute(k, v);
-  const path = doc.createElementNS(SVG_NS, 'path');
-  path.setAttribute('d', 'M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5');
-  svg.append(rect, path);
-  b.append(svg);
-  b.addEventListener('click', onClick);
+/** A copy button (copy-button.mjs: the tick and "Copied", or the × and the reason). It copies by itself; the
+ *  controller hears only of a miss, `onCopyFailed(what, text)`, and puts it in the card's notice with the text. */
+function copyAct(doc, handlers, name, what, text, opts = {}) {
+  const b = copyButton(doc, { name, ...opts });
+  b.addEventListener('click', async () => { if (!(await copyFromButton(b, text))) handlers.onCopyFailed?.(what, text); });
   return b;
 }
 /** Branch and Folder as labelled rows: each mono string says what it is. */
@@ -147,13 +140,13 @@ function metaRows(doc, m, handlers) {
   const row = (label, ...value) => { const dd = h(doc, 'dd'); dd.append(...value); dl.append(h(doc, 'dt', null, label), dd); };
   if (!m.branch) { row('Branch', h(doc, 'span', 'act-later', 'None: this run made no branch')); return dl; }
   const br = h(doc, 'code', 'act-branch', middleClip(m.branch)); br.title = m.branch;
-  row('Branch', br, copyIconButton(doc, 'Copy branch name', () => handlers.onCopy?.(m.branch)));
+  row('Branch', br, copyAct(doc, handlers, 'Copy branch name', 'branch name', m.branch, { cls: 'act-copy' }));
   const dir = m.checkout ? (m.checkout.worktreeDir || m.worktreeDir) : (m.heldBy || null);
   if (dir) {
     const p = h(doc, 'code', 'act-path', middleClip(dir, 64)); p.title = dir;
     const extra = m.checkout?.external ? [h(doc, 'span', 'badge act-linked', 'Your folder')]
       : !m.checkout && m.heldBy ? [h(doc, 'span', 'act-later', 'already has this branch')] : [];
-    row('Folder', p, copyIconButton(doc, 'Copy folder path', () => handlers.onCopy?.(dir)), ...extra);
+    row('Folder', p, copyAct(doc, handlers, 'Copy folder path', 'folder path', dir, { cls: 'act-copy' }), ...extra);
   } else row('Folder', h(doc, 'span', 'act-later', 'Created when you check out'));
   return dl;
 }
@@ -175,8 +168,8 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
     return sec;
   }
   if (!model.enabled) sec.append(h(doc, 'p', 'hint', 'Actions are turned off on this hosted deployment. Check out and Copy command still work.'));
-  const copyBtn = () => (m.copyCommand ? btn(doc, 'Copy command', null, () => handlers.onCopy?.(m.copyCommand),
-    'Copy the git commands that put this branch in your own clone') : null);
+  const copyBtn = () => (m.copyCommand ? copyAct(doc, handlers, 'Copy command', 'command', m.copyCommand,
+    { action: true, title: 'Copy the git commands that put this branch in your own clone' }) : null);
   const discardBtn = () => (m.checkout?.external
     ? btn(doc, 'Unlink', 'btn act-discard', () => handlers.onUnlink?.(m.projectKey),
       'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
@@ -575,9 +568,9 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
       if (r.data?.instanceId) subscribe(r.data.instanceId);
       await refresh();
     },
-    onCopy: async (text) => {
-      try { await doc.defaultView?.navigator?.clipboard?.writeText(text); st.notice = { text: 'Copied', kind: 'ok' }; }
-      catch { st.notice = { text: 'Copy failed; select the text by hand.', kind: 'error' }; }
+    // A copy shows on its own button; only a miss reaches the notice, which outlasts the flash and holds the text.
+    onCopyFailed: (what, text) => {
+      st.notice = { text: `Could not copy the ${what}. Copy it from here: ${text}`, kind: 'error' };
       render();
     },
     onStack: async (stackId, op) => after(await api('POST', `${base}/stacks/${encodeURIComponent(stackId)}/${op === 'stop' ? 'stop' : 'start'}${q}`, {})),
