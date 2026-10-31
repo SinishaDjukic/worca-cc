@@ -2624,6 +2624,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const lead = active && g.engine !== active ? engineLead(g.models, readEnginePicks(storage)[g.engine], ((st.catalog && st.catalog.defaults) || {})[g.engine]) : null;
       return splitCatalog(lead ? [lead, ...g.models.filter((x) => x !== lead)] : g.models);
     };
+    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
+    // The engine the main pane lists: the chat's, else the picked model's, else the first with models.
+    const shownEngine = () => {
+      const sections = sectionsNow();
+      const want = pickerEngine();
+      return (sections.find((x) => x.engine === want) || sections[0] || {}).engine || null;
+    };
+    const moreModelsRow = (engine) => {
+      const moreRow = menuItem('ask-more-models', () => renderPane(`more:${engine}`));
+      moreRow.setAttribute('data-ask-more-models', '');
+      moreRow.appendChild(make('span', null, 'More models'));
+      moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
+      return moreRow;
+    };
     let shownPane = 'main';
     let effortPaneKey = '';   // the model + effort list the effort pane was painted from
     const effortKeyNow = () => { const e = catalogEntry(st.picker.model); return `${st.picker.model}:${e && Array.isArray(e.efforts) ? e.efforts.join() : ''}`; };
@@ -2644,31 +2658,47 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (eff === st.picker.effort) item.appendChild(checkMark());
           panel.appendChild(item);
         }
-      } else if (pane === 'more') {
-        const back = menuItem('ask-pane-back', () => renderPane('main'));
+      } else if (pane.startsWith('more:') || pane.startsWith('engine:')) {
+        // 'engine:<name>': another engine's main list, led by the model last used there (else its default), so a pick
+        // moves the chat after a confirm; 'more:<name>': that engine's more models, back to the list it came from.
+        const more = pane.startsWith('more:');
+        const engine = pane.slice(pane.indexOf(':') + 1);
+        const g = sectionsNow().find((x) => x.engine === engine);
+        const home = engine === shownEngine() ? 'main' : `engine:${engine}`;
+        const back = menuItem('ask-pane-back', () => renderPane(more ? home : 'main'));
         back.setAttribute('data-ask-pane-back', '');
-        back.appendChild(make('span', null, '‹ Models'));
+        back.appendChild(make('span', null, more && home === 'main' ? '‹ Models' : `‹ ${g ? g.label : 'Models'}`));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        // Each engine's more models under its name, as in the main pane, when more than one engine has some.
-        const activeNow = activeEngine();
-        const more = pickerGroups(st.catalog ? st.catalog.models : [], { active: activeNow })
-          .map((g) => ({ ...g, rest: sectionSplit(g, activeNow).rest })).filter((g) => g.rest.length);
-        for (const g of more) {
-          if (more.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          appendByConnection(g.rest, g.engine);
+        if (g) {
+          const split = sectionSplit(g, activeEngine());
+          appendByConnection(more ? split.rest : split.primary, g.engine);
+          if (!more && split.rest.length) {
+            panel.appendChild(make('div', 'ask-pop-divider'));
+            panel.appendChild(moreModelsRow(engine));
+          }
         }
       } else {
-        // D12 / #943: every engine under its name; the chat's own is marked, and another engine's section leads with the
-        // model last used there (else its default): picking one moves the chat after a confirm.
-        const active = activeEngine();
-        const sections = pickerGroups(st.catalog ? st.catalog.models : [], { active });
-        const rest = [];
-        for (const g of sections) {
+        // D12 / #943: the shown engine's models under its name (the chat's own is marked); every other engine is one
+        // row that opens its own list, so the menu stays short however many engines have models.
+        const sections = sectionsNow();
+        const shown = shownEngine();
+        const g = sections.find((x) => x.engine === shown);
+        let hasMore = false;
+        if (g) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          const split = sectionSplit(g, active);
+          const split = sectionSplit(g, activeEngine());
           appendByConnection(split.primary, g.engine);
-          rest.push(...split.rest);
+          hasMore = split.rest.length > 0;
+        }
+        const others = sections.filter((x) => x !== g);
+        if (others.length) panel.appendChild(make('div', 'ask-pop-divider'));
+        for (const o of others) {
+          const engineRow = menuItem('ask-engine-row', () => renderPane(`engine:${o.engine}`));
+          engineRow.setAttribute('data-ask-engine-group', o.engine);
+          engineRow.appendChild(make('span', null, o.label));
+          engineRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
+          panel.appendChild(engineRow);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
         const noEffort = !!catalogEntry(st.picker.model)?.noEffort;
@@ -2685,13 +2715,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           effortRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
         }
         panel.appendChild(effortRow);
-        if (rest.length) {
-          const moreRow = menuItem('ask-more-models', () => renderPane('more'));
-          moreRow.setAttribute('data-ask-more-models', '');
-          moreRow.appendChild(make('span', null, 'More models'));
-          moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
-          panel.appendChild(moreRow);
-        }
+        if (hasMore) panel.appendChild(moreModelsRow(shown));
       }
       focusFirst();
     };

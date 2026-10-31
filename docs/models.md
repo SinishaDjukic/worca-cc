@@ -885,8 +885,9 @@ click Apply.
 
 ### Switching a chat's engine
 
-A chat is not tied to the engine it started on. In the model picker every chat engine has its own section, and the
-chat's own section is marked *this chat*. Pick a model in another section to move the chat there:
+A chat is not tied to the engine it started on. The model picker lists the models of the chat's engine, marked
+*this chat*, and one row for each other engine that has models. Open an engine's row to see its models, and pick one to
+move the chat there:
 
 - worca first shows what changes: the tools the new engine has, images or PDFs it cannot view, whether it reports a
   cost, both models' context windows, the MCP servers from your sets it cannot start, the attachments it gets only by
@@ -907,8 +908,8 @@ chat's own section is marked *this chat*. Pick a model in another section to mov
 - Event turns (a card you answered, a finished command) run on the engine the chat is on when they start.
 - When more than one engine is set up, the model button names the engine the chat runs on, in Chat and in the browser
   extension.
-- Your browser remembers the last model and effort you used on each engine; another engine's section lists that model
-  first in its group, tagged *last used*. The Workflows chat and the browser extension do not switch: the extension shows the chat's engine and lists
+- Your browser remembers the last model and effort you used on each engine; another engine's list shows that model
+  first, tagged *last used*. The Workflows chat and the browser extension do not switch: the extension shows the chat's engine and lists
   its models only.
 
 ### Per-agent models for one run

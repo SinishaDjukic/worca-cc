@@ -1,4 +1,4 @@
-// test/ask-panel-engine.test.mjs — new-chat picker grouped by engine; in a chat only its engine (D12).
+// test/ask-panel-engine.test.mjs — the model picker by engine: the shown engine's models, a row per other engine (D12, #943).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
@@ -25,13 +25,21 @@ function handler({ thread = null, messages = [], catalog = CATALOG } = {}) {
 }
 const names = (ctx) => [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
 const groups = (ctx) => [...ctx.doc.querySelectorAll('.ask-pop-model .ask-pop-group')].map((n) => n.textContent);
+const engineRows = (ctx) => [...ctx.doc.querySelectorAll('.ask-pop-model [data-ask-engine-group]')].map((n) => n.textContent.replace(/›$/, ''));
+const openEngine = async (ctx, engine) => { ctx.doc.querySelector(`.ask-pop-model [data-ask-engine-group="${engine}"]`).click(); await ctx.tick(); };
 
-test('a new chat lists both engines under their names', async () => {
+test('a new chat lists its engine\'s models; every other engine is one row that opens its own list', async () => {
   const ctx = makePanel({ fetchHandler: handler() });
   ctx.panel.open(); await ctx.tick(); await ctx.tick();
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), ['Claude', 'Codex (beta)']);
-  assert.deepEqual(names(ctx), ['Opus 5.5', 'GPT-5.5']);
+  assert.deepEqual(groups(ctx), ['Claude']);
+  assert.deepEqual(names(ctx), ['Opus 5.5']);
+  assert.deepEqual(engineRows(ctx), ['Codex (beta)']);
+  await openEngine(ctx, 'codex');
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ Codex (beta)');
+  assert.deepEqual(names(ctx), ['GPT-5.5']);
+  ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
+  assert.deepEqual(names(ctx), ['Opus 5.5'], 'back returns to the main list');
 });
 
 test('askEngine codex: a new chat starts on the Codex default; a stored Claude pick does not override it', async () => {
@@ -74,11 +82,26 @@ function freshHandler({ catalog = CATALOG_X, gate = null, sent = null, ...rest }
 const modelBtn = (ctx) => ctx.doc.querySelector('[data-ask-model-btn]');
 const effortBtn = (ctx) => ctx.doc.querySelector('.ask-model-btn-effort').textContent;
 const checked = (ctx) => [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-item')].filter((i) => i.querySelector('.ask-model-check')).map((i) => i.querySelector('.ask-model-name').textContent);
-const pickItem = (ctx, label) => {
+// The open selector's row for `label`, opening the pane that lists it: a second model of a family sits under
+// "More models", another engine's models under that engine's row.
+const reveal = (ctx, label) => {
   const find = () => [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-item')].find((i) => i.querySelector('.ask-model-name').textContent === label);
-  if (!find()) ctx.doc.querySelector('[data-ask-more-models]').click();   // a second model of a family sits under "More models"
-  find().click();
+  const toMain = () => { const back = ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]'); if (back) back.click(); };
+  if (find()) return find();
+  toMain();
+  if (find()) return find();
+  const panes = [...ctx.doc.querySelectorAll('.ask-pop-model [data-ask-more-models], .ask-pop-model [data-ask-engine-group]')]
+    .map((b) => (b.hasAttribute('data-ask-more-models') ? '[data-ask-more-models]' : `[data-ask-engine-group="${b.dataset.askEngineGroup}"]`));
+  for (const sel of panes) {
+    toMain();
+    ctx.doc.querySelector(`.ask-pop-model ${sel}`).click();
+    if (find()) return find();
+    const more = ctx.doc.querySelector('.ask-pop-model [data-ask-more-models]');   // an engine's own "More models"
+    if (more) { more.click(); if (find()) return find(); }
+  }
+  return undefined;
 };
+const pickItem = (ctx, label) => reveal(ctx, label).click();
 const pickEffort = (ctx, label) => {
   ctx.doc.querySelector('[data-ask-effort-row]').click();
   [...ctx.doc.querySelectorAll('.ask-pop-model .ask-effort-item')].find((b) => b.textContent.startsWith(label)).click();
@@ -242,15 +265,23 @@ const CATALOG_MORE = {
   defaults: { ...CATALOG.defaults, copilot: { model: 'copilot/claude-sonnet-5.5', effort: 'medium' } },
 };
 
-test('the main list holds the newest of each Copilot family; More models names each engine it lists', async () => {
+test('each engine\'s list holds the newest of each family; its More models the rest', async () => {
   const ctx = makePanel({ fetchHandler: handler({ catalog: CATALOG_MORE }) });
   ctx.panel.open(); await ctx.tick(); await ctx.tick();
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), ['Claude', 'Codex (beta)', 'Copilot (beta)']);
-  assert.deepEqual(names(ctx), ['Opus 5.5', 'GPT-5.5', 'Claude Sonnet 5.5', 'GPT-6.1 Sol', 'Gemini 4 Argon']);
+  assert.deepEqual(groups(ctx), ['Claude']);
+  assert.deepEqual(names(ctx), ['Opus 5.5']);
+  assert.deepEqual(engineRows(ctx), ['Codex (beta)', 'Copilot (beta)']);
   ctx.doc.querySelector('[data-ask-more-models]').click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), ['Claude', 'Copilot (beta)'], 'Codex has no more models: no heading for it');
-  assert.deepEqual(names(ctx), ['Opus 5', 'Claude Sonnet 5', 'GPT-5.4 Mini']);
+  assert.deepEqual(names(ctx), ['Opus 5'], 'only the shown engine\'s more models');
+  ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
+  await openEngine(ctx, 'copilot');
+  assert.deepEqual(names(ctx), ['Claude Sonnet 5.5', 'GPT-6.1 Sol', 'Gemini 4 Argon'], 'the newest of each family');
+  ctx.doc.querySelector('.ask-pop-model [data-ask-more-models]').click(); await ctx.tick();
+  assert.deepEqual(names(ctx), ['Claude Sonnet 5', 'GPT-5.4 Mini']);
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ Copilot (beta)');
+  ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
+  assert.deepEqual(names(ctx), ['Claude Sonnet 5.5', 'GPT-6.1 Sol', 'Gemini 4 Argon'], 'back to Copilot\'s list, not the main one');
 });
 
 // ---- #943: a chat moves to another engine in place ----
@@ -287,15 +318,18 @@ async function openCodexChat(over) {
   ctx.panel.open(); await ctx.tick(); await ctx.tick(); await ctx.tick();
   return ctx;
 }
-const row = (ctx, name) => [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-item')].find((b) => b.querySelector('.ask-model-name').textContent === name);
+const row = reveal;
 const settle = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); ctx.flush(); };
 
 test('inside a Codex chat the picker lists every engine and marks the chat\'s own', async () => {
   const ctx = await openCodexChat({ fetchHandler: handler(CODEX_CHAT) });
   assert.equal(modelBtn(ctx).dataset.engine, 'codex');
   modelBtn(ctx).click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), ['Claude', 'Codex (beta) · this chat']);
-  assert.deepEqual(names(ctx), ['Opus 5.5', 'GPT-5.5']);
+  assert.deepEqual(groups(ctx), ['Codex (beta) · this chat']);
+  assert.deepEqual(names(ctx), ['GPT-5.5']);
+  assert.deepEqual(engineRows(ctx), ['Claude']);
+  await openEngine(ctx, 'claude');
+  assert.deepEqual(names(ctx), ['Opus 5.5']);
 });
 
 test('picking a Claude model in a Codex chat previews, asks, then switches in place', async () => {
@@ -380,11 +414,12 @@ test('another engine\'s section leads with the model last used there, tagged', a
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open(); await ctx.tick(); await ctx.tick(); await ctx.tick();
   modelBtn(ctx).click(); await ctx.tick();
-  assert.equal(names(ctx)[0], 'Opus 5');
-  assert.equal(row(ctx, 'Opus 5').querySelector('.ask-model-tag').textContent, 'last used');
   assert.equal(row(ctx, 'GPT-5.5').querySelector('.ask-model-tag'), null, 'the chat\'s own section is untagged');
-  ctx.doc.querySelector('[data-ask-more-models]').click(); await ctx.tick();
-  assert.deepEqual(names(ctx), ['Opus 5.5'], 'the model the lead displaced is under More models, never lost');
+  await openEngine(ctx, 'claude');
+  assert.deepEqual(names(ctx), ['Opus 5']);
+  assert.equal(row(ctx, 'Opus 5').querySelector('.ask-model-tag').textContent, 'last used');
+  ctx.doc.querySelector('.ask-pop-model [data-ask-more-models]').click(); await ctx.tick();
+  assert.deepEqual(names(ctx), ['Opus 5.5'], 'the model the lead displaced is under Claude\'s More models, never lost');
 });
 
 test('the model button names the chat\'s engine in text when the catalog has more than one engine, and none with one', async () => {
