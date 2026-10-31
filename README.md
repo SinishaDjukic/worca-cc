@@ -9,7 +9,7 @@ Worca turns a task into **reviewed, merge-ready work**. It is a
 work, and a state machine runs the agents of a workflow in sequence — by
 default **Clarify → Plan → Refine → Implement → Review** — looping until the
 work clears quality gates, pausing to ask *you* the questions that matter, and
-keeping every run isolated in its own git worktree and branch — or, for a plain
+keeping every run's changes apart in its own git worktree and branch — or, for a plain
 folder, on a copy you apply back with **Apply to folder**; with **No project**, in a folder of its own. Pick **Auto**
 and Worca chooses the workflow for the task, draw your own in **Workflows** (or
 ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
@@ -105,7 +105,9 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Isolated worktrees** — each run works in its own git worktree on its own
   `worca-cc/…` branch, so agents never edit your checkout and parallel runs
   don't collide. When a run ends, its work is committed to that branch and the
-  worktree is removed; the branch stays.
+  worktree is removed; the branch stays. A worktree isolates changes, not the
+  host: natively, agents run as your user and can reach whatever you can (see
+  [Guardrails](#guardrails)).
 - **Run on the source branch** — switch it on under the feature branch (or
   `--on-source-branch`) and the run still works on a hidden branch, but when it
   finishes `done` its source branch is fast-forwarded onto that work and the
@@ -114,8 +116,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   dirty checkout of it, or a run that did not finish leaves the work on its own
   branch, with the commands to merge it by hand.
 - **Live cockpit** — **Runs** in the sidebar lists every run, live and
-  finished, with **All / Live / Finished / Needs you** tabs, search, and
-  grouping by project or date. A live run's page shows its state and current
+  finished; its **View** menu shows All, Needs you, Running, Waiting, Finished,
+  **Ready to ship** (finished, no PR yet) or Archived, and groups by project or date. A live run's page shows its state and current
   step, ticking time, cost and changed files, and a **Live view** of the running
   step inside its workflow graph; **Diff** shows the worktree's changes so far,
   and **Logs** streams every step with search (filters by source, level, step
@@ -128,7 +130,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   **Generate** it (Settings › Runs › **Pull requests** can draft it as soon as the
   dialog opens), open it as a draft and watch it, then pushes the branch
   and opens the PR with the GitHub CLI (`gh`), or on
-  [Azure DevOps](docs/azure-devops.md) with a personal access token. A run
+  [Azure DevOps](docs/azure-devops.md) with a personal access token, and
+  [Bitbucket Cloud](docs/bitbucket.md) with an access or API token. A run
   started from a GitHub issue closes it on merge, and a workspace run opens one
   linked PR per changed repo. The button then becomes **View PR**.
   **Publish branch** (Advanced) pushes the branch without a PR.
@@ -337,7 +340,8 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 - **Named policy sets, picked per run** — the **Guardrails** picker under
   **New pipeline › Advanced** offers the built-in **Permissive / Normal /
-  Strict** tiers plus your own sets; Permissive, the default, adds no rules.
+  Strict** tiers plus your own sets. A new install defaults to Normal; an
+  install from before that keeps Permissive, which adds no rules.
   Normal protects credential files (`.env*`, keys, cert stores, container
   secrets, Worca's own DB and settings) and blocks publication commands
   (`git push`, `npm`/`yarn`/`pnpm publish`); Strict adds an environment scrub on agent spawn, denies
@@ -358,6 +362,11 @@ level and has no **Diff**, **Changes** or **Actions**.
   MCP registry tools, but a deny rule you write on a server reaches every copy
   of it. See [`docs/guardrails.md`](docs/guardrails.md) for the full model and
   its honest limitations.
+- **Not a sandbox** — native mode runs agents as your user. Normal and Strict
+  restrict tools, not the filesystem: an agent with Bash can still reach your
+  files, `HOME` and network through an interpreter. For untrusted work, run
+  Worca in a container ([`docs/docker.md`](docs/docker.md)), where agents see
+  only the projects you mount and can run as their own user.
 
 ### MCP servers & credential broker
 
@@ -594,6 +603,10 @@ level and has no **Diff**, **Changes** or **Actions**.
   A note above it reads like "5 answers while you were away — 2 to check". A
   short notice says when away hours start and end, and a violet dot sits on your avatar while you
   are away; turning **Away** off in the account menu ends it.
+- **A small easter egg** — while you are away with **Keep awake** on, leave the Worca window in front and untouched
+  for 5 minutes and a screensaver takes over: the wordmark drifts across the window with one line on how your runs
+  and chats are doing. Moving the mouse or pressing a key brings the page back. `AWAY_SCREENSAVER` in
+  `ui/public/away-screensaver.mjs` turns it off.
 
 ### Scheduled runs
 
@@ -638,7 +651,7 @@ level and has no **Diff**, **Changes** or **Actions**.
   or month (runs split into finished, stopped and failed). With a total limit, a ring around your
   avatar in the sidebar fills toward it (amber from 80%, red once new runs are blocked); the account
   menu's spend card has the figures. Filter or split spend by person (or by tag, see
-  [Labs features](#labs-features)) and export the split as CSV; see
+  [Shaper, cost tags and keep awake](#shaper-cost-tags-and-keep-awake)) and export the split as CSV; see
   [`docs/statistics.md`](docs/statistics.md).
 - **Hard limits** — set in Settings › Runs › Budget & cost limits, or with `worca config`. A
   per-pipeline cost limit pauses a runaway run before its next step; *Continue without cap (this
@@ -717,7 +730,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   **Engine & models** card or in a project's settings. Each needs its own CLI
   installed and signed in. The beta engines hold guardrail rules only in part,
   so Normal and Strict need **Allow unguarded**
-  (`--allow-unguarded-engine`); Copilot and Cursor report no cost; Chat
+  (`--allow-unguarded-engine`), or run them on Permissive
+  (`--guardrails permissive`); Copilot and Cursor report no cost; Chat
   runs on Claude Code or Codex. A model's connection decides which engines can
   run it. See [`docs/models.md`](docs/models.md#codex).
 - **Bring your own models** — *Add model* on the **Models** page registers any
@@ -774,22 +788,24 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ![Runs page — runs from nimbus-crm, lumen-docs and nimbus-web grouped by project, one scheduled and one stopped, with the finished run Paginate the search endpoint open: Ready to ship, 17m 2s, $3.65, +29 −2 across 4 files](docs/screenshots/history.png)
 
+### Shaper, cost tags and keep awake
+
+- **Shaper** — Worca shapes a thin or large task first: at most 3
+  questions, a plan for the perspectives you pick, rule checks on the plan, and
+  your approval before anything is built; a large task can be cut into slices.
+  See [`docs/shape-it-first.md`](docs/shape-it-first.md).
+- **Cost tags** — `key:value` tags such as `client:acme` on New
+  pipeline, run pages and Ask run cards (`--tag` on the CLI), optional
+  mandatory tags under Settings › Tags, and spend **By tag** on Statistics and
+  Team metrics.
+- **Keep awake** — stops the computer sleeping while a run has agents working;
+  a switch in the account menu. See [`docs/keep-awake.md`](docs/keep-awake.md).
+
 ### Labs features
 
 - **Off until you turn them on** — unfinished features ship behind machine-wide
   flags: **Settings › Labs**, `worca flags on|off <key>`, or
   `WORCA_FLAGS=<key>` at start. See [`docs/feature-flags.md`](docs/feature-flags.md).
-- **Shaper** (`shapeFirst`, beta, on by default) — Worca shapes a thin or large task first: at most 3
-  questions, a plan for the perspectives you pick, rule checks on the plan, and
-  your approval before anything is built; a large task can be cut into slices.
-  Turn it off in **Settings › Labs** or with `worca flags off shapeFirst`.
-  See [`docs/shape-it-first.md`](docs/shape-it-first.md).
-- **Run tags** (`runTags`) — `key:value` tags such as `client:acme` on New
-  pipeline, run pages and Ask run cards (`--tag` on the CLI), optional
-  mandatory tags under Settings › Tags, and spend **By tag** on Statistics and
-  Team metrics.
-- **Keep awake** (`keepAwake`) — stops the computer sleeping while a run has
-  agents working.
 
 ### Getting started & UI levels
 
@@ -822,6 +838,31 @@ level and has no **Diff**, **Changes** or **Actions**.
 ```bash
 npm install -g @worca/app     # puts `worca` on your PATH
 ```
+
+Install with the npm of the Node that is first on your `PATH` in a **new**
+terminal. A global package lands under the Node that ran `npm install -g`: if
+nvm was active then, but a new terminal starts with the system or Homebrew
+Node, `worca` is not found there. Check in a fresh terminal:
+
+```bash
+command -v worca    # prints the path of the worca binary; nothing means it is not on PATH
+```
+
+**npm install scripts.** Newer npm versions warn about, or skip, the install
+scripts of dependencies you have not approved. Approve the two Worca needs:
+
+```bash
+npm install -g @worca/app --allow-scripts=node-pty,protobufjs
+```
+
+`node-pty` is optional and is used only by the web UI's terminal pane (and the
+commands Ask Worca runs in it); pipelines, mock or real, never load it. On
+Linux its install script compiles it, so without it the terminal falls back
+to plain pipes. On macOS the prebuilt `spawn-helper` can lack the execute bit;
+Worca sets it the first time a terminal opens, and `worca doctor` prints the
+exact `chmod +x <path>` when it cannot (prefix `sudo` for a root-owned global
+install). `protobufjs`'s script only prints a version warning. See
+[Without node-pty](docs/terminal.md#without-node-pty).
 
 Requirements:
 
@@ -941,6 +982,9 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 # run the agents on another engine (beta: codex, copilot, cursor)
 worca --project /path/to/your/project --prompt "Add a /search endpoint" --engine codex
 
+# pick the run's guardrail set (default: Normal on a new install; every engine but Claude needs permissive or --allow-unguarded-engine)
+worca --project /path/to/your/project --prompt "Add a /search endpoint" --engine codex --guardrails permissive
+
 # register a project: the current folder, or a clone into the projects folder
 worca add
 worca add --clone https://github.com/you/your-repo.git
@@ -991,14 +1035,15 @@ worca extension --open          # the packaged browser extension folder
 
 # feature flags
 worca flags                     # list them
-worca flags off shapeFirst      # Shaper is beta and on by default
+worca flags on smartRunNaming   # a Labs feature, off by default
 ```
 
-Run `worca --help` for every subcommand — projects (`add`, `list`,
-`remove`), `ui`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`,
-`workflow`, `script`, `plugin`, `marketplace`, `models`, `config`, `flags`,
-`metrics`, `policy`, `container`, `broker`, `extension`, `doctor` — and flag;
-most have their own `worca <subcommand> help`.
+Run `worca --help` for every subcommand — the project registry (`add`,
+`list`, `remove`, top-level: `worca list`, not `worca projects list`), `ui`,
+`resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
+`plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`,
+`container`, `broker`, `extension`, `doctor` — and flag; most have their own
+`worca <subcommand> help`.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
 interactive run paused and you can resume it); `1` a hard error, a stop, or an
@@ -1016,8 +1061,18 @@ worca --install /path/to/your/project
 ```
 
 This copies Worca's agents and the `/worca` skill into the project's
-`.claude/` folder (files already there are kept). Then open Claude Code in
-that project and run:
+`.claude/` folder (files already there are kept; `--force` overwrites them).
+To have `/worca` in every project, install into your home folder instead:
+
+```bash
+worca --install ~
+```
+
+Claude Code loads `~/.claude/agents/` and `~/.claude/skills/` in every
+project, so the agents and the skill are then available everywhere. Add
+`--force` to overwrite copies from an older Worca version.
+
+Then open Claude Code in a project and run:
 
 ```
 /worca Add a /search endpoint with pagination
@@ -1047,6 +1102,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Voice mode](docs/speech.md) — hands-free Chat: Whisper and Kokoro in the browser, or your own speech servers
 - [Voice languages](docs/speech-languages.md) — which languages work today, and the plan for more
 - [Azure DevOps](docs/azure-devops.md) — Ship-it, clone, sync, merge tracking and the Boards source on `dev.azure.com`: the token, its scopes, and what does not work yet
+- [Bitbucket](docs/bitbucket.md) — Ship-it, clone, sync, Watch PR and merge tracking on bitbucket.org: the tokens, their scopes, and what does not work yet
 - [Statistics](docs/statistics.md) — spend and outcomes by range, person and tag, CSV export and the API
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide records of finished runs on a `worca-metrics` branch
 - [Team policy](docs/team-policy.md) — team-set cost caps, allowed models, required plugins, guardrail defaults and MCP servers from a `worca-policy` branch

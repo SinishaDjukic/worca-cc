@@ -18,12 +18,14 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { devNull, tmpdir } from 'node:os';
 import { githubEnv } from './github-credentials.mjs';
 import { azureEnv } from './azure-credentials.mjs';
+import { bitbucketEnv, stripBitbucketCredentials } from './bitbucket-credentials.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
 import { worcaHome } from './projects.mjs';
 import { parseRemoteUrl, prBaseBranch } from './git-info.mjs';
 import { forgeOf } from './forge.mjs';
 import { mapWithCap } from './fanout.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv } from './git-guard.mjs';
 
 export const INTERACTIVE_TTL_MS = 45_000;
 export const INTERACTIVE_TIMEOUT_MS = 8_000;
@@ -50,13 +52,12 @@ const QUIET_ENV = Object.freeze({ LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_ASK
  *  Windows (v8): no setsid. Git for Windows' ssh can still prompt on an inherited console; on a
  *  timeout the whole tree is ended with `taskkill /T /F`, as script-runner.mjs:264-272 does. */
 const NETWORK_CMDS = new Set(['fetch', 'merge', 'merge-tree']);
-/** Every git-sync call runs with an empty hooks directory (metrics/sync.mjs hookFreeArgs, decision 33):
- *  `reference-transaction` fires on fetch / update-ref / branch and `post-merge` on merge --ff-only,
- *  with the spawn env — worca's GitHub credential included. Run worktrees share the project's
- *  .git/hooks, so an agent could plant one there. On POSIX the hooks path is the null device, which
- *  can hold no hooks (a directory could be created and filled later); on Windows, a worca-home
- *  folder that does not exist simply has no hooks. The shared .git/config is just as writable, so
- *  a planted core.fsmonitor command (run by `git status`) and http.sslVerify=false are overridden too. */
+/** Every git-sync call runs with git-guard.mjs's env (security G2): `reference-transaction` fires on
+ *  fetch / update-ref / branch and `post-merge` on merge --ff-only, with the spawn env — worca's GitHub
+ *  credential included — and run worktrees share the project's .git/hooks and .git/config, so an agent
+ *  could plant a hook, a core.fsmonitor command or a smudge filter there. hookFreeArgs is the same
+ *  hooks-off set for a repository worca made itself (marketplace-publish's scratch clone): on POSIX
+ *  the null device, which can hold no hooks; on Windows, a worca-home folder that does not exist. */
 export function hookFreeArgs() {
   let dir = devNull;
   if (process.platform === 'win32') { try { dir = join(worcaHome(), 'no-hooks'); } catch { /* devNull */ } }
@@ -72,15 +73,17 @@ function trackGroup(pid) {
   exitHooked = true;
   process.on('exit', () => { for (const p of liveGroups) { try { process.kill(-p, 'SIGKILL'); } catch { /* gone */ } } });
 }
-function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}) {
+async function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}) {
+  let guarded;
+  try { guarded = await guardedGitEnv(cwd, { env: { ...(env || stripHostCredentials(process.env)), ...QUIET_ENV } }); }
+  catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1, timedOut: false }; }
   return new Promise((done) => {
     const network = NETWORK_CMDS.has(args[0]);
     const win = process.platform === 'win32';
     const group = network && !win;
     let child;
     try {
-      child = spawn('git', [...hookFreeArgs(), ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: group,
-        env: { ...(env || stripHostCredentials(process.env)), ...QUIET_ENV } });
+      child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: group, env: guarded });
     } catch (err) { done({ ok: false, stdout: '', stderr: err.message, code: -1, timedOut: false }); return; }
     if (group && child.pid) trackGroup(child.pid);
     let stdout = '', stderr = '', settled = false, timer = null;
@@ -267,7 +270,7 @@ async function operationOn(dir, base) {
 }
 
 // ── remote + fetch ───────────────────────────────────────────────────────────
-/** The remote's display label (host/owner/repo, credential-free), its github "owner/name", and whether it is Azure DevOps. */
+/** The remote's display label (host/owner/repo, credential-free), its github "owner/name", and whether it is Azure DevOps or Bitbucket. */
 export async function remoteInfo(dir, remote = 'origin') {
   if (!isSafeRemoteName(remote)) return { ok: false, kind: 'bad-remote', error: 'invalid remote name' };
   const r = await _run(['remote', 'get-url', remote], { cwd: dir });
@@ -276,13 +279,17 @@ export async function remoteInfo(dir, remote = 'origin') {
   const p = parseRemoteUrl(url);
   return { ok: true, name: remote, label: p ? `${p.host}/${p.owner}/${p.repo}` : scrubGitText(url, 200),
     githubRepo: p && p.host === 'github.com' ? `${p.owner}/${p.repo}` : null,
-    azure: forgeOf(p) === 'azure', fetchUrls: fetchHeadUrls(url) };
+    azure: forgeOf(p) === 'azure', bitbucket: forgeOf(p) === 'bitbucket', fetchUrls: fetchHeadUrls(url) };
 }
 
 /** worca's server-side READ credential for the remote's host (App mode mints per call); other hosts: this machine's git. */
 async function readCred(info) {
-  if (info.githubRepo) return githubEnv('read', { repo: info.githubRepo });
-  if (info.azure) return { env: azureEnv('read'), error: null };
+  if (info.githubRepo) {
+    const r = await githubEnv('read', { repo: info.githubRepo });
+    return { ...r, env: stripBitbucketCredentials(r.env) };
+  }
+  if (info.azure) return { env: stripBitbucketCredentials(azureEnv('read')), error: null };
+  if (info.bitbucket) return { env: bitbucketEnv('read'), error: null };
   return { env: stripHostCredentials(process.env), error: null };
 }
 
@@ -459,7 +466,7 @@ export async function fastForward(dir, { base, remote = 'origin' } = {}) {
     // read credential the fetch had (v8), or a private hosted repo fails every fast-forward.
     // Minting can take a network round trip, so HEAD is re-checked after it, right before the merge.
     const info = await remoteInfo(dir, remote);
-    const cred = info.ok && (info.githubRepo || info.azure) ? await readCred(info) : null;
+    const cred = info.ok && (info.githubRepo || info.azure || info.bitbucket) ? await readCred(info) : null;
     const headNow = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: dir });
     if (!(headNow.ok && headNow.stdout.trim() === `refs/heads/${base}`)) return { ok: false, kind: 'in-use', paths: [], status: s };
     r = await _run(['merge', '--ff-only', '--no-stat', '-q', s.remoteSha], { cwd: dir, timeoutMs: FF_TIMEOUT_MS, env: cred ? cred.env : null });
@@ -629,10 +636,10 @@ const MERGE_TREE_TIMEOUT_MS = 120_000;
 const CONFLICT_FILES_CAP = 200;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
-/** The read credential env for `remote` (GitHub/Azure); null = this machine's git (fastForward's rule). */
+/** The read credential env for `remote` (GitHub/Azure/Bitbucket); null = this machine's git (fastForward's rule). */
 async function readEnvFor(dir, remote) {
   const info = isSafeRemoteName(remote) ? await remoteInfo(dir, remote) : { ok: false };
-  return info.ok && (info.githubRepo || info.azure) ? (await readCred(info)).env : null;
+  return info.ok && (info.githubRepo || info.azure || info.bitbucket) ? (await readCred(info)).env : null;
 }
 
 /** Where the base lives: the fetched <remote>/<base> when present, else the local <base> (Q&A base-ref). */

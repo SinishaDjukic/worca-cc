@@ -9,7 +9,7 @@
 // deleteGuardrailSet throws ReferencedError while any pipeline resume point pins
 // the set (guardrails are selected PER RUN — resume_point.guardrailsId is the only
 // reference kind; the historical pipelines.guardrails_id column never blocks).
-import { getDb, prepare, tx } from './db.mjs';
+import { getDb, prepare, tx, GUARDRAILS_DEFAULT_META_KEY } from './db.mjs';
 import { slugify } from './artifacts.mjs';
 import { GUARDRAIL_PRESETS, GUARDRAIL_LEVELS, sanitizeGuardrails } from './guardrails.mjs';
 // Shared delete-guard error class (uninstall/delete blocked by live references).
@@ -49,6 +49,25 @@ function builtinSet(id) {
 /** All three virtual built-ins, list order Permissive -> Normal -> Strict. Sync: a pure code-table derivation. */
 export function listBuiltinGuardrailSets() {
   return BUILTIN_GUARDRAIL_SET_IDS.map(builtinSet);
+}
+
+/** What a fresh install starts runs on (G13). Permissive restricts nothing. */
+export const NEW_INSTALL_GUARDRAIL_SET_ID = 'normal';
+
+/**
+ * The guardrail set a run uses when its starter names none (the CLI, an API body
+ * without guardrailsId, the New run picker's preselection). Installs that existed
+ * before v81 carry a store_meta row recording Permissive (db.mjs applySchemaV81);
+ * every other install gets Normal. Sync and never throws: an unreadable or
+ * malformed row reads as the new-install default.
+ */
+export function defaultGuardrailSetId() {
+  try {
+    const row = prepare('SELECT data FROM store_meta WHERE key = ?').get(GUARDRAILS_DEFAULT_META_KEY);
+    const id = row ? JSON.parse(row.data) : null;
+    if (typeof id === 'string' && id.trim()) return id.trim();
+  } catch { /* fall through */ }
+  return NEW_INSTALL_GUARDRAIL_SET_ID;
 }
 
 /** A set id is a stem; reject anything that could escape (same rule as workflows). */

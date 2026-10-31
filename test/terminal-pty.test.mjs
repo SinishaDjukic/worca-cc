@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadPty, _resetPtyForTests, spawnTerminal, descendantPids, killDescendants, pidAlive, ensureSpawnHelper } from '../src/core/terminal/pty.mjs';
+import { loadPty, _resetPtyForTests, spawnTerminal, descendantPids, killDescendants, pidAlive, ensureSpawnHelper, spawnHelperStatus, spawnHelperDoctorLine } from '../src/core/terminal/pty.mjs';
 
 afterEach(() => _resetPtyForTests());
 const scratch = mkdtempSync(join(tmpdir(), 'term-pty-'));
@@ -25,6 +25,38 @@ test('ensureSpawnHelper sets the exec bit node-pty 1.1.0 ships without; absent h
   assert.equal(ensureSpawnHelper(join(scratch, 'pkg'), { platform: 'darwin', arch: 'arm64' }), null);
   assert.equal(statSync(helper).mode & 0o111, 0o111);
   assert.equal(ensureSpawnHelper(join(scratch, 'none'), { platform: 'linux', arch: 'x64' }), null);
+});
+
+test('spawnHelperStatus finds the platform helper and reports its exec bit; doctor line prints the chmod fix', { skip: process.platform === 'win32' }, () => {
+  const pkg = join(scratch, 'status-pkg');
+  const dir = join(pkg, 'prebuilds', 'darwin-x64');
+  mkdirSync(dir, { recursive: true });
+  const helper = join(dir, 'spawn-helper');
+  writeFileSync(helper, '');
+  chmodSync(helper, 0o644);
+
+  const bad = spawnHelperStatus(pkg, { platform: 'darwin', arch: 'x64' });
+  assert.deepEqual(bad, [{ path: helper, executable: false }]);
+  assert.equal(
+    spawnHelperDoctorLine(bad),
+    `node-pty spawn-helper: NOT executable — fix with: chmod +x '${helper}'`,
+  );
+
+  chmodSync(helper, 0o755);
+  const good = spawnHelperStatus(pkg, { platform: 'darwin', arch: 'x64' });
+  assert.deepEqual(good, [{ path: helper, executable: true }]);
+  assert.equal(spawnHelperDoctorLine(good), `node-pty spawn-helper: ok (${helper})`);
+
+  // No helper shipped for this platform (Linux without a build, Windows): nothing to check.
+  assert.deepEqual(spawnHelperStatus(join(scratch, 'none'), { platform: 'linux', arch: 'x64' }), []);
+  assert.equal(spawnHelperDoctorLine([]), 'node-pty spawn-helper: none for this platform (nothing to check)');
+});
+
+test('spawnHelperDoctorLine single-quotes a path with a quote in it', () => {
+  assert.equal(
+    spawnHelperDoctorLine([{ path: "/opt/it's/spawn-helper", executable: false }]),
+    `node-pty spawn-helper: NOT executable — fix with: chmod +x '/opt/it'\\''s/spawn-helper'`,
+  );
 });
 
 test('pipes: stdout and stderr both arrive; CR becomes LF on the way in; exit code reported', async () => {

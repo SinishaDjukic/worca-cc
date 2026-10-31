@@ -332,6 +332,7 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
    took their presses; now the centre and the page name give way. Every tier keeps it 48px tall.
    HOUSE RULE: no comment inside a rule body and no closing brace in a comment. */
 .main-col{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;}
+.main-row{flex:1;min-width:0;min-height:0;display:flex;position:relative;}
 .topnav{flex:none;height:48px;display:grid;grid-template-columns:minmax(32px,1fr) minmax(240px,440px) minmax(max-content,1fr);
   align-items:center;gap:12px;padding:0 16px 0 12px;background:var(--panel);border-bottom:1px solid var(--line);}
 .topnav-l{display:flex;align-items:center;gap:6px;min-width:0;}
@@ -433,11 +434,15 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
   color:var(--ink);font-size:var(--fs-body);white-space:nowrap;cursor:pointer;}
 .tsearch-opt.is-active{background:var(--hover);}
 .tsearch-opt .tsearch-ic{color:var(--ink-3);}
+.tsearch-opt.is-locked{flex-wrap:wrap;row-gap:2px;padding-top:6px;padding-bottom:6px;}
+.tsearch-note{flex:1 0 100%;min-width:0;padding-left:26px;white-space:normal;font-size:12px;color:var(--amber-ink-strong);}
 .tsearch-title{min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .tsearch-meta{flex:0 1 auto;min-width:0;max-width:55%;margin-left:auto;padding-left:12px;overflow:hidden;text-overflow:ellipsis;
   font-size:12px;color:var(--ink-3);}
 .tsearch-tx{display:flex;flex-direction:column;min-width:0;padding:4px 0;}
 .tsearch-sub{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* A plugin's long description must not squeeze its Installed / Available state: the meta keeps its width (55% cap). */
+.tsearch-opt-plugin .tsearch-meta{flex-shrink:0;}
 .tsearch-dot{flex:none;width:8px;height:8px;margin:0 4px;border-radius:50%;background:var(--seq);}
 .tsearch-dot.tone-need{background:var(--amber);}
 .tsearch-dot.tone-run{background:var(--blue);}
@@ -1601,8 +1606,8 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 :is(.rd-questions,.chat-rc-q) .af-label{font-size:var(--fs-body);}
 :is(.rd-questions,.chat-rc-q) .af-choice{min-height:52px;gap:14px;padding:12px 16px 12px 12px;border-radius:var(--r-sm);font-size:var(--fs-body);}
 :is(.rd-questions,.chat-rc-q) .af-inp{padding:13px 16px;border-radius:var(--r-sm);font-size:var(--fs-body);}
-/* the form is the run page's one ask card (the panel around it draws nothing); inside a chat card it is not boxed
-   (review B2: the in-card override tints it) */
+/* the form is the run page's one ask card (the panel around it draws nothing); inside a chat card it is neither boxed
+   (review B2) nor tinted (Run 4 D21): it sits on the card's white, as on the Runs page */
 .rd-questions .qpanel[data-kind="form"] .af-form{padding:28px 32px;background:var(--panel);
   border:1px solid var(--line);border-radius:var(--r-card);}
 :is(.rd-questions,.chat-rc-q) .af-gal-card img{height:148px;}
@@ -2073,7 +2078,7 @@ div.ws-members:empty{display:none;}
 .wd-rescan-lead{flex:0 0 auto;padding-top:1px;}
 .wd-rescan-spinner{width:22px;height:22px;border-width:2.5px;}
 .wd-rescan-mark{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:var(--r-sm);font-size:12px;font-weight:700;}
-.wd-rescan.is-done .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
+.wd-rescan.is-done .wd-rescan-mark,.wd-rescan.is-pruned .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
 .wd-rescan.is-failed .wd-rescan-mark{color:var(--red-ink);background:var(--red-bg);}
 .wd-rescan-body{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto;}
 .wd-rescan .status-label{font-size:13px;}
@@ -3566,6 +3571,10 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .settings-card{max-width:760px;padding:var(--pad-card);margin-left:auto;margin-right:auto;}
 .settings-card + .settings-card{margin-top:18px;}
 .settings-card[hidden]{display:none;}
+.settings-card.is-found{animation:settingFound 3s ease-out;}
+:is(.view[data-view="models"] > .card, .mv-card, .mv-pv-card, .mcp-server-row).is-found{animation:settingFound 3s ease-out;}
+@keyframes settingFound{0%,60%{background:var(--amber-wash);box-shadow:0 0 0 3px var(--amber-ring);}100%{background:var(--panel);box-shadow:0 0 0 3px transparent;}}
+@media (prefers-reduced-motion:reduce){.settings-card.is-found{animation:none;box-shadow:0 0 0 3px var(--amber-ring);}:is(.view[data-view="models"] > .card, .mv-card, .mv-pv-card, .mcp-server-row).is-found{animation:none;box-shadow:0 0 0 3px var(--amber-ring);}}
 /* The Models page: Title generation, Auto workflow model and PR description model side by side
    above the catalog, so short cards do not push it a screen down; one column once they would squeeze. */
 
@@ -4834,8 +4843,10 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* Runs list (runs redesign §3.1, §3.3a alignment): every row is the same 3-column grid, so the right column and the bars
    end at one x (Known bug 5); members indent inside their cells, never by changing the grid. */
 .runs-item{display:grid;grid-template-columns:28px minmax(0,1fr) 56px;align-items:start;border-bottom:1px solid var(--line);}
-/* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent. */
-.runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;}
+/* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent.
+   Each Needs-you run is its own card: an inset amber ring (a box-shadow, so the grid keeps its widths) and a gap above,
+   so two of them never read as one block. The ring stays when the row is selected (only the fill changes). */
+.runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;box-shadow:inset 0 0 0 1px var(--amber-ring);margin-top:6px;}
 .runs-item:has(> a.runs-row.selected){background:var(--row-selected);border-radius:var(--r-sm);border-bottom-color:transparent;}
 /* One highlight at a time: a group whose run is open takes the lighter fill as one block over its whole row only while
    collapsed (no .runs-members); expanded, the open member row is the highlight (it is .selected) and the group keeps
@@ -4870,6 +4881,12 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-members .runs-pr-word{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .runs-members .runs-row:has(> .runs-row-prog){position:relative;padding-bottom:11px;}
 .runs-members .runs-row > .runs-row-prog{position:absolute;left:16px;right:0;bottom:4px;margin:0;}
+/* #1012: a staged live member draws the four-section block (bar and Plan / Build / Review / Ready) under its line. */
+.runs-members .runs-row:has(> .runs-stage){flex-wrap:wrap;}
+.runs-members .runs-row > .runs-stage{order:3;flex:1 0 calc(100% - 16px);margin:4px 0 2px 16px;}
+/* One step below the group row's 3px line: a 2px bar, the 11px marks closer under it. */
+.runs-members .runs-stage > .run-prog-track{height:2px;}
+.runs-members .runs-stage > .run-prog-marks{margin-top:3px;}
 .runs-members .runs-pick,.runs-members .runs-row-tail{height:26px;}
 @media (pointer: coarse){.runs-members .runs-pick,.runs-members .runs-row-tail{height:40px;}.runs-members .runs-row{min-height:40px;}}
 /* A group row heads its runs. */
@@ -4898,7 +4915,14 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-l{grid-column:2;min-width:0;}
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > :is(.wfv-menu-hint,.kind-chip){grid-column:3;justify-self:end;margin-left:0;}
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-hint{min-width:3ch;text-align:right;font-variant-numeric:tabular-nums;}
-.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+/* Section heads (Needs you, Running, a project, a day) are large, light ink type that stands above the rows; the light
+   weight keeps them under the page title. Their count sits at the line's right end at body size (the row-level count
+   stays a caption), and a gap above each later section keeps one section's last row from running into the next head.
+   The text sits 12px in from both ends; the line under it still spans the list. */
+.runs-sec + .runs-sec{margin-top:8px;}
+/* The list section head (Runs and Chats: Needs you, projects, topics, days) is a meta label, quieter than its rows. */
+.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font:600 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+.runs-sec-head .runs-count{margin-left:auto;font-weight:400;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .runs-older{margin:8px 0;}
@@ -4910,6 +4934,16 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .gp-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:6px 4px;border:0;background:none;text-align:left;color:inherit;cursor:pointer;}
 .gp-row:hover{background:var(--hover);}
 .gp-row[hidden]{display:none;}
+.gp-list{margin-top:4px;}
+.gp-row{border-radius:var(--r-sm);cursor:pointer;}   /* rows are now div[role=option], not buttons */
+.gp-row.is-active{background:var(--hover);}
+.gp-new,.gp-create{grid-template-columns:16px minmax(0,1fr);font-weight:500;}
+.group-picker .menu-h{padding:8px 4px 4px;}
+.gp-head[hidden],.group-picker .menu-sep[hidden]{display:none;}
+.gp-foot{display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 0;padding:6px 4px 0;border-top:1px solid var(--line);color:var(--ink-2);font-size:var(--fs-meta);}
+.gp-hint .kbd + .kbd{margin-left:2px;}
+/* Add to group (decision 5): the moved row's brief fill, the lighter row highlight; static, so no motion to reduce. */
+.runs-list a.runs-row.is-landed{background:var(--row-open);}
 @media (pointer: coarse){.runs-pick,.runs-row-tail{height:40px;}}
 @media (max-width: 480px){.runs-bulk-n{flex-basis:100%;}.group-picker{width:calc(100vw - 16px);}}
 .runs-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding-inline:8px;}
@@ -5098,6 +5132,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .status-dot.has-sym > svg{display:block;}
 .status-dot.has-ic{width:14px;height:14px;background:none;color:var(--ink-2);}
 .status-dot.has-ic > svg{display:block;}
+.status-dot.has-ic.is-peach{color:var(--peach-ink);}   /* Following a run: the run icon keeps the Following colour */
 .status-sym > g{stroke:var(--on-signal);}
 .status-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){.status-dot.is-pulse{animation:none;}}
@@ -5864,6 +5899,54 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 @media (max-width:760px){ body.term-open .app{margin-right:0;} .term-pane{width:100vw;} body.term-open .toasts{right:12px;}
  }
 
+/* ── Ask worca beside the page: the header toggle (#topnav-ask) and the side column (aside#ask-side, ask-side.mjs)
+   that docks the ONE Chat page beside main.main. Above 1080px it pushes the page (the toasts move with it); 761-1080px
+   it covers the main column; up to 760px it is full width under the 48px bar. The button drops its label up to 1200px
+   and beside the terminal pane, where the label would squeeze the page's title in the bar. Tokens only; the tier
+   blocks stay below the base rules. HOUSE RULE: no comment inside a rule body and no closing brace in a comment. ── */
+.topnav-ask{flex:none;white-space:nowrap;position:relative;}
+.topnav-ask[hidden]{display:none;}
+.topnav-ask[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
+.topnav-ask svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
+.topnav-ask-dot{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--slate);}
+.topnav-ask-dot[hidden]{display:none;}
+.ask-side{flex:none;position:relative;display:flex;flex-direction:column;width:var(--ask-side-w,440px);min-width:0;max-width:100%;height:100%;
+  overflow:hidden;background:var(--panel);border-left:1px solid var(--line);}
+.ask-side[hidden]{display:none;}
+.ask-side-in{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
+.ask-side-grip{position:absolute;z-index:7;top:0;bottom:0;left:0;width:6px;cursor:col-resize;touch-action:none;}
+.ask-side-grip:is(:hover,:focus-visible)::after{content:"";position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--ink);}
+.ask-side-grip:focus-visible{outline:none;}
+.ask-side.is-resizing{user-select:none;}
+body.ask-side-rail .side-toggle{display:none;}
+@keyframes askSideIn{from{width:0;}}
+@keyframes askSideInner{from{opacity:0;transform:translateX(24px);}}
+.ask-side.is-entering{animation:askSideIn .32s cubic-bezier(.2,.8,.2,1);}
+.ask-side.is-entering .ask-side-in{animation:askSideInner .24s cubic-bezier(.2,.8,.2,1) .08s both;}
+.ask-side.is-leaving{animation:askSideIn .32s cubic-bezier(.2,.8,.2,1) reverse both;}
+.ask-side.is-leaving .ask-side-in{animation:askSideInner .24s cubic-bezier(.2,.8,.2,1) reverse both;}
+@media (prefers-reduced-motion:reduce){.ask-side,.ask-side-in{animation:none !important;}}
+@media (min-width:1081px){
+  body.ask-side-open .toasts{right:calc(var(--ask-side-w,440px) + 20px);}
+  body.ask-side-open.term-open .toasts{right:calc(var(--ask-side-w,440px) + var(--term-w,460px) + 20px);}
+}
+@media (max-width:1200px){
+  .topnav-ask{min-width:32px;padding:0 8px;justify-content:center;}
+  .topnav-ask-label{display:none;}
+  .topnav-ask-dot{top:4px;right:4px;}
+}
+body.term-open .topnav-ask{min-width:32px;padding:0 8px;justify-content:center;}
+body.term-open .topnav-ask-label{display:none;}
+body.term-open .topnav-ask-dot{top:4px;right:4px;}
+@media (max-width:1080px){
+  .ask-side{position:absolute;inset:0 0 0 auto;z-index:38;width:100%;border-left:0;}
+  .ask-side-grip{display:none;}
+  body.ask-side-open .toasts{bottom:calc(var(--ask-side-dock-h,240px) + 12px + env(safe-area-inset-bottom,0px));}
+}
+@media (max-width:760px){
+  .ask-side{position:fixed;top:48px;right:0;bottom:0;left:auto;height:auto;}
+}
+
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-composer-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
 .ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;flex:none;}
@@ -5898,6 +5981,7 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* Shaper (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
 .ask-user-intent{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font:500 11px/1 var(--sans);}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
+.ask-user-where{align-self:flex-end;display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-caption);color:var(--ink-3);}
 .ask-attachment-pill{padding-right:12px;}
 .ask-attachment-thumb-link{display:inline-block;line-height:0;}
 .ask-attachment-thumb{max-width:180px;max-height:130px;border-radius:var(--r-sm);border:1px solid var(--line);display:block;}
@@ -6205,6 +6289,10 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* model card (buildModelCard; docs/models.md "Chat"): the policy card's change list + what will still block the model */
 .ask-modcard-warn,.ask-wscard-warn{color:var(--amber-ink);}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
+/* workspace removal card (buildWorkspaceCard): worca's recommended re-scan, its reason, and the three options */
+.ask-wscard-rescan{border:0;margin:10px 0 0;padding:0;min-width:0;}
+.ask-wscard-rescan-reason{font-size:12px;color:var(--ink-2);margin-bottom:2px;}
+.ask-wscard-rescan .radio-card{margin-top:6px;}
 
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
@@ -6254,11 +6342,9 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
 .gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
 .gv-well > .gv-nav{right:12px;bottom:12px;}
-/* #959: a chat card sits on the text column; only its graph well (.gv-well: the build card's, the Auto card's, the
-   run card's) widens, up to --chat-card-max and centred on the column (100cqi = the transcript's content box; 100% =
-   the card's content box, itself centred on the column). Its host fits the graph into it (run-hosts `card`,
-   proposal-host). */
-.chat-convo .ask-msg .gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
+/* A chat card sits on the text column and so does every part of it: a graph well (.gv-well: the build card's, the
+   Auto card's, the run card's) is as wide as its card, and its host fits the graph into it (run-hosts `card`,
+   proposal-host). No rule widens it. */
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
@@ -6312,6 +6398,19 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-composer-box{width:100%;max-width:var(--ask-col-max);margin-inline:auto;padding:8px 10px;
   border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--panel);
   display:flex;flex-direction:column;gap:4px;}
+/* Ask worca beside the page: the page on screen as chips above the attachments (ask-panel.mjs paintPageChips): an icon,
+   a caption, the name, and the × that leaves it out of the next messages. */
+.ask-page-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px;}
+.ask-page-chips[hidden]{display:none;}
+.ask-page-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;height:28px;padding:0 4px 0 8px;box-sizing:border-box;
+  border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:var(--fs-meta);}
+.ask-page-chip .ic{flex:none;color:var(--ink-3);}
+.ask-page-chip-cap{flex:none;}
+.ask-page-chip-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--ink);}
+.ask-page-chip-x{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--ink-3);cursor:pointer;}
+.ask-page-chip-x:hover{background:var(--hover-on-field);color:var(--ink);}
+.ask-page-chip-x:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
 .ask-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
 .ask-chips[hidden]{display:none;}
 .ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
@@ -6579,10 +6678,12 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-out[hidden]{display:none;}
 /* Command summaries (#911): one row per command with the runs status dot; a group holds its rows in one card. */
 .ask-card.ask-cmd.is-sum{gap:0;padding:0;}
-.ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;cursor:pointer;}
+.ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:28px;padding:0 14px;cursor:pointer;}
 .ask-cmd-row:hover{background:var(--hover);}
 .ask-cmd-row-btn{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
 .ask-cmd-row-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* An 8px dot sits in the 12px slot of a symbol dot (failed "!"), so every row's text starts at one line. */
+.ask-cmd-row-btn > .status-dot:not(.has-sym){margin:0 2px;}
 .ask-cmd-sum{flex:1 1 auto;min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-cmd-sum.is-raw{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);}
 .ask-cmd-meta{flex:none;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
@@ -6614,6 +6715,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd.is-sum > .ask-cmd-warning{margin:0 14px 12px;}
 /* A group (#911): one quiet disclosure head over ONE card; the panel moves the rows in; --line between them. */
 .ask-cmd-group{display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:2px;}
+.ask-cmd-gtop{display:flex;align-items:center;gap:8px;min-width:0;}
 .ask-cmd-ghead{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;max-width:100%;min-height:28px;padding:0 8px;margin-left:-8px;
   border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:inherit;font-size:13px;cursor:pointer;}
 .ask-cmd-ghead:hover{background:var(--hover);}
@@ -6626,6 +6728,18 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-gbody[hidden]{display:none;}
 .ask-cmd-gbody > .ask-card.ask-cmd.is-sum{margin:0;border:0;border-radius:0;background:none;animation:none;}
 .ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum{border-top:1px solid var(--line);}
+/* A lone command (#911) is a line like the group head (no card, no dot): its summary · time ›; opening it shows the detail. */
+.ask-card.ask-cmd.is-sum:not(.ask-cmd-gbody > *){border:0;border-radius:0;background:none;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-row{display:inline-flex;align-self:flex-start;gap:6px;max-width:100%;padding:0 8px 0 0;
+  border-radius:var(--r-sm);color:var(--ink-2);font-size:13px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn{flex:0 1 auto;gap:0;color:var(--ink-2);}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn > .status-dot{display:none;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-sum{font-weight:400;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-meta{font-size:13px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-meta:not(:empty)::before{content:"\00a0·\00a0";color:var(--ink-2);}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-stop{order:1;margin-left:2px;}   /* after the chevron, as beside a group head */
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-detail{padding:6px 0 4px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-warning{margin:6px 0 0;}
 .ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}
@@ -6773,6 +6887,8 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
 .confirm-field > label{display:block;font-weight:600;font-size:var(--fs-body);margin-bottom:6px;}
 .confirm-field .input{font-size:var(--fs-body);}
 .confirm-field .hint.err{color:var(--red-ink);}
+.confirm-choices{display:flex;flex-direction:column;margin-top:2px;}
+.confirm-choices .radio-card{margin-top:8px;}
 .confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
   background:var(--field);border-radius:var(--r-sm);font-size:var(--fs-body);color:var(--ink-2);
   cursor:pointer;line-height:1.45;}
@@ -8832,7 +8948,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
    takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
 body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 .view[data-view="chat"]{flex:1 1 auto;min-height:0;position:relative;}
-.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;--chat-card-max:1040px;}
+.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;}
 .chat-page[data-history="closed"] .chat-history{display:none;}
 /* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
 .chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;--chat-dock-fade:32px;}
@@ -8865,7 +8981,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-dock > .ask-jump{bottom:100%;}
 /* #959: ONE width rule for every chat card: the text column. .ask-transcript-col caps the column at --ask-col-max
    (= --chat-text-max) and every card, stub and build card fills it, so text and cards share one left edge; no card
-   kind sets a width. Only a graph well widens (.chat-convo .ask-msg .gv-well). The transcript is its own stacking
+   kind sets a width. No part of a card leaves the column, a graph well included. The transcript is its own stacking
    context, so a card's raised parts scroll under the dock, not over it. It reserves its scrollbar gutter on both
    edges, so the column, the composer and Jump to latest share one centre with classic and overlay scrollbars alike;
    its bottom clearance is the dock's height plus the dock's fade band. */
@@ -8883,6 +8999,46 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));}
 .chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
 .chat-panel[hidden]{display:none;}
+/* Ask worca beside the page: the same chat page in the side column (app.js moves it, ask-panel.mjs setHost). The Chat
+   page keeps its head, home, History column and run panel; the column shows its own head, an empty state and the
+   History column as a dropdown under its head. */
+.chat-page:not([data-host="dock"]) :is(.ask-side-thread,.ask-side-btn,.chat-history-foot,.ask-side-empty){display:none;}
+.chat-page[data-host="dock"] :is(.chat-history-toggle,.chat-head > .ask-title,.chat-head-spacer,.chat-new-plus,.chat-head-meter,.chat-home,.chat-panel){display:none;}
+.chat-page[data-host="dock"] .chat-head{height:46px;gap:2px;padding:0 8px 0 6px;}
+.chat-page[data-host="dock"] .chat-convo{container:chat-convo / inline-size;}
+.ask-side-thread{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;height:32px;margin-right:auto;padding:0 8px;border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--ink);font:inherit;font-size:var(--fs-body);font-weight:600;cursor:pointer;}
+.ask-side-thread:hover,.ask-side-thread[aria-expanded="true"]{background:var(--hover);}
+.ask-side-thread:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.ask-side-thread-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-side-thread svg{flex:none;color:var(--ink-3);}
+.chat-page[data-host="dock"][data-view="home"] .chat-dock{display:block;}
+.chat-page[data-host="dock"][data-view="thread"] .ask-side-empty{display:none;}
+.chat-page[data-host="dock"][data-view="home"] .ask-composer > .ask-pop{top:auto;bottom:calc(var(--ask-box-top) + 6px);max-height:min(420px,calc(100vh - 240px));}
+.ask-side-empty{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
+  padding:28px 18px calc(var(--chat-dock-h,120px) + 10px);box-sizing:border-box;}
+.ask-side-empty-h{margin:0;font-size:15px;font-weight:600;color:var(--ink);}
+.ask-side-suggest{display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+.ask-side-opt{display:inline-flex;align-items:center;max-width:100%;min-height:32px;box-sizing:border-box;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);
+  font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+.ask-side-opt:hover{background:var(--hover);}
+.ask-side-opt:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-side-recent{display:flex;flex-direction:column;align-items:flex-start;gap:4px;}
+.ask-side-recent[hidden]{display:none;}
+.ask-side-recent-cap{font-size:var(--fs-caption);color:var(--ink-3);}
+.ask-side-recent-list{display:flex;flex-direction:column;align-self:stretch;}
+.ask-side-recent-row{display:flex;flex-direction:column;gap:2px;width:100%;padding:6px 8px;border:0;border-radius:var(--r-sm);background:transparent;
+  color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.ask-side-recent-row:hover{background:var(--hover);}
+.ask-side-recent-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-body);}
+.ask-side-recent-meter{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-side-recent-when{font-weight:700;color:var(--ink);white-space:nowrap;}
+.ask-side-recent-topics{color:var(--ink-2);}
+.ask-side-recent-fill.is-ctx-warn{color:var(--amber-ink);}
+.ask-side-recent-fill.is-ctx-high{color:var(--red-ink);font-weight:600;}
+.chat-page[data-host="dock"] .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:transparent;}
+.chat-history-foot{flex:none;display:flex;padding:6px;border-top:1px solid var(--line);}
+.chat-history-in-chat{flex:1;justify-content:flex-start;}
 /* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */
 .nav-count.nav-dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--slate);}
 .sidebar.collapsed .nav-count.nav-dot{top:6px;right:8px;}
@@ -8920,6 +9076,12 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-page[data-chats="on"] .chat-new-plus{flex:none;}
 .chat-page[data-chats="on"] [data-ask-meter]{display:none;}
 @media (max-width:1099px){.chat-page[data-chats="on"] .chat-history{position:absolute;width:min(340px,86vw);}.chat-page[data-chats="on"] .runs-resize{display:none;}}
+/* Ask worca beside the page: in the side column the Chats column is a dropdown under its head (after the rules above,
+   which it ties), with no resize handle; the composer's meter stands in for the head meter the column hides. */
+.chat-page[data-host="dock"] .chat-history{position:absolute;top:46px;right:8px;bottom:auto;left:8px;z-index:6;width:auto;
+  max-height:min(520px,calc(100% - 140px));border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-pop);}
+.chat-page[data-host="dock"] .runs-resize{display:none;}
+.chat-page[data-host="dock"] [data-ask-meter]{display:flex;}
 
 /* ===== Chat P2: Action cards ===== */
 /* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
@@ -9065,6 +9227,10 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-expand:hover{color:var(--ink);background:var(--hover);}
 .chat-rc-expand:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-expand[hidden]{display:none;}
+/* Expand's overlay (chat/run-graph-overlay.mjs): the large workflow pop-up (.wf-pop) around a run monitor host that
+   fills its canvas (mountRunGraph `fill`): no --run-host-h height, and none of the page wrap's margin, border or corner. */
+.chat-rc-zoom .run-flow-wrap.wf-pop-canvas{flex:1 1 0;height:auto;margin:0;border:0;border-radius:0;}
+.chat-rc-zoom-acts{display:flex;align-items:center;gap:8px;flex:none;}
 .chat-rc-q{margin-top:14px;}
 .chat-rc-q[hidden]{display:none;}
 /* The question is the Runs page's ask card: the `:is(.rd-questions,.chat-rc-q)` rules of the questions panel block draw
@@ -10173,8 +10339,10 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
 .req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-ico:disabled{opacity:.45;cursor:not-allowed}
-/* The menus are upstream's one menu (.menu box, .menu-item rows) placed like the header ⋯ (.hd-more-wrap, .hd-menu). */
-.req-menu .hd-menu{min-width:200px}
+/* The menus are upstream's one menu (.menu box, .menu-item rows), placed by .req-menu: the open list floats under its
+   trigger, right-aligned. */
+.req-menu{position:relative;display:inline-flex}
+.req-menu .hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:200px}
 .req-menu-item{box-sizing:border-box;text-decoration:none}   /* Download .md is a link row */
 .req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
 .req-cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
@@ -10437,6 +10605,403 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-brief-notes{padding:16px}
   .req-brief-card{padding:16px}
   .req-brief-terms{grid-template-columns:minmax(0,38%) minmax(0,1fr)}
+}
+/* A8 (plans/requirements-a8-design.md §6): files on New feature (design round 3, board 15), the Files card (16, 17, 20), its
+   menus and dialogs (21), the Ready row (18) and the brief's Documents (19). Tokens only. */
+.req-new-files .req-drop{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px 6px;padding:18px 16px;border:1.5px dashed var(--line-2);border-radius:var(--r-md);background:var(--field);font-size:13px;color:var(--ink);text-align:center}
+.req-new-files .req-drop.over{border-color:var(--blue-ink);background:var(--blue-bg)}
+.req-new-files .req-drop:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-drop .req-drop-ico{order:-1;flex-basis:100%;display:flex;justify-content:center;color:var(--ink-3)}
+.req-drop .link-btn{font-size:inherit}
+.req-drop .hint{flex-basis:100%;margin:0}
+.req-files-privacy{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0}
+.req-files-privacy > svg{flex:none;margin-top:2px}
+.req-new-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.req-new-chips:empty{display:none}
+.req-new-chip{display:inline-flex;align-items:center;gap:8px;max-width:100%;box-sizing:border-box;padding:4px 4px 4px 8px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);font-size:12px}
+.req-new-chip > svg{flex:none;color:var(--ink-2)}
+.req-new-chip-name{min-width:0;overflow-wrap:anywhere}
+.req-new-chip .hint{margin:0;white-space:nowrap}
+.req-new-chip .req-new-chip-x{width:24px;height:24px}
+.req-file-refused{display:flex;flex-direction:column;gap:4px;margin:10px 0 0;padding:8px 10px;border-radius:var(--r-md);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:12px;overflow-wrap:anywhere}
+.req-file-refused[hidden]{display:none}
+.req-file-refused b{font-weight:600}
+.req-new-files-note{margin:0}
+.req-new-files-note[hidden]{display:none}
+.req-reading{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;padding:12px 16px;border-radius:var(--r-md);background:var(--field);font-size:13px}
+.req-reading .hint{margin:0;color:var(--ink-2)}
+.req-reading .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg: 5.0:1 (--blue-ink is 3.6:1); dark is the same shade */
+/* A create's "<name> was not added: Worca could not store it." on the feature page: the refusal box's AA pair, not the
+   shared .form-msg.warn (amber ink on the page background is under 4.5:1). */
+.form-msg.req-msg-warn{padding:8px 10px;border-radius:var(--r-md);background:var(--amber-bg);color:var(--amber-ink-strong);overflow-wrap:anywhere}
+@media (max-width:600px){
+  /* 44px touch targets on phones: the hit area grows past the visible control (a 32px × plus 6px each side) */
+  .req-drop .link-btn{position:relative}
+  .req-drop .link-btn::after{content:"";position:absolute;inset:-13px -6px}
+  .req-new-chip .req-new-chip-x{position:relative;width:32px;height:32px}
+  .req-new-chip .req-new-chip-x::after{content:"";position:absolute;inset:-6px}
+}
+/* The feature page's Files card (board 16; board 17 is the same in the dark theme; board 20 at 390 px): after Ready to
+   start? in the right column. Each file is a divided row: the name (a link), "Kind · size · read for $X", the pencil and
+   ⋯; What Worca took from it, clamped to three lines; the answers; the history (advanced); the Send with the run switch. */
+.req-files{padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.req-files-head{align-items:flex-start;gap:10px;margin:0}
+.req-files-head h3{margin:0}
+.req-files-head .hint{margin:2px 0 0}
+.req-files-head .btn{flex:none}
+.req-files .req-files-privacy{margin:0}
+.req-files .req-file-refused{margin:0}
+.req-files-empty{margin:0}
+.req-files-list{display:flex;flex-direction:column}
+.req-file{display:flex;flex-direction:column;gap:6px;padding:12px 0;border-top:1px solid var(--line);min-width:0}
+.req-files-list > .req-file:first-child{border-top:0;padding-top:4px}
+.req-file-top{display:flex;align-items:center;gap:6px 8px;min-width:0}
+.req-file-name{font-weight:600;font-size:13px;color:var(--blue-ink-strong);overflow-wrap:anywhere;min-width:0}
+.req-file-name:hover{color:var(--ink)}
+.req-file-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
+.req-file-meta{margin:0;white-space:nowrap}
+.req-file-gap{flex:1 1 auto}
+/* AA on --blue-bg / --amber-bg at badge size: the -ink-strong shades (the plain -ink ones are under 4.5:1 there) */
+.req-file .badge.blue{color:var(--blue-ink-strong)}
+.req-file .badge.amber{color:var(--amber-ink-strong)}
+.req-file-cap{margin:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-file-took{margin:0;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-file-took:focus{outline:none}
+.req-file-took.req-clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.req-file-all{align-self:flex-start;font-size:12px}
+.req-file-asks{display:flex;flex-direction:column;gap:6px}
+.req-file-ask p{margin:0;font-size:13px;overflow-wrap:anywhere}
+.req-file-q{font-weight:600}
+.req-file-state{margin:0}
+.req-file-failed{margin:0;font-size:13px;color:var(--red-ink-strong);overflow-wrap:anywhere}
+.req-file-failed .btn{margin-left:6px}
+.req-file-history summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
+.req-file-history ol{margin:6px 0 0;padding-left:18px;font-size:12px}
+.req-file-history li .hint{margin:0}
+.req-file-history li p{margin:2px 0 6px;overflow-wrap:anywhere}
+.req-file-send{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.req-file-send .hint{margin:0}
+.req-file-edit{margin:0}
+.req-file-edit textarea{width:100%;min-height:96px}
+.req-why-src{font-weight:600}
+@media (max-width:600px){
+  .req-file-top{flex-wrap:wrap}
+  .req-file-meta{order:3;flex-basis:100%;white-space:normal}
+  /* 44px touch targets (board 20): the hit area grows past the visible control, as on New feature. A 28px button's
+     area starts inside its 1px border (26 + 2 × 9); the 28px icon button and switch row have none (28 + 2 × 8); a 20px
+     or 18px link line takes 13 each side. The rows' gap keeps neighbouring areas apart. */
+  .req-files .btn-sm,.req-files .req-ico,.req-files .link-btn,.req-files .req-file-name,.req-files .switch-row{position:relative}
+  .req-files .switch-row{min-height:28px}
+  .req-files .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-files .switch-row::after{content:"";position:absolute;inset:-8px 0}
+  .req-files .req-ico::after{content:"";position:absolute;inset:-8px}
+  .req-files .link-btn::after,.req-files .req-file-name::after{content:"";position:absolute;inset:-13px -4px}
+  .req-file{gap:22px}
+  .req-file-history summary{position:relative}
+  .req-file-history summary::after{content:"";position:absolute;inset:-13px -4px}
+  .req-file-failed .btn{display:flex;margin:10px 0 0}
+}
+/* Board 20: at phone width the pencil is in each file's ⋯ menu. */
+@media (max-width:600px){
+  .req-file-pencil{display:none}
+}
+/* Board 21: a file's menu, Replace, Ask about this file, the spec's source tags. Remove takes --red-ink-strong: AA on the
+   menu's --panel and on its --red-bg hover (upstream's --red-ink is 3.9:1 there). */
+.req-menu .menu-item.is-danger{color:var(--red-ink-strong)}
+.req-menu .menu-item.is-danger:is(:disabled,[aria-disabled="true"]){color:var(--ink-3)}
+.req-files .req-menu .menu-item{white-space:nowrap}   /* board 21: one line a row */
+/* D13: a source after an item's text; a link while the file exists (--blue-ink-strong on --field, 5.5:1), else --ink-2. */
+.req-src-tag{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 6px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:12px;line-height:1.4;text-decoration:none;vertical-align:baseline;overflow-wrap:anywhere}
+.req-src-tag > svg{flex:none}
+a.req-src-tag{color:var(--blue-ink-strong)}
+a.req-src-tag:hover{color:var(--ink)}
+a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-file-askpanel{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md)}
+.req-file-askpanel label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-file-askfoot{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.req-file-askfoot .hint{flex:1 1 160px;margin:0}
+.req-file-askmsg:empty{display:none}
+.req-file-q.req-file-added{color:var(--ink-2)}
+.req-replace-lead b{font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.req-replace-choice{display:flex;flex-direction:column;gap:8px;min-width:0;margin:0;padding:0;border:0}
+.req-replace-choice legend{margin:0 0 6px;padding:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-replace-opt{display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer}
+.req-replace-opt input{flex:none;margin:3px 0 0}
+.req-replace-opt .hint{display:inline;margin:0}
+.req-replace-hint{margin:0}
+@media (max-width:600px){
+  /* 44px targets (board 20's pattern): the menu rows, the question field, the choice rows, the dialog's buttons */
+  .req-files .req-menu .menu-item{min-height:44px}
+  .req-file-askpanel{gap:10px}
+  .req-file-askpanel input{min-height:44px}
+  .req-replace-opt{min-height:44px;align-items:center}
+  .req-replace-opt input{margin:0}
+  .req-replace .req-dlg-btns .btn{position:relative}
+  .req-replace .req-dlg-btns .btn::after{content:"";position:absolute;inset:-7px 0}
+  .req-spec a.req-src-tag{position:relative}
+  .req-spec a.req-src-tag::after{content:"";position:absolute;inset:-13px -4px}
+}
+/* Board 18: Files for the run on Ready to build (D14). A chip is the file's Send switch. Attached (A2's .req-confirm
+   pattern): a --green-ink-strong outline and check on --panel, no fill (5.7:1 light), the name in --ink.
+   Left out: a dashed outline (an --ink-2 / --ink-3 mix, 3.7:1 on --panel), a + and the name in --ink-2 (6.6:1). One
+   weight either way, so a press never shifts the row. No strikethrough and no red: those say rejected and error. */
+.req-build-files{display:flex;flex-direction:column;gap:8px;margin-top:10px;padding-top:12px;border-top:1px solid var(--line)}
+.req-build-files-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
+.req-build-files-head h4{margin:0;font-size:var(--fs-body);font-weight:600}
+.req-build-files-head .hint{margin:0}
+.req-fpicks{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-fpick{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:30px;box-sizing:border-box;padding:4px 10px 4px 8px;border:1px dashed color-mix(in srgb,var(--ink-2) 35%,var(--ink-3));border-radius:var(--r-sm);background:transparent;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);line-height:1.4;text-align:left;cursor:pointer}
+.req-fpick > svg{flex:none}
+.req-fpick:hover:not(:disabled):not(.on){border-style:solid;background:var(--hover)}
+.req-fpick.on{border:1px solid var(--green-ink-strong);background:var(--panel);color:var(--green-ink-strong)}
+.req-fpick.on .req-fpick-name{color:var(--ink)}
+.req-fpick:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-fpick:disabled{cursor:not-allowed}
+.req-fpick:disabled:not(.bad){opacity:.6}
+.req-fpick.bad > svg{color:var(--amber-ink-strong)}
+.req-fpick-name{min-width:0;overflow-wrap:anywhere}
+.req-fpick-state{color:var(--blue-ink-strong)}
+.req-fpick-group{margin-right:2px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-build .req-build-files-note,.req-build .req-build-files-bad{margin:0;font-size:var(--fs-meta)}
+.req-build .req-build-files-bad{color:var(--amber-ink-strong)}   /* 6.1:1 on --panel */
+.req-changed-body .req-changed-files{margin:0}
+.req-file-send .req-file-unsendable{flex-basis:100%;margin:4px 0 0;color:var(--amber-ink-strong)}
+/* Board 18 at phone width: a chip's hit area is 44px tall (the 28px inside its 1px border, and 8px above and below);
+   rows 14px apart, so no two areas overlap. */
+@media (max-width:600px){
+  .req-build-files{gap:14px}
+  .req-fpicks{row-gap:14px}
+  .req-fpick{position:relative}
+  .req-fpick::after{content:"";position:absolute;inset:-8px 0}
+}
+
+/* Board 19: the brief's Documents card. It is a .req-files card, so the Files card's rows, menus, alert and 44px hit
+   areas apply as they are; the footer sits under a rule. A brief item's source "(from <name>)" is inline, in the hint's
+   --ink-2 (AA), one step down the type scale. */
+.req-docs .req-docs-foot{margin:0;padding-top:10px;border-top:1px solid var(--line)}
+.req-brief-src{display:inline;margin:0;font-size:var(--fs-meta)}
+
+/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Feature chat beside the feature spec. Wider than 900 px the panel takes
+   the right column (420 px) and the Ready, Files and Spec cards move under the current card; at 900 px and narrower it is a
+   full-screen sheet with Back and 44 px targets. The pressed toggle has an ink border, never a green fill; board 23 (dark) is
+   these tokens and nothing else. */
+.req-help-toggle[aria-pressed="true"]{border-color:var(--ink)}
+.req-cols.with-helper{grid-template-columns:minmax(0,1fr) 420px}
+.req-moved{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-help{position:sticky;top:12px;align-self:start;display:flex;flex-direction:column;min-height:420px;max-height:calc(100vh - 96px);border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);overflow:hidden}
+.req-help-head{display:flex;align-items:center;gap:4px;padding:12px 12px 12px 18px;border-bottom:1px solid var(--line)}
+.req-help-title{flex:1;min-width:0}
+.req-help-title h3{margin:0;font-size:15px;font-weight:700}
+.req-help-title .hint{margin:2px 0 0}
+.req-help-back{display:none}
+.req-help-log{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.req-help-msg-po{align-self:flex-end;max-width:85%;padding:10px 12px;border-radius:var(--r-md);background:var(--field);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-cap{display:block;margin:0 0 2px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-msg-w{align-self:stretch;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.req-help-msg-w .hint,.req-help-text{margin:0}
+.req-help-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-fail{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--red-ink-strong)}
+.req-help-stopped{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-help-budget{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:12px}
+.req-help-waiting{display:flex;flex-direction:column;gap:6px}
+.req-help-waiting p{margin:0}
+.req-help-waiting-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.req-help-empty{display:flex;flex-direction:column;gap:10px;font-size:13px}
+.req-help-empty p{margin:0}
+.req-help-starters{display:flex;flex-direction:column;gap:6px}
+.req-help-starters .btn{justify-content:flex-start;text-align:left}
+.req-help-composer{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+.req-help-label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-in{width:100%;box-sizing:border-box;resize:vertical;font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink)}
+.req-help-in:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-help-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.req-help-foot .hint,.req-help-count,.req-help-refusal{margin:0}
+.req-help-refusal{font-size:12px;color:var(--red-ink-strong)}
+.req-help-archived{margin:0;padding:12px 14px;border-top:1px solid var(--line)}
+@media (max-width:900px){
+  .req-cols.with-helper{grid-template-columns:1fr}
+  .req-help{position:fixed;inset:0;align-self:stretch;z-index:45;min-height:0;max-height:none;border:0;border-radius:0}
+  .req-help-head{padding:4px 4px 4px 8px}
+  .req-help-back{display:inline-grid}
+  .req-help-close,.req-help-wide{display:none}
+  /* 44px targets: the icon buttons grow; a 28px .btn-sm grows its hit area past its 1px border (26 + 2 × 9), board 20's
+     pattern (a 44px .btn is off the control scale); the starters' gap keeps neighbouring areas apart */
+  .req-help .req-ico{min-width:44px;min-height:44px}
+  .req-help .btn-sm{position:relative}
+  .req-help .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-help-starters{gap:18px}
+  .req-help-toggle,.req-help .menu-item{min-height:44px}
+}
+/* A3 D1/D6 (boards 22, 25): Help me answer beside each pending question (its own 44 px line on a phone), and Worca's draft: a
+   dashed blue chip after the options (blue means active), its × and its why. On the type scale and the radius tokens (the
+   board's 11.5px and pill corners are off them); on a phone the × keeps its size and its hit area grows to 44 × 44 (the
+   ::after pattern above), the row's margins keeping that area off the options and the answer field. */
+.req-qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.req-qhead > .qtext{flex:1;min-width:0}
+.req-help-ask{flex:none;white-space:nowrap;font-size:var(--fs-meta)}
+.req-help-drafted-row{display:flex;flex-direction:column;gap:4px;margin:6px 0 0 24px}
+.req-help-drafted-row[hidden]{display:none}
+.req-help-drafted{display:inline-flex;align-self:flex-start;align-items:center;gap:4px;padding:1px 7px;border:1px dashed var(--blue-ink-strong);border-radius:var(--r-md);color:var(--blue-ink-strong);font-size:var(--fs-meta);white-space:nowrap}
+.req-help-drafted-x{display:inline-flex;align-items:center;padding:0 0 0 2px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.req-help-drafted-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px;border-radius:var(--r-sm)}
+.req-help-draft-why,.req-help-dropped{margin:0}
+@media (max-width:900px){
+  .req-qhead{flex-wrap:wrap}
+  .req-help-ask{flex-basis:100%;display:inline-flex;align-items:center;min-height:44px;text-align:left}
+  .req-help-drafted-row{margin:12px 0 12px 24px}
+  .req-help-drafted-x{position:relative}
+  .req-help-drafted-x::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
+}
+/* A3 (board 24): a proposed change as a card: Before / After / New / Remove / Confirm / Reject rows, the old side muted. Accepted is
+   green ink with a check, never a fill; the stale line is the amber alert. On the type scale (the board's 11.5 / 12.5px are off
+   it); on a phone Reject and Accept share the row and reach 44 px through the panel's .btn-sm ::after hit area above (a 44px
+   .btn is off the control scale). */
+.req-help-card{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel)}
+.req-help-card-head{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-ba{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 10px;font-size:var(--fs-body)}
+.req-help-ba > span{overflow-wrap:anywhere}
+.req-help-k{padding-top:1px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-old,.req-help-id{color:var(--ink-2)}
+.req-help-card .req-help-reason{margin:0}
+.req-help-btns{display:flex;justify-content:flex-end;gap:8px}
+.req-help-state{margin:0;display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-help-state.ok{color:var(--green-ink-strong)}
+.req-help-state:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm)}
+.req-help-measure{display:block}
+.req-help-stale{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+@media (max-width:900px){
+  .req-help-ba{grid-template-columns:52px minmax(0,1fr);gap:4px 8px}
+  .req-help-btns .btn{flex:1}
+}
+
+/* A6 (plans/requirements-a6-design.md §7): Export to a tracker. The dialogs are .req-dialog cards on the page's modal (the
+   setup 560 px, board 26); a field is its label over its control, two short fields share a row. The label chips' remove
+   button is the shared remove icon, in --ink-2 (an icon needs 3:1; --ink-3 is under it on white). */
+.req-dialog.req-export .req-export-body{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-export-fld{display:flex;flex-direction:column;gap:6px;margin:0;min-width:0}
+.req-export-fld > label,.req-export-fl{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-export-fld .opt{font-weight:400;color:var(--ink-3)}
+.req-export-fld > .hint{margin:0}
+.req-export-pair{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px}
+.req-export-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-export-labin{flex:1 1 120px;min-width:0;box-sizing:border-box}   /* board 26: "Add a label" ends the chips row */
+.req-export-lab{display:inline-flex;align-items:center;gap:4px;max-width:100%;overflow-wrap:anywhere}
+.req-export-x{display:inline-flex;align-items:center;justify-content:center;padding:2px;border:0;border-radius:var(--r-xs);background:transparent;color:var(--ink-2);cursor:pointer}
+.req-export-x:hover{color:var(--ink)}
+.req-export-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-export-rad{display:flex;align-items:center;gap:10px;min-height:28px;font-size:var(--fs-body);color:var(--ink);cursor:pointer}
+.req-export-rad input{margin:0}
+.req-export-radrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.req-export-radrow .select-wrap{flex:1 1 220px;min-width:0}
+.req-export-alert{margin:0}
+.req-export-alert:empty{display:none}
+.req-dialog.req-export .req-dlg-btns{padding-top:14px;border-top:1px solid var(--line)}   /* board 26: the buttons under a rule */
+/* Board 29 (7): an archived feature's "Restore the feature to export it." under the open Export menu, in a box of its own
+   (the menu holds only items); the pair floats where the list alone would. */
+.req-menu .req-export-menupop{position:absolute;top:calc(100% + 6px);right:0;z-index:5;display:flex;flex-direction:column;align-items:stretch;gap:6px;width:max-content;max-width:min(280px,calc(100vw - 32px))}
+.req-export-menupop[hidden]{display:none}
+.req-menu .req-export-menupop > .hd-menu{position:static;min-width:200px}
+.req-export-menupop > .req-export-archnote{margin:0;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu)}
+/* Board 27: the preview (1000 px): Fields beside the description as the tracker will show it, then the footer. The description
+   box scrolls inside; on a phone it folds behind Show all (board 31). */
+.req-dlg-wrap .card.req-dialog.req-export-preview{width:min(1000px,100%)}
+.viewer-modal.req-dlg-wrap.req-dlg-sheet{padding-top:min(8vh,48px)}   /* openModal's page mode: the six export dialogs only */
+.req-export-grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
+.req-export-grid[hidden],.req-export-desc[hidden]{display:none}   /* until the first preview arrives */
+.req-export-col{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-export-col h3,.req-export-changes h3{margin:0;font-size:var(--fs-body);font-weight:700}
+.req-export-fields{display:flex;flex-direction:column;gap:14px}
+.req-export-val{margin:0;font-size:var(--fs-body);color:var(--ink);overflow-wrap:anywhere}
+.req-export-items{margin:0;padding-left:18px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-export-desc{max-height:548px;overflow:auto;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);
+  font-size:var(--fs-body);line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+.req-export-desc:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-export-desc h4{margin:12px 0 4px;font-size:var(--fs-body);font-weight:700}
+.req-export-desc h4:first-child{margin-top:0}
+.req-export-desc p,.req-export-desc ul,.req-export-desc ol{margin:0 0 6px}
+.req-export-desc ul,.req-export-desc ol{padding-left:20px}
+.req-export-desc .req-export-sig{margin-top:10px;padding-top:8px;border-top:1px solid var(--line);color:var(--ink-2)}
+.req-export-comment{max-height:360px}
+.req-export-more{display:none}
+.req-export-more[hidden]{display:none}
+.req-export-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:14px;border-top:1px solid var(--line)}
+.req-export-foot > .hint{margin:0}
+.req-export-foot .req-dlg-btns{margin:0 0 0 auto}
+.req-export .req-export-foot .req-dlg-btns{padding-top:0;border-top:0}   /* one rule above a footer: its own, at every width */
+.req-export-status{margin:0}
+.req-export-status:empty{display:none}
+.req-export-status .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg (5.0:1; --blue-ink is 3.6:1), as .req-reading's */
+/* Board 31: at 900 px and narrower the preview's title is "Export to Jira" over "FEAT-7 · <title>". */
+.req-export-sub{display:none;margin:-4px 0 0}
+@media (max-width:900px){
+  .req-export-title .req-export-tid{display:none}
+  .req-export-sub{display:block}
+}
+.req-export-alert.is-warn{padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-md);background:var(--amber-wash);color:var(--ink)}
+.req-export-alert.is-warn b{font-weight:600}
+.req-export-alert-hint{margin:0}
+.req-export-foot > .req-export-alert-hint{flex:1 0 100%}   /* board 29 (1): a line of its own under the footer's buttons */
+.req-export-alert-btns{display:flex;flex-wrap:wrap;gap:8px}
+.req-export-alert-btns[hidden]{display:none}
+/* Board 28: Export again — the choices as radio cards (the picked one has an ink border, never a fill), what changed. */
+.req-export-modes{display:flex;flex-direction:column;gap:8px}
+.req-export-modes[hidden],.req-export-changes[hidden]{display:none}
+.req-export-mode{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
+.req-export-mode:has(input:checked){border-color:var(--ink)}
+.req-export-mode.off{cursor:not-allowed;color:var(--ink-3)}
+.req-export-mode input{margin:3px 0 0}
+.req-export-mode-txt{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-body)}
+.req-export-mode-txt b{font-weight:600}
+.req-export-mode-txt .hint{margin:0}
+.req-export-changes{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:var(--r-md);background:var(--field)}
+.req-export-change{margin:0;font-size:var(--fs-body)}
+.req-export-change code{font-size:var(--fs-meta)}
+/* Board 28: the ticket chip after the header chips (the shared external icon), in link ink (--blue-ink-strong: AA on --field);
+   the History card; board 29 (5): "Created SHOP-123", icon and text in green ink, never a fill. */
+a.chip.req-export-chip{display:inline-flex;align-items:center;gap:4px;text-decoration:none;color:var(--blue-ink-strong)}
+a.chip.req-export-chip:hover{text-decoration:underline}
+a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-export-done{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-body);color:var(--green-ink-strong)}
+.req-export-done:empty{display:none}
+.req-export-done > svg{flex:none}
+.req-history{display:flex;flex-direction:column;gap:8px}
+.req-history h3{margin:0;font-size:var(--fs-section);font-weight:600}
+.req-history-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.req-history-list li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:var(--fs-body)}
+.req-history-list li:first-child{border-top:0}
+.req-history-list .hint{margin:0}
+/* Board 29 (6), D15: Report back on Ready to build, the start dialog and the runs card (upstream's switch row, ink when on). */
+.req-report{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.req-report .req-report-hint{margin:0 0 0 40px;font-size:var(--fs-meta)}
+.req-dialog .req-report{margin-top:0}
+/* Board 31 (D20): at 900 px and narrower an export dialog is a full-screen sheet: fixed to the viewport (its size, never the
+   content's), its body scrolls inside while the button row stays at the bottom, ← FEAT-7 first, the description folded behind
+   Show all, full-width buttons whose hit areas reach 44 px (::after, as .req-fpick), rows 14–18 px apart so no two overlap. */
+.req-export-back{display:none}
+@media (max-width:900px){
+  .viewer-modal.req-dlg-wrap.req-dlg-sheet{padding:0;place-items:stretch}
+  .req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export{position:fixed;inset:0;width:auto;max-width:none;height:auto;max-height:none;border:0;border-radius:0;
+    box-shadow:none;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px 0}
+  .req-dlg-sheet .req-export > *{flex-shrink:0}
+  .req-dlg-sheet .req-export > .req-dlg-btns,
+  .req-dlg-sheet .req-export > .req-export-foot{position:sticky;bottom:0;z-index:1;margin-top:auto;padding:12px 0 16px;background:var(--panel)}
+  .req-export-back{display:inline-flex;align-self:flex-start;position:relative;font-size:var(--fs-body)}
+  .req-export-back::after{content:"";position:absolute;inset:-14px -8px}   /* an 18 px line box + 28 = 46 px */
+  .req-export-grid,.req-export-pair{grid-template-columns:minmax(0,1fr)}
+  .req-dlg-sheet .req-export-desc{max-height:none}
+  .req-export-desc.folded{max-height:180px;overflow:hidden}
+  .req-export-more{display:block;width:100%;position:relative}
+  .req-export-more[hidden]{display:none}
+  .req-export-foot{flex-direction:column;align-items:stretch}
+  .req-export .req-dlg-btns{flex-direction:column;align-items:stretch;gap:14px;margin:0}
+  .req-export .req-dlg-btns .btn,.req-export .req-export-alert-btns .btn{width:100%;position:relative}
+  .req-export .req-dlg-btns .btn::after,.req-export .req-export-alert-btns .btn::after,.req-export-more::after{content:"";position:absolute;inset:-7px 0}   /* a 32 px button: 30 + 14 = 44 */
+  .req-export .req-export-alert-btns{flex-direction:column;gap:18px}
+  .req-export .req-export-alert-btns .btn-sm::after{inset:-9px 0}   /* a 28 px button: 26 + 18 = 44 */
+  .req-export-x{position:relative}
+  .req-export-x::after{content:"";position:absolute;inset:-14px}
+  a.chip.req-export-chip{position:relative}
+  a.chip.req-export-chip::after{content:"";position:absolute;inset:-8px 0}
 }
 
 /* ── marketplace P3 ── */
@@ -10914,7 +11479,7 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot){margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
 .ask-card.chat-rc .ask-rc-stats > .ask-rc-stat{padding:0;border-radius:0;background:none;}
 .ask-card.chat-rc > .chat-rc-result{padding:12px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
-.ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock){padding-left:0;padding-right:0;border-radius:0;background:none;}
+.ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock,.af-form){padding-left:0;padding-right:0;border-radius:0;background:none;}
 .ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}
 
 /* Smart run naming (Labs, flag smartRunNaming): the Suggested chip, the ↻ / × buttons inside the title and branch
@@ -10944,6 +11509,32 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 #network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
 #network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
 
+
+/* The away screensaver (away-screensaver.mjs), an easter egg: the wordmark drifts over a faint network while Away
+   mode and Keep awake are on and the window sits idle. Under the session-expired notice (10000). */
+.ss{position:fixed;inset:0;z-index:9999;overflow:hidden;background:var(--bg);color:var(--ink);cursor:none;}
+.ss-net{position:absolute;inset:0;}
+.ss-block{position:absolute;top:0;left:0;width:max-content;max-width:calc(100vw - 32px);will-change:transform;}
+.ss.is-still .ss-block{top:50%;left:50%;transform:translate(-50%,-50%);}
+.ss-bubble{display:flex;align-items:center;gap:8px;width:max-content;margin:0 0 12px;padding:4px 12px;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);font-size:var(--fs-meta);visibility:hidden;}
+.ss-bubble.is-on{visibility:visible;}
+.ss-logo{width:200px;aspect-ratio:512/190;background:var(--ink);
+  -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+.ss-logo.is-squash-x{animation:ss-squash-x .35s ease-out;}
+.ss-logo.is-squash-y{animation:ss-squash-y .35s ease-out;}
+.ss-head{margin:16px 0 8px;font-size:var(--fs-section);font-weight:500;line-height:var(--lh-title);}
+.ss-caret{display:inline-block;width:6px;height:1em;margin-left:4px;vertical-align:-2px;background:var(--ink-2);animation:ss-blink 1s steps(1) infinite;}
+.ss-items{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0;list-style:none;color:var(--ink-2);font-size:var(--fs-body);}
+.ss-items li{display:flex;align-items:center;gap:8px;}
+.ss-hint{position:absolute;right:24px;bottom:16px;margin:0;color:var(--ink-2);font-size:var(--fs-caption);}
+.ss-spark{position:absolute;top:0;left:0;width:10px;height:10px;background:var(--ink-2);pointer-events:none;
+  clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);animation:ss-spark .9s ease-out forwards;}
+@keyframes ss-squash-x{30%{scale:.88 1.06;}}
+@keyframes ss-squash-y{30%{scale:1.06 .88;}}
+@keyframes ss-blink{50%{opacity:0;}}
+@keyframes ss-spark{from{opacity:.8;scale:1;}to{opacity:0;scale:.3;}}
+@media (prefers-reduced-motion: reduce){.ss-caret{animation:none;}}
 
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */

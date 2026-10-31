@@ -10,7 +10,6 @@ import {
 } from './helpers/history-detail-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { setShapeFirst } from './helpers/shape-gate.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 
@@ -1138,8 +1137,11 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   assert.equal(stop.hidden, false, 'a live run can be stopped');
   assert.equal(end.querySelector('.hd-resume-split').hidden, true, 'nothing to resume while it runs');
   assert.equal(end.querySelector('.hd-after').title, 'Schedule a run after this');
+  const sic = doc.querySelector('#hist-detail .hd-sic');
+  assert.equal(sic.title, 'Running', 'the header pip reads the live run');
   click(ctx.window, pause);
   await settle(ctx.window);
+  assert.equal(sic.title, 'Pausing…', 'the header pip says Pausing… at the click, before the server status');
   const pauses = ctx.calls.filter((c) => c.url.endsWith('/api/pause'));
   assert.equal(pauses.length, 1);
   assert.deepEqual(JSON.parse(pauses[0].opts.body), { runId: 'r-live' });
@@ -1147,6 +1149,7 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'running', ...STEPPING });
   await settle(ctx.window, 4);
   assert.equal(pause.disabled, true, 'the pause request still owns the button');
+  assert.equal(sic.title, 'Pausing…', 'a running frame sent before the pause keeps it');
   click(ctx.window, pause);
   await settle(ctx.window);
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/pause')).length, 1, 'no second POST');
@@ -1170,6 +1173,7 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   assert.equal(end.querySelector('.hd-resume-split').hidden, false, 'a paused run can be resumed');
   assert.equal(end.querySelector('.hd-resume').hidden, false);
   assert.equal(stop.hidden, false);
+  assert.equal(sic.title, 'Paused');
   // It ends: neither control is left.
   frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'stopped' });
   await settle(ctx.window, 6);
@@ -1268,6 +1272,35 @@ test('History bar of a resumed pipeline: Pause/Stop and the Resume split follow 
       assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'running/r-9');
     } },
   ]);
+});
+
+// The header pip follows the parked copy's Resume as it follows Pause (paintHdLive reads hdPipelineRun).
+test('History detail header: Resume shows Resuming… on the pip until the server answers, and a failure puts Paused back', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const ctx = await bootDetail({
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } }, rows: [{ ...ROW, status: 'running' }],
+    arms: (url) => (url === '/api/resume' ? held : null),
+  });
+  const frame = (msg) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify(msg) });
+  frame({ type: 'hello', runs: [{ runId: 'r-live', title: ROW.title, projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: ROW.id }] });
+  frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'running', ...STEPPING });
+  await settle(ctx.window, 4);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  frame({ type: 'done', runId: 'r-live', status: 'paused' });
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const sic = doc.querySelector('#hist-detail .hd-sic');
+  assert.equal(sic.title, 'Paused');
+  click(ctx.window, doc.querySelector('#hist-detail .hd-resume'));
+  await settle(ctx.window, 3);
+  assert.equal(sic.title, 'Resuming…', 'the header pip says Resuming… at the click');
+  assert.equal(sic.getAttribute('aria-label'), 'Resuming…');
+  release(fail(500, { error: 'boom' }));
+  await settle(ctx.window, 6);
+  assert.equal(sic.title, 'Paused', 'the failure puts Paused back');
+  assert.equal(sic.getAttribute('aria-label'), 'Paused');
 });
 
 // The run page logs a failed pause into the run's log, which this page does not show: the
@@ -2201,22 +2234,13 @@ test('Running actions: a row whose run loses its saved row keeps keyboard focus 
   assert.ok(doc.activeElement.classList.contains('act-stop'), 'on its Stop, so Enter cannot open another run');
 });
 
-test('History › Overview: the Perspective checklists group follows the Shape it first gate (spec D7)', async () => {
+test('History › Overview: the Perspective checklists group is on the saved run\'s Overview (spec D7)', async () => {
   const reviews = [{ kind: 'impl', cycle: 1, issues: [], summary: '',
     checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes' }] }];
-  const groupOf = async (features) => {
-    const ctx = await bootDetail({ detail: { ...DETAIL, reviews } });
-    ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', ...(features ? { flags: features } : {}), runs: [] }) });
-    await openDetail(ctx, 'details/overview');
-    return secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
-  };
-  try {
-    setShapeFirst(false);
-    assert.equal(await groupOf(null), null, 'gate off: no group');
-    const on = await groupOf({ shapeFirst: true });
-    assert.ok(on, 'gate on: the group is on the saved run\'s Overview');
-    assert.match(on.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
-  } finally {
-    setShapeFirst(false);
-  }
+  const ctx = await bootDetail({ detail: { ...DETAIL, reviews } });
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
+  await openDetail(ctx, 'details/overview');
+  const group = secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
+  assert.ok(group, 'the group is on the saved run\'s Overview');
+  assert.match(group.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
 });

@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -150,11 +150,28 @@ test('dateBucket: local midnights, the finish time for History, now for live, Up
   assert.equal(b(t(29, 0)), 'yesterday');
   assert.equal(b(t(28, 23)), 'week');
   assert.equal(b(t(23, 0)), 'week', 'Previous 7 days: yesterday plus the six before it');
-  assert.equal(b(t(22, 23)), 'older');
+  assert.equal(b(t(22, 23)), 'month');
+  assert.equal(b(new Date(2026, 7, 31, 0, 0).getTime()), 'month', 'Previous 30 days: 8 to 30 days ago');
+  assert.equal(b(new Date(2026, 7, 30, 23, 0).getTime()), 'older');
   assert.equal(b(NaN), 'older', 'an unknown time files under Older, not Today');
   assert.equal(dateBucket({ kind: 'live' }, NOW), 'today');
   assert.equal(dateBucket({ kind: 'sched' }, NOW), 'upcoming');
-  assert.deepEqual(DATE_BUCKETS.map(([id]) => id), ['upcoming', 'today', 'yesterday', 'week', 'older']);
+  assert.deepEqual(DATE_BUCKETS.map(([id]) => id), ['upcoming', 'today', 'yesterday', 'week', 'month', 'older']);
+  assert.deepEqual(DATE_BUCKETS.slice(1), [...DAY_BUCKETS], 'Runs adds Upcoming to the day sections Chats uses');
+  assert.equal(dayBucket(t(28, 23), NOW), 'week');
+});
+
+test('Group by Date: Older starts folded; the person\'s fold record flips it either way', () => {
+  const history = [histIt('a', { mtime: NOW - 60000 }), histIt('b', { mtime: new Date(2026, 6, 1).getTime() })];
+  const sec = (collapsed) => buildRunsModel({ history, groupBy: 'date', collapsed, now: NOW }).sections;
+  assert.deepEqual(sec(new Set()).map((s) => [s.id, s.collapsed]), [['date:today', false], ['date:older', true]]);
+  const c = new Set();
+  setFolded(c, 'date:older', false);
+  assert.ok(c.has('date:older') && !isFolded(c, 'date:older'), 'opening Older records the difference from its default');
+  assert.equal(sec(c).find((s) => s.id === 'date:older').collapsed, false);
+  setFolded(c, 'date:older', true);
+  setFolded(c, 'date:today', true);
+  assert.deepEqual([...c], ['date:today'], 'folding back to the default drops the record; Today folds like before');
 });
 
 test('dateBucket: a DST day is still one day', () => {
@@ -209,7 +226,7 @@ const HIST5 = Array.from({ length: 5 }, (_, i) => histIt(`d${i}`, { run: { statu
 
 test('Show / Group by: counts, Running excludes ended runs, project grouping keeps Needs you on top', () => {
   const m = buildRunsModel({ live: LIVE3, history: HIST5, show: 'running', now: NOW });   // LIVE3: ask + 2 working; HIST5: 5 done
-  assert.deepEqual(m.counts, { all: 8, needs: 1, running: 3, waiting: 0, finished: 5, archived: null });
+  assert.deepEqual(m.counts, { all: 8, needs: 1, running: 3, waiting: 0, finished: 5, ready: 5, archived: null });
   assert.deepEqual(m.sections.map((s) => s.id), ['running']);
   const p = buildRunsModel({ live: LIVE3, history: HIST5, groupBy: 'project', now: NOW });
   assert.equal(p.sections[0].id, 'needs');
@@ -248,6 +265,25 @@ test('the label filter keeps runs with ANY chosen label; a group stays when one 
   assert.equal(row4.querySelector('.label-more').textContent, '+2');
   assert.equal(row4.querySelector('.label-more').title, 'spike, release');
   assert.equal(host.querySelector('.runs-item[data-row-key="hist:worca-00000002/h0"] .runs-row-labels'), null);
+});
+
+test('Show = Ready to ship: finished git runs with no open PR, not Folder, no-project, in-review, merged or archived', () => {
+  const pr = (state) => ({ url: 'https://github.com/o/r/pull/7', number: 7, state });
+  const history = [
+    histIt('h-ready', { run: { status: 'done' } }),
+    histIt('h-closed', { run: { status: 'done', pr: pr('CLOSED') } }),
+    histIt('h-open', { run: { status: 'done', pr: pr('OPEN') } }),
+    histIt('h-merged', { run: { status: 'done', pr: pr('MERGED') } }),
+    histIt('h-folder', { run: { status: 'done', workMode: 'folder', changes: null } }),
+    histIt('h-none', { run: { status: 'done', workMode: 'none' } }),
+    histIt('h-arch', { archived: true, run: { status: 'done' } }),
+  ];
+  const m = buildRunsModel({ live: [liveIt('r')], history, show: 'ready', now: NOW });
+  assert.deepEqual(keysOf(m).sort(), ['hist:worca-00000002/h-closed', 'hist:worca-00000002/h-ready']);
+  assert.equal(m.counts.ready, 2);
+  assert.deepEqual(m.sections.map((s) => s.title), ['Ready to ship']);
+  assert.equal(buildRunsModel({ live: [liveIt('r')], history, now: NOW }).counts.ready, 2, 'counted under Show = All too');
+  assert.equal(renderRunsList(doc, buildRunsModel({ live: [liveIt('r')], show: 'ready', now: NOW })).at(-1).textContent, 'Nothing is ready to ship.');
 });
 
 test('an archived run reads "Archived" with its time under Show = Archived', () => {
@@ -326,7 +362,7 @@ test('dateBucket: an ended group files under its latest member\'s time, a workin
     history: [histIt('m1', { mtime: tenDays }), histIt('m2', { mtime: tenDays - 3600000 }), histIt('r1', { mtime: NOW - 60000 })],
     groups: [feature, working, ready], groupBy: 'date', now: NOW });
   const where = (key) => m.sections.find((s) => s.rows.some((r) => r.key === key)).id;
-  assert.equal(where('chain:feat_m'), 'date:older');
+  assert.equal(where('chain:feat_m'), 'date:month');
   assert.equal(where('chain:p:w1'), 'date:today');
   const host = doc.createElement('div');
   host.append(...renderRunsList(doc, buildRunsModel({ history: [histIt('r1', { mtime: NOW - 60000 })], groups: [ready], now: NOW })));
@@ -674,6 +710,41 @@ test('#955 a one-line member: PR chip kept with no repeated word, no labels, no 
   assert.doesNotMatch(live.querySelector('.runs-row-sub').textContent, /^(Working|Running)\b/);
   const liveModel = m.sections.flatMap((s) => s.rows).find((r) => r.key === 'chain:p:c955').members[1].model;
   assert.equal(live.querySelector(':scope > a.runs-row').dataset.line, liveModel.line, 'data-line keeps the canonical line (D11)');
+});
+
+test('#1012 a staged live member draws the four-section block; a working one names no step, a needing one keeps why', () => {
+  const run = { status: 'running', steps: [{ nodeId: 'n' }], active: ['n'], stepper: { auto: { status: 'deciding' } } };   // Plan · choosing the workflow
+  const chain = { id: 'p:c1012', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run })], groups: [chain], now: NOW });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const row = host.querySelector('.runs-members .runs-item[data-level="member"] > a.runs-row');
+  assert.ok(row.querySelector(':scope > .runs-stage .run-prog-track'), 'the four-section bar');
+  assert.equal(row.querySelector(':scope > .runs-stage .run-prog-mark[data-state="current"]').textContent, 'Plan');
+  assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line beside it');
+  assert.equal(row.querySelector('.runs-row-sub').textContent, '', 'the marks say Plan, the dot says Working: no step');
+  assert.equal(row.dataset.line, 'Plan · choosing the workflow', 'data-line keeps the canonical line (D11)');
+  const asking = { ...run, pendingQuestion: { questions: [{ id: 'q1', question: 'Which?' }] } };
+  const m2 = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run: asking })],
+    groups: [{ ...chain, members: [{ ...chain.members[0], run: asking }] }], now: NOW });
+  const host2 = doc.createElement('div');
+  host2.append(...renderRunsList(doc, m2));
+  const sub2 = host2.querySelector('.runs-members .runs-item[data-level="member"] .runs-row-sub').textContent;
+  assert.match(sub2, /^needs you/, 'a state the dot does not say stays, without the stage word');
+});
+
+test('#1012 a member dispatched but not started yet draws no progress at all', () => {
+  const run = { status: 'running', stepper: { auto: { status: 'deciding' } } };   // no step yet: Starting, with stages
+  const chain = { id: 'p:c1012s', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run })], groups: [chain], now: NOW });
+  assert.equal(m.sections.flatMap((s) => s.rows)[0].members[0].model.state, 'starting');
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const row = host.querySelector('.runs-members .runs-item[data-level="member"] > a.runs-row');
+  assert.equal(row.querySelector(':scope > .runs-stage'), null, 'no four-section block');
+  assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line');
 });
 
 test('#955 a chat inside a one-project topic group does not repeat the project; a "2 projects" group keeps it', () => {

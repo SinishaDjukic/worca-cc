@@ -159,7 +159,10 @@ export function prNotice(doc, { status = null, loading = false, prKnown = false 
     if (status.azureError) parts.push(`Azure DevOps did not answer for some pull requests: ${status.azureError}`);
     const cut = Array.isArray(status.azureTruncated) ? status.azureTruncated : [];
     if (cut.length) parts.push(`${cut.join(', ')} ${cut.length === 1 ? 'has' : 'have'} more pull requests than one listing covers; older runs there may show without merge data.`);
-    if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub and Azure DevOps repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
+    if (status.bitbucket === 'missing') parts.push('Merge dates for Bitbucket repositories need a token: set `WORCA_BB_TOKEN` (Pull requests: Read) where worca runs.');
+    if (status.bitbucket === 'unauthenticated') parts.push('Bitbucket refused the token in `WORCA_BB_TOKEN`: check that it has not expired and can read pull requests.');
+    if (status.bitbucketError) parts.push(`Bitbucket did not answer for some pull requests: ${status.bitbucketError}`);
+    if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub, Azure DevOps and Bitbucket repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
   }
   if (!parts.length) return null;
   const n = h(doc, 'div', 'hint tl-note');

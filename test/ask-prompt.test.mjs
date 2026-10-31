@@ -522,6 +522,14 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
   ]);
 });
 
+test('rule 20: a removal re-scans as the card says, and Ask relays the recommendation', () => {
+  const rule = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('20. Workspaces:'));
+  assert.ok(rule, 'rule 20 is there');
+  assert.match(rule, /removing one prunes the map at once .* none .* partial .* full/);
+  assert.match(rule, /relay the recommendation and its reason/);
+  assert.doesNotMatch(rule, /Once a member change is applied worca starts a Workspace scan run of the new set itself/);
+});
+
 test('the context header says which part of a run page is open; runPage is an enum', async () => {
   const { validateClientContext } = await import('../src/core/ask/prompt.mjs');
   assert.match(buildContextHeader({ view: 'running', runPage: 'glance' }), /\nrun page: the run summary/);
@@ -937,4 +945,29 @@ test('Ask proposes graphs and drafts like the composer: rule 11 teaches build_wo
 test('the commands section asks for a short summary on run_command (#911)', () => {
   assert.match(renderCommandsSection(), /summary/);
   assert.match(renderCommandsSection(), /under 80 characters/);
+});
+
+// Ask worca beside the page (Task 2): the project / workspace PAGE on screen is its own pair of keys and header lines.
+test('the page on screen validates as ids; bad shapes refuse', () => {
+  assert.deepEqual(validateClientContext({ pageProjectKey: 'worca-cc-551183d0' }), { ok: true, context: { pageProjectKey: 'worca-cc-551183d0' } });
+  assert.deepEqual(validateClientContext({ pageWorkspaceId: 'wks-havn-649ebfe7' }), { ok: true, context: { pageWorkspaceId: 'wks-havn-649ebfe7' } });
+  assert.equal(validateClientContext({ pageProjectKey: '../etc' }).ok, false);
+  assert.equal(validateClientContext({ pageWorkspaceId: 'Havn' }).ok, false);
+});
+
+test('every Details tab of a run page is a valid runPage with its own header line (Changes and Actions too)', () => {
+  for (const [part, line] of [['changes', 'Details › Changes tab'], ['actions', 'Details › Actions tab'], ['diff', 'Details › Diff tab']]) {
+    assert.deepEqual(validateClientContext({ view: 'running', runPage: part }), { ok: true, context: { view: 'running', runPage: part } }, part);
+    assert.match(buildContextHeader({ view: 'running', runPage: part }), new RegExp(`^run page: ${line}$`, 'm'));
+  }
+  assert.equal(validateClientContext({ runPage: 'nope' }).ok, false);
+});
+
+test('the header names the page on screen apart from the scope, right after the workspace line', () => {
+  const h = buildContextHeader({ view: 'project-detail', noProject: true, pageProject: { name: 'Havn IOS', key: 'havn-ios-0a1b2c3d' } });
+  assert.match(h, /^on screen: project Havn IOS \(key havn-ios-0a1b2c3d\), the page the user is looking at, not this chat's scope$/m);
+  assert.match(h, /\nworkspace: -\non screen: project /);
+  const w = buildContextHeader({ view: 'workspaces', pageWorkspace: { name: 'Havn', id: 'wks-havn-649ebfe7' } });
+  assert.match(w, /^on screen: workspace Havn \(wks-havn-649ebfe7\), the page the user is looking at, not this chat's scope$/m);
+  assert.doesNotMatch(buildContextHeader({ view: 'runs' }), /on screen:/);
 });

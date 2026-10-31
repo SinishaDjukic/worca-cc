@@ -39,3 +39,12 @@ export function pluginSetupState(name, manifest, { broker = brokerEnabled() } = 
   }
   return { ok: !missing.length && !noProfiles.length, missing, noProfiles };
 }
+
+/** Does the manage sheet show a Settings section for this plugin? setup-fields.mjs setupSections' rule, on the manifest:
+ *  a task source or chat channel with config fields, or model secrets unless the credential broker holds them. */
+export function pluginHasSettings(manifest, { broker = brokerEnabled() } = {}) {
+  const fields = (x) => Array.isArray(x?.configSchema) && x.configSchema.length > 0;
+  if ((manifest?.taskSources || []).some(fields)) return true;
+  if ((manifest?.chatChannels || []).some(fields)) return true;
+  return !broker && (manifest?.modelSecrets || []).length > 0;
+}

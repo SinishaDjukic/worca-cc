@@ -3,10 +3,12 @@
 // Every rule here holds regardless of what the model asks — the model only supplies a URL/query.
 import { request as httpsRequest } from 'node:https';
 import { lookup as dnsLookup } from 'node:dns';
-import { BlockList, isIP } from 'node:net';
+import { BlockList, isIP, connect as netConnect } from 'node:net';
+import { connect as tlsConnect } from 'node:tls';
 import { pipeline } from 'node:stream';
 import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import { hostAllowed } from '../web-allowlist.mjs';
+import { httpsProxyFor } from '../env-proxy.mjs';
 import { htmlToText } from './html-text.mjs';
 
 export const WEB_LIMITS = Object.freeze({
@@ -102,7 +104,10 @@ export function makeGuardedLookup(resolve = dnsLookup) {
 }
 export const guardedLookup = makeGuardedLookup();
 
-// ── transport: GET only, no agent (fresh socket ⇒ lookup always runs), decompressed body ──
+// ── transport: GET only, decompressed body. Direct: no agent (fresh socket ⇒ lookup always
+// runs). Through HTTPS_PROXY (NO_PROXY and loopback go direct): a CONNECT tunnel, then TLS to
+// the target inside it — the proxy resolves the host, so the guarded lookup runs first as a
+// best-effort check (a private answer is refused; no answer at all is the proxy-only network). ──
 function decoded(res) {
   const enc = String(res.headers['content-encoding'] || '').trim().toLowerCase();
   const z = enc === 'gzip' || enc === 'x-gzip' ? createGunzip() : enc === 'deflate' ? createInflate() : enc === 'br' ? createBrotliDecompress() : null;
@@ -110,15 +115,80 @@ function decoded(res) {
   pipeline(res, z, () => {});
   return z;
 }
-export function httpsTransport({ url, signal, lookup = guardedLookup, headers }) {
+function get(url, options) {
   return new Promise((resolve, reject) => {
-    const req = httpsRequest(url, { method: 'GET', headers, lookup, signal, agent: false }, (res) => {
+    const req = httpsRequest(url, { method: 'GET', ...options }, (res) => {
       const body = decoded(res);
       resolve({ status: res.statusCode || 0, headers: res.headers, body, destroy: () => { res.destroy(); body.destroy?.(); } });
     });
     req.on('error', reject);
     req.end();
   });
+}
+
+/** The guarded lookup's refusal, or null; rejects when `signal` aborts first (a stalled DNS never outlives the deadline). */
+function refusedByLookup(host, lookup, signal) {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    lookup(host, { all: true }, (err) => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(err?.code === 'EWORCA_BLOCKED' ? err : null);
+    });
+  });
+}
+
+const TUNNEL_HEAD_MAX = 16 * 1024;
+/** A raw socket to host:443 through an http(s):// proxy's CONNECT; the caller does TLS over it. */
+export function openTunnel(proxyUrl, host, { signal } = {}) {
+  let p;
+  try { p = new URL(proxyUrl); } catch { p = null; }
+  // Never echo the proxy URL: it often carries user:password.
+  if (!p || (p.protocol !== 'http:' && p.protocol !== 'https:')) return Promise.reject(new WebAccessError('HTTPS_PROXY / HTTP_PROXY is not a valid proxy URL', { code: 'network' }));
+  return new Promise((resolve, reject) => {
+    const hostname = p.hostname.replace(/^\[|\]$/g, '');
+    const port = Number(p.port) || (p.protocol === 'https:' ? 443 : 80);
+    const sock = p.protocol === 'https:' ? tlsConnect({ host: hostname, port, servername: isIP(hostname) ? undefined : hostname }) : netConnect({ host: hostname, port });
+    let head = Buffer.alloc(0);
+    const done = (err, value) => {
+      sock.off('data', onData); sock.off('error', onError); sock.off('close', onClose); signal?.removeEventListener('abort', onAbort);
+      if (err) { sock.destroy(); reject(err); } else resolve(value);
+    };
+    const onError = (err) => done(err);
+    const onClose = () => done(Object.assign(new Error('the proxy closed the connection'), { code: 'ECONNRESET' }));
+    const onAbort = () => done(signal.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    const onData = (chunk) => {
+      head = Buffer.concat([head, chunk]);
+      const end = head.indexOf('\r\n\r\n');
+      if (end < 0) {
+        if (head.length > TUNNEL_HEAD_MAX) done(new WebAccessError('the proxy sent an oversized reply to CONNECT', { code: 'network' }));
+        return;
+      }
+      const status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(head.subarray(0, end).toString('latin1'))?.[1] || 0);
+      if (status !== 200) return done(new WebAccessError(`the proxy refused the tunnel to ${host} (HTTP ${status || 'reply not understood'})`, { code: 'network' }));
+      const rest = head.subarray(end + 4);
+      if (rest.length) sock.unshift(rest);
+      done(null, sock);
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    sock.on('data', onData); sock.on('error', onError); sock.on('close', onClose);
+    const auth = p.username || p.password ? `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(p.username)}:${decodeURIComponent(p.password)}`).toString('base64')}\r\n` : '';
+    sock.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n${auth}\r\n`);
+  });
+}
+
+/** `env` and `ca` exist for tests: the proxy variables (read per call, so a runtime change applies) and an extra trusted CA. */
+export async function httpsTransport({ url, signal, lookup = guardedLookup, headers, env = process.env, ca }) {
+  const host = url.hostname;
+  const proxy = httpsProxyFor(host, { env });
+  if (!proxy) return get(url, { headers, lookup, signal, agent: false, ca });
+  const blocked = await refusedByLookup(host, lookup, signal);
+  if (blocked) throw blocked;
+  const socket = await openTunnel(proxy, host, { signal });
+  // No agent: the request runs on this one TLS socket (a global proxy agent never sees it).
+  return get(url, { headers, signal, ca, createConnection: () => tlsConnect({ socket, host, servername: host, ca, ALPNProtocols: ['http/1.1'] }) });
 }
 
 async function readCapped(body, max) {

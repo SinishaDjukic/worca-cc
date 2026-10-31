@@ -12,6 +12,9 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node
 import { basename, join } from 'node:path';
 import { getDb, prepare, tx } from '../db.mjs';
 import { worcaHome } from '../projects.mjs';
+import { agentIdentityFor } from '../agent-pool.mjs';
+import { claimForAgent } from '../agent-user.mjs';
+import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
 
@@ -39,6 +42,20 @@ export function attachmentsDir(threadId) {
 export function askOutDir(threadId) {
   if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('askOutDir: refusing a thread id the store never minted');
   return join(askRoot(), threadId, 'out');
+}
+
+/** 1.4: a chat's folder (its attachments, worktrees, skill mounts, output) belongs to the agent user of the person
+ *  whose turns run in it (agent-pool.mjs): with a pool, `ask/<thread>` gets that user's own group, setgid 2770, and
+ *  `ask/` is sticky, so no other person's agent can read, edit or swap what this chat's agent loads. Made here when it
+ *  is not there yet; refused (throws) when it is a link or another user's folder. A no-op without a pool group. */
+export function claimThreadDir(threadId, owner = currentOwner()) {
+  const id = agentIdentityFor(owner);
+  if (!Number.isInteger(id?.runGid)) return;
+  if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('claimThreadDir: refusing a thread id the store never minted');
+  const dir = join(askRoot(), threadId);
+  mkdirSync(askRoot(), { recursive: true });
+  try { mkdirSync(dir); } catch (err) { if (err?.code !== 'EEXIST') throw err; }
+  claimForAgent(dir, id);
 }
 
 const now = () => new Date().toISOString();
@@ -109,6 +126,7 @@ function rowToRunLink(r) {
 export function createThread({ title = null, model = null, effort = null, createdBy = null, mode = null } = {}) {
   getDb();
   const id = newAskId('ask');
+  claimThreadDir(id);   // 1.4: before an attachment lands in it
   const t = now();
   prepare('INSERT INTO ask_threads (id, title, created_at, updated_at, model, effort, totals, created_by, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()), createdBy || null, mode === 'composer' ? 'composer' : null);
@@ -169,6 +187,18 @@ function excerptAround(text, q) {
   return `${from > 0 ? '…' : ''}${flat.slice(from, to)}${to < flat.length ? '…' : ''}`;
 }
 
+/** A list row's link counts and what the chat did (the Chats column's kind icon), over `t`. A run card's launch links its
+ *  run WITH the card id and a track_run without one; a later track of a run the chat started only patches the row, so
+ *  its card id stays. A workflow card is a propose_workflow (`workflow`) or build_workflow (`workflow-build`) card in
+ *  any state. The LIKE skips messages that cannot hold one before json_each parses any. */
+const LIST_FACTS_SQL = `(SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
+           (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id AND l.card_id IS NOT NULL) AS started_runs,
+           (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id AND l.card_id IS NULL) AS tracked_runs,
+           EXISTS (SELECT 1 FROM ask_messages m, json_each(CASE WHEN json_valid(m.blocks) THEN m.blocks END) b
+                   WHERE m.thread_id = t.id AND m.blocks LIKE '%"type":"workflow%' AND json_extract(b.value, '$.kind') = 'card'
+                     AND json_extract(b.value, '$.card.type') IN ('workflow', 'workflow-build')) AS workflow_card,
+           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees`;
+
 /** A list row: the thread without its composer canvas, its link counts and, for a message hit, the excerpt. */
 function toListRow(r, q) {
   const { composer: _canvas, ...t } = rowToThread(r);
@@ -176,7 +206,8 @@ function toListRow(r, q) {
   const match = !q || r.title_hit ? {}
     : r.group_hit != null ? { match: { group: r.group_hit } }
     : r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
-  return { ...t, runLinks: r.run_links, worktrees: r.worktrees, ...match };
+  return { ...t, runLinks: r.run_links, startedRuns: r.started_runs, trackedRuns: r.tracked_runs, hasWorkflowCard: !!r.workflow_card,
+    worktrees: r.worktrees, ...match };
 }
 
 export function listThreads({ limit = 50, visibleTo = null, mode = null, query = '' } = {}) {
@@ -190,8 +221,7 @@ export function listThreads({ limit = 50, visibleTo = null, mode = null, query =
            (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text,
            (SELECT g.name FROM ask_chat_groups g WHERE g.id = t.group_id AND g.name LIKE ? ESCAPE '\\') AS group_hit` : '';
   const rows = prepare(`
-    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
-           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees${hit}
+    SELECT t.*, ${LIST_FACTS_SQL}${hit}
     FROM ask_threads t${w.sql} ORDER BY t.updated_at DESC, t.id LIMIT ?
   `).all(...(q ? [likeContains(q), likeContains(q), likeContains(q)] : []), ...w.args, n);
   // A list row never carries the composer canvas (up to 256 KB each): getThread does.
@@ -238,8 +268,7 @@ export function listThreadsPage({ limit = 50, visibleTo = null, mode = null, que
            (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text,
            (SELECT g.name FROM ask_chat_groups g WHERE g.id = t.group_id AND g.name LIKE ? ESCAPE '\\') AS group_hit` : '';
   const rows = prepare(`
-    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
-           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees,
+    SELECT t.*, ${LIST_FACTS_SQL},
            ${expr} AS sort_key, (t.pinned_at IS NULL) AS unpinned${hit}
     FROM ask_threads t${w.sql}${keyset}
     ORDER BY (t.pinned_at IS NULL), ${expr} ${desc ? 'DESC' : 'ASC'}, t.id LIMIT ?
@@ -364,6 +393,34 @@ export function addToChatGroup(groupId, threadIds) {
   if (!getChatGroup(groupId)) throw new ChatGroupError('NOT_FOUND', 'group not found', 404);
   tx(() => moveRows(groupId, ids));
   return getChatGroup(groupId);
+}
+
+/** What Undo puts back for these chats: each one's group (null = ungrouped) and those groups' rows. */
+export function snapshotChatGroups(threadIds) {
+  getDb();
+  const rows = uniqueIds(threadIds).map((id) => ({ id, groupId: prepare('SELECT group_id FROM ask_threads WHERE id = ?').get(id)?.group_id || null }));
+  const gids = [...new Set(rows.map((r) => r.groupId).filter(Boolean))];
+  return { rows, groups: gids.map((g) => prepare('SELECT * FROM ask_chat_groups WHERE id = ?').get(g)).filter(Boolean).map((g) => ({ ...g })), created: null };
+}
+
+/** Undo of an add or a create: each chat back in its old group (a group the move dropped comes back with its id,
+ *  name and source); the created group, or one the undo empties, is dropped. A chat deleted since is skipped. */
+export function restoreChatGroups(snap) {
+  getDb();
+  tx(() => {
+    for (const g of snap.groups) {
+      prepare('INSERT OR IGNORE INTO ask_chat_groups (id, name, name_source, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(g.id, g.name, g.name_source, g.created_by, g.created_at, g.updated_at);
+    }
+    const touched = new Set(snap.created ? [snap.created] : []);
+    for (const r of snap.rows) {
+      const cur = prepare('SELECT group_id FROM ask_threads WHERE id = ?').get(r.id);
+      if (!cur) continue;
+      if (cur.group_id) touched.add(cur.group_id);
+      prepare('UPDATE ask_threads SET group_id = ? WHERE id = ?').run(r.groupId, r.id);
+    }
+    for (const g of touched) dropIfEmpty(g);
+  });
 }
 
 /** Remove from group: { groupId, deleted } (deleted = that was its last chat), or null when the chat had no group. */
@@ -653,7 +710,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
         || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
-        || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command'
+        || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command' || b.card.type === 'script-approval'
         || (b.card.type === 'progress' && !!b.card.fix)));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });

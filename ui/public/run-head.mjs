@@ -198,8 +198,13 @@ const repos = (n) => `${n} ${n === 1 ? 'repository' : 'repositories'}`;
 
 /** "owner/repo#N" from a GitHub pull request URL; "#N" for any other host. */
 export function prRef(pr) {
-  const m = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(String((pr && pr.url) || ''));
-  return m ? `${m[1]}#${m[2]}` : `#${(pr && pr.number) || ''}`;
+  const url = String((pr && pr.url) || '');
+  const m = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(url);
+  if (m) return `${m[1]}#${m[2]}`;
+  // A PR opened in this session has no number yet (number: null until a reload); Azure DevOps (/pullrequest/N) and
+  // Bitbucket (/pull-requests/N) URLs carry it.
+  const n = (pr && pr.number) || (/\/pull(?:request|-requests)\/(\d+)(?:[/?#]|$)/.exec(url) || [])[1];
+  return `#${n || ''}`;
 }
 
 /** Where the run's work lands (D2): a run that builds on the run before it lands in its feature's or chain's base

@@ -80,7 +80,7 @@ test('Settings sits in the account menu (not the page list), loads root, and sav
 
 const okJson = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const tick = () => new Promise((r) => setTimeout(r, 0));
-/** Boot with runTags on and open Settings › Tags. `settings` is the GET body; `team` the machine-wide lock. */
+/** Boot and open Settings › Tags. `settings` is the GET body; `team` the machine-wide lock. */
 async function openTags({ settings = {}, team = null, posts = [] } = {}) {
   const ctx = await boot({
     fetchHandler: (url, opts) => {
@@ -96,7 +96,6 @@ async function openTags({ settings = {}, team = null, posts = [] } = {}) {
     },
   });
   const { window } = ctx;
-  applyFlags({ runTags: true }, window.document);
   window.location.hash = 'settings/tags';
   window.dispatchEvent(new window.Event('hashchange'));
   for (let i = 0; i < 4; i++) await tick();
@@ -175,7 +174,7 @@ test('Settings › Tags: the switch is off by default; on with no tag ticked Man
   assert.equal(hint.hidden, true, 'a Mandatory tag: the hint goes');
 });
 
-async function openLabels({ flags = { runTags: true, runLabels: true }, labels = [], sent = [], answer = () => okJson({}) } = {}) {
+async function openLabels({ flags = { runLabels: true }, labels = [], sent = [], answer = () => okJson({}) } = {}) {
   const ctx = await boot({ fetchHandler: (url, opts) => {
     // as openTags: the Settings view reads its settings before painting the tags pane
     if (url.includes('/api/settings')) return okJson({ root: '', default: '/home/me', tagDimensions: [], enforceTags: false });
@@ -236,7 +235,7 @@ test('Settings › Labels & cost tags: a refused rename shows the server message
 });
 
 test('Settings › Labels & cost tags: with runLabels off the Labels section is gated and /api/labels is never read', async () => {
-  const { doc, sent } = await openLabels({ flags: { runTags: true } });
+  const { doc, sent } = await openLabels({ flags: { runLabels: false } });
   const card = doc.getElementById('labels-settings-card');
   assert.equal(card.dataset.flag, 'runLabels');
   assert.equal(card.querySelectorAll('.lbl-set-row').length, 0);

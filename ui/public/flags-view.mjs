@@ -117,7 +117,7 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
 }
 
 /**
- * A single flag's switch outside the Labs page (the account menu's Keep awake row, review F): the same
+ * A single flag's switch outside the Labs page (Settings › Runs › Smart run naming): the same
  * value, one source. `el` is a `.switch[role=switch]`, or a whole `<button>` row (a menuitemcheckbox
  * whose .switch only shows aria-checked). A button turns Enter and Space into a click by itself, so it
  * gets no key handler (one flip per key). The message (a refusal, "Locked by WORCA_FLAGS", '' to clear)

@@ -22,22 +22,25 @@ export function paintStatusDot(el, m) {
   if (m.symbol) {
     if (el.dataset.symbol !== m.symbol) { el.innerHTML = symbolSvg(m.symbol); el.dataset.symbol = m.symbol; }
   } else if (m.icon) {
-    // #948 s2: an idle chat's bubble, a line icon in the dot's place.
+    // #948 s2: a chat's kind (the idle bubble, a started or followed run, a workflow), a line icon in the dot's place.
     if (el.dataset.symbol !== `ic:${m.icon}`) { el.innerHTML = iconSvg(m.icon); el.dataset.symbol = `ic:${m.icon}`; }
   } else {
     el.replaceChildren();
     delete el.dataset.symbol;
   }
   // QA 6: a PR-driven Needs you is a plain dot, but the list shows no state word beside it, so it keeps its name.
-  if (m.symbol || m.state === 'needs-you') {
+  // A chat's icon says what the chat did ("Started a run"), which no word beside it says: `dotLabel` names it.
+  if (m.symbol || m.state === 'needs-you' || m.dotLabel) {
     el.setAttribute('role', 'img');
-    el.setAttribute('aria-label', m.word);
+    el.setAttribute('aria-label', m.dotLabel || m.word);
     el.removeAttribute('aria-hidden');
   } else {
     el.removeAttribute('role');
     el.removeAttribute('aria-label');
     el.setAttribute('aria-hidden', 'true');
   }
+  if (m.dotLabel) el.title = m.dotLabel;
+  else el.removeAttribute('title');
 }
 
 /** A new dot for a model. */

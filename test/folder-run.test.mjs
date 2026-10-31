@@ -248,7 +248,7 @@ test('a Cursor run: an agent deleting the folder\'s own .cursor/mcp.json is a ch
   const dir = plainFolder(); mkdirSync(join(dir, '.cursor'));
   writeFileSync(join(dir, '.cursor', 'mcp.json'), '{"mcpServers":{"mine":{"command":"x"}}}\n');
   let orch;
-  orch = ENGINES[0].create({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true, engine: 'cursor' }, workMode: 'folder',
+  orch = ENGINES[0].create({ projectDir: dir, prompt: 'x', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'cursor' }, workMode: 'folder',
     runners: { producer: async () => { rmSync(join(orch.runCwd, '.cursor', 'mcp.json'), { force: true }); return { status: 'ok' }; },
       verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }) } });
   assert.equal((await orch.run()).status, 'done');

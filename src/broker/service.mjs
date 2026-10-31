@@ -3,20 +3,30 @@
 // resolution, the /p/<slot>/… proxy, key verification, and the /internal API the
 // worca server calls. Both HTTP listeners (main.mjs) hand requests here; the key
 // page (ui-server.mjs) uses the credential methods.
-import http from 'node:http';
-import https from 'node:https';
 import { seal, open, suffixOf, keyId } from './vault.mjs';
-import { isAllowedPath, pathIssue, validatePluginSlots } from './slots.mjs';
+import { isAllowedPath, pathIssue, validatePluginSlots, PLUGIN_SLOT_PREFIX } from './slots.mjs';
 import { resolveToken, tokenFromHeaders, parseMintRequest, mintToken, safeEqual, normalizeBillTo } from './tokens.mjs';
-import { createUsageTap, priceUsage } from './usage.mjs';
+import { createUsageTap, priceUsage, listRatesFor, requestWithUsage, UNPRICED_RATES } from './usage.mjs';
 import { scrubText } from './scrub.mjs';
 import { createLimits } from './limits.mjs';
 import { createCopilotExchange, parseGithubSecret, refreshGithubToken } from './copilot.mjs';
+import { fetchUpstream } from './upstream-request.mjs';
 
 export const MAX_REQUEST_BYTES = 32 << 20;
+// Every request body is held in memory until its upstream call ends, so the bodies of all
+// calls in flight, across every token, share one budget sized for the container's
+// `mem_limit: 256m` (docker/compose.broker.yml): two bodies at the size cap fit.
+export const INFLIGHT_BODY_BYTES = 64 << 20;
+// A 2xx answer to a GET (model lists, OpenRouter's key info) is read whole and scrubbed.
+const MAX_SCRUBBED_BODY = 8 << 20;
 const MAX_ERROR_BODY = 64 << 10;
 const CRED_CACHE_MS = 30_000;
 const UPSTREAM_IDLE_MS = 10 * 60_000;
+// A request body must keep arriving (idle) and be all there in time (total): see readBody.
+export const BODY_IDLE_MS = 15_000;
+export const BODY_TOTAL_MS = 120_000;
+// A client that stops reading a streamed answer this long is treated as gone: the rest is read and booked (V7).
+export const CLIENT_DRAIN_MS = 60_000;
 
 const REQUEST_HEADER_ALLOW = new Set([
   'content-type', 'accept', 'anthropic-version', 'anthropic-beta', 'user-agent', 'openai-beta',
@@ -64,12 +74,34 @@ function sendJson(res, status, body, extra = {}) {
   res.end(s);
 }
 
-function readBody(req, limit) {
+/**
+ * The request body, at most `limit` bytes (else E_TOO_LARGE). `take(n)`, when given, is asked
+ * for each chunk's bytes, and a refusal ends the read with E_BUSY. A refused read leaves the
+ * request paused, so the caller can still answer; answer with `connection: close` and drop it.
+ */
+/** The body of `req`, at most `limit` bytes. `take(n)` holds each chunk in the shared budget. A body that stalls
+ *  for `idleMs` or is not all there after `totalMs` is refused (E_TIMEOUT): a declared length holds its share
+ *  of the budget until then, and with no deadline a client that never sends it holds it for good (V6). */
+function readBody(req, limit, take = null, { idleMs = 0, totalMs = 0 } = {}) {
   return new Promise((resolveP, rejectP) => {
-    const parts = []; let n = 0;
-    req.on('data', (c) => { n += c.length; if (n > limit) { rejectP(Object.assign(new Error('too large'), { code: 'E_TOO_LARGE' })); req.destroy(); return; } parts.push(c); });
-    req.on('end', () => resolveP(Buffer.concat(parts)));
-    req.on('error', rejectP);
+    const parts = []; let n = 0; let stopped = false;
+    let idle = null;
+    const total = totalMs > 0 ? setTimeout(() => stop('E_TIMEOUT'), totalMs) : null;
+    const clear = () => { clearTimeout(idle); clearTimeout(total); };
+    const arm = () => { if (idleMs > 0) { clearTimeout(idle); idle = setTimeout(() => stop('E_TIMEOUT'), idleMs); } };
+    const stop = (code) => { if (stopped) return; stopped = true; clear(); req.pause(); rejectP(Object.assign(new Error(code), { code })); };
+    arm();
+    req.on('data', (c) => {
+      if (stopped) return;
+      arm();
+      n += c.length;
+      if (n > limit) { stop('E_TOO_LARGE'); return; }
+      if (take && !take(c.length)) { stop('E_BUSY'); return; }
+      parts.push(c);
+    });
+    req.on('end', () => { if (stopped) return; stopped = true; clear(); resolveP(Buffer.concat(parts)); });
+    req.on('error', (err) => { if (stopped) return; stopped = true; clear(); rejectP(err); });
+    req.on('close', () => stop('E_CLOSED'));
   });
 }
 
@@ -97,6 +129,7 @@ export function mergeBetas(...lists) {
 /**
  * @param {{config:object, slots:object[], store:object, log?:(line:string)=>void, now?:()=>number,
  *          requestImpl?:(url:URL, opts:object)=>import('node:http').ClientRequest}} o
+ *   requestImpl defaults to fetchUpstream: fetch, so HTTP(S)_PROXY applies on every Node (env-proxy.mjs).
  */
 export function createBrokerService({ config, slots: baseSlots, store, log = () => {}, now = Date.now, requestImpl, fetchImpl = globalThis.fetch }) {
   // The built-in and operator slots, then the plugin slots worca registers
@@ -107,13 +140,35 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     slots = Object.freeze([...baseSlots, ...pluginSlots]);
     slotById = new Map(slots.map((s) => [s.id, s]));
   };
+  // One log line per model the price tables lack, so the operator sees what the fallback rate books.
+  const unpricedSeen = new Set();
+  const noteUnpriced = (model, slotId) => {
+    const key = `${slotId}|${model || ''}`;
+    if (unpricedSeen.has(key) || unpricedSeen.size > 1000) return;
+    unpricedSeen.add(key);
+    const r = config.unpricedRates || UNPRICED_RATES;
+    log(`no list price for ${model ? `model ${model}` : 'a response that names no model'} on ${slotId}: booked at the fallback rate ($${r.input} in / $${r.output} out per million tokens; WORCA_BROKER_UNPRICED_USD_PER_MTOK)`);
+  };
   let storedPluginSlots = [];
   try { storedPluginSlots = validatePluginSlots(store.getPluginSlots ? store.getPluginSlots() : [], baseSlots.map((s) => s.id)); }
   catch (err) { log(`stored plugin slots ignored: ${err.message}`); }
   useSlots(storedPluginSlots);
   const limits = createLimits({ store, config, now });
   const credCache = new Map();
-  const doRequest = requestImpl || ((url, opts) => (url.protocol === 'https:' ? https : http).request(url, opts));
+
+  // The bytes of request bodies (and scrubbed responses) held by calls in flight.
+  const bodyBudget = config.inflightBodyBytes || INFLIGHT_BODY_BYTES;
+  let bodyBytes = 0;
+  /** One call's share of the budget: take(n) holds n more bytes if they fit, release() frees them all. */
+  function bodyHold() {
+    let held = 0;
+    return {
+      take(n) { if (bodyBytes + n > bodyBudget) return false; bodyBytes += n; held += n; return true; },
+      held: () => held,
+      release() { bodyBytes -= held; held = 0; },
+    };
+  }
+  const doRequest = requestImpl || fetchUpstream;
   const exchanges = new Map();
   /** The Copilot token exchange for a slot (one per slot: its fallback host and exchange URL). */
   const copilotFor = (slot) => {
@@ -159,6 +214,18 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     return `this key was saved for ${hostOf(row.upstream)}, and ${slotName(slot)} now points at ${hostOf(origin)}: enter it again`;
   }
 
+  /** Why the operator's key may not go to a plugin slot's current upstream, or null. worca registers
+   *  plugin slots over /internal (so can anyone holding the shared secret): the upstream is not the
+   *  operator's word, and the key goes only to the origin WORCA_BROKER_KEY_<SLOT>_ORIGIN names. */
+  function unapprovedOrigin(slot) {
+    if (!slot.id.startsWith(PLUGIN_SLOT_PREFIX)) return null;
+    const origin = new URL(slot.upstream).origin;
+    const approved = config.singleKeyOrigins?.[slot.id];
+    if (approved === origin) return null;
+    const v = `WORCA_BROKER_KEY_${slot.id.toUpperCase().replace(/-/g, '_')}`;
+    return `${approved ? `${v} is approved for ${hostOf(approved)}, and ${slotName(slot)} now points at ${hostOf(origin)}: ` : ''}set ${v}_ORIGIN=${origin} on the broker to send it there`;
+  }
+
   /** {secret} (null secret for a keyless slot), or {missing:true}, or {error}. */
   function resolveCredential(billTo, slot) {
     if (slot.credential === 'none' || slot.auth === 'none') return { secret: null, row: null };
@@ -168,7 +235,8 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     let value;
     if (config.mode === 'single' || (slot.credential === 'operator' && config.allowTeamKeys)) {
       const secret = config.singleKeys[slot.id];
-      value = secret ? { secret, row: null } : { missing: true };
+      const why = secret ? unapprovedOrigin(slot) : null;
+      value = !secret ? { missing: true } : why ? { error: why } : { secret, row: null };
     } else if (slot.credential === 'operator') {
       value = { missing: true };
     } else {
@@ -283,6 +351,8 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       if (slot.credential === 'none' || slot.auth === 'none') return { ...base, state: 'keyless' };
       if (config.mode === 'single') {
         const k = config.singleKeys[slot.id];
+        const why = k ? unapprovedOrigin(slot) : null;
+        if (why) return { ...base, state: 'invalid', verifyError: why };
         return { ...base, state: k ? 'set' : 'missing', ...(k ? { kind: credentialKind(slot, k) } : {}) };
       }
       if (slot.credential === 'operator') return { ...base, state: config.allowTeamKeys && config.singleKeys[slot.id] ? 'operator' : 'missing' };
@@ -367,6 +437,18 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       return;
     }
 
+    // A body refused before or while it arrives: answer, then drop the connection, so the
+    // rest of the body is never read.
+    const refuseBody = (code) => {
+      res.on('finish', () => req.destroy());
+      if (code === 'E_TOO_LARGE') fail(413, 'request_too_large', 'request body is too large', { connection: 'close' });
+      else if (code === 'E_TIMEOUT') fail(408, 'invalid_request_error', 'the request body did not arrive in time', { connection: 'close' });
+      else if (code === 'E_BACKGROUND') fail(400, 'invalid_request_error', 'background responses are not supported through the broker: their cost cannot be booked', { connection: 'close' });
+      else fail(503, 'overloaded_error', 'the broker is busy with other large requests, retry in a few seconds', { connection: 'close', 'retry-after': '2' });
+    };
+    const declared = req.headers['content-length'] === undefined ? NaN : Number(req.headers['content-length']);
+    if (declared > MAX_REQUEST_BYTES) { refuseBody('E_TOO_LARGE'); return; }
+
     const admit = limits.acquire({ tokenRow: tok, slot, credentialRow: cred.row });
     if (!admit.release) {
       fail(admit.status, admit.kind === 'rate' ? 'rate_limit_error' : 'permission_error', admit.message,
@@ -374,11 +456,18 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       return;
     }
 
+    // A declared length is held up front, so a call that can't fit is refused before any of
+    // its body is read; a chunked body is held as it arrives.
+    const hold = bodyHold();
+    const sized = Number.isFinite(declared);
+    if (sized && !hold.take(declared)) { admit.release(); refuseBody('E_BUSY'); return; }
     let body;
-    try { body = await readBody(req, MAX_REQUEST_BYTES); }
-    catch (err) {
-      admit.release();
-      if (err.code === 'E_TOO_LARGE') fail(413, 'request_too_large', 'request body is too large');
+    try {
+      body = requestWithUsage(slot, rest, await readBody(req, MAX_REQUEST_BYTES, sized ? null : hold.take,
+        { idleMs: config.bodyIdleMs ?? BODY_IDLE_MS, totalMs: config.bodyTotalMs ?? BODY_TOTAL_MS }));
+    } catch (err) {
+      admit.release(); hold.release();
+      if (['E_TOO_LARGE', 'E_BUSY', 'E_TIMEOUT', 'E_BACKGROUND'].includes(err.code)) refuseBody(err.code);
       else res.destroy();
       return;
     }
@@ -387,18 +476,24 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     // Copilot's gateway answers from a Chat Completions or a Messages endpoint on one slot.
     const tapProtocol = /\/v1\/messages$/.test(rest) ? 'anthropic' : slot.protocol;
 
+    // Calls with no per-call price record tokens and book no dollars: a Claude subscription,
+    // Copilot (billed per seat and premium request, not per token) and a keyless slot (local
+    // models). Everything else is priced, an unlisted model at the fallback rate.
+    const plan = subscription ? 'subscription' : (slot.auth === 'copilot' ? 'copilot' : null);
+    // A slot that sends no key (auth or credential 'none') is keyless, as resolveCredential treats it (V12).
+    const priced = !plan && slot.credential !== 'none' && slot.auth !== 'none';
     let settled = false;
     const finish = (status, usage) => {
       if (settled) return; settled = true;
-      admit.release();
-      // A subscription call has no per-call price: tokens are recorded, dollars are not.
-      const usd = usage && !subscription ? priceUsage(usage) : 0;
+      admit.release(); hold.release();
+      const usd = usage && priced ? priceUsage(usage, config.unpricedRates || UNPRICED_RATES) : 0;
+      if (usd > 0 && !Number.isFinite(usage.reportedUsd) && !listRatesFor(usage.model)) noteUnpriced(usage.model, slot.id);
       try {
         store.insertUsage({
           at: now(), billTo: tok.bill_to, slot: slot.id, spawnId: tok.spawn_id, runId: tok.run_id,
           model: usage?.model ?? null, status, inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens,
           cacheReadTokens: usage?.cacheReadTokens, cacheWriteTokens: usage?.cacheWriteTokens, usd, ms: now() - started,
-          plan: subscription ? 'subscription' : null,
+          plan,
         });
         store.addSpend(tok.hash, usd);
         if (cred.row) store.markUsed(tok.bill_to, slot.id, now());
@@ -408,8 +503,16 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     };
 
     let up = null;
+    // Once a streamed answer has started, every way it ends books what the tap read (V7), never $0.
+    let tap = null; let tapStatus = 0;
     let authSecrets = [];   // derived credentials (a Copilot token) to scrub along with the stored one
-    res.on('close', () => { if (!settled && up) up.destroy(); });
+    // A client that hangs up does not end the upstream call: the response is read to its end
+    // and booked in full. Cutting it short would book only the output counted at
+    // message_start, so an agent could abort every stream and spend unbooked. The provider
+    // then finishes the response, so a dropped call costs what a finished one would; the
+    // upstream idle timeout still ends a stalled one.
+    let clientGone = false;
+    res.on('close', () => { if (!res.writableFinished) clientGone = true; });
 
     /** One attempt. Copilot gets exactly one retry with a fresh exchange on a 401 (its token expired early). */
     const send = async (attempt) => {
@@ -430,12 +533,16 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       catch { finish(502, null); fail(502, 'api_error', 'upstream unreachable'); return; }
       up.on('timeout', () => up.destroy(new Error('upstream idle timeout')));
       up.on('error', () => {
-        finish(502, null);
+        finish(tap ? tapStatus : 502, tap ? tap.end() : null);
         if (!res.headersSent) fail(502, 'api_error', 'upstream unreachable');
         else res.destroy();
       });
       up.on('response', (ur) => onResponse(ur, attempt));
       up.end(body);
+      // The body is forwarded: its bytes leave the shared budget now, not when a long stream ends (V13),
+      // and the reference goes with them, so a long stream does not keep an uncounted Buffer alive.
+      // Copilot may send it again after a 401, so its bytes stay until the answer is past that.
+      if (slot.auth !== 'copilot') { body = null; hold.release(); }
     };
 
     const onResponse = (ur, attempt) => {
@@ -446,6 +553,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
         send(1);
         return;
       }
+      body = null; hold.release();
       if (status >= 300 && status < 400) {
         ur.resume();
         finish(502, null);
@@ -473,13 +581,49 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
         ur.on('error', () => { finish(status, null); res.destroy(); });
         return;
       }
-      const tap = createUsageTap(tapProtocol, ur.headers['content-type']);
+      if (req.method === 'GET') {
+        // A metadata read can echo the key (OpenRouter's /api/v1/key labels it, masked), so it
+        // is read whole and scrubbed like an error. Calls that make the model write stream
+        // through untouched: the model never sees the key, and scrubbing key shapes there
+        // would rewrite what it wrote.
+        const parts = [];
+        ur.on('data', (c) => {
+          if (settled) return;
+          const tooLarge = hold.held() + c.length > MAX_SCRUBBED_BODY;
+          if (tooLarge || !hold.take(c.length)) {
+            ur.destroy(); finish(tooLarge ? 502 : 503, null);
+            if (tooLarge) fail(502, 'api_error', 'upstream response too large');
+            else fail(503, 'overloaded_error', 'the broker is busy with other large requests, retry in a few seconds', { 'retry-after': '2' });
+            return;
+          }
+          parts.push(c);
+        });
+        ur.on('end', () => {
+          const text = scrubText(Buffer.concat(parts).toString('utf8'), [cred.secret, ...authSecrets]);
+          finish(status, null);
+          const h = agentResponseHeaders(ur.headers);
+          h['content-length'] = String(Buffer.byteLength(text));
+          res.writeHead(status, h); res.end(text);
+        });
+        ur.on('error', () => { if (!settled) { finish(status, null); res.destroy(); } });
+        return;
+      }
+      tap = createUsageTap(tapProtocol, ur.headers['content-type']); tapStatus = status;
       res.writeHead(status, agentResponseHeaders(ur.headers));
+      // A client that stops reading (never hangs up) would pause the upstream until its idle timeout, which
+      // books nothing: after CLIENT_DRAIN_MS it counts as gone, and the rest is read and booked as for a hang-up.
+      let drainTimer = null;
+      const resume = () => { clearTimeout(drainTimer); ur.resume(); };
+      res.on('close', resume);   // a pause waiting for 'drain' would never end once the client is gone
       ur.on('data', (c) => {
         tap.write(c);
-        if (!res.write(c)) { ur.pause(); res.once('drain', () => ur.resume()); }
+        if (clientGone) return;
+        if (!res.write(c)) {
+          ur.pause(); res.once('drain', resume);
+          drainTimer = setTimeout(() => { clientGone = true; res.destroy(); resume(); }, config.clientDrainMs ?? CLIENT_DRAIN_MS);
+        }
       });
-      ur.on('end', () => { res.end(); finish(status, tap.end()); });
+      ur.on('end', () => { if (!clientGone) res.end(); finish(status, tap.end()); });
       ur.on('error', () => { finish(status, tap.end()); res.destroy(); });
     };
     await send(0);
@@ -496,7 +640,11 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     let body = null;
     if (req.method === 'POST' || req.method === 'PUT') {
       try { const b = await readBody(req, 64 << 10); body = b.length ? JSON.parse(b.toString('utf8')) : {}; }
-      catch { sendJson(res, 400, { error: 'body must be JSON (at most 64 KB)' }); return; }
+      catch {
+        res.on('finish', () => req.destroy());
+        sendJson(res, 400, { error: 'body must be JSON (at most 64 KB)' }, { connection: 'close' });
+        return;
+      }
     }
     if (req.method === 'GET' && p === '/internal/info') {
       sendJson(res, 200, {

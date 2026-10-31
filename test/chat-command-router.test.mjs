@@ -61,7 +61,7 @@ function fixture(overrideActions = {}) {
   const router = createCommandRouter({ actions, chatContext, logger: () => {} });
   const send = (text, chatId = '42') => router.handleIncoming({
     plugin: 'p', channelId: 'main', platform: 'testchat',
-    channelConfig: CONFIG, msg: { chatId, userId: 'u1', text, meta: {} },
+    channelConfig: CONFIG, msg: { chatId, userId: 'u1', text, meta: { isGroup: false } },
   });
   return { send, calls, state, chatContext };
 }
@@ -445,7 +445,7 @@ test('chat actions carry the sender as attribution text: "<name> via <Platform>"
   await send('/stop *1111', {}, 'slack', 'U024BE7LH');
   await send('/resume *3333', { name: 'Grace Hopper' }, 'teams');
   f.state.pending['run-aaaa1111'] = { id: 'g1', kind: 'gate' };
-  await send('/approve', { username: 'ada' }, 'discord');
+  await send('/approve', { username: 'ada', isGroup: false }, 'discord');
   assert.deepEqual(got, [
     ['pause', 'run-aaaa1111', 'ada via Telegram'],
     ['stop', 'run-aaaa1111', 'U024BE7LH via Slack'],

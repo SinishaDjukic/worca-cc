@@ -136,7 +136,7 @@ Set these where worca runs (for Railway: on the `worca` service).
 | `WORCA_ALLOWED_HOSTS` | `worca.example.com` | Hostnames accepted in `Host` and `Origin` besides loopback. Comma-separated. A leading dot (`.example.com`) matches subdomains, but prefer the exact name. On Railway add `healthcheck.railway.app` (see [deploy-railway.md](deploy-railway.md)). |
 | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `acme.cloudflareaccess.com` | Your team domain. Turns on the token check. |
 | `WORCA_CF_ACCESS_AUD` | `4714c1…` | The application's AUD tag. Tokens issued for any other application are refused. |
-| `WORCA_HOST` | `::` | Listen address. Must be non-loopback so `cloudflared` in another container can reach worca; `::` accepts IPv6 and IPv4. |
+| `WORCA_HOST` | `::` | Listen address. Must be non-loopback so `cloudflared` in another container can reach worca; `::` accepts IPv6 and IPv4. Without `WORCA_ALLOWED_HOSTS` a non-loopback bind still answers only callers on the same machine (a loopback TCP peer, or Docker's gateway in the worca image): a network caller gets a 403 even with `Host: localhost`. |
 | `WORCA_INSECURE_NO_IDENTITY_CHECK` | `1` | Runs with an allowlist but **no** token check, trusting the proxy alone. Never needed with Cloudflare Access; it exists for proxies that sign nothing. |
 
 ### Worca refuses to start if the setup is unsafe
@@ -208,7 +208,7 @@ Worca takes the name from the first of these that applies, and never guesses:
 | Source | When |
 | --- | --- |
 | The verified Cloudflare Access token | Always, when the Access check is on |
-| `WORCA_IDENTITY_HEADER` | A header your own identity proxy sets (oauth2-proxy, Tailscale, …). Only when you name it: set it only if the proxy verifies the user and strips any copy the browser sends |
+| `WORCA_IDENTITY_HEADER` | A header your own identity proxy sets (oauth2-proxy, Tailscale, …). Only when you name it: set it only if the proxy verifies the user and strips any copy the browser sends. It is read only from `WORCA_IDENTITY_TRUSTED_PROXIES` (the proxy's IP addresses or CIDRs, comma-separated), the same rule the credential broker's key page keeps; from any other peer it is dropped, and worca does not start with the header set but no trusted proxy. With agent isolation on, it is ignored from the box itself (an agent could set it too), so the proxy must reach worca from another address |
 | `WORCA_IDENTITY_NAME` | A name you declare, for a self-hosted worca with no identity layer |
 | none | Nothing is shown or added, as on a local install |
 

@@ -373,9 +373,14 @@ test('a timed-out fetch kills its whole process group (no orphaned ssh left wait
   // An "ssh" that never answers; it records its pid first.
   const pidFile = join(root, `ssh-${n}.pid`), fake = join(root, `fake-ssh-${n}.sh`);
   await writeFile(fake, `#!/bin/sh\necho $$ > "${pidFile}"\nexec sleep 30\n`); await chmod(fake, 0o755);
-  g(a, 'config', 'core.sshCommand', fake);
+  // The server's own env, not the repository's config: a local core.sshCommand that is not `ssh -i <key>` is
+  // replaced (git-guard.mjs, G2).
   g(a, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/x.git');
-  const r = await fetchRemote(a, { timeoutMs: 3_000, maxAgeMs: 0 });   // room for git to start the ssh under a loaded suite (700 ms raced it); the stand-in sleeps 30 s
+  const prev = process.env.GIT_SSH_COMMAND;
+  process.env.GIT_SSH_COMMAND = fake;
+  let r;
+  try { r = await fetchRemote(a, { timeoutMs: 3_000, maxAgeMs: 0 }); }   // room for git to start the ssh under a loaded suite (700 ms raced it); the stand-in sleeps 30 s
+  finally { if (prev === undefined) delete process.env.GIT_SSH_COMMAND; else process.env.GIT_SSH_COMMAND = prev; }
   assert.equal(r.ok, false); assert.equal(r.kind, 'timeout');
   const pid = Number((await readFile(pidFile, 'utf8')).trim());
   const deadline = Date.now() + 5_000;
@@ -576,6 +581,50 @@ test('a fast-forward on an Azure DevOps remote merges with the ADO read helper',
   } finally { _testing.setRunner(null); }
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(mergeOpts.env.WORCA_ADO_GIT_TOKEN, 'pat');
+  assert.equal(mergeOpts.env.GH_TOKEN, undefined);
+});
+
+const NO_BB = { WORCA_BB_TOKEN: undefined, WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined, WORCA_BB_EMAIL: undefined };
+const BB_URL = 'https://bitbucket.org/acme/api.git';
+const answerBitbucketUrl = (args) => args[0] === 'remote' && args[1] === 'get-url'
+  ? Promise.resolve({ ok: true, stdout: `${BB_URL}\n`, stderr: '', code: 0, timedOut: false }) : null;
+
+test('fetch of a Bitbucket remote carries the Bitbucket read helper, never a GitHub or Azure token', async () => {
+  const { a } = await world();
+  let fetchEnv;
+  _testing.setRunner((args, opts) => {
+    const bb = answerBitbucketUrl(args);
+    if (bb) return bb;
+    if (args[0] === 'fetch') { fetchEnv = opts.env; return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0, timedOut: false }); }
+    return _testing.defaultRun(args, opts);
+  });
+  try {
+    await withEnv({ ...NO_ADO, ...NO_BB, WORCA_BB_READ_TOKEN: 'bbread', WORCA_BB_WRITE_TOKEN: 'bbwrite', WORCA_ADO_TOKEN: 'pat', GH_TOKEN: 'ghp_x' },
+      () => fetchRemote(a));
+  } finally { _testing.setRunner(null); }
+  assert.equal(fetchEnv.WORCA_BB_GIT_TOKEN, 'bbread', 'the read token, never the write one');
+  assert.equal(fetchEnv.WORCA_BB_READ_TOKEN, undefined);
+  assert.equal(fetchEnv.WORCA_BB_WRITE_TOKEN, undefined);
+  assert.equal(fetchEnv.WORCA_ADO_TOKEN, undefined);
+  assert.equal(fetchEnv.GH_TOKEN, undefined);
+});
+
+test('a fast-forward on a Bitbucket remote merges with the Bitbucket read helper', { skip: process.platform === 'win32' }, async () => {
+  const { a, push } = await world();
+  await push('m.txt', 'two'); await fetchRemote(a);
+  let mergeOpts = null;
+  _testing.setRunner((args, opts) => {
+    const bb = answerBitbucketUrl(args);
+    if (bb) return bb;
+    if (args[0] === 'merge') mergeOpts = opts;
+    return _testing.defaultRun(args, opts);
+  });
+  let r;
+  try {
+    r = await withEnv({ ...NO_ADO, ...NO_BB, WORCA_BB_TOKEN: 'bbtok' }, () => fastForward(a, { base: 'dev' }));
+  } finally { _testing.setRunner(null); }
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(mergeOpts.env.WORCA_BB_GIT_TOKEN, 'bbtok');
   assert.equal(mergeOpts.env.GH_TOKEN, undefined);
 });
 

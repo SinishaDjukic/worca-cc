@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { confirmDialog } from './helpers/confirm-modal.mjs';
+import { confirmDialog, confirmChoice, dialogChoices, dialogText } from './helpers/confirm-modal.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -605,7 +605,7 @@ test('Remove confirms, posts {remove}; a 409 (live run) keeps the member and sho
   click(window, removeOf(THIRD.path));
   await confirmDialog(window);
   await settle(8);
-  assert.deepEqual(posts, [{ remove: THIRD.path }]);
+  assert.deepEqual(posts, [{ remove: THIRD.path, rescan: 'full' }]);
   assert.equal(doc.querySelectorAll('#ws-detail .wd-member').length, 3, 'still a member');
   assert.match(doc.querySelector('#ws-detail .pd-error').textContent, /live run/);
   status = 200;
@@ -613,6 +613,96 @@ test('Remove confirms, posts {remove}; a 409 (live run) keeps the member and sho
   await confirmDialog(window);
   await settle(8);
   assert.equal(doc.querySelectorAll('#ws-detail .wd-member').length, 2, 'removed');
+});
+
+const IMPACT = { level: 'partial', reason: 'svc-api had 1 edge with 1 member (svc-iam). A partial re-scan is recommended: one agent rewrites the overview and coordination notes from the pruned map.', partialAvailable: true, signals: {} };
+const threeOf = () => ({ ...WS[0], projectPaths: [...WS[0].projectPaths, THIRD.path], projectKeys: ['k1', 'k2', 'k5'], exists: [true, true, true] });
+const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+
+/** Open alpha with THIRD as a member and click its Remove; the remove-impact lookup answers `impact`. */
+async function bootRemove({ impact, membersBody }) {
+  const posts = [];
+  const booted = await boot({ workspaces: [threeOf(), WS[1]], fetchHandler: (u, opts) => {
+    if (u.includes('/members/remove-impact?path=')) return impact;
+    if (/\/api\/workspaces\/wks-alpha-00000001\/members$/.test(u) && opts.method === 'POST') {
+      posts.push(JSON.parse(opts.body));
+      return ok(membersBody);
+    }
+    return withThird(u);
+  } });
+  booted.show('workspaces/wks-alpha-00000001');
+  await settle(8);
+  const removeBtn = [...booted.window.document.querySelectorAll('#ws-detail .wd-member-remove')].find((b) => b.dataset.path === THIRD.path);
+  click(booted.window, removeBtn);
+  await settle(4);
+  return { ...booted, posts, doc: booted.window.document };
+}
+
+test('Remove shows worca\'s recommendation and three options (recommended preselected); No re-scan posts it and shows the pruned box', async () => {
+  const { window, doc, posts, ws } = await bootRemove({ impact: ok({ recommendation: IMPACT }),
+    membersBody: { workspace: { ...WS[0] }, clearedHomes: [], rescan: { mode: 'none' }, recommendation: IMPACT } });
+  assert.match(dialogText(window).message, /A partial re-scan is recommended/);
+  assert.deepEqual(dialogChoices(window).map((c) => [c.value, c.checked, c.disabled]), [['none', false, false], ['partial', true, false], ['full', false, false]]);
+  assert.match(dialogChoices(window)[1].title, /^Partial re-scan — recommended$/);
+  await confirmChoice(window, 'none');
+  await settle(8);
+  assert.deepEqual(posts, [{ remove: THIRD.path, rescan: 'none' }]);
+  const box = doc.querySelector('#ws-detail .wd-rescan');
+  assert.ok(box.classList.contains('is-pruned'));
+  assert.match(box.querySelector('.status-label').textContent, /^Member removed: map pruned, not re-scanned$/);
+  assert.equal(box.querySelector('.spinner'), null);
+  assert.ok(box.querySelector('.wd-rescan-mark svg'), 'the pruned box carries the check icon');
+  assert.match(box.querySelector('.status-sub').textContent, /^Its edges and reviews left the map\./, 'no note: the plain pruned text');
+  // A box that follows no run ignores another run's end frame.
+  ws().deliver({ type: 'workspaces-changed', action: 'description', workspaceId: 'wks-alpha-00000001', runId: 'run_other' });
+  await settle(8);
+  assert.ok(doc.querySelector('#ws-detail .wd-rescan').classList.contains('is-pruned'), 'still pruned: run_other is not this box\'s run');
+});
+
+test('a pruned box over a map that misses a member leads with the server\'s note', async () => {
+  const { window, doc } = await bootRemove({ impact: ok({ recommendation: IMPACT }),
+    membersBody: { workspace: { ...WS[0] }, clearedHomes: [], rescan: { mode: 'none', note: 'The map still does not cover svc-new.' }, recommendation: IMPACT } });
+  await confirmChoice(window, 'none');
+  await settle(8);
+  const box = doc.querySelector('#ws-detail .wd-rescan');
+  assert.ok(box.classList.contains('is-pruned'));
+  assert.match(box.querySelector('.status-sub').textContent, /^The map still does not cover svc-new\. Its edges and reviews left the map\./);
+});
+
+test('Remove when partial is unavailable: the partial choice is disabled, Full preselected', async () => {
+  const full = { ...IMPACT, level: 'full', partialAvailable: false, reason: 'The map does not cover svc-new yet (its scan never finished). A full re-scan is recommended so the map describes every member left.' };
+  const { window, posts } = await bootRemove({ impact: ok({ recommendation: full }),
+    membersBody: { workspace: { ...WS[0] }, clearedHomes: [], rescan: { mode: 'full', runId: 'run_f' } } });
+  assert.deepEqual(dialogChoices(window).map((c) => [c.value, c.checked, c.disabled]), [['none', false, false], ['partial', false, true], ['full', true, false]]);
+  await confirmDialog(window);
+  await settle(4);
+  assert.deepEqual(posts, [{ remove: THIRD.path, rescan: 'full' }]);
+});
+
+test('Remove with no recommendation (the impact call failed) preselects Full and says why', async () => {
+  const { window, posts } = await bootRemove({ impact: Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }),
+    membersBody: { workspace: { ...WS[0] }, clearedHomes: [], rescan: { mode: 'full', skipped: 'x' } } });
+  assert.match(dialogText(window).message, /could not work out a recommendation \(boom\); a full re-scan is preselected/);
+  assert.deepEqual(dialogChoices(window).map((c) => [c.value, c.checked]), [['none', false], ['partial', false], ['full', true]]);
+  assert.equal(dialogChoices(window).some((c) => /recommended/.test(c.title)), false);
+  await confirmDialog(window);
+  await settle(4);
+  assert.deepEqual(posts, [{ remove: THIRD.path, rescan: 'full' }]);
+});
+
+test('a partial re-scan follows its run with the partial labels, through to done', async () => {
+  const { window, ws, doc } = await bootRemove({ impact: ok({ recommendation: IMPACT }),
+    membersBody: { workspace: { ...WS[0] }, clearedHomes: [], rescan: { mode: 'partial', runId: 'run_p' } } });
+  await confirmDialog(window);   // partial is preselected
+  await settle(8);
+  const loader = () => doc.querySelector('#ws-detail .wd-rescan');
+  assert.ok(loader().classList.contains('is-running'));
+  assert.match(loader().querySelector('.status-label').textContent, /^Member removed: partial re-scan$/);
+  assert.match(loader().querySelector('.status-sub').textContent, /no member is scanned again/);
+  ws().deliver({ type: 'workspaces-changed', action: 'description', workspaceId: 'wks-alpha-00000001', runId: 'run_p' });
+  await settle(8);
+  assert.ok(loader().classList.contains('is-done'));
+  assert.match(loader().querySelector('.status-label').textContent, /^Partial re-scan done$/);
 });
 
 // #555 D10: a failed metrics-home save reuses one error line instead of appending

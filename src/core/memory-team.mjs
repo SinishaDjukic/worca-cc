@@ -1106,14 +1106,14 @@ export async function teamMountNotes(projectKey) {
 }
 /** Make `dir` hold exactly `notes` (*.md): per-file atomic writes, other *.md removed, sub-directories and another
  *  writer's in-flight temp files untouched. A file that cannot be written keeps its previous copy. */
-export async function writeTeamDir(dir, notes) {
-  await mkdir(dir, { recursive: true });
+export async function writeTeamDir(dir, notes, { dirMode, fileMode } = {}) {
+  await mkdir(dir, { recursive: true, mode: dirMode });
   const keep = new Set();
   for (const n of notes) {
     const target = join(dir, `${n.name}.md`);
     keep.add(`${n.name}.md`);
     const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
-    try { await writeFile(tmp, n.text, 'utf8'); await rename(tmp, target); }
+    try { await writeFile(tmp, n.text, { encoding: 'utf8', mode: fileMode }); await rename(tmp, target); }
     catch { await rm(tmp, { force: true }).catch(() => {}); }
   }
   for (const e of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
@@ -1162,7 +1162,7 @@ export async function memoryLoadPlans(dirs) {
  * (memoryLoadPlans, the ones the local copies were mounted with) — read here when not given.
  * @returns {Promise<Array<{key:string, rel:string, count:number, load:string}>>} one entry per opted-in project
  */
-export async function mountTeamLayer({ rules, dirs, plans = null }) {
+export async function mountTeamLayer({ rules, dirs, plans = null, modes = {} }) {
   const out = [];
   for (const d of dirs || []) {
     if (d.scope?.kind !== 'project') continue;
@@ -1172,9 +1172,9 @@ export async function mountTeamLayer({ rules, dirs, plans = null }) {
     // One workspace member that cannot be mounted (a disk error) never costs the next one its team notes.
     try {
       const plan = plans?.get(key) ?? (plans ? null : await memoryLoadPlan(key));
-      if (!plan || plan.load === 'local') { if (existsSync(target)) await writeTeamDir(target, []); continue; }
+      if (!plan || plan.load === 'local') { if (existsSync(target)) await writeTeamDir(target, [], modes); continue; }
       const notes = plan.team;
-      await writeTeamDir(target, notes);
+      await writeTeamDir(target, notes, modes);
       out.push({ key, rel, count: notes.length, load: plan.load });
     } catch (err) {
       console.warn(`[worca] team memory: ${key}: team notes not mounted (${err?.code || err?.message || err})`);

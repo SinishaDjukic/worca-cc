@@ -350,6 +350,8 @@ test('one wording per state: no status line has a colon form; a paused-after-res
     assert.ok(!line.includes(': '), `colon form: ${line}`);
   }
   assert.equal(runModel(R({ stepper: noStage, status: 'interrupted', steps: [row('n_x', 'start')] }), OPTS).line, 'Paused · interrupted');
+  assert.equal(runModel(R({ stepper: noStage, status: 'paused', resumePending: true, steps: [row('n_x', 'paused')] }), OPTS).line, 'Resuming',
+    'a Resume in flight reads like a pause in flight ("Pausing")');
 });
 
 test('an interrupted run offers Archive, never Stop: with Resume while it can resume, alone once it never can', () => {
@@ -376,6 +378,11 @@ test('prState: a closed Azure DevOps PR reads Abandoned, colour and id stay clos
   assert.equal(prState({ ...az, url: 'https://acme.visualstudio.com/My%20Project/_git/api/pullrequest/5' }).word, 'Abandoned');
   assert.equal(prState({ ...az, state: 'MERGED' }).word, 'Merged', 'only a closed Azure PR is abandoned');
   assert.equal(prState({ ...PR, state: 'CLOSED' }).word, 'Closed', 'GitHub keeps Closed');
+});
+
+test('prState: a closed Bitbucket PR reads Declined, colour and id stay closed', () => {
+  const s = prState({ url: 'https://bitbucket.org/acme/api/pull-requests/5', number: 5, state: 'CLOSED' });
+  assert.deepEqual([s.id, s.word], ['closed', 'Declined']);
 });
 
 test('memberPrState: a workspace run’s most urgent member PR and their count (#784’s workspace glyph, as words)', () => {

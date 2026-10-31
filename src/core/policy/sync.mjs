@@ -19,13 +19,13 @@ import { readTeamPolicyPrefs, writeTeamPolicyPrefs } from '../config.mjs';
 import { readWorkspace, listWorkspaces } from '../workspaces.mjs';
 import { withLock } from '../metrics/lock.mjs';
 import {
-  runGit, projectSlug, gitUserName, orphanCommit, identityArgs, findLocalRepoBySlug, isNonFastForward,
+  runGit, addBranchWorktree, projectSlug, gitUserName, orphanCommit, identityArgs, findLocalRepoBySlug, isNonFastForward,
   slugDirName, DISCOVERY_TTL_MS, DISCOVERY_RETRY_MS,
 } from '../metrics/sync.mjs';
 import { canonicalMetricsSlug, sameMetricsSlug } from '../../shared/team-metrics/slug.mjs';
 import { normalizePolicyDoc, emptyPolicyDoc, serializePolicyDoc, POLICY_SCHEMA, fieldMeta } from './registry.mjs';
 import { capSummary, fieldCount, effectiveRows } from './effective.mjs';
-import { GIT_MISSING, onGitChange } from '../git-available.mjs';
+import { GIT_MISSING, BITBUCKET_NEEDS_GIT, gitMissingMessage, onGitChange } from '../git-available.mjs';
 import { teamOverHttps } from '../git-free/team-repo.mjs';
 import { repoOfSlug, lsRemoteHttps, readBranchFile, createOrphanBranch, commitFiles } from '../git-free/team-branch.mjs';
 
@@ -127,7 +127,7 @@ export async function discoverPolicy(projectDir, { force = false, now = Date.now
   }
   const https = teamOverHttps(projectDir);
   // A repository the slug misnames (projectSlugHttps's needsGit: `acme/.github`) is asked nothing — a host slug's answer.
-  const ls = https ? (needsGit ? { ok: false, stdout: '', stderr: GIT_MISSING.message } : await lsRemoteHttps(slug, POLICY_BRANCH, { timeoutMs: lsTimeoutMs })) : await runGit(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${POLICY_BRANCH}`], { timeoutMs: lsTimeoutMs });
+  const ls = https ? (needsGit ? { ok: false, stdout: '', stderr: gitMissingMessage(slug) } : await lsRemoteHttps(slug, POLICY_BRANCH, { timeoutMs: lsTimeoutMs })) : await runGit(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${POLICY_BRANCH}`], { timeoutMs: lsTimeoutMs });
   if (!ls.ok) return write({ hasOrigin: true, slug, originDisplay, lastDiscoveryError: firstLine(ls.stderr), lastDiscoveryAt: iso(now) });
   const sha = ls.stdout.trim().split(/\s+/)[0] || null;
   if (!sha) {
@@ -195,7 +195,7 @@ export const carriesPolicy = (prefs) => !!prefs?.present && !!prefs.docKnown && 
 // P6: a GitHub team repository never read over HTTPS (a private one without a token, GitHub unreachable) is not read
 // yet — never "off"; with git a failed first discovery reads as before. One that needs git (a repository the slug misnames
 // answers GIT_MISSING) is off, as a host slug.
-const unreadOverHttps = (prefs, dir) => !prefs?.present && !!prefs?.lastDiscoveryError && prefs.lastDiscoveryError !== GIT_MISSING.message
+const unreadOverHttps = (prefs, dir) => !prefs?.present && !!prefs?.lastDiscoveryError && ![GIT_MISSING.message, BITBUCKET_NEEDS_GIT].includes(prefs.lastDiscoveryError)
   && !prefs.checkedAt && !!repoOfSlug(prefs.slug) && teamOverHttps(dir);
 
 // ---- resolver (§6) ----------------------------------------------------------------
@@ -271,13 +271,8 @@ export async function ensureWorktree(slug, projectDir) {
   await mkdir(dirname(dir), { recursive: true });
   const f = await fetchPolicyBranch(projectDir);
   if (!f.ok) throw policyError('FETCH_FAILED', firstLine(f.stderr) || 'git fetch failed', { stderr: f.stderr });
-  let add = await runGit(projectDir, ['worktree', 'add', '--detach', '--force', dir, REMOTE_REF]);
-  if (!add.ok) {
-    await rm(dir, { recursive: true, force: true, maxRetries: 10 });
-    await runGit(projectDir, ['worktree', 'prune']);
-    add = await runGit(projectDir, ['worktree', 'add', '--detach', '--force', dir, REMOTE_REF]);
-    if (!add.ok) throw policyError('WORKTREE_FAILED', firstLine(add.stderr), { stderr: add.stderr });
-  }
+  const err = await addBranchWorktree(projectDir, dir, REMOTE_REF);
+  if (err) throw policyError('WORKTREE_FAILED', firstLine(err), { stderr: err });
   return dir;
 }
 
@@ -312,7 +307,7 @@ function sameContent(a, b) {
 export async function enableTeamPolicy(projectDir, { mode = 'here', delegateTo = null, change = false, title = '', now = new Date(), by = null } = {}) {
   if (mode !== 'here' && mode !== 'follow') throw policyError('BAD_REQUEST', 'mode must be "here" or "follow"');
   const { slug, hasOrigin, needsGit, repoInput } = await projectSlug(projectDir);
-  if (needsGit) throw policyError('GIT_MISSING', GIT_MISSING.message);
+  if (needsGit) throw policyError('GIT_MISSING', gitMissingMessage(slug));
   if (repoInput) throw policyError('REPO_REQUIRED', 'type the GitHub repository (owner/name)');
   if (!hasOrigin) throw policyError('NO_ORIGIN', 'this project has no origin remote — a team policy lives on origin, so there is nowhere to put it');
   const target = mode === 'follow' ? (await validateFollowTarget(delegateTo, slug)).slug : null;
@@ -377,7 +372,7 @@ async function rewriteMarker(slug, projectDir, doc) {
 
 /** P6: the branch head over HTTPS, or a coded error. */
 async function headHttps(slug) {
-  if (!repoOfSlug(slug)) throw policyError('GIT_MISSING', GIT_MISSING.message);
+  if (!repoOfSlug(slug)) throw policyError('GIT_MISSING', gitMissingMessage(slug));
   const ls = await lsRemoteHttps(slug, POLICY_BRANCH);
   const head = ls.ok ? ls.stdout.split('\t')[0].trim() : '';
   if (head) return head;
@@ -444,7 +439,7 @@ export async function publishPolicy(projectDir, rawDoc, { message = null, now = 
   const out = await withSlugLock(slug, async () => {
     if (teamOverHttps(projectDir)) {
       // A repository the slug misnames (projectSlugHttps's needsGit: `acme/.github`) needs git, as a host slug (headHttps).
-      if ((await projectSlug(projectDir)).needsGit) throw policyError('GIT_MISSING', GIT_MISSING.message);
+      if ((await projectSlug(projectDir)).needsGit) throw policyError('GIT_MISSING', gitMissingMessage(slug));
       return publishHttps(slug, doc, body, commitMsg);
     }
     const dir = await ensureWorktree(slug, projectDir);

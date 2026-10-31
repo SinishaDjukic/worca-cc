@@ -10,6 +10,7 @@ import { bridgeEvents } from '../bridge/telemetry.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from '../preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
+import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -55,8 +56,10 @@ function extraSettingsOf(extraSettings) {
  *  which the guard does not need). `extraSettings` (skills registry §4.1) merges in
  *  first, so the runner's own `hooks` / `permissions` always win. `memoryLoadLog` (memory usage, U3: set by the
  *  harness only when the mounted rules hold a note with `paths:`) adds the `InstructionsLoaded` counting hook the
- *  same way — never into the user's settings files. */
-export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null } = {}) {
+ *  same way — never into the user's settings files. `readGuard` (Requirements A8: the one file a read may open) adds
+ *  the file-read guard (file-read-guard.mjs) on every tool, with `disableAllHooks: false`, logging each decision to
+ *  `readGuardLog` (stageClaudeInvocation names it); absent (null/undefined), nothing changes. */
+export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null } = {}) {
   const hook = buildHookSettings();
   const extra = extraSettingsOf(extraSettings);
   const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
@@ -71,7 +74,10 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
       && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
     console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
   }
-  if (!hook && !hasRules && !guard && !extra && !usage) return null;
+  // A8: a Requirements file read's guard (file-read-guard.mjs): every tool, fail-closed; the user settings cannot turn it off.
+  // Any value but null/undefined goes to readGuardHookEntry, which throws unless it is an absolute path: never a silent no-guard.
+  const read = readGuard != null ? readGuardHookEntry(readGuard, { log: readGuardLog }) : null;
+  if (!hook && !hasRules && !guard && !extra && !usage && !read) return null;
   const settings = { ...(extra ?? {}) };
   if (hook) settings.hooks = { ...hook.hooks };
   if (guard) {
@@ -81,6 +87,11 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
   if (usage) {
     settings.hooks = settings.hooks ?? {};
     settings.hooks.InstructionsLoaded = [...(settings.hooks.InstructionsLoaded ?? []), usage];
+  }
+  if (read) {
+    settings.hooks = settings.hooks ?? {};
+    settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), read];
+    settings.disableAllHooks = false;
   }
   if (hasRules) settings.permissions = permissionRules;
   return { hook: !!hook, settings };
@@ -276,12 +287,13 @@ export function isHookEvent(evt) {
  * [] when there is nothing to say, so the baseline argv is byte-identical.
  * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
  * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
- * @param {{hostGuard?:boolean, extraSettings?:object|null}} [opts] host-process guard (runClaudeProcess sets it; see
- *   buildSettingsPayload) and extra settings merged into the same payload (skills registry §4.1)
+ * @param {{hostGuard?:boolean, extraSettings?:object|null, readGuard?:string|null, readGuardLog?:string|null}} [opts]
+ *   host-process guard (runClaudeProcess sets it; see buildSettingsPayload), extra settings merged into the same payload
+ *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null } = {}) {
-  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog });
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog });
   if (!payload) return [];
   const args = [];
   if (payload.hook) args.push('--include-hook-events');
@@ -324,11 +336,14 @@ export function buildClaudeArgs({
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
   maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
-  pluginDirs, extraSettings, memoryLoadLog,
+  pluginDirs, extraSettings, memoryLoadLog, readGuard, readGuardLog,
   // Requirements A1.1: 'replace' swaps Claude Code's own system prompt for ours
   // (--system-prompt / --system-prompt-file). Anything else, absent included, is
   // today's --append-system-prompt(-file), so every other argv stays byte-identical.
   systemPromptMode,
+  // Requirements A8: true ⇒ --no-session-persistence (-p only): Claude Code keeps no session transcript of this call,
+  // so a read of the product owner's file leaves no copy of it in Claude Code's own logs. Anything else ⇒ nothing.
+  noSessionPersistence,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -352,7 +367,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog })) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -388,6 +403,7 @@ export function buildClaudeArgs({
     args.push('--setting-sources', sources.join(','));
   }
   if (disableSlashCommands === true) args.push('--disable-slash-commands');
+  if (noSessionPersistence === true) args.push('--no-session-persistence');
   if (includePartialMessages === true) args.push('--include-partial-messages');
   if (Number.isSafeInteger(maxTurns) && maxTurns > 0) args.push('--max-turns', String(maxTurns));
   if (typeof maxBudgetUsd === 'number' && Number.isFinite(maxBudgetUsd) && maxBudgetUsd > 0) {
@@ -441,7 +457,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     files.push({ path: systemPromptFile, content: opts.systemPrompt });
   }
   let settingsFile = null;
-  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog });
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog });
   if (payload) {
     settingsFile = join(dir, 'settings.json');
     files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
@@ -456,12 +472,22 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
  *  spawn, and it keeps the spawn sequence in runClaudeProcess linear. */
 export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_INLINE_LIMIT } = {}) {
   let dir = null;
-  const plan = planClaudeInvocation(opts, { bin, limit, dir: () => (dir = mkdtempSync(join(tmpdir(), 'worca-claude-'))) });
-  for (const file of plan.files) writeFileSync(file.path, file.content, 'utf8');
-  return { ...plan, dir };
+  const makeDir = () => (dir ??= mkdtempSync(join(tmpdir(), 'worca-claude-')));
+  // A8: a guarded read logs every decision of its guard to a file in this private dir: the server's path, never a
+  // caller's, read back when the spawn ends (runClaudeProcess) and removed with the dir.
+  const o = opts.readGuard != null ? { ...opts, readGuardLog: join(makeDir(), 'read-guard.jsonl') } : opts;
+  let plan;
+  try {
+    plan = planClaudeInvocation(o, { bin, limit, dir: makeDir });
+    for (const file of plan.files) writeFileSync(file.path, file.content, 'utf8');
+  } catch (err) {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  return { ...plan, dir, ...(o.readGuardLog ? { readGuardLog: o.readGuardLog } : {}) };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
   const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
@@ -553,7 +579,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
-        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode,
+        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode, readGuard, noSessionPersistence,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -647,7 +673,9 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       isBenignStderr: isBenignStderrLine,
       redactText: redactor ? redactor.text : null,
       spawnError: (err, prefix) => spawnFailure(bin, err, prefix),
-      onDone: (code) => ({ text: resultText || assistantText, exitCode: code }),
+      // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
+      // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
+      onDone: (code) => ({ text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) }),
       onStdoutLine: (trimmed) => {
         let evt;
         try {
@@ -830,11 +858,14 @@ async function runViaBroker(opts) {
   const isolated = opts.asAgent
     ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
     : !!agentIdentity();
+  // A spawn with its own cost cap (an Ask turn's) gets the same cap as its token's budget: the
+  // CLI's --max-budget-usd is the agent's own bookkeeping, the broker's holds whatever it does.
+  const budgetUsd = typeof opts.maxBudgetUsd === 'number' && Number.isFinite(opts.maxBudgetUsd) && opts.maxBudgetUsd > 0 ? opts.maxBudgetUsd : undefined;
   let minted;
   try {
     minted = await mintSpawnToken({
       billTo: billTo || 'local', slots: [bridgeSlot || route.slot], kind, ttlSec: SPAWN_TTL_SEC[kind],
-      runId: opts.runId || null, threadId: opts.threadId || null, isolated,
+      runId: opts.runId || null, threadId: opts.threadId || null, isolated, budgetUsd,
     });
   } catch (err) {
     throw brokerSpawnError(`cannot get a token for this spawn: ${err.message}`, err.status === 401 ? 'auth' : 'network');

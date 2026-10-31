@@ -408,16 +408,15 @@ test('list(): forty-five tools with JSON-Schema inputs', () => {
   assert.deepEqual(tools.list().find((d) => d.name === 'propose_run').inputSchema.required, ['brief']);
 });
 
-test('Shaper tools: listed only with chatActions, the gate and a followed thread; the child\'s refusal is the model\'s result', async () => {
+test('Shaper tools: listed only with chatActions and a followed thread; the child\'s refusal is the model\'s result', async () => {
   const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
   const seen = [];
   const shapeTools = (follows, verdict) => ({ follows: () => follows, check: (kind, input) => { seen.push([kind, input]); return verdict; } });
-  const on = { shapeFirstOn: () => true, perspectiveKeys: PERSPECTIVE_KEYS, chatActions: {} };
+  const on = { perspectiveKeys: PERSPECTIVE_KEYS, chatActions: {} };
   const names = (deps) => createAskTools({ ...fake, ...deps }).list().map((d) => d.name).filter((n) => n === 'propose_changes' || n === 'route_message');
   assert.deepEqual(names({ ...on, shapeTools: shapeTools(true, { ok: true }) }), ['propose_changes', 'route_message']);
   assert.deepEqual(names({ ...on, shapeTools: shapeTools(false, { ok: true }) }), [], 'a thread that follows nothing');
-  assert.deepEqual(names({ ...on, shapeFirstOn: () => false, shapeTools: shapeTools(true, { ok: true }) }), [], 'gate off');
-  assert.deepEqual(names({ shapeFirstOn: () => true, perspectiveKeys: PERSPECTIVE_KEYS, shapeTools: shapeTools(true, { ok: true }) }), [], 'no chatActions bundle');
+  assert.deepEqual(names({ perspectiveKeys: PERSPECTIVE_KEYS, shapeTools: shapeTools(true, { ok: true }) }), [], 'no chatActions bundle');
   await assert.rejects(createAskTools({ ...fake, ...on }).call('propose_changes', { pipelineId: 'aaaa0001', request: 'x' }), /propose_changes: unavailable/);
   const ok = await createAskTools({ ...fake, ...on, shapeTools: shapeTools(true, { ok: true }) }).call('propose_changes', { pipelineId: 'aaaa0001', request: 'make it blue' });
   assert.deepEqual([ok.ok, ok.requested], [true, { kind: 'changes', pipelineId: 'aaaa0001', request: 'make it blue' }]);
@@ -779,6 +778,14 @@ test('propose_run passes through validateProposal (commentIds untouched); unknow
         { ok: true, card: { echoed: { projectKey: 'demo-00000001', brief: 'b', commentIds: ['dc_00000001'] } } });
     } },
   ]);
+});
+
+test('propose_workspace_change: remove_member takes an optional rescan, and the description says to relay card.recommendation', () => {
+  const def = createAskTools({ limits: ASK_LIMITS, workspaceChanges: {} }).list().find((d) => d.name === 'propose_workspace_change');
+  assert.ok(def.inputSchema.properties.rescan, 'rescan is in the schema');
+  assert.match(def.inputSchema.properties.rescan.description, /none \| partial \| full/);
+  assert.deepEqual(def.inputSchema.required, ['kind'], 'rescan stays optional');
+  assert.match(def.description, /card\.recommendation \{level, reason\}.*relay it in one or two sentences; the user picks on the card/);
 });
 
 test('propose_run hands the thread\'s attachment ledger to the validator', async () => {
@@ -1217,7 +1224,7 @@ test('isByteArtifact agrees with the shared artifact-kind table', () => {
 
 // ── Shape it first (spec D9, D12): propose_run's shape/assess fields ride the injected gate ──
 
-test('propose_run: shape and assess exist only while the injected gate is on with the perspective keys', async () => {
+test('propose_run: shape and assess exist only with the perspective keys', async () => {
   const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
   const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
   const today = schemaOf({});
@@ -1226,15 +1233,11 @@ test('propose_run: shape and assess exist only while the injected gate is on wit
     'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
   assert.deepEqual(today.required, ['brief']);
   await checkRows([
-    { name: 'gate off: byte-identical to no deps', run: () => {
-      assert.deepEqual(schemaOf({ shapeFirstOn: () => false, perspectiveKeys: PERSPECTIVE_KEYS }), today);
+    { name: 'empty perspectiveKeys: no shape fields', run: () => {
+      assert.deepEqual(schemaOf({ perspectiveKeys: [] }), today);
     } },
-    { name: 'gate on without perspectiveKeys: no shape fields', run: () => {
-      assert.deepEqual(schemaOf({ shapeFirstOn: () => true }), today);
-      assert.deepEqual(schemaOf({ shapeFirstOn: () => true, perspectiveKeys: [] }), today);
-    } },
-    { name: 'gate on with perspectiveKeys: shape and assess, required unchanged', run: () => {
-      const s = schemaOf({ shapeFirstOn: () => true, perspectiveKeys: PERSPECTIVE_KEYS });
+    { name: 'with perspectiveKeys: shape and assess, required unchanged', run: () => {
+      const s = schemaOf({ perspectiveKeys: PERSPECTIVE_KEYS });
       assert.deepEqual(s.required, ['brief']);
       assert.equal(s.additionalProperties, false);
       const keys = Object.keys(s.properties);
@@ -1251,10 +1254,8 @@ test('propose_run: shape and assess exist only while the injected gate is on wit
       assert.equal(s.properties.assess.properties.openDecisions.maxItems, 6);
       assert.deepEqual(s.properties.assess.properties.perspectives.items.enum, [...PERSPECTIVE_KEYS]);
     } },
-    { name: 'defaultToolDeps carries the gate and the perspective keys', run: () => {
+    { name: 'defaultToolDeps carries the perspective keys', run: () => {
       const d = defaultToolDeps({ threadId: null });
-      assert.equal(typeof d.shapeFirstOn, 'function');
-      assert.equal(typeof d.shapeFirstOn(), 'boolean');
       assert.ok(Array.isArray(d.perspectiveKeys) && d.perspectiveKeys.length > 0);
       assert.deepEqual([...d.perspectiveKeys], [...PERSPECTIVE_KEYS]);
     } },
@@ -1315,4 +1316,18 @@ test('show_files: gated by deps.showFiles; validates counts; hands rows through 
   await t.call('show_files', { files: [{ path: '$WORCA_ASK_OUT/a.png' }], caption: 'Home' });
   assert.equal(calls[0].caption, 'Home');
   assert.match(calls[1], /show_files: run not found/);
+});
+
+test('defaultToolDeps: list_presets shows a preset naming no guardrails as the install default (V21 wiring)', async () => {
+  const { prepare, GUARDRAILS_DEFAULT_META_KEY } = await import('../src/core/db.mjs');
+  prepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('secure'));
+  try {
+    const deps = defaultToolDeps({ threadId: 'ask_00000001' });
+    assert.equal(deps.defaultGuardrailsId?.(), 'secure');
+    const t = createAskTools({ ...deps, pinnedScope: () => null,
+      listPresets: () => [{ id: 'rp_aaaaaaaaaaaa', name: 'Bare', scope: { kind: 'global', ref: null }, setup: {} }] });
+    assert.equal((await t.call('list_presets', {})).presets[0].guardrailsId, 'secure');
+  } finally {
+    prepare('DELETE FROM store_meta WHERE key = ?').run(GUARDRAILS_DEFAULT_META_KEY);
+  }
 });

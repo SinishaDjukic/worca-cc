@@ -101,7 +101,7 @@ test('starts: versions per feature, newest first, run id lookup, shape', () => {
   const s1 = createStart({ featureSeq: a.seq, version: 1, runId: 'run-a1', spec, title: 'A', ready: true }, { by: 'po' });
   assert.deepEqual({ ...s1, id: 0, startedAt: '' }, {
     id: 0, featureSeq: a.seq, version: 1, runId: 'run-a1', pipelineId: null, spec, title: 'A', ready: true, failing: [],
-    reason: null, workflowId: null, sourceBranch: null, startedBy: 'po', startedAt: '',
+    reason: null, workflowId: null, sourceBranch: null, startedBy: 'po', startedAt: '', files: [],
   });
   assert.ok(s1.startedAt);
   const s2 = createStart({ featureSeq: a.seq, version: 2, runId: 'run-a2', spec, title: 'A', ready: false,

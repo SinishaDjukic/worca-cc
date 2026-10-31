@@ -28,9 +28,31 @@ export function unaskedRejections(spec, turns = []) {
   return out;
 }
 
+/** A8 D8: the files no round has asked about since they were last added or replaced (ids). A round asked about a file
+ *  only when its prompt carried the file's text (its payload `files`, recorded by runRound): a round that ran while the
+ *  file was still being read listed it by name only. A file still being read counts; one that failed or that the budget
+ *  stopped does not (the interview lists it by name only). After a start there are none: a change then counts as a
+ *  change since the start. */
+export function unaskedFiles(files = [], turns = []) {
+  const list = Array.isArray(turns) ? turns : [];
+  if (list.some((t) => t && t.kind === 'start')) return [];
+  const rounds = list.filter((t) => t && t.kind === 'round' && t.payload);
+  const out = [];
+  for (const f of files || []) {
+    if (!f || (f.status !== 'reading' && f.status !== 'done')) continue;
+    let changed = -Infinity;
+    for (const t of list) {
+      if (t && t.kind === 'file' && t.payload && t.payload.id === f.id && (t.payload.action === 'added' || t.payload.action === 'replaced') && t.id > changed) changed = t.id;
+    }
+    const asked = rounds.some((t) => t.id > changed && Array.isArray(t.payload.files) && t.payload.files.includes(f.id));
+    if (changed !== -Infinity && !asked) out.push(f.id);
+  }
+  return out;
+}
+
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-export function readiness(feature, { turns = [], target = { ok: true } } = {}) {
+export function readiness(feature, { turns = [], target = { ok: true }, files = [] } = {}) {
   const spec = (feature && feature.spec) || {};
   const goal = spec.goal || {};
   const criteria = spec.criteria || [];
@@ -41,6 +63,11 @@ export function readiness(feature, { turns = [], target = { ok: true } } = {}) {
   const waiting = feature && feature.pending && feature.pending.questions ? feature.pending.questions.length : 0;
   const open = assumptions.filter((a) => a.status === 'open').length;
   const unasked = unaskedRejections(spec, turns);
+  const unaskedF = unaskedFiles(files, turns);   // A8 D8: a file added or replaced after the interview fails "Interview finished"
+  const nameOf = (id) => ((files || []).find((x) => x && x.id === id) || {}).name || id;
+  // A file to ask about that is still being read: the follow-up waits for the read, and the check says so in the
+  // page's reading words (A8 D2), not "to ask about" yet.
+  const readingF = unaskedF.filter((id) => ((files || []).find((x) => x && x.id === id) || {}).status === 'reading');
 
   let assumptionHint = '';
   if (open) assumptionHint = `${open} to decide`;
@@ -52,8 +79,11 @@ export function readiness(feature, { turns = [], target = { ok: true } } = {}) {
     mk('criteria', criteria.length >= 1,
       criteria.length ? plural(criteria.length, 'acceptance criterion', 'acceptance criteria') : 'No acceptance criteria',
       'add at least one'),
-    mk('interview', !!(latest && latest.payload && latest.payload.done === true), 'Interview finished',
-      waiting ? `${plural(waiting, 'question', 'questions')} waiting` : 'not finished'),
+    mk('interview', !!(latest && latest.payload && latest.payload.done === true) && !unaskedF.length, 'Interview finished',
+      waiting ? `${plural(waiting, 'question', 'questions')} waiting`
+        : readingF.length ? `Reading ${plural(readingF.length, 'file', 'files')}…`
+          : unaskedF.length === 1 ? `${nameOf(unaskedF[0])} to ask about`
+            : unaskedF.length ? `${unaskedF.length} files to ask about` : 'not finished'),
     mk('openQuestions', openQ === 0, 'No open questions', `${openQ} open`),
     mk('assumptions', !open && !unasked.length, 'Every assumption decided', assumptionHint),
     mk('target', !!(target && target.ok), (target && target.label) || 'Project or workspace exists',
@@ -75,9 +105,13 @@ export function displayState(feature, { ready, starts = [] } = {}) {
   return ready && ready.ok ? 'ready' : 'decide';
 }
 
-const diffList = (b, a) => ({ added: a.filter((x) => !b.includes(x)), removed: b.filter((x) => !a.includes(x)) });
+/** The lines a whole list gains and loses (A2 D11's changes since a start; A3 D8's proposal cards). */
+export const diffList = (b, a) => ({ added: a.filter((x) => !b.includes(x)), removed: b.filter((x) => !a.includes(x)) });
 
-export function changedSince(before, after) {
+/** The changes since a start (A2 D11), and with the files lists (A8 D14) the files the start sent against the ones it
+ *  would send now: one line for a file added to the list, one left out of it (its switch off, or removed), one replaced
+ *  (another sha256). Without both lists, no file lines. */
+export function changedSince(before, after, { filesBefore = null, filesNow = null } = {}) {
   const b = before || {}, a = after || {};
   const out = [];
   for (const field of ['text', 'measure']) {
@@ -100,6 +134,15 @@ export function changedSince(before, after) {
   for (const [id, x] of aa) {
     if (!ba.has(id)) out.push({ kind: 'assumption', id, change: 'added', after: x.text });
     else if (ba.get(id).status !== x.status) out.push({ kind: 'assumption', id, change: 'status', before: ba.get(id).status, after: x.status });
+  }
+  if (Array.isArray(filesBefore) && Array.isArray(filesNow)) {
+    const was = new Map(filesBefore.map((x) => [x.id, x]));
+    const now = new Map(filesNow.map((x) => [x.id, x]));
+    for (const [id, x] of now) {
+      if (!was.has(id)) out.push({ kind: 'file', change: 'added', name: x.name });
+      else if (was.get(id).sha256 !== x.sha256) out.push({ kind: 'file', change: 'replaced', name: x.name });
+    }
+    for (const [id, x] of was) if (!now.has(id)) out.push({ kind: 'file', change: 'removed', name: x.name });
   }
   return out;
 }

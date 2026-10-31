@@ -154,7 +154,7 @@ test('GET /api/setup/detect refuses an agent caller', async () => {
   try {
     const r = await fetch(`${base}/api/setup/detect`);
     assert.equal(r.status, 403);
-    assert.equal((await r.json()).code, 'SETUP_AGENT_BLOCKED');
+    assert.equal((await r.json()).code, 'AGENT_CALLER_BLOCKED');   // G1: the global gate answers before the route's own check
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
 });
 
@@ -178,7 +178,7 @@ test('GET /api/setup/team and POST /api/setup/team/draft refuse an agent caller'
       ['/api/setup/team/draft', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }]]) {
       const r = await fetch(`${base}${url}`, opts);
       assert.equal(r.status, 403, url);
-      assert.equal((await r.json()).code, 'SETUP_AGENT_BLOCKED', url);
+      assert.equal((await r.json()).code, 'AGENT_CALLER_BLOCKED', url);   // G1: the global gate answers first
     }
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
 });
