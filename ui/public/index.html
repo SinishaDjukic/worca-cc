@@ -1667,6 +1667,7 @@
             <button type="button" class="tab" data-tab="tags" data-min-level="simple" aria-pressed="false">Labels &amp; cost tags</button>
             <button type="button" class="tab" data-tab="presets" data-min-level="advanced" aria-pressed="false">Presets</button>
             <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
+            <button type="button" class="tab" data-tab="automations" data-min-level="advanced" data-flag="gitAutomations" data-flag-chip aria-pressed="false">Automations</button>
             <!-- Labs (docs/feature-flags.md) shows at every level: flags are not levels. -->
             <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Labs</button>
             <button type="button" class="tab" data-tab="ask" data-min-level="advanced" aria-pressed="false">Chat</button>
@@ -1990,6 +1991,15 @@
               <div id="presets-list"></div>
             </section>
           </section><!-- /pane presets -->
+
+          <!-- Git event automations (#711, docs/git-automations.md): per project and workspace, Auto-handle + rules + what they did. -->
+          <section class="settings-pane hidden" data-tab="automations">
+            <section class="card settings-card" id="automations-settings-card" data-min-level="advanced" data-flag="gitAutomations">
+              <div class="card-head"><div class="label-row"><h2>Automations</h2></div></div>
+              <p class="hint">Start a workflow when an issue or PR is created. Each project and workspace sets its own in its Automations tab.</p>
+              <div id="automations-body"></div>
+            </section>
+          </section><!-- /pane automations -->
 
           <!-- ===== TAB: RUNS — how pipeline runs are capped, scheduled and reported.
                Simple, for Budget; the two Advanced cards keep their own level. ===== -->
