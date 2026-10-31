@@ -47,6 +47,7 @@ export const REASON = Object.freeze({
   NIGHT_GUARDRAIL: 'night_guardrail', // night mode hit its per-run decision limit or the night spend cap
   DRAIN: 'drain',                 // the server was stopping (SIGTERM, POST /api/drain): resumable as is, and
                                   // the one reason WORCA_AUTO_RESUME picks up again on the next start
+  TIME_LIMIT: 'time_limit',       // an agent node ran past its wall-clock or idle limit (E4): resumable, re-runs the node
   TERMINATED: 'terminated',       // a CLI run got SIGTERM (docker stop, a pod eviction, a CI cancel): resumable
                                   // with `worca resume`, but nothing resumes it by itself
 });
@@ -92,6 +93,9 @@ export const FAILURE_POLICY = Object.freeze({
     // The model id itself was refused — retrying the same id is futile. The
     // run parks as an error; resume retries the node once the model is fixed.
     model:       both(pause(REASON.ERROR)),
+    // A node past its wall-clock or idle limit (graph/executor.mjs nodeTimeLimits). Never retried:
+    // a hung node would hang again; the person looks, then resumes.
+    time_limit:  both(pause(REASON.TIME_LIMIT)),
     quota:       cell(pause(REASON.RECOVERABLE), prompt(pause(REASON.ERROR))),
     rate_limit:  cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.RECOVERABLE)), prompt(pause(REASON.ERROR))),
     network:     cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.RECOVERABLE)), prompt(pause(REASON.ERROR))),
@@ -204,6 +208,7 @@ const CONSEQUENCES = Object.freeze({
   [REASON.DRAIN]:        { reportsToSource: false, stagesResults: false, severity: 'info',    notifyPref: 'paused', exitInteractive: 0, label: 'worca was restarting' },
   // A SIGTERM to the CLI is a supervisor stopping a headless run: no server comes back to resume it, so the
   // task source hears needs-human, or the ticket stays claimed "in progress".
+  [REASON.TIME_LIMIT]:   { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'node time limit reached' },
   [REASON.TERMINATED]:   { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'worca was stopped' },
 });
 

@@ -255,3 +255,25 @@ test('membersOfRow: a run merged back into its source has no branch of its own (
   assert.equal(membersOfRow(same({ merged: false, kind: 'dirty' }))[0].br.feature, 'worca-cc/h-1', 'refused: the work is on its branch');
   assert.equal(membersOfRow({ ...same(null), branch: JSON.stringify({ feature: 'worca-cc/f', source: 'main' }) })[0].br.feature, 'worca-cc/f');
 });
+
+test('3.7: the boot sweep keeps a terminal run root whose checkout still holds uncommitted work', async () => {
+  const { updateRunManifest } = await import('../src/core/run-manifest.mjs');
+  const { writeFileSync } = await import('node:fs');
+  const repo = await freshRepo();
+  git(repo, ['branch', 'worca-cc/fin']);
+  const { id } = await seedDoneRun(repo, 'worca-cc/fin');
+  const r = await checkoutRun({ id, by: 'test' });
+  const wt = r.members[0].worktreeDir;
+  // A crash right after `done` was persisted, before the teardown commit: no retain record, dirty tree.
+  await updateRunManifest(join(worcaHome(), 'runs', id), { retain: null });
+  writeFileSync(join(wt, 'work.txt'), 'the agent\'s change\n');
+  const lookups = { ...runRootSweepLookups(), retainOf: () => null };
+  const sweep = await sweepRunRoots({ worcaHome: worcaHome(), ...lookups, log: () => {} });
+  assert.ok(existsSync(join(wt, 'work.txt')), 'the uncommitted work survives the sweep');
+  assert.ok(sweep.keep.includes(join(worcaHome(), 'runs', id)), JSON.stringify(sweep));
+  assert.ok(sweep.warnings.some((w) => /uncommitted/.test(w)), JSON.stringify(sweep.warnings));
+  // Once clean, the next sweep reclaims it as before.
+  await rm(join(wt, 'work.txt'));
+  const again = await sweepRunRoots({ worcaHome: worcaHome(), ...lookups, log: () => {} });
+  assert.ok(again.removed.includes(join(worcaHome(), 'runs', id)), JSON.stringify(again));
+});

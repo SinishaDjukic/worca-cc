@@ -13,11 +13,32 @@ export const SEVERITIES = ['critical', 'major', 'minor', 'suggestion'];
 
 export const BLOCKING = new Set(['critical', 'major']);
 
-/** Normalize an arbitrary value to one of SEVERITIES (default "minor"). */
-export function normalizeSeverity(value) {
-  if (typeof value !== 'string') return 'minor';
+/** Words agents and other engines write for the four severities. */
+const SEVERITY_ALIASES = Object.freeze({
+  blocker: 'critical', p0: 'critical', severe: 'critical', fatal: 'critical',
+  high: 'major', p1: 'major', important: 'major',
+  low: 'minor', p3: 'minor', nit: 'minor', nitpick: 'minor', trivial: 'minor',
+  info: 'suggestion', suggest: 'suggestion', optional: 'suggestion',
+});
+
+const severityOf = (value) => {
+  if (typeof value !== 'string') return null;
   const v = value.trim().toLowerCase();
-  return SEVERITIES.includes(v) ? v : 'minor';
+  return SEVERITIES.includes(v) ? v : (SEVERITY_ALIASES[v] || null);
+};
+
+/** True for one of SEVERITIES or a known alias (case and spacing ignored). */
+export function isKnownSeverity(value) {
+  return severityOf(value) !== null;
+}
+
+/**
+ * Normalize an arbitrary value to one of SEVERITIES. Anything unrecognised —
+ * a misspelling, a new word, a missing severity — is "major", i.e. blocking:
+ * silence is not approval, and a wrong guess costs one bounded fix cycle.
+ */
+export function normalizeSeverity(value) {
+  return severityOf(value) || 'major';
 }
 
 /**

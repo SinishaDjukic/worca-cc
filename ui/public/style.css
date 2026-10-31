@@ -4043,6 +4043,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-status-word{font:600 var(--fs-body) var(--sans);}
 .hd-status-word.st-done{color:var(--green-ink);}
 .hd-status-word.st-stopped,.hd-status-word.st-error{color:var(--red-ink);}
+.hd-outcome-note{font:600 var(--fs-body) var(--sans);color:var(--amber-ink-strong);}
 .hd-status-word.st-paused{color:var(--amber-ink);}
 /* 14px -> 6px: the branch chip and the Resume/Archive buttons carry ~8px of their
    own vertical padding, so the row reads far further from the meta line than the

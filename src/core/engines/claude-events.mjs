@@ -141,7 +141,13 @@ export function createClaudeNormalizer() {
         }
         if (raw.subtype === 'task_notification' && typeof raw.tool_use_id === 'string') {
           const u = raw.usage && typeof raw.usage === 'object' && !Array.isArray(raw.usage) ? raw.usage : {};
-          return [defined({ type: 'subagent', event: raw.status === 'completed' ? 'finish' : 'error', toolUseId: raw.tool_use_id,
+          const event = raw.status === 'completed' ? 'finish' : 'error';
+          // A background Bash job sends the same notification as a background sub-agent (7.2): only a
+          // known Agent/Task call is a sub-agent; anything else is a background job, so counts stay true.
+          if (!agents.has(raw.tool_use_id)) {
+            return [defined({ type: 'background', event, toolUseId: raw.tool_use_id, durationMs: num(Number(u.duration_ms)) })];
+          }
+          return [defined({ type: 'subagent', event, toolUseId: raw.tool_use_id,
             durationMs: num(Number(u.duration_ms)), tokens: num(Number(u.total_tokens)), via: 'notification' })];
         }
         if (raw.subtype === 'api_retry') {
