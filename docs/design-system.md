@@ -70,6 +70,9 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Something done, nothing to answer | Toast | PR merged |
 | Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
 | Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
+| A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |
+| Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
+| The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
 
 Building from it:
 - A page sets no look of its own: no colour, type size, corner or shadow that is not a token, no inline style but
@@ -98,6 +101,23 @@ Archive, Discard) confirms first, in the dialog or the strip. Its button then sa
 the place you acted says what failed and why (`Could not merge #959`, the reason, `Nothing changed.`) with Try again,
 and what already succeeded stays (a stack that fails part-way keeps the PRs it opened; a retry opens the rest).
 Pause, Resume, Copy link and Terminal do not confirm.
+
+### When something breaks unexpectedly
+An error nobody planned for still has one place and one calm sentence. A crash in the interface never stops a run:
+runs execute on their own, and the words say so.
+- **A step you took:** the place you acted, like any failure (`Could not merge #959`), with the reason `Something went
+  wrong on Worca's side. Nothing changed.`, Try again and a Details link.
+- **A part that cannot be drawn:** that part only, as EmptyState's error (`Could not show the changes`, `Something went
+  wrong here. The rest of the page still works.`, Reload this part, Details). Nothing typed elsewhere is lost.
+- **In the background** (an uncaught error or a rejected promise, with no part to point at): one error Toast that stays
+  until closed: `Something went wrong`, `Worca hit an error it did not expect. Your runs keep going.`, Reload and Copy
+  details. A repeat adds a count to it, never a second toast; it never moves focus.
+- **Never the raw error in visible text:** the message, the stack and an error id go behind Details or Copy details,
+  ready to paste into an issue or Chat.
+- **A lost connection is a state, not an error:** `Offline · retrying` with a grey dot at the end of the top bar, gone
+  when it reconnects (a toast says `Back online`). Nothing you typed is lost and nothing is retried twice.
+
+The prototype's Break picker plays each case.
 
 ### Small rules that hold everywhere
 - Hover is a tint, never a lift.

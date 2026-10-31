@@ -26,7 +26,7 @@ const svg = (name, size) => (ICON[name] ? `<svg width="${size}" height="${size}"
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // a case starts fresh: nothing from the case before it carries over
-const fresh = (caseId) => ({ caseId, open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null });
+const fresh = (caseId) => ({ caseId, open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null, broken: false, crash: null, offline: false });
 let ui = fresh('working');
 
 function statusDot(v) {
@@ -219,7 +219,9 @@ function decisionsPanel(v) {
     <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => `<li class="rd-route-row is-done"><span class="rd-route-dot dc-who is-${x.who}" role="img" aria-label="${esc(WHO[x.who])}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_WHO[x.who]}</svg></span><div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who], x.note, x.when].filter(Boolean).join(' · '))}</p></div></li>`).join('')}</ol></section>`;
 }
 function panelHtml(v) {
-  const id = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
+  const t = v.tabs.find((x) => x.sel) || v.tabs[0]; const id = t.id;
+  // a part that cannot be drawn says so in its own place; the rest of the page keeps working
+  if (ui.broken) return `<div class="empty-line is-err" role="alert"><span class="el-t">Could not show the ${esc(t.l.toLowerCase())}</span><span>Something went wrong here. The rest of the page still works.</span><span class="el-acts"><button type="button" class="btn btn-sm" data-fixpart data-key="fix-part">Reload this part</button><button type="button" class="btn btn-sm btn-quiet" data-say="${esc(DETAILS)}" data-key="part-details">Details</button></span></div>`;
   return ({ summary: summaryPanel, changes: changesPanel, activity: activityPanel, decisions: decisionsPanel })[id](v);
 }
 function figHtml(f, v) {
@@ -285,7 +287,7 @@ function render() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   document.getElementById('card').innerHTML = `
   <div class="rc">
-    <div class="rc-bar">${crumbs}${pager}</div>
+    <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your runs keep going and it reconnects by itself"><span class="status-dot is-grey" aria-hidden="true"></span>Offline · retrying</span>` : ''}${pager}</div>
     ${stripHtml(v)}
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1></div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
     <section class="rc-card" aria-label="Run status">
@@ -298,6 +300,7 @@ function render() {
     ${prDialogHtml(v)}
     <div class="rc-toast${ui.toast ? ' is-on' : ''}" role="status" aria-live="polite">${esc(ui.toast || '')}</div>
     <div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>
+    ${ui.crash ? `<div class="toasts"><div class="toast err" role="alert"><span class="ti">${svg('alert', 15)}</span><span class="tb"><span class="tt">Something went wrong${ui.crash.n > 1 ? ` <span class="badge" title="It happened ${ui.crash.n} times">${ui.crash.n}</span>` : ''}</span><span class="td">Worca hit an error it did not expect. Your runs keep going.</span><span class="el-acts"><button type="button" class="btn btn-sm" data-crash="reload" data-key="crash-reload">Reload</button><button type="button" class="btn btn-sm btn-quiet" data-say="${esc(DETAILS)}" data-key="crash-details">Copy details</button></span></span><button type="button" class="btn btn-sm btn-quiet btn-icon" data-crash="close" data-key="crash-close" aria-label="Close">${svg('x', 14)}</button></div></div>` : ''}
   </div>`;
 
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
@@ -331,6 +334,7 @@ document.addEventListener('input', (e) => {
   if (m) (m[2] === undefined ? ui.pr : ui.pr.prs[+m[2]])[m[1]] = e.target.value;
 });
 document.addEventListener('change', (e) => {
+  if (e.target.id === 'break' && e.target.value && e.target.value !== 'step') { const k = e.target.value; e.target.value = ''; breakNow(k); return; }
   if (!ui.pr) return;
   if (e.target.id === 'pd-draft') ui.pr.draft = e.target.checked;
   if (e.target.id === 'pd-watch') ui.pr.watch = e.target.checked;
@@ -383,7 +387,8 @@ function follow(f, label) {
     setTimeout(() => {
       if (ui.busy !== busy) return;
       ui.busy = null;
-      if (takeFail()) { failed(label); render(); document.querySelector('.pd-alert')?.scrollIntoView({ block: 'nearest' }); return; }
+      const odd = takeBreak('step');
+      if (odd || takeFail()) { failed(label, odd); render(); document.querySelector('.pd-alert')?.scrollIntoView({ block: 'nearest' }); return; }
       done(f, label); render();
     }, 900);
     return;
@@ -400,9 +405,9 @@ const WORKING = { Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…
 const working = (label) => WORKING[label.split(' ')[0]] || 'Working…';
 const REASON = { Merge: 'GitHub says the branch is behind dev; update it and try again', Create: 'git push was rejected: the remote branch moved', Stop: 'the run did not answer; it may have just finished',
   Archive: 'a terminal still has the worktree open', Discard: 'a terminal still has the worktree open', Cancel: 'run 3 had just started', 'Re-plan': 'the planner did not answer in time', Continue: 'the budget settings could not be saved' };
-function failed(label) {
-  const why = REASON[label.split(' ')[0]] || 'GitHub did not answer';
-  const err = { title: 'Could not ' + label.charAt(0).toLowerCase() + label.slice(1), detail: why[0].toUpperCase() + why.slice(1) + '. Nothing changed.' };
+function failed(label, odd) {
+  const why = odd ? 'something went wrong on Worca’s side' : REASON[label.split(' ')[0]] || 'GitHub did not answer';
+  const err = { title: 'Could not ' + label.charAt(0).toLowerCase() + label.slice(1), detail: why[0].toUpperCase() + why.slice(1) + '. Nothing changed.', odd };
   if (ui.dialog === 'pr') {
     // a stack fails part-way: the PRs already opened stay opened, and a retry opens only the rest
     const left = (ui.pr.prs || []).filter((x) => !x.made);
@@ -413,6 +418,17 @@ function failed(label) {
 }
 // The prototype's "Next one fails" switch: the next confirmed step or suggestion fails, to show how a failure reads.
 function takeFail() { const box = document.getElementById('fail-next'); if (!box || !box.checked) return false; box.checked = false; return true; }
+// The prototype's "Break something" picker: what an error nobody planned for looks like (docs/design-system.md › When
+// something breaks unexpectedly). A step waits for the next confirmed step; the others happen at once.
+function takeBreak(kind) { const s = document.getElementById('break'); if (!s || s.value !== kind) return false; s.value = ''; return true; }
+const DETAILS = 'Copied the error details: id E-7F3A, with the message and stack';
+let offlineTimer = 0;
+function breakNow(kind) {
+  if (kind === 'part') { ui.broken = true; pendingFocus = 'fix-part'; }
+  if (kind === 'background') ui.crash = { n: ui.crash ? ui.crash.n + 1 : 1 };   // a repeat counts, never a second toast
+  if (kind === 'offline') { ui.offline = true; clearTimeout(offlineTimer); offlineTimer = setTimeout(() => { ui.offline = false; toast('Back online'); render(); }, 6000); }
+  render();
+}
 // Worca writes for you (the violet shimmer), in a field you then edit: a drafted answer, a change request.
 const DRAFT = { answer: 'Show only ‹ Parent under 600px; keep the full trail from 600px up', changes: 'Slices: take the parent from the feature, not the project.\nSaved runs: fall back to Runs when there is no live parent.' };
 let draftTimer = 0;
@@ -469,7 +485,7 @@ function stripHtml(v) {
   }
   if (ui.confirm) {
     const c = ui.confirm; const busy = !!ui.busy && !ui.dialog;
-    const text = c.err ? `<span class="rc-confirm-t is-err" id="rc-strip-t" role="alert">${esc(c.err.title)}<span class="rc-confirm-why">${esc(c.err.detail)}</span></span>` : `<span class="rc-confirm-t" id="rc-strip-t">${esc(c.text)}</span>`;
+    const text = c.err ? `<span class="rc-confirm-t is-err" id="rc-strip-t" role="alert">${esc(c.err.title)}<span class="rc-confirm-why">${esc(c.err.detail)}${c.err.odd ? ` <button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : ''}</span></span>` : `<span class="rc-confirm-t" id="rc-strip-t">${esc(c.text)}</span>`;
     return `<div class="rc-confirm" role="alertdialog" aria-labelledby="rc-strip-t">${text}${acts(busy ? working(c.label) : c.err ? 'Try again' : c.yes, c.danger ? 'btn-danger' : 'btn-primary', busy)}</div>`;
   }
   return '';
@@ -512,7 +528,7 @@ function prDialogHtml(v) {
   const into = `<div class="pd-f"><div class="pd-into">${shipPick}<code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span><span class="rc-pop pd-basepop"><button type="button" class="pd-base" data-menu="pdbase" data-key="menu:pdbase" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdbase'}" title="Base branch · pushes to origin">${esc(pr.base)}${svg('chevron', 12)}</button>${menu('pdbase', ['dev', 'main'].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</span></div>
     ${shipHint}<span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the run started; they merge cleanly'}</span></div>`;
   const opts = `<div class="pd-opts"><label class="pd-check"><input type="checkbox" id="pd-draft" data-key="pd-draft"${pr.draft ? ' checked' : ''}> Draft</label><label class="pd-check"><input type="checkbox" id="pd-watch" data-key="pd-watch"${pr.watch ? ' checked' : ''}> Watch: fix failing checks</label><span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span></div>`;
-  const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}</span></div>` : '';
+  const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ` <button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : ''}</span></div>` : '';
   const busy = !!ui.busy;
   return `<div class="viewer-modal" role="dialog" aria-modal="true" aria-labelledby="pd-h"><div class="pd2">
     <div class="pd2-head"><h2 class="pd-h" id="pd-h">${esc(ui.dialogLabel)}</h2><button type="button" class="btn btn-sm btn-quiet btn-icon" data-pd="cancel" data-key="pd-close" aria-label="Close">${svg('x', 14)}</button></div>
@@ -567,6 +583,8 @@ const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
   const t = e.target.closest('button');
   if (t && t.id === 'next-event') { nextEvent(); return; }
+  if (t && t.dataset.fixpart !== undefined) { ui.broken = false; pendingFocus = 'tab:' + ((M.view(ui.caseId, ui).tabs.find((x) => x.sel) || {}).id || ''); toast('Reloaded the part'); render(); return; }
+  if (t && t.dataset.crash) { const k = t.dataset.crash; ui.crash = null; if (k === 'reload') toast('Reloaded'); pendingFocus = 'act-main'; render(); return; }
   if (t && t.id === 'restart') { ui = fresh('starting'); pick.value = 'starting'; pendingFocus = 'act-main'; toast('Restarted: a new run'); render(); return; }
   if (t && t.dataset.themePick) {
     document.documentElement.dataset.theme = t.dataset.themePick;

@@ -735,3 +735,12 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-then .rc-pop{flex:none;}
 .sc-then .menu{min-width:180px;}
 .pd-into .rc-pop .menu:has([data-menu-pick^="ship:"]){min-width:220px;}
+
+/* When something breaks unexpectedly (docs/design-system.md): a part that cannot be drawn says so in its place, the
+   background error is the shared error toast, a lost connection is a quiet line on the top bar. */
+.empty-line.is-err{flex-direction:column;align-items:flex-start;gap:2px;}
+.el-t{color:var(--red-ink-strong);font-weight:500;}
+.el-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+.rc .toasts{bottom:calc(24px + env(safe-area-inset-bottom, 0px));}
+.rc-conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+.rc-conn + .rc-pager{margin-left:12px;}

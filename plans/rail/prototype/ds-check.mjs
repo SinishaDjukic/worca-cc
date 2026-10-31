@@ -58,7 +58,7 @@ for (const name of SHEETS) {
 
 // --- the pages ---
 const b = await chromium.launch({ channel: 'chrome' });
-const OPEN = ['[data-pop]', '[data-acct]', '[data-newrun]', '[data-go="settings"]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
+const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-go="settings"]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
 for (const page of ['index.html', 'pulse.html']) {
   const p = await b.newPage({ viewport: { width: 900, height: 900 } });
   p.on('pageerror', (e) => add('script error', String(e)));
@@ -66,7 +66,8 @@ for (const page of ['index.html', 'pulse.html']) {
   const cases = await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));
   for (const c of cases) for (const o of [null, ...OPEN]) {
     await p.selectOption('#case', cases[(cases.indexOf(c) + 1) % cases.length]); await p.selectOption('#case', c);
-    if (o) { const hit = await p.evaluate((s) => { const x = document.querySelector(s); x?.click(); return !!x; }, o); if (!hit) continue; }
+    if (o && o.startsWith('break:')) { if (!(await p.$('#break'))) continue; await p.selectOption('#break', o.slice(6)); }   // the error cases
+    else if (o) { const hit = await p.evaluate((s) => { const x = document.querySelector(s); x?.click(); return !!x; }, o); if (!hit) continue; }
     const found = await p.evaluate(([CONTROL_SEL, known]) => {
       const out = []; const known_ = new Set(known);
       const root = document.querySelector('.mk-wrap, .pz-app') ? document.body : document.body;
