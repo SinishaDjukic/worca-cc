@@ -21,12 +21,12 @@ to the database. Deleting the run deletes the file.
 | `step` | A step starts, ends, pauses or fails | Step key, node, status |
 | `session` | An agent's CLI names its session or model | Session id, model |
 | `call` | Every model call | Input, cache read and cache write tokens, and `out`, the output tokens the engine reported when the message began (on Claude Code a placeholder of a few tokens, far below the final count: use the `result` record's `out` for the real one); context (input + cache read + cache write); the model; the tools the call asked for; time since the previous call or tool result (`gapMs`, model wait, approximately); main agent or which sub-agent |
-| `tool` | A tool call returns | Tool name, run time, error or not |
+| `tool` | A tool call returns | Tool name, run time, error or not; for a shell call, a coarse kind (`test`, `build`, `git`, `poll` or `other`, from a fixed set of patterns: the command itself is never recorded) and whether it ran in the background |
 | `retry` | The CLI retries an API call | Attempt, HTTP status, reason, delay |
 | `compact` | The CLI compacts the conversation | Trigger, tokens before |
 | `agent` | A sub-agent spawns or finishes | Type, model, tokens, duration |
 | `result` | A session ends | The session's usage and cost as the engine reports it |
-| `harness` | Every 10 seconds with activity | State saves (count, total and max time, step rows written), live `state` updates (count, total and max size), event loop delay (p50, p99, max) |
+| `harness` | Every 10 seconds with activity | State saves (count, total and max time, step rows written), live `state` updates (count, total and max size), event loop delay (p50, p99, max), the machine's 1-minute load average (not on Windows) and Worca's garbage-collection pauses (count, total, max) |
 | `end` | The run ends | Size of the database, the telemetry file (before its last lines) and the run log |
 
 A call's output tokens are what the stream reports when the message starts. In Claude Code that
@@ -55,13 +55,20 @@ With the flag on, each card on the run page's **Agents** tab shows:
   share of it. Amber from 75% of the point where Claude Code compacts, red from 90%. An engine
   without per-call usage shows **session input** instead: the input of every call of the session added up,
   with no window or level, and no chart.
-- Calls, sessions (when more than one), how the step's time split (start-up, model, tools), the
-  share of prompt tokens read from cache, tool errors, retries, compactions and sub-agent calls.
-- A chart of context over time: the context of each call, the model's window (dashed), where
-  compaction starts (dotted) and any compaction (a vertical line). Long steps are cut to 200 points,
-  keeping the largest value in each stretch.
+- The step's wall time (paused stretches left out) and cost (sub-agents included; per session, the last
+  figure of an engine that reports a running total).
+- Calls, sessions (when more than one), how the step's time split (start-up, model, tools), the time spent
+  waiting on foreground sub-agents (calls of 5 s or more; parallel ones count once), the time in test runs
+  (shell calls of kind `test`, in the agent and its sub-agents, parallel ones once), the share of prompt
+  tokens read from cache, tool errors, retries, compactions and sub-agent calls.
+- A chart of context over time, scaled to the step's own peak (×1.15): the context of each call, sub-agent
+  calls as grey dots, the model's window (dashed) and where compaction starts (dotted) when they fall
+  inside that scale, and any compaction (a vertical line). The caption under it gives the start, the peak
+  and when it came, the window when it is off the scale, and the step's length; hovering the chart says the
+  same. Long steps are cut to 200 points, keeping the largest value in each stretch.
 
-A line above the cards shows Worca's own figures for the run: saves, live updates and event loop delay.
+A line above the cards shows Worca's own figures for the run: saves, live updates, event loop delay,
+garbage-collection pauses and the machine's load.
 
 The context window comes from the model catalog (Models page), or 1M for Claude models that have
 one, else 200k. A 200k window that is only assumed says so on hover.
