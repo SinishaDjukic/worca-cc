@@ -25,7 +25,7 @@ import { clearStaleGitLocks } from './git-lock.mjs';
 import { runRootMode } from './settings.mjs';
 import {
   readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, liveRetainMembers,
-  removeInjectedPaths,
+  removeInjectedPaths, removeRunMcpConfig,
 } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 import { guardedGitEnv, guardedWorktreeAdd } from './git-guard.mjs';
@@ -609,7 +609,7 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
  * @returns {Promise<{ok:true, committed:boolean, sha:string|null, hooksBypassed:boolean}
  *                  |{ok:false, step:'status'|'branch'|'add'|'commit', message:string}>}
  */
-export async function commitStagedWork(worktreeDir, { message, exclude = [], bypassHooks = false, branch = null } = {}) {
+export async function commitStagedWork(worktreeDir, { message, exclude = [], bypassHooks = false, hooksOff = false, branch = null } = {}) {
   const run = (args, o = {}) => git(worktreeDir, args, { timeout: SLOW_GIT_TIMEOUT_MS, ...o });
   const msgOf = (r) => r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
   const indexWrite = async (args, o) => {
@@ -642,9 +642,10 @@ export async function commitStagedWork(worktreeDir, { message, exclude = [], byp
   const staged = await run(['diff', '--cached', '--quiet']);
   if (staged.ok) return { ok: true, committed: false, sha: null, hooksBypassed: false };   // exit 0 = nothing staged
   const local = ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator'];
-  // As at teardown, the project's own commit hooks run (git-guard.mjs: never under agent isolation).
-  let commit = await indexWrite(['commit', '-m', message], { hooks: true });
-  if (!commit.ok) commit = await run([...local, 'commit', '-m', message], { hooks: true });
+  // As at teardown, the project's own commit hooks run (git-guard.mjs: never under agent isolation), except when the
+  // work came from a sandbox (hooksOff, an exec-env run): then no repo hook runs on this machine for it.
+  let commit = await indexWrite(['commit', '-m', message], { hooks: !hooksOff });
+  if (!commit.ok) commit = await run([...local, 'commit', '-m', message], { hooks: !hooksOff });
   let hooksBypassed = false;
   if (!commit.ok && bypassHooks) {
     commit = await run(['-c', 'core.hooksPath=', ...local, 'commit', '-m', message]);
@@ -816,6 +817,9 @@ export async function sweepRunRoots({
       say('info', `keep ${dir} (${status})`);
       continue;
     }
+    // G22: the run is over (or its row is gone), so its MCP config and any literal secret in it go now, whatever
+    // becomes of the root below (a retained or quarantined root is kept). Unknown statuses are left alone.
+    if (!status || RUN_ROOT_REMOVE.has(status)) await removeRunMcpConfig(dir).catch(() => {});
 
     // A manifest retain record is live only while at least one named checkout
     // still exists. This makes manual recovery/removal self-clearing instead of

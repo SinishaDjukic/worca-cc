@@ -137,7 +137,7 @@ function errorCodes(err) {
  * Rejects with the socket error (its `code` intact, e.g. ECONNREFUSED) or the
  * signal's AbortError.
  */
-function request(url, { method = 'GET', headers = {}, signal } = {}) {
+function request(url, { method = 'GET', headers = {}, signal, body } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(url, { method, agent: false, signal, headers: { ...headers, connection: 'close' } }, (res) => {
       const chunks = [];
@@ -149,7 +149,7 @@ function request(url, { method = 'GET', headers = {}, signal } = {}) {
       }));
     });
     req.on('error', reject);
-    req.end();
+    req.end(body);
   });
 }
 
@@ -194,6 +194,26 @@ export async function probeUi({ host = DEFAULT_UI_HOST, port = DEFAULT_UI_PORT, 
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * A JSON call to THIS worca home's running server (`src/cli/schedule.mjs serverIsUp` is the precedent): the
+ * instance file is only a hint, so the address must also answer as a Worca UI, and as the same process when
+ * the file names a pid. No default-port fallback: a server there may belong to another WORCA_HOME, whose DB
+ * has neither this project's spec nor its key. null when no server of this home runs (the caller explains).
+ * @returns {Promise<null | {status: number, ok: boolean, data: any}>}
+ */
+export async function callUi(path, { method = 'GET', body, signal } = {}) {
+  const target = readUiInstance();
+  if (!target?.port) return null;
+  const probe = await probeUi({ host: target.host, port: target.port }).catch(() => null);
+  if (probe?.state !== 'worca') return null;
+  if (target.pid && probe.info?.pid && probe.info.pid !== target.pid) return null;   // a stale file, a new occupant
+  const text = body === undefined ? undefined : JSON.stringify(body);
+  const res = await request(`http://${dialHost(target.host)}:${target.port}${path}`, { method, signal, body: text,
+    headers: { accept: 'application/json', ...(text !== undefined ? { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(text)) } : {}) } });
+  let data = null; try { data = JSON.parse(res.text); } catch { /* not JSON */ }
+  return { status: res.status, ok: res.ok, data };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

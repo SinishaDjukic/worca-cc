@@ -350,6 +350,19 @@ test('the Models page: each non-Claude card says whether its engine is ready (GE
   assert.equal(none.querySelector('.engine-card[data-engine="cursor"] .engine-card-status').textContent, '', 'no engines array: an empty line');
 });
 
+test('the Models page: a configured remote backend adds whether each engine signs in inside its sandbox', async () => {
+  const { doc } = await boot({}, { hash: 'models', engines: [
+    { name: 'claude', label: 'Claude', ready: true, reason: null, sandbox: { titles: ['E2B'], ready: true, reason: null } },
+    { name: 'codex', label: 'Codex', ready: true, reason: null },
+    { name: 'copilot', label: 'Copilot', ready: true, reason: null, sandbox: { titles: ['E2B'], ready: false, reason: 'COPILOT_GITHUB_TOKEN is not set' } },
+    { name: 'cursor', label: 'Cursor', ready: false, reason: 'cursor-agent is not signed in', sandbox: { titles: ['E2B'], ready: true, reason: null } },
+  ] });
+  const status = (e) => doc.querySelector(`.engine-card[data-engine="${e}"] .engine-card-status`)?.textContent;
+  assert.equal(status('copilot'), 'Copilot can start runs: its CLI is installed and signed in. Remote sandbox (E2B): COPILOT_GITHUB_TOKEN is not set.');
+  assert.equal(status('cursor'), "Cursor can't start runs yet: cursor-agent is not signed in. Remote sandbox (E2B): worca can sign its model calls from the sandbox.");
+  assert.equal(status('codex'), 'Codex can start runs: its CLI is installed and signed in.', 'no sandbox entry: today`s exact text');
+});
+
 // Scale: one engine card at a time (the default engine's first), and each card lists only the slots set at this
 // level; the rest are summed up in one line, "+ Override a step…" reveals one, Show all reveals every slot.
 test('renderEngineSection: one card at a time, only the changed steps, one-line summary, override and show all', () => {

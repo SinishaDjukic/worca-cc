@@ -1031,6 +1031,21 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Workflow (60%) and the engine that runs it (40%) share a row; the engine hints span it below. */
 .wf-engine-row{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);column-gap:18px;align-items:start;}
 .wf-engine-row > *{min-width:0;}
+.wf-engine-row #exec-env-row{grid-column:1/-1;}
+/* The execution environment's live status (exec-env-status.mjs): beside New run's "Runs in" and on Settings › Runs. */
+.exec-env-pick{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;}
+.exec-env-pick .select-wrap{flex:1 1 180px;min-width:0;}
+.exec-env-status{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:var(--fs-meta);font-weight:600;
+  padding:4px 10px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);}
+.exec-env-status::before{content:'';width:7px;height:7px;border-radius:var(--r-xs);background:var(--ink-3);flex:none;}
+.exec-env-status[hidden]{display:none;}
+.exec-env-status[data-tone="ok"]{background:var(--green-bg);color:var(--green-ink);}
+.exec-env-status[data-tone="ok"]::before{background:var(--green);}
+.exec-env-status[data-tone="warn"]{background:var(--amber-bg);color:var(--amber-ink);}
+.exec-env-status[data-tone="warn"]::before{background:var(--amber);}
+.exec-env-status[data-tone="bad"]{background:var(--red-bg);color:var(--red-ink);}
+.exec-env-status[data-tone="bad"]::before{background:var(--red);}
+.exec-env-status-server{overflow-wrap:anywhere;}
 .wf-engine-hints{grid-column:1 / -1;margin:-7px 0 12px;}
 .wf-engine-hints:not(:has(.hint:not([hidden]))){display:none;}
 .wf-engine-hints .hint{margin-top:0;font-size:var(--fs-meta);}
@@ -1201,6 +1216,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qpanel-head{display:flex;align-items:center;gap:11px;}
 .qpanel-head svg{stroke:var(--amber-ink);flex:0 0 auto;}
 .qpanel-head b{flex:1;min-width:0;font-weight:600;font-size:var(--fs-body);color:var(--amber-ink);}
+.qpanel-deadline{margin:6px 0 0;font-size:var(--fs-meta);line-height:1.45;color:var(--amber-ink);}
 .qpanel-head .qcount{margin-left:auto;flex:0 0 auto;background:var(--amber-bg);color:var(--amber-ink);
   font-weight:700;font-size:var(--fs-caption);padding:4px 10px;border-radius:var(--r-xs);}
 .qblock{padding:13px 0 0;}
@@ -4038,6 +4054,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-meta .strong{font-weight:700;color:var(--ink);}   /* no global .strong rule exists */
 /* New text on this line meets 4.5:1 (--ink-2); the older --ink-3 parts sit in the light contrast baseline, which only shrinks. */
 .hd-meta .hd-engine{color:var(--ink-2);}
+.hd-meta .hd-exec-env{color:var(--ink-2);}
 .hd-diffcounts{display:inline-flex;align-items:center;gap:6px;}
 .hd-dot{font-weight:700;color:var(--ink);}
 .hd-status-word{font:600 var(--fs-body) var(--sans);}
@@ -6136,6 +6153,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* #959: ONE form grid for the card's fields: as many 200px+ columns as fit, stacked when narrow. A switch field takes
    a whole row; labels stay on one line. The fields are the shared .input / .select (design-system › Field). */
 .ask-rp-grid.two,.ask-rp-grid.wf-row{margin-top:10px;}
+/* Workflow, Engine, Guardrails, Runs in: the workflow takes a whole row. */
+.ask-rp-grid.wf-row>.ask-rp-field:first-child{grid-column:1/-1;}
 .ask-rp-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .ask-rp-field:has(> .switch-row){grid-column:1 / -1;}
 .ask-rp-label{font-weight:600;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -6851,7 +6870,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
   font-weight:500;font-size:var(--fs-body);color:var(--ink-2);}
 /* The engine field's hint and the gate refusal's consent row: hidden must win over
    .hint's display:block and .check-row's inline-flex. */
-#engine-hint[hidden], #engine-default-hint[hidden], #engineAllowRow[hidden]{display:none;}
+#engine-hint[hidden], #engine-default-hint[hidden], #exec-env-hint[hidden], #engineAllowRow[hidden]{display:none;}
 #engineAllowRow{margin-top:6px;}
 .field > label.check-row,
 .field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}
@@ -8591,6 +8610,10 @@ button.act-srow-name{cursor:pointer}
   .engine-slot-actions{justify-content:flex-start;}
 }
 .pd-settings-card{margin-top:14px}
+/* The exec card's sandbox environments (exec-env-project-view.mjs): one block per backend, its build log tail. */
+.exec-env-backend{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.exec-env-backend h4{margin:0 0 6px;font-size:13px}
+.exec-env-spec pre,.exec-env-log{font-family:var(--mono);font-size:11px;max-height:180px;overflow:auto;white-space:pre-wrap;margin:6px 0}
 /* House brief (Settings → Project): 4px corners (--r-sm), 2px on inner boxes (--r-xs), 1px dividers;
    colours are tokens only so light and dark follow data-theme. */
 .card.house-brief{margin-top:14px;border-radius:var(--r-card);}

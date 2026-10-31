@@ -39,7 +39,7 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname, basename, isAbsolute, sep } from 'node:path';
 
 import { contextMaxBytesPerFile, contextMaxBytesTotal, skillMount, defaultRoot } from './settings.mjs';
-import { readRunManifest, updateRunManifest, insideCheckout } from './run-manifest.mjs';
+import { readRunManifest, updateRunManifest, insideCheckout, RUN_MCP_FILE } from './run-manifest.mjs';
 import { isValidSkillName } from './skills.mjs';
 import { mergePermissionRules } from './guardrails.mjs';
 import { screenMcpSecrets, mcpSecretsMode } from './mcp-secrets.mjs';
@@ -72,7 +72,7 @@ export const MCP_GRANT_MODE = 'server';
 export const MAX_IMPORT_DEPTH = 4;
 
 const CLAUDE_MD_FILE = 'CLAUDE.md';
-const MCP_FILE = 'mcp.json';
+const MCP_FILE = RUN_MCP_FILE;
 const NO_MEMORY_PLACEHOLDER = '*(no CLAUDE.md found in this project)*';
 /** §8.7: a run-log warning above 40 KB, independent of the (raisable) hard cap. */
 const CONTEXT_SOFT_WARN_BYTES = 40960;

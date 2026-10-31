@@ -49,8 +49,8 @@ the network.
 
 - **Permissive** — no restrictions; the default on installs from before
   Normal became the default.
-- **Normal** (the default on a new install) — protects credential files (`.env*`, `*.pem`, `*.key`, SSH keys,
-  cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
+- **Normal** (the default on a new install) — protects credential files (`.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
+  SSH keys (`id_*`), cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
   and blocks publication commands
   (`git push`, `npm/yarn/pnpm publish`). It also protects Worca's own state
   (the DB, secrets, settings and MCP registry) from Read/Edit and blocks edits

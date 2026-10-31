@@ -164,15 +164,19 @@ const STDERR_DETAIL_MAX = 2000;
  *   still streamed, but never classified and never the exit detail while other evidence exists
  * @param {(err:Error, prefix:string) => Error} o.spawnError
  * @param {(code:number) => any} o.onDone
+ * @param {object|null} [o.execEnv]               a remote execution environment (src/core/exec-env/): when set,
+ *   the command runs in its sandbox through a child-like handle (no host pid, stdin as a file); null on local runs
  */
 export function superviseSpawn(o) {
   const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
-    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
+    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone, execEnv = null } = o;
+  const remote = execEnv?.remote ? execEnv : null;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
     // own process group so a stuck agent can still be SIGKILLed through sudo.
-    const agentId = asAgent ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
+    // Agent isolation applies on THIS host only; inside a sandbox there is no sudo pool.
+    const agentId = asAgent && !remote ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
     let child;
     try {
       let exe = file;
@@ -183,16 +187,18 @@ export function superviseSpawn(o) {
         for (const d of [stagedDir].flat()) if (d) shareWithAgent(typeof d === 'string' ? d : d.dir, agentId, { stopAt: join(worcaHome(), 'tmp'), writable: typeof d === 'object' && d.writable === true });
         ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
       }
-      child = spawn(exe, argv, {
-        cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
-        ...(agentId ? { detached: true } : {}),
-      });
+      child = remote
+        ? remote.spawn(exe, argv, { cwd, env: childEnv, stdin, uploads: [stagedDir].flat().filter(Boolean).map((d) => (typeof d === 'string' ? d : d.dir)) })
+        : spawn(exe, argv, {
+          cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
+          ...(agentId ? { detached: true } : {}),
+        });
     } catch (err) {
       cleanup();
       rejectP(spawnError(err, `Failed to spawn ${displayBin}`));
       return;
     }
-    if (stdin != null) {
+    if (stdin != null && child.stdin) {   // a remote child takes stdin as a file
       // A child that dies before draining stdin (bad flag, ENOENT surfaced
       // late) raises EPIPE here; the 'error'/'close' handlers own the real cause.
       child.stdin.on('error', () => {});

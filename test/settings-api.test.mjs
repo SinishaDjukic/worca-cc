@@ -310,6 +310,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
       modelRoles: {},                                        // Models › Roles: {} changes nothing
+      execEnv: null, e2bMaxSandboxes: null, e2bMaxWaitMin: null,   // the execution environment (docs/e2b.md): null clears
       askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
       tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)
@@ -508,4 +509,23 @@ test('POST modelRoles: a model outside the catalog or a bad effort is 400 and wr
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { model: 'claude-opus-5-5' } } });
   assert.equal((await postJson({ modelRoles: { claude: { deep: null } } })).status, 200);
   assert.equal('modelRoles' in JSON.parse(readFileSync(file, 'utf8')), false);
+});
+
+const getApi = async () => (await fetch(`${base}/api/settings`)).json();
+test('execution environment: GET has the raw values, POST saves and echoes them, null clears, bad values are 400', async () => {
+  const g0 = await getApi();
+  assert.deepEqual([g0.execEnv, g0.e2bMaxSandboxes, g0.e2bMaxWaitMin], [null, null, null], 'unset: the UI shows the defaults as placeholders');
+  const r = await postJson({ execEnv: 'e2b', e2bMaxSandboxes: 2, e2bMaxWaitMin: 30 });
+  assert.equal(r.status, 200);
+  const g1 = await getApi();
+  assert.deepEqual([g1.execEnv, g1.e2bMaxSandboxes, g1.e2bMaxWaitMin], ['e2b', 2, 30]);
+  for (const [body, field] of [[{ execEnv: 'docker' }, 'execEnv'], [{ e2bMaxSandboxes: 0 }, 'e2bMaxSandboxes'], [{ e2bMaxWaitMin: 2 }, 'e2bMaxWaitMin']]) {
+    const bad = await postJson(body);
+    const j = await bad.json();
+    assert.equal(bad.status, 400, JSON.stringify(j));
+    assert.equal(j.field, field, JSON.stringify(j));
+  }
+  await (await postJson({ execEnv: null, e2bMaxSandboxes: null, e2bMaxWaitMin: null })).json();
+  const g2 = await getApi();
+  assert.deepEqual([g2.execEnv, g2.e2bMaxSandboxes, g2.e2bMaxWaitMin], [null, null, null]);
 });

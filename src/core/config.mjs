@@ -1541,17 +1541,45 @@ export function writeActionsMeta(key, patch) {
   writeExtraKey(key, ACTIONS_META_KEY, { ...readActionsMeta(key), ...patch });
 }
 
-function writeExtraKey(key, name, value) {
+/** Read-modify-write ONE extra key in a single transaction: `mutate(current)` returns the new value. */
+function mutateExtraKey(key, name, mutate) {
+  let next;
   tx(() => {
     const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
     const extra = row ? parseJson(row.extra, {}) : {};
-    extra[name] = value;
+    next = mutate(extra[name]);
+    extra[name] = next;
     prepare(`
       INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
       VALUES (?, '{}', '[]', NULL, ?)
       ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
     `).run(key, JSON.stringify(extra));
   });
+  return next;
+}
+function writeExtraKey(key, name, value) { mutateExtraKey(key, name, () => value); }
+
+// ── Execution environment (project_config.extra.execEnvProject) ─────────────
+// The project's execution-environment record (src/core/exec-env/project-env.mjs; plans/e2b-execution-design.md §18):
+// per-backend project fields (e.g. { e2b: { template } }), the environment spec, and the last SUCCESSFUL build per
+// backend. Lives in worca's DB, never in the repo. Same KEY-taking contract as the team-metrics pair.
+const EXEC_ENV_KEY = 'execEnvProject';
+const emptyExecEnv = () => ({ config: {}, spec: null, builds: {} });
+function execEnvOf(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return emptyExecEnv();
+  const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  return { config: obj(v.config), spec: v.spec && typeof v.spec === 'object' ? v.spec : null, builds: obj(v.builds) };
+}
+export function readProjectExecEnv(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  return execEnvOf((row ? parseJson(row.extra, {}) : {})[EXEC_ENV_KEY]);
+}
+/** Read-modify-write in ONE transaction: a template Save, a spec change and a finished build can race.
+ *  `mutate(record)` edits the record in place; it must never call another config writer (tx is not re-entrant). */
+export function updateProjectExecEnv(key, mutate) {
+  assertProjectKey(key);
+  return mutateExtraKey(key, EXEC_ENV_KEY, (cur) => { const next = execEnvOf(cur); mutate(next); return next; });
 }
 
 // ── Team-policy preferences (project_config.extra.teamPolicy) ──────────────

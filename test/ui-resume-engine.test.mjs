@@ -237,13 +237,13 @@ test('run page banner: other pauses, and a limit that was not the engine\'s, off
 
 // ── History detail ───────────────────────────────────────────────────────────
 
-const histFetch = (runEngine, { limitEngine = runEngine, pauseReason = 'usage_limit' } = {}) => (url) => {
+const histFetch = (runEngine, { limitEngine = runEngine, pauseReason = 'usage_limit', extra = {} } = {}) => (url) => {
   if (url.endsWith('/api/history')) {
     return ok({ pipelines: [{ id: 'fcec04e8', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Paused feat', status: 'paused', startedAt: '2026-08-17T20:54:42Z', branch: 'worca-cc/feat', pauseReason, retainedWork: null }], live: [], ghAvailable: false });
   }
   if (url.endsWith(`/api/history/${KEY}/fcec04e8`)) {
     return ok({
-      state: { id: 'fcec04e8', title: 'Paused feat', status: 'paused', startedAt: '2026-08-17T20:54:42Z', stepper: null, steps: [], subAgents: [], totalCostUsd: 1.5, totalActiveMs: 60000, branch: { source: 'main', feature: 'worca-cc/feat', worktreeDir: '/tmp/wt' }, prompt: 'Do it.', pauseReason, limitEngine, runEngine },
+      state: { id: 'fcec04e8', title: 'Paused feat', status: 'paused', startedAt: '2026-08-17T20:54:42Z', stepper: null, steps: [], subAgents: [], totalCostUsd: 1.5, totalActiveMs: 60000, branch: { source: 'main', feature: 'worca-cc/feat', worktreeDir: '/tmp/wt' }, prompt: 'Do it.', pauseReason, limitEngine, runEngine, ...extra },
       results: null, overview: null, clarify: { questions: [], answers: [] }, reviews: [], stepQuestions: [], artifacts: [], auditMarkdown: '# saved',
     });
   }
@@ -434,4 +434,35 @@ test('History detail Overview names the run\'s engine under the title', async ()
     assert.equal(seg.textContent, label, engine);
     assert.equal(seg.previousElementSibling.className, 'hd-dot');
   }
+});
+
+test('an E2B run says so: History detail chip, live header segment (and "waiting for an E2B slot" while queued)', async () => {
+  const ctx = await boot({ fetchHandler: histFetch('claude', { pauseReason: 'error', limitEngine: null, extra: { execEnv: 'e2b' } }) });
+  ctx.go(`history/${KEY}/fcec04e8`);
+  await ctx.settle(8);
+  const chip = ctx.doc.querySelector('#hist-detail .hd-meta .hd-exec-env');
+  assert.equal(chip?.textContent, 'E2B sandbox');
+  assert.equal(chip.previousElementSibling.className, 'hd-dot');
+
+  const live = await boot();
+  live.go('running');
+  live.recv({ type: 'hello', runs: [{ runId: 'r1', title: 'Feat', projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: 'pl_1', runEngine: 'claude', execEnv: 'e2b', execEnvWaiting: true }] });
+  await live.settle();
+  live.go('running/r1');
+  await live.settle(8);
+  const seg = () => live.doc.querySelector('#run-detail .rd-meta .rd-exec-env');
+  assert.equal(seg()?.textContent, 'waiting for an E2B slot');
+  live.recv({ type: 'state', runId: 'r1', status: 'running', runEngine: 'claude', execEnv: 'e2b', execEnvWaiting: false });
+  await live.settle(8);
+  assert.equal(seg()?.textContent, 'E2B sandbox');
+});
+
+test('a local run shows no execution-environment chip or segment', async () => {
+  const ctx = await boot({ fetchHandler: histFetch('claude', { pauseReason: 'error', limitEngine: null }) });
+  ctx.go(`history/${KEY}/fcec04e8`);
+  await ctx.settle(8);
+  assert.ok(ctx.doc.querySelector('#hist-detail .hd-meta .hd-engine'));
+  assert.equal(ctx.doc.querySelector('#hist-detail .hd-meta .hd-exec-env'), null);
+  const page = await pausedRun(await boot(), { engine: 'claude' });
+  assert.equal(page.querySelector('.rd-meta .rd-exec-env'), null);
 });

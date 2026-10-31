@@ -18,7 +18,7 @@ import { PROJECT_KEY_RE } from './store.mjs';
 import { memoryCaps, teamMemoryEnabled, teamMemoryLoad } from './settings.mjs';
 import './settings-cascade.mjs';   // side effect: installs the project-layer reader teamMemoryEnabled and memoryCaps consult
 import {
-  memoryRoot, projectScope, scopeDir, listMemory, readMemory, writeMemory, removeMemory, setMemoryExtra, snapshotScope,
+  memoryRoot, projectScope, scopeDir, listMemory, readMemory, writeMemory, removeMemory, setMemoryExtra, snapshotScope, isHeldSource,
   listSnapshots, SNAPSHOT_KEEP, parseMemoryFile, renderMemoryFile, repairMemoryFile, hashText, isValidMemoryName, flattenLine,
   TEAM_MARKER_KEY, MemoryError,
 } from './memory-store.mjs';
@@ -276,6 +276,16 @@ async function queueNow(projectKey, names, { force = false, restore = false, sou
     if (local) {
       const meta = { ...local.meta, name };
       hash = contentHash(meta, local.body);
+      // A note a sandbox run wrote is HELD for review (memory-store isHeldSource): what ran in the sandbox is untrusted, so
+      // it never reaches the team — not even forced — until a person approves it in Memory (Save re-stamps it `user`).
+      if (isHeldSource(meta.source)) {
+        if (queuedOp !== 'delete') await dropQueued();
+        const reason = 'held for review: a sandbox run wrote it — approve it in Memory first';
+        const prev = readStatusNow(projectKey, name);
+        writeStatus(projectKey, name, { state: 'blocked', hash, sharedHash: prev?.sharedHash ?? null, kept: keptHashOf(prev), reason, findings: [], error: null, at: now });
+        out.blocked.push({ name, reason });
+        continue;
+      }
       // A restore brings back the `team:` line a note had in its snapshot — also one from before a team delete or an
       // untrack. A note this machine no longer tracks (no `sharedHash`) is never re-marked that way: the next follow would
       // take the team's deletion as one to follow and remove the copy (D12). Under a tombstone (a teammate deleted it, a
@@ -494,6 +504,15 @@ async function planOps(key, claimed) {
     }
     const meta = { ...local.meta, name };
     const hash = contentHash(meta, local.body);
+    // Held at flush time too: a sandbox run may have rewritten a note after a person queued it (memory-store isHeldSource).
+    // Before the revert checks, so neither `force` nor a kept hash lets it through.
+    if (isHeldSource(meta.source)) {
+      writeStatus(key, name, { state: 'blocked', hash, sharedHash: status?.sharedHash ?? null, kept: keptHashOf(status),
+        reason: 'held for review: a sandbox run wrote it — approve it in Memory first', findings: [], error: null, at: new Date().toISOString() });
+      emit(key, 'blocked', { names: [name] });
+      if (entry.teamDelete) ops.push({ name, kind: 'delete', team: true });
+      continue;
+    }
     // Reverted to its synced version since the queue — a team delete under the edit still goes.
     if (!entry.force && meta.extra[TEAM_MARKER_KEY] === hash) { if (entry.teamDelete) ops.push({ name, kind: 'delete', team: true }); continue; }
     // Back to its kept content, the edit never shared (an undo after a failed push): no change — a team delete under it goes.

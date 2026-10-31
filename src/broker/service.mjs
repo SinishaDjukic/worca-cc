@@ -21,7 +21,7 @@ export const INFLIGHT_BODY_BYTES = 64 << 20;
 const MAX_SCRUBBED_BODY = 8 << 20;
 const MAX_ERROR_BODY = 64 << 10;
 const CRED_CACHE_MS = 30_000;
-const UPSTREAM_IDLE_MS = 10 * 60_000;
+export const UPSTREAM_IDLE_MS = 10 * 60_000;
 // A request body must keep arriving (idle) and be all there in time (total): see readBody.
 export const BODY_IDLE_MS = 15_000;
 export const BODY_TOTAL_MS = 120_000;

@@ -444,6 +444,20 @@ test('waiting for the network: a hello paints the banner naming the host; a stat
   assert.equal(window.document.querySelector('#run-detail .rd-banners .net-wait-banner'), null, 'the network is back: no banner');
 });
 
+test('an E2B run lists the files from the sandbox to review before running them here; a state frame adds to the list', async () => {
+  const one = [{ path: 'package.json', why: 'npm scripts postinstall added or changed' }];
+  const { window, recv } = await openDetail({ run: { execEnv: 'e2b', execEnvReview: one } });
+  const banner = () => window.document.querySelector('#run-detail .rd-banners .exec-review-banner');
+  assert.ok(banner(), 'the banner renders from the first hello');
+  assert.match(banner().textContent, /Review them before running them here/);
+  assert.match(banner().textContent, /package\.json: npm scripts postinstall/);
+  recv({ type: 'state', runId: ID, status: 'running', steps: [], execEnv: 'e2b',
+    execEnvReview: [...one, { path: '.vscode/tasks.json', why: 'VS Code workspace config' }] });
+  await settle(window);
+  assert.equal(banner().querySelectorAll('li').length, 2);
+  assert.match(banner().textContent, /\.vscode\/tasks\.json/);
+});
+
 test('the recovery body carries the network note only when the prompt waits for the network', async () => {
   const until = new Date(Date.now() + 3_600_000).toISOString();
   const net = await openDetail();

@@ -10,7 +10,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mockEnabled, buildSpawnEnv } from '../claude-runner.mjs';
 import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME, the proxy and CA variables + the Windows start-up baseline (P11); no cycle: plugin-shim imports no graph module
@@ -33,6 +33,29 @@ const PY_HARNESS_PATH = fileURLToPath(new URL('./worca_script.py', import.meta.u
 /** Forced on every python spawn: a Windows console defaults to cp1252 and would corrupt the frame. */
 const PY_ENV = Object.freeze({ PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' });
 const AWAIT_ID = AWAIT_PORT.id;
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+// npm packages the built-in scripts' closure imports (src/core/workspace-map/detectors/lib/yaml.mjs, lib/toml.mjs;
+// gsap: assets/promo-kit/tools/init-film.mjs, loaded by scripts/promo-narrate.mjs).
+// test/exec-env-script-roots.test.mjs proves this list complete.
+export const BUILTIN_SCRIPT_PACKAGES = Object.freeze(['yaml', 'smol-toml', 'gsap']);
+const inside = (file, dir) => file.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+/** The installed package's own directory (…/node_modules/<name>), wherever npm put it. */
+function packageDir(name) {
+  const p = fileURLToPath(import.meta.resolve(name));
+  const marker = `${sep}node_modules${sep}${name}${sep}`;
+  return p.slice(0, p.lastIndexOf(marker) + marker.length - 1);
+}
+/** Host dirs a script program may import from, mirrored into an E2B sandbox before it runs (e2b mode). */
+export function scriptUploadRoots(file) {
+  const builtin = join(REPO_ROOT, 'scripts');
+  if (inside(file, builtin)) {
+    return [builtin, join(REPO_ROOT, 'src'), join(REPO_ROOT, 'ui', 'public', 'c4'), join(REPO_ROOT, 'ui', 'public', 'fonts'),
+      join(REPO_ROOT, 'assets', 'promo-kit'), ...BUILTIN_SCRIPT_PACKAGES.map(packageDir)];
+  }
+  const i = file.lastIndexOf(`${sep}current${sep}scripts${sep}`);       // <plugin>/current/scripts/… (script-registry.mjs)
+  if (i >= 0) return [file.slice(0, i + `${sep}current`.length)];
+  return [dirname(file)];                                                  // <worcaHome>/scripts or anywhere else
+}
 /** The three server-side variables a script must not inherit (D11). */
 const STRIPPED_ENV = new Set(['WORCA_HOME', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID']);
 export const CAPTURE_HEAD = 256 * 1024;
@@ -139,7 +162,9 @@ export function buildEnvelope(ctx) {
       ...(ctx.workMode && ctx.workMode !== 'git' ? { workMode: ctx.workMode } : {}),   // P1/P3: absent on git runs (additive)
       baseName: ctx.runCtx?.baseName ?? null,
       runId: ctx.pipelineId ?? null,
-      platform: process.platform,
+      // Where the program runs: a remote execution environment (e2b mode) is a Linux sandbox, whatever the host is.
+      platform: ctx.execEnv?.remote ? 'linux' : process.platform,
+      execEnv: ctx.execEnv?.remote ? ctx.execEnv.kind : null,
       mock: Boolean(mockEnabled(ctx.claudeOpts)),
       // W12: true only on a test-bench execution, so a side-effect script ("post
       // a comment") can stay quiet under test. Additive — apiVersion stays 1.
@@ -169,6 +194,7 @@ export function envForShell(envelope, baseEnv = process.env) {
   env.WORCA_CYCLE = String(envelope.execution?.ordinal ?? 1);
   env.WORCA_RUN_ID = c.runId || '';
   env.WORCA_PLATFORM = c.platform || process.platform;
+  if (c.execEnv) env.WORCA_EXEC_ENV = c.execEnv; else delete env.WORCA_EXEC_ENV;
   env.WORCA_MOCK = c.mock ? '1' : '0';
   // P0: a script child never probes git; it gets this process's answer (server / CLI / Ask child), so the
   // built-in workspace-map scripts keep git ls-files and origins where git is installed (CONTRACT §0, S1).
@@ -312,13 +338,15 @@ process.on('exit', () => { for (const [child, platform] of live) killTree(child,
  * capture. `stdoutMode: 'frame'` (node) keeps stdout whole for the frame and
  * streams stderr only; `'capture'` (shell) interleaves both into the capture.
  * Resolves `{ exitCode, signal, timedOut, aborted, stdout, frameOverflow, capture, durationMs }`;
- * rejects only on a spawn failure.
+ * rejects only on a spawn failure. `execEnv` (e2b mode, src/core/exec-env/): the child runs in the run's
+ * sandbox through a child-like handle — no host pid, no agent uid, stdin as a file.
  */
-export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, signal, onLine, stdoutMode, platform = process.platform }) {
+export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, signal, onLine, stdoutMode, platform = process.platform, execEnv = null }) {
+  const remote = execEnv?.remote ? execEnv : null;
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    // Scripts run the agents' code (tests, builds): under the agent's uid when the container has one.
-    const agent = platform !== 'win32' ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
+    // Scripts run the agents' code (tests, builds): under the agent's uid when the container has one (host only).
+    const agent = platform !== 'win32' && !remote ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
     let spawnFile = file;
     let spawnArgs = args;
     let spawnEnv = env;
@@ -326,15 +354,17 @@ export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, sig
       try { ({ file: spawnFile, args: spawnArgs, env: spawnEnv } = agentSpawn(file, args, env || process.env, agent)); }
       catch (err) { reject(err); return; }
     }
-    const child = spawn(spawnFile, spawnArgs, {
-      cwd,
-      env: spawnEnv,
-      detached: platform !== 'win32',
-      windowsHide: true,
-      windowsVerbatimArguments: platform === 'win32' && stdoutMode === 'capture',
-      stdio: [stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-    });
-    live.set(child, platform);
+    const child = remote
+      ? remote.spawn(file, args, { cwd, env, stdin })
+      : spawn(spawnFile, spawnArgs, {
+        cwd,
+        env: spawnEnv,
+        detached: platform !== 'win32',
+        windowsHide: true,
+        windowsVerbatimArguments: platform === 'win32' && stdoutMode === 'capture',
+        stdio: [stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      });
+    if (!remote) live.set(child, platform);
     if (agent) agentOf.set(child, agent);
     const capture = createCapture();
     const partial = { out: '', err: '' };
@@ -378,7 +408,8 @@ export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, sig
     // so a timeout and a Stop always settle the execution even when something survives the kill.
     let grace = null;
     const killAndRelease = () => {
-      killTree(child, platform);
+      // killTree needs a numeric pid; a remote child kills its sandbox command (SIGKILL there anyway).
+      if (remote) child.kill('SIGKILL'); else killTree(child, platform);
       if (grace) return;
       grace = setTimeout(() => { try { child.stdout.destroy(); child.stderr.destroy(); } catch { /* already closed */ } }, KILL_GRACE_MS);
       grace.unref?.();
@@ -402,7 +433,7 @@ export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, sig
       flush();
       done(resolve, { exitCode: code, signal: sig, timedOut, aborted, stdout: frameOut, frameOverflow, capture: capture.text(), durationMs: Date.now() - started });
     });
-    if (stdin != null) {
+    if (stdin != null && child.stdin) {   // a remote child takes stdin as a file
       // v2 R5: a child that dies before it reads (a bad inherited NODE_OPTIONS, an OOM kill) turns this write into
       // EPIPE — an 'error' event on the stdin stream. With no listener that is an uncaught exception in the HOST
       // process. The failure itself is already reported through 'close' (no frame, exit N), so the event is dropped.
@@ -542,6 +573,16 @@ export async function runScriptExecution(ctx) {
   // executor): merged into the CHILD's environment only. It is deliberately absent from the
   // envelope, its audit copy on disk, `params` and every log line.
   const env = { ...envForShell(envelope, scriptBaseEnv(ctx.claudeOpts, platform)), ...(ctx.runCtx?.secretEnv || {}), WORCA_ENVELOPE: envelopePath };
+  // e2b mode (src/core/exec-env/): the program runs in the run's sandbox at its mirrored path. Built-in scripts
+  // import ../src/**, ../ui/public/** (scripts/c4-*.mjs, scripts/workspace-map-*.mjs) and, lazily,
+  // ../assets/promo-kit/** (scripts/promo-*.mjs); user and plugin scripts
+  // get their own directory tree. Uploaded once per sandbox. No model credential and no model route (scripts call no
+  // model); declared secrets ride `keep`.
+  const remote = ctx.execEnv?.remote ? ctx.execEnv : null;
+  if (remote && script.file) await remote.uploadTrees(scriptUploadRoots(script.file));
+  // CHROME_NO_SANDBOX: the sandbox VM is the isolation boundary, and Chrome's own namespace sandbox needs kernel
+  // support the template user may not have (promo-kit/tools/cdp.mjs, scripts/c4-raster.mjs read it).
+  const runEnv = remote ? { ...remote.envFor(env, { keep: Object.keys(ctx.runCtx?.secretEnv || {}) }), CHROME_NO_SANDBOX: '1' } : env;
   // Clamped as well as validated (v4 T3): the bench and the CLI build a ctx without going through V22, and a delay
   // past 2^31-1 ms makes the timer fire after one millisecond.
   const timeoutMs = Number.isInteger(script.timeoutMs) && script.timeoutMs >= MIN_TIMEOUT_MS ? Math.min(script.timeoutMs, MAX_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS;
@@ -574,8 +615,8 @@ export async function runScriptExecution(ctx) {
   let run;
   let frame;
   if (meta.runtime === 'node') {
-    run = await spawnOrThrow({ file: process.execPath, args: [CHILD_PATH, programFile()], cwd: envelope.ctx.cwd, env,
-      stdin: JSON.stringify(envelope), timeoutMs, signal: ctx.signal, onLine, stdoutMode: 'frame', platform });
+    run = await spawnOrThrow({ file: remote ? 'node' : process.execPath, args: [CHILD_PATH, programFile()], cwd: envelope.ctx.cwd, env: runEnv,
+      stdin: JSON.stringify(envelope), timeoutMs, signal: ctx.signal, onLine, stdoutMode: 'frame', platform, execEnv: remote });
     afterRun(run);
     frame = readFrame(run, 'console.* or log()');
   } else if (meta.runtime === 'python') {
@@ -587,12 +628,16 @@ export async function runScriptExecution(ctx) {
     // and windowsVerbatimArguments stays off (spawnScript sets it for
     // stdoutMode 'capture' only), which is what quotes a path with a space.
     const file = programFile();
-    const probe = await probePython();
-    if (!probe.ok) throw scriptError(pythonMissingSentence(key));
-    const [exe, ...pre] = probe.command;
-    run = await spawnOrThrow({ file: exe, args: [...pre, '-u', PY_HARNESS_PATH, file], cwd: envelope.ctx.cwd,
-      env: { ...env, ...PY_ENV }, stdin: JSON.stringify(envelope), timeoutMs, signal: ctx.signal, onLine,
-      stdoutMode: 'frame', platform });
+    let spawnPy;
+    if (remote) spawnPy = { file: 'python3', args: ['-u', PY_HARNESS_PATH, file], env: { ...runEnv, ...PY_ENV } };   // the template has python3
+    else {
+      const probe = await probePython();
+      if (!probe.ok) throw scriptError(pythonMissingSentence(key));
+      const [exe, ...pre] = probe.command;
+      spawnPy = { file: exe, args: [...pre, '-u', PY_HARNESS_PATH, file], env: { ...env, ...PY_ENV } };
+    }
+    run = await spawnOrThrow({ ...spawnPy, cwd: envelope.ctx.cwd, stdin: JSON.stringify(envelope), timeoutMs, signal: ctx.signal, onLine,
+      stdoutMode: 'frame', platform, execEnv: remote });
     afterRun(run);
     frame = readFrame(run, 'print() or api.log()');
   } else {
@@ -605,7 +650,7 @@ export async function runScriptExecution(ctx) {
     const [shell, args] = platform === 'win32'
       ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${command}"`]]
       : ['/bin/sh', ['-c', command]];
-    run = await spawnOrThrow({ file: shell, args, cwd: envelope.ctx.cwd, env, stdin: null, timeoutMs, signal: ctx.signal, onLine, stdoutMode: 'capture', platform });
+    run = await spawnOrThrow({ file: shell, args, cwd: envelope.ctx.cwd, env: runEnv, stdin: null, timeoutMs, signal: ctx.signal, onLine, stdoutMode: 'capture', platform, execEnv: remote });
     // Every md output the command did not write receives the report — written
     // before the exit mapping so a failed run still leaves its log behind.
     const displayName = meta.displayName || key;

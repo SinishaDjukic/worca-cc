@@ -71,6 +71,8 @@ import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
+import { isExecEnvName, execEnvNames } from './exec-env/index.mjs';
+import { DEFAULT_E2B_MAX_SANDBOXES, DEFAULT_E2B_MAX_WAIT_MIN } from './exec-env/e2b-config.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 
@@ -1284,6 +1286,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
+  'execEnv', 'e2bMaxSandboxes', 'e2bMaxWaitMin', // the execution environment (docs/e2b.md)
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
@@ -1386,6 +1389,70 @@ export async function setRunEngineSetting(input) {
   if (value === undefined) delete settings.runEngine; else settings.runEngine = value;
   await persistSettings(settings);
   return { runEngine: runEngineSetting() ?? null };
+}
+
+// ── Execution environment (plans/e2b-execution-design.md §12) ────────────────
+// `execEnv` is the user default of the `run.execEnv` cascade (local | a registered backend); the two integers
+// size the e2b mode: sandboxes at once (the capacity queue) and the wait for an answer.
+export function execEnvSetting() {
+  if (homeGuarded()) return undefined;
+  const value = readSettings().execEnv;
+  return value === null ? undefined : value;
+}
+export function assertExecEnvInput(input) {
+  if (isClearInput(input)) return null;
+  if (!isExecEnvName(input)) throw new Error(`execEnv must be one of ${execEnvNames().join(' | ')}`);
+  return input;
+}
+export async function setExecEnvSetting(input) {
+  const value = assertExecEnvInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.execEnv; else settings.execEnv = value;
+  await persistSettings(settings);
+  return { execEnv: execEnvSetting() ?? null };
+}
+
+const E2B_INTS = {
+  e2bMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_E2B_MAX_SANDBOXES },
+  e2bMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_E2B_MAX_WAIT_MIN },
+};
+/** The stored value or null (GET: an unset field stays empty and shows the default as its placeholder). */
+export function e2bIntSettingRaw(key) {
+  if (homeGuarded()) return null;
+  const v = readSettings()[key];
+  return E2B_INTS[key].valid(v) ? v : null;
+}
+/** The effective value (runtime). An invalid stored value warns and falls back to the default. */
+function e2bInt(key) {
+  const { valid, def } = E2B_INTS[key];
+  if (homeGuarded()) return def;
+  const v = readSettings()[key];
+  if (v === undefined || v === null) return def;
+  if (!valid(v)) { console.warn(`[worca] settings: ignoring invalid ${key} ${JSON.stringify(v)}; using ${def}`); return def; }
+  return v;
+}
+export const e2bMaxSandboxes = () => e2bInt('e2bMaxSandboxes');
+export const e2bMaxWaitMin = () => e2bInt('e2bMaxWaitMin');
+/** A backend's integer limit by its settings key (exec-env backend `limitSettings`); undefined for a
+ *  key this build has no setting for, so the backend's own capability default applies. */
+export function execEnvLimitSetting(key) { return Object.hasOwn(E2B_INTS, key) ? e2bInt(key) : undefined; }
+/** maxConcurrent | maxWaitMin of an exec-env backend: its user setting, else its capability default. */
+export function execEnvLimit(backend, which) {
+  const key = backend.limitSettings?.[which];
+  const v = key ? execEnvLimitSetting(key) : undefined;
+  return v ?? (which === 'maxConcurrent' ? backend.capabilities.defaultMaxConcurrent : backend.capabilities.defaultMaxWaitMin);
+}
+export function assertE2bIntInput(key, input) {
+  if (isClearInput(input)) return null;
+  if (!E2B_INTS[key].valid(input)) throw new Error(`${key} must be a whole number in ${E2B_INTS[key].range}`);
+  return input;
+}
+export async function setE2bIntSetting(key, input) {
+  const value = assertE2bIntInput(key, input);
+  const settings = readSettings();
+  if (value === null) delete settings[key]; else settings[key] = value;
+  await persistSettings(settings);
+  return { [key]: e2bIntSettingRaw(key) };
 }
 const ROLE_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export function assertStepModelsInput(input) {
@@ -1510,6 +1577,7 @@ export const SETTING_CHECKS = Object.freeze({
   pct: (value) => isByteCap(value) && value <= 100,
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),
+  execEnv: (value) => isExecEnvName(value),
 });
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────

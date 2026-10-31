@@ -53,17 +53,18 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
-import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
+import { hasProjectSetting, utilityModelFor, resolveSetting } from './settings-cascade.mjs';
 import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
+import { secretPathsFor } from './secret-paths.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
-import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
+import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief, SANDBOX_SOURCE_PREFIX, isHeldSource } from './memory-store.mjs';
 import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText, memoryLoadPlans, loadFilteredDirs } from './memory-team.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
-  RETAIN_REASONS,
+  RETAIN_REASONS, removeRunMcpConfig,
 } from './run-manifest.mjs';
 import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE, discoverProjectSettings, skillsRelFor, realDirsBelow } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
@@ -109,6 +110,13 @@ import { withBillTo, currentBillTo } from './billing.mjs';
 import { claimRunDir } from './agent-pool.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
+import { selectExecEnv, getExecBackend, ExecEnvLostError, ExecEnvSyncError, LOST_HINT } from './exec-env/index.mjs';
+import { instanceTag, remotePreflight } from './exec-env/policy.mjs';
+import { RemoteExecEnv, SCRIPT_SUPPORT_FILES } from './exec-env/remote-env.mjs';
+import { acquireSandboxSlot } from './exec-env/slots.mjs';
+import { priceRelayUsage, relayUsageTotal } from './exec-env/relay-usage.mjs';
+import { resolveRunEnvironment } from './exec-env/project-env.mjs';
+import { execEnvLimit } from './settings.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
 import { syncPluginSlots } from './plugin-broker-slots.mjs';
 import { recoveryDelayMs, sleepAbortable } from './recovery-backoff.mjs';
@@ -854,6 +862,13 @@ export class RunHarness extends EventEmitter {
       // before anything is created.
       engine: selectRunEngine(this.opts.claude?.engine || savedEngine),
     };
+    // Where the run's agent and script steps execute (src/core/exec-env/). Kept off this.claude, which
+    // is spread into spawn options. A resume takes the kind from its point.
+    const savedExec = this.opts.resume?.resumePoint?.execEnv;
+    this.execEnvKind = selectExecEnv(this.opts.execEnv || savedExec?.kind || 'local');
+    this._savedExecEnv = savedExec || null;
+    this.execEnv = null;              // the live RemoteExecEnv (remote runs only)
+    this._execEnvRelease = null;
     // Resume with another model: every remaining step runs on this.claude.model (a usage limit spent on the provider
     // the run's steps were on). Rides the resume point while the model does. Kept off this.claude (spawn options).
     this._modelForAll = this.opts.claude?.modelForAll === true
@@ -1092,6 +1107,7 @@ export class RunHarness extends EventEmitter {
       title: this.opts.title || null,
       projectDir: this.projectDir,
       runEngine: this.claude.engine,
+      ...(this.execEnvKind !== 'local' ? { execEnv: this.execEnvKind } : {}),
       ...(this._projectPipelineCap() !== undefined ? { pipelineCapUsd: this._projectPipelineCap() } : {}),
       status: 'idle',
       phase: 'idle',
@@ -1508,6 +1524,11 @@ export class RunHarness extends EventEmitter {
       this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false, { guardrails: this.guardrails });
       await this._engineMcpGate();
       this._pendingAudits.push(...this._engineGate());
+      // The remote preflight: before any worktree exists, so a refusal is a launch error.
+      { const r = this.execEnvStartRefusal(); if (r) throw markTerminal(new Error(r)); }
+      // A saved remote default this run cannot take (resolveRunExecEnv's fallback, from the server or the CLI): it
+      // runs locally, and its log says why (the reason names the backend).
+      if (this.opts.execEnvFallback) this._log('exec-env', 'warn', this.opts.execEnvFallback);
       this._log(
         'preflight',
         'info',
@@ -1753,6 +1774,7 @@ export class RunHarness extends EventEmitter {
       // itself into that map.
       await this._mountMemory();
       await this._registerEngineConfig();   // an engine's checkout config files (Cursor, Gemini CLI) join the §8.8 set (both modes)
+      await this._startExecEnv();           // remote only: the run's sandbox, once the §8.8 set is complete
       this._checkAbort();
       // D7: every setup step above is done — a pause from here on has nothing to
       // replay, so _completePaused strips any `setupIncomplete` stamp instead.
@@ -1856,6 +1878,7 @@ export class RunHarness extends EventEmitter {
       // a read-only scan), only the disposable checkout is removed. But NEVER on a pause: the checkout (with any uncommitted agent
       // work) and the run root are the things we resume into (§8.13).
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
+        await this._finishExecEnv();   // remote: the last sync, then the sandbox goes (before the teardown commit)
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
@@ -1906,6 +1929,8 @@ export class RunHarness extends EventEmitter {
     // the 'resume' site below would end the paused run. The row stays paused, so the
     // user can resume again with the missing flag.
     const engineGateNodes = await this._engineResumeGate(rp);
+    // The remote preflight, likewise before the claim: a refused resume keeps the row paused.
+    { const r = this.execEnvStartRefusal(); if (r) throw markTerminal(new Error(r)); }
     // The snapshot can be stale: a stop (claimPausedForStop, in this process or another) may have
     // claimed the row since it was read. Take the row over ATOMICALLY, here: after the engine hooks,
     // so a rejected point or gate leaves the row alone, and before the rehydration awaits anything.
@@ -2094,6 +2119,7 @@ export class RunHarness extends EventEmitter {
       // then remount fresh from the store.
       await this._mountMemory({ resume: true });
       await this._registerEngineConfig();
+      await this._resumeExecEnv();   // remote only: reconnect to the parked sandbox (or create it)
 
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
@@ -2169,6 +2195,7 @@ export class RunHarness extends EventEmitter {
       // crash-interrupted run, §8.12's primary scenario): run root leaked until the
       // next boot, no stray scan, no injected-path cleanup.
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
+        await this._finishExecEnv();
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
@@ -2451,6 +2478,8 @@ export class RunHarness extends EventEmitter {
       return await this._settleStopped();
     } finally {
       this._stopHeartbeat();
+      // remote: the parked sandbox goes whatever else failed (its changes were synced at park time).
+      await this._dropSavedSandbox();
       // resume()'s teardown on a stop: commit the work onto the kept branch, remove the checkout.
       if (reattached) {
         await this._teardownRunRoot().catch(() => {});
@@ -3549,6 +3578,8 @@ export class RunHarness extends EventEmitter {
    * which spawns nothing; then the DENY rules of each honoring member's own
    * `.claude/settings.json` (run-context.mjs#discoverProjectSettings, the file Claude
    * Code reads itself). A preflight refusal throws. Returns the merged deny rules, or null.
+   * A codex run also keeps whether it needs codex's sign-in (`_codexSignIn`), which the sync
+   * remote preflight (_execEnvPreflight) reads.
    * @param {(member:object)=>boolean} honors whether a member's project settings are honored
    * @param {{quiet?:boolean, guardrails?:object}} [opts] quiet: skip the preflight's warning line (a
    *   check made before the run exists; run() checks again and warns then); guardrails: the run's set, whose env
@@ -3559,13 +3590,21 @@ export class RunHarness extends EventEmitter {
     const name = this.claude.engine || 'claude';
     if (name === 'claude') return null;
     const adapter = getEngine(name);
-    if (!this.claude.mock && typeof adapter.preflight === 'function') {
-      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}),
-        ...(name === 'codex' ? { signIn: await this._codexNeedsSignIn() } : {}),
+    if (!this.claude.mock && name === 'codex') this._codexSignIn = await this._codexNeedsSignIn();
+    // A remote run's agents run the sandbox template's own pinned CLI, whose model calls worca's relay signs with the
+    // server's credential: the backend's preflight checks that credential (e2bPreflight → engineCredential). Its helper jobs still run this machine's CLI when
+    // they stay on the run engine (helperEngineFor: codex, copilot), so that CLI is checked too, and its failure warns,
+    // naming those jobs: the agents do not need it.
+    const remote = this._execBackend;
+    if (!this.claude.mock && (!remote || helperEngineFor(name) === name) && typeof adapter.preflight === 'function') {
+      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}), ...(name === 'codex' ? { signIn: this._codexSignIn } : {}),
         ...(name === 'opencode' ? { defaultModel: await this._opencodeOnDefaultModel(), envScrub: !!guardrails?.envScrub,
           envAllowlist: guardrails?.envScrub ? guardrails.envAllowlist : undefined } : {}) });
-      if (r?.refusal) throw engineRefusal(name, r.refusal);
-      if (r?.warning && !quiet) this._log('orchestrator', 'warn', `engine ${name}: ${r.warning}`);
+      if (r?.refusal && !remote) throw engineRefusal(name, r.refusal);
+      const why = r?.refusal || r?.warning;
+      if (why && !quiet) {
+        this._log('orchestrator', 'warn', `engine ${name}: ${why}${remote ? `. The agents run the ${remote.label}'s own ${name}, but the title, overview, PR description, Auto classifier and Away decider jobs run on this machine's ${name}: they fail until it works here.` : ''}`);
+      }
     }
     let rules = null;
     for (const m of this.members) {
@@ -4256,12 +4295,13 @@ export class RunHarness extends EventEmitter {
     const loadDirs = loadFilteredDirs(dirs, plans);
     // The WRITABLE copy: a copy of the mounted scopes (agents edit existing files in place;
     // syncBack diffs it against this baseline). Outside git — no sentinel.
-    const m = await mountMemory({ root, mount, dirs: loadDirs, onError });
+    const ownSource = this._memorySource();   // a sandbox run reads back its own held writes (memory-store isHeldSource)
+    const m = await mountMemory({ root, mount, dirs: loadDirs, onError, ownSource });
     // The READ-ONLY rules copy: the same files where the CLI discovers them. Its baseline is
     // irrelevant (nothing syncs back from it). `<rules>/.gitignore` = `*` keeps it out of an agent's
     // own `git add -A`, a staging pre-commit hook, snapshotWorktreePatch's bare `git add -A` and the
     // reviewer's `git status`; the §8.8 `:(exclude)` pathspec stays as defence in depth.
-    await mountMemory({ root, mount: rules, dirs: loadDirs, onError, gitIgnore: true });
+    await mountMemory({ root, mount: rules, dirs: loadDirs, onError, gitIgnore: true, ownSource });
     // …then the team folder(s) of the READ-ONLY copy only (decision D2): an agent changes a team note by writing a
     // same-named local note, which shadows it here and is shared on sync. A defragment run works on local notes only.
     const team = this.memoryScope ? [] : (await this._mountTeamDirs(rules, dirs, plans)) ?? [];
@@ -4470,10 +4510,18 @@ export class RunHarness extends EventEmitter {
     }
   }
 
+  /** The provenance this run's memory writes carry. A remote run's agents ran in a sandbox, so what they wrote is
+   *  held for review (`sandbox:`, memory-store isHeldSource; security evaluation 2026-10-21, E5). */
+  _memorySource() {
+    if (this.execEnvKind !== 'local') return `${SANDBOX_SOURCE_PREFIX}${this.pipeline.id}`;
+    return `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`;
+  }
+
   async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] }) {
     const now = new Date().toISOString();
+    const source = this._memorySource();
     const res = await syncBack({
-      root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
+      root: memoryRoot(), mount, dirs, baseline, source, now,
       caps: memoryCaps(this._settingsScope()), onWarn: (w) => this._log('memory', 'warn', w),
       onError: (p, err) => this._memoryReadWarn(p, err),
       // Team memory (phase 1a): a note's `team:` marker is worca's, never the writable copy's line from mount time (D10).
@@ -4490,17 +4538,19 @@ export class RunHarness extends EventEmitter {
       });
       const head = `Memory: +${res.added.length} ~${res.modified.length} -${res.deleted.length}` +
         `${res.rejected.length ? ` (${res.rejected.length} rejected)` : ''}${failed.length ? ` (${failed.length} failed)` : ''} by ${label}`;
+      const held = isHeldSource(source) && (res.added.length || res.modified.length)
+        ? ' — held for review: written in a sandbox, so no other run or chat loads it until you approve it in Memory' : '';
       const name = (r) => `${r.scope ? `${r.scope}/` : ''}${r.name}.md`;
       const details = [
         ...res.added.map((r) => `added ${name(r)}`), ...res.modified.map((r) => `updated ${name(r)}`),
         ...res.deleted.map((r) => `deleted ${name(r)}`), ...res.rejected.map((r) => `rejected ${name(r)} — ${r.reason}`),
         ...failed.map((r) => `failed ${name(r)} — ${r.reason}`),
       ];
-      this._log('memory', 'info', `${head}: ${details.join('; ')}`, { nodeId, executionId });
+      this._log('memory', 'info', `${head}: ${details.join('; ')}${held}`, { nodeId, executionId });
       // A failed write is the one memory outcome nobody asked for: warn, per file, so it is visible in
       // the run log without opening the 300 KB transcript.
       for (const r of failed) this._log('memory', 'warn', `memory: ${name(r)} written by ${label} never reached the store — ${r.reason}`, { nodeId, executionId });
-      await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
+      await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}${held}`).catch(() => {});
       await this._recordFailedWrites(failed, now);
     }
     // Never a defragment run's result (D15). Queued FIRST: a note on its way to the team loads in a project whose team
@@ -4516,7 +4566,7 @@ export class RunHarness extends EventEmitter {
       try {
         // the rules copy lives in the cwd: a Folder copy swapped for a link is never written through
         if (this.workMode === 'folder' && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${this.runCwd}`);
-        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs: loadFilteredDirs(dirs, plans), onError: (p, err) => this._memoryReadWarn(p, err) }));
+        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs: loadFilteredDirs(dirs, plans), ownSource: source, onError: (p, err) => this._memoryReadWarn(p, err) }));
         if (stale.length) this._log('memory', 'warn', `memory: the rules copy could not be refreshed for ${stale.join(', ')} — the next agent loads the previous text`);
       } catch (err) {
         this._log('memory', 'warn', `memory: the rules copy could not be refreshed: ${err?.message || err}`);
@@ -4822,6 +4872,12 @@ export class RunHarness extends EventEmitter {
       this._log('graph', 'debug', 'No worktree (workDir===projectDir); skipping in-worktree graph build.');
       return; // building "in the worktree" would write into main
     }
+    if (this._execBackend) {
+      // A remote run's agents work in the sandbox's clone: _buildSandboxGraph builds the graph there, once it starts.
+      this.toolInstruction = '';
+      this._log('graph', 'info', 'the graphify graph is built in the sandbox once it starts');
+      return;
+    }
     if (this.state.tools?.kind !== 'cli') {
       this.toolInstruction = '';
       this._log('graph', 'info', 'graphify CLI not on PATH; skipping in-worktree graph build');
@@ -4846,6 +4902,26 @@ export class RunHarness extends EventEmitter {
           + errDetail(res),
         errStreamAttr(res?.stderr),
       );
+    }
+  }
+
+  /**
+   * A remote run's graph (docs/e2b.md "How a run works"): built in its sandbox after the code is in, so the host
+   * builds nothing and uploads no graphify-out/. Same guards and fail-safe as _buildWorktreeGraph; a reconnected
+   * sandbox keeps its graph and the resume point's instruction, so only a fresh sandbox calls this.
+   */
+  async _buildSandboxGraph() {
+    if (this.claude.mock || !this.execEnv?.buildCodeGraph) return;
+    if (this._skipCodeGraph()) { this.toolInstruction = ''; return; }
+    if (this.workDir === this.projectDir) return;
+    const res = await this.execEnv.buildCodeGraph({ timeoutMs: this.graphBuildTimeoutMs });
+    if (res.ok) {
+      this.toolInstruction = worktreeGraphInstruction();
+      this._log('graph', 'info', `graphify graph built in the sandbox in ${(res.ms / 1000).toFixed(1)} s.`);
+      await appendAudit(this.pipeline.dir, 'Preflight: built graphify graph in the sandbox worktree (AST-only).').catch(() => {});
+    } else {
+      this.toolInstruction = '';
+      this._log('graph', 'warn', `graphify build in the sandbox failed (${res.error}); proceeding without graph grounding`);
     }
   }
 
@@ -5105,6 +5181,8 @@ export class RunHarness extends EventEmitter {
     // still streaming after a failure) must not recreate the removed root.
     this._mcpClosed = true;
     await this._mcpTail;
+    // G22: first, so no later step that fails or keeps the run root leaves the MCP config's secrets behind.
+    if (this.runRoot) await removeRunMcpConfig(this.runRoot).catch(() => {});
     if (this.runRootMode !== 'detached') {
       if (this.isWorkspace) await this._teardownWorktreeAll();
       else await this._teardownWorktree();
@@ -5599,12 +5677,16 @@ export class RunHarness extends EventEmitter {
     // Plain commit first (uses the repo's configured identity); fall back to a
     // local identity so a repo with no user.name/email still commits — mirrors
     // _ensureGitCheckpoint's belt-and-braces.
-    // The one place worca runs the project's own commit hooks (git-guard.mjs: never under agent isolation).
-    let commit = await this._gitIndexWrite(['commit', '-m', msg], { ...gitOpts, hooks: true });
+    // The one place worca runs the project's own commit hooks (git-guard.mjs: never under agent isolation). A sandbox
+    // run's code came from an untrusted machine: no repo hook runs on this one for it, with the server's keys in its
+    // environment (the sync also refuses hook changes, remote-env.mjs). Local runs keep their hooks.
+    const hooks = !this._execBackend;
+    if (!hooks) this._log('git', 'info', `committing without git hooks: this run's code came from the ${this._execBackend.label}`);
+    let commit = await this._gitIndexWrite(['commit', '-m', msg], { ...gitOpts, hooks });
     if (!commit.ok) {
       commit = await this._git(
         ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator', 'commit', '-m', msg],
-        { ...gitOpts, hooks: true },
+        { ...gitOpts, hooks },
       );
     }
     if (!commit.ok && this.runRootMode === 'detached') {
@@ -6149,6 +6231,7 @@ export class RunHarness extends EventEmitter {
     });
     this._metricsIv.questions += 1;
 
+    let execWaiting = null;   // the remote env this ask parked (remote mode), paired in the finally
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
@@ -6189,8 +6272,13 @@ export class RunHarness extends EventEmitter {
         if (kind !== PLAN_ASK_KIND) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }
+        // remote: an idle sandbox parks while the ask waits. Counted, so the `false` below pairs with this
+        // `true` on the same env (the --yes branch above never gets here).
+        execWaiting = this.execEnv;
+        execWaiting?.setWaiting(true, this._execEnvMaxWaitMs());
       });
     } finally {
+      execWaiting?.setWaiting(false);
       this._nightDisarm();
       this._nightCancel(id);
       this._nightPublish();
@@ -6856,6 +6944,11 @@ export class RunHarness extends EventEmitter {
    */
   async _buildResults({ stage = false } = {}) {
     if (!this.pipeline) return;
+    // remote: the final sync, so the diff, results.json and the memory sync see the last changes (every finished
+    // spawn already synced; this catches a spawn the stop interrupted mid-sync).
+    if (this.execEnv && !this.execEnv.fatalError()) {
+      await this.execEnv.syncBack().catch((err) => this._execLog('error', `final sync failed: ${err?.message || err}`));
+    }
     try {
       // stage: the non-done terminal paths never reached the review loop's staging
       // (:2204, :2311), so `git add -A -N` has not run and the `git diff <checkpoint>`
@@ -7547,6 +7640,7 @@ export class RunHarness extends EventEmitter {
       case 'toolResult': this._onToolResultEvent(role, e, attr); return;
       case 'retry': this._onRetryEvent(role, e, attr); return;
       case 'usage': this._onUsageEvent(e, attr); return;
+      case 'relayCost': this._onRelayCostEvent(e, attr); return;
       default: return;
     }
   }
@@ -7647,11 +7741,10 @@ export class RunHarness extends EventEmitter {
     // id it does not know at $0, and a pinned price is only an estimate of it.
     // Read before _recordBridgeCalls forgets the tag.
     const upstreamCost = attr?.executionId ? bridgeCostFor(attr.executionId) : null;
+    const cliCost = costCfg ? resolveModelCost(attr.model, rawCost, e.usage, costCfg) : rawCost;
     const cost = upstreamCost
       ? upstreamCost.costUsd
-      : costCfg
-        ? resolveModelCost(attr.model, rawCost, e.usage, costCfg)
-        : rawCost;
+      : e.relay ? this._relayedCost(e.relay, cliCost, attr) : cliCost;
     this._openTurns?.delete(attr?.stepKey);        // the result prices every turn it closes
     this._recordBridgeCalls(attr?.stepKey, attr?.executionId);
     // Booked here, so never again at _closeOpenTurns' flush: _recordBridgeCalls keeps a tag under which
@@ -7669,7 +7762,7 @@ export class RunHarness extends EventEmitter {
     }
     if (!this.claude.mock && attr?.model) {
       try {
-        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.usage, costCfg);
+        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.relay ? relayUsageTotal(e.relay) : e.usage, costCfg);
         if (verdict === 'flagged' && !(this._costUnreliableWarned ||= new Set()).has(attr.model)) {
           this._costUnreliableWarned.add(attr.model);
           this._log('orchestrator', 'warn',
@@ -7690,6 +7783,36 @@ export class RunHarness extends EventEmitter {
         this._mcpChain(() => this._recordRunWarning(`${MCP_NAME_WARNING} — Test the servers in ${sets} (${untested.map((c) => c.name).join(', ')})`));
       }
     }
+  }
+
+  /** The cost a REMOTE result books (security evaluation 2026-10-21, E4): the sandbox writes the CLI's result frames,
+   *  so its figure is a claim, and `relay` is what worca's own relay measured upstream since the previous result. The
+   *  measure is booked, and a sandbox figure far from it is named in the run log. A model worca has no price for is
+   *  booked at the fallback rate (relay-usage.mjs priceRelayUsage, audit 2.8), never at the sandbox's figure. */
+  _relayedCost(relay, cliCost, attr) {
+    let measured;
+    try { measured = priceRelayUsage(relay, attr?.model || null); } catch { return cliCost; }
+    if (measured.unpriced.length) { this._warnUnpriced(relay.messages, measured.unpriced, attr); return measured.costUsd; }
+    const gap = Number.isFinite(cliCost) ? Math.abs(cliCost - measured.costUsd) : 0;
+    if (gap > Math.max(0.01, 0.25 * Math.max(cliCost, measured.costUsd))) {
+      this._log('orchestrator', 'warn', `the sandbox reported $${cliCost.toFixed(4)} for this call, the model relay measured $${measured.costUsd.toFixed(4)}` +
+        ` (${relay.messages} model ${relay.messages === 1 ? 'reply' : 'replies'}); worca books the relay's figure`, attr);
+    }
+    return measured.costUsd;
+  }
+
+  /** A remote spawn ended with model calls no result covered (stopped mid-turn, or its sandbox printed no result):
+   *  the relay measured them, so they are booked like a result's, and the step's open turns are not counted apart. */
+  _onRelayCostEvent(e, attr) {
+    let measured;
+    try { measured = priceRelayUsage(e, attr?.model || null); } catch { return; }
+    if (attr?.stepKey) this._openTurns?.delete(attr.stepKey);
+    if (measured.unpriced.length) this._warnUnpriced(e.messages, measured.unpriced, attr);
+    if (measured.costUsd > 0) this._recordCost(measured.costUsd, attr?.stepKey);
+  }
+
+  _warnUnpriced(messages, models, attr) {
+    this._log('orchestrator', 'warn', `model relay: ${messages} model ${messages === 1 ? 'reply' : 'replies'} include a model worca has no price for (${models.join(', ')}); booked at the highest list rate. Give the model a price to book it exactly`, attr);
   }
 
   /** What a result's CLI cost adds to the step. A `cumulativeCost` figure (Claude Code) is the
@@ -8440,6 +8563,242 @@ export class RunHarness extends EventEmitter {
     this._log('orchestrator', 'warn', `control: unknown command action "${cmd.action}" — consumed, ignored`);
   }
 
+  // ── Execution environment (plans/e2b-execution-design.md §17–§18) ─────────────────
+  // Local is the ABSENCE of all of this: `this.execEnv` stays null, and every method below returns
+  // at once on a local run, so a local run's options, state, outcome and resume point gain no key.
+  // A remote run asks the registry for its backend; nothing here names a provider.
+
+  /** The backend of a remote run; null on local runs. */
+  get _execBackend() { return this.execEnvKind === 'local' ? null : getExecBackend(this.execEnvKind); }
+  _execLog(level, msg) { this._log(this.execEnvKind, level, msg); }
+
+  /** Sync: the server's 409 path and the run-start gate. null on local runs. */
+  execEnvStartRefusal() {
+    const b = this._execBackend;
+    if (!b) return null;
+    const { errors } = this._execEnvPreflight();
+    return errors.length ? `${b.title} execution cannot start: ${errors.join(' ')}` : null;
+  }
+  /** The generic remote-run checks (policy.mjs) + the backend's own, de-duplicated in order: for e2b, whose
+   *  preflight also runs remotePreflight, the result is exactly today's list. */
+  _execEnvPreflight() {
+    const b = this._execBackend;
+    const ctx = { engine: this.claude.engine, isWorkspace: this.isWorkspace, workMode: this.workMode,
+      mock: mockEnabled({ mock: this.claude.mock }), brokerOn: brokerEnabled(),
+      // this.runRootMode is set only at _setupRunRoot, after the gate; until then the setting decides.
+      runRootMode: this.runRootMode || runRootMode(),
+      // Set by the gate's async half (_engineChecks), which every start and resume path runs first; until then
+      // (undefined) the backend asks for the sign-in.
+      needsSignIn: this._codexSignIn };
+    const own = b.preflight(ctx);
+    return { errors: [...new Set([...remotePreflight({ title: b.title, ...ctx }), ...own.errors])], warnings: own.warnings };
+  }
+  /** maxConcurrent | maxWaitMin: the backend's user setting, else its capability default. 0 on a local run. */
+  _execEnvLimit(which) { return this._execBackend ? execEnvLimit(this._execBackend, which) : 0; }
+  _execEnvMaxWaitMs() { return this._execEnvLimit('maxWaitMin') * 60_000; }
+  _openExecClient() { return this._execBackend.open({ mock: mockEnabled({ mock: this.claude.mock }) }); }
+
+  /** After setup (worktree, context, memory, engine config): one sandbox for this run. */
+  async _startExecEnv() {
+    const b = this._execBackend;
+    if (!b) return;
+    for (const w of this._execEnvPreflight().warnings) this._execLog('warn', w);
+    const maxWait = this._execEnvLimit('maxWaitMin');
+    const grace = effectiveNightConfig(this.projectDir)?.config?.graceMinutes;
+    if (Number.isFinite(grace) && grace >= maxWait) {
+      this._execLog('warn', `Away mode answers after ${grace} min, but an ${b.label} waits at most ${maxWait} min for an answer; lower the Away grace or raise "Max wait for an answer".`);
+    }
+    const client = await this._openExecClient();
+    // Which environment (template) the sandbox starts from, and whether its build is stale: never blocks.
+    const target = resolveRunEnvironment(b, this.members[0].projectKey);
+    for (const n of target.notes) this._execLog(n.level, n.text);
+    const signal = AbortSignal.any([this.abort.signal, this.pauseAbort.signal]);
+    try {
+      this._execEnvRelease = await acquireSandboxSlot({
+        pool: b.name, cap: this._execEnvLimit('maxConcurrent'), signal,
+        countRunning: client.countRunning ? () => client.countRunning() : null,
+        onWait: ({ cap }) => {
+          this.state.execEnvWaiting = true;
+          this._execLog('info', `waiting for an ${b.label} slot (${cap} of ${cap} in use)`);
+          this._emit('state', this.getState());
+        },
+      });
+    } finally {
+      // Also on a stop/pause while queued: a stopped or paused run must not keep showing "waiting".
+      if (this.state.execEnvWaiting) { delete this.state.execEnvWaiting; this._emit('state', this.getState()); }
+    }
+    const env = new RemoteExecEnv(this._execEnvOpts(client, target));
+    try { await env.start(); }
+    catch (err) {
+      await env.close('start failed').catch(() => {});
+      this._releaseExecEnvSlot();
+      throw markTerminal(err instanceof ExecEnvLostError ? err : new Error(`${b.label} setup failed: ${err?.message || err}`, { cause: err }));
+    }
+    this.execEnv = env;
+    this.state.execEnvSandbox = env.sandboxId;
+    this._execLog('info', `agents and scripts run in ${b.label} ${env.sandboxId} (${b.environmentNoun} ${target.name} from ${target.from}${client.describe ? `, ${client.describe()}` : ''})`);
+    await this._buildSandboxGraph();
+    await this._persist(); this._emit('state', this.getState());
+  }
+  /** `target`: resolveRunEnvironment's { name, buildId, rebuild }; a reconnect starts nothing, so it has no name or build. */
+  _execEnvOpts(client, target) {
+    const m = this.members[0];
+    const paths = artifactPaths(this.projectDir, this.workspaceKey);
+    const entries = this.injectedPaths?.[m.projectKey] || [];
+    return { backend: this._execBackend, client, environment: target?.name ?? null, environmentBuild: target?.buildId ?? null,
+      rebuildHint: target?.rebuild,
+      worktreeDir: this.workDirs.get(m.projectKey), pipelineDir: this.pipeline.dir,
+      storeRoots: [paths.plans, paths.reviews], mcpConfigPath: this.mcpConfigPath,
+      // §8.8 injected paths (memory mount, skills); the code graph is built in the sandbox instead. Engine config files
+      // (Cursor's .cursor/*.json) are not overlaid at start: the adapter mirrors them per spawn (syncEngineFiles), which
+      // also removes the ones it no longer writes and hides them from the sandbox clone's git.
+      injected: entries.filter((e) => e.kind !== 'engineConfig').map((e) => e.path).filter(Boolean),
+      // Re-uploaded when the host changes them mid-run: the memory rules mount (refreshMount), self-ignoring.
+      refreshPaths: entries.filter((e) => e.kind === MEMORY_INJECTED_ENTRY.kind).map((e) => e.path),
+      // Kept out of the sync tree: the same entries _excludePathspecs keeps out of the host's staging. Not Cursor's
+      // engine files: syncEngineFiles' info/exclude line keeps worca's own out of the patch, and a .cursor file the
+      // project tracks (registered on every Cursor run) must still bring the agent's edits home.
+      syncExcludes: entries.filter((e) => e?.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig').map((e) => e.path),
+      // The run-root CLAUDE.md sits above the worktree; Claude Code loads it from a parent dir.
+      supportFiles: [...SCRIPT_SUPPORT_FILES, ...(this.runRoot ? [join(this.runRoot, 'CLAUDE.md')] : [])],
+      metadata: { worca: '1', worcaInstance: instanceTag(worcaHome()), worcaRunId: this.pipeline.id, worcaProject: m.projectKey },
+      // Untracked and changed files matching these stay on this machine (secret-paths.mjs); the project adds its own.
+      secretPaths: secretPathsFor({ secretPaths: resolveSetting('secretPaths', { projectDir: this.projectDir, projectKey: m.projectKey }).value }),
+      // The sandbox's outbound network: null (open) unless the project's E2B egress setting is `allow`.
+      network: target?.network ?? null,
+      scratchDir: this._execEnvScratchDir(),
+      // The `.mcp.json` approvals a Claude spawn applies (orchestrator mcpjsonProjectDir); a workspace uses the worktree.
+      mcpjsonProjectDir: this.isWorkspace ? null : this.projectDir,
+      log: (level, msg) => this._execLog(level, msg),
+      // Files from the sandbox that only a person runs later (npm scripts, VS Code tasks): the run page lists them.
+      onReview: (items) => {
+        const have = Array.isArray(this.state.execEnvReview) ? this.state.execEnvReview : [];
+        const add = items.filter((i) => !have.some((h) => h.path === i.path)).map(({ path, why }) => ({ path, why }));
+        if (!add.length) return;
+        this.state.execEnvReview = [...have, ...add];
+        this._emit('state', this.getState());
+      },
+      onMaxWait: () => this._execEnvMaxWaitReached(),
+      // The run page's "answer by" line: when the parked sandbox is released if the question stays open.
+      onPark: (until) => {
+        if (until) this.state.execEnvWaitUntil = new Date(until).toISOString();
+        else if (!Object.hasOwn(this.state, 'execEnvWaitUntil')) return;
+        else delete this.state.execEnvWaitUntil;
+        this._emit('state', this.getState());
+      } };
+  }
+  _execEnvScratchDir() { return join(worcaHome(), 'tmp', this.execEnvKind, this.pipeline.id); }
+  _releaseExecEnvSlot() { const r = this._execEnvRelease; this._execEnvRelease = null; r?.(); }
+
+  /** done / stopped / error, from the finally: free the sandbox and the slot (the files and code
+   *  came home after every spawn and in _buildResults). */
+  async _finishExecEnv() {
+    const ee = this.execEnv;
+    // A resumed run that ended before (or while) reconnecting still owns its parked sandbox.
+    if (!ee) { await this._dropSavedSandbox(); this._releaseExecEnvSlot(); return; }
+    try { if (!ee.lost && !ee.syncFailure) await ee.syncBack(); }
+    catch (err) { this._execLog('error', `final sync failed: ${err?.message || err}`); }
+    finally { await ee.close('run ended').catch(() => {}); this._releaseExecEnvSlot(); }
+  }
+
+  /** The parked sandbox of a resume point this run never reconnected to (stop from paused, a resume
+   *  that failed): killed, and its host scratch dir removed. */
+  async _dropSavedSandbox() {
+    const id = this._savedExecEnv?.sandboxId;
+    if (!id || this.execEnv) return;
+    // The saved record names its own backend.
+    let b = null; try { b = getExecBackend(this._savedExecEnv.kind || this.execEnvKind); } catch { return; }
+    const client = await Promise.resolve().then(() => b.open({ mock: mockEnabled({ mock: this.claude.mock }) })).catch(() => null);
+    await client?.remove(id).catch(() => {});
+    if (this.pipeline?.id) await rm(this._execEnvScratchDir(), { recursive: true, force: true }).catch(() => {});
+  }
+
+  /** paused / drain: sync, then let the provider keep it for the backend's max wait (clarify: long-wait-policy). */
+  async _parkExecEnv() {
+    const ee = this.execEnv;
+    if (!ee || ee.lost) { this._releaseExecEnvSlot(); return; }
+    if (this._execEnvReleaseOnPark) {
+      // The max wait ran out (_execEnvMaxWaitReached): bring the last files home, release the sandbox, and leave a
+      // resume point without a sandbox id, so the resume starts a fresh one.
+      this._execEnvReleaseOnPark = false;
+      try { await ee.syncBack(); }
+      catch (err) { this._execLog('warn', `syncing the sandbox before releasing it failed: ${err?.message || err}`); }
+      await ee.close('max wait reached').catch(() => {});
+      if (this.state.resumePoint) this.state.resumePoint.execEnv = { kind: this.execEnvKind };
+      this._releaseExecEnvSlot();
+      return;
+    }
+    // Park whatever the sync did: an unparked sandbox's heartbeat would renew it for as long as the
+    // server runs. A patch that did not apply is kept in the pipeline dir; the resume fails on it.
+    try { await ee.syncBack(); }
+    catch (err) { this._execLog('error', `syncing the sandbox before the pause failed: ${err?.message || err}`); }
+    try { await ee.park(this._execEnvMaxWaitMs()); }
+    catch (err) { this._execLog('warn', `parking the sandbox failed: ${err?.message || err}`); }
+    if (this.state.resumePoint) this.state.resumePoint.execEnv = ee.resumeRecord();   // syncedTree moved
+    this._releaseExecEnvSlot();        // the in-process count; the provider's running count still sees it
+  }
+
+  /** Resume: reconnect to the parked sandbox, or fail cleanly (clarify: sandbox-loss). The
+   *  preflight refusal already ran before the row was claimed. */
+  async _resumeExecEnv() {
+    const b = this._execBackend;
+    if (!b) return;
+    const record = this._savedExecEnv;
+    if (!record?.sandboxId) { await this._startExecEnv(); return; }   // paused before the sandbox existed
+    const client = await this._openExecClient();
+    this._execEnvRelease = await acquireSandboxSlot({ pool: b.name, cap: this._execEnvLimit('maxConcurrent'), force: true });
+    const { rebuild } = resolveRunEnvironment(b, this.members[0].projectKey);
+    try { this.execEnv = await RemoteExecEnv.reconnect(record, this._execEnvOpts(client, { name: null, rebuild })); }
+    catch (err) {
+      this._releaseExecEnvSlot();
+      if (err?.sandboxGone) {
+        // The parked sandbox ended (its max wait, a provider restart): every finished step is already home, so
+        // continue in a fresh one. A step whose agent session lived in the old sandbox re-runs fresh.
+        this._execLog('warn', `sandbox ${record.sandboxId} is gone (${firstLine(err.message)}); starting a fresh ${b.label} from the work so far`);
+        await appendAudit(this.pipeline.dir, `Resume: the ${b.label} ${record.sandboxId} was gone; continued in a fresh one.`).catch(() => {});
+        await this._startExecEnv();
+        return;
+      }
+      throw markTerminal(err instanceof ExecEnvLostError || err instanceof ExecEnvSyncError ? err
+        : new ExecEnvLostError(`The run's ${b.label} could not be resumed (${err?.message || err}); it may have outlived the ${this._execEnvLimit('maxWaitMin')}-minute wait. ${LOST_HINT}`, { cause: err }));
+    }
+    // The project's environment was built or changed while the run was paused: the reconnect brought the work
+    // home, so continue in a fresh sandbox from the new one. A record without `environment` predates this check.
+    const target = record.environment ? resolveRunEnvironment(b, this.members[0].projectKey) : null;
+    const was = (name, build) => `${name}${build ? ` (build ${build})` : ''}`;
+    if (target && (target.name !== record.environment || (target.buildId || null) !== (record.environmentBuild || null))) {
+      const change = `${was(record.environment, record.environmentBuild)} → ${was(target.name, target.buildId)}`;
+      this._execLog('info', `the run's ${b.environmentNoun} changed while it was paused (${change}); replacing sandbox ${record.sandboxId} with a fresh ${b.label}`);
+      await appendAudit(this.pipeline.dir, `Resume: the ${b.environmentNoun} changed (${change}); continued in a fresh ${b.label}.`).catch(() => {});
+      const old = this.execEnv; this.execEnv = null;
+      await old.close('environment changed').catch(() => {});
+      this._releaseExecEnvSlot();
+      await this._startExecEnv();
+      return;
+    }
+    this.state.execEnvSandbox = this.execEnv.sandboxId;
+  }
+
+  /** The ask outlived the backend's max wait while the sandbox was parked (the provider ends it at the same time).
+   *  The run PAUSES instead of failing: a parked sandbox runs nothing, every finished step is already home, and a
+   *  resume starts a fresh sandbox from that work (a step whose agent session was in the old sandbox re-runs fresh).
+   *  The sandbox is released by _parkExecEnv once the pause has unwound, so no in-flight catch sees it lost. */
+  _execEnvMaxWaitReached() {
+    const ee = this.execEnv; const pq = this.pendingQuestion;
+    const ms = this._execEnvMaxWaitMs();
+    const label = this._execBackend.label;
+    if (!pq) {
+      // Nothing waits any more (answered as the timer fired): release it the old way.
+      if (ee && !ee.lost) ee.lost = new ExecEnvLostError(`No answer within ${Math.round(ms / 60_000)} min: the run's ${label} was released. ${LOST_HINT}`);
+      ee?.close('max wait reached').catch(() => {});
+      return;
+    }
+    const detail = `No answer within ${Math.round(ms / 60_000)} min: the run's ${label} was released to free its slot. Resume continues in a fresh ${label} from the work so far.`;
+    this._execEnvReleaseOnPark = true;
+    this._pauseFor(REASON.ERROR, new Error(detail), { detail });
+    this.pause();
+  }
+
   /** Terminal bookkeeping for a pause: persist the resume point + paused status.
    *  An ERROR-pause additionally keeps what the retired error path produced — the
    *  diff artifact and the task-source write-back (statusToResult('paused') ->
@@ -8493,6 +8852,7 @@ export class RunHarness extends EventEmitter {
       this._pauseToken ||= randomUUID();
     }
     this._setStatus('paused');
+    await this._parkExecEnv();   // remote: sync, then the sandbox waits (held) for a resume
     const persisted = await this._persist();
     // From here a resume may build a new harness on this row: a late write from this one (the run
     // title outlives a pause) checks the row is still its own first (_rowHandedOff). Only once the

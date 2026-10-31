@@ -9,12 +9,15 @@ import {
   assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertAutoGeneratePrDescriptionInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
   assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair, normalizeRolePair,
+  assertExecEnvInput, assertE2bIntInput,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
 import { RUN_ENGINES, MODEL_ENGINES, ASK_ENGINES, EFFORTS, SUBAGENT_MODELS, effortsForEngine } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
+import { describeExecEnvs } from '../exec-env/index.mjs';
+import { DEFAULT_E2B_MAX_SANDBOXES, DEFAULT_E2B_MAX_WAIT_MIN } from '../exec-env/e2b-config.mjs';
 import { receiptCard } from './receipt.mjs';
 
 /** What the chat never reads or changes, and why (list_settings returns `what`; a refused change names `why`). */
@@ -57,6 +60,7 @@ const MISSED = choice([['run', 'Start it late'], ['skip', 'Skip it']]);
 const MOUNT = choice([['copy', 'Copy'], ['symlink', 'Link']]);
 const RUN_ENGINE = choice(RUN_ENGINES.map((e) => [e, engineLabel(e)]));
 const CHAT_ENGINE = choice(ASK_ENGINES.map((e) => [e, engineLabel(e)]));
+const EXEC_ENV = choice(describeExecEnvs().map((e) => [e.name, e.label]));
 const NOTIFY = Object.freeze({ question: 'Approval / question needed', done: 'Run finished', error: 'Run failed', paused: 'Run paused', away: 'Away hours start or end' });
 const JOBS = Object.freeze({ title: 'Title model', classifier: 'Auto workflow classifier model', overview: 'Run overview model', prDescription: 'PR description model', memoryDefrag: 'Memory defragment model', workspaceScan: 'Workspace scan model' });
 const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel' });
@@ -182,6 +186,13 @@ function buildUserDefs(roles, scanDefaults) {
       check: async (v, ctx) => { const pair = assertMemoryDefragModelInput(v, await ctx.models()); return pair ? { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) } : null; } }),
     userDef({ id: 'run.engine', label: 'Engine for new runs', group: 'Models', read: (s) => ownKey(s, 'runEngine'), body: (unit) => ({ runEngine: unit ?? null }),
       dflt: 'claude', fmt: RUN_ENGINE.fmt, allowed: RUN_ENGINE.allowed, check: (v) => assertRunEngineInput(v) }),
+    // Settings › Runs › Execution environment (docs/e2b.md): where new runs execute, and the E2B mode's two limits.
+    userDef({ id: 'run.execEnv', label: 'Execution environment for new runs', group: 'Runs', read: (s) => ownKey(s, 'execEnv'), body: (unit) => ({ execEnv: unit ?? null }),
+      dflt: 'local', fmt: EXEC_ENV.fmt, allowed: EXEC_ENV.allowed, check: (v) => { const x = assertExecEnvInput(v); return x === 'local' ? null : x; } }),
+    userDef({ id: 'e2bMaxSandboxes', label: 'E2B sandboxes at once', group: 'Runs', read: (s) => ownKey(s, 'e2bMaxSandboxes'), body: (unit) => ({ e2bMaxSandboxes: unit ?? null }),
+      dflt: DEFAULT_E2B_MAX_SANDBOXES, fmt: String, allowed: 'a whole number 1–64', check: (v) => assertE2bIntInput('e2bMaxSandboxes', v) }),
+    userDef({ id: 'e2bMaxWaitMin', label: 'E2B max wait for an answer', group: 'Runs', read: (s) => ownKey(s, 'e2bMaxWaitMin'), body: (unit) => ({ e2bMaxWaitMin: unit ?? null }),
+      dflt: DEFAULT_E2B_MAX_WAIT_MIN, fmt: minutes, allowed: 'whole minutes 5–1440', check: (v) => assertE2bIntInput('e2bMaxWaitMin', v) }),
     ...MODEL_ENGINES.flatMap((e) => roles.map((r) => pairDef(`models.${e}.steps.${r.key}`, `${r.label || r.key} model (${engineLabel(e)})`, 'Models', e,
       (s) => (isObj(s.stepModels) && isObj(s.stepModels[e]) && isObj(s.stepModels[e][r.key]) ? s.stepModels[e][r.key] : null),
       (unit) => ({ stepModels: { [e]: { [r.key]: unit ?? null } } })))),

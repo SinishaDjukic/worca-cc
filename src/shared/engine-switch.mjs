@@ -20,16 +20,18 @@
  *             = the descriptor is wired but worca has no verified lockdown yet (its lockdown is null), so Chat stays off
  *             there. src/core/engines/chat.mjs refuses to load when this and the descriptors disagree. Kept here, not in
  *             the adapters, because the browser and src/core/model-env.mjs read it and neither may import an adapter.
+ *   sandbox   a remote execution sandbox (E2B, src/core/exec-env/) runs it; where not, it runs locally only for now and
+ *             a remote run on it is refused at run start (src/shared/exec-env.mjs REMOTE_ENGINES)
  */
 export const ENGINES = Object.freeze({
-  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
-  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }) }),
-  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
-  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }) }),
-  gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
-  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: false }) }),
-  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
-  qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
+  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }), sandbox: true }),
+  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }), sandbox: true }),
+  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }), sandbox: true }),
+  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }), sandbox: true }),
+  gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }), sandbox: false }),
+  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: false }), sandbox: false }),
+  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }), sandbox: false }),
+  qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }), sandbox: false }),
 });
 
 /** The run engines. */

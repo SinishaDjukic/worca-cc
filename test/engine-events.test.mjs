@@ -9,7 +9,7 @@ const env = (raw, extra = {}) => ({ type: raw.type, raw, ...extra });
 const norm = () => createClaudeNormalizer();
 
 test('the vocabulary', () => {
-  assert.deepEqual([...EVENT_TYPES].sort(), ['compact', 'hook', 'log', 'result', 'retry', 'session', 'stderr', 'subagent', 'text', 'tool', 'toolResult', 'usage']);
+  assert.deepEqual([...EVENT_TYPES].sort(), ['compact', 'hook', 'log', 'relayCost', 'result', 'retry', 'session', 'stderr', 'subagent', 'text', 'tool', 'toolResult', 'usage']);
 });
 
 test('isNormalized: raw envelopes are not, hook and raw-free events are', () => {

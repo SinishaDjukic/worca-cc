@@ -111,6 +111,7 @@ export function createClaudeNormalizer() {
       sessionId: str(raw.session_id),
       errors: Array.isArray(raw.errors) ? raw.errors.map(String) : undefined,
       modelUsage: raw.modelUsage && typeof raw.modelUsage === 'object' ? raw.modelUsage : undefined,
+      relay: e.relay && typeof e.relay === 'object' ? e.relay : undefined,   // a remote spawn: what worca's relay measured
     })];
   }
 
