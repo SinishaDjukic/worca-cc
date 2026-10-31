@@ -24,7 +24,7 @@
         "playwright-core": "1.56.0",
         "smol-toml": "1.9.0",
         "tar": "7.5.22",
-        "undici": "7.30.0",
+        "undici": "8.12.3",
         "ws": "^8.18.0",
         "yaml": "2.9.1"
       },
@@ -2600,6 +2600,16 @@
         "url": "https://github.com/fb55/entities?sponsor=1"
       }
     },
+    "node_modules/cheerio/node_modules/undici": {
+      "version": "7.30.1",
+      "resolved": "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz",
+      "integrity": "sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==",
+      "dev": true,
+      "license": "MIT",
+      "engines": {
+        "node": ">=20.18.1"
+      }
+    },
     "node_modules/cheerio/node_modules/whatwg-mimetype": {
       "version": "4.0.0",
       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
@@ -4902,6 +4912,16 @@
         }
       }
     },
+    "node_modules/jsdom/node_modules/undici": {
+      "version": "7.30.1",
+      "resolved": "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz",
+      "integrity": "sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==",
+      "dev": true,
+      "license": "MIT",
+      "engines": {
+        "node": ">=20.18.1"
+      }
+    },
     "node_modules/json-buffer": {
       "version": "3.0.1",
       "resolved": "https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz",
@@ -6902,12 +6922,12 @@
       "optional": true
     },
     "node_modules/undici": {
-      "version": "7.30.0",
-      "resolved": "https://registry.npmjs.org/undici/-/undici-7.30.0.tgz",
-      "integrity": "sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==",
+      "version": "8.12.3",
+      "resolved": "https://registry.npmjs.org/undici/-/undici-8.12.3.tgz",
+      "integrity": "sha512-+fdndUTwBP86cVjihTp21hZHo7d6oj1c/47XPA3lL8mM0XHs+C4EkcjmgRsFnFk2f/UONGDy9ItBItmXsLOQHw==",
       "license": "MIT",
       "engines": {
-        "node": ">=20.18.1"
+        "node": ">=22.19.0"
       }
     },
     "node_modules/undici-types": {
