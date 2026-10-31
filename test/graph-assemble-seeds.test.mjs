@@ -16,10 +16,12 @@ import { checkRows } from './helpers/rows.mjs';
 const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
 const PORTS = registryPortsFn(REG);
 const S = (agent, extra = {}) => ({ agent, ...extra });
-const REF = () => S('refiner', { selfLoop: true });
+// The V24 seeds keep their v1-era 3-cycle refine; a bare `selfLoop: true` is Default's ONE light cycle.
+const REF = () => S('refiner', { selfLoop: { maxCycles: 3 } });
+const REF_DEFAULT = () => S('refiner', { selfLoop: true });
 
 const SEED_SHAPES = {
-  wf_default: { stages: [S('clarify'), S('planner'), REF(), S('implementer'), S('reviewer')] },
+  wf_default: { stages: [S('clarify'), S('planner'), REF_DEFAULT(), S('implementer'), S('reviewer')] },
   wf_full: { stages: [S('clarify'), S('planner'), REF(), S('decomposer'), S('implementer'), S('reviewer'), S('manualTestsChecklist'), S('manualWebUiTesting')] },
   'wf_no-clarify': { stages: [S('planner'), REF(), S('decomposer'), S('implementer'), S('reviewer'), S('manualTestsChecklist'), S('manualWebUiTesting', { loop: false })] },
   'wf_provided-plan': { taskKind: 'plan-complete-detailed', stages: [REF(), S('decomposer'), S('implementer'), S('reviewer'), S('manualTestsChecklist'), S('manualWebUiTesting')] },
@@ -41,6 +43,10 @@ test('every seed shape is reproduced by the assembler (isomorphic, zero errors, 
       assert.equal(template.nodes.length, seedTpl.nodes.length);
       assert.equal(template.wires.length, seedTpl.wires.length);
       assert.ok(isomorphic(template, seedTpl), `${id}: topology differs`);
+      if (id === 'wf_default') {
+        const self = template.wires.find((w) => w.from.node === w.to.node);
+        assert.deepEqual(self.config, { maxCycles: 1, onExhausted: 'clean' }, 'the assembled refine continues when spent, like Default');
+      }
     },
   })));
 });

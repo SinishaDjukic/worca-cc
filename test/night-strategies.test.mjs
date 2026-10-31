@@ -33,6 +33,18 @@ test('mixed falls back to analysis; low analysis confidence → most reversible,
   assert.deepEqual([d.choice, d.flagged, d.strategy], ['B', true, 'analysis']);
 });
 
+test('low analysis confidence but the analysis picked the clarifier\'s recommendation → that option, flagged', async () => {
+  // Run 6c9cf587: both sources chose the server-side store; the fallback swapped it for the most reversible option.
+  const analysis = { choice: 'A', confidence: 50, rationale: 'only A gives both the same pick', reversible: false,
+    scores: { A: { reversible: 2 }, B: { reversible: 9 }, C: { reversible: 5 } } };
+  const d = await decideQuestion(Q({ confidence: [55, 40, 5], recommended: 'A' }), C, { analyze: async () => analysis });
+  assert.deepEqual([d.choice, d.flagged, d.strategy, d.confidence], ['A', true, 'analysis', 50]);
+  assert.match(d.rationale, /picked the option the clarifier recommended/);
+  // They disagree: the most reversible option, as before.
+  const other = await decideQuestion(Q({ confidence: [55, 40, 5], recommended: 'C' }), C, { analyze: async () => analysis });
+  assert.equal(other.choice, 'B');
+});
+
 test('analysis confident → its choice, not flagged', async () => {
   const d = await decideQuestion(Q({}), C, { analyze: async () => ({ choice: 'C', confidence: 85, rationale: 'r', reversible: true, scores: {} }) });
   assert.deepEqual([d.choice, d.flagged, d.confidence], ['C', false, 85]);
@@ -50,7 +62,17 @@ test('weightedTotals / mostReversible', () => {
   assert.equal(mostReversible(['A', 'B'], { A: { reversible: 3 }, B: { reversible: 3 } }, { A: 1, B: 2 }), 'B', 'tie → higher total');
 });
 
+test('gate rule: Away adds no extra fix round by default (like --yes at a spent loop)', () => {
+  assert.equal(NIGHT_DEFAULTS.maxExtraCycles, 0);
+  const major = { severity: 'major', title: 'y' };
+  assert.deepEqual(gateRule({ issues: [major], extraUsed: 0 }, C),
+    { decision: 'continue', flagged: true, reason: '1 major issue left; Away mode adds no extra fix rounds, continuing' });
+  // A refine re-check hold (#996): the verdict lists only open issues, so a fixed plan continues unflagged.
+  assert.deepEqual(gateRule({ issues: [], extraUsed: 0 }, C), { decision: 'continue', flagged: false, reason: 'no critical or major issues left, continuing' });
+});
+
 test('gate rule', () => {
+  const C = { ...NIGHT_DEFAULTS, maxExtraCycles: 1 };
   const crit = [{ severity: 'critical', title: 'x' }], major = [{ severity: 'major', title: 'y' }], minor = [{ severity: 'minor', title: 'z' }];
   assert.deepEqual(gateRule({ issues: minor, extraUsed: 0 }, C), { decision: 'continue', flagged: false, reason: 'no critical or major issues left, continuing' });
   assert.equal(gateRule({ issues: crit, extraUsed: 0 }, C).decision, 'another');
@@ -62,6 +84,7 @@ test('gate rule', () => {
 });
 
 test('gate rule: major issues get the extra fix rounds too (the loop blocks on them)', () => {
+  const C = { ...NIGHT_DEFAULTS, maxExtraCycles: 1 };
   const crit = { severity: 'critical', title: 'x' }, major = { severity: 'major', title: 'y' };
   assert.deepEqual(gateRule({ issues: [major], extraUsed: 0 }, C), { decision: 'another', flagged: false, reason: '1 major issue left, one more fix round' });
   assert.equal(gateRule({ issues: [crit, major, major], extraUsed: 0 }, C).reason, '1 critical and 2 major issues left, one more fix round');

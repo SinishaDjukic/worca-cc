@@ -280,24 +280,31 @@ export async function readAskFile(absPath) {
 
 /**
  * Coerce arbitrary parsed data into the canonical review shape:
- *   { issues: [ { severity, title, detail, location } ], summary, checklist? }
+ *   { issues: [ { severity, title, detail, location } ], summary, fixed?, checklist? }
  * Always returns { issues: [], summary: '' } on bad input.
  */
 export function normalizeReview(data) {
   if (!data || typeof data !== 'object') return { issues: [], summary: '' };
-  const list = Array.isArray(data.issues) ? data.issues : [];
-  const issues = [];
-  for (const it of list) {
+  const issues = normalizeIssueList(data.issues);
+  // `fixed`: the refiner's issues found in its input and fixed in its output — information only, never blocking.
+  const fixed = normalizeIssueList(data.fixed);
+  const checklist = normalizeReviewChecklist(data.checklist);
+  return { issues, summary: asString(data.summary).trim(),
+    ...(fixed.length ? { fixed } : {}), ...(checklist ? { checklist } : {}) };
+}
+
+function normalizeIssueList(list) {
+  const out = [];
+  for (const it of Array.isArray(list) ? list : []) {
     if (!it || typeof it !== 'object') continue;
-    issues.push({
+    out.push({
       severity: normalizeSeverity(it.severity),
       title: asString(it.title).trim(),
       detail: asString(it.detail).trim(),
       location: asString(it.location).trim(),
     });
   }
-  const checklist = normalizeReviewChecklist(data.checklist);
-  return { issues, summary: asString(data.summary).trim(), ...(checklist ? { checklist } : {}) };
+  return out;
 }
 
 /**

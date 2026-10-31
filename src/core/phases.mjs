@@ -221,7 +221,8 @@ export function subagentModelDirective(subagentModel) {
       'Choose on WHO CHECKS THE OUTPUT, never on how small or cheap the sub-task looks:\n' +
       '- `sonnet`: mechanical, bounded investigation whose findings the report itself lets you ' +
       'verify — grep-and-summarize a known pattern, enumerate usages or call sites, extract or ' +
-      'reformat existing content, confirm what a file plainly states.\n' +
+      'reformat existing content, confirm what a file plainly states — and any lane whose findings ' +
+      'you will re-check yourself (read the cited file:line) before you rely on them.\n' +
       '- `opus`: investigation needing real codebase judgment you will build on — trace why ' +
       'something fails, map how a subsystem hangs together, weigh where a change belongs — and ' +
       'analysis whose VERDICT the run depends on and nothing downstream re-checks: a severity call, ' +
@@ -365,6 +366,10 @@ export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentMod
     'use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
     'trivial, single-file change.\n\n' +
+    'Send every dispatch in ONE message with `run_in_background: false`: the lanes still run concurrently and ' +
+    'all their reports come back in that same turn. Never wait for a lane or a background command with ' +
+    '`sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts; a background ' +
+    'command\'s completion notice wakes you.\n\n' +
     (endpointRouted ? sameEndpointSubagentDirective() : subagentModelDirective(subagentModel))
   );
 }
@@ -1162,7 +1167,7 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
   if (mode === 'fix') {
     // VERBATIM from the original phases.mjs fix-mode body.
     return (
-      `Address EVERY critical and major issue in the review below, then re-run the tests. ` +
+      `Address EVERY critical and major issue in the review below, then run the tests that cover what you changed. ` +
       `Follow the plan; deviate only if something does not work at all.\n\n` +
       `Plan: ${planPath}\n` +
       `Review to fix: ${reviewPath}\n`
@@ -1181,8 +1186,8 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
   }
   // VERBATIM from the original phases.mjs implement-mode body.
   return (
-    `Implement the plan using TDD (red-green-refactor). Follow it with NO deviation; ` +
-    `deviate slightly only if a step does not work at all.\n\n` +
+    `Implement the plan using TDD (red-green-refactor). Follow its contracts with NO deviation; ` +
+    `deviate slightly only if a contract does not work at all.\n\n` +
     `Plan: ${planPath}\n`
   );
 }

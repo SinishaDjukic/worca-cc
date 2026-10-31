@@ -101,7 +101,7 @@ test('resolvedFromManifest: port IDENTITY comes from the snapshot, executor meta
   assert.equal(ports.verdict.filename, registry.reviewer.verdict.filename, 'verdict filename is the LIVE one, never the manifest stub');
   assert.equal(r.nodes.n_review.runnerType, 'verifier');
   assert.ok(r.nodes.n_impl.meta.sideEffect === 'code');
-  assert.deepEqual(r.wires, { w5: { maxCycles: 3 }, w9: { maxCycles: 5 } }, 'effective budgets survive the round trip');
+  assert.deepEqual(r.wires, { w5: { maxCycles: 1 }, w9: { maxCycles: 5 } }, 'effective budgets survive the round trip');
   assert.deepEqual(r.template.wires.find((w) => w.id === 'w9').config, { maxCycles: 5 });
   assert.equal(r.nodes.n_task.kind, 'task');
   assert.deepEqual([...r.agentKeys].sort(), ['clarify', 'implementer', 'planner', 'refiner', 'reviewer']);

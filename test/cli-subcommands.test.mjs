@@ -287,12 +287,12 @@ test('doctor prunes leftover legacy worktrees per registered project (detached) 
   assert.match(branches, /worca-cc\/clidone1/);
 });
 
-test('workflow list prepends the graph built-ins (Default, then Memory defragment) before the stored rows', async () => {
+test('workflow list prepends the graph built-ins (Default, Lean, then Memory defragment) before the stored rows', async () => {
   const home = await freshHome();
   const r = await run(['workflow', 'list'], { home });
   assert.equal(r.code, 0, r.stderr);
   const ids = r.stdout.trim().split('\n').filter(Boolean).map((l) => l.split('\t')[0]);
-  assert.deepEqual(ids.slice(0, 2), ['wf_default', 'wf_memory_defrag'], r.stdout);
+  assert.deepEqual(ids.slice(0, 3), ['wf_default', 'wf_lean_build', 'wf_memory_defrag'], r.stdout);
   assert.match(r.stdout, /wf_memory_defrag\tMemory defragment\tshared/);
 });
 

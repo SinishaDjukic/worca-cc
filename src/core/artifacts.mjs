@@ -602,7 +602,7 @@ export function readReviewRow(pipelineId, kind, cycle) {
  * (readStepQuestions, chronological insert order). Always returns arrays (never
  * null) so callers render unconditionally.
  * @param {string} pipelineId
- * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,fixed?:Array,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
  */
 export function readPipelineExtras(pipelineId) {
   const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
@@ -624,6 +624,7 @@ export function readPipelineExtras(pipelineId) {
       cycle: r.cycle,
       issues: Array.isArray(v.issues) ? v.issues : [],
       summary: typeof v.summary === 'string' ? v.summary : '',
+      ...(Array.isArray(v.fixed) && v.fixed.length ? { fixed: v.fixed } : {}),
       ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });

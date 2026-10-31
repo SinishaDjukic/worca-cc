@@ -2256,9 +2256,11 @@ export class GraphOrchestrator extends RunHarness {
     // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.
     if (this.pipeline && ctx.verdict?.path && result?.verdict && !result.verdict.missing) {
       await writeReview(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal, result.verdict);
-      // Run progress (P5): the latest pass's blocking count — "Review · 2nd pass, fixing 2 issues".
+      // Run progress (P5): the latest pass's blocking count — "Review · 2nd pass, fixing 2 issues" — and the
+      // blockers a refiner fixed in that pass (its `fixed` list), so a pass that fixed them never reads as zero findings.
       this.state.progressFacts ||= { tasks: {}, reviews: {} };
-      this.state.progressFacts.reviews[ctx.nodeId] = { pass: ctx.ordinal || 1, blocking: blockingIssues(result.verdict).length };
+      const fixed = blockingIssues({ issues: result.verdict.fixed }).length;
+      this.state.progressFacts.reviews[ctx.nodeId] = { pass: ctx.ordinal || 1, blocking: blockingIssues(result.verdict).length, ...(fixed ? { fixed } : {}) };
     }
     const seen = new Set();
     for (const port of ctx.ports?.outputs || []) {

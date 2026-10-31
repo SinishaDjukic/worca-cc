@@ -51,6 +51,7 @@ import {
 } from '../phases.mjs';
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
+import { withRecheck } from '../../shared/graph/verdict.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
 import { roleBriefBlock, roleItems, houseBriefBlock } from '../../shared/shape/role-review.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
@@ -713,7 +714,7 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
 export async function runAgentExecution(ctx) {
   const { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning } = await prepare(ctx);
   const { text, sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
-  const review = verdict?.path ? await readVerdict(verdict.path) : null;
+  const review = verdict?.path ? withRecheck(await readVerdict(verdict.path), ctx.ordinal ?? 1) : null;
   return {
     summary: (text || '').trim() || `${meta.displayName || ctx.node?.key || 'Agent'} completed.`,
     outputs: publishable(ports, outputs),

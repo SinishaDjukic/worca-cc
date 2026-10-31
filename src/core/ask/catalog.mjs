@@ -6,7 +6,7 @@
 // Readers are injected so unit tests run without a DB.
 import { listProjects as realListProjects } from '../projects.mjs';
 import { listWorkspaces as realListWorkspaces } from '../workspaces.mjs';
-import { listWorkflows as realListWorkflows, GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW } from '../workflows.mjs';
+import { listWorkflows as realListWorkflows, GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW } from '../workflows.mjs';
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { rankNodes } from '../../shared/graph/layout.mjs';
 import { registryPortsFn } from '../graph/registry-ports.mjs';
@@ -109,7 +109,7 @@ export function createCatalog({
   listWorkspaces = realListWorkspaces,
   listWorkflows = realListWorkflows,
   defaultWorkflow = GRAPH_DEFAULT_WORKFLOW,
-  builtinWorkflows = [GRAPH_MEMORY_DEFRAG_WORKFLOW],
+  builtinWorkflows = [GRAPH_LEAN_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW],
   loadAgentRegistry = realLoadAgentRegistry,
   // The model catalog (project-less, like list_models) and the entries' own cost: the Models section's facts.
   listModels = realListModels,
