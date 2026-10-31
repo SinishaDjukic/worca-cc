@@ -43,7 +43,11 @@ The type scale below, named by what it does on a Rail page.
 | A form | the dialog (Modals) | Create PR |
 | Picking and adding names | the list editor: one field (find or create) over checked lists | labels and cost tags, groups |
 | Worca writing text for you | the suggestion: a sparkle inside the field, a Suggested chip, the violet shimmer while it writes, Stop | run title and branch, PR title and description, a drafted answer, a change request |
-A choice is never a full-width toggle or radio cards: it is a picker in the sentence it changes.
+| A setting that is on or off | the switch (Switch): takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR, resume after a limit |
+| Two or three views of the same thing | the segmented control | Light and Dark, Summaries and Raw |
+| Something done, nothing to answer | the toast (Toasts); a failure with a place on the page says it there instead | PR merged, Link copied |
+A choice is never a full-width toggle or radio cards: it is a picker in the sentence it changes. Rail pages use no
+radios; the prototype's one-line ink toast (`.rc-toast`) is a stand-in for the shared toast.
 A yes or no never covers the page: it is the strip, in place; the dialog is only for a form.
 
 ### Violet, kept apart
