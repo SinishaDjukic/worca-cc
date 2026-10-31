@@ -556,6 +556,15 @@ level and has no **Diff**, **Changes** or **Actions**.
   memory: global for how you work, per project for facts about one repository. Pipeline agents
   load the same memory; view, edit, delete or restore it on Settings › **Memory** and on a
   project's **Memory** tab.
+  - A run loads memory as it was when the run started, and a resume loads that same set. Each
+    step records which set it loaded (a sha256 in the step record; the files are in the run's `memory.json`).
+  - Pipeline agents never change memory themselves. A note they write waits under **Proposed by runs** on
+    the Memory page (or `worca memory proposals`) until you approve or reject it.
+  - A note with `roles: reviewer` (agent keys, comma-separated; `ask` is the chat) loads only into those agents.
+  - **Run without memory** on the New run page (`--no-memory`, or `noMemory: true` in `POST /api/run`) starts a
+    run that loads none, to compare runs with and without it.
+  - Pipeline agents on Claude load only the project's own Claude Code settings, not your `~/.claude` hooks,
+    plugins or skills. The project setting **Runs load my Claude Code setup** brings them back.
 - **Voice** — the composer's mic dictates once, lets you talk and read the replies, or holds a
   hands-free conversation that reads replies aloud (hold the mic to start it). Whisper and
   Kokoro run in the browser, so audio never leaves the computer, or point either side at your

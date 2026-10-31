@@ -624,6 +624,13 @@
                       <span class="txt">Mark this run: worca may answer for me</span>
                     </label>
                     <small class="hint" id="nightModeHint"></small>
+                    <!-- #943: a run without worca memory (no notes load, none are proposed). -->
+                    <label class="switch-row" id="no-memory-row">
+                      <input id="noMemory" class="sw-input" type="checkbox" role="switch">
+                      <span class="switch"></span>
+                      <span class="txt">Run without memory</span>
+                    </label>
+                    <small class="hint" id="noMemoryHint">No memory notes load and the agents propose none. Use it to compare a run with and without memory.</small>
 
                     <!-- Guardrails picker (built-ins + named sets; the selection IS the
                          run's policy, applied uniformly to every member). app.js populates

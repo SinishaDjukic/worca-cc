@@ -9,8 +9,14 @@
     "acceptEdits",
     "--append-system-prompt",
     "<SYSTEM_PROMPT>",
+    "--settings",
+    "{\"autoMemoryEnabled\":false}",
     "--allowedTools",
-    "Read,Write,Edit,Bash,Grep,Glob,Skill,Task,Agent"
+    "Read,Write,Edit,Bash,Grep,Glob,Skill,Task,Agent",
+    "--tools",
+    "Read,Write,Edit,Bash,Grep,Glob,Skill,Task,Agent,WebFetch,ToolSearch",
+    "--setting-sources",
+    "project"
   ],
   "stdin": "",
   "files": {},

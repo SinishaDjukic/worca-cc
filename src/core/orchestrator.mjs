@@ -1026,6 +1026,7 @@ export class GraphOrchestrator extends RunHarness {
       guardrailsId: this.guardrailsId,
       ...(this.mcpOptOut?.length ? { mcpOptOut: [...this.mcpOptOut] } : {}),   // MCP registry §6.2: resume re-resolves minus it
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
+      ...(this.memoryOff ? { noMemory: true } : {}),   // #943: a run started without memory resumes without it
       ...(this.runShape ? { shape: this.runShape } : {}),
       ...(this.state.shaping ? { shaping: jsonClone(this.state.shaping) } : {}),
       checkpointRef: this.checkpointRef || null,
@@ -1871,6 +1872,7 @@ export class GraphOrchestrator extends RunHarness {
       runRoot: this.runRoot,
       mcpConfigPath: this.mcpConfigPath,
       mcpServerGrants: this.mcpServerGrants,
+      mcpConfigServers: this.mcpConfigServers,
       // MCP registry (design §6.1): the copies' secret env, the values to redact and the tools
       // withheld for the run's tool-name limit. Never persisted anywhere.
       mcpEnv: this.mcpLayer?.env,
@@ -1886,7 +1888,12 @@ export class GraphOrchestrator extends RunHarness {
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
       shape: this.runShape,
-      memoryBlock: this.memoryBlock || '',              // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs)
+      claudeSettingSources: this._claudeSettingSources(),   // #943 C3: ['project'], or null = every source (opt-in / sign-in)
+      // #943: the memory this step loads, for the per-execution manifest: 'frozen' | 'off' | null (a defragment run, a
+      // failed mount), and the frozen set ({ set, files }: memory-sync.mjs frozenManifest; role notes carry `roles`).
+      memoryMode: this.memoryOff ? 'off' : (this.memory?.manifest ? 'frozen' : null),
+      memoryManifest: this.memory?.manifest || null,
+      memoryBlock: this._memoryBlockFor(nc.key),        // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs), + this role's notes (#943)
       memoryMount: this.memory?.mount || null,          // the WRITABLE copy: <pipeline.dir>/memory (agents, the defrag mock and tests write here; runOpts passes it as --add-dir)
       memoryRules: this.memory?.rules || null,          // the read-only rules copy inside the cwd (tests read it; agents never write it)
       memoryLoadLog: this._memoryLoadLogFor(executionId),   // memory usage: this execution's InstructionsLoaded hook file, or null
@@ -2044,6 +2051,8 @@ export class GraphOrchestrator extends RunHarness {
         cycle: ctx.ordinal,                 // legacy alias the whole UI reads
         agentKey: ctx.node?.kind === 'agent' ? (ctx.node.key ?? null) : null,   // agents only (D17: it must not lie)
         nodeKey: ctx.node?.key ?? null,                                          // every keyed kind
+        // #943: the memory this step loaded (the run's frozen set, by sha256), on agent steps only.
+        ...(ctx.node?.kind === 'agent' && this._memoryStepRecord(ctx.node.key) ? { memory: this._memoryStepRecord(ctx.node.key) } : {}),
         phase: ctx.node?.key ?? ctx.uiPhase, // legacy column
         stepIndex: null,                    // a graph has executions, not step indexes
         status,

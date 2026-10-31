@@ -440,6 +440,7 @@ import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs
 import { whereOf } from '../src/shared/ask-where.mjs';
 import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
+import { listProposals, approveProposal, rejectProposal } from '../src/core/memory-proposals.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
   readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot, listMemory,
@@ -2849,6 +2850,10 @@ const startRunHandler = async (req, res) => {
     const scopeReason = validateMemoryScope({ workflowId, memoryScope, isWorkspace: !!hasWorkspace });
     if (scopeReason) return badRequest(res, scopeReason);
     if (noProject && memoryScope === 'project') return badRequest(res, NO_PROJECT_ERRORS.memory);   // U13 + CONTRACT §3: global memory only
+    // #943: a run without memory — no notes load, none are proposed. A defragment run IS memory: never with it.
+    if (body.noMemory != null && typeof body.noMemory !== 'boolean') return badRequest(res, 'noMemory must be true or false');
+    const noMemory = body.noMemory === true;
+    if (noMemory && memoryScope) return badRequest(res, 'noMemory cannot be set on a Memory defragment run');
     // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
     // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
     // models per node, and a body model there stays ignored exactly as before. The shape here; the
@@ -3036,6 +3041,7 @@ const startRunHandler = async (req, res) => {
         startedBy,
         humanInLoop: bodyHumanInLoop ?? true,
         ...(memoryScope ? { memoryScope } : {}),
+        ...(noMemory ? { noMemory: true } : {}),
         ...(runOverlay ? { overlay: runOverlay } : {}),
         claude: { permissionMode: 'acceptEdits', ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : {}), mock, ...runEngine },
         ...(nightMode ? { nightMode: true } : {}),
@@ -3350,6 +3356,7 @@ const startRunHandler = async (req, res) => {
         sync,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
+        ...(noMemory ? { noMemory: true } : {}),
         ...(runOverlay ? { overlay: runOverlay } : {}),
         claude: {
           permissionMode: stored.permissionMode || 'acceptEdits',
@@ -11117,6 +11124,46 @@ app.get('/api/memory/health', async (_req, res) => {
 });
 registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
+
+// #943: the notes pipeline agents proposed (memory-proposals.mjs). A run never writes the store; a person approves each
+// note here (Settings › Memory › Proposed notes) or with `worca memory proposals approve <id>`. Approving is the
+// person's consent, like a team share: same-origin pages only, never a possible agent (teamOriginOk).
+async function proposalProject(item) {
+  if (!String(item.scope).startsWith('projects/')) return null;
+  const key = item.scope.slice('projects/'.length);
+  return (await listProjects()).find((p) => p.key === key) || null;
+}
+app.get('/api/memory/proposals', async (req, res) => {
+  try {
+    const runId = typeof req.query.runId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(req.query.runId) ? req.query.runId : null;
+    const projects = new Map((await listProjects()).map((p) => [p.key, p.name]));
+    const proposals = (await listProposals(memoryRoot(), { runId })).map((p) => ({
+      ...p, scopeLabel: p.scope === 'global' ? 'Global' : `Project ${projects.get(p.scope.slice('projects/'.length)) || p.scope.slice('projects/'.length)}`,
+    }));
+    res.json({ proposals });
+  } catch (err) { return memoryError(res, err); }
+});
+app.post('/api/memory/proposals/:id/:action(approve|reject)', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const id = String(req.params.id || '');
+    const item = (await listProposals(memoryRoot())).find((p) => p.id === id);
+    if (!item) return res.status(404).json({ error: 'proposal not found' });
+    if (req.params.action === 'reject') {
+      await rejectProposal(memoryRoot(), id);
+      return res.json({ ok: true });
+    }
+    const live = liveDefragRun(item.scope);
+    if (live) return res.status(409).json({ error: 'a defragment run is live on this memory scope. Wait for it to finish', runId: live.id });
+    const project = await proposalProject(item);
+    if (item.scope !== 'global' && !project) return res.status(404).json({ error: 'the project of this proposal is no longer registered' });
+    const r = await approveProposal(memoryRoot(), id, { caps: memoryCaps(project ? { projectDir: project.path } : null), prepare: teamClientText });
+    if (!r) return res.status(404).json({ error: 'proposal not found' });
+    emitMemoryChanged(item.scope);
+    if (project) await queueTeamChanges(project.key, [item.name], { source: `run:${item.runId}` }).catch(teamWarn);
+    res.json({ ok: true, applied: r.applied });
+  } catch (err) { return memoryError(res, err); }
+});
 
 // Requirements (plans/requirements-design.md): product-owner feature specs, behind the `requirements` flag.
 registerRequirementsRoutes(app, { broadcast, deps: {

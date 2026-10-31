@@ -131,7 +131,7 @@ import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '
 import { workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
 // The memory view's history list is `renderMemoryHistory`: "History" alone names the saved runs here.
 import {
-  memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
+  memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor, renderProposals,
   renderMemoryHistory, MEMORY_NAME_HELP, formatWhen, parseSnapshotId, patchRunRefs,
   MEMORY_TEAM_SUB, renderMemoryViews, renderTeamCard, renderTeamNotes, renderSeedReview, renderClashCompare, teamLoadOf, teamLoadValue,
   collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
@@ -750,6 +750,7 @@ const el = {
   hitlRow: $('#hitl-row'),
   humanInLoop: $('#humanInLoop'),
   nightMode: $('#nightMode'),
+  noMemory: $('#noMemory'),
   memoryScopeRow: $('#memory-scope-row'),
   memoryScopeSeg: $('#memory-scope-seg'),
   engineSelect: $('#engineSelect'),
@@ -4456,6 +4457,7 @@ async function renderWorkflowConfig(workflowId) {
   // Memory defragment (agent memory §7.3 / B11): the ONE run option that workflow needs. Every
   // path that changes the picker ends here, so this single line covers them all.
   if (el.memoryScopeRow) el.memoryScopeRow.hidden = workflowId !== MEMORY_DEFRAG_WORKFLOW_ID;
+  for (const id of ['no-memory-row', 'noMemoryHint']) { const n = document.getElementById(id); if (n) n.hidden = workflowId === MEMORY_DEFRAG_WORKFLOW_ID; }
   // MCP registry (§6.1): a memory-defrag run starts no registry servers, so the control hides at
   // once; the policy-line repaint at the end refetches the preview for every other workflow.
   if (el.mcpRunsField) renderMcpRuns();
@@ -15068,6 +15070,8 @@ function buildRunBody() {
     memoryScope: isDefragRun ? state.memoryScope : undefined,
     // Night mode per-run opt-in: only when ticked, so every other run body stays byte-identical.
     nightMode: el.nightMode && el.nightMode.checked ? true : undefined,
+    // #943: only when ticked (and never on a defragment run, which IS memory), so every other body stays byte-identical.
+    noMemory: !isDefragRun && el.noMemory && el.noMemory.checked ? true : undefined,
     // Engine: only a non-default one is sent, and the consent only with it and only when
     // ticked, so a Claude run's body stays byte-identical.
     // The engine shown is the engine that runs: Claude goes unsent only when the default is KNOWN
@@ -17698,7 +17702,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
   // a frame refresh (a draft is not a baseline), or the next frame reads the editor as clean and
   // refetches over the unsaved text. `flash` carries a success message across the reload a write
   // triggers: load() clears the message as its first act, so say() before it would never be seen.
-  const st = { report: null, selected: '', editor: null, isNew: false, snapshots: [], flash: null };
+  const st = { report: null, selected: '', editor: null, isNew: false, snapshots: [], proposals: [], flash: null };
   // Request token: a frame poke, a save and a route change can all be in flight at once, and the
   // LAST one issued must win however the responses land.
   let seq = 0;
@@ -17721,6 +17725,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     // A live defragment run owns the scope: Save / Delete / Restore resume when it finishes (B23).
     const locked = !!st.report.defragRunId;
     host.appendChild(renderHealthCard(st.report, { host: hostRef() }));
+    const proposals = renderProposals(st.proposals, { runInfo: memoryRunInfo, locked });
+    if (proposals) host.appendChild(proposals);
     host.appendChild(renderFileList(st.report.files, { selected: st.selected, runInfo: memoryRunInfo }));
     const right = document.createElement('div');
     right.className = 'mem-right';
@@ -17760,6 +17766,9 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     const report = r.data;
     const hist = await memoryApi('GET', `${base}/history`);
     if (my !== seq) return;
+    const props = await memoryApi('GET', '/api/memory/proposals');
+    if (my !== seq) return;
+    st.proposals = props.ok && Array.isArray(props.data.proposals) ? props.data.proposals.filter((p) => p.scope === scopeKey) : [];
     st.report = report;
     st.snapshots = hist.ok && Array.isArray(hist.data.snapshots) ? hist.data.snapshots : [];
     if ((fromFrame || keepDraft) && dirty) {
@@ -17844,6 +17853,19 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     await load('');
   }
 
+  /** #943: Approve writes a run's proposed note to this scope, Reject drops it. */
+  async function decide(id, action, button) {
+    const r = await withButton(button, async () => {
+      const res = await memoryApi('POST', `/api/memory/proposals/${encodeURIComponent(id)}/${action}`);
+      return res.ok ? res : { ok: false, error: res.data.error || `HTTP ${res.status}` };
+    });
+    if (r.skipped) return;
+    if (!r.ok) { say(r.error, 'err'); return; }
+    const p = st.proposals.find((x) => x.id === id);
+    st.flash = [`${action === 'approve' ? 'Approved' : 'Rejected'}${p ? ` ${p.name}.md` : ''}`, 'ok'];
+    await load(st.selected, { keepDraft: true });
+  }
+
   async function defragment(runId) {
     // ONE control (spec §10): while a run is live the same button opens it instead of starting a second.
     if (runId) { location.hash = `running/${runId}`; return; }
@@ -17872,6 +17894,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (hit('mem-delete')) { void remove(); return; }
     if (hit('mem-restore')) { void restore(hit('mem-restore').dataset.id); return; }
     if (hit('mem-defrag')) { void defragment(hit('mem-defrag').dataset.runId || ''); return; }
+    if (hit('mem-prop-approve')) { void decide(hit('mem-prop-approve').dataset.id, 'approve', hit('mem-prop-approve')); return; }
+    if (hit('mem-prop-reject')) { void decide(hit('mem-prop-reject').dataset.id, 'reject', hit('mem-prop-reject')); return; }
     const row = hit('mem-row');
     if (row) open(row.dataset.name);
   };
@@ -28961,13 +28985,14 @@ function buildHdOverview(sec, record, data) {
         const linked = !!scopeKey && c.kind !== 'del' && c.kind !== 'fail';
         const chip = document.createElement(linked ? 'button' : 'span');
         // `fail` borrows the rejected colour: no new CSS class, no new light-contrast baseline signature.
-        chip.className = `hd-mem-chip hd-mem-${c.kind === 'fail' ? 'rej' : c.kind} mono`;
-        if (c.kind === 'fail') chip.dataset.kind = 'fail';
+        // `prop` (#943, a proposal waiting for approval) borrows the modified colour and opens the scope, where it waits.
+        chip.className = `hd-mem-chip hd-mem-${c.kind === 'fail' ? 'rej' : c.kind === 'prop' ? 'mod' : c.kind} mono`;
+        if (c.kind === 'fail' || c.kind === 'prop') chip.dataset.kind = c.kind;
         chip.textContent = c.text;
         if (c.title) chip.title = c.title;
         if (linked) {
           chip.type = 'button';
-          chip.addEventListener('click', () => { location.hash = memoryRoute(scopeKey, c.name); });
+          chip.addEventListener('click', () => { location.hash = memoryRoute(scopeKey, c.kind === 'prop' ? '' : c.name); });
         }
         line.appendChild(chip);
       }
