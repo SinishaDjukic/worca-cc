@@ -55,7 +55,8 @@ import {
 } from './settings.mjs';
 import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
 import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
-import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
+import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY, memoryLoadedPath, readFrozenSet, frozenManifest, writeFrozenCopies, renderRoleNotes } from './memory-sync.mjs';
+import { captureProposals } from './memory-proposals.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
 import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
 import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText, memoryLoadPlans, loadFilteredDirs } from './memory-team.mjs';
@@ -125,7 +126,8 @@ import { fieldsForRun, effectiveCap, deviationsFor, mcpDeviations } from './poli
 import { overlayStepModels } from './run-overlay.mjs';
 import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/state.mjs';
 import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
-import { readSettings as readRawSettings, userTagDimensions } from './settings.mjs';
+import { readSettings as readRawSettings, userTagDimensions, runUserClaudeSettings } from './settings.mjs';
+import { userClaudeSignIn } from './claude-user-settings.mjs';
 import { readRunTags } from './run-tags-store.mjs';
 import { missingRequired } from '../shared/tag-dimensions.mjs';
 import { byActor } from './identity.mjs';
@@ -987,6 +989,7 @@ export class RunHarness extends EventEmitter {
     this.runContext = null;
     this.mcpConfigPath = null;      // <runRoot>/mcp.json -> --mcp-config
     this.mcpServerGrants = [];      // `mcp__<server>` per merged server (V1 branch (a))
+    this.mcpConfigServers = [];     // the server names mcp.json holds (strictMcpFor)
     // MCP registry layer (design §6.1): { env, redact, disallowed, allowlist, copies } for every
     // dispatch, or null. Holds secret values: never written to run.json, events, journals or the
     // resume point.
@@ -1030,6 +1033,8 @@ export class RunHarness extends EventEmitter {
     // it back from its resume point — the resume sites pass no run options (B10). The API and the
     // CLI validated already; this throw is the programming-error backstop (never a 400).
     this.memoryScope = this.opts.memoryScope || this.resumeOpts?.resumePoint?.memoryScope || null;
+    // #943: a run started without memory (POST /api/run `noMemory`, `--no-memory`) mounts none, on every resume too.
+    this.memoryOff = !this.memoryScope && !!(this.opts.noMemory || this.resumeOpts?.resumePoint?.noMemory);
     // Shape it first (spec D5): { perspectives } for a shaped run, null otherwise. NOT `this.shape` — the
     // orchestrator's Auto path already uses "shape" for the classifier's shape.
     this.runShape = this.opts.shape || this.resumeOpts?.resumePoint?.shape || null;
@@ -3630,6 +3635,22 @@ export class RunHarness extends EventEmitter {
 
   _settingsScope() { return this.isWorkspace ? null : this.projectDir; }
 
+  /** #943 C3: the Claude Code setting sources this run's nodes spawn with, read once per run segment. ['project'] (the
+   *  checkout's own .claude settings, rules and CLAUDE.md; no ~/.claude settings, hooks, plugins or skills), or null
+   *  (every source) when Settings opts in (`runUserClaudeSettings`) or when the user settings file carries sign-in or
+   *  network setup (apiKeyHelper, a proxy, Bedrock…), which project-only would leave out. */
+  _claudeSettingSources() {
+    if (this._settingSources !== undefined) return this._settingSources;
+    if (runUserClaudeSettings(this._settingsScope())) {
+      this._settingSources = null;
+      this._log('orchestrator', 'info', 'agents load your own Claude Code setup (~/.claude settings, hooks, plugins, skills): Settings › Runs load my Claude Code setup is on');
+    } else if (userClaudeSignIn()) {
+      this._settingSources = null;
+      this._log('orchestrator', 'warn', 'agents load your own Claude Code setup: ~/.claude/settings.json holds sign-in or network settings, which a project-only spawn would drop');
+    } else this._settingSources = ['project'];
+    return this._settingSources;
+  }
+
   _projectPipelineCap() {
     const scope = this._settingsScope();
     return scope && hasProjectSetting('pipelineCostLimitUsd', scope) ? pipelineCostLimitUsd(scope) : undefined;
@@ -3818,6 +3839,7 @@ export class RunHarness extends EventEmitter {
     });
     this.injectedPaths = rc.injectedPaths;                // feeds _excludePathspecs / teardown / rescue (§8.8)
     this.mcpConfigPath = rc.mcpConfigPath;
+    this.mcpConfigServers = rc.mcpConfigServers || [];
     // V1-gated (§4.1 outcome table). Branch (a) PASSED on this CLI (server wildcard),
     // so one grant per merged server; the 'per-tool' / 'none' branches would leave
     // this empty and rely on the frontmatter union alone.
@@ -4151,6 +4173,11 @@ export class RunHarness extends EventEmitter {
    *  paused/error with setupIncomplete, so a retryable mount failure can resume. */
   async _mountMemory({ resume = false } = {}) {
     if (!this.pipeline?.dir) return;
+    if (this.memoryOff) {
+      if (!resume) await appendAudit(this.pipeline.dir, 'Memory: off for this run (started without memory).').catch(() => {});
+      this._log('memory', 'info', 'Memory: off for this run — its agents load no memory notes and write none');
+      return;
+    }
     try { await this._mountMemoryUnguarded({ resume }); }
     catch (err) {
       this.memory = null; this.memoryBlock = ''; this.state.memoryMount = null; this.state.memoryRules = null;
@@ -4246,6 +4273,8 @@ export class RunHarness extends EventEmitter {
     // EBUSY past the retries) leaves files under the cwd, and only the §8.8 entry keeps them out
     // of the commit and gets them removed at teardown. Idempotent, harmless on failure.
     await this._registerMemoryMount(scope);
+    if (!this.memoryScope) { await this._mountFrozenMemory({ root, mount, rules, dirs, onError }); return; }
+    // ── a Memory defragment run: mounted from the store, synced straight back (its writes ARE the new content) ──
     // Team memory (phase 1a): bring each opted-in project's team layer up to date FIRST — following the team rewrites
     // this machine's unedited tracked copies, and the two copies below must already carry that. Bounded; never throws.
     await this._refreshTeamMemory(dirs);
@@ -4275,6 +4304,61 @@ export class RunHarness extends EventEmitter {
     this._refreshMemoryBlock();
     await this._writeMemoryLedger();
     this._log('memory', 'info', `Memory mounted: ${m.files} file(s) across ${dirs.length} scope(s) — loaded from ${rules}, written to ${mount}`);
+  }
+
+  /**
+   * An ordinary run's memory, frozen at its start (#943): the first mount copies the store's notes and the team notes once
+   * into `<pipeline.dir>/memory-loaded`; this mount and every later one (a resume) build the writable copy, the rules
+   * copy and the role notes from that set, so every step of the run, and a resume days later, loads the same notes.
+   * The ledger records the set (`loaded`: its sha256 and every file's), each step its `memory` field.
+   */
+  async _mountFrozenMemory({ root, mount, rules, dirs, onError }) {
+    const loaded = memoryLoadedPath(this.pipeline.dir);
+    const resumed = existsSync(loaded);
+    if (!resumed) {
+      // Team memory (phase 1a): bring each opted-in project's team layer up to date FIRST — following the team rewrites
+      // this machine's unedited tracked copies, and the set must already carry that. Bounded; never throws.
+      await this._refreshTeamMemory(dirs);
+      // What each project loads (team-memory-load-choice.md): a project whose team memory loads team notes only mounts
+      // just its local notes that are team notes.
+      const plans = await memoryLoadPlans(dirs);
+      const loadDirs = loadFilteredDirs(dirs, plans);
+      await mountMemory({ root, mount: loaded, dirs: loadDirs, onError });
+      // Team notes go into the set's team folder(s) only: an agent changes one by proposing a same-named local note (D2).
+      await this._mountTeamDirs(loaded, dirs, plans);
+      for (const d of loadDirs) if (d.only) {
+        const hidden = (await listMemory(root, d.scope).catch(() => [])).length - d.only.size;
+        if (hidden > 0) this._log('memory', 'info', `team memory: ${d.label} loads team notes only — ${hidden} local note(s) not loaded`);
+      }
+    }
+    const entries = await readFrozenSet(loaded, { onError });
+    const baseline = await writeFrozenCopies({ entries, mount, rules, dirs });
+    const teamCount = entries.filter((e) => /^team(\/|$)/.test(e.rel) && !e.roles.length).length;
+    this.memory = { root, mount, rules, dirs, baseline, entries, manifest: frozenManifest(entries),
+      team: teamCount ? [{ count: teamCount }] : [], scoped: await this._memoryScoped(rules) };
+    this.state.memoryMount = mount;
+    this.state.memoryRules = rules;
+    this._refreshMemoryBlock();
+    await this._writeMemoryLedger();
+    const always = entries.filter((e) => e.alwaysOn).reduce((n, e) => n + e.bytes, 0);
+    this._log('memory', 'info', `Memory ${resumed ? 'mounted again from the set this run started with' : 'frozen for this run'}: ${entries.length} file(s) across ${dirs.length} scope(s), ${always} bytes load into every agent — set ${this.memory.manifest.set.slice(0, 12)}`);
+  }
+
+  /** The `memory` field of one execution's record (#943): what that step loaded. 'off' on a run started without
+   *  memory; null on a run whose memory is not frozen (a defragment run, a mount that failed). */
+  _memoryStepRecord(role) {
+    if (this.memoryOff) return { mode: 'off' };
+    const m = this.memory;
+    if (!m?.manifest) return null;
+    const key = String(role || '').toLowerCase();
+    const roleNotes = key ? m.entries.filter((e) => e.roles.includes(key)).map((e) => e.path) : [];
+    return { mode: 'frozen', set: m.manifest.set, files: m.entries.filter((e) => !e.roles.length).length, ...(roleNotes.length ? { roleNotes } : {}) };
+  }
+
+  /** The memory text one agent's system prompt carries: the pointer block, then the notes kept for its role. */
+  _memoryBlockFor(role) {
+    const notes = this.memory?.entries ? renderRoleNotes(this.memory.entries, role) : '';
+    return notes ? `${this.memoryBlock}\n${notes}` : (this.memoryBlock || '');
   }
 
   /**
@@ -4381,7 +4465,7 @@ export class RunHarness extends EventEmitter {
   _refreshMemoryBlock() {
     if (!this.memory) { this.memoryBlock = ''; return; }
     const teamDir = this.memory.rules && (this.memory.team || []).some((t) => t.count > 0) ? join(this.memory.rules, 'team') : null;
-    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine: this.claude.engine, teamDir });
+    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine: this.claude.engine, teamDir, direct: !!this.memoryScope });
   }
 
   /** The `onError` every memory listing gets. A junk NAME is not an I/O failure — phrasing it
@@ -4470,7 +4554,35 @@ export class RunHarness extends EventEmitter {
     }
   }
 
-  async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] }) {
+  /** An ordinary run's sync (#943): what the execution wrote becomes proposals a person approves, and the writable copy
+   *  goes back to the frozen set. Nothing reaches the store, so nothing is shared with the team either. */
+  async _proposeMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] }) {
+    const now = new Date().toISOString();
+    const entries = this.memory?.mount === mount && this.memory.entries ? this.memory.entries
+      : await readFrozenSet(memoryLoadedPath(this.pipeline.dir), { onError: (p, err) => this._memoryReadWarn(p, err) });
+    const res = await captureProposals({ root: memoryRoot(), runId: this.pipeline.id, mount, dirs, baseline, entries, executionId, agentKey, now,
+      onWarn: (w) => this._log('memory', 'warn', w) });
+    if (res.proposed.length || res.rejected.length || failed.length) {
+      this.memoryChanges.push({ executionId, nodeId, agentKey, at: now, added: [], modified: [], deleted: [], proposed: res.proposed, rejected: res.rejected, failed });
+      const name = (r) => `${r.scope ? `${r.scope}/` : ''}${r.name}.md`;
+      const head = `Memory: ${res.proposed.length} proposal(s)${res.rejected.length ? ` (${res.rejected.length} rejected)` : ''}${failed.length ? ` (${failed.length} failed)` : ''} by ${label}`;
+      const details = [
+        ...res.proposed.map((r) => `${r.kind === 'delete' ? 'remove' : 'write'} ${name(r)}`), ...res.rejected.map((r) => `rejected ${name(r)} — ${r.reason}`),
+        ...failed.map((r) => `failed ${name(r)} — ${r.reason}`),
+      ];
+      this._log('memory', 'info', `${head}: ${details.join('; ')} — waiting for approval in Settings › Memory`, { nodeId, executionId });
+      for (const r of failed) this._log('memory', 'warn', `memory: ${name(r)} written by ${label} never reached the writable copy — ${r.reason}`, { nodeId, executionId });
+      await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
+      await this._recordFailedWrites(failed, now);
+    }
+    await this._recordMemoryUsage({ res: null, dirs, executionId });
+    if (this.memory && this.memory.mount === mount) await this._writeMemoryLedger();
+    return { ...res, total: res.proposed.length, added: [], modified: [], deleted: [] };
+  }
+
+  async _syncMemoryWith(o) {
+    if (!this.memoryScope) return this._proposeMemoryWith(o);
+    const { mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] } = o;
     const now = new Date().toISOString();
     const res = await syncBack({
       root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
@@ -4663,7 +4775,8 @@ export class RunHarness extends EventEmitter {
     // must never read as "the run deleted every file").
     const payload = neutralised
       ? { mount: null, rules: null, dirs: [], baseline: {}, changes: this.memoryChanges }
-      : { mount: this.memory.mount, rules: this.memory.rules, dirs: this.memory.dirs, baseline: this.memory.baseline, changes: this.memoryChanges };
+      : { mount: this.memory.mount, rules: this.memory.rules, dirs: this.memory.dirs, baseline: this.memory.baseline, changes: this.memoryChanges,
+        ...(this.memory.manifest ? { loaded: this.memory.manifest } : {}) };
     const tmp = `${file}.tmp-${process.pid}-${++this._ledgerSeq}`;
     try { await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8'); await rename(tmp, file); }
     catch (err) { this._log('memory', 'warn', `memory ledger not written: ${err?.message || err}`); }
@@ -4760,6 +4873,7 @@ export class RunHarness extends EventEmitter {
       );
       this.mcpConfigPath = null;
       this.mcpServerGrants = [];
+      this.mcpConfigServers = [];
       this.mcpLayer = null;
     }
     await updateRunManifest(this.runRoot, {

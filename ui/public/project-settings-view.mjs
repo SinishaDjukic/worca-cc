@@ -15,7 +15,10 @@ export const PROJECT_CARDS = Object.freeze([
       // Project layer only (no user layer): inherit = Local (off). Off is stored as null, like the CLI and the Team view do.
       fromValue: (v) => (v === true ? 'both' : v === 'only' ? 'team' : ''), toValue: (v) => (v === 'team' ? 'only' : v === 'both' ? true : null),
       format: (v) => (v === true ? 'Both' : v === 'only' ? 'Team' : 'Local'),
-      hint: 'Which memory runs and chats load. Local (off): this machine\'s notes. Team and Both share this project\'s notes with the team on its worca-memory branch, after a secret check (needs an origin remote); Team loads only the team\'s notes, Both yours too. Notes that exist stay on this machine until you share them from the Memory tab\'s Team view. Switching back to Local drops changes still waiting to be pushed from this machine.' }] },
+      hint: 'Which memory runs and chats load. Local (off): this machine\'s notes. Team and Both share this project\'s notes with the team on its worca-memory branch, after a secret check (needs an origin remote); Team loads only the team\'s notes, Both yours too. Notes that exist stay on this machine until you share them from the Memory tab\'s Team view. Switching back to Local drops changes still waiting to be pushed from this machine.' },
+    { id: 'runUserClaudeSettings', label: 'Runs load my Claude Code setup', kind: 'select', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
+      toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
+      hint: 'Off: pipeline agents load only this project\'s own Claude Code settings, rules and CLAUDE.md, never your ~/.claude settings, hooks, plugins or skills, so every run gets the same setup. On: they load yours too. Sign-in or proxy settings in ~/.claude/settings.json keep it on.' }] },
   { key: 'pr', title: 'Pull requests', fields: [{ id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
     options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
     toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),

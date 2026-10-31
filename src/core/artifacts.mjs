@@ -1473,7 +1473,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null || st.memory != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1488,7 +1488,9 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
               // Agent turns cut before their `result`: a count and a lower bound, never in the cost.
               ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}),
               // The CLI's last session total per session id: a resumed spawn books only what it adds.
-              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}) })
+              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}),
+              // The memory the step loaded (#943): { mode: 'frozen', set, files, roleNotes? } | { mode: 'off' }.
+              ...(st.memory ? { memory: st.memory } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -2696,6 +2698,7 @@ function stepRowToStep(r) {
     if (em.auxCosts && typeof em.auxCosts === 'object') step.auxCosts = em.auxCosts;
     if (em.stoppedTurns && typeof em.stoppedTurns === 'object') step.stoppedTurns = em.stoppedTurns;
     if (em.sessionCosts && typeof em.sessionCosts === 'object') step.sessionCosts = em.sessionCosts;
+    if (em.memory && typeof em.memory === 'object') step.memory = em.memory;
   }
   return step;
 }
@@ -3084,7 +3087,7 @@ export async function readPipelineByKey(key, id) {
 export async function readMemoryLedger(dir) {
   const ledger = await readJsonFile(join(dir, 'memory.json'));
   if (!ledger || !Array.isArray(ledger.changes)) return null;
-  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes) };
+  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes), loaded: ledger.loaded || null };
 }
 
 /** Local helper: read + JSON-parse a file, null on any failure. */

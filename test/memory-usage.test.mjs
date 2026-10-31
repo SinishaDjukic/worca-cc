@@ -146,7 +146,7 @@ test('drain + merge: a hook file is read once and removed, repeats count once, b
   await rm(pipe, { recursive: true, force: true });
 });
 
-test('a run with a path-scoped note: hook file per execution, hits from the hook and reads from tool events counted once each, edits recorded, written at sync-back only, the user\'s settings untouched', { timeout: 120000 }, async () => {
+test('a run with a path-scoped note: hook file per execution, hits from the hook and reads from tool events counted once each, a proposed note is no edit (#943), written at sync-back only, the user\'s settings untouched', { timeout: 120000 }, async () => {
   await rm(memoryRoot(), { recursive: true, force: true });
   await rm(memoryUsageRoot(), { recursive: true, force: true });
   const dir = gitDir('usage');
@@ -182,7 +182,7 @@ test('a run with a path-scoped note: hook file per execution, hits from the hook
   const proj = await usageOf(pk);
   assert.deepEqual(proj.notes['project:billing'].days[day], { hit: 1, read: 1, edit: 0 }, 'two loads and two reads in one execution count once each');
   assert.deepEqual(proj.notes['project:billing'].triggers, ['src/billing/a.js']);
-  assert.deepEqual(proj.notes['project:lesson'].days[day], { hit: 0, read: 0, edit: 1 });
+  assert.equal(proj.notes['project:lesson'], undefined, 'a note the run wrote is only a proposal: no store edit to count');
   assert.deepEqual((await usageOf('global')).notes['global:style'].days[day], { hit: 0, read: 1, edit: 0 });
   assert.deepEqual(await readdir(join(orch.getState().pipelineDir, MEMORY_LOADS_DIR)), [], 'hook files drained');
   assert.ok(!JSON.stringify(proj).includes('Round half even'), 'counts only, never note text');

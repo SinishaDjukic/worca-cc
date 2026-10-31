@@ -219,6 +219,7 @@ async function requestFromFlags(flags, { projectDir, extras, promptText, stageId
     ...(flags.featureBranch ? { featureBranch: flags.featureBranch } : {}),
     ...(flags.onSourceBranch ? { sameAsSource: true } : {}),
     ...(flags.memoryScope ? { memoryScope: flags.memoryScope } : {}),
+    ...(flags.noMemory ? { noMemory: true } : {}),
     ...(flags.humanInLoop === false ? { humanInLoop: false } : {}),
     ...(flags.nightMode ? { nightMode: true } : {}),   // --night: POST /api/run's own opt-in field
     ...(flags.tags?.length ? { tags: flags.tags } : {}),

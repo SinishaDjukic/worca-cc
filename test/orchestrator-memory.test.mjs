@@ -1,8 +1,8 @@
-// Offline end-to-end: the store is mounted into a mock run, every agent execution
-// carries the pointer block; the files are in the run cwd's `.claude/rules/worca/`, where
-// Claude Code loads them natively. A file an agent writes lands in the store after its
-// execution, the run summary carries the change, and the mount never enters the worktree
-// diff or the kept branch. Default (detached) mode + a legacy pin.
+// Offline end-to-end: the store is FROZEN into a mock run at its start (#943: <pipeline.dir>/memory-loaded), every
+// agent execution carries the pointer block; the files are in the run cwd's `.claude/rules/worca/`, where Claude Code
+// loads them natively. A file an agent writes becomes a PROPOSAL after its execution (the store gets it only once a
+// person approves it), the run summary carries the proposal, a later step never loads it, and the mount never enters
+// the worktree diff or the kept branch. Default (detached) mode + a legacy pin.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
@@ -21,6 +21,8 @@ import { RESULTS_FILE, retainedWorkPatchName } from '../src/core/results.mjs';
 import { memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL } from '../src/core/memory-sync.mjs';
 import { RUN_LOG_FILE } from '../src/core/run-log.mjs';
 import { readPipelineByKey, readPipelineForResume } from '../src/core/artifacts.mjs';
+import { listProposals, approveProposal, proposalsDir } from '../src/core/memory-proposals.mjs';
+import { memoryLoadedPath } from '../src/core/memory-sync.mjs';
 
 useTempHome(after);
 // settings.json (memory caps) resolves under HOME; the detached run context reads
@@ -45,6 +47,17 @@ after(async () => {
 
 const CAPS = { hardBytesPerFile: 32768 };
 const NOW = '2026-09-09T10:00:00.000Z';
+
+/** #943: a run's writes are proposals. The pending ones of `orch`'s run, as `scope-rel/name` refs. */
+async function proposalsOf(orch) { return listProposals(memoryRoot(), { runId: orch.pipeline.id }); }
+const proposalNames = async (orch) => (await proposalsOf(orch)).map((p) => p.name).sort();
+/** What a person does in Settings › Memory: approve every proposal of the run (the store gets them, source run:<id>). */
+async function approveAll(orch) {
+  const items = await proposalsOf(orch);
+  for (const p of items) assert.ok(await approveProposal(memoryRoot(), p.id, { caps: CAPS }), `approved ${p.name}`);
+  assert.deepEqual(await proposalsOf(orch), [], 'every proposal of the run is gone once approved');
+  return items;
+}
 
 /** A producer runner that records what every producer execution saw (`runners.producer`
  *  intercepts producer nodes only — planner, refiner x2, implementer x2 under mock
@@ -121,7 +134,7 @@ async function pausedRun({ seed = true, onPause } = {}) {
   return { dir, orch, mkRunners, setRef: (o) => { orchRef = o; } };
 }
 
-test('detached (default): writable copy at <pipelineDir>/memory, rules copy at <worktree>/.claude/rules/worca, pointer block names the writable dirs, sync after the writing execution refreshes the rules copy, summary + ledger, nothing memory in the commit', { timeout: 120000 }, async () => {
+test('detached (default): writable copy at <pipelineDir>/memory, rules copy at <worktree>/.claude/rules/worca, pointer block names the writable dirs, a write becomes a proposal the next execution does NOT load (frozen), summary + ledger, nothing memory in the commit', { timeout: 120000 }, async () => {
   const { dir, orch, seen } = await runOnce({ workflowId: 'wf_default' });
   const st = orch.getState();
   const pipelineDir = st.pipelineDir;
@@ -143,12 +156,18 @@ test('detached (default): writable copy at <pipelineDir>/memory, rules copy at <
   const impl = seen.filter((s) => s.key === 'implementer');
   assert.ok(impl.length >= 2, 'wf_default under mock runs the implementer twice (review → fix)');
   assert.equal(impl[0].rulesHasLesson, false, 'the first implementer spawned before lesson.md existed');
-  assert.equal(impl[1].rulesHasLesson, true, 'after the first implementer\'s sync the rules copy was refreshed from the store — the second execution loads lesson.md natively');
+  assert.equal(impl[1].rulesHasLesson, false, 'frozen (#943): the first implementer\'s write is a proposal — the second execution loads the set the run started with');
   // Captured INSIDE the first producer execution: with the sentinel the mount is invisible to
   // an agent's own `git add -A`, to a staging pre-commit hook and to the reviewer's `git status`.
   assert.equal(seen[0].status, '', `git status inside the live checkout: ${JSON.stringify(seen[0].status)}`);
-  // Store: repaired frontmatter, run-stamped.
+  // Store: nothing until a person approves; then repaired frontmatter, run-stamped.
   const pk = orch.members[0].projectKey;
+  assert.equal(await readMemory(memoryRoot(), projectScope(pk), 'lesson'), null, 'the run never writes the store');
+  assert.deepEqual((await listMemory(memoryRoot(), GLOBAL_SCOPE)).map((e) => e.name), ['testing']);
+  const pending = await proposalsOf(orch);
+  assert.deepEqual(pending.map((p) => `${p.scope}/${p.name}:${p.kind}`).sort(), ['global/style:write', `projects/${pk}/lesson:write`]);
+  assert.ok(pending.every((p) => p.agentKey === 'implementer' && p.stale === false), JSON.stringify(pending));
+  await approveAll(orch);
   const lesson = await readMemory(memoryRoot(), projectScope(pk), 'lesson');
   assert.equal(lesson.meta.source, `run:${orch.pipeline.id}`);
   assert.equal(lesson.meta.description, 'Run npm ci before the suite.');
@@ -158,8 +177,9 @@ test('detached (default): writable copy at <pipelineDir>/memory, rules copy at <
   assert.equal(results.memory.changes.length, 1);
   const ch = results.memory.changes[0];
   assert.equal(ch.agentKey, 'implementer');
-  assert.deepEqual(ch.added.map((r) => `${r.scope}/${r.name}`).sort(), ['global/style', 'project/lesson']);
-  assert.deepEqual(results.memory.totals, { added: 2, modified: 0, deleted: 0, rejected: 0, failed: 0 });
+  assert.deepEqual([ch.added, ch.modified, ch.deleted], [[], [], []], 'an ordinary run changes nothing in the store');
+  assert.deepEqual(ch.proposed.map((r) => `${r.scope}/${r.name}:${r.kind}`).sort(), ['global/style:write', 'project/lesson:write']);
+  assert.deepEqual(results.memory.totals, { added: 0, modified: 0, deleted: 0, rejected: 0, failed: 0, proposed: 2 });
   assert.ok(!(results.newFiles || []).some((f) => /lesson\.md|style\.md/.test(f.path || f)), 'memory files never enter the run diff');
   assert.equal(orch.injectedPaths[pk].filter((e) => e.kind === 'memory').length, 1, 'ONE memory entry in the §8.8 set');
   assert.deepEqual(orch.injectedPaths[pk].find((e) => e.kind === 'memory'), { path: MEMORY_RULES_REL, kind: 'memory', source: null });
@@ -169,15 +189,20 @@ test('detached (default): writable copy at <pipelineDir>/memory, rules copy at <
   const ledger = JSON.parse(await readFile(join(pipelineDir, 'memory.json'), 'utf8'));
   assert.equal(ledger.mount, st.memoryMount);
   assert.equal(ledger.rules, st.memoryRules, 'the ledger records both copies');
-  assert.ok(ledger.baseline['project/lesson.md']);
+  assert.ok(ledger.baseline['global/testing.md'], 'the baseline is the frozen set');
+  assert.equal(ledger.baseline['project/lesson.md'], undefined, 'a proposal never enters the baseline');
+  assert.match(ledger.loaded.set, /^[0-9a-f]{64}$/);
+  assert.deepEqual(ledger.loaded.files.map((f) => f.path), ['global/testing.md'], 'the set the run loaded: the store at its start');
+  assert.ok(existsSync(join(memoryLoadedPath(pipelineDir), 'global', 'testing.md')), 'the frozen set is kept in the run dir');
   const detail = await readPipelineByKey(pk, orch.pipeline.id);
   assert.equal(detail.memory.changes.length, 1);
   assert.equal(detail.memory.mount, st.memoryMount);
   assert.deepEqual(detail.memory.totals, results.memory.totals, 'the detail and results.json agree');
-  // (folded) the detail exposes only mount + changes + totals — never the baseline
-  assert.deepEqual(Object.keys(detail.memory).sort(), ['changes', 'mount', 'totals']);
+  assert.deepEqual(detail.memory.loaded, ledger.loaded);
+  // (folded) the detail exposes only mount + changes + loaded + totals — never the baseline
+  assert.deepEqual(Object.keys(detail.memory).sort(), ['changes', 'loaded', 'mount', 'totals']);
   // Run log carries the audit line.
-  assert.match(detail.auditMarkdown, /Memory: \+2 ~0 -0 by implementer/);
+  assert.match(detail.auditMarkdown, /Memory: 2 proposal\(s\) by implementer: write (global\/style\.md; write project\/lesson\.md|project\/lesson\.md; write global\/style\.md)/);
 });
 
 test('legacy (pinned): mount in the legacy worktree, the ONE legacy exclusion pathspec, nothing memory in the commit', { timeout: 120000 }, async () => {
@@ -188,7 +213,7 @@ test('legacy (pinned): mount in the legacy worktree, the ONE legacy exclusion pa
     assert.equal(st.memoryMount, memoryWorkPath(st.pipelineDir));
     assert.equal(st.memoryRules, memoryRulesPath(st.branch.worktreeDir));
     assert.ok(st.branch.worktreeDir.includes(join('.worca-cc', 'worktrees')), 'legacy checkout');
-    assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'lesson'));
+    assert.deepEqual(await proposalNames(orch), ['lesson', 'style'], 'the agent writes became proposals');
     assert.deepEqual(orch._excludePathspecs(orch.members[0].projectKey), [`:(exclude)${MEMORY_RULES_REL}`]);
     const tree = spawnSync('git', ['-C', dir, 'ls-tree', '-r', '--name-only', st.branch.feature]).stdout.toString().split(/\r?\n/).filter(Boolean);
     assert.ok(!tree.some((q) => q.startsWith('.claude/')), `legacy commit carries no mount: ${tree.join(',')}`);
@@ -242,7 +267,7 @@ test('legacy retained checkout (commit failed): the mount is removed before the 
     assert.equal(existsSync(join(st.branch.worktreeDir, '.claude', 'rules', 'worca')), false, 'the mount was removed after the commit attempt');
     const patch = await readFile(join(st.pipelineDir, retainedWorkPatchName(null)), 'utf8').catch(() => '');
     assert.ok(!patch.includes('.claude/rules/worca'), 'the recovery patch carries no memory');
-    assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'lesson'), 'the agent write still reached the store (final sync at _buildResults)');
+    assert.ok((await proposalNames(orch)).includes('lesson'), 'the agent write still became a proposal');
   } finally { delete process.env.WORCA_RUN_ROOT; }
 });
 
@@ -257,8 +282,8 @@ test('resume: the ledger sync runs BEFORE the tracked guard — a guard that fai
     ? Promise.resolve({ ok: false, code: 128, stdout: '', stderr: 'fatal: not a git repository' })
     : realGit(args, opts));
   await orch._mountMemory({ resume: true });
-  assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'guard-race'),
-    'the interrupted execution\'s write was synced before the guard ran');
+  assert.deepEqual(await proposalNames(orch), ['guard-race'], 'the interrupted execution\'s write was proposed before the guard ran');
+  assert.equal(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'guard-race'), null, 'and never written to the store');
   assert.equal(orch.memory, null, 'and the run degraded to no memory');
   assert.equal(orch.getState().memoryMount, null);
   assert.equal(orch.getState().memoryRules, null);
@@ -270,6 +295,7 @@ test('resume: a run paused BEFORE the write split keeps its files at the ledger\
   const pdir = orch1.getState().pipelineDir;
   const worktree = orch1.getState().branch.worktreeDir;
   const oldMount = memoryRulesPath(worktree);                          // the previous revision's one-and-only mount
+  await mkdir(join(oldMount, 'project'), { recursive: true });         // the frozen rules copy holds no empty scope folder
   await writeFile(join(oldMount, 'project', 'legacy-paused.md'), 'Written under the old in-checkout mount.\n');
   const ledger = JSON.parse(await readFile(join(pdir, 'memory.json'), 'utf8'));
   ledger.mount = oldMount; delete ledger.rules;
@@ -281,8 +307,9 @@ test('resume: a run paused BEFORE the write split keeps its files at the ledger\
   let liveMount = null; let liveWorktree = null;
   orch2.on('state', (st) => { if (st.memoryMount) liveMount = st.memoryMount; if (st.branch?.worktreeDir) liveWorktree = st.branch.worktreeDir; });
   assert.equal((await orch2.resume()).status, 'done');
-  assert.ok(await readMemory(memoryRoot(), projectScope(pk), 'legacy-paused'), 'the pre-revision mount was synced once');
-  assert.ok(orch2.memoryChanges.some((c) => c.nodeId === 'resume' && c.added.some((r) => r.name === 'legacy-paused')), JSON.stringify(orch2.memoryChanges));
+  assert.deepEqual(await proposalNames(orch2), ['legacy-paused'], 'the pre-revision mount was captured once, as a proposal');
+  assert.equal(await readMemory(memoryRoot(), projectScope(pk), 'legacy-paused'), null);
+  assert.equal(orch2.memoryChanges.filter((c) => c.nodeId === 'resume' && c.proposed.some((r) => r.name === 'legacy-paused')).length, 1, JSON.stringify(orch2.memoryChanges));
   assert.equal(liveMount, memoryWorkPath(pdir), 'and the remount is at the RECOMPUTED writable path, never the ledger\'s');
   assert.equal(orch2.getState().memoryRules, memoryRulesPath(liveWorktree));
 });
@@ -301,13 +328,16 @@ test('resume: a file written by an interrupted execution is synced BEFORE the re
   await writeFile(join(mount, 'project', 'interrupted.md'), 'Written mid-execution.\n');
   const before = orch.memoryChanges.length;
   await orch._mountMemory({ resume: true });
-  assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'interrupted'), 'captured into the store');
+  assert.deepEqual(await proposalNames(orch), ['interrupted'], 'captured as a proposal');
+  assert.equal(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'interrupted'), null, 'never into the store');
   assert.equal(orch.memoryChanges.length, before + 1);
   assert.equal(orch.memoryChanges.at(-1).agentKey, null);
   assert.equal(orch.memoryChanges.at(-1).nodeId, 'resume');
-  assert.ok(existsSync(join(mount, 'project', 'interrupted.md')), 'the fresh mount carries it (it is in the store now)');
+  assert.deepEqual(orch.memoryChanges.at(-1).proposed, [{ scope: 'project', name: 'interrupted', kind: 'write' }]);
+  assert.equal(existsSync(join(mount, 'project', 'interrupted.md')), false, 'the fresh mount is the frozen set: the proposal is not in it');
+  assert.ok(existsSync(join(mount, 'global', 'testing.md')), 'the frozen notes are');
   assert.equal(await readFile(join(orch.getState().memoryRules, '.gitignore'), 'utf8'), '*\n', 'the remount re-writes the sentinel in the rules copy');
-  assert.equal(existsSync(join(orch.getState().memoryRules, 'project', 'interrupted.md')), true, 'and the rules copy carries the synced file');
+  assert.equal(existsSync(join(orch.getState().memoryRules, 'project', 'interrupted.md')), false, 'nor does the rules copy carry it');
   assert.ok(orch.memoryBlock.startsWith('## Worca memory\n'));
 });
 
@@ -339,8 +369,7 @@ test('a stopped run still captures what the interrupted execution wrote (the _bu
     } },
   });
   await orch.run();
-  assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'midflight'),
-    'the _buildResults final sync captured the interrupted execution write');
+  assert.ok((await proposalNames(orch)).includes('midflight'), 'the _buildResults final sync captured the interrupted execution write as a proposal');
 });
 
 test('resume(): the REAL call site syncs the interrupted mount back before remounting', { timeout: 120000 }, async () => {
@@ -373,8 +402,8 @@ test('resume(): the REAL call site syncs the interrupted mount back before remou
   });
   orchRef = orch2;
   assert.equal((await orch2.resume()).status, 'done');
-  assert.ok(await readMemory(memoryRoot(), projectScope(pk), 'midpause'),
-    'resume() captured the interrupted execution write into the store');
+  assert.ok((await proposalNames(orch2)).includes('midpause'), 'resume() captured the interrupted execution write as a proposal');
+  assert.equal(await readMemory(memoryRoot(), projectScope(pk), 'midpause'), null);
 });
 
 test('stopPaused(): a paused run stopped for good still captures what the interrupted execution wrote', { timeout: 120000 }, async () => {
@@ -401,11 +430,11 @@ test('stopPaused(): a paused run stopped for good still captures what the interr
   const pk = orch1.members[0].projectKey;
   const orch2 = createOrchestrator({ projectDir: dir, claude: { mock: true }, auto: true, resume: readPipelineForResume(orch1.state.id) });
   assert.equal((await orch2.stopPaused('ada')).status, 'stopped');
-  assert.ok(await readMemory(memoryRoot(), projectScope(pk), 'midstop'),
-    'the stop captured the interrupted execution write into the store');
+  assert.ok((await proposalNames(orch1)).includes('midstop'), 'the stop captured the interrupted execution write as a proposal');
+  assert.equal(await readMemory(memoryRoot(), projectScope(pk), 'midstop'), null);
 });
 
-test('two executions finishing together sync ONCE: one change entry, one store write', { timeout: 120000 }, async () => {
+test('two executions finishing together sync ONCE: one change entry, one proposal, no store write', { timeout: 120000 }, async () => {
   const { orch } = await pausedRun();
   const mount = orch.getState().memoryMount;
   const writesBefore = (await readScopeState(memoryRoot(), GLOBAL_SCOPE)).writesSinceDefrag;
@@ -416,9 +445,10 @@ test('two executions finishing together sync ONCE: one change entry, one store w
   // ONE baseline would both write the file and both report it.
   await Promise.all([orch._syncMemory({ key: 'a' }, ctx('a')), orch._syncMemory({ key: 'b' }, ctx('b'))]);
   assert.equal(orch.memoryChanges.length, entriesBefore + 1, 'ONE change entry, not two');
-  assert.deepEqual(orch.memoryChanges.at(-1).added.map((r) => `${r.scope}/${r.name}`), ['global/race']);
-  assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).writesSinceDefrag, writesBefore + 1, 'ONE store write');
-  assert.ok(await readMemory(memoryRoot(), GLOBAL_SCOPE, 'race'));
+  assert.deepEqual(orch.memoryChanges.at(-1).proposed.map((r) => `${r.scope}/${r.name}`), ['global/race']);
+  assert.equal((await proposalsOf(orch)).filter((p) => p.name === 'race').length, 1, 'ONE proposal');
+  assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).writesSinceDefrag, writesBefore, 'no store write');
+  assert.equal(await readMemory(memoryRoot(), GLOBAL_SCOPE, 'race'), null);
 });
 
 test('a mount failure degrades to no memory; the run still finishes', { timeout: 120000 }, async () => {
@@ -456,10 +486,12 @@ test('junk in a store scope never blocks the run\'s memory writes, and is logged
     runners: { producer: recordingProducer(seen) },
   });
   assert.equal((await orch.run()).status, 'done');
-  assert.ok(await readMemory(memoryRoot(), GLOBAL_SCOPE, 'style'), 'the agent write reached the store');
+  assert.deepEqual(await proposalNames(orch), ['lesson', 'style'], 'the agent writes were proposed, none rejected');
+  await approveAll(orch);
+  assert.ok(await readMemory(memoryRoot(), GLOBAL_SCOPE, 'style'), 'approved, the agent write reached the store');
   assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'lesson'));
   const results = JSON.parse(await readFile(join(orch.getState().pipelineDir, RESULTS_FILE), 'utf8'));
-  assert.deepEqual(results.memory.totals, { added: 2, modified: 0, deleted: 0, rejected: 0, failed: 0 });
+  assert.deepEqual(results.memory.totals, { added: 0, modified: 0, deleted: 0, rejected: 0, failed: 0, proposed: 2 });
   assert.ok(!(await listMemory(memoryRoot(), GLOBAL_SCOPE)).some((e) => e.name === 'my notes'), 'the junk file is never served');
   const log = await readFile(join(orch.getState().pipelineDir, RUN_LOG_FILE), 'utf8');
   assert.match(log, /memory: ignored [^"]*my notes\.md \(invalid name/, log.split('\n').filter((l) => /memory/.test(l)).join('\n'));
@@ -532,7 +564,8 @@ test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, s
   assert.equal(results.memory.changes[0].agentKey, 'memoryDefragmenter');
   assert.deepEqual(results.memory.changes[0].modified, [{ scope: 'global', name: 'a' }]);
   assert.deepEqual(results.memory.changes[0].deleted, [{ scope: 'global', name: 'b' }]);
-  assert.deepEqual(results.memory.totals, { added: 0, modified: 1, deleted: 1, rejected: 0, failed: 0 });
+  assert.deepEqual(results.memory.totals, { added: 0, modified: 1, deleted: 1, rejected: 0, failed: 0, proposed: 0 });
+  assert.deepEqual(await listProposals(memoryRoot(), { runId: orch.pipeline.id }), [], 'a defragment run writes the store, it proposes nothing');
   assert.ok(existsSync(join(st.pipelineDir, 'defrag-report.md')), 'the report output landed in the pipeline dir');
   const detail = await readPipelineByKey(pk, orch.pipeline.id);
   assert.match(detail.auditMarkdown, /Memory: \+0 ~1 -1 by memoryDefragmenter/);
@@ -685,17 +718,17 @@ test('a refused write into the rules copy is reported: warn line, audit, results
   assert.equal(results.memory.changes.length, 1);
   const ch = results.memory.changes[0];
   assert.equal(ch.agentKey, 'implementer');
-  assert.deepEqual({ added: ch.added, modified: ch.modified, deleted: ch.deleted, rejected: ch.rejected }, { added: [], modified: [], deleted: [], rejected: [] });
+  assert.deepEqual({ added: ch.added, modified: ch.modified, deleted: ch.deleted, rejected: ch.rejected, proposed: ch.proposed }, { added: [], modified: [], deleted: [], rejected: [], proposed: [] });
   assert.equal(ch.failed.length, 1);
   assert.equal(ch.failed[0].scope, 'project'); assert.equal(ch.failed[0].name, 'trap');
   assert.match(ch.failed[0].reason, /^written into the read-only rules copy — Claude requested permissions to edit .* which is a sensitive file\.$/);
-  assert.deepEqual(results.memory.totals, { added: 0, modified: 0, deleted: 0, rejected: 0, failed: 1 });
+  assert.deepEqual(results.memory.totals, { added: 0, modified: 0, deleted: 0, rejected: 0, failed: 1, proposed: 0 });
   const detail = await readPipelineByKey(pk, orch.pipeline.id);
-  assert.match(detail.auditMarkdown, /Memory: \+0 ~0 -0 \(1 failed\) by implementer: failed project\/trap\.md — written into the read-only rules copy/);
+  assert.match(detail.auditMarkdown, /Memory: 0 proposal\(s\) \(1 failed\) by implementer: failed project\/trap\.md — written into the read-only rules copy/);
   const log = await readFile(join(orch.getState().pipelineDir, RUN_LOG_FILE), 'utf8');
-  const warn = log.split('\n').filter((l) => /"level":"warn"/.test(l) && /never reached the store/.test(l));
+  const warn = log.split('\n').filter((l) => /"level":"warn"/.test(l) && /never reached the writable copy/.test(l));
   assert.equal(warn.length, 1, log.split('\n').filter((l) => /memory/.test(l)).join('\n'));
-  assert.match(warn[0], /project\/trap\.md written by implementer never reached the store — written into the read-only rules copy — Claude requested permissions/);
+  assert.match(warn[0], /project\/trap\.md written by implementer never reached the writable copy — written into the read-only rules copy — Claude requested permissions/);
   const st = await readScopeState(memoryRoot(), projectScope(pk));
   assert.equal(st.failedWrites, 1); assert.equal(st.lastFailedRunId, orch.pipeline.id); assert.ok(st.lastFailedAt);
   assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).failedWrites, 0, 'only the scope that was written to');
@@ -723,7 +756,7 @@ test('a failed write followed by a successful write of the SAME file is not repo
   });
   assert.equal((await orch.run()).status, 'done');
   const ch = orch.memoryChanges.find((c) => c.agentKey === 'implementer');
-  assert.deepEqual(ch.added.map((r) => r.name), ['lesson'], 'the successful retry landed');
+  assert.deepEqual(ch.proposed.map((r) => r.name), ['lesson'], 'the successful retry was proposed');
   assert.deepEqual(ch.failed, [{ scope: '', name: 'notes', reason: 'disk full' }], 'the retried key is clean; the stray write beside the scope dirs is reported with an empty scope');
   const st = await readScopeState(memoryRoot(), projectScope(orch.members[0].projectKey));
   assert.equal(st.failedWrites, 0, 'a write beside the scope dirs counts against no scope');
@@ -752,4 +785,148 @@ test('the run-end sync drains the bookkeeping of an execution that never finishe
   assert.deepEqual(carriers[0].failed.map((f) => `${f.scope}/${f.name}`), ['global/trap']);
   assert.ok(['final', 'n_implementer'].includes(carriers[0].nodeId), carriers[0].nodeId);
   assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).failedWrites, 1);
+});
+
+// ── frozen at run start (#943) ───────────────────────────────────────────────
+
+const hangUntilAbort = (ctx) => new Promise((_r, rej) => {
+  const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+  if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+});
+const listOrNull = async (p) => (existsSync(p) ? (await readdir(p)).sort() : []);
+
+test('frozen: a store write made mid-run (Chat / REST) never reaches a later execution\'s rules copy or writable copy, and is no proposal', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDir('mem');
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'testing', 'How the suite runs.\n', { source: 'user', now: NOW, caps: CAPS });
+  const pk = projectKey(dir);
+  const seen = [];
+  let wrote = false;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => {
+      seen.push({ key: ctx.node.key, rules: await listOrNull(join(ctx.memoryRules, 'project')), mount: await listOrNull(join(ctx.memoryMount, 'project')),
+        testing: await readFile(join(ctx.memoryRules, 'global', 'testing.md'), 'utf8') });
+      if (!wrote && ctx.node.key === 'planner') {
+        wrote = true;
+        // What Chat's remember tool or PUT /api/memory does while the run is live.
+        await writeMemory(memoryRoot(), projectScope(pk), 'chat-note', 'Told in Chat mid-run.\n', { source: 'ask', now: NOW, caps: CAPS });
+        await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'testing', 'Rewritten in Chat mid-run.\n', { source: 'ask', now: NOW, caps: CAPS });
+      }
+      return runAgentExecution(ctx);
+    } },
+  });
+  assert.equal((await orch.run()).status, 'done');
+  assert.ok(wrote && seen.length >= 4, `producers ran: ${seen.length}`);
+  for (const s of seen) {
+    assert.deepEqual([s.rules, s.mount], [[], []], `${s.key}: the mid-run note never loads: ${JSON.stringify(s)}`);
+    assert.match(s.testing, /How the suite runs\./, `${s.key}: the frozen text of an edited note`);
+  }
+  assert.ok(await readMemory(memoryRoot(), projectScope(pk), 'chat-note'), 'the store keeps the Chat write');
+  assert.match((await readMemory(memoryRoot(), GLOBAL_SCOPE, 'testing')).body, /Rewritten in Chat mid-run\./, 'and the edit — the run never puts its frozen copy back');
+  assert.deepEqual(await proposalsOf(orch), [], 'the run proposes nothing it did not write');
+  assert.equal(orch.memorySummary(), null, 'and records no memory change');
+});
+
+test('frozen: a resume rebuilds both copies from memory-loaded, not from today\'s store', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const { dir, orch: orch1, mkRunners, setRef } = await pausedRun();
+  const pdir = orch1.getState().pipelineDir;
+  const pk = orch1.members[0].projectKey;
+  const set1 = JSON.parse(await readFile(join(pdir, 'memory.json'), 'utf8')).loaded.set;
+  assert.ok(existsSync(join(memoryLoadedPath(pdir), 'global', 'testing.md')));
+  // The store moves on while the run is paused.
+  await writeMemory(memoryRoot(), projectScope(pk), 'later', 'Written while the run was paused.\n', { source: 'user', now: NOW, caps: CAPS });
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'testing', 'Changed while paused.\n', { source: 'user', now: NOW, caps: CAPS });
+  const saved = readPipelineForResume(orch1.state.id);
+  const runners = mkRunners();
+  const seen = [];
+  const producer = runners.producer;
+  runners.producer = async (ctx) => {
+    seen.push({ key: ctx.node.key, rules: await listOrNull(join(ctx.memoryRules, 'project')), mount: await listOrNull(join(ctx.memoryMount, 'project')),
+      testing: await readFile(join(ctx.memoryMount, 'global', 'testing.md'), 'utf8') });
+    return producer(ctx);
+  };
+  const orch2 = createOrchestrator({ projectDir: dir, claude: { mock: true }, auto: true, runners, resume: saved });
+  setRef(orch2);
+  assert.equal((await orch2.resume()).status, 'done');
+  assert.ok(seen.length >= 1, 'the resumed segment ran producers');
+  for (const s of seen) {
+    assert.deepEqual([s.rules, s.mount], [[], []], `${s.key}: the note written while paused never loads`);
+    assert.match(s.testing, /How the suite runs\./, `${s.key}: the frozen text, not today's`);
+  }
+  assert.equal(JSON.parse(await readFile(join(pdir, 'memory.json'), 'utf8')).loaded.set, set1, 'the same set before and after the resume');
+  assert.ok(orch2.state.steps.filter((x) => x.agentKey).every((x) => x.memory?.set === set1), 'every step, both segments, names that set');
+});
+
+test('step records: every agent step carries memory { mode: frozen, set } = the ledger\'s loaded set; a role note reaches its role\'s prompt only', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDir('mem');
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'testing', 'How the suite runs.\n', { source: 'user', now: NOW, caps: CAPS });
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'impl-trap', '---\nname: impl-trap\ndescription: For implementers\nroles: implementer\n---\nRun the codegen before the suite.\n', { source: 'user', now: NOW, caps: CAPS });
+  const seen = [];
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_quick-fix', prompt: 'demo task', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => {
+      seen.push({ key: ctx.node.key, block: ctx.memoryBlock, rules: await listOrNull(join(ctx.memoryRules, 'global')), mount: await listOrNull(join(ctx.memoryMount, 'global')) });
+      return runAgentExecution(ctx);
+    } },
+  });
+  assert.equal((await orch.run()).status, 'done');
+  const ledger = JSON.parse(await readFile(join(orch.getState().pipelineDir, 'memory.json'), 'utf8'));
+  assert.deepEqual(ledger.loaded.files.map((f) => f.path), ['global/impl-trap.md', 'global/testing.md']);
+  assert.deepEqual(ledger.loaded.files[0].roles, ['implementer']);
+  const agentSteps = orch.state.steps.filter((x) => x.agentKey);
+  assert.ok(agentSteps.length >= 3, JSON.stringify(orch.state.steps.map((x) => x.key)));
+  for (const st of agentSteps) {
+    assert.equal(st.memory.mode, 'frozen', st.key);
+    assert.equal(st.memory.set, ledger.loaded.set, `${st.key}: the step names the ledger's set`);
+    assert.equal(st.memory.files, 1, `${st.key}: one note loads into every agent (the role note does not count)`);
+    if (st.agentKey === 'implementer') assert.deepEqual(st.memory.roleNotes, ['global/impl-trap.md']);
+    else assert.equal('roleNotes' in st.memory, false, st.key);
+  }
+  assert.ok(orch.state.steps.filter((x) => !x.agentKey).every((x) => !('memory' in x)), 'only agent steps carry it');
+  for (const s of seen) {
+    assert.deepEqual(s.rules, ['testing.md'], `${s.key}: the role note never enters the rules copy`);
+    assert.deepEqual(s.mount, ['impl-trap.md', 'testing.md'], `${s.key}: it is in the writable copy, to edit`);
+    const has = s.block.includes('## Worca memory for the implementer role') && s.block.includes('Run the codegen before the suite.');
+    assert.equal(has, s.key === 'implementer', `${s.key}: role notes only in the implementer's prompt`);
+  }
+});
+
+test('noMemory: no mount, no ledger, step memory { mode: off }, nothing proposed — and the resume point keeps it', { timeout: 120000 }, async () => {
+  const dir = gitDir('mem');
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'testing', 'How the suite runs.\n', { source: 'user', now: NOW, caps: CAPS });
+  const seen = [];
+  let orchRef = null; let hangOnce = true;
+  const mkRunners = () => ({ producer: async (ctx) => {
+    seen.push({ key: ctx.node.key, block: ctx.memoryBlock, mount: ctx.memoryMount, rules: ctx.memoryRules });
+    if (hangOnce && ctx.node.key === 'implementer') { hangOnce = false; queueMicrotask(() => orchRef.pause()); return hangUntilAbort(ctx); }
+    return runAgentExecution(ctx);
+  } });
+  const orch1 = createOrchestrator({ projectDir: dir, workflowId: 'wf_quick-fix', prompt: 'demo task', claude: { mock: true }, auto: true, noMemory: true, runners: mkRunners() });
+  orchRef = orch1;
+  assert.equal(orch1.memoryOff, true);
+  assert.equal((await orch1.run()).status, 'paused');
+  const pdir = orch1.getState().pipelineDir;
+  const saved = readPipelineForResume(orch1.state.id);
+  assert.equal(saved.resumePoint.noMemory, true, 'the resume point carries the option');
+  assert.equal(orch1._buildResumePoint(null).noMemory, true);
+  const orch2 = createOrchestrator({ projectDir: dir, claude: { mock: true }, auto: true, runners: mkRunners(), resume: saved });
+  orchRef = orch2;
+  assert.equal(orch2.memoryOff, true, 'rehydrated from the point, not from opts');
+  assert.equal((await orch2.resume()).status, 'done');
+  assert.ok(seen.length >= 3, `producers ran: ${seen.length}`);
+  for (const s of seen) assert.deepEqual([s.block, s.mount, s.rules], ['', null, null], `${s.key}: no memory at all`);
+  assert.equal(orch2.memory, null);
+  assert.equal(existsSync(join(pdir, 'memory.json')), false, 'no ledger');
+  assert.equal(existsSync(memoryLoadedPath(pdir)), false, 'no frozen set');
+  assert.equal(existsSync(memoryWorkPath(pdir)), false, 'no writable copy');
+  const agentSteps = orch2.state.steps.filter((x) => x.agentKey);
+  assert.ok(agentSteps.length >= 3);
+  assert.ok(agentSteps.every((x) => JSON.stringify(x.memory) === JSON.stringify({ mode: 'off' })), JSON.stringify(agentSteps.map((x) => x.memory)));
+  assert.equal(existsSync(join(proposalsDir(memoryRoot()), `${orch1.pipeline.id}.json`)), false, 'nothing under .proposals');
+  assert.deepEqual(await listProposals(memoryRoot(), { runId: orch1.pipeline.id }), []);
+  const detail = await readPipelineByKey(orch1.members[0].projectKey, orch1.pipeline.id);
+  assert.equal((detail.auditMarkdown.match(/Memory: off for this run/g) || []).length, 1, 'the audit says so once, not again on the resume');
 });

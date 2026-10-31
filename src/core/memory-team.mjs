@@ -19,7 +19,7 @@ import { memoryCaps, teamMemoryEnabled, teamMemoryLoad } from './settings.mjs';
 import './settings-cascade.mjs';   // side effect: installs the project-layer reader teamMemoryEnabled and memoryCaps consult
 import {
   memoryRoot, projectScope, scopeDir, listMemory, readMemory, writeMemory, removeMemory, setMemoryExtra, snapshotScope,
-  listSnapshots, SNAPSHOT_KEEP, parseMemoryFile, renderMemoryFile, repairMemoryFile, hashText, isValidMemoryName, flattenLine,
+  listSnapshots, SNAPSHOT_KEEP, parseMemoryFile, rolesOf, renderMemoryFile, repairMemoryFile, hashText, isValidMemoryName, flattenLine,
   TEAM_MARKER_KEY, MemoryError,
 } from './memory-store.mjs';
 import { withStoreLock } from './memory-sync.mjs';
@@ -1162,7 +1162,7 @@ export async function memoryLoadPlans(dirs) {
  * (memoryLoadPlans, the ones the local copies were mounted with) — read here when not given.
  * @returns {Promise<Array<{key:string, rel:string, count:number, load:string}>>} one entry per opted-in project
  */
-export async function mountTeamLayer({ rules, dirs, plans = null, modes = {} }) {
+export async function mountTeamLayer({ rules, dirs, plans = null, modes = {}, role = null }) {
   const out = [];
   for (const d of dirs || []) {
     if (d.scope?.kind !== 'project') continue;
@@ -1173,7 +1173,8 @@ export async function mountTeamLayer({ rules, dirs, plans = null, modes = {} }) 
     try {
       const plan = plans?.get(key) ?? (plans ? null : await memoryLoadPlan(key));
       if (!plan || plan.load === 'local') { if (existsSync(target)) await writeTeamDir(target, [], modes); continue; }
-      const notes = plan.team;
+      // `role` (#943): as refreshMount — a team note kept for other roles stays out of this mount.
+      const notes = role ? plan.team.filter((n) => { const r = rolesOf(parseMemoryFile(n.text).meta); return !r.length || r.includes(role); }) : plan.team;
       await writeTeamDir(target, notes, modes);
       out.push({ key, rel, count: notes.length, load: plan.load });
     } catch (err) {
