@@ -14,7 +14,7 @@ import { join } from 'node:path';
 export {
   SEVERITIES, BLOCKING, normalizeSeverity, hasBlocking, blockingIssues,
 } from '../shared/graph/verdict.mjs';
-import { normalizeSeverity } from '../shared/graph/verdict.mjs';
+import { BLOCKING, normalizeSeverity } from '../shared/graph/verdict.mjs';
 import { normalizeReviewChecklist } from '../shared/shape/review-checklist.mjs';
 
 /** Coerce any value to a trimmed string (empty string for null/undefined). */
@@ -169,7 +169,9 @@ export function normalizeClarify(data) {
   for (let i = 0; i < list.length; i++) {
     const q = list[i];
     if (!q || typeof q !== 'object') continue;
-    const id = asString(q.id).trim() || `q${i + 1}`;
+    // Answers are keyed by id: a duplicate would share one answer, so it gets its own id.
+    let id = asString(q.id).trim() || `q${i + 1}`;
+    for (let n = 2; questions.some((x) => x.id === id); n++) id = `${asString(q.id).trim() || `q${i + 1}`}_${n}`;
     const question = asString(q.question).trim();
     if (!question) continue;
     const raw = Array.isArray(q.options) ? q.options.map(asString) : [];
@@ -278,26 +280,43 @@ export async function readAskFile(absPath) {
   return { ...classifyAskPayload(parsed), malformed: false };
 }
 
+/** Issue statuses that mean "not open" and the top-level verdict words that mean "rejected". */
+const CLOSED_STATUSES = new Set(['fixed', 'resolved', 'wontfix', 'won\'t fix', 'closed']);
+const REJECT_VERDICTS = new Set(['reject', 'rejected', 'fail', 'failed', 'changes_requested', 'request_changes', 'blocked']);
+
 /**
  * Coerce arbitrary parsed data into the canonical review shape:
- *   { issues: [ { severity, title, detail, location } ], summary, checklist? }
+ *   { issues: [ { severity, title, detail, location } ], summary, checklist?, closed? }
+ * `closed` holds the issues marked fixed/resolved/wontfix; they never block.
  * Always returns { issues: [], summary: '' } on bad input.
  */
 export function normalizeReview(data) {
   if (!data || typeof data !== 'object') return { issues: [], summary: '' };
   const list = Array.isArray(data.issues) ? data.issues : [];
   const issues = [];
+  const closed = [];
   for (const it of list) {
     if (!it || typeof it !== 'object') continue;
-    issues.push({
+    const issue = {
       severity: normalizeSeverity(it.severity),
       title: asString(it.title).trim(),
       detail: asString(it.detail).trim(),
       location: asString(it.location).trim(),
-    });
+    };
+    // An issue the agent lists for the record as fixed/resolved/wontfix is not open: it must not
+    // block a loop (the engine half of the rule #996 states in the refine prompt).
+    const status = asString(it.status).trim().toLowerCase();
+    if (CLOSED_STATUSES.has(status)) closed.push({ ...issue, status });
+    else issues.push(issue);
+  }
+  // `{"verdict": "reject", "issues": []}` is a rejection, not an approval.
+  const word = asString(data.verdict).trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (REJECT_VERDICTS.has(word) && !issues.some((i) => BLOCKING.has(i.severity))) {
+    issues.push({ severity: 'major', title: `Verdict "${asString(data.verdict).trim()}" with no blocking issue listed`,
+      detail: asString(data.summary).trim(), location: '' });
   }
   const checklist = normalizeReviewChecklist(data.checklist);
-  return { issues, summary: asString(data.summary).trim(), ...(checklist ? { checklist } : {}) };
+  return { issues, summary: asString(data.summary).trim(), ...(checklist ? { checklist } : {}), ...(closed.length ? { closed } : {}) };
 }
 
 /**

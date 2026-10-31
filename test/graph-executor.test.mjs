@@ -14,7 +14,7 @@ import {
   allocateOutputs, allocateVerdict, portIoBlock, changesInstruction, selectMode, taskSourcedPorts,
   expandsOutputPort, normalizeDecomposition, readDecomposition, resolveMockRole, readVerdict,
   runTaskExecution, runAndExecution, runOrExecution, runEndExecution, runCombineExecution, runExecution,
-  buildAgentPrompt, runAgentExecution, runClarifierExecution, toolsForMeta,
+  buildAgentPrompt, runAgentExecution, runClarifierExecution, toolsForMeta, _testing,
 } from '../src/core/graph/executor.mjs';
 import { READ_WRITE_TOOLS, IMPLEMENTER_TOOLS, MEMORY_TOOLS } from '../src/core/phases.mjs';
 
@@ -243,7 +243,7 @@ test('7 the MOCK role chain is graph-derived, never keyed on an agent name', () 
   assert.equal(resolveMockRole({ meta: { runnerType: 'producer' } }), 'generic-producer', '5. the fallback');
 });
 
-test('8 readVerdict: a MISSING file is a clean pass (flagged); a PRESENT broken one throws', async () => {
+test('8 readVerdict: a MISSING file comes back flagged (the caller decides); a PRESENT broken one throws', async () => {
   // v1 parity: a verifier that declares a verdict and writes none is not a run
   // failure — but the caller has to be able to SAY so, hence `missing: true`.
   assert.deepEqual(await readVerdict(null), { issues: [], summary: '' });
@@ -276,18 +276,25 @@ test('8 readVerdict: a MISSING file is a clean pass (flagged); a PRESENT broken 
   await assert.rejects(() => readVerdict(notArray), /verdict file is not a review JSON/);
 });
 
-test('8b a verifier that never wrote its verdict warns, naming the node and the file', async () => {
-  // A verifier that exits 0 without writing its JSON (truncated context, wrong path,
-  // a denied tool) is indistinguishable from an approval — and on every shipped seed
-  // the clean side is wired straight to End. Parity keeps it a pass, but it is now a
-  // LOUD one: the warning rides the result and the scheduler logs it.
+test('8b E1: a verifier that never wrote its verdict PAUSES the node (VERDICT_MISSING), never the clean path', async () => {
+  // A verifier that exits 0 without writing its JSON (turn cap, API error, wrong path) is
+  // indistinguishable from an approval, and on every shipped seed the clean side is wired
+  // straight to End. Silence is not approval: the execution throws an unclassified error,
+  // which the failure policy pauses (resume re-runs the node).
   const nodeObj = { id: 'n_c', kind: 'agent', key: 'custom', config: {}, agentPrompt: 'You are custom.', tools: [] };
   // A declared mockRole of 'generic-producer' makes the offline writer skip the
   // verdict JSON while the PORTS still declare one: the file never appears.
   const meta = { ...CUSTOM, mockRole: 'generic-producer' };
-  const c = ctx8({ node: nodeObj, meta, ports: meta });
-  const r = await runAgentExecution(c);
-  assert.deepEqual(r.verdict.issues, [], 'a missing verdict still routes the CLEAN side (v1 parity)');
+  await assert.rejects(() => runAgentExecution(ctx8({ node: nodeObj, meta, ports: meta })), (e) => {
+    assert.equal(e.code, 'VERDICT_MISSING');
+    assert.equal(e.errorClass, null, 'never sniffed into a retry class');
+    assert.match(e.message, /n_c never wrote custom-review-cycle2\.json/);
+    return true;
+  });
+  // The per-node opt-out keeps the v1 pass, loudly.
+  const optional = { ...nodeObj, config: { verdictOptional: true } };
+  const r = await runAgentExecution(ctx8({ node: optional, meta, ports: meta }));
+  assert.deepEqual(r.verdict.issues, []);
   assert.deepEqual(r.warnings, ['verdict file missing: n_c custom-review-cycle2.json — treated as clean']);
   // And the happy path carries no warning at all.
   const ok = await runAgentExecution(ctx8());
@@ -295,15 +302,69 @@ test('8b a verifier that never wrote its verdict warns, naming the node and the 
 });
 
 test('8c a verdict file that EXISTS but is garbage fails the execution', async () => {
-  const nodeObj = { id: 'n_c', kind: 'agent', key: 'custom', config: {}, agentPrompt: 'You are custom.', tools: [] };
-  const meta = { ...CUSTOM, mockRole: 'generic-producer' };   // the mock writes no verdict…
-  const c = ctx8({ node: nodeObj, meta, ports: meta });
-  writeFileSync(c.verdict.path, '{"issues": [ truncated', 'utf8');   // …the agent wrote a truncated one
-  await assert.rejects(() => runAgentExecution(c), (e) => {
-    assert.equal(e.code, 'BAD_VERDICT');
-    assert.equal(e.message, `verdict file is not a review JSON: ${c.verdict.path} — expected { "issues": [ … ] }`);
-    return true;
-  });
+  const c = ctx8();
+  _testing.runClaude = async () => { writeFileSync(c.verdict.path, '{"issues": [ truncated', 'utf8'); return { text: 'done' }; };
+  try {
+    await assert.rejects(() => runAgentExecution(c), (e) => {
+      assert.equal(e.code, 'BAD_VERDICT');
+      assert.equal(e.message, `verdict file is not a review JSON: ${c.verdict.path} — expected { "issues": [ … ] }`);
+      return true;
+    });
+  } finally { _testing.runClaude = null; }
+});
+
+test('8d E8: an output the verdict fires that the agent never wrote does not publish', async () => {
+  const PRODUCER = {
+    displayName: 'Maker', runnerType: 'producer', mockRole: 'generic-producer',
+    inputs: [{ id: 'task', type: 'md', required: true }],
+    outputs: [{ id: 'plan', type: 'md', when: 'always', filename: 'maker-plan.md', store: 'run' },
+      { id: 'extra', type: 'md', when: 'blocking', filename: 'maker-extra.md', store: 'run' }],
+  };
+  const nodeObj = { id: 'n_m', kind: 'agent', key: 'maker', config: {}, agentPrompt: 'You make.', tools: [] };
+  const rc = runCtx();
+  const c = ctx8({ node: nodeObj, nodeId: 'n_m', meta: PRODUCER, ports: PRODUCER, bindings: { task: { type: 'md', path: '/abs/task.md' } },
+    outputs: allocateOutputs({ node: nodeObj, ports: PRODUCER, ordinal: 1, runCtx: rc }), verdict: null });
+  let write = '';
+  _testing.runClaude = async () => { if (write !== null) writeFileSync(c.outputs.plan.path, write, 'utf8'); return { text: 'done' }; };
+  try {
+    write = null;   // never written
+    await assert.rejects(() => runAgentExecution(c), (e) => {
+      assert.equal(e.code, 'OUTPUT_MISSING');
+      assert.equal(e.errorClass, null);
+      assert.match(e.message, /n_m did not write output plan \(maker-plan\.md\)/);
+      return true;
+    });
+    write = '';     // written but empty
+    await assert.rejects(() => runAgentExecution(c), (e) => e.code === 'OUTPUT_MISSING');
+    write = '# plan\n';   // written: publishes; the unfired blocking `extra` is not required
+    const ok = await runAgentExecution(c);
+    assert.equal(ok.outputs.plan.path, c.outputs.plan.path);
+  } finally { _testing.runClaude = null; }
+});
+
+test('8e E6: a retry never reads the previous attempt\'s output or verdict; a bound input is never cleared', async () => {
+  const c = ctx8();
+  // The failed attempt left a clean verdict and a review file behind.
+  writeFileSync(c.verdict.path, JSON.stringify({ issues: [], summary: 'stale clean' }), 'utf8');
+  writeFileSync(c.outputs.review.path, 'stale', 'utf8');
+  const input = join(pipelineDir, 'in-place.md');
+  writeFileSync(input, 'input', 'utf8');
+  let sawVerdict = null;
+  _testing.runClaude = async () => {
+    let v = true; try { readFileSync(c.verdict.path); } catch { v = false; }
+    sawVerdict = v;
+    return { text: 'hit its turn cap' };   // writes nothing this time
+  };
+  try {
+    await assert.rejects(() => runAgentExecution({ ...c, bindings: { ...c.bindings, inPlace: { type: 'md', path: input } } }),
+      (e) => e.code === 'VERDICT_MISSING');
+    assert.equal(sawVerdict, false, 'the stale verdict was removed before the spawn');
+    assert.equal(readFileSync(input, 'utf8'), 'input');
+    // A resumed SESSION is the same attempt continuing: its own earlier writes stand.
+    writeFileSync(c.verdict.path, JSON.stringify({ issues: [], summary: 'own write' }), 'utf8');
+    const r = await runAgentExecution({ ...c, resumeSessionId: 'sess-1' });
+    assert.equal(r.verdict.summary, 'own write');
+  } finally { _testing.runClaude = null; }
 });
 
 // ── flow executors ───────────────────────────────────────────────────────────
@@ -615,4 +676,119 @@ test('runExecution dispatches kind:script to the script runner, and the runners.
   assert.deepEqual(seen, ['echo']);
   await assert.rejects(runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, script: { meta: { runtime: 'ruby' } }, ports: {}, outputs: {}, pipelineDir: tmp('worca-exec-sd-'), claudeOpts: {} }),
     (e) => /unknown runtime "ruby"/.test(e.message) && e.errorClass === null);
+});
+
+test('19 decompositionProblems: unique safe ids, positive integer ordinals, files inside the pipeline dir, a task cap', async () => {
+  const { decompositionProblems } = await import('../src/core/graph/executor.mjs');
+  const ok = { phases: [{ ordinal: 1, tasks: [{ id: 'p1t1', file: 'tasks/a.md' }, { id: 'p1t2', file: 'tasks/b.md' }] },
+    { ordinal: 2, tasks: [{ id: 'p2t1', file: 'tasks/c.md' }] }] };
+  assert.deepEqual(decompositionProblems(ok, pipelineDir), []);
+  const probs = (doc) => decompositionProblems(doc, pipelineDir).join('\n');
+  assert.match(probs({ phases: [{ ordinal: 1, tasks: [{ id: 't1', file: 'tasks/a.md' }, { id: 't1', file: 'tasks/b.md' }] }] }), /duplicate task id "t1"/);
+  assert.match(probs({ phases: [{ ordinal: 1, tasks: [{ id: '../../x', file: 'tasks/a.md' }] }] }), /task id "\.\.\/\.\.\/x"/);
+  assert.match(probs({ phases: [{ ordinal: 1, tasks: [{ id: 'a', file: 'tasks/a.md' }] }, { ordinal: '1', tasks: [{ id: 'b', file: 'tasks/b.md' }] }] }), /ordinal "1"/);
+  assert.match(probs({ phases: [{ ordinal: 1, tasks: [{ id: 'a', file: 'tasks/a.md' }] }, { ordinal: 1, tasks: [{ id: 'b', file: 'tasks/b.md' }] }] }), /duplicate ordinal 1/);
+  assert.match(probs({ phases: [{ ordinal: 1, tasks: [{ id: 'a', file: '../../../../etc/passwd' }] }] }), /outside the pipeline directory/);
+  assert.match(probs({ phases: [{ ordinal: 1, tasks: [{ id: 'a', file: '/etc/passwd' }] }] }), /outside the pipeline directory/);
+  const many = { phases: [{ ordinal: 1, tasks: Array.from({ length: 51 }, (_, i) => ({ id: `t${i}`, file: `tasks/${i}.md` })) }] };
+  assert.match(probs(many), /51 tasks/);
+  // readDecomposition parses a fenced manifest instead of silently losing the fan-out.
+  const fenced = join(pipelineDir, 'fenced-decomp.json');
+  writeFileSync(fenced, 'Manifest:\n```json\n' + JSON.stringify(ok) + '\n```\n', 'utf8');
+  assert.equal((await readDecomposition(fenced)).phases.length, 2);
+});
+
+test('E4: an agent node that runs past its wall-clock or goes silent past its idle limit stops with a time_limit error', async () => {
+  const { nodeTimeLimits } = await import('../src/core/graph/executor.mjs');
+  // Defaults: generous enough for normal nodes; per node, then per workflow, override them.
+  assert.deepEqual(nodeTimeLimits({ node: { config: {} } }), { wallMs: 90 * 60000, idleMs: 20 * 60000 });
+  assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 5 } }, template: { limits: { idleLimitMinutes: 2, timeLimitMinutes: 9 } } }),
+    { wallMs: 5 * 60000, idleMs: 2 * 60000 });
+  const hang = (emitEvery) => async (opts) => new Promise((resolve, reject) => {
+    const t = emitEvery ? setInterval(() => opts.onEvent({ type: 'text', text: 'still here' }), emitEvery) : null;
+    opts.signal.addEventListener('abort', () => { if (t) clearInterval(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+  });
+  const run = async (config, emitEvery) => {
+    const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal });
+    _testing.runClaude = hang(emitEvery);
+    try { return await runAgentExecution(c).then(() => null, (e) => e); } finally { _testing.runClaude = null; }
+  };
+  const idle = await run({ idleLimitMinutes: 0.001, timeLimitMinutes: 1 }, 0);
+  assert.equal(idle.code, 'NODE_IDLE_LIMIT');
+  assert.equal(idle.errorClass, 'time_limit');
+  assert.match(idle.message, /no output for/);
+  const wall = await run({ idleLimitMinutes: 1, timeLimitMinutes: 0.002 }, 10);   // chatty, but too long
+  assert.equal(wall.code, 'NODE_TIME_LIMIT');
+  assert.equal(wall.errorClass, 'time_limit');
+  // A real abort (Stop/Pause) stays an abort, never a time limit.
+  const ac = new AbortController();
+  _testing.runClaude = hang(0);
+  try {
+    const p = runAgentExecution(ctx8({ signal: ac.signal })).then(() => null, (e) => e);
+    setTimeout(() => ac.abort(), 5);
+    assert.equal((await p).name, 'AbortError');
+  } finally { _testing.runClaude = null; }
+});
+
+test('E9/E10: each spawn appends a manifest line (prompt hashes, model, effort, settings, memory) and names paths outside the checkout', async () => {
+  const { createHash } = await import('node:crypto');
+  const { mkdirSync } = await import('node:fs');
+  const rules = tmp('worca-exec-rules-');
+  mkdirSync(join(rules, 'worca'), { recursive: true });
+  writeFileSync(join(rules, 'worca', 'note.md'), 'a rule\n');
+  const events = [];
+  const c = ctx8({ claudeOpts: { mock: true, model: 'claude-opus-5-5', effort: 'high' }, memoryRules: rules, cliVersion: '2.1.400',
+    onEvent: (e) => events.push(e) });
+  const scratch = '/private/tmp/claude-501/other-session/scratchpad/tree/a.mjs';
+  _testing.runClaude = async (opts) => {
+    opts.onEvent({ type: 'session', sessionId: 's-1', model: 'claude-opus-5-5-20261001', init: true });
+    opts.onEvent({ type: 'tool', parentId: null, calls: [
+      { name: 'Read', input: { file_path: join(projectDir, 'src/in.mjs') } },          // inside: not recorded
+      { name: 'Bash', input: { command: `cp -r ${scratch} src/ && ls /usr/bin/env` } },  // outside; /usr is system
+      { name: 'Read', input: { file_path: join(pipelineDir, 'plan.md') } },               // the pipeline dir is owned
+    ] });
+    writeFileSync(c.verdict.path, JSON.stringify({ issues: [], summary: 'ok' }), 'utf8');
+    return { text: 'done' };
+  };
+  try {
+    const r = await runAgentExecution(c);
+    assert.ok(r.warnings.some((w) => w.includes('outside its checkout') && w.includes(scratch)), JSON.stringify(r.warnings));
+    const lines = readFileSync(join(pipelineDir, 'executions.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const m = lines.at(-1);
+    assert.equal(m.executionId, 'x:n_c:2');
+    assert.equal(m.cliVersion, '2.1.400');
+    assert.deepEqual(m.model, { requested: 'claude-opus-5-5', init: 'claude-opus-5-5-20261001' });
+    assert.equal(m.effort, 'high');
+    assert.equal(m.sessionId, 's-1');
+    assert.equal(m.prompts.prompt, createHash('sha256').update(r.prompt).digest('hex'));
+    assert.equal(m.prompts.system, createHash('sha256').update(r.systemPrompt).digest('hex'));
+    assert.ok('user' in m.settings && 'project' in m.settings && typeof m.settings.worca === 'string');
+    assert.equal(m.memory.mode, 'frozen');
+    assert.deepEqual(m.memory.files.map((f) => f.path), ['worca/note.md']);
+    const noteSha = createHash('sha256').update('a rule\n').digest('hex');
+    assert.equal(m.memory.set, createHash('sha256').update(`worca/note.md ${noteSha}\n`).digest('hex'), 'the frozen-set hash rule');
+    assert.deepEqual(m.outside, [{ path: scratch, tool: 'Bash' }]);
+    assert.equal(m.outcome, 'ok');
+    assert.ok(events.some((e) => e.type === 'scope' && e.paths.length === 1), 'telemetry gets the outside paths');
+  } finally { _testing.runClaude = null; }
+});
+
+test('E10: the run\'s frozen memory manifest wins over listing the rules copy', async () => {
+  const c = ctx8({ memoryMode: 'frozen', memoryManifest: { set: 'abc', files: [{ path: 'project/a.md', sha256: 'h1', bytes: 3, roles: ['x'] }] } });
+  _testing.runClaude = async () => { writeFileSync(c.verdict.path, JSON.stringify({ issues: [] }), 'utf8'); return { text: 'ok' }; };
+  try {
+    await runAgentExecution(c);
+    const m = readFileSync(join(pipelineDir, 'executions.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).at(-1);
+    assert.deepEqual(m.memory, { mode: 'frozen', set: 'abc', files: [{ path: 'project/a.md', sha256: 'h1' }] });
+  } finally { _testing.runClaude = null; }
+});
+
+test('E1/E8: a spawn that stopped to ask questions is not checked yet — the resumed spawn is', async () => {
+  const qf = join(pipelineDir, 'asked-questions.json');
+  const c = ctx8({ questionsFile: qf });
+  _testing.runClaude = async () => { writeFileSync(qf, JSON.stringify({ questions: [{ id: 'q1', question: 'Which?', options: ['a', 'b'] }] }), 'utf8'); return { text: 'asking' }; };
+  try {
+    const r = await runAgentExecution(c);
+    assert.equal(r.verdict.missing, true, 'no verdict yet, and no throw');
+  } finally { _testing.runClaude = null; rmSync(qf, { force: true }); }
 });

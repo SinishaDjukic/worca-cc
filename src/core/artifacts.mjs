@@ -1992,6 +1992,8 @@ function toPipelineRow(o) {
           endReached: !!o.endReached,
           result: o.result ?? null,
           warnings: Array.isArray(o.warnings) ? o.warnings : [],
+          // E2: loops forced past their budget with blocking issues still open.
+          ...(Array.isArray(o.openIssues) && o.openIssues.length ? { openIssues: o.openIssues } : {}),
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
@@ -2345,6 +2347,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     limitEngine: row.limit_engine ?? null,
     limitResetAt: row.limit_reset_at ?? null,
     runEngine: row.run_engine || 'claude',
+    // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
+    ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
+    ...(row.end_reached === 0 ? { endReached: false } : row.end_reached === 1 ? { endReached: true } : {}),
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     baseCheck: baseCheckSummaryFor(row),
@@ -2452,7 +2457,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine,
+           ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -2496,7 +2502,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine,
+           ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
@@ -2769,6 +2776,7 @@ function rowToState(row) {
     state.endReached = !!outcome.endReached;
     state.result = outcome.result ?? null;
     state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
+    state.openIssues = Array.isArray(outcome.openIssues) ? outcome.openIssues : [];
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
     state.active = [];        // nothing is in flight in a rehydrated snapshot
@@ -2831,6 +2839,10 @@ function buildAuditMarkdown(row) {
 const RUN_ENGINE_SQL = `COALESCE(
              json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.runEngine'),
              json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.claude.engine'))`;
+/** The done-run caveat columns for the History list: total open issues and whether End fired. */
+const OUTCOME_NOTE_SQL = `(SELECT SUM(json_extract(o.value, '$.count'))
+              FROM json_each(json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.openIssues')) AS o) AS open_issue_count,
+           json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.endReached') AS end_reached`;
 export function runEngineOfRow(row) {
   if (!row) return 'claude';
   const outcome = j(row.outcome, null);

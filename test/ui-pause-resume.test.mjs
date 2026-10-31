@@ -79,6 +79,18 @@ test('paused and pausing land in the amber paused family (histStatusMeta and sta
   ]);
 });
 
+test('E2/2.3: a done run that was forced past open issues, or never reached End, says so in its status', async () => {
+  const { window } = await bootLive();
+  const { histStatusMeta, statusPill } = window.__np;
+  assert.deepEqual(statusPill({ status: 'done', openIssues: [{ nodeId: 'n_review', count: 2 }], endReached: true }),
+    { family: 'amber', text: 'Done · 2 open issues' });
+  assert.deepEqual(statusPill({ status: 'done', endReached: false }), { family: 'amber', text: 'Done · End not reached' });
+  assert.deepEqual(statusPill({ status: 'done', endReached: true }), { family: 'green', text: 'Done' });
+  assert.deepEqual(statusPill({ status: 'paused', pauseReason: 'time_limit' }), { family: 'amber', text: 'Paused · time limit' });
+  assert.equal(histStatusMeta({ status: 'done', openIssueCount: 1 }).word, 'Done · 1 open issue');
+  assert.equal(histStatusMeta({ status: 'done' }).word, 'Done');
+});
+
 test('a paused run shows a wired Resume button on its detail screen', async () => {
   const row = { id: 'p1', title: 't', status: 'paused', projectKey: 'k' };
   const ctx = await bootLive({ fetchHandler: historyArms(row) });

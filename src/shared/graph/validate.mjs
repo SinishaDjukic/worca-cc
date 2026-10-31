@@ -19,7 +19,7 @@ const AWAIT_PORT_ID = 'await';
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
   agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort',
-    'approve', 'maxQuestions', 'promptHints', 'roleReview']),
+    'approve', 'maxQuestions', 'promptHints', 'roleReview', 'timeLimitMinutes', 'idleLimitMinutes', 'verdictOptional']),
   script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock', 'paramsPort']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
@@ -296,12 +296,27 @@ export const RULES = [
     }
   } },
 
+  // Every CYCLE must cross a budgeted loop wire, not merely its component (2.4): with the loop wires
+  // removed, what is left of the component must be acyclic, or a second cycle runs with no budget.
   { code: 'V10', level: 'E', check({ cycles, liveWires, loopWireIds }, add) {
     for (const scc of cycles) {
       const members = new Set(scc);
       const inner = liveWires.filter((w) => members.has(w.from.node) && members.has(w.to.node));
-      if (inner.some((w) => loopWireIds.has(w.id))) continue;
-      add(`cycle without a blocking-source edge: ${scc.join(', ')} (wires ${inner.map((w) => w.id).join(', ') || 'none'})`);
+      const free = inner.filter((w) => !loopWireIds.has(w.id));
+      // Kahn's algorithm over the unbudgeted wires: whatever never drains sits on an unbudgeted cycle.
+      const indeg = new Map(scc.map((id) => [id, 0]));
+      for (const w of free) indeg.set(w.to.node, indeg.get(w.to.node) + 1);
+      const queue = scc.filter((id) => indeg.get(id) === 0);
+      const drained = new Set();
+      while (queue.length) {
+        const id = queue.shift();
+        drained.add(id);
+        for (const w of free) if (w.from.node === id) { indeg.set(w.to.node, indeg.get(w.to.node) - 1); if (indeg.get(w.to.node) === 0) queue.push(w.to.node); }
+      }
+      if (drained.size === scc.length) continue;
+      const stuck = scc.filter((id) => !drained.has(id));
+      const wiresOf = free.filter((w) => !drained.has(w.from.node) && !drained.has(w.to.node));
+      add(`cycle without a blocking-source edge: ${stuck.join(', ')} (wires ${wiresOf.map((w) => w.id).join(', ') || 'none'})`);
     }
   } },
 
@@ -586,6 +601,16 @@ export const RULES = [
       }
       if (promptHints !== undefined && typeof promptHints !== 'string') {
         add(`node '${n.id}' config.promptHints must be a string`, { nodeId: n.id });
+      }
+      // E4 node limits (graph/executor.mjs nodeTimeLimits): minutes, above 0, at most a day.
+      for (const k of ['timeLimitMinutes', 'idleLimitMinutes']) {
+        const v = n.config[k];
+        if (v !== undefined && !(typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1440)) {
+          add(`node '${n.id}' config.${k} must be a number of minutes above 0 and at most 1440`, { nodeId: n.id });
+        }
+      }
+      if (n.config.verdictOptional !== undefined && typeof n.config.verdictOptional !== 'boolean') {
+        add(`node '${n.id}' config.verdictOptional must be true or false`, { nodeId: n.id });
       }
     }
   } },

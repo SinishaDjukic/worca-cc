@@ -128,3 +128,56 @@ test('resolvedFromManifest rebuilds a script ctx from the cell config + the live
   assert.equal(r.ports({ id: 'n_tests', kind: 'script', key: 'runTests', config: {} }).verdict.filename, 'tests-cycle{cycle}.json', 'the verdict filename is live');
   assert.equal(resolvedFromManifest(manifest, registry).nodes.n_tests.file, null, 'no scripts index: the ctx is a stub the preflight refuses');
 });
+
+test('E5: a resumed run keeps a resume point on its row from the start — before its first node finishes', { timeout: 120000 }, async () => {
+  const dir = gitDir('gresume-e5');
+  const seen = { resumed: [] };
+  let orch;
+  orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: pausingOnce(() => orch, seen), verifier: okVerifier, clarifier: okClarifier },
+  });
+  assert.equal((await orch.run()).status, 'paused');
+  const saved = readPipelineForResume(orch.getState().id);
+  let during = null;
+  let orch2;
+  const producer = pausingOnce(() => orch2, seen);
+  orch2 = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', auto: true, claude: { mock: true }, resume: saved,
+    runners: {
+      producer: async (ctx) => {
+        // The first re-invoked node: a crash here must still leave the run resumable.
+        if (during === null) during = readPipelineForResume(orch2.getState().id).row.resume_point;
+        return producer(ctx);
+      },
+      verifier: okVerifier, clarifier: okClarifier,
+    },
+  });
+  assert.equal((await orch2.resume()).status, 'done');
+  assert.ok(during, 'the row held a resume point while the first resumed node ran');
+  const rp = JSON.parse(during);
+  assert.ok(rp.snapshot, 'with the snapshot to resume from');
+  assert.equal(rp.pauseReason, undefined, 'never the old pause reason — the run is running');
+  assert.equal(rp.pausedBy, undefined, 'and never the paused harness\'s ownership token');
+});
+
+test('3.2: the row\'s resume point advances at every completion, not one completion behind', { timeout: 120000 }, async () => {
+  const dir = gitDir('gresume-32');
+  const snaps = [];
+  let orch;
+  const producer = async (ctx) => {
+    const row = readPipelineForResume(orch.getState().id)?.row;
+    const rp = row?.resume_point ? JSON.parse(row.resume_point) : null;
+    snaps.push({ node: ctx.nodeId, done: (rp?.snapshot?.execs || []).filter((e) => e.status === 'done').map((e) => e.nodeId) });
+    return { outputs: outsOf(ctx), verdict: null, summary: 'ok' };
+  };
+  orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer, verifier: okVerifier, clarifier: okClarifier },
+  });
+  assert.equal((await orch.run()).status, 'done');
+  // Every node after the first sees its predecessor's completion in the persisted point.
+  const later = snaps.slice(1);
+  assert.ok(later.length >= 1, JSON.stringify(snaps));
+  for (const s of later) assert.ok(s.done.length >= 1, `the point persisted before ${s.node} started: ${JSON.stringify(snaps)}`);
+});
