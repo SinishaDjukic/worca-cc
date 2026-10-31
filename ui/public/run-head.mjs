@@ -499,7 +499,7 @@ function foldLine(doc, fold, h) {
   p.append(routeDot(doc, fold.kind, fold.state), tx);
   return p;
 }
-/** D15: copies through the page's branch copy (app.js copyBranchToClipboard: the copied tick, "Copied"). */
+/** D15: the one copy button (copy-button.mjs); the host's onCopy copies through copyFromButton (the tick, "Copied"). */
 function routeCopyButton(doc, name, h) {
   const b = copyButton(doc, { name: `Copy branch name ${name}`, title: name, cls: 'rd-route-copy' });
   b.dataset.route = 'copy';

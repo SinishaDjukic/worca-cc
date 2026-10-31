@@ -539,25 +539,30 @@ export function collectSpeechRow(rootEl) {
   return body;
 }
 
-/** Copy code: the one copy button (copy-button.mjs: the copy icon, then a green tick and "Copied"). It copies by
- *  itself, so the box works wherever it is mounted (Providers, the setup assistant). */
-function copyCodeButton(doc, code) {
-  const b = copyButton(doc, { name: 'Copy code', cls: 'mv-cp-copy' });
+/** The code is its own copy button (copy-button.mjs: the code as the label, then a green tick and "Copied"), the one
+ *  step of the box. It copies by itself, so the box works wherever it is mounted (Providers, the setup assistant).
+ *  A failure stays in the box's status line: a button's text cannot be selected, so it says to type the code. */
+function copyCodeButton(doc, code, status) {
+  const b = copyButton(doc, { name: `Copy code ${code}`, label: code, title: 'Copy code', cls: 'mv-cp-copy' });
+  b.querySelector('.copy-btn-text').classList.add('mv-cp-code');
   b.dataset.code = code;
-  b.addEventListener('click', () => { void copyFromButton(b, code, { empty: 'No code yet', failed: 'Copy failed: select the code' }); });
+  b.addEventListener('click', async () => {
+    if (await copyFromButton(b, code, { empty: 'No code yet' })) return;
+    status.textContent = code ? `Could not copy the code. Type ${code} on GitHub instead.` : 'No code yet.';
+    status.classList.add('err');
+  });
   return b;
 }
 
-// In the order it is used: the code and Copy as one group, then Open (the primary step); below, the wait (a spinner
-// while it lasts) with Cancel on the same line. Every control is the same 32px tall, the code included.
+// In the order it is used: the code (its own copy button), then Open (the primary step); below, the wait (a spinner
+// while it lasts) with Cancel on the same line.
 export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
   const box = h(doc, 'div', 'mv-cp-signin-box');
   box.appendChild(h(doc, 'small', 'hint', 'Copy this code, then enter it on GitHub to connect your Copilot account.'));
+  const status = h(doc, 'small', `hint mv-cp-status${flow.error ? ' err' : ''}`, flow.error || flow.status || 'Waiting for approval…');
+  status.setAttribute('role', 'status');
   const codeRow = h(doc, 'div', 'mv-cp-code-row');
-  const group = h(doc, 'div', 'mv-cp-code-group');
-  group.appendChild(h(doc, 'code', 'mv-cp-code', flow.userCode || ''));
-  group.appendChild(copyCodeButton(doc, flow.userCode || ''));
-  codeRow.appendChild(group);
+  codeRow.appendChild(copyCodeButton(doc, flow.userCode || '', status));
   const link = h(doc, 'a', 'btn btn-primary mv-cp-open', 'Open github.com/login/device');
   link.href = flow.verificationUri || 'https://github.com/login/device';
   link.target = '_blank'; link.rel = 'noopener';
@@ -566,8 +571,6 @@ export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
   const foot = h(doc, 'div', 'mv-cp-foot');
   const wait = h(doc, 'div', 'mv-cp-wait');
   if (!flow.error) { const spin = h(doc, 'span', 'mk-phase-spin'); spin.setAttribute('aria-hidden', 'true'); wait.appendChild(spin); }
-  const status = h(doc, 'small', `hint mv-cp-status${flow.error ? ' err' : ''}`, flow.error || flow.status || 'Waiting for approval…');
-  status.setAttribute('role', 'status');
   wait.appendChild(status);
   const cancel = h(doc, 'button', 'btn btn-quiet mv-cp-cancel', flow.error ? 'Dismiss' : 'Cancel');
   cancel.type = 'button';

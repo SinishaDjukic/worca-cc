@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { copyButton, copyFromButton, flashCopy, COPIED_MS } from '../ui/public/copy-button.mjs';
+import { createUpdateUi } from '../ui/public/update-view.mjs';
+import { renderCopilotSignIn } from '../ui/public/bridge-view.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const UI = join(ROOT, 'ui/public');
@@ -139,4 +141,61 @@ test('the caption CSS: green Copied, red reason, an icon square widens for it; n
   assert.match(css, /\.copy-btn\.copy-miss \.copy-btn-msg\{display:inline;color:var\(--red-ink-strong\);\}/);
   assert.match(css, /\.copy-btn\.btn-icon:is\(\.copied,\.copy-miss\)\{width:auto;/);
   assert.doesNotMatch(css + readFileSync(join(UI, 'index.html'), 'utf8'), /(?:hd|rd)-copied/, 'the branch caption is the shared one now');
+});
+
+test('screen readers hear the outcome: one polite status region, re-said on every flash', async () => {
+  const { window, doc } = page();
+  clipboard(window, async () => {});
+  const a = copyButton(doc, { name: 'Copy path' });
+  const b = copyButton(doc, { name: 'Copy command' });
+  await copyFromButton(a, 'x');
+  const live = doc.getElementById('copy-live');
+  assert.equal(live.getAttribute('role'), 'status');
+  assert.equal(live.getAttribute('aria-live'), 'polite');
+  assert.ok(live.classList.contains('sr-only'), 'visually hidden: the caption is what sighted users see');
+  assert.equal(live.textContent, 'Copied');
+  await copyFromButton(b, '');
+  assert.equal(doc.querySelectorAll('#copy-live').length, 1, 'one region for every button');
+  assert.equal(live.textContent, 'Nothing to copy');
+});
+
+test('createUpdateUi hands every command copy to the injected copyFromButton; a miss is reported', async () => {
+  const { doc } = page();
+  doc.body.innerHTML = `
+    <code id="aboutUpdateCmd">npm i -g @worca/app@1.15.0</code><button id="aboutUpdateCopy"></button>
+    <code id="aboutUpdateFailedCmd">npm i -g @worca/app@1.15.0</code><button id="aboutUpdateFailedCopy"></button>
+    <code id="updateConfirmStartCmd">worca ui</code><button id="updateConfirmCopy"></button>
+    <code id="updateOverlayStartCmd">worca ui --port 4400</code><button id="updateOverlayCopy"></button>`;
+  const calls = [];
+  const reports = [];
+  let ok = true;
+  const ui = createUpdateUi({ doc, fetchImpl: async () => ({ ok: false }), report: (m, tone) => reports.push([m, tone]),
+    copyFromButton: async (btn, text) => { calls.push([btn.id, text]); return ok; } });
+  ui.wire();
+  const press = async (id) => { doc.getElementById(id).click(); await new Promise((r) => setImmediate(r)); };
+  for (const id of ['aboutUpdateCopy', 'aboutUpdateFailedCopy', 'updateConfirmCopy', 'updateOverlayCopy']) await press(id);
+  assert.deepEqual(calls, [
+    ['aboutUpdateCopy', 'npm i -g @worca/app@1.15.0'], ['aboutUpdateFailedCopy', 'npm i -g @worca/app@1.15.0'],
+    ['updateConfirmCopy', 'worca ui'], ['updateOverlayCopy', 'worca ui --port 4400']]);
+  assert.deepEqual(reports, [], 'a copy that landed says nothing more');
+  ok = false;
+  await press('updateOverlayCopy');
+  assert.deepEqual(reports, [['Could not copy the command: select it and copy it by hand.', 'err']]);
+  const app = readFileSync(join(UI, 'app.js'), 'utf8');
+  assert.match(app, /createUpdateUi\(\{[^}]*\bcopyFromButton\b/, 'app.js passes the shared copyFromButton in');
+});
+
+test('the Copilot device code is its own copy button; a miss stays in the status line with the code to type', async () => {
+  const { window, doc } = page();
+  const box = renderCopilotSignIn({ userCode: 'ABCD-1234', status: 'Waiting for approval…' }, { doc });
+  const btn = box.querySelector('.mv-cp-copy');
+  assert.ok(btn.classList.contains('copy-btn') && btn.classList.contains('mono') && !btn.classList.contains('btn-icon'));
+  assert.equal(btn.querySelector('.copy-btn-text.mv-cp-code').textContent, 'ABCD-1234', 'the code is the label');
+  assert.equal(btn.getAttribute('aria-label'), 'Copy code ABCD-1234');
+  clipboard(window, async () => { throw new Error('denied'); });
+  btn.click();
+  await new Promise((r) => setImmediate(r));
+  const status = box.querySelector('.mv-cp-status');
+  assert.equal(status.textContent, 'Could not copy the code. Type ABCD-1234 on GitHub instead.');
+  assert.ok(status.classList.contains('err'));
 });

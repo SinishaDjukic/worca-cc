@@ -98,20 +98,25 @@ primary.
 Every button that puts text on the clipboard is the one copy button, built by `copyButton(doc, { name, label?, title?,
 cls? })` in `ui/public/copy-button.mjs` (static markup: `.btn.btn-sm.btn-quiet.copy-btn` with `copyIconsHtml()`'s three
 glyphs). The branch name in the run head is the model.
-1. Look. A quiet 28px button with a 14px `copy` glyph. When the copied text is the label (a branch name, a
-   worktree path), the label is that text in mono beside the glyph and ellipsizes. Otherwise the button is an icon
-   square (`.btn-icon`), never a typed "Copy"/"copy" label, and it sits next to what it copies.
+1. Look. A quiet 28px button with a 14px `copy` glyph. When the copied text is shown and is the thing to copy (a
+   branch name, a worktree path, the Copilot device code), it is the label, in mono beside the glyph, and the text
+   itself is the button. Otherwise the button is an icon square (`.btn-icon`), never a typed "Copy"/"copy" label, and
+   it sits next to what it copies.
 2. Name. `aria-label` says what it does, verb first, sentence case: `Copy branch name`, `Copy the visible log lines`,
    `Copy path`, `Copy command`. The title is the same, or the full text when the label is shortened.
 3. Feedback. Through `copyFromButton(btn, text)` only, the same on every copy button: for 1200 ms the glyph turns into
    a `--green-ink` tick followed by a green `Copied` caption (12px sans, `.copy-btn-msg`, inside the button), and the
    title says `Copied` (`.copied`). A failed write or empty text shows a `--red-ink-strong` × and the reason as the
    caption and title (`Copy failed`, `Nothing to copy`; `.copy-miss`). An icon square widens to hold its caption for
-   that window. The label never changes and no toast is raised for success; a failure that needs a next step may add a
-   status line.
-4. Not copy buttons: menu items ("Copy Markdown", "Copy PR link") and a dialog's labelled footer actions (the report
+   that window. The outcome is also said to screen readers through one polite `#copy-live` status region (the
+   caption is not read: the aria-label names the button). The label never changes and no toast is raised for success.
+4. A failure the person must act on (the text is needed elsewhere: a command to run, a path, a sign-in code) also goes
+   to the surface's status line, which outlasts the 1200 ms flash, and says what to do instead ("Type ABCD-1234 on
+   GitHub instead", "select it and copy it by hand"). A failure with nothing to do (the Logs bar) needs only the flash.
+5. Not copy buttons: menu items ("Copy Markdown", "Copy PR link") and a dialog's labelled footer actions (the report
    dialog's `Copy JSON`, the team policy's `Copy for PR`), which keep their words, in sentence case.
-A copy-labelled `.btn` that is not a `.copy-btn` fails `test/ui-copy-button.test.mjs`.
+A copy-labelled `.btn` that is not a `.copy-btn`, or a `.copied` toggled outside `copy-button.mjs`, fails
+`test/ui-copy-button.test.mjs`.
 ### PR controls (checked)
 Every pull request button and link looks the same everywhere (`test/ui-pr-controls.test.mjs`).
 1. Variant. Create PR and Push are the ship actions: `.btn.btn-primary`. View PR is navigation: a plain secondary

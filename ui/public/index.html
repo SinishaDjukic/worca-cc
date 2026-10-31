@@ -935,8 +935,6 @@
                     <button type="button" class="btn btn-sm btn-quiet mono copy-btn rd-branch-copy" hidden data-min-level="advanced" data-needs-git title="Copy branch name" aria-label="Copy branch name">
                       <span class="rd-branch-name"></span><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span>
                     </button>
-                    <!-- NO `hidden`: the caption is driven purely by the CSS sibling rule
-                         off copyBranchToClipboard's own 1200ms `.copied` window. -->
                     <!-- Sync before run (#527): shown only when the run has a Sync row; opens its log. -->
                     <button type="button" class="btn btn-sm rd-sync" hidden data-min-level="advanced" data-needs-git title="Show the Sync log"></button>
                     <span class="rd-spacer"></span>
@@ -1103,11 +1101,6 @@
                   <button type="button" class="btn btn-sm btn-quiet mono copy-btn hd-branch-copy" hidden data-min-level="advanced" data-needs-git title="Copy branch name" aria-label="Copy branch name">
                     <span class="hd-branch-name"></span><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span>
                   </button>
-                  <!-- NO `hidden` attribute: the caption is driven purely by the CSS
-                       sibling rule off copyBranchToClipboard's own 1200ms `.copied`
-                       window. Shipping `hidden` here would leave the node hidden from
-                       assistive tech while visually shown, because the author rule
-                       outranks the UA [hidden] rule either way. -->
                   <span class="hd-spacer"></span>
                 </div>
               </header>

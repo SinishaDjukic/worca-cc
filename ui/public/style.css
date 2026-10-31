@@ -836,6 +836,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .copy-btn.copied .ico-check{display:inline-flex;color:var(--green-ink);}
 .copy-btn.copy-miss .ico-x{display:inline-flex;color:var(--red-ink-strong);}
 .copy-btn[hidden]{display:none;}
+.copy-btn.mono{font-family:var(--mono);}   /* the copied text as label: mono (.btn sets font-family:inherit; .mono has no rule of its own) */
 .copy-btn-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .copy-btn-msg{display:none;flex:none;font:500 var(--fs-meta) var(--sans);}
 .copy-btn.copied .copy-btn-msg{display:inline;color:var(--green-ink);}
@@ -3849,11 +3850,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12px;padding:0 12px;}
 .mv-pv-row .mv-pv-conc{max-width:120px;}
 .mv-cp-signin-box{display:grid;gap:12px;padding:14px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);min-width:0;}
-/* The code and Copy are one group; Open follows. All three share the .btn height (32px) so the row lines up. */
+/* The code is its own copy button (the code as its label, design-system.md › Copy button); Open follows. */
 .mv-cp-code-row{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;min-width:0;}
-.mv-cp-code-group{display:flex;align-items:center;gap:8px;}
-.mv-cp-code{display:inline-flex;align-items:center;height:32px;box-sizing:border-box;padding:0 12px;font-family:var(--mono);font-size:var(--fs-subpage);font-weight:700;
-  border-radius:var(--r-sm);background:var(--panel);border:1px solid var(--line-2);user-select:all;}
+.mv-cp-copy .mv-cp-code{font-size:var(--fs-subpage);font-weight:700;}
 /* The wait (spinner + line) on the left, Cancel on the right of the same row. */
 .mv-cp-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;}
 .mv-cp-wait{display:flex;align-items:center;gap:8px;min-width:0;}
@@ -7880,7 +7879,6 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
    stat card with the lists' status and one action; an empty RUNS card spans two columns. */
 .pd-meta .pd-path{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .pd-path-copy{flex:none;}
-.pd-path-copy.copied{color:var(--green-ink);}   /* --ink-2: --ink-3 is under 3:1 for an icon */
 /* --blue is 2.7:1 on white */
 .pd-ov-card{display:flex;flex-direction:column;}
 .pd-ov-branch .pd-ov-value{display:flex;align-items:center;gap:8px;min-width:0;}

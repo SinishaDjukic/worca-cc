@@ -75,6 +75,24 @@ function captionOf(btn) {
 }
 
 /**
+ * Says `text` to screen readers through one polite, visually hidden status region (#copy-live). The button's own
+ * caption is not read out: its aria-label names it. Emptied first, so the same words twice are announced twice.
+ */
+export function announceCopy(doc, text) {
+  let r = doc.getElementById('copy-live');
+  if (!r) {
+    r = doc.createElement('div');
+    r.id = 'copy-live';
+    r.className = 'sr-only';
+    r.setAttribute('role', 'status');
+    r.setAttribute('aria-live', 'polite');
+    doc.body.append(r);
+  }
+  r.textContent = '';
+  r.textContent = text;
+}
+
+/**
  * Shows the outcome on `btn` for COPIED_MS: the tick and "Copied", or the × and `miss`, as glyph, caption and title.
  * The resting title is read once and kept in `data-copy-title`, so a click during the window can never make a flash
  * the button's title.
@@ -86,6 +104,7 @@ export function flashCopy(btn, ok, miss = 'Copy failed') {
   btn.classList.toggle('copied', ok);
   btn.classList.toggle('copy-miss', !ok);
   btn.title = say;
+  announceCopy(btn.ownerDocument, say);
   const win = btn.ownerDocument.defaultView;
   win.clearTimeout(btn._copyTimer);
   btn._copyTimer = win.setTimeout(() => {
