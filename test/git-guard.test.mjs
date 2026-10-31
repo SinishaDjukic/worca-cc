@@ -5,7 +5,7 @@
 // local install (documented), never under agent isolation.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -16,7 +16,7 @@ import { commitStagedWork, createWorktree, createDetachedWorktree } from '../src
 import { openBranchWorktree } from '../src/core/terminal/worktrees.mjs';
 import { pushBranch, diffPatch, diffNumstat } from '../src/core/git-info.mjs';
 import { fetchRemote, fastForward } from '../src/core/git-sync.mjs';
-import { guardEntries, parseConfigList, safeLocalSshCommand, guardedGitEnv, guardedGitEnvSync, guardedWorktreeAdd } from '../src/core/git-guard.mjs';
+import { guardEntries, parseConfigList, safeLocalSshCommand, guardedGitEnv, guardedGitEnvSync, guardedWorktreeAdd, _testing as guardTesting } from '../src/core/git-guard.mjs';
 import { existsSync } from 'node:fs';
 
 useTempHome(after);
@@ -326,4 +326,93 @@ test('guardedGitEnv refuses a repository whose config sets a first-wins command 
   assert.throws(() => guardedGitEnvSync(repo), { code: 'GIT_CONFIG_REFUSED' });
   const missing = guardedGitEnvSync(join(repo, 'no-such-dir'));
   assert.ok(Number(missing.GIT_CONFIG_COUNT) > 0);
+});
+
+test('parseConfigList with origin: scope, origin, then key and value', () => {
+  assert.deepEqual(parseConfigList('local\0file:.git/config\0core.bare\nfalse\0command line:\0\0x.y\0', { origin: true }),
+    [{ scope: 'local', origin: 'file:.git/config', key: 'core.bare', value: 'false' },
+      { scope: 'command line:', origin: '', key: 'x.y', value: null }]);
+});
+
+// The listing memo (perf): one listing per repository while nothing it reads changed. It sits on the trust
+// boundary, so every way an agent can change what git would read must list again.
+const settle = () => new Promise((r) => setTimeout(r, 5));
+async function memoRepo(t) {
+  guardTesting.clearMemo();
+  const prev = guardTesting.setRacyMs(0);   // fixtures are seconds old at most; the racy rule has its own test
+  t.after(() => { guardTesting.setRacyMs(prev); guardTesting.clearMemo(); });
+  const { repo } = repoWithOrigin();
+  await settle();
+  return repo;
+}
+const listingsFor = async (fn) => { const n = guardTesting.listings(); await fn(); return guardTesting.listings() - n; };
+const pinsFilter = (env) => Object.entries(env).some(([k, v]) => k.startsWith('GIT_CONFIG_KEY_') && v === 'filter.evil.clean');
+
+test('memo: a second call in an unchanged repository lists nothing; async and sync share it', POSIX, async (t) => {
+  const repo = await memoRepo(t);
+  assert.equal(await listingsFor(() => guardedGitEnv(repo)), 1);
+  assert.equal(await listingsFor(() => guardedGitEnv(repo)), 0);
+  assert.equal(await listingsFor(() => guardedGitEnvSync(repo)), 0);
+  // Another env that names config files is another key.
+  assert.equal(await listingsFor(() => guardedGitEnv(repo, { env: { ...process.env, GIT_CONFIG_GLOBAL: join(repo, 'g') } })), 1);
+});
+
+test('memo: a local config write lists again and the new driver is pinned', POSIX, async (t) => {
+  const repo = await memoRepo(t);
+  assert.equal(pinsFilter(await guardedGitEnv(repo)), false);
+  git(repo, 'config', 'filter.evil.clean', 'touch /tmp/x');
+  assert.equal(await listingsFor(async () => assert.equal(pinsFilter(await guardedGitEnv(repo)), true)), 1);
+});
+
+test('memo: a config rewritten with its old mtime put back still lists again (ctime)', POSIX, async (t) => {
+  const repo = await memoRepo(t);
+  await guardedGitEnv(repo);
+  const cfg = join(repo, '.git', 'config');
+  const before = statSync(cfg);
+  writeFileSync(cfg, `${readFileSync(cfg, 'utf8')}[filter "evil"]\n\tclean = touch /tmp/x\n`);
+  utimesSync(cfg, before.atime, before.mtime);
+  assert.equal(await listingsFor(async () => assert.equal(pinsFilter(await guardedGitEnv(repo)), true)), 1);
+});
+
+test('memo: creating or changing an include target lists again, even one that did not exist', POSIX, async (t) => {
+  const repo = await memoRepo(t);
+  git(repo, 'config', 'include.path', '../extra.inc');
+  git(repo, 'config', 'includeIf.onbranch:main.path', join(repo, 'branch.inc'));
+  await settle();
+  await guardedGitEnv(repo);
+  assert.equal(await listingsFor(() => guardedGitEnv(repo)), 0);
+  writeFileSync(join(repo, 'extra.inc'), '[filter "evil"]\n\tclean = touch /tmp/x\n');
+  await settle();
+  assert.equal(await listingsFor(async () => assert.equal(pinsFilter(await guardedGitEnv(repo)), true)), 1);
+  assert.equal(await listingsFor(() => guardedGitEnv(repo)), 0);
+  writeFileSync(join(repo, 'branch.inc'), '[diff "evil"]\n\ttextconv = touch /tmp/y\n');
+  assert.equal(await listingsFor(() => guardedGitEnv(repo)), 1);
+});
+
+test('memo: a HEAD change (includeIf.onbranch) lists again', POSIX, async (t) => {
+  const repo = await memoRepo(t);
+  await guardedGitEnv(repo);
+  git(repo, 'checkout', '-q', '-b', 'other');
+  assert.equal(await listingsFor(() => guardedGitEnv(repo)), 1);
+});
+
+test('memo: a linked worktree\'s own config.worktree appearing lists again there', POSIX, async (t) => {
+  const repo = await memoRepo(t);
+  const dir = join(tmp('worca-cc-g2-memo-wt-'), 'wt');
+  git(repo, 'worktree', 'add', '-q', '--detach', dir);
+  await settle();
+  await guardedGitEnv(dir);
+  assert.equal(await listingsFor(() => guardedGitEnv(dir)), 0);
+  git(repo, 'config', 'extensions.worktreeConfig', 'true');
+  git(dir, 'config', '--worktree', 'filter.evil.clean', 'touch /tmp/x');
+  assert.equal(await listingsFor(async () => assert.equal(pinsFilter(await guardedGitEnv(dir)), true)), 1);
+});
+
+test('memo: a config changed just before the listing is never reused (racy window)', POSIX, async (t) => {
+  guardTesting.clearMemo();
+  t.after(() => guardTesting.clearMemo());
+  const { repo } = repoWithOrigin();
+  git(repo, 'config', 'x.y', '1');
+  assert.equal(await listingsFor(() => guardedGitEnv(repo)), 1);
+  assert.equal(await listingsFor(() => guardedGitEnv(repo)), 1);
 });

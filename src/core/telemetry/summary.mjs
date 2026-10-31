@@ -6,6 +6,32 @@ export const MAX_POINTS = 200;
 const AGENT_TOOLS = new Set(['Agent', 'Task', 'task']);
 
 const sum = (a, f) => a.reduce((x, r) => x + (Number(f(r)) || 0), 0);
+/** A sub-agent wait shorter than this is a background launch, not a wait. */
+const AGENT_WAIT_MIN_MS = 5000;
+
+/** Wall time covered by [start, start + ms] intervals: parallel ones count once. */
+export function unionMs(intervals) {
+  const xs = intervals.filter(([a, d]) => Number.isFinite(a) && d > 0).map(([a, d]) => [a, a + d]).sort((p, q) => p[0] - q[0]);
+  let total = 0, from = null, to = null;
+  for (const [a, b] of xs) {
+    if (to == null || a > to) { if (to != null) total += to - from; from = a; to = b; } else if (b > to) to = b;
+  }
+  return to == null ? 0 : total + (to - from);
+}
+
+/** A step's cost: per session the last figure of a cumulative engine, else the sum of its results. */
+function stepCost(results) {
+  const priced = results.filter((r) => Number.isFinite(r.costUsd));
+  if (!priced.length) return null;
+  const bySession = new Map();
+  for (const r of priced) {
+    const k = r.session ?? '';
+    const a = bySession.get(k) || { last: 0, sum: 0, cumulative: false };
+    a.last = r.costUsd; a.sum += r.costUsd; a.cumulative ||= !!r.cumulative;
+    bySession.set(k, a);
+  }
+  return [...bySession.values()].reduce((x, a) => x + (a.cumulative ? a.last : a.sum), 0);
+}
 
 /** Parse NDJSON text; a torn or foreign line is skipped. */
 export function parseTelemetry(text) {
@@ -67,6 +93,9 @@ function stepSummary(key, recs, windowOf) {
     : usedResults.map((r) => [r.ts - t0, r.ctx, r.out, sessions.indexOf(r.session)]);
   const ctxs = points.map((p) => p[1]);
   const tools = recs.filter((r) => r.t === 'tool' && r.sub == null && !AGENT_TOOLS.has(r.name));
+  // The main session sat in a foreground sub-agent call (a background launch returns at once).
+  const agentWaits = recs.filter((r) => r.t === 'tool' && r.sub == null && AGENT_TOOLS.has(r.name) && r.ms >= AGENT_WAIT_MIN_MS);
+  const tests = recs.filter((r) => r.t === 'tool' && r.kind === 'test');
   const firstSeen = recs.find((r) => r.t === 'session' || r.t === 'call')?.ts ?? null;
   const sub = new Map();
   for (const r of subCalls) {
@@ -106,14 +135,21 @@ function stepSummary(key, recs, windowOf) {
     toolMs: sum(tools, (r) => r.ms),
     toolCalls: tools.length,
     toolErrors: tools.filter((r) => r.err).length,
+    agentWaitMs: agentWaits.length ? unionMs(agentWaits.map((r) => [r.ts, r.ms])) : null,
+    // Test runs anywhere in the step (main session and sub-agents), parallel ones once; a background run's
+    // tool time is only its launch.
+    testMs: tests.length ? unionMs(tests.filter((r) => !r.bg).map((r) => [r.ts, r.ms])) : null,
+    testRuns: tests.length,
     retries: recs.filter((r) => r.t === 'retry').length,
     compactions: recs.filter((r) => r.t === 'compact').map((r) => ({ at: r.ts - t0, trigger: r.trigger ?? null, preTokens: r.preTokens ?? null, sub: r.sub ?? null })),
     subAgents: recs.filter((r) => r.t === 'agent' && r.ev === 'spawn').length,
     subCalls: subCalls.length,
     subPeak: subCalls.length ? Math.max(...subCalls.map((r) => r.ctx)) : null,
-    costUsd: results.length ? results[results.length - 1].costUsd : null,
+    costUsd: stepCost(results),
     series: downsampleMax(points),
     seriesPoints: points.length,
+    // Sub-agent calls on the same clock: [ms from the step's start, context].
+    subSeries: downsampleMax(subCalls.map((r) => [r.ts - t0, r.ctx])),
   };
 }
 
@@ -122,7 +158,13 @@ function harnessSummary(recs) {
   const persists = sum(h, (r) => r.persists);
   const emits = sum(h, (r) => r.emits);
   const lags = h.filter((r) => Number.isFinite(r.lagP99Ms));
+  const loads = h.filter((r) => Number.isFinite(r.load1));
   return {
+    loadAvg: loads.length ? sum(loads, (r) => r.load1) / loads.length : null,
+    loadMax: loads.length ? Math.max(...loads.map((r) => r.load1)) : null,
+    gcs: sum(h, (r) => r.gcs),
+    gcMs: sum(h, (r) => r.gcMs),
+    gcMaxMs: h.some((r) => r.gcs) ? Math.max(...h.map((r) => r.gcMaxMs || 0)) : null,
     windows: h.length,
     persists,
     persistMs: sum(h, (r) => r.persistMs),

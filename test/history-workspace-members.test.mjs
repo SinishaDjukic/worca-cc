@@ -27,6 +27,7 @@ function stub({ ahead = '2' } = {}) {
     const ok = (stdout) => Promise.resolve({ ok: true, stdout, stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === '--version') return ok('gh 2');
     if (cmd === 'git' && args[0] === 'rev-parse') return ok('abc\n');                 // every branch exists
+    if (cmd === 'git' && args[0] === 'for-each-ref') return ok(['f-api', 'f-web', 'f-doc'].map((b) => `refs/heads/${b} abc`).join('\n'));
     if (cmd === 'git' && args[0] === 'rev-list') return ok(opts.cwd === '/r/doc' ? `${ahead}\n` : '0\n');
     if (cmd === 'git' && args[0] === 'diff') return ok(' 1 file changed, 4 insertions(+), 1 deletion(-)\n');
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list')

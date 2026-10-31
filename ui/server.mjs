@@ -817,6 +817,19 @@ const AGENTGEN_EVENT_NAMES = ['agentgen-progress', 'agentgen-done', 'agentgen-er
 const SCRIPTBENCH_EVENT_NAMES = ['scriptbench-line', 'scriptbench-done', 'scriptbench-error'];
 const MAX_BENCH_ENTRIES = 8;   // finished bench entries kept in the runs Map (startScriptBench evicts the rest)
 const MAX_BUFFER = 5000;
+const FINISHED_RUN_CAP = 20;   // finished (done / stopped / error) pipeline entries kept in the runs Map and `hello`
+
+/** A run ended: its buffered `state` frames go (each is a full deep copy; replayEntry sends a fresh snapshot after
+ *  the replay), and beyond FINISHED_RUN_CAP the oldest finished pipeline entries leave the runs Map, as a restart
+ *  would: History, the run page and every route read a finished run from its saved row. Paused and interrupted
+ *  entries are never evicted (they resume from here). */
+function settleRunEntry(entry) {
+  entry.events = entry.events.filter((ev) => ev.type !== 'state');
+  entry.endedAt = Date.now();
+  const finished = [...runs.values()].filter((r) => r.orch && (r.kind == null || r.kind === 'run' || r.kind === 'workspace-run')
+    && ['done', 'stopped', 'error'].includes(r.status)).sort((a, b) => (a.endedAt || 0) - (b.endedAt || 0));
+  for (const r of finished.slice(0, Math.max(0, finished.length - FINISHED_RUN_CAP))) runs.delete(r.id);
+}
 
 // ---------------------------------------------------------------------------
 // WebSocket plumbing
@@ -1583,6 +1596,7 @@ function wireRun(entry) {
       }
 
       record(event);
+      if (name === 'done') settleRunEntry(entry);
       // Only the events that can change status or pendingQuestion; log/token frames are far too
       // frequent for a flag check (it reads settings.json synchronously).
       if (KEEP_AWAKE_EVENTS.has(name)) syncKeepAwake();
@@ -7334,7 +7348,8 @@ async function applyProjectSettingsPatch(project, patch) {
 
 app.get('/api/sync/projects', syncRoute(async (_req, res) => {
   const ps = (await listProjects()).filter((p) => p.exists);
-  const blocks = await mapWithCap(ps, fanoutCap(), (p) => projectSyncBlock({ dir: p.path, projectKey: p.key, mode: 'status' }));
+  // The Projects list paints every chip: no project counts as opened by it (project-sync.mjs QUIET_AFTER_MS).
+  const blocks = await mapWithCap(ps, fanoutCap(), (p) => projectSyncBlock({ dir: p.path, projectKey: p.key, mode: 'status', opened: false }));
   res.json({ projects: Object.fromEntries(ps.map((p, i) => [p.key, blocks[i]])) });
 }));
 app.post('/api/sync/all', syncRoute(async (req, res) => {

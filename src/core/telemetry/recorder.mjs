@@ -14,16 +14,21 @@
 //            (sub: the parent tool_use id). ctx = in + cr + cw, the prompt the call sent.
 //            gapMs: from the stream's previous boundary (session start, the previous call, a tool
 //            result) to the call's first frame — model wait, approximately.
-//   tool     {ts, step, sub, name, ms, err}                  a tool call's run time
+//   tool     {ts, step, sub, name, ms, err, kind?, bg?}      a tool call's run time; a shell call also gets a coarse
+//            kind (test|build|git|poll|other, from a fixed label set: the command text is never recorded) and bg
+//            when it ran in the background
 //   retry    {ts, step, sub, attempt, status, reason, delayMs}
 //   compact  {ts, step, sub, trigger, preTokens}             the CLI compacted the context
 //   agent    {ts, step, ev, id, type, model, tokens, ms}     a sub-agent spawned / finished
 //   result   {ts, step, session, in, cr, cw, out, ctx, costUsd, cumulative, turns, durationMs}
 //            the end-of-session usage; the only usage some engines report
 //   harness  {ts, windowMs, persists, persistMs, persistMaxMs, rows, emits, emitBytes,
-//            emitMaxBytes, lagP50Ms, lagP99Ms, lagMaxMs}    Worca's own work, per window
+//            emitMaxBytes, lagP50Ms, lagP99Ms, lagMaxMs, load1?, gcs?, gcMs?, gcMaxMs?}
+//            Worca's own work, per window; load1 = the machine's 1-minute load average (none on Windows),
+//            gc* = this process's garbage-collection pauses in the window
 //   end      {ts, dbBytes, telemetryBytes, logBytes}
-import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { monitorEventLoopDelay, PerformanceObserver } from 'node:perf_hooks';
+import { loadavg } from 'node:os';
 import { createRunLogWriter } from '../run-log.mjs';
 
 export const TELEMETRY_FILE = 'telemetry.ndjson';
@@ -39,6 +44,22 @@ export function usageFields(u) {
   const f = { in: n(o.input_tokens), cr: n(o.cache_read_input_tokens), cw: n(o.cache_creation_input_tokens), out: n(o.output_tokens) };
   f.ctx = f.in + f.cr + f.cw;
   return f;
+}
+
+const SHELL_TOOLS = new Set(['Bash', 'bash', 'shell', 'exec_command', 'run_shell_command', 'local_shell']);
+const KINDS = [
+  ['test', /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?::\S*)?|node\s+(?:--\S+\s+)*--test|node\s+tools\/test\.mjs|jest|vitest|mocha|pytest|rspec|phpunit|tox|playwright\s+test|(?:cargo|go|dotnet|swift|mix)\s+test|make\s+(?:check|test))\b/],
+  ['build', /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build|tsc|webpack|esbuild|vite\s+build|(?:cargo|go|dotnet|swift)\s+build|gradle|mvn|make)\b/],
+  ['poll', /\bsleep\s+\d|\btail\s+-[fF]\b|\bwatch\s|\buntil\b|\bwhile\b/],
+  ['git', /^\s*(?:cd\s+\S+\s*&&\s*)?git\b/],
+];
+/** A shell call's coarse kind (a fixed label, never the command), or null for any other tool. */
+export function shellKind(name, input) {
+  if (!SHELL_TOOLS.has(name)) return null;
+  const raw = input && typeof input === 'object' ? input.command ?? input.cmd : null;
+  const cmd = Array.isArray(raw) ? raw.join(' ') : typeof raw === 'string' ? raw : '';
+  for (const [kind, re] of KINDS) if (re.test(cmd)) return kind;
+  return 'other';
 }
 
 /** A result's usage; an engine whose input already holds the cache (Goose) gets ctx = input. */
@@ -61,7 +82,8 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
   let hist = null;
   let closed = false;
 
-  function freshWindow() { return { start: now(), persists: 0, persistMs: 0, persistMaxMs: 0, rows: 0, emits: 0, emitBytes: 0, emitMaxBytes: 0 }; }
+  let gcObs = null;
+  function freshWindow() { return { start: now(), persists: 0, persistMs: 0, persistMaxMs: 0, rows: 0, emits: 0, emitBytes: 0, emitMaxBytes: 0, gcs: 0, gcMs: 0, gcMaxMs: 0 }; }
   const push = (rec) => { if (!closed) writer.push(rec); };
 
   function stream(step, sub) {
@@ -105,7 +127,11 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
     for (const c of Array.isArray(e.calls) ? e.calls : []) {
       if (!c || typeof c.name !== 'string') continue;
       if (s.pending && (e.messageId == null || s.pending.msg === e.messageId)) s.pending.tools.push(c.name);
-      if (c.toolUseId) openTools.set(c.toolUseId, { ts, name: c.name, step, sub: e.parentId ?? null });
+      if (c.toolUseId) {
+        const kind = shellKind(c.name, c.input);
+        openTools.set(c.toolUseId, { ts, name: c.name, step, sub: e.parentId ?? null, ...(kind ? { kind } : {}),
+          ...(c.input && c.input.run_in_background === true ? { bg: true } : {}) });
+      }
     }
   }
 
@@ -119,7 +145,8 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
       const t = r && r.toolUseId ? openTools.get(r.toolUseId) : null;
       if (!t) continue;
       openTools.delete(r.toolUseId);
-      push({ t: 'tool', ts: t.ts, step: t.step, sub: t.sub, name: t.name, ms: ms(ts - t.ts), err: !!r.isError });
+      push({ t: 'tool', ts: t.ts, step: t.step, sub: t.sub, name: t.name, ms: ms(ts - t.ts), err: !!r.isError,
+        ...(t.kind ? { kind: t.kind } : {}), ...(t.bg ? { bg: true } : {}) });
     }
   }
 
@@ -170,6 +197,9 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
       rec.lagMaxMs = ms(hist.max / 1e6);
       hist.reset();
     }
+    const load1 = loadavg()[0];
+    if (load1 > 0) rec.load1 = Math.round(load1 * 100) / 100;   // Windows reports 0: no figure rather than a false one
+    if (win.gcs) Object.assign(rec, { gcs: win.gcs, gcMs: ms(win.gcMs), gcMaxMs: ms(win.gcMaxMs) });
     const busy = win.persists || win.emits || rec.lagMaxMs > 0;
     win = freshWindow();
     if (busy) push(rec);
@@ -183,7 +213,13 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
       if (timer || closed || !dir) return;
       writer.bind(dir);
       push({ t: 'run', v: TELEMETRY_VERSION, ts: now() });
-      if (lag) { hist = monitorEventLoopDelay({ resolution: 20 }); hist.enable(); }
+      if (lag) {
+        hist = monitorEventLoopDelay({ resolution: 20 }); hist.enable();
+        gcObs = new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) { win.gcs += 1; win.gcMs += e.duration; if (e.duration > win.gcMaxMs) win.gcMaxMs = e.duration; }
+        });
+        gcObs.observe({ entryTypes: ['gc'] });
+      }
       win = freshWindow();
       timer = setInterval(safe(windowRecord), windowMs);
       if (typeof timer.unref === 'function') timer.unref();
@@ -216,6 +252,7 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
       for (const s of streams.values()) flushCall(s);
       if (timer) { clearInterval(timer); timer = null; windowRecord(); }
       if (hist) { hist.disable(); hist = null; }
+      if (gcObs) { gcObs.disconnect(); gcObs = null; }
       push({ t: 'end', ts: now(), ...end });
       closed = true;
       return Promise.resolve(writer.close()).catch(() => {});
