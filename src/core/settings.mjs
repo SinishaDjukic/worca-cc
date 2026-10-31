@@ -582,6 +582,13 @@ export async function setWorkspaceScanModels(input, { models = null } = {}) {
   return { workspaceScan: workspaceScanModels() };
 }
 
+/** #943: whether pipeline agents (Claude) also load the user's own Claude Code setup — `~/.claude` settings, hooks,
+ *  plugins and skills. Off by default: a node spawns with `--setting-sources project`. A project setting wins. */
+export function runUserClaudeSettings(scope) {
+  const p = projectOverride('runUserClaudeSettings', scope); if (typeof p === 'boolean') return p;
+  return readSettings().runUserClaudeSettings === true;
+}
+
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
 export function skillMount(scope) {
   const p = projectOverride('skillMount', scope); if (p !== undefined) return p;
