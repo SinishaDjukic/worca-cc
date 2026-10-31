@@ -98,6 +98,15 @@ npm test
 This runs the full `node:test` suite (`test/*.mjs`) against an isolated
 `WORCA_HOME`. No network, no Claude, no API keys needed.
 
+One full suite runs at a time on a machine: a second `npm test` (another
+worktree, a Worca agent) waits for the first and says so; `WORCA_TEST_NO_LOCK=1`
+skips the wait. A suite is stopped after 60 minutes
+(`WORCA_TEST_SUITE_TIMEOUT_MIN`). Workers default to all cores but one;
+`--concurrency N` or `WORCA_TEST_CONCURRENCY` (Worca sets it in its agents'
+environment, Settings › Runs › Machine load) lowers that. Timing-budget tests
+stretch their budgets by the machine's load locally (`test/helpers/load-budget.mjs`);
+CI keeps them strict.
+
 CI runs on every pull request and every push to `dev`: the fast tier always,
 the slow tier when the change touches what it exercises (`test/tiers.json`;
 `npm run test:fast` and `npm run test:slow` run one tier locally). It skips

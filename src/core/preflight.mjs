@@ -248,8 +248,8 @@ export function worktreeGraphInstruction() {
  * Run `graphify update <dir>` headlessly to build/refresh an AST graph at
  * <dir>/graphify-out/. Spawned with cwd=cwd so graphify's stray cwd-relative
  * manifest write lands inside the same worktree, never the main repo. Bounded
- * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed.
- * Never throws. Resolves { ok, code, timedOut, stderr }.
+ * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed,
+ * and so it is when `signal` aborts. Never throws. Resolves { ok, code, timedOut, stderr }.
  *
  * Before the build, <dir>/graphify-out/.gitignore = `*` makes the output ignore
  * itself (the memory mount's sentinel, memory-sync.mjs mountMemory): a target
@@ -259,7 +259,7 @@ export function worktreeGraphInstruction() {
  * tracks files under graphify-out/ gets no sentinel (it commits its graph on
  * purpose). A failed write is not fatal: the build runs as before.
  */
-export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
+export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000, signal } = {}) {
   try {
     if (!existsSync(dir)) throw new Error('no dir');
     // A repo that commits its graph keeps doing so: hiding only the NEW files would commit half a graph.
@@ -284,17 +284,24 @@ export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       resolveP(val);
     };
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const kill = () => {
       try {
         child.kill('SIGKILL');
       } catch {
         /* ignore */
       }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
       done({ ok: false, code: -1, timedOut: true, stderr: 'graphify update timed out' });
     }, timeoutMs);
+    // signal: the caller stops the build (a run's teardown); resolves once the process has exited.
+    const onAbort = () => kill();
+    if (signal?.aborted) kill(); else signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout?.on('data', () => {});
     child.stderr?.on('data', (d) => {
       stderr += d.toString();
