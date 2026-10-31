@@ -9,7 +9,7 @@ const env = (raw, extra = {}) => ({ type: raw.type, raw, ...extra });
 const norm = () => createClaudeNormalizer();
 
 test('the vocabulary', () => {
-  assert.deepEqual([...EVENT_TYPES].sort(), ['compact', 'hook', 'log', 'result', 'retry', 'session', 'stderr', 'subagent', 'text', 'tool', 'toolResult', 'usage']);
+  assert.deepEqual([...EVENT_TYPES].sort(), ['background', 'compact', 'hook', 'log', 'result', 'retry', 'scope', 'session', 'stderr', 'subagent', 'text', 'tool', 'toolResult', 'usage']);
 });
 
 test('isNormalized: raw envelopes are not, hook and raw-free events are', () => {
@@ -107,11 +107,19 @@ test('tool_result for a tracked agent: ack, finish (with telemetry), error', () 
   assert.deepEqual(failed[0], { type: 'subagent', event: 'error', toolUseId: 'a2', errorText: 'boom' });
 });
 
-test('task_notification -> subagent finish/error with usage', () => {
-  assert.deepEqual(norm()(env({ type: 'system', subtype: 'task_notification', tool_use_id: 'a1', status: 'completed', usage: { duration_ms: 9, total_tokens: 4 } })),
+test('task_notification -> subagent finish/error with usage, for a known Agent call only (7.2)', () => {
+  const spawned = () => { const n = norm(); n(env({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'a1', name: 'Agent', input: {} }] } })); return n; };
+  assert.deepEqual(spawned()(env({ type: 'system', subtype: 'task_notification', tool_use_id: 'a1', status: 'completed', usage: { duration_ms: 9, total_tokens: 4 } })),
     [{ type: 'subagent', event: 'finish', toolUseId: 'a1', durationMs: 9, tokens: 4, via: 'notification' }]);
-  assert.deepEqual(norm()(env({ type: 'system', subtype: 'task_notification', tool_use_id: 'a1', status: 'killed' })),
+  assert.deepEqual(spawned()(env({ type: 'system', subtype: 'task_notification', tool_use_id: 'a1', status: 'killed' })),
     [{ type: 'subagent', event: 'error', toolUseId: 'a1', via: 'notification' }]);
+  // A background Bash job sends the same notification: it is a background job, never a sub-agent finish.
+  const n = norm();
+  n(env({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'npm test', run_in_background: true } }] } }));
+  assert.deepEqual(n(env({ type: 'system', subtype: 'task_notification', tool_use_id: 'b1', status: 'completed', usage: { duration_ms: 70 } })),
+    [{ type: 'background', event: 'finish', toolUseId: 'b1', durationMs: 70 }]);
+  assert.deepEqual(norm()(env({ type: 'system', subtype: 'task_notification', tool_use_id: 'zz', status: 'failed' })),
+    [{ type: 'background', event: 'error', toolUseId: 'zz' }]);
 });
 
 test('stream_event -> usage start/delta and text deltas on the main stream only', () => {

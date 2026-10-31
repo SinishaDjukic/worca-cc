@@ -102,6 +102,7 @@ import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, proj
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
+import { outcomeNote } from './run-outcome.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
@@ -23785,8 +23786,10 @@ function histStatusMeta(p) {
   const s = String((p && p.status) || '').toLowerCase();
   const family = HIST_STATUS_FAMILY[s]
     || ((p && p.live) || s === 'running' || s === 'starting' ? 'paused' : '');
+  const note = outcomeNote(p);
   const word = s === 'pausing' ? 'Pausing…'
     : p && p.resumePending ? 'Resuming…'   // a Resume in flight (the browser's flag)
+    : note ? `Done · ${note.text}`          // E2/2.3: the caveat rides the word
     : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown';
   return { family: family || 'paused', word };
 }
@@ -25896,6 +25899,16 @@ function paintHdHeaderMeta(screen, record, data) {
   w.className = `hd-status-word st-${family}`;
   w.textContent = doneWord || word;
   meta.appendChild(w);
+  // E2/2.3: the run's caveat (open issues left by a forced loop, or End not reached) as a chip.
+  const note = outcomeNote(st);
+  if (note) {
+    const chip = document.createElement('span');
+    chip.className = 'hd-outcome-note';
+    chip.textContent = note.text;
+    chip.title = note.title;
+    meta.appendChild(hdDot());
+    meta.appendChild(chip);
+  }
   // The engine that runs the agents (a resume on another engine shows the new one): every run names it.
   const engine = ENGINE_NAMES.includes(st.runEngine) ? st.runEngine : 'claude';
   meta.appendChild(hdDot());
@@ -30183,6 +30196,10 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'cost_total_policy') return 'Paused: team total cap reached.';
   if (r.pauseReason === 'night_guardrail') return r.pauseDetail || 'Paused: Away mode limit reached.';
   if (r.pauseReason === 'drain') return 'Paused while worca was stopping. Resume continues from here. The worktree and progress are kept.';
+  if (r.pauseReason === 'time_limit') {
+    const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
+    return `Paused at a node time limit${why}. Resume re-runs the step. The worktree and progress are kept.`;
+  }
   if (r.pauseReason === 'error') {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
     return `Paused after an error${why}. Fix the cause, then Resume. The worktree and progress are kept.`;
@@ -31662,6 +31679,7 @@ function statusPill(r) {
     if (r.pauseReason === 'cost_total_policy') return { family: 'amber', text: 'Paused · team total' };
     if (r.pauseReason === 'night_guardrail') return { family: 'amber', text: 'Paused · Away mode limit' };
     if (r.pauseReason === 'drain') return { family: 'amber', text: 'Paused · restart' };
+    if (r.pauseReason === 'time_limit') return { family: 'amber', text: 'Paused · time limit' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
@@ -31673,7 +31691,11 @@ function statusPill(r) {
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (r.pendingQuestion != null) return { family: 'amber', text: r.pendingQuestion.kind === 'workflow' ? 'Paused · your decision' : 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
-  if (r.status === 'done') return { family: 'green', text: 'Done' };
+  if (r.status === 'done') {
+    // E2/2.3: forced past open issues, or quiesced before End — not a plain success.
+    const note = outcomeNote(r);
+    return note ? { family: 'amber', text: `Done · ${note.text}` } : { family: 'green', text: 'Done' };
+  }
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
   // Running: the newest active agent names the pill. A run whose manifest has

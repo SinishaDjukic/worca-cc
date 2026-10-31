@@ -42,7 +42,8 @@ import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
 import { rolesForRound, roleTaskId, roleItems, roleRecord, findingsMarkdown, refinerVerdict, applyAddressed } from '../shared/shape/role-review.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
-import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS } from './graph/executor.mjs';
+import { sigkillGraceMs } from './engines/spawn.mjs';
+import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS } from './graph/executor.mjs';
 import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
@@ -74,10 +75,14 @@ import { prepareFormAsk, formAnswerValidator, downgradeQuestion, redactSecrets }
 import { classifyError } from './recoverable-error.mjs';
 import { withRecoveryRetry, RETRYABLE_CLASSES, HELPER_RETRY_ATTEMPTS } from './recovery-backoff.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
-import { byActor } from './identity.mjs';
+import { byActor, actorLabel } from './identity.mjs';
+import { NIGHT_ACTOR } from './night/config.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
+
+/** A gate answer: exactly `{decision: 'another' | 'continue'}`, else null (the question stays open). */
+export const gateAnswer = (raw) => (raw && (raw.decision === 'another' || raw.decision === 'continue') ? { decision: raw.decision } : null);
 
 function abortError(msg = 'aborted') {
   const e = new Error(msg);
@@ -136,6 +141,7 @@ export class GraphOrchestrator extends RunHarness {
       engine: 2,
       active: [],                // [{nodeId, executionId}]
       endReached: false,
+      openIssues: [],
       result: null,              // {type, path?, value?} | null
       warnings: [],
       wireDeliveries: {},        // {[wireId]: n}
@@ -902,9 +908,12 @@ export class GraphOrchestrator extends RunHarness {
         this._graphSnapshot = snap;
         // Keep a resumable point on the row at all times: a crash-reconciled
         // ('interrupted') v2 run is then resumable from its last clean snapshot.
-        // The base clears it on done and on stop. (No extra _persist — the next
-        // _execStep writes it.)
+        // The base clears it on done and on stop. Persisted HERE (3.2): the step row
+        // already says `done`, and waiting for the next _execStep left the point one
+        // completion behind — a crash in between re-ran a finished node, and nothing
+        // starts next while a gate is held.
         this.state.resumePoint = this._buildResumePoint(snap);
+        void this._persist();
       },
       // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
       // askId} | null); onAsk is the ONE ask channel (gates today).
@@ -914,6 +923,8 @@ export class GraphOrchestrator extends RunHarness {
       log: (line, attrs = null) => this._log('orchestrator', 'warn', String(line), attrs),
       // Shape it first (spec D2/D12): node approval stops are armed only for a run that carries `shape`.
       approvalStops: Boolean(this.runShape),
+      // 4.1: a failure or stop waits for siblings to take their SIGTERM→SIGKILL before teardown.
+      settleGraceMs: sigkillGraceMs() + 2000,
     });
     this._scheduler = sched;
     if (resume && this._resumeSnapshot) {
@@ -1074,6 +1085,14 @@ export class GraphOrchestrator extends RunHarness {
     }));
   }
 
+  /** Who answered a gate, for its audit line (6.3): Away mode, a named person, the --yes run, or the user. */
+  _gateChooser(askId) {
+    const by = askId ? this.answeredBy(askId) : null;
+    if (by === NIGHT_ACTOR) return 'Away mode';
+    if (by) return actorLabel(by) || 'the user';
+    return this.auto ? 'the unattended run (--yes)' : 'the user';
+  }
+
   /** Mirror the scheduler's derived counters onto state (the scheduler is the
    *  authority for deliveries/latches/gate; state is the transport). Defensive:
    *  a partially-built scheduler state degrades to the previous values. */
@@ -1085,6 +1104,7 @@ export class GraphOrchestrator extends RunHarness {
     if (Array.isArray(s.active)) this.state.active = s.active.map((a) => ({ nodeId: a.nodeId, executionId: a.executionId }));
     if (s.wireDeliveries && typeof s.wireDeliveries === 'object') this.state.wireDeliveries = { ...s.wireDeliveries };
     if (Array.isArray(s.warnings)) this.state.warnings = [...s.warnings];
+    if (Array.isArray(s.openIssues)) this.state.openIssues = s.openIssues.map((o) => ({ ...o }));
     if (s.endReached === true) { this.state.endReached = true; if (s.result) this.state.result = { ...s.result }; }
     if (s.tokens) {
       const t = {};
@@ -1121,7 +1141,7 @@ export class GraphOrchestrator extends RunHarness {
       } else if (payload.status !== 'held' && this.pipeline) {
         appendAudit(
           this.pipeline.dir,
-          `Loop gate on wire ${payload.wireId} (${payload.nodeId}): the user chose **${payload.status}**.`,
+          `Loop gate on wire ${payload.wireId} (${payload.nodeId}): ${this._gateChooser(payload.askId)} chose **${payload.status}**.`,
         ).catch(() => {});
       }
       return;
@@ -1173,9 +1193,12 @@ export class GraphOrchestrator extends RunHarness {
    */
   _schedulerAsk(q) {
     if (q.kind === PLAN_ASK_KIND) return this._planAsk(q);
-    return this._enqueueAsk(() => this._ask(q)).then(
+    // A gate takes exactly "another" or "continue" (2.1): anything else leaves the question open
+    // (answer() refuses it), so a typo or a wrapper object can never continue past open issues.
+    const ask = q.kind === 'gate' ? { ...q, validate: gateAnswer } : q;
+    return this._enqueueAsk(() => this._ask(ask)).then(
       (payload) => {
-        if (q.kind === 'gate') return payload?.decision === 'another' ? 'another' : 'continue';
+        if (q.kind === 'gate') return gateAnswer(payload)?.decision ?? null;   // null: the scheduler fails the run
         return payload;
       },
       (err) => {
@@ -1670,6 +1693,8 @@ export class GraphOrchestrator extends RunHarness {
     } catch (err) {
       return this._settleUnstarted(nc, node, args, err);   // allocation failed: no row to mark
     }
+    // E10: the CLI version the execution manifest records (Claude's probe, already run at start; null elsewhere).
+    if (nc.kind === 'agent' && this._capsProbe) ctx.cliVersion = (await Promise.resolve(this._capsProbe).catch(() => null))?.version ?? null;
     // A role slice's brief lists the plan's own items for its role: read the plan this round reviews.
     if (ctx.role) {
       const plan = this._rolePlanBinding(args);
@@ -2699,8 +2724,15 @@ export class GraphOrchestrator extends RunHarness {
    */
   async _expandDecomposition(node, args) {
     const token = (args.bindings || {})[args.expandsPort];
-    const { phases } = await readDecomposition(token?.path);
+    const doc = await readDecomposition(token?.path);
+    const { phases } = doc;
     const attr = { nodeId: node.id, executionId: args.executionId, cycle: args.ordinal || 1 };
+    // Ids collide, escape the pipeline dir or fan out without bound: refuse, never run it half-right.
+    const problems = decompositionProblems(doc.raw, this.pipeline.dir);
+    if (problems.length) {
+      throw Object.assign(new Error(`${node.id}: the decomposition on "${args.expandsPort}" cannot be fanned out — ${problems.join('; ')}`),
+        { code: 'BAD_DECOMPOSITION', errorClass: null });
+    }
     if (!phases.length) {
       this._log(node.id, 'warn',
         `no runnable phases in the decomposition bound to "${args.expandsPort}"`

@@ -145,6 +145,12 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
       case 'compact':
         push({ t: 'compact', ts, step, sub: e.parentId ?? null, trigger: e.trigger ?? null, preTokens: e.preTokens ?? null });
         return;
+      case 'background':
+        push({ t: 'job', ts, step, ev: e.event ?? null, id: e.toolUseId ?? null, ms: e.durationMs ?? null });
+        return;
+      case 'scope':     // E9: paths an agent read or wrote outside its checkout (graph/exec-manifest.mjs)
+        push({ t: 'outside', ts, step, paths: Array.isArray(e.paths) ? e.paths.slice(0, 200) : [] });
+        return;
       case 'subagent':
         if (e.event !== 'spawn' && e.event !== 'finish' && e.event !== 'error') return;
         push({ t: 'agent', ts, step, ev: e.event, id: e.toolUseId ?? null, type: e.subagentType ?? e.agentType ?? null,

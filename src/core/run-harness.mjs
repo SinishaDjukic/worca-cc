@@ -213,6 +213,17 @@ export const ERR_STREAM = Object.freeze({ stream: 'err' });
  *  nothing. runGraphifyUpdate already returns its child's stderr and the log
  *  line used to drop it — tagging a line as stderr-derived while discarding the
  *  stderr would make the tag a lie. Clipped: a build failure can be verbose. */
+
+/** Consecutive failed state writes that pause a running run (3.6). */
+const PERSIST_FAILURE_PAUSE = 3;
+
+/** A consumed resume point as a RUNNING row keeps it (E5): the position, minus the pause's own fields. */
+export function runningPoint(rp) {
+  if (!rp || typeof rp !== 'object') return null;
+  const { pauseReason, pauseDetail, lastAction, limitEngine, limitResetAt, pausedBy, ...kept } = rp;   // eslint-disable-line no-unused-vars
+  return kept;
+}
+
 function errDetail(res, max = 200) {
   const text = (res?.stderr || '').trim().replace(/\s+/g, ' ');
   return text ? `: ${clip(text, max)}` : '';
@@ -2018,7 +2029,10 @@ export class RunHarness extends EventEmitter {
       this.registry = loadAgentRegistry(this.agentsDir);
       this.agentPrompts = await this._loadAgentPrompts();
 
-      this.state.resumePoint = null; // consumed; cleared on the next persist
+      // E5: keep the point on the row until the first new snapshot replaces it — a crash during the
+      // first node after a resume must leave the run resumable. Only what described the PAUSE goes
+      // (its reason, who paused, the paused harness's ownership token): the run is running again.
+      this.state.resumePoint = runningPoint(rp);
       this._setStatus('running');
       await this._persist();
       this._startHeartbeat();
@@ -6608,6 +6622,7 @@ export class RunHarness extends EventEmitter {
     }
     if (Number.isFinite(res.peakContextTokens)) into.peakContextTokens = res.peakContextTokens;
     into.reviewId = id;
+    await this._nightReviewRecord(id, q, { startedAt, config, pair, res });
     if (res.priced) {
       this._nightBookAnalysis(id, q, startedAt, res, 'finished', pair);
       Object.assign(into, { reviewStatus: 'finished', costUsd: res.costUsd, tokens: tokensOf(res.usage) });
@@ -6617,6 +6632,25 @@ export class RunHarness extends EventEmitter {
       Object.assign(into, { reviewStatus: 'stopped', costUsd: null, tokens: tokensOf(res.turnUsage), floorUsd });
     }
     return res.byId;
+  }
+
+  /** 6.3: one Away mode review, auditable after the fact — the prompt, the raw reply, the config in force and
+   *  the model that answered — at `<pipeline>/night/<reviewId>.json`. The pipeline dir already holds the task
+   *  and the memory the prompt quotes. Best effort: an unwritable dir never fails the decision. */
+  async _nightReviewRecord(id, q, { startedAt, config, pair, res }) {
+    if (!this.pipeline?.dir) return;
+    const rec = {
+      reviewId: id, askId: q?.id ?? null, kind: q?.kind ?? null, startedAt, finishedAt: new Date().toISOString(),
+      model: pair?.model ?? null, effort: pair?.effort ?? null, turnModel: res?.turnModel ?? null,
+      config: { criteria: config?.criteria ?? null, strategy: config?.strategy ?? null, maxExtraCycles: config?.maxExtraCycles ?? null,
+        deciderModel: config?.deciderModel ?? null, deciderEffort: config?.deciderEffort ?? null },
+      systemPrompt: res?.systemPrompt ?? null, prompt: res?.prompt ?? null, rawReply: res?.rawReply ?? null,
+    };
+    try {
+      const dir = join(this.pipeline.dir, 'night');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${id}.json`), JSON.stringify(rec, null, 2) + '\n', 'utf8');
+    } catch { /* best effort */ }
   }
 
   /** The nightDecider's model + effort for this call (night/decider-model.mjs). A configured model
@@ -8343,17 +8377,27 @@ export class RunHarness extends EventEmitter {
         ? { ...this.state, resumePoint: { ...rpNow, pausedBy: this._pauseToken } } : this.state;
       if (this.telemetry) {
         const t0 = performance.now();
-        await writeState(this.pipeline.dir, st);
+        await this._persistWrite(this.pipeline.dir, st);
         this.telemetry.persisted(performance.now() - t0, st.steps?.length || 0);
       } else {
-        await writeState(this.pipeline.dir, st);
+        await this._persistWrite(this.pipeline.dir, st);
       }
+      this._persistFailures = 0;
       return true;
-    } catch {
-      /* persistence is best-effort */
+    } catch (err) {
+      // Best effort, but never silent (3.6): a full disk would freeze the run's saved position while the
+      // run kept going, and a crash would then resume from far back. A few failures in a row pause it.
+      this._persistFailures = (this._persistFailures || 0) + 1;
+      if (this._persistFailures === 1) this._log('orchestrator', 'warn', `could not save the run state: ${firstLine(err?.message || err)}`);
+      if (this._persistFailures === PERSIST_FAILURE_PAUSE && this.state.status === 'running') {
+        this._pauseFor(REASON.ERROR, err, { detail: `the run could not save its state ${PERSIST_FAILURE_PAUSE} times in a row (${firstLine(err?.message || err)}) — free disk space or fix the database, then resume` });
+      }
       return false;
     }
   }
+
+  /** The one state write (a seam for the failure test). */
+  _persistWrite(dir, st) { return writeState(dir, st); }
 
   /** True once a PAUSED harness no longer owns its pipeline row. A resume builds a NEW harness on
    *  the same row, and work started here can outlive the pause (the fire-and-forget run title gets

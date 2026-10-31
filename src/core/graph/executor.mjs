@@ -32,8 +32,8 @@
 // input left UNBOUND. The composite DRIVER is scheduler.mjs; this module owns the
 // document — including the prompt block that tells a producer where to write the
 // task files and what the manifest looks like.
-import { join, dirname, relative } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname, relative, basename, isAbsolute, resolve as resolvePath } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
 import {
@@ -41,7 +41,7 @@ import {
 } from '../claude-runner.mjs';
 import { planPath, reviewPath, writeStepQuestions, writeClarify, appendAuditById } from '../artifacts.mjs';
 import { byActor } from '../identity.mjs';
-import { readReview, classifyAskPayload } from '../protocol.mjs';
+import { readReview, classifyAskPayload, readAskFile, safeParseJson } from '../protocol.mjs';
 import { prepareFormAsk, formAnswerValidator, downgradeQuestion, redactSecrets } from '../ask-forms.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
@@ -364,12 +364,53 @@ export function normalizeDecomposition(raw) {
   return { phases };
 }
 
-/** Read a decomposition document off disk through the tolerant parse. Never throws
- *  and never rejects. */
+/** The most tasks one decomposition may fan out to. */
+export const MAX_DECOMPOSITION_TASKS = 50;
+const TASK_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+/**
+ * What makes a decomposition unsafe to fan out, as one line per problem ([] = fine). A task id
+ * becomes a slice execution id and a filename prefix, so two tasks with one id would share a
+ * ledger row and one set of files while running in parallel, and an id like `../x` would put
+ * outputs outside the pipeline directory. Checked on the RAW document (the normalizer stays
+ * tolerant for what it drops): ids unique and safe, ordinals positive integers and distinct,
+ * task files inside the pipeline directory, at most MAX_DECOMPOSITION_TASKS tasks.
+ */
+export function decompositionProblems(raw, pipelineDir) {
+  const problems = [];
+  const ids = new Set();
+  const ordinals = new Set();
+  let count = 0;
+  const root = resolvePath(String(pipelineDir || '.'));
+  for (const ph of Array.isArray(raw?.phases) ? raw.phases : []) {
+    const tasks = (Array.isArray(ph?.tasks) ? ph.tasks : []).filter((t) => t && t.id && t.file);
+    if (!tasks.length) continue;
+    if (typeof ph.ordinal !== 'number' || !Number.isInteger(ph.ordinal) || ph.ordinal < 1) {
+      problems.push(`phase ordinal ${JSON.stringify(ph.ordinal)} is not a positive integer`);
+    } else if (ordinals.has(ph.ordinal)) problems.push(`duplicate ordinal ${ph.ordinal}`);
+    else ordinals.add(ph.ordinal);
+    for (const t of tasks) {
+      count += 1;
+      const id = String(t.id);
+      if (!TASK_ID_RE.test(id)) problems.push(`task id ${JSON.stringify(id)} must match ${TASK_ID_RE}`);
+      else if (ids.has(id)) problems.push(`duplicate task id "${id}"`);
+      ids.add(id);
+      const rel = relative(root, resolvePath(root, String(t.file)));
+      if (!rel || rel.startsWith('..') || isAbsolute(rel)) problems.push(`task "${id}" file ${JSON.stringify(String(t.file))} is outside the pipeline directory`);
+    }
+  }
+  if (count > MAX_DECOMPOSITION_TASKS) problems.push(`${count} tasks — at most ${MAX_DECOMPOSITION_TASKS} per decomposition`);
+  return problems;
+}
+
+/** Read a decomposition document off disk through the tolerant parse (a fenced manifest
+ *  still fans out). Never throws and never rejects. `raw` rides along for
+ *  decompositionProblems. */
 export async function readDecomposition(path) {
   if (!path) return { phases: [] };
   try {
-    return normalizeDecomposition(JSON.parse(await readFile(path, 'utf8')));
+    const raw = safeParseJson(await readFile(path, 'utf8'));
+    return Object.defineProperty(normalizeDecomposition(raw), 'raw', { value: raw, enumerable: false });
   } catch {
     return { phases: [] };
   }
@@ -398,7 +439,8 @@ export function resolveMockRole({ meta, expandsPort = null }) {
 
 // ── verdicts ──────────────────────────────────────────────────────────────────
 
-import { readVerdict, missingVerdictWarning, publishable } from './exec-io.mjs';
+import { readVerdict, checkVerdict, clearAllocated, assertOutputsWritten, publishable } from './exec-io.mjs';
+import { createScopeWatch, outsideWarning, writeExecManifest } from './exec-manifest.mjs';
 export { readVerdict, publishable };
 
 // ── prompt assembly ───────────────────────────────────────────────────────────
@@ -495,7 +537,11 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
     markers.MOCK_OUT = outputs[expandsPort]?.path;
     markers.MOCK_TASKS_DIR = tasksDirOf(runCtx);
   } else {
-    markers.MOCK_OUT = Object.values(outputs).find((o) => o && o.path)?.path;
+    const paths = [...new Set(Object.values(outputs).map((o) => o?.path).filter(Boolean))];
+    markers.MOCK_OUT = paths[0];
+    // The generic producer's further outputs (E8 requires each fired output to exist): '' for a
+    // single-output node, which mockMarkers skips, so those prompts stay byte-identical.
+    if (role === 'generic-producer') markers.MOCK_OUTS = paths.slice(1).join('|');
   }
   if (verdict?.path) markers.MOCK_JSON = verdict.path;
   const primaryIn = (ports?.inputs || [])
@@ -686,8 +732,18 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   let sessionId = null;
   let sawInit = false;
   const said = [];   // the CLI's plain (non-JSON) lines: a refusal printed on stdout lands here, not in the error
+  const limit = timeLimitGuard(nodeTimeLimits(full), opts.signal, full.node?.id);
+  opts.signal = limit.signal;
+  const scope = createScopeWatch(full);            // E9: paths outside the checkout, from the tool calls
+  const startedAt = new Date().toISOString();
+  let initModel = null;
+  let outcome = 'ok';
+  let failure = null;
   const inner = opts.onEvent;
   opts.onEvent = (e) => {
+    limit.touch();
+    scope.observe(e);
+    if (e?.type === 'session' && e.model && !initModel) initModel = String(e.model);
     if (e?.type === 'session' && e.sessionId) sessionId = String(e.sessionId);
     if (e?.type === 'session' || (e?.type === 'system' && e.raw?.subtype === 'init')) sawInit = true;
     if (e?.type === 'log' && typeof e.text === 'string' && said.length < 20) said.push(e.text.slice(0, 500));
@@ -696,13 +752,72 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   const run = _testing.runClaude || runClaude;
   try {
     const { text } = await run(opts);
-    return { text, sessionId };
+    return { text, sessionId, outside: scope.paths() };
   } catch (err) {
+    outcome = 'error'; failure = limit.error || err;
+    if (limit.error) throw limit.error;
     if (!opts.pluginDirs?.length || sawInit || !SIDELOAD_REFUSED_RE.test([String(err?.message || err), ...said].join('\n'))) throw err;
     if (typeof full.onSkillSideloadRefused === 'function') full.onSkillSideloadRefused();
-    const { text } = await run({ ...opts, pluginDirs: undefined });
-    return { text, sessionId };
+    try {
+      const { text } = await run({ ...opts, pluginDirs: undefined });
+      outcome = 'ok'; failure = null;
+      return { text, sessionId, outside: scope.paths() };
+    } catch (again) { failure = limit.error || again; throw failure; }
+  } finally {
+    limit.stop();
+    const outside = scope.paths();
+    // Telemetry sees the outside paths as one event per spawn (the recorder's `outside` record).
+    if (outside.length && typeof inner === 'function') { try { inner({ type: 'scope', paths: outside }); } catch { /* listener */ } }
+    await writeExecManifest(full, { opts, prompt, systemPrompt, sessionId, initModel, startedAt, outcome, error: failure, outside });
   }
+}
+
+// ── node time limits (E4) ─────────────────────────────────────────────────────
+
+const DEFAULT_TIME_LIMIT_MIN = 90;
+const DEFAULT_IDLE_LIMIT_MIN = 20;
+const minutesOf = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+
+/**
+ * An agent node's wall-clock and idle limits in ms: the node's `config.timeLimitMinutes` /
+ * `config.idleLimitMinutes`, else the workflow's `limits` of the same names, else the env
+ * (`WORCA_NODE_TIME_LIMIT_MIN`, `WORCA_NODE_IDLE_LIMIT_MIN`), else 90 and 20 minutes —
+ * generous enough for a normal node, short enough that a hung one does not hold the run forever.
+ */
+export function nodeTimeLimits(ctx) {
+  const cfg = ctx?.node?.config || {};
+  const wf = ctx?.template?.limits || {};
+  const env = (k) => minutesOf(Number(process.env[k]));
+  const wall = minutesOf(cfg.timeLimitMinutes) ?? minutesOf(wf.timeLimitMinutes) ?? env('WORCA_NODE_TIME_LIMIT_MIN') ?? DEFAULT_TIME_LIMIT_MIN;
+  const idle = minutesOf(cfg.idleLimitMinutes) ?? minutesOf(wf.idleLimitMinutes) ?? env('WORCA_NODE_IDLE_LIMIT_MIN') ?? DEFAULT_IDLE_LIMIT_MIN;
+  return { wallMs: Math.round(wall * 60000), idleMs: Math.round(idle * 60000) };
+}
+
+const fmtMinutes = (ms) => (ms >= 60000 ? `${Math.round(ms / 60000)} min` : `${Math.max(1, Math.round(ms / 1000))} s`);
+
+/**
+ * Abort the spawn when a limit hits. `signal` combines the run's own (Stop/Pause) with the
+ * limit's; `touch()` resets the idle timer on every stream event; `error` is the limit's
+ * error once one hit (class `time_limit`, which the failure policy pauses on).
+ */
+function timeLimitGuard({ wallMs, idleMs }, outer, nodeId) {
+  const ac = new AbortController();
+  const guard = { error: null, signal: outer ? AbortSignal.any([outer, ac.signal]) : ac.signal };
+  const hit = (code, text) => {
+    if (guard.error || outer?.aborted) return;
+    guard.error = Object.assign(new Error(`${nodeId || 'agent'}: ${text} — stopped; resume re-runs the node`),
+      { code, errorClass: 'time_limit' });
+    ac.abort(guard.error);
+  };
+  const wall = setTimeout(() => hit('NODE_TIME_LIMIT', `ran past its ${fmtMinutes(wallMs)} time limit`), wallMs);
+  let idle = null;
+  guard.touch = () => {
+    if (idle) clearTimeout(idle);
+    idle = setTimeout(() => hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(idleMs)} (idle limit)`), idleMs);
+  };
+  guard.touch();
+  guard.stop = () => { clearTimeout(wall); if (idle) clearTimeout(idle); };
+  return guard;
 }
 
 /**
@@ -712,17 +827,30 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
  */
 export async function runAgentExecution(ctx) {
   const { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning } = await prepare(ctx);
-  const { text, sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
+  // E6: a fresh attempt starts from no outputs, so a retry or a resume never publishes the failed
+  // attempt's files. A resumed SESSION continues the same attempt: its own earlier writes stand.
+  if (!ctx.resumeSessionId) await clearAllocated({ outputs, verdict, bindings: ctx.bindings });
+  const { text, sessionId, outside = [] } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
   const review = verdict?.path ? await readVerdict(verdict.path) : null;
+  // Non-fatal problems the scheduler folds into state.warnings + the run log.
+  const warnings = [];
+  const away = outsideWarning(ctx, outside);                       // E9: on the run log, not only in the manifest
+  if (away) warnings.push(away);
+  // An agent that stopped to ask (the questions loop resumes it with the answers), or a slicing Planner
+  // that stopped at its slice outline (the outline loop resumes it), has not finished: its outputs and
+  // verdict come on the resumed spawn, which is checked like any other.
+  const asked = (ctx.questionsFile ? (await readAskFile(ctx.questionsFile)).kind !== 'none' : false)
+    || (typeof ctx.shapeSlicing?.file === 'string' && existsSync(ctx.shapeSlicing.file));
+  if (!asked) {
+    checkVerdict(ctx, verdict?.path, review, warnings);          // E1: a missing verdict throws
+    await assertOutputsWritten(ctx, ports, outputs, review);      // E8: so does an unwritten output
+  }
+  if (pinIgnoredWarning) warnings.push(pinIgnoredWarning);
   return {
     summary: (text || '').trim() || `${meta.displayName || ctx.node?.key || 'Agent'} completed.`,
     outputs: publishable(ports, outputs),
     verdict: review,
-    // Non-fatal problems the scheduler folds into state.warnings + the run log.
-    warnings: [
-      ...(review?.missing ? [missingVerdictWarning(ctx, verdict.path)] : []),
-      ...(pinIgnoredWarning ? [pinIgnoredWarning] : []),
-    ],
+    warnings,
     sessionId,
     prompt,
     systemPrompt,
@@ -786,7 +914,7 @@ async function prepareClarifierForm({ full, meta, node, ordinal, answersPath, pa
     };
     const again = await spawnAgent(repairCtx, spawn);
     sessionId = again.sessionId ?? sessionId;
-    const retry = classifyAskPayload(await readJsonMaybe(answersPath));
+    const retry = await readAskFile(answersPath);
     if (retry.kind !== 'form') {
       return { ask: null, autoValues: null, questions: retry.kind === 'questions' ? retry.questions : [], sessionId };
     }
@@ -815,14 +943,19 @@ export async function runClarifierExecution(ctx) {
   if (ctx.carriedClarify) return carryClarify(ctx, { node, ports, outputs, answersPath, prompt, meta });
 
   let sessionId;
+  if (!ctx.resumeSessionId) await clearAllocated({ outputs, bindings: ctx.bindings });   // E6
   ({ sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools }));
 
-  const raw = await readJsonMaybe(answersPath);
-  const payload = classifyAskPayload(raw);
+  // Tolerant parse (a fenced file still asks), as every other ask path reads its file.
+  const payload = await readAskFile(answersPath);
   // Non-interactive default (v1 `_ask` auto): no gate ⇒ every question takes its first
   // option (normalizeAnswers' fallback). The scheduler's onAsk never sees clarify asks.
   const ask = typeof ctx.ask === 'function' ? ctx.ask : null;
   const warnings = pinIgnoredWarning ? [pinIgnoredWarning] : [];
+  // A file that exists but yields neither questions nor a form must not pass as "no questions".
+  if (payload.malformed || (payload.kind === 'none' && existsSync(answersPath))) {
+    warnings.push(`${node.id}: the clarifier wrote ${basename(answersPath)}, but no questions could be read from it — continuing without asking`);
+  }
   let questions = payload.kind === 'questions' ? payload.questions : [];
 
   if (payload.kind === 'form') {
