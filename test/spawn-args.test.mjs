@@ -18,6 +18,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildClaudeArgs, runClaude, debugSpawnEnabled, redactArgvForLog, cleanRunEnv } from '../src/core/claude-runner.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { runOpts, builtinToolsFor, strictMcpFor, READ_WRITE_TOOLS, MEMORY_TOOLS } from '../src/core/phases.mjs';
+import { assembleRunContext } from '../src/core/run-context.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
@@ -931,4 +933,77 @@ test('runClaude FORWARDS systemPromptMode to runReal (--system-prompt reaches th
     if (prevMock === undefined) delete process.env.WORCA_MOCK;
     else process.env.WORCA_MOCK = prevMock;
   }
+});
+
+// ── #943: the fixed context a pipeline agent starts with ────────────────────
+// Tool schemas ride every call of an agent and its sub-agents. runOpts offers only the built-ins the agent is
+// allowed (--tools), only the run's own MCP servers where mcp.json holds them all (--strict-mcp-config), and turns
+// Claude Code's auto-memory off (the user's MEMORY.md of the repo the run checkout is a worktree of).
+
+test('#943 builtinToolsFor: allowed built-ins + WebFetch + ToolSearch; MCP grants and rule specifiers left out', () => {
+  assert.deepEqual(builtinToolsFor(READ_WRITE_TOOLS), [...READ_WRITE_TOOLS, 'WebFetch', 'ToolSearch']);
+  assert.deepEqual(builtinToolsFor(MEMORY_TOOLS), [...MEMORY_TOOLS, 'WebFetch', 'ToolSearch'], 'a memory agent gets no Bash or Skill');
+  assert.deepEqual(builtinToolsFor(['Read', 'Bash(git:*)', 'Bash', 'mcp__db', 'mcp__plugin_x_y__go', 'Task', 'Agent', 'ToolSearch']),
+    ['Read', 'Bash', 'Task', 'Agent', 'ToolSearch', 'WebFetch']);
+  assert.deepEqual(builtinToolsFor(undefined), ['WebFetch', 'ToolSearch']);
+});
+
+test('#943 strictMcpFor: only a detached run whose mcp.json holds every granted and declared server', async () => {
+  const run = { runRoot: '/r', mcpConfigServers: ['db', 'worca'], mcpServerGrants: ['mcp__db', 'mcp__worca'] };
+  await checkRows([
+    { name: 'mcp.json holds every grant', run: () => assert.equal(strictMcpFor(run), true) },
+    { name: 'no MCP at all on a detached run', run: () => assert.equal(strictMcpFor({ runRoot: '/r' }), true) },
+    { name: 'a legacy run (no run root): its servers load natively', run: () => assert.equal(strictMcpFor({ ...run, runRoot: null }), false) },
+    { name: 'a granted committed .mcp.json server a drop kept out of mcp.json', run: () =>
+      assert.equal(strictMcpFor({ ...run, mcpServerGrants: [...run.mcpServerGrants, 'mcp__native'] }), false) },
+    { name: 'frontmatter names a plugin server', run: () =>
+      assert.equal(strictMcpFor({ ...run, node: { tools: ['Read', 'mcp__plugin_playwright_playwright__browser_click'] } }), false) },
+    { name: 'frontmatter names a server of mcp.json', run: () =>
+      assert.equal(strictMcpFor({ ...run, node: { tools: ['mcp__db__query', 'mcp__worca'] } }), true) },
+  ]);
+});
+
+test('#943 a run whose checkout commits an approved .mcp.json server spawns under --strict-mcp-config, the server in mcp.json', async () => {
+  const wt = await tmp();
+  await writeFile(join(wt, '.mcp.json'), JSON.stringify({ mcpServers: { db: { command: 'node', args: ['/abs/db.js'] } } }), 'utf8');
+  const real = await tmp();
+  await writeFile(join(real, '.mcp.json'), JSON.stringify({ mcpServers: { db: { command: 'node', args: ['/abs/db.js'] } } }), 'utf8');
+  const home = await tmp();
+  await mkdir(join(home, '.claude'), { recursive: true });
+  await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ enabledMcpjsonServers: ['db'] }), 'utf8');
+  const runRoot = await tmp();
+  const rc = await assembleRunContext({
+    runRoot, members: [{ projectKey: 'k1', projectName: 'P', projectDir: real, worktreeDir: wt }], projectsRoot: await tmp(),
+    isWorkspace: false, requiredSkillResolutions: new Map(), graphInstructions: new Map(), homeDir: home, platform: 'darwin',
+  });
+  const ctx = {
+    projectDir: wt, claudeOpts: {}, runRoot, mcpConfigPath: rc.mcpConfigPath,
+    mcpConfigServers: rc.mcpConfigServers, mcpServerGrants: rc.mcpServerNames.map((n) => `mcp__${n}`), node: { key: 'implementer' },
+  };
+  const args = buildClaudeArgs(runOpts(ctx, { role: 'implementer', prompt: 'p', allowedTools: READ_WRITE_TOOLS }));
+  assert.ok(args.includes('--strict-mcp-config'), 'the committed server no longer keeps every user-scope, plugin and claude.ai server loading');
+  assert.equal(args[args.indexOf('--mcp-config') + 1], rc.mcpConfigPath);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers), ['db'], 'the strict spawn still has it');
+  assert.ok(args[args.indexOf('--allowedTools') + 1].split(',').includes('mcp__db'));
+});
+
+test('#943 runOpts: --tools, --strict-mcp-config and autoMemoryEnabled:false reach the spawn argv', () => {
+  const ctx = {
+    projectDir: '/p', claudeOpts: {}, runRoot: '/r', mcpConfigPath: '/r/mcp.json',
+    mcpConfigServers: ['db'], mcpServerGrants: ['mcp__db'], node: { key: 'implementer', fanOut: true, tools: ['WebFetch'] },
+  };
+  const o = runOpts(ctx, { role: 'implementer', prompt: 'p', allowedTools: READ_WRITE_TOOLS });
+  assert.deepEqual(o.tools, [...READ_WRITE_TOOLS, 'WebFetch', 'Task', 'Agent', 'ToolSearch'], 'fan-out adds the sub-agent tool');
+  assert.equal(o.strictMcpConfig, true);
+  assert.deepEqual(o.extraSettings, { autoMemoryEnabled: false });
+  const args = buildClaudeArgs(o);
+  assert.equal(args[args.indexOf('--tools') + 1], 'Read,Write,Edit,Bash,Grep,Glob,Skill,WebFetch,Task,Agent,ToolSearch');
+  assert.ok(args.includes('--strict-mcp-config'));
+  assert.equal(args[args.indexOf('--mcp-config') + 1], '/r/mcp.json');
+  assert.deepEqual(JSON.parse(args[args.indexOf('--settings') + 1]), { autoMemoryEnabled: false });
+
+  const plain = runOpts({ projectDir: '/p', claudeOpts: {}, node: { key: 'reviewer' } }, { role: 'reviewer', prompt: 'p', allowedTools: READ_WRITE_TOOLS });
+  assert.deepEqual(plain.tools, [...READ_WRITE_TOOLS, 'WebFetch', 'ToolSearch'], 'no fan-out: no sub-agent tool');
+  assert.equal('strictMcpConfig' in plain, false, 'a legacy run keeps every MCP server it loads natively');
+  assert.ok(!buildClaudeArgs(plain).includes('--strict-mcp-config'));
 });

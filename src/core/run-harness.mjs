@@ -987,6 +987,7 @@ export class RunHarness extends EventEmitter {
     this.runContext = null;
     this.mcpConfigPath = null;      // <runRoot>/mcp.json -> --mcp-config
     this.mcpServerGrants = [];      // `mcp__<server>` per merged server (V1 branch (a))
+    this.mcpConfigServers = [];     // the server names mcp.json holds (strictMcpFor)
     // MCP registry layer (design §6.1): { env, redact, disallowed, allowlist, copies } for every
     // dispatch, or null. Holds secret values: never written to run.json, events, journals or the
     // resume point.
@@ -3818,6 +3819,7 @@ export class RunHarness extends EventEmitter {
     });
     this.injectedPaths = rc.injectedPaths;                // feeds _excludePathspecs / teardown / rescue (§8.8)
     this.mcpConfigPath = rc.mcpConfigPath;
+    this.mcpConfigServers = rc.mcpConfigServers || [];
     // V1-gated (§4.1 outcome table). Branch (a) PASSED on this CLI (server wildcard),
     // so one grant per merged server; the 'per-tool' / 'none' branches would leave
     // this empty and rely on the frontmatter union alone.
@@ -4760,6 +4762,7 @@ export class RunHarness extends EventEmitter {
       );
       this.mcpConfigPath = null;
       this.mcpServerGrants = [];
+      this.mcpConfigServers = [];
       this.mcpLayer = null;
     }
     await updateRunManifest(this.runRoot, {

@@ -1871,6 +1871,7 @@ export class GraphOrchestrator extends RunHarness {
       runRoot: this.runRoot,
       mcpConfigPath: this.mcpConfigPath,
       mcpServerGrants: this.mcpServerGrants,
+      mcpConfigServers: this.mcpConfigServers,
       // MCP registry (design §6.1): the copies' secret env, the values to redact and the tools
       // withheld for the run's tool-name limit. Never persisted anywhere.
       mcpEnv: this.mcpLayer?.env,
