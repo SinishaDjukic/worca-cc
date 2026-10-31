@@ -13,6 +13,7 @@ export const TABS = Object.freeze([
   tab('tags', 'Labels & cost tags', { alts: ['labels', 'tags', 'cost centres', 'tagging'] }),
   tab('presets', 'Presets', { min: 'advanced', alts: ['run presets', 'templates', 'saved setups'] }),
   tab('runs', 'Runs', { alts: ['pipeline', 'run options'] }),
+  tab('automations', 'Automations', { min: 'advanced', flag: 'gitAutomations', alts: ['git events', 'auto-handle', 'triggers', 'issues', 'webhook'] }),
   tab('experimental', 'Labs', { alts: ['experimental', 'beta', 'feature flags', 'flags', 'early access', 'features'] }),
   tab('ask', 'Chat', { min: 'advanced', alts: ['ask', 'assistant', 'conversation'] }),
   tab('guardrails', 'Guardrails', { min: 'advanced', alts: ['guardrail', 'permissions', 'safety', 'rules', 'allow', 'deny', 'sets'] }),

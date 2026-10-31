@@ -225,7 +225,8 @@ export function renderSchedule(n = {}) {
   const title = String(n.title || 'Scheduled run').trim();
   const name = title.length > 60 ? `${title.slice(0, 60)}…` : title;
   const msg = String(n.message || '');
-  return mdMsg(`${icon} **Schedule:** ${name}\n   ${msg.length > 300 ? `${msg.slice(0, 300)}…` : msg}`, n.severity === 'info' ? 'info' : 'warning');
+  const label = String(n.kind || '').startsWith('automation_') ? 'Automation' : 'Schedule';   // #711 rides the same feed
+  return mdMsg(`${icon} **${label}:** ${name}\n   ${msg.length > 300 ? `${msg.slice(0, 300)}…` : msg}`, n.severity === 'info' ? 'info' : 'warning');
 }
 
 /** The away hours started or ended by themselves (night/hours-watch.mjs). */
