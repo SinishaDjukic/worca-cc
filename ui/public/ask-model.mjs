@@ -269,6 +269,14 @@ export function createThreadModel({ threadId }) {
         dirty.suggestion = true;
         return { ok: true };
       }
+      case 'ask-engine':
+        // #943: the chat moved to another engine (POST /api/ask/threads/:id/engine): its pair and engine follow, and
+        // its provider session is gone. The divider row arrives as its own ask-message.
+        if (typeof frame.engine !== 'string' || typeof frame.model !== 'string') return { dropped: 'no-live' };
+        thread = { ...thread, engine: frame.engine, model: frame.model, effort: typeof frame.effort === 'string' ? frame.effort : thread.effort, sessionId: null };
+        // The switch cleared the context fill and window (store.mjs switchThreadEngine): the meter starts over.
+        if (frame.threadTotals && typeof frame.threadTotals === 'object') { thread.totals = frame.threadTotals; dirty.meters = true; }
+        return { ok: true };
       default:
         return { dropped: 'no-live' };
     }

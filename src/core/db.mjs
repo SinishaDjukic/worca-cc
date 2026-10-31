@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 82;
+export const SCHEMA_VERSION = 83;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -878,6 +878,7 @@ const INCREMENTAL_COLUMNS = {
                             // v70: where a copy found under a run's or project's folder came from, for Show in folder's
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
+  ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -2711,6 +2712,7 @@ export function migrate(db) {
     if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
     if (current < 81) applySchemaV81(db, { existing: current >= 1 });  // v81 (G13) guardrail default
     if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
+    // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

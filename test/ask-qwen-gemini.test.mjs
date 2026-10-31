@@ -108,7 +108,7 @@ test('askCatalog: Qwen and Gemini rows with their engine\'s efforts, their defau
 test('a Qwen chat takes only Qwen models', async () => {
   const m = mk();
   assert.deepEqual(await m.validateModelEffort('qwen3-coder-plus', 'medium', { engine: 'qwen' }), { ok: true, model: 'qwen3-coder-plus', effort: 'medium' });
-  assert.deepEqual(await m.validateModelEffort('gemini-3-pro', 'medium', { engine: 'qwen' }), { ok: false, error: 'this chat runs on Qwen Code; start a new chat to use Gemini CLI' });
+  assert.deepEqual(await m.validateModelEffort('gemini-3-pro', 'medium', { engine: 'qwen' }), { ok: false, error: 'this chat runs on Qwen Code; switch it to Gemini CLI from the Chat model picker first' });
   assert.equal(chatEngine({ model: 'x', engine: 'gemini' }), 'gemini');
 });
 

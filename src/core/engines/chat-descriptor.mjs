@@ -106,6 +106,40 @@ export function chatCostCapRefusal(d, model, modelPriced) {
   return null;
 }
 
+/**
+ * The checks a chat on descriptor `d` passes before a turn may start, in the order the turn runs them (#943: the switch
+ * route runs the same ones before it moves a chat): the lockdown, the model, a per-turn cost cap it can keep, then —
+ * not for the mock — the binary's lockdown flags (askSupport), the self-test, and — not for a relayed chat, whose agent
+ * user signs in itself — the sign-in preflight. `seams` are the turn's per-engine test deps (`<engine>Lockdown`, …).
+ * @returns {Promise<null|{message:string, code?:string, notReady?:true}>} null when the chat may start
+ */
+export async function chatEngineGate(d, { model, capped = false, modelPriced = () => false, mock = false, relay = false, seams = {} } = {}) {
+  const lockdown = seams.lockdown ?? d.lockdown;
+  if (!lockdown()) return { message: d.noLockdownMessage };
+  const problem = d.modelProblem(model);
+  if (problem) return { message: `${model} cannot run a chat on ${d.label}: ${problem}. Pick another model for this chat.` };
+  if (capped) {
+    const refusal = chatCostCapRefusal(d, model, seams.modelPriced ?? modelPriced);
+    if (refusal) return { message: refusal };
+  }
+  if (mock) return null;
+  const notReady = (refusal) => ({ message: refusal, code: d.notReady.code, notReady: true });
+  let support = null;
+  try { support = await d.askSupport(undefined, seams.askSupport); } catch (err) { support = { refusal: err?.message || String(err) }; }
+  if (support && support.refusal) return notReady(support.refusal);
+  const selfTest = d.selfTest ? () => d.selfTest(undefined, seams.selfTest) : seams.selfTest;
+  if (selfTest) {
+    let st = null;
+    try { st = await selfTest(); } catch (err) { st = { refusal: err?.message || String(err) }; }
+    if (st && st.refusal) return notReady(st.refusal);
+  }
+  if (relay) return null;
+  let pf = null;
+  try { pf = await d.preflight({ model }, seams.preflight); } catch (err) { pf = { warning: err?.message || String(err) }; }
+  if (pf && pf.refusal) return notReady(pf.refusal);
+  return null;
+}
+
 /** OpenAI's list price of a model id as per-million-token rates (list-prices.mjs CODEX_PRICES), or null. */
 export function openaiListRates(id) {
   const row = typeof id === 'string' && Object.hasOwn(CODEX_PRICES, id) ? CODEX_PRICES[id] : null;

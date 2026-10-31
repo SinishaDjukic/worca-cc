@@ -404,3 +404,27 @@ test('scope: the last good list names a pin while a later reload fails (a reconn
   assert.ok(h.calls.filter((c) => c.includes('/api/projects')).length >= 2, 'the lists were re-read');
   assert.equal(h.$('.ask-scope-label').textContent, 'ACME Web');
 });
+
+test('#943: a chat that has run names its engine, offers only that engine\'s models and sends a switch to Chat; another tab\'s switch moves the pick', async () => {
+  const CAT2 = { ...CATALOG, models: [...CATALOG.models, { id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['low', 'medium'], engine: 'codex' }],
+    defaults: { claude: CATALOG.default, codex: { model: 'gpt-5.5', effort: 'medium' } } };
+  const base = SNAP(TID);
+  const snap = { ...base, thread: { ...base.thread, model: 'gpt-5.5', effort: 'low', engine: 'codex' },
+    messages: [...base.messages, { id: 'askm_00000002', threadId: TID, seq: 2, role: 'assistant', text: 'Because.', blocks: [], status: 'done', model: 'gpt-5.5', effort: 'low', createdAt: 't' }] };
+  const { route } = rig((p, o, method) => (p === '/api/ask/models' ? ok(CAT2) : p === `/api/ask/threads/${TID}` && method === 'GET' ? ok(snap) : null),
+    { threads: [{ id: TID, title: 'Rate limits' }] });
+  const h = await bootSidebar({ storage: STORE, route });
+  await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
+  assert.equal(h.$('.ask-model-btn').dataset.engine, 'codex');
+  assert.equal(h.$('.ask-model-btn-engine').textContent, 'Codex', 'the engine is on the button in text');
+  await h.click(h.$('.ask-model-btn'));
+  assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['Codex (beta) · this chat']);
+  assert.deepEqual(h.$$('.ask-pop-model .ask-model-name').map((n) => n.textContent), ['GPT-5.5']);
+  assert.match(h.$('.ask-pop-model .ask-pop-empty').textContent, /use the model picker in Chat/);
+  h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'ask-engine', threadId: TID, engine: 'claude', model: 'claude-opus-5-5', effort: 'high' }) });
+  await h.flush();
+  assert.equal(h.$('.ask-model-btn-label').textContent, 'Opus 5.5');
+  assert.equal(h.$('.ask-model-btn').dataset.engine, 'claude');
+  assert.equal(h.$('.ask-model-btn-engine').textContent, 'Claude');
+  assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['Claude · this chat'], 'the open menu now lists the new engine');
+});
