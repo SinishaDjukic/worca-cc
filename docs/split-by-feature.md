@@ -1,5 +1,31 @@
 # Split by feature (#919): runbook
 
+## Before Ship and on freeze day: `npm run verify:919`
+
+One command, from a clean checkout of the commit to ship (this branch merged with the latest dev, or dev itself on
+freeze day). It runs every check below in order, never stops early, prints one table (check · pass/fail · number ·
+evidence file) and exits 0 only when every row passes. It never posts on #919 and never pushes. It takes several hours; the
+table in `OUT/verify-919.md` grows row by row (`npm run verify:919 -- --out DIR [--keep]`; without `--out`, a new temp
+folder). Firefox (for `e2e:firefox-smoke`) and Playwright's Chromium (for `e2e:extension`) must be installed: a suite
+that prints SKIP is a fail.
+
+| Check | Pass means |
+|---|---|
+| a. fetch | `git fetch origin dev` works; the table head prints the SHA used; HEAD contains it; no tracked changes |
+| b. gate | `node tools/split-by-feature.mjs --check --stats` exits 0 and prints `spike gate passed` |
+| c. dry-run-repeatable | `--dry-run` twice: both exit 0 and print the same tree hash |
+| d. suite-split | full `npm test` on the split tree: 0 failures outside `test/flaky-register.json`; each register failure is named with its entry and its file rerun alone (`evidence/d-suite-split-flaky.json`) |
+| e. parity-quick | quick parity, this tree against the split tree: PASS, 18 shot pairs, all 6 flows on both sides |
+| f. parity-full | full parity with the timing gate, this tree against the split tree: 0 route, 0 visual, 0 flow differences; every route probed signed in and signed out; 18 screenshots light and dark; boot and page-load timings gated and within budget |
+| g. parity-package | full parity, this tree against its own `npm pack` (`package:.`): 0 differences, same completeness as f (timings are not gated for a package) |
+| h. e2e-split | every `e2e:*` suite in `package.json` but the snapshot updater, on the split tree: exit 0 and no SKIP |
+| i. rollback | the split reverted: diff to HEAD empty, then suite, full parity and the e2e suites pass again |
+| j. readiness | `npm run readiness -- run` (with `--dev-ref` when HEAD is not dev): verdict `go`; `report.md` and `report.json` written |
+
+A failing row names its evidence file inside `OUT`. When it is a test that is in the register, the row stays green
+and the evidence names the entry and the solo rerun. When it is not, follow "When `suite-migrated` or `rollback` fails"
+under The readiness command below.
+
 This runbook does not choose its inputs. Fill them in on #919 before step 3:
 
 | Input | Value |
@@ -22,8 +48,9 @@ that the migration commit updates them.
 
 The spike gate (`--check --stats`): at least 95% of the route statements between the static mount and the SPA
 fallback move, and the residual `ui/server.mjs` is at most its ceiling in `tools/split-by-feature/size-caps.json`
-(9,972 lines: the residual on `04370c0f6`, accepted as is). `--apply` and `--dry-run` refuse a failed gate. Raising
-the ceiling is a hand edit in a reviewed PR.
+(10,085 lines: the residual on `04370c0f6` merged with dev `c82347c7c`, whose git automations added 113 lines to it;
+accepted as is). `--apply` refuses a failed gate; `--dry-run` reports it as a problem and exits 1. Raising the ceiling
+is a hand edit in a reviewed PR.
 
 ## Rollback
 Two layers roll back separately. The tooling PRs (slices 1–3 and the #919 follow-up; T below is the one to undo)
@@ -118,7 +145,7 @@ anything else), step 11 writes the report:
 9. `rollback`: rollback A on the migrated clone (revert the migration commit); the diff to dev is empty, and the
    suite, parity and every `e2e:*` suite in `package.json` (today `e2e:extension` and `e2e:firefox-smoke`; the
    snapshot updater `e2e:extension:update-linux` is not a suite) pass again; a suite that prints SKIP is listed as
-   skipped. While `split-check` fails this proves the mechanics only.
+   skipped; the row fails when no suite ran. While `split-check` fails this proves the mechanics only.
 10. `baseline`: conflicted-merge share, boot and page-load medians and the dead-code count, dev against migrated.
     It fails when `open-prs` fails (no table to compare); no open PRs at all is a passing, empty comparison.
 

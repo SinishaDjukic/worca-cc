@@ -58,6 +58,17 @@ test('two builds on the same commit give the same tree hash; the revert gives ba
   assert.equal(treeHash(run, mig), h1);                           // splits it exactly like its own copy
 });
 
+test('commitMigration commits what applySplit wrote, with no treeHash in between (readiness split, verify:919)', async (t) => {
+  const mig = scratch(t, 'commit-direct');
+  if (SPLIT) return assert.rejects(applySplit(run, mig), /is already split/);
+  await applySplit(run, mig);
+  const m = commitMigration(run, mig);
+  assert.notEqual(m, HEAD);
+  assert.equal(run('git', ['-C', mig, 'status', '--porcelain']).stdout, '');
+  assert.equal(run('git', ['-C', mig, 'cat-file', '-e', `${m}:ui/public/parts.json`]).code, 0);
+  assert.notEqual(run('git', ['-C', mig, 'cat-file', '-e', `${m}:ui/public/style.css`]).code, 0);
+});
+
 test('rehearseRollback fails when the reverted tree is not the given commit', (t) => {
   const d = scratch(t, 'rb-fail');
   appendFileSync(join(d, 'README.md'), '\nlater dev commit\n'); git(d, 'commit', '-qam', 'later');   // a commit between sha and M

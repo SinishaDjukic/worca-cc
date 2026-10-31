@@ -522,6 +522,15 @@
       ],
       "css": [],
       "html": []
+    },
+    {
+      "name": "git-automations",
+      "doc": "docs/git-automations.md",
+      "routes": [
+        "/api/automations"
+      ],
+      "css": [],
+      "html": []
     }
   ]
 }

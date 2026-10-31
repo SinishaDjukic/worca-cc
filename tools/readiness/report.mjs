@@ -102,9 +102,11 @@ export function renderMarkdown(r) {
     if (s.id === 'moved') out.push('| Feature | Files | Lines |', '|---|---|---|', ...r.moved.features.map((f) => `| ${f.feature} | ${f.files.length} | ${f.lines} |`), '',
       '| Largest files on dev | Lines | Largest files after the split | Lines |', '|---|---|---|---|',
       ...(r.moved.largest.dev ?? []).map((d, i) => `| ${code(d.path)} | ${d.lines} | ${code(r.moved.largest.migrated?.[i]?.path)} | ${r.moved.largest.migrated?.[i]?.lines ?? ''} |`), '');
-    if (s.id === 'risks') out.push(...(r.risks.note ? [`${cell(r.risks.note)} · ${links(r.risks.evidence)}`] : [
+    // No sizes (no migrated tree): the note alone. Sizes present: the full section, the note standing in for the deltas.
+    if (s.id === 'risks') out.push(...(r.risks.serverLines == null ? [`${cell(r.risks.note)} · ${links(r.risks.evidence)}`] : [
       `The owner signs these off on #919; a go without that sign-off is not a go. · ${links(r.risks.evidence)}`, '',
-      `- Accepted served deltas: ${r.risks.acceptedDeltas.length}`, ...r.risks.acceptedDeltas.map((d) => `  - ${deltaLine(d)}`),
+      ...(r.risks.note ? [`- Accepted served deltas: ${cell(r.risks.note)}`]
+        : [`- Accepted served deltas: ${r.risks.acceptedDeltas.length}`, ...r.risks.acceptedDeltas.map((d) => `  - ${deltaLine(d)}`)]),
       `- Residual \`ui/server.mjs\`: ${r.risks.serverLines} lines, capped at ${r.risks.ceiling ?? 'no ceiling'} (\`tools/split-by-feature/size-caps.json\`), not under 1,000`,
       `- Routes pinned in \`ui/server.mjs\`: ${r.risks.pins} (\`tools/split-by-feature/pinned.json\`)`]), '');
     if (s.id === 'inputs') out.push(`- Go/no-go owner: ${cell(r.inputs.owner ?? 'not recorded yet')}`, `- Freeze window: ${cell(r.inputs.freezeWindow ?? 'not recorded yet')}`,

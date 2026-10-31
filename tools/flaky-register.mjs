@@ -32,12 +32,15 @@ export function parseFailures(log) {
   return out;
 }
 
-/** Failures no register row covers: same file, and the title prefix before "…", or `test: "*"` for a file-level failure. */
+/** The register row that covers one failure: same file, and the title prefix before "…", or `test: "*"` for a file-level failure. */
+export const registerEntryFor = ({ file, test }, register) => register.find((e) => e.file === file
+  && (test === FILE_LEVEL ? e.test === '*' : e.test !== '*' && test.startsWith(e.test.split('…')[0].trim())));
+
+/** Failures no register row covers. */
 export function unlistedFailures(log, register) {
   const empty = register.find((e) => e.test !== '*' && !e.test.split('…')[0].trim());
   if (empty) throw new Error(`flaky register: ${empty.file} row has an empty title prefix, which would cover every failure in its file`);
-  return parseFailures(log).filter(({ file, test }) => !register.some((e) => e.file === file
-    && (test === FILE_LEVEL ? e.test === '*' : e.test !== '*' && test.startsWith(e.test.split('…')[0].trim()))));
+  return parseFailures(log).filter((f) => !registerEntryFor(f, register));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

@@ -93,7 +93,7 @@ test('--apply writes the split; a second --apply changes 0 files; a fresh plan o
   assert.equal(await main(['--apply', '--root', d], { out: (m) => outs.push(m), err: (m) => errs.push(m) }), 0);
   assert.equal(outs[1], 'already split (parts manifest v1 present): 0 files changed');
   assert.deepEqual(writeFiles(d, planSplit({ root: pristine }).files), []);      // idempotent without the shortcut too
-  assert.equal(JSON.parse(readFileSync(join(d, 'tools/split-by-feature/size-caps.json'), 'utf8'))['ui/server.mjs'], 9972);
+  assert.equal(JSON.parse(readFileSync(join(d, 'tools/split-by-feature/size-caps.json'), 'utf8'))['ui/server.mjs'], 10085);
 });
 
 test('--apply refuses a git checkout with uncommitted changes and writes nothing', { skip: UNSPLIT_ONLY }, async (t) => {
@@ -125,7 +125,7 @@ test('the real tree is fully covered, the pins match the baseline and the spike 
     assert.ok(codeLineCounts(ROOT)['ui/server.mjs'] <= serverCeiling(ROOT), `ui/server.mjs over its ceiling ${serverCeiling(ROOT)}`);
     return;
   }
-  assert.deepEqual(spikeGate(r.stats, serverCeiling(ROOT)), { pass: true, reasons: [], ceiling: 9972 });
+  assert.deepEqual(spikeGate(r.stats, serverCeiling(ROOT)), { pass: true, reasons: [], ceiling: 10085 });
 });
 
 test('spike gate: >= 95% of route statements moved and ui/server.mjs within its size-cap ceiling', () => {
@@ -141,7 +141,7 @@ test('--check --stats prints the gate result with its reason, and exits 1 when i
   const outs = [];
   assert.equal(await main(['--check', '--stats', '--root', ROOT], { out: (m) => outs.push(m), err: () => {} }), 0);
   if (SPLIT) return assert.deepEqual(outs, ['already split (parts manifest v1 present): nothing left to move']);
-  assert.match(outs.at(-1), /^moved \d+\/\d+ route statements \(\d+%\), ui\/server\.mjs after the split: \d+ lines — spike gate passed \(>= 95% moved, ceiling 9972 lines\)$/);
+  assert.match(outs.at(-1), /^moved \d+\/\d+ route statements \(\d+%\), ui\/server\.mjs after the split: \d+ lines — spike gate passed \(>= 95% moved, ceiling 10085 lines\)$/);
 });
 
 test('docs/split-by-feature.md holds the tooling rollback (plain and two-part) next to procedures A and B', () => {
@@ -153,4 +153,57 @@ test('docs/split-by-feature.md holds the tooling rollback (plain and two-part) n
   assert.match(tooling, /two-part revert/);
   assert.match(tooling, /git diff origin\/dev/);
   assert.match(tooling, /fail 0/);
+});
+
+test('--apply writes ui/public/parts.json last, so an interrupted apply is never "already split"', async (t) => {
+  if (SPLIT) return t.skip(UNSPLIT_ONLY);
+  const d = plannerCopy(t);
+  const plan = planSplit({ root: d });
+  const order = []; writeFiles(d, plan.files, { onWrite: (rel) => order.push(rel) });
+  assert.equal(order.at(-1), 'ui/public/parts.json');
+});
+
+test('an apply cut off before parts.json: --apply and --check exit 1 naming the interrupted apply', async (t) => {
+  if (SPLIT) return t.skip(UNSPLIT_ONLY);
+  const d = plannerCopy(t);
+  const plan = planSplit({ root: d });
+  // killed right after the last file before the manifest: ui/server.mjs sorts last once parts.json is moved to the end.
+  // (A write count is not deterministic: unchanged files are skipped and do not call onWrite.)
+  assert.throws(() => writeFiles(d, plan.files, { onWrite: (rel) => { if (rel === 'ui/server.mjs') throw new Error('killed'); } }), /killed/);
+  assert.ok(existsSync(join(d, 'ui/routes/index.mjs')));
+  assert.ok(!existsSync(join(d, 'ui/public/parts.json')));
+  for (const mode of ['--apply', '--check']) {
+    const errs = [];
+    assert.equal(await main([mode, '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1, mode);
+    assert.match(errs.join('\n'), /interrupted --apply: ui\/public\/parts\.json is missing/, mode);
+  }
+});
+
+test('the full split with only parts.json removed is reported as interrupted, not as unsplit', async (t) => {
+  if (SPLIT) return t.skip(UNSPLIT_ONLY);
+  const d = plannerCopy(t);
+  writeFiles(d, planSplit({ root: d }).files);
+  rmSync(join(d, 'ui/public/parts.json'));
+  const p = planSplit({ root: d });
+  assert.equal(p.interrupted, true); assert.match(p.problems[0], /interrupted --apply/);
+});
+
+const lowCeiling = (d) => writeFileSync(join(d, 'tools/split-by-feature/size-caps.json'),
+  JSON.stringify({ ...JSON.parse(readFileSync(join(d, 'tools/split-by-feature/size-caps.json'), 'utf8')), 'ui/server.mjs': 1 }, null, 2) + '\n');
+
+test('--check --stats exits 1 when the spike gate fails, and says why', async (t) => {
+  if (SPLIT) return t.skip(UNSPLIT_ONLY);
+  const d = plannerCopy(t); lowCeiling(d);
+  const outs = [];
+  assert.equal(await main(['--check', '--stats', '--root', d], { out: (m) => outs.push(m), err: () => {} }), 1);
+  assert.match(outs.at(-1), /spike gate FAILED \(ui\/server\.mjs \d+ lines > ceiling 1\)$/);
+});
+
+test('--apply refuses a failed spike gate and writes nothing', async (t) => {
+  if (SPLIT) return t.skip(UNSPLIT_ONLY);
+  const d = plannerCopy(t); lowCeiling(d);
+  const errs = [];
+  assert.equal(await main(['--apply', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);
+  assert.match(errs.join('\n'), /spike gate FAILED \(.*ceiling 1\): nothing written/);
+  assert.ok(!existsSync(join(d, 'ui/public/parts.json'))); assert.ok(existsSync(join(d, 'ui/public/style.css')));
 });

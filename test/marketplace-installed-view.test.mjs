@@ -22,7 +22,7 @@ const SECRET = { kind: 'secret', id: 'github.webhookSecret', red: true };
 const SLACK_SETUP = { ok: false, missing: [{ kind: 'chatChannel', id: 'slack', keys: ['botToken'] }], noProfiles: [] };
 const MSG = 'built for plugin API 2; this version of worca requires plugin API 3 for agents and pipeline templates — update or reinstall the plugin (1 agent(s), 1 template(s) ignored)';
 // P1 row notes carry the relative manifest prefix (SM5); noteText strips it for display.
-const NOTE = (i, id) => `plugins/discretestack-models/worca-cc-plugin.json: models[${i}] ("${id}"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored`;
+const NOTE = (i, id) => `plugins/example-models/worca-cc-plugin.json: models[${i}] ("${id}"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored`;
 const chips = (el) => [...el.querySelectorAll('.badge')].map((b) => [b.className, b.textContent]);
 
 test('header: Refresh marketplaces (icon), then Update all · n (primary, arrow-up) only when there are updates', () => {
@@ -40,8 +40,8 @@ test('All installed: alphabetical calm rows — tile, name button, version, chip
   const el = renderAllInstalled(doc, [
     row('github-source', { version: '0.2.0', contributions: { ...ZERO, taskSources: 1 } }),
     row('atlassian-mcp', { contributions: { ...ZERO, mcpServers: 1 }, latest: L('0.1.1') }),
-    row('discretestack-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 }, marketplaceName: 'BD-AI-SDLC/worca-marketplace',
-      notes: [NOTE(0, 'discretestack-stable'), NOTE(1, 'discretestack-stable-fast')] }),
+    row('example-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 }, marketplaceName: 'example/worca-marketplace',
+      notes: [NOTE(0, 'example-stable'), NOTE(1, 'example-stable-fast')] }),
     row('jira-source', { version: null, pinnedSha: 'deadbeef99', enabled: false, broken: true, contributions: {} }),
     row('local-dev', { version: 'dev', pinnedSha: null, linked: true, marketplace: null, marketplaceName: null, contributions: { agents: ['a'], workflows: ['w'] } }),
   ]);
@@ -49,7 +49,7 @@ test('All installed: alphabetical calm rows — tile, name button, version, chip
   assert.equal(el.querySelector('.mk-sec-head h2.section-title').textContent, 'All installed');
   assert.equal(el.querySelector('.mk-sec-head .mk-count').textContent, '5');
   const rows = [...el.querySelectorAll('ul.mk-rows.card > li.mk-row')];
-  assert.deepEqual(rows.map((r) => r.dataset.name), ['atlassian-mcp', 'discretestack-models', 'github-source', 'jira-source', 'local-dev']);
+  assert.deepEqual(rows.map((r) => r.dataset.name), ['atlassian-mcp', 'example-models', 'github-source', 'jira-source', 'local-dev']);
   const [a, d, , j, l] = rows;
   assert.ok(a.querySelector('.mk-mt.mk-mt-sm.mk-t-mcp'));
   assert.equal(a.querySelector('button.mk-name[data-name="atlassian-mcp"]').textContent, 'atlassian-mcp');
@@ -66,11 +66,11 @@ test('All installed: alphabetical calm rows — tile, name button, version, chip
     ['atlassian-mcp', 'More actions for atlassian-mcp', 'menu', 'false']);
   assert.deepEqual([a.querySelector('button.mk-name').dataset.focusKey, sw.dataset.focusKey, more.dataset.focusKey],
     ['name:atlassian-mcp', 'enable:atlassian-mcp', 'more:atlassian-mcp'], 'P3 refocuses the same key after a re-render');
-  assert.equal(d.querySelector('.mk-meta').textContent, '2 models · BD-AI-SDLC/worca-marketplace');
+  assert.equal(d.querySelector('.mk-meta').textContent, '2 models · example/worca-marketplace');
   assert.equal(d.querySelector('.mk-meta a'), null);
   const notes = d.querySelector('.badge.mk-chip-n.mk-notes-chip');
   assert.deepEqual([notes.textContent, notes.title], ['2 manifest notes',
-    'models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored\nmodels[1] ("discretestack-stable-fast"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored']);
+    'models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored\nmodels[1] ("example-stable-fast"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored']);
   assert.deepEqual([j.querySelector('.mk-ver').textContent, j.querySelector('.mk-ver').classList.contains('mk-sha'), j.querySelector('.mk-enable').checked],
     ['deadbee', true, false], 'sha7 stands in (a sha is mono through P3\u2019s .mk-ver.mk-sha, SM30); the switch says off');
   assert.equal(j.querySelector('.mk-meta').textContent, 'Worca CC Official');
@@ -255,19 +255,19 @@ test('Remove dialog (board 3.4): tile + "Remove {plugin}?" + Close; Goes away; C
 });
 
 test('Blocked dialog: "{plugin} is still in use", Used by rows (P4 list rows) with Open links, the note, Remove disabled', () => {
-  const parts = renderBlockedDialog(doc, { name: 'discretestack-models', iconKind: 'models', note: 'Clear those selections first.', rows: [
-    { kind: 'models', title: 'discretestack-stable', meta: 'Model · 2 pipeline selections', href: '#models' },
-    { kind: 'models', title: 'discretestack-stable-fast', meta: 'Model · 1 pipeline selection', href: '#models' },
+  const parts = renderBlockedDialog(doc, { name: 'example-models', iconKind: 'models', note: 'Clear those selections first.', rows: [
+    { kind: 'models', title: 'example-stable', meta: 'Model · 2 pipeline selections', href: '#models' },
+    { kind: 'models', title: 'example-stable-fast', meta: 'Model · 1 pipeline selection', href: '#models' },
     { kind: 'agents', title: 'triager', meta: 'Agent · in Docs Flow', href: null },
   ] });
   assert.ok(parts.head[0].matches('.mk-mt.mk-mt-md.mk-t-model'));
-  assert.equal(parts.head[1].textContent, 'discretestack-models is still in use');
+  assert.equal(parts.head[1].textContent, 'example-models is still in use');
   assert.equal(parts.body.querySelector('section.mk-sec > h3.subsection-title').textContent, 'Used by');
   const rows = [...parts.body.querySelectorAll('ul.mk-list.mk-used > li.mk-list-row')];
   assert.deepEqual(rows.map((li) => [li.querySelector('.mk-row-main > .mk-row-title.mk-mono').textContent, li.querySelector('.mk-row-main > .mk-meta').textContent,
     li.querySelector('a.mk-link.mk-open[data-dlg="open"]')?.getAttribute('href') ?? null, li.querySelector('a.mk-open')?.textContent ?? null]), [
-    ['discretestack-stable', 'Model · 2 pipeline selections', '#models', 'Open'],
-    ['discretestack-stable-fast', 'Model · 1 pipeline selection', '#models', 'Open'],
+    ['example-stable', 'Model · 2 pipeline selections', '#models', 'Open'],
+    ['example-stable-fast', 'Model · 1 pipeline selection', '#models', 'Open'],
     ['triager', 'Agent · in Docs Flow', null, null],
   ]);
   assert.deepEqual(rows.map((li) => [...li.querySelector('.mk-mt.mk-mt-sm').classList].find((c) => c.startsWith('mk-t-'))), ['mk-t-model', 'mk-t-model', 'mk-t-agent']);

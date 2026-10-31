@@ -46,9 +46,9 @@ app). No token, SSH agent or host config of the operator reaches a target.
    `timeout`; the server is restarted and re-seeded, and the run fails naming the route.
 3. **Signed-out pass**, on an unseeded server in remote mode (`WORCA_ALLOWED_HOSTS=parity.invalid`, an http
    localhost issuer). Every request carries `Host: parity.invalid`, no `Origin` and no identity. A canary
-   `GET /api/projects` must answer 401 first. Every route must answer 401 except the 2 in
-   `tools/parity/public-routes.json` (`GET /api/health`, which must answer only `name` and `version`, and the Teams
-   ingress webhook, which must answer a 4xx other than 401 without a valid token).
+   `GET /api/projects` must answer 401 first. Every route must answer 401 except the 4 in
+   `tools/parity/public-routes.json` (`GET /api/health`, which must answer only `name` and `version`, and the Teams,
+   GitHub and Azure DevOps ingress webhooks, which must answer a 4xx other than 401 without a valid token).
 4. **UI server** at fixed paths (`$TMPDIR/worca-parity/home` and `…/sandbox`, wiped per launch, mode `0700`, guarded
    by a lock dir) so both sides show the same paths. 9 pages (Chat home, a chat thread, New run, Runs list, a live
    run, History detail, Settings, Labs, Statistics) are captured in light and dark (18 PNGs, 1280×800), then the 6

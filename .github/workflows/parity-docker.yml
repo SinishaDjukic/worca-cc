@@ -1,8 +1,9 @@
 name: Parity (CI image)
 
 # #919 parity harness (docs/parity-harness.md): this tree against the container image built from it, and against its
-# own npm pack. A required check: it runs on every pull request into dev and every push to dev, with NO paths filter,
-# so a docs-only PR reports it too (a required check that never runs stays pending forever; see ci.yml's header).
+# own npm pack. A required check: it runs on every pull request into dev (incl. one retargeted to dev) and every push
+# to dev, with NO paths filter, so a docs-only PR reports it too (a required check that never runs stays pending forever;
+# see ci.yml's header).
 # Routes, the signed-out pass and the 6 flows are gated for both pairs; visuals of the docker pair are reported, not
 # gated; timings are not gated on shared runners (--no-timing-gate).
 on:
@@ -10,6 +11,8 @@ on:
     branches: [dev]
   pull_request:
     branches: [dev]
+    # edited: a stacked PR retargeted to dev changes its base without a push
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read

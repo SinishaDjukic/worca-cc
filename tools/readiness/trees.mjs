@@ -67,7 +67,9 @@ export function resetTree(run, dir, sha) {
   must(run('git', ['-C', dir, 'clean', '-fdq']), 'git clean');
 }
 
+/** Commits the split as one migration commit. applySplit only writes files, so stage everything first. */
 export function commitMigration(run, dir) {
+  must(run('git', ['-C', dir, 'add', '-A']), 'git add -A');
   must(run('git', ['-C', dir, ...IDENT, 'commit', '--quiet', '-m', 'Split large files by feature (#919): readiness dry run']), 'git commit');
   return must(run('git', ['-C', dir, 'rev-parse', 'HEAD']), 'git rev-parse').trim();
 }

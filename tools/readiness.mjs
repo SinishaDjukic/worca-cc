@@ -201,7 +201,8 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
       return { ok: problems.length === 0, detail: problems.length ? problems[0] : `${openRows.length} PRs and branches, ${openRows.filter((t) => t.split.conflict).length} conflict after the split${vanished}${noExpress}`, evidence: [ev('open-prs.json', 'evidence/open-prs.json')] };
     });
     // A suite that exits 0 after printing "SKIP" (firefox-smoke without Firefox, tools/firefox-smoke.mjs:15-17) did not
-    // run: it does not fail the row, but the detail names it as skipped, never green.
+    // run: the detail names it as skipped, never green. One skip next to a suite that ran passes; a row where no suite
+    // ran fails.
     const e2e = (dir) => e2eScripts(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts).map((name) => {
       const file = `rollback-${name.replace(/:/g, '-')}.log`;
       const r = d.runLogged('npm', ['run', name], E(file), { cwd: dir });
@@ -215,8 +216,9 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
       const bad = e.filter((x) => !x.ok).map((x) => x.name);
       const ran = e.filter((x) => x.ok && !x.skipped).map((x) => x.name); const skipped = e.filter((x) => x.skipped).map((x) => x.name);
       const e2eText = !e.length ? 'e2e none found' : bad.length ? `e2e FAIL (${bad.join(', ')})`
-        : `e2e green (${ran.join(', ') || 'none ran'})${skipped.length ? `; skipped (${skipped.join(', ')})` : ''}`;
-      return { ok: r.ok && s.ok && p.ok && e.length > 0 && !bad.length,
+        : !ran.length ? `e2e none ran (skipped: ${skipped.join(', ')})`
+        : `e2e green (${ran.join(', ')})${skipped.length ? `; skipped (${skipped.join(', ')})` : ''}`;
+      return { ok: r.ok && s.ok && p.ok && ran.length > 0 && !bad.length,
         detail: `diff ${r.diff ? 'NOT empty' : 'empty'}; suite ${s.ok ? 'green' : 'red'}; parity ${p.ok ? 'PASS' : 'FAIL'}; ${e2eText}${gateFailed ? ` (${GATE_NOTE})` : ''} — ${ROLLBACK_NOTE}`,
         evidence: [ev('rollback-diff.log', 'evidence/rollback-diff.log'), ...s.evidence, ...p.evidence, ...e.map((x) => x.evidence)] };   // 4 + one per e2e suite
     });

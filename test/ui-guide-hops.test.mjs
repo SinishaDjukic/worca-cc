@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
 const app = read('app.js');
@@ -17,7 +18,7 @@ const start = app.indexOf('// ── Guides ─');
 const end = app.indexOf('\n// ── ', start + 12);            // the next banner ("Interface mode")
 const section = app.slice(start, end);
 const lineOf = (i) => app.slice(0, start + i).split('\n').length;
-const { document } = new JSDOM(read('index.html')).window;
+const { document } = new JSDOM(readIndexHtml()).window;
 const roots = [document, ...[...document.querySelectorAll('template')].map((t) => t.content)];
 const resolves = (sel) => { try { return roots.some((r) => r.querySelector(sel)); } catch { return false; } };
 

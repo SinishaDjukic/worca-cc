@@ -97,9 +97,9 @@ test('a part that is a symlink out of the public dir is refused', () => {
 // (which deletes style.css and index.html) touches no test. style.css / index.html: any path mention counts (exists,
 // stat and spawn calls break too). ui/server.mjs stays a file, so only disk reads of it count.
 const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/(^|[^:'"\\])\/\/.*$/gm, '$1');
-const MONO = /(['"`])(?:\.{1,2}\/)*ui\/public\/(?:style\.css|index\.html)\1|(['"])public\2\s*,\s*(['"])(?:style\.css|index\.html)\3/;
+const MONO = /(['"`])(?:\.{1,2}\/)*ui\/public\/(?:style\.css|index\.html)\1|(['"])public\2\s*,\s*(['"])(?:style\.css|index\.html)\3|\/ui\/public\/(?:style\.css|index\.html)['"`]/;
 const BARE = /(['"])(?:style\.css|index\.html)\1/;
-const PUBLIC_DIR_MENTION = /ui\/public\/?['"`]|(['"])ui\1\s*,\s*(['"])public\2/;
+const PUBLIC_DIR_MENTION = /ui\/public\/?(?:['"`]|\$\{)|(['"])ui\1\s*,\s*(['"])public\2/;
 const SERVER = /(['"`])(?:\.{1,2}\/)*ui\/server\.mjs\1|(['"])ui\2\s*,\s*(['"])server\.mjs\3/;
 const READ = /\b(?:readFileSync|readFile|createReadStream|openSync)\s*\(/;
 const IMPORT = /^\s*import\s[^;]*;?|\bimport\s*\([^)]*\)/g;
@@ -107,7 +107,9 @@ export function directReads(src) {
   const code = strip(src); const hits = [];
   const publicDirFile = PUBLIC_DIR_MENTION.test(code);
   const serverVars = [...code.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=[^;\n]*(?:ui\/server\.mjs|['"]server\.mjs['"])/g)].map((m) => m[1]);
-  const serverVarRead = serverVars.length ? new RegExp(`${READ.source}[^\\n]*\\b(?:${serverVars.join('|')})\\b`) : null;
+  // The variable may come after the read on the line, or before it (`files.filter((f) => … readFileSync(f, 'utf8'))`).
+  const serverVarRead = serverVars.length
+    ? new RegExp(`${READ.source}[^\\n]*\\b(?:${serverVars.join('|')})\\b|\\b(?:${serverVars.join('|')})\\b[^\\n]*${READ.source}`) : null;
   // Imports are not reads: drop the import itself and scan what else the line holds.
   const lines = code.split('\n').map((l) => l.replace(IMPORT, ''));
   lines.forEach((line, i) => {
@@ -131,6 +133,11 @@ test('guard: every read form is caught, imports and spawns are not', () => {
     "const root = join(__dir, '..', 'ui', 'public');\nconst h = read('index.html');",
     "const S = join(ROOT, 'ui/server.mjs');\nconst src = readFileSync(S, 'utf8');",
     "const src = readFileSync(\n  join(ROOT, 'ui/server.mjs'),\n  'utf8');",
+    "const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');\nconst html = read('index.html');",
+    "const html = readFileSync(root + '/ui/public/index.html', 'utf8');",
+    "const index = readFileSync(`${root}/ui/public/index.html`, 'utf8');",
+    "const UI = join(ROOT, 'ui/public');\nconst html = readFileSync(join(UI, 'index.html'), 'utf8');",
+    "const files = [...dirs, join(REPO, 'ui', 'server.mjs')];\nconst bad = files.filter((f) => /x/.test(readFileSync(f, 'utf8')));",
   ];
   for (const src of caught) assert.notDeepEqual(directReads(src), [], src);
   const fine = [
@@ -138,6 +145,8 @@ test('guard: every read form is caught, imports and spawns are not', () => {
     "const SERVER = join(ROOT, 'ui/server.mjs');\nspawn(process.execPath, [SERVER]);",
     "// reads ui/public/style.css in a comment",
     "readFileSync(join(KIT, 'film', 'index.html'), 'utf8')",
+    // a test title naming the path is not a read
+    "test('a change to ui/public/style.css does not select the readers of index.html', () => {});",
   ];
   for (const src of fine) assert.deepEqual(directReads(src), [], src);
 });
@@ -148,13 +157,14 @@ const ALLOW = new Map([
   ['tools/split-by-feature.mjs', 'the migration tool itself'],
   ['test/house-brief.test.mjs', "writes a fixture project's own ui/public/style.css and ui/server.mjs"],
   ['test/parity.test.mjs', "edits a copied tree's ui/server.mjs and style.css to prove the parity gates catch a change"],
+  ['e2e/extension/fixtures.mjs', "spawns ui/server.mjs; its only reads (openSync, readFileSync) are of the server's own log file"],
 ]);
 const ALLOW_PREFIX = ['tools/split-by-feature/', 'test/split-by-feature',   // the tool and its fixture strings
   'tools/readiness/', 'test/readiness'];   // the readiness dry run compares a scratch tree's monoliths with its split
 test('no test or tool reaches style.css, index.html or ui/server.mjs on disk directly', () => {
   const root = new URL('../', import.meta.url);
   const offenders = [];
-  for (const d of ['test', 'tools']) {
+  for (const d of ['test', 'tools', 'e2e']) {   // e2e: the Playwright specs run on the split tree too (verify:919 row h)
     for (const f of readdirSync(new URL(d + '/', root), { recursive: true })) {
       const rel = `${d}/${String(f).split('\\').join('/')}`;
       if (!/\.(mjs|js|cjs)$/.test(rel) || ALLOW.has(rel) || ALLOW_PREFIX.some((p) => rel.startsWith(p))) continue;

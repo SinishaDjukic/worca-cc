@@ -1,0 +1,483 @@
+<title>Worca — What's new in 1.16.0</title>
+<style>
+  :root{
+    --bg:#ECEAE4; --card:#FFFFFF; --card-2:#F6F4EF;
+    --ink:#14151A; --ink-2:#56534C; --ink-3:#8B8780; --line:#E2DFD7;
+    --ocean:#4B5ED2; --ocean-deep:#3A49AC; --wash:#DDE3F7; --wash-2:#EBEEFA;
+    --coral:#EEA47D; --coral-soft:#F8E3D5; --lime:#DEEFC4; --lime-2:#EDF6DC;
+    --dark:#131419; --dark-2:#1C1D25; --on-dark:#F4F3EE; --on-dark-2:#9EA0AC;
+    --ok:#38854F; --warn:#DFA23F; --bad:#C9524A; --info:#5B94C8;
+    --r-lg:28px; --r-md:18px; --r-sm:12px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --shadow:0 18px 50px -22px rgba(20,21,26,.28);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  img{max-width:100%;display:block}
+  .wrap{max-width:1280px;margin:0 auto;padding:18px 22px 90px}
+
+  /* ---------- shared bits ---------- */
+  .kicker{display:inline-flex;align-items:center;gap:8px;background:var(--card);
+    border:1px solid var(--line);border-radius:999px;padding:7px 15px;
+    font-size:11.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--ocean)}
+  h1,h2{margin:0;letter-spacing:-.035em;line-height:1.02;text-wrap:balance;font-weight:800}
+  h1{font-size:clamp(44px,7vw,92px)}
+  h2{font-size:clamp(34px,4.6vw,58px)}
+  .sub b{color:var(--ink);font-weight:700}
+  .sub{color:var(--ink-2);font-size:clamp(16px,1.6vw,19px);max-width:52ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:8px 16px;font-size:13.5px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+  .chip b{color:var(--ink);font-family:var(--mono);font-weight:700}
+  .chip.acc{background:var(--ink);border-color:var(--ink);color:#fff}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  .sec{border-radius:var(--r-lg);background:var(--card);margin-top:26px;
+    padding:clamp(28px,4.4vw,64px);position:relative;overflow:hidden}
+  .sec-head{display:flex;flex-direction:column;align-items:flex-start;gap:18px;max-width:900px;position:relative;z-index:2}
+  .grid2{display:grid;grid-template-columns:5fr 6fr;gap:clamp(22px,3vw,44px);align-items:center;margin-top:38px}
+  .grid2.flip{grid-template-columns:6fr 5fr}
+  @media (max-width:920px){.grid2,.grid2.flip{grid-template-columns:1fr}}
+
+  /* screenshot frame */
+  .shot{border-radius:var(--r-md);overflow:hidden;background:var(--card);
+    border:1px solid var(--line);box-shadow:var(--shadow)}
+  .shot .bar{height:32px;background:var(--card-2);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:6px;padding:0 14px}
+  .shot .bar i{width:10px;height:10px;border-radius:50%;background:#DDD9CF;display:block}
+  .shot .bar i:first-child{background:#E8B4AC}.shot .bar i:nth-child(2){background:#EAD3A2}.shot .bar i:nth-child(3){background:#BCD8B4}
+  .shot .crop{overflow:hidden;position:relative}
+  .shot img{height:auto}
+  .shot-cap{margin:12px 4px 0;font-size:13px;color:var(--ink-3);font-weight:600}
+
+  /* reveals */
+  .rv{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+
+  /* ---------- topbar ---------- */
+  .top{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em;font-size:18px}
+  .top .chip{background:transparent}
+
+  /* ---------- hero ---------- */
+  .hero{background:linear-gradient(135deg,var(--wash) 0%,var(--wash-2) 60%,#F2EFFA 100%)}
+  .hero-grid{display:grid;grid-template-columns:6fr 5fr;gap:clamp(24px,3vw,48px);align-items:center;position:relative}  /* no z-index: a stacking context here would put the ribbon over the text */
+  @media (max-width:920px){.hero-grid{grid-template-columns:1fr}}
+  .hero .shot{transform:rotate(1.6deg)}
+  .hero .sec-head{position:relative;z-index:4}
+  .ribbon{position:absolute;inset:0;z-index:1;pointer-events:none}   /* behind the text (4) and the shot (2) */
+  @media (max-width:920px){.ribbon{display:none}}
+  .ribbon text{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.30em;fill:#fff}
+  .float-chip{position:absolute;z-index:3;background:var(--card);border-radius:14px;box-shadow:var(--shadow);
+    border:1px solid var(--line);padding:10px 16px;font-size:13px;font-weight:700}
+  .float-chip small{display:block;font-weight:600;color:var(--ink-3);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+
+  /* ---------- demo cards ---------- */
+  .demo{border-radius:var(--r-md);background:var(--card-2);border:1px solid var(--line);padding:26px;position:relative}
+  .demo .dlabel{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:18px}
+  .env-note{margin:14px 2px 0;font-size:12.5px;color:var(--ink-3);font-weight:600}
+  .badge{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .badge.violet{background:#E7E4F8;color:#4A3E9E}
+  .badge.grey{background:var(--card-2);color:var(--ink-3);border:1px solid var(--line)}
+  .pill{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:4px 10px}
+  .pill.run{background:#E4F0E7;color:var(--ok)}
+  .pill.flag{background:#FBEEDC;color:#9A6A17}
+  .ghost-btn{border:1.5px solid var(--ink);border-radius:999px;background:var(--card);
+    padding:7px 14px;font-size:12px;font-weight:700;white-space:nowrap;transition:.3s;display:inline-block}
+  .ghost-btn.pulse{transform:scale(1.06);box-shadow:0 0 0 6px rgba(75,94,210,.18)}
+
+  /* recipe: precedence — layers resolve into one winner */
+  .cat-demo{display:flex;flex-direction:column;gap:10px}
+  .cat-row{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);padding:13px 16px;
+    display:flex;align-items:center;gap:12px;transition:.35s ease}
+  .cat-row .t{font-weight:700;font-size:13.5px;flex:1}
+  .cat-row .src{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+  .cat-row.dim{opacity:.45}
+  .cat-row.win{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: mask / reveal — a secret shown only on demand */
+  .env-demo .erow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 16px;
+    display:flex;align-items:center;gap:14px}
+  .env-demo .ekey{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);flex:0 0 auto}
+  .env-demo .eval{font-family:var(--mono);font-size:13px;font-weight:700;position:relative;flex:1;height:20px;overflow:hidden}
+  .env-demo .eval span{position:absolute;inset:0;transition:opacity .4s}
+  .env-demo .eval .raw{opacity:0}
+  .env-demo.reveal .eval .raw{opacity:1}
+  .env-demo.reveal .eval .msk{opacity:0}
+
+  /* recipe: meter + flag — a run crossing a threshold */
+  .meter-run{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:16px 18px}
+  .meter-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .meter-top .t{font-weight:700;font-size:14px}
+  .meter{height:12px;border-radius:999px;background:var(--line);position:relative}
+  .meter .fill{height:100%;border-radius:999px;width:0%;background:var(--info);transition:width 1.4s ease}
+  .meter-amt{display:flex;justify-content:space-between;margin-top:10px;font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+  .cost-banner{margin-top:14px;border-radius:var(--r-sm);background:#FBF3E4;border:1px solid #EDD9AE;
+    padding:13px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    opacity:.22;transform:translateY(-4px);transition:.45s ease}
+  .cost-banner.show{opacity:1;transform:none}
+  .cost-banner .msg{font-size:13px;font-weight:600;color:#7A5A1A}
+  .cap-steps{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .cap-steps li{display:flex;gap:11px;align-items:center;font-size:13.5px;font-weight:600;color:var(--ink-3);transition:.35s}
+  .cap-steps .n{width:23px;height:23px;border-radius:50%;background:var(--card);border:1px solid var(--line);flex:none;
+    display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:700;transition:.35s}
+  .cap-steps li.on{color:var(--ink)}
+  .cap-steps li.on .n{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* recipe: grouped picker — grouping + a collision suffix */
+  .dd-demo .grp{margin-bottom:12px}
+  .dd-demo .glabel{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin:0 0 7px 4px}
+  .dd-opt{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px 14px;
+    font-size:13.5px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .dd-opt .sfx{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);opacity:0;transition:opacity .5s}
+  .dd-demo.collide .dd-opt .sfx{opacity:1}
+  .dd-opt.sel{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: review rows — red-flagged changes + a green guarantee */
+  .con-demo .crow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    font-size:13px;font-weight:600;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .red-chip{background:#FCE9E4;color:#A03A31;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;font-family:var(--mono)}
+  .con-note{border-radius:var(--r-sm);background:var(--lime-2);border:1px solid #CFE3A8;padding:12px 16px;
+    display:flex;align-items:center;justify-content:space-between;font-size:12.5px;font-weight:600;color:#41611F}
+
+  /* recipe: policy flip — a heuristic changing a default */
+  .pol-demo .prow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    display:flex;align-items:center;gap:12px}
+  .pol-demo .pkey{font-family:var(--mono);font-size:12px;color:var(--ink-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .pol-demo .pmode{font-size:12px;font-weight:700;border:1px solid var(--line);border-radius:8px;padding:6px 12px;background:var(--card-2);
+    position:relative;min-width:150px;text-align:center;height:31px;overflow:hidden}
+  .pol-demo .pmode span{position:absolute;inset:0;display:grid;place-items:center;transition:opacity .4s}
+  .pol-demo .pmode .b{opacity:0;color:#A03A31}
+  .pol-demo .prow.flip .pmode .a{opacity:0}
+  .pol-demo .prow.flip .pmode .b{opacity:1}
+  .pol-demo .warn-note{font-size:11.5px;color:var(--bad);font-weight:700;opacity:0;transition:opacity .4s}
+  .pol-demo .prow.flip ~ .warn-note{opacity:1}
+
+  /* ---------- receipts section ---------- */
+  .polish{background:linear-gradient(160deg,#F7EFE7,#FBF6EF)}
+  .p-ribbon{position:absolute;inset:0;pointer-events:none;z-index:1}
+  .p-ribbon text{font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:.28em;fill:#fff}
+  .bubs{position:relative;z-index:2;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+  @media (max-width:920px){.bubs{grid-template-columns:1fr 1fr}}
+  @media (max-width:560px){.bubs{grid-template-columns:1fr}}
+  .bub{background:var(--card);border-radius:20px;border:1px solid var(--line);padding:18px;display:flex;gap:16px;align-items:center}
+  .bub .im{width:86px;height:86px;border-radius:50%;overflow:hidden;flex:none;border:1px solid var(--line);position:relative;
+    display:grid;place-items:center;background:var(--card-2)}
+  .bub .im img{width:300%;max-width:none;position:absolute}
+  .bub .im .big{font-family:var(--mono);font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .bub .tx b{display:block;font-size:14.5px;letter-spacing:-.01em}
+  .bub .tx span{font-size:12.5px;color:var(--ink-2)}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;padding:34px 8px 0;color:var(--ink-3);font-size:13px}
+
+  /* dot rail */
+  .rail{position:fixed;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:9px;z-index:50}
+  .rail a{width:8px;height:8px;border-radius:50%;background:var(--ink-3);opacity:.35;transition:.25s}
+  .rail a.on{opacity:1;background:var(--ocean);transform:scale(1.35)}
+  @media (max-width:1360px){.rail{display:none}}
+
+  a{color:inherit}
+  :focus-visible{outline:2.5px solid var(--ocean);outline-offset:2px;border-radius:4px}
+
+
+  /* copy rows — one button, one feedback (this entry) */
+  .cp-demo .cp-row{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:10px;
+    display:flex;align-items:center;gap:12px}
+  .cp-demo .ekey{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);flex:0 0 64px}
+  .cp-demo .cp-v{font-family:var(--mono);font-size:12.5px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cp-demo .cp-b{position:relative;width:76px;height:22px;flex:none;font-size:12px;font-weight:700}
+  .cp-demo .cp-b span{position:absolute;inset:0;display:grid;place-items:center end;transition:opacity .3s}
+  .cp-demo .cp-b .a{color:var(--ink-3);font-size:15px}
+  .cp-demo .cp-b .b{opacity:0;color:var(--ok)}
+  .cp-demo .cp-row.on .cp-b .a{opacity:0}
+  .cp-demo .cp-row.on .cp-b .b{opacity:1}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    html{scroll-behavior:auto}
+    .rv{opacity:1;transform:none}
+    .cost-banner{opacity:1;transform:none}
+    .env-demo .eval .raw{position:static}
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- top -->
+  <div class="top">
+    <div class="brand">
+      <img src="ui/public/assets/worca-logo.png" alt="Worca" style="height:34px;width:auto;mix-blend-mode:multiply">
+    </div>
+    <span class="chip mono">changelog · v1.15.0 → v1.16.0</span>
+  </div>
+
+  <!-- ================= HERO ================= -->
+  <section class="sec hero" id="s0">
+    <svg class="ribbon" viewBox="0 0 1280 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="rb" d="M -120 652 C 260 650, 560 640, 740 560 S 1060 170, 1400 120" fill="none" stroke="#4B5ED2" stroke-width="42" stroke-linecap="round" opacity=".92"></path>
+      <text><textPath id="rbt" href="#rb" startOffset="-12%">GIT AUTOMATIONS · SAFER BY DEFAULT · SEARCH SETTINGS · CHAT ICONS · ONE COPY BUTTON · GIT AUTOMATIONS · SAFER BY DEFAULT · SEARCH SETTINGS · CHAT ICONS · ONE COPY BUTTON · </textPath></text>
+    </svg>
+    <div class="hero-grid">
+      <div class="sec-head rv in">
+        <span class="kicker"><span class="dot"></span>What's new · v1.16.0</span>
+        <h1>Issues in.<br>Runs out.</h1>
+        <p class="sub">Worca now picks up new issues and pull requests on its own. It is safer by default. Search finds any setting. Each chat shows what it did. Every copy button works the same way.</p>
+        <div class="chips">
+          <span class="chip acc">Git automations</span><span class="chip">Safer by default</span><span class="chip">Search settings</span><span class="chip">Chat icons</span><span class="chip">One copy button</span>
+        </div>
+      </div>
+      <div class="rv d1 in" style="position:relative;z-index:2">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:560px"><img src="docs/changelog/shots/1.16.0/s0.jpg" alt="Project page, Automations tab — Auto-handle switches for triage, full fix and PR review, with a rule below" style="width:170%;max-width:none;margin:-18% 0 0 -30%"></div></div>
+        <div class="float-chip" style="right:-8px;top:-16px"><small>New</small><span>Auto-handle</span></div>
+        <div class="float-chip" style="right:24px;bottom:-18px"><small>New</small><span>Rules per project</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S1 · Git automations ================= -->
+  <section class="sec" id="s1">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--info)"></span>Automations</span>
+      <h2>Worca picks up new issues.</h2>
+      <p class="sub"><b>A bug report sat in GitHub until someone had time to start a run?</b><br>Now Worca watches your repository. A new issue gets a fix plan. You approve it, and Worca opens a draft PR. A new pull request gets a review.</p>
+      <div class="chips">
+        <span class="chip">GitHub and Azure DevOps</span><span class="chip">nothing changes until you approve</span><span class="chip">a daily limit, a cost limit per run</span><span class="chip">turn it on in Settings › Labs</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">From a new issue to a draft PR</div>
+        <div class="meter-run">
+          <div class="meter-top"><span class="t">Issue #142 · Search ignores accents</span><span class="pill run" id="flowPill">New</span></div>
+        </div>
+        <ol class="cap-steps" id="flowSteps">
+          <li><span class="n">1</span>Worca sees the new issue</li>
+          <li><span class="n">2</span>Triages it as a bug and finds the cause</li>
+          <li><span class="n">3</span>Posts a fix plan on the issue</li>
+          <li><span class="n">4</span>You approve: it fixes and opens a draft PR</li>
+        </ol>
+        <p class="env-note">Questions get a comment, not a run. It never merges.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:470px"><img src="docs/changelog/shots/1.16.0/s1.jpg" alt="Automations tab — a rule, the empty Waiting queue and four recent events: one waiting for approval, two done, one skipped as a question" style="width:170%;max-width:none;margin:-12% 0 0 -30%"></div></div>
+        <p class="shot-cap">Recent: what each rule did, with Approve, Open run and View PR.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S2 · Security (no UI surface) ================= -->
+  <section class="sec" id="s2">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--bad)"></span>Security</span>
+      <h2>Safer by default, everywhere.</h2>
+      <p class="sub"><b>Could an agent, a plugin or someone on your network reach more than you meant?</b><br>Now Worca is harder to trick. Its git commands ignore hooks an agent plants. The server checks who is calling. Plugins install the exact version you saw. New installs start runs on Normal guardrails.</p>
+      <div class="chips">
+        <span class="chip">every fix has its own test</span><span class="chip">your install keeps its guardrails</span><span class="chip">chat asks before it runs a script</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv con-demo">
+        <div class="dlabel">What is refused now</div>
+        <div class="crow"><span>A git hook planted in the repository</span><span class="red-chip">ignored</span></div>
+        <div class="crow"><span>A network caller pretending to be this machine</span><span class="red-chip">refused</span></div>
+        <div class="crow"><span>A plugin update that changed after the preview</span><span class="red-chip">not installed</span></div>
+        <div class="con-note"><span>In the container, chats and plugins run as their own user</span><span class="mono">✓</span></div>
+      </div>
+      <div class="demo rv d1 pol-demo" id="polDemo">
+        <div class="dlabel">Guardrails a run starts with</div>
+        <div class="prow"><span class="pkey">Your install today</span><span class="pmode"><span class="a">Permissive</span></span></div>
+        <div class="prow" id="polFlip"><span class="pkey">A new install</span><span class="pmode"><span class="a">Permissive</span><span class="b">Normal</span></span></div>
+        <p class="warn-note">New installs start safer · pick another set per run</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S3 · Search finds settings ================= -->
+  <section class="sec" id="s3">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Search</span>
+      <h2>Search finds any setting.</h2>
+      <p class="sub"><b>Knew the setting existed, but not which tab it was on?</b><br>Now the search box finds it. It finds settings, Settings tabs and Add-ons pages. Pick one and Worca opens it. The setting lights up. If it needs another mode, Worca says so.</p>
+      <div class="chips">
+        <span class="chip">highlights the setting it found</span><span class="chip">says when a mode switch is needed</span><span class="chip">finds marketplace plugins</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:440px"><img src="docs/changelog/shots/1.16.0/s3.jpg" alt="Top-bar search for “model” — a Settings group and an Add-ons group, two results marked Switch to Expert mode" style="width:220%;max-width:none;margin:-1% 0 0 -88%"></div></div>
+        <p class="shot-cap">Searching “model”: settings and Add-ons pages, grouped.</p>
+      </div>
+      <div class="demo rv d1 dd-demo" id="ddDemo">
+        <div class="dlabel">One box, grouped results</div>
+        <div class="grp">
+          <p class="glabel">Settings</p>
+          <div class="dd-opt sel">Engine &amp; models</div>
+        </div>
+        <div class="grp">
+          <p class="glabel">Add-ons</p>
+          <div class="dd-opt">Model catalogue</div>
+          <div class="dd-opt">Helper job models <span class="sfx">· switch to Expert mode</span></div>
+        </div>
+        <p class="env-note">A locked result says what unlocks it, then opens it.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S4 · Chat icons ================= -->
+  <section class="sec" id="s4">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Chats</span>
+      <h2>See what each chat did.</h2>
+      <p class="sub"><b>A list of chats that all looked the same?</b><br>Now each chat shows one icon for what it did. A run may need you. The chat may have started a run, followed one or proposed a workflow. The most important icon wins.</p>
+      <div class="chips">
+        <span class="chip"><b>5</b> kinds, one icon each</span><span class="chip">needs you comes first</span><span class="chip">hover for its name</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">Which icon a chat shows</div>
+        <div class="cat-demo">
+          <div class="cat-row win"><span class="t">A run it follows asks a question</span><span class="badge violet">needs you</span></div>
+          <div class="cat-row"><span class="t">It started a run</span><span class="badge grey">started</span></div>
+          <div class="cat-row"><span class="t">It follows someone else's run</span><span class="badge grey">follows</span></div>
+          <div class="cat-row dim"><span class="t">It proposed a workflow</span><span class="badge grey">workflow</span></div>
+          <div class="cat-row dim"><span class="t">Questions and answers only</span><span class="badge grey">chat</span></div>
+        </div>
+        <p class="env-note">The first match from the top wins.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:470px"><img src="docs/changelog/shots/1.16.0/s4.jpg" alt="Chat page — the Chats list with run, follow, workflow and chat icons per row" style="width:200%;max-width:none;margin:-2% 0 0 -30%"></div></div>
+        <p class="shot-cap">The Chats list: one icon per chat, by what it did.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S5 · One copy button ================= -->
+  <section class="sec" id="s5">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Polish</span>
+      <h2>One copy button, everywhere.</h2>
+      <p class="sub"><b>Some copy buttons said “Copied”, some changed an icon, some did nothing?</b><br>Now they all work the same. Click one and a green tick shows it worked. If it fails, a red × says why. Runs started from a feature also get clean branch and PR names.</p>
+      <div class="chips">
+        <span class="chip">a tick when it worked</span><span class="chip">the reason when it did not</span><span class="chip">clean names for feature runs</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:360px"><img src="docs/changelog/shots/1.16.0/s5.jpg" alt="A finished run — the branch name with its copy button showing a green tick" style="width:200%;max-width:none;margin:-14% 0 0 -96%"></div></div>
+        <p class="shot-cap">A run's branch name, just copied.</p>
+      </div>
+      <div class="demo rv d1 cp-demo" id="cpDemo">
+        <div class="dlabel">Same feedback on every copy</div>
+        <div class="cp-row"><span class="ekey">Branch</span><span class="cp-v">worca-cc/csv-export-for-contacts</span><span class="cp-b"><span class="a">⧉</span><span class="b">✓ Copied</span></span></div>
+        <div class="cp-row"><span class="ekey">Path</span><span class="cp-v">~/code/nimbus-crm</span><span class="cp-b"><span class="a">⧉</span><span class="b">✓ Copied</span></span></div>
+        <div class="cp-row"><span class="ekey">Command</span><span class="cp-v">npm install -g @worca/app</span><span class="cp-b"><span class="a">⧉</span><span class="b">✓ Copied</span></span></div>
+        <p class="env-note">Logs, run heads, paths, device codes and chat commands, one look.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECEIPTS ================= -->
+  <section class="sec polish" id="s6">
+    <svg class="p-ribbon" viewBox="0 0 1280 760" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="pb" d="M -60 78 C 260 8, 520 140, 760 92 S 1160 6, 1360 96" fill="none" stroke="#EEA47D" stroke-width="34" stroke-linecap="round" opacity=".9"></path>
+      <text><textPath id="pbt" href="#pb" startOffset="-10%">TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · </textPath></text>
+    </svg>
+    <div class="sec-head rv" style="margin-top:110px">
+      <span class="kicker"><span class="dot" style="background:var(--coral)"></span>And the receipts</span>
+      <h2>Shipped, tested, verified live.</h2>
+    </div>
+    <div class="bubs">
+      <div class="bub rv"><span class="im"><span class="big">18,122</span></span><div class="tx"><b>Tests green</b><span>0 failed · 31 new test files · +7,325 test lines</span></div></div>
+      <div class="bub rv d1"><span class="im"><span class="big">+14.6k</span></span><div class="tx"><b>Lines landed</b><span>325 files · −1,473 lines · 11 commits on dev</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">8</span></span><div class="tx"><b>PRs merged</b><span>since v1.15.0 · 2 days</span></div></div>
+      <div class="bub rv"><span class="im"><span class="big">6</span></span><div class="tx"><b>Security commits</b><span>each fix with a test that fails without it</span></div></div>
+      <div class="bub rv d1"><span class="im"><span class="big">4</span></span><div class="tx"><b>CI shards green</b><span>full suite before publish · Node 22</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">v82</span></span><div class="tx"><b>Schema</b><span>guardrail default v81 · automations v82</span></div></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>WORCA · changelog · <span class="mono">v1.15.0 → v1.16.0</span></span>
+    <span class="mono">Oct 29 – Oct 31, 2026</span>
+  </div>
+</div>
+
+<nav class="rail" id="rail" aria-label="Sections">
+  <a href="#s0" aria-label="What's new" class="on"></a><a href="#s1" aria-label="Git automations"></a><a href="#s2" aria-label="Safer by default"></a><a href="#s3" aria-label="Search settings"></a><a href="#s4" aria-label="Chat icons"></a><a href="#s5" aria-label="One copy button"></a><a href="#s6" aria-label="Receipts"></a>
+</nav>
+
+<script>
+(function () {
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function (id) { return document.getElementById(id); };
+
+  // scroll reveals
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.18 });
+  document.querySelectorAll('.rv').forEach(function (el) { io.observe(el); });
+
+  // dot rail follows the section in the middle of the viewport
+  var secs = [].slice.call(document.querySelectorAll('.sec'));
+  var dots = [].slice.call(document.querySelectorAll('.rail a'));
+  var so = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (e.isIntersecting) {
+        var i = secs.indexOf(e.target);
+        dots.forEach(function (d, j) { d.classList.toggle('on', j === i); });
+      }
+    });
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  secs.forEach(function (s) { so.observe(s); });
+
+  // ribbons drift with scroll position
+  var rbt = $('rbt'), pbt = $('pbt');
+  if (!reduced) addEventListener('scroll', function () {
+    var p = scrollY / Math.max(1, document.body.scrollHeight - innerHeight);
+    if (rbt) rbt.setAttribute('startOffset', (-12 + p * 30) + '%');
+    if (pbt) pbt.setAttribute('startOffset', (-10 + p * 26) + '%');
+  }, { passive: true });
+
+  var flowSteps = [].slice.call(document.querySelectorAll('#flowSteps li'));
+  var cpRows = [].slice.call(document.querySelectorAll('#cpDemo .cp-row'));
+
+  // Reduced motion: every demo in its final state, no timers.
+  if (reduced) {
+    flowSteps.forEach(function (li) { li.classList.add('on'); });
+    if ($('flowPill')) { $('flowPill').textContent = 'Draft PR'; }
+    if ($('ddDemo')) $('ddDemo').classList.add('collide');
+    if ($('polFlip')) $('polFlip').classList.add('flip');
+    cpRows.forEach(function (r) { r.classList.add('on'); });
+    return;
+  }
+
+  // recipe: numbered steps — new issue → triage → plan → approved fix
+  var flowPill = $('flowPill'), PILL = ['New', 'Triaging', 'Plan posted', 'Draft PR'];
+  if (flowSteps.length) { var fp = -1; setInterval(function () {
+    fp = (fp + 1) % (flowSteps.length + 1);
+    flowSteps.forEach(function (li, i) { li.classList.toggle('on', i < fp); });
+    flowPill.textContent = PILL[Math.max(0, fp - 1)];
+    flowPill.className = fp >= 3 ? 'pill flag' : 'pill run';
+  }, 1700); }
+
+  // recipe: grouped picker — the lock note
+  var dd = $('ddDemo');
+  if (dd) setInterval(function () { dd.classList.toggle('collide'); }, 2800);
+
+  // recipe: policy flip
+  var pf = $('polFlip');
+  if (pf) setInterval(function () { pf.classList.toggle('flip'); }, 2400);
+
+  // copy rows: one at a time shows the tick
+  if (cpRows.length) { var ci = -1; setInterval(function () {
+    ci = (ci + 1) % cpRows.length;
+    cpRows.forEach(function (r, i) { r.classList.toggle('on', i === ci); });
+  }, 1400); }
+})();
+</script>

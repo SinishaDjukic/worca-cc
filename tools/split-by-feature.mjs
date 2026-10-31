@@ -8,7 +8,7 @@
 //   --write-caps               rewrite tools/split-by-feature/size-caps.json (only lowers, drops or adds)
 //   --root D                   the repo root to read, feature map, pin baseline and size caps included (default: cwd)
 // Every mode checks Express 4 first (it reads app._router) and exits 1 otherwise.
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, realpathSync, mkdtempSync, symlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, realpathSync, mkdtempSync, symlinkSync, renameSync } from 'node:fs';
 import { tmpdir, devNull } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -37,6 +37,11 @@ export function planSplit({ root, serverSrc, css, html, mapText } = {}) {
   if (existsSync(ui('public/parts.json')) && serverSrc === undefined) {
     try { readPartsManifest(ui('public')); return { alreadySplit: true, problems: [], files: new Map() }; }
     catch (err) { return { alreadySplit: true, problems: [`${err.message} (ui/public/parts.json:1)`], files: new Map() }; }
+  }
+  if (serverSrc === undefined && !existsSync(ui('public/parts.json'))
+      && (existsSync(join(root, 'ui/routes/index.mjs')) || !existsSync(ui('public/style.css')) || !existsSync(ui('public/index.html')))) {
+    return { interrupted: true, problems: ['interrupted --apply: ui/public/parts.json is missing but the split was partly written; '
+      + 'restore the checkout (`git checkout -- . && git clean -fd -- ui/routes ui/public`) and apply again'], files: new Map() };
   }
   serverSrc ??= readFileSync(ui('server.mjs'), 'utf8');
   css ??= readFileSync(ui('public/style.css'), 'utf8');
@@ -353,17 +358,21 @@ export function patchDocsAndPackage(root, cssParts, out, map) {
   return res;
 }
 
-/** Writes only what differs, deletes null entries that exist; returns the changed paths.
+const MANIFEST_REL = 'ui/public/parts.json';
+const manifestLast = ([a], [b]) => (a === MANIFEST_REL) - (b === MANIFEST_REL) || (a < b ? -1 : a > b ? 1 : 0);
+/** Writes only what differs, deletes null entries that exist; returns the changed paths. ui/public/parts.json goes
+ *  last (atomically): it is the "already split" signal, so its presence means the whole split was written.
  *  Callers: --apply, the dry run, and readiness's applySplit (tools/readiness/trees.mjs). */
-export function writeFiles(root, files) {
+export function writeFiles(root, files, { onWrite = () => {} } = {}) {
   const changed = [];
-  for (const [rel, text] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
+  for (const [rel, text] of [...files].sort(manifestLast)) {
     const abs = join(root, rel);
-    if (text === null) { if (existsSync(abs)) { rmSync(abs); changed.push(rel); } continue; }
+    if (text === null) { if (existsSync(abs)) { rmSync(abs); changed.push(rel); onWrite(rel); } continue; }
     if (existsSync(abs) && readFileSync(abs, 'utf8') === text) continue;
     mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, text);
-    changed.push(rel);
+    if (rel === MANIFEST_REL) { const tmp = `${abs}.tmp-${process.pid}`; writeFileSync(tmp, text); renameSync(tmp, abs); }
+    else writeFileSync(abs, text);
+    changed.push(rel); onWrite(rel);
   }
   return changed;
 }

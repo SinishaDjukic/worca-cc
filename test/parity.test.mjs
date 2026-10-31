@@ -159,6 +159,7 @@ test('CI-image parity is its own workflow, on every PR into dev and every push t
   const wf = readFileSync(new URL('../.github/workflows/parity-docker.yml', import.meta.url), 'utf8');
   const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
   assert.match(wf, /^on:\n {2}push:\n {4}branches: \[dev\]\n {2}pull_request:\n {4}branches: \[dev\]\n/m);
+  assert.match(wf, /^ {4}types: \[opened, synchronize, reopened, edited\]$/m, 'a stacked PR retargeted to dev (edited) runs it too');
   assert.doesNotMatch(wf, /^\s+paths(?:-ignore)?:/m);                       // a required check must never be skipped
   assert.ok(wf.includes('npm run parity -- run --a tree:. --b docker:ghcr.io/sinishadjukic/worca:ci --out "$RUNNER_TEMP/parity-docker" --no-timing-gate'));
   assert.ok(wf.includes('npm run parity -- run --a tree:. --b package:. --out "$RUNNER_TEMP/parity-pkg" --no-timing-gate'));

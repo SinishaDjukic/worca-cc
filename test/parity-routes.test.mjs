@@ -38,10 +38,10 @@ test('fillPath uses seeded ids for GET and the placeholder otherwise', () => {
   assert.equal(fillPath('DELETE', '/api/runs/:id', seed), '/api/runs/parity-missing');
 });
 
-test('signed out: 401 everywhere except the two public routes', () => {
+test('signed out: 401 everywhere except the public routes (health and the three webhook ingresses)', () => {
   const pub = JSON.parse(readFileSync(new URL('../tools/parity/public-routes.json', import.meta.url)));
   assert.deepEqual(pub.map((r) => `${r.method} ${r.path}`),
-    ['GET /api/health', 'POST /api/ingress/teams/:plugin/:channelId/:token']);
+    ['GET /api/health', 'POST /api/ingress/teams/:plugin/:channelId/:token', 'POST /api/ingress/github', 'POST /api/ingress/azure']);
   assert.equal(judgeSignedOut({ method: 'GET', path: '/api/projects', status: 401 }, pub), null);
   assert.match(judgeSignedOut({ method: 'GET', path: '/api/projects', status: 200 }, pub), /expected 401/);
   assert.equal(judgeSignedOut({ method: 'GET', path: '/api/health', status: 200, shape: '{"name":"string","version":"string"}' }, pub), null);
@@ -50,6 +50,8 @@ test('signed out: 401 everywhere except the two public routes', () => {
   const ingress = { method: 'POST', path: '/api/ingress/teams/:plugin/:channelId/:token' };
   assert.equal(judgeSignedOut({ ...ingress, status: 404 }, pub), null);
   for (const status of [200, 500, 'crashed']) assert.match(judgeSignedOut({ ...ingress, status }, pub), /not a 4xx/, String(status));
+  // the git automations webhooks (#711) answer 404 to an unsigned call, before any guard
+  for (const path of ['/api/ingress/github', '/api/ingress/azure']) assert.equal(judgeSignedOut({ method: 'POST', path, status: 404 }, pub), null, path);
 });
 
 test('request() puts the given Host header on the wire and sends no Origin', async () => {

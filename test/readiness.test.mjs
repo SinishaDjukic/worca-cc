@@ -208,6 +208,20 @@ test('a suite that prints SKIP and exits 0 is named skipped, not green', async (
   assert.equal(row.status, 'pass'); assert.match(row.detail, /e2e green \(e2e:extension\); skipped \(e2e:firefox-smoke\)/);
 });
 
+test('the rollback row fails when every e2e suite skipped: e2e none ran', async () => {
+  const deps = fakeDeps(); const inner = deps.runLogged;
+  deps.runLogged = (cmd, args, file, o) => {
+    const r = inner(cmd, args, file, o);                              // makes the evidence dir and the log
+    if (cmd !== 'npm' || !/^e2e:/.test(args[1] ?? '')) return r;
+    const text = `${args[1]}: SKIP — no browser\n`; writeFileSync(file, text); return { code: 0, text };
+  };
+  const { report } = await go(deps);
+  const row = report.checks.find((c) => c.id === 'rollback');
+  assert.equal(row.status, 'fail');
+  assert.match(row.detail, /e2e none ran \(skipped: e2e:extension, e2e:firefox-smoke\)/);
+  assert.equal(report.verdict.value, 'no-go');
+});
+
 test('e2eScripts: every e2e:* suite, not the snapshot updaters, sorted', () => {
   assert.deepEqual(e2eScripts({ 'e2e:firefox-smoke': '', 'e2e:extension:update-linux': '', 'e2e:extension': '', test: '' }), ['e2e:extension', 'e2e:firefox-smoke']);
 });
@@ -218,6 +232,16 @@ test('the report carries accepted deltas, the residual server size with its ceil
   assert.equal(report.risks.serverLines, 9972); assert.equal(report.risks.ceiling, 9972); assert.equal(report.risks.pins, 11);
   assert.ok(existsSync(join(out, 'evidence/accepted-deltas.json')));
   assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /^- Residual `ui\/server\.mjs`: 9972 lines, capped at 9972 .*not under 1,000$/m);
+});
+
+test('when the equivalence step throws, Risks still shows the residual server size and the pin count', async () => {
+  const deps = fakeDeps(); deps.sliceOneEquivalence = async () => { throw new Error('boom'); };
+  const { report, out } = await go(deps);
+  assert.equal(report.checks.find((c) => c.id === 'equivalence').status, 'fail');
+  const md = readFileSync(join(out, 'report.md'), 'utf8');
+  assert.match(md, /^- Residual `ui\/server\.mjs`: 9972 lines, capped at 9972/m);
+  assert.match(md, /^- Routes pinned in `ui\/server\.mjs`: 11/m);
+  assert.match(md, /accepted deltas not measured \(the equivalence row failed\)/);
 });
 
 test('without a migration commit the report still validates and Risks says it was not measured', async () => {

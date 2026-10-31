@@ -1,4 +1,6 @@
 [
   { "method": "GET", "path": "/api/health", "reason": "platform healthcheck; a remote caller gets only name and version (its handler in ui/server.mjs; exempt from the remote-access guard)" },
-  { "method": "POST", "path": "/api/ingress/teams/:plugin/:channelId/:token", "reason": "mounted in ui/server.mjs before every guard; checks its own capability token" }
+  { "method": "POST", "path": "/api/ingress/teams/:plugin/:channelId/:token", "reason": "mounted in ui/server.mjs before every guard; checks its own capability token" },
+  { "method": "POST", "path": "/api/ingress/github", "reason": "mounted in ui/server.mjs before every guard; 404 unless gitAutomations is on and the body's HMAC matches WORCA_GH_WEBHOOK_SECRET" },
+  { "method": "POST", "path": "/api/ingress/azure", "reason": "mounted in ui/server.mjs before every guard; 404 unless gitAutomations is on and Basic auth matches WORCA_ADO_WEBHOOK_SECRET" }
 ]
