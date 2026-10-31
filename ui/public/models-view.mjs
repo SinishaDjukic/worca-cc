@@ -869,10 +869,10 @@ export function renderExportWizard(globals, { doc = globalThis.document } = {}) 
     meta.appendChild(wrap);
     return input;
   };
-  field('Plugin name', 'mvx-name', 'discretestack-models', 'kebab-case; becomes the folder + install name');
+  field('Plugin name', 'mvx-name', 'team-models', 'kebab-case; becomes the folder + install name');
   field('Description', 'mvx-desc', 'Team routing for …');
   field('Version', 'mvx-version', '0.1.0');
-  field('Destination folder', 'mvx-dest', '~/dev/discretestack-models',
+  field('Destination folder', 'mvx-dest', '~/dev/team-models',
     'Must be new or empty. The scaffold goes here. Run git init + push it to share.');
 
   const msg = h(doc, 'p', 'form-msg mvx-msg');

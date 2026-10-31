@@ -47,7 +47,7 @@ test('helpers: display url, local path, web url, Synced text, notes', async () =
     } },
     { name: 'marketplaceNotes: per-plugin notes through noteText, then other manifest warnings; never the refresh failure', run: () => {
       assert.deepEqual(marketplaceNotes(EXAMPLE), [
-        { plugin: 'discretestack-models', text: 'models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored' },
+        { plugin: 'example-models', text: 'models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored' },
         { plugin: null, text: SKIP }]);
       assert.deepEqual(marketplaceNotes(OFFICIAL), []);
       assert.deepEqual(marketplaceNotes({ plugins: [{ name: 'p', notes: ['./worca-cc-plugin.json: x'] }] }), [{ plugin: 'p', text: 'x' }]);
@@ -94,7 +94,7 @@ test('card: a marketplace that cannot be reached (Retry first; chip + snapshot d
   const notes = byId(card, disc.getAttribute('aria-controls'));
   assert.deepEqual([disc.textContent, disc.getAttribute('aria-expanded'), notes.hidden, notes.classList.contains('mk-disc-body')], ['2 manifest notes', 'false', true, true]);
   assert.deepEqual([...notes.querySelectorAll('.mk-note')].map((n) => [n.querySelector('b')?.textContent ?? null, n.textContent]), [
-    ['discretestack-models', 'discretestack-models · models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored'],
+    ['example-models', 'example-models · models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored'],
     [null, SKIP]]);
   disc.click();
   assert.deepEqual([disc.getAttribute('aria-expanded'), notes.hidden], ['true', false]);

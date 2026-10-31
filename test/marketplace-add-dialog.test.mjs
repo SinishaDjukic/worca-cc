@@ -76,7 +76,7 @@ test('idle: lg dialog, title, own Close, field, placeholder; Add waits for a val
 });
 
 test('adding: real progress lines from the job (U3, board 2.1); done → the result lists the plugins (board 2.2)', async () => {
-  const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() }, plugins: [row('discretestack-models')] });
+  const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() }, plugins: [row('example-models')] });
   h.dlg.open(); type('example/worca-marketplace'); await submit();
   assert.deepEqual([D().dataset.state, D().getAttribute('aria-busy'), doc.getElementById('mk-add-url').readOnly], ['adding', null, true]);
   assert.deepEqual(foot(), [['Cancel', false], ['Adding…', true]]);
@@ -105,7 +105,7 @@ test('adding: real progress lines from the job (U3, board 2.1); done → the res
   const adds = (i) => addsSummary(kindCounts(ADDED.plugins[i].inventory));
   assert.deepEqual(qa('li.mk-prow').map(bits), [
     ['bmf-models', '0.2.0', adds(0)],
-    ['discretestack-models', '0.4.0', adds(1), '1 note'],
+    ['example-models', '0.4.0', adds(1), '1 note'],
     ['jira-source', '1.0.0', adds(2), secretsSummary(['pat'])]]);
   assert.equal(qa('li.mk-prow .mk-prow-ver.mk-mono').length, 0, 'versions are sans (SM30)');
   assert.deepEqual(qa('li.mk-prow > button').map((b) => [b.textContent, b.getAttribute('aria-label')]),
@@ -116,7 +116,7 @@ test('adding: real progress lines from the job (U3, board 2.1); done → the res
   assert.deepEqual([disc.textContent, disc.getAttribute('aria-expanded'), notes.hidden], ['1 note from the manifest', 'false', true]);
   disc.click();
   assert.deepEqual([notes.hidden, notes.textContent],
-    [false, 'discretestack-models · models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored']);
+    [false, 'example-models · models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored']);
   assert.deepEqual(foot(), [['Add another', false], ['Browse these 3 plugins', false]]);
   h.dlg.close();
 });

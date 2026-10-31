@@ -6576,7 +6576,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-pop-row-chev{color:var(--ink-3);}
 /* .ask-pop-model is a fixed 292px panel (256px of row content), so something in the
    row has to give: rigid badges win every negotiation, and measured in Chrome an
-   origin badge -- "DS Fast" + "plugin: discretestack-models" + "secret not set" --
+   origin badge -- "DS Fast" + "plugin: example-models" + "secret not set" --
    starved the name to 0px and spilled the row 45px past the panel, which sets no
    overflow of its own (.ask-sheet then chops the check mark off). The row shows no
    provenance at all now, so its only variable-width text IS the name: it shrinks to

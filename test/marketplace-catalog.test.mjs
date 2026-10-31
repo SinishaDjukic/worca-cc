@@ -63,7 +63,7 @@ test('marketplaceHealth (SM4: lastError non-null), shortDate and noteText (SM5)'
   const at = (y, m, d) => new Date(y, m - 1, d, 12).toISOString();   // local noon: the same calendar day in every zone
   const now = new Date(2031, 9, 20, 12).getTime();                    // a year the real clock is not in
   assert.deepEqual([shortDate(at(2031, 9, 3), now), shortDate(at(2030, 9, 3), now), shortDate(null, now), shortDate('nope', now)], ['Sep 3', 'Sep 3, 2030', '', '']);
-  assert.equal(noteText('plugins/discretestack-models/worca-cc-plugin.json: models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored'),
-    'models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored');
+  assert.equal(noteText('plugins/example-models/worca-cc-plugin.json: models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored'),
+    'models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored');
   assert.equal(noteText('worca-cc-marketplace.json: bad/entry — skipped'), 'worca-cc-marketplace.json: bad/entry — skipped');
 });

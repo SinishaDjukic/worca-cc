@@ -1,5 +1,5 @@
 // test/helpers/mk-marketplaces-fixtures.mjs — P7 marketplace entries as GET /api/marketplaces answers after P2.
-export const NOTE0 = 'plugins/discretestack-models/worca-cc-plugin.json: models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored';
+export const NOTE0 = 'plugins/example-models/worca-cc-plugin.json: models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored';
 export const SKIP = 'worca-cc-marketplace.json: plugins/x/worca-cc-plugin.json not found in repo — skipped';
 const inv = (o) => ({ agents: [], scripts: [], taskSources: [], chatChannels: [], models: [], modelSecrets: [], mcpServers: [],
   skills: [], workflows: [], depCount: 0, setupCommands: [], ...o });
@@ -27,8 +27,8 @@ export const EXAMPLE = {
     { name: 'bmf-models', subdir: 'plugins/bmf-models', version: '0.2.0', description: 'BMF Models',
       inventory: inv({ models: [1, 2, 3, 4, 5].map((i) => ({ id: `bmf-${i}`, label: `BMF ${i}`, efforts: [], engine: 'claude', envKeys: [], baseUrl: null })) }),
       installed: false, notes: [] },
-    { name: 'discretestack-models', subdir: 'plugins/discretestack-models', version: '0.4.0', description: 'Discretestack models',
-      inventory: inv({ models: [{ id: 'discretestack-stable' }, { id: 'discretestack-stable-fast' }] }), installed: true, notes: [NOTE0] },
+    { name: 'example-models', subdir: 'plugins/example-models', version: '0.4.0', description: 'Example models',
+      inventory: inv({ models: [{ id: 'example-stable' }, { id: 'example-stable-fast' }] }), installed: true, notes: [NOTE0] },
     { name: 'jira-source', subdir: 'plugins/jira-source', version: '1.0.0', description: 'Pull tasks from Jira',
       inventory: inv({ taskSources: [{ id: 'jira', displayName: 'Jira', secrets: ['pat'] }] }), installed: false, notes: [] },
   ],
