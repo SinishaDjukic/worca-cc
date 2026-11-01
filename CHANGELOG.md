@@ -5,7 +5,7 @@
 ### Credential broker: "Push as me" with a pasted token, no GitHub App needed
 
 - In multi mode the broker's GitHub row is always on the key page. Without `WORCA_BROKER_GITHUB_CLIENT_ID` it is paste-only: each person pastes a fine-grained token (checked with GitHub, kept sealed) and Worca's pushes and pull requests with `WORCA_GH_AS_PERSON` go out as them. The client ID now only adds "Sign in with GitHub" (and, with the secret, the renewal of GitHub App user tokens). A sign-in's token due for renewal on a broker without a client ID counts as expired.
-- Worca no longer warns at start when `WORCA_GH_AS_PERSON` is set and the broker has no GitHub client ID.
+- Worca warns at start about `WORCA_GH_AS_PERSON` only when the broker has no GitHub slot at all (single mode without a client ID), no longer for a multi-mode broker without one.
 
 ### Security: worca's trust boundaries
 

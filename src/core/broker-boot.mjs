@@ -86,5 +86,9 @@ export async function checkBrokerAtBoot({ env = process.env, shared = false, log
   if (syncError) warnings.push(syncError);
   const asPerson = String(env.WORCA_GH_AS_PERSON || '').trim().toLowerCase();
   if (asPerson && !['prefer', 'required', 'off', '0'].includes(asPerson)) warnings.push(`WORCA_GH_AS_PERSON must be prefer or required (got ${JSON.stringify(asPerson)}); pushes use worca's own GitHub credential`);
+  // A broker in multi mode always has the slot (a pasted token needs no app); in single mode only with a client ID.
+  if ((asPerson === 'prefer' || asPerson === 'required') && !(info.slots || []).some((s) => s.auth === 'github-user')) {
+    warnings.push(`WORCA_GH_AS_PERSON=${asPerson}, but the broker has no GitHub slot (run it in multi mode, or set WORCA_BROKER_GITHUB_CLIENT_ID on it)${asPerson === 'required' ? ': every push will fail' : ''}`);
+  }
   return { on: true, fatal: [], warnings, info };
 }

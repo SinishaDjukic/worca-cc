@@ -520,7 +520,8 @@ git or gh call it makes itself, puts it in that call's environment only, and the
 worca's own metrics branch. A GitHub App user token also only reaches repositories the App
 is installed on. A sign-in's token that is due for renewal while the broker has no client ID
 (or, for a GitHub App, no client secret) counts as expired: the person signs in again or
-pastes a token.
+pastes a token. worca warns at start when `WORCA_GH_AS_PERSON` is set but the broker has no
+GitHub slot (single mode without a client ID).
 
 ## Cloudflare Access and Railway
 
