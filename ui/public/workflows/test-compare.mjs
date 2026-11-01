@@ -523,8 +523,10 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     inner.append(el(doc, 'div', 'wft-crow-grp', title));
     for (const label of labels) {
       const row = el(doc, 'div', cls);
-      // Final review M5: a command check is set in code, as the editor writes it (checkWords).
-      const check = key === 'checks' ? ((s.example && s.example.checks) || []).find((c) => c && c.kind === 'command' && `The command ${c.cmd} passes` === label) : null;
+      // Final review M5: a command check is set in code, as the editor writes it (checkWords), from the kind and command its
+      // result carries (result.mjs checkTry); a result without them (an older try) shows its label as it is.
+      const check = key === 'checks' ? [cur.a, cur.b].flatMap((v) => (v && v.verdict && v.verdict.checks) || [])
+        .find((x) => x && x.label === label && x.kind === 'command' && typeof x.cmd === 'string') || null : null;
       row.append(check ? checkWords(doc, check, label) : el(doc, 'span', '', label));
       if (!once) row.append(cell(cur.a, key, label, `${s.labels.a} · try ${cur.n}`));
       row.append(cell(cur.b, key, label, `${s.labels.b} · try ${cur.n}`));

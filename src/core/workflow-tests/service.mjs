@@ -790,9 +790,7 @@ export async function sideBySide(workflowId, runId, exampleId, { forgeFor = null
   for (let i = 0; i < Math.max(A.length, B.length); i += 1) out.push({ n: i + 1, a: await view(A[i]), b: await view(B[i]) });
   const labels = { a: run.a != null ? useLabel(run.a, ctx) : null, b: useLabel(run.b, ctx) };
   const m = compareModel({ examples: [{ id: ex.id, name: ex.name }], a: labels.a ? { label: labels.a } : null, b: { label: labels.b }, tries });
-  return { run, compareTitle: testTitle(run, ctx, { exampleName: ex.name }),
-    example: { id: ex.id, name: ex.name, checks: (ex.checks || []).filter((c) => c && c.kind === 'command').map((c) => ({ id: c.id, kind: c.kind, cmd: c.cmd })) },
-    labels, row: m.examples[0],
+  return { run, compareTitle: testTitle(run, ctx, { exampleName: ex.name }), example: { id: ex.id, name: ex.name }, labels, row: m.examples[0],
     connectors: run.connectors, tries: out,
     start: ex.project ? { ref: ex.project.startRef, short: ex.project.startSha.slice(0, 7), at: ex.project.startAt, setupCmd: ex.project.setupCmd,
       setupMs: store.avgSetupMs(ex.id, ex.project.startCommit) } : null,

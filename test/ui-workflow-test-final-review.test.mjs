@@ -78,9 +78,11 @@ test('M4: the setup input, the command box and the from-run setup input are mono
 });
 
 const A = { tryId: 11, status: 'passed', connectors: 'pretend', text: null, name: null, truncated: false, answeredReads: [], wouldHaveSent: [],
-  verdict: { basics: [], checks: [{ id: 'c_1', label: 'The command npm test passes', met: true, value: '213 passed' }] }, project: null };
+  // Round 2: the verdict carries the check's kind and command (checkTry); the page never parses the label.
+  verdict: { basics: [], checks: [{ id: 'c_1', kind: 'command', cmd: 'npm ci && npm test', label: 'The command npm ci && npm test passes', met: true, value: '213 passed' },
+    { id: 'c_2', label: 'The command looks like this passes', met: true, value: 'Met' }] }, project: null };
 const sbs = (over = {}) => ({
-  run: { id: 5, kind: 'compare' }, compareTitle: 'Your v3 draft compared with v1', example: { id: 1, name: 'Ticket 482', checks: [{ id: 'c_1', kind: 'command', cmd: 'npm test', timeoutMin: 5 }] },
+  run: { id: 5, kind: 'compare' }, compareTitle: 'Your v3 draft compared with v1', example: { id: 1, name: 'Ticket 482' },
   labels: { a: 'v1', b: 'v3 draft' }, row: { result: 'same', a: { passed: 1, total: 1 }, b: { passed: 1, total: 1 } }, connectors: 'pretend',
   tries: [{ n: 1, a: A, b: { ...A, tryId: 12 } }], start: { ref: 'main', short: 'abc1234', at: '2026-10-28T09:00:00.000Z', setupCmd: null, setupMs: null },
   nothingPushed: true, ...over });
@@ -93,9 +95,11 @@ function paintSbs(s) {
 }
 test('M5 and M8: "What was checked" sets the command in code; one try is "1 try"', () => {
   const root = paintSbs(sbs());
-  const row = [...root.querySelectorAll('.wft-crow:not(.is-head)')].find((r) => r.textContent.startsWith('The command'));
-  assert.equal(row.firstChild.textContent, 'The command npm test passes');
-  assert.equal(row.firstChild.querySelector('.code').textContent, 'npm test');
+  const rows = [...root.querySelectorAll('.wft-crow:not(.is-head)')];
+  const row = rows.find((r) => r.firstChild.textContent === 'The command npm ci && npm test passes');
+  assert.equal(row.firstChild.querySelector('.code').textContent, 'npm ci && npm test', 'from the verdict\'s kind and command');
+  const other = rows.find((r) => r.firstChild.textContent === 'The command looks like this passes');
+  assert.equal(other.firstChild.querySelector('.code'), null, 'a label that only reads like a command stays plain');
   assert.match(root.querySelector('.wft-pg-head .hint').textContent, /^v1 passed 1 of 1 try · v3 draft passed 1 of 1/);
 });
 

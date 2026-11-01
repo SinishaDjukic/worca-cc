@@ -135,3 +135,11 @@ test('final review I2: the harness gives its git the try env only on a try (opts
   assert.equal(stopped._isTestTry(), true);
   assert.ok(stopped._tryGitEnv());
 });
+
+test('round 2 (M5): the verdict of a command check names its kind and command, so the page sets it in code without reading the label', async () => {
+  const outcome = { pipelineId: null, facts: { status: 'done', costUsd: 0, help: [], sentBack: 0 }, text: null, files: [],
+    project: { checkoutDir: tmp('worca-cc-wftcg-co4-') }, logFile: null };
+  const v = await checkTry({ basics: {}, checks: [{ id: 'c_1', kind: 'command', cmd: 'npm test', timeoutMin: 1 }] }, outcome,
+    { runCommand: async () => ({ met: true, value: 'Met' }) });
+  assert.deepEqual([v.checks[0].kind, v.checks[0].cmd, v.checks[0].label], ['command', 'npm test', 'The command npm test passes']);
+});

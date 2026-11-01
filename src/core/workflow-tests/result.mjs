@@ -240,7 +240,9 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       let r;
       try { r = await runCommand(check, { cwd: cwdDir, logFile: outcome.logFile }); } catch { r = { met: false, value: 'Ended with an error' }; }
       // Board 36: a command its time limit stopped says so in the side by side (timedOut), not "ended with an error".
-      results[i] = { id: check.id, label, met: !!r.met, value: r.value, ...(r.output ? { output: r.output } : {}), ...(r.timedOut ? { timedOut: true } : {}) };
+      // Round 2 (M5): the kind and the command travel with the result, so the side by side sets it in code from data.
+      results[i] = { id: check.id, kind: 'command', cmd: check.cmd, label, met: !!r.met, value: r.value, ...(r.output ? { output: r.output } : {}),
+        ...(r.timedOut ? { timedOut: true } : {}) };
       continue;
     }
     const r = await runScript(check, { pipelineId: outcome.pipelineId, cwdDir, logFile: outcome.logFile });

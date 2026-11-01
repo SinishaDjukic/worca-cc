@@ -138,8 +138,8 @@ test('Fix 1: the verdict item of a command its time limit stopped carries timedO
   const runCommand = async (c) => (c.cmd === 'node slow.mjs' ? { met: false, value: 'Stopped after 5 minutes', output: 'ℹ pass 3', timedOut: true }
     : { met: false, value: '2 passed, 1 failed', output: 'ℹ fail 1' });
   const v = await checkTry(example, outcome(home), { runCommand });
-  assert.deepEqual(v.checks[0], { id: 'c_1', label: 'The command node slow.mjs passes', met: false, value: 'Stopped after 5 minutes', output: 'ℹ pass 3', timedOut: true });
-  assert.deepEqual(Object.keys(v.checks[1]), ['id', 'label', 'met', 'value', 'output'], 'the Part 2 shape otherwise');
+  assert.deepEqual(v.checks[0], { id: 'c_1', kind: 'command', cmd: 'node slow.mjs', label: 'The command node slow.mjs passes', met: false, value: 'Stopped after 5 minutes', output: 'ℹ pass 3', timedOut: true });
+  assert.deepEqual(Object.keys(v.checks[1]), ['id', 'kind', 'cmd', 'label', 'met', 'value', 'output'], 'otherwise no timedOut (round 2: a command item names its kind and command)');
 });
 
 test('a command that throws is "Ended with an error"; the other checks keep their verdict', async () => {
