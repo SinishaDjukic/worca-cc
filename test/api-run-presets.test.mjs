@@ -30,6 +30,7 @@ before(async () => {
   process.env.WORCA_PROJECTS_ROOT = projectsRoot;
   process.env.WORCA_MOCK = '1';
   process.env.WORCA_IDENTITY_HEADER = H;   // a request without the header is the local install (sees every preset)
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   const mod = await import('../ui/server.mjs');
   ({ runs } = mod);
   srv = mod.server;
@@ -109,6 +110,16 @@ test('a preset run with only a prompt sends the hand-made body plus the run-only
 
   const cfgAfter = (await (await get(`/api/config?projectDir=${encodeURIComponent(project.path)}`)).json()).config;
   assert.deepEqual(cfgAfter, cfgBefore, 'Agents rows, active workflow and human-in-the-loop unchanged');
+});
+
+test('the pick-time engine probe checks a preset naming no guardrails against the install default (V21)', async () => {
+  // A fresh install starts runs on Normal, which carries rules codex cannot enforce; Permissive carries none.
+  const { preset } = await (await post('/api/presets', { name: 'Codex bare', setup: { workflowId: 'wf_default', engine: 'codex', mock: true },
+    basis: { projectDir: project.path } })).json();
+  const check = await (await post(`/api/presets/${preset.id}/check`, { projectDir: project.path })).json();
+  assert.deepEqual(check.broken.map((b) => b.item), ['engine'], JSON.stringify(check));
+  assert.match(check.broken[0].message, /guardrail set "normal" has permission rules this engine cannot enforce/);
+  await send('DELETE', `/api/presets/${preset.id}`).then((r) => r.body?.cancel());
 });
 
 test('a preset whose guardrail set or model is gone is refused with named items', async () => {

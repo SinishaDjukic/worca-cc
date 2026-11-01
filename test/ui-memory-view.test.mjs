@@ -71,7 +71,7 @@ async function boot({ fetchHandler, projects = PROJECTS } = {}) {
     if (u.includes('/api/workflows/')) return json(WORKFLOWS.find((w) => u.endsWith(w.id)) || WORKFLOWS[0]);
     if (u.includes('/api/agents')) return json({ agents: [], channels: [] });
     if (u.includes('/api/workspaces')) return json({ workspaces: [] });
-    if (u.includes('/api/guardrails')) return json({ guardrails: GUARDRAILS });
+    if (u.includes('/api/guardrails')) return json({ guardrails: GUARDRAILS, default: 'permissive' });   // an upgraded install: the defrag run still lifts it to Normal
     if (u.includes('/api/run') && method === 'POST') return json({ runId: 'run-uuid-1' });
     if (u.includes('/api/branches')) return json({ branches: ['main'], current: 'main' });
     return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [] });
@@ -421,7 +421,7 @@ test('New Pipeline Memory scope: row only for wf_memory_defrag, run body carries
       await tick(); await tick(); await tick();
       const plain = calls.filter((c) => c.url.endsWith('/api/run') && c.method === 'POST').pop();
       assert.equal('memoryScope' in plain.body, false, 'a legacy run body is unchanged');
-      assert.equal('guardrailsId' in plain.body && plain.body.guardrailsId !== undefined, false, 'and so is its guardrail key');
+      assert.equal(plain.body.guardrailsId, 'permissive', 'and its guardrail key is the picked set, sent as is');
     } },
     { name: 'New Pipeline: a workspace target disables Memory defragment and falls back to Default', run: async () => {
       await go(window, 'new');

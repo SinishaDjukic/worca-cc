@@ -38,13 +38,19 @@ export async function startFakeUpstream({ validKeys = [GOOD_KEY], host = '127.0.
         res.end(JSON.stringify({ data: [{ id: 'claude-sonnet-5' }] }));
         return;
       }
+      if (req.method === 'GET' && path === '/api/v1/key') {
+        // OpenRouter's key info: its label is the key itself, masked.
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: { label: `${key.slice(0, 15)}...${key.slice(-3)}`, limit: null, usage: 0.5, is_free_tier: false } }));
+        return;
+      }
       if (req.method === 'POST' && path === '/v1/messages') {
         let parsed = {};
         try { parsed = JSON.parse(body || '{}'); } catch { /* keep {} */ }
         if (parsed.stream) {
           res.writeHead(200, { 'content-type': 'text/event-stream', 'request-id': 'req_1', 'set-cookie': 'leak=1' });
           const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
-          ev('message_start', { message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-sonnet-5', content: [], stop_reason: null, usage: { input_tokens: 1000, output_tokens: 1, cache_read_input_tokens: 200, cache_creation_input_tokens: 0 } } });
+          ev('message_start', { message: { id: 'msg_1', type: 'message', role: 'assistant', model: state.model || 'claude-sonnet-5', content: [], stop_reason: null, usage: { input_tokens: 1000, output_tokens: 1, cache_read_input_tokens: 200, cache_creation_input_tokens: 0 } } });
           ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
           // A first chunk now, the rest after a pause: proves the broker streams instead of buffering.
           ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'hello' } });
@@ -58,7 +64,7 @@ export async function startFakeUpstream({ validKeys = [GOOD_KEY], host = '127.0.
           return;
         }
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ id: 'msg_2', type: 'message', role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'text', text: 'hi' }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } }));
+        res.end(JSON.stringify({ id: 'msg_2', type: 'message', role: 'assistant', model: state.model || 'claude-sonnet-5', content: [{ type: 'text', text: 'hi' }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } }));
         return;
       }
       if (req.method === 'POST' && (path === '/api/v1/chat/completions' || path === '/v1/chat/completions')) {

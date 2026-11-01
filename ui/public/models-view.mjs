@@ -10,6 +10,7 @@
 import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { icon } from './icons.mjs';
+import { copyButton } from './copy-button.mjs';
 import { makeSwitch } from './switch.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
 import { harnessesOf, runsOn, suggestModelHandle, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
@@ -446,11 +447,7 @@ function envRow(doc, key = '', value = '') {
     // The STORED key, frozen at render time — the copy must reveal what is on
     // disk even after the user edits the key input.
     row.dataset.key = key;
-    const cp = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon mv-env-copy');
-    cp.type = 'button';
-    cp.title = 'Copy the real (unmasked) value';
-    cp.setAttribute('aria-label', cp.title);
-    cp.append(icon(doc, 'copy', 14));
+    const cp = copyButton(doc, { name: 'Copy the real (unmasked) value', cls: 'mv-env-copy' });
     row.appendChild(cp);
   }
   const rm = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon mv-env-rm');
@@ -872,10 +869,10 @@ export function renderExportWizard(globals, { doc = globalThis.document } = {}) 
     meta.appendChild(wrap);
     return input;
   };
-  field('Plugin name', 'mvx-name', 'discretestack-models', 'kebab-case; becomes the folder + install name');
+  field('Plugin name', 'mvx-name', 'team-models', 'kebab-case; becomes the folder + install name');
   field('Description', 'mvx-desc', 'Team routing for …');
   field('Version', 'mvx-version', '0.1.0');
-  field('Destination folder', 'mvx-dest', '~/dev/discretestack-models',
+  field('Destination folder', 'mvx-dest', '~/dev/team-models',
     'Must be new or empty. The scaffold goes here. Run git init + push it to share.');
 
   const msg = h(doc, 'p', 'form-msg mvx-msg');

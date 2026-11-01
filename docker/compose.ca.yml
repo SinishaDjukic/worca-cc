@@ -1,0 +1,18 @@
+# docker/compose.ca.yml — trust a corporate CA inside the box (docs/docker.md, "Corporate proxy and CA").
+#
+#   WORCA_CA_CERT=/path/to/corporate-ca.pem docker compose -f compose.yml -f compose.ca.yml up -d
+#
+# `worca container` adds this file by itself when it finds a CA (WORCA_CA_CERT in
+# .env or the shell, else the shell's NODE_EXTRA_CA_CERTS or SSL_CERT_FILE).
+# The PEM file is mounted read-only. Node (worca, claude, npm) reads it through
+# NODE_EXTRA_CA_CERTS; the entrypoint appends it to a copy of the system bundle
+# and points SSL_CERT_FILE, GIT_SSL_CAINFO, CURL_CA_BUNDLE and REQUESTS_CA_BUNDLE
+# at that copy, so git, curl, gh and Python trust it too.
+
+services:
+  worca:
+    volumes:
+      - ${WORCA_CA_CERT:?set WORCA_CA_CERT to the corporate CA (PEM)}:/etc/worca/corporate-ca.pem:ro
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/worca/corporate-ca.pem
+      WORCA_CA_CERT_FILE: /etc/worca/corporate-ca.pem

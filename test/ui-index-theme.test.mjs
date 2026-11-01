@@ -32,6 +32,18 @@ test('index.html carries the theme anchor once (+ color-scheme meta) and renderI
   ]);
 });
 
+test('index.html runs no inline script, so the shell CSP needs no unsafe-inline (G23)', () => {
+  const html = readFileSync(indexPath, 'utf8');
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+  assert.ok(scripts.length > 0);
+  for (const [, attrs, body] of scripts) {
+    assert.match(attrs, /\bsrc="\/[^/"]/, `same-origin src: ${attrs}`);
+    assert.equal(body.trim(), '', 'no inline script body');
+  }
+  assert.doesNotMatch(html, /\son[a-z]+\s*=/i, 'no inline event handler attributes');
+  assert.doesNotMatch(html, /javascript:/i, 'no javascript: URLs');
+});
+
 let home, srv, base, prev;
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'worca-cc-indextheme-'));
@@ -57,7 +69,9 @@ test('GET /, /index, /index.html (any case) and an SPA path serve the shell in t
     assert.equal(r.headers.get('cache-control'), 'no-store', p);
     assert.equal(r.headers.get('x-content-type-options'), 'nosniff', p);
     // The shell can never be framed: a framed pairing prompt could be clickjacked (docs/browser-extension.md).
-    assert.equal(r.headers.get('content-security-policy'), "frame-ancestors 'none'", p);
+    // Scripts only from this origin (G23): an HTML injection cannot run inline or third-party script.
+    // 'wasm-unsafe-eval' lets voice mode's onnxruntime compile its WebAssembly; it allows no JS eval.
+    assert.equal(r.headers.get('content-security-policy'), "script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; frame-ancestors 'none'", p);
     assert.equal(r.headers.get('x-frame-options'), 'DENY', p);
     assert.match(await r.text(), /<html lang="en" data-theme="system"( data-level="(simple|advanced|expert)")?( data-flags="[^"]*")?( data-git="(on|off)")?>/, p);   // + the interface mode (docs/ui-levels.md)
   }

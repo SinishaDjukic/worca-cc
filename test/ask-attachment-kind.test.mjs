@@ -19,7 +19,7 @@ const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([4, 0, 0, 0]), Buff
 const PDF = Buffer.concat([Buffer.from('%PDF-1.7\n%'), Buffer.from([0xe2, 0xe3, 0xcf, 0xd3]), Buffer.from('\n')]);
 
 test('the two allowlists carry the spec extensions and stay disjoint', () => {
-  assert.deepEqual([...TEXT_EXTENSIONS], ['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm']);
+  assert.deepEqual([...TEXT_EXTENSIONS], ['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm', '.xml']);
   assert.deepEqual([...BINARY_EXTENSIONS], ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']);
   for (const e of TEXT_EXTENSIONS) assert.ok(!BINARY_EXTENSIONS.includes(e), `${e} in one list only`);
 });
@@ -45,6 +45,12 @@ test('classifyExtension: text kinds (HTML as text), image kinds, pdf as binary, 
       assert.deepEqual(classifyExtension('.HTML'), { kind: 'text', mime: 'text/html' });
       assert.equal(extensionForAttachment('text', 'text/html'), '.txt', 'the body lands as <id>.txt like every text kind');
       assert.equal(classifyExtension('.xhtml'), null, 'only .html and .htm');
+    } },
+    { name: 'classifyExtension: XML is a TEXT kind with its own mime (never text/html), stored as .txt', run: () => {
+      assert.deepEqual(classifyExtension('.xml'), { kind: 'text', mime: 'application/xml' });
+      assert.deepEqual(classifyExtension('.XML'), { kind: 'text', mime: 'application/xml' });
+      assert.equal(extensionForAttachment('text', 'application/xml'), '.txt');
+      assert.equal(classifyExtension('.svg'), null, 'SVG stays out: it is scriptable markup');
     } },
   ]);
 });

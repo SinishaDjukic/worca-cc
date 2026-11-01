@@ -73,3 +73,33 @@ test('#948 s2: an idle chat paints the bubble line icon in the dot\'s place; a p
   assert.equal(el.querySelector('svg'), null);
   assert.ok(!el.classList.contains('has-ic'));
 });
+
+test('a chat kind names its icon: role img, the name as aria-label and tooltip; a repaint without one drops both', async () => {
+  await checkRows([
+    ['an idle chat that started a run', { state: 'idle', dot: 'grey', icon: 'run', word: 'Idle', dotLabel: 'Started a run' }, 'ic:run', 'has-ic'],
+    ['a plain chat', { state: 'idle', dot: 'grey', icon: 'chat', word: 'Idle', dotLabel: 'Chat' }, 'ic:chat', 'has-ic'],
+    ['a chat whose run needs you', { state: 'needs-you', dot: 'amber', symbol: 'question', word: 'Needs you', dotLabel: 'Run needs you' }, 'question', 'has-sym'],
+  ].map(([name, m, sym, cls]) => ({ name, run: () => {
+    const el = renderStatusDot(doc, m);
+    assert.ok(el.classList.contains(cls));
+    assert.equal(el.dataset.symbol, sym);
+    assert.equal(el.getAttribute('role'), 'img');
+    assert.equal(el.getAttribute('aria-label'), m.dotLabel);
+    assert.equal(el.getAttribute('title'), m.dotLabel);
+    assert.equal(el.getAttribute('aria-hidden'), null);
+    paintStatusDot(el, { state: 'replying', dot: 'green', pulse: true, word: 'Replying' });
+    assert.equal(el.getAttribute('title'), null, 'the busy pulse has no name of its own: its word is on the sub line');
+    assert.equal(el.getAttribute('role'), null);
+    assert.equal(el.getAttribute('aria-label'), null);
+    assert.equal(el.getAttribute('aria-hidden'), 'true');
+  } })));
+});
+
+test('Following a run draws the run line icon in the Following colour, pulsing; the CSS keeps its colour on the icon', () => {
+  const el = renderStatusDot(doc, { state: 'following', dot: 'peach', pulse: true, icon: 'track', word: 'Following a run', dotLabel: 'Follows a run' });
+  assert.deepEqual([...el.classList].sort(), ['has-ic', 'is-peach', 'is-pulse', 'status-dot']);
+  assert.equal(el.querySelectorAll('svg.status-ic').length, 1);
+  assert.equal(el.getAttribute('aria-label'), 'Follows a run');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.status-dot\.has-ic\.is-peach\{color:var\(--peach-ink\);\}/, 'the icon reads in the Following colour, not ink-2');
+});

@@ -94,6 +94,32 @@ Watch item and the route's idle `Watching` button. `.info-tip` is a 28px square 
 button outside `.btn` must be a shared control or a row a person opens (checked by the stray audit). The composer's
 disabled Save keeps its ink fill at 70% opacity, not the 45% grey of other disabled buttons, so it still reads as the
 primary.
+### Copy button (checked)
+Every button that puts text on the clipboard is the one copy button, built by `copyButton(doc, { name, label?, title?,
+cls? })` in `ui/public/copy-button.mjs` (static markup: `.btn.btn-sm.btn-quiet.copy-btn` with `copyIconsHtml()`'s three
+glyphs). The branch name in the run head is the model.
+1. Look. A quiet 28px button with a 14px `copy` glyph. When the copied text is shown and is the thing to copy (a
+   branch name, a worktree path, the Copilot device code), it is the label, in mono beside the glyph, and the text
+   itself is the button. Otherwise the button is an icon square (`.btn-icon`), never a typed "Copy"/"copy" label, and
+   it sits next to what it copies.
+2. Name. `aria-label` says what it does, verb first, sentence case: `Copy branch name`, `Copy the visible log lines`,
+   `Copy path`, `Copy command`. The title is the same, or the full text when the label is shortened.
+3. Feedback. Through `copyFromButton(btn, text)` only, the same on every copy button: for 1200 ms the glyph turns into
+   a `--green-ink` tick followed by a green `Copied` caption (12px sans, `.copy-btn-msg`, inside the button), and the
+   title says `Copied` (`.copied`). A failed write or empty text shows a `--red-ink-strong` × and the reason as the
+   caption and title (`Copy failed`, `Nothing to copy`; `.copy-miss`). An icon square widens to hold its caption for
+   that window. The outcome is also said to screen readers through one polite `#copy-live` status region (the
+   caption is not read: the aria-label names the button). The label never changes and no toast is raised for success.
+4. A failure the person must act on (the text is needed elsewhere: a command to run, a path, a sign-in code) also goes
+   to the surface's status line, which outlasts the 1200 ms flash, and says what to do instead ("Type ABCD-1234 on
+   GitHub instead", "select it and copy it by hand"). A failure with nothing to do (the Logs bar) needs only the flash.
+5. Labelled actions. A copy that is one of a row of worded actions keeps its words: `copyButton(doc, { name,
+   action: true })` is a secondary `.btn-sm` reading glyph + name (Run Actions' `Copy command`, beside Check out,
+   VS Code, Terminal), and while the tick shows, `Copied` takes the words' place; the feedback and failure rules above
+   are unchanged. Not copy buttons at all: menu items ("Copy Markdown", "Copy PR link") and a dialog's footer actions
+   (the report dialog's `Copy JSON`, the team policy's `Copy for PR`), which keep their words, in sentence case.
+A copy-labelled `.btn` that is not a `.copy-btn`, or a `.copied` toggled outside `copy-button.mjs`, fails
+`test/ui-copy-button.test.mjs`.
 ### PR controls (checked)
 Every pull request button and link looks the same everywhere (`test/ui-pr-controls.test.mjs`).
 1. Variant. Create PR and Push are the ship actions: `.btn.btn-primary`. View PR is navigation: a plain secondary
@@ -169,7 +195,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), folded until the person opens it (a failure shows only as the red `N failed`; a running group puts Stop beside the head), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; a lone command is a line like that head (its summary · time ›, no card, no dot) that opens to its detail; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), folded until the person opens it (a failure shows only as the red `N failed`; a running group puts Stop beside the head), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
@@ -359,17 +385,24 @@ and hand the focus back to the opener.
   13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
   touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
   and ellipsises first), then its PR chip; no label chips and no Independent tag. A live member's 3px line sits under
-  its title. Its ⋯ stays 28px, centred.
+  its title; a live member with stages draws the four-section block instead (a 2px bar, one step below the group
+  row's 3px line, then the 11px Plan / Build / Review / Ready with its stage bold); its status names no step, only a
+  state its dot does not say (needs you, paused). A member dispatched but not started yet (Starting) draws no progress. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
+- Day sections (Group by Date, Runs and Chats alike, `runs-list.mjs` `DAY_BUCKETS`): Today · Yesterday · Previous 7
+  days · Previous 30 days · Older, by last activity, split at local midnights. Runs puts Upcoming above them, Chats puts
+  Pinned. Every day section folds by hand; Older starts folded. A section head in either list is a meta label:
+  12px / 600 / `--ink-2`, its count an 11px caption at the line's right end. Both View menus list Group by in one order (Date ·
+  Project · Topic (Chats only) · None) with the day sections as Date's title, and the view chip names filters and a
+  non-default sort, never the grouping.
 - Chats list: the Runs list anatomy in the Chat page's column; the open chat's figures sit once in the conversation
   head as a readout control (`button.chat-head-meter`, 11px mono, like the cost breakdown's `.cost-bd-btn`), not a
-  §1.2 button; sections Pinned · Today · Recent
-  (the 10 latest before today) · Older (folded); Archive is disabled while a chat replies, runs a command or follows a
+  §1.2 button; sections Pinned, then the day sections; Archive is disabled while a chat replies, runs a command or follows a
   live run; an archived chat reads Restore, as a run does; New chat is the one + after the list toggle; a topic group is
   a Runs group row (count, ⌄, members indented 16px, no dividers) placed by its newest chat; its sub line names its
   project or `N projects`; Group by Project files a group spanning projects under Several projects, never No project;

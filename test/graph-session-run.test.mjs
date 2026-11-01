@@ -1,8 +1,8 @@
 // test/graph-session-run.test.mjs — a whole run with one session, offline: the seam, rows, events, trace, kill switch.
 import { test, after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
@@ -74,9 +74,12 @@ test('M-4 — a managed --plugin-dir refusal inside a host drops the skills and 
 test('the seam: with ctx.sessionHost the executor hands its runOpts to the host and never calls runClaude', async () => {
   let called = null; execT.runClaude = () => { throw new Error('runClaude must not run'); };
   try {
-    const host = { mode: 'subagents', run: async (opts, member) => { called = { opts, member }; return { text: 'R', exitCode: 0 }; } };
+    // The step writes its outputs, as a real member does: the executor refuses a step that publishes nothing (#1058 E8).
+    let cur = null;
+    const writeOutputs = () => { for (const o of Object.values(cur.outputs || {})) { mkdirSync(dirname(o.path), { recursive: true }); writeFileSync(o.path, '# out\n'); } };
+    const host = { mode: 'subagents', run: async (opts, member) => { called = { opts, member }; writeOutputs(); return { text: 'R', exitCode: 0 }; } };
     const { agentCtx } = await import('./helpers/graph-run.mjs');
-    const ctx = { ...(await agentCtx('planner')), sessionHost: host, sessionMode: 'subagents' };
+    const ctx = cur = { ...(await agentCtx('planner')), sessionHost: host, sessionMode: 'subagents' };
     const out = await runAgentExecution(ctx);
     assert.equal(out.summary, 'R');
     assert.equal(called.member.executionId, ctx.executionId);
@@ -85,7 +88,7 @@ test('the seam: with ctx.sessionHost the executor hands its runOpts to the host 
     // v2 — memberInfo(full): every field, C26 reads model and effort (null when the node pins none).
     assert.deepEqual(called.member, { nodeId: 'n_planner', executionId: 'x:n_planner:1', ordinal: 1, label: 'Plan · cycle 1', model: null, effort: null, fanOut: true });
     const base = await agentCtx('implementer');
-    const pinned = { ...base, node: { ...base.node, fanOut: false }, ordinal: 2, claudeOpts: { mock: true, model: 'claude-sonnet-4-6', effort: 'high' }, sessionHost: host, sessionMode: 'subagents' };
+    const pinned = cur = { ...base, node: { ...base.node, fanOut: false }, ordinal: 2, claudeOpts: { mock: true, model: 'claude-sonnet-4-6', effort: 'high' }, sessionHost: host, sessionMode: 'subagents' };
     await runAgentExecution(pinned);
     assert.deepEqual([called.member.ordinal, called.member.label, called.member.model, called.member.effort, called.member.fanOut], [2, 'Implementation · cycle 2', 'claude-sonnet-4-6', 'high', false]);
     assert.equal(called.opts.model, 'claude-sonnet-4-6', 'the runOpts reach the host unchanged');

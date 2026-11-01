@@ -1,5 +1,6 @@
 // src/core/run-presets-check.mjs — what stops a preset's setup from starting, named per item (#712 point 6),
-// and the full-picks snapshot a preset stores. Never falls back: a gone guardrail set is an item, not Permissive.
+// and the full-picks snapshot a preset stores. Never falls back: a gone guardrail set is an item, not Permissive, and a
+// setup that names none is checked as what a start runs on, the install default (defaultGuardrailSetId).
 import { checkRunOverlay } from './run-overlay.mjs';
 import { nodeLabel } from '../shared/run-presets.mjs';
 
@@ -7,7 +8,7 @@ import { nodeLabel } from '../shared/run-presets.mjs';
  * @param {object} setup  PRESET_SETUP_KEYS of the body being started (or of the stored preset on pick)
  * @param {{ scope?: {kind:string, ref:string|null}, scopeExists?: (scope)=>Promise<boolean>|boolean,
  *   assertWorkflow: (id:string)=>Promise<object>, guardrailExists: (id:string)=>Promise<boolean>,
- *   models: object[], engine?: string, engineRefusal?: ()=>Promise<string|null> }} ctx
+ *   models: object[], engine?: string, engineRefusal?: ()=>Promise<string|null>, defaultGuardrailsId: ()=>string }} ctx
  * @returns {Promise<{item:string, ref:string|null, message:string, reset:boolean}[]>}
  */
 export async function presetRefusals(setup, ctx) {
@@ -22,7 +23,7 @@ export async function presetRefusals(setup, ctx) {
   try { workflow = await ctx.assertWorkflow(wfId); } catch (e) {
     add('workflow', wfId, e && e.code === 'NOT_FOUND' ? `Workflow ${wfId} no longer exists` : `Workflow ${wfId}: ${e.message}`);
   }
-  const gr = setup.guardrailsId || 'permissive';
+  const gr = setup.guardrailsId || ctx.defaultGuardrailsId();
   if (!(await ctx.guardrailExists(gr))) add('guardrails', gr, `Guardrail set ${gr} no longer exists`);
   const nodes = setup.overlay?.nodes || {};
   const wires = setup.overlay?.wires || {};

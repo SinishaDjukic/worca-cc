@@ -512,12 +512,12 @@ const GR_SETS = [
   { id: 'gr_org', name: 'Org Policy', origin: null,
     settings: { ...GR_EMPTY, envScrub: true, deny: ['Bash(curl:*)', 'Bash(nc:*)'] } },
 ];
-function guardrailsFetch(sets = GR_SETS) {
+function guardrailsFetch(sets = GR_SETS, dflt = 'normal') {
   const base = workflowFetch();
   return (url, opts) => {
     if (url.includes('/api/guardrails')) {
       const list = typeof sets === 'function' ? sets() : sets;
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ guardrails: list }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ guardrails: list, default: dflt }) });
     }
     return base(url, opts);
   };
@@ -527,25 +527,53 @@ const pickGuardrails = (window, id) => {
   s.value = id; s.dispatchEvent(new window.Event('change', { bubbles: true }));
 };
 
-test('default submit posts NO guardrailsId key (Permissive default = byte-identical request)', async () => {
+// G13: the picker starts on the install's default (GET /api/guardrails `default`) and the
+// form always names its set, so an explicit Permissive pick is never read as "use the default".
+for (const [dflt, label] of [['normal', 'a fresh install'], ['permissive', 'an upgraded install']]) {
+  test(`default submit posts the install default (${dflt} on ${label}) and labels it in the picker`, async () => {
+    const runs = [];
+    const base = guardrailsFetch(GR_SETS, dflt);
+    const { window } = await boot({
+      fetchHandler: (url, opts) => {
+        if (url.includes('/api/run') && opts && opts.method === 'POST') {
+          runs.push(JSON.parse(opts.body));
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ runId: 'r9' }) });
+        }
+        return base(url, opts);
+      },
+    });
+    selectProjectAnd(window);
+    await new Promise((r) => setTimeout(r, 0));
+    const sel = window.document.querySelector('#guardrailsSelect');
+    assert.equal(sel.value, dflt, 'preselected');
+    assert.match(sel.selectedOptions[0].textContent, /\(default\)/);
+    window.document.querySelector('#prompt').value = 'ship it';
+    window.document.querySelector('#run-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].guardrailsId, dflt);
+  });
+}
+
+test('picking Permissive on a Normal-default install posts guardrailsId "permissive"', async () => {
   const runs = [];
   const base = guardrailsFetch();
   const { window } = await boot({
     fetchHandler: (url, opts) => {
       if (url.includes('/api/run') && opts && opts.method === 'POST') {
         runs.push(JSON.parse(opts.body));
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ runId: 'r9' }) });
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ runId: 'r11' }) });
       }
       return base(url, opts);
     },
   });
   selectProjectAnd(window);
   await new Promise((r) => setTimeout(r, 0));
+  pickGuardrails(window, 'permissive');
   window.document.querySelector('#prompt').value = 'ship it';
   window.document.querySelector('#run-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(runs.length, 1);
-  assert.equal('guardrailsId' in runs[0], false, 'key absent, not null (omit-when-default)');
+  assert.equal(runs[0].guardrailsId, 'permissive');
 });
 
 test('picking a set posts its guardrailsId and paints the selected-set summary hint', async () => {
@@ -595,7 +623,7 @@ test('a failing guardrails list keeps the dropdown options and selection (never 
   assert.equal(window.document.querySelector('#guardrailsSelect').value, 'secure', 'selection kept');
 });
 
-test('a VANISHED selection falls back to Permissive with a VISIBLE form message (never a silent revert)', async () => {
+test('a VANISHED selection falls back to the default set with a VISIBLE form message (never a silent revert)', async () => {
   let list = GR_SETS;
   const { window } = await boot({ fetchHandler: guardrailsFetch(() => list) });
   selectProjectAnd(window);
@@ -605,7 +633,7 @@ test('a VANISHED selection falls back to Permissive with a VISIBLE form message 
   list = GR_SETS.filter((g) => g.id !== 'gr_org');
   selectProjectAnd(window);
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(window.document.querySelector('#guardrailsSelect').value, 'permissive', 'fell back to the default');
+  assert.equal(window.document.querySelector('#guardrailsSelect').value, 'normal', 'fell back to the default');
   assert.match(window.document.querySelector('#form-msg').textContent, /no longer exists/, 'said out loud');
 });
 

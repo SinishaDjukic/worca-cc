@@ -11,7 +11,7 @@ import { buildMessageBody, pickModel, validPick, reservedSlots } from '../compos
 import { CAPTURE_MAX } from '../page-context.mjs';
 import { COMMANDS } from '../manifest.mjs';
 import { ATTACH_MAX_FILES, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../../../ui/public/attach-files.mjs';
-import { chatEngineOf, engineOfEntry } from '../../../ui/public/ask-engine.mjs';
+import { chatEngineOf, engineOfEntry, pickerEngineName } from '../../../ui/public/ask-engine.mjs';
 import { createThreadModel } from '../../../ui/public/ask-model.mjs';
 import { createMarkdownRenderer } from '../../../ui/public/ask-markdown.mjs';
 import * as V from './sidebar-view.mjs';
@@ -267,6 +267,12 @@ async function openSocket() {
     if (!st.model || f.threadId !== st.threadId) return;
     const out = st.model.apply(f);
     if (out && out.gap) { void openThread(st.threadId).catch(reportLoadError); return; }   // a seq gap: re-fetch the snapshot
+    // #943: the chat moved to another engine (in Chat): its next message uses the new pair.
+    if (f.type === 'ask-engine' && typeof f.model === 'string' && typeof f.effort === 'string') {
+      st.pick = { model: f.model, effort: f.effort };
+      patchModel();
+      if (pops && el && pops.isOpen(el.model)) pops.rebuild();   // an open model menu lists the new engine's models
+    }
     renderTranscript();
   };
   ws.onclose = (ev) => {
@@ -691,6 +697,13 @@ function patchModel() {
   el.modelLabel.textContent = (entry ? entry.label || entry.id : (st.pick ? st.pick.model : '')) + (flagged ? ' ⚠' : '');
   el.modelEffort.textContent = entry && entry.noEffort ? '' : (st.pick ? st.pick.effort : '');
   el.modelEffort.hidden = !!(entry && entry.noEffort);
+  // #943: the engine the next message runs on, as Chat's button says it.
+  const eng = pickerEngine();
+  const engName = pickerEngineName((st.catalog && st.catalog.models) || [], eng);
+  el.modelEngine.textContent = engName;
+  el.modelEngine.hidden = !engName;
+  const btn = el.modelLabel.parentNode;
+  if (btn) btn.dataset.engine = eng;
 }
 
 /** The meter and an open context popover, only when the figures changed: every streaming frame lands here. */

@@ -12,6 +12,9 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node
 import { basename, join } from 'node:path';
 import { getDb, prepare, tx } from '../db.mjs';
 import { worcaHome } from '../projects.mjs';
+import { agentIdentityFor } from '../agent-pool.mjs';
+import { claimForAgent } from '../agent-user.mjs';
+import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
 
@@ -39,6 +42,20 @@ export function attachmentsDir(threadId) {
 export function askOutDir(threadId) {
   if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('askOutDir: refusing a thread id the store never minted');
   return join(askRoot(), threadId, 'out');
+}
+
+/** 1.4: a chat's folder (its attachments, worktrees, skill mounts, output) belongs to the agent user of the person
+ *  whose turns run in it (agent-pool.mjs): with a pool, `ask/<thread>` gets that user's own group, setgid 2770, and
+ *  `ask/` is sticky, so no other person's agent can read, edit or swap what this chat's agent loads. Made here when it
+ *  is not there yet; refused (throws) when it is a link or another user's folder. A no-op without a pool group. */
+export function claimThreadDir(threadId, owner = currentOwner()) {
+  const id = agentIdentityFor(owner);
+  if (!Number.isInteger(id?.runGid)) return;
+  if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('claimThreadDir: refusing a thread id the store never minted');
+  const dir = join(askRoot(), threadId);
+  mkdirSync(askRoot(), { recursive: true });
+  try { mkdirSync(dir); } catch (err) { if (err?.code !== 'EEXIST') throw err; }
+  claimForAgent(dir, id);
 }
 
 const now = () => new Date().toISOString();
@@ -81,7 +98,7 @@ function rowToMessage(r) {
   return {
     id: r.id, threadId: r.thread_id, seq: r.seq, role: r.role, text: r.text ?? '',
     blocks: parse(r.blocks, null), status: r.status ?? null, reason: r.reason ?? null,
-    model: r.model ?? null, effort: r.effort ?? null, usage: parse(r.usage, null),
+    model: r.model ?? null, effort: r.effort ?? null, engine: r.engine ?? null, usage: parse(r.usage, null),
     costUsd: r.cost_usd ?? null, durationMs: r.duration_ms ?? null, createdAt: r.created_at,
   };
 }
@@ -109,6 +126,7 @@ function rowToRunLink(r) {
 export function createThread({ title = null, model = null, effort = null, createdBy = null, mode = null } = {}) {
   getDb();
   const id = newAskId('ask');
+  claimThreadDir(id);   // 1.4: before an attachment lands in it
   const t = now();
   prepare('INSERT INTO ask_threads (id, title, created_at, updated_at, model, effort, totals, created_by, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()), createdBy || null, mode === 'composer' ? 'composer' : null);
@@ -169,6 +187,18 @@ function excerptAround(text, q) {
   return `${from > 0 ? '…' : ''}${flat.slice(from, to)}${to < flat.length ? '…' : ''}`;
 }
 
+/** A list row's link counts and what the chat did (the Chats column's kind icon), over `t`. A run card's launch links its
+ *  run WITH the card id and a track_run without one; a later track of a run the chat started only patches the row, so
+ *  its card id stays. A workflow card is a propose_workflow (`workflow`) or build_workflow (`workflow-build`) card in
+ *  any state. The LIKE skips messages that cannot hold one before json_each parses any. */
+const LIST_FACTS_SQL = `(SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
+           (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id AND l.card_id IS NOT NULL) AS started_runs,
+           (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id AND l.card_id IS NULL) AS tracked_runs,
+           EXISTS (SELECT 1 FROM ask_messages m, json_each(CASE WHEN json_valid(m.blocks) THEN m.blocks END) b
+                   WHERE m.thread_id = t.id AND m.blocks LIKE '%"type":"workflow%' AND json_extract(b.value, '$.kind') = 'card'
+                     AND json_extract(b.value, '$.card.type') IN ('workflow', 'workflow-build')) AS workflow_card,
+           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees`;
+
 /** A list row: the thread without its composer canvas, its link counts and, for a message hit, the excerpt. */
 function toListRow(r, q) {
   const { composer: _canvas, ...t } = rowToThread(r);
@@ -176,7 +206,8 @@ function toListRow(r, q) {
   const match = !q || r.title_hit ? {}
     : r.group_hit != null ? { match: { group: r.group_hit } }
     : r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
-  return { ...t, runLinks: r.run_links, worktrees: r.worktrees, ...match };
+  return { ...t, runLinks: r.run_links, startedRuns: r.started_runs, trackedRuns: r.tracked_runs, hasWorkflowCard: !!r.workflow_card,
+    worktrees: r.worktrees, ...match };
 }
 
 export function listThreads({ limit = 50, visibleTo = null, mode = null, query = '' } = {}) {
@@ -190,8 +221,7 @@ export function listThreads({ limit = 50, visibleTo = null, mode = null, query =
            (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text,
            (SELECT g.name FROM ask_chat_groups g WHERE g.id = t.group_id AND g.name LIKE ? ESCAPE '\\') AS group_hit` : '';
   const rows = prepare(`
-    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
-           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees${hit}
+    SELECT t.*, ${LIST_FACTS_SQL}${hit}
     FROM ask_threads t${w.sql} ORDER BY t.updated_at DESC, t.id LIMIT ?
   `).all(...(q ? [likeContains(q), likeContains(q), likeContains(q)] : []), ...w.args, n);
   // A list row never carries the composer canvas (up to 256 KB each): getThread does.
@@ -238,8 +268,7 @@ export function listThreadsPage({ limit = 50, visibleTo = null, mode = null, que
            (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text,
            (SELECT g.name FROM ask_chat_groups g WHERE g.id = t.group_id AND g.name LIKE ? ESCAPE '\\') AS group_hit` : '';
   const rows = prepare(`
-    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
-           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees,
+    SELECT t.*, ${LIST_FACTS_SQL},
            ${expr} AS sort_key, (t.pinned_at IS NULL) AS unpinned${hit}
     FROM ask_threads t${w.sql}${keyset}
     ORDER BY (t.pinned_at IS NULL), ${expr} ${desc ? 'DESC' : 'ASC'}, t.id LIMIT ?
@@ -568,21 +597,51 @@ export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowM
 
 // ── messages ────────────────────────────────────────────────────────────────
 
-/** seq = MAX(seq)+1 inside tx(): follower notices interleave with turns (spec §7.1). */
-export function appendMessage(threadId, { role, text = '', blocks = null, status = null, model = null, effort = null } = {}) {
+/** One message row, inside the caller's tx(): seq = MAX(seq)+1 (spec §7.1). Returns the new id. */
+function insertMessage(threadId, { role, text = '', blocks = null, status = null, model = null, effort = null, engine = null }, t) {
+  const { next } = prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM ask_messages WHERE thread_id = ?').get(threadId);
+  const id = newAskId('askm');
+  prepare(`INSERT INTO ask_messages (id, thread_id, seq, role, text, blocks, status, model, effort, engine, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, threadId, next, role, String(text ?? ''), str(blocks), status, model, effort, engine, t);
+  return id;
+}
+
+/** seq = MAX(seq)+1 inside tx(): follower notices interleave with turns (spec §7.1). `engine`: the engine a reply runs
+ *  on (#943), null for user and system rows. */
+export function appendMessage(threadId, { role, text = '', blocks = null, status = null, model = null, effort = null, engine = null } = {}) {
   if (!ROLES.has(role)) throw new Error(`appendMessage: invalid role ${JSON.stringify(role)}`);
   return tx(() => {
     if (!prepare('SELECT 1 FROM ask_threads WHERE id = ?').get(threadId)) {
       throw new Error(`appendMessage: unknown thread ${threadId}`);
     }
-    const { next } = prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM ask_messages WHERE thread_id = ?').get(threadId);
-    const id = newAskId('askm');
     const t = now();
-    prepare(`INSERT INTO ask_messages (id, thread_id, seq, role, text, blocks, status, model, effort, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, threadId, next, role, String(text ?? ''), str(blocks), status, model, effort, t);
+    const id = insertMessage(threadId, { role, text, blocks, status, model, effort, engine }, t);
     prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(t, threadId);
     return getMessage(id);
+  });
+}
+
+/**
+ * #943: move a chat to another engine in ONE transaction: the thread's engine, model and effort, no provider session
+ * (the destination starts a fresh one from the transcript, turn.mjs), and the system row that marks the boundary.
+ * Throws for an unknown thread and writes nothing then.
+ */
+export function switchThreadEngine(threadId, { engine, model, effort, text, blocks }) {
+  return tx(() => {
+    const t = now();
+    const row = prepare('SELECT totals FROM ask_threads WHERE id = ?').get(threadId);
+    if (!row) throw new Error(`switchThreadEngine: unknown thread ${threadId}`);
+    // The context meter starts over: the fresh session has no fill yet, and the old model's window is not the new
+    // one (addThreadTotals keeps the last window when a turn reports none, and only Claude reports one). Cost, tokens
+    // and turns stay: the chat's total spans every engine.
+    const totals = { ...emptyTotals(), ...(parse(row.totals, {}) || {}) };
+    delete totals.ctx;
+    delete totals.ctxWindow;
+    prepare('UPDATE ask_threads SET engine = ?, model = ?, effort = ?, session_id = NULL, totals = ?, updated_at = ? WHERE id = ?')
+      .run(engine, model, effort, JSON.stringify(totals), t, threadId);
+    const id = insertMessage(threadId, { role: 'system', text, blocks }, t);
+    return { thread: getThread(threadId), message: getMessage(id) };
   });
 }
 
@@ -681,7 +740,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
         || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
-        || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command'
+        || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command' || b.card.type === 'script-approval'
         || (b.card.type === 'progress' && !!b.card.fix)));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });

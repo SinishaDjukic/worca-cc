@@ -92,7 +92,7 @@ test('socket lifecycle: hello -> connected; envelopes acked BEFORE processing; f
   assert.deepEqual(sock.sent[0], { envelope_id: 'env-1' }, 'ack sent');
   assert.deepEqual(events.inbound[0], {
     chatId: 'C1', userId: 'U9', text: '/status',
-    meta: { platform: 'slack', ts: '1.2', threadTs: null, team: 'T1' },
+    meta: { platform: 'slack', ts: '1.2', threadTs: null, team: 'T1', isGroup: true },
   });
 
   // filtered: own message, bot message, subtype, non-allowlisted channel — all acked, none emitted
@@ -105,6 +105,11 @@ test('socket lifecycle: hello -> connected; envelopes acked BEFORE processing; f
     sock.message({ type: 'events_api', envelope_id: 'x', payload: { event: ev } });
   }
   assert.equal(events.inbound.length, 1);
+
+  // A 1:1 DM (channel_type "im") is the only non-group chat; anything else counts as a group.
+  sock.message({ type: 'events_api', envelope_id: 'env-2',
+    payload: { event: { type: 'message', channel: 'C1', channel_type: 'im', user: 'U9', text: '/direct x', ts: '1.3' } } });
+  assert.equal(events.inbound[1].meta.isGroup, false);
   await w.stop();
 });
 

@@ -7,7 +7,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { displayUrl, isLocalPath, repoWebUrl, syncedText, marketplaceNotes, renderMarketplaceCard, renderMarketplaceCards }
   from '../ui/public/marketplace/marketplaces-view.mjs';
 import { shortDate } from '../ui/public/marketplace/catalog.mjs';
-import { OFFICIAL, BD, LOCAL, GITLAB, NOTE0, SKIP } from './helpers/mk-marketplaces-fixtures.mjs';
+import { OFFICIAL, EXAMPLE, LOCAL, GITLAB, NOTE0, SKIP } from './helpers/mk-marketplaces-fixtures.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const NOW = Date.parse('2026-10-20T12:00:00Z');
@@ -46,8 +46,8 @@ test('helpers: display url, local path, web url, Synced text, notes', async () =
       assert.match(day('2026-08-01T12:00:00Z'), /^Aug [12]$/, 'a month and a day, no year (the same year as NOW)');
     } },
     { name: 'marketplaceNotes: per-plugin notes through noteText, then other manifest warnings; never the refresh failure', run: () => {
-      assert.deepEqual(marketplaceNotes(BD), [
-        { plugin: 'discretestack-models', text: 'models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored' },
+      assert.deepEqual(marketplaceNotes(EXAMPLE), [
+        { plugin: 'example-models', text: 'models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored' },
         { plugin: null, text: SKIP }]);
       assert.deepEqual(marketplaceNotes(OFFICIAL), []);
       assert.deepEqual(marketplaceNotes({ plugins: [{ name: 'p', notes: ['./worca-cc-plugin.json: x'] }] }), [{ plugin: 'p', text: 'x' }]);
@@ -80,21 +80,21 @@ test('card: a healthy built-in marketplace (Browse, refresh, ⋯; url + branch; 
 });
 
 test('card: a marketplace that cannot be reached (Retry first; chip + snapshot date; notes folded)', () => {
-  const card = renderMarketplaceCard(doc, BD, { now: NOW });
+  const card = renderMarketplaceCard(doc, EXAMPLE, { now: NOW });
   assert.equal(card.querySelector('.mk-mkt-head .mk-chip-built'), null);
   assert.deepEqual(actions(card), ['btn btn-sm mk-mkt-retry', 'btn btn-sm mk-mkt-browse', 'btn btn-sm btn-quiet btn-icon mk-mkt-more']);
   const retry = card.querySelector('.mk-mkt-retry');
-  assert.deepEqual([retry.textContent, retry.getAttribute('aria-label'), retry.dataset.id], ['Retry', 'Retry refresh of BD-AI-SDLC/worca-marketplace', BD.id]);
-  assert.equal(retry.dataset.focusKey, `refresh:${BD.id}`, 'Retry and refresh share a key, so focus stays when one becomes the other');
-  assert.deepEqual(kids(card.querySelector('.mk-mkt-url')), ['github.com/BD-AI-SDLC/worca-marketplace']);
+  assert.deepEqual([retry.textContent, retry.getAttribute('aria-label'), retry.dataset.id], ['Retry', 'Retry refresh of example/worca-marketplace', EXAMPLE.id]);
+  assert.equal(retry.dataset.focusKey, `refresh:${EXAMPLE.id}`, 'Retry and refresh share a key, so focus stays when one becomes the other');
+  assert.deepEqual(kids(card.querySelector('.mk-mkt-url')), ['github.com/example/worca-marketplace']);
   const health = card.querySelector('.mk-mkt-health');
-  assert.deepEqual(kids(health), ["Can't reach · HTTP 403", `Using the snapshot from ${day(BD.lastSync.at)}`, '·', '16b6363', '·', '3 plugins', '·', '1 installed']);
+  assert.deepEqual(kids(health), ["Can't reach · HTTP 403", `Using the snapshot from ${day(EXAMPLE.lastSync.at)}`, '·', '16b6363', '·', '3 plugins', '·', '1 installed']);
   assert.deepEqual([health.firstElementChild.title, health.firstElementChild.classList.contains('mk-chip-warn')], ['HTTP 403', true]);
   const disc = card.querySelector('button.mk-disc');
   const notes = byId(card, disc.getAttribute('aria-controls'));
   assert.deepEqual([disc.textContent, disc.getAttribute('aria-expanded'), notes.hidden, notes.classList.contains('mk-disc-body')], ['2 manifest notes', 'false', true, true]);
   assert.deepEqual([...notes.querySelectorAll('.mk-note')].map((n) => [n.querySelector('b')?.textContent ?? null, n.textContent]), [
-    ['discretestack-models', 'discretestack-models · models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored'],
+    ['example-models', 'example-models · models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored'],
     [null, SKIP]]);
   disc.click();
   assert.deepEqual([disc.getAttribute('aria-expanded'), notes.hidden], ['true', false]);
@@ -125,25 +125,25 @@ test('card: SYNC_FAILED, never synced, Needs git, one note', async () => {
     { name: 'a refresh in flight: aria-disabled + aria-busy, never disabled (P3 pattern)', run: () => {
       const r = renderMarketplaceCard(doc, OFFICIAL, { now: NOW, busy: true }).querySelector('.mk-mkt-refresh');
       assert.deepEqual([r.getAttribute('aria-disabled'), r.getAttribute('aria-busy'), r.disabled], ['true', 'true', false]);
-      const list = renderMarketplaceCards(doc, [OFFICIAL, BD], { now: NOW, busy: new Set([BD.id]) });
+      const list = renderMarketplaceCards(doc, [OFFICIAL, EXAMPLE], { now: NOW, busy: new Set([EXAMPLE.id]) });
       assert.deepEqual([...list.querySelectorAll('.mk-mkt-refresh, .mk-mkt-retry')].map((b) => b.getAttribute('aria-busy')), [null, 'true']);
     } },
     { name: 'an error with no message reads "Can\'t reach"; the notes disclosure keeps its focus key', run: () => {
-      const card = renderMarketplaceCard(doc, { ...BD, lastError: { message: '', code: 'UNREACHABLE', at: '2026-10-20T11:59:00Z' } }, { now: NOW });
+      const card = renderMarketplaceCard(doc, { ...EXAMPLE, lastError: { message: '', code: 'UNREACHABLE', at: '2026-10-20T11:59:00Z' } }, { now: NOW });
       assert.equal(card.querySelector('.mk-mkt-health').firstElementChild.textContent, "Can't reach");
-      assert.equal(card.querySelector('button.mk-disc').dataset.focusKey, `notes:${BD.id}`);
+      assert.equal(card.querySelector('button.mk-disc').dataset.focusKey, `notes:${EXAMPLE.id}`);
     } },
     { name: 'one note reads singular', run: () => {
-      assert.equal(renderMarketplaceCard(doc, { ...BD, warnings: [NOTE0] }, { now: NOW }).querySelector('.mk-disc').textContent, '1 manifest note');
+      assert.equal(renderMarketplaceCard(doc, { ...EXAMPLE, warnings: [NOTE0] }, { now: NOW }).querySelector('.mk-disc').textContent, '1 manifest note');
     } },
     { name: 'notesOpen paints the notes open (a re-render keeps what the user opened); the toggle still folds them', run: () => {
-      const list = renderMarketplaceCards(doc, [OFFICIAL, BD], { now: NOW, notesOpen: new Set([BD.id]) });
-      const disc = list.querySelector(`section.mk-mkt[data-id="${BD.id}"] button.mk-disc`);
+      const list = renderMarketplaceCards(doc, [OFFICIAL, EXAMPLE], { now: NOW, notesOpen: new Set([EXAMPLE.id]) });
+      const disc = list.querySelector(`section.mk-mkt[data-id="${EXAMPLE.id}"] button.mk-disc`);
       const notes = byId(list, disc.getAttribute('aria-controls'));
       assert.deepEqual([disc.getAttribute('aria-expanded'), notes.hidden], ['true', false]);
       disc.click();
       assert.deepEqual([disc.getAttribute('aria-expanded'), notes.hidden], ['false', true]);
-      const shut = renderMarketplaceCard(doc, BD, { now: NOW }).querySelector('button.mk-disc');
+      const shut = renderMarketplaceCard(doc, EXAMPLE, { now: NOW }).querySelector('button.mk-disc');
       assert.equal(shut.getAttribute('aria-expanded'), 'false');
     } },
   ]);
@@ -155,10 +155,10 @@ test('card: Needs git with an old sync error offers no Retry: the chip keeps the
 });
 
 test('a card never carries a destructive button; the list keeps the server order', () => {
-  for (const m of [OFFICIAL, BD, LOCAL, GITLAB]) assert.equal(renderMarketplaceCard(doc, m, { now: NOW }).querySelector('.btn-danger, [class*="remove"]'), null, m.id);
-  const list = renderMarketplaceCards(doc, [OFFICIAL, BD], { now: NOW });
+  for (const m of [OFFICIAL, EXAMPLE, LOCAL, GITLAB]) assert.equal(renderMarketplaceCard(doc, m, { now: NOW }).querySelector('.btn-danger, [class*="remove"]'), null, m.id);
+  const list = renderMarketplaceCards(doc, [OFFICIAL, EXAMPLE], { now: NOW });
   assert.equal(list.className, 'mk-mkts');
-  assert.deepEqual([...list.children].map((c) => c.dataset.id), [OFFICIAL.id, BD.id]);
+  assert.deepEqual([...list.children].map((c) => c.dataset.id), [OFFICIAL.id, EXAMPLE.id]);
 });
 
 test('the P7 CSS block sits after P6\'s and uses tokens only (SM56, SM69, the chat CSS-slice bans); a long card chip wraps and grows (cycles 4, 5); ⋯ wraps inside the card (cycle 5)', () => {

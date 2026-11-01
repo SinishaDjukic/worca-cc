@@ -6,9 +6,15 @@
 //
 // Facts this module encodes (checked against @github/copilot 1.0.92, its shipped
 // schemas/session-events.schema.json, and a stand-in OpenAI Responses endpoint in BYOK mode):
-// - With no -p, the prompt is read from stdin (no argv limit). `--allow-all-tools` is required
-//   for a non-interactive run; a tool call that would still prompt (a path outside the cwd and
-//   the --add-dir folders) is denied, never asked.
+// - With no -p, the prompt is read from stdin (no argv limit). A tool call that would prompt is denied, never asked.
+// - Tool approval is an allow list (G14, checked on 1.0.100 in BYOK mode against a scripted stand-in endpoint):
+//   `--allow-tool=shell` and `--allow-tool=write` approve the shell and the file tools, `--allow-tool=<server>` each MCP
+//   server worca attached, `--allow-all-urls` a URL in a shell command (without it `curl <url>` is denied). A read-only
+//   tool (view, rg, glob, a read-only shell command such as `cat`), `task`, `sql` and `skill` need no approval, and a
+//   sub-agent's shell runs under the parent's list. Anything else, such as an MCP server worca did not attach, is denied.
+//   `--allow-all-tools` (which --help still calls required) is not needed in -p mode. COPILOT_ALLOW_ALL in copilot's env
+//   would approve everything again (exactly "true" also trusts the folder, loading its hooks and MCP servers), and
+//   COPILOT_ASSISTED_APPROVAL hands unlisted tools to a judge, so the spawn drops both.
 // - There is no system-prompt flag. A custom agent (`--agent <name>`) carries one: its markdown
 //   body reaches the model as `<agent_instructions>`. Agents load from `<dir>/.github/agents`
 //   of every `--add-dir`, so worca writes a scratch folder per spawn and adds it.
@@ -16,7 +22,7 @@
 //   unknown id fails with "No session, task, or name matched".
 // - `--usage-output-file` gets the session's CUMULATIVE token totals (a resumed session's file
 //   counts its earlier turns too); the stream carries no per-call usage in -p mode.
-// - Deny rules (`--deny-tool`) beat --allow-all-tools. `shell(cmd)` / `shell(cmd sub)` match the
+// - Deny rules (`--deny-tool`) beat every allow rule (checked again on 1.0.100). `shell(cmd)` / `shell(cmd sub)` match the
 //   command (and git/gh sub-command) wherever it sits in a line — in a chain, behind a redirect,
 //   a substitution or `VAR=x` — but not inside `bash -c "…"`, and a flag is not part of the
 //   match (`shell(rm -rf)` lets `rm -rf x` run). `write` covers the file tools, not the shell.
@@ -292,16 +298,19 @@ export function copilotInvestigatorAgent({ agents, subagentSystemPrompt } = {}) 
 
 /**
  * `copilot` argv. The prompt always travels on stdin.
- *   copilot --output-format json --allow-all-tools --no-ask-user --no-auto-update --no-color --disable-builtin-mcps
- *     [--disallow-temp-dir] (--session-id U | --resume=U) [--model M] [--reasoning-effort E] [--agent A]
+ *   copilot --output-format json [--allow-tool=shell --allow-tool=write] [--allow-tool=S]… [--allow-all-urls]
+ *     --no-ask-user --no-auto-update --no-color --disable-builtin-mcps [--disallow-temp-dir] (--session-id U | --resume=U) [--model M] [--reasoning-effort E] [--agent A]
  *     [--add-dir D]… [--additional-mcp-config @F] [--disable-mcp-server N]… [--available-tools=…]
  *     [--excluded-tools=…] [--deny-tool=R]… [--usage-output-file F]
  * @param {{sessionId:string, resume?:boolean, model?:string, effort?:string, agent?:string, addDirs?:string[],
  *   mcpConfigFile?:string, disableMcp?:string[], availableTools?:string[], excludedTools?:string[], deny?:string[],
- *   usageFile?:string, readOnly?:boolean, ask?:boolean}} o
+ *   usageFile?:string, readOnly?:boolean, ask?:boolean, allowMcp?:string[]}} o
+ *   allowMcp: the MCP servers worca attached, approved by name. A read-only spawn has no shell or file tool to approve.
  */
-export function buildCopilotArgs({ sessionId, resume = false, model, effort, agent, addDirs, mcpConfigFile, disableMcp, availableTools, excludedTools, deny, usageFile, readOnly = false, ask = false } = {}) {
-  const args = ['--output-format', 'json', '--allow-all-tools', '--no-ask-user', '--no-auto-update', '--no-color', '--disable-builtin-mcps'];
+export function buildCopilotArgs({ sessionId, resume = false, model, effort, agent, addDirs, mcpConfigFile, disableMcp, availableTools, excludedTools, deny, usageFile, readOnly = false, ask = false, allowMcp } = {}) {
+  const allow = [...new Set([...(readOnly ? [] : ['shell', 'write']), ...(Array.isArray(allowMcp) ? allowMcp : [])])];
+  const args = ['--output-format', 'json', ...allow.map((t) => `--allow-tool=${t}`), ...(readOnly ? [] : ['--allow-all-urls']),
+    '--no-ask-user', '--no-auto-update', '--no-color', '--disable-builtin-mcps'];
   if (readOnly) args.push('--disallow-temp-dir');
   if (ask) args.push('--no-custom-instructions');
   if (sessionId) args.push(resume ? `--resume=${sessionId}` : `--session-id=${sessionId}`);
@@ -632,6 +641,9 @@ export async function runCopilotProcess({
   // of a run without a project is no secret and must reach the agent's own git.
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   env.COPILOT_AUTO_UPDATE = 'false';
+  // Either would widen the allow list buildCopilotArgs sets (see the notes at the top).
+  delete env.COPILOT_ALLOW_ALL;
+  delete env.COPILOT_ASSISTED_APPROVAL;
 
   // Scratch folder: the node agent (system prompt), the investigator, the MCP config and the usage file.
   const scratch = join(scratchBase, `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
@@ -667,6 +679,7 @@ export async function runCopilotProcess({
     // only the MCP servers it was handed (worca's own read_file/grep/glob behind the secret-path denies).
     availableTools: readOnly ? Object.keys(mcpServers || {}) : undefined,
     excludedTools: [...rules.excluded, ...tools.excluded], deny: [...rules.deny, ...tools.deny], usageFile, readOnly, ask,
+    allowMcp: Object.keys(mcpServers || {}),
   });
   const normalizer = createCopilotNormalizer({ model: model || null, sessionId });
   const priorUsage = resume ? loadUsage(usageDir, session) : null;

@@ -37,7 +37,7 @@ before(async () => {
   ghUrl = `http://127.0.0.1:${gh.address().port}`;
   const { config, errors } = readBrokerConfig({
     WORCA_BROKER_MODE: 'multi', WORCA_BROKER_SECRET: 's'.repeat(40), WORCA_BROKER_VAULT_KEY: randomBytes(32).toString('base64'),
-    WORCA_BROKER_PUBLIC_URL: PUBLIC, WORCA_IDENTITY_HEADER: 'x-email',
+    WORCA_BROKER_PUBLIC_URL: PUBLIC, WORCA_IDENTITY_HEADER: 'x-email', WORCA_IDENTITY_TRUSTED_PROXIES: '127.0.0.1',
   });
   assert.deepEqual(errors, []);
   const slots = mergeSlots(builtinSlots(), [{ id: 'copilot', upstream: ghUrl, exchangeUrl: `${ghUrl}/copilot_internal/v2/token`, deviceBaseUrl: ghUrl }]);

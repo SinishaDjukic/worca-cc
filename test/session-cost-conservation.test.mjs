@@ -47,7 +47,9 @@ async function conserve(st) {
 }
 const run = async (behave, { engine } = {}) => {
   mockT.behave = behave;
-  const o = createOrchestrator({ projectDir: gitDir(`cons-${Math.random().toString(36).slice(2, 7)}`), workflowId: 'wf_cons', prompt: 'demo', auto: true, claude: { mock: true, ...(engine ? { engine } : {}) } });
+  const o = createOrchestrator({ projectDir: gitDir(`cons-${Math.random().toString(36).slice(2, 7)}`), workflowId: 'wf_cons', prompt: 'demo', auto: true,
+    // Another engine cannot enforce the Normal set's rules, the default a fresh install runs on.
+    ...(engine ? { guardrailsId: 'permissive' } : {}), claude: { mock: true, ...(engine ? { engine } : {}) } });
   assert.equal((await o.run()).status, 'done');
   return o.getState();
 };
@@ -156,7 +158,7 @@ test('crash and resume', { timeout: 120000 }, async () => {
 test('an engine switch on resume: both epochs conserve', { timeout: 120000 }, async () => {
   const { orch, id } = await pauseMidTurn({ workflowId: 'wf_cons', nodeId: 'n_impl' });
   mockT.behave = null;
-  const o2 = resumeOf(orch, id, { mock: true, engine: 'codex' });
+  const o2 = resumeOf(orch, id, { mock: true, engine: 'codex', allowUnguardedEngine: true });   // the run pinned the Normal set
   assert.equal((await o2.resume()).status, 'done');
   await conserve(o2.getState());
 });
@@ -211,7 +213,7 @@ test('shared mode: one conversation conserves, all of it the steps\' (no hand-of
 
 test('shared mode on Copilot: every figure blank, never $0', { timeout: 120000 }, async () => {
   mockT.behave = () => 'no-cost';
-  const o = createOrchestrator({ projectDir: gitDir('cons-shared-copilot'), workflowId: 'wf_cons_shared', prompt: 'demo', auto: true, claude: { mock: true, engine: 'copilot' } });
+  const o = createOrchestrator({ projectDir: gitDir('cons-shared-copilot'), workflowId: 'wf_cons_shared', prompt: 'demo', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'copilot' } });
   assert.equal((await o.run()).status, 'done');
   const st = o.getState();
   const members = st.steps.filter((s) => s.session?.sid === SID);

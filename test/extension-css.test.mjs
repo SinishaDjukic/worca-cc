@@ -21,4 +21,7 @@ test('the sidebar gets every :root token byte-for-byte, in source order, plus th
   }
   const at = (s) => css.indexOf(s);
   assert.ok(at('.ask-composer-box{') < at('.chat-page .ask-composer-box{'), 'Chat P1 overrides come after the Ask base rules');
+  // #943: the model button's engine name is styled, and the 400px sidebar drops it (else the scope label shrinks to nothing).
+  assert.ok(css.includes('.ask-model-btn-engine{font-weight:500;'), 'the engine name\'s look');
+  assert.match(css, /@media \(max-width:480px\)\{\s*\.chat-page \.ask-model-btn-engine\{display:none;\}\s*\}/, 'the sidebar hides the engine name');
 });

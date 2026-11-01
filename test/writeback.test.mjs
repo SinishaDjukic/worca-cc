@@ -1,6 +1,6 @@
 // test/writeback.test.mjs — spec §7.5 result write-back, all in WORCA_MOCK mode.
-// The mock registry has NO canned 'capabilities' default, so every test here also
-// exercises the tolerant-default: PluginOpError kind 'unimplemented' => writeBack:true.
+// The first test sets no capabilities answer, so it exercises the tolerant-default: PluginOpError kind 'unimplemented' =>
+// writeBack:true. The mock registry's own capabilities answer (A6) keeps writeBack true, so the others behave the same.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
@@ -39,7 +39,8 @@ async function seedDonePluginPipeline(meta = META) {
 
 test('done plugin pipeline reports completed with a diffstat summary (capabilities op absent => default writeBack)', async () => {
   const calls = [];
-  setMockSourceResponses({ reportResult: (args) => { calls.push(args); return { ok: true }; } });
+  // capabilities: undefined = no canned answer, so the op is absent and the tolerant default (writeBack true) is what runs
+  setMockSourceResponses({ capabilities: undefined, reportResult: (args) => { calls.push(args); return { ok: true }; } });
   const p = await seedDonePluginPipeline();
 
   const out = await retryWriteback(p.id);

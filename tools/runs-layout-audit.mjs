@@ -34,8 +34,9 @@ export function auditRunsLayout(root, env, doc = root.ownerDocument) {
       const rt = rightEl ? rect(rightEl) : null;
       if (rt && rt.width > 0 && rt.top < t.bottom - 1 && t.width < rr.width / 2 - 1) out.push({ rule: 'title-share', got: `${t.width} of ${rr.width}`, text: titleEl.textContent });
     }
-    // #955: a row inside a group is one line, 26px (40px on a coarse pointer), unless it draws its live 3px line.
-    if (item.dataset.level === 'member' && rowEl && !rowEl.querySelector(':scope > .runs-row-prog')) {
+    // #955: a row inside a group is one line, 26px (40px on a coarse pointer), unless it draws its live 3px line
+    // or (#1012) its stage block.
+    if (item.dataset.level === 'member' && rowEl && !rowEl.querySelector(':scope > .runs-row-prog, :scope > .runs-stage')) {
       const coarse = env && 'coarse' in env ? !!env.coarse : !!(win.matchMedia && win.matchMedia('(pointer: coarse)').matches);
       const want = coarse ? 40 : 26;
       const h = rect(item).height;
