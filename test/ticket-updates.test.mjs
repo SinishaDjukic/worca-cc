@@ -23,6 +23,7 @@ const SAVED = {
   savedAt: '2026-10-29T10:42:00.000Z', savedBy: 'local',
 };
 writeTicketUpdates('jira-source', 'acme', 'jira', SAVED);
+writeTicketUpdates('jira-source', 'norule', 'jira', { projects: [], rules: [RULE('SHOP', 'Shop', RESOLVED)] });
 writeTicketUpdates('jira-source', 'typed', 'jira', { projects: [], rules: [ALL({ kind: 'typed', value: 'Resolve' })] });
 const AT = { plugin: 'jira-source', sourceId: 'jira', profile: 'acme' };
 
@@ -50,6 +51,10 @@ test('moveFor: project rule, All projects, no project, no record, a failed run, 
       assert.deepEqual(moveFor({ ...AT, project: 'SHOP', status: 'needs-human' }), { none: true });
     } },
     { name: 'typed carried over: status without a name', run: () => assert.deepEqual(moveFor({ ...AT, profile: 'typed', status: 'completed' }), { status: 'Resolve' }) },
+    { name: 'a hand-edited record without an All projects rule: none, for any project (fails closed)', run: () => {
+      assert.deepEqual(moveFor({ ...AT, profile: 'norule', project: 'OPS', status: 'completed' }), { none: true });
+      assert.deepEqual(moveFor({ ...AT, profile: 'norule', status: 'completed' }), { none: true });
+    } },
     { name: 'no profile reads the default bucket (empty here)', run: () => assert.equal(moveFor({ plugin: 'jira-source', sourceId: 'jira', status: 'completed' }), undefined) },
   ]);
   flag(false);
@@ -78,6 +83,11 @@ test('validateTicketUpdates: the limits and shapes of §4; the clean record, All
     { name: 'values and labels at most 200 characters', run: () => {
       refused({ projects: [{ value: 'X'.repeat(201) }], rules: [NONE_ALL] }, /200 characters/);
       refused({ projects: [], rules: [NONE_ALL, RULE('SHOP', 'n'.repeat(201), { kind: 'none' })] }, /200 characters/);
+    } },
+    { name: 'a rule project is a key: not an object, null or a boolean; project values and rule projects refuse a/b', run: () => {
+      for (const project of [{}, null, true, ['SHOP']]) refused({ projects: [], rules: [NONE_ALL, { ...RULE('x', '', { kind: 'none' }), project }] }, /project must be a project key/);
+      refused({ projects: [{ value: 'a/b' }], rules: [NONE_ALL] }, /is not a project key/);
+      refused({ projects: [], rules: [NONE_ALL, RULE('a/b', '', { kind: 'none' })] }, /is not a project key/);
     } },
     { name: 'one rule per project and moment', run: () => refused({ projects: [], rules: [NONE_ALL, RULE('SHOP', '', { kind: 'none' }), RULE('SHOP', '', { kind: 'none' })] }, /SHOP has more than one rule/) },
     { name: 'exactly one All projects rule', run: () => {

@@ -6,7 +6,9 @@ import { callSource as shimCallSource } from './plugin-shim.mjs';
 import { listProfiles, isValidProfileId, redactedConfig, readTicketUpdates, writeTicketUpdates, DEFAULT_PROFILE } from './plugin-config.mjs';
 import { actorOf } from './identity.mjs';
 import { reachSentence } from './source-reach.mjs';
-import { validateTicketUpdates, TU_CATEGORIES, TU_LIMITS } from './ticket-updates.mjs';
+import { validateTicketUpdates, isProjectKey, TU_CATEGORIES, TU_LIMITS } from './ticket-updates.mjs';
+
+export { isProjectKey };
 
 /** listProjects pages up to 2,000 Jira Cloud projects (§3, A6-D14). */
 export const LIST_PROJECTS_TIMEOUT_MS = 60_000;
@@ -16,11 +18,6 @@ const isBag = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v : []);
 /** The shim's answer for a disabled plugin (plugin-shim.mjs): `plugin "<name>" is disabled — …`. */
 const DISABLED = /^plugin "[^"]+" is disabled\b/;
-/** A project key as a tracker names it: 1 to 100 characters, never "." or "..", no slash, backslash, "?", "#", "%" or control
- *  character (it lands in a URL path in the plugin, where "%2e%2e" or ".%2e" reads as ".."; Jira keys are [A-Z][A-Z0-9_]*).
- *  jira-source checks the same in statusesOf. */
-export const isProjectKey = (v) => typeof v === 'string' && v.length > 0 && v.length <= 100 && !/^\.+$/.test(v)
-  && !/[/\\?#%\u0000-\u001f\u007f]/.test(v);
 /** Board 5 A's line, the answer to a save while the connection is not saved (D12). */
 const notSaved = (tracker) => `Save this connection first. Ticket updates read ${tracker}'s projects and statuses through it.`;
 

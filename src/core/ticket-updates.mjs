@@ -9,6 +9,12 @@ export const TU_CATEGORIES = Object.freeze(['todo', 'in_progress', 'done', 'canc
 export const TU_MOMENTS = Object.freeze(['finished']);
 export const TU_LIMITS = Object.freeze({ projects: 200, rules: 200, text: 200 });
 
+/** A project key as a tracker names it: 1 to 100 characters, never "." or "..", no slash, backslash, "?", "#", "%" or control
+ *  character (it lands in a URL path in the plugin, where "%2e%2e" or ".%2e" reads as ".."; Jira keys are [A-Z][A-Z0-9_]*).
+ *  jira-source checks the same in statusesOf. */
+export const isProjectKey = (v) => typeof v === 'string' && v.length > 0 && v.length <= 100 && !/^\.+$/.test(v)
+  && !/[/\\?#%\u0000-\u001f\u007f]/.test(v);
+
 /** A save §4 refuses; the route answers 400 with its message. */
 export class TicketUpdatesError extends Error {
   constructor(message) { super(message); this.name = 'TicketUpdatesError'; this.code = 'BAD_REQUEST'; }
@@ -98,6 +104,7 @@ export function validateTicketUpdates(body) {
     const value = text(isBag(p) ? p.value : '', 'A project key');
     const label = text(isBag(p) ? p.label : '', 'A project name');
     if (!value) throw new TicketUpdatesError('Each project needs its key.');
+    if (!isProjectKey(value)) throw new TicketUpdatesError(`${value} is not a project key.`);
     if (seen.has(value)) continue;
     seen.add(value);
     projects.push({ value, label: label || value });
@@ -108,7 +115,9 @@ export function validateTicketUpdates(body) {
   for (const r of b.rules) {
     if (!isBag(r)) throw new TicketUpdatesError('Each rule needs a project and a move.');
     if (!TU_MOMENTS.includes(r.moment)) throw new TicketUpdatesError('A rule can only apply when a run finishes.');
+    if (r.project !== undefined && typeof r.project !== 'string' && typeof r.project !== 'number') throw new TicketUpdatesError('A rule\'s project must be a project key.');
     const project = text(r.project, 'A project key');
+    if (project && !isProjectKey(project)) throw new TicketUpdatesError(`${project} is not a project key.`);
     const key = `${project}\u0000${r.moment}`;
     if (keys.has(key)) throw new TicketUpdatesError(`${project || 'All projects'} has more than one rule.`);
     keys.add(key);
