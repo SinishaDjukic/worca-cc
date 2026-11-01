@@ -20,6 +20,7 @@ import { basicsList } from '../../shared/workflow-tests/checks.mjs';
 import { useLabel, testTitle, latestTitle, compareModel, TRIES_AT_ONCE } from '../../shared/workflow-tests/compare.mjs';
 import { loadScriptRegistry } from '../script-registry.mjs';
 import * as store from './store.mjs';
+import { changedSinceStart } from './changed.mjs';
 import { useGraph, useFingerprint } from './uses.mjs';
 import { testTargetOf, exampleReadiness } from './try-body.mjs';
 import { ensureStartCommit, treeBytes, freeDiskBytes, removeTryCheckout, pinStart, listBranches, behindCount, headOf, commitExists,
@@ -666,8 +667,8 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null } 
     const bad = own.find((t) => t.setup && t.setup.ok === false);
     const ex = bad ? store.readExample(workflowId, bad.exampleId) : null;
     if (bad) setupStop = { cmd: bad.setup.cmd, tail: bad.setup.tail || '', exampleId: bad.exampleId, exampleName: ex ? ex.name : '', label: useLabel(bad.use, ctx), tryNo: bad.tryNo,
-      // P36: what continueRun checks: an example edited since the test started means Finish the rest is refused.
-      edited: own.some((t) => { const e = store.readExample(workflowId, t.exampleId); return !!e && e.fingerprint !== t.exampleFp; }) };
+      // P38: filled by progressEdited (async, in the route): what continueRun checks.
+      edited: false };
   }
   const phases = (() => {
     const ex = firstNow ? store.readExample(workflowId, firstNow.exampleId) : null;
@@ -690,6 +691,13 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null } 
     quick: run.quick,
     project,
   };
+}
+
+/** P38: would "Finish the rest" be refused (the draft or a tested version changed, or an example of a stopped/waiting try
+ *  was edited)? Then the page offers a new test instead. Same check as continueRun's (changed.mjs). */
+export async function progressEdited(workflowId, run, { fingerprintOf = (id, use) => useFingerprint(id, use) } = {}) {
+  const fingerprintNow = async (id, use) => { try { return await fingerprintOf(id, use); } catch { return null; } };
+  return (await changedSinceStart(run, { fingerprintNow })) !== null;
 }
 
 // A running test's disk need, worked out at its first poll and kept while it runs (only free space is read again).

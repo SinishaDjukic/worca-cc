@@ -3780,7 +3780,14 @@ function wftProgressActions() {
       if (run && run.kind === 'once') wftShow('detail', { runId, exampleId: run.exampleIds[0], tryIndex: 0 });   // G2
       else wftShow('compare', { runId });
     },
-    startNew: () => wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds, tries: run.tries }),   // P36: the same versions, examples and tries
+    // P36: the same versions, examples and tries. P38: a Try it once run has no version a: it reopens Try it once on the
+    // same example (the draft), never a two-version compare at twice the cost.
+    startNew: async () => {
+      if (!(run && run.kind === 'once')) { wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds, tries: run.tries }); return; }
+      const r = await wftCall('POST', `${wftBase(id)}/examples/${run.exampleIds[0]}/try-once`, {});
+      if (!r.ok) { notify({ tone: 'err', title: 'The test did not start', detail: r.error }); return; }
+      if (still()) wftShow('progress', { runId: r.data.run.id });
+    },
     editExample: (exampleId) => void wftOpenExample(exampleId),   // board 35: a setup that failed is fixed in the example
   };
 }

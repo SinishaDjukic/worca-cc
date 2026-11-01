@@ -123,7 +123,7 @@ test('board 35: the test stopped because the setup step failed', () => {
   assert.equal(root.querySelector('.wft-outlog').hidden, false);
   assert.equal(root.querySelector('.wft-outlog').textContent, '> npm ci\nnpm error code EUSAGE');
   assert.equal(root.querySelector('.wft-setup-where').textContent, 'Ticket 482, v2, try 1');
-  assert.equal(root.querySelector('.wft-setup-fix').textContent, 'Fix the setup in the project, then try again. To change the example, start a new test.');
+  assert.equal(root.querySelector('.wft-setup-fix').textContent, 'If something on this computer was missing, fix it and try again. To change the setup or the start point, edit the example and start a new test.');
   click([...root.querySelectorAll('button')].find((b) => b.textContent === 'Edit the example'));
   click([...root.querySelectorAll('button')].find((b) => b.textContent === 'Try again'));
   assert.deepEqual(calls, [['edit', 1], ['continue', null]]);

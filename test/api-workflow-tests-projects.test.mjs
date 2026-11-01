@@ -280,10 +280,21 @@ test('progress (board 35): a running project try shows its phase; an example wit
   store.updateTestRun(run.id, { status: 'stopped', stopReason: 'setup', finishedAt: new Date().toISOString() });
   const q = service.progressOf('wf_pt', run.id);
   assert.deepEqual(q.project.setupStop, { cmd: 'npm ci', tail: 'npm ERR! missing', exampleId: withP.id, exampleName: 'Ticket 600', label: 'Your draft', tryNo: 1, edited: false });
+  assert.equal(await service.progressEdited('wf_pt', run, { fingerprintOf: async () => 'fp' }), false, 'nothing changed yet');
   // P36: once an example of the test is edited, Finish the rest would be refused, so the page says so (edited: true).
   const put = await call('PUT', `${WF}/examples/${withP.id}`, { request: 'a different request' });
   assert.equal(put.status, 200, JSON.stringify(put.body));
-  assert.equal(service.progressOf('wf_pt', run.id).project.setupStop.edited, true);
+  assert.equal(await service.progressEdited('wf_pt', run, { fingerprintOf: async () => 'fp' }), true);
+  // P38: a changed draft or version also means a refusal; only stopped/waiting tries count (a finished try's old example does not).
+  const { prepare } = await import('../src/core/db.mjs');
+  const setFp = (id, fp) => prepare('UPDATE wf_test_tries SET example_fp = ? WHERE id = ?').run(fp, id);
+  const fresh = (await call('GET', `${WF}/examples/${withP.id}`)).body.example;
+  setFp(tp.id, fresh.fingerprint);
+  assert.equal(await service.progressEdited('wf_pt', run, { fingerprintOf: async () => 'fp' }), false, 'example and draft as at the start');
+  assert.equal(await service.progressEdited('wf_pt', run, { fingerprintOf: async () => 'fp-new' }), true, 'the draft changed since the test started');
+  setFp(tp.id, 'old'); store.updateTry(tp.id, { status: 'passed' });
+  assert.equal(await service.progressEdited('wf_pt', run, { fingerprintOf: async () => 'fp' }), false, 'a finished try is not made again, so its example does not matter');
+  setFp(tp.id, fresh.fingerprint); store.updateTry(tp.id, { status: 'stopped' });
   const none = store.createTestRun({ workflowId: 'wf_pt', kind: 'once', b: 'draft', bFp: 'fp', exampleIds: [without.id], tries: 1 });
   store.updateTestRun(none.id, { status: 'stopped', finishedAt: new Date().toISOString() });
   assert.equal(service.progressOf('wf_pt', none.id).project, null, 'Part 2: no project block');

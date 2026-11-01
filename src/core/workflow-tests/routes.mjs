@@ -159,6 +159,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   route('GET', `${W}/runs/:run`, async (req, res) => {
     const p = service.progressOf(wid(req), num(req.params.run, 'test'), { costOf: runner.costOf, phaseOf: runner.phaseOf });
     if (p.project) p.project.disk = await service.progressDisk(wid(req), p.run, { diskOf: runner.diskOf });
+    if (p.project && p.project.setupStop) p.project.setupStop.edited = await service.progressEdited(wid(req), p.run);
     res.json(p);
   });
   route('POST', `${W}/runs/:run/stop`, async (req, res) => {

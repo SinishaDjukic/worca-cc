@@ -5,6 +5,7 @@
 // no-project run started through the run handler (deps.startRun), marked as a test (D21), with the test's connectors
 // mode (D35). The state lives in the store; this module keeps only what is live.
 import * as store from './store.mjs';
+import { changedText, editedText, changedSinceStart, leftTries } from './changed.mjs';
 import { tx } from '../db.mjs';
 import { attachAnswerer } from './answers.mjs';
 import { tryRunBody } from './try-body.mjs';
@@ -19,8 +20,7 @@ export const COST_POLL_MS = 2000;
 /** D37, G19: the refusal of a second start, and the hint the UI shows on its disabled buttons. */
 export const BUSY_TEXT = 'A test of this workflow is running. Wait for it, or stop it first.';
 /** C18: what changed since a test started (a refused "Finish the rest", or a test stopped as `changed`). */
-export const changedText = (use) => `${use === 'draft' ? 'Your draft' : `v${use}`} changed since this test started: start a new test.`;
-export const editedText = (name) => `"${name}" was edited since this test started: start a new test.`;
+export { changedText, editedText };
 /** A stored detail (no full stop): the UI says "Stopped: Worca could not save how this test ended." */
 export const CLOSE_FAILED_TEXT = 'Worca could not save how this test ended';
 const err = store.testError;
@@ -504,18 +504,13 @@ export function createTestRunner(deps) {
     if (store.runningTestRun(run.workflowId) || starting.has(run.workflowId)) throw err(BUSY_TEXT, 'BUSY');
     starting.add(run.workflowId);   // D37: a second "Finish the rest" (or a start) while this one awaits fingerprints
     try {
-      for (const [use, fp] of [[run.a, run.aFp], [run.b, run.bFp]]) {
-        if (use == null) continue;
-        if ((await fingerprintNow(run.workflowId, use)) !== fp) throw err(changedText(use), 'BAD_REQUEST');
-      }
-      const left = store.triesOfRun(run.id).filter((t) => t.runId === run.id && (t.status === 'stopped' || t.status === 'waiting'));
+      const left = leftTries(run);
       const leftExamples = new Map();
       const leftCounts = {};
-      for (const t of left) {
-        const ex = store.readExample(run.workflowId, t.exampleId);
-        if (ex && ex.fingerprint !== t.exampleFp) throw err(editedText(ex.name), 'BAD_REQUEST');
-        if (ex) { leftExamples.set(ex.id, ex); leftCounts[ex.id] = (leftCounts[ex.id] || 0) + 1; }
-      }
+      const refusal = await changedSinceStart(run, { fingerprintNow, left, examples: leftExamples });
+      if (refusal) throw err(refusal, 'BAD_REQUEST');
+      for (const t of left) { const ex = leftExamples.get(t.exampleId); if (ex) leftCounts[ex.id] = (leftCounts[ex.id] || 0) + 1; }
+      for (const [id, ex] of [...leftExamples]) if (!ex) leftExamples.delete(id);
       // D60: Finish the rest makes tries again (D55: "Try again" after a setup failure is this), so the disk must hold the
       // largest of what is left, at once, before anything is written.
       if (deps.diskCheck && leftExamples.size) {
