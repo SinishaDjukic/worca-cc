@@ -1,6 +1,6 @@
 // ui/public/workflows/test-dialogs.mjs — the workflow tests dialogs (plans/workflow-tests-part2-plan.md Tasks 12–13):
 // pick a past run (G7), use this run as a test example (board 3), and test a version with its connectors (boards 4, 30). Pure DOM.
-import { el, seg, field, testDialog, runStatusBadge, refusedRun } from './test-ui.mjs';
+import { el, seg, field, testDialog, runStatusBadge, refusedRun, startInto } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
@@ -114,13 +114,14 @@ export function openFromRunDialog({ doc, win, past, onSubmit, dateText = (s) => 
   if (past.project) {
     startBox = el(doc, 'div', 'wft-startbox');
     const where = el(doc, 'span');
-    where.append(doc.createTextNode(STARTS_FROM_RUN), el(doc, 'b', '', past.project.startRef || past.project.short), doc.createTextNode(' at '),
-      el(doc, 'span', 'code', past.project.short), doc.createTextNode(` · ${dateText(past.project.startAt)}`));
+    where.append(doc.createTextNode(STARTS_FROM_RUN));
+    startInto(doc, where, { ref: past.project.startRef, short: past.project.short, at: past.project.startAt }, dateText, { bold: true });
     startBox.append(el(doc, 'span', 'label', WHERE_TITLE), where, el(doc, 'span', 'hint', pastRunProjectNote(past.project.name)));
     setup = el(doc, 'input');
     setup.type = 'text'; setup.id = 'wft-fr-setup'; setup.className = 'wft-mono'; setup.maxLength = 4000; setup.value = past.project.setupCmd || '';
     devBox = el(doc, 'div', 'wft-dev');
-    devBox.append(el(doc, 'span', 'wft-dev-cap', DEV_CAPTION), field(doc, SETUP_LABEL, setup, { id: setup.id, hint: SETUP_HINT_PAST }));
+    // Final review M9: "Filled in from the project's setup" only when there is one to fill in.
+    devBox.append(el(doc, 'span', 'wft-dev-cap', DEV_CAPTION), field(doc, SETUP_LABEL, setup, { id: setup.id, hint: past.project.setupCmd ? SETUP_HINT_PAST : null }));
   }
   return testDialog({
     doc, win, title: 'Use this run as a test example', confirmLabel: 'Add example',
@@ -297,6 +298,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   row2.firstChild.append(leftHint);   // under the Examples field (board 34)
   const reused = (side) => !!(plan && plan[side] && plan[side].reusable) && (side === 'a' ? boxA : boxB).checked;
   const projectTest = () => !!(plan && plan.project && plan.project.names && plan.project.names.length);
+  // Final review M1: the lock line and the Real hint follow the chosen examples, so they are right while the plan loads.
+  const projectChosen = () => chosen().some((e) => e.projectName);
 
   const capField = field(doc, 'Stop if the cost goes over', cap, { id: cap.id, hint: 'Tests count in your spending limit. You can close this page: Worca tells you when the results are ready.' });
   const dlg = testDialog({
@@ -407,7 +410,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   /** Board 30: the Real sentence names how often a post would go out; Pretend lists each connector; the script caution stays. */
   function paintConnectors(e) {
     const n = e ? e.total : null;
-    realOpt.hint.textContent = `Tries use your real connectors. If the workflow posts or sends something, it does it in every try${!n ? '' : n === 1 ? ': once in this test' : `: ${n} times in this test`}.${projectTest() ? REAL_BLOCKED_HINT : ''}`;   // nothing to try: no count
+    realOpt.hint.textContent = `Tries use your real connectors. If the workflow posts or sends something, it does it in every try${!n ? '' : n === 1 ? ': once in this test' : `: ${n} times in this test`}.${projectChosen() ? REAL_BLOCKED_HINT : ''}`;   // nothing to try: no count
     const c = plan && plan.connectors;
     notes.replaceChildren();
     const line = (name, parts) => {
@@ -443,8 +446,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       if (sc.more) words.append(doc.createTextNode(sc.more.lead), el(doc, 'b', '', sc.more.name), doc.createTextNode(sc.more.rest));
       caution.append(icon(doc, 'alert', 14), words);
     }
-    lock.hidden = !projectTest();
-    safe.hidden = mode !== 'pretend' || projectTest();   // P13
+    lock.hidden = !projectChosen();
+    safe.hidden = mode !== 'pretend' || projectChosen();   // P13
   }
 
   async function refresh() {

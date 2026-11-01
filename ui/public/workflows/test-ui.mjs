@@ -6,6 +6,23 @@ import { icon } from '../icons.mjs';
 /** G19, D37: the hint beside a start button while a test of the workflow runs (the server's BUSY_TEXT). */
 export const BUSY_HINT = 'A test of this workflow is running. Wait for it, or stop it first.';
 
+/** Final review M7: "main at <code>abc1234</code> · 28 Oct" appended to `node`: the ref (bold with `bold`), the short SHA in
+ *  code, the date when the start has one. `start` is { ref, short, at }; a start without a ref names its SHA. */
+export function startInto(doc, node, start, dateText, { bold = false } = {}) {
+  const st = start || {};
+  const name = st.ref || st.short || '';
+  node.append(bold ? el(doc, 'b', '', name) : doc.createTextNode(name), doc.createTextNode(' at '), el(doc, 'span', 'code', st.short || ''));
+  if (st.at) node.append(doc.createTextNode(` · ${dateText(st.at)}`));
+  return node;
+}
+/** A check in its words: a command in code (boards 32, 33, 36), any other check as its label. Inline, in one span. */
+export function checkWords(doc, c, label) {
+  const s = el(doc, 'span');
+  if (c && c.kind === 'command') s.append(doc.createTextNode('The command '), el(doc, 'span', 'code', c.cmd), doc.createTextNode(' passes'));
+  else s.textContent = label;
+  return s;
+}
+
 export const el = (doc, tag, cls, text) => {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;

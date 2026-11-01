@@ -3,7 +3,7 @@
 // C10, C19, G2, G3, G9, G15). Pure DOM: app.js reads the server's models (service.compareOf / sideBySide) and owns the
 // actions. A repaint keeps the focus on the same control (data-focus-key), and a button whose action is out stays busy
 // across repaints (BUSY), as the progress page does.
-import { el, btn } from './test-ui.mjs';
+import { el, btn, startInto, checkWords } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
@@ -12,13 +12,12 @@ import { serverName } from '../../../src/shared/workflow-tests/connector-name.mj
 import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
-  EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES,
+  EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
   NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
 const usdOr = (n) => (typeof n === 'number' && Number.isFinite(n) ? fmtUsd(n) : '—');
 const timeOr = (ms) => (typeof ms === 'number' && Number.isFinite(ms) ? fmtDuration(ms) : '—');
-const inSentence = (label) => (/^Your\b/.test(label) ? `y${label.slice(1)}` : label);   // "Your draft" inside a sentence
 const wrote = (label) => `What ${inSentence(label)} wrote`;
 const plural = (w) => (/(?:s|sh|ch|x)$/.test(w) ? `${w}es` : `${w}s`);
 /** A test tries an example at most this often (src/core/workflow-tests/store.mjs MAX_TRIES): Try 3 more has no room above. */
@@ -27,12 +26,6 @@ const STARTED_FROM = ' · started from ';   // one version (Try it once now): "b
 /** The picked file's diff shows at most this many lines; Read all the changes has the rest. */
 const DIFF_LINES_MAX = 400;
 const BADGE_CLASS = { added: 'badge green', removed: 'badge wft-badge-rm' };   // "Changed" and "Renamed" are plain
-/** "main at <code>abc1234</code> · 28 Oct" into `node`. */
-function startInto(doc, node, st, dateText) {
-  const when = st.at ? dateText(st.at) : '';
-  node.append(doc.createTextNode(`${st.ref || st.short} at `), el(doc, 'span', 'code', st.short), doc.createTextNode(when ? ` · ${when}` : ''));
-  return node;
-}
 
 /** N3: the count beside "Would have sent": "1 message, 1 issue", by what each call makes. */
 export function sentCount(calls) {
@@ -346,7 +339,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
   if (!once && s.row.result) name.append(badge(doc, s.row.result));
   const counts = once
     ? `${s.labels.b} passed ${s.row.b.passed} of ${s.row.b.total} ${s.row.b.total === 1 ? 'try' : 'tries'}`
-    : `${s.labels.a} passed ${s.row.a.passed} of ${s.row.a.total} tries · ${s.labels.b} passed ${s.row.b.passed} of ${s.row.b.total}`;
+    : `${s.labels.a} passed ${s.row.a.passed} of ${s.row.a.total} ${s.row.a.total === 1 ? 'try' : 'tries'} · ${s.labels.b} passed ${s.row.b.passed} of ${s.row.b.total}`;
   const countsEl = el(doc, 'span', 'hint', counts);
   if (s.start) startInto(doc, (countsEl.append(doc.createTextNode(once ? STARTED_FROM : BOTH_STARTED_FROM)), countsEl), s.start, dateText);   // board 36
   head.append(titles(doc, act(doc, root, runId, once ? 'Tests' : s.compareTitle, () => actions.back(), 'wft-crumb', 'wft-sbs-back'),
@@ -530,7 +523,9 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMa
     inner.append(el(doc, 'div', 'wft-crow-grp', title));
     for (const label of labels) {
       const row = el(doc, 'div', cls);
-      row.append(el(doc, 'span', '', label));
+      // Final review M5: a command check is set in code, as the editor writes it (checkWords).
+      const check = key === 'checks' ? ((s.example && s.example.checks) || []).find((c) => c && c.kind === 'command' && `The command ${c.cmd} passes` === label) : null;
+      row.append(check ? checkWords(doc, check, label) : el(doc, 'span', '', label));
       if (!once) row.append(cell(cur.a, key, label, `${s.labels.a} · try ${cur.n}`));
       row.append(cell(cur.b, key, label, `${s.labels.b} · try ${cur.n}`));
       // Board 36: a command not met says so under its row, and opens its output (the last 40 lines; P6: no "Failed:" line).

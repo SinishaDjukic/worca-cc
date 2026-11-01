@@ -2,7 +2,7 @@
 // what Worca gets, your answers to its questions, what a good result needs (Basics + automatic checks; "Your criteria"
 // is Part 3), how many tries. Plus the two small dialogs: a question and its answer, and an automatic check (G1).
 // Pure DOM; app.js saves.
-import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT } from './test-ui.mjs';
+import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, startInto, checkWords } from './test-ui.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import {
@@ -33,13 +33,6 @@ const skinned = (doc, select, cls = '') => { const w = el(doc, 'div', `select-wr
 const P2_CARD1_HINT = 'The same request and files are used every time this example is tried.';
 const P2_CHECKS_HINT = 'Counted exactly, without AI. Pick a ready check, or a script from the Library.';   // C3
 const TEXT_KIND_SET = new Set(['words', 'sections', 'mentions', 'not-mentions']);
-/** A check in its words: a command in code (boards 32, 33), any other check as its label. Inline, in one span. */
-function checkWords(doc, c, label) {
-  const s = el(doc, 'span');
-  if (c && c.kind === 'command') s.append(doc.createTextNode('The command '), el(doc, 'span', 'code', c.cmd), doc.createTextNode(' passes'));
-  else s.textContent = label;
-  return s;
-}
 /** A check as its line shows it. The line's text is a flex column, so the words go in one inline span. */
 function checkLineEl(doc, c, label) {
   const s = el(doc, 'span', 'wft-line-text');
@@ -488,7 +481,7 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
     if (usableProject) {
       const row = el(doc, 'div', 'wft-start');
       const words = el(doc, 'span');
-      words.append(el(doc, 'b', '', st.ref || st.short), doc.createTextNode(' at '), el(doc, 'span', 'code', st.short), doc.createTextNode(` · ${dateText(st.at)}`));
+      startInto(doc, words, st, dateText, { bold: true });
       changeBtn = btn(doc, CHANGE_BUTTON, () => void changeStart());
       changeBtn.dataset.focusKey = 'wft-start-change';   // the start point dialog's focusBack finds the repainted twin
       row.append(words, changeBtn);

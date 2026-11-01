@@ -6,7 +6,7 @@ import { el, btn, iconBtn, BUSY_HINT, runStatusBadge, refusedRun } from './test-
 import { withButton } from '../feedback.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.mjs';
-import { NO_PROJECT_YET_HINT, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText,
+import { NO_PROJECT_YET_TAIL, WITH_CHANGES_HINT, MOVED_BADGE, behindText, PICK_FIRST_TEXT, CANT_TRY_TEXT, LIST_FOOT_HINT, firstUseNoneText,
   refusedRunsCount }
   from '../../../src/shared/workflow-tests/project-text.mjs';
 
@@ -57,14 +57,16 @@ const hintTail = (e, dateText) => [e.hasRequest && e.fromAt ? `from a run on ${d
   .filter(Boolean).map((x) => ` · ${x}`).join('');
 
 /** The hint under an example's name: what it has, where it came from, its note. */
+/** What an example has, as its hint starts: no request, the request and its files, or the request only. */
+const hasText = (e) => (!e.hasRequest ? 'No request yet' : e.files && e.files.length ? `Request + ${e.files.join(', ')}` : 'Request only');
 export function exampleHint(e, { dateText = defaultDate } = {}) {
-  return `${!e.hasRequest ? 'No request yet' : e.files && e.files.length ? `Request + ${e.files.join(', ')}` : 'Request only'}${hintTail(e, dateText)}`;
+  return `${hasText(e)}${hintTail(e, dateText)}`;
 }
 
 /** Board 38: the hint under an example's name, with its project and start point; an example left out says so. */
 export function exampleHintEl(doc, e, { dateText = defaultDate } = {}) {
   const h = el(doc, 'span', 'hint');
-  if (e.reason === 'pick-project') { h.textContent = NO_PROJECT_YET_HINT; return h; }
+  if (e.reason === 'pick-project') { h.textContent = `${hasText(e)}${NO_PROJECT_YET_TAIL}`; return h; }   // final review M3: what it has
   if (!e.project) { h.textContent = exampleHint(e, { dateText }); return h; }
   const lead = !e.hasRequest ? 'No request yet' : e.files && e.files.length ? `Request + ${e.files.join(', ')}` : 'Request';
   h.append(doc.createTextNode(`${lead} · ${e.project.name} · from `), el(doc, 'span', 'code', e.project.short));

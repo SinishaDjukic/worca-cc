@@ -137,7 +137,7 @@ test('P36: the setup failed and an example was edited since: Start a new test re
   });
   const { root, calls } = page(p, { startNew: () => calls.push(['new']) });
   assert.deepEqual(texts(root, '.wft-acts button'), ['Edit the example', 'Start a new test']);
-  assert.equal(root.querySelector('.wft-setup-fix').textContent, 'The example was edited since this test started. Start a new test to try it again.');
+  assert.equal(root.querySelector('.wft-setup-fix').textContent, 'Something this test uses changed since it started (an example or a version). Start a new test to try it again.');
   click([...root.querySelectorAll('button')].find((b) => b.textContent === 'Start a new test'));
   assert.deepEqual(calls, [['new']]);
   // The command printed nothing: a sentence, not an empty box.

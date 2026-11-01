@@ -48,7 +48,7 @@ Pull requests (add each number when it opens):
 - Each try works in Worca's own copy of the project. Your folder and your branches are never touched, and the copy of each try is deleted after its checks. The list of changes and the full diff stay to look at.
 - Before each try, Worca can run a setup command (filled in from the project's setup, such as `npm ci`). If it fails, the test stops and no try counts as failed.
 - A new automatic check: The command passes (such as `npm test`), with its summary line. Text checks can read a file of the project.
-- Pushes, pull requests and issues are stopped, with any engine; common publish commands are stopped with Claude Code. The attempts Worca sees are listed under Would have sent. It is not a network block yet: a program's own web calls, a publish that signs in with a token kept in a file, and a publish run from inside a script are not stopped.
+- Pushes, pull requests and issues are stopped, with any engine; common publish commands are stopped with Claude Code. The attempts Worca sees are listed under Would have sent. It is not a network block yet: a program's own web calls, a publish that signs in with a token kept in a file, a publish run from inside a script, or a push or web call with a token the agent reads from a file or from git's settings are not stopped.
 - Test a version says how much disk and time a test needs, and refuses to start when the disk is too full.
 - Add from a past run takes project runs too: the example starts where the run started.
 

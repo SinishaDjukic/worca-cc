@@ -3821,7 +3821,8 @@ function wftRender() {
   if (wft.view !== 'list') { wftRenderView(els.tests); return; }
   renderTestsPage(els.tests, wft.overview, wftListActions(), { doc: document, storage: wftStorage(), error: wft.error, dateText: wftDate });
 }
-function wftShow(view, extra = {}) { wft = { ...wft, view, data: null, ...extra }; void wftRefresh(); }
+// Final review M6: the opened diffs (up to 5 MB each) are let go on every move; the side by side reads them again.
+function wftShow(view, extra = {}) { wftPatchCut.clear(); wft = { ...wft, view, data: null, patches: null, ...extra }; void wftRefresh(); }
 
 function wftListActions() {
   return {

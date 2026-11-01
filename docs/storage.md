@@ -248,7 +248,9 @@ Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
   `setup` (JSON: the command, ok, exit code, whether it ran out of time, how long it took and the last 40 lines of its output,
   at most 8 KB) and `changes` (JSON: the first 50 changed files with their status and line counts, and the totals).
 - **Worca's copy of a project** (`<worcaHome>/workflow-tests/repos/<projectKey>`): a `git clone --local --no-checkout` of
-  the project with no remote, `core.longpaths` on and automatic gc and maintenance off. Start points are pinned as
+  the project with no remote, `core.longpaths` on and automatic gc and maintenance off. Before each test Worca repairs it
+  (any remote removed; `core.hooksPath`, `core.fsmonitor` and `extensions.worktreeConfig` unset; those settings set again),
+  and Worca's own git in it runs no hook, fsmonitor or signing program of the copy and has the outward guard's env. Start points are pinned as
   `refs/worca-tests/<sha>`. Each try is a worktree of it under its run folder (`<worcaHome>/runs/<pipelineId>/repos/<projectKey>`),
   on its own branch, always named `worca-cc/…` (Smart run naming never applies to a try). Worca removes the checkout, the branch and the run folder after the try's checks. At boot,
   it also removes what a restart left. `projectKey()` answers the real project's key for the copy and its worktrees, so a try
@@ -261,7 +263,9 @@ Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
   - every engine gets the env layers: the stand-ins first on PATH, git that cannot sign in (no terminal prompt, no SSH, no
     credential helper), the forge CLIs' config folders pointed at empty ones, and the forge, CI and publish tokens removed
     from the environment. On Windows, `WSLENV` carries the same into WSL. The setup step alone keeps the install-side
-    registry tokens (`NPM_TOKEN` and the like), never a forge, CI or publish one; the agents and the checks get the full strip;
+    registry tokens (`NPM_TOKEN` and the like), never a forge, CI or publish one; the agents and the checks (the command
+    check and Library scripts) get the full strip. A guard whose try's log is not known writes to
+    `<worcaHome>/workflow-tests/unbound-calls.ndjson` instead: it never runs unguarded;
   - Claude Code also gets a `PreToolUse` hook on its Bash and PowerShell tools and the `TRY_DENY` deny rules for both. The
     hook answers with a structured deny when the probed Claude Code is 2.1.304 or later, else with exit 2;
   - it is not a network block yet: a program's own web calls are not stopped, nor, with an engine other than Claude Code, a
@@ -269,6 +273,7 @@ Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
 - `<worcaHome>/workflow-tests/bin`: the `gh`, `glab` and `az` stand-ins a try finds first on its PATH (sh and `.cmd`). They
   write the call down and answer "Not sent: this is a test.".
   `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
+  `<worcaHome>/workflow-tests/no-hooks`: the empty `core.hooksPath` of Worca's own git in a try's copy.
 
 ### Run groups (v65)
 

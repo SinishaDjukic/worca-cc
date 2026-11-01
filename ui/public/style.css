@@ -8941,6 +8941,8 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 @media (prefers-reduced-motion:reduce){.wft-run-dot{animation:none;}}
 /* Workflow tests, Part 3a: examples that work on a project (plans/workflow-tests-part3a-plan.md; canvas boards 32–39) */
 .wft-mono,.wft-start .code,.wft-line-text .code,.wft-ck-preview .code,.wft-notice .code,.wft-pick-list .code{font-family:var(--mono);}
+/* Final review M4: the shared field rule (input[type="text"] { font-family:inherit }) is more specific than .wft-mono. */
+input.wft-mono[type="text"],textarea.wft-mono{font-family:var(--mono);}
 .wft-mono{font-size:var(--fs-body);}
 .wft-start-field{margin-bottom:0;}
 .wft-start{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);font-size:var(--fs-body);}

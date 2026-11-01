@@ -1,7 +1,7 @@
 // ui/public/workflows/test-progress.mjs — While the test runs, stopped and done (canvas boards 20, 27, 28;
 // plans/workflow-tests-part2-plan.md Task 13, C7, C9, G8, D39). Pure DOM: app.js reads GET …/runs/:run and repaints on
 // every workflow-tests-changed frame, so a repaint keeps the focus (data-focus-key) and one live line says what changed.
-import { el, btn } from './test-ui.mjs';
+import { el, btn, startInto } from './test-ui.mjs';
 import { fmtUsd, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
@@ -115,7 +115,8 @@ function phasesCard(doc, ph, dateText) {
     const sub = el(doc, 'span', 's');
     if (k === 'preparing') {
       const st = ph.start || {};
-      sub.append(doc.createTextNode(`${FROM_LEAD}${st.ref || st.short} at `), el(doc, 'span', 'code', st.short || ''), doc.createTextNode(st.at ? ` · ${dateText(st.at)}` : ''));
+      sub.append(doc.createTextNode(FROM_LEAD));
+      startInto(doc, sub, st, dateText);
     } else if (k === 'setup') sub.append(el(doc, 'span', 'code', ph.setupCmd));
     else sub.textContent = PHASE_SUB[k];
     words.append(el(doc, 'b', '', label), sub);
@@ -284,7 +285,8 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
     table.append(row);
   }
   page.append(table);
-  if (st !== 'done') page.append(el(doc, 'p', 'hint', 'Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice.'));
+  // Not after a setup stop (final review): no try was done, and the setup card says what to do.
+  if (st !== 'done' && p.run.stopReason !== 'setup') page.append(el(doc, 'p', 'hint', 'Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice.'));
   root.append(page, live);
   const said = stopped ? `${pillText}. ${stopped}` : pillText;
   if (live.textContent !== said) live.textContent = said;   // only a change is news

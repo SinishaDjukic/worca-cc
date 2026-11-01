@@ -122,7 +122,9 @@ export const PHASES = Object.freeze([['preparing', 'Preparing a copy of the proj
 export const PHASE_LABEL = Object.freeze(Object.fromEntries(PHASES));
 export const PHASE_SUB = Object.freeze({ working: 'The workflow does its work', checking: 'The checks run, then the copy is deleted' });
 export const PHASES_TITLE = 'What happens in each try';
-export const phasesShownFor = (name, label, tryNo) => `Shown for ${name}, ${label}, try ${tryNo}. Up to three tries run at once, each in its own copy of the project.`;   // P29
+/** A version's label inside a sentence (final review M2): "Your draft" reads "your draft" after other words; "v3 draft" stays. */
+export const inSentence = (label) => (/^Your\b/.test(String(label ?? '')) ? `y${String(label).slice(1)}` : label);
+export const phasesShownFor = (name, label, tryNo) => `Shown for ${name}, ${inSentence(label)}, try ${tryNo}. Up to three tries run at once, each in its own copy of the project.`;   // P29
 export const nowText = (now) => `Try ${now.tryNo} · ${PHASE_LABEL[now.phase] || PHASE_LABEL.working}`;
 export const forMinutes = (ms) => { const m = Math.max(1, Math.round(ms / 60000)); return `for ${m} ${m === 1 ? 'minute' : 'minutes'}`; };
 export const RUNNING_LEAD = 'running ';
@@ -132,9 +134,10 @@ export const diskInUseSub = (need, free) => `of about ${fmtGb(need)} · ${fmtGb(
 export const SETUP_STOP_REST = ' The test stopped, and no try counts as failed.';
 export const SETUP_STOP_HINT = "Setup gets the project ready before the workflow starts, so a problem there is not the workflow's fault. Cost: ";
 export const SEE_SETUP_OUTPUT = 'See the setup output';
-export const setupWhere = (name, label, tryNo) => `${name}, ${label}, try ${tryNo}`;
+export const setupWhere = (name, label, tryNo) => `${name}, ${inSentence(label)}, try ${tryNo}`;
 export const SETUP_FIX_HINT = 'If something on this computer was missing, fix it and try again. To change the setup or the start point, edit the example and start a new test.';
-export const SETUP_EDITED_HINT = 'The example was edited since this test started. Start a new test to try it again.';
+// Final review: `edited` is true when an example, the draft or a tested version changed, so the hint names none of them.
+export const SETUP_EDITED_HINT = 'Something this test uses changed since it started (an example or a version). Start a new test to try it again.';
 export const START_NEW_TEST = 'Start a new test';
 export const SETUP_NO_OUTPUT = 'The command printed nothing.';
 export const EDIT_EXAMPLE = 'Edit the example';
@@ -186,7 +189,8 @@ export const PICK_FIRST_TEXT = 'Pick a project first';
 export const CANT_TRY_TEXT = "Can't be tried yet";
 // P34 (not drawn; decided 2026-10-30 by the controller): first use, when some of the runs found cannot become examples.
 export const refusedRunsCount = (n) => ` (${n} can't be used yet)`;
-export const NO_PROJECT_YET_HINT = 'Request only · no project yet, so it is left out of tests';
+export const NO_PROJECT_YET_TAIL = ' · no project yet, so it is left out of tests';
+export const NO_PROJECT_YET_HINT = `Request only${NO_PROJECT_YET_TAIL}`;
 export const WITH_CHANGES_HINT = ' · with changes not committed yet';
 export const MOVED_BADGE = 'Moved on';
 export const LIST_FOOT_HINT = 'Each example keeps its start point. Open an example and pick "Start from the latest" to move it to the newest commit. Both versions are then tried again from there.';
