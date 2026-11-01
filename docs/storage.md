@@ -247,12 +247,16 @@ Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
 - `wf_test_tries` gains `start_commit`, `disk_bytes` (the checkout's size after its setup, measured once per example and start),
   `setup` (JSON: the command, ok, exit code, whether it ran out of time, how long it took and the last 40 lines of its output,
   at most 8 KB) and `changes` (JSON: the first 50 changed files with their status and line counts, and the totals).
-- **Worca's copy of a project** (`<worcaHome>/workflow-tests/repos/<projectKey>`): a `git clone --local --no-checkout` of
+- **Worca's copy of a project** (`<worcaHome>/workflow-tests/repos/<projectKey>`): a `git clone --local --dissociate --no-checkout` of
   the project with no remote, `core.longpaths` on and automatic gc and maintenance off. Before a try it removes any
   remote and sets those settings again. Tries running at the same time share the copy's git settings; the copy is reset
-  when no try is running (before a try, when no checkout of it is live): its git config rewritten from an allowlist (what
+  when no try is running (before a try, when no checkout of it is live: a live checkout is a try's, in its run folder,
+  whose pipelines row is a test try not archived; any other registration, locked or elsewhere, is dropped, and a folder
+  outside Worca's run folders is never removed): its git config rewritten from an allowlist (what
   `git init` makes on that disk, the object and ref format and those settings), `.git/info` as `git init` makes it, and
-  per-checkout `config.worktree` files, hooks a try installed, replace refs and alternates removed. Pinning a start
+  per-checkout `config.worktree` files, hooks a try installed and replace refs removed. A copy that still borrows objects
+  (alternates, from a project cloned with `--shared` or `--reference`) is repacked first and loses its alternates only
+  when it then holds every object; a copy whose start commit is no longer whole is made again. Pinning a start
   point never resets it.
   and Worca's own git in it runs no hook, fsmonitor or signing program of the copy and has the outward guard's env. Start points are pinned as
   `refs/worca-tests/<sha>`. Each try is a worktree of it under its run folder (`<worcaHome>/runs/<pipelineId>/repos/<projectKey>`),

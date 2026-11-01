@@ -30,11 +30,11 @@ import {
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 import { testCopyKeyOf } from './store.mjs';
 import { tryGitEnv } from './workflow-tests/try-guard-env.mjs';
+import { ownWorkDir } from './no-project-work.mjs';
 
 /** Round 4: Worca's git in its workflow-test copy of a project always runs under the try env (the guard; no hook, fsmonitor
  *  or signing program of the copy), whoever calls: a try's teardown, an archive of a try, the boot sweep of a try's run. */
 const copyEnvOr = (projectDir, gitEnv) => gitEnv || (projectDir && testCopyKeyOf(projectDir) ? tryGitEnv() : null);
-import { ownWorkDir } from './no-project-work.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
 const BRANCH_PREFIX = 'worca-cc/';
@@ -417,6 +417,9 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
   const steps = [];
   gitEnv = copyEnvOr(projectDir, gitEnv);
   if (worktreeDir) {
+    // Round 5: a checkout of Worca's workflow-test copy is unlocked first (a try may lock its checkout), so a forced remove
+    // leaves no locked registration behind. Normal runs are unchanged.
+    if (force && projectDir && testCopyKeyOf(projectDir)) await git(projectDir, ['worktree', 'unlock', worktreeDir], { fullEnv: gitEnv });
     const args = force
       ? ['worktree', 'remove', '--force', worktreeDir]
       : ['worktree', 'remove', worktreeDir];

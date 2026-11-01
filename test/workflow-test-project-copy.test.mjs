@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { repoSnapshot } from './helpers/repo-snapshot.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -220,6 +220,7 @@ test('a copy that got a remote is repaired in place (pins, branches and live wor
   const wt = join(wh, 'runs', 'd00d0001', 'repos', key);
   mkdirSync(dirname(wt), { recursive: true });
   git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-d00d0001', '--', wt, p.startCommit);   // a live try
+  getDb().prepare("INSERT INTO pipelines (id, project_key, status, is_test) VALUES ('d00d0001', ?, 'running', 1)").run(key);   // round 5: its row
   git(wt, 'remote', 'add', 'origin', real);   // an agent in its checkout: worktrees share the copy's config
   git(dir, 'remote', 'add', 'upstream', real);
   git(dir, 'config', 'gc.auto', '1');
@@ -410,6 +411,7 @@ test('round 4 (P39): a live sibling checkout keeps the shared settings; with non
   const wt = join(wh, 'runs', 'r4000001', 'repos', key);
   mkdirSync(dirname(wt), { recursive: true });
   git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r4000001', '--', wt, p.startCommit);   // a try still running
+  getDb().prepare("INSERT INTO pipelines (id, project_key, status, is_test) VALUES ('r4000001', ?, 'running', 1)").run(key);   // round 5: its try
   git(wt, 'config', 'core.hooksPath', '.husky/_');   // its setup (husky)
   git(wt, 'config', 'filter.nb.clean', 'nbstripout');   // and a filter it relies on
   writeFileSync(join(dir, '.git', 'info', 'attributes'), '* filter=lfs\n');
@@ -418,7 +420,8 @@ test('round 4 (P39): a live sibling checkout keeps the shared settings; with non
   assert.equal(git(dir, 'config', 'filter.nb.clean'), 'nbstripout', 'and its filter');
   assert.ok(existsSync(join(dir, '.git', 'info', 'attributes')), 'nothing is reset while a checkout is live');
 
-  rmSync(wt, { recursive: true, force: true });   // that try ended (its checkout folder is gone; the registration is stale)
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'r4000001'").run();   // that try ended
+  rmSync(wt, { recursive: true, force: true });   // and its checkout folder is gone; the registration is stale
   git(dir, 'config', 'alias.co', '!evil');
   await copy.pinStart({ key, name: 'real', projectDir: real });   // pinning needs no reset
   assert.equal(git(dir, 'config', 'alias.co'), '!evil', 'pinStart leaves the settings as they are');
@@ -470,4 +473,125 @@ test('round 4: Worca removes a checkout of its copy under the try env (no hook o
   } finally { if (prev === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prev; }
   assert.equal(existsSync(marker) ? readFileSync(marker, 'utf8') : '', '', 'the copy\'s reference-transaction hook never ran');
   assert.throws(() => git(dir, 'rev-parse', '--verify', '--quiet', 'refs/heads/worca-cc/try-r4000003'), undefined, 'the branch went');
+});
+
+/** A project that borrows its objects (`git clone --shared`: objects/info/alternates), as shared object caches do. */
+function sharedProject() {
+  const base = templateRepo('wftbase', { branch: 'main', user: true, files: { 'README.md': '# base\n', 'src/a.mjs': 'export const a = 1;\n' } });
+  const parent = mkdtempSync(join(tmpdir(), 'worca-cc-wftshared-'));
+  dirs.push(base, parent);
+  const person = join(parent, 'person');
+  execFileSync('git', ['clone', '-q', '--shared', base, person]);
+  assert.ok(existsSync(join(person, '.git', 'objects', 'info', 'alternates')), 'the project borrows its objects');
+  // A commit of its own on top: the commit and its tree are local, src/a.mjs's blob is only in the borrowed store. A copy that
+  // loses its alternates then still "has" the start commit, so a fetch would never bring the blob back.
+  writeFileSync(join(person, 'README.md'), '# person\n');
+  git(person, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-am', 'own');
+  return { person, key: projectKey(person) };
+}
+const fsckOk = (dir) => { try { git(dir, 'fsck', '--connectivity-only', '--no-dangling'); return true; } catch { return false; } };
+
+test('round 5: an alternates-backed project gets a copy with its own objects; a reset keeps it whole; the pin checks out', async () => {
+  const { person, key: k } = sharedProject();
+  const p = await copy.pinStart({ key: k, name: 'person', projectDir: person });
+  const dir = join(wh, 'workflow-tests', 'repos', k);
+  assert.equal(existsSync(join(dir, '.git', 'objects', 'info', 'alternates')), false, 'made with --dissociate');
+  await copy.ensureStartCommit({ key: k, projectDir: person, project: { key: k, startSha: p.startSha, startCommit: p.startCommit, startAt: p.startAt } });
+  assert.ok(fsckOk(dir), 'fsck is clean after the reset');
+  const wt = join(wh, 'runs', 'r5000001', 'repos', k);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r5000001', '--', wt, p.startCommit);
+  assert.ok(existsSync(join(wt, 'src', 'a.mjs')), 'the pin checks out');
+});
+
+test('round 5: an existing copy that still borrows objects is repacked, then its alternates go; a damaged copy is made again', async () => {
+  const { person, key: k } = sharedProject();
+  const dir = join(wh, 'workflow-tests', 'repos', k);
+  mkdirSync(dirname(dir), { recursive: true });
+  // A copy made before round 5: `clone --local` copied the alternates file.
+  execFileSync('git', ['clone', '-q', '--local', '--no-checkout', '--no-tags', person, dir]);
+  git(dir, 'remote', 'remove', 'origin');
+  assert.ok(existsSync(join(dir, '.git', 'objects', 'info', 'alternates')));
+  const sha = git(person, 'rev-parse', 'HEAD');
+  const at = new Date(Date.parse(git(person, 'show', '-s', '--format=%cI', sha))).toISOString();
+  const project = { key: k, startSha: sha, startCommit: sha, startAt: at };
+  await copy.ensureStartCommit({ key: k, projectDir: person, project });
+  assert.equal(existsSync(join(dir, '.git', 'objects', 'info', 'alternates')), false, 'repacked, then its alternates removed');
+  assert.ok(fsckOk(dir), 'and nothing is missing');
+  const wt = join(wh, 'runs', 'r5000002', 'repos', k);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r5000002', '--', wt, sha);
+  assert.ok(existsSync(join(wt, 'README.md')));
+  rmSync(wt, { recursive: true, force: true });
+
+  // A copy damaged the round 4 way (alternates removed without a repack): its start commit is no longer whole.
+  rmSync(dir, { recursive: true, force: true });
+  execFileSync('git', ['clone', '-q', '--local', '--no-checkout', '--no-tags', person, dir]);
+  git(dir, 'remote', 'remove', 'origin');
+  rmSync(join(dir, '.git', 'objects', 'info', 'alternates'));
+  assert.equal(fsckOk(dir), false, 'the copy is damaged');
+  await copy.ensureStartCommit({ key: k, projectDir: person, project });
+  assert.ok(fsckOk(dir), 'a damaged copy is made again, never used as it is');
+  const wt2 = join(wh, 'runs', 'r5000003', 'repos', k);
+  mkdirSync(dirname(wt2), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r5000003', '--', wt2, sha);
+  assert.ok(existsSync(join(wt2, 'README.md')));
+});
+
+test('round 5: a locked try checkout and a checkout added outside the run folder never switch the reset off; the outside folder is kept', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const project = { key, startSha: p.startSha, startCommit: p.startCommit, startAt: p.startAt };
+  // A try locked its checkout; the teardown's remove refused it and the fallback removed the folder.
+  const wt = join(wh, 'runs', 'r5000004', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r5000004', '--', wt, p.startCommit);
+  git(dir, 'worktree', 'lock', wt);
+  rmSync(wt, { recursive: true, force: true });
+  // An agent added a checkout elsewhere.
+  const outside = join(mkdtempSync(join(tmpdir(), 'worca-cc-wftoutwt-')), 'elsewhere');
+  dirs.push(dirname(outside));
+  git(dir, 'worktree', 'add', '-q', '--detach', outside, p.startCommit);
+  git(dir, 'config', 'filter.x.clean', 'evil');
+  await copy.ensureStartCommit({ key, projectDir: real, project });
+  assert.throws(() => git(dir, 'config', '--get', 'filter.x.clean'), undefined, 'the reset ran');
+  assert.equal(git(dir, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((l) => l.startsWith('worktree ')).length, 1, 'only the copy itself is registered');
+  assert.ok(existsSync(join(outside, 'README.md')), 'a folder outside Worca\'s run folders is never removed');
+
+  // The boot sweep does the same: a locked registration no longer holds a leftover try branch.
+  const wt2 = join(wh, 'runs', 'r5000005', 'repos', key);
+  mkdirSync(dirname(wt2), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r5000005', '--', wt2, p.startCommit);
+  git(dir, 'worktree', 'lock', wt2);
+  rmSync(wt2, { recursive: true, force: true });
+  await copy.sweepTestCopies();
+  assert.throws(() => git(dir, 'rev-parse', '--verify', '--quiet', 'refs/heads/worca-cc/try-r5000005'), undefined, 'the leftover branch went');
+});
+
+test('round 5: removing a locked checkout of the copy unlocks it first, so no registration is left behind', async () => {
+  const { removeWorktree } = await import('../src/core/worktree.mjs');
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'r5000006', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r5000006', '--', wt, p.startCommit);
+  git(dir, 'worktree', 'lock', wt);
+  const r = await removeWorktree({ projectDir: dir, worktreeDir: wt, branch: null, force: true });
+  assert.ok(r.ok, JSON.stringify(r.steps));
+  assert.equal(git(dir, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((l) => l.startsWith('worktree ')).length, 1);
+});
+
+test('round 5: a try that has not settled keeps its registration even before its folder exists (its checkout is being made)', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'r5000007', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r5000007', '--', wt, p.startCommit);
+  getDb().prepare("INSERT INTO pipelines (id, project_key, status, is_test) VALUES ('r5000007', ?, 'starting', 1)").run(key);
+  git(dir, 'worktree', 'lock', '--reason', 'initializing', wt);   // what `git worktree add` holds while it makes the checkout
+  rmSync(wt, { recursive: true, force: true });   // as if git had registered it but not yet written the folder
+  git(dir, 'config', 'filter.y.clean', 'kept');
+  await copy.ensureStartCommit({ key, projectDir: real, project: { key, startSha: p.startSha, startCommit: p.startCommit, startAt: p.startAt } });
+  assert.equal(git(dir, 'config', 'filter.y.clean'), 'kept', 'no reset while that try runs');
+  assert.ok(existsSync(join(dir, '.git', 'worktrees')) && readdirSync(join(dir, '.git', 'worktrees')).length > 0, 'its registration is kept');
 });

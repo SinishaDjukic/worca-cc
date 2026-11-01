@@ -5,15 +5,16 @@
 // rev-list, ls-tree, cat-file, show, grep <tree>, for-each-ref, symbolic-ref and remote get-url, and uncommitted changes
 // are read with uncommittedPatch's scratch objects.
 import { execFile } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { testCopiesRoot, testCopyDirFor, testCopyKeyOf, PROJECT_KEY_RE } from '../store.mjs';
 import { uncommittedPatch } from '../git-info.mjs';
 import { isSafeBranchName } from '../git-sync.mjs';
 import { rmGuarded } from '../run-manifest.mjs';
+import { findPipelineRowById } from '../artifacts.mjs';
 import { testError, PIN_MAX_CHANGES } from './store.mjs';
 import { lfsText, submodulesText, START_GONE_TEXT, CHANGES_TOO_BIG_TEXT } from '../../shared/workflow-tests/project-text.mjs';
 import { tryGitEnv, withSafeGitArgs } from './try-guard-env.mjs';
@@ -119,10 +120,10 @@ async function resetCopyConfig(dir, key) {
     } finally { await rm(next, { force: true }).catch(() => {}); }
     await resetInfo(join(gitDir, 'info'), join(probe, '.git', 'info'));
   } finally { await removeTree(probe); }
-  // Round 4: replace refs and alternates change what a later try reads; Worca's copy uses neither.
+  // Round 4: replace refs change what a later try reads; Worca's copy uses none.
   const rep = await copyGit(dir, ['for-each-ref', '--format=%(refname)', 'refs/replace/']);
   for (const ref of rep.stdout.split(/\r?\n/).filter((r) => r.startsWith('refs/replace/'))) await copyGit(dir, ['update-ref', '-d', ref]);
-  await rmFileOrLink(join(gitDir, 'objects', 'info', 'alternates'));
+  await dissociate(dir);
   await rmFileOrLink(join(gitDir, 'config.worktree'));
   let names = [];
   if (await isRealDir(join(gitDir, 'worktrees'))) {   // round 4: never read through a link out of the copy
@@ -136,6 +137,33 @@ async function resetCopyConfig(dir, key) {
   else if (hst) {
     for (const e of await readdir(hooks)) if (!e.endsWith('.sample')) await rmFileOrLink(join(hooks, e));
   }
+}
+
+/**
+ * Round 5: a copy made before `--dissociate` may still borrow objects (objects/info/alternates, from a project cloned with
+ * --shared or --reference). Its alternates go only once the copy holds every object itself: `git repack -a -d` first, then
+ * the file is set aside and the copy checked (`fsck --connectivity-only`); on any failure the file is put back and a line
+ * is logged. Never removed otherwise: without the objects it borrows the copy would be damaged for good.
+ */
+async function dissociate(dir) {
+  const alt = join(dir, '.git', 'objects', 'info', 'alternates');
+  let st = null;
+  try { st = await lstat(alt); } catch { return true; }
+  if (!st.isFile()) { console.warn(`workflow tests: ${alt} is not a file; left in place`); return false; }
+  const rp = await copyGit(dir, ['repack', '-a', '-d', '-q']);
+  if (!rp.ok) { console.warn(`workflow tests: could not repack ${dir} (${firstLine(rp.stderr)}); it keeps borrowing objects`); return false; }
+  const aside = `${alt}.worca-off`;
+  await rename(alt, aside);
+  if ((await copyGit(dir, ['fsck', '--connectivity-only', '--no-dangling', '--no-progress'])).ok) { await rm(aside, { force: true }); return true; }
+  await rename(aside, alt);
+  console.warn(`workflow tests: ${dir} still needs the objects it borrows; its alternates stay`);
+  return false;
+}
+
+/** Round 5: every object of `sha` (the commit, its trees and blobs) is readable in the copy. A copy that lost objects it
+ *  borrowed still has the commit, so `cat-file -e` alone would never notice. */
+async function commitWhole(dir, sha) {
+  return (await copyGit(dir, ['rev-list', '--objects', '--no-walk', '--missing=error', `${sha}^{commit}`, '--'])).ok;
 }
 
 /** A real folder (lstat): never a link, never followed. */
@@ -158,12 +186,54 @@ async function resetInfo(info, probeInfo) {
  * not a real folder (a link out of the copy) is removed as itself, never followed, and counts as none.
  */
 async function hasLiveCheckout(dir) {
+  return (await tidyCheckouts(dir)) > 0;
+}
+
+const SETTLED_TRY = new Set(['done', 'stopped', 'error']);
+/** Round 5: the checkout `wt` is a live try's: it is at <worcaHome>/runs/<id>/repos/<name>, <id> is a test try's pipelines row
+ *  that is not archived, and either that try has not settled (its checkout may still be being made: never judged by the
+ *  folder) or its folder is still there (a settled try keeps its checkout until its checks ran and the runner removed it). */
+function liveTryCheckout(wt) {
+  const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const parts = relative(fold(resolve(join(worcaHome(), 'runs'))), fold(resolve(wt))).split(/[\\/]/);
+  if (parts.length !== 3 || parts[1] !== 'repos' || !parts[0] || parts[0] === '..' || !parts[2]) return false;
+  let row = null;
+  try { row = findPipelineRowById(parts[0]); } catch { row = null; }
+  if (!row || !row.is_test || row.archived_at) return false;
+  if (!SETTLED_TRY.has(String(row.status || ''))) return true;
+  return isRealDirSync(wt);
+}
+const isRealDirSync = (p) => { try { return lstatSync(p).isDirectory(); } catch { return false; } };
+
+/**
+ * Round 5: the copy's checkout registrations, tidied; returns how many are live tries' (liveTryCheckout). Every other one
+ * (a try that ended or was locked, a checkout an agent added elsewhere) is unlocked, then removed: inside Worca's run
+ * folders with `worktree remove -f -f`; elsewhere only its registration goes, the folder is never touched. Then prune.
+ * A `.git/worktrees` that is not a real folder (a link out of the copy) is removed as itself, never followed.
+ */
+async function tidyCheckouts(dir) {
   const wts = join(dir, '.git', 'worktrees');
   let st = null;
-  try { st = await lstat(wts); } catch { return false; }
-  if (!st.isDirectory()) { await rm(wts, { force: true }); return false; }
+  try { st = await lstat(wts); } catch { return 0; }
+  if (!st.isDirectory()) { await rm(wts, { force: true }); return 0; }
+  let live = 0;
+  let entries = [];
+  try { entries = (await readdir(wts, { withFileTypes: true })).filter((e) => e.isDirectory()); } catch { entries = []; }
+  for (const e of entries) {
+    const admin = join(wts, e.name);
+    let wt = null;
+    try { wt = dirname(resolve(String(await readFile(join(admin, 'gitdir'), 'utf8')).trim())); } catch { wt = null; }
+    if (wt && liveTryCheckout(wt)) { live += 1; continue; }
+    await rmFileOrLink(join(admin, 'locked'));   // unlocked: a lock never keeps a dead checkout registered
+    if (wt && existsSync(wt) && insideRunFolder(wt, null)) {
+      await copyGit(dir, ['worktree', 'remove', '-f', '-f', wt]);
+    } else if (wt && existsSync(wt)) {
+      const why = await removeTree(admin);   // only the registration; the folder outside Worca's is not Worca's
+      if (why) console.warn(`workflow tests: could not drop the checkout registration ${admin}: ${why}`);
+    }
+  }
   await copyGit(dir, ['worktree', 'prune']);
-  try { return (await readdir(wts, { withFileTypes: true })).some((e) => e.isDirectory()); } catch { return false; }
+  return live;
 }
 
 const notACopy = (dir) => `${dir} is not a usable copy of the project (no git repository of its own): skipped`;
@@ -231,7 +301,7 @@ async function ensureTestCopyLocked(key, { projectDir, reset = true }) {
   const tmp = await mkdtemp(join(testCopiesRoot(), `.clone-${key}-`));   // never matches PROJECT_KEY_RE; the boot sweep removes a leftover
   try {
     // --local hardlinks the project's object files on purpose: cheap, and git never rewrites an object file in place.
-    const c = await copyGit(testCopiesRoot(), ['clone', '--quiet', '--local', '--no-checkout', '--no-tags', '--', resolve(projectDir), tmp]);
+    const c = await copyGit(testCopiesRoot(), ['clone', '--quiet', '--local', '--dissociate', '--no-checkout', '--no-tags', '--', resolve(projectDir), tmp]);
     if (!c.ok) throw testError(`Worca could not copy the project: ${firstLine(c.stderr)}`, 'NOT_READY');
     await setUp(tmp, [['remote', 'remove', 'origin']]);
     await resetCopyConfig(tmp, key);
@@ -366,7 +436,14 @@ export async function pinStart({ key, name = key, projectDir, ref = null, sha = 
 /** Before a try: the example's start commit is in the copy; a copy removed meanwhile is made again (same SHA, D53). */
 export async function ensureStartCommit({ key, projectDir, project, changes = null }) {
   return withKeyLock(key, async () => {
-    const { dir } = await ensureTestCopyLocked(key, { projectDir });
+    let { dir } = await ensureTestCopyLocked(key, { projectDir });
+    // Round 5: a copy that has the start commit but not every object of it is damaged: made again when no try runs.
+    if ((await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok && !(await commitWhole(dir, project.startCommit))) {
+      if (await hasLiveCheckout(dir)) throw testError("Worca's copy of the project is damaged. It is made again once no test of this project runs.", 'NOT_READY');
+      const why = await removeTree(dir);
+      if (why) throw testError(`Worca could not remove its damaged copy of the project: ${why}`, 'NOT_READY');
+      ({ dir } = await ensureTestCopyLocked(key, { projectDir }));
+    }
     if (!(await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok) {
       await fetchInto(dir, projectDir, project.startSha);
       const again = changes ? await commitChanges(dir, project.startSha, changes, project.startAt) : project.startSha;
@@ -525,7 +602,7 @@ export async function sweepTestCopies({ log = () => {} } = {}) {
     await withKeyLock(name, async () => {
       if (!(await ownRepo(dir))) { log('warn', `workflow tests: ${notACopy(dir)}`); return; }
       out.copies += 1;
-      await copyGit(dir, ['worktree', 'prune']);
+      await tidyCheckouts(dir);   // round 5: a locked or foreign registration holds nothing
       const held = new Set((await copyGit(dir, ['worktree', 'list', '--porcelain'])).stdout.split('\n')
         .filter((l) => l.startsWith('branch refs/heads/')).map((l) => l.slice('branch refs/heads/'.length)));
       const r = await copyGit(dir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/worca-cc/']);
