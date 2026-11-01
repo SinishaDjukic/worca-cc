@@ -1495,6 +1495,7 @@ export function createAskTools(deps) {
   async function baseMovedOf(row, baseSha, source) {
     if (gitOff()) return null;
     if (!baseSha || !source || !row || !row.project_key) return null;
+    if (row.is_test) return null;   // 3a (final review round 2): a try's branch is in Worca's copy; its base is not the person's
     if (!deps.branches || typeof deps.branches.baseMoved !== 'function' || typeof deps.readStoreMeta !== 'function') return null;
     const meta = deps.readStoreMeta(row.project_key);
     if (!meta || !meta.path) return null;

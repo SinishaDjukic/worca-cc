@@ -5123,7 +5123,8 @@ export class RunHarness extends EventEmitter {
    * skip its final _persist.
    */
   async _mergeBack(key, info, branchRecord, { retained = false } = {}) {
-    if (!branchRecord || branchRecord.sameAsSource !== true || this._isWorkspaceScan()) return false;
+    // A test try never merges back (it never starts on its source branch; this keeps it so): no fast-forward, no post-merge hook.
+    if (!branchRecord || branchRecord.sameAsSource !== true || this._isWorkspaceScan() || this._isTestTry()) return false;
     const source = branchRecord.source;
     const at = new Date().toISOString();
     const notMerged = async (kind, reason, paths = null) => {
@@ -5394,7 +5395,8 @@ export class RunHarness extends EventEmitter {
     const pipelineDir = this.pipeline?.dir;
     if (!pipelineDir || !info?.worktreeDir) return;
     const name = retainedWorkPatchName(this.isWorkspace ? key : null);
-    const snap = await snapshotWorktreePatch(info.worktreeDir, join(pipelineDir, name));
+    const tryEnv = this._tryGitEnv();   // final review round 2: a try's snapshot runs the copy's programs only under the guard
+    const snap = await snapshotWorktreePatch(info.worktreeDir, join(pipelineDir, name), tryEnv ? { gitEnv: tryEnv } : {});
     for (const lock of snap.clearedLocks || []) await this._recordRunWarning(staleGitLockNote(lock));
     if (snap.ok && snap.file) {
       recordArtifact(this.pipeline.id, 'retained-work-patch', name);

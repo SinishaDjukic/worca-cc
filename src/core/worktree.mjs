@@ -669,16 +669,17 @@ export async function indexTracks(dir, rel) {
  * When stale git locks had to be removed first, every result after that carries
  * `clearedLocks: [{ kind, path, ageMs }]` so the caller can leave a trace of each.
  */
-export async function snapshotWorktreePatch(worktreeDir, outFile) {
+// gitEnv (workflow tests 3a, final review round 2): a try's env (the guard, no hook / fsmonitor of the copy) for every git here.
+export async function snapshotWorktreePatch(worktreeDir, outFile, { gitEnv = null } = {}) {
   if (!worktreeDir || !outFile) {
     return { ok: false, step: 'path', message: 'worktreeDir and outFile are required' };
   }
-  let add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
+  let add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
   // Leftover locks from a killed git are the usual reason a retained run's commit failed;
   // without this, discard and delete could never save the work once they are stale.
   const clearedLocks = add.ok ? [] : await clearStaleGitLocks(worktreeDir);
   if (clearedLocks.length) {
-    add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
+    add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
   }
   const done = (res) => (clearedLocks.length ? { ...res, clearedLocks } : res);
   if (!add.ok) {
@@ -686,7 +687,7 @@ export async function snapshotWorktreePatch(worktreeDir, outFile) {
   }
   const part = `${outFile}.part`;
   const diff = await git(worktreeDir, ['diff', '--binary', `--output=${part}`, 'HEAD', '--'],
-    { timeout: SLOW_GIT_TIMEOUT_MS });
+    { timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
   if (!diff.ok) {
     await rm(part, { force: true }).catch(() => {});
     return done({ ok: false, step: 'diff', message: diff.stderr.trim() || `exit ${diff.code}`, fromStderr: !!diff.stderr.trim() });

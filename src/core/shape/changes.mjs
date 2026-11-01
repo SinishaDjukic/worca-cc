@@ -4,7 +4,7 @@
 import { landingFor } from '../../shared/shape/landing.mjs';
 import { routeLabel, ROUTE_CHOICES } from '../../shared/shape/route.mjs';
 import { getDb } from '../db.mjs';
-import { readStoreMeta } from '../artifacts.mjs';
+import { readStoreMeta, projectDirOfRow } from '../artifacts.mjs';
 import { roundsOf, roundOrigin } from './rounds.mjs';
 import { featureOfPipeline, currentFeatureId, featureBase, featureView } from './features.mjs';
 
@@ -101,7 +101,7 @@ export function landingFacts(pipelineId, deps) {
   const row = deps.findPipelineRowById(origin);
   if (!row || row.target === 'workspace') return null;
   const rounds = roundsOf([row.id]).get(row.id) || [];
-  return { feature: null, run: { pipelineId: row.id, title: row.title || 'this run', status: row.status, projectDir: readStoreMeta(row.project_key)?.path ?? null,
+  return { feature: null, run: { pipelineId: row.id, title: row.title || 'this run', status: row.status, projectDir: row.is_test ? projectDirOfRow(row) : readStoreMeta(row.project_key)?.path ?? null,
     finished: FINISHED.has(row.status) && !rounds.some((r) => LIVE_ROUND.has(r.status)),
     branch: parse(row.branch), pr: deps.readPrState(row.id), rounds: 1 + rounds.length, tags: tagsOf(deps, row.id), labels: labelsOf(deps, row.id) } };
 }

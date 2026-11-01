@@ -1506,6 +1506,11 @@ async function cmdResume(argv) {
     return 1;
   }
   if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) { process.stderr.write(`worca: ${GIT_MISSING.message}\n`); return 1; }
+  // Workflow tests 3a (final review round 2): as the server, never resume a try (its key names the person's project).
+  if (saved.row.is_test) {
+    process.stderr.write(`pipeline ${id}: a test try cannot be resumed: finish the rest from its test\n`);
+    return 1;
+  }
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
     process.stderr.write(`pipeline ${id} is "${saved.row.status}", not resumable (paused/interrupted only)\n`);
     return 1;

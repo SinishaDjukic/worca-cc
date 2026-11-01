@@ -11,14 +11,13 @@ import { createWorktree, removeWorktree, worktreePathForBranch, snapshotWorktree
 import { staleGitLockNote } from './git-lock.mjs';
 import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS, liveRetainMembers } from './run-manifest.mjs';
 import { findPipelineRowById, retainedWorkFor, checkoutRecordsFor, readPrState, appendAuditById,
-  readStoreMeta, runRootSweepLookups } from './artifacts.mjs';
+  readStoreMeta, runRootSweepLookups, projectDirOfRow as projectDirOfSavedRow } from './artifacts.mjs';
 import { isNoProjectKey, NO_PROJECT_NAME } from '../shared/no-project.mjs';
 import { branchExists, branchPushedTo, restoreBranchFromRemote, prLifecycleState } from './git-info.mjs';
 import { actionsSettings } from './settings.mjs';
 import { busyRunIdsFromPidFile, actionsPidFile } from './actions/registry.mjs';
 import { terminalPidFile } from './terminal/paths.mjs';
 import { gitAvailable } from './git-available.mjs';
-import { testCopyDirFor, PROJECT_KEY_RE } from './store.mjs';
 import { TRY_STAYS_IN_COPY_TEXT } from '../shared/workflow-tests/project-text.mjs';
 
 const execFileP = promisify(execFile);
@@ -47,9 +46,7 @@ export const busyRunIds = (extra = []) => new Set([
 /** The project dir of a single-project row, exactly as rowToState derives it (artifacts.mjs:2249). Workflow tests 3a
  *  (final review C1): a test try ran in Worca's copy of the project, so its row resolves there (store.mjs runProjectDir),
  *  never to the person's folder. */
-const projectDirOfRow = (row) => (row.is_test
-  ? (PROJECT_KEY_RE.test(String(row.project_key ?? '')) ? testCopyDirFor(row.project_key) : null)
-  : readStoreMeta(row.project_key)?.path ?? null);
+const projectDirOfRow = (row) => projectDirOfSavedRow(row);
 
 /** A test try's row: its branch lives only in Worca's copy (3a, final review C1). Check out, Update branch and the keep
  *  policy refuse it with code TEST_TRY. */

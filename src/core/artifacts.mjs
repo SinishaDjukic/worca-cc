@@ -14,7 +14,7 @@ import { join, basename, resolve, isAbsolute, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
-import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY, testCopyKeyOf } from './store.mjs';
+import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY, testCopyKeyOf, testCopyDirFor, PROJECT_KEY_RE } from './store.mjs';
 import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
 import { workModeOfRow } from './project-kind.mjs';
 import { rollupChanges } from './folder-members.mjs';
@@ -58,6 +58,18 @@ const DIR_ID_RE = /-([0-9a-f]{8})$/i;
  * @param {string} key
  * @returns {object|null}
  */
+/**
+ * The folder a single-project pipelines row worked in: a run without a project, its own work folder; a workflow-test try
+ * (is_test), Worca's copy of the project (3a, final review round 2: never the person's folder); else the project's
+ * registered path (store meta). null when unknown. Workspace rows keep their members' own dirs (workspace_meta).
+ */
+export function projectDirOfRow(row) {
+  if (!row) return null;
+  if (isNoProjectKey(row.project_key)) return noProjectWorkDir(row.id);
+  if (row.is_test) return PROJECT_KEY_RE.test(String(row.project_key ?? '')) ? testCopyDirFor(row.project_key) : null;
+  return readStoreMeta(row.project_key)?.path ?? null;
+}
+
 export function readStoreMeta(key) {
   const row = getDb().prepare('SELECT data FROM store_meta WHERE key = ?').get(key);
   return row ? j(row.data, null) : null;
@@ -2776,9 +2788,8 @@ function rowToState(row) {
     state.active = [];        // nothing is in flight in a rehydrated snapshot
     state.gate = null;
   }
-  const meta = readStoreMeta(row.project_key);
-  state.projectDir = meta?.path ?? null;
-  if (isNoProjectKey(row.project_key)) state.projectDir = noProjectWorkDir(row.id);   // P3: the run's own work folder
+  // P3: a run without a project, its own work folder; 3a: a test try, Worca's copy of the project (projectDirOfRow).
+  state.projectDir = projectDirOfRow(row);
   // Workspace superset: spread workspace_meta back onto the top level + target.
   if (row.target === 'workspace') {
     const wm = j(row.workspace_meta, {}) || {};
@@ -2816,7 +2827,7 @@ function buildAuditMarkdown(row) {
   const header =
     `# Pipeline: ${row.title ?? row.id}\n\n` +
     `- **id**: ${row.id}\n` +
-    `- **project**: ${(readStoreMeta(row.project_key)?.path) ?? ''}\n` +
+    `- **project**: ${(row.is_test ? projectDirOfRow(row) : readStoreMeta(row.project_key)?.path) ?? ''}\n` +
     `- **started**: ${row.started_at ?? ''}\n` +
     (actorLabel(row.started_by) ? `- **started by**: ${actorLabel(row.started_by)}\n` : '') +
     `- **prompt file**: prompt.md\n\n` +

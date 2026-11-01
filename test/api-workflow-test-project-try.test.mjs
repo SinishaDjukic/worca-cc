@@ -304,3 +304,40 @@ test('final review I2: hooks and an fsmonitor a setup leaves in the copy never r
   await ensureStartCommit({ key, projectDir: real, project: pin });
   for (const k of ['core.hooksPath', 'core.fsmonitor']) assert.throws(() => git(copyDir, 'config', '--get', k), undefined, `${k} unset before the next test`);
 });
+
+test('final review round 2: a retained try\'s snapshot runs the copy\'s filter and fsmonitor only under the try guard', { timeout: 240000 }, async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const fw = (p) => p.replaceAll('\\', '/');
+  const evil = join(homeDir, 'evil2');
+  mkdirSync(evil, { recursive: true });
+  const marker = fw(join(evil, 'ran.txt'));
+  // A clean filter that fails without GH_TOKEN: the teardown's add (guarded) fails, so the work is retained and the
+  // retained-work snapshot runs `git add -A` again. It must not get the token either.
+  const filter = join(evil, 'clean.sh');
+  writeFileSync(filter, `#!/bin/sh\necho "clean $GH_TOKEN" >> "${marker}"\nif [ -z "$GH_TOKEN" ]; then exit 1; fi\ncat\n`);
+  const fsmon = join(evil, 'fsmon.sh');
+  writeFileSync(fsmon, `#!/bin/sh\necho "fsmonitor $GH_TOKEN" >> "${marker}"\nexit 1\n`);
+  const setup = [
+    `git config filter.x.clean "sh ${fw(filter)}"`, 'git config filter.x.smudge cat', 'git config filter.x.required true',
+    `git config core.fsmonitor "sh ${fw(fsmon)}"`,
+    'node -e "require(\'fs\').writeFileSync(\'.gitattributes\', \'*.mjs filter=x\')"',
+  ].join(' && ');
+  const prevTok = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = 'secret-token';
+  try {
+    const out = await _testing.invokeStartRun(await tryBody({ title: 'Test: Ticket 482 · try 6' }), null,
+      { workflowTest: { use: 'draft', project: { key, setupCmd: setup } } });
+    assert.equal(out.status, 200, JSON.stringify(out.body));
+    const entry = await settled(out.body.runId);
+    const row = artifacts.findPipelineRowById(entry.pipelineId);
+    const br = JSON.parse(row.branch);
+    assert.ok(br.commitFailed, `the guarded teardown add failed, so the work was retained: ${row.branch}`);
+    const ran = existsSync(marker) ? readFileSync(marker, 'utf8') : '';
+    assert.match(ran, /^clean $/m, 'the filter did run (the scenario is real)');
+    assert.doesNotMatch(ran, /secret-token/, `no program of the copy saw the token:\n${ran}`);
+  } finally {
+    if (prevTok === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prevTok;
+    try { git(copyDir, 'config', '--remove-section', 'filter.x'); } catch { /* not set */ }
+    try { git(copyDir, 'config', '--unset', 'core.fsmonitor'); } catch { /* not set */ }
+  }
+});

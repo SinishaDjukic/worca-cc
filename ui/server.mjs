@@ -4275,7 +4275,7 @@ app.get('/api/schedules/after-candidates', (req, res) => {
     // process's run is not in this host's runs Map at all. The Map only adds live runIds.
     const where = workspaceId ? 'workspace_key = ?' : "project_key = ? AND target = 'project'";
     const rows = getDb().prepare(`SELECT id, title, status FROM pipelines WHERE ${where}
-      AND status IN ('created', 'starting', 'running', 'pausing', 'paused') AND archived_at IS NULL ORDER BY started_at DESC LIMIT 50`)
+      AND status IN ('created', 'starting', 'running', 'pausing', 'paused') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at DESC LIMIT 50`)
       .all(workspaceId || projectKey(projectDir));
     const byPipeline = new Map(rows.map((r) => [r.id, { pipelineId: r.id, runId: null, title: r.title || null, status: r.status }]));
     for (const r of runs.values()) {
@@ -7827,6 +7827,7 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
     if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'TEST_TRY') return res.status(409).json({ error: e.message, code: 'TEST_TRY' });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -7863,6 +7864,7 @@ app.post('/api/runs/:id/apply-retained', async (req, res) => {
     res.json(report);
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message, code: 'RUNNING' });
+    if (e && e.code === 'TEST_TRY') return res.status(409).json({ error: e.message, code: 'TEST_TRY' });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -8931,7 +8933,7 @@ app.post('/api/projects/:key/actions/:actionId/try', async (req, res) => {
   if (!PROJECT_KEY_RE.test(req.params.key)) return badRequest(res, 'invalid project key');
   // `branch LIKE '%"feature"%'` also matches `"feature":null`, and SQL cannot see retained work or
   // liveness, so pick in JS from the newest few candidates.
-  const row = getDb().prepare(`SELECT * FROM pipelines WHERE project_key = ? AND target = 'project' AND archived_at IS NULL
+  const row = getDb().prepare(`SELECT * FROM pipelines WHERE project_key = ? AND target = 'project' AND archived_at IS NULL AND is_test IS NULL
       AND status IN ('done','stopped','error') ORDER BY started_at DESC LIMIT 25`).all(req.params.key)
     .find((r) => membersOfRow(r)[0]?.br?.feature && !retainedWorkFor(r) && !isLiveRun(r.id));
   if (!row) return res.status(404).json({ error: 'No finished run yet.', code: 'NO_FINISHED_RUN' });
