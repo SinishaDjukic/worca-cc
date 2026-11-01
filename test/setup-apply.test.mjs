@@ -720,7 +720,7 @@ test('all three setup routes refuse an agent caller', async () => {
     const before = fileNow();
     for (const r of [await fetch(`${base}/api/setup/detect`), await post({ work: { pipelineCostLimitUsd: 3 } }), await fetch(`${base}/api/setup/apply/stp_x`)]) {
       assert.equal(r.status, 403);
-      assert.equal((await r.json()).code, 'SETUP_AGENT_BLOCKED');
+      assert.equal((await r.json()).code, 'AGENT_CALLER_BLOCKED');   // G1: the global gate answers before the route's own check
     }
     assert.equal(fileNow(), before);
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }

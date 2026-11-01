@@ -1,7 +1,7 @@
 // The Chats column's model (issue #948 slice 2): the view (Show / Sort by / Group by, per browser),
-// the chat rows in the Runs list's item shape (runs-list.mjs renderRunsList draws them), the sections Pinned · Today ·
-// Recent · Older, the busy rule for Archive and the row ⋯ items. Pure: no DOM, no fetch; chats-column.mjs mounts it.
-import { timeMs, rowTime } from './runs-list.mjs';
+// the chat rows in the Runs list's item shape (runs-list.mjs renderRunsList draws them), the sections Pinned then the
+// Runs list's day sections, the busy rule for Archive and the row ⋯ items. Pure: no DOM, no fetch; chats-column.mjs mounts it.
+import { timeMs, rowTime, DAY_BUCKETS, dayBucket, DATE_GROUP_TITLE } from './runs-list.mjs';
 import { viewMenuItems } from './runs-view-menu.mjs';
 import { keyHint } from './list-keys.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
@@ -11,10 +11,9 @@ export const CHATS_VIEW_KEY = 'worca-cc.chats.view';
 export const CHATS_LIST_W_KEY = 'worca-cc.chats.listWidth';
 export const CHATS_SHOW = Object.freeze([['all', 'All'], ['needs', 'Needs you'], ['archived', 'Archived']]);
 export const CHATS_SORT = Object.freeze([['activity', 'Recent', 'Last activity'], ['created', 'Created'], ['title', 'A–Z', 'Title A–Z'], ['cost', 'Cost']]);
-// Date's third entry is its segment title in the View menu.
-export const CHATS_GROUP = Object.freeze([['date', 'Date', 'Today · Recent · Older'], ['project', 'Project'], ['topic', 'Topic'], ['none', 'None']]);
+// Date's third entry is its segment title in the View menu. The Runs list's Group by uses the same order and title.
+export const CHATS_GROUP = Object.freeze([['date', 'Date', DATE_GROUP_TITLE], ['project', 'Project'], ['topic', 'Topic'], ['none', 'None']]);
 export const DEFAULT_CHATS_VIEW = Object.freeze({ show: 'all', sort: 'activity', groupBy: 'date' });
-export const CHATS_RECENT = 10;
 export const CHATS_PAGE = 50;
 export const CHATS_EMPTY = Object.freeze({ needs: 'No chat needs you.', archived: 'No archived chats.' });
 export const CHATS_LOADING = 'Loading chats…';
@@ -34,13 +33,11 @@ export function saveChatsView(storage, v) {
   try { storage.setItem(CHATS_VIEW_KEY, JSON.stringify(cleanChatsView(v))); } catch { /* private mode: the view lasts the session */ }
 }
 
-/** '' for the default view, else its non-default parts and "N chats" ("Archived · 8 chats"). */
+/** '' while nothing is filtered or re-sorted, else those parts and "N chats" ("Archived · 8 chats"). Grouping only
+ *  arranges the list and its section heads already say it, so it draws no chip (the Runs list's rule). */
 export function chatsViewChip(v, { shown = 0 } = {}) {
   const parts = [];
   if (v.show !== 'all') parts.push(labelOf(CHATS_SHOW, v.show));
-  if (v.groupBy === 'project') parts.push('By project');
-  else if (v.groupBy === 'topic') parts.push('By topic');
-  else if (v.groupBy === 'none') parts.push('Not grouped');
   if (v.sort !== 'activity') parts.push(fullName(CHATS_SORT, v.sort));
   if (!parts.length) return '';
   parts.push(`${shown} chat${shown === 1 ? '' : 's'}`);
@@ -51,7 +48,8 @@ export function chatsViewMenuItems(v, counts, { onPick, mac = false }) {
   return viewMenuItems(v, counts, { onPick, mac, showOpts: CHATS_SHOW, sortOpts: CHATS_SORT, groupOpts: CHATS_GROUP });
 }
 
-/** The state column and the state word on the sub line. Busy states pulse; idle draws the bubble (status-dot icon). */
+/** The state column and the state word on the sub line. Busy states pulse; idle draws the bubble (status-dot icon), which
+ *  a chat row swaps for its CHAT_KINDS icon. */
 export const CHAT_STATES = Object.freeze({
   'needs-you': Object.freeze({ word: 'Needs you', line: 'Run needs you', dot: 'amber', pulse: false, symbol: 'question', icon: null }),
   replying: Object.freeze({ word: 'Replying', line: 'Replying', dot: 'green', pulse: true, symbol: null, icon: null }),
@@ -59,6 +57,37 @@ export const CHAT_STATES = Object.freeze({
   following: Object.freeze({ word: 'Following a run', line: 'Following a run', dot: 'peach', pulse: true, symbol: null, icon: null }),
   idle: Object.freeze({ word: 'Idle', line: '', dot: 'grey', pulse: false, symbol: null, icon: 'chat' }),
 });
+
+/** What the chat did, in the user's priority order (first match wins): its line icon in the state column and the
+ *  icon's name (status-dot's aria-label and tooltip). Needs you keeps CHAT_STATES' amber "?". Started, Follows and
+ *  Proposed describe the chat's history: every run it ever linked, every workflow card in any state. */
+export const CHAT_KINDS = Object.freeze({
+  'needs-you': Object.freeze({ label: 'Run needs you', icon: null }),
+  started: Object.freeze({ label: 'Started a run', icon: 'run' }),
+  tracks: Object.freeze({ label: 'Follows a run', icon: 'track' }),
+  workflow: Object.freeze({ label: 'Proposed a workflow', icon: 'workflow' }),
+  chat: Object.freeze({ label: 'Chat', icon: 'chat' }),
+});
+const KIND_ORDER = Object.keys(CHAT_KINDS);
+
+/** An API list item's kind: `waiting` (a followed run asks), `startedRuns` (links made by this chat's run cards),
+ *  `trackedRuns` (track_run links it did not start), `hasWorkflowCard` (propose_workflow / build_workflow). */
+function chatKind(t) {
+  if (t.waiting) return 'needs-you';
+  if (Number(t.startedRuns) > 0) return 'started';
+  if (Number(t.trackedRuns) > 0) return 'tracks';
+  return t.hasWorkflowCard ? 'workflow' : 'chat';
+}
+
+/** The state column's model for a state and a kind. Replying and Running a command keep their bare pulse (the chat
+ *  itself works); Following draws the run's icon (Started, else Follows) in its colour, pulsing; idle draws the kind's. */
+function chatDot(state, kind) {
+  const s = CHAT_STATES[state];
+  const k = state === 'following' ? (kind === 'started' ? 'started' : 'tracks') : kind;
+  const shows = state === 'needs-you' || state === 'following' || state === 'idle';
+  return { state, kind, word: s.word, dot: s.dot, pulse: s.pulse, symbol: s.symbol,
+    icon: shows ? CHAT_KINDS[k].icon : null, dotLabel: shows ? CHAT_KINDS[k].label : null };
+}
 
 /** One API list item as a Runs list item. `scopeName(scope)` names a project or workspace (app.js knows them). */
 export function chatRow(t, { scopeName = () => '', now = Date.now() } = {}) {
@@ -77,16 +106,18 @@ export function chatRow(t, { scopeName = () => '', now = Date.now() } = {}) {
     groupId: t.groupId || '',   // #948 s3: the topic group; groupKey stays the project
     needs: state === 'needs-you', busy, pinned: !!t.pinnedAt, isArchived: !!(t.archived || t.archivedAt),
     activityMs, createdMs: timeMs(t.createdAt, now), cost, groupKey, groupName, projectKey: (scope && scope.projectKey) || '',
-    labels: [], model: { state, word: s.word, line, dot: s.dot, pulse: s.pulse, symbol: s.symbol, icon: s.icon },
+    labels: [], model: { ...chatDot(state, chatKind(t)), line },
   };
 }
 
 /** #948 s3: one topic group as a list row, drawn by renderRunsList as a Runs group row. `members` are its loaded chat
- *  rows, newest first. Its state is its most urgent member's; its sub line names its one project or "N projects". */
+ *  rows, newest first. Its state is its most urgent member's, its kind its members' first in CHAT_KINDS' order; its sub
+ *  line names its one project or "N projects". */
 export function chatGroupRow(g, members, { now = Date.now() } = {}) {
   const needs = members.some((m) => m.needs);
   const busyMb = members.find((m) => m.busy) || null;
   const state = needs ? 'needs-you' : busyMb ? busyMb.model.state : 'idle';
+  const kind = KIND_ORDER.find((k) => members.some((m) => m.model.kind === k)) || 'chat';
   const s = CHAT_STATES[state];
   // Only chats with a project count: one project reads its name, 2+ read "N projects", none reads "No project".
   const keys = [...new Set(members.map((m) => m.groupKey).filter(Boolean))];
@@ -109,7 +140,7 @@ export function chatGroupRow(g, members, { now = Date.now() } = {}) {
     cost, costUsd: cost || 0, groupKey: keys.length === 1 ? keys[0] : '', groupName: where, projectKey: '', labels: [],
     spansProjects: keys.length > 1,
     open: needs || !!busyMb,   // D9: open while a chat in it needs you or works; buildChatsModel applies the person's ⌄
-    model: { state, word: s.word, line, dot: s.dot, pulse: s.pulse, symbol: s.symbol, icon: s.icon },
+    model: { ...chatDot(state, kind), line },
   };
 }
 
@@ -146,9 +177,9 @@ export function sortChats(rows, sort = 'activity') {
 
 /**
  * The column's sections for renderRunsList. `threads` are the loaded API items (pinned first, as the server pages them),
- * `total` the server's count for this Show, `more` whether a next page exists. Group by Date: Pinned, Today (active since
- * local midnight), Recent (the CHATS_RECENT latest before today), Older (the rest, folded until `olderOpen`; its count
- * includes the chats not loaded yet). Sort by orders rows inside each section.
+ * `total` the server's count for this Show, `more` whether a next page exists. Group by Date: Pinned, then the Runs
+ * list's day sections by last activity (Today · Yesterday · Previous 7 days · Previous 30 days · Older); Older is folded
+ * until `olderOpen` and its count includes the chats not loaded yet. Sort by orders rows inside each section.
  */
 export function buildChatsModel({ threads = [], view = DEFAULT_CHATS_VIEW, total = null, more = false, olderOpen = false,
   collapsed = new Set(), groups = [], toggled = new Map(), scopeName = () => '', now = Date.now() } = {}) {
@@ -192,19 +223,18 @@ export function buildChatsModel({ threads = [], view = DEFAULT_CHATS_VIEW, total
     const rest = top.filter((r) => !r.pinned);
     push('pinned', 'Pinned', sortChats(pinned, v.sort));
     if (v.groupBy === 'date') {
-      const midnight = new Date(now);
-      midnight.setHours(0, 0, 0, 0);
-      const byTime = sortChats(rest, 'activity');
-      const today = byTime.filter((r) => r.activityMs >= midnight.getTime());
-      const before = byTime.filter((r) => !(r.activityMs >= midnight.getTime()));
-      const recent = before.slice(0, CHATS_RECENT);
-      const older = before.slice(CHATS_RECENT);
-      push('today', 'Today', sortChats(today, v.sort));
-      push('recent', 'Recent', sortChats(recent, v.sort));
+      // The day sections the Runs list uses (runs-list.mjs DAY_BUCKETS). Chats arrive newest first, so the ones not
+      // loaded yet are older than every loaded one: Older counts them once it has rows, else Show more ends the list.
+      const by = new Map(DAY_BUCKETS.map(([b]) => [b, []]));
+      for (const r of rest) by.get(dayBucket(r.activityMs, now)).push(r);
+      for (const [b, name] of DAY_BUCKETS) if (b !== 'older') push(b, name, sortChats(by.get(b), v.sort), { collapsed: collapsed.has(b) });
+      const older = by.get('older');
       // `total` counts chats, so a group row weighs its chats here, not 1.
       const chats = (list) => list.reduce((a, r) => a + (r.kind === 'chat-group' ? r.memberCount : 1), 0);
-      const olderCount = total == null ? chats(older) : Math.max(chats(older), total - chats(pinned) - chats(today) - chats(recent));
-      push('older', 'Older', sortChats(older, v.sort), { count: olderCount, collapsed: !olderOpen, more: olderOpen && more });
+      if (older.length) {
+        const olderCount = total == null ? chats(older) : Math.max(chats(older), total - chats(top) + chats(older));
+        push('older', 'Older', sortChats(older, v.sort), { count: olderCount, collapsed: !olderOpen, more: olderOpen && more });
+      } else if (sections.length && more) Object.assign(sections[sections.length - 1], { more: true, moreLabel: 'Show more' });
     } else {
       // Group by Project: one foldable section per project in first-seen order; counts are the loaded chats'. Groups
       // spanning 2+ projects share one "Several projects" section, never No project's.

@@ -63,10 +63,19 @@ test('session ids are engine-qualified; a claude or codex id is not a copilot se
 
 // ── argv ─────────────────────────────────────────────────────────────────────
 
-test('fresh run: JSON output, tools allowed without asking, no auto-update, no built-in MCP, a named new session', () => {
+test('fresh run: JSON output, the shell and file tools allowed without asking, no auto-update, no built-in MCP, a named new session', () => {
   assert.deepEqual(buildCopilotArgs({ sessionId: 'S1', agent: 'worca-node', addDirs: ['/scratch', '/mem', '/mem'] }), [
-    '--output-format', 'json', '--allow-all-tools', '--no-ask-user', '--no-auto-update', '--no-color', '--disable-builtin-mcps',
+    '--output-format', 'json', '--allow-tool=shell', '--allow-tool=write', '--allow-all-urls', '--no-ask-user', '--no-auto-update', '--no-color', '--disable-builtin-mcps',
     '--session-id=S1', '--agent', 'worca-node', '--add-dir', '/scratch', '--add-dir', '/mem']);
+});
+
+test('approval is an allow list (G14): never --allow-all-tools; worca\'s own MCP servers by name; read-only allows no shell, file tool or URL', () => {
+  const run = buildCopilotArgs({ sessionId: 'S', allowMcp: ['probe', 'probe', 'worca'] });
+  assert.ok(!run.includes('--allow-all-tools') && !run.includes('--allow-all') && !run.includes('--yolo'));
+  assert.deepEqual(run.filter((a) => a.startsWith('--allow')), ['--allow-tool=shell', '--allow-tool=write', '--allow-tool=probe', '--allow-tool=worca', '--allow-all-urls']);
+  const ro = buildCopilotArgs({ sessionId: 'S', readOnly: true, availableTools: ['worca_files'], allowMcp: ['worca_files'] });
+  assert.deepEqual(ro.filter((a) => a.startsWith('--allow')), ['--allow-tool=worca_files']);
+  assert.deepEqual(buildCopilotArgs({ sessionId: 'S', readOnly: true }).filter((a) => a.startsWith('--allow')), []);
 });
 
 test('resume, model, effort, MCP, tool filters and deny rules', () => {
@@ -324,18 +333,26 @@ test('guardrails, tools, fan-out and MCP reach copilot; secret values reach its 
   const dir = tmp();
   const mcpPath = join(dir, 'mcp.json');
   writeFileSync(mcpPath, JSON.stringify({ mcpServers: { probe: { command: 'node', args: ['srv.mjs'], env: { TOKEN: '${MCPSECRET_PROBE_TOKEN}' } } } }));
-  const f = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl'), envNames: ['MCPSECRET_PROBE_TOKEN', 'GH_TOKEN', 'COPILOT_AUTO_UPDATE'] });
+  const f = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl'), envNames: ['MCPSECRET_PROBE_TOKEN', 'GH_TOKEN', 'COPILOT_AUTO_UPDATE', 'COPILOT_ALLOW_ALL', 'COPILOT_ASSISTED_APPROVAL'] });
   const prevGh = process.env.GH_TOKEN;
   process.env.GH_TOKEN = 'ghp_should_not_pass';
+  // Either would widen the allow list: COPILOT_ALLOW_ALL=true approves every tool and trusts the folder (its hooks and
+  // MCP servers load); the assisted-approval judge may approve a tool the list leaves out.
+  process.env.COPILOT_ALLOW_ALL = 'true';
+  process.env.COPILOT_ASSISTED_APPROVAL = 'true';
   try {
     await runCopilotProcess({ bin: f.bin, cwd: dir, prompt: 'x', mcpConfigPath: mcpPath, spawnEnv: { MCPSECRET_PROBE_TOKEN: 's3cret-value' },
       permissionRules: { deny: ['Bash(git push:*)', 'mcp__probe__wipe', 'WebSearch'] }, allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Agent'],
       agents: { investigator: { prompt: 'Look only.' } }, appendSubagentSystemPrompt: 'MEMORY', usageDir: join(dir, 'u'), scratchBase: join(dir, 's') });
   } finally {
     if (prevGh === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prevGh;
+    delete process.env.COPILOT_ALLOW_ALL; delete process.env.COPILOT_ASSISTED_APPROVAL;
   }
   const rec = f.record();
   assert.ok(rec.argv.includes('--deny-tool=shell(git push)') && rec.argv.includes('--deny-tool=probe(wipe)'));
+  assert.ok(rec.argv.includes('--allow-tool=probe') && !rec.argv.includes('--allow-all-tools'), 'the attached server is allowed by name');
+  assert.equal(rec.env.COPILOT_ALLOW_ALL, null, 'a host COPILOT_ALLOW_ALL never reaches copilot');
+  assert.equal(rec.env.COPILOT_ASSISTED_APPROVAL, null);
   // WebSearch is denied by the rules; WebFetch is not in the role's tools.
   assert.ok(rec.argv.includes('--excluded-tools=web_search,web_fetch'));
   assert.ok(!rec.argv.includes('--deny-tool=shell') && !rec.argv.some((a) => a.startsWith('--available-tools')));
@@ -356,6 +373,7 @@ test('read-only (a helper job): no built-in tool, only the MCP servers handed ov
     usageDir: join(dir, 'u'), scratchBase: join(dir, 's') });
   const argv = f.record().argv;
   assert.ok(argv.includes('--available-tools=worca_files') && argv.includes('--disallow-temp-dir'));
+  assert.deepEqual(argv.filter((a) => a.startsWith('--allow')), ['--allow-tool=worca_files']);
   assert.equal(argv.filter((a) => a === '--add-dir').length, 1, 'only the scratch folder that holds the agent');
   assert.equal(f.record().investigator, null, 'no fan-out on a read-only spawn');
   const bare = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl') });
@@ -417,6 +435,7 @@ test('Ask Worca on copilot: only worca\'s MCP server, no custom instructions, no
   } finally { delete process.env.WORCA_TEST_SECRET_X; }
   const rec = f.record();
   assert.ok(rec.argv.includes('--available-tools=worca'), 'worca\'s server is the only tool source');
+  assert.deepEqual(rec.argv.filter((a) => a.startsWith('--allow')), ['--allow-tool=worca']);
   assert.ok(rec.argv.includes('--no-custom-instructions') && rec.argv.includes('--disallow-temp-dir') && rec.argv.includes('--disable-builtin-mcps'));
   assert.equal(rec.argv.filter((a) => a === '--add-dir').length, 1, 'only the scratch folder that holds the agent');
   assert.equal(rec.argv[rec.argv.indexOf('--model') + 1], 'gpt-5.4');

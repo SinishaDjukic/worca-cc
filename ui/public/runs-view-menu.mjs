@@ -3,11 +3,13 @@
 // per-browser record. app.js opens the menu and repaints.
 import { normaliseLabels } from '../../src/shared/run-labels.mjs';
 import { keyGlyph } from './list-keys.mjs';
+import { DATE_GROUP_TITLE } from './runs-list.mjs';
 
 export const VIEW_KEY = 'worca-cc.runs.view';
 export const DEFAULT_VIEW = Object.freeze({ show: 'all', groupBy: 'none', person: '', labels: Object.freeze([]) });
 const SHOW = [['all', 'All'], ['needs', 'Needs you'], ['running', 'Running'], ['waiting', 'Waiting'], ['finished', 'Finished'], ['ready', 'Ready to ship'], ['archived', 'Archived']];
-const GROUP = [['none', 'None'], ['project', 'Project'], ['date', 'Date']];
+// The Chats column's order and Date title (chats-list.mjs CHATS_GROUP, less Topic).
+const GROUP = [['date', 'Date', DATE_GROUP_TITLE], ['project', 'Project'], ['none', 'None']];
 const OLD_SHOW = { all: 'all', live: 'running', finished: 'finished', needs: 'needs', archived: 'archived' };
 
 function clean(v) {

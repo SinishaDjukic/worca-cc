@@ -32,8 +32,8 @@ for a pinned workflow, then **More**.
 ## Chats column
 
 The Chat page's list has the Runs list's anatomy: a head with "Chats" and View ⌄ (Show with
-counts, Sort by and Group by as segmented rows, Select, Keyboard shortcuts), sections Pinned · Today · Recent (the 10 latest before today) · Older
-(folded), divided rows with a state column and a `project · state · cost · time` sub line, a row ⋯ menu, a selection
+counts, Sort by and Group by as segmented rows, Select, Keyboard shortcuts), sections Pinned, then the Runs list's day sections
+(Today · Yesterday · Previous 7 days · Previous 30 days · Older, Older folded), divided rows with a state column and a `project · state · cost · time` sub line, a row ⋯ menu, a selection
 bar (⌘/Ctrl-click, Shift-click and a touch long-press select, as in the Runs list), a resize handle and the shared list keys. Pin and archive are new: Archive is blocked while a chat replies, runs
 a command or follows a run that is still going (the server answers 409 `CHAT_BUSY`), and sending a message in an
 archived chat unarchives it. The column's search moves into the top-bar search as a Chats group, and New chat is one +

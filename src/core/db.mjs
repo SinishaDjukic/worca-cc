@@ -64,7 +64,10 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 79;
+export const SCHEMA_VERSION = 83;
+
+/** store_meta row holding the install's default guardrail set id (JSON string). */
+export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -876,6 +879,7 @@ const INCREMENTAL_COLUMNS = {
                             // v70: where a copy found under a run's or project's folder came from, for Show in folder's
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
+  ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -1072,6 +1076,77 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
   FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
 );
 `;
+
+// v82 (#711): Git event automations. A rule starts a run when an issue or PR event in its project or workspace matches;
+// one automation_events row per (rule, subject) is the "never twice" guarantee and the Activity log; cursors hold
+// each project's poll position; deliveries drop webhook repeats. src/core/automations.mjs owns all four.
+const AUTOMATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS automation_rules (
+  id            TEXT PRIMARY KEY,
+  project_key   TEXT NOT NULL,
+  project_dir   TEXT NOT NULL,
+  scope         TEXT NOT NULL DEFAULT 'project',     -- project | workspace
+  workspace_id  TEXT,                                -- the workspace a workspace rule watches; NULL = a project's
+  repo          TEXT,                                -- owner/name on GitHub, from the project's remote
+  event         TEXT NOT NULL,                       -- issue.opened | pr.opened
+  action        TEXT NOT NULL,                       -- run | propose | fix | review
+  workflow_id   TEXT,                                -- action run: the workflow it starts
+  filter        TEXT NOT NULL DEFAULT '{}',          -- JSON { labels, excludeLabels, triggerLabel, allowLogins }
+  limits        TEXT NOT NULL DEFAULT '{}',          -- JSON { dailyRuns, maxCostUsd, maxConcurrent }
+  guardrails_id TEXT NOT NULL DEFAULT 'secure',
+  origin        TEXT NOT NULL DEFAULT 'rule',        -- rule | auto-handle
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  enabled_at    TEXT NOT NULL,                       -- nothing opened before it triggers the rule
+  created_by    TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_automation_rules_project ON automation_rules (project_key);
+CREATE TABLE IF NOT EXISTS automation_events (
+  id          TEXT PRIMARY KEY,
+  rule_id     TEXT NOT NULL,
+  project_key TEXT NOT NULL,
+  repo        TEXT,
+  subject     TEXT NOT NULL,                         -- issue:o/r#42 | pr:o/r#7 | pr:o/r#7@<head sha> (review)
+  kind        TEXT NOT NULL,                         -- issue | pr
+  number      INTEGER,
+  url         TEXT,
+  title       TEXT,
+  author      TEXT,
+  head_sha    TEXT,
+  action      TEXT,
+  phase       TEXT,                                  -- propose: plan, then fix once approved
+  via         TEXT NOT NULL,                         -- poll | webhook
+  status      TEXT NOT NULL,                         -- skipped | queued | starting | running | awaiting-approval | done | failed
+  reason      TEXT,
+  run_id      TEXT,
+  pipeline_id TEXT,
+  pr_url      TEXT,
+  prs         TEXT,                                  -- JSON [{name, repo, url, closes}] a workspace fix opened, one per changed member; NULL = one PR (pr_url)
+  started_at  TEXT,                                  -- when its run started (the daily cap counts by it); NULL = not started
+  posted      INTEGER NOT NULL DEFAULT 0,
+  approved_by TEXT,
+  cost_usd    REAL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  UNIQUE (rule_id, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_automation_events_status ON automation_events (status);
+CREATE INDEX IF NOT EXISTS idx_automation_events_project ON automation_events (project_key, created_at);
+CREATE TABLE IF NOT EXISTS automation_cursors (
+  project_key TEXT NOT NULL,
+  stream      TEXT NOT NULL,                         -- issues | comments
+  since       TEXT,
+  etag        TEXT,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (project_key, stream)
+);
+CREATE TABLE IF NOT EXISTS automation_deliveries (
+  delivery_id TEXT PRIMARY KEY,
+  received_at TEXT NOT NULL
+);
+`;
+
 
 // v68 (labels slice 1): run labels — free words that organise runs. Never read by stats, metrics or policy.
 // Written only by the label routes; survive archive/restore; removed by hand on a hard delete (pipeline-delete.mjs).
@@ -1391,6 +1466,39 @@ CREATE TABLE IF NOT EXISTS req_helper_messages (
 CREATE INDEX IF NOT EXISTS req_helper_messages_feature ON req_helper_messages(feature_seq, id);
 `;
 
+// v80 Requirements A6 (plans/requirements-a6-design.md §3): export to a tracker. The setup per project or workspace names
+// a connection (plugin, source id, profile; never a config value) and the tracker project, issue type, labels, priority and
+// where the criteria go; the link per feature is its current ticket, the spec and fields as last sent, the plugin's
+// fingerprint of the stored description, and a pending create's marker (D10). Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const REQUIREMENTS_EXPORT_DDL = `
+CREATE TABLE IF NOT EXISTS req_export_setups (
+  scope_type      TEXT NOT NULL,
+  scope_key       TEXT NOT NULL,
+  plugin          TEXT NOT NULL, source_id TEXT NOT NULL, profile TEXT,
+  tracker_project TEXT NOT NULL, tracker_project_name TEXT NOT NULL,
+  issue_type      TEXT NOT NULL, issue_type_name TEXT NOT NULL,
+  labels_json     TEXT NOT NULL DEFAULT '["worca"]',
+  priority        TEXT, priority_name TEXT,
+  criteria_json   TEXT NOT NULL DEFAULT '{"target":"description"}',
+  done_status     TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
+);
+CREATE TABLE IF NOT EXISTS req_export_links (
+  feature_seq     INTEGER PRIMARY KEY,
+  plugin          TEXT NOT NULL, source_id TEXT NOT NULL, profile TEXT,
+  tracker_project TEXT NOT NULL,
+  ticket_key      TEXT, ticket_url TEXT,
+  created_at      TEXT,
+  exported_at     TEXT,
+  spec_json       TEXT,
+  fields_json     TEXT,
+  fingerprint     TEXT,
+  pending_marker  TEXT, pending_at TEXT,
+  updated_by TEXT, updated_at TEXT NOT NULL
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1423,6 +1531,10 @@ const INCREMENTAL_TABLES = {
   run_labels:     RUN_LABELS_DDL,
   utility_cost_ledger: UTILITY_COST_LEDGER_DDL,
   run_presets:    RUN_PRESETS_DDL,
+  automation_rules:      AUTOMATIONS_DDL,
+  automation_events:     AUTOMATIONS_DDL,
+  automation_cursors:    AUTOMATIONS_DDL,
+  automation_deliveries: AUTOMATIONS_DDL,
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
@@ -1439,6 +1551,8 @@ const INCREMENTAL_TABLES = {
   req_briefs:        REQUIREMENTS_BRIEFS_DDL,
   req_attachments:   REQUIREMENTS_ATTACHMENTS_DDL,
   req_helper_messages: REQUIREMENTS_HELPER_DDL,
+  req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
+  req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
 };
 
 /**
@@ -2116,6 +2230,15 @@ function applySchemaV69(db) {
   } catch { /* never fail the migration on the backfill */ }
 }
 
+/** v81 (G13): a fresh install starts runs on Normal guardrails (guardrail-store.mjs
+ *  defaultGuardrailSetId). An install that existed before keeps today's default, so
+ *  it is recorded as Permissive here; a value already there is kept. */
+function applySchemaV81(db, { existing }) {
+  if (!existing || !hasSqliteTable(db, 'store_meta')) return;
+  db.prepare('INSERT OR IGNORE INTO store_meta (key, kind, data) VALUES (?, ?, ?)')
+    .run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('permissive'));
+}
+
 /** applySchemaV52's column guard (the presentationSeedable precedent). */
 function memberPrBackfillable(db) {
   if (!hasSqliteTable(db, 'pipelines') || !hasSqliteTable(db, 'pipeline_member_prs')) return false;
@@ -2598,6 +2721,12 @@ export function migrate(db) {
     // coming from below 72 creates the ledger after the hoisted repair.
     if (current < 78) { db.exec(REQUIREMENTS_HELPER_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     // v79: run_groups.name_source — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v80 requirements A6: req_export_setups + req_export_links (first written as v79; dev took 79). New tables only, so no repair call:
+    // INCREMENTAL_TABLES creates them for a DB stamped past this rung without them.
+    if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
+    if (current < 81) applySchemaV81(db, { existing: current >= 1 });  // v81 (G13) guardrail default
+    if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
+    // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

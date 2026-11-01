@@ -53,6 +53,10 @@ server and dials out to `api.telegram.org` only.
 approving gates, stopping/pausing runs, reading run titles and costs.
 
 - `allowedChatIds` is **deny-by-default**: empty means *no* inbound commands.
+- `allowedUserIds` (optional) narrows an allowed chat to named senders; everyone
+  else in it is ignored. `/direct` and the answer commands (`/answer`, `/approve`, `/retry`, `/abort`,
+  `/cancel`) steer a live run, so in a group chat they are accepted only from those senders unless `directInGroups` is `anyone`; a direct
+  message to the bot always works.
 - The worker child runs with a scrubbed environment ({PATH, HOME}, the proxy and
   CA variables, never a proxy URL with credentials); the token travels only over
   stdin and never reaches logs (host-side redaction).

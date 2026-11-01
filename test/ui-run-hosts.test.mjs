@@ -1180,22 +1180,22 @@ test('focusNodeIds: running steps first, then a paused or stopped step, then the
 // `model` (the run's resolved pick — project node selection > team default > authored),
 // never the template's authored `config.model`, and through the catalog label like the composer.
 test('a run card labels the run-resolved model (manifest cell), mapped through the catalog, with the full name as a tooltip', () => {
-  const CATALOG = { 'claude-opus-5-5': 'Opus 5.5', 'discretestack-stable': 'discretestack-stable-max' };
+  const CATALOG = { 'claude-opus-5-5': 'Opus 5.5', 'example-stable': 'example-stable-max' };
   const ran = { ...MANIFEST, graph: { ...MANIFEST.graph, nodes: [
-    { ...MANIFEST.graph.nodes[0], config: { model: 'discretestack-stable' }, model: 'claude-opus-5-5' },
+    { ...MANIFEST.graph.nodes[0], config: { model: 'example-stable' }, model: 'claude-opus-5-5' },
     MANIFEST.graph.nodes[1],
   ] } };
   const { m, host } = mountHost('monitor', 800, { modelLabel: (id) => CATALOG[id] || id });
   m.update('run1', ran, decorFromState(RUN({ stepper: ran })));
   const lm = host.querySelector('[data-node-id="n_a"] .nlabel .lm');
-  assert.equal(lm.textContent, 'Opus 5.5', 'the resolved model, not the authored discretestack-stable');
+  assert.equal(lm.textContent, 'Opus 5.5', 'the resolved model, not the authored example-stable');
   assert.equal(lm.title, 'Opus 5.5', 'an ellipsised model keeps its full name as a tooltip');
 
   // A manifest cell with no resolved model falls back to the authored config, still through the catalog.
   const authored = { ...ran, graph: { ...ran.graph, nodes: [{ ...ran.graph.nodes[0], model: '' }, ran.graph.nodes[1]] } };
   const h2 = mountHost('monitor', 800, { modelLabel: (id) => CATALOG[id] || id });
   h2.m.update('run2', authored, decorFromState(RUN({ stepper: authored })));
-  assert.equal(h2.host.querySelector('[data-node-id="n_a"] .nlabel .lm').textContent, 'discretestack-stable-max');
+  assert.equal(h2.host.querySelector('[data-node-id="n_a"] .nlabel .lm').textContent, 'example-stable-max');
 
   // No catalog handed in: the raw resolved id.
   const h3 = mountHost('monitor');

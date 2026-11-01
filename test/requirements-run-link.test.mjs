@@ -7,6 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
@@ -369,4 +370,49 @@ test('server: POST /api/run never takes _extrasPaths from its body', async () =>
     assert.equal(existsSync(join(pdir, 'extras')), false);
     assert.equal(existsSync(join(tmpdir(), `orchestrator-extras-${runId}`)), false);
   } finally { await stopRun(runId); }
+});
+
+// ---- A6 D15: a run started from an exported feature is linked to the ticket the way a run started from a ticket is ----
+test('server: Start with Report back makes a plugin pipeline row; write-back reports to the ticket (mock); _reportTo from HTTP is ignored', async () => {
+  const { linkPlugin } = await import('../src/core/plugin-store.mjs');
+  const { createProfile, readPluginState } = await import('../src/core/plugin-config.mjs');
+  const { reportResultForPipeline } = await import('../src/core/sources.mjs');
+  const { getDb } = await import('../src/core/db.mjs');
+  const { emptySpec } = await import('../src/core/requirements/spec.mjs');
+  await linkPlugin('jira-source', fileURLToPath(new URL('../plugins/jira-source', import.meta.url)));
+  createProfile('jira-source', 'acme', 'acme.atlassian.net (Cloud)');
+  const spec = { ...emptySpec(), goal: { text: 'Cancel', measure: 'fewer calls' }, criteria: [{ id: 'R-po-1', text: 'Cancel while unpaid' }] };
+  const f = store.createFeature({ scopeType: 'project', scopeKey: projKey, title: 'Report back', description: 'd' });
+  store.appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true } });
+  store.updateFeature(f.seq, { status: 'done', criteriaSeq: 1, spec });
+  store.saveExportLink(f.seq, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', trackerProject: 'SHOP', key: 'SHOP-123',
+    url: 'https://mock.test/browse/SHOP-123', createdAt: new Date().toISOString(), exportedAt: new Date().toISOString(), spec, fingerprint: 'f' });
+  const s = await call('POST', `/api/requirements/${f.seq}/start`, {});
+  assert.equal(s.status, 201, JSON.stringify(s.json));
+  let runId = s.json.runId;
+  try {
+    const pid = await waitFor(() => mod.runs.get(runId)?.orch?.pipeline?.id, 10000, 'the pipeline');
+    const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(pid);
+    assert.equal(row.source_type, 'plugin');
+    const ref = JSON.parse(row.source_ref);
+    assert.deepEqual([ref.plugin, ref.sourceId, ref.profile, ref.taskId, ref.url, ref.inputs], ['jira-source', 'jira', 'acme', 'SHOP-123',
+      'https://mock.test/browse/SHOP-123', { writeBack: 'yes' }]);
+    const out = await reportResultForPipeline({ ...row, status: 'done' }, { results: null, branch: null, prUrl: null });
+    assert.deepEqual(out, { ok: true });
+    const last = JSON.parse(readPluginState('jira-source', 'acme').lastReport);
+    assert.deepEqual([last.id, last.status, last.inputs], ['SHOP-123', 'completed', { writeBack: 'yes' }]);
+  } finally { await stopRun(runId); }
+  // a body's _reportTo from HTTP is never read: the run stays a markdown run
+  const r = await call('POST', '/api/run', { projectDir: projDir, promptMarkdown: '# Hello\n\nA run.', title: 'Plain', workflowId: 'wf_auto',
+    _reportTo: { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', taskId: 'SHOP-1', inputs: { writeBack: 'yes' } } });
+  runId = r.json.runId || r.json.id;
+  try {
+    const pid = await waitFor(() => mod.runs.get(runId)?.orch?.pipeline?.id, 10000, 'the plain pipeline');
+    assert.equal(getDb().prepare('SELECT source_type FROM pipelines WHERE id = ?').get(pid).source_type, 'markdown');
+  } finally { await stopRun(runId); }
+});
+
+test('server: the browser cannot drive an export op (D18): /api/sources/call refuses createTicket', async () => {
+  const r = await call('POST', '/api/sources/call', { plugin: 'jira-source', sourceId: 'jira', op: 'createTicket', profile: 'acme', args: { ticket: {} } });
+  assert.deepEqual([r.status, r.json.error], [400, 'op "createTicket" is not allowed for this source']);
 });

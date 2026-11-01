@@ -10,7 +10,7 @@ const PINS = {
 
 test('yaml and smol-toml are exact-pinned runtime dependencies, locked with integrity', () => {
   const pkg = read('../package.json');
-  const lock = read('../package-lock.json');
+  const lock = read('../npm-shrinkwrap.json');
   for (const [name, [version, integrity]] of Object.entries(PINS)) {
     assert.equal(pkg.dependencies[name], version, `${name} pinned exactly (no caret)`);
     assert.equal((pkg.devDependencies || {})[name], undefined);
