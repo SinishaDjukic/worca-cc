@@ -1,7 +1,7 @@
 ---
 name: pipeline-worktree-node-modules
 description: Read before running tests or plan shell lines in a worca run worktree, or a task file's commit/count checks — node_modules link, test runner, waiting, zsh traps
-updated: 2026-10-25T07:35:56.772Z
+updated: 2026-11-01T18:20:48.666Z
 author: Denislav Prinov
 ---
 
@@ -13,7 +13,7 @@ A run worktree (`~/.worca-cc/runs/<id>/repos/<key>`) has NO `node_modules`: anyt
 ## Running tests
 - **`env -u WORCA_HOST_PID npm test`** (else `test/host-guard-wiring.test.mjs` fails one case), from a realpath (`pwd -P`, `/private/tmp/…`), never via `/tmp`. Never two full suites at once (timing pins flake).
 - **Subsets: `env -u WORCA_HOST_PID node tools/test.mjs <files>`** — hermetic HOME + WORCA_HOME per call plus the no-real-claude guard. A bare `WORCA_HOME=… PATH=<guard>:$PATH node --test` keeps the REAL HOME: batching `api-run-engine-default` with `api-run-auto` / `api-memory-defrag-model` / `api-schedules` then times out its humanInLoop and wf_auto-workspace cases (~185 s each), even at the checkpoint, though each passes alone. Write plan Run lines with the runner. It takes only `--tier/--shard/--concurrency/--write-timings/--related/--base`: any other flag (`--test-name-pattern`) exits 2 `unknown flag` with no `ℹ` lines — pass whole files.
-- **Waiting (headless):** a full run (~9 500 tests) takes ~370 s. Background Bash `npm test > log; echo exit=$? >> log` (a `( … ) &` wrapper reports "completed" at once), log OUTSIDE `.worca-cc-test/` (`npm test` deletes it); wait with a FOREGROUND `node -e` poller (5 s `setTimeout`, exit on `^ℹ fail` or `exit=`, give up ~560 s; Bash timeout 600000). Monitor and inline `sleep` loops are refused. Host-, load- or Node-22-only reds: [[headless-background-suite-run]].
+- **Waiting (headless):** a full run (~18 400 tests) takes ~600 s at low load (592 s on 2026-11-01, load ~2), so one poll gives up first: "still running" is not a hang, poll again. Background Bash `npm test > log; echo exit=$? >> log` (a `( … ) &` wrapper reports "completed" at once), log OUTSIDE `.worca-cc-test/` (`npm test` deletes it); wait with a FOREGROUND `node -e` poller (5 s `setTimeout`, exit on `^ℹ fail` or `exit=`, give up ~560 s; Bash timeout 600000). Monitor and inline `sleep` loops are refused. Host-, load- or Node-22-only reds: [[headless-background-suite-run]].
 - `test/timings.json` is read with a silent `{}` fallback: `JSON.parse` it after a hand edit.
 
 ## Task files' commit steps vs "Commit nothing"
