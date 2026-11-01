@@ -2,7 +2,7 @@
 name: chat-channel-traps
 description: Traps in the chat-channel stack (Discord worker filters, parser/rate-limiter APIs, Ask turn echo races) worth reading before planning or building chat-plugin fe
 paths: plugins/*-chat/**, src/core/chat/**
-updated: 2026-11-01T09:56:13.417Z
+updated: 2026-11-01T14:05:14.224Z
 author: Bulibas
 ---
 
@@ -35,3 +35,11 @@ Each of these sank a reviewed plan once (freeform Discord chat plan, cycles 1-2,
   skip these only because a gated user turn came first. Share the gates, do not call `startAskTurn` bare.
 - **Discord modals after a restart.** A modal must be opened inside the 3 s ack window by the worker; keep "this
   button opens a modal" in the `custom_id` itself, never only in worker memory.
+- **Checking Discord API facts headless.** WebFetch/WebSearch are refused in pipeline sub-agents. `curl` the official
+  docs repo (`github.com/discord/discord-api-docs`, branch `main`) and grep the `.mdx` files instead. Facts it gave
+  (2026-11-01): a text input inside an action row in a modal is deprecated (Label component, type 18; its submit item
+  is `{type:18, component:{type:4, custom_id, value}}`), so read both submit shapes; a thread started off a message
+  takes that message's id and a message holds one thread (retrying thread creation on the same message is a 400).
+- **Ask turn shapes a bridge must handle** (refine cycle 1): a stopped turn finishes `status: 'stopped'`, often with
+  empty text (render something); `job.status` is `'running'` before `job.turn` exists (tests wait for `.turn`); the
+  mock's propose rule (`\b(propose|start|run)\b`) also fires on any text containing "run", e.g. a change request.
