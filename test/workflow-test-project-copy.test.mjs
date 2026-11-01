@@ -356,3 +356,48 @@ test('final review: a start that names a remote-tracking branch (origin/main, as
   assert.equal(latest.startSha, git(real, 'rev-parse', 'refs/remotes/origin/main'), 'Start from the latest follows it');
   assert.equal(await copy.behindCount({ projectDir: real, startSha: p.startSha, startRef: 'main' }), 0, 'a local branch still reads refs/heads');
 });
+
+test('round 3: before each test the copy\'s config is rewritten from an allowlist; per-checkout config and hooks a try left are gone; the copy still works', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'r3000001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r3000001', '--', wt, p.startCommit);   // a live try
+  // What a try's setup or agent can leave behind (worktrees share the copy's config).
+  for (const [k, v] of [['filter.x.clean', 'evil-clean'], ['filter.x.required', 'true'], ['diff.x.textconv', 'evil-textconv'], ['merge.x.driver', 'evil-merge'],
+    ['include.path', join(home, 'evil.gitconfig')], ['includeIf.gitdir:/.path', join(home, 'evil2.gitconfig')], ['alias.co', '!evil'],
+    ['url.https://evil.example/.insteadOf', 'https://github.com/'], ['http.extraHeader', 'Authorization: token x'], ['credential.helper', 'evil'],
+    ['core.sshCommand', 'evil-ssh'], ['core.hooksPath', join(home, 'hooks')], ['core.fsmonitor', 'evil-fsmonitor'], ['branch.foo.remote', 'origin'],
+    ['user.name', 'Evil'], ['extensions.worktreeConfig', 'true']]) git(wt, 'config', k, v);
+  git(wt, 'config', '--worktree', 'core.hooksPath', join(home, 'wt-hooks'));
+  git(dir, 'remote', 'add', 'upstream', real);
+  writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n');
+  writeFileSync(join(dir, '.git', 'config.worktree'), '[core]\n\thooksPath = /evil\n');
+  const wtConfig = git(wt, 'rev-parse', '--git-path', 'config.worktree');
+  assert.ok(existsSync(resolve(wt, wtConfig)), 'the per-checkout config is real');
+
+  assert.deepEqual(await copy.ensureTestCopy(key, { projectDir: real }), { dir, created: false });
+  const keys = git(dir, 'config', '--local', '--list', '--name-only').split(/\r?\n/).filter(Boolean).map((k) => k.toLowerCase());
+  const allowed = new Set(['core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates', 'core.symlinks', 'core.ignorecase',
+    'core.precomposeunicode', 'core.longpaths', 'gc.auto', 'maintenance.auto', 'extensions.objectformat', 'extensions.refstorage']);
+  assert.deepEqual(keys.filter((k) => !allowed.has(k)), [], `only Worca's settings are left: ${keys.join(', ')}`);
+  assert.equal(git(dir, 'config', 'core.longpaths'), 'true');
+  assert.equal(git(dir, 'config', 'gc.auto'), '0');
+  assert.equal(git(dir, 'config', 'maintenance.auto'), 'false');
+  assert.equal(git(dir, 'config', 'core.bare'), 'false');
+  assert.equal(existsSync(resolve(wt, wtConfig)), false, 'the live checkout\'s config.worktree is gone');
+  assert.equal(existsSync(join(dir, '.git', 'config.worktree')), false);
+  assert.equal(existsSync(join(dir, '.git', 'hooks', 'pre-commit')), false, 'a hook a try installed is gone');
+  assert.equal(git(dir, 'remote'), '');
+  // The copy still works: pins, branches and the live checkout kept; a new checkout, a commit and a diff.
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${p.startCommit}`), p.startCommit);
+  assert.ok(existsSync(join(wt, 'README.md')));
+  const wt2 = join(wh, 'runs', 'r3000002', 'repos', key);
+  mkdirSync(dirname(wt2), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r3000002', '--', wt2, p.startCommit);
+  writeFileSync(join(wt2, 'README.md'), '# changed\n');
+  git(wt2, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-am', 'try');
+  assert.match(git(wt2, 'diff', '--stat', p.startCommit, 'HEAD'), /README\.md/);
+  assert.deepEqual(await copy.ensureTestCopy(key, { projectDir: real }), { dir, created: false }, 'a clean copy is rewritten again as a no-op');
+  assert.equal(git(dir, 'config', 'core.longpaths'), 'true');
+});

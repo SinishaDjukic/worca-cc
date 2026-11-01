@@ -63,10 +63,71 @@ async function ownRepo(dir) {
 }
 
 /** What every copy has set (D54): long paths on Windows, and no automatic gc or maintenance under a running try. */
-const COPY_SETTINGS = Object.freeze([['config', 'core.longpaths', 'true'], ['config', 'gc.auto', '0'], ['config', 'maintenance.auto', 'false']]);
-/** Final review I2: settings a try can leave in the copy's shared config that make git run a program (or move the config
- *  per checkout); every repair unsets them, so the next test starts from a copy that runs nothing of a past try's. */
-const UNSAFE_COPY_KEYS = Object.freeze(['core.hooksPath', 'core.fsmonitor', 'extensions.worktreeConfig']);
+const COPY_SETTINGS = Object.freeze([['core.longpaths', 'true'], ['gc.auto', '0'], ['maintenance.auto', 'false']]);
+/** Round 3: the settings `git init` makes for a repository on this disk, the only git settings the copy keeps besides
+ *  COPY_SETTINGS and its object and ref format. */
+const INIT_KEYS = Object.freeze(['core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates', 'core.symlinks',
+  'core.ignorecase', 'core.precomposeunicode']);
+/** The repository's own format: kept from the copy (it describes the data on disk), only with a value git knows. */
+const FORMAT_KEYS = Object.freeze({ 'extensions.objectformat': /^(sha1|sha256)$/i, 'extensions.refstorage': /^(files|reftable)$/i });
+
+/** `git config --list -z` of one config file: [[key, value]]. */
+async function configEntries(at, file) {
+  const r = await copyGit(at, ['config', '--file', file, '--list', '-z']);
+  if (!r.ok) return null;
+  return r.stdout.split('\0').filter(Boolean).map((e) => { const i = e.indexOf('\n'); return i < 0 ? [e.toLowerCase(), ''] : [e.slice(0, i).toLowerCase(), e.slice(i + 1)]; });
+}
+
+/** Remove `p` when it is a plain file or a link (the link itself, never what it points at). */
+async function rmFileOrLink(p) {
+  let st;
+  try { st = await lstat(p); } catch { return; }
+  if (st.isFile() || st.isSymbolicLink()) await rm(p, { force: true });
+  else if (st.isDirectory()) { const why = await removeTree(p); if (why) throw new Error(why); }
+}
+
+/**
+ * Round 3 (test isolation and safety): the copy's git config, rewritten from an allowlist before each test. A try's setup or
+ * agent can write the shared config (filters, textconv, includes, aliases, url rewrites, credential helpers, hooks): none of
+ * it may change a later test's result or run in Worca's git. What stays: what `git init` makes on this disk (read from a
+ * scratch repository beside the copies, so a try cannot have changed it), the repository's object and ref format, and
+ * COPY_SETTINGS. Remotes and branch settings go too. Then every per-checkout `config.worktree` and every hook a try installed
+ * (anything in .git/hooks but git's own `*.sample` files) are removed. Call it inside the key's lock.
+ */
+async function resetCopyConfig(dir, key) {
+  const gitDir = join(dir, '.git');
+  const probe = await mkdtemp(join(testCopiesRoot(), `.clone-cfg-${key}-`));   // a `.clone-` leftover is removed at boot
+  try {
+    const init = await copyGit(testCopiesRoot(), ['init', '-q', '--', probe]);
+    const fresh = init.ok ? await configEntries(testCopiesRoot(), join(probe, '.git', 'config')) : null;
+    const cur = await configEntries(dir, join(gitDir, 'config'));
+    if (!fresh || !cur) throw testError(`Worca could not read the settings of its copy of the project: ${firstLine(init.stderr)}`, 'NOT_READY');
+    const keep = new Map(fresh.filter(([k]) => INIT_KEYS.includes(k)));
+    keep.set('core.bare', 'false');
+    for (const [k, v] of cur) if (FORMAT_KEYS[k] && FORMAT_KEYS[k].test(v)) keep.set(k, v);
+    if ([...keep.keys()].some((k) => FORMAT_KEYS[k])) keep.set('core.repositoryformatversion', '1');
+    for (const [k, v] of COPY_SETTINGS) keep.set(k, v);
+    const next = join(gitDir, `config.worca-${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
+    try {
+      for (const [k, v] of keep) {
+        const w = await copyGit(dir, ['config', '--file', next, k, v]);
+        if (!w.ok) throw testError(`Worca could not set up its copy of the project: ${firstLine(w.stderr)}`, 'NOT_READY');
+      }
+      await renameRetry(next, join(gitDir, 'config'));
+    } finally { await rm(next, { force: true }).catch(() => {}); }
+  } finally { await removeTree(probe); }
+  await rmFileOrLink(join(gitDir, 'config.worktree'));
+  let names = [];
+  try { names = (await readdir(join(gitDir, 'worktrees'), { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name); } catch { /* none */ }
+  for (const n of names) await rmFileOrLink(join(gitDir, 'worktrees', n, 'config.worktree'));
+  const hooks = join(gitDir, 'hooks');
+  let hst = null;
+  try { hst = await lstat(hooks); } catch { /* none */ }
+  if (hst && !hst.isDirectory()) { await rm(hooks, { force: true }); await mkdir(hooks); }   // a link or a file in its place
+  else if (hst) {
+    for (const e of await readdir(hooks)) if (!e.endsWith('.sample')) await rmFileOrLink(join(hooks, e));
+  }
+}
 
 const notACopy = (dir) => `${dir} is not a usable copy of the project (no git repository of its own): skipped`;
 
@@ -114,16 +175,10 @@ async function ensureTestCopyLocked(key, { projectDir }) {
     }
   };
   if (await ownRepo(dir)) {
-    const rem = await copyGit(dir, ['remote']);
-    if (!rem.ok) throw testError(`Worca could not read its copy of the project: ${firstLine(rem.stderr)}`, 'NOT_READY');
-    const remotes = rem.stdout.split(/\r?\n/).map((n) => n.trim()).filter(Boolean);
-    // Always (final review I2), not only when a remote was found: every remote removed, the unsafe settings unset and
-    // COPY_SETTINGS set again.
-    await setUp(dir, [...remotes.map((n) => ['remote', 'remove', '--', n]), ...COPY_SETTINGS]);
-    for (const k of UNSAFE_COPY_KEYS) {
-      const u = await copyGit(dir, ['config', '--unset-all', k]);
-      if (!u.ok && u.code !== 5) throw testError(`Worca could not set up its copy of the project: ${firstLine(u.stderr)}`, 'NOT_READY');   // 5: not set
-    }
+    // Before each test (round 3): the config from its allowlist (no remote, nothing a past try set), no per-checkout
+    // config, no hook a try installed.
+    try { await resetCopyConfig(dir, key); }
+    catch (e) { throw e.code === 'NOT_READY' ? e : testError(`Worca could not set up its copy of the project: ${e.message}`, 'NOT_READY'); }
     return { dir, created: false };
   }
   try { await rm(dir, RM); }
@@ -134,7 +189,8 @@ async function ensureTestCopyLocked(key, { projectDir }) {
     // --local hardlinks the project's object files on purpose: cheap, and git never rewrites an object file in place.
     const c = await copyGit(testCopiesRoot(), ['clone', '--quiet', '--local', '--no-checkout', '--no-tags', '--', resolve(projectDir), tmp]);
     if (!c.ok) throw testError(`Worca could not copy the project: ${firstLine(c.stderr)}`, 'NOT_READY');
-    await setUp(tmp, [['remote', 'remove', 'origin'], ...COPY_SETTINGS]);
+    await setUp(tmp, [['remote', 'remove', 'origin']]);
+    await resetCopyConfig(tmp, key);
     await renameRetry(tmp, dir);
   } catch (e) {
     await rm(tmp, RM).catch(() => {});

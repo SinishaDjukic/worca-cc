@@ -249,7 +249,9 @@ Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
   at most 8 KB) and `changes` (JSON: the first 50 changed files with their status and line counts, and the totals).
 - **Worca's copy of a project** (`<worcaHome>/workflow-tests/repos/<projectKey>`): a `git clone --local --no-checkout` of
   the project with no remote, `core.longpaths` on and automatic gc and maintenance off. Before each test Worca repairs it
-  (any remote removed; `core.hooksPath`, `core.fsmonitor` and `extensions.worktreeConfig` unset; those settings set again),
+  (its git config rewritten from an allowlist: what `git init` makes on that disk, the object and ref format and those
+  settings, so no remote, filter, include, alias, hook path or other setting a past try left survives; per-checkout
+  `config.worktree` files and hooks a try installed removed),
   and Worca's own git in it runs no hook, fsmonitor or signing program of the copy and has the outward guard's env. Start points are pinned as
   `refs/worca-tests/<sha>`. Each try is a worktree of it under its run folder (`<worcaHome>/runs/<pipelineId>/repos/<projectKey>`),
   on its own branch, always named `worca-cc/…` (Smart run naming never applies to a try). Worca removes the checkout, the branch and the run folder after the try's checks. At boot,
