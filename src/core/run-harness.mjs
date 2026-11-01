@@ -135,7 +135,7 @@ import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTe
 import { loadCatalog } from './mcp/catalog.mjs';
 import { pretendServers, pretendLayer, noteSeenServers, CONNECTOR_CALLS_FILE } from './workflow-tests/connectors.mjs';
 import { runShellStep, tryShellEnv, writeTrySetup, TRY_SETUP_STAGE } from './workflow-tests/shell-step.mjs';
-import { claudeReadsStructuredDeny } from './workflow-tests/try-guard-env.mjs';
+import { claudeReadsStructuredDeny, tryGitEnv, withSafeGitArgs } from './workflow-tests/try-guard-env.mjs';
 import { setupFailedText } from '../shared/workflow-tests/project-text.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
@@ -2689,9 +2689,11 @@ export class RunHarness extends EventEmitter {
             ...(reuseBase ? { diffBase: reuseBase.sha, diffBaseFrom: reuseBase.against } : {}),
             ...(syncRecord ? { sync: syncRecord } : {}),
             ...(sameAsSource ? { sameAsSource: true } : {}) };
+          const tryGitEnv_ = this._tryGitEnv();
           const info = await createWorktree({
             projectDir: resolve(m.projectDir),              // the REAL dir: git runs here
             pipelineId: this.pipeline.id,
+            ...(tryGitEnv_ ? { gitEnv: tryGitEnv_ } : {}),   // final review I2: a try's checkout runs no hook of the copy
             // detached ⇒ <runRoot>/repos/<projectKey>, uniqueness from the run root.
             // legacy   ⇒ both omitted, so worktree.mjs falls back to its retained
             //            default <projectDir>/.worca-cc/worktrees/<pipelineId> (§10).
@@ -2820,7 +2822,11 @@ export class RunHarness extends EventEmitter {
    *  error the runner reads as a setup failure (try-setup.json), never as the workflow's. */
   async _runTrySetup() {
     const { cmd, timeoutMs } = this.opts.trySetup;
-    const cwd = this.workDirs.get(this.members[0].projectKey) || this.runCwd || this.workDir;
+    // Only ever in the try's own checkout (final review): never a fallback to the copy's main folder.
+    const cwd = this.workDirs.get(this.members[0].projectKey) || null;
+    if (!cwd) {
+      throw markTerminal(Object.assign(new Error('The setup step did not run: the try\'s checkout is not known.'), { code: 'TRY_SETUP_NO_CHECKOUT' }));
+    }
     this._setupStage(TRY_SETUP_STAGE);
     // The setup keeps the package-registry tokens (the person's own command, before the agent changed anything); never
     // a forge token. The checks and the agents get the full strip (D56).
@@ -3780,6 +3786,7 @@ export class RunHarness extends EventEmitter {
       setSkills: this._setSkillSources(skillPlan),
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
       ...(this._testConnectors() === 'pretend' ? { mcpStandIn: async (layer) => (standIn = await pretendServers(layer, { pipelineDir: this.pipeline.dir })) } : {}),
+      ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
     });
     this.runContext = rc;
     if (rc?.projectPermissions) {
@@ -5023,6 +5030,7 @@ export class RunHarness extends EventEmitter {
       worktreeDir: info.worktreeDir,
       branch: merged ? info.branch : null,
       force: true,
+      ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
     });
     for (const s of res.steps.filter((x) => !x.ok)) {
       this._log('worktree', 'warn', `teardown ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
@@ -5078,6 +5086,7 @@ export class RunHarness extends EventEmitter {
         worktreeDir: info.worktreeDir,
         branch: dropBranch ? info.branch : null,
         force: true,
+        ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
         this._log('worktree', 'warn', `teardown ${projectKey_} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
@@ -5267,6 +5276,7 @@ export class RunHarness extends EventEmitter {
         worktreeDir: wt,
         branch: dropBranch ? info.branch : null,
         force: true,
+        ...(this._tryGitEnv() ? { gitEnv: this._tryGitEnv() } : {}),
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
         this._log('worktree', 'warn', `teardown ${key} ${s.step} failed: ${s.stderr || 'unknown error'}`, errStreamAttr(s.stderr));
@@ -6887,11 +6897,12 @@ export class RunHarness extends EventEmitter {
       const base = this.checkpointRefs[key];
       if (!base) continue;
       const ex = this._excludePathspecs(key);
+      const gitOpts = this._tryGitEnv() ? { env: this._tryGitEnv() } : {};   // final review I2: a try's diff runs no fsmonitor of the copy
       const [ns, num, patch, untracked] = await Promise.all([
-        diffNameStatus(dir, base, undefined, ex),
-        diffNumstat(dir, base, undefined, ex),
-        diffPatch(dir, base, undefined, ex),
-        untrackedFiles(dir, ex),
+        diffNameStatus(dir, base, undefined, ex, gitOpts),
+        diffNumstat(dir, base, undefined, ex, gitOpts),
+        diffPatch(dir, base, undefined, ex, gitOpts),
+        untrackedFiles(dir, ex, gitOpts),
       ]);
       const listed = new Set(ns.map((r) => r.path));
       // An agent's own engine config file that only worca's info/exclude line hides is listed; worca's own never is.
@@ -6900,7 +6911,7 @@ export class RunHarness extends EventEmitter {
       if (fresh.length > maxUntracked) untrackedCapped = true;
       const extra = [];
       for (const p of fresh.slice(0, maxUntracked)) {
-        const u = await untrackedPatch(dir, p);
+        const u = await untrackedPatch(dir, p, gitOpts);
         ns.push({ status: 'A', path: p });
         num.set(p, { added: u.added, removed: 0, binary: u.binary });
         if (u.patch) extra.push(u.patch);
@@ -6959,10 +6970,11 @@ export class RunHarness extends EventEmitter {
         // §8.8: the same exclusion set the commit uses, so results.json and
         // diff.patch agree with what _commitWork actually committed.
         const ex = this._excludePathspecs(key);
+        const gitOpts = this._tryGitEnv() ? { env: this._tryGitEnv() } : {};   // final review I2
         const [ns, num, patch] = await Promise.all([
-          diffNameStatus(dir, base, undefined, ex),
-          diffNumstat(dir, base, undefined, ex),
-          diffPatch(dir, base, undefined, ex),
+          diffNameStatus(dir, base, undefined, ex, gitOpts),
+          diffNumstat(dir, base, undefined, ex, gitOpts),
+          diffPatch(dir, base, undefined, ex, gitOpts),
         ]);
         const results = assembleResults({ nameStatus: ns, numstat: num, reviews });
         members.push({ projectKey: key, results });
@@ -7233,13 +7245,25 @@ export class RunHarness extends EventEmitter {
    * the whole process, and under `npm test` the runner, until the CI job's
    * 30-minute limit killed it.
    */
+  /** Workflow tests 3a (final review I2): the env Worca's own git runs with in a try's copy (its config is written by the
+   *  try's setup and agent): the outward guard (no token, no sign-in) and no hook, fsmonitor or signing program of the copy.
+   *  null for every other run, so their git is unchanged. */
+  _tryGitEnv() {
+    if (!this._isTestTry()) return null;
+    const logFile = this.pipeline?.dir ? join(this.pipeline.dir, CONNECTOR_CALLS_FILE) : null;
+    if (this._tryGitEnvOf?.logFile !== logFile) this._tryGitEnvOf = { logFile, env: tryGitEnv({ logFile }) };
+    return this._tryGitEnvOf.env;
+  }
+
   _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS } = {}) {
     if (!gitAvailable()) return Promise.resolve(gitMissingResult());
+    const tryEnv = this._tryGitEnv();   // final review I2: a try's git runs none of the copy's hooks, under the guard
     return new Promise((resolveP) => {
       let child;
       try {
-        child = spawn('git', args, {
+        child = spawn('git', tryEnv ? withSafeGitArgs(args) : args, {
           cwd: cwd || this.projectDir,
+          ...(tryEnv ? { env: tryEnv } : {}),
           stdio: ['ignore', 'pipe', 'pipe'],
           // ignoreAbort: teardown commits run AFTER the run is aborted (stop/error);
           // binding the aborted signal here would kill them instantly and leave the

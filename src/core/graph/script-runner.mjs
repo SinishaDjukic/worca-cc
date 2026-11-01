@@ -146,7 +146,9 @@ export function buildEnvelope(ctx) {
       bench: Boolean(ctx.bench),
       // Workflow tests (D35): set on a test try's script step only (additive — apiVersion stays 1).
       ...(ctx.testConnectors === 'pretend' || ctx.testConnectors === 'real'
-        ? { test: { connectors: ctx.testConnectors, ...(ctx.tryGuard ? { guard: ctx.tryGuard } : {}) } } : {}),
+        ? { test: { connectors: ctx.testConnectors, ...(ctx.tryGuard ? { guard: ctx.tryGuard } : {}) } }
+        // Final review I1: a try's Library check on the bench has the guard and no connectors (it is no step of a try).
+        : ctx.bench && ctx.tryGuard ? { test: { guard: ctx.tryGuard } } : {}),
     },
   };
 }

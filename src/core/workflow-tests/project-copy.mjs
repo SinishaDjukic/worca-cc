@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { testCopiesRoot, testCopyDirFor, testCopyKeyOf, PROJECT_KEY_RE } from '../store.mjs';
 import { uncommittedPatch } from '../git-info.mjs';
@@ -16,6 +16,7 @@ import { isSafeBranchName } from '../git-sync.mjs';
 import { rmGuarded } from '../run-manifest.mjs';
 import { testError, PIN_MAX_CHANGES } from './store.mjs';
 import { lfsText, submodulesText, START_GONE_TEXT, CHANGES_TOO_BIG_TEXT } from '../../shared/workflow-tests/project-text.mjs';
+import { tryGitEnv, withSafeGitArgs } from './try-guard-env.mjs';
 
 const GIT_TIMEOUT_MS = 10 * 60_000;
 const firstLine = (s) => String(s || '').trim().split(/\r?\n/)[0].slice(0, 300) || 'git failed';
@@ -43,7 +44,9 @@ function copyGit(dir, args, { env = null } = {}) {
   const e = { ...(env || process.env) };
   if (!env) for (const k of GIT_DIR_ENV) delete e[k];
   e.GIT_CEILING_DIRECTORIES = resolve(testCopiesRoot());
-  return git(dir, args, { env: e });
+  // Final review I2: the copy's config is written by tries (a setup, an agent), so Worca's own git here runs none of its
+  // hooks or fsmonitor and carries the try guard's env (no token, no sign-in).
+  return git(dir, withSafeGitArgs(args), { env: tryGitEnv({ env: e }) });
 }
 
 const samePath = (a, b) => {
@@ -61,6 +64,9 @@ async function ownRepo(dir) {
 
 /** What every copy has set (D54): long paths on Windows, and no automatic gc or maintenance under a running try. */
 const COPY_SETTINGS = Object.freeze([['config', 'core.longpaths', 'true'], ['config', 'gc.auto', '0'], ['config', 'maintenance.auto', 'false']]);
+/** Final review I2: settings a try can leave in the copy's shared config that make git run a program (or move the config
+ *  per checkout); every repair unsets them, so the next test starts from a copy that runs nothing of a past try's. */
+const UNSAFE_COPY_KEYS = Object.freeze(['core.hooksPath', 'core.fsmonitor', 'extensions.worktreeConfig']);
 
 const notACopy = (dir) => `${dir} is not a usable copy of the project (no git repository of its own): skipped`;
 
@@ -111,7 +117,13 @@ async function ensureTestCopyLocked(key, { projectDir }) {
     const rem = await copyGit(dir, ['remote']);
     if (!rem.ok) throw testError(`Worca could not read its copy of the project: ${firstLine(rem.stderr)}`, 'NOT_READY');
     const remotes = rem.stdout.split(/\r?\n/).map((n) => n.trim()).filter(Boolean);
-    if (remotes.length) await setUp(dir, [...remotes.map((n) => ['remote', 'remove', '--', n]), ...COPY_SETTINGS]);
+    // Always (final review I2), not only when a remote was found: every remote removed, the unsafe settings unset and
+    // COPY_SETTINGS set again.
+    await setUp(dir, [...remotes.map((n) => ['remote', 'remove', '--', n]), ...COPY_SETTINGS]);
+    for (const k of UNSAFE_COPY_KEYS) {
+      const u = await copyGit(dir, ['config', '--unset-all', k]);
+      if (!u.ok && u.code !== 5) throw testError(`Worca could not set up its copy of the project: ${firstLine(u.stderr)}`, 'NOT_READY');   // 5: not set
+    }
     return { dir, created: false };
   }
   try { await rm(dir, RM); }
@@ -339,6 +351,12 @@ export async function removeTree(dir, { rmImpl = rm, attempts = 5, waitMs = 500 
  */
 export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = null, runRoot = null, pipelineId = null, rmImpl } = {}) {
   const errors = [];
+  // Final review: the recorded folder is removed only inside the try's own run folder (<worcaHome>/runs/<pipelineId>; without
+  // a pipeline id, inside <worcaHome>/runs). Anything else is refused and reported, never removed.
+  if (worktreeDir && existsSync(worktreeDir) && !insideRunFolder(worktreeDir, pipelineId)) {
+    errors.push(`Worca did not remove ${worktreeDir}: it is outside the try's run folder`);
+    worktreeDir = null;
+  }
   if (worktreeDir && existsSync(worktreeDir)) {
     const e = await removeTree(worktreeDir, rmImpl ? { rmImpl } : {});
     if (e) errors.push(e);
@@ -361,6 +379,17 @@ export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = 
     if (!r.removed && existsSync(runRoot)) errors.push(r.reason || 'the run folder stayed');
   }
   return { removed: !errors.length, error: errors[0] || null };
+}
+
+/** `dir` is inside <worcaHome>/runs/<pipelineId> (or <worcaHome>/runs without one): by path, and by realpath when both exist. */
+function insideRunFolder(dir, pipelineId) {
+  const runs = join(worcaHome(), 'runs');
+  if (pipelineId != null && !/^[A-Za-z0-9._-]+$/.test(String(pipelineId))) return false;
+  const base = pipelineId ? join(runs, String(pipelineId)) : runs;
+  const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const within = (child, parent) => { const c = fold(resolve(child)); const b = fold(resolve(parent)); return c !== b && c.startsWith(b.endsWith(sep) ? b : b + sep); };
+  if (!within(dir, base)) return false;
+  try { return within(realpathSync(dir), realpathSync(base)); } catch { return true; }   // the path test held; a base that is gone has nothing to follow
 }
 
 /**

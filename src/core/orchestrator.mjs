@@ -2128,7 +2128,9 @@ export class GraphOrchestrator extends RunHarness {
     try {
       return await measureCodeCursor({
         workDirs: this.workDirs, checkpointRefs: this.checkpointRefs,
-        excludeFor: (k) => this._excludePathspecs(k), numstat: diffNumstat,
+        excludeFor: (k) => this._excludePathspecs(k),
+        // Workflow tests 3a (final review I2): a try's measure runs no fsmonitor of the copy, under the guard.
+        numstat: (d, b, h, p) => diffNumstat(d, b, h, p, this._tryGitEnv() ? { env: this._tryGitEnv() } : {}),
         stage: () => this._stageWorkingTree({ ignoreAbort: true, refreshFolders: false }),
       });
     } catch { return null; }

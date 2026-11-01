@@ -180,10 +180,10 @@ const byProjectKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey 
 const repoRel = (m) => `repos/${m.worktreeDir ? basename(m.worktreeDir) : m.projectKey}`;
 
 /** `git -C dir <args>` stdout, or null. Sync + fail-safe (mirrors store.mjs). */
-function gitOut(dir, args) {
+function gitOut(dir, args, env = null) {
   if (!gitAvailable()) return null;
   try {
-    return execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'] })
+    return execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], ...(env ? { env } : {}) })
       .toString().trim() || null;
   } catch {
     return null;
@@ -396,9 +396,9 @@ function rewriteSkillName(text, name) {
 export const skillsRelFor = (engine) => (engine && engine !== 'claude' ? join('.agents', 'skills') : join('.claude', 'skills'));
 
 /** Top-level entry names tracked under the skills folder `rel` in a checkout (§5.6 guard). */
-function trackedSkillNames(worktreeDir, rel = join('.claude', 'skills')) {
+function trackedSkillNames(worktreeDir, rel = join('.claude', 'skills'), env = null) {
   if (!worktreeDir) return new Set();
-  const out = gitOut(worktreeDir, ['ls-files', '--', rel]);
+  const out = gitOut(worktreeDir, ['ls-files', '--', rel], env);
   if (!out) return new Set();
   const prefix = `${rel}/`;
   return new Set(
@@ -1290,6 +1290,7 @@ export async function assembleRunContext({
   platform = process.platform, agentIsolated = false, registry = null, settingsScope = null, engine = 'claude',
   setSkills = [],
   mcpStandIn = null,
+  gitEnv = null,   // workflow tests 3a (final review I2): a try's git env (no hook or fsmonitor of the copy, the guard)
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1400,7 +1401,7 @@ export async function assembleRunContext({
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
       resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
-      trackedNames: primary.workMode && primary.workMode !== 'git' ? shippedSkillNames(primary.shippedFiles, skillsRel) : trackedSkillNames(primary.worktreeDir, skillsRel),
+      trackedNames: primary.workMode && primary.workMode !== 'git' ? shippedSkillNames(primary.shippedFiles, skillsRel) : trackedSkillNames(primary.worktreeDir, skillsRel, gitEnv),
     });
     if (skillsOut.records.length) injectedPaths[primary.projectKey] = skillsOut.records;
   } else if (primary) {

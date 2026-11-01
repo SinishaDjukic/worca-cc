@@ -14,6 +14,7 @@ import { WORK_ARTIFACT_KIND } from '../no-project-work.mjs';
 import { runBenchOnce } from '../script-bench.mjs';
 import { readScript } from '../script-store.mjs';
 import { CONNECTOR_CALLS_FILE } from './connectors.mjs';
+import { scratchTryLog } from './try-guard-env.mjs';
 import { runShellStep, readTrySetup, tryShellEnv } from './shell-step.mjs';
 import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
 import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, commandSummary } from '../../shared/workflow-tests/checks.mjs';
@@ -124,7 +125,11 @@ const copyable = async (src) => { try { return !(await lstat(src)).isSymbolicLin
  * at a time), so the bench's limits (2 at once, one per key: script-bench.mjs:335) only meet a person's own bench runs,
  * which are waited out. Met when the bench says `clean`.
  */
-export function runScriptCheck(check, { pipelineId, cwdDir = null, runBench = runBenchOnce, waitMs = BUSY_WAIT_MS, deadlineMs = null, timeoutOf = declaredTimeout } = {}) {
+export function runScriptCheck(check, { pipelineId, cwdDir = null, logFile = null, runBench = runBenchOnce, waitMs = BUSY_WAIT_MS, deadlineMs = null,
+  timeoutOf = declaredTimeout } = {}) {
+  // Final review I1, I3 (D56): a check runs after the agent may have changed scripts, so it gets the try's full outward guard
+  // (the script bench applies it to the child's env), writing to the try's log, or a scratch one when that is not known.
+  const tryGuard = { logFile: logFile || scratchTryLog() };
   const notMet = (error) => ({ met: false, value: 'Not met', error });
   // Does the whole job, setup included, and always removes its copy once it settles (even after a timeout).
   const work = async (state, timeoutMs) => {
@@ -143,7 +148,7 @@ export function runScriptCheck(check, { pipelineId, cwdDir = null, runBench = ru
       }
       for (let attempt = 0; ; attempt += 1) {
         try {
-          const r = await runBench({ key: check.key, params: check.params || {}, inputs: {}, timeoutMs, cwd: { kind: 'dir', dir } }, { allowDirCwd: true });
+          const r = await runBench({ key: check.key, params: check.params || {}, inputs: {}, timeoutMs, cwd: { kind: 'dir', dir } }, { allowDirCwd: true, tryGuard });
           const met = !!r && r.status === 'clean';
           return { met, value: met ? 'Met' : String((r && (r.summary || r.status)) || 'Not met').split('\n')[0].slice(0, 120) };
         } catch (err) {
@@ -238,7 +243,7 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       results[i] = { id: check.id, label, met: !!r.met, value: r.value, ...(r.output ? { output: r.output } : {}), ...(r.timedOut ? { timedOut: true } : {}) };
       continue;
     }
-    const r = await runScript(check, { pipelineId: outcome.pipelineId, cwdDir });
+    const r = await runScript(check, { pipelineId: outcome.pipelineId, cwdDir, logFile: outcome.logFile });
     results[i] = { id: check.id, label, met: !!r.met, value: r.value, ...(r.error ? { error: r.error } : {}) };
   }
   return judgeTry(example, outcome.facts, results,

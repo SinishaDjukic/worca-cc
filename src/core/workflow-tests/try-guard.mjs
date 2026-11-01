@@ -23,9 +23,9 @@
 // word (always, when WSL reads it). A command nested deeper than MAX_DEPTH, or one whose name is an expansion that carries
 // a push / publish / web write, is denied as unreadable.
 // It is one layer of four: the stand-ins, the git env and the deny rules hold without it (try-guard-env.mjs).
-import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const NOT_SENT_TEXT = 'Not sent: this is a test.';   // = mcp/mock-connector.mjs NOT_SENT (the test pins them equal)
 export const TRY_GUARD_LOG_ENV = 'WORCA_TRY_GUARD_LOG';
@@ -1175,7 +1175,17 @@ function record(entry) {
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+/** Whether node was started with this file. Compared by realpath (final review): node loads the main module from its
+ *  realpath, so a path through a symlink or junction (a linked install) would otherwise read as "not main" and the hook
+ *  would allow everything. */
+function startedAsMain() {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  if (import.meta.url === pathToFileURL(arg).href) return true;
+  const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  try { return fold(realpathSync(arg)) === fold(realpathSync(fileURLToPath(import.meta.url))); } catch { return false; }
+}
+const isMain = startedAsMain();
 if (isMain) {
   const argv = process.argv.slice(2);
   if (argv[0] === '--stand-in') {

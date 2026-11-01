@@ -292,3 +292,44 @@ test('the boot sweep removes a clone folder left half made by a crash', async ()
   assert.equal(existsSync(left), false);
   assert.ok(existsSync(join(wh, 'workflow-tests', 'repos', key, '.git')), 'the copy itself stays');
 });
+
+test('final review I2: the copy repair always unsets the settings that run a program, and sets COPY_SETTINGS again (no remote needed)', async () => {
+  await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  git(dir, 'config', 'core.hooksPath', join(home, 'evil-hooks'));   // what a setup (husky) or an agent can leave in the shared config
+  git(dir, 'config', 'core.fsmonitor', join(home, 'evil-fsmonitor'));
+  git(dir, 'config', 'extensions.worktreeConfig', 'true');
+  git(dir, 'config', 'gc.auto', '1');
+  git(dir, 'config', 'core.longpaths', 'false');
+  const b = await copy.ensureTestCopy(key, { projectDir: real });
+  assert.deepEqual(b, { dir, created: false });
+  for (const k of ['core.hooksPath', 'core.fsmonitor', 'extensions.worktreeConfig']) {
+    assert.throws(() => git(dir, 'config', '--get', k), undefined, `${k} is unset`);
+  }
+  assert.equal(git(dir, 'config', 'gc.auto'), '0');
+  assert.equal(git(dir, 'config', 'core.longpaths'), 'true');
+  assert.deepEqual(await copy.ensureTestCopy(key, { projectDir: real }), { dir, created: false }, 'a clean copy repairs as a no-op');
+});
+
+test('final review: removing a try checkout refuses a recorded folder outside the try\'s run folder', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const outside = mkdtempSync(join(tmpdir(), 'worca-cc-wftoutside-'));
+  dirs.push(outside);
+  writeFileSync(join(outside, 'keep.txt'), 'keep');
+  const r = await copy.removeTryCheckout({ copyDir: dir, worktreeDir: outside, runRoot: join(wh, 'runs', 'abcd0001'), pipelineId: 'abcd0001' });
+  assert.equal(r.removed, false);
+  assert.match(r.error, /outside/);
+  assert.equal(existsSync(join(outside, 'keep.txt')), true, 'never removed');
+  const other = join(wh, 'runs', 'abcd0002', 'repos', key);   // another try's run folder
+  mkdirSync(other, { recursive: true });
+  writeFileSync(join(other, 'x.txt'), 'x');
+  const r2 = await copy.removeTryCheckout({ copyDir: dir, worktreeDir: other, pipelineId: 'abcd0001' });
+  assert.equal(r2.removed, false);
+  assert.equal(existsSync(join(other, 'x.txt')), true, 'not another try\'s');
+  const wt = join(wh, 'runs', 'abcd0001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-abcd0001', '--', wt, p.startCommit);
+  const ok = await copy.removeTryCheckout({ copyDir: dir, worktreeDir: wt, branch: 'worca-cc/try-abcd0001', runRoot: join(wh, 'runs', 'abcd0001'), pipelineId: 'abcd0001' });
+  assert.deepEqual(ok, { removed: true, error: null });
+});

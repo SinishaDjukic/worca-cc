@@ -115,10 +115,10 @@ export async function commitsAhead(projectDir, source, feature, { timeout = 0 } 
  * per command whether a rename is one `R` row or a `D` plus an `A`.
  * @returns {Promise<Array<{status:string, path:string, from?:string}>>}
  */
-export async function diffNameStatus(projectDir, base, head, pathspecs = []) {
+export async function diffNameStatus(projectDir, base, head, pathspecs = [], { env = null } = {}) {
   if (!projectDir || !base) return [];
   const args = ['-c', 'core.quotePath=false', 'diff', '--name-status', '-M', '-l0', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   if (!r.ok) return [];
   const out = [];
   for (const line of r.stdout.split('\n')) {
@@ -141,11 +141,11 @@ export async function diffNameStatus(projectDir, base, head, pathspecs = []) {
  * and `-l0` this shares so the Map keys match the name-status paths.
  * @returns {Promise<Map<string,{added:number, removed:number, binary:boolean}>>}
  */
-export async function diffNumstat(projectDir, base, head, pathspecs = []) {
+export async function diffNumstat(projectDir, base, head, pathspecs = [], { env = null } = {}) {
   const m = new Map();
   if (!projectDir || !base) return m;
   const args = ['-c', 'core.quotePath=false', 'diff', '--numstat', '-M', '-l0', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   if (!r.ok) return m;
   for (const line of r.stdout.split('\n')) {
     if (!line.trim()) continue;
@@ -182,12 +182,12 @@ export async function diffNumstat(projectDir, base, head, pathspecs = []) {
  * detection the old-path filter in ask/tools.mjs depends on.
  * @returns {Promise<string>}
  */
-export async function diffPatch(projectDir, base, head, pathspecs = []) {
+export async function diffPatch(projectDir, base, head, pathspecs = [], { env = null } = {}) {
   if (!projectDir || !base) return '';
   const args = ['-c', 'core.quotePath=false', 'diff', '-M', '-l0', '--no-color', '--no-ext-diff', '--submodule=short',
     '--src-prefix=a/', '--dst-prefix=b/',
     base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   return r.ok ? r.stdout : '';
 }
 
@@ -197,10 +197,10 @@ export async function diffPatch(projectDir, base, head, pathspecs = []) {
  * agent created; the live diff lists these separately. Read-only: never touches the index.
  * @returns {Promise<string[]>}
  */
-export async function untrackedFiles(projectDir, pathspecs = []) {
+export async function untrackedFiles(projectDir, pathspecs = [], { env = null } = {}) {
   if (!projectDir) return [];
   const args = ['-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '-z', '--', '.', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   if (!r.ok) return [];
   return r.stdout.split('\0').filter(Boolean);
 }
@@ -211,10 +211,10 @@ export async function untrackedFiles(projectDir, pathspecs = []) {
  * the success case here, so the exit code is ignored and stdout decides.
  * @returns {Promise<{patch:string, added:number, binary:boolean}>}
  */
-export async function untrackedPatch(projectDir, relPath) {
+export async function untrackedPatch(projectDir, relPath, { env = null } = {}) {
   const args = ['-c', 'core.quotePath=false', 'diff', '--no-index', '--no-color', '--no-ext-diff',
     '--src-prefix=a/', '--dst-prefix=b/', '--', '/dev/null', relPath];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   const patch = r.code === 0 || r.code === 1 ? r.stdout : '';
   const binary = /^Binary files /m.test(patch);
   let added = 0;

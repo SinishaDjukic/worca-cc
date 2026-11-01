@@ -15,6 +15,7 @@ import { standInDir } from '../src/core/workflow-tests/try-guard-env.mjs';
 import { runCodexProcess } from '../src/core/engines/codex.mjs';
 import { runGooseProcess } from '../src/core/engines/goose.mjs';
 import { runOpencodeProcess } from '../src/core/engines/opencode.mjs';
+import { getEngine } from '../src/core/engines/index.mjs';
 
 let home, prevHome, prevOpts;
 const fwd = (p) => p.replaceAll('\\', '/');
@@ -67,3 +68,50 @@ for (const [name, run] of [
     assert.equal(pathOf(plainNull), pathOf(plain));
   });
 }
+
+// Final review: copilot, cursor and the gemini family (gemini, qwen) start with options (`--output-format …`), which node
+// itself refuses before any preload, so their fake CLI is a POSIX script that records its env (the adapters' own tests use
+// the same kind of fake). They go through each engine's adapter `run` (the wrapper a turn calls): a wrapper that dropped
+// tryGuard would show here.
+const POSIX = process.platform === 'win32' ? { skip: 'POSIX script fake CLI (node refuses the leading options of these engines)' } : {};
+async function scriptEnv(tag, run) {
+  const dir = mkdtempSync(join(home, `${tag}-`));
+  const rec = join(dir, 'env.json');
+  const bin = join(dir, 'fake-cli');
+  writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" -e "require('fs').writeFileSync(process.argv[1], JSON.stringify(process.env))" "${rec}"\n`, { mode: 0o755 });
+  await run({ cwd: dir, bin, onEvent: () => {} }).catch(() => null);
+  return JSON.parse(readFileSync(rec, 'utf8'));
+}
+for (const name of ['copilot', 'cursor', 'gemini', 'qwen']) {
+  const run = (o) => getEngine(name).run({ ...o, prompt: 'p', ...(name === 'copilot' ? { scratchBase: join(o.cwd, 'scratch') } : {}) });
+  test(`${name}: a try's agent gets the guard env through the adapter's run; a normal spawn does not`, POSIX, async () => {
+    const logFile = join(home, `${name}-calls.ndjson`);
+    const tried = await scriptEnv(`${name}-try`, (o) => run({ ...o, tryGuard: { logFile } }));
+    assert.equal(tried[TRY_GUARD_LOG_ENV], logFile);
+    assert.equal(tried.GIT_TERMINAL_PROMPT, '0');
+    assert.ok(pathOf(tried).startsWith(standInDir(worcaHome())), pathOf(tried).slice(0, 200));
+    const plain = await scriptEnv(`${name}-plain`, (o) => run(o));
+    for (const k of GUARD_KEYS) assert.equal(plain[k], process.env[k], `${k} on a normal spawn`);
+    assert.ok(!pathOf(plain).includes(standInDir(worcaHome())), 'no stand-ins on a normal spawn');
+  });
+}
+
+test('every engine adapter\'s run is its process function, which takes tryGuard to composeSpawnEnv', async () => {
+  const { readFileSync: read } = await import('node:fs');
+  const src = (f) => read(new URL(`../src/core/engines/${f}`, import.meta.url), 'utf8');
+  const copilot = await import('../src/core/engines/copilot.mjs');
+  const cursor = await import('../src/core/engines/cursor.mjs');
+  const gemini = await import('../src/core/engines/gemini.mjs');
+  const qwen = await import('../src/core/engines/qwen.mjs');
+  assert.equal(getEngine('copilot').run, copilot.runCopilotProcess);
+  assert.equal(getEngine('cursor').run, cursor.runCursorProcess);
+  assert.equal(getEngine('gemini').run, gemini.runGeminiProcess);
+  assert.equal(getEngine('qwen').run, qwen.runQwenProcess);
+  assert.equal(getEngine('codex').run, runCodexProcess);
+  assert.equal(getEngine('goose').run, runGooseProcess);
+  assert.equal(getEngine('opencode').run, runOpencodeProcess);
+  for (const f of ['copilot.mjs', 'cursor.mjs', 'gemini-family.mjs', 'codex.mjs', 'goose.mjs', 'opencode.mjs']) {
+    assert.match(src(f), /composeSpawnEnv\(\{[^;]*\.\.\.\(tryGuard \? \{ tryGuard \} : \{\}\)/, `${f} hands tryGuard to composeSpawnEnv`);
+  }
+  for (const f of ['gemini.mjs', 'qwen.mjs']) assert.match(src(f), /runFamilyProcess\([A-Z_]+_SPEC, \{ \.\.\.opts,/, `${f} forwards every option`);
+});

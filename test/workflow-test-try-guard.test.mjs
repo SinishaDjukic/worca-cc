@@ -361,7 +361,7 @@ test('fix 4: the setup step keeps the package-registry tokens, never a forge tok
     assert.deepEqual([setupEnv.NPM_TOKEN, setupEnv.NODE_AUTH_TOKEN, setupEnv.GITLAB_TOKEN], ['r1', 'r2', undefined]);
     const checkEnv = tryShellEnv({ logFile: join(home, 's.ndjson') });
     assert.deepEqual([checkEnv.NPM_TOKEN, checkEnv.NODE_AUTH_TOKEN, checkEnv.GITLAB_TOKEN], [undefined, undefined, undefined]);
-    assert.equal(tryShellEnv().NPM_TOKEN, 'r1', 'no try (no log file): no guard, unchanged');
+    assert.equal(tryShellEnv().NPM_TOKEN, undefined, 'no log file: still guarded, never fails open (final review I3)');
     const ctx = { executionId: 'e1', projectDir: home, pipelineDir: home, pipelineId: 'abcd1234', claudeOpts: {} };
     const script = envForShell(buildEnvelope({ ...ctx, node: { id: 'n1', key: 's1' }, script: { meta: {}, params: {} }, testConnectors: 'pretend', tryGuard: { logFile: join(home, 's.ndjson') } }));
     assert.deepEqual([script.NPM_TOKEN, script.GITLAB_TOKEN], [undefined, undefined], 'a Library script step: full strip');
@@ -954,3 +954,20 @@ test('review fix 1 (8): the .cmd stand-in does not run what its arguments hold, 
     assert.deepEqual(readdirSync(standInDir(home)).filter((f) => f.startsWith('worca-stand-in-')), []);
     assert.deepEqual(readdirSync(env.TEMP || env.TMP || tmpdir()).filter((f) => f.startsWith('worca-stand-in-')), [], 'its temp file is gone');
   });
+
+test('final review: the hook still runs when started through a linked folder (a symlinked install path never fails open)', async () => {
+  const { symlinkSync } = await import('node:fs');
+  const { dirname, basename } = await import('node:path');
+  const link = join(mkdtempSync(join(tmpdir(), 'worca-cc-wftlink-')), 'linked');
+  symlinkSync(dirname(TRY_GUARD_PATH), link, process.platform === 'win32' ? 'junction' : 'dir');
+  const viaLink = join(link, basename(TRY_GUARD_PATH));
+  const log = join(home, 'linked-calls.ndjson');
+  const env = { ...process.env, [TRY_GUARD_LOG_ENV]: log };
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin main' } });
+  const hook = spawnSync(process.execPath, [viaLink], { input: payload, env, encoding: 'utf8' });
+  assert.equal(hook.status, 2, `the hook denies through the link too: ${hook.stderr}`);
+  const standIn = spawnSync(process.execPath, [viaLink, '--stand-in', 'gh', 'pr', 'create'], { env, encoding: 'utf8' });
+  assert.equal(standIn.status, 1, standIn.stderr);
+  assert.ok(existsSync(log) && readFileSync(log, 'utf8').includes('pr'), 'and records what it stopped');
+  rmSync(dirname(link), { recursive: true, force: true });
+});

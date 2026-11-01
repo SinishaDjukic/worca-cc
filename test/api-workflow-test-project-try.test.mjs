@@ -182,6 +182,16 @@ test('_excludePathspecs: unchanged without a setup, the setup\'s paths added aft
   assert.deepEqual(o._excludePathspecs('pk'), [':(exclude,literal)a*b', ':(exclude,literal)c?[d]'], 'never a pattern');
 });
 
+test('final review: the setup runs only in the try\'s checkout; an unknown checkout is an error, never the copy\'s folder', async () => {
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const o = createOrchestrator({ projectDir: copyDir, claude: { mock: true }, workflowTest: true, trySetup: { cmd: 'node -e "1"', timeoutMs: 60000 } });
+  o.workDirs = new Map();
+  o.runCwd = copyDir; o.workDir = copyDir;   // what the old fallback reached for
+  o.pipeline = { id: 'x', dir: join(homeDir, 'nope') };
+  await assert.rejects(o._runTrySetup(), { code: 'TRY_SETUP_NO_CHECKOUT' });
+  assert.equal(o.state.setupStage ?? null, null, 'no setup stage was entered');
+});
+
 test('_untrackedDirs: a git failure and a list cut at 200 are logged', async () => {
   const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
   const o = createOrchestrator({ projectDir: join(tmpdir(), 'wftptry-unit2'), claude: { mock: true } });
@@ -256,4 +266,41 @@ test('run-root mode legacy: a try still keeps its checkout under its run root; a
   } finally {
     if (prev === undefined) delete process.env.WORCA_RUN_ROOT; else process.env.WORCA_RUN_ROOT = prev;
   }
+});
+
+test('final review I2: hooks and an fsmonitor a setup leaves in the copy never run in Worca\'s own git, and the next test unsets them', { timeout: 240000 }, async () => {
+  const { mkdirSync, writeFileSync, chmodSync } = await import('node:fs');
+  const evil = join(homeDir, 'evil');
+  const hooks = join(evil, 'hooks');
+  mkdirSync(hooks, { recursive: true });
+  const fw = (p) => p.replaceAll('\\', '/');
+  const marker = fw(join(evil, 'ran.txt'));
+  for (const h of ['pre-commit', 'commit-msg', 'prepare-commit-msg', 'post-commit', 'post-checkout']) {
+    writeFileSync(join(hooks, h), `#!/bin/sh\necho "${h} $GH_TOKEN" >> "${marker}"\nexit 0\n`);
+    try { chmodSync(join(hooks, h), 0o755); } catch { /* Windows */ }
+  }
+  const fsmon = join(evil, 'fsmon.sh');
+  writeFileSync(fsmon, `#!/bin/sh\necho "fsmonitor $GH_TOKEN" >> "${marker}"\nexit 1\n`);
+  try { chmodSync(fsmon, 0o755); } catch { /* Windows */ }
+  // What husky's `prepare` (npm ci) does: it points the copy's shared config at the project's hooks.
+  const setup = `git config core.hooksPath "${fw(hooks)}" && git config core.fsmonitor "${fw(fsmon)}"`;
+  const prevTok = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = 'secret-token';
+  try {
+    const out = await _testing.invokeStartRun(await tryBody({ title: 'Test: Ticket 482 · try 5' }), null,
+      { workflowTest: { use: 'draft', project: { key, setupCmd: setup } } });
+    assert.equal(out.status, 200, JSON.stringify(out.body));
+    const entry = await settled(out.body.runId);
+    const row = artifacts.findPipelineRowById(entry.pipelineId);
+    assert.equal(row.status, 'done');
+    assert.equal(git(copyDir, 'config', 'core.hooksPath'), fw(hooks), 'the setup did set it (the scenario is real)');
+    const br = JSON.parse(row.branch);
+    assert.match(git(copyDir, 'ls-tree', '-r', '--name-only', br.feature), /src\/feature\.mjs/, 'the teardown commit still happened');
+    assert.equal(existsSync(marker) ? readFileSync(marker, 'utf8') : '', '', 'no hook and no fsmonitor of the copy ran in Worca\'s git');
+  } finally {
+    if (prevTok === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prevTok;
+  }
+  const { ensureStartCommit } = await import('../src/core/workflow-tests/project-copy.mjs');
+  await ensureStartCommit({ key, projectDir: real, project: pin });
+  for (const k of ['core.hooksPath', 'core.fsmonitor']) assert.throws(() => git(copyDir, 'config', '--get', k), undefined, `${k} unset before the next test`);
 });

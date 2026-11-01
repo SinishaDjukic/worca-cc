@@ -56,14 +56,15 @@ const SLOW_GIT_TIMEOUT_MS = 120_000;
 /** Run git and resolve to { ok, stdout, stderr, code }. Never throws.
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
  *  credential helper need PATH/HOME. Only the Ask Worca callers pass it. */
-function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0 } = {}) {
+function git(cwd, args, { signal, timeout = 30_000, env, fullEnv = null, maxBytes = 0 } = {}) {
   if (!gitAvailable()) return Promise.resolve(gitMissingResult());
   return new Promise((res) => {
     let child;
     try {
       child = spawn('git', args, {
         cwd, stdio: ['ignore', 'pipe', 'pipe'], signal,
-        ...(env ? { env: { ...process.env, ...env } } : {}),
+        // fullEnv REPLACES the env (a workflow-test try's guarded env: what it dropped must stay dropped).
+        ...(fullEnv ? { env: fullEnv } : env ? { env: { ...process.env, ...env } } : {}),
       });
     } catch (err) {
       res({ ok: false, stdout: '', stderr: err.message, code: -1 });
@@ -318,7 +319,7 @@ async function gitCommonDir(projectDir) {
  * @param {string} [args.checkoutName]  checkout dir name (default: pipelineId)
  */
 export async function createWorktree({
-  projectDir, pipelineId, sourceBranch, featureBranch, signal, baseDir, checkoutName,
+  projectDir, pipelineId, sourceBranch, featureBranch, signal, baseDir, checkoutName, gitEnv = null,
 }) {
   if (!projectDir) throw new Error('projectDir required');
   if (!pipelineId) throw new Error('pipelineId required');
@@ -364,7 +365,7 @@ export async function createWorktree({
     // M2: git forbids checking out one branch in two worktrees at once. Reap
     // stale registrations first; if a *live* worktree still holds it, fail with
     // an actionable message rather than a raw exit-128 mid-pipeline.
-    await git(projectDir, ['worktree', 'prune']);
+    await git(projectDir, ['worktree', 'prune'], { fullEnv: gitEnv });
     const inUse = await worktreePathForBranch(projectDir, branch);
     if (inUse && resolve(inUse) !== resolve(worktreeDir)) {
       throw new Error(`branch "${branch}" is already checked out in worktree ${inUse}`);
@@ -379,7 +380,8 @@ export async function createWorktree({
     }
     args = ['worktree', 'add', '-b', branch, '--', worktreeDir, sourceBranch];
   }
-  const r = await git(projectDir, args, { signal, timeout: SLOW_GIT_TIMEOUT_MS });
+  // gitEnv (workflow tests 3a, final review I2): a try's env, so `worktree add` runs no hook (post-checkout) of the copy.
+  const r = await git(projectDir, args, { signal, timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
   if (!r.ok) {
     const err = new Error(`git worktree add failed: ${r.stderr.trim() || `exit ${r.code}`}`);
     // The ONE abort path that surfaced as a PLAIN error: on signal abort Node
@@ -404,13 +406,13 @@ export async function createWorktree({
  * leaks. With force:true the dir is also removed directly as a backstop, and
  * the registration is pruned so a later reuse of the branch won't trip M2.
  */
-export async function removeWorktree({ projectDir, worktreeDir, branch, force = false } = {}) {
+export async function removeWorktree({ projectDir, worktreeDir, branch, force = false, gitEnv = null } = {}) {
   const steps = [];
   if (worktreeDir) {
     const args = force
       ? ['worktree', 'remove', '--force', worktreeDir]
       : ['worktree', 'remove', worktreeDir];
-    const r = await git(projectDir, args, { timeout: SLOW_GIT_TIMEOUT_MS });
+    const r = await git(projectDir, args, { timeout: SLOW_GIT_TIMEOUT_MS, fullEnv: gitEnv });
     steps.push({ step: 'worktree-remove', ok: r.ok, stderr: r.stderr.trim() });
     // fs backstop whenever the checkout survives the git remove — not only on
     // force. Git for Windows routinely leaves the directory behind (a read-only
@@ -427,10 +429,10 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
       if (fsRes) steps.push({ step: 'rm-dir', ok: false, stderr: fsRes });
     }
     // Reap the (now-missing) registration so it can't collide on reuse.
-    await git(projectDir, ['worktree', 'prune']);
+    await git(projectDir, ['worktree', 'prune'], { fullEnv: gitEnv });
   }
   if (branch) {
-    const r = await git(projectDir, ['branch', force ? '-D' : '-d', branch]);
+    const r = await git(projectDir, ['branch', force ? '-D' : '-d', branch], { fullEnv: gitEnv });
     steps.push({ step: 'branch-delete', ok: r.ok, stderr: r.stderr.trim() });
   }
   return { ok: steps.every((s) => s.ok), steps };

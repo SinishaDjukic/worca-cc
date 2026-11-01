@@ -29,6 +29,43 @@ export const TRY_DENY = Object.freeze([...DENIED_COMMANDS.map((c) => `Bash(${c})
 // Forward slashes, as host-guard.mjs:38-47 does: JSON would double each backslash, and both shells accept them.
 const fwd = (s) => String(s).replaceAll('\\', '/');
 export const standInDir = (home = worcaHome()) => join(home, 'workflow-tests', 'bin');
+/** Final review I3: where the guard records when a try's own log file is not known (its run folder is gone). The guard never
+ *  fails open: a try path with no log file still gets every env layer, writing here. */
+export const scratchTryLog = (home = worcaHome()) => join(home, 'workflow-tests', 'unbound-calls.ndjson');
+
+/** Final review I2: an empty folder Worca's own git in a try's copy uses as core.hooksPath, so no hook the copy holds runs. */
+export const noHooksDir = (home = worcaHome()) => join(home, 'workflow-tests', 'no-hooks');
+/** Settings in the copy's config (shared by every checkout of it; a setup like husky or an agent can write them) that make
+ *  git run a program: off for every git call Worca itself makes in a try's copy. Signing is off too: a try's commits never
+ *  leave Worca's copy, and gpg.program is a program the config names. */
+function safeGitPairs(home) {
+  const dir = noHooksDir(home);
+  try { mkdirSync(dir, { recursive: true }); } catch { /* an unwritable home: git then finds no such folder, which runs no hook either */ }
+  return [['core.hooksPath', fwd(dir)], ['core.fsmonitor', 'false'], ['commit.gpgsign', 'false']];
+}
+/** The same settings as `-c` arguments, to put before a git subcommand. */
+export function safeGitArgs(home = worcaHome()) {
+  return safeGitPairs(home).flatMap(([k, v]) => ['-c', `${k}=${v}`]);
+}
+/** `args` with safeGitArgs after any leading `-c` pairs of the caller, so the safe values win (the last -c wins). */
+export function withSafeGitArgs(args, home = worcaHome()) {
+  let i = 0;
+  while (args[i] === '-c' && i + 1 < args.length) i += 2;
+  return [...args.slice(0, i), ...safeGitArgs(home), ...args.slice(i)];
+}
+/** `env` with the same settings as GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n entries (they reach every git process a git spawns). */
+export function withSafeGitConfig(env, home = worcaHome()) {
+  const out = { ...(env ?? process.env) };
+  let n = Number.parseInt(out.GIT_CONFIG_COUNT || '0', 10) || 0;
+  for (const [k, v] of safeGitPairs(home)) { out[`GIT_CONFIG_KEY_${n}`] = k; out[`GIT_CONFIG_VALUE_${n}`] = v; n += 1; }
+  out.GIT_CONFIG_COUNT = String(n);
+  return out;
+}
+/** The env Worca's own git runs with in a try's copy: the outward guard (no token, no sign-in; `logFile` or the scratch log)
+ *  and the safe git settings. */
+export function tryGitEnv({ logFile = null, env = process.env, home = worcaHome(), platform = process.platform } = {}) {
+  return withSafeGitConfig(withTryGuardEnv(env, { logFile: logFile || scratchTryLog(home) }, { home, platform }), home);
+}
 const noAuthDir = (home, name) => join(home, 'workflow-tests', 'no-auth', name);
 
 /**
