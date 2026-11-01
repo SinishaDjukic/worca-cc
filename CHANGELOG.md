@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Credential broker: "Push as me" with a pasted token, no GitHub App needed
+
+- In multi mode the broker's GitHub row is always on the key page. Without `WORCA_BROKER_GITHUB_CLIENT_ID` it is paste-only: each person pastes a fine-grained token (checked with GitHub, kept sealed) and Worca's pushes and pull requests with `WORCA_GH_AS_PERSON` go out as them. The client ID now only adds "Sign in with GitHub" (and, with the secret, the renewal of GitHub App user tokens). A sign-in's token due for renewal on a broker without a client ID counts as expired.
+- Worca no longer warns at start when `WORCA_GH_AS_PERSON` is set and the broker has no GitHub client ID.
+
 ### Security: worca's trust boundaries
 
 - Worca's own git calls in a project or run checkout never run a hook or config command an agent planted in the shared `.git`, including a filter behind a conditional include on `git worktree add` (runs, terminal branch folders, team metrics, policy and memory). Model-chosen code in the chat (`test_script` with a draft, a `command`/`code` param, or a built-in or plugin script) runs only behind an approval card that shows every value it runs. Under agent isolation, every caller on the box (all of 127.0.0.0/8 included) needs the instance token. `/answer`, `/approve`, `/retry`, `/abort` and `/cancel` follow the `/direct` rule in group chats. The credential broker gives the body budget back at a deadline and books paused readers, large JSON answers and every stream flag. Artifact routes read the file the link check passed. A relayed chat's MCP config is readable only by that person's agent user.

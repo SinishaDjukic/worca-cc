@@ -145,7 +145,7 @@ A slot is one kind of credential with one fixed destination.
 | `openrouter` | `https://openrouter.ai` | `Authorization: Bearer` |
 | `copilot` | `*.githubcopilot.com` | Copilot's short-lived token, exchanged from the person's GitHub sign-in |
 | `local` | `WORCA_BROKER_LOCAL_URL` | none (keyless), or an operator-held key |
-| `github` | `https://api.github.com` | Only with `WORCA_BROKER_GITHUB_CLIENT_ID`. Never proxied: its token goes to worca for one push ([Push as me](#push-as-me)) |
+| `github` | `https://api.github.com` | In multi mode (in single mode only with `WORCA_BROKER_GITHUB_CLIENT_ID`). A pasted token, or a GitHub sign-in with `WORCA_BROKER_GITHUB_CLIENT_ID`. Never proxied: its token goes to worca for one push ([Push as me](#push-as-me)) |
 
 Operators add slots (another OpenAI-compatible gateway, say) in `WORCA_BROKER_SLOTS_FILE`. A
 slot is `per-person` (each person saves their own) or `operator` (one credential for everyone,
@@ -362,7 +362,7 @@ store, and its key page on its own hostname behind its own Cloudflare Access app
 | `WORCA_BROKER_LOCAL_URL` | `http://host.docker.internal:11434` | A keyless local model server (Anthropic API) as slot `local` |
 | `WORCA_BROKER_SLOTS_FILE` | | JSON array of extra or overridden slots |
 | `WORCA_BROKER_ALLOW_TEAM_KEYS` | `1` | Allow an operator key on a slot everyone uses (off: a shared key is what multi mode removes) |
-| `WORCA_BROKER_GITHUB_CLIENT_ID` | `Iv23li…` | Optional: turns on [Push as me](#push-as-me) |
+| `WORCA_BROKER_GITHUB_CLIENT_ID` | `Iv23li…` | Optional: adds "Sign in with GitHub" to [Push as me](#push-as-me) (a pasted token needs none) |
 | `WORCA_BROKER_GITHUB_CLIENT_SECRET` | | Needed to renew expiring GitHub App user tokens |
 | `WORCA_BROKER_GITHUB_SCOPES` | `repo` | OAuth App scopes (a GitHub App uses its own permissions) |
 
@@ -498,14 +498,15 @@ Optional. By default pushes and pull requests use the deployment's GitHub App or
 before. With **push as me**, a write (a push, a pull request) goes out with the GitHub
 identity of the person who caused it:
 
-1. Create a GitHub App (recommended: fine-grained permissions, contents and pull requests
-   write; enable *Device flow*; user tokens expire and are renewed) or an OAuth App (enable
-   *Device flow*).
-2. On the broker: `WORCA_BROKER_GITHUB_CLIENT_ID`, and for a GitHub App
-   `WORCA_BROKER_GITHUB_CLIENT_SECRET` so it can renew tokens.
-3. On worca: `WORCA_GH_AS_PERSON=prefer` or `required`.
-4. Each person signs in with GitHub on the key page (a device code), or pastes a
-   fine-grained token.
+1. On worca: `WORCA_GH_AS_PERSON=prefer` or `required`.
+2. Each person pastes a fine-grained token (contents and pull requests write on the
+   repositories they work on) in the GitHub row of the key page. The broker checks it with
+   GitHub (`GET /user`) and keeps it sealed. That is all a multi-mode broker needs.
+3. Optional, for "Sign in with GitHub" on the key page instead of a pasted token: create a
+   GitHub App (recommended: fine-grained permissions, contents and pull requests write;
+   enable *Device flow*; user tokens expire and are renewed) or an OAuth App (enable
+   *Device flow*), and set `WORCA_BROKER_GITHUB_CLIENT_ID` on the broker, and for a GitHub
+   App `WORCA_BROKER_GITHUB_CLIENT_SECRET` so it can renew tokens. Pasting still works.
 
 | `WORCA_GH_AS_PERSON` | A person who connected GitHub | A person who didn't, or no signed-in person |
 | --- | --- | --- |
@@ -517,8 +518,9 @@ The token never reaches an agent: worca asks the broker (`/internal/github-token
 git or gh call it makes itself, puts it in that call's environment only, and the broker's
 `github` slot is never proxied. Reads (clone, fetch) keep worca's own credential, and so does
 worca's own metrics branch. A GitHub App user token also only reaches repositories the App
-is installed on. worca warns at start when `WORCA_GH_AS_PERSON` is set but the broker has no
-GitHub client ID.
+is installed on. A sign-in's token that is due for renewal while the broker has no client ID
+(or, for a GitHub App, no client secret) counts as expired: the person signs in again or
+pastes a token.
 
 ## Cloudflare Access and Railway
 
