@@ -415,7 +415,7 @@ async function ghCreatePr({ projectDir, base, head, title, body = '', repo = nul
     return { ok: true, url, existed: false };
   }
   if (/already exists/i.test(r.stderr || '')) {
-    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepo(repo) })).env });
+    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo: ownerRepo(repo) })).env });
     if (v.ok && v.stdout.trim()) return { ok: true, url: v.stdout.trim(), existed: true };
     // gh's message ends with the existing PR's URL ("… already exists:\n<url>");
     // use it when the view selector cannot resolve (e.g. a PR opened from another fork).
@@ -557,7 +557,7 @@ async function ghPrMergeable({ projectDir, head, repo = null, headOwner = null, 
   const selector = prUrl || (head ? prHeadRef(head, headOwner) : '');
   if (!selector) return 'UNKNOWN';
   const repoArgs = !prUrl && repo ? ['--repo', repo] : [];
-  const r = await _run('gh', ['pr', 'view', selector, ...repoArgs, '--json', 'mergeable', '-q', '.mergeable'], { cwd: projectDir, env: (await githubEnv('read', { repo: prUrl ? ownerRepoOfPrUrl(prUrl) : ownerRepo(repo) })).env });
+  const r = await _run('gh', ['pr', 'view', selector, ...repoArgs, '--json', 'mergeable', '-q', '.mergeable'], { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo: prUrl ? ownerRepoOfPrUrl(prUrl) : ownerRepo(repo) })).env });
   if (!r.ok) return 'UNKNOWN';
   return normalizeMergeable(r.stdout.trim());
 }
@@ -641,7 +641,7 @@ export async function ghPrChecks({ projectDir, prUrl }) {
   try {
     const [r, base] = await Promise.all([
       _run('gh', ['pr', 'view', prUrl, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup'],
-        { cwd: projectDir, env: (await githubEnv('read', { repo })).env }),
+        { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo })).env }),
       ghPrBaseFailing({ projectDir, prUrl }).catch(() => ({ base: null, failing: [] })),
     ]);
     if (!r.ok) return null;
@@ -688,7 +688,7 @@ const normalizePr = (pr) => ({
  */
 /** The OPEN PR's verdict by one extra `gh pr view` (merged PRs need none). Null on any failure: the chip keeps today's words. */
 async function ghPrVerdict(projectDir, url) {
-  const v = await _run('gh', ['pr', 'view', url, '--json', VERDICT_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(url) })).env });
+  const v = await _run('gh', ['pr', 'view', url, '--json', VERDICT_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo: ownerRepoOfPrUrl(url) })).env });
   if (!v.ok) return null;
   try { return prVerdictOf(JSON.parse(v.stdout || 'null')); } catch { return null; }
 }
@@ -696,7 +696,7 @@ async function ghFindPrForBranch({ projectDir, head, prUrl = null, withVerdict =
   const done = async (pr) => (withVerdict && pr && pr.state === 'OPEN' ? { ...pr, verdict: await ghPrVerdict(projectDir, pr.url) } : pr);
   let closedAtUrl = null;
   if (prUrl) {
-    const v = await _run('gh', ['pr', 'view', prUrl, '--json', PR_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
+    const v = await _run('gh', ['pr', 'view', prUrl, '--json', PR_FIELDS], { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo: ownerRepoOfPrUrl(prUrl) })).env });
     if (v.ok) {
       let obj = null;
       try { obj = JSON.parse(v.stdout || 'null'); } catch { obj = null; }
@@ -711,7 +711,7 @@ async function ghFindPrForBranch({ projectDir, head, prUrl = null, withVerdict =
   const r = await _run(
     'gh',
     ['pr', 'list', '--head', head, '--state', 'all', '--json', PR_FIELDS, '--limit', '30'],
-    { cwd: projectDir, env: (await githubEnv('read', { repo: null })).env },
+    { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo: null })).env },
   );
   let norm = [];
   try {
@@ -729,7 +729,7 @@ async function ghFindPrForBranch({ projectDir, head, prUrl = null, withVerdict =
 export async function readPrBody({ projectDir = null, prUrl } = {}) {
   if (!prUrl) return { ok: false, error: 'prUrl is required' };
   const r = await _run('gh', ['pr', 'view', prUrl, '--json', 'body', '-q', '.body'],
-    { cwd: projectDir || undefined, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
+    { cwd: projectDir || undefined, env: (await githubEnv('read', { readAsPerson: true, repo: ownerRepoOfPrUrl(prUrl) })).env });
   if (!r.ok) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
   return { ok: true, body: String(r.stdout || '').replace(/\r?\n$/, '') };
 }
@@ -875,7 +875,7 @@ export async function prBaseBranch(projectDir, name, remoteNames = []) {
 /** OPEN | MERGED | CLOSED | null — unlike findPrForBranch, CLOSED is reported (keep policy `until-pr`). */
 async function ghPrLifecycleState({ projectDir, prUrl }) {
   const v = await _run('gh', ['pr', 'view', prUrl, '--json', 'state'],
-    { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
+    { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo: ownerRepoOfPrUrl(prUrl) })).env });
   if (!v.ok) return null;
   try { const s = JSON.parse(v.stdout || 'null')?.state; return ['OPEN', 'MERGED', 'CLOSED'].includes(s) ? s : null; } catch { return null; }
 }
@@ -910,7 +910,7 @@ export async function ghItemSummaries({ repo, numbers, timeout = GH_CHIP_TIMEOUT
   if (!owner || !name || extra !== undefined || !list.length || !(await hasGh())) return out;
   const aliases = list.map((n) => `p${n}: pullRequest(number: ${n}) { title state isDraft } i${n}: issue(number: ${n}) { title state }`);
   const query = `query { r: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${aliases.join(' ')} } }`;
-  const cred = await githubEnv('read', { repo: `${owner}/${name}` });
+  const cred = await githubEnv('read', { readAsPerson: true, repo: `${owner}/${name}` });
   if (cred.error) return out;                      // a failed App mint: never fall back to the server user's own gh login
   // --hostname: these refs are github.com ones even when the server's GH_HOST names an Enterprise host.
   const r = await _run('gh', ['api', 'graphql', '--hostname', 'github.com', '-f', `query=${query}`], { timeout, env: cred.env });
@@ -1109,7 +1109,7 @@ const pageOk = (p) => p && typeof p.hasNextPage === 'boolean'
   && (!p.hasNextPage || (typeof p.endCursor === 'string' && p.endCursor));
 
 async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
-  const cred = await githubEnv(role, { repo });
+  const cred = await githubEnv(role, { readAsPerson: true, repo });
   if (cred.error) return { ok: false, class: 'auth', error: cred.error };
   const args = ['api', 'graphql', '-f', `query=${query}`];
   // `-f` sends a raw string; `-F` types its value, and only the literals true/false and an integer
@@ -1222,7 +1222,7 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
 
 export async function ghFailedJobLog({ projectDir, prUrl, databaseId } = {}) {
   const p = parseGithubPrUrl(prUrl); if (!p || !databaseId) return { ok: false, class: 'failed', error: 'invalid job log request' };
-  const repo = `${p.owner}/${p.repo}`; const cred = await githubEnv('read', { repo });
+  const repo = `${p.owner}/${p.repo}`; const cred = await githubEnv('read', { readAsPerson: true, repo });
   if (cred.error) return { ok: false, class: 'auth', error: cred.error };
   const r = await _run('gh', ['run', 'view', '--job', String(databaseId), '--log-failed', '--repo', repo], { cwd: projectDir, env: cred.env });
   if (!r.ok) return { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
@@ -1392,7 +1392,7 @@ export function parseGhInclude(out) {
  */
 export async function ghApi({ role = 'read', repo = null, method = 'GET', path, body = null, etag = null, timeout = 30_000 } = {}) {
   if (!path) return { ok: false, status: null, class: 'failed', error: 'path is required' };
-  const cred = await githubEnv(role, { repo: ownerRepo(repo) });
+  const cred = await githubEnv(role, { readAsPerson: true, repo: ownerRepo(repo) });
   if (cred.error) return { ok: false, status: null, class: 'auth', error: cred.error };
   const args = ['api', '--include', '-X', method, '-H', 'Accept: application/vnd.github+json', path];
   if (etag) args.push('-H', `If-None-Match: ${etag}`);

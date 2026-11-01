@@ -28,7 +28,7 @@ export function hostCredentialLabel(mode, { host = 'github.com', appId = null, a
   }
   if (host !== 'github.com') return `none (${host} is not GitHub): public repositories only`;
   // "Push as me" (WORCA_GH_AS_PERSON): the person's own GitHub when they connected it on the key page.
-  if (asPerson) return `your own GitHub account if you connected it on the key page; otherwise ${hostCredentialLabel(mode, { host, appId })}`;
+  if (asPerson) return `your own GitHub account if you connected it on the key page (the clone is then visible to everyone on this worca); otherwise ${hostCredentialLabel(mode, { host, appId })}`;
   if (mode === 'app') return `GitHub App${appId ? ` ${appId}` : ''} (a read-only token for this clone)`;
   if (mode === 'split') return 'the read token (WORCA_GH_READ_TOKEN)';
   if (mode === 'single') return 'the deployment token (GH_TOKEN)';

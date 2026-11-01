@@ -72,7 +72,7 @@ function slotCard(slot) {
     el('span', { class: `chip ${slot.state}` }, chipText)));
 
   if (slot.credential === 'per-person' && slot.signIn === 'github-device') card.append(githubSignIn(slot, say));
-  if (isGithub) card.append(el('p', { class: 'meta' }, "Worca clones, pushes and opens pull requests as you with it, for what you do and the runs you start. Give a fine-grained token Contents and Pull requests (read and write) on the repositories you work on. Nothing here is ever given to an agent."));
+  if (isGithub) card.append(el('p', { class: 'meta' }, "Worca clones, pushes and opens pull requests as you with it, for what you do and the runs you start. Give a fine-grained token Contents and Pull requests (read and write) on the repositories you work on. A repository you clone with it is visible to everyone on this Worca. Nothing here is ever given to an agent."));
   if (slot.credential === 'per-person' && (slot.signIn !== 'github-device' || pasteToo)) {
     const input = el('input', { type: 'password', id: `key-${slot.id}`, autocomplete: 'off', spellcheck: 'false', placeholder: slot.keyHint ? `Paste your key (${slot.keyHint})` : 'Paste your key', 'aria-label': `${slot.label}` });
     const form = el('div', { class: 'row', hidden: slot.state === 'set' || (pasteToo && slot.state !== 'invalid') });

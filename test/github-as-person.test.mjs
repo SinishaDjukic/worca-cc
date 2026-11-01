@@ -78,7 +78,7 @@ test('prefer: the acting person\'s token for writes and reads, worca\'s own for 
   assert.equal(w.env.GH_TOKEN, 'ghu_adas_own_token');
   assert.equal(w.env.WORCA_GIT_TOKEN, 'ghu_adas_own_token');
   assert.equal(w.as, 'ada@acme.dev');
-  const r = await githubEnv('read', { base: env, person: 'ada@acme.dev' });
+  const r = await githubEnv('read', { base: env, person: 'ada@acme.dev', readAsPerson: true });
   assert.equal(r.env.GH_TOKEN, 'ghu_adas_own_token');
   const nobody = await githubEnv('write', { base: env, person: 'bob@acme.dev' });
   assert.equal(nobody.env.GH_TOKEN, 'ghs_worcas_own');
@@ -140,39 +140,51 @@ test('reads as the person: their clone and fetch reach what their account reache
     asked.length = 0;
     // No credential of the deployment at all: the person's own GitHub is the only way in.
     const env = { WORCA_BROKER_URL: url, WORCA_GH_AS_PERSON: mode };
-    const ada = await withBillTo('ada@acme.dev', () => githubEnv('read', { base: env, repo: 'acme/app' }));
+    const ada = await withBillTo('ada@acme.dev', () => githubEnv('read', { base: env, repo: 'acme/app', readAsPerson: true }));
     assert.equal(ada.error, null);
     assert.equal(ada.env.GH_TOKEN, 'ghu_adas_own_token');
     assert.equal(ada.env.WORCA_GIT_TOKEN, 'ghu_adas_own_token');
     assert.equal(ada.as, 'ada@acme.dev');
     // Not connected, expired, or nobody behind the call: worca's own credential (none here), no error, even under required.
     for (const person of ['bob@acme.dev', 'old@acme.dev', null, 'local']) {
-      const r = await githubEnv('read', { base: { ...env, GH_TOKEN: 'ghs_worcas_own' }, person });
+      const r = await githubEnv('read', { base: { ...env, GH_TOKEN: 'ghs_worcas_own' }, person, readAsPerson: true });
       assert.equal(r.error, null, `${mode} ${person}`);
       assert.equal(r.env.GH_TOKEN, 'ghs_worcas_own', `${mode} ${person}`);
     }
   }
 });
 
-test('reads: asPerson:false (git-free API, metrics) and "push as me" off keep worca\'s credential and never ask the broker', async () => {
-  const off = await githubEnv('read', { base: base(), person: 'ada@acme.dev' });
+test('reads: opt-in only; asPerson:false (git-free API, metrics), no opt-in (plugins, skills) and "push as me" off keep worca\'s credential and never ask the broker', async () => {
+  const off = await githubEnv('read', { base: base(), person: 'ada@acme.dev', readAsPerson: true });
   assert.equal(off.env.GH_TOKEN, 'ghs_worcas_own');
-  const own = await githubEnv('read', { base: base({ WORCA_GH_AS_PERSON: 'prefer' }), person: 'ada@acme.dev', asPerson: false });
+  const own = await githubEnv('read', { base: base({ WORCA_GH_AS_PERSON: 'prefer' }), person: 'ada@acme.dev', asPerson: false, readAsPerson: true });
   assert.equal(own.env.GH_TOKEN, 'ghs_worcas_own');
+  // Opt-in per call site: a read that doesn't ask for it (plugins, skills) stays on worca's credential.
+  const shared = await githubEnv('read', { base: base({ WORCA_GH_AS_PERSON: 'prefer' }), person: 'ada@acme.dev' });
+  assert.equal(shared.env.GH_TOKEN, 'ghs_worcas_own');
   assert.deepEqual(asked, []);
 });
 
 test('reads: a person\'s token is kept for a minute, "not connected" for 30 s; writes always ask', async () => {
   const env = base({ WORCA_GH_AS_PERSON: 'prefer' });
   const t0 = 1_000_000;
-  await githubEnv('read', { base: env, person: 'ada@acme.dev', now: t0 });
-  await githubEnv('read', { base: env, person: 'ADA@acme.dev', now: t0 + 59_000 });
-  await githubEnv('read', { base: env, person: 'bob@acme.dev', now: t0 });
-  const bob = await githubEnv('read', { base: env, person: 'bob@acme.dev', now: t0 + 29_000 });
+  await githubEnv('read', { base: env, person: 'ada@acme.dev', now: t0, readAsPerson: true });
+  await githubEnv('read', { base: env, person: 'ADA@acme.dev', now: t0 + 59_000, readAsPerson: true });
+  await githubEnv('read', { base: env, person: 'bob@acme.dev', now: t0, readAsPerson: true });
+  const bob = await githubEnv('read', { base: env, person: 'bob@acme.dev', now: t0 + 29_000, readAsPerson: true });
   assert.equal(bob.env.GH_TOKEN, 'ghs_worcas_own');
   assert.deepEqual(asked, ['ada@acme.dev', 'bob@acme.dev']);
-  await githubEnv('read', { base: env, person: 'ada@acme.dev', now: t0 + 61_000 });
-  await githubEnv('read', { base: env, person: 'bob@acme.dev', now: t0 + 31_000 });
+  await githubEnv('read', { base: env, person: 'ada@acme.dev', now: t0 + 61_000, readAsPerson: true });
+  await githubEnv('read', { base: env, person: 'bob@acme.dev', now: t0 + 31_000, readAsPerson: true });
   await githubEnv('write', { base: env, person: 'ada@acme.dev', now: t0 + 61_500 });
   assert.deepEqual(asked, ['ada@acme.dev', 'bob@acme.dev', 'ada@acme.dev', 'bob@acme.dev', 'ada@acme.dev']);
+});
+
+test('reads as the person are opted in only where worca acts on a project for them', () => {
+  const src = (f) => readFileSync(new URL(`../src/core/${f}`, import.meta.url), 'utf8');
+  assert.match(src('clone-project.mjs'), /gitEnvFor\('read', plan\.url, \{[^}]*readAsPerson: true/);
+  assert.match(src('git-sync.mjs'), /githubEnv\('read', \{[^}]*readAsPerson: true/);
+  // Shared installs keep worca's own credential.
+  assert.doesNotMatch(src('plugin-repo.mjs'), /readAsPerson/);
+  assert.doesNotMatch(src('skills-registry/import.mjs'), /readAsPerson/);
 });

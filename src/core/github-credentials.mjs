@@ -69,7 +69,7 @@ export function credentialEnv(role, base = process.env) {
  * for this one call (`repo` "owner/name" helps find the installation). Never throws:
  * `{ env, error }`, where a failed mint leaves a credential-free env and says why.
  */
-export async function githubEnv(role, { base = process.env, repo = null, fetchImpl = fetch, now = Date.now(), asPerson = true, person = undefined } = {}) {
+export async function githubEnv(role, { base = process.env, repo = null, fetchImpl = fetch, now = Date.now(), asPerson = true, readAsPerson = false, person = undefined } = {}) {
   // "Push as me" (optional, docs/credential-broker.md): a write (push, pull request) goes out
   // with the acting person's own GitHub token, from the credential broker, for this call only;
   // reads use it too when they connected one (personReadEnv).
@@ -79,10 +79,13 @@ export async function githubEnv(role, { base = process.env, repo = null, fetchIm
     const p = await personWriteEnv(base, person === undefined ? currentBillTo() : person);
     if (p) return p;
   }
-  // Reads (clone, fetch, pull request status) with "push as me" on: the acting person's token when
-  // they connected GitHub, so they reach what their own account reaches; else worca's own
-  // credential (also in required mode, which only refuses writes).
-  if (role === 'read' && asPerson) {
+  // Reads with "push as me" on, opt-in per call site (`readAsPerson`): the acting person's token
+  // when they connected GitHub, so a clone, fetch or pull request status reaches what their own
+  // account reaches; else worca's own credential (also in required mode, which only refuses
+  // writes). Only reads that act on a project for that person opt in: shared installs (plugins,
+  // skills), the git-free API and metrics keep worca's own credential, so one person's token never
+  // decides what everyone on the deployment gets.
+  if (role === 'read' && asPerson && readAsPerson) {
     const p = await personReadEnv(base, person === undefined ? currentBillTo() : person, now);
     if (p) return p;
   }

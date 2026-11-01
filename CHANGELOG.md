@@ -4,7 +4,7 @@
 
 ### "Push as me" covers clones and fetches too
 
-- With `WORCA_GH_AS_PERSON`, worca's GitHub reads (a clone, a fetch, a pull request's status) also use the acting person's own GitHub when they connected it on the key page, so a person can clone and open pull requests on what their own account reaches, even when the deployment has no GitHub credential. Without a connected GitHub (or with no one behind the call) reads use the deployment's credential, also under `required`, which only refuses writes. Their token is kept in memory for up to a minute for reads.
+- With `WORCA_GH_AS_PERSON`, worca's GitHub reads (a clone, a fetch, a pull request's status) also use the acting person's own GitHub when they connected it on the key page, so a person can clone and open pull requests on what their own account reaches, even when the deployment has no GitHub credential. Without a connected GitHub (or with no one behind the call) reads use the deployment's credential, also under `required`, which only refuses writes. Their token is kept in memory for up to a minute for reads. Only reads on a project opt in (clone, fetch, pull request status); plugin and skill installs, the git-free API and metrics keep the deployment's credential. A repository cloned with a person's token is visible to everyone on that worca, and the clone card and key page say so.
 - The clone card, Ask Worca's hosting rules (`githubAsPerson=` on the deployment line) and the key page's GitHub row say so, and the key page names the permissions a token needs.
 
 ### Credential broker: "Push as me" with a pasted token, no GitHub App needed
