@@ -90,7 +90,7 @@ test('askCatalog: Copilot rows, their default, and askEngine copilot', async () 
 test('a Copilot chat takes only Copilot models', async () => {
   const m = mk();
   assert.deepEqual(await m.validateModelEffort('copilot/gpt-5.4', 'high', { engine: 'copilot' }), { ok: true, model: 'copilot/gpt-5.4', effort: 'high' });
-  assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low', { engine: 'copilot' }), { ok: false, error: 'this chat runs on Copilot; start a new chat to use Codex' });
+  assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low', { engine: 'copilot' }), { ok: false, error: 'this chat runs on Copilot; switch it to Codex from the Chat model picker first' });
   assert.equal(chatEngine({ model: 'x', engine: 'copilot' }), 'copilot');
 });
 
