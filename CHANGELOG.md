@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### "Push as me" covers clones and fetches too
+
+- With `WORCA_GH_AS_PERSON`, worca's GitHub reads (a clone, a fetch, a pull request's status) also use the acting person's own GitHub when they connected it on the key page, so a person can clone and open pull requests on what their own account reaches, even when the deployment has no GitHub credential. Without a connected GitHub (or with no one behind the call) reads use the deployment's credential, also under `required`, which only refuses writes. Their token is kept in memory for up to a minute for reads.
+- The clone card, Ask Worca's hosting rules (`githubAsPerson=` on the deployment line) and the key page's GitHub row say so, and the key page names the permissions a token needs.
+
 ### Credential broker: "Push as me" with a pasted token, no GitHub App needed
 
 - In multi mode the broker's GitHub row is always on the key page. Without `WORCA_BROKER_GITHUB_CLIENT_ID` it is paste-only: each person pastes a fine-grained token (checked with GitHub, kept sealed) and Worca's pushes and pull requests with `WORCA_GH_AS_PERSON` go out as them. The client ID now only adds "Sign in with GitHub" (and, with the secret, the renewal of GitHub App user tokens). A sign-in's token due for renewal on a broker without a client ID counts as expired.

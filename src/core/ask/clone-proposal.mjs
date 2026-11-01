@@ -15,7 +15,7 @@ const BREAKS_RE = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/g;
 const clip = (v, n) => String(v ?? '').replace(BREAKS_RE, ' ').slice(0, n);
 
 /** How the clone authenticates, in words for the card. `mode` = githubMode(), `adoMode` / `bbMode` = the Azure / Bitbucket credential modes. */
-export function hostCredentialLabel(mode, { host = 'github.com', appId = null, adoMode = 'none', bbMode = 'none' } = {}) {
+export function hostCredentialLabel(mode, { host = 'github.com', appId = null, adoMode = 'none', bbMode = 'none', asPerson = null } = {}) {
   if (isAzureHost(host)) {
     if (adoMode === 'split') return 'the Azure DevOps read token (WORCA_ADO_READ_TOKEN)';
     if (adoMode === 'single') return 'the Azure DevOps token (WORCA_ADO_TOKEN)';
@@ -27,6 +27,8 @@ export function hostCredentialLabel(mode, { host = 'github.com', appId = null, a
     return 'none (Bitbucket: set WORCA_BB_TOKEN): public repositories only';
   }
   if (host !== 'github.com') return `none (${host} is not GitHub): public repositories only`;
+  // "Push as me" (WORCA_GH_AS_PERSON): the person's own GitHub when they connected it on the key page.
+  if (asPerson) return `your own GitHub account if you connected it on the key page; otherwise ${hostCredentialLabel(mode, { host, appId })}`;
   if (mode === 'app') return `GitHub App${appId ? ` ${appId}` : ''} (a read-only token for this clone)`;
   if (mode === 'split') return 'the read token (WORCA_GH_READ_TOKEN)';
   if (mode === 'single') return 'the deployment token (GH_TOKEN)';
