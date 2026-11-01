@@ -199,9 +199,10 @@ export function createAskModels({
     const e = effort.trim();
     // A model on two harnesses keeps its own efforts; a chat on the other harness takes them mapped (effortsOn).
     if (!entry.efforts.includes(e) && !(engine && effortsOn(entry, engine).includes(e))) return { ok: false, error: `effort "${e}" is not available for model "${entry.id}"` };
-    // D12: inside a chat (engine given) only a model the chat's engine runs; switching engine means a new chat.
+    // D12 / #943: inside a chat (engine given) only a model its engine runs. Moving the chat to another engine is its own
+    // step (POST /api/ask/threads/:id/engine, after a confirm): a PATCH or a message never moves it.
     const own = entry.engine || 'claude';
-    if (engine && !runsOn(entry, engine)) return { ok: false, error: `this chat runs on ${ENGINE_LABEL[engine]}; start a new chat to use ${ENGINE_LABEL[own]}` };
+    if (engine && !runsOn(entry, engine)) return { ok: false, error: `this chat runs on ${ENGINE_LABEL[engine]}; switch it to ${ENGINE_LABEL[own]} from the Chat model picker first` };
     return { ok: true, model: entry.id, effort: e };
   }
 

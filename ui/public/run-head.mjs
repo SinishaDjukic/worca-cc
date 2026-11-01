@@ -3,6 +3,7 @@
 // read the facts app.js builds (headFactsOf); renderHeadButtons / renderRoute draw over the host's ownerDocument, never
 // fetch.
 import { icon } from './icons.mjs';
+import { copyButton } from './copy-button.mjs';
 import { CREATE_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel } from './ship-words.mjs';
 
 // Watch PR (#619), moved from app.js: the route and the Overview's PR rows read one wording.
@@ -484,7 +485,7 @@ function routeList(doc, model, h, labelId) {
     const place = doc.createElement('div');
     place.className = 'rd-route-place';
     r.place.forEach((p, j) => { if (j) place.append(' '); place.append(routePart(doc, p, h)); });
-    if (r.copy) place.append(copyButton(doc, r.copy, h));
+    if (r.copy) place.append(routeCopyButton(doc, r.copy, h));
     const second = doc.createElement('div');
     second.className = 'rd-route-second';
     for (const p of r.second) second.append(routePart(doc, p, h, i));   // focus keys watch-N / commit-N
@@ -503,15 +504,10 @@ function foldLine(doc, fold, h) {
   p.append(routeDot(doc, fold.kind, fold.state), tx);
   return p;
 }
-/** D15: copies through the page's branch copy (app.js copyBranchToClipboard: the copied tick, "Copied"). */
-function copyButton(doc, name, h) {
-  const b = doc.createElement('button');
-  b.type = 'button';
-  b.className = 'btn btn-sm btn-quiet rd-route-copy';
+/** D15: the one copy button (copy-button.mjs); the host's onCopy copies through copyFromButton (the tick, "Copied"). */
+function routeCopyButton(doc, name, h) {
+  const b = copyButton(doc, { name: `Copy branch name ${name}`, title: name, cls: 'rd-route-copy' });
   b.dataset.route = 'copy';
-  b.title = name;
-  b.setAttribute('aria-label', `Copy branch name ${name}`);
-  b.append(icon(doc, 'copy', 12, 'ic ico-copy'), icon(doc, 'check', 12, 'ic ico-check'));
   b.addEventListener('click', () => { if (h.onCopy) h.onCopy(b, name); });
   return b;
 }

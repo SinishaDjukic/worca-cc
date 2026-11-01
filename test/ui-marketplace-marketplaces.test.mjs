@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { lastToast } from './helpers/feedback.mjs';
-import { OFFICIAL, BD, LOCAL, NOTE0, row } from './helpers/mk-marketplaces-fixtures.mjs';
+import { OFFICIAL, EXAMPLE, LOCAL, NOTE0, row } from './helpers/mk-marketplaces-fixtures.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
@@ -24,7 +24,7 @@ const settle = async (n = 10) => { for (let i = 0; i < n; i++) await tick(); };
 const POLICY = { projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, homes: [], requirements: [], blockedPlugins: [], anyEnabled: false };
 
 // `api(method, path, body, state)` answers what a test cares about ({status, body}); undefined → the defaults below.
-async function boot({ level = null, api = () => undefined, marketplaces = [OFFICIAL, BD], plugins = [], orphans = [] } = {}) {
+async function boot({ level = null, api = () => undefined, marketplaces = [OFFICIAL, EXAMPLE], plugins = [], orphans = [] } = {}) {
   const page = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const { window } = trackDom(new JSDOM(page, { url: 'http://localhost:4319/' }));
   window.Element.prototype.scrollIntoView = function () {};
@@ -68,7 +68,7 @@ const dialog = (d) => d.querySelector('#mk-dialog-host #mk-dialog');
 const head = (d) => d.querySelector('#mk-root .mk-head-actions[data-tab="marketplaces"]');
 const menuLabels = (d) => [...d.querySelectorAll('.wfv-menu [role^="menuitem"] .wfv-menu-l')].map((l) => l.textContent);
 const pick = (d, label) => [...d.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === label).click();
-const mjob = (o = {}) => ({ id: 'mkt_0a1b2c3d', url: 'BD-AI-SDLC/worca-marketplace', state: 'running', phase: 'resolving', resolvedUrl: BD.url,
+const mjob = (o = {}) => ({ id: 'mkt_0a1b2c3d', url: 'example/worca-marketplace', state: 'running', phase: 'resolving', resolvedUrl: EXAMPLE.url,
   sha: null, done: 0, total: null, plugin: null, error: null, code: null, existing: null, marketplace: null,
   startedAt: '2026-10-20T12:00:00Z', endedAt: null, ...o });
 
@@ -80,7 +80,7 @@ test('Marketplaces tab: one card per marketplace, its count and header; switchin
   assert.deepEqual([count(calls, 'POST', '/api/marketplaces/refresh'), count(calls, 'GET', '/api/marketplaces')], before, 'CONTRACT §4');
   const tab = doc.querySelector('a.mk-tab[data-tab="marketplaces"]');
   assert.deepEqual([tab.getAttribute('aria-current'), tab.querySelector('.mk-count').textContent], ['page', '2']);
-  assert.deepEqual([...doc.querySelectorAll('.mk-panel[data-tab="marketplaces"] section.mk-mkt')].map((s) => s.dataset.id), [BD.id, OFFICIAL.id],
+  assert.deepEqual([...doc.querySelectorAll('.mk-panel[data-tab="marketplaces"] section.mk-mkt')].map((s) => s.dataset.id), [EXAMPLE.id, OFFICIAL.id],
     'name order: the entry refresh sorts as GET /api/marketplaces does');
   assert.deepEqual([...head(doc).querySelectorAll('button')].map((b) => [b.className, b.textContent.trim()]),
     [['btn mk-refresh-all', 'Refresh all'], ['btn btn-primary mk-add-mkt', 'Add marketplace']]);
@@ -95,36 +95,36 @@ test('Marketplaces tab: refresh one, Retry, Refresh all; each one POST, then a r
   doc.querySelector(`.mk-mkt-refresh[data-id="${OFFICIAL.id}"]`).click(); await settle();
   assert.equal(count(calls, 'POST', `/api/marketplaces/${OFFICIAL.id}/refresh`), 1);
   assert.ok(gets() > g, 'reloads after a good refresh');
-  doc.querySelector(`.mk-mkt-retry[data-id="${BD.id}"]`).click(); await settle();
-  assert.equal(count(calls, 'POST', `/api/marketplaces/${BD.id}/refresh`), 1);
+  doc.querySelector(`.mk-mkt-retry[data-id="${EXAMPLE.id}"]`).click(); await settle();
+  assert.equal(count(calls, 'POST', `/api/marketplaces/${EXAMPLE.id}/refresh`), 1);
   const all = count(calls, 'POST', '/api/marketplaces/refresh');
   head(doc).querySelector('.mk-refresh-all').click(); await settle();
   assert.equal(count(calls, 'POST', '/api/marketplaces/refresh'), all + 1);
-  doc.querySelector(`.mk-mkt-browse[data-id="${BD.id}"]`).click(); await settle();
+  doc.querySelector(`.mk-mkt-browse[data-id="${EXAMPLE.id}"]`).click(); await settle();
   assert.equal(doc.querySelector('a.mk-tab[data-tab="browse"]').getAttribute('aria-current'), 'page');
-  assert.equal(doc.querySelector(`button.mk-facet[data-from="${BD.id}"]`).getAttribute('aria-pressed'), 'true');
+  assert.equal(doc.querySelector(`button.mk-facet[data-from="${EXAMPLE.id}"]`).getAttribute('aria-pressed'), 'true');
 });
 
 test('Marketplaces tab: the ⋯ menu (Copy URL, Open repository only with a web URL, Remove… in its own dialog)', async () => {
   const deleted = [];
-  const { window, doc } = await boot({ marketplaces: [OFFICIAL, BD, LOCAL], api: (m, p) => {
+  const { window, doc } = await boot({ marketplaces: [OFFICIAL, EXAMPLE, LOCAL], api: (m, p) => {
     if (m !== 'DELETE') return undefined;
     if (p === `/api/marketplaces/${LOCAL.id}`) return { status: 500, body: { error: 'marketplaces.json is locked' } };
-    deleted.push(p); return { status: 200, body: { ok: true, id: BD.id } };
+    deleted.push(p); return { status: 200, body: { ok: true, id: EXAMPLE.id } };
   } });
   const copied = [];
   Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => { copied.push(t); } } });
   await go(window, 'marketplace/marketplaces');
   await checkRows([
     { name: 'a GitHub marketplace: Copy URL, Open repository, Remove… (icons, the last one red)', run: async () => {
-      const more = doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`);
+      const more = doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`);
       more.click();
-      assert.deepEqual([menuLabels(doc), doc.querySelector('.wfv-menu').getAttribute('aria-label')], [['Copy URL', 'Open repository', 'Remove…'], BD.name]);
+      assert.deepEqual([menuLabels(doc), doc.querySelector('.wfv-menu').getAttribute('aria-label')], [['Copy URL', 'Open repository', 'Remove…'], EXAMPLE.name]);
       assert.deepEqual([doc.querySelectorAll('.wfv-menu .wfv-menu-ic').length, doc.querySelector('.wfv-menu .is-danger .wfv-menu-l').textContent], [3, 'Remove…']);
       pick(doc, 'Copy URL'); await settle();
-      assert.deepEqual([copied, lastToast(doc).title], [[BD.url], 'URL copied.']);
+      assert.deepEqual([copied, lastToast(doc).title], [[EXAMPLE.url], 'URL copied.']);
       more.click(); pick(doc, 'Open repository');
-      assert.deepEqual(window.__opened, ['https://github.com/BD-AI-SDLC/worca-marketplace', '_blank', 'noopener']);
+      assert.deepEqual(window.__opened, ['https://github.com/example/worca-marketplace', '_blank', 'noopener']);
     } },
     { name: 'a folder marketplace has no Open repository', run: async () => {
       doc.querySelector(`.mk-mkt-more[data-id="${LOCAL.id}"]`).click();
@@ -132,16 +132,16 @@ test('Marketplaces tab: the ⋯ menu (Copy URL, Open repository only with a web 
       doc.body.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
     } },
     { name: 'Remove… asks in its own md dialog, deletes from it, and confirms with a toast', run: async () => {
-      doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+      doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
       const dlg = dialog(doc);
       assert.deepEqual([dlg.dataset.kind, dlg.dataset.width, dlg.getAttribute('aria-labelledby'), dlg.querySelector('h2#mk-rm-title').textContent, dlg.querySelector('.mk-consequence').textContent],
-        ['remove-marketplace', 'md', 'mk-rm-title', 'Remove BD-AI-SDLC/worca-marketplace?', 'Installed plugins keep working.']);
+        ['remove-marketplace', 'md', 'mk-rm-title', 'Remove example/worca-marketplace?', 'Installed plugins keep working.']);
       assert.equal(dlg.querySelector('button.mk-dlg-close').getAttribute('aria-label'), 'Close');
       assert.deepEqual([...dlg.querySelectorAll('.mk-dialog-foot button')].map((b) => [b.textContent, b.className]),
         [['Cancel', 'btn btn-quiet'], ['Remove', 'btn btn-danger mk-confirm']]);
       dlg.querySelector('.mk-confirm').click(); await settle();
       assert.deepEqual([deleted, dialog(doc), lastToast(doc).title],
-        [[`/api/marketplaces/${BD.id}`], null, 'Marketplace removed. Installed plugins remain.']);
+        [[`/api/marketplaces/${EXAMPLE.id}`], null, 'Marketplace removed. Installed plugins remain.']);
     } },
     { name: 'a failed remove stays inside its dialog', run: async () => {
       doc.querySelector(`.mk-mkt-more[data-id="${LOCAL.id}"]`).click(); pick(doc, 'Remove…'); await settle();
@@ -157,7 +157,7 @@ test('Marketplaces tab: the ⋯ menu (Copy URL, Open repository only with a web 
 });
 
 test('Add marketplace: the header button opens the dialog; progress arrives over the socket; Install hands over to the plugin sheet', async () => {
-  const ADDED = { ...BD, lastError: null, warnings: [NOTE0], lastSync: { sha: BD.lastSync.sha, at: '2026-10-20T12:00:00Z' } };
+  const ADDED = { ...EXAMPLE, lastError: null, warnings: [NOTE0], lastSync: { sha: EXAMPLE.lastSync.sha, at: '2026-10-20T12:00:00Z' } };
   const { window, doc, calls, state } = await boot({ marketplaces: [OFFICIAL], api: (m, p, b, st) => {
     if (m === 'POST' && p === '/api/marketplaces') { st.marketplaces = [OFFICIAL, ADDED]; return { status: 202, body: { jobId: 'mkt_0a1b2c3d', job: mjob() } }; }
     return undefined;
@@ -166,14 +166,14 @@ test('Add marketplace: the header button opens the dialog; progress arrives over
   head(doc).querySelector('.mk-add-mkt').click(); await settle();
   assert.deepEqual([dialog(doc).dataset.kind, doc.activeElement.id], ['add-marketplace', 'mk-add-url']);
   const url = doc.getElementById('mk-add-url');
-  url.value = 'BD-AI-SDLC/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
+  url.value = 'example/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
-  assert.deepEqual(calls.filter((c) => c.method === 'POST' && c.path === '/api/marketplaces').map((c) => c.body), [{ url: 'BD-AI-SDLC/worca-marketplace', progress: true }]);
-  WSStub.last.frame({ type: 'marketplace-add-changed', job: mjob({ phase: 'reading', sha: BD.lastSync.sha }) }); await settle();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST' && c.path === '/api/marketplaces').map((c) => c.body), [{ url: 'example/worca-marketplace', progress: true }]);
+  WSStub.last.frame({ type: 'marketplace-add-changed', job: mjob({ phase: 'reading', sha: EXAMPLE.lastSync.sha }) }); await settle();
   assert.deepEqual([...dialog(doc).querySelectorAll('ol.mk-progress > li')].map((l) => [l.dataset.state, l.textContent]), [
-    ['done', 'Found github.com/BD-AI-SDLC/worca-marketplace'], ['done', 'Fetched 16b6363'], ['current', 'Reading plugins…'], ['pending', 'Checking what each plugin asks for']]);
-  WSStub.last.frame({ type: 'marketplace-add-changed', job: mjob({ state: 'done', phase: 'saved', sha: BD.lastSync.sha, marketplace: ADDED }) }); await settle();
-  assert.equal(dialog(doc).querySelector('h2').textContent, 'Added BD-AI-SDLC/worca-marketplace');
+    ['done', 'Found github.com/example/worca-marketplace'], ['done', 'Fetched 16b6363'], ['current', 'Reading plugins…'], ['pending', 'Checking what each plugin asks for']]);
+  WSStub.last.frame({ type: 'marketplace-add-changed', job: mjob({ state: 'done', phase: 'saved', sha: EXAMPLE.lastSync.sha, marketplace: ADDED }) }); await settle();
+  assert.equal(dialog(doc).querySelector('h2').textContent, 'Added example/worca-marketplace');
   assert.deepEqual([doc.querySelector('a.mk-tab[data-tab="marketplaces"] .mk-count').textContent, state.marketplaces.length], ['2', 2], 'the page behind is already updated');
   dialog(doc).querySelector('button[aria-label="Install jira-source"]').click(); await settle();
   assert.equal(dialog(doc), null, 'Install closes the dialog first');
@@ -209,29 +209,29 @@ test('Already added: Open it lands on the Marketplaces tab (the address follows,
 
 test('Open it rings the card it found, even after a mouse click (focusVisible; cycle 5)', async () => {
   const { window, doc } = await boot({ api: (m, p) => (m === 'POST' && p === '/api/marketplaces'
-    ? { status: 409, body: { error: `marketplace already added: ${BD.url}`, code: 'EXISTS', existing: { id: BD.id, name: BD.name } } } : undefined) });
+    ? { status: 409, body: { error: `marketplace already added: ${EXAMPLE.url}`, code: 'EXISTS', existing: { id: EXAMPLE.id, name: EXAMPLE.name } } } : undefined) });
   await go(window, 'marketplace');
   const seen = [];
   const focus = window.HTMLElement.prototype.focus;
   window.HTMLElement.prototype.focus = function (o) { if (this.matches('section.mk-mkt')) seen.push([this.dataset.id, o?.focusVisible ?? null]); return focus.call(this, o); };
   doc.querySelector('#mk-root .mk-head-actions .mk-add-mkt').click(); await settle();
   const url = doc.getElementById('mk-add-url');
-  url.value = 'BD-AI-SDLC/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
+  url.value = 'example/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
-  assert.deepEqual([seen, doc.activeElement.dataset.id], [[[BD.id, true]], BD.id]);
+  assert.deepEqual([seen, doc.activeElement.dataset.id], [[[EXAMPLE.id, true]], EXAMPLE.id]);
 });
 
 test('Browse n, then Remove… of that marketplace: Browse drops the From filter it set, never an empty grid with no facet to undo it (cycle 5)', async () => {
   const { window, doc } = await boot({ api: (m, p, b, st) => {
     if (m !== 'DELETE') return undefined;
     st.marketplaces = st.marketplaces.filter((x) => `/api/marketplaces/${x.id}` !== p);
-    return { status: 200, body: { ok: true, id: BD.id } };
+    return { status: 200, body: { ok: true, id: EXAMPLE.id } };
   } });
   await go(window, 'marketplace/marketplaces');
-  doc.querySelector(`.mk-mkt-browse[data-id="${BD.id}"]`).click(); await settle();
+  doc.querySelector(`.mk-mkt-browse[data-id="${EXAMPLE.id}"]`).click(); await settle();
   doc.querySelector('a.mk-tab[data-tab="marketplaces"]').click(); await settle();
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
   dialog(doc).querySelector('.mk-confirm').click(); await settle();
   doc.querySelector('a.mk-tab[data-tab="browse"]').click(); await settle();
   const panel = doc.querySelector('.mk-panel[data-tab="browse"]');
@@ -282,7 +282,7 @@ test('Marketplaces tab: Refresh all while the refresh runs is busy and ignores t
   assert.deepEqual([h.n, all.getAttribute('aria-disabled'), all.getAttribute('aria-busy'), all.disabled], [1, 'true', 'true', false]);
   all.click(); await settle();
   assert.deepEqual([h.n, count(calls, 'GET', '/api/marketplaces')], [1, gets]);
-  h.release(200, { ok: true, marketplaces: [OFFICIAL, BD] }); await settle();
+  h.release(200, { ok: true, marketplaces: [OFFICIAL, EXAMPLE] }); await settle();
   assert.equal(head(doc).querySelector('.mk-refresh-all').getAttribute('aria-disabled'), null);
 });
 
@@ -293,21 +293,21 @@ test('Marketplaces tab: closing the Add dialog returns focus to the header butto
   head(doc).querySelector('.mk-add-mkt').click(); await settle();
   dialog(doc).querySelector('.mk-dlg-close').click(); await settle();
   assert.equal(doc.activeElement, head(doc).querySelector('.mk-add-mkt'));
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Copy URL'); await settle();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Copy URL'); await settle();
   assert.deepEqual([lastToast(doc).tone, lastToast(doc).title], ['err', 'Could not copy the URL.']);
 });
 
 test('Remove…: the request holds Close, Cancel and Escape', async () => {
   const { window, doc } = await boot();
   await go(window, 'marketplace/marketplaces');
-  const h = hold(window, 'DELETE', `/api/marketplaces/${BD.id}`);
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+  const h = hold(window, 'DELETE', `/api/marketplaces/${EXAMPLE.id}`);
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
   dialog(doc).querySelector('.mk-confirm').click(); await settle();
   const dlg = dialog(doc);
   assert.deepEqual([...dlg.querySelectorAll('button')].map((b) => b.disabled), [true, true, true], 'Close, Cancel, Remove');
   (doc.activeElement || doc).dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle();
   assert.equal(dialog(doc), dlg, 'Escape waits for the answer');
-  h.release(200, { ok: true, id: BD.id }); await settle();
+  h.release(200, { ok: true, id: EXAMPLE.id }); await settle();
   assert.equal(dialog(doc), null);
 });
 
@@ -315,23 +315,23 @@ test('Remove…: after the reload drops the card, focus is on Add marketplace, n
   const { window, doc } = await boot({ api: (m, p, b, st) => {
     if (m !== 'DELETE') return undefined;
     st.marketplaces = [OFFICIAL];
-    return { status: 200, body: { ok: true, id: BD.id } };
+    return { status: 200, body: { ok: true, id: EXAMPLE.id } };
   } });
   await go(window, 'marketplace/marketplaces');
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
   dialog(doc).querySelector('.mk-confirm').click(); await settle();
-  assert.deepEqual([doc.querySelector(`#mk-root section.mk-mkt[data-id="${BD.id}"]`), doc.activeElement === head(doc).querySelector('.mk-add-mkt')], [null, true]);
+  assert.deepEqual([doc.querySelector(`#mk-root section.mk-mkt[data-id="${EXAMPLE.id}"]`), doc.activeElement === head(doc).querySelector('.mk-add-mkt')], [null, true]);
 });
 
 test('Remove…: leaving #marketplace closes it (SM70); a failure that answers later is a toast', async () => {
   const { window, doc } = await boot();
   await go(window, 'marketplace/marketplaces');
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
   await go(window, 'runs');
   assert.equal(doc.getElementById('mk-dialog-host'), null);
   await go(window, 'marketplace/marketplaces');
-  const h = hold(window, 'DELETE', `/api/marketplaces/${BD.id}`);
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+  const h = hold(window, 'DELETE', `/api/marketplaces/${EXAMPLE.id}`);
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
   dialog(doc).querySelector('.mk-confirm').click(); await settle();
   await go(window, 'runs');
   assert.equal(doc.getElementById('mk-dialog-host'), null);
@@ -355,9 +355,9 @@ test('Marketplaces tab: a finished refresh frees its button for the next one; Re
   const { window, doc, calls } = await boot({ api: (m, p) => (failGet && m === 'GET' && p === '/api/plugins' ? { status: 500, body: { error: 'db locked' } } : undefined) });
   await go(window, 'marketplace/marketplaces');
   const OFF = `/api/marketplaces/${OFFICIAL.id}/refresh`;
-  const BDR = `/api/marketplaces/${BD.id}/refresh`;
+  const EXAMPLE_R = `/api/marketplaces/${EXAMPLE.id}/refresh`;
   const refresh = () => doc.querySelector(`.mk-mkt-refresh[data-id="${OFFICIAL.id}"]`);
-  const retry = () => doc.querySelector(`.mk-mkt-retry[data-id="${BD.id}"]`);
+  const retry = () => doc.querySelector(`.mk-mkt-retry[data-id="${EXAMPLE.id}"]`);
   await checkRows([
     { name: 'a refresh that answered and reloaded leaves its button free: the second click POSTs again', run: async () => {
       refresh().click(); await settle();
@@ -366,7 +366,7 @@ test('Marketplaces tab: a finished refresh frees its button for the next one; Re
       assert.equal(count(calls, 'POST', OFF), 2);
     } },
     { name: 'Retry rebuilt during its refresh is freed when a failed reload paints nothing', run: async () => {
-      const h = hold(window, 'POST', BDR);
+      const h = hold(window, 'POST', EXAMPLE_R);
       retry().click(); await settle();
       WSStub.last.frame({ type: 'plugins-changed', action: 'marketplace-refresh' }); await settle();
       assert.equal(retry().getAttribute('aria-busy'), 'true', 'the rebuilt Retry is busy');
@@ -377,7 +377,7 @@ test('Marketplaces tab: a finished refresh frees its button for the next one; Re
     } },
     { name: 'one refresh ending leaves another marketplace\'s refresh busy', run: async () => {
       const a = hold(window, 'POST', OFF);
-      const b = hold(window, 'POST', BDR);
+      const b = hold(window, 'POST', EXAMPLE_R);
       refresh().click(); retry().click(); await settle();
       failGet = true;
       a.release(200, { ok: true }); await settle();
@@ -396,7 +396,7 @@ test('Marketplaces tab: the header keeps the focus through its re-renders; its i
   head(doc).querySelector('.mk-refresh-all').focus();
   head(doc).querySelector('.mk-refresh-all').click(); await settle();
   assert.equal(doc.activeElement, head(doc).querySelector('.mk-refresh-all'), 'busy, rebuilt and still focused');
-  h.release(200, { ok: true, marketplaces: [OFFICIAL, BD] }); await settle();
+  h.release(200, { ok: true, marketplaces: [OFFICIAL, EXAMPLE] }); await settle();
   assert.equal(doc.activeElement, head(doc).querySelector('.mk-refresh-all'), 'after the refresh');
   head(doc).querySelector('.mk-add-mkt').focus();
   WSStub.last.frame({ type: 'plugins-changed', action: 'install' }); await settle();
@@ -407,7 +407,7 @@ test('Marketplaces tab: the ⋯ menu ends at its button with copy / external / t
   const { iconSvg } = await import('../ui/public/icons.mjs');
   const { window, doc } = await boot();
   await go(window, 'marketplace/marketplaces');
-  const more = doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`);
+  const more = doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`);
   more.getBoundingClientRect = () => ({ left: 600, right: 628, top: 100, bottom: 128, width: 28, height: 28, x: 600, y: 100 });
   more.click();
   const menu = doc.querySelector('.wfv-menu');
@@ -423,13 +423,13 @@ test('Marketplaces tab: the ⋯ menu ends at its button with copy / external / t
 test('Remove…: Cancel returns focus to the ⋯ button rebuilt while its menu was open; the toast comes before the reload answers', async () => {
   const { window, doc } = await boot();
   await go(window, 'marketplace/marketplaces');
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click();
   WSStub.last.frame({ type: 'plugins-changed', action: 'install' }); await settle();
   pick(doc, 'Remove…'); await settle();
   dialog(doc).querySelector('.mk-dialog-foot .btn-quiet').click(); await settle();
-  assert.equal(doc.activeElement, doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`));
+  assert.equal(doc.activeElement, doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`));
   const h = hold(window, 'GET', '/api/plugins');
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
   dialog(doc).querySelector('.mk-confirm').click(); await settle();
   assert.deepEqual([h.n, dialog(doc), lastToast(doc)?.title], [1, null, 'Marketplace removed. Installed plugins remain.'], 'the toast never waits for the reload');
   h.release(200, { plugins: [], orphans: [] }); await settle();
@@ -440,7 +440,7 @@ test('SM70 edges: a move inside #marketplace keeps Remove… open; leaving with 
   const errors = [];
   window.addEventListener('error', (e) => { errors.push(e.message); });
   await go(window, 'marketplace/marketplaces');
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
   await go(window, 'marketplace/installed');
   assert.equal(dialog(doc)?.dataset.kind, 'remove-marketplace', 'still inside #marketplace');
   dialog(doc).querySelector('.mk-dlg-close').click(); await settle();
@@ -458,14 +458,14 @@ test('Open it: the card takes focus once; a later re-render leaves the focus whe
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
   assert.equal(doc.activeElement.dataset.id, OFFICIAL.id);
-  doc.querySelector(`.mk-mkt-browse[data-id="${BD.id}"]`).focus();
+  doc.querySelector(`.mk-mkt-browse[data-id="${EXAMPLE.id}"]`).focus();
   WSStub.last.frame({ type: 'plugins-changed', action: 'install' }); await settle();
-  assert.equal(doc.activeElement, doc.querySelector(`.mk-mkt-browse[data-id="${BD.id}"]`));
+  assert.equal(doc.activeElement, doc.querySelector(`.mk-mkt-browse[data-id="${EXAMPLE.id}"]`));
 });
 
 // ── Refine killers: the first marketplace replaces the empty state, so the opener and the field leave the page ──
 test('the first add from "No marketplaces yet": every close of the dialog leaves focus on the header Add, never <body>', async () => {
-  const ADDED = { ...BD, lastError: null, warnings: [], lastSync: { sha: BD.lastSync.sha, at: '2026-10-20T12:00:00Z' } };
+  const ADDED = { ...EXAMPLE, lastError: null, warnings: [], lastSync: { sha: EXAMPLE.lastSync.sha, at: '2026-10-20T12:00:00Z' } };
   const rows = [];
   for (const tab of ['browse', 'marketplaces']) for (const how of ['primary', 'x', 'esc']) {
     rows.push({ name: `${tab} ${how}`, run: async () => {
@@ -475,7 +475,7 @@ test('the first add from "No marketplaces yet": every close of the dialog leaves
       } });
       await go(window, tab === 'browse' ? 'marketplace' : 'marketplace/marketplaces');
       const form = doc.querySelector(`.mk-panel[data-tab="${tab}"] form.mk-empty-add`);
-      form.querySelector('input').value = 'BD-AI-SDLC/worca-marketplace';
+      form.querySelector('input').value = 'example/worca-marketplace';
       form.querySelector('button[type="submit"]').focus();
       form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await settle();
       WSStub.last.frame({ type: 'marketplace-add-changed', job: mjob({ state: 'done', phase: 'saved', marketplace: ADDED }) }); await settle();
@@ -500,7 +500,7 @@ test('the first add from "No marketplaces yet": every close of the dialog leaves
 });
 
 test('No marketplaces yet, on either tab: when the first marketplace lands under the inline add, focus goes to the header Add', async () => {
-  const ADDED = { ...BD, lastError: null, warnings: [], lastSync: { sha: BD.lastSync.sha, at: '2026-10-20T12:00:00Z' } };
+  const ADDED = { ...EXAMPLE, lastError: null, warnings: [], lastSync: { sha: EXAMPLE.lastSync.sha, at: '2026-10-20T12:00:00Z' } };
   const headAdd = (doc) => doc.querySelector('#mk-root .mk-head-actions .mk-add-mkt');
   const rows = [];
   for (const tab of ['marketplaces', 'browse']) {
@@ -517,7 +517,7 @@ test('No marketplaces yet, on either tab: when the first marketplace lands under
       const { window, doc, state } = await boot({ marketplaces: [], api: (m, p) => (m === 'POST' && p === '/api/marketplaces' ? { status: 202, body: { jobId: 'mkt_0a1b2c3d', job: mjob() } } : undefined) });
       await go(window, hash);
       const form = doc.querySelector(`.mk-panel[data-tab="${tab}"] form.mk-empty-add`);
-      form.querySelector('input').value = 'BD-AI-SDLC/worca-marketplace';
+      form.querySelector('input').value = 'example/worca-marketplace';
       const add = form.querySelector('button[type="submit"]');
       add.focus();
       form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await settle();
@@ -551,7 +551,7 @@ test('No marketplaces yet, on either tab: when the first marketplace lands under
 test('Remove…: a failed DELETE puts the focus back on Remove (a browser drops it from the disabled button)', async () => {
   const { window, doc } = await boot({ api: (m) => (m === 'DELETE' ? { status: 500, body: { error: 'marketplaces.json is locked' } } : undefined) });
   await go(window, 'marketplace/marketplaces');
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
   const confirm = dialog(doc).querySelector('.mk-confirm');
   confirm.focus();
   confirm.click();
@@ -570,19 +570,19 @@ test('Open it before the first good read: the card takes focus when the page fir
   let down = true;
   const { window, doc } = await boot({ api: (m, p) => {
     if (down && m === 'GET' && p === '/api/plugins') return { status: 500, body: { error: 'db locked' } };
-    if (m === 'POST' && p === '/api/marketplaces') return { status: 409, body: { error: 'x', code: 'EXISTS', existing: { id: BD.id, name: BD.name } } };
+    if (m === 'POST' && p === '/api/marketplaces') return { status: 409, body: { error: 'x', code: 'EXISTS', existing: { id: EXAMPLE.id, name: EXAMPLE.name } } };
     return undefined;
   } });
   await go(window, 'marketplace/marketplaces');
   head(doc).querySelector('.mk-add-mkt').click(); await settle();
   const url = doc.getElementById('mk-add-url');
-  url.value = 'BD-AI-SDLC/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
+  url.value = 'example/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
   assert.equal(doc.querySelector('#mk-root section.mk-mkt'), null, 'nothing painted yet');
   down = false;
   WSStub.last.frame({ type: 'plugins-changed', action: 'install' }); await settle();
-  assert.equal(doc.activeElement.dataset.id, BD.id);
+  assert.equal(doc.activeElement.dataset.id, EXAMPLE.id);
 });
 
 // ── Refine killers (cycle 3): focus with no twin left, and notes the user opened, across a re-render ──
@@ -591,11 +591,11 @@ test('a re-render that drops the focused control with no twin puts the focus on 
     { name: 'Remove…: Cancel after another tab removed that marketplace', run: async () => {
       const { window, doc, state } = await boot();
       await go(window, 'marketplace/marketplaces');
-      doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Remove…'); await settle();
+      doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Remove…'); await settle();
       state.marketplaces = [OFFICIAL];
       WSStub.last.frame({ type: 'plugins-changed', action: 'marketplace-remove' }); await settle();
       dialog(doc).querySelector('.mk-dialog-foot .btn-quiet').click(); await settle();
-      assert.deepEqual([doc.querySelector(`section.mk-mkt[data-id="${BD.id}"]`), doc.activeElement === head(doc).querySelector('.mk-add-mkt')], [null, true]);
+      assert.deepEqual([doc.querySelector(`section.mk-mkt[data-id="${EXAMPLE.id}"]`), doc.activeElement === head(doc).querySelector('.mk-add-mkt')], [null, true]);
     } },
     { name: 'Installed has no Add in its header: the selected tab takes the focus', run: async () => {
       const { window, doc, state } = await boot({ plugins: [row('acme')] });
@@ -678,8 +678,8 @@ test('a tab switch never leaves the focus in the panel it hid (a browser drops i
     { name: 'a card\'s Browse n, then back to the Marketplaces tab: the header\'s Add marketplace', run: async () => {
       const { window, doc } = await boot();
       await go(window, 'marketplace/marketplaces');
-      doc.querySelector(`.mk-mkt-browse[data-id="${BD.id}"]`).click(); await settle();
-      assert.equal(doc.activeElement.dataset.from, BD.id, 'the From facet it set (P7-am)');
+      doc.querySelector(`.mk-mkt-browse[data-id="${EXAMPLE.id}"]`).click(); await settle();
+      assert.equal(doc.activeElement.dataset.from, EXAMPLE.id, 'the From facet it set (P7-am)');
       await go(window, 'marketplace/marketplaces');
       assert.equal(doc.activeElement, head(doc).querySelector('.mk-add-mkt'));
     } },
@@ -693,17 +693,17 @@ test('Open it on a card not painted yet: once the user acts, a later paint never
   };
   await checkRows(Object.entries(act).map(([how, press]) => ({ name: `the user's ${how} moves on`, run: async () => {
     const { window, doc, state } = await boot({ marketplaces: [OFFICIAL], api: (m, p) => (m === 'POST' && p === '/api/marketplaces'
-      ? { status: 409, body: { error: 'x', code: 'EXISTS', existing: { id: BD.id, name: BD.name } } } : undefined) });
+      ? { status: 409, body: { error: 'x', code: 'EXISTS', existing: { id: EXAMPLE.id, name: EXAMPLE.name } } } : undefined) });
     await go(window, 'marketplace/marketplaces');
     head(doc).querySelector('.mk-add-mkt').click(); await settle();
     const url = doc.getElementById('mk-add-url');
-    url.value = 'BD-AI-SDLC/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
+    url.value = 'example/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
     dialog(doc).querySelector('.mk-add-primary').click(); await settle();
-    dialog(doc).querySelector('.mk-add-primary').click(); await settle();   // Open it: BD has no card yet
+    dialog(doc).querySelector('.mk-add-primary').click(); await settle();   // Open it: EXAMPLE has no card yet
     const r = doc.querySelector(`.mk-mkt-refresh[data-id="${OFFICIAL.id}"]`);
     press(r, window);
     r.focus();
-    state.marketplaces = [OFFICIAL, BD];
+    state.marketplaces = [OFFICIAL, EXAMPLE];
     r.click(); await settle();
     assert.equal(doc.activeElement, doc.querySelector(`.mk-mkt-refresh[data-id="${OFFICIAL.id}"]`));
   } })));
@@ -716,7 +716,7 @@ test('Remove…: while the DELETE runs the focus stays inside the dialog (a brow
   const orig = globalThis.fetch;
   globalThis.fetch = window.fetch = (u, opts = {}) => ((opts.method || 'GET') === 'DELETE'
     ? new Promise((res) => waiters.push(() => res({ ok: false, status: 500, json: async () => ({ error: 'locked' }) }))) : orig(u, opts));
-  doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click();
+  doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click();
   pick(doc, 'Remove…'); await settle();
   const confirm = dialog(doc).querySelector('.mk-confirm');
   confirm.focus(); confirm.click(); await settle();
@@ -730,7 +730,7 @@ test('Remove…: while the DELETE runs the focus stays inside the dialog (a brow
 test('Marketplaces tab: notes the user opened stay open through a re-render; a card that leaves takes its state with it (cycle 3)', async () => {
   const { window, doc, state } = await boot();
   await go(window, 'marketplace/marketplaces');
-  const disc = () => doc.querySelector(`section.mk-mkt[data-id="${BD.id}"] button.mk-disc`);
+  const disc = () => doc.querySelector(`section.mk-mkt[data-id="${EXAMPLE.id}"] button.mk-disc`);
   disc().click();
   doc.querySelector(`.mk-mkt-refresh[data-id="${OFFICIAL.id}"]`).click(); await settle();
   assert.deepEqual([disc().getAttribute('aria-expanded'), doc.getElementById(disc().getAttribute('aria-controls')).hidden], ['true', false]);
@@ -740,7 +740,7 @@ test('Marketplaces tab: notes the user opened stay open through a re-render; a c
   disc().click();
   state.marketplaces = [OFFICIAL];
   WSStub.last.frame({ type: 'plugins-changed', action: 'marketplace-remove' }); await settle();
-  state.marketplaces = [OFFICIAL, BD];
+  state.marketplaces = [OFFICIAL, EXAMPLE];
   WSStub.last.frame({ type: 'plugins-changed', action: 'marketplace-add' }); await settle();
   assert.equal(disc().getAttribute('aria-expanded'), 'false', 'a card added again starts folded');
 });
@@ -752,7 +752,7 @@ test('Remove… open while Back moves the page to Browse: Cancel, Close and Esca
     const focus = window.HTMLElement.prototype.focus;   // a browser never focuses a control it does not render
     window.HTMLElement.prototype.focus = function (o) { if (this.closest('[hidden], .hidden')) return; return focus.call(this, o); };
     await go(window, 'marketplace/marketplaces');
-    const more = doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`);
+    const more = doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`);
     more.focus(); more.click(); pick(doc, 'Remove…'); await settle();
     await go(window, 'marketplace');   // Back: Browse shows behind the dialog, which stays open (P7-y); the ⋯ is in a hidden panel
     assert.ok(dialog(doc), 'still open');
@@ -779,7 +779,7 @@ test('Remove… while that card\'s refresh runs: the refresh answering 404 after
 
 test('Marketplaces tab: Open repository never opens a credential; a clipboard that refuses says so; Remove… keeps another marketplace\'s Browse filter (cycle 6)', async () => {
   const CRED = { ...LOCAL, id: 'github.com-acme-m-0c0ffee0', name: 'acme/m', url: 'https://x-access-token:s3cret@github.com/acme/m.git' };
-  const { window, doc } = await boot({ marketplaces: [OFFICIAL, BD, CRED], api: (m, p, b, st) => {
+  const { window, doc } = await boot({ marketplaces: [OFFICIAL, EXAMPLE, CRED], api: (m, p, b, st) => {
     if (m !== 'DELETE') return undefined;
     st.marketplaces = st.marketplaces.filter((x) => `/api/marketplaces/${x.id}` !== p);
     return { status: 200, body: { ok: true } };
@@ -792,18 +792,18 @@ test('Marketplaces tab: Open repository never opens a credential; a clipboard th
     } },
     { name: 'a clipboard that refuses: an error toast, never "URL copied."', run: async () => {
       Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.reject(new Error('Write permission denied.')) } });
-      doc.querySelector(`.mk-mkt-more[data-id="${BD.id}"]`).click(); pick(doc, 'Copy URL'); await settle();
+      doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Copy URL'); await settle();
       assert.deepEqual([lastToast(doc).tone, lastToast(doc).title], ['err', 'Could not copy the URL.']);
     } },
     { name: 'Remove… of another marketplace keeps the From filter Browse n set', run: async () => {
-      doc.querySelector(`.mk-mkt-browse[data-id="${BD.id}"]`).click(); await settle();
+      doc.querySelector(`.mk-mkt-browse[data-id="${EXAMPLE.id}"]`).click(); await settle();
       doc.querySelector('a.mk-tab[data-tab="marketplaces"]').click(); await settle();
       doc.querySelector(`.mk-mkt-more[data-id="${CRED.id}"]`).click(); pick(doc, 'Remove…'); await settle();
       dialog(doc).querySelector('.mk-confirm').click(); await settle();
       doc.querySelector('a.mk-tab[data-tab="browse"]').click(); await settle();
       const panel = doc.querySelector('.mk-panel[data-tab="browse"]');
-      assert.deepEqual([panel.querySelectorAll('.mk-tile').length, panel.querySelector(`button.mk-facet[data-from="${BD.id}"]`)?.getAttribute('aria-pressed')],
-        [BD.plugins.length, 'true']);
+      assert.deepEqual([panel.querySelectorAll('.mk-tile').length, panel.querySelector(`button.mk-facet[data-from="${EXAMPLE.id}"]`)?.getAttribute('aria-pressed')],
+        [EXAMPLE.plugins.length, 'true']);
     } },
   ]);
 });
@@ -857,12 +857,12 @@ test('trusted home: a required plugin a marketplace now offers installs once aft
   };
   const OFFICIAL_X = { ...OFFICIAL, lastSync: { sha: SHA, at: '2026-10-22T12:00:00Z' }, plugins: [...OFFICIAL.plugins, X] };
   const refreshGivesX = (m, p, b, st) => {
-    if (m === 'POST' && p === `/api/marketplaces/${OFFICIAL.id}/refresh`) { st.marketplaces = [OFFICIAL_X, BD]; return { status: 200, body: { ok: true, marketplace: OFFICIAL_X } }; }
+    if (m === 'POST' && p === `/api/marketplaces/${OFFICIAL.id}/refresh`) { st.marketplaces = [OFFICIAL_X, EXAMPLE]; return { status: 200, body: { ok: true, marketplace: OFFICIAL_X } }; }
     return undefined;
   };
   await checkRows([
     { name: 'a card refresh brings the plugin: one silent install from that snapshot', run: async () => {
-      const { doc, installs } = await trustedBoot({ marketplaces: [OFFICIAL, BD], req: REQ(OFFICIAL.id), api: refreshGivesX });
+      const { doc, installs } = await trustedBoot({ marketplaces: [OFFICIAL, EXAMPLE], req: REQ(OFFICIAL.id), api: refreshGivesX });
       assert.equal(installs().length, 0, 'not offered at entry');
       assert.match(doc.getElementById('plugins-msg')?.textContent || '', /not found in a synced marketplace/);
       doc.querySelector(`.mk-mkt-refresh[data-id="${OFFICIAL.id}"]`).click(); await settle(20);
@@ -870,21 +870,21 @@ test('trusted home: a required plugin a marketplace now offers installs once aft
       assert.equal(lastToast(doc).title, 'Installed acme-x (trusted policy home).');
     } },
     { name: 'a finished Add brings the plugin: one silent install', run: async () => {
-      const BD_X = { ...BD, lastError: null, warnings: [], plugins: [...BD.plugins, X] };
-      const { window, doc, installs } = await trustedBoot({ marketplaces: [OFFICIAL], req: REQ(BD.id), api: (m, p, b, st) => {
-        if (m === 'POST' && p === '/api/marketplaces') { st.marketplaces = [OFFICIAL, BD_X]; return { status: 202, body: { jobId: 'mkt_0a1b2c3d', job: mjob() } }; }
+      const EXAMPLE_X = { ...EXAMPLE, lastError: null, warnings: [], plugins: [...EXAMPLE.plugins, X] };
+      const { window, doc, installs } = await trustedBoot({ marketplaces: [OFFICIAL], req: REQ(EXAMPLE.id), api: (m, p, b, st) => {
+        if (m === 'POST' && p === '/api/marketplaces') { st.marketplaces = [OFFICIAL, EXAMPLE_X]; return { status: 202, body: { jobId: 'mkt_0a1b2c3d', job: mjob() } }; }
         return undefined;
       } });
       assert.equal(installs().length, 0);
       head(doc).querySelector('.mk-add-mkt').click(); await settle();
       const url = doc.getElementById('mk-add-url');
-      url.value = 'BD-AI-SDLC/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
+      url.value = 'example/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
       dialog(doc).querySelector('.mk-add-primary').click(); await settle();
-      WSStub.last.frame({ type: 'marketplace-add-changed', job: mjob({ state: 'done', phase: 'saved', sha: BD.lastSync.sha, marketplace: BD_X }) }); await settle(20);
-      assert.deepEqual(installs().map((c) => [c.body.name, c.body.marketplace]), [['acme-x', BD.id]]);
+      WSStub.last.frame({ type: 'marketplace-add-changed', job: mjob({ state: 'done', phase: 'saved', sha: EXAMPLE.lastSync.sha, marketplace: EXAMPLE_X }) }); await settle(20);
+      assert.deepEqual(installs().map((c) => [c.body.name, c.body.marketplace]), [['acme-x', EXAMPLE.id]]);
     } },
     { name: 'a failing install is not retried by re-reads that change no marketplace (background read, Refresh all)', run: async () => {
-      const { doc, installs } = await trustedBoot({ marketplaces: [OFFICIAL, BD], req: REQ(OFFICIAL.id), installStatus: 500, api: refreshGivesX });
+      const { doc, installs } = await trustedBoot({ marketplaces: [OFFICIAL, EXAMPLE], req: REQ(OFFICIAL.id), installStatus: 500, api: refreshGivesX });
       doc.querySelector(`.mk-mkt-refresh[data-id="${OFFICIAL.id}"]`).click(); await settle(20);
       assert.equal(installs().length, 1);
       WSStub.last.frame({ type: 'plugins-changed', action: 'install' }); await settle(20);
@@ -892,9 +892,9 @@ test('trusted home: a required plugin a marketplace now offers installs once aft
       assert.equal(installs().length, 1);
     } },
     { name: 'off the page a marketplace change installs nothing', run: async () => {
-      const { window, doc, state, installs } = await trustedBoot({ marketplaces: [OFFICIAL, BD], req: REQ(OFFICIAL.id) });
+      const { window, doc, state, installs } = await trustedBoot({ marketplaces: [OFFICIAL, EXAMPLE], req: REQ(OFFICIAL.id) });
       await go(window, 'runs');
-      state.marketplaces = [OFFICIAL_X, BD];
+      state.marketplaces = [OFFICIAL_X, EXAMPLE];
       WSStub.last.frame({ type: 'plugins-changed', action: 'marketplace-refresh' }); await settle(20);
       assert.equal(installs().length, 0);
       assert.ok(doc);

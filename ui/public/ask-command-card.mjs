@@ -4,6 +4,7 @@
 import { paintStatusDot } from './status-dot.mjs';
 import { RUN_STATES } from '../../src/shared/run-model.mjs';
 import { iconSvg } from './icons.mjs';
+import { copyButton, copyFromButton } from './copy-button.mjs';
 import { fmtCmdDur, elapsedMs, isFailed, groupHeadParts, groupOpen } from './ask-command-group.mjs';
 export { isFailed };
 
@@ -93,29 +94,10 @@ export function commandSpans(doc, cmd) {
   return commandTokens(cmd).map((k) => (k.t === 'text' ? doc.createTextNode(k.s) : h(doc, 'span', `ask-cmd-tk-${k.t}`, k.s)));
 }
 
-/** A quiet copy button (as branch names copy, app.js copyBranchToClipboard): `.copied` for 1200 ms. `read()` gives the
- *  text at click time; `label` adds words after the icon (none: a square icon button). */
-function copyButton(doc, read, { title, label = '' }) {
-  const btn = h(doc, 'button', `btn btn-sm btn-quiet ask-cmd-copy${label ? '' : ' btn-icon'}`);
-  btn.type = 'button';
-  btn.title = title;
-  btn.setAttribute('aria-label', title);
-  btn.insertAdjacentHTML('beforeend', iconSvg('copy', 14).replace('<svg', '<svg class="ico-copy"')
-    + iconSvg('check', 14).replace('<svg', '<svg class="ico-check"'));
-  if (label) btn.append(h(doc, 'span', 'ask-cmd-copy-text', label));
-  let timer = null;
-  btn.addEventListener('click', () => {
-    const win = doc.defaultView;
-    const done = (ok) => {
-      btn.classList.toggle('copied', ok);
-      btn.title = ok ? 'Copied' : 'Copy failed';
-      clearTimeout(timer);
-      timer = setTimeout(() => { btn.classList.remove('copied'); btn.title = title; }, 1200);
-    };
-    const clip = win && win.navigator && win.navigator.clipboard;
-    if (!clip) { done(false); return; }
-    clip.writeText(read()).then(() => done(true), () => done(false));
-  });
+/** The card's copy button (copy-button.mjs): an icon square named `name`; `read()` gives the text at click time. */
+function cardCopyButton(doc, read, name) {
+  const btn = copyButton(doc, { name, cls: 'ask-cmd-copy' });
+  btn.addEventListener('click', () => { void copyFromButton(btn, read()); });
   return btn;
 }
 
@@ -242,7 +224,7 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
   const cmdBox = h(doc, 'div', 'ask-cmd-cmd');
   const code = h(doc, 'code', 'ask-cmd-code');
   code.append(h(doc, 'span', 'ask-cmd-dollar', '$ '), ...commandSpans(doc, card.command));
-  cmdBox.append(code, copyButton(doc, () => card.command, { title: 'Copy command' }));
+  cmdBox.append(code, cardCopyButton(doc, () => card.command, 'Copy command'));
   const where = h(doc, 'div', 'ask-cmd-ctx');
   const dir = h(doc, 'span', 'ask-cmd-dir', card.folder || '');
   dir.hidden = !card.folder;
@@ -258,7 +240,7 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
   outBox.hidden = true;
   const outHead = h(doc, 'div', 'ask-cmd-outhead');
   const outLabel = h(doc, 'span', 'ask-cmd-outlabel', '');
-  outHead.append(outLabel, h(doc, 'span', 'ask-rc-spacer'), copyButton(doc, () => out.textContent, { title: 'Copy output', label: 'Copy' }));
+  outHead.append(outLabel, h(doc, 'span', 'ask-rc-spacer'), cardCopyButton(doc, () => out.textContent, 'Copy output'));
   outBox.append(outHead, out);
   detail.append(cmdBox, where, outBox);
   const warning = h(doc, 'div', 'ask-cmd-warning', card.warning || '');

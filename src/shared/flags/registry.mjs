@@ -88,6 +88,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/run-telemetry.md',
   }),
   entry({
+    key: 'gitAutomations',
+    title: 'Git event automations',
+    description: 'Start a workflow when an issue or pull request is created in a project or a workspace: rules, the Auto-handle switches (propose a fix, full fix, automatic review) and the GitHub webhook. Off: nothing polls GitHub and the routes answer 404.',
+    stage: 'experimental',
+    default: false,
+    owner: 'denislavprinov',
+    since: '1.16.0',
+    added: '2026-10-22',
+    reviewBy: '2027-01-20',
+    docs: 'docs/git-automations.md',
+  }),
+  entry({
     key: 'ticketUpdates',
     title: 'Ticket updates',
     description: 'Marketplace › Installed › a tracker plugin › Settings gets Ticket updates: the projects you work on, and per project what a finished run does to its tickets (Don\'t move, Any Done status, or one of that project\'s statuses). New run and the Requirements export list only those projects. Off: each plugin\'s old setting applies.',
