@@ -260,7 +260,9 @@ Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
   when it then holds every object (a repack that fails is tried again at most once a day); a copy whose start commit is
   no longer whole is made again once no test of the project is running, keeping the pinned start commits that were
   still whole. Pinning a start point never resets it. A try row left running after a crash holds off the reset until
-  Worca restarts (the boot recovery settles it). The copy hard-links the project's objects when both are on the same
+  Worca finds its owner gone (the stale-run check: the owner's process or heartbeat, or 30 minutes for a row with no
+  owner, `WORCA_STALE_RUN_MS`); a try another Worca UI on the same home is running is never settled. The copy
+  hard-links the project's objects when both are on the same
   disk; on another disk git copies them.
   and Worca's own git in it runs no hook, fsmonitor or signing program of the copy and has the outward guard's env. Start points are pinned as
   `refs/worca-tests/<sha>`. Each try is a worktree of it under its run folder (`<worcaHome>/runs/<pipelineId>/repos/<projectKey>`),

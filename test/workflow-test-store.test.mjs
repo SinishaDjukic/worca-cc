@@ -129,12 +129,32 @@ test('deleting an example refuses while a test tries it; a restart stops running
   assert.deepEqual(store.readExampleFiles(ex.id), []);
 });
 
-test('round 7: at boot every unsettled test-try row is stopped; a normal run is left as it is', () => {
-  const ins = getDb().prepare('INSERT INTO pipelines (id, project_key, status, is_test) VALUES (?, ?, ?, ?)');
-  for (const [id, st] of [['b7000001', 'created'], ['b7000002', 'starting'], ['b7000003', 'running'], ['b7000004', 'pausing']]) ins.run(id, 'proj-00000001', st, 1);
-  ins.run('b7000005', 'proj-00000001', 'starting', null);
+test('round 8: boot maintenance settles only dead tries: a live owner\'s try survives another server\'s boot, with its run root', async () => {
+  const { hostname } = await import('node:os');
+  const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
+  const { reconcileStaleRunning, runRootSweepLookups } = await import('../src/core/artifacts.mjs');
+  const { sweepRunRoots } = await import('../src/core/worktree.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const { _testing: pc } = await import('../src/core/workflow-tests/project-copy.mjs');
+  const key = 'proj-12345678';
+  const now = new Date().toISOString();
+  const old = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+  const ins = getDb().prepare(`INSERT INTO pipelines (id, project_key, status, is_test, owner_pid, owner_host, heartbeat_at, started_at, updated_at)
+    VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)`);
+  ins.run('b8000001', key, 'running', process.pid, hostname(), now, now, now);   // server A drives this try right now
+  ins.run('b8000002', 'proj-87654321', 'starting', null, null, null, old, old);   // a crash left it, ownerless, two hours ago
+  ins.run('b8000003', 'proj-87654322', 'created', null, null, null, now, now);    // ownerless but fresh: the reconcile's grace
+  const runRoot = join(worcaHome(), 'runs', 'b8000001');
+  mkdirSync(join(runRoot, 'repos', key), { recursive: true });
+  writeFileSync(join(runRoot, 'repos', key, 'f'), 'x');
+  // Server B boots: the same order as bootMaintenance.
+  reconcileStaleRunning({ liveIds: [] });
   store.recoverInterruptedTestRuns();
+  await sweepRunRoots({ worcaHome: worcaHome(), ...runRootSweepLookups(), log: () => {} });
   const st = (id) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status;
-  assert.deepEqual(['b7000001', 'b7000002', 'b7000003', 'b7000004'].map(st), ['stopped', 'stopped', 'stopped', 'stopped']);
-  assert.equal(st('b7000005'), 'starting', 'a normal run is not a try');
+  assert.equal(st('b8000001'), 'running', 'server A\'s try is not stopped by server B');
+  assert.equal(pc.copyBusy(key), true, 'its copy stays busy');
+  assert.ok(existsSync(join(runRoot, 'repos', key, 'f')), 'and its run root is kept');
+  assert.equal(st('b8000002'), 'stopped', 'a crashed ownerless try older than the reconcile\'s window is settled');
+  assert.equal(st('b8000003'), 'created', 'a fresh ownerless row waits for that window (WORCA_STALE_RUN_MS, 30 minutes)');
 });
