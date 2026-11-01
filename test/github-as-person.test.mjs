@@ -110,20 +110,25 @@ test('asPerson:false (worca\'s own metrics branch) always uses worca\'s credenti
   assert.match(metricsSrc, /gitEnvFor\('write', url, \{[^}]*asPerson: false/);
 });
 
-test('boot: WORCA_GH_AS_PERSON without a GitHub slot on the broker is a warning', async () => {
+test('boot: WORCA_GH_AS_PERSON warns only when the broker has no GitHub slot (a client ID is not needed); a bad value warns', async () => {
   const home = mkdtempSync(join(tmpdir(), 'worca-asperson-'));
   const savedHome = process.env.HOME;
   process.env.HOME = home;
   try {
+  // A broker without the github slot (single mode without a client ID, or an older broker): pushes as people can't work.
   slots = [{ id: 'anthropic', auth: 'x-api-key', upstream: 'https://api.anthropic.com' }];
   // Multi mode: agents under their own user, or worca refuses to start (broker-secret-seal.test.mjs).
   const env = { WORCA_BROKER_URL: url, WORCA_BROKER_SECRET: SECRET, WORCA_GH_AS_PERSON: 'required', HOME: home, WORCA_AGENT_USER: 'worca-agent', WORCA_AGENT_HOME: join(home, 'agent') };
   const r = await checkBrokerAtBoot({ env, waitMs: 0, log: () => {} });
   assert.deepEqual(r.fatal, []);
-  assert.match(r.warnings.join(' '), /no GitHub slot.*every push will fail/);
+  assert.match(r.warnings.join(' '), /WORCA_GH_AS_PERSON=required, but the broker has no GitHub slot.*every push will fail/);
+  // A multi-mode broker has it, with or without a client ID: no warning.
   slots = [...slots, { id: 'github', auth: 'github-user', upstream: 'https://api.github.com' }];
   resetBrokerClient();
   const r2 = await checkBrokerAtBoot({ env, waitMs: 0, log: () => {} });
   assert.deepEqual(r2.warnings, []);
+  resetBrokerClient();
+  const r3 = await checkBrokerAtBoot({ env: { ...env, WORCA_GH_AS_PERSON: 'always' }, waitMs: 0, log: () => {} });
+  assert.match(r3.warnings.join(' '), /WORCA_GH_AS_PERSON must be prefer or required/);
   } finally { process.env.HOME = savedHome; rmSync(home, { recursive: true, force: true }); }
 });
