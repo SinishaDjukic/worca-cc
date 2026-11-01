@@ -98,6 +98,7 @@ const PAIRS = [
   ['--pink-ink-strong', '--pink-bg', 4.5],   // the Marketplace kind tiles' glyphs (.mk-t-chat / -skill / -wf / -mix)
   ['--teal-ink-strong', '--teal-bg', 4.5], ['--indigo-ink', '--indigo-bg', 4.5], ['--cocoa-ink', '--cocoa-bg', 4.5],   // and .mk-t-mcp / -model / -script
   ['--green-ink-strong', '--green-bg', 4.5], ['--amber-ink-strong', '--amber-bg', 4.5], ['--red-ink-strong', '--red-bg', 4.5],   // Marketplace status chips (L19)
+  ['--ink-2', '--sess-head', 4.5], ['--red-ink-strong', '--sess-head', 4.5],   // the session tray's header text, and its error text (.gv-sess-head, .gv-sess.bad)
   ['--ink-2', '--hover', 4.5],   // the Marketplace "off" chip (.mk-chip-off)
   ['--ink-2', '--line', 4.5],   // the Marketplace counts (.mk-count in the tabs and group heads, LC-P3-18)
   ['--slate-ink', '--slate-bg', 4.5],   // .badge.slate: the Official and policy badges

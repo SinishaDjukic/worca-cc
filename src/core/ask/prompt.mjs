@@ -485,13 +485,13 @@ const DIFF_PATH_MAX = 512;
 // A run page's parts (ui/public/app.js RD_TABS / HD_TABS): the glance, then each Details tab.
 // History calls its Q&A tab `clarify`; the Running page calls it `qa`.
 // Ask worca beside the page: Changes (a Folder run) and Actions are Details tabs too — a message sent from them was a 400.
-export const RUN_PAGE_PARTS = ['glance', 'overview', 'diff', 'changes', 'artifacts', 'actions', 'workflow', 'qa', 'clarify', 'logs', 'agents'];
+export const RUN_PAGE_PARTS = ['glance', 'overview', 'diff', 'changes', 'artifacts', 'actions', 'workflow', 'qa', 'clarify', 'logs', 'sessions', 'agents'];
 const RUN_PAGE_LABEL = {
   glance: 'the run summary (status, time, cost, changes, one row per tab)',
   overview: 'Details › Overview tab', diff: 'Details › Diff tab', changes: 'Details › Changes tab', artifacts: 'Details › Artifacts tab',
   actions: 'Details › Actions tab',
   workflow: 'Details › Workflow tab', qa: 'Details › Q&A tab', clarify: 'Details › Q&A tab',
-  logs: 'Details › Logs tab', agents: 'Details › Agents tab',
+  logs: 'Details › Logs tab', sessions: 'Details › Sessions tab', agents: 'Details › Agents tab',
 };
 const TM_SCOPE_RE = /^(?:project:[a-z0-9][a-z0-9-]*-[0-9a-f]{8}|workspace:wks-[a-z0-9-]+-[0-9a-f]{8})$/;
 const TM_RANGES = ['this-month', 'last-month', 'quarter', 'year', 'all', 'custom'];
