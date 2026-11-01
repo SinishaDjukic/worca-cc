@@ -595,3 +595,115 @@ test('round 5: a try that has not settled keeps its registration even before its
   assert.equal(git(dir, 'config', 'filter.y.clean'), 'kept', 'no reset while that try runs');
   assert.ok(existsSync(join(dir, '.git', 'worktrees')) && readdirSync(join(dir, '.git', 'worktrees')).length > 0, 'its registration is kept');
 });
+
+// ── Round 6 (P40): a copy is busy while any test try of its project has not settled; then nothing is touched. ──
+const runRow = (id, k, status = 'running') => getDb().prepare('INSERT INTO pipelines (id, project_key, status, is_test) VALUES (?, ?, ?, 1)').run(id, k, status);
+const startOf = (p) => ({ key, startSha: p.startSha, startCommit: p.startCommit, startAt: p.startAt });
+const registered = (dir) => git(dir, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((l) => l.startsWith('worktree ')).length;
+
+test('round 6: with Worca\'s home behind a link, a running try\'s checkout survives another try\'s start', async () => {
+  const realHome = mkdtempSync(join(tmpdir(), 'worca-cc-wftrealhome-'));
+  const linkParent = mkdtempSync(join(tmpdir(), 'worca-cc-wftlinkhome-'));
+  dirs.push(realHome, linkParent);
+  const link = join(linkParent, 'home');
+  symlinkSync(realHome, link, process.platform === 'win32' ? 'junction' : 'dir');
+  _resetForTests(); process.env.WORCA_HOME = link; wh = worcaHome();
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'r6000001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r6000001', '--', wt, p.startCommit);   // git records the real path
+  runRow('r6000001', key);
+  await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });
+  assert.ok(existsSync(join(wt, 'README.md')), 'the running try\'s checkout is kept');
+  assert.equal(registered(dir), 2, 'and so is its registration');
+  assert.equal(git(wt, 'status', '--porcelain'), '', 'it is still a working checkout');
+});
+
+test('round 6: an agent\'s own worktree inside a running try survives; locked and outside registrations are cleaned once nothing is unsettled', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'r6000002', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r6000002', '--', wt, p.startCommit);
+  runRow('r6000002', key);
+  const nested = join(wt, '.claude', 'worktrees', 'x');
+  git(wt, 'worktree', 'add', '-q', '--detach', nested, p.startCommit);   // the agent's own
+  const outside = join(mkdtempSync(join(tmpdir(), 'worca-cc-wftout6-')), 'elsewhere');
+  dirs.push(dirname(outside));
+  git(dir, 'worktree', 'add', '-q', '--detach', outside, p.startCommit);
+  git(dir, 'worktree', 'lock', outside);
+  git(dir, 'config', 'filter.z.clean', 'kept');
+  await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });   // another try starts: the copy is busy
+  assert.ok(existsSync(join(nested, 'README.md')), 'the nested worktree is kept');
+  assert.equal(registered(dir), 4, 'no registration is touched while a try runs');
+  assert.equal(git(dir, 'config', 'filter.z.clean'), 'kept', 'and no reset');
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'r6000002'").run();   // the try ended
+  rmSync(wt, { recursive: true, force: true });
+  await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });
+  assert.equal(registered(dir), 1, 'locked, outside and ended registrations are gone');
+  assert.ok(existsSync(join(outside, 'README.md')), 'the folder outside Worca\'s run folders is kept');
+  assert.throws(() => git(dir, 'config', '--get', 'filter.z.clean'), undefined, 'the reset ran');
+});
+
+test('round 6: the whole-commit check is quiet and only "missing" objects mean damage', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  assert.equal(await copy._testing.commitWhole(dir, p.startCommit), 'whole');
+  assert.equal(await copy._testing.commitWhole(join(home, 'no-such-copy'), p.startCommit), 'unknown', 'a git failure is not damage');
+  const src = readFileSync(new URL('../src/core/workflow-tests/project-copy.mjs', import.meta.url), 'utf8');
+  assert.match(src, /'rev-list', '--objects', '--no-walk', '--missing=error', '--quiet'/, 'never prints every object');
+});
+
+test('round 6: an alternates file a crash left aside is put back; a repack that failed is not retried within a day', async () => {
+  const { person, key: k } = sharedProject();
+  const dir = join(wh, 'workflow-tests', 'repos', k);
+  mkdirSync(dirname(dir), { recursive: true });
+  execFileSync('git', ['clone', '-q', '--local', '--no-checkout', '--no-tags', person, dir]);   // an old-style copy (borrows)
+  git(dir, 'remote', 'remove', 'origin');
+  const alt = join(dir, '.git', 'objects', 'info', 'alternates');
+  const sha = git(person, 'rev-parse', 'HEAD');
+  const at = new Date(Date.parse(git(person, 'show', '-s', '--format=%cI', sha))).toISOString();
+  const project = { key: k, startSha: sha, startCommit: sha, startAt: at };
+  // A crash between setting the file aside and the check:
+  writeFileSync(`${alt}.worca-off`, readFileSync(alt));
+  rmSync(alt);
+  writeFileSync(join(dir, '.git', 'worca-repack-failed'), new Date().toISOString());   // and a repack failed today
+  await copy.ensureStartCommit({ key: k, projectDir: person, project });
+  assert.ok(existsSync(alt), 'the alternates file is back');
+  assert.equal(existsSync(`${alt}.worca-off`), false);
+  assert.ok(fsckOk(dir), 'the copy is whole');
+  writeFileSync(join(dir, '.git', 'worca-repack-failed'), new Date(Date.now() - 2 * 86_400_000).toISOString());   // two days ago
+  await copy.ensureStartCommit({ key: k, projectDir: person, project });
+  assert.equal(existsSync(alt), false, 'retried after a day: repacked, then its alternates removed');
+  assert.ok(fsckOk(dir));
+});
+
+test('round 6: a damaged copy made again keeps the pinned start commits that were still whole', async () => {
+  const { person, key: k } = sharedProject();
+  const y = git(person, 'rev-parse', 'HEAD');   // its tree borrows src/a.mjs from the shared store
+  git(person, 'checkout', '-q', '--orphan', 'xbranch');
+  git(person, 'rm', '-q', '-rf', '.');
+  writeFileSync(join(person, 'only-x.txt'), 'x only' + String.fromCharCode(10));
+  git(person, 'add', '-A'); commit(person, 'x');
+  const x = git(person, 'rev-parse', 'HEAD');   // every object of X is the project's own
+  const dir = join(wh, 'workflow-tests', 'repos', k);
+  mkdirSync(dirname(dir), { recursive: true });
+  execFileSync('git', ['clone', '-q', '--local', '--no-checkout', '--no-tags', person, dir]);   // an old-style copy
+  git(dir, 'remote', 'remove', 'origin');
+  git(dir, 'fetch', '-q', '--no-tags', '--no-write-fetch-head', person, x);
+  for (const s2 of [x, y]) git(dir, 'update-ref', `refs/worca-tests/${s2}`, s2);
+  rmSync(join(dir, '.git', 'objects', 'info', 'alternates'));   // damaged the round 4 way: Y is no longer whole, X is
+  git(person, 'checkout', '-q', 'main');
+  git(person, 'branch', '-q', '-D', 'xbranch');
+  git(person, 'reflog', 'expire', '--expire=now', '--all');
+  git(person, 'gc', '-q', '--prune=now');
+  assert.throws(() => git(person, 'cat-file', '-e', `${x}^{commit}`), undefined, 'the project no longer has X');
+  const at = (sha, from) => new Date(Date.parse(git(from, 'show', '-s', '--format=%cI', sha))).toISOString();
+  await copy.ensureStartCommit({ key: k, projectDir: person, project: { key: k, startSha: y, startCommit: y, startAt: at(y, person) } });
+  assert.ok(fsckOk(dir), 'made again, whole');
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${x}`), x, 'X was carried over from the damaged copy');
+  const r = await copy.ensureStartCommit({ key: k, projectDir: person, project: { key: k, startSha: x, startCommit: x, startAt: '2026-10-28T09:00:00.000Z' } });
+  assert.equal(r.startCommit, x, 'so example 1 still starts (no START_GONE)');
+  assert.equal(await copy._testing.commitWhole(dir, x), 'whole');
+});

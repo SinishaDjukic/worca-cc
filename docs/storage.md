@@ -250,14 +250,18 @@ Behind the flag `workflowTests`, like v80. FK-free like the v80 tables.
 - **Worca's copy of a project** (`<worcaHome>/workflow-tests/repos/<projectKey>`): a `git clone --local --dissociate --no-checkout` of
   the project with no remote, `core.longpaths` on and automatic gc and maintenance off. Before a try it removes any
   remote and sets those settings again. Tries running at the same time share the copy's git settings; the copy is reset
-  when no try is running (before a try, when no checkout of it is live: a live checkout is a try's, in its run folder,
-  whose pipelines row is a test try not archived; any other registration, locked or elsewhere, is dropped, and a folder
-  outside Worca's run folders is never removed): its git config rewritten from an allowlist (what
+  when no try is running (before a try, when no test try of that project has an unsettled pipelines row or is still
+  being checked). Then every checkout registration goes first: unlocked, and removed with its folder only when that
+  folder is inside Worca's run folders; any other folder is never touched, only its registration goes. Then the reset:
+  its git config rewritten from an allowlist (what
   `git init` makes on that disk, the object and ref format and those settings), `.git/info` as `git init` makes it, and
   per-checkout `config.worktree` files, hooks a try installed and replace refs removed. A copy that still borrows objects
   (alternates, from a project cloned with `--shared` or `--reference`) is repacked first and loses its alternates only
-  when it then holds every object; a copy whose start commit is no longer whole is made again. Pinning a start
-  point never resets it.
+  when it then holds every object (a repack that fails is tried again at most once a day); a copy whose start commit is
+  no longer whole is made again once no test of the project is running, keeping the pinned start commits that were
+  still whole. Pinning a start point never resets it. A try row left running after a crash holds off the reset until
+  Worca restarts (the boot recovery settles it). The copy hard-links the project's objects when both are on the same
+  disk; on another disk git copies them.
   and Worca's own git in it runs no hook, fsmonitor or signing program of the copy and has the outward guard's env. Start points are pinned as
   `refs/worca-tests/<sha>`. Each try is a worktree of it under its run folder (`<worcaHome>/runs/<pipelineId>/repos/<projectKey>`),
   on its own branch, always named `worca-cc/…` (Smart run naming never applies to a try). Worca removes the checkout, the branch and the run folder after the try's checks. At boot,

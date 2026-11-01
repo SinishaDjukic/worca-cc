@@ -5,16 +5,16 @@
 // rev-list, ls-tree, cat-file, show, grep <tree>, for-each-ref, symbolic-ref and remote get-url, and uncommitted changes
 // are read with uncommittedPatch's scratch objects.
 import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { testCopiesRoot, testCopyDirFor, testCopyKeyOf, PROJECT_KEY_RE } from '../store.mjs';
 import { uncommittedPatch } from '../git-info.mjs';
 import { isSafeBranchName } from '../git-sync.mjs';
 import { rmGuarded } from '../run-manifest.mjs';
-import { findPipelineRowById } from '../artifacts.mjs';
+import { getDb, prepare } from '../db.mjs';
 import { testError, PIN_MAX_CHANGES } from './store.mjs';
 import { lfsText, submodulesText, START_GONE_TEXT, CHANGES_TOO_BIG_TEXT } from '../../shared/workflow-tests/project-text.mjs';
 import { tryGitEnv, withSafeGitArgs } from './try-guard-env.mjs';
@@ -89,7 +89,7 @@ async function rmFileOrLink(p) {
 
 /**
  * Rounds 3 and 4 (test isolation and safety): the copy's git config, rewritten from an allowlist when no try is running
- * (P39: the caller checks hasLiveCheckout; tries running at the same time share these settings). A try's setup or
+ * (P39, P40: the caller checks copyBusy; tries running at the same time share these settings). A try's setup or
  * agent can write the shared config (filters, textconv, includes, aliases, url rewrites, credential helpers, hooks): none of
  * it may change a later test's result or run in Worca's git. What stays: what `git init` makes on this disk (read from a
  * scratch repository beside the copies, so a try cannot have changed it), the repository's object and ref format, and
@@ -150,8 +150,18 @@ async function dissociate(dir) {
   let st = null;
   try { st = await lstat(alt); } catch { return true; }
   if (!st.isFile()) { console.warn(`workflow tests: ${alt} is not a file; left in place`); return false; }
+  // Round 6: a repack that failed is tried again at most once a day (a marker with the time of the failure).
+  const marker = join(dir, '.git', 'worca-repack-failed');
+  let last = NaN;
+  try { last = Date.parse(String(await readFile(marker, 'utf8')).trim()); } catch { /* none */ }
+  if (Number.isFinite(last) && Date.now() - last < REPACK_RETRY_MS) return false;
   const rp = await copyGit(dir, ['repack', '-a', '-d', '-q']);
-  if (!rp.ok) { console.warn(`workflow tests: could not repack ${dir} (${firstLine(rp.stderr)}); it keeps borrowing objects`); return false; }
+  if (!rp.ok) {
+    await writeFile(marker, new Date().toISOString()).catch(() => {});
+    console.warn(`workflow tests: could not repack ${dir} (${firstLine(rp.stderr)}); it keeps borrowing objects (tried again in a day)`);
+    return false;
+  }
+  await rm(marker, { force: true }).catch(() => {});
   const aside = `${alt}.worca-off`;
   await rename(alt, aside);
   if ((await copyGit(dir, ['fsck', '--connectivity-only', '--no-dangling', '--no-progress'])).ok) { await rm(aside, { force: true }); return true; }
@@ -160,10 +170,16 @@ async function dissociate(dir) {
   return false;
 }
 
-/** Round 5: every object of `sha` (the commit, its trees and blobs) is readable in the copy. A copy that lost objects it
- *  borrowed still has the commit, so `cat-file -e` alone would never notice. */
+const REPACK_RETRY_MS = 24 * 60 * 60_000;
+
+/** Rounds 5 and 6: 'whole' when every object of `sha` (the commit, its trees and blobs) is readable in the copy; 'damaged'
+ *  only when git says an object is missing or bad; 'unknown' for any other failure (a timeout, no git, no such folder),
+ *  which is never taken for damage. `--quiet`: the object list never fills a buffer, whatever the tree's size. A copy that
+ *  lost objects it borrowed still has the commit, so `cat-file -e` alone would never notice. */
 async function commitWhole(dir, sha) {
-  return (await copyGit(dir, ['rev-list', '--objects', '--no-walk', '--missing=error', `${sha}^{commit}`, '--'])).ok;
+  const r = await copyGit(dir, ['rev-list', '--objects', '--no-walk', '--missing=error', '--quiet', `${sha}^{commit}`, '--']);
+  if (r.ok) return 'whole';
+  return /missing|bad (?:[a-z]+ )?object/i.test(r.stderr) ? 'damaged' : 'unknown';   // "missing blob object", "bad tree object"
 }
 
 /** A real folder (lstat): never a link, never followed. */
@@ -182,58 +198,61 @@ async function resetInfo(info, probeInfo) {
 }
 
 /**
- * Round 4 (P39): does any checkout of the copy still live? Stale registrations are pruned first. A `.git/worktrees` that is
- * not a real folder (a link out of the copy) is removed as itself, never followed, and counts as none.
+ * P40 (round 6): the copy is busy while any test try of its project has not settled (its pipelines row is not done,
+ * stopped, error or failed, and not archived) or is still being checked (its try row is running). Then no checkout
+ * registration is touched and nothing is reset. No path is compared: git records real paths (junctions, links, short
+ * names), so only the database says what runs. When it cannot be read, the copy counts as busy.
  */
-async function hasLiveCheckout(dir) {
-  return (await tidyCheckouts(dir)) > 0;
+function copyBusy(key) {
+  try {
+    getDb();
+    return !!prepare(`SELECT 1 FROM pipelines p WHERE p.project_key = ? AND p.is_test IS NOT NULL AND p.archived_at IS NULL
+      AND (p.status IS NULL OR p.status NOT IN ('done', 'stopped', 'error', 'failed')
+        OR EXISTS (SELECT 1 FROM wf_test_tries t WHERE t.pipeline_id = p.id AND t.status = 'running')) LIMIT 1`).get(key);
+  } catch { return true; }
 }
 
-const SETTLED_TRY = new Set(['done', 'stopped', 'error']);
-/** Round 5: the checkout `wt` is a live try's: it is at <worcaHome>/runs/<id>/repos/<name>, <id> is a test try's pipelines row
- *  that is not archived, and either that try has not settled (its checkout may still be being made: never judged by the
- *  folder) or its folder is still there (a settled try keeps its checkout until its checks ran and the runner removed it). */
-function liveTryCheckout(wt) {
-  const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
-  const parts = relative(fold(resolve(join(worcaHome(), 'runs'))), fold(resolve(wt))).split(/[\\/]/);
-  if (parts.length !== 3 || parts[1] !== 'repos' || !parts[0] || parts[0] === '..' || !parts[2]) return false;
-  let row = null;
-  try { row = findPipelineRowById(parts[0]); } catch { row = null; }
-  if (!row || !row.is_test || row.archived_at) return false;
-  if (!SETTLED_TRY.has(String(row.status || ''))) return true;
-  return isRealDirSync(wt);
-}
-const isRealDirSync = (p) => { try { return lstatSync(p).isDirectory(); } catch { return false; } };
+const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+const realOrNull = (p) => { try { return realpathSync(p); } catch { return null; } };
+const within = (child, parent) => { const c = fold(child); const b = fold(parent); return c !== b && c.startsWith(b.endsWith(sep) ? b : b + sep); };
 
 /**
- * Round 5: the copy's checkout registrations, tidied; returns how many are live tries' (liveTryCheckout). Every other one
- * (a try that ended or was locked, a checkout an agent added elsewhere) is unlocked, then removed: inside Worca's run
- * folders with `worktree remove -f -f`; elsewhere only its registration goes, the folder is never touched. Then prune.
- * A `.git/worktrees` that is not a real folder (a link out of the copy) is removed as itself, never followed.
+ * P40 (round 6): with no try running, every checkout registration of the copy goes. Each is unlocked; one whose folder
+ * (realpath of its gitdir's folder; a relative gitdir is read against its admin folder) is inside realpath(<worcaHome>/runs)
+ * is removed with `worktree remove -f -f`; any other one only loses its registration, its folder is never touched (also
+ * when Worca cannot tell). Then prune. A `.git/worktrees` that is not a real folder is removed as itself, never followed.
  */
-async function tidyCheckouts(dir) {
+async function clearCheckouts(dir) {
   const wts = join(dir, '.git', 'worktrees');
   let st = null;
-  try { st = await lstat(wts); } catch { return 0; }
-  if (!st.isDirectory()) { await rm(wts, { force: true }); return 0; }
-  let live = 0;
+  try { st = await lstat(wts); } catch { return; }
+  if (!st.isDirectory()) { await rm(wts, { force: true }); return; }
+  const runs = realOrNull(join(worcaHome(), 'runs'));
   let entries = [];
   try { entries = (await readdir(wts, { withFileTypes: true })).filter((e) => e.isDirectory()); } catch { entries = []; }
   for (const e of entries) {
     const admin = join(wts, e.name);
+    await rmFileOrLink(join(admin, 'locked'));
     let wt = null;
-    try { wt = dirname(resolve(String(await readFile(join(admin, 'gitdir'), 'utf8')).trim())); } catch { wt = null; }
-    if (wt && liveTryCheckout(wt)) { live += 1; continue; }
-    await rmFileOrLink(join(admin, 'locked'));   // unlocked: a lock never keeps a dead checkout registered
-    if (wt && existsSync(wt) && insideRunFolder(wt, null)) {
-      await copyGit(dir, ['worktree', 'remove', '-f', '-f', wt]);
-    } else if (wt && existsSync(wt)) {
-      const why = await removeTree(admin);   // only the registration; the folder outside Worca's is not Worca's
+    try {
+      const raw = String(await readFile(join(admin, 'gitdir'), 'utf8')).trim();
+      wt = raw ? dirname(isAbsolute(raw) ? raw : resolve(admin, raw)) : null;
+    } catch { wt = null; }
+    const real = wt ? realOrNull(wt) : null;
+    if (real && runs && within(real, runs) && (await copyGit(dir, ['worktree', 'remove', '-f', '-f', real])).ok) continue;
+    if (!wt || real) {   // a folder that is there (outside, or a remove that failed) or unknown: the registration only
+      const why = await removeTree(admin);
       if (why) console.warn(`workflow tests: could not drop the checkout registration ${admin}: ${why}`);
     }
   }
   await copyGit(dir, ['worktree', 'prune']);
-  return live;
+}
+
+/** Round 6: an alternates file a crash left set aside (between the set-aside and the check) is put back. */
+async function restoreAsideAlternates(dir) {
+  const alt = join(dir, '.git', 'objects', 'info', 'alternates');
+  if (existsSync(alt) || !existsSync(`${alt}.worca-off`)) return;
+  await rename(`${alt}.worca-off`, alt).catch((e) => console.warn(`workflow tests: could not put back ${alt}: ${e.message}`));
 }
 
 const notACopy = (dir) => `${dir} is not a usable copy of the project (no git repository of its own): skipped`;
@@ -283,6 +302,7 @@ async function ensureTestCopyLocked(key, { projectDir, reset = true }) {
   };
   if (await ownRepo(dir)) {
     try {
+      await restoreAsideAlternates(dir);
       // D54: every remote removed and COPY_SETTINGS set again, always (live tries share the copy).
       const rem = await copyGit(dir, ['remote']);
       if (!rem.ok) throw testError(`Worca could not read its copy of the project: ${firstLine(rem.stderr)}`, 'NOT_READY');
@@ -291,7 +311,11 @@ async function ensureTestCopyLocked(key, { projectDir, reset = true }) {
       // Round 3 and 4 (P39): the full reset (config from its allowlist, hooks, .git/info, per-checkout config, replace refs,
       // alternates) only when no checkout of the copy is live: tries running at the same time share the copy's git
       // settings, and a reset would change a running try. Never on a pin (`reset: false`).
-      if (reset && !(await hasLiveCheckout(dir))) await resetCopyConfig(dir, key);
+      // P40 (round 6): only when no test try of the project is running (copyBusy): every registration cleared, then the reset.
+      if (reset && !copyBusy(key)) {
+        await clearCheckouts(dir);
+        await resetCopyConfig(dir, key);
+      }
     } catch (e) { throw e.code === 'NOT_READY' ? e : testError(`Worca could not set up its copy of the project: ${e.message}`, 'NOT_READY'); }
     return { dir, created: false };
   }
@@ -437,12 +461,16 @@ export async function pinStart({ key, name = key, projectDir, ref = null, sha = 
 export async function ensureStartCommit({ key, projectDir, project, changes = null }) {
   return withKeyLock(key, async () => {
     let { dir } = await ensureTestCopyLocked(key, { projectDir });
-    // Round 5: a copy that has the start commit but not every object of it is damaged: made again when no try runs.
-    if ((await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok && !(await commitWhole(dir, project.startCommit))) {
-      if (await hasLiveCheckout(dir)) throw testError("Worca's copy of the project is damaged. It is made again once no test of this project runs.", 'NOT_READY');
-      const why = await removeTree(dir);
-      if (why) throw testError(`Worca could not remove its damaged copy of the project: ${why}`, 'NOT_READY');
-      ({ dir } = await ensureTestCopyLocked(key, { projectDir }));
+    // Rounds 5 and 6: a copy that has the start commit but not every object of it is damaged: made again once no test of
+    // the project is running, keeping the pinned start commits that were still whole. A check that failed for another
+    // reason is no damage: logged, and the try goes on.
+    if ((await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok) {
+      const whole = await commitWhole(dir, project.startCommit);
+      if (whole === 'unknown') console.warn(`workflow tests: could not check the start commit in ${dir}; going on`);
+      if (whole === 'damaged') {
+        if (copyBusy(key)) throw testError("Worca's copy of the project is damaged. It is made again once no test of this project is running.", 'NOT_READY');
+        dir = await remakeCopy(key, dir, projectDir);
+      }
     }
     if (!(await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok) {
       await fetchInto(dir, projectDir, project.startSha);
@@ -453,6 +481,32 @@ export async function ensureStartCommit({ key, projectDir, project, changes = nu
     await pinRef(dir, project.startCommit);
     return { copyDir: dir, startCommit: project.startCommit };
   });
+}
+
+/** Round 6: a damaged copy made again from the project. The old one is set aside first; every pinned start commit that is
+ *  still whole in it is fetched into the new copy and pinned again (the project may no longer have it), then the old one
+ *  is removed. Call it inside the key's lock, with no try of the project running. */
+async function remakeCopy(key, dir, projectDir) {
+  const aside = await mkdtemp(join(testCopiesRoot(), `.clone-old-${key}-`));   // `.clone-`: a leftover goes at boot
+  await rm(aside, RM);
+  try { await renameRetry(dir, aside); }
+  catch (e) { throw testError(`Worca could not set aside its damaged copy of the project: ${e.message}`, 'NOT_READY'); }
+  try {
+    const pins = (await copyGit(aside, ['for-each-ref', '--format=%(objectname)', 'refs/worca-tests/'])).stdout.split(/\r?\n/).filter(Boolean);
+    const keep = [];
+    for (const sha of new Set(pins)) if ((await commitWhole(aside, sha)) === 'whole') keep.push(sha);
+    const { dir: fresh } = await ensureTestCopyLocked(key, { projectDir });
+    for (const sha of keep) {
+      if (!(await copyGit(fresh, ['cat-file', '-e', `${sha}^{commit}`])).ok) {
+        await copyGit(fresh, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--', aside, sha]);
+      }
+      if ((await copyGit(fresh, ['cat-file', '-e', `${sha}^{commit}`])).ok) await pinRef(fresh, sha);
+    }
+    return fresh;
+  } finally {
+    const why = await removeTree(aside);
+    if (why) console.warn(`workflow tests: could not remove the damaged copy set aside at ${aside}: ${why}`);
+  }
 }
 
 /** D63: how many commits the start branch gained since the start point; null when Worca cannot tell. Read only. */
@@ -602,7 +656,9 @@ export async function sweepTestCopies({ log = () => {} } = {}) {
     await withKeyLock(name, async () => {
       if (!(await ownRepo(dir))) { log('warn', `workflow tests: ${notACopy(dir)}`); return; }
       out.copies += 1;
-      await tidyCheckouts(dir);   // round 5: a locked or foreign registration holds nothing
+      // P40: at boot the recovery has settled stale rows; a project with no try running loses every registration (locked,
+      // foreign, ended), so none holds a leftover branch.
+      if (!copyBusy(name)) await clearCheckouts(dir); else await copyGit(dir, ['worktree', 'prune']);
       const held = new Set((await copyGit(dir, ['worktree', 'list', '--porcelain'])).stdout.split('\n')
         .filter((l) => l.startsWith('branch refs/heads/')).map((l) => l.slice('branch refs/heads/'.length)));
       const r = await copyGit(dir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/worca-cc/']);
@@ -647,3 +703,6 @@ export async function commitDate(projectDir, sha) {
   const d = r.ok ? Date.parse(r.stdout.trim()) : NaN;
   return Number.isFinite(d) ? new Date(d).toISOString() : null;
 }
+
+/** Test seams. */
+export const _testing = Object.freeze({ commitWhole, copyBusy });
