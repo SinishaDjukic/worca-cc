@@ -2,7 +2,7 @@
 name: composer-selection-traps
 description: Read when changing the Composer's selection, gestures or canvas keys (composer.mjs, view.mjs, the shell toolbar), or writing their jsdom tests or CDP checks. Tr
 paths: ui/public/graph/composer.mjs, ui/public/graph/view.mjs, ui/public/workflows/shell.mjs, test/ui-composer*, test/ui-workflows-session-menu*, tools/verify-composer-cdp.mjs, src/shared/graph/canvas-ops.mjs
-updated: 2026-11-01T16:42:01.637Z
+updated: 2026-11-01T18:07:17.552Z
 author: Denislav Prinov
 ---
 
@@ -35,5 +35,9 @@ The text-selection row of check (21) stays green with `.gv-canvas{user-select:no
 ## Keys during a held press
 `onKeyDown` has no gesture guard. A commit during a drag snapshots half-moved cards into the undo stack, and the release commits again. At the base (2026-11-01, not fixed): plain card drag + Delete + release throws in `onUp` (`n` is null), and in jsdom the gesture stays stuck until Escape (Chrome's `lostpointercapture` should clear it); an arrow during a plain press double-commits and the release loses the nudge; ⌘Z during a strip drag then release wipes redo. The picks drag cancels first on any commit key. Anything new reusing the `session` gesture needs the same. The gesture recomputes `moved` from the offset, so out-and-back reads as "never moved": keep a separate sticky flag if the release must tell them apart.
 
+## A rule for picked cards is also a rule for their strip
+A session's `.gv-sess-head` is its drag handle, and picks hold whole sessions, so ask every picks rule of the strip too. A plain press on a held strip took the plain branch, dropped the picks and moved one session, while a press on its card moved them all. No test or fuzz flagged it: only a real-input walk asking "would a user find this broken" did. Share the predicate (`picksHold`) rather than repeating it.
+
 ## Toolbar
+It sits 10 px under the cards and is outside the canvas's `user-select:none`, so a Shift+click that misses a card can paint a page-wide selection, if a caret sits in page text.
 `data-flag` on a toolbar control is what hides it the moment Labs flips; `flagOn` in the signature only repaints at the next render, and nothing renders while the user is on Settings. Re-check the flag in the click too: jsdom has no gate CSS, so a test can only reach that guard by clicking.
