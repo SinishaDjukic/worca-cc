@@ -42,6 +42,10 @@ recognised, so the retry reads "Could not move to …" and the ticket stays wher
 Every run records its ticket's project when it starts, even with the flag off, so a rule saved later also applies to runs
 that started before.
 
+The rules live in the plugin's `data/ticket-updates.json`. If that file is edited by hand into something that cannot be read, Worca
+treats the connection as having no saved rules: the old **Transition on completion** setting applies again, and the next
+save writes a fresh file without the rules that could not be read.
+
 **Any Done status** is one the ticket can reach, never a cancelled one (Won't Do, Won't Fix, Rejected, Duplicate, Cancelled,
 Declined, Invalid, Obsolete, Abandoned, Not planned), and never through a transition with such a name (a "Won't Do" transition into Closed is skipped; of several transitions to one status, the one named Done, Close or Resolve goes first). When a move asks for a Resolution, Worca fills in Done, Fixed or
 Complete.

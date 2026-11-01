@@ -235,3 +235,44 @@ test('the list is placed again once the statuses arrive: never over the select (
   assert.ok(parseFloat(pop().style.top) + 300 <= 700, 'its bottom stays over the select\'s top');
   assert.deepEqual(scrolled.at(-1), ['Released', '396px'], 'the active option is scrolled into view after the last placement');
 });
+
+test('a scroll of the sheet or a resize closes the popup (it is fixed); its own list scrolling does not; close() drops both listeners', async () => {
+  const m = mount();
+  const spy = { doc: [], win: [] };
+  const dr = m.doc.removeEventListener.bind(m.doc);
+  m.doc.removeEventListener = (t, ...a) => { spy.doc.push(t); return dr(t, ...a); };
+  const wr = m.window.removeEventListener.bind(m.window);
+  m.window.removeEventListener = (t, ...a) => { spy.win.push(t); return wr(t, ...a); };
+  m.ms.button.click();
+  await settle();
+  m.list().dispatchEvent(new m.window.Event('scroll'));
+  assert.ok(m.list(), 'the list scrolling inside the popup keeps it open');
+  m.doc.body.dispatchEvent(new m.window.Event('scroll'));
+  assert.ok(m.list(), 'a scroll that leaves the select where the popup was placed (a focus scroll) keeps it open');
+  m.ms.button.getBoundingClientRect = () => ({ top: 120, left: 0, width: 0, height: 0, right: 0, bottom: 0 });
+  m.doc.body.dispatchEvent(new m.window.Event('scroll'));
+  assert.equal(m.list(), null, 'a scroller holding the select, once the select has moved, closes it');
+  assert.ok(spy.doc.includes('scroll') && spy.doc.includes('pointerdown') && spy.win.includes('resize'), `listeners removed: ${spy.doc} / ${spy.win}`);
+  m.ms.button.click();
+  await settle();
+  m.window.dispatchEvent(new m.window.Event('resize'));
+  assert.equal(m.list(), null, 'a resize closes it');
+  m.doc.body.dispatchEvent(new m.window.Event('scroll'));   // no listener left: nothing throws, nothing reopens
+  assert.equal(m.list(), null);
+});
+
+test('the first loading sentence is set one frame after the live region is inserted empty, so it is announced', async () => {
+  const frames = [];
+  let resolve;
+  const m = mount({ loadStatuses: () => new Promise((r) => { resolve = r; }) });
+  m.window.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+  m.ms.button.click();
+  const live = m.doc.querySelector('.mk-tu-live');
+  assert.equal(live.textContent, '', 'inserted empty');
+  assert.equal(frames.length, 1);
+  frames.shift()();
+  assert.equal(live.textContent, "Getting CRM's statuses…");
+  resolve(CRM);
+  await settle();
+  assert.equal(live.textContent, '', 'later updates are immediate');
+});

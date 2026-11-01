@@ -554,3 +554,16 @@ test('D12: Add profile and Remove profile repaint the section with the group', a
   await settle();
   assert.deepEqual([m.$('.mk-tu-head .mk-meta').textContent, !!m.$('.mk-tu-rules'), m.doc.querySelectorAll('.mk-tu').length], ['Acme (acme)', true, 1]);
 });
+
+test('D12: the config PUT went through and the Ticket updates PUT was refused: the Installed list reloads, the refusal stays shown', async () => {
+  const m = await sheet({ 'PUT /api/plugins/jira-source/config': ok({ ok: true }), [`PUT ${TU}`]: fail(400, { error: 'All projects needs exactly one rule.' }) });
+  const before = m.page.loads;
+  m.type('baseUrl', 'https://acme2.atlassian.net');
+  m.$('.mk-tu-chip[data-value="CRM"] .mk-tu-x').click();
+  m.$('[data-act="save"]').click();
+  await settle();
+  assert.deepEqual(m.puts(), ['/api/plugins/jira-source/config', TU]);
+  assert.equal(m.page.loads, before + 1, 'the saved part is on disk: the list is loaded again');
+  assert.equal(m.$('[data-sec="settings"] .mk-save-err .mk-wash-text').textContent, 'All projects needs exactly one rule.');
+  assert.equal(m.manage.isOpen(), true);
+});

@@ -338,7 +338,9 @@ const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.chat-home-preset': 28
 const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
-const ROW_OK = ['.act-srow', '.mk-tu'];                // activity list row, 26px dense row (spec §3.1); Ticket updates' phone targets, 36px chips and 44px controls (ticket-updates board 6)
+const ROW_OK = ['.act-srow'];                          // activity list row, 26px dense row (spec §3.1)
+// Ticket updates' phone targets, 36px chips and 44px controls (ticket-updates board 6): only inside its phone @media block, so an off-scale desktop height is still caught
+const rowOk = (r, s) => ROW_OK.some((ok) => s.includes(ok)) || (!!r.media && /max-width:s*600px/.test(r.media) && /.mk-tu/.test(s));
 const classWords = (s) => (s.match(/\.[\w-]+/g) || []).flatMap((c) => c.slice(1).split('-'));
 test('control heights on the scale (A5)', () => {
   for (const [sel, h] of Object.entries(CONTROL_HEIGHTS)) {
@@ -347,7 +349,7 @@ test('control heights on the scale (A5)', () => {
   }
   const off = ALL.flatMap((r) => decls(r.body, '(?:min-)?height')
     .filter(([, v]) => /^\d+px$/.test(v) && OFF_SCALE.includes(parseInt(v, 10))
-      && splitTop(r.sel).some((s) => !ROW_OK.some((ok) => s.includes(ok))
+      && splitTop(r.sel).some((s) => !rowOk(r, s)
         && (/\bbutton\b/.test(s) || classWords(lastCompound(s)).some((w) => CONTROL_WORD.test(w)))))
     .map(([, v]) => where(r, v)));
   assert.deepEqual(off, []);

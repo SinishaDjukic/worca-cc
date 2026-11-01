@@ -111,7 +111,7 @@ export function ticketRunTitle(meta) {
  *   { type:'prompt', prompt } | { type:'markdown', promptText?, promptFile? }
  * | { type:'plugin', plugin, sourceId, taskId, inputs?, profile? }
  * @returns {Promise<{promptText:string, promptFile:string|null,
- *   sourceMeta:{plugin,sourceId,taskId,profile,url,title}|null}>}
+ *   sourceMeta:{plugin,sourceId,taskId,profile,url,title,project?}|null}>}
  */
 export async function resolveTaskInput(source, { projectDir } = {}) {
   const src = source && typeof source === 'object' ? source : { type: 'prompt', prompt: '' };

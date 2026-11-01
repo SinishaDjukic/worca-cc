@@ -3481,9 +3481,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       reportBack.set(f.seq, input.checked);
       for (const o of document.querySelectorAll('[data-ui="report-card"],[data-ui="report-dialog"],[data-ui="report-runs"]')) if (o !== input) o.checked = input.checked;
     });
-    const hintText = mv && mv.kind === 'none'
+    const hintText = mv && mv.label && mv.kind === 'none'
       ? `${lead}. Ticket updates in the ${name} connection leave ${mv.label} tickets where they are.`
-      : mv && (mv.kind === 'category' || mv.kind === 'status')
+      : mv && mv.label && (mv.kind === 'category' || mv.kind === 'status')
         ? `${lead}, and moves the ticket to ${mv.label} (Ticket updates in the ${name} connection).`
         : done
           ? `${lead}, and moves the ticket to ${done} (the status named in the ${name} connection; without one, it only comments).`

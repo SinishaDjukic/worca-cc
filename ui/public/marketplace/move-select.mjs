@@ -50,6 +50,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
   let loading = false;
   let failure = null;
   let pop = null;
+  let placedAt = null;   // the select's rect when the popup was last placed
   let listEl = null;
   let liveEl = null;
   let retry = null;
@@ -148,8 +149,14 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
 
   function paintState() {
     if (!liveEl) return;
-    liveEl.textContent = general ? '' : (failure || (loading ? `Getting ${project}'s statuses…` : ''));
+    const say = () => (general ? '' : (failure || (loading ? `Getting ${project}'s statuses…` : '')));
     retry.hidden = general || !failure;
+    // A live region that already holds its text when it is inserted is not announced: the first sentence waits one frame.
+    const raf = doc.defaultView?.requestAnimationFrame;
+    if (liveEl.dataset.ready || typeof raf !== 'function') { liveEl.dataset.ready = '1'; liveEl.textContent = say(); return; }
+    if (liveEl.dataset.pending) return;
+    liveEl.dataset.pending = '1';
+    raf.call(doc.defaultView, () => { if (!liveEl) return; liveEl.dataset.ready = '1'; delete liveEl.dataset.pending; liveEl.textContent = say(); });
   }
 
   async function load() {
@@ -170,10 +177,20 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
   function place() {
     pop.style.minWidth = `${btn.offsetWidth}px`;
     placeFlyout(pop, btn, { mode: 'down', gap: 4, margin: 8, fit: true, win: doc.defaultView });
+    placedAt = btn.getBoundingClientRect();
     active?.scrollIntoView?.({ block: 'nearest' });
   }
 
   const onDown = (e) => { if (pop && !pop.contains(e.target) && !btn.contains(e.target)) close(); };
+  // The popup is fixed: it would stay put while the sheet scrolls or the window resizes, so it closes (as side-flyout's do).
+  // Only a scroller that holds the select counts, and only when the select moved from where the popup was placed (the focus or
+  // a scroll-into-view scrolls the sheet too, without moving the select away from its popup).
+  const onScroll = (e) => {
+    if (!pop || !placedAt || !e.target || typeof e.target.contains !== 'function' || !e.target.contains(btn)) return;
+    const r = btn.getBoundingClientRect();
+    if (Math.abs(r.top - placedAt.top) > 1 || Math.abs(r.left - placedAt.left) > 1) close();
+  };
+  const onResize = () => close();
 
   function open() {
     if (pop) return;
@@ -183,7 +200,7 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     listEl.setAttribute('role', 'listbox');
     listEl.setAttribute('aria-label', general ? name : `${project} statuses`);
     liveEl = mk('p', 'mk-tu-live');
-    liveEl.setAttribute('aria-live', 'polite');
+    liveEl.setAttribute('aria-live', 'polite');   // inserted empty: a region that already holds its text is not announced
     retry = mk('button', 'btn btn-sm mk-tu-retry', 'Try again');
     retry.type = 'button';
     retry.hidden = true;
@@ -198,14 +215,18 @@ export function createMoveSelect({ doc, project = '', value = null, general = fa
     paintState();
     place();
     doc.addEventListener('pointerdown', onDown, true);
+    doc.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    doc.defaultView?.addEventListener('resize', onResize);
     if (!general && !loaded && !loading) void load();
   }
 
   function close() {
     if (!pop) return;
     doc.removeEventListener('pointerdown', onDown, true);
+    doc.removeEventListener('scroll', onScroll, { capture: true });
+    doc.defaultView?.removeEventListener('resize', onResize);
     pop.remove();
-    pop = null; listEl = null; liveEl = null; retry = null; active = null; moved = false;
+    pop = null; listEl = null; liveEl = null; retry = null; active = null; moved = false; placedAt = null;
     targets.clear();
     btn.setAttribute('aria-expanded', 'false');
     btn.removeAttribute('aria-controls');

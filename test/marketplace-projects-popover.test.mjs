@@ -170,3 +170,31 @@ test('Esc closes it also when the focus is on Add projects…; close() drops the
   await settle();
   assert.equal(el.querySelectorAll('.mk-tu-prow').length, 0, 'a load that resolves after close does not repaint');
 });
+
+test('close() removes the pointerdown, keydown, scroll and resize listeners it added (spied, so a leak fails)', async () => {
+  const m = mount();
+  await settle();
+  const removed = [];
+  const dr = m.doc.removeEventListener.bind(m.doc);
+  m.doc.removeEventListener = (t, ...a) => { removed.push(`doc:${t}`); return dr(t, ...a); };
+  const wr = m.window.removeEventListener.bind(m.window);
+  m.window.removeEventListener = (t, ...a) => { removed.push(`win:${t}`); return wr(t, ...a); };
+  m.pop.close();
+  assert.deepEqual(['doc:pointerdown', 'doc:keydown', 'doc:scroll', 'win:resize'].filter((x) => !removed.includes(x)), [], `removed: ${removed}`);
+});
+
+test('a scroll of a scroller holding Add projects… or a resize closes the popover; its own list scrolling does not', async () => {
+  let m = mount();
+  await settle();
+  m.$('.mk-tu-plist').dispatchEvent(new m.window.Event('scroll'));
+  assert.ok(m.$('.mk-tu-projpop'), 'the list scrolling keeps it open');
+  m.doc.body.dispatchEvent(new m.window.Event('scroll'));
+  assert.ok(m.$('.mk-tu-projpop'), 'a scroll that leaves the button where the popover was placed keeps it open');
+  m.anchor.getBoundingClientRect = () => ({ top: 120, left: 0, width: 0, height: 0, right: 0, bottom: 0 });
+  m.doc.body.dispatchEvent(new m.window.Event('scroll'));
+  assert.deepEqual([m.$('.mk-tu-projpop'), m.closed()], [null, 1]);
+  m = mount();
+  await settle();
+  m.window.dispatchEvent(new m.window.Event('resize'));
+  assert.deepEqual([m.$('.mk-tu-projpop'), m.closed()], [null, 1]);
+});

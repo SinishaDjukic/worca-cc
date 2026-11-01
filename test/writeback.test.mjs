@@ -1,7 +1,7 @@
 // test/writeback.test.mjs — spec §7.5 result write-back, all in WORCA_MOCK mode.
 // The first test sets no capabilities answer, so it exercises the tolerant-default: PluginOpError kind 'unimplemented' =>
 // writeBack:true. The mock registry's own capabilities answer (A6) keeps writeBack true, so the others behave the same.
-import { test, after } from 'node:test';
+import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -18,6 +18,8 @@ import { retryWriteback, reportResultForPipeline } from '../src/core/sources.mjs
 
 useTempHome(after);
 process.env.WORCA_MOCK = '1';
+// a failing test must not leave its mock answers behind to cascade into the next ones
+afterEach(() => { setMockSourceResponses(null); });
 after(() => { delete process.env.WORCA_MOCK; setMockSourceResponses(null); });
 
 const META = { plugin: 'gh', sourceId: 'issues', taskId: 'T-9', url: 'https://tracker.test/T-9', title: 'Fix login' };

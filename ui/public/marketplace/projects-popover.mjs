@@ -72,7 +72,8 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     onToggle(p, on);
     paintFoot();
   }
-  const place = () => placeFlyout(el, anchor, { mode: 'down', gap: 4, margin: 8, fit: true, win: doc.defaultView });   // never over Add projects…
+  let placedAt = null;
+  const place = () => { placeFlyout(el, anchor, { mode: 'down', gap: 4, margin: 8, fit: true, win: doc.defaultView }); placedAt = anchor.getBoundingClientRect(); };   // never over Add projects…
   function rowFor(p, i) {
     const r = mk('div', 'mk-tu-prow');
     r.id = `${uid}-r${i}`;
@@ -111,6 +112,8 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     open = false;
     doc.removeEventListener('pointerdown', onDown, true);
     doc.removeEventListener('keydown', onEsc, true);
+    doc.removeEventListener('scroll', onScroll, { capture: true });
+    doc.defaultView?.removeEventListener('resize', onResize);
     el.remove();
     anchor.setAttribute('aria-expanded', 'false');
     onClose();
@@ -118,6 +121,14 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
   }
   const onEsc = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); e.stopPropagation(); close(); } };
   const onDown = (e) => { if (!el.contains(e.target) && !anchor.contains(e.target)) close(); };
+  // Fixed popup: it closes when a scroller that holds its button scrolls the button away from where the popup was placed, or the
+  // window resizes (its own list may scroll, and the focus may scroll the sheet without moving the button)
+  const onScroll = (e) => {
+    if (!placedAt || !e.target || typeof e.target.contains !== 'function' || !e.target.contains(anchor)) return;
+    const r = anchor.getBoundingClientRect();
+    if (Math.abs(r.top - placedAt.top) > 1 || Math.abs(r.left - placedAt.left) > 1) close();
+  };
+  const onResize = () => close();
   // Tab away from both the popover and Add projects… closes it (a repaint that drops the focused row has no relatedTarget)
   const onFocusOut = (e) => { const to = e.relatedTarget; if (to && !el.contains(to) && !anchor.contains(to)) close(false); };
 
@@ -145,6 +156,8 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
   place();
   doc.addEventListener('pointerdown', onDown, true);
   doc.addEventListener('keydown', onEsc, true);
+  doc.addEventListener('scroll', onScroll, { capture: true, passive: true });
+  doc.defaultView?.addEventListener('resize', onResize);
   q.focus();
   void load();
   return { el, close };

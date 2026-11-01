@@ -1638,7 +1638,7 @@ function applySchemaV12(db) {
 /**
  * Incremental v12 -> v13 migration (plugin task-sources, spec 2026-07-12 §10):
  *   pipelines.source_type TEXT DEFAULT 'prompt'  -- 'prompt' | 'markdown' | 'plugin'
- *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,profile,inputs,url,title}; NULL unless plugin
+ *   pipelines.source_ref  TEXT                   -- JSON {plugin,sourceId,taskId,profile,inputs,url,title,project?}; NULL unless plugin
  *   workflows.origin      TEXT                   -- 'plugin:<name>' provenance; NULL = user-created
  * Implemented as a CONDITIONAL repair (same shape as applySchemaV12), NOT a plain
  * DDL string: the three columns live in INCREMENTAL_COLUMNS (hard rule above), so

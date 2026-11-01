@@ -471,7 +471,7 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
     sheet.setBusy(false);
     if (cancel) cancel.disabled = false;
     const back = () => { if (doc.activeElement === sheet.panel && btn.isConnected) btn.focus(); };
-    if (!r.ok) { back(); return; }
+    if (!r.ok) { if (r.sent) void page.load(); back(); return; }
     const typed = isDirty();   // typed while Save ran (each baseline is what was sent): still a change, the sheet stays
     if (typed) back(); else close();
     if (r.sent) {
