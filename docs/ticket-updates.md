@@ -13,8 +13,8 @@ the Marketplace page.
 
 - **Projects you work on.** Pick the tracker's projects you work on (**Add projects…**; the list opens right-aligned under
   its button). New run and Requirements export list only these. None picked = all projects. A project the tracker
-  no longer lists stays as a chip. Once the Requirements import ships (#1041), its **All projects** word search will look only in the projects
-  you picked; that part is not in this release.
+  no longer lists stays as a chip. Once the Requirements import ships (#1041), its **All projects** word search will look
+  only in the projects you picked; that part is not in this release.
 - **When a run finishes successfully.** **All projects** says what happens unless a project says otherwise: **Don't move**
   or **Any Done status**. **Add a project rule** for a project's own choice: Don't move, Any Done status, or one of that
   project's statuses. The trash icon removes a rule. Removing a project from the list keeps its rule.
@@ -47,8 +47,9 @@ treats the connection as having no saved rules: the old **Transition on completi
 save writes a fresh file without the rules that could not be read.
 
 **Any Done status** is one the ticket can reach, never a cancelled one (Won't Do, Won't Fix, Rejected, Duplicate, Cancelled,
-Declined, Invalid, Obsolete, Abandoned, Not planned), and never through a transition with such a name (a "Won't Do" transition into Closed is skipped; of several transitions to one status, the one named Done, Close or Resolve goes first). When a move asks for a Resolution, Worca fills in Done, Fixed or
-Complete.
+Declined, Invalid, Obsolete, Abandoned, Not planned), and never through a transition whose name contains such a word ("Won't Do" or "Close as Duplicate" into Closed
+is skipped; of several transitions to one status, the one named Done, Close or Resolve goes first). When a move asks for a
+Resolution, Worca fills in Done, Fixed or Complete.
 
 ## Categories
 

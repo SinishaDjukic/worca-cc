@@ -71,9 +71,9 @@ export const CANCELLED_NAME = /^(?:won['’]?t (?:do|fix)|rejected|duplicate|can
 /** Inner runs of whitespace (NBSP too) collapse to one space and the ends are trimmed before the test. */
 const squash = (name) => String(name ?? '').replace(/\s+/g, ' ').trim();
 export const isCancelledName = (name) => CANCELLED_NAME.test(squash(name));
-/** I1: a transition's own name can cancel a ticket even when it leads to a neutral status ("Won't Do" into Closed): the
- *  status words plus the verb forms Reject, Cancel, Decline and Mark as duplicate. */
-const CANCELLED_TRANSITION = /^(?:reject|cancel|decline|(?:mark(?:ed)? as |set as )?duplicate|mark as invalid)$/i;
+/** I1: a transition's own name can cancel a ticket even when it leads to a neutral status ("Won't Do" into Closed, "Close as
+ *  Duplicate"): the cancelling words anywhere in the name, as whole words, whitespace and NBSP collapsed. */
+const CANCELLED_TRANSITION = /\b(?:won['’]?t|wont|duplicate|reject(?:ed)?|cancell?(?:ed)?|declin(?:e|ed)|invalid|obsolete|abandon(?:ed)?|not planned|cannot reproduce)\b/i;
 export const isCancelledTransition = (name) => isCancelledName(name) || CANCELLED_TRANSITION.test(squash(name));
 /** A transition named like a done verb ("Done", "Close Issue", "Resolve"). */
 const DONE_VERB = /^(?:done|close|closed|resolve|resolved|complete|completed|finish)\b/i;

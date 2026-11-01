@@ -177,6 +177,12 @@ test("I1: a cancelling transition into a neutral status is not taken; of two int
   assert.deepEqual([named.posts.map((p) => p.body.transition.id), named.out.note], [['61'], 'Moved to Closed.'], 'a named status too');
   const namedOnly = await report({ status: '6', name: 'Closed' }, { transitions: [tr('81', "Won't Do", S.closed)] });
   assert.equal(namedOnly.posts.length, 0);
+  for (const bad of ['Close as Duplicate', "Resolve as Won't Fix", 'Cancel issue', 'Reject request', 'Cannot Reproduce', 'Closed (Wont Fix)', 'Close  as\u00a0DUPLICATE']) {
+    const compound = await report({ category: 'done' }, { transitions: [tr('81', bad, S.closed), tr('82', 'Approve', S.closed)] });
+    assert.deepEqual(compound.posts.map((p) => p.body.transition.id), ['82'], `${JSON.stringify(bad)} listed first is never taken`);
+    const only = await report({ category: 'done' }, { transitions: [tr('81', bad, S.closed)] });
+    assert.equal(only.posts.length, 0, `${JSON.stringify(bad)} alone moves nothing`);
+  }
   const picked = await report({ status: '10010', name: "Won't Do" }, { transitions: [tr('81', "Won't Do", S.wontdo)] });
   assert.equal(picked.out.note, "Moved to Won't Do.", 'choosing a cancelled status on purpose still works');
 });
@@ -184,6 +190,12 @@ test("I1: a cancelling transition into a neutral status is not taken; of two int
 test('isCancelledName collapses inner spaces and NBSP and accepts Wont Fix', () => {
   for (const n of ["Won't  Do", 'Won’t Fix', ' Not   planned ', 'Wont Fix', 'Wont do']) assert.equal(isCancelledName(n), true, JSON.stringify(n));
   assert.equal(isCancelledName('Closed'), false);
+});
+
+test("Jira's reason is collapsed to one line in the comment's last line", async () => {
+  const r = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
+    refuseTransition: { status: 400, body: { errorMessages: ['Field   Assignee\n  is\r\nrequired.'], errors: { x: 'second\tone' } } } });
+  assert.equal(r.comment.split('\n').at(-1), 'Not moved: Jira refused the move to Done: Field Assignee is required.; second one.');
 });
 
 test('an unrecognised move shape moves nothing and does not read the ticket', async () => {

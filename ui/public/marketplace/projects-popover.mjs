@@ -107,7 +107,7 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
   }
 
   /** `refocus` false: the focus already went somewhere else (Tab out), so it is left there. */
-  function close(refocus = true) {
+  function close(refocus = true, keepScroll = false) {
     if (!open) return;
     open = false;
     doc.removeEventListener('pointerdown', onDown, true);
@@ -117,7 +117,7 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
     el.remove();
     anchor.setAttribute('aria-expanded', 'false');
     onClose();
-    if (refocus && anchor && anchor.isConnected) anchor.focus();
+    if (refocus && anchor && anchor.isConnected) anchor.focus(keepScroll ? { preventScroll: true } : undefined);
   }
   const onEsc = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); e.stopPropagation(); close(); } };
   const onDown = (e) => { if (!el.contains(e.target) && !anchor.contains(e.target)) close(); };
@@ -126,7 +126,7 @@ export function openProjectsPopover({ doc, anchor, host = null, profileLabel, tr
   const onScroll = (e) => {
     if (!placedAt || !e.target || typeof e.target.contains !== 'function' || !e.target.contains(anchor)) return;
     const r = anchor.getBoundingClientRect();
-    if (Math.abs(r.top - placedAt.top) > 1 || Math.abs(r.left - placedAt.left) > 1) close();
+    if (Math.abs(r.top - placedAt.top) > 1 || Math.abs(r.left - placedAt.left) > 1) close(true, true);
   };
   const onResize = () => close();
   // Tab away from both the popover and Add projects… closes it (a repaint that drops the focused row has no relatedTarget)

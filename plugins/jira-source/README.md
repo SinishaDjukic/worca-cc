@@ -137,9 +137,10 @@ project's statuses). The plugin answers `capabilities()` with `ticketUpdates: tr
 - **legacyMove** — what **Transition on completion** means, so the section starts from it.
 - **reportResult with a move** — the transition first, then one comment: the run summary, its links, and a last line saying
   what happened. **Any Done status** takes a transition to a done status, preferring Done, then Closed, Resolved, Complete,
-  Completed, and never a cancelled one: not a cancelled-named target, and not a transition named Won't Do, Reject, Cancel,
-  Decline or Mark as duplicate even when it leads to Closed (of two transitions to one status, the one named Done, Close,
-  Resolve and the like goes first; a typed or picked status is reached the same way). A required Resolution is filled with the first allowed value named Done, Fixed,
+  Completed, and never a cancelled one: not a cancelled-named target, and not a transition whose name contains a cancelling
+  word (Won't Do, Reject, Cancel, Decline, Duplicate, Invalid, ... as in "Close as Duplicate") even when it leads to
+  Closed (of two transitions to one status, the one named Done, Close, Resolve and the like goes first; a typed or picked
+  status is reached the same way). A required Resolution is filled with the first allowed value named Done, Fixed,
   Complete or Completed. Last lines:
   - `Moved to Resolved.` / `Moved to Done, Resolution: Done.` / `Already in Closed.`
   - `Not moved: from "In Review" only Won't Do and Duplicate lead to a Done status.` (one: `only Won't Do leads`)

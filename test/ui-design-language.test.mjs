@@ -340,7 +340,7 @@ const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
 const ROW_OK = ['.act-srow'];                          // activity list row, 26px dense row (spec §3.1)
 // Ticket updates' phone targets, 36px chips and 44px controls (ticket-updates board 6): only inside its phone @media block, so an off-scale desktop height is still caught
-const rowOk = (r, s) => ROW_OK.some((ok) => s.includes(ok)) || (!!r.media && /max-width:s*600px/.test(r.media) && /.mk-tu/.test(s));
+const rowOk = (r, s) => ROW_OK.some((ok) => s.includes(ok)) || (!!r.media && /max-width:\s*600px/.test(r.media) && /\.mk-tu/.test(s));
 const classWords = (s) => (s.match(/\.[\w-]+/g) || []).flatMap((c) => c.slice(1).split('-'));
 test('control heights on the scale (A5)', () => {
   for (const [sel, h] of Object.entries(CONTROL_HEIGHTS)) {

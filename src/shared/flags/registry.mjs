@@ -90,7 +90,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'ticketUpdates',
     title: 'Ticket updates',
-    description: 'Marketplace › Installed › a tracker plugin › Settings gets Ticket updates: the projects you work on, and per project what a finished run does to its tickets (Don\'t move, Any Done status, or one of that project\'s statuses). New run and Requirements list only those projects. Off: each plugin\'s old setting applies.',
+    description: 'Marketplace › Installed › a tracker plugin › Settings gets Ticket updates: the projects you work on, and per project what a finished run does to its tickets (Don\'t move, Any Done status, or one of that project\'s statuses). New run and the Requirements export list only those projects. Off: each plugin\'s old setting applies.',
     stage: 'experimental',
     default: false,
     owner: 'TomicaB',
