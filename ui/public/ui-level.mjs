@@ -153,9 +153,11 @@ export function levelMenuHtml(level) {
  * @param {object} o
  * @param {Document} [o.doc]
  * @param {(level:string)=>Promise<{ok:boolean,level?:string,error?:string}>} o.save  persists; answers the CONFIRMED mode
+ * @param {(error:string)=>void} [o.onError]  a side-menu pick the server refused (the dialog shows its own line)
+ * @param {()=>void} [o.onClose]  the dialog went from open to closed (Done, backdrop, Escape, close())
  * @returns {{paint:(level?:string)=>void, open:(from?:Element)=>void, close:()=>void, choose:(level:string, o?:{report?:boolean})=>Promise<void>}}
  */
-export function createLevelController({ doc, save, onError = null } = {}) {
+export function createLevelController({ doc, save, onError = null, onClose = null } = {}) {
   const d = docOf(doc);
   const $ = (s) => d.querySelector(s);
   const modal = $('#mode-modal');
@@ -163,6 +165,7 @@ export function createLevelController({ doc, save, onError = null } = {}) {
   const msg = $('#mode-msg');
   let confirmed = currentLevel(d);   // the last SERVER-confirmed mode
   let seq = 0;                       // out-of-order saves never repaint a stale answer
+  let saving = 0;                    // picks whose save has not answered yet
   let opener = null;
 
   function paint(level) {
@@ -201,6 +204,7 @@ export function createLevelController({ doc, save, onError = null } = {}) {
   function close() {
     if (!modal || modal.classList.contains('hidden')) return;
     modal.classList.add('hidden');
+    if (onClose) onClose();
     // The opener may have been repainted or hidden by the change; fall back to the account corner.
     const back = (opener && opener.isConnected && opener.offsetParent !== null) ? opener : $('#side-acct');
     if (back && typeof back.focus === 'function') back.focus();
@@ -217,8 +221,10 @@ export function createLevelController({ doc, save, onError = null } = {}) {
     paint(level);                                  // optimistic: the app re-lays out behind the dialog
     if (msg) { msg.textContent = ''; msg.className = 'hint'; }
     let out;
+    saving += 1;
     try { out = await save(level); } catch (e) { out = { ok: false, error: (e && e.message) || 'network error' }; }
-    if (mine !== seq) return;                      // a later click owns the paint now
+    saving -= 1;
+    if (mine !== seq) return;                     // a later click owns the paint now
     if (!out || !out.ok) {
       paint(previous);
       const error = (out && out.error) || 'unknown error';
@@ -267,7 +273,9 @@ export function createLevelController({ doc, save, onError = null } = {}) {
     open,
     close,
     choose,
-    /** A server-confirmed value from elsewhere (GET /api/settings, settings-changed). */
-    confirm(level) { if (isUiLevel(level)) { confirmed = level; paint(level); } },
+    /** A server-confirmed value from elsewhere (GET /api/settings, settings-changed). Ignored while a pick is saving:
+     *  that read may predate the save (a top bar search pick routes, and reloads Settings, as soon as the mode is
+     *  painted), and the save's own answer paints the mode. */
+    confirm(level) { if (!saving && isUiLevel(level)) { confirmed = level; paint(level); } },
   };
 }

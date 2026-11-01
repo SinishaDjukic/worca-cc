@@ -8,7 +8,7 @@
 // is active: `.is-active` lands on the wrong section, and ArrowRight
 // stopImmediatePropagation()s to reveal [data-step] elements on an invisible
 // slide, so the deck looks frozen for maxStep keypresses.
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,9 @@ import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 
 const SRC = readFileSync(fileURLToPath(new URL('../assets/deck-kit/deck-enhance.js', import.meta.url)), 'utf8');
+// Every window this file opens; closing them stops their timers, which otherwise hold the process seconds after the last test.
+const windows = [];
+after(() => { for (const w of windows) w.close(); });
 
 /** A mounted stage: seven slides, with deck-stage's own active marker on one. */
 function boot({ hash = '', activeIndex = null, steps = 0, stepsOn = 0 } = {}) {
@@ -33,6 +36,7 @@ function boot({ hash = '', activeIndex = null, steps = 0, stepsOn = 0 } = {}) {
     `<!doctype html><body><deck-stage width="1920" height="1080">${sections}</deck-stage></body>`,
     { url: `http://localhost/deck.html${hash}`, runScripts: 'outside-only' },
   );
+  windows.push(dom.window);
   dom.window.eval(SRC);
   return dom.window;
 }

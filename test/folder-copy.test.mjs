@@ -15,6 +15,11 @@ const dirs = [];
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 const tmp = (p) => { const d = mkdtempSync(join(tmpdir(), `worca-fcopy-${p}-`)); dirs.push(d); return d; };
 const posix = process.platform !== 'win32';
+/** `promise`, or `blocked` once `ms` pass; the timer is cleared either way, so it never holds the process after the test. */
+const within = (promise, ms, blocked) => {
+  let timer;
+  return Promise.race([promise, new Promise((res) => { timer = setTimeout(() => res(blocked), ms); })]).finally(() => clearTimeout(timer));
+};
 
 test('copyFolder copies files and folders, leaves out .git (any depth), .worca-cc and the worca home, and writes a sha1 manifest', async () => {
   const src = tmp('src'); const dest = join(tmp('dst'), 'copy');
@@ -177,7 +182,7 @@ test('POSIX: a FIFO the user put in the folder at a path the run deleted never b
   rmSync(join(dest, 'gone.txt')); rmSync(join(src, 'gone.txt')); execFileSync('mkfifo', [join(src, 'gone.txt')]);
   try {
     const scanAndPatch = scanChanges(dest, manifest).then(async (sc) => { await buildChangesPatch({ realRoot: src, copyDir: dest, manifest, files: sc.files }); return sc; });
-    const r = await Promise.race([scanAndPatch, new Promise((res) => setTimeout(() => res({ files: 'blocked' }), 3000))]);
+    const r = await within(scanAndPatch, 3000, { files: 'blocked' });
     assert.deepEqual(r.files, [{ path: 'gone.txt', change: 'deleted', size: 2 }]);
   } finally { try { closeSync(openSync(join(src, 'gone.txt'), fsc.O_WRONLY | fsc.O_NONBLOCK)); } catch { /* no opener was blocked */ } }
 });
@@ -272,7 +277,7 @@ test('POSIX: readChangesFile never follows a link at changes.json, nor blocks on
   symlinkSync(elsewhere, ff.changes);
   assert.equal(await readChangesFile(ff.changes), null);
   rmSync(ff.changes); execFileSync('mkfifo', [ff.changes]);
-  const r = await Promise.race([readChangesFile(ff.changes), new Promise((res) => setTimeout(() => res('blocked'), 3000))]);
+  const r = await within(readChangesFile(ff.changes), 3000, 'blocked');
   assert.equal(r, null);
 });
 

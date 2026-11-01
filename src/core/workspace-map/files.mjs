@@ -10,6 +10,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { LIMITS } from '../../shared/workspace-map/limits.mjs';
 import { gitAvailable } from '../git-available.mjs';
+import { guardedGitEnv } from '../git-guard.mjs';
 
 export const SKIP_DIRS = Object.freeze(['.git', 'node_modules', 'vendor', 'dist', 'build', 'target', 'out',
   '.next', '.nuxt', 'coverage', 'graphify-out', '.venv', 'venv', '__pycache__', '.gradle', '.idea', '.vscode',
@@ -70,16 +71,17 @@ const inside = (root, abs) => {
  *  (never the process cwd). */
 export function gitOutput(dir, args, { timeoutMs = 30000, maxBuffer = 256 * 1024 * 1024 } = {}) {
   if (typeof dir !== 'string' || !dir || !Array.isArray(args) || !gitAvailable()) return Promise.resolve(null);
-  const env = { ...process.env };
-  for (const k of GIT_ENV_DROP) delete env[k];
-  return new Promise((done) => {
+  const base = { ...process.env };
+  for (const k of GIT_ENV_DROP) delete base[k];
+  // No planted hook or config command runs (git-guard.mjs, G2): `ls-files` alone starts core.fsmonitor.
+  return guardedGitEnv(dir, { env: base }).then((env) => new Promise((done) => {
     try {
       execFile('git', args, { cwd: dir, env, encoding: 'utf8', timeout: timeoutMs, maxBuffer, windowsHide: true },
         (err, stdout) => done(err ? null : String(stdout)));
     } catch {
       done(null);
     }
-  });
+  }), () => null);
 }
 
 async function walk(dir, maxFiles) {

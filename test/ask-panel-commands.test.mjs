@@ -242,13 +242,13 @@ test('summaries on: the group head total ticks with its running row, with no fra
   ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { blockId: 't-0000000001:2', status: 'running', exitCode: null, durationMs: null, startedAt: t0, tail: '' } });
   ctx.flush();
   const head = ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords');
-  assert.equal(head.textContent, 'Running 2 commands · 10s');
+  assert.equal(head.textContent, 'Running the slow script · 2 commands · 10s', 'the running row\'s line leads');
   assert.equal(ticks.length, 1, 'one ticker for the running row');
   const realNow = Date.now;
   try {
     Date.now = () => t0 + 19_000;
     ticks[0]();
-    assert.equal(head.textContent, 'Running 2 commands · 20s');
+    assert.equal(head.textContent, 'Running the slow script · 2 commands · 20s');
   } finally { Date.now = realNow; }
   ctx.panel.destroy();
 });
@@ -318,7 +318,7 @@ test('summaries on: a reloaded group whose commands all passed shows folded; the
   ctx.panel.destroy();
 });
 
-test('summaries on: a running group stays open; it folds itself when the last command passes (#911)', async () => {
+test('summaries on: a running group stays folded with Stop on its head; it stays folded when the last command passes (#911)', async () => {
   const blocks = [cmdBlock(1, 0, 'Checking the git status'), cmdBlock(2, 0, 'Running the slow script')];
   const { ctx } = setup({ blocks });
   applyFlags({ commandSummaries: true }, ctx.doc);
@@ -331,16 +331,18 @@ test('summaries on: a running group stays open; it folds itself when the last co
   ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { blockId: 't-0000000001:2', status: 'running', exitCode: null, durationMs: null, startedAt: Date.now(), tail: '' } });
   ctx.flush();
   const body = () => ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gbody');
-  assert.equal(body().hidden, false, 'open while a command runs');
-  assert.match(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords').textContent, /^Running 2 commands · /);
+  assert.equal(body().hidden, true, 'folded while a command runs');
+  assert.match(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords').textContent, /^Running the slow script · 2 commands · /);
+  assert.equal(ctx.doc.querySelector('.ask-cmd-gtop > .ask-cmd-stop').hidden, false, 'the head offers Stop');
   ctx.panel.pushServerFrame({ type: 'ask-command', threadId: TID, command: { blockId: 't-0000000001:2', status: 'done', exitCode: 0, durationMs: 2000, tail: '' } });
   ctx.flush();
-  assert.equal(body().hidden, true, 'everything passed: folded');
+  assert.equal(body().hidden, true, 'everything passed: still folded');
+  assert.equal(ctx.doc.querySelector('.ask-cmd-gtop > .ask-cmd-stop').hidden, true);
   assert.equal(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords').textContent, 'Ran 2 commands · 3.0s');
   ctx.panel.destroy();
 });
 
-test('summaries on: a reloaded failed group opens itself from the REST views alone; a close survives a rebuild (#911)', async () => {
+test('summaries on: a reloaded failed group stays folded with "1 failed"; an open survives a rebuild (#911)', async () => {
   const blocks = [cmdBlock(1, 0, 'Checking the git status'), cmdBlock(2, 0, 'Running the tests')];
   const { ctx } = setup({ blocks, view: { blockId: 't-0000000001:2', status: 'done', exitCode: 1, durationMs: 500, tail: 'FAIL' } });
   applyFlags({ commandSummaries: true }, ctx.doc);
@@ -351,16 +353,16 @@ test('summaries on: a reloaded failed group opens itself from the REST views alo
   await settle(ctx);
   const body = () => ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gbody');
   const rows = () => [...ctx.doc.querySelectorAll('.ask-cmd.is-sum')];
-  assert.equal(body().hidden, false, 'a failure opens the group');
-  assert.equal(rows()[1].querySelector('.ask-cmd-detail').hidden, false, 'and its row');
+  assert.equal(body().hidden, true, 'a failure does not open the group');
+  assert.equal(rows()[1].querySelector('.ask-cmd-detail').hidden, true, 'nor its row');
   assert.equal(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gfail').textContent, '1 failed');
   assert.ok(ctx.doc.querySelector('.ask-cmd-group .ask-cmd-gwords').textContent.startsWith('Ran 2 commands · 1 failed · '));
   ctx.doc.querySelector('.ask-cmd-group .ask-cmd-ghead').click();
-  assert.equal(body().hidden, true);
+  assert.equal(body().hidden, false);
   applyFlags({ commandSummaries: false }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
   applyFlags({ commandSummaries: true }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
   await settle(ctx);
-  assert.equal(body().hidden, true, 'the close survived the rebuild');
+  assert.equal(body().hidden, false, 'the open survived the rebuild');
   ctx.panel.destroy();
 });
 
@@ -435,8 +437,9 @@ test('a closed failed row stays closed after a rebuild (the choice is kept per b
   ctx.flush();
   await settle(ctx);
   const row = () => ctx.doc.querySelector('.ask-cmd.is-sum');
-  assert.equal(row().querySelector('.ask-cmd-detail').hidden, false, 'a failure opens itself');
+  assert.equal(row().querySelector('.ask-cmd-detail').hidden, true, 'a failure stays folded');
   const before = row();
+  row().querySelector('.ask-cmd-row-btn').click();
   row().querySelector('.ask-cmd-row-btn').click();
   // Force a REAL rebuild: flag off (full card), then on again (a new summary row built from st.commandsRowOpen).
   applyFlags({ commandSummaries: false }, ctx.doc);
@@ -452,7 +455,7 @@ test('a closed failed row stays closed after a rebuild (the choice is kept per b
   ctx.panel.destroy();
 });
 
-test('a failed row that opened itself stays open after a rebuild, with its output and no Output toggle', async () => {
+test('a failed row the person opened stays open after a rebuild, with its output and no Output toggle', async () => {
   const blocks = [cmdBlock(1, 0, 'Running the tests')];
   const { ctx } = setup({ blocks, view: { blockId: 't-0000000001:1', status: 'done', exitCode: 1, durationMs: 1000, tail: 'FAIL' } });
   applyFlags({ commandSummaries: true }, ctx.doc);
@@ -462,12 +465,13 @@ test('a failed row that opened itself stays open after a rebuild, with its outpu
   ctx.flush();
   await settle(ctx);
   const row = () => ctx.doc.querySelector('.ask-cmd.is-sum');
+  row().querySelector('.ask-cmd-row-btn').click();
   const before = row();
   applyFlags({ commandSummaries: false }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
   applyFlags({ commandSummaries: true }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
   await settle(ctx);
   assert.notEqual(row(), before, 'a rebuilt row');
-  assert.equal(row().querySelector('.ask-cmd-detail').hidden, false, 'the row stays open (auto-open was recorded)');
+  assert.equal(row().querySelector('.ask-cmd-detail').hidden, false, 'the row stays open (the open was recorded)');
   assert.equal(row().querySelector('.ask-cmd-outbox').hidden, false, 'its output shows with it');
   assert.equal(row().querySelector('.ask-cmd-toggle'), null, 'no Output toggle');
   ctx.panel.destroy();

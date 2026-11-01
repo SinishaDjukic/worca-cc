@@ -1,5 +1,5 @@
 // test/helpers/mk-marketplaces-fixtures.mjs — P7 marketplace entries as GET /api/marketplaces answers after P2.
-export const NOTE0 = 'plugins/discretestack-models/worca-cc-plugin.json: models[0] ("discretestack-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored';
+export const NOTE0 = 'plugins/example-models/worca-cc-plugin.json: models[0] ("example-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored';
 export const SKIP = 'worca-cc-marketplace.json: plugins/x/worca-cc-plugin.json not found in repo — skipped';
 const inv = (o) => ({ agents: [], scripts: [], taskSources: [], chatChannels: [], models: [], modelSecrets: [], mcpServers: [],
   skills: [], workflows: [], depCount: 0, setupCommands: [], ...o });
@@ -17,18 +17,18 @@ export const OFFICIAL = {
       installed: false, notes: [] },
   ],
 };
-export const BD = {
-  id: 'github.com-BD-AI-SDLC-worca-marketplace-8d59be17', name: 'BD-AI-SDLC/worca-marketplace', url: 'https://github.com/BD-AI-SDLC/worca-marketplace',
+export const EXAMPLE = {
+  id: 'github.com-example-worca-marketplace-a0d3e686', name: 'example/worca-marketplace', url: 'https://github.com/example/worca-marketplace',
   description: '', addedAt: '2026-09-01T12:00:00Z',
   lastSync: { sha: '16b6363deadbeef000000000000000000000000000', at: '2026-09-03T12:00:00Z' },
   lastError: { message: 'HTTP 403', code: 'UNREACHABLE', at: '2026-10-20T11:59:00Z' },
   warnings: ['last sync 2026-09-03; refresh failed: HTTP 403', NOTE0, SKIP],
   plugins: [
-    { name: 'bmf-models', subdir: 'plugins/bmf-models', version: '0.2.0', description: 'BMF Models',
-      inventory: inv({ models: [1, 2, 3, 4, 5].map((i) => ({ id: `bmf-${i}`, label: `BMF ${i}`, efforts: [], engine: 'claude', envKeys: [], baseUrl: null })) }),
+    { name: 'base-models', subdir: 'plugins/base-models', version: '0.2.0', description: 'Base Models',
+      inventory: inv({ models: [1, 2, 3, 4, 5].map((i) => ({ id: `base-${i}`, label: `Base ${i}`, efforts: [], engine: 'claude', envKeys: [], baseUrl: null })) }),
       installed: false, notes: [] },
-    { name: 'discretestack-models', subdir: 'plugins/discretestack-models', version: '0.4.0', description: 'Discretestack models',
-      inventory: inv({ models: [{ id: 'discretestack-stable' }, { id: 'discretestack-stable-fast' }] }), installed: true, notes: [NOTE0] },
+    { name: 'example-models', subdir: 'plugins/example-models', version: '0.4.0', description: 'Example models',
+      inventory: inv({ models: [{ id: 'example-stable' }, { id: 'example-stable-fast' }] }), installed: true, notes: [NOTE0] },
     { name: 'jira-source', subdir: 'plugins/jira-source', version: '1.0.0', description: 'Pull tasks from Jira',
       inventory: inv({ taskSources: [{ id: 'jira', displayName: 'Jira', secrets: ['pat'] }] }), installed: false, notes: [] },
   ],

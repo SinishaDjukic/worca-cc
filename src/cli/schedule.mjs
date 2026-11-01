@@ -212,6 +212,7 @@ async function requestFromFlags(flags, { projectDir, extras, promptText, stageId
   const request = {
     projectDir,
     workflowId: flags.workflow || 'wf_default',
+    ...(flags.guardrailsId ? { guardrailsId: flags.guardrailsId } : {}),
     ...(flags.title ? { title: flags.title } : {}),
     ...(flags.mock ? { mock: true } : {}),
     ...(flags.sourceBranch ? { sourceBranch: flags.sourceBranch } : {}),

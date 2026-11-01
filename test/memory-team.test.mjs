@@ -599,7 +599,9 @@ test('the restore route (a queue call inside the store lock) never deadlocks wit
   const restore = withStoreLock(memoryRoot(), () => queueTeamChanges(K, ['a'], { force: true, flush: false }));   // the restore route's shape
   await new Promise((r) => setTimeout(r, 20));
   g.release();
-  const done = await Promise.race([Promise.all([q, d, restore]).then(() => 'done'), new Promise((r) => setTimeout(() => r('deadlock'), 5000))]);
+  let deadlock;   // cleared once settled: an armed 5 s timer would hold the process after the file's last test
+  const done = await Promise.race([Promise.all([q, d, restore]).then(() => 'done'), new Promise((r) => { deadlock = setTimeout(() => r('deadlock'), 5000); })])
+    .finally(() => clearTimeout(deadlock));
   g.restore();
   assert.equal(done, 'done');
   assert.equal(entryOf(K, 'b')?.op, 'delete');

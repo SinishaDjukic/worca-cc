@@ -174,7 +174,8 @@ environment; config files hold `${MCPSECRET_…}` references. Still:
   the `claude` environment;
 - without agent isolation any pipeline agent can read `secrets.json`; under agent isolation one
   person's agents share a user and can read each other's process environment;
-- with **Create and run scripts** on, an Ask script runs with worca's privileges;
+- with **Create and run scripts** on, an Ask script runs with worca's privileges (a draft or a
+  changed script only after the user presses Run or Save on its card);
 - Claude Code's own session transcripts (`~/.claude/projects`) are not redacted;
 - a proxy URL with credentials reaches every registry stdio server;
 - with the [credential broker](credential-broker.md) on, registry secrets are delivered to agents

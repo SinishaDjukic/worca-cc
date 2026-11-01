@@ -509,6 +509,17 @@ test('P11: under the run`s env-scrub guardrail a script child starts from the ag
   }
 });
 
+test('a script base env never carries a proxy URL with a login, scrub on or off', async () => {
+  await withEnv({ HTTPS_PROXY: 'http://ACME%5Cjdoe:s3cret@proxy.corp.example:8080', HTTP_PROXY: 'http://proxy.corp.example:8080', https_proxy: undefined, http_proxy: undefined, NO_PROXY: 'intranet.example', ALL_PROXY: 'http://u:s3cret@proxy:8080' }, () => {
+    for (const opts of [{}, { envScrub: true }]) {
+      const env = scriptBaseEnv(opts);
+      for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /s3cret/, k);
+      assert.equal(env.HTTP_PROXY, undefined);
+      assert.equal(env.NO_PROXY, 'intranet.example');
+    }
+  });
+});
+
 test('a script base env never carries an Azure DevOps or Bitbucket credential, scrub on or off', async () => {
   const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN',
     'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER'];

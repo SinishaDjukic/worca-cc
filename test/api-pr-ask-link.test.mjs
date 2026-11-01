@@ -177,6 +177,7 @@ test('a project card already applied is not opened again by naming a member: the
 test('on a shared sign-in another person\'s thread is an unknown askThreadId: nothing pushed, the card stays proposed (impl review m1 mutation killer)', async () => {
   const prev = process.env.WORCA_IDENTITY_HEADER;
   process.env.WORCA_IDENTITY_HEADER = 'x-test-user';         // a per-person sign-in (identity.mjs 'header')
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   try {
     const t = createThread({ createdBy: 'alice@example.com' });
     const askCardId = `card_${String(++n).padStart(8, '0')}`;

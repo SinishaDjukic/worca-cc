@@ -97,7 +97,7 @@ test('list_presets: the viewer\'s presets for the pinned scope, plus any-project
   const { ASK_LIMITS } = await import('../src/core/ask/limits.mjs');
   // createAskTools reads deps.limits while building its tool list, so `limits` is required.
   const TOOL_DEPS = { limits: ASK_LIMITS, redact: (s) => s };
-  const t = createAskTools({ ...TOOL_DEPS, pinnedScope: () => ({ projectKey: PK }),
+  const t = createAskTools({ ...TOOL_DEPS, pinnedScope: () => ({ projectKey: PK }), defaultGuardrailsId: () => 'normal',
     listPresets: () => [QUICK, OPEN, { id: 'rp_dddddddddddd', name: 'Elsewhere', scope: { kind: 'project', ref: 'other-1' }, setup: {} }] });
   assert.ok(t.list().some((d) => d.name === 'list_presets'), 'listed when the dep is there');
   const out = await t.call('list_presets', {});
@@ -105,7 +105,7 @@ test('list_presets: the viewer\'s presets for the pinned scope, plus any-project
   assert.deepEqual(Object.keys(out.presets[0]).sort(), ['engine', 'guardrailsId', 'id', 'name', 'scope', 'workflowId']);
   assert.equal(out.presets[0].engine, 'claude');
   assert.equal(out.presets[1].engine, null, 'a preset naming no engine runs on the default engine, shown as null');
-  assert.equal(out.presets[1].guardrailsId, 'permissive', 'a preset naming none is shown as what it runs');
+  assert.equal(out.presets[1].guardrailsId, 'normal', 'a preset naming none is shown as what it runs: the install default (V21)');
   const without = createAskTools(TOOL_DEPS);
   assert.equal(without.list().some((d) => d.name === 'list_presets'), false, 'not listed without the dep');
   assert.deepEqual(await without.call('list_presets', {}), { presets: [] });

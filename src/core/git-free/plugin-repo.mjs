@@ -12,7 +12,7 @@ import { gitMissingError } from '../git-available.mjs';
 import { repoSnapshotRoot, discoverPlugins, assembleManifestDelta, manifestMcp, emptyManifestDelta, manifestVersion, finishPreview } from '../plugin-repo.mjs';
 import { buildInstallInventory } from '../plugin-store.mjs';
 import { findEscapingSymlinks } from '../plugin-manifest.mjs';
-import { readPluginsLock, pluginDir } from '../plugins-lock.mjs';
+import { readPluginsLock, pluginVersionDir } from '../plugins-lock.mjs';
 import { mcpUpdatePreview } from '../mcp/plugin-lifecycle.mjs';
 import { extractTarGz, ARCHIVE_LIMITS } from './archive.mjs';
 import { createGithubClient, resolveCommit, resolveBranch, githubRepoOf, GithubError } from './github.mjs';
@@ -174,9 +174,9 @@ export async function inventoryHttps(repoUrl, sha, subdir) {
 
 /** exportVersion without git: `versions/<sha7>` = the plugin folder of the commit's snapshot (no .git). */
 export async function exportVersionHttps(name, sha, { repoUrl, subdir = '' } = {}) {
+  const versionDir = pluginVersionDir(name, sha); // refuses a pin that would leave versions/, before any read or write
   githubPluginRepo(repoUrl);
   const snap = await pluginSnapshot(repoUrl, sha);
-  const versionDir = join(pluginDir(name), 'versions', sha.slice(0, 7));
   rmSync(versionDir, { recursive: true, force: true }); // re-export = fresh dir
   mkdirSync(versionDir, { recursive: true });
   try {

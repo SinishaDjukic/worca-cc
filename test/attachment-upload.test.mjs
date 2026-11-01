@@ -15,10 +15,13 @@ const up = (name, data) => ({ name, dataBase64: b64(data) });
 const no = (list, o = ASK) => { const r = validateAttachmentUploads(list, o); assert.equal(r.ok, false, JSON.stringify(r)); return [r.status, r.error]; };
 
 test("every allowed type passes with Ask's kinds, the body and a sha256 of the uploaded bytes", () => {
-  const r = validateAttachmentUploads([up('a.md', '# hi'), up('b.csv', 'x,y'), up('c.png', PNG), up('d.pdf', PDF), up('e.HTML', '<p>')], ASK);
+  const r = validateAttachmentUploads([up('a.md', '# hi'), up('b.csv', 'x,y'), up('c.png', PNG), up('d.pdf', PDF), up('e.HTML', '<p>'),
+    up('f.xml', '<a/>')], ASK);
   assert.equal(r.ok, true);
   assert.deepEqual(r.files.map((f) => [f.name, f.kind, f.mime, f.bytes]), [['a.md', 'text', 'text/markdown', 4], ['b.csv', 'text', 'text/csv', 3],
-    ['c.png', 'image', 'image/png', 12], ['d.pdf', 'binary', 'application/pdf', PDF.length], ['e.HTML', 'text', 'text/html', 3]]);
+    ['c.png', 'image', 'image/png', 12], ['d.pdf', 'binary', 'application/pdf', PDF.length], ['e.HTML', 'text', 'text/html', 3],
+    ['f.xml', 'text', 'application/xml', 4]]);
+  assert.equal(r.files[5].text, '<a/>');
   assert.equal(r.files[0].text, '# hi');
   assert.ok(r.files.every((f) => Buffer.isBuffer(f.data)));
   assert.equal(r.files[2].sha256, createHash('sha256').update(PNG).digest('hex'));

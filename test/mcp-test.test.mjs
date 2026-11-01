@@ -303,7 +303,7 @@ test('killProbe: POSIX signals the group, Windows runs taskkill /T /F /PID; once
 
 test('the SDK is pinned exactly and named in THIRD_PARTY_NOTICES.md', () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-  const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
+  const lock = JSON.parse(readFileSync(join(ROOT, 'npm-shrinkwrap.json'), 'utf8'));
   assert.equal(pkg.dependencies['@modelcontextprotocol/sdk'], '1.32.1');
   assert.equal(lock.packages['node_modules/@modelcontextprotocol/sdk'].version, '1.32.1');
   assert.match(readFileSync(join(ROOT, 'THIRD_PARTY_NOTICES.md'), 'utf8'), /@modelcontextprotocol\/sdk 1\.32\.1/);

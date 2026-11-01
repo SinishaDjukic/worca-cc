@@ -4,10 +4,11 @@
 // its own Access application. The broker checks the identity itself and never trusts
 // worca for it. Keys can be written, never read back.
 import { readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createAccessVerifier } from '../core/cf-access.mjs';
 import { createIssuerVerifier } from '../core/issuer-jwt.mjs';
+import { createTrustedPeerCheck, peerAddress } from '../core/trusted-proxies.mjs';
 import { safeEqual, normalizeBillTo } from './tokens.mjs';
 import { startOfUtcDay, startOfUtcMonth } from './limits.mjs';
 import { startDeviceFlow, pollDeviceFlow, githubSecretOf } from './copilot.mjs';
@@ -84,7 +85,14 @@ export function createIdentity(config, { fetchImpl } = {}) {
     };
   }
   if (id?.kind === 'header') {
+    // Only the identity proxy may vouch for a person: from any other peer the header is
+    // whatever the caller wrote (worca and its agents share the broker's network).
+    const trusted = createTrustedPeerCheck(id.trustedProxies);
     return async (req) => {
+      if (!trusted(req)) {
+        const peer = peerAddress(req);
+        throw Object.assign(new Error(`refused: the ${id.header} header is accepted only from the trusted proxy (WORCA_IDENTITY_TRUSTED_PROXIES), not from ${peer || 'an unknown peer'}`), { status: 403 });
+      }
       const v = req.headers[id.header];
       return normalizeBillTo(Array.isArray(v) ? v[0] : v);
     };
@@ -116,13 +124,26 @@ export function createUiHandler({ config, service, store, identity = createIdent
     return out;
   }
 
-  /** A state-changing request must come from the key page itself. */
-  function csrfOk(req) {
+  // The CSRF token is "<nonce>.<mac>", the mac binding the nonce to the person it was issued
+  // to: a matching cookie/header pair is not enough, the broker must have issued it to this
+  // person. The key comes from the vault key, so tokens survive a restart.
+  const csrfKey = config.vaultKey
+    ? createHmac('sha256', config.vaultKey).update('worca key page csrf').digest()
+    : randomBytes(32);
+  const csrfMac = (email, nonce) => createHmac('sha256', csrfKey).update(`${email}\n${nonce}`).digest('base64url');
+  const issueCsrf = (email) => { const nonce = randomBytes(16).toString('base64url'); return `${nonce}.${csrfMac(email, nonce)}`; };
+  function csrfValid(token, email) {
+    const m = /^([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})$/.exec(String(token || ''));
+    return !!m && safeEqual(m[2], csrfMac(email, m[1]));
+  }
+
+  /** A state-changing request must come from the key page itself, signed in as this person. */
+  function csrfOk(req, email) {
     const origin = String(req.headers.origin || '');
     if (!config.publicUrl || origin !== config.publicUrl) return false;
     const c = cookies(req)[CSRF_COOKIE];
     const h = req.headers['x-worca-csrf'];
-    return !!c && typeof h === 'string' && safeEqual(c, h);
+    return !!c && typeof h === 'string' && safeEqual(c, h) && csrfValid(c, email);
   }
 
   async function handle(req, res) {
@@ -132,14 +153,18 @@ export function createUiHandler({ config, service, store, identity = createIdent
 
     let email;
     try { email = await identity(req); }
-    catch { send(res, 503, { error: 'cannot verify the sign-in token right now' }); return; }
+    catch (err) {
+      if (err?.status === 403) send(res, 403, { error: err.message });
+      else send(res, 503, { error: 'cannot verify the sign-in token right now' });
+      return;
+    }
     if (!email) { send(res, 401, { error: 'unauthorized: sign in through the identity proxy' }); return; }
 
     if (req.method === 'GET' && STATIC[p]) { send(res, 200, readStatic(STATIC[p]), STATIC[p].type); return; }
 
     if (req.method === 'GET' && p === '/api/me') {
       let csrf = cookies(req)[CSRF_COOKIE];
-      if (!csrf || !/^[A-Za-z0-9_-]{43}$/.test(csrf)) csrf = randomBytes(32).toString('base64url');
+      if (!csrfValid(csrf, email)) csrf = issueCsrf(email);
       send(res, 200, {
         email, returnUrl: config.returnUrl, csrf,
         slots: service.slotStatus(email), usage: usageFor(email),
@@ -150,7 +175,7 @@ export function createUiHandler({ config, service, store, identity = createIdent
 
     const m = /^\/api\/(slots|budget)\/([a-z][a-z0-9-]{1,31})(\/test|\/device|\/device\/poll)?$/.exec(p);
     if (!m) { send(res, 404, { error: 'not found' }); return; }
-    if (!csrfOk(req)) { send(res, 403, { error: 'refused: this request did not come from the key page' }); return; }
+    if (!csrfOk(req, email)) { send(res, 403, { error: 'refused: this request did not come from the key page' }); return; }
     const [, kind, slotId, sub] = m;
     const test = sub === '/test';
     if (!service.slotById.has(slotId)) { send(res, 404, { error: 'unknown slot' }); return; }

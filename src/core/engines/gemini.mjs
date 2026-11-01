@@ -44,7 +44,9 @@
 // - Context files (~/.gemini/GEMINI.md, skill descriptions) still reach the prompt as text; they add no tool.
 // - Sessions live per folder (~/.gemini/tmp/<hash of the cwd>), so a chat runs in a folder of its own, the same every turn.
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
+import { assertOwnFolders } from '../agent-user.mjs';
+import { worcaHome } from '../projects.mjs';
 import { homedir } from 'node:os';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { writeProjectFiles } from './project-files.mjs';
@@ -313,6 +315,11 @@ function prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir,
   const mcpNames = Object.keys(mcpServers);
   const policyFile = join(scratchDir(), 'worca-chat-policy.toml');
   writeFileSync(policyFile, geminiAskPolicyToml(mcpNames), { mode: 0o644 });
+  // V10: the chat folder sits under tmp/ask, which every agent may write into: refuse one another user made first. The
+  // walk starts at tmp/ask itself; a chat cwd elsewhere (no shared folder above it) has only its .gemini checked.
+  const askRoot = join(worcaHome(), 'tmp', 'ask');
+  const rel = relative(askRoot, cwd);
+  assertOwnFolders(join(cwd, '.gemini'), rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)) ? askRoot : cwd);
   mkdirSync(join(cwd, '.gemini'), { recursive: true, mode: 0o700 });
   const settingsFile = join(cwd, '.gemini', 'settings.json');
   const doc = mergeSettings({ mcpServers }, GEMINI_ASK_SETTINGS, geminiEffortSettings(effort), probe ? { security: { auth: { selectedType: 'gemini-api-key' } } } : {});

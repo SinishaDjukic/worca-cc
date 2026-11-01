@@ -3,7 +3,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { createListRove, paintBulkBar, navKey } from '../ui/public/list-dom.mjs';
+import { createListRove, paintBulkBar, navKey, landOn, paintLanded, collapsedSectionOf, LANDED_MS } from '../ui/public/list-dom.mjs';
 
 const trackDom = useDomRelease(afterEach);
 function list(html) {
@@ -61,4 +61,39 @@ test('paintBulkBar: label, counts, disabled at 0, title set and removed, optiona
   assert.equal(b.hasAttribute('title'), false);
   assert.equal(b.querySelector('.runs-bulk-w').textContent, 'Restore');
   assert.equal(bar.querySelector('[data-bulk="label"]').disabled, false, 'buttons not named are left alone');
+});
+
+test('landOn (Add to group): the moved row takes the Tab stop, the focus and .is-landed, kept across a repaint until its time is up', () => {
+  const host = list(ROWS);
+  const state = { focusKey: null };
+  const rove = createListRove({ host, state });
+  const timers = [];
+  const win = { setTimeout: (fn, ms) => timers.push([fn, ms]) };
+  const a = host.querySelector('a.runs-row[data-row-key="a"]');
+  assert.equal(landOn({ host, rove, state, node: a, win, now: 1000 }), a);
+  assert.equal(host.ownerDocument.activeElement, a);
+  assert.equal(state.focusKey, 'row:a');
+  assert.equal(a.tabIndex, 0);
+  assert.ok(a.classList.contains('is-landed'));
+  assert.deepEqual(timers.map((t) => t[1]), [LANDED_MS]);
+  host.innerHTML = ROWS;   // a repaint rebuilds the rows
+  paintLanded(host, state, 1500);
+  assert.ok(host.querySelector('a.runs-row[data-row-key="a"]').classList.contains('is-landed'), 'the rebuilt row keeps the fill');
+  assert.equal(host.querySelectorAll('.is-landed').length, 1);
+  paintLanded(host, state, 1000 + LANDED_MS);
+  assert.equal(host.querySelectorAll('.is-landed').length, 0, 'gone once the time is up');
+  assert.equal(state.landed, null);
+});
+
+test('landOn with no moved row focuses the fallback (the opener); collapsedSectionOf names a folded section only', () => {
+  const host = list(`${ROWS}<button id="opener">⋯</button>`);
+  const state = { focusKey: null };
+  const rove = createListRove({ host, state });
+  const opener = host.querySelector('#opener');
+  assert.equal(landOn({ host, rove, state, node: null, fallback: () => opener, win: { setTimeout() {} } }), null);
+  assert.equal(host.ownerDocument.activeElement, opener);
+  assert.equal(host.querySelectorAll('.is-landed').length, 0);
+  assert.equal(collapsedSectionOf({ sections: [{ id: 'project:k', collapsed: true, rows: [{ key: 'chain:g1' }] }] }, 'chain:g1'), 'project:k');
+  assert.equal(collapsedSectionOf({ sections: [{ id: 'project:k', collapsed: false, rows: [{ key: 'chain:g1' }] }] }, 'chain:g1'), null);
+  assert.equal(collapsedSectionOf(null, 'chain:g1'), null);
 });

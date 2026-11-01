@@ -8,7 +8,8 @@ export function authHeader({ email, token }) {
   return email ? `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}` : `Bearer ${token}`;
 }
 
-export async function jiraFetch(jira, path, { method = 'GET', body, anonymous = false } = {}) {
+// timeoutMs: give up on a request that does not answer (an export op after the issue exists, A6 D10); a network failure then.
+export async function jiraFetch(jira, path, { method = 'GET', body, anonymous = false, timeoutMs = 0 } = {}) {
   const url = `${jira.base}${path}`;
   let res;
   try {
@@ -17,8 +18,12 @@ export async function jiraFetch(jira, path, { method = 'GET', body, anonymous = 
       headers: { accept: 'application/json', 'content-type': 'application/json', ...(anonymous ? {} : { authorization: authHeader(jira) }),
         'user-agent': 'worca-cc-jira-source', 'x-atlassian-token': 'no-check' },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
-  } catch (e) { throw err('network', `Jira unreachable: ${e?.message || e}`); }
+  } catch (e) {
+    if (e?.name === 'TimeoutError') throw err('network', `Jira did not answer within ${Math.round(timeoutMs / 1000)} s`);
+    throw err('network', `Jira unreachable: ${e?.message || e}`);
+  }
   if (res.status === 401) throw err('auth', 'Jira token invalid or expired (or the email does not match it)', { status: 401 });
   if (res.status === 429) {
     const after = res.headers?.get?.('retry-after');
@@ -28,7 +33,8 @@ export async function jiraFetch(jira, path, { method = 'GET', body, anonymous = 
   if (res.status !== 204) { try { json = await res.json(); } catch { json = null; } }
   if (!res.ok) {
     const detail = [...(json?.errorMessages || []), ...Object.values(json?.errors || {})].join('; ');
-    throw err('plugin', `Jira ${res.status}${detail ? `: ${detail}` : ''} (${method} ${path})`, { status: res.status });
+    // `body`: Jira's own errors, for an export op that turns a refused field into a result (A6 D11)
+    throw err('plugin', `Jira ${res.status}${detail ? `: ${detail}` : ''} (${method} ${path})`, { status: res.status, body: json });
   }
   return json;
 }

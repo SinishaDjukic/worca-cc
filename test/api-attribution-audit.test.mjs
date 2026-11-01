@@ -37,6 +37,7 @@ before(async () => {
   process.env.WORCA_HOME = homeDir;
   process.env.WORCA_MOCK = '1';
   process.env.WORCA_IDENTITY_HEADER = H;
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   mod = await import('../ui/server.mjs');
   ({ runs } = mod);
   ({ readPipeline } = await import('../src/core/artifacts.mjs'));

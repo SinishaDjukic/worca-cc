@@ -127,8 +127,8 @@ test('POST /api/ask/refs/resolve: GitHub through gh (one call per repo, cached),
 test('POST /api/ask/refs/resolve: a caller that may be an agent gets no GitHub or Azure lookup', async () => {
   const calls = stubGh({ data: { r: { p1: null, i1: { title: 'Private', state: 'OPEN' } } } });
   await withEnv({ ...GH_ENV, WORCA_AGENT_USER: 'worca-agent', WORCA_AGENT_HOME: join(tmpdir(), 'agent-home') }, async () => {
-    const { body } = await resolve(['gh:o/private#1', 'chat:ask_00000000']);
-    assert.deepEqual(body.refs, { 'gh:o/private#1': { ok: false }, 'chat:ask_00000000': { ok: false } });
+    const { status, body } = await resolve(['gh:o/private#1', 'chat:ask_00000000']);
+    assert.deepEqual([status, body.code], [403, 'AGENT_CALLER_BLOCKED']);   // G1: no API at all without the token
   });
   assert.equal(calls.length, 0, 'gh never ran');
 });
