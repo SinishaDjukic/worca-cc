@@ -421,7 +421,7 @@ can neither charge to a person nor keep from the agent. So with the broker on:
 
 ### People
 
-Each person opens **Settings › My model credentials › Manage keys** (or the key page URL),
+Each person opens **Settings › My credentials › Manage keys** (or the key page URL),
 signs in through Access, and saves their keys; for GitHub Copilot they sign in with GitHub (a
 device code) instead. The broker checks each credential with the provider before storing it.
 Keys are never shown again: the page shows the last four characters, the kind (API key,
