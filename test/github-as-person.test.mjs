@@ -184,6 +184,12 @@ test('reads as the person are opted in only where worca acts on a project for th
   const src = (f) => readFileSync(new URL(`../src/core/${f}`, import.meta.url), 'utf8');
   assert.match(src('clone-project.mjs'), /gitEnvFor\('read', plan\.url, \{[^}]*readAsPerson: true/);
   assert.match(src('git-sync.mjs'), /githubEnv\('read', \{[^}]*readAsPerson: true/);
+  // In git-info only the person's own "pull request already exists" lookup; status, checks, chips (a
+  // shared cache), the watcher and ghApi (automations) stay on worca's credential.
+  const gi = src('git-info.mjs');
+  assert.equal((gi.match(/readAsPerson: true/g) || []).length, 1);
+  const create = gi.slice(gi.indexOf('async function ghCreatePr('), gi.indexOf('async function ghPrMergeable('));
+  assert.match(create, /readAsPerson: true/);
   // Shared installs keep worca's own credential.
   assert.doesNotMatch(src('plugin-repo.mjs'), /readAsPerson/);
   assert.doesNotMatch(src('skills-registry/import.mjs'), /readAsPerson/);
