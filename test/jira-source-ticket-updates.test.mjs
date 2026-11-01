@@ -165,6 +165,32 @@ test('a status move: by id, a typed name, already there, gone from the project, 
   assert.ok(legacyTyped.logs.some((l) => /^warn SHOP-12: Could not move/.test(l)));
 });
 
+test("I1: a cancelling transition into a neutral status is not taken; of two into Closed the done-verb one wins", async () => {
+  const first = await report({ category: 'done' }, { transitions: [tr('81', "Won't Do", S.closed), tr('61', 'Close Issue', S.closed)] });
+  assert.deepEqual([first.posts.map((p) => p.body.transition.id), first.out.note], [['61'], 'Moved to Closed.'], "Won't Do listed first");
+  const verbs = await report({ category: 'done' }, { transitions: [tr('81', 'Reject', S.closed), tr('82', 'Cancel', S.closed), tr('83', 'Mark as duplicate', S.closed), tr('84', 'Decline', S.closed)] });
+  assert.deepEqual([verbs.posts.length, verbs.out.note], [0, 'Not moved: from "In Progress" only Reject, Cancel, Mark as duplicate and Decline lead to a Done status.'],
+    'only cancelling transitions reach a done status: nothing moves, and it says so');
+  const tie = await report({ category: 'done' }, { transitions: [tr('91', 'Ship it', S.closed), tr('92', 'Done', S.closed)] });
+  assert.deepEqual(tie.posts.map((p) => p.body.transition.id), ['92'], 'same target: a preferred done name first');
+  const named = await report({ status: '6', name: 'Closed' }, { transitions: [tr('81', "Won't Do", S.closed), tr('61', 'Close Issue', S.closed)] });
+  assert.deepEqual([named.posts.map((p) => p.body.transition.id), named.out.note], [['61'], 'Moved to Closed.'], 'a named status too');
+  const namedOnly = await report({ status: '6', name: 'Closed' }, { transitions: [tr('81', "Won't Do", S.closed)] });
+  assert.equal(namedOnly.posts.length, 0);
+  const picked = await report({ status: '10010', name: "Won't Do" }, { transitions: [tr('81', "Won't Do", S.wontdo)] });
+  assert.equal(picked.out.note, "Moved to Won't Do.", 'choosing a cancelled status on purpose still works');
+});
+
+test('isCancelledName collapses inner spaces and NBSP and accepts Wont Fix', () => {
+  for (const n of ["Won't  Do", 'Won’t Fix', ' Not   planned ', 'Wont Fix', 'Wont do']) assert.equal(isCancelledName(n), true, JSON.stringify(n));
+  assert.equal(isCancelledName('Closed'), false);
+});
+
+test('an unrecognised move shape moves nothing and does not read the ticket', async () => {
+  const r = await report({}, { transitions: [tr('71', 'Finish', S.done)] });
+  assert.deepEqual([r.posts.length, r.reads.length, r.out.moved, r.out.note], [0, 0, null, '']);
+});
+
 test("a 4xx refusal of the transition still comments with Jira's reason (D10, Deviation 3); 401, 429 and 5xx throw", async () => {
   const r = await report({ category: 'done' }, { transitions: [tr('71', 'Finish', S.done)],
     refuseTransition: { status: 400, body: { errorMessages: ['Field Assignee is required.'], errors: {} } } });

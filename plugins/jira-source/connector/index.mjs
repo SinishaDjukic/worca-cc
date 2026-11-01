@@ -67,8 +67,17 @@ const PROPERTY = 'worca.export';
 export const AFTER_KEY_TIMEOUT_MS = 15_000;
 
 /** D1: a done status whose name means a negative ending is cancelled (case-insensitive; ' or ’). */
-export const CANCELLED_NAME = /^(?:won['’]t (?:do|fix)|rejected|duplicate|cancell?ed|declined|invalid|obsolete|abandoned|not planned)$/i;
-export const isCancelledName = (name) => CANCELLED_NAME.test(String(name ?? '').trim());
+export const CANCELLED_NAME = /^(?:won['’]?t (?:do|fix)|rejected|duplicate|cancell?ed|declined|invalid|obsolete|abandoned|not planned)$/i;
+/** Inner runs of whitespace (NBSP too) collapse to one space and the ends are trimmed before the test. */
+const squash = (name) => String(name ?? '').replace(/\s+/g, ' ').trim();
+export const isCancelledName = (name) => CANCELLED_NAME.test(squash(name));
+/** I1: a transition's own name can cancel a ticket even when it leads to a neutral status ("Won't Do" into Closed): the
+ *  status words plus the verb forms Reject, Cancel, Decline and Mark as duplicate. */
+const CANCELLED_TRANSITION = /^(?:reject|cancel|decline|(?:mark(?:ed)? as |set as )?duplicate|mark as invalid)$/i;
+export const isCancelledTransition = (name) => isCancelledName(name) || CANCELLED_TRANSITION.test(squash(name));
+/** A transition named like a done verb ("Done", "Close Issue", "Resolve"). */
+const DONE_VERB = /^(?:done|close|closed|resolve|resolved|complete|completed|finish)\b/i;
+const doneVerb = (name) => DONE_VERB.test(squash(name));
 /** D1: Jira's statusCategory onto Worca's four: new → todo, indeterminate → in_progress, done → done (cancelled-named:
  *  cancelled); a status without a category is to do. */
 export function categoryOf(status) {
@@ -244,7 +253,7 @@ export default function createTaskSource(ctx, deps = {}) {
   const andList = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
   /** Jira's own words for a refusal, without a trailing full stop; "Jira gave no reason" when it sends none (decided 2026-10-30). */
   const jiraSaid = (e) => ([...(e?.body?.errorMessages || []), ...Object.values(e?.body?.errors || {})]
-    .map((m) => String(m).trim()).filter(Boolean).join('; ') || 'Jira gave no reason').replace(/\.+$/, '');
+    .map((m) => String(m).replace(/\s+/g, ' ').trim()).filter(Boolean).join('; ') || 'Jira gave no reason').replace(/\.+$/, '');
   /** Deviation 3 (decided 2026-10-30): a 4xx refusal of the transition, other than 401 (auth) and 429 (rate limit), is a line;
    *  a 5xx, network, timeout, 401 or 429 throws, so the write-back fails and Report result retries. */
   const refusedMove = (e) => !!e && e.kind === 'plugin' && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429;
@@ -270,6 +279,7 @@ export default function createTaskSource(ctx, deps = {}) {
   async function applyMove(key, move) {
     const none = { note: '', moved: null, transitioned: false };
     if (!move || move.none === true) return none;
+    if (move.category !== 'done' && typeof move.status !== 'string' && typeof move.status !== 'number') return none;   // an unrecognised shape moves nothing
     const notRead = (e) => ({ ...none, note: `Not moved: Jira did not let Worca read ${key}'s transitions (${jiraSaid(e)}).` });
     let fields;
     try { fields = (await issue(key, ['status', 'project']))?.fields || {}; } catch (e) { if (unreadable(e)) return notRead(e); throw e; }
@@ -294,15 +304,15 @@ export default function createTaskSource(ctx, deps = {}) {
       const read = await readTransitions();
       if (read.refused) return read.refused;
       const done = read.list.filter((t) => t?.to?.statusCategory?.key === 'done');
-      const usable = done.filter((t) => !isCancelledName(t.to?.name));
+      const usable = done.filter((t) => !isCancelledName(t.to?.name) && !isCancelledTransition(t.name));
       if (!usable.length) {
-        const names = [...new Set(done.map((t) => t.to?.name).filter(Boolean))];
+        const names = [...new Set(done.map((t) => (isCancelledName(t.to?.name) ? t.to?.name : t.name || t.to?.name)).filter(Boolean))];
         // "only Won't Do leads", "only Won't Do and Duplicate lead" (decided 2026-10-30)
         return { ...none, note: names.length ? `Not moved: from "${from}" only ${andList(names)} ${names.length === 1 ? 'leads' : 'lead'} to a Done status.`
           : `Not moved: from "${from}" no transition leads to a Done status.` };
       }
       const rank = (t) => { const i = PREFERRED.indexOf(lc(t.to?.name)); return i < 0 ? PREFERRED.length : i; };
-      const ordered = usable.map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([t]) => t);
+      const ordered = usable.map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || Number(!doneVerb(a[0].name)) - Number(!doneVerb(b[0].name)) || a[1] - b[1]).map(([t]) => t);
       for (const t of ordered) {
         const n = needs(t);
         if (!n.other.length && n.resolution !== null) return go(t, n.resolution);
@@ -316,9 +326,15 @@ export default function createTaskSource(ctx, deps = {}) {
     if (read.refused) return read.refused;
     const transitions = read.list;
     // By the status id; else, as legacy does (S2), a transition's name across all transitions first, then a target's name.
-    const t = transitions.find((x) => String(x?.to?.id ?? '') === want)
+    // I1: a transition whose own name cancels ("Won't Do" into Closed) is not taken to a neutral-named status; of the rest,
+    // one named like a done verb comes first.
+    const viaTo = (match) => {
+      const ok = transitions.filter(match).filter((x) => isCancelledName(x?.to?.name) || !isCancelledTransition(x?.name));
+      return ok.find((x) => doneVerb(x?.name)) || ok[0];
+    };
+    const t = viaTo((x) => String(x?.to?.id ?? '') === want)
       || transitions.find((x) => lc(x?.name) === lc(want))
-      || transitions.find((x) => lc(x?.to?.name) === lc(want));
+      || viaTo((x) => lc(x?.to?.name) === lc(want));
     if (!t) {
       const project = fields.project?.key;
       if (named && project) {

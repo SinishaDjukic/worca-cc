@@ -37,7 +37,7 @@ test('board 1: a saved connection: header and meta, the projects as chips, the r
   assert.deepEqual(m.$$('.mk-tu-chip').map((c) => [c.getAttribute('role'), c.querySelector('.mk-tu-key').textContent, c.querySelector('.mk-tu-cname').textContent,
     c.querySelector('.mk-tu-x').getAttribute('aria-label')]), [['listitem', 'SHOP', 'Shop', 'Remove SHOP'], ['listitem', 'CRM', 'Customer portal', 'Remove CRM']]);
   assert.equal(m.$('.mk-tu-add-projects').textContent, 'Add projects…');
-  assert.ok(m.$$('.mk-tu-projects .hint').some((n) => n.textContent === 'New run, Requirements export and import list only these. None picked = all projects.'));
+  assert.ok(m.$$('.mk-tu-projects .hint').some((n) => n.textContent === 'New run and Requirements export list only these. None picked = all projects.'));
   assert.equal(m.$('.mk-tu-rules').getAttribute('role'), 'list');
   assert.deepEqual(m.rows().map((r) => [r.getAttribute('role'), r.querySelector('.mk-tu-key, .mk-tu-rname').textContent,
     r.querySelector('.mk-tu-move').textContent]),

@@ -13,7 +13,7 @@ export const TU_COPY = Object.freeze({
   sub: "What Worca does to a ticket when a run that writes back finishes. A project's own rule wins over All projects.",
   projects: 'Projects you work on',
   addProjects: 'Add projects…',
-  projectsHint: 'New run, Requirements export and import list only these. None picked = all projects.',
+  projectsHint: 'New run and Requirements export list only these. None picked = all projects.',
   rules: 'When a run finishes successfully',
   all: 'All projects',
   allSub: 'Unless a project below says otherwise',
