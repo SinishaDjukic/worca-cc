@@ -462,6 +462,9 @@ export function recoverInterruptedTestRuns(now = nowIso()) {
     // 3a D61: nothing resumes a try, so a paused or interrupted one is stopped; the run-root sweep that follows in
     // bootMaintenance then reclaims its folder (it keeps an interrupted run's root).
     prepare("UPDATE pipelines SET status = 'stopped' WHERE is_test = 1 AND status IN ('paused', 'interrupted')").run();
+    // Round 7: only this process runs tries, so at boot none is running: a try row a crash left created, starting, running or
+    // pausing is stopped too (else it would keep its project's copy busy for good).
+    prepare("UPDATE pipelines SET status = 'stopped' WHERE is_test = 1 AND status IN ('created', 'starting', 'running', 'pausing')").run();
   });
   return out;
 }

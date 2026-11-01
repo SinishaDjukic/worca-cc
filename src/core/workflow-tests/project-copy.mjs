@@ -26,6 +26,9 @@ const WORCA_ID = Object.freeze({ GIT_AUTHOR_NAME: 'Worca', GIT_AUTHOR_EMAIL: 'wo
 const GIT_DIR_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_COMMON_DIR', 'GIT_PREFIX'];
 const RM = Object.freeze({ recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
+/** Round 7: the realpath git agrees with. On Windows only the native one expands 8.3 short names (C:\USERS\ABC~1), as git
+ *  does in what it prints; Node's JS realpath keeps them, and the same folder would read as two. */
+const realpathNative = process.platform === 'win32' ? realpathSync.native : realpathSync;
 
 function git(cwd, args, { env = null } = {}) {
   const e = { ...(env || process.env) };
@@ -53,7 +56,7 @@ function copyGit(dir, args, { env = null } = {}) {
 const samePath = (a, b) => {
   const fold = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
   if (fold(a) === fold(b)) return true;
-  try { return fold(realpathSync(a)) === fold(realpathSync(b)); } catch { return false; }   // macOS /var ↔ /private/var
+  try { return fold(realpathNative(a)) === fold(realpathNative(b)); } catch { return false; }   // macOS /var ↔ /private/var; Windows 8.3 names
 };
 
 /** `dir` is a repository of its own: its git dir is exactly `<dir>/.git` (not an enclosing repo's, not a gitfile's target). */
@@ -171,6 +174,9 @@ async function dissociate(dir) {
 }
 
 const REPACK_RETRY_MS = 24 * 60 * 60_000;
+/** Round 7: git's own words for an object a copy lacks or cannot read ("missing blob object", "bad tree object"). Nothing
+ *  else: an old git's usage error names `--missing` too, and must never read as damage. */
+const isDamage = (stderr) => /missing (?:blob|tree|commit|tag) object|bad (?:[a-z]+ )?object/.test(String(stderr || ''));
 
 /** Rounds 5 and 6: 'whole' when every object of `sha` (the commit, its trees and blobs) is readable in the copy; 'damaged'
  *  only when git says an object is missing or bad; 'unknown' for any other failure (a timeout, no git, no such folder),
@@ -179,7 +185,7 @@ const REPACK_RETRY_MS = 24 * 60 * 60_000;
 async function commitWhole(dir, sha) {
   const r = await copyGit(dir, ['rev-list', '--objects', '--no-walk', '--missing=error', '--quiet', `${sha}^{commit}`, '--']);
   if (r.ok) return 'whole';
-  return /missing|bad (?:[a-z]+ )?object/i.test(r.stderr) ? 'damaged' : 'unknown';   // "missing blob object", "bad tree object"
+  return isDamage(r.stderr) ? 'damaged' : 'unknown';   // "missing blob object", "bad tree object"
 }
 
 /** A real folder (lstat): never a link, never followed. */
@@ -207,13 +213,13 @@ function copyBusy(key) {
   try {
     getDb();
     return !!prepare(`SELECT 1 FROM pipelines p WHERE p.project_key = ? AND p.is_test IS NOT NULL AND p.archived_at IS NULL
-      AND (p.status IS NULL OR p.status NOT IN ('done', 'stopped', 'error', 'failed')
+      AND (p.status IS NULL OR p.status NOT IN ('done', 'stopped', 'error', 'failed', 'interrupted')
         OR EXISTS (SELECT 1 FROM wf_test_tries t WHERE t.pipeline_id = p.id AND t.status = 'running')) LIMIT 1`).get(key);
   } catch { return true; }
 }
 
 const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
-const realOrNull = (p) => { try { return realpathSync(p); } catch { return null; } };
+const realOrNull = (p) => { try { return realpathNative(p); } catch { return null; } };
 const within = (child, parent) => { const c = fold(child); const b = fold(parent); return c !== b && c.startsWith(b.endsWith(sep) ? b : b + sep); };
 
 /**
@@ -318,6 +324,11 @@ async function ensureTestCopyLocked(key, { projectDir, reset = true }) {
       }
     } catch (e) { throw e.code === 'NOT_READY' ? e : testError(`Worca could not set up its copy of the project: ${e.message}`, 'NOT_READY'); }
     return { dir, created: false };
+  }
+  // Round 7: a copy that is there but cannot be read is never removed while a test of the project runs (its tries may still
+  // use it): that try is refused instead.
+  if (existsSync(dir) && copyBusy(key)) {
+    throw testError("Worca cannot read its copy of the project while a test of this project is running. Try again once it has finished.", 'NOT_READY');
   }
   try { await rm(dir, RM); }
   catch (e) { throw testError(`Worca could not remove its broken copy of the project: ${e.message}`, 'NOT_READY'); }
@@ -491,11 +502,17 @@ async function remakeCopy(key, dir, projectDir) {
   await rm(aside, RM);
   try { await renameRetry(dir, aside); }
   catch (e) { throw testError(`Worca could not set aside its damaged copy of the project: ${e.message}`, 'NOT_READY'); }
+  const pins = (await copyGit(aside, ['for-each-ref', '--format=%(objectname)', 'refs/worca-tests/'])).stdout.split(/\r?\n/).filter(Boolean);
+  const keep = [];
+  for (const sha of new Set(pins)) if ((await commitWhole(aside, sha)) === 'whole') keep.push(sha);
+  let fresh;
+  try { ({ dir: fresh } = await ensureTestCopyLocked(key, { projectDir })); }
+  catch (e) {
+    // Round 7: the new copy could not be made: the old one goes back where it was, with its pins.
+    if (!existsSync(dir)) await renameRetry(aside, dir).catch((e2) => console.warn(`workflow tests: could not put back ${dir}: ${e2.message}`));
+    throw e;
+  }
   try {
-    const pins = (await copyGit(aside, ['for-each-ref', '--format=%(objectname)', 'refs/worca-tests/'])).stdout.split(/\r?\n/).filter(Boolean);
-    const keep = [];
-    for (const sha of new Set(pins)) if ((await commitWhole(aside, sha)) === 'whole') keep.push(sha);
-    const { dir: fresh } = await ensureTestCopyLocked(key, { projectDir });
     for (const sha of keep) {
       if (!(await copyGit(fresh, ['cat-file', '-e', `${sha}^{commit}`])).ok) {
         await copyGit(fresh, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--', aside, sha]);
@@ -633,7 +650,7 @@ function insideRunFolder(dir, pipelineId) {
   const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
   const within = (child, parent) => { const c = fold(resolve(child)); const b = fold(resolve(parent)); return c !== b && c.startsWith(b.endsWith(sep) ? b : b + sep); };
   if (!within(dir, base)) return false;
-  try { return within(realpathSync(dir), realpathSync(base)); } catch { return true; }   // the path test held; a base that is gone has nothing to follow
+  try { return within(realpathNative(dir), realpathNative(base)); } catch { return true; }   // the path test held; a base that is gone has nothing to follow
 }
 
 /**
@@ -705,4 +722,4 @@ export async function commitDate(projectDir, sha) {
 }
 
 /** Test seams. */
-export const _testing = Object.freeze({ commitWhole, copyBusy });
+export const _testing = Object.freeze({ commitWhole, copyBusy, isDamage, remakeCopy });

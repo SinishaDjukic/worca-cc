@@ -1183,7 +1183,8 @@ function startedAsMain() {
   if (!arg) return false;
   if (import.meta.url === pathToFileURL(arg).href) return true;
   const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
-  try { return fold(realpathSync(arg)) === fold(realpathSync(fileURLToPath(import.meta.url))); } catch { return false; }
+  const real = process.platform === 'win32' ? realpathSync.native : realpathSync;   // round 7: 8.3 short names too
+  try { return fold(real(arg)) === fold(real(fileURLToPath(import.meta.url))); } catch { return false; }
 }
 const isMain = startedAsMain();
 if (isMain) {

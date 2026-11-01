@@ -126,7 +126,9 @@ export function testCopyKeyOf(dir) {
   let root;
   try { root = testCopiesRoot(); } catch { return null; }                       // node:test without WORCA_HOME
   if (fold(parent) === fold(resolve(root))) return name;
-  try { return fold(realpathSync(parent)) === fold(realpathSync(root)) ? name : null; } catch { return null; }
+  // Round 7: the native realpath on Windows, so git's long path and an 8.3 short-name home read as the same folder.
+  const real = process.platform === 'win32' ? realpathSync.native : realpathSync;
+  try { return fold(real(parent)) === fold(real(root)) ? name : null; } catch { return null; }
 }
 
 /** P3: a pipelines row's project dir — its own work folder for the reserved key (lookup never called), else lookup(key).

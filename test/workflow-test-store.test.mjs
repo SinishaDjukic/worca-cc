@@ -128,3 +128,13 @@ test('deleting an example refuses while a test tries it; a restart stops running
   assert.equal(store.readExample(WF, ex.id), null);
   assert.deepEqual(store.readExampleFiles(ex.id), []);
 });
+
+test('round 7: at boot every unsettled test-try row is stopped; a normal run is left as it is', () => {
+  const ins = getDb().prepare('INSERT INTO pipelines (id, project_key, status, is_test) VALUES (?, ?, ?, ?)');
+  for (const [id, st] of [['b7000001', 'created'], ['b7000002', 'starting'], ['b7000003', 'running'], ['b7000004', 'pausing']]) ins.run(id, 'proj-00000001', st, 1);
+  ins.run('b7000005', 'proj-00000001', 'starting', null);
+  store.recoverInterruptedTestRuns();
+  const st = (id) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status;
+  assert.deepEqual(['b7000001', 'b7000002', 'b7000003', 'b7000004'].map(st), ['stopped', 'stopped', 'stopped', 'stopped']);
+  assert.equal(st('b7000005'), 'starting', 'a normal run is not a try');
+});

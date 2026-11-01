@@ -707,3 +707,63 @@ test('round 6: a damaged copy made again keeps the pinned start commits that wer
   assert.equal(r.startCommit, x, 'so example 1 still starts (no START_GONE)');
   assert.equal(await copy._testing.commitWhole(dir, x), 'whole');
 });
+
+// ── Round 7: an 8.3 short-name home (Windows); stale try rows; the damage pattern; a failed remake keeps the old copy. ──
+/** The 8.3 short form of `dir`, or null when the volume makes none (or not on Windows). */
+function shortName(dir) {
+  if (process.platform !== 'win32') return null;
+  try {
+    const out = execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"for %I in ("${dir}") do @echo %~sI"`],
+      { encoding: 'utf8', windowsVerbatimArguments: true }).trim();
+    return out && out.toLowerCase() !== dir.toLowerCase() ? out : null;
+  } catch { return null; }
+}
+
+test('round 7: with an 8.3 short-name home, the copy is never made again under a running try', async (t) => {
+  const longHome = mkdtempSync(join(tmpdir(), 'worca-cc-longnamehome-'));
+  dirs.push(longHome);
+  const short = shortName(longHome);
+  if (!short) { t.skip('no 8.3 short names on this volume (or not Windows)'); return; }
+  _resetForTests(); process.env.WORCA_HOME = short; wh = worcaHome();
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  writeFileSync(join(dir, '.git', 'worca-was-here'), 'x');   // gone if the copy were made again
+  const wt = join(wh, 'runs', 'r7000001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r7000001', '--', wt, p.startCommit);
+  runRow('r7000001', key);
+  await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });
+  assert.ok(existsSync(join(dir, '.git', 'worca-was-here')), 'the copy was kept, not made again');
+  assert.equal(git(wt, 'status', '--porcelain'), '', 'the running try\'s checkout still works');
+  const { testCopyKeyOf } = await import('../src/core/store.mjs');
+  assert.equal(testCopyKeyOf(git(dir, 'rev-parse', '--show-toplevel')), key, 'git\'s long path of the copy is still the copy');
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'r7000001'").run();
+  rmSync(wt, { recursive: true, force: true });
+  await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });
+  assert.ok(existsSync(join(dir, '.git', 'worca-was-here')), 'nor once nothing runs');
+});
+
+test('round 7: a copy Worca cannot read is never removed while a try of the project runs', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  runRow('r7000002', key);
+  rmSync(join(dir, '.git', 'HEAD'));   // no longer a repository git can read
+  await assert.rejects(copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) }), { code: 'NOT_READY' });
+  assert.ok(existsSync(join(dir, '.git', 'config')), 'kept: a running try may still use it');
+});
+
+test('round 7: an interrupted try is settled; the damage pattern ignores a "--missing" usage error', async () => {
+  getDb().prepare("INSERT INTO pipelines (id, project_key, status, is_test) VALUES ('r7000003', ?, 'interrupted', 1)").run(key);
+  assert.equal(copy._testing.copyBusy(key), false);
+  assert.equal(copy._testing.isDamage('error: unrecognized argument: --missing=error'), false);
+  assert.equal(copy._testing.isDamage('fatal: missing blob object 7898'), true);
+  assert.equal(copy._testing.isDamage('fatal: bad tree object 4b2e'), true);
+});
+
+test('round 7: a remake whose new clone fails puts the old copy back, with its pins', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  await assert.rejects(copy._testing.remakeCopy(key, dir, join(home, 'no-such-project')), { code: 'NOT_READY' });
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${p.startCommit}`), p.startCommit, 'the old copy and its pins are back');
+  assert.deepEqual(readdirSync(join(wh, 'workflow-tests', 'repos')).filter((n) => n.startsWith('.clone-')), [], 'nothing left aside');
+});
