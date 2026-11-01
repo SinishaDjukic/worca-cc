@@ -3884,15 +3884,30 @@ export class RunHarness extends EventEmitter {
     return rc;
   }
 
+  /** Workflow tests 3a (final review C1): is this harness a test try? Its opts say so on a fresh try; a harness rebuilt from
+   *  the saved row (stopPausedRun stops a paused try with only `resume`) knows it from the row's persisted is_test. */
+  _isTestTry() {
+    if (this.opts.workflowTest === true) return true;
+    if (this.resumeOpts?.row?.is_test) return true;
+    const id = this.state?.id || this.pipeline?.id || null;
+    if (!id) return false;
+    if (this._testTryOf?.id !== id) {   // one row read per pipeline id: the per-step callers stay cheap
+      let v = false;
+      try { v = isTestPipeline(id); } catch { v = false; }
+      this._testTryOf = { id, v };
+    }
+    return this._testTryOf.v;
+  }
+
   /** Workflow tests (D35): 'pretend' | 'real' for a test try, null for every other run. */
   _testConnectors() {
-    if (this.opts.workflowTest !== true) return null;
+    if (!this._isTestTry()) return null;
     return this.opts.testConnectors === 'real' ? 'real' : 'pretend';
   }
 
   /** Workflow tests 3a (D56): every try's outward guard writes to its connector-calls.ndjson; null for every other run. */
   _tryGuard() {
-    if (this.opts.workflowTest !== true || !this.pipeline?.dir) return null;
+    if (!this.pipeline?.dir || !this._isTestTry()) return null;
     // structuredDeny only once the probe saw a CLI that reads it (_recordCapabilities); until then, and for any other
     // version, the hook blocks with stderr + exit 2.
     return { logFile: join(this.pipeline.dir, CONNECTOR_CALLS_FILE), ...(this._tryGuardStructured === true ? { structuredDeny: true } : {}) };
@@ -5447,7 +5462,9 @@ export class RunHarness extends EventEmitter {
 
   /** Keep policy (issue #529, D10): re-create the checkout the teardown just removed. */
   async _keepCheckoutByPolicy() {
-    if (this.opts.workflowTest === true) return;   // 3a: a try's checkout belongs to its test, and a try never fetches
+    // 3a: a try's checkout belongs to its test, and a try never fetches. The persisted fact, not only opts: a stopped paused
+    // try's harness carries no opts.workflowTest (final review C1).
+    if (this._isTestTry()) return;
     if (this.workMode !== 'git') return;
     if (this._isWorkspaceScan() || this.state.status !== 'done' || !this.state.id) return;
     const { keepAfterRun } = await import('./checkout.mjs');   // lazy: no import cycle, no cost when unused
@@ -5475,7 +5492,9 @@ export class RunHarness extends EventEmitter {
 
   /** #620 (D9): after teardown the branch holds the run's final commit; check it against its fetched base. */
   async _checkBaseAfterRun() {
-    if (this.opts.workflowTest === true) return;   // 3a: a try's checkout belongs to its test, and a try never fetches
+    // 3a: a try's branch lives in Worca's copy, and a try never fetches. The persisted fact, not only opts: a stopped paused
+    // try's harness carries no opts.workflowTest (final review C1).
+    if (this._isTestTry()) return;
     if (this.workMode !== 'git') return;
     if (this._isWorkspaceScan() || !this.state.id || !['done', 'stopped', 'error'].includes(this.state.status)) return;
     const { afterRunBaseCheck } = await import('./base-conflicts.mjs');   // lazy, like checkout.mjs

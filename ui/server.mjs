@@ -340,7 +340,7 @@ import { registerWorkflowTestRoutes } from '../src/core/workflow-tests/routes.mj
 import { TRY_ANSWERED_BY } from '../src/core/workflow-tests/answers.mjs';
 import { pretendCopies } from '../src/core/workflow-tests/connectors.mjs';
 import { SETUP_TIMEOUT_MS } from '../src/core/workflow-tests/shell-step.mjs';
-import { TRY_NEVER_SHIPS_TEXT } from '../src/shared/workflow-tests/project-text.mjs';
+import { TRY_NEVER_SHIPS_TEXT, TRY_STAYS_IN_COPY_TEXT } from '../src/shared/workflow-tests/project-text.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -8544,15 +8544,24 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
   return job;
 }
 
+/** Workflow tests 3a (final review C1): a test try's branch lives only in Worca's copy of the project. Check out, the base
+ *  check, Update branch and the two Resolve routes answer 409 for its row, so nothing acts on it from the person's folder. */
+function refuseTestTryRow(res, row) {
+  if (!row || !row.is_test) return false;
+  res.status(409).json({ error: TRY_STAYS_IN_COPY_TEXT, code: 'TEST_TRY' });
+  return true;
+}
+
 function sendCheckoutError(res, e) {
   const map = { NOT_FOUND: 404, BAD_REQUEST: 400, NOT_FINISHED: 409, RETAINED: 409, BRANCH_MISSING: 409,
-    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409 };
+    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, TEST_TRY: 409 };
   res.status(map[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
 
 app.post('/api/runs/:id/checkout', async (req, res) => {
   const row = runRowForScope(req, res); if (!row) return;
+  if (refuseTestTryRow(res, row)) return;
   const members = Array.isArray(req.body?.members) ? req.body.members.filter((x) => typeof x === 'string') : null;
   try {
     // useExisting: the branch is already checked out in the person's own folder; link it (checkout.mjs).
@@ -9640,7 +9649,7 @@ app.post('/api/push', async (req, res) => {
 const BASE_ERR_STATUS = { NOT_FOUND: 404, MEMBER_REQUIRED: 400, BAD_REQUEST: 400, NOT_FINISHED: 409, UP_TO_DATE: 409,
   CONFLICTS: 409, NOT_CONFLICTING: 409, NO_BRANCH: 409, DIRTY: 409, IN_USE: 409, MOVED: 409, IDENTITY: 409,
   BRANCH_CHECKED_OUT: 409, RETAINED: 409, BRANCH_MISSING: 409, TARGET_EXISTS: 409, RESOLVING: 409,
-  UNSUPPORTED_BRANCH: 409, PR_OPEN: 409, PR_FIXING: 409, CHECK_FAILED: 502 };
+  UNSUPPORTED_BRANCH: 409, PR_OPEN: 409, PR_FIXING: 409, TEST_TRY: 409, CHECK_FAILED: 502 };
 function sendBaseError(res, e) {
   res.status(BASE_ERR_STATUS[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.baseCheck ? { baseCheck: e.baseCheck } : {}), ...(e?.holder ? { holder: e.holder } : {}),
@@ -9672,6 +9681,7 @@ function assertNoPrFix(row, m) {
 app.post('/api/runs/:id/base-check', async (req, res) => {
   try {
     const row = runRowForScope(req, res); if (!row) return;
+    if (refuseTestTryRow(res, row)) return;
     assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
     const member = bodyMember(req);
     if (member && !membersOfRow(row).some((x) => x.projectKey === member)) {
@@ -9692,6 +9702,7 @@ app.post('/api/runs/:id/base-check', async (req, res) => {
 app.post('/api/runs/:id/update-branch', async (req, res) => {
   try {
     const row = runRowForScope(req, res); if (!row) return;
+    if (refuseTestTryRow(res, row)) return;
     const r = await updateRunBranch({ id: row.id, member: bodyMember(req), by: actorOf(req), isLive: isLiveRun,
       isFinishing: isFinishingRun, isActive: resolveRunActive, assertFree: assertNoPrFix });
     emitChanged('pipelines-changed', 'updated');
@@ -9721,6 +9732,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
   try {
     await withRunLock(req.params.id, async () => {
     const row = runRowForScope(req, res); if (!row) return;
+    if (refuseTestTryRow(res, row)) return;
     assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
     const m = pickBaseMember(row, bodyMember(req));
     assertNotResolving(m, resolveRunActive);
@@ -9790,6 +9802,7 @@ app.post('/api/runs/:id/resolve-terminal', async (req, res) => {
   try {
     await withRunLock(req.params.id, async () => {
     const row = runRowForScope(req, res); if (!row) return;
+    if (refuseTestTryRow(res, row)) return;
     assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
     const m = pickBaseMember(row, bodyMember(req));
     assertNotResolving(m, resolveRunActive);     // else useExisting would link the resolve run's live worktree

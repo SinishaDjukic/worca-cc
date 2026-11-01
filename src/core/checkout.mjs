@@ -18,6 +18,8 @@ import { actionsSettings } from './settings.mjs';
 import { busyRunIdsFromPidFile, actionsPidFile } from './actions/registry.mjs';
 import { terminalPidFile } from './terminal/paths.mjs';
 import { gitAvailable } from './git-available.mjs';
+import { testCopyDirFor, PROJECT_KEY_RE } from './store.mjs';
+import { TRY_STAYS_IN_COPY_TEXT } from '../shared/workflow-tests/project-text.mjs';
 
 const execFileP = promisify(execFile);
 const FINISHED = new Set(['done', 'stopped', 'error']);
@@ -42,8 +44,19 @@ const isUnder = (child, parent) => { const c = canon(child); const p = canon(par
 export const busyRunIds = (extra = []) => new Set([
   ...busyRunIdsFromPidFile(actionsPidFile(worcaHome())), ...busyRunIdsFromPidFile(terminalPidFile(worcaHome())), ...extra]);
 
-/** The project dir of a single-project row, exactly as rowToState derives it (artifacts.mjs:2249). */
-const projectDirOfRow = (row) => readStoreMeta(row.project_key)?.path ?? null;
+/** The project dir of a single-project row, exactly as rowToState derives it (artifacts.mjs:2249). Workflow tests 3a
+ *  (final review C1): a test try ran in Worca's copy of the project, so its row resolves there (store.mjs runProjectDir),
+ *  never to the person's folder. */
+const projectDirOfRow = (row) => (row.is_test
+  ? (PROJECT_KEY_RE.test(String(row.project_key ?? '')) ? testCopyDirFor(row.project_key) : null)
+  : readStoreMeta(row.project_key)?.path ?? null);
+
+/** A test try's row: its branch lives only in Worca's copy (3a, final review C1). Check out, Update branch and the keep
+ *  policy refuse it with code TEST_TRY. */
+export const isTestRow = (row) => !!(row && row.is_test);
+export function assertNotTestRow(row) {
+  if (isTestRow(row)) throw cerr(TRY_STAYS_IN_COPY_TEXT, 'TEST_TRY');
+}
 
 /** A run on its source branch whose work was merged back: the hidden branch it committed on was
  *  fast-forwarded into the source and deleted, so it has no branch of its own to check out. */
@@ -73,6 +86,7 @@ export function checkoutPathFor(row, member) {
 
 function assertEligible(row, isLive) {
   if (!row || row.archived_at) throw cerr('pipeline not found', 'NOT_FOUND');
+  assertNotTestRow(row);
   if (isLive(row.id) || !FINISHED.has(row.status)) throw cerr('Check out is available once the run has finished.', 'NOT_FINISHED');
   if (retainedWorkFor(row)) throw cerr('This run kept uncommitted work in its worktree. Recover or discard it first.', 'RETAINED');
 }
@@ -295,7 +309,7 @@ export async function keepAfterRun({ pipelineId, log = () => {} }) {
   const { keep, maxCheckouts } = actionsSettings();
   if (keep === 'never') return null;
   const row = findPipelineRowById(pipelineId);
-  if (!row || row.status !== 'done' || retainedWorkFor(row)) return null;
+  if (!row || row.status !== 'done' || isTestRow(row) || retainedWorkFor(row)) return null;
   const r = await checkoutRun({ id: pipelineId, by: 'keep-policy', policy: keep });
   log(`checkout kept by policy (${keep})`);
   // The cap never evicts a run with a live action (pid file) nor the run just kept (D12).

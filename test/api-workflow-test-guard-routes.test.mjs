@@ -67,3 +67,33 @@ test('a normal run is not refused for that reason', async () => {
     assert.notEqual(j.error, TEXT, path);
   }
 });
+
+test('final review C1: check out, base check, Update branch and Resolve in a pipeline answer 409 for a test try', async () => {
+  const { TRY_STAYS_IN_COPY_TEXT } = await import('../src/shared/workflow-tests/project-text.mjs');
+  const scope = `?projectDir=${encodeURIComponent(project)}`;
+  for (const p of ['checkout', 'base-check', 'update-branch', 'resolve-pipeline']) {
+    const r = await post(`/api/runs/${tryId}/${p}${scope}`, {});
+    assert.equal(r.status, 409, p);
+    const j = await r.json();
+    assert.deepEqual([j.error, j.code], [TRY_STAYS_IN_COPY_TEXT, 'TEST_TRY'], p);
+  }
+  for (const p of ['checkout', 'base-check', 'update-branch', 'resolve-pipeline']) {
+    const r = await post(`/api/runs/${normalId}/${p}${scope}`, {});
+    assert.notEqual((await r.json()).code, 'TEST_TRY', `a normal run: ${p}`);
+  }
+});
+
+test('final review C1: the core refuses a test try row too (checkout, Update branch, the keep policy, the base members)', async () => {
+  const { findPipelineRowById } = await import('../src/core/artifacts.mjs');
+  const { membersOfRow, checkoutRun, keepAfterRun } = await import('../src/core/checkout.mjs');
+  const { baseMembersOfRow, updateRunBranch } = await import('../src/core/base-conflicts.mjs');
+  const { testCopyDirFor, projectKey } = await import('../src/core/store.mjs');
+  const row = findPipelineRowById(tryId);
+  assert.equal(membersOfRow(row)[0].projectDir, testCopyDirFor(projectKey(project)), "Worca's copy, never the person's folder");
+  assert.deepEqual(baseMembersOfRow(row), []);
+  await assert.rejects(checkoutRun({ id: tryId }), { code: 'TEST_TRY' });
+  await assert.rejects(updateRunBranch({ id: tryId, isLive: () => false, isFinishing: () => false }), { code: 'TEST_TRY' });
+  assert.equal(await keepAfterRun({ pipelineId: tryId }), null);
+  const normal = findPipelineRowById(normalId);
+  assert.equal(baseMembersOfRow(normal).length, 1, 'a normal run keeps its base member');
+});

@@ -18,6 +18,9 @@ export const CHANGES_TOO_BIG_TEXT = 'Your changes that are not committed are lar
 export const setupFailedText = (cmd) => `The setup step failed: ${cmd} ended with an error.`;
 // D45: the push, pull request, publish and issue routes' answer for a test try (409).
 export const TRY_NEVER_SHIPS_TEXT = 'A test try stays in Worca: it is never pushed and gets no pull request or issue.';
+// Final review C1: the checkout, base-check and update-branch routes' answer for a test try (409). Its branch lives only in
+// Worca's copy of the project, so nothing acts on it from the person's folder.
+export const TRY_STAYS_IN_COPY_TEXT = "A test try's branch stays in Worca's copy of the project: it cannot be checked out, checked against its base or updated.";
 // D60, boards 34 and 39: disk.
 const GB = 2 ** 30;
 /** "0.9 GB", "1.2 GB", and whole GB from 10 GB up ("48 GB"), as boards 34 and 35 write them. */
