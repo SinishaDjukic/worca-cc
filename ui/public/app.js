@@ -30658,7 +30658,7 @@ function wireSessionsClicks(sec, ctxOf) {
     if (!b || !sec.contains(b)) return;
     const ctx = ctxOf();
     if (b.dataset.copy || b.dataset.transcript) {
-      copyText(b.dataset.copy || b.dataset.transcript).then((ok) => flashCopyBtn(b, ok ? 'Copied' : 'Copy failed'));
+      copyFromButton(b, b.dataset.copy || b.dataset.transcript);
     } else if (b.dataset.logExec) {
       focusLogExecution(ctx, b.dataset.logExec, b.dataset.nodeId || '');
     } else if (b.dataset.subagent) {
@@ -32294,7 +32294,7 @@ function newLogDrawer(sec, { onClose, onOpenInLogs }) {
   // The session line's copy button (Task 59): the sub-agent id.
   d.el.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('.wf-log-sub button[data-copy]');
-    if (b) copyText(b.dataset.copy).then((ok) => flashCopyBtn(b, ok ? 'Copied' : 'Copy failed'));
+    if (b) copyFromButton(b, b.dataset.copy);
   });
   // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
   d.body.addEventListener('scroll', () => {

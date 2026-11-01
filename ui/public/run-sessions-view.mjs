@@ -8,6 +8,7 @@ import { fmtUsd, fmtDur, sessionReasonText, decorFromState, sessionRowLine } fro
 import { engineLabel, engineReportsCost } from '../../src/shared/engine-switch.mjs';
 import { manifestTemplate, manifestPortsFn } from '../../src/shared/graph/manifest.mjs';
 import { sessionsOf } from '../../src/shared/graph/sessions.mjs';
+import { copyButton } from './copy-button.mjs';
 import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../../src/shared/graph/constants.mjs';
 
 export { sessionRowLine };
@@ -70,10 +71,8 @@ export function sessionRowEl(doc, step, sessionHosts) {
   const id = step.session.memberAgentId;
   if (typeof id === 'string' && id) {
     p.append(doc.createTextNode(' · sub-agent '), el(doc, 'code', null, shortId(id)));
-    const b = el(doc, 'button', 'btn btn-sm btn-quiet', 'Copy id');
-    b.type = 'button';
+    const b = copyButton(doc, { name: 'Copy the sub-agent id' });
     b.dataset.copy = id;
-    b.title = 'Copy the sub-agent id';   // its name is its text, so the "Copied" flash is what a screen reader hears
     p.appendChild(b);
   }
   return p;
@@ -147,10 +146,8 @@ export function renderSessionCard(session, { doc, labelOf = (id) => id, engineCo
     const host = el(doc, 'span', null, s.mode === 'shared' ? 'conversation ' : 'host session ');
     host.appendChild(el(doc, 'code', null, shortId(String(s.hostSessionId))));
     if (s.hostEpoch > 1) host.appendChild(doc.createTextNode(` (epoch ${s.hostEpoch})`));
-    const copy = el(doc, 'button', 'btn btn-sm btn-quiet rs-copy', 'Copy id');
-    copy.type = 'button';
+    const copy = copyButton(doc, { name: s.mode === 'shared' ? 'Copy the conversation id' : 'Copy the host session id', cls: 'rs-copy' });
     copy.dataset.copy = String(s.hostSessionId);
-    copy.title = s.mode === 'shared' ? 'Copy the conversation id' : 'Copy the host session id';
     meta.append(host, copy);
   }
   // The tray's figures (Σ the members' rows): a member run outside a host turn (a runtime degrade, ×N slices, a session
