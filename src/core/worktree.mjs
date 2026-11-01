@@ -28,6 +28,12 @@ import {
   removeInjectedPaths,
 } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { testCopyKeyOf } from './store.mjs';
+import { tryGitEnv } from './workflow-tests/try-guard-env.mjs';
+
+/** Round 4: Worca's git in its workflow-test copy of a project always runs under the try env (the guard; no hook, fsmonitor
+ *  or signing program of the copy), whoever calls: a try's teardown, an archive of a try, the boot sweep of a try's run. */
+const copyEnvOr = (projectDir, gitEnv) => gitEnv || (projectDir && testCopyKeyOf(projectDir) ? tryGitEnv() : null);
 import { ownWorkDir } from './no-project-work.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
@@ -323,6 +329,7 @@ export async function createWorktree({
 }) {
   if (!projectDir) throw new Error('projectDir required');
   if (!pipelineId) throw new Error('pipelineId required');
+  gitEnv = copyEnvOr(projectDir, gitEnv);
   if (!sourceBranch) throw new Error('sourceBranch required');
   // S2: pipelineId becomes a path segment and is later passed to a recursive
   // remove — reject anything that could escape the worktrees base.
@@ -408,6 +415,7 @@ export async function createWorktree({
  */
 export async function removeWorktree({ projectDir, worktreeDir, branch, force = false, gitEnv = null } = {}) {
   const steps = [];
+  gitEnv = copyEnvOr(projectDir, gitEnv);
   if (worktreeDir) {
     const args = force
       ? ['worktree', 'remove', '--force', worktreeDir]

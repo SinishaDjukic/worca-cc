@@ -132,3 +132,12 @@ test('the other places that turn a row into a folder: Ask worktrees refuse a try
   const nf = landingFacts(n.id, { findPipelineRowById: artifacts.findPipelineRowById, readPrState: () => null, readRunTags: () => [] });
   assert.equal(nf.run.projectDir, project, 'a normal run: its own folder');
 });
+
+test('round 4: the branch list never names a test try as the run of a branch', async () => {
+  const t = await seed(true);
+  git(project, 'branch', t.feature);   // a branch of that name in the person's repository
+  const r = await (await fetch(`${base}/api/branches?projectDir=${encodeURIComponent(project)}`)).json();
+  assert.ok(r.branches.includes(t.feature), 'the branch itself is listed');
+  assert.ok(!r.runs.some((x) => x.pipelineId === t.id), 'but not as the try\'s run');
+  git(project, 'branch', '-D', t.feature);
+});

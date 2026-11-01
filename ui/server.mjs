@@ -10005,7 +10005,7 @@ app.get('/api/branches', async (req, res) => {
     const runsOut = [];
     try {
       const rows = getDb().prepare(`SELECT id, title, status, updated_at, branch FROM pipelines
-        WHERE project_key = ? AND target = 'project' AND archived_at IS NULL ORDER BY started_at DESC LIMIT 50`).all(projectKey(projectDir));
+        WHERE project_key = ? AND target = 'project' AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at DESC LIMIT 50`).all(projectKey(projectDir));
       for (const r of rows) {
         let b = null; try { b = JSON.parse(r.branch || 'null'); } catch { b = null; }
         if (b && typeof b.feature === 'string' && have.has(b.feature)) runsOut.push({ branch: b.feature, pipelineId: r.id, title: r.title || null, status: r.status, endedAt: r.updated_at || null });

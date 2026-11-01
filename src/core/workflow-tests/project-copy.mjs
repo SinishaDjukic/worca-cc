@@ -87,12 +87,14 @@ async function rmFileOrLink(p) {
 }
 
 /**
- * Round 3 (test isolation and safety): the copy's git config, rewritten from an allowlist before each test. A try's setup or
+ * Rounds 3 and 4 (test isolation and safety): the copy's git config, rewritten from an allowlist when no try is running
+ * (P39: the caller checks hasLiveCheckout; tries running at the same time share these settings). A try's setup or
  * agent can write the shared config (filters, textconv, includes, aliases, url rewrites, credential helpers, hooks): none of
  * it may change a later test's result or run in Worca's git. What stays: what `git init` makes on this disk (read from a
  * scratch repository beside the copies, so a try cannot have changed it), the repository's object and ref format, and
  * COPY_SETTINGS. Remotes and branch settings go too. Then every per-checkout `config.worktree` and every hook a try installed
- * (anything in .git/hooks but git's own `*.sample` files) are removed. Call it inside the key's lock.
+ * (anything in .git/hooks but git's own `*.sample` files) are removed, `.git/info` is made as `git init` makes it, and replace
+ * refs and alternates go. Call it inside the key's lock.
  */
 async function resetCopyConfig(dir, key) {
   const gitDir = join(dir, '.git');
@@ -115,10 +117,17 @@ async function resetCopyConfig(dir, key) {
       }
       await renameRetry(next, join(gitDir, 'config'));
     } finally { await rm(next, { force: true }).catch(() => {}); }
+    await resetInfo(join(gitDir, 'info'), join(probe, '.git', 'info'));
   } finally { await removeTree(probe); }
+  // Round 4: replace refs and alternates change what a later try reads; Worca's copy uses neither.
+  const rep = await copyGit(dir, ['for-each-ref', '--format=%(refname)', 'refs/replace/']);
+  for (const ref of rep.stdout.split(/\r?\n/).filter((r) => r.startsWith('refs/replace/'))) await copyGit(dir, ['update-ref', '-d', ref]);
+  await rmFileOrLink(join(gitDir, 'objects', 'info', 'alternates'));
   await rmFileOrLink(join(gitDir, 'config.worktree'));
   let names = [];
-  try { names = (await readdir(join(gitDir, 'worktrees'), { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name); } catch { /* none */ }
+  if (await isRealDir(join(gitDir, 'worktrees'))) {   // round 4: never read through a link out of the copy
+    try { names = (await readdir(join(gitDir, 'worktrees'), { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name); } catch { /* none */ }
+  }
   for (const n of names) await rmFileOrLink(join(gitDir, 'worktrees', n, 'config.worktree'));
   const hooks = join(gitDir, 'hooks');
   let hst = null;
@@ -127,6 +136,34 @@ async function resetCopyConfig(dir, key) {
   else if (hst) {
     for (const e of await readdir(hooks)) if (!e.endsWith('.sample')) await rmFileOrLink(join(hooks, e));
   }
+}
+
+/** A real folder (lstat): never a link, never followed. */
+async function isRealDir(p) { try { return (await lstat(p)).isDirectory(); } catch { return false; } }
+
+/** Round 4: `.git/info` as `git init` makes it (`probeInfo`): files git did not put there (attributes, a changed exclude)
+ *  are removed, git's own are written again. A link in its place is removed, never followed. */
+async function resetInfo(info, probeInfo) {
+  let st = null;
+  try { st = await lstat(info); } catch { /* none */ }
+  if (st && !st.isDirectory()) { await rm(info, { force: true }); st = null; }
+  if (!st) await mkdir(info, { recursive: true });
+  const want = (await isRealDir(probeInfo)) ? (await readdir(probeInfo, { withFileTypes: true })).filter((e) => e.isFile()).map((e) => e.name) : [];
+  for (const e of await readdir(info)) if (!want.includes(e)) await rmFileOrLink(join(info, e));
+  for (const n of want) { await rmFileOrLink(join(info, n)); await writeFile(join(info, n), await readFile(join(probeInfo, n))); }
+}
+
+/**
+ * Round 4 (P39): does any checkout of the copy still live? Stale registrations are pruned first. A `.git/worktrees` that is
+ * not a real folder (a link out of the copy) is removed as itself, never followed, and counts as none.
+ */
+async function hasLiveCheckout(dir) {
+  const wts = join(dir, '.git', 'worktrees');
+  let st = null;
+  try { st = await lstat(wts); } catch { return false; }
+  if (!st.isDirectory()) { await rm(wts, { force: true }); return false; }
+  await copyGit(dir, ['worktree', 'prune']);
+  try { return (await readdir(wts, { withFileTypes: true })).some((e) => e.isDirectory()); } catch { return false; }
 }
 
 const notACopy = (dir) => `${dir} is not a usable copy of the project (no git repository of its own): skipped`;
@@ -166,7 +203,7 @@ async function renameRetry(from, to, attempts = 10) {
  * sibling folder and renamed into place only when every step worked, so a copy is never left half set up (with `origin`
  * still pointing at the person's repository).
  */
-async function ensureTestCopyLocked(key, { projectDir }) {
+async function ensureTestCopyLocked(key, { projectDir, reset = true }) {
   const dir = testCopyDirFor(key);
   const setUp = async (at, steps) => {
     for (const args of steps) {
@@ -175,10 +212,17 @@ async function ensureTestCopyLocked(key, { projectDir }) {
     }
   };
   if (await ownRepo(dir)) {
-    // Before each test (round 3): the config from its allowlist (no remote, nothing a past try set), no per-checkout
-    // config, no hook a try installed.
-    try { await resetCopyConfig(dir, key); }
-    catch (e) { throw e.code === 'NOT_READY' ? e : testError(`Worca could not set up its copy of the project: ${e.message}`, 'NOT_READY'); }
+    try {
+      // D54: every remote removed and COPY_SETTINGS set again, always (live tries share the copy).
+      const rem = await copyGit(dir, ['remote']);
+      if (!rem.ok) throw testError(`Worca could not read its copy of the project: ${firstLine(rem.stderr)}`, 'NOT_READY');
+      const remotes = rem.stdout.split(/\r?\n/).map((n) => n.trim()).filter(Boolean);
+      await setUp(dir, [...remotes.map((n) => ['remote', 'remove', '--', n]), ...COPY_SETTINGS.map(([k, v]) => ['config', k, v])]);
+      // Round 3 and 4 (P39): the full reset (config from its allowlist, hooks, .git/info, per-checkout config, replace refs,
+      // alternates) only when no checkout of the copy is live: tries running at the same time share the copy's git
+      // settings, and a reset would change a running try. Never on a pin (`reset: false`).
+      if (reset && !(await hasLiveCheckout(dir))) await resetCopyConfig(dir, key);
+    } catch (e) { throw e.code === 'NOT_READY' ? e : testError(`Worca could not set up its copy of the project: ${e.message}`, 'NOT_READY'); }
     return { dir, created: false };
   }
   try { await rm(dir, RM); }
@@ -310,7 +354,7 @@ export async function pinStart({ key, name = key, projectDir, ref = null, sha = 
     changes = await readChanges(projectDir, commit);
   }
   return withKeyLock(key, async () => {
-    const { dir } = await ensureTestCopyLocked(key, { projectDir });
+    const { dir } = await ensureTestCopyLocked(key, { projectDir, reset: false });   // P39: pinning needs no reset
     await fetchInto(dir, projectDir, commit);
     const startCommit = changes ? await commitChanges(dir, commit, changes, startAt) : commit;
     await pinRef(dir, commit);   // D53: both are pinned, the start SHA and (with changes) Worca's start commit on top

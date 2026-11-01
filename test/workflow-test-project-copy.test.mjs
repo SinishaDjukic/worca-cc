@@ -362,7 +362,7 @@ test('round 3: before each test the copy\'s config is rewritten from an allowlis
   const dir = join(wh, 'workflow-tests', 'repos', key);
   const wt = join(wh, 'runs', 'r3000001', 'repos', key);
   mkdirSync(dirname(wt), { recursive: true });
-  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r3000001', '--', wt, p.startCommit);   // a live try
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r3000001', '--', wt, p.startCommit);   // a try (it ends below)
   // What a try's setup or agent can leave behind (worktrees share the copy's config).
   for (const [k, v] of [['filter.x.clean', 'evil-clean'], ['filter.x.required', 'true'], ['diff.x.textconv', 'evil-textconv'], ['merge.x.driver', 'evil-merge'],
     ['include.path', join(home, 'evil.gitconfig')], ['includeIf.gitdir:/.path', join(home, 'evil2.gitconfig')], ['alias.co', '!evil'],
@@ -375,6 +375,8 @@ test('round 3: before each test the copy\'s config is rewritten from an allowlis
   writeFileSync(join(dir, '.git', 'config.worktree'), '[core]\n\thooksPath = /evil\n');
   const wtConfig = git(wt, 'rev-parse', '--git-path', 'config.worktree');
   assert.ok(existsSync(resolve(wt, wtConfig)), 'the per-checkout config is real');
+  const wtConfigAbs = resolve(wt, wtConfig);
+  rmSync(wt, { recursive: true, force: true });   // round 4 (P39): the try ended; the reset runs when no checkout is live
 
   assert.deepEqual(await copy.ensureTestCopy(key, { projectDir: real }), { dir, created: false });
   const keys = git(dir, 'config', '--local', '--list', '--name-only').split(/\r?\n/).filter(Boolean).map((k) => k.toLowerCase());
@@ -385,13 +387,12 @@ test('round 3: before each test the copy\'s config is rewritten from an allowlis
   assert.equal(git(dir, 'config', 'gc.auto'), '0');
   assert.equal(git(dir, 'config', 'maintenance.auto'), 'false');
   assert.equal(git(dir, 'config', 'core.bare'), 'false');
-  assert.equal(existsSync(resolve(wt, wtConfig)), false, 'the live checkout\'s config.worktree is gone');
+  assert.equal(existsSync(wtConfigAbs), false, 'the ended checkout\'s config.worktree is gone');
   assert.equal(existsSync(join(dir, '.git', 'config.worktree')), false);
   assert.equal(existsSync(join(dir, '.git', 'hooks', 'pre-commit')), false, 'a hook a try installed is gone');
   assert.equal(git(dir, 'remote'), '');
-  // The copy still works: pins, branches and the live checkout kept; a new checkout, a commit and a diff.
+  // The copy still works: pins and branches kept; a new checkout, a commit and a diff.
   assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${p.startCommit}`), p.startCommit);
-  assert.ok(existsSync(join(wt, 'README.md')));
   const wt2 = join(wh, 'runs', 'r3000002', 'repos', key);
   mkdirSync(dirname(wt2), { recursive: true });
   git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r3000002', '--', wt2, p.startCommit);
@@ -400,4 +401,73 @@ test('round 3: before each test the copy\'s config is rewritten from an allowlis
   assert.match(git(wt2, 'diff', '--stat', p.startCommit, 'HEAD'), /README\.md/);
   assert.deepEqual(await copy.ensureTestCopy(key, { projectDir: real }), { dir, created: false }, 'a clean copy is rewritten again as a no-op');
   assert.equal(git(dir, 'config', 'core.longpaths'), 'true');
+});
+
+test('round 4 (P39): a live sibling checkout keeps the shared settings; with none live the reset runs (config, hooks, .git/info, replace refs, alternates); pinning never resets', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const project = { key, startSha: p.startSha, startCommit: p.startCommit, startAt: p.startAt };
+  const wt = join(wh, 'runs', 'r4000001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r4000001', '--', wt, p.startCommit);   // a try still running
+  git(wt, 'config', 'core.hooksPath', '.husky/_');   // its setup (husky)
+  git(wt, 'config', 'filter.nb.clean', 'nbstripout');   // and a filter it relies on
+  writeFileSync(join(dir, '.git', 'info', 'attributes'), '* filter=lfs\n');
+  await copy.ensureStartCommit({ key, projectDir: real, project });   // a second try of the same example starts
+  assert.equal(git(dir, 'config', 'core.hooksPath'), '.husky/_', 'the live try keeps its hooks path');
+  assert.equal(git(dir, 'config', 'filter.nb.clean'), 'nbstripout', 'and its filter');
+  assert.ok(existsSync(join(dir, '.git', 'info', 'attributes')), 'nothing is reset while a checkout is live');
+
+  rmSync(wt, { recursive: true, force: true });   // that try ended (its checkout folder is gone; the registration is stale)
+  git(dir, 'config', 'alias.co', '!evil');
+  await copy.pinStart({ key, name: 'real', projectDir: real });   // pinning needs no reset
+  assert.equal(git(dir, 'config', 'alias.co'), '!evil', 'pinStart leaves the settings as they are');
+
+  git(dir, 'update-ref', `refs/replace/${p.startCommit}`, p.startCommit);
+  mkdirSync(join(dir, '.git', 'objects', 'info'), { recursive: true });
+  writeFileSync(join(dir, '.git', 'objects', 'info', 'alternates'), `${join(home, 'elsewhere')}\n`);
+  const initExclude = readFileSync(join(dir, '.git', 'info', 'exclude'), 'utf8');
+  writeFileSync(join(dir, '.git', 'info', 'exclude'), `${initExclude}secret/\n`);
+  await copy.ensureStartCommit({ key, projectDir: real, project });   // the next try, with no checkout live: prune, then reset
+  for (const k of ['core.hooksPath', 'filter.nb.clean', 'alias.co']) assert.throws(() => git(dir, 'config', '--get', k), undefined, `${k} is gone`);
+  assert.equal(git(dir, 'config', 'core.longpaths'), 'true');
+  assert.equal(existsSync(join(dir, '.git', 'info', 'attributes')), false, '.git/info as git init makes it');
+  assert.doesNotMatch(readFileSync(join(dir, '.git', 'info', 'exclude'), 'utf8'), /secret\//);
+  assert.equal(git(dir, 'for-each-ref', 'refs/replace/'), '', 'no replace refs');
+  assert.equal(existsSync(join(dir, '.git', 'objects', 'info', 'alternates')), false, 'no alternates');
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${p.startCommit}`), p.startCommit, 'the pin is kept');
+});
+
+test('round 4: a linked .git/worktrees is never followed out of the copy', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const outside = mkdtempSync(join(tmpdir(), 'worca-cc-wftwtlink-'));
+  dirs.push(outside);
+  mkdirSync(join(outside, 'x'));
+  writeFileSync(join(outside, 'x', 'config.worktree'), 'keep');
+  writeFileSync(join(outside, 'x', 'gitdir'), join(home, 'gone', '.git'));   // what prune would take as stale
+  rmSync(join(dir, '.git', 'worktrees'), { recursive: true, force: true });
+  symlinkSync(outside, join(dir, '.git', 'worktrees'), process.platform === 'win32' ? 'junction' : 'dir');
+  await copy.ensureStartCommit({ key, projectDir: real, project: { key, startSha: p.startSha, startCommit: p.startCommit, startAt: p.startAt } });
+  assert.equal(readFileSync(join(outside, 'x', 'config.worktree'), 'utf8'), 'keep', 'nothing outside the copy is touched');
+  assert.ok(existsSync(join(outside, 'x', 'gitdir')), 'not even by prune');
+});
+
+test('round 4: Worca removes a checkout of its copy under the try env (no hook of the copy runs, as in an archive or the boot sweep)', async () => {
+  const { removeWorktree } = await import('../src/core/worktree.mjs');
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'r4000003', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r4000003', '--', wt, p.startCommit);
+  const marker = join(home, 'hook-ran.txt').replaceAll(String.fromCharCode(92), '/');
+  writeFileSync(join(dir, '.git', 'hooks', 'reference-transaction'), `#!/bin/sh\necho "ran $GH_TOKEN" >> "${marker}"\n`);
+  const prev = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = 'secret-token';
+  try {
+    const r = await removeWorktree({ projectDir: dir, worktreeDir: wt, branch: 'worca-cc/try-r4000003', force: true });
+    assert.ok(r.ok, JSON.stringify(r.steps));
+  } finally { if (prev === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prev; }
+  assert.equal(existsSync(marker) ? readFileSync(marker, 'utf8') : '', '', 'the copy\'s reference-transaction hook never ran');
+  assert.throws(() => git(dir, 'rev-parse', '--verify', '--quiet', 'refs/heads/worca-cc/try-r4000003'), undefined, 'the branch went');
 });

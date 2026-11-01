@@ -301,6 +301,14 @@ test('final review I2: hooks and an fsmonitor a setup leaves in the copy never r
     if (prevTok === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prevTok;
   }
   const { ensureStartCommit } = await import('../src/core/workflow-tests/project-copy.mjs');
+  // P39 (round 4): the copy is reset when no try is running. The runner removes each try's checkout after its checks; the
+  // tries of this file keep theirs, so remove them as the runner would.
+  const { rmSync } = await import('node:fs');
+  const main = git(copyDir, 'rev-parse', '--show-toplevel').toLowerCase();
+  for (const l of git(copyDir, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((x) => x.startsWith('worktree '))) {
+    const wp = l.slice('worktree '.length);
+    if (wp.toLowerCase() !== main) rmSync(wp, { recursive: true, force: true });
+  }
   await ensureStartCommit({ key, projectDir: real, project: pin });
   for (const k of ['core.hooksPath', 'core.fsmonitor']) assert.throws(() => git(copyDir, 'config', '--get', k), undefined, `${k} unset before the next test`);
 });
