@@ -366,6 +366,10 @@ test('chatChannels: rejections (id/platform/module/ingress, both capabilities of
       const inOnly = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { outbound: false } })] });
       assert.equal(inOnly.ok, true);
       assert.deepEqual(inOnly.manifest.chatChannels[0].capabilities, { inbound: true, outbound: false });
+      const inter = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: true } })] });
+      assert.deepEqual(inter.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true, interactive: true });
+      const notInter = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: 'yes' } })] });
+      assert.deepEqual(notInter.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true }, 'only a literal true');
     } },
     { name: 'chatChannels: duplicate ids rejected; unknown fields warn (strict errors)', run: () => {
       const dup = normalizeManifest({ name: 'p', chatChannels: [CH(), CH()] });

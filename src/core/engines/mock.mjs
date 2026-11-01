@@ -260,7 +260,11 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   // <id>" its removal. The parent re-validates the INPUT against the real catalog and mints the card.
   const modelAdd = !wfEvent && !tmEvent && !trEvent && !scEvent && /\bllama\b/i.test(userText) && /\b(?:add|register)\b/i.test(userText);
   const modelRemove = !wfEvent && !tmEvent && !trEvent && !scEvent && !modelAdd ? /\bremove model ([A-Za-z0-9._-]+)/i.exec(userText) : null;
-  const propose = !wfEvent && !tmEvent && !trEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && !modelAdd && !modelRemove && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
+  // Freeform chat (D5): MOCK_CHOICE / MOCK_TEXT_Q ask a question card; its answer event replies with the answer.
+  const qEvent = /^\s*\[worca event\] question card (card_[0-9a-f]{8}) answered: (.*)$/m.exec(userText);
+  const qChoice = !qEvent && /\bMOCK_CHOICE\b/.test(userText);
+  const qText = !qEvent && !qChoice && /\bMOCK_TEXT_Q\b/.test(userText);
+  const propose = !wfEvent && !tmEvent && !trEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && !modelAdd && !modelRemove && !qEvent && !qChoice && !qText && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
   // The proposal both arms send: a brief, or the task reference instead of one.
   const proposal = () => {
     if (!taskKey) return { ...card, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}) };
@@ -423,6 +427,19 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
         : { kind: 'remove_model', id: modelRemove[1], note: 'mock: as asked' };
       frames.push(delta('[mock] '), delta('proposing '), delta('a model change'), atext(MSG1, 'Proposing a model change card.'),
         atool(MSG1, 'toolu_mock_model', 'mcp__worca__propose_model_change', mInput), uresult('toolu_mock_model', JSON.stringify({ ok: true })));
+      answerMsg = MSG2;
+    }
+    if (qChoice || qText) {
+      const qInput = qChoice
+        ? { answer: 'choice', question: 'Which branch should the run use?', options: [{ id: 'main', label: 'main' }, { id: 'dev', label: 'dev', description: 'the integration branch' }] }
+        : { answer: 'text', question: 'What should the run focus on?', placeholder: 'one sentence' };
+      frames.push(delta('[mock] '), delta('asking'), atext(MSG1, 'One question first.'),
+        atool(MSG1, 'toolu_mock_question', 'mcp__worca__ask_question', qInput),
+        uresult('toolu_mock_question', JSON.stringify({ ok: true, card: { type: 'question', ...qInput } })));
+      answerMsg = MSG2;
+    }
+    if (qEvent) {
+      frames.push(delta('[mock] '), delta('answered'), atext(MSG1, `Got it: ${qEvent[2].slice(0, 160)}`));
       answerMsg = MSG2;
     }
     if (propose) {

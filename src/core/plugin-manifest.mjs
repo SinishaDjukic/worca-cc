@@ -432,6 +432,9 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       const capabilities = {
         inbound: capsRaw.inbound !== false,
         outbound: capsRaw.outbound !== false,
+        // v2 additive (#freeform chat): native controls + message edits + threads. Present only when declared, so
+        // every existing manifest normalizes byte-identically.
+        ...(capsRaw.interactive === true ? { interactive: true } : {}),
       };
       if (!capabilities.inbound && !capabilities.outbound) {
         errors.push(`${at} ("${id}"): capabilities cannot disable both inbound and outbound`);

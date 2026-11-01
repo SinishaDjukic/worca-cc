@@ -360,6 +360,8 @@ const RUNGS = [
   // seeded row (HOST_ROWS) must survive.
   { v: 48, tables: [['night_decisions', ['idx_night_decisions_pipeline']]] },
   { v: 54, cols: [['ask_threads', 'mode', null], ['ask_threads', 'composer', null]] },
+  { v: 84, tables: [['chat_conversations', ['idx_chat_conversations_thread']], ['chat_controls', ['idx_chat_controls_card']],
+    ['chat_deliveries', []], ['chat_inbound_seen', ['idx_chat_inbound_seen_at']]] },
 ];
 
 // One row per host table, written before the removal: every one must survive the climb,
@@ -433,7 +435,7 @@ test('ladder: each incremental addition, removed (rows kept), is restored by one
     name: `v${r.v} stamp ${stamp} (${rungLabel(r)})`,
     run: () => climbAndCheck(r, stamp, SCHEMA_VERSION),
   })));
-  assert.equal(rows.length, 20, 'ten rungs >= 25, two arms each');
+  assert.equal(rows.length, 22, 'eleven rungs >= 25, two arms each');
   await checkRows(rows);
 });
 

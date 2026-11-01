@@ -9,18 +9,18 @@
 // (nonzero exit -> the supervisor restarts with backoff).
 //
 // The plugin module must export:
-//   createChannelWorker(ctx) -> { start(), stop(), send(chatId, msg),
-//                                 handleWebhook?(req), onConfig?(config) }
+//   createChannelWorker(ctx) -> { start(), stop(), send(chatId, msg, options),
+//                                 handleWebhook?(req), onConfig?(config), replyInteraction?(interactionId, text) }
 //   validateConfig?(config)  -> {ok:true, identity?} | {ok:false, errors:[...]}
 // ctx = { apiVersion, platform, mock, config, state:{get,set}, log,
-//         emitMessage, setStatus, shutdownSignal }
+//         emitMessage, emitInteraction, setStatus, shutdownSignal }
 //
 // `--check` argv mode (doctor / `worca plugin channel --check`): read hello,
 // run validateConfig once, write ONE result line, exit 0.
 
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
-import { encodeFrame, decodeFrame, isValidIncoming, isValidMessage, CONNECTION_STATES } from './channel-protocol.mjs';
+import { encodeFrame, decodeFrame, isValidIncoming, isValidMessage, isValidInteraction, isValidSendOptions, CONNECTION_STATES } from './channel-protocol.mjs';
 import { useEnvProxy, proxyNotice } from '../env-proxy.mjs';
 
 const CHECK_MODE = process.argv.includes('--check');
@@ -95,6 +95,15 @@ async function main() {
       if (!isValidIncoming(msg)) { ctx.log('warn', 'emitMessage: invalid IncomingMessage dropped'); return; }
       writeFrame({ type: 'inbound', msg: { chatId: msg.chatId, userId: msg.userId, text: msg.text, meta: msg.meta ?? {} } });
     },
+    // v2 (interactive channels): a component click / select / modal submit the worker has ALREADY acknowledged to the
+    // platform. Only the opaque ref and the chosen values travel; the platform's interaction token stays in the worker.
+    emitInteraction: (evt) => {
+      if (!isValidInteraction(evt)) { ctx.log('warn', 'emitInteraction: invalid interaction dropped'); return; }
+      writeFrame({ type: 'interaction', evt: {
+        id: evt.id, chatId: evt.chatId, userId: evt.userId, ref: evt.ref, kind: evt.kind,
+        ...(evt.values ? { values: evt.values } : {}), ...(evt.fields ? { fields: evt.fields } : {}), meta: evt.meta ?? {},
+      } });
+    },
     setStatus: (state, detail) => {
       if (!CONNECTION_STATES.includes(state)) return;
       writeFrame({ type: 'status', state, detail: detail == null ? null : String(detail) });
@@ -156,7 +165,7 @@ async function main() {
         (async () => {
           try {
             if (!isValidMessage(frame.message)) throw Object.assign(new Error('invalid NormalizedMessage'), { kind: 'protocol' });
-            const r = await worker.send(frame.chatId, frame.message);
+            const r = await worker.send(frame.chatId, frame.message, frame.options || {});
             writeFrame({ type: 'send-result', id: frame.id, ok: true, ...(r && typeof r === 'object' ? { detail: r } : {}) });
           } catch (err) {
             writeFrame({
@@ -164,8 +173,21 @@ async function main() {
               error: {
                 kind: errKind(err), message: err?.message || String(err),
                 ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
+                ...(err?.permanent === true ? { permanent: true } : {}),
               },
             });
+          }
+        })();
+        break;
+      }
+      case 'interaction-reply': {
+        (async () => {
+          try {
+            if (typeof worker.replyInteraction !== 'function') throw Object.assign(new Error('worker cannot reply to interactions'), { kind: 'plugin' });
+            await worker.replyInteraction(frame.interactionId, frame.text);
+            writeFrame({ type: 'send-result', id: frame.id, ok: true });
+          } catch (err) {
+            writeFrame({ type: 'send-result', id: frame.id, ok: false, error: { kind: errKind(err), message: err?.message || String(err) } });
           }
         })();
         break;

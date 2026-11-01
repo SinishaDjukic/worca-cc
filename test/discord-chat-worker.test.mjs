@@ -5,7 +5,7 @@
 // mapping) and validateConfig.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createDiscordWorker, validateConfig, renderToMarkdown } from '../plugins/discord-chat/channel/worker.mjs';
+import { createDiscordWorker, validateConfig, renderToMarkdown, renderComponents, parseCustomId, toInteraction } from '../plugins/discord-chat/channel/worker.mjs';
 import { createGatewayClient, INTENTS } from '../plugins/discord-chat/channel/gateway.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -123,20 +123,22 @@ test('gateway: 4004 -> fatal auth; 4014 -> fatal plugin naming the intent toggle
   }
 });
 
-function workerCtx(config = {}) {
-  const events = { inbound: [], status: [], logs: [] };
+function workerCtx(config = {}, { state = {} } = {}) {
+  const events = { inbound: [], status: [], logs: [], interactions: [] };
   const ac = new AbortController();
   return {
     ctx: {
       apiVersion: 2, platform: 'discord', mock: false,
       config: { botToken: 'tok', ...config },
-      state: { get: async () => null, set: async () => {} },
+      state: { get: async (k) => (state[k] ?? null), set: async (k, v) => { state[k] = v; } },
       log: (l, m) => events.logs.push(`${l}:${m}`),
       emitMessage: (m) => events.inbound.push(m),
+      emitInteraction: (e) => events.interactions.push(e),
       setStatus: (s, d) => events.status.push({ state: s, detail: d ?? null }),
       shutdownSignal: ac.signal,
     },
     events,
+    state,
   };
 }
 
@@ -162,7 +164,10 @@ test('worker: identity via /users/@me; bot/self/off-list messages filtered; empt
     { id: 'm5', channel_id: 'C1', content: '', author: { id: 'U1' } },
   ]) s.frame({ op: 0, t: 'MESSAGE_CREATE', s: 2, d: m });
   assert.deepEqual(events.inbound.map((m) => m.text), ['/status', '']);
-  assert.deepEqual(events.inbound[0].meta, { platform: 'discord', messageId: 'm1', guildId: 'G1', username: 'sam', isGroup: true });
+  assert.deepEqual(events.inbound[0].meta, { platform: 'discord', messageId: 'm1', guildId: 'G1', username: 'sam', isGroup: true, mentionsBot: false, botId: 'BOT1' });
+  s.frame({ op: 0, t: 'MESSAGE_CREATE', s: 3, d: { id: 'm6', channel_id: 'C1', content: '<@BOT1> hi', author: { id: 'U1', username: 'sam' }, guild_id: 'G1', mentions: [{ id: 'BOT1' }] } });
+  assert.equal(events.inbound.at(-1).meta.mentionsBot, true);
+  assert.equal(events.inbound.at(-1).meta.botId, 'BOT1');
   assert.ok(events.logs.some((l) => /MESSAGE CONTENT INTENT/.test(l)), 'empty-content hint logged once');
   await w.stop();
 });
@@ -176,6 +181,7 @@ test('worker send: markdown render, 2000 split, 429 retry_after, kind mapping', 
       posts.push(JSON.parse(opts.body));
       if (mode === '429') return json({ retry_after: 0.5 }, 429);
       if (mode === '403') return json({ message: 'Missing Access' }, 403);
+      if (/^\d{3}$/.test(mode)) return json({ message: 'x' }, Number(mode));
       return json({ id: 'sent' });
     }
     throw new Error(`unexpected ${url}`);
@@ -193,7 +199,18 @@ test('worker send: markdown render, 2000 split, 429 retry_after, kind mapping', 
   mode = '429';
   await assert.rejects(w.send('C1', msg), (e) => e.kind === 'rate-limit');
   mode = '403';
-  await assert.rejects(w.send('C1', msg), (e) => e.kind === 'plugin' && /invite the bot/.test(e.message));
+  await assert.rejects(w.send('C1', msg), (e) => e.kind === 'plugin' && e.permanent === true && /invite the bot/.test(e.message));
+  // Only a refusal that fails again is permanent: 404 and 400 are; an outage (5xx) and other statuses are not.
+  mode = '404';
+  await assert.rejects(w.send('C1', msg), (e) => e.kind === 'plugin' && e.permanent === true);
+  mode = '400';
+  await assert.rejects(w.send('C1', msg), (e) => e.kind === 'plugin' && e.permanent === true);
+  for (const m of ['500', '502', '503', '504']) {
+    mode = m;
+    await assert.rejects(w.send('C1', msg), (e) => e.kind === 'network' && e.permanent !== true, `HTTP ${m}`);
+  }
+  mode = '409';
+  await assert.rejects(w.send('C1', msg), (e) => e.kind === 'plugin' && e.permanent !== true);
 });
 
 test('validateConfig: ok, 401 pins botToken, gateway failure reported', async () => {
@@ -354,4 +371,172 @@ test('V20: the README never promises DMs while the gateway lacks the DIRECT_MESS
   assert.equal(INTENTS & DIRECT_MESSAGES, 0);
   assert.doesNotMatch(readme, /direct\s+message to the bot always works/);
   assert.match(readme, /DIRECT_MESSAGES intent/);
+});
+
+test('renderComponents: selects own a row, buttons 5 per row, links have url and no custom_id', () => {
+  const ref = (n) => `ref${n}`.padEnd(24, 'x');
+  const rows = renderComponents([
+    ...Array.from({ length: 6 }, (_, n) => ({ kind: 'button', ref: ref(n), label: `B${n}`, style: 'primary' })),
+    { kind: 'link', label: 'Open in worca', url: 'https://w.example/#chat/ask_0123abcd' },
+    { kind: 'select', ref: ref(9), placeholder: 'Scope', options: [{ value: 'none', label: 'No project' }] },
+  ]);
+  assert.deepEqual(rows.map((r) => r.components.length), [5, 2, 1]);
+  assert.equal(rows[0].components[0].custom_id, `w:${ref(0)}`);
+  const modalRow = renderComponents([{ kind: 'button', ref: ref(1), label: 'Answer', style: 'primary',
+    modal: { title: 'Answer', fields: [{ id: 'text', label: 'Answer', style: 'paragraph', required: true, maxLength: 2000 }] } }]);
+  assert.equal(modalRow[0].components[0].custom_id, `w:m:${ref(1)}`, 'a modal button is marked in its own id');
+  assert.deepEqual(parseCustomId(`w:m:${ref(1)}`), { ref: ref(1), opensModal: true });
+  assert.deepEqual(parseCustomId(`w:${ref(1)}`), { ref: ref(1), opensModal: false });
+  assert.equal(parseCustomId('w:short'), null);
+  assert.equal(parseCustomId('other'), null);
+  assert.deepEqual(rows[1].components[1], { type: 2, style: 5, label: 'Open in worca', url: 'https://w.example/#chat/ask_0123abcd' });
+  assert.equal(rows[2].components[0].type, 3);
+});
+
+test('interactions: ack type 6 then emit; modal buttons ack with type 9 and emit only the submit; token never emitted', async () => {
+  const calls = [];
+  const fetchFn = async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    if (String(url).endsWith('/users/@me')) return json({ id: 'BOT1', username: 'worca' });
+    if (String(url).endsWith('/gateway/bot')) return json({ url: 'wss://gw.test', session_start_limit: { remaining: 100 } });
+    if (String(url).includes('/channels/T1/messages')) return json({ id: 'M9' });
+    return json({});
+  };
+  const { ctx, events } = workerCtx({});
+  const w = createDiscordWorker(ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  await w.start();
+  const s = await waitFor(() => FakeWebSocket.instances.at(-1));
+  s.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  const REF = 'AbCdEfGhIjKlMnOpQrStUvWx';
+  await w.send('T1', { title: null, severity: 'info', body: [{ kind: 'markdown', value: 'q' }],
+    controls: [{ kind: 'button', ref: REF, label: 'Answer', style: 'primary',
+      modal: { title: 'Answer', fields: [{ id: 'text', label: 'Answer', style: 'paragraph', required: true, maxLength: 2000 }] } }] });
+  s.frame({ op: 0, t: 'INTERACTION_CREATE', s: 3, d: { id: 'I1', token: 'SECRET-TOKEN', application_id: 'APP', type: 3,
+    channel_id: 'T1', member: { user: { id: 'U1', username: 'sam' } }, data: { custom_id: `w:m:${REF}`, component_type: 2 } } });
+  await waitFor(() => calls.find((c) => c.url.includes('/interactions/I1/')));
+  assert.equal(calls.find((c) => c.url.includes('/interactions/I1/')).body.type, 9);
+  assert.equal(events.interactions.length, 0, 'the modal open is not a host event');
+  s.frame({ op: 0, t: 'INTERACTION_CREATE', s: 4, d: { id: 'I2', token: 'SECRET-TOKEN-2', application_id: 'APP', type: 5,
+    channel_id: 'T1', member: { user: { id: 'U1' } }, data: { custom_id: `w:${REF}`, components: [{ type: 1, components: [{ type: 4, custom_id: 'text', value: 'focus on tests' }] }] } } });
+  await waitFor(() => events.interactions.length === 1);
+  assert.equal(calls.find((c) => c.url.includes('/interactions/I2/')).body.type, 6);
+  assert.deepEqual(events.interactions[0], { id: 'I2', chatId: 'T1', userId: 'U1', ref: REF, kind: 'modal', fields: { text: 'focus on tests' },
+    meta: { platform: 'discord', guildId: null, messageId: null, username: null } });
+  assert.equal(JSON.stringify(events).includes('SECRET-TOKEN'), false);
+  await w.replyInteraction('I2', 'Only the owner can act.');
+  const follow = calls.find((c) => c.url.endsWith('/webhooks/APP/SECRET-TOKEN-2'));
+  assert.deepEqual(follow.body, { content: 'Only the owner can act.', flags: 64, allowed_mentions: { parse: [] } });
+  await assert.rejects(w.replyInteraction('nope', 'x'), /interaction expired/);
+  s.frame({ op: 0, t: 'INTERACTION_CREATE', s: 5, d: { id: 'I3', token: 't', type: 3, channel_id: 'T1', member: { user: { id: 'U1' } }, data: { custom_id: 'someone-else', component_type: 2 } } });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(calls.some((c) => c.url.includes('/interactions/I3/')), false, 'foreign custom_ids are not ours to answer');
+  // Discord's Label (type 18) modal layout is read too.
+  assert.deepEqual(toInteraction({ id: 'I9', type: 5, channel_id: 'T1', member: { user: { id: 'U1' } },
+    data: { custom_id: `w:${REF}`, components: [{ type: 18, id: 1, component: { type: 4, custom_id: 'text', value: 'via label' } }] } }).fields, { text: 'via label' });
+  await w.stop();
+});
+
+test('send options: thread from message, edit in place, ids returned; mention flag on inbound', async () => {
+  const calls = [];
+  const fetchFn = async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    if (String(url).endsWith('/threads')) return json({ id: 'TH1' });
+    if (String(url).includes('/messages')) return json({ id: init.method === 'PATCH' ? 'M1' : 'M2' });
+    return json({});
+  };
+  const { ctx } = workerCtx({});
+  const w = createDiscordWorker(ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  const msg = { title: null, severity: 'info', body: [{ kind: 'markdown', value: 'hello' }] };
+  assert.deepEqual(await w.send('C1', msg, { thread: { fromMessageId: 'U-MSG', name: 'worca chat' } }), { ok: true, chunks: 1, messageIds: ['M2'], threadId: 'TH1' });
+  assert.equal(calls[0].url, 'https://discord.com/api/v10/channels/C1/messages/U-MSG/threads');
+  assert.equal(calls[1].url, 'https://discord.com/api/v10/channels/TH1/messages');
+  assert.deepEqual(await w.send('TH1', msg, { edit: { messageId: 'M1' } }), { ok: true, messageIds: ['M1'] });
+  assert.equal(calls[2].method, 'PATCH');
+  assert.deepEqual(calls[2].body.components, []);
+});
+
+const startedWorker = async (config, opts = {}) => {
+  FakeWebSocket.instances = [];
+  const calls = [];
+  const fetchFn = async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    if (String(url).endsWith('/users/@me')) return json({ id: 'BOT1', username: 'worca' });
+    if (String(url).endsWith('/gateway/bot')) return json({ url: 'wss://gw.test', session_start_limit: { remaining: 100 } });
+    if (String(url).endsWith('/threads')) return json({ id: 'TH1' });
+    if (String(url).includes('/messages')) return json({ id: 'M1' });
+    return json({});
+  };
+  const wc = workerCtx(config, opts);
+  const w = createDiscordWorker(wc.ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async () => {} });
+  await w.start();
+  const s = await waitFor(() => FakeWebSocket.instances.at(-1));
+  s.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  return { w, s, calls, ...wc };
+};
+const threadMsg = (s, id) => s.frame({ op: 0, t: 'MESSAGE_CREATE', s: 9, d: { id, channel_id: 'TH1', guild_id: 'G1',
+  content: 'continue please', author: { id: 'U1', username: 'sam' }, mentions: [] } });
+
+test('channelAllowlist: messages in a thread this worker created are admitted, also after a restart; others are not', async () => {
+  const first = await startedWorker({ channelAllowlist: 'C1' });
+  threadMsg(first.s, 'm-before');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(first.events.inbound.length, 0, 'unknown thread: still filtered');
+  await first.w.send('C1', { title: null, severity: 'info', body: [{ kind: 'markdown', value: 'hi' }] }, { thread: { fromMessageId: 'U-MSG', name: 'worca chat' } });
+  assert.deepEqual(first.state.freeformThreads, ['TH1']);
+  threadMsg(first.s, 'm-after');
+  await waitFor(() => first.events.inbound.length === 1);
+  assert.equal(first.events.inbound[0].chatId, 'TH1');
+  await first.w.stop();
+  // A new worker process with the persisted state (the host replays ctx.state in `hello`).
+  const second = await startedWorker({ channelAllowlist: 'C1' }, { state: { freeformThreads: ['TH1'] } });
+  threadMsg(second.s, 'm-restart');
+  await waitFor(() => second.events.inbound.length === 1);
+  second.s.frame({ op: 0, t: 'MESSAGE_CREATE', s: 10, d: { id: 'm-other', channel_id: 'TH-OTHER', guild_id: 'G1', content: 'x', author: { id: 'U1' }, mentions: [] } });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(second.events.inbound.length, 1, 'a thread the bot did not create stays filtered');
+  await second.w.stop();
+});
+
+test('a fresh worker (no memory of the post) still opens a modal for a w:m: button, titled from the button label', async () => {
+  const { w, s, calls, events } = await startedWorker({});
+  const REF = 'ZyXwVuTsRqPoNmLkJiHgFeDc';
+  s.frame({ op: 0, t: 'INTERACTION_CREATE', s: 3, d: { id: 'I7', token: 'TOK7', application_id: 'APP', type: 3, channel_id: 'TH1',
+    member: { user: { id: 'U1' } }, data: { custom_id: `w:m:${REF}`, component_type: 2 },
+    message: { id: 'M5', components: [{ type: 1, components: [{ type: 2, style: 2, label: 'Request changes', custom_id: `w:m:${REF}` }] }] } } });
+  await waitFor(() => calls.find((c) => c.url.includes('/interactions/I7/')));
+  const cb = calls.find((c) => c.url.includes('/interactions/I7/')).body;
+  assert.equal(cb.type, 9);
+  assert.equal(cb.data.custom_id, `w:${REF}`, 'the submit comes back on the plain id');
+  assert.equal(cb.data.title, 'Request changes');
+  assert.deepEqual(cb.data.components[0].components[0], { type: 4, custom_id: 'text', label: 'Your answer', style: 2, required: true, max_length: 2000 });
+  assert.equal(events.interactions.length, 0);
+  await w.stop();
+});
+
+test('interactions: a valid-shaped id without the w: prefix, a bot, or an off-list channel is never acked or emitted', async () => {
+  const { w, s, calls, events } = await startedWorker({ channelAllowlist: 'C1' });
+  const REF = 'AbCdEfGhIjKlMnOpQrStUvWx';
+  const click = (id, over) => s.frame({ op: 0, t: 'INTERACTION_CREATE', s: 20, d: { id, token: 't', application_id: 'APP', type: 3,
+    channel_id: 'C1', member: { user: { id: 'U1' } }, data: { custom_id: `w:${REF}`, component_type: 2 }, ...over } });
+  click('F1', { data: { custom_id: REF, component_type: 2 } });
+  click('F2', { member: { user: { id: 'B9', bot: true } } });
+  click('F3', { channel_id: 'C9' });
+  click('F4', { channel_id: 'TH9', channel: { id: 'TH9', parent_id: 'C1' } });
+  await waitFor(() => events.interactions.length === 1);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(calls.filter((c) => c.url.includes('/interactions/')).map((c) => c.url.split('/')[6]), ['F4']);
+  assert.equal(events.interactions[0].id, 'F4');
+  assert.equal(parseCustomId(REF), null, 'only our w: ids are ours');
+  await w.stop();
+});
+
+test('replyInteraction refuses a token older than 14 minutes', async () => {
+  const { w, s, events } = await startedWorker({});
+  s.frame({ op: 0, t: 'INTERACTION_CREATE', s: 21, d: { id: 'I8', token: 'TOK8', application_id: 'APP', type: 3, channel_id: 'T1',
+    member: { user: { id: 'U1' } }, data: { custom_id: 'w:AbCdEfGhIjKlMnOpQrStUvWx', component_type: 2 } } });
+  await waitFor(() => events.interactions.length === 1);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 14 * 60 * 1000 + 1;
+  try { await assert.rejects(w.replyInteraction('I8', 'late'), /interaction expired/); } finally { Date.now = realNow; }
+  await w.stop();
 });

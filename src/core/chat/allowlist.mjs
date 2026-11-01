@@ -40,3 +40,23 @@ export function createAllowlistGuard(allowedIds, log = {}, allowedUserIds = []) 
 export function parseIdList(value) {
   return String(value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }
+
+// The character rule of src/core/identity.mjs VALUE_RE (C0, DEL, C1, U+2028/U+2029, < and >): a mapped identity must
+// be one actorOf accepts, else createdBy and the recorded actor disagree. Built from a string, because a raw U+2028 in
+// a regex literal is a line terminator.
+const MEMBER_BAD_CHARS = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029<>]');
+
+/** "discordUserId=worca identity" pairs (comma or newline separated) → Map(userId → identity). Bad entries are skipped;
+ *  ids must be platform snowflake-ish (1–32 of [A-Za-z0-9_-]); identities one printable line ≤ 200. */
+export function parseChatMembers(raw) {
+  const out = new Map();
+  for (const item of String(raw ?? '').split(/[,\n]/)) {
+    const eq = item.indexOf('=');
+    if (eq <= 0) continue;
+    const id = item.slice(0, eq).trim();
+    const who = item.slice(eq + 1).trim();
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(id) || !who || who.length > 200 || MEMBER_BAD_CHARS.test(who)) continue;
+    out.set(id, who);
+  }
+  return out;
+}

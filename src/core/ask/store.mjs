@@ -582,13 +582,14 @@ export function deleteThread(id) {
   return removed;
 }
 
-/** Boot sweep (spec §6.2.1): threads that never received a message and are older than the cutoff. */
+/** Boot sweep (spec §6.2.1): threads that never received a message and are older than the cutoff, except threads a chat conversation (v84) is bound to. */
 export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowMs = Date.now() } = {}) {
   getDb();
   const cutoff = new Date(nowMs - olderThanMs).toISOString();
   const ids = prepare(`
     SELECT t.id FROM ask_threads t
     WHERE t.created_at < ? AND NOT EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = t.id)
+      AND NOT EXISTS (SELECT 1 FROM chat_conversations c WHERE c.ask_thread_id = t.id)
   `).all(cutoff).map((r) => r.id);
   let removed = 0;
   for (const id of ids) if (deleteThread(id)) removed += 1;   // a row deleteThread refuses is not counted as swept
@@ -723,7 +724,7 @@ const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor'
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
  *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply),
- *  a COMMAND card (its helper-job `summary`, #911 slice 2), and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
+ *  a COMMAND card (its helper-job `summary`, #911 slice 2), a QUESTION card (its `choice` / `answerText`), and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
  *  card's `card` is never touched (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
 export function updateCardBlock(threadId, cardId, patch = {}) {
   return tx(() => {
@@ -741,7 +742,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
         || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command' || b.card.type === 'script-approval'
-        || (b.card.type === 'progress' && !!b.card.fix)));
+        || (b.card.type === 'progress' && !!b.card.fix) || b.card.type === 'question'));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);

@@ -1402,6 +1402,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qcancel:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .qopen[hidden]{display:none;}
 :is(.rd-questions,.chat-rc-q) .qanswered{font:600 var(--fs-body) var(--sans);color:var(--ink);}   /* the pill bar's lead, not a mono aside */
+.chat-q-text textarea.chat-q-input{width:100%;box-sizing:border-box;}
+.chat-q-err:empty{display:none;}
 
 /* ---------- Ask forms (agent-ask-forms design §6.1) ---------- */
 /* The declarative widget catalog, inside the same amber .qpanel wash. Every

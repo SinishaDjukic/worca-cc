@@ -84,3 +84,46 @@ test('redactSecrets scrubs every platform credential shape', () => {
   assert.match(red, /client_secret=<redacted>/);
   assert.equal(redactSecrets('plain message, no secrets'), 'plain message, no secrets');
 });
+import { isValidControls, isValidInteraction, isValidSendOptions, CONTROL_LIMITS } from '../src/core/chat/channel-protocol.mjs';
+import * as vendored from '../plugins/discord-chat/lib/message.mjs';
+
+const REF = 'AbCdEfGhIjKlMnOpQrStUvWx';
+const CMSG = (controls) => ({ title: null, body: [{ kind: 'markdown', value: 'x' }], severity: 'info', controls });
+
+test('controls: buttons, link, select, modal spec; limits refuse', () => {
+  const ok = [
+    { kind: 'button', ref: REF, label: 'Start run', style: 'primary' },
+    { kind: 'button', ref: REF.replace('A', 'B'), label: 'Answer', style: 'secondary',
+      modal: { title: 'Your answer', fields: [{ id: 'text', label: 'Answer', style: 'paragraph', required: true, maxLength: 2000 }] } },
+    { kind: 'link', label: 'Open in worca', url: 'https://worca.example/#chat/ask_0123abcd' },
+    { kind: 'select', ref: REF.replace('A', 'C'), placeholder: 'Pick one', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B', description: 'second' }] },
+  ];
+  assert.equal(isValidControls(ok), true);
+  for (const impl of [isValidMessage, vendored.isValidMessage]) {
+    assert.equal(impl(CMSG(ok)), true);
+    assert.equal(impl(CMSG(undefined)), true, 'controls are optional');
+    assert.equal(impl(CMSG([{ kind: 'button', ref: 'short', label: 'x', style: 'primary' }])), false, 'ref shape');
+    assert.equal(impl(CMSG([{ kind: 'link', label: 'x', url: 'javascript:alert(1)' }])), false, 'link scheme');
+    assert.equal(impl(CMSG([{ kind: 'select', ref: REF, options: [] }])), false, 'empty select');
+    assert.equal(impl(CMSG([{ kind: 'select', ref: REF, options: Array.from({ length: 26 }, (_, i) => ({ value: `v${i}`, label: `L${i}` })) }])), false, '26 options');
+    assert.equal(impl(CMSG(Array.from({ length: CONTROL_LIMITS.controls + 1 }, (_, i) => ({ kind: 'link', label: `l${i}`, url: 'https://x.example' })))), false, 'too many');
+    assert.equal(impl(CMSG([{ kind: 'button', ref: REF, label: 'x', style: 'blurple' }])), false, 'style');
+    assert.equal(impl(CMSG([{ kind: 'button', ref: REF, label: 'x', style: 'primary', modal: { title: 'x'.repeat(46), fields: [] } }])), false, 'modal title');
+  }
+});
+
+test('send options and interaction frames', () => {
+  assert.equal(isValidSendOptions({ edit: { messageId: 'm1' } }), true);
+  assert.equal(isValidSendOptions({ thread: { fromMessageId: 'm1', name: 'Chat with worca' } }), true);
+  assert.equal(isValidSendOptions({ edit: { messageId: 'm1' }, thread: { fromMessageId: 'm1', name: 'x' } }), false, 'one at a time');
+  assert.equal(isValidSendOptions({ thread: { fromMessageId: 'm1', name: '' } }), false);
+  const evt = { id: 'i1', chatId: 'T1', userId: 'U1', ref: REF, kind: 'select', values: ['a'], meta: { platform: 'discord' } };
+  assert.equal(isValidInteraction(evt), true);
+  assert.equal(isValidInteraction({ ...evt, kind: 'modal', values: undefined, fields: { text: 'hi' } }), true);
+  assert.equal(isValidInteraction({ ...evt, ref: 'bad ref' }), false);
+  assert.equal(isValidInteraction({ ...evt, values: [7] }), false);
+  assert.equal(isValidFrame({ type: 'interaction', evt }), true);
+  assert.equal(isValidFrame({ type: 'interaction-reply', id: 'r1', interactionId: 'i1', text: 'Only the owner can act.' }), true);
+  assert.equal(isValidFrame({ type: 'send', id: 's1', chatId: 'C', message: CMSG(undefined), options: { edit: { messageId: 'm1' } } }), true);
+  assert.equal(isValidFrame({ type: 'send', id: 's1', chatId: 'C', message: CMSG(undefined), options: { edit: {} } }), false);
+});

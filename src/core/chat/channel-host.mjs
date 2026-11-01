@@ -25,7 +25,7 @@ import { normalizeManifest, negotiatedApi } from '../plugin-manifest.mjs';
 import { WORCA_PLUGIN_API } from '../plugin-api.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../plugins-lock.mjs';
 import { readPluginConfig, readPluginState, writePluginState } from '../plugin-config.mjs';
-import { encodeFrame, decodeFrame, isValidMessage, MAX_FRAME_BYTES } from './channel-protocol.mjs';
+import { encodeFrame, decodeFrame, isValidMessage, isValidSendOptions, CONTROL_LIMITS, MAX_FRAME_BYTES } from './channel-protocol.mjs';
 import { redactSecrets } from './redact.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./channel-worker-child.mjs', import.meta.url));
@@ -39,6 +39,13 @@ const MAX_OUT_QUEUE = 100;
 const DELIVERY_RING_SIZE = 50;
 
 const workerKey = (plugin, channelId) => `${plugin}/${channelId}`;
+
+/** A send the platform itself refused (404, 403, an invalid message): retrying the same message cannot succeed, unlike a
+ *  network error, a 5xx, a 429 or a worker that is down. The conversation bridge reads `permanent` to skip such a part. */
+function refused(err) {
+  err.permanent = true;
+  return err;
+}
 
 /** Same env-flag semantics as plugin-shim.mjs#mockMode. */
 function mockMode() {
@@ -61,6 +68,20 @@ export function mockSentMessages() { return _mockSent.slice(); }
 
 /** Tests: reset recorded mock deliveries. */
 export function clearMockSentMessages() { _mockSent.length = 0; }
+const _mockReplies = [];    // every replyInteraction seen in mock mode
+/** Tests: interaction replies delivered through mock workers, oldest first. */
+export function mockInteractionReplies() { return _mockReplies.slice(); }
+export function clearMockInteractionReplies() { _mockReplies.length = 0; }
+
+/** A non-interactive channel gets text only: link controls become link segments, executable controls vanish
+ *  (they could never be answered there). */
+export function withoutControls(message) {
+  if (!Array.isArray(message.controls)) return message;
+  const links = message.controls.filter((c) => c.kind === 'link')
+    .flatMap((c) => [{ kind: 'text', value: '\n' }, { kind: 'link', value: c.label, href: c.url }]);
+  const { controls: _drop, ...rest } = message;
+  return { ...rest, body: [...rest.body, ...links] };
+}
 
 // ── discovery ────────────────────────────────────────────────────────────────
 
@@ -116,7 +137,7 @@ export function discoverChannels() {
  *          _spawn?:typeof spawn, _backoffMs?:number[], _healthyAfterMs?:number}} opts
  *   `_spawn`/`_backoffMs`/`_healthyAfterMs` are test seams only.
  */
-export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn, _backoffMs = RESTART_BACKOFF_MS, _healthyAfterMs = HEALTHY_AFTER_MS } = {}) {
+export function createChannelHost({ logger, onInbound, onInteraction, onStatus, _spawn = spawn, _backoffMs = RESTART_BACKOFF_MS, _healthyAfterMs = HEALTHY_AFTER_MS } = {}) {
   const log = typeof logger === 'function' ? logger : (level, msg) => console.error(`chat ${level}: ${msg}`);
   const workers = new Map(); // key -> worker record
   let stopping = false;
@@ -212,6 +233,11 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
         if (!w.entry.capabilities.inbound) break; // manifest said outbound-only: drop
         try { onInbound?.({ plugin: w.entry.plugin, channelId: w.entry.channelId, platform: w.entry.platform, msg: frame.msg }); }
         catch (err) { log('error', `chat inbound handler failed: ${w.redact(err?.message || err)}`); }
+        break;
+      case 'interaction':
+        if (!w.entry.capabilities.inbound || w.entry.capabilities.interactive !== true) break;
+        try { onInteraction?.({ plugin: w.entry.plugin, channelId: w.entry.channelId, platform: w.entry.platform, evt: frame.evt }); }
+        catch (err) { log('error', `chat interaction handler failed: ${w.redact(err?.message || err)}`); }
         break;
       case 'send-result':
       case 'webhook-result': {
@@ -471,15 +497,19 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
      * Deliver one NormalizedMessage to one chat. Resolves {ok:true} or throws
      * PluginOpError with the worker-reported kind. Mock mode records instead.
      */
-    async sendMessage({ plugin, channelId, chatId, message, timeoutMs = 15000 }) {
-      if (!isValidMessage(message)) throw new PluginOpError('plugin', 'invalid NormalizedMessage');
+    async sendMessage({ plugin, channelId, chatId, message, options = null, timeoutMs = 15000 }) {
+      if (!isValidMessage(message)) throw refused(new PluginOpError('plugin', 'invalid NormalizedMessage'));
       const w = workers.get(workerKey(plugin, channelId));
       if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      const interactive = w.entry.capabilities.interactive === true;
+      if (options && !interactive) throw new PluginOpError('plugin', 'channel is not interactive (edits and threads need the interactive capability)');
+      if (options && !isValidSendOptions(options)) throw new PluginOpError('plugin', 'invalid send options');
+      const msg = interactive ? message : withoutControls(message);
       if (w.mock) {
         const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
-        _mockSent.push({ plugin, channelId, chatId, message });
+        _mockSent.push({ plugin, channelId, chatId, message: msg, ...(options ? { options } : {}) });
         if (behavior?.send) {
-          const r = await behavior.send(chatId, message); // may throw {kind,...}
+          const r = await behavior.send(chatId, msg, options); // may throw {kind, permanent?,...}
           pushDelivery(w, { chatId, ok: true });
           return r ?? { ok: true };
         }
@@ -490,12 +520,35 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
         throw new PluginOpError('plugin', `channel worker is ${w.state}`);
       }
       const id = `s-${++rpcSeq}`;
-      const res = await rpc(w, { type: 'send', id, chatId, message }, timeoutMs);
-      if (res.ok) { pushDelivery(w, { chatId, ok: true }); return { ok: true }; }
+      const res = await rpc(w, { type: 'send', id, chatId, message: msg, ...(options ? { options } : {}) }, timeoutMs);
+      if (res.ok) {
+        pushDelivery(w, { chatId, ok: true });
+        return { ok: true, ...(res.detail && typeof res.detail === 'object' && !Array.isArray(res.detail) ? { detail: res.detail } : {}) };
+      }
       pushDelivery(w, { chatId, ok: false, errorKind: res.error?.kind || 'plugin' });
       const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'send failed'));
       if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
-      throw err;
+      throw res.error?.permanent === true ? refused(err) : err;
+    },
+
+    /** v2: an ephemeral answer to one acknowledged interaction (interactive channels). The worker holds the token. */
+    async replyInteraction({ plugin, channelId, interactionId, text, timeoutMs = 15000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (w.entry.capabilities.interactive !== true) throw new PluginOpError('plugin', 'channel is not interactive');
+      const body = String(text || '').slice(0, CONTROL_LIMITS.replyText) || '…';
+      if (w.mock) { _mockReplies.push({ plugin, channelId, interactionId, text: body }); return { ok: true }; }
+      if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+      const res = await rpc(w, { type: 'interaction-reply', id: `r-${++rpcSeq}`, interactionId, text: body }, timeoutMs);
+      if (res.ok) return { ok: true };
+      throw new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'reply failed'));
+    },
+
+    /** Tests: the interaction twin of injectInboundMessage. */
+    injectInteraction(plugin, channelId, evt) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new Error(`no such channel worker "${plugin}/${channelId}"`);
+      handleFrame(w, { type: 'interaction', evt });
     },
 
     /** Teams ingress: forward one raw HTTP request to the worker, get back

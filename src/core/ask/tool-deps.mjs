@@ -13,6 +13,8 @@ import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { buildCatalog } from './catalog.mjs';
 import { validateProposal } from './proposal.mjs';
 import { chatScopeOf, scopeCardKeys, validateScopeSwitch } from './scope.mjs';
+import { validateQuestion } from './question-card.mjs';
+import { conversationForThread } from '../chat/conversations.mjs';
 import { readAttachmentText, readAttachmentRaw, getAttachment, attachmentPath, getThread, listAttachments, listMessages } from './store.mjs';
 import { redactAskText } from './redact.mjs';
 import { htmlToText } from './html-text.mjs';
@@ -175,6 +177,14 @@ export function defaultToolDeps({ threadId, viewer = null }) {
         return validateScopeSwitch(input, { scope: chatScopeOf(thread?.context ?? null), projects, asked: scopeCardKeys(messages) });
       },
     },
+    // ask_question (freeform chat D5): only on a thread bound to a chat conversation (read per tool list, like
+    // pinnedScope). Absent everywhere else, so browser chats keep their exact tool list.
+    chatQuestions: (() => {
+      if (!threadId) return null;
+      let bound = null;
+      try { bound = conversationForThread(threadId); } catch { bound = null; }
+      return bound ? { validate: (input) => validateQuestion(input) } : null;
+    })(),
     // The SECURE preset is the floor, not the run's own set: guardrailsId defaults
     // to 'permissive' (empty protectedPaths), so resolving per row would show the
     // model every credential file on most runs. This only ever omits more.
