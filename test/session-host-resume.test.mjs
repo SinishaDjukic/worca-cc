@@ -91,7 +91,7 @@ test('a vanished host session: a new host, a restart record, an audit line, the 
 
 test('an engine switch on resume opens a new host on the new engine and re-chooses the mode', { timeout: 120000 }, async () => {
   const { orch, id } = await pauseMidTurn({ workflowId: 'wf_sess_resume', nodeId: 'n_impl' });
-  const o2 = resumeOf(orch, id, { mock: true, engine: 'codex' });         // as test/engine-switch-pause.test.mjs switches a paused run
+  const o2 = resumeOf(orch, id, { mock: true, engine: 'codex', allowUnguardedEngine: true });   // as test/engine-switch-pause.test.mjs switches a paused run; the run pinned the Normal set
   assert.equal((await o2.resume()).status, 'done');
   const recs = (await readTrace(tracePath(o2.getState().pipelineDir, SID))).records;
   const r = recs.find((x) => x.kind === 'restart');
