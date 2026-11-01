@@ -415,7 +415,10 @@ async function ghCreatePr({ projectDir, base, head, title, body = '', repo = nul
     return { ok: true, url, existed: false };
   }
   if (/already exists/i.test(r.stderr || '')) {
-    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepo(repo) })).env });
+    // The person's own pull request, found as them ("push as me" reads, opt-in). Every other read
+    // here (status, checks, chips, the watcher, ghApi) feeds shared views, caches or automations,
+    // so it stays on worca's own credential.
+    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo: ownerRepo(repo) })).env });
     if (v.ok && v.stdout.trim()) return { ok: true, url: v.stdout.trim(), existed: true };
     // gh's message ends with the existing PR's URL ("… already exists:\n<url>");
     // use it when the view selector cannot resolve (e.g. a PR opened from another fork).

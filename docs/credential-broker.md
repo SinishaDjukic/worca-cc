@@ -421,7 +421,7 @@ can neither charge to a person nor keep from the agent. So with the broker on:
 
 ### People
 
-Each person opens **Settings › My model credentials › Manage keys** (or the key page URL),
+Each person opens **Settings › My credentials › Manage keys** (or the key page URL),
 signs in through Access, and saves their keys; for GitHub Copilot they sign in with GitHub (a
 device code) instead. The broker checks each credential with the provider before storing it.
 Keys are never shown again: the page shows the last four characters, the kind (API key,
@@ -494,13 +494,16 @@ secrets included.
 
 ## Push as me
 
-Optional. By default pushes and pull requests use the deployment's GitHub App or token, as
-before. With **push as me**, a write (a push, a pull request) goes out with the GitHub
-identity of the person who caused it:
+Optional. By default clones, pushes and pull requests use the deployment's GitHub App or
+token, as before. With **push as me**, worca's GitHub calls go out with the GitHub identity of
+the person who caused them (what they do in the UI, and the runs they start), so they reach
+what their own account reaches: writes (a push, a pull request) and the reads worca makes on a
+project for them (a clone, a fetch, finding their own pull request when they open one) alike. A repository someone clones
+with their own token is visible to everyone on that worca, as every project is:
 
 1. On worca: `WORCA_GH_AS_PERSON=prefer` or `required`.
-2. Each person pastes a fine-grained token (contents and pull requests write on the
-   repositories they work on) in the GitHub row of the key page. The broker checks it with
+2. Each person pastes a fine-grained token (Contents and Pull requests, read and write, on
+   the repositories they work on) in the GitHub row of the key page. The broker checks it with
    GitHub (`GET /user`) and keeps it sealed. That is all a multi-mode broker needs.
 3. Optional, for "Sign in with GitHub" on the key page instead of a pasted token: create a
    GitHub App (recommended: fine-grained permissions, contents and pull requests write;
@@ -512,12 +515,19 @@ identity of the person who caused it:
 | --- | --- | --- |
 | unset | worca's own credential | worca's own credential |
 | `prefer` | their token | worca's own credential |
-| `required` | their token | the push fails and says how to connect |
+| `required` | their token | reads: worca's own credential; a push or pull request fails and says how to connect |
 
 The token never reaches an agent: worca asks the broker (`/internal/github-token`) for one
 git or gh call it makes itself, puts it in that call's environment only, and the broker's
-`github` slot is never proxied. Reads (clone, fetch) keep worca's own credential, and so does
-worca's own metrics branch. A GitHub App user token also only reaches repositories the App
+`github` slot is never proxied. For reads worca keeps a person's token for up to a minute
+(never past its expiry) and "not connected" for 30 seconds, in memory, so pages that show pull
+request status don't ask the broker on every call. worca's own metrics branch and the git-free
+GitHub API calls (team policy, metrics) keep worca's own credential, and so do reads whose
+result everyone sees or that run in the background (pull request status, checks and chips, the
+pull request watcher, automations) and reads for what is installed for everyone (plugin and
+skill repositories): one person's token never decides
+what the whole deployment gets. Reads use a person's token only where the call site asks for it
+(`readAsPerson`). A GitHub App user token also only reaches repositories the App
 is installed on. A sign-in's token that is due for renewal while the broker has no client ID
 (or, for a GitHub App, no client secret) counts as expired: the person signs in again or
 pastes a token. worca warns at start when `WORCA_GH_AS_PERSON` is set but the broker has no
