@@ -209,8 +209,9 @@ export function findDisabledPluginFor(key, subdir = 'agents') {
  * not raw stderr echoes. Frozen and shared: `_log` only reads from `attr`.
  */
 export const ERR_STREAM = Object.freeze({ stream: 'err' });
-/** The setup stage while a git run makes its worktree (state.setupStage): the workflow-test runner reads it as a phase. */
-export const WORKTREE_STAGE = 'Creating the worktree';
+// The setup stage while a git run makes its worktree: defined in a leaf module the workflow-test runner reads, re-exported here.
+import { WORKTREE_STAGE } from './setup-stages.mjs';
+export { WORKTREE_STAGE };
 
 /** The `: <stderr>` suffix for a failed subprocess result, or '' when it said
  *  nothing. runGraphifyUpdate already returns its child's stderr and the log
@@ -3894,7 +3895,7 @@ export class RunHarness extends EventEmitter {
   /** Workflow tests 3a (final review C1): is this harness a test try? Its opts say so on a fresh try; a harness rebuilt from
    *  the saved row (stopPausedRun stops a paused try with only `resume`) knows it from the row's persisted is_test. */
   _isTestTry() {
-    if (this.opts.workflowTest === true) return true;
+    if (this.opts?.workflowTest === true) return true;
     if (this.resumeOpts?.row?.is_test) return true;
     const id = this.state?.id || this.pipeline?.id || null;
     if (!id) return false;

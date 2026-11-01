@@ -140,6 +140,15 @@ function checkPin(p) {
   return { ...p, name, startRef: p.startRef ?? null, changes: changes && changes.length ? changes : null, setupCmd: setup };
 }
 
+/** Whether the checked pin `p` is what the example already has (`was`, projectOf's shape): the same project, start commit,
+ *  branch, Worca start commit, date, uncommitted changes and setup. The shown name is left out: it is no change to a try. */
+function samePin(was, p) {
+  if (!was || !p) return !was && !p;
+  const changesSha = p.changes ? createHash('sha256').update(p.changes).digest('hex') : null;
+  return was.key === p.key && was.startSha === p.startSha && (was.startRef ?? null) === (p.startRef ?? null) && was.startCommit === p.startCommit
+    && was.startAt === p.startAt && (was.changesSha256 ?? null) === changesSha && (was.setupCmd ?? null) === (p.setupCmd ?? null);
+}
+
 function writePin(exampleId, p) {
   prepare(`INSERT INTO wf_test_example_projects (example_id, project_key, start_sha, start_ref, start_at, start_commit, changes,
       changes_sha256, setup_cmd, updated_at, project_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -208,7 +217,9 @@ export function updateExample(workflowId, id, input = {}, { project } = {}) {
   const hasProject = project === undefined ? !!was.project : !!pinned;
   const { value, errors } = normaliseExample({ ...was, ...input }, { hasProject });
   if (!value) throw invalid(errors);
-  if (project !== undefined) {
+  // Final review: only a save that changes what a try runs from (the project, its start, the changes or the setup) waits for
+  // the test; one that carries the same pin (a note-only edit from the editor) saves.
+  if (project !== undefined && !samePin(was.project, pinned)) {
     const run = runningTestRun(workflowId);
     if (run && run.exampleIds.includes(was.id)) throw testError('a test is trying this example: stop it first', 'BUSY');
   }

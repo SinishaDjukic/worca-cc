@@ -13,7 +13,7 @@ import { fmtUsd } from '../../shared/workflow-tests/checks.mjs';
 import { REASON, REASON_CODES } from '../failure-policy.mjs';
 import { setupFailedText } from '../../shared/workflow-tests/project-text.mjs';
 import { TRY_SETUP_STAGE } from './shell-step.mjs';
-import { WORKTREE_STAGE } from '../run-harness.mjs';
+import { WORKTREE_STAGE } from '../setup-stages.mjs';
 
 export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a time (result.mjs), inside runBenchOnce's limit of 2.
 export const COST_POLL_MS = 2000;

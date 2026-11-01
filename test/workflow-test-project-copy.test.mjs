@@ -333,3 +333,26 @@ test('final review: removing a try checkout refuses a recorded folder outside th
   const ok = await copy.removeTryCheckout({ copyDir: dir, worktreeDir: wt, branch: 'worca-cc/try-abcd0001', runRoot: join(wh, 'runs', 'abcd0001'), pipelineId: 'abcd0001' });
   assert.deepEqual(ok, { removed: true, error: null });
 });
+
+test('final review: a start that names a remote-tracking branch (origin/main, as a past run records it) is read from refs/remotes', async () => {
+  const origin = mkdtempSync(join(tmpdir(), 'worca-cc-wftorigin-'));
+  dirs.push(origin);
+  const bare = join(origin, 'o.git');
+  git(origin, 'init', '-q', '--bare', '-b', 'main', bare);
+  git(real, 'remote', 'add', 'origin', bare);
+  git(real, 'push', '-q', 'origin', 'main');
+  git(real, 'fetch', '-q', 'origin');
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real, ref: 'origin/main' });
+  assert.equal(p.startRef, 'origin/main');
+  assert.equal(p.startSha, git(real, 'rev-parse', 'refs/remotes/origin/main'));
+  const team = join(origin, 'team');
+  git(origin, 'clone', '-q', bare, team);
+  writeFileSync(join(team, 'README.md'), '# team\n');
+  commit(team, 'team');
+  git(team, 'push', '-q', 'origin', 'HEAD:main');
+  git(real, 'fetch', '-q', 'origin');   // the person fetched; Worca never does
+  assert.equal(await copy.behindCount({ projectDir: real, startSha: p.startSha, startRef: 'origin/main' }), 1, 'drift is known');
+  const latest = await copy.pinStart({ key, name: 'real', projectDir: real, ref: 'origin/main' });
+  assert.equal(latest.startSha, git(real, 'rev-parse', 'refs/remotes/origin/main'), 'Start from the latest follows it');
+  assert.equal(await copy.behindCount({ projectDir: real, startSha: p.startSha, startRef: 'main' }), 0, 'a local branch still reads refs/heads');
+});

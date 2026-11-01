@@ -166,6 +166,16 @@ export async function projectUnsupported({ projectDir, sha }) {
   throw unreadable(g);
 }
 
+/** The full ref a start branch name reads (final review): a local branch (refs/heads/<name>), else a remote-tracking one
+ *  (refs/remotes/<name>: a past run that started from `origin/main` records that name). null when neither exists. Read only:
+ *  Worca never fetches; a remote-tracking ref is as fresh as the person's last fetch. */
+async function startRefName(projectDir, name) {
+  for (const full of [`refs/heads/${name}`, `refs/remotes/${name}`]) {
+    if ((await git(projectDir, ['rev-parse', '--verify', '--quiet', `${full}^{commit}`])).ok) return full;
+  }
+  return null;
+}
+
 async function resolveStart(projectDir, { ref, sha }) {
   const current = (await git(projectDir, ['symbolic-ref', '-q', '--short', 'HEAD'])).stdout.trim() || null;
   if (sha) {
@@ -174,7 +184,8 @@ async function resolveStart(projectDir, { ref, sha }) {
     return { commit: v.stdout.trim(), startRef: ref ?? null, current };
   }
   const startRef = ref ?? current;
-  const v = await git(projectDir, ['rev-parse', '--verify', '--quiet', startRef ? `refs/heads/${startRef}^{commit}` : 'HEAD^{commit}']);
+  const full = startRef ? await startRefName(projectDir, startRef) : 'HEAD';
+  const v = full ? await git(projectDir, ['rev-parse', '--verify', '--quiet', `${full}^{commit}`]) : { ok: false };
   if (!v.ok) throw testError(startRef ? `the branch ${startRef} is not in the project` : 'the project has no commit yet', 'BAD_REQUEST');
   return { commit: v.stdout.trim(), startRef, current };
 }
@@ -270,7 +281,9 @@ export async function ensureStartCommit({ key, projectDir, project, changes = nu
 /** D63: how many commits the start branch gained since the start point; null when Worca cannot tell. Read only. */
 export async function behindCount({ projectDir, startSha, startRef }) {
   if (!startRef || !projectDir || !existsSync(projectDir) || !isSafeBranchName(startRef)) return null;
-  const r = await git(projectDir, ['rev-list', '--count', `${startSha}..refs/heads/${startRef}`]);
+  const full = await startRefName(projectDir, startRef);
+  if (!full) return null;
+  const r = await git(projectDir, ['rev-list', '--count', `${startSha}..${full}`]);
   return r.ok ? Number(r.stdout.trim()) || 0 : null;
 }
 

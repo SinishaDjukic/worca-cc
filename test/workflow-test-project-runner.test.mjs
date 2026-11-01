@@ -289,3 +289,11 @@ test('projectStateOf and readinessText for each state (D62, board 39)', async ()
   assert.equal(readinessText({ name: 'Ticket 497', project: null }, 'pick-project'), 'Ticket 497 is left out: pick its project first.');
   assert.equal(readinessText(ex, 'missing'), folderMissingText(pin.key, ''), 'no registry row: the key names it');
 });
+
+test('final review: the runner takes WORKTREE_STAGE from a leaf module, not the whole run harness', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/core/workflow-tests/runner.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /from '\.\.\/run-harness\.mjs'/);
+  const leaf = await import('../src/core/setup-stages.mjs');
+  assert.equal(leaf.WORKTREE_STAGE, WORKTREE_STAGE, 'the harness re-exports the same constant');
+});

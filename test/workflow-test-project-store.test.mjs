@@ -85,3 +85,18 @@ test('a try records its start, disk, setup and changes; the last disk size and s
   assert.equal(store.avgSetupMs(ex.id, SHA), 90000);
   assert.equal(store.lastDiskBytes(ex.id, SHA2), null);
 });
+
+test('final review: while a test tries the example, a save that keeps its project is allowed; a changed project, start, changes or setup is BUSY', () => {
+  const ex = store.createExample('wf_p', { name: 'Ticket 482', request: 'Fix it.' }, { project: pin() });
+  const run = store.createTestRun({ workflowId: 'wf_p', a: 1, b: 'draft', aFp: 'a', bFp: 'b', exampleIds: [ex.id], tries: 1 });
+  assert.equal(store.runningTestRun('wf_p').id, run.id);
+  const noted = store.updateExample('wf_p', ex.id, { note: 'a note' }, { project: pin() });
+  assert.equal(noted.note, 'a note', 'a note-only edit with the unchanged pin saves');
+  assert.equal(store.updateExample('wf_p', ex.id, { note: 'again' }, { project: pin({ name: 'worca-cc' }) }).note, 'again', 'the shown name is no change');
+  for (const [what, over] of [['the start', { startSha: SHA2, startCommit: SHA2 }], ['the branch', { startRef: 'dev' }], ['the setup', { setupCmd: 'npm install' }],
+    ['the changes', { changes: Buffer.from('diff --git a/x b/x\n') }], ['the project', { key: 'other-1a2b3c4d' }]]) {
+    assert.throws(() => store.updateExample('wf_p', ex.id, {}, { project: pin(over) }), { code: 'BUSY' }, what);
+  }
+  assert.throws(() => store.updateExample('wf_p', ex.id, {}, { project: null }), { code: 'BUSY' }, 'removing the project');
+  assert.deepEqual(store.readExample('wf_p', ex.id).project.startSha, SHA, 'nothing changed');
+});
