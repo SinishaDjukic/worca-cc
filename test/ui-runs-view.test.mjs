@@ -1646,7 +1646,9 @@ test('list keys: with a selection, E on the View button or the bar\'s Archive po
 test('list keys: E on the second of 3 finished rows leaves the focus on the row that was third', async () => {
   let hist = [...HIST, MORE];
   let late = false;   // after the archive, History answers a beat later, as it does over the network
-  const { window, doc, posts } = await boot({ history: () => (late ? new Promise((r) => setTimeout(() => r(hist), 30)) : hist), bulk: (body) => {
+  let release;        // held until the test lets it go, so a slow runner cannot answer before the focus check
+  const held = new Promise((r) => { release = r; });
+  const { window, doc, posts } = await boot({ history: () => (late ? held.then(() => hist) : hist), bulk: (body) => {
     const id = body.targets[0].pipelineId;
     hist = hist.filter((p) => p.id !== id);
     late = true;
@@ -1658,6 +1660,7 @@ test('list keys: E on the second of 3 finished rows leaves the focus on the row 
   second.focus();
   press(window, second, 'e'); await settle(window, 8);
   assert.equal(doc.activeElement, second, 'the row keeps the focus until History drops it');
+  release();
   await new Promise((r) => setTimeout(r, 60)); await settle(window);
   assert.equal(posts.length, 1);
   assert.equal(doc.querySelector(`#runs-list a.runs-row[data-row-key="${second.dataset.rowKey}"]`), null, 'the repaint dropped it');

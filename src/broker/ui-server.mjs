@@ -184,7 +184,9 @@ export function createUiHandler({ config, service, store, identity = createIdent
     // GitHub token sealed; neither the page nor worca ever holds it.
     if (kind === 'slots' && (sub === '/device' || sub === '/device/poll') && req.method === 'POST') {
       const slot = service.slotById.get(slotId);
-      if (slot.signIn !== 'github-device') { send(res, 404, { error: 'this credential has no sign-in flow' }); return; }
+      // "Push as me" signs in through the operator's own app only: without its client ID the
+      // slot is paste-only (never Copilot's app, startDeviceFlow's default).
+      if (slot.signIn !== 'github-device' || (slot.auth === 'github-user' && !slot.clientId)) { send(res, 404, { error: 'this credential has no sign-in flow' }); return; }
       const key = `${email}|${slotId}`;
       if (sub === '/device') {
         try {

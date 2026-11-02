@@ -252,6 +252,7 @@ import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, baseM
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
 import { sealBrokerSecret, brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
+import { asPersonMode } from '../src/core/github-credentials.mjs';
 import {
   startPlatformHeartbeat, buildHeartbeatBody, dbPipelineCounts, todayCounts, nextScheduledAt, dbWritable, diskNearlyFull,
   HEARTBEAT_INTERVAL_MS,
@@ -12261,7 +12262,8 @@ app.get('/api/credentials', async (req, res) => {
         if (r) models[m.id] = r.slot ? { slot: r.slot } : r.keyless ? { keyless: true } : { error: r.error };
       }
     } catch { /* badges are a nicety: an unreadable catalog leaves them off */ }
-    const base = { enabled: true, mode: info.mode, keyPage: info.publicUrl || null, models };
+    // "Push as me" (docs/credential-broker.md): the card shows the person's GitHub only when worca uses it.
+    const base = { enabled: true, mode: info.mode, keyPage: info.publicUrl || null, models, githubAsPerson: asPersonMode(process.env) };
     if (info.mode !== 'multi') return res.json({ ...base, person: null, slots: (await personSlots('local')).slots });
     if (!isSharedIdentity(who.source)) return res.json({ ...base, person: null, slots: [] });
     const r = await personSlots(who.name);

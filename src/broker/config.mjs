@@ -195,8 +195,9 @@ export function readBrokerConfig(env = process.env, { readFile = readFileSync } 
     else tokenMaxTtlMs = t;
   }
 
-  // "Push as me" (optional): each person signs in with GitHub on the key page through the
-  // operator's GitHub App or OAuth App; worca's pushes and PRs then go out as them.
+  // "Push as me": each person pastes a GitHub token on the key page (multi mode, no app
+  // needed) or, with this client ID, signs in with GitHub through the operator's GitHub App
+  // or OAuth App; worca's pushes and PRs then go out as them.
   const githubClientId = String(env.WORCA_BROKER_GITHUB_CLIENT_ID || '').trim() || null;
   const ghSecret = readSecret(env, 'WORCA_BROKER_GITHUB_CLIENT_SECRET', readFile);
   if (ghSecret.error) errors.push(ghSecret.error);

@@ -694,7 +694,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
     // itself (never an agent). A GitHub App user token close to expiry is renewed first.
     if (req.method === 'POST' && p === '/internal/github-token') {
       const slot = [...slotById.values()].find((s) => s.auth === 'github-user');
-      if (!slot) { sendJson(res, 404, { error: '"push as me" is not set up on the broker (WORCA_BROKER_GITHUB_CLIENT_ID)', code: 'not_configured' }); return; }
+      if (!slot) { sendJson(res, 404, { error: '"push as me" is not set up on the broker (it needs multi mode, or WORCA_BROKER_GITHUB_CLIENT_ID in single mode)', code: 'not_configured' }); return; }
       const who = normalizeBillTo(body?.person);
       if (!who || who === 'local') { sendJson(res, 400, { error: 'person must be a signed-in person\'s email' }); return; }
       const c = resolveCredential(who, slot);
@@ -703,6 +703,9 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       let g = parseGithubSecret(c.secret);
       if (g.refreshToken && g.expiresAt && g.expiresAt - now() < 5 * 60_000) {
         try {
+          // A pasted token has no refresh token; a sign-in's does, and renewing it needs the
+          // client ID it was issued to. Without one (the operator removed it) it has expired.
+          if (!slot.clientId) throw new Error('the GitHub sign-in expired and the broker has no GitHub client ID to renew it: paste a token on the key page');
           const next = await refreshGithubToken({ refreshToken: g.refreshToken, clientId: slot.clientId, clientSecret: config.github?.clientSecret, fetchImpl, ...(slot.deviceBaseUrl ? { baseUrl: slot.deviceBaseUrl } : {}), now: now() });
           g = parseGithubSecret(next);
           store.putCredential({ billTo: who, slot: slot.id, sealed: seal(config.vaultKey, next, { billTo: who, slot: slot.id }), suffix: suffixOf(g.token), kind: 'github', upstream: new URL(slot.upstream).origin, verifiedAt: now(), now: now() });
