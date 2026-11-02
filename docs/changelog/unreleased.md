@@ -32,7 +32,7 @@ Read it: [Ticket updates](../ticket-updates.md)
 
 Pull requests (add each number when it opens):
 
-- Ticket updates
+- Ticket updates (#1072)
 
 ## Shaper, Run presets and Cost tags leave Labs
 
