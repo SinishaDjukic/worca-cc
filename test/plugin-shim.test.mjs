@@ -7,7 +7,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +19,7 @@ import { callSource, PluginOpError, setMockSourceResponses, _resetWithheldProxyN
 import { egressChildEnv } from '../src/core/egress-policy.mjs';
 import { startProxyNet, setProxyEnv, assertProxyRouting, NO_PROXY_HOST } from './helpers/proxy-net.mjs';
 import { importClosure } from './helpers/import-closure.mjs';
+import { redactAskText } from '../src/core/ask/redact.mjs';
 
 useTempHome(after);
 // The developer's own proxy variables never reach these real children (the proxy
@@ -406,6 +407,24 @@ test('A6.1 mock answers (D18): search, a ticket, a gone key, a download into des
     delete process.env.WORCA_MOCK;
     setMockSourceResponses(null);
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the mock fixtures live in plugin-shim-mock.mjs, loaded only in mock mode, with no token-shaped literal (review of #1041)', async () => {
+  assert.ok(!importClosure('src/core/plugin-shim.mjs').modules.includes('src/core/plugin-shim-mock.mjs'), 'a real call never loads the fixtures');
+  const source = (f) => readFileSync(fileURLToPath(new URL(`../src/core/${f}`, import.meta.url)), 'utf8');
+  assert.ok(!/MOCK_COMMENTS|MOCK_TICKET_DESCRIPTION/.test(source('plugin-shim.mjs')), 'the fixtures are not in the shim');
+  const TOKEN = /\b(?:gh[opsur]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,})/;
+  for (const f of ['plugin-shim.mjs', 'plugin-shim-mock.mjs']) assert.ok(!TOKEN.test(source(f)), `${f}: no token-shaped literal`);
+  process.env.WORCA_MOCK = '1';
+  try {
+    const t = await callSource({ plugin: 'x', sourceId: 'x', op: 'importTicket', args: { key: 'SHOP-124' } });
+    const body = t.comments.at(-1).body;
+    assert.match(body, /\bghp_(?:FAKE){9}\b/, 'the mock comment carries an obviously fake token');
+    assert.equal(redactAskText(body), 'Sandbox for the refund API is ready; token ghp_<redacted>', 'which the import still hides, as a real one');
+  } finally {
+    delete process.env.WORCA_MOCK;
+    setMockSourceResponses(null);
   }
 });
 
