@@ -41,7 +41,7 @@ import {
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   folderApplyRetainFor,
-  resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
+  resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
 } from '../src/core/artifacts.mjs';
@@ -64,7 +64,7 @@ import {
 import { listProjects, runOnboarded, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
-import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR, SHELL_CSP } from '../src/core/index-html.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
@@ -125,7 +125,7 @@ import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERROR
 import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
 import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
 import { setupFromBody, bodyFollowingPreset, overriddenKeys, PRESET_LIMITS } from '../src/shared/run-presets.mjs';
-import { describeTitleModel } from '../src/core/title.mjs';
+import { describeTitleModel, auxTextCall, resolveTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
 import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
@@ -149,13 +149,13 @@ import {
   renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
   deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
   snapshotChatGroups as askSnapshotChatGroups, restoreChatGroups as askRestoreChatGroups,
-  ChatGroupError,
+  ChatGroupError, switchThreadEngine as askSwitchThreadEngine,
 } from '../src/core/ask/store.mjs';
 import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
-import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
+import { ASK_LIMITS, askLimits as askLimitsFor } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
 import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEventPick as askEventPickOf, eventFallbackNotice } from '../src/core/ask/models.mjs';
@@ -163,9 +163,11 @@ import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
+  buildHandoffPrompt as askBuildHandoffPrompt, handoffBudgetChars as askHandoffBudgetChars, needsHandoff as askNeedsHandoff,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
-import { askScriptPromptInput, scriptToolsEnabled } from '../src/core/ask/script-deps.mjs';
+import { askScriptPromptInput, scriptToolsEnabled, defaultScriptDeps as askScriptDeps } from '../src/core/ask/script-deps.mjs';
+import { applyScriptCard, scriptEventPrompt, scriptNoticeText } from '../src/core/ask/script-approval.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
 import { validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
@@ -215,8 +217,9 @@ import { policyCatalogModels, cachedPolicyHomes } from '../src/core/policy/cache
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
-  isPeerThisMachine, LOCAL_HOSTNAMES, hostnameOf,
+  isThisBox, LOCAL_HOSTNAMES, hostnameOf, createPeerGuard, readRouteGateways,
 } from '../src/core/remote-access.mjs';
+import { identityHeaderTrust } from '../src/core/trusted-proxies.mjs';
 import {
   createExtensionPairing, decideExtensionRequest, extensionOrigin, EXTENSION_WS_PROTOCOL, TOKEN_PREFIX,
 } from '../src/core/extension-pairing.mjs';
@@ -248,7 +251,8 @@ import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, baseM
   resolveMark, toRecord, resolveTaskText } from '../src/core/base-conflicts.mjs';
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
-import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
+import { sealBrokerSecret, brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
+import { asPersonMode } from '../src/core/github-credentials.mjs';
 import {
   startPlatformHeartbeat, buildHeartbeatBody, dbPipelineCounts, todayCounts, nextScheduledAt, dbWritable, diskNearlyFull,
   HEARTBEAT_INTERVAL_MS,
@@ -273,8 +277,10 @@ import {
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel, readSettings } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES, lockedChatEngine } from '../src/core/model-env.mjs';
-import { engineLabel, ENGINE_NAMES, engineRefusalFor, ENGINES, chatAttachRefusal } from '../src/shared/engine-switch.mjs';
+import { engineLabel, ENGINE_NAMES, engineRefusalFor, ENGINES, chatAttachRefusal, chatSwitchChanges } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
+import { chatDescriptor, chatEngineGate } from '../src/core/engines/chat.mjs';   // #943: the switch route runs the turn's gate
+import { chatModelRates } from '../src/core/ask/chat-price.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
@@ -290,12 +296,12 @@ import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
 import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
-  DEFAULT_UI_PORT, UI_HEALTH_NAME, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet, listPolicyGuardrailSets, isPolicyGuardrailSetId,
-  writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
+  writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId, defaultGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
@@ -354,7 +360,7 @@ import {
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
-  commitFileOnBranch, checkCombine, writeCombinedBranch,
+  commitFileOnBranch, checkCombine, writeCombinedBranch, fetchPullHead,
 } from '../src/core/git-sync.mjs';
 import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mjs';
 import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
@@ -366,9 +372,18 @@ import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
-  markPrReady, closePr, uncommittedPatch, ghItemSummaries } from '../src/core/git-info.mjs';
+  markPrReady, closePr, uncommittedPatch, ghItemSummaries, ghApi, branchExists, commitsAhead } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
+import {
+  createAutomationEngine, listRules as listAutomationRules, getRule as getAutomationRule, createRule as createAutomationRule,
+  updateRule as updateAutomationRule, deleteRule as deleteAutomationRule, validateRule as validateAutomationRule, listEvents as listAutomationEvents,
+  autoHandleState, setAutoHandle, AUTO_HANDLE, verifyGithubSignature, recordDelivery, normalizeFilter as normalizeAutomationFilter,
+  normalizeLimits as normalizeAutomationLimits, forgeOfRepo, DEFAULT_LIMITS as AUTOMATION_DEFAULT_LIMITS, TRIAGE_SYSTEM, triagePrompt, parseTriage, mockTriage,
+  DEFAULT_WORKSPACE_LIMITS as AUTOMATION_WORKSPACE_LIMITS, workspaceOwnerKey, memberForEvent, limitsError as automationLimitsError,
+} from '../src/core/automations.mjs';
+import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION } from '../src/core/automation-templates.mjs';
+import { createAzureAutomationHost, azureWebhookItems } from '../src/core/automation-azure.mjs';
 import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { forkRefusal as bitbucketForkRefusal } from '../src/core/pr/bitbucket.mjs';
 // Forges whose PRs worca opens over REST (pr/azure.mjs, pr/bitbucket.mjs): gh body edits and GitHub "Closes" lines skip them.
@@ -444,7 +459,7 @@ import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
-import { failedBecauseSignedOut } from '../src/core/claude-auth.mjs';
+import { failedBecauseSignedOut, claudeChatSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen, resolveAgentGenModel } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -457,7 +472,7 @@ import { PORT_ID_RE } from '../src/shared/graph/constants.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin, pythonNoticeFor,
   setPluginEnabled, doctorPlugin, linkPlugin,
-  listOrphanPluginData, purgePluginData, installedInventory, pluginReferences,
+  listOrphanPluginData, purgePluginData, installedInventory, pluginReferences, COMMIT_SHA_RE,
 } from '../src/core/plugin-store.mjs';
 import { githubWebUrl } from '../src/shared/plugin-access.mjs';
 import { fetchCandidate } from '../src/core/plugin-repo.mjs';
@@ -496,7 +511,7 @@ import {
   chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
-  onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
+  addNotification, onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
 } from '../src/core/notifications.mjs';
 import {
   normalizeRule, nextOccurrence, previewOccurrences, describeRule, parseScheduledFor, localDate,
@@ -551,6 +566,8 @@ import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposa
 // direct-bin fallback. We removeAllListeners('warning') FIRST so Node's default
 // printer no longer fires (a bare listener would NOT suppress the warning and would
 // double-print every OTHER warning), then attach our single filtering listener.
+// The credential broker's secret leaves process.env before anything can spawn: no child inherits it.
+sealBrokerSecret();
 process.removeAllListeners('warning');
 process.on('warning', (w) => {
   if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
@@ -683,9 +700,11 @@ const VOICE_VENDOR = [
 
 // PORT=0 is a real value (the OS picks a free port; `--scratch` uses it), not "unset".
 const PORT = process.env.PORT === '0' ? 0 : Number(process.env.PORT) || DEFAULT_UI_PORT;
-// Bind to loopback by default (S1). Power users who knowingly want LAN exposure
-// can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
-// applies unless they also front it with auth.
+// Bind to loopback by default (S1). WORCA_HOST=0.0.0.0 (the worca image) still
+// answers only callers on this machine: local mode needs a loopback Host AND a
+// loopback TCP peer (or Docker's gateway, in the image), so a network caller
+// sending `Host: localhost` gets a 403 (G4, createPeerGuard). Anything wider
+// goes through remote access below.
 const HOST = process.env.WORCA_HOST || '127.0.0.1';
 
 // Remote access behind an identity proxy (src/core/remote-access.mjs): opt-in
@@ -693,12 +712,25 @@ const HOST = process.env.WORCA_HOST || '127.0.0.1';
 // contract above, unchanged. A config error stops the server at boot (isMain)
 // and, should the app be imported anyway, refuses every non-local request.
 const REMOTE_ACCESS = readRemoteAccessConfig(process.env);
-const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: HOST });
 const REMOTE_MODE = isRemoteMode(REMOTE_ACCESS);
-const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
-const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
+// In the image, a published port reaches worca from the container's gateway (G4).
+const PEER_GATEWAYS = DEPLOYMENT === 'container' ? readRouteGateways() : [];
+const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: HOST, gateways: PEER_GATEWAYS });
+const isTrustedPeer = createPeerGuard(REMOTE_ACCESS, { gateways: PEER_GATEWAYS });
+const hostGuard = createHostGuard(REMOTE_ACCESS.allowedHosts);
+const isLocalRequest = (req) => isTrustedPeer(req) && hostGuard(req);
+// X1: WORCA_IDENTITY_HEADER names a person (Ask thread owner, broker bill-to, startedBy) only when the identity
+// proxy sent it, from WORCA_IDENTITY_TRUSTED_PROXIES, as on the broker's key page (trusted-proxies.mjs). From any
+// other peer it is dropped before anything reads it. Read per request: tests flip the env between requests.
+let idHeaderTrust = null;
+function dropUntrustedIdentityHeader(req) {
+  const key = `${process.env.WORCA_IDENTITY_HEADER || ''}\0${process.env.WORCA_IDENTITY_TRUSTED_PROXIES || ''}`;
+  if (idHeaderTrust?.key !== key) idHeaderTrust = { key, ...identityHeaderTrust(process.env) };
+  if (idHeaderTrust.header && !idHeaderTrust.trusted(req)) delete req.headers[idHeaderTrust.header];
+}
+const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // Keep awake, the account menu's switch (keepAwake setting, default on locally): one OS child holds off idle
 // system sleep while any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it
 // wherever a run's status or pendingQuestion changes, and when the setting changes.
@@ -725,6 +757,8 @@ const extensionPairing = createExtensionPairing({ file: () => path.join(worcaHom
  * also carries name, org, inst, teams and exp), null when refused. Rejects when the identity provider cannot be reached (-> 503).
  */
 async function requestIdentity(req) {
+  // A caller on this box skips the identity check. Under agent isolation that caller may be the agent, which is
+  // safe only because G1 (admitThisBoxCaller, the same isThisBox test) then demands the per-boot token.
   if (isInContainer(req)) return { local: true };
   if (REMOTE_ACCESS_CHECK.errors.length) return null;
   if (!identityCheck) return { local: true };
@@ -883,6 +917,8 @@ const wss = new WebSocketServer({
   server,
   path: '/ws',
   verifyClient: (info, done) => {
+    if (!isTrustedPeer(info.req)) return done(false, 403);   // G4: before the extension gate, as for HTTP
+    dropUntrustedIdentityHeader(info.req);
     const ext = extensionSocketAuth(info.req);
     if (ext === 'refuse') return done(false, 401);
     if (ext) { info.req.worcaExtension = ext; return done(true); }
@@ -890,7 +926,11 @@ const wss = new WebSocketServer({
     requestIdentity(info.req).then(
       // Keep who this is on the upgrade request: the connection handler reads it to scope
       // per-thread Ask frames to their owner (askViewer).
-      (who) => { if (who) info.req.worcaUser = who; return who ? done(true) : done(false, 401); },
+      (who) => {
+        if (!who) return done(false, 401);
+        info.req.worcaUser = who;
+        return admitThisBoxCaller(info.req, { ws: true }) ? done(true) : done(false, 403);   // G1
+      },
       () => done(false, 503),
     );
   },
@@ -1685,6 +1725,63 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
   });
 
 // ---------------------------------------------------------------------------
+// GitHub webhook ingress (#711, docs/git-automations.md): the second exemption from the loopback guard, mounted
+// here for the same reason as Teams'. It answers 404 to everything unless the gitAutomations flag is on, a secret is
+// set (WORCA_GH_WEBHOOK_SECRET) and the body's HMAC-SHA256 matches X-Hub-Signature-256 — so a probe cannot tell it
+// exists. Bodies are never logged. A repeated X-GitHub-Delivery is acknowledged and dropped. The event is handled
+// after the answer: GitHub waits 10 s at most.
+// ---------------------------------------------------------------------------
+const githubIngressBucket = new TokenBucket(120);
+app.post('/api/ingress/github', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => {
+  const notFound = () => res.status(404).json({ error: 'not found' });
+  if (!flagEnabled('gitAutomations')) return notFound();
+  const secret = String(process.env.WORCA_GH_WEBHOOK_SECRET || '').trim();
+  if (!secret) return notFound();
+  if (!githubIngressBucket.tryConsume()) return res.status(429).json({ error: 'rate limited' });
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const delivery = String(req.get('x-github-delivery') || '').slice(0, 100);
+  const name = String(req.get('x-github-event') || '').slice(0, 50);
+  if (!verifyGithubSignature(secret, raw, req.get('x-hub-signature-256'))) {
+    console.warn(`[worca-ui] GitHub webhook refused: bad or missing signature (event ${name || '?'}, delivery ${delivery || '?'}, ${raw.length} bytes)`);
+    return notFound();
+  }
+  if (name === 'ping') return res.status(200).json({ ok: true });
+  let payload;
+  try { payload = JSON.parse(raw.toString('utf8')); } catch { return res.status(400).json({ error: 'not JSON' }); }
+  if (!recordDelivery(delivery)) return res.status(200).json({ ok: true, duplicate: true });
+  res.status(202).json({ ok: true });
+  Promise.resolve().then(() => automations.handleWebhook(name, payload))
+    .catch((err) => console.warn(`[worca-ui] GitHub webhook ${name} (${delivery}): ${err?.message || err}`));
+});
+
+// Azure DevOps service hooks (#711): the same posture as the GitHub route above. Service hooks cannot sign a body, so
+// the hook sends Basic authentication whose password is WORCA_ADO_WEBHOOK_SECRET (any user name), compared in
+// constant time; anything else is 404. A repeated notification (its `id`) is acknowledged and dropped.
+app.post('/api/ingress/azure', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => {
+  const notFound = () => res.status(404).json({ error: 'not found' });
+  if (!flagEnabled('gitAutomations')) return notFound();
+  const secret = String(process.env.WORCA_ADO_WEBHOOK_SECRET || '').trim();
+  if (!secret) return notFound();
+  if (!githubIngressBucket.tryConsume()) return res.status(429).json({ error: 'rate limited' });
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const m = /^Basic\s+(\S+)$/i.exec(String(req.get('authorization') || ''));
+  let password = '';
+  try { const decoded = m ? Buffer.from(m[1], 'base64').toString('utf8') : ''; password = decoded.slice(decoded.indexOf(':') + 1); } catch { password = ''; }
+  const got = Buffer.from(password); const want = Buffer.from(secret);
+  if (!m || got.length !== want.length || !timingSafeEqual(got, want)) {
+    console.warn(`[worca-ui] Azure DevOps service hook refused: bad or missing credential (${raw.length} bytes)`);
+    return notFound();
+  }
+  let payload;
+  try { payload = JSON.parse(raw.toString('utf8')); } catch { return res.status(400).json({ error: 'not JSON' }); }
+  const delivery = typeof payload?.id === 'string' ? `ado:${payload.id.slice(0, 90)}` : '';
+  if (delivery && !recordDelivery(delivery)) return res.status(200).json({ ok: true, duplicate: true });
+  res.status(202).json({ ok: true });
+  Promise.resolve().then(async () => automations.handleItems(azureWebhookItems(payload, await automationAzureRepos())))
+    .catch((err) => console.warn(`[worca-ui] Azure DevOps service hook ${payload?.eventType || '?'}: ${err?.message || err}`));
+});
+
+// ---------------------------------------------------------------------------
 // Express middleware + static
 // ---------------------------------------------------------------------------
 
@@ -1693,7 +1790,8 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // loopback (see HOST below); this guard is the DNS-rebinding belt to that
 // suspenders: reject any request whose Host (or browser Origin) is not a
 // loopback name, so a malicious page resolving a name to 127.0.0.1 still can't
-// drive the API. Override WORCA_HOST only if you understand the exposure.
+// drive the API. On a non-loopback bind (WORCA_HOST) the header alone proves
+// nothing, so local mode also needs a trusted TCP peer (isTrustedPeer, G4).
 // The one sanctioned exception is a deployment behind an identity proxy:
 // WORCA_ALLOWED_HOSTS adds its hostname here, and the identity middleware
 // right below then demands the proxy's token (src/core/remote-access.mjs).
@@ -1717,6 +1815,8 @@ function setExtensionCors(req, res, origin) {
   if (req.headers['access-control-request-private-network'] === 'true') res.setHeader('Access-Control-Allow-Private-Network', 'true');
 }
 app.use((req, res, next) => {
+  if (!isTrustedPeer(req)) return res.status(403).json({ error: HOST_FORBIDDEN });   // G4: a loopback Host from the network
+  dropUntrustedIdentityHeader(req);
   const d = decideExtensionRequest(req, { remoteMode: REMOTE_MODE, verify: extensionPairing.verify });
   if (d.kind === 'pass') return next();
   if (d.origin) setExtensionCors(req, res, d.origin);   // none for an Origin / X-Worca-Extension mismatch
@@ -1765,6 +1865,43 @@ app.use((req, res, next) => {
   }, () => {
     res.status(503).json({ error: 'cannot verify the sign-in token right now' });
   });
+});
+
+/**
+ * D4: under agent isolation a caller on this machine may be the agent itself. Identity is skipped for a
+ * loopback peer + loopback Host (requestIdentity). In local mode the host guard accepts `Host: localhost`
+ * from ANY peer, so a peer at one of this machine's own addresses (the container's eth0) counts too.
+ * A request that carries a verified sign-in (`req.worcaUser` with an email/sub) is a person: the agent
+ * holds no identity token. agentIdentity() reads process.env per call (tests flip it between requests).
+ *
+ * G1: such a caller is the operator only with the per-boot token (UI_TOKEN_HEADER). It lives in memory
+ * and in ui.json (0600, in worca's home): the worca user reads it (the in-box `worca` CLI), an agent user
+ * cannot, and it is never put in an environment, so no spawn inherits it.
+ */
+const UI_TOKEN = newUiToken();
+const hasUiToken = (req) => {
+  const got = Buffer.from(String(req?.headers?.[UI_TOKEN_HEADER] || ''));
+  const want = Buffer.from(UI_TOKEN);
+  return got.length === want.length && timingSafeEqual(got, want);
+};
+const signedInPerson = (req) => !!(req.worcaUser && (req.worcaUser.email || req.worcaUser.sub));
+const thisBoxCaller = (req) => !!(req && agentIdentity() && !signedInPerson(req) && isThisBox(req));
+const agentMayBeCaller = (req) => thisBoxCaller(req) && !hasUiToken(req);
+// What a possible agent still reaches: the healthcheck, and routes that check their own credential
+// (the per-turn Ask relay and command tokens, the shutdown bearer).
+const AGENT_OPEN_ROUTES = new Set(['GET /api/health', 'POST /api/ask/relay', 'POST /api/ask/commands', 'POST /api/shutdown']);
+const AGENT_CALLER_BLOCKED = 'Worca refuses callers on this machine while agent isolation is on, unless they send the instance token (the worca CLI does). Open Worca through its published address.';
+/** G1 + G17 for one request (HTTP or a WebSocket upgrade): false = refuse it. A caller from this box names
+ *  no person either: the configured identity header is dropped, since the agent can set it too. */
+function admitThisBoxCaller(req, { ws = false } = {}) {
+  if (!thisBoxCaller(req)) return true;
+  const header = String(process.env.WORCA_IDENTITY_HEADER || '').trim().toLowerCase();
+  if (header) delete req.headers[header];
+  return hasUiToken(req) || (!ws && AGENT_OPEN_ROUTES.has(`${req.method} ${req.path}`));
+}
+app.use((req, res, next) => {
+  if (admitThisBoxCaller(req)) return next();
+  res.status(403).json({ error: AGENT_CALLER_BLOCKED, code: 'AGENT_CALLER_BLOCKED' });
 });
 
 // Ask threads have an owner (ask_threads.created_by). On a shared deployment (a real per-person
@@ -2020,8 +2157,9 @@ function sendIndex(res) {
   res.set('Cache-Control', 'no-store');
   res.set('X-Content-Type-Options', 'nosniff');
   // Nothing frames the shell. A framed shell lets a third party (an extension, any page) put a decoy over a
-  // security prompt it can trigger, e.g. the browser-extension pairing Approve.
-  res.set('Content-Security-Policy', "frame-ancestors 'none'");
+  // security prompt it can trigger, e.g. the browser-extension pairing Approve. Scripts come only from
+  // this origin (SHELL_CSP).
+  res.set('Content-Security-Policy', SHELL_CSP);
   res.set('X-Frame-Options', 'DENY');
   return res.send(html);
 }
@@ -2195,10 +2333,20 @@ export function firstInjectionSource(sourceByKey = {}) {
 // via resolveTaskInput (src/core/sources.mjs) so the task is fetched exactly
 // once — the server must never resolve it too.
 // Returns null when absent, else { ok:true, source } | { ok:false, error }.
-function normalizeRunSource(raw) {
+function normalizeRunSource(raw, { automation = false } = {}) {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'source must be an object' };
   const type = raw.type;
+  // A Git event automation's issue or PR (#711). In-process only (invokeStartRun's `automation`), never from HTTP:
+  // a hand-built body must not claim an issue it was not started from.
+  if ((type === 'github' || type === 'azure') && automation) {
+    const host = type === 'azure' ? /^https:\/\/dev\.azure\.com\// : /^https:\/\/github\.com\//;
+    if (!(typeof raw.prompt === 'string' && raw.prompt.trim()) || !(typeof raw.url === 'string' && host.test(raw.url))) {
+      return { ok: false, error: `source.prompt and a ${type === 'azure' ? 'dev.azure.com' : 'github.com'} source.url are required for type "${type}"` };
+    }
+    return { ok: true, source: { type, kind: raw.kind === 'pr' ? 'pr' : 'issue', repo: String(raw.repo || ''),
+      number: Number.isSafeInteger(raw.number) ? raw.number : null, url: raw.url, title: String(raw.title || '').slice(0, 300), prompt: raw.prompt } };
+  }
   if (type === 'prompt') {
     if (!(typeof raw.prompt === 'string' && raw.prompt.trim())) {
       return { ok: false, error: 'source.prompt is required for type "prompt"' };
@@ -2615,7 +2763,7 @@ const startRunHandler = async (req, res) => {
     // NEW (plugins §7.3): body.source is the task-source descriptor; shape-check
     // only and pass through — the orchestrator resolves it exactly once. Absent
     // -> the legacy branch below runs byte-identical.
-    const sourceCheck = normalizeRunSource(body.source);
+    const sourceCheck = normalizeRunSource(body.source, { automation: !!req._automation });
     if (sourceCheck && !sourceCheck.ok) return badRequest(res, sourceCheck.error);
     const source = sourceCheck ? sourceCheck.source : null;
 
@@ -2731,7 +2879,7 @@ const startRunHandler = async (req, res) => {
     // Their tags are stored data (a ticket's request, a predecessor's or parent's tags, a changes/route card's origin
     // run's tags), so the key:value rule skips them too.
     const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
-      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID
+      || req._startedBy === 'pr-watch' || !!req._automation || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID
       || req._cardStart === true;   // Shaper s5 (D19): a run started from a changes/route card; its tags are the origin's stored tags
     let tags = [];
     if (body.tags !== undefined) {
@@ -2752,16 +2900,16 @@ const startRunHandler = async (req, res) => {
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
-    // Absent/blank/null normalizes to 'permissive' — the empty policy,
-    // byte-identical legacy spawn — so pre-picker API/CLI callers keep today's
-    // behavior. A NON-STRING value is a caller bug and 400s (normalizing it
+    // Absent/blank/null normalizes to the install's default set (Normal on a
+    // fresh install, Permissive on one from before v81 — defaultGuardrailSetId).
+    // A NON-STRING value is a caller bug and 400s (normalizing it
     // away would silently drop the requested policy). Unknown ids 400 up
     // front, like workflowId.
     if (body.guardrailsId != null && typeof body.guardrailsId !== 'string') {
       return badRequest(res, 'guardrailsId must be a string');
     }
     const guardrailsId =
-      typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : 'permissive';
+      typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : defaultGuardrailSetId();
     if (!(await readGuardrailSet(guardrailsId))) {
       return badRequest(res, `unknown guardrailsId "${guardrailsId}"`);
     }
@@ -3711,7 +3859,7 @@ function dropStagedOnceCopied(runId, drop) {
  *  a requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
  *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy.
  *  A6 D15: `reportTo` (a requirements start's ticket) is handed over as req._reportTo. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3723,7 +3871,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
-      ...(reportTo ? { _reportTo: reportTo } : {}) }, res);
+      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
@@ -3841,8 +3989,8 @@ async function fireTicket(ticket) {
     const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];
     body = bodyFollowingPreset(body, preset, { keep });
     // An Ask card can never propose Permissive (D9 / R-sec-2), so an unattended run from one never starts on it,
-    // whatever the preset says now. (A missing guardrailsId starts as Permissive.)
-    if (ticket.askCardId && (!body.guardrailsId || body.guardrailsId === 'permissive')) {
+    // whatever the preset says now. (A missing guardrailsId starts on the install default, defaultGuardrailSetId.)
+    if (ticket.askCardId && (body.guardrailsId || defaultGuardrailSetId()) === 'permissive') {
       return { ok: false, error: `it was scheduled from Chat and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
     }
   }
@@ -3943,6 +4091,8 @@ const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches ||
 // Ship card here, after teardown (`done` fires before teardown). Returns the card's promise (the test awaits it).
 function afterRunSettled(orch) {
   let card;
+  // Git event automations (#711): a finished event run writes back now, not at the next tick.
+  if (automationsOn()) kickAutomations();
   try {
     const st = orch.getState?.();
     // The Ship card is offered once the last slice is done (offerShipCard checks).
@@ -6166,51 +6316,85 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
   const hit = await resolveIndexedArtifactFileForRow(row, rel);
   if (!hit) return res.status(404).json({ error: 'artifact not found' });
   const mime = mimeForPath(hit.rel);
+  // V16: the shell's CSP `script-src 'self'` admits any script on this origin. Agent-written JS is served
+  // from here, so a script load from the worca origin itself is refused, and the JS is a script only for a
+  // deck's sandboxed frame (an opaque origin: cross-site). Anything else gets it as text, which nosniff never
+  // runs: the viewer reads it as text, and a browser that sends no fetch metadata cannot be told apart.
+  const fetchHeader = (name) => String(res.req?.headers?.[name] || '').toLowerCase();
+  const isScript = mime?.startsWith('text/javascript') && !download;
+  if (isScript && fetchHeader('sec-fetch-site') === 'same-origin'
+      && ['script', 'worker', 'sharedworker', 'serviceworker'].includes(fetchHeader('sec-fetch-dest'))) {
+    return res.status(403).json({ error: 'artifact scripts do not run in the worca page' });
+  }
+  const servedMime = isScript && fetchHeader('sec-fetch-site') !== 'cross-site' ? 'text/plain; charset=utf-8' : mime;
   if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
-  let size;
-  try { size = (await fsp.stat(hit.file)).size; } catch { return res.status(404).json({ error: 'artifact not found' }); }
-  const kind = viewerKindFor(hit.rel);
-  const anySize = download || kind === 'audio' || kind === 'video';
-  if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
-  // Set Content-Type explicitly so express/send does not re-derive it from the ext.
-  res.set('Content-Type', mime || 'application/octet-stream');
-  res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
-    : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
-  res.set('Cache-Control', 'no-store');                       // artifacts are mutable while a run is live
-  // Defense in depth for scriptable markup: even opened in a top-level tab the
-  // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
-  if (kind === 'html') res.set('Content-Security-Policy', 'sandbox allow-scripts');
-  else if (mime === 'image/svg+xml' || mime === 'application/xml') res.set('Content-Security-Policy', 'sandbox');
-  // NO Access-Control-Allow-Origin, deliberately.
-  //
-  // The viewer frames a deck with sandbox="allow-scripts" and no
-  // allow-same-origin, so it has an opaque origin and its CORS-mode `@font-face`
-  // requests carry `Origin: null` — which the localhost-only guard refuses. A
-  // previewed deck therefore renders in FALLBACK TYPE. That is the accepted
-  // cost: the PDF and the standalone HTML (what actually gets sent to anyone)
-  // embed their fonts correctly.
-  //
-  // An earlier attempt exempted `Origin: null` from that guard so the header
-  // could work. It was a hole: every condition is attacker-controllable — any
-  // page can produce `Origin: null` from `<iframe sandbox="allow-scripts">`, and
-  // `Host: localhost:PORT` is simply what the browser sends — so any site the
-  // user visited while worca ran could read a run's font/media bytes and probe
-  // artifact paths for existence. Serving these to an opaque origin safely needs
-  // an unforgeable token in the PATH (so relative subresource URLs inherit it),
-  // not a header the caller chooses.
-  res.sendFile(path.basename(hit.file), { root: path.dirname(hit.file), dotfiles: 'allow', cacheControl: false }, (err) => {
-    if (!err || res.headersSent) return;
-    // A player's Range past the end (or any Range on an empty file) is send's 416: answer it as one, with the
-    // Content-Range send already set — never a 500. Other errors are JSON, not the artifact's type or name.
-    if (err.status === 416) return res.status(416).end();
-    res.removeHeader('Content-Disposition');
-    res.removeHeader('Content-Type');
-    // A conditional request send refuses (If-Match, If-Unmodified-Since) is a 412, not a server error.
-    if (err.status === 412) return res.status(412).end();
-    if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'artifact not found' });
-    res.status(500).json({ error: err.message || String(err) });
-  });
+  // Served from the file the link check passed, never by path again (V9: openArtifactUnder).
+  const fh = await openArtifactUnder(hit.base, hit.rel);
+  if (!fh) return res.status(404).json({ error: 'artifact not found' });
+  let streaming = false;
+  try {
+    const st = await fh.stat();
+    const size = st.size;
+    // The preconditions send answered: no ETag is sent, so any If-Match but `*` fails, as does an
+    // If-Unmodified-Since older than the file. A 412 carries neither the artifact's type nor its name.
+    const ifMatch = String(res.req?.headers?.['if-match'] || '').trim();
+    const unmodifiedSince = Date.parse(res.req?.headers?.['if-unmodified-since'] || '');
+    if ((ifMatch && ifMatch !== '*') || (Number.isFinite(unmodifiedSince) && Math.floor(st.mtimeMs / 1000) * 1000 > unmodifiedSince)) {
+      return res.status(412).end();
+    }
+    const kind = viewerKindFor(hit.rel);
+    const anySize = download || kind === 'audio' || kind === 'video';
+    if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
+    res.set('Accept-Ranges', 'bytes');
+    // One byte range for the players' seeks (express's req.range); a Range the file cannot satisfy is a 416
+    // with Content-Range, never the artifact's type or name. Several ranges get the whole file.
+    const ranges = res.req?.headers?.range ? res.req.range(size, { combine: true }) : null;
+    if (ranges === -1 || (ranges && size === 0)) {
+      res.set('Content-Range', `bytes */${size}`);
+      return res.status(416).end();
+    }
+    let start = 0, end = size - 1, status = 200;
+    if (Array.isArray(ranges) && ranges.type === 'bytes' && ranges.length === 1) {
+      ({ start, end } = ranges[0]);
+      status = 206;
+      res.set('Content-Range', `bytes ${start}-${end}/${size}`);
+    }
+    res.status(status);
+    res.set('Content-Length', String(size ? end - start + 1 : 0));
+    res.set('Content-Type', servedMime || 'application/octet-stream');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
+      : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
+    res.set('Cache-Control', 'no-store');                       // artifacts are mutable while a run is live
+    // Defense in depth for scriptable markup: even opened in a top-level tab the
+    // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
+    if (kind === 'html') res.set('Content-Security-Policy', 'sandbox allow-scripts');
+    else if (mime === 'image/svg+xml' || mime === 'application/xml') res.set('Content-Security-Policy', 'sandbox');
+    // NO Access-Control-Allow-Origin, deliberately.
+    //
+    // The viewer frames a deck with sandbox="allow-scripts" and no
+    // allow-same-origin, so it has an opaque origin and its CORS-mode `@font-face`
+    // requests carry `Origin: null` — which the localhost-only guard refuses. A
+    // previewed deck therefore renders in FALLBACK TYPE. That is the accepted
+    // cost: the PDF and the standalone HTML (what actually gets sent to anyone)
+    // embed their fonts correctly.
+    //
+    // An earlier attempt exempted `Origin: null` from that guard so the header
+    // could work. It was a hole: every condition is attacker-controllable — any
+    // page can produce `Origin: null` from `<iframe sandbox="allow-scripts">`, and
+    // `Host: localhost:PORT` is simply what the browser sends — so any site the
+    // user visited while worca ran could read a run's font/media bytes and probe
+    // artifact paths for existence. Serving these to an opaque origin safely needs
+    // an unforgeable token in the PATH (so relative subresource URLs inherit it),
+    // not a header the caller chooses.
+    if (res.req?.method === 'HEAD' || size === 0) return res.end();
+    const stream = fh.createReadStream({ start, end, autoClose: true });
+    streaming = true;
+    stream.on('error', () => res.destroy());
+    stream.pipe(res);
+  } finally {
+    if (!streaming) await fh.close().catch(() => {});
+  }
 }
 
 /** The run dir behind a LIVE id: the pipeline id (what /api/runs/:id/artifact
@@ -6829,7 +7013,7 @@ app.get('/api/policy/notes', async (req, res) => {
     const { meta, r, workspaceRun } = await policyForScope(scope);
     if (!r.ok) return res.json({ scope: meta, policy: null, notes: [] });
     const fields = fieldsForRun(r.doc, { workspaceRun });
-    const guardrailsId = typeof req.query.guardrailsId === 'string' && req.query.guardrailsId ? req.query.guardrailsId : 'permissive';
+    const guardrailsId = typeof req.query.guardrailsId === 'string' && req.query.guardrailsId ? req.query.guardrailsId : defaultGuardrailSetId();
     const set = await readGuardrailSet(guardrailsId);
     const models = typeof req.query.models === 'string' && req.query.models ? req.query.models.split(',').filter(Boolean).map((m) => ({ role: null, model: m })) : [];
     const dev = deviationsFor(fields, { guardrailsId, guardrailSet: set, stepModels: models, installed: installedPluginsMap(), worcaVersion: POLICY_WORCA_VERSION, metricsRecord: null });
@@ -7952,16 +8136,6 @@ const autoDetectedBuiltins = () => {
   return { editor: d.editor?.label || null, terminal: d.terminal?.label || null };
 };
 
-/**
- * D4: under agent isolation a caller on this machine may be the agent itself. Identity is skipped for a
- * loopback peer + loopback Host (requestIdentity). In local mode the host guard accepts `Host: localhost`
- * from ANY peer, so a peer at one of this machine's own addresses (the container's eth0) counts too.
- * A request that carries a verified sign-in (`req.worcaUser` with an email/sub) is a person: the agent
- * holds no identity token. Actions run as the server user, so a possible agent never gets them.
- * agentIdentity() reads process.env per call (tests flip it between requests).
- */
-const signedInPerson = (req) => !!(req.worcaUser && (req.worcaUser.email || req.worcaUser.sub));
-const agentMayBeCaller = (req) => !!(req && agentIdentity() && !signedInPerson(req) && (isInContainer(req) || isPeerThisMachine(req)));
 /** D4: actions run locally, or on a hosted deployment that opted in. No isInContainer exemption. */
 const actionsEnabledHere = (req = null) =>
   !agentMayBeCaller(req) && (!REMOTE_MODE || isTruthy(process.env.WORCA_ACTIONS_REMOTE));
@@ -8162,6 +8336,412 @@ const prWatcher = createPrWatcher(prWatcherDeps);
 const kickPrWatch = () => { void prWatcher.runner.kick(); };
 
 // ---------------------------------------------------------------------------
+// Git event automations and Auto-handle (#711, docs/git-automations.md; flag gitAutomations). A rule starts a run
+// when an issue or PR is opened in its project. src/core/automations.mjs owns the decisions; everything below is IO:
+// GitHub through `gh api` with worca's own credential (agents never get one), runs through invokeStartRun, the
+// Activity feed and chat through addNotification. Delivery: the poll below, plus the signed webhook route above the
+// loopback guard when WORCA_GH_WEBHOOK_SECRET is set.
+// ---------------------------------------------------------------------------
+const automationsOn = () => flagEnabled('gitAutomations');
+const webhookSecret = () => String(process.env.WORCA_GH_WEBHOOK_SECRET || '').trim();
+const adoWebhookSecret = () => String(process.env.WORCA_ADO_WEBHOOK_SECRET || '').trim();
+let ownLoginsCache = { at: 0, logins: [] };
+/** The account behind worca's GitHub credential, cached for an hour (an App token has no /user: none). */
+async function automationOwnLogins() {
+  if (Date.now() - ownLoginsCache.at < 3_600_000) return ownLoginsCache.logins;
+  const r = await ghApi({ path: 'user' });
+  ownLoginsCache = { at: Date.now(), logins: r.ok && r.json?.login ? [r.json.login] : [] };
+  return ownLoginsCache.logins;
+}
+/** The project's remote whose repository is `repo` (the remote a PR head is fetched from), else origin. */
+async function automationRemote(projectDir, repo) {
+  const rl = await listRemotes(projectDir);
+  const hit = rl.ok ? rl.remotes.find((r) => r.forge && String(r.slug || '').toLowerCase() === String(repo).toLowerCase()) : null;
+  return hit?.name || 'origin';
+}
+/** A project's repository on GitHub (`owner/name`) or Azure DevOps (`dev.azure.com/org/project/repo`, its remote slug):
+ *  origin's when it is on either, else the first such remote. */
+async function projectAutomationRepo(projectDir) {
+  const rl = await listRemotes(projectDir);
+  if (!rl.ok) return null;
+  const hosted = rl.remotes.filter((r) => (r.forge === 'github' || r.forge === 'azure') && r.slug);
+  return (hosted.find((r) => r.name === 'origin') || hosted[0])?.slug || null;
+}
+const NO_FORGE_REMOTE = 'this project has no GitHub or Azure DevOps remote: automations watch a repository on one of them';
+const NO_MEMBER_REMOTE = 'no project in this workspace has a GitHub or Azure DevOps remote: automations watch repositories on them';
+// A workspace's members as the engine reads them (createAutomationEngine's workspaceMembers): each member's directory,
+// key and repository, in the canonical member order (by project key). Cached a minute: the poll asks every tick.
+const automationWsCache = new Map();
+async function automationWorkspaceMembers(id, { fresh = false } = {}) {
+  const hit = automationWsCache.get(id);
+  if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.value;
+  const ws = await readWorkspace(id);
+  const value = ws ? {
+    name: ws.name || null,
+    members: (await Promise.all(ws.projectPaths.map(async (dir) => ({
+      name: getProjectByPath(dir)?.name || path.basename(dir), projectDir: dir, projectKey: projectKey(dir),
+      repo: await projectAutomationRepo(dir).catch(() => null),
+    })))).sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0)),
+  } : null;
+  automationWsCache.set(id, { at: Date.now(), value });
+  return value;
+}
+/** Every Azure DevOps repository a rule watches: project rules' own, and workspace rules' members' (the service hook's
+ *  work items are offered to each; the engine claims a workspace's once per Azure project). */
+async function automationAzureRepos() {
+  const out = new Set(listAutomationRules({ enabledOnly: true, scope: 'project' }).map((r) => r.repo).filter((r) => forgeOfRepo(r) === 'azure'));
+  for (const id of new Set(listAutomationRules({ enabledOnly: true, scope: 'workspace' }).map((r) => r.workspaceId))) {
+    for (const m of (await automationWorkspaceMembers(id))?.members || []) if (m.repo && forgeOfRepo(m.repo) === 'azure') out.add(m.repo);
+  }
+  return [...out];
+}
+/** The workspaces whose enabled rules take a project's repository over, per event (the project tab says so). */
+async function automationOverrides(repo) {
+  if (!repo) return [];
+  const by = new Map();
+  for (const r of listAutomationRules({ enabledOnly: true, scope: 'workspace' })) {
+    const w = await automationWorkspaceMembers(r.workspaceId);
+    if (!w || !memberForEvent(w.members, { kind: r.event === 'issue.opened' ? 'issue' : 'pr', repo })) continue;
+    if (!by.has(r.workspaceId)) by.set(r.workspaceId, { workspaceId: r.workspaceId, name: w.name || r.workspaceId, events: [] });
+    const o = by.get(r.workspaceId);
+    if (!o.events.includes(r.event)) o.events.push(r.event);
+  }
+  return [...by.values()];
+}
+async function automationPlanText(pipelineId) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return null;
+  // Oldest first: the last one is the newest plan version (the refined plan).
+  const plans = (await listRunArtifacts(row.id)).filter((a) => a.kind === 'plan' || /^plans\//.test(a.relPath));
+  if (!plans.length) return null;
+  const hit = await resolveIndexedArtifactForRow(row, plans[plans.length - 1].relPath);
+  return hit ? hit.text : null;
+}
+/** Open the fix run's draft PR (createRunPr: the issue source adds `Closes #N`) and turn on Watch PR for it. A
+ *  workspace run opens one per changed member (automationWorkspacePrs). */
+async function automationDraftPr(pipelineId) {
+  if (!(await anyPrHost())) return { ok: false, error: 'no pull request host is available (install the GitHub CLI)' };
+  const state = readPipelineStateById(pipelineId);
+  if (!state) return { ok: false, error: 'the run is gone' };
+  if (state.target === 'workspace') return automationWorkspacePrs(pipelineId, state);
+  const target = prTargetFor(state);
+  if (target.error || !target.repoDir) return { ok: false, error: target.error || 'the run has no project' };
+  const walked = chainBaseBranchesOf(pipelineId);
+  const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
+  const base = chain[0] || null;
+  if (!base) return { ok: false, error: 'the run has no base branch' };
+  let out = await createRunPr({ id: pipelineId, state, target, base, draft: true, actor: 'automation' });
+  if (!out.ok && /draft/i.test(out.error || '')) out = await createRunPr({ id: pipelineId, state, target, base, draft: false, actor: 'automation' });
+  if (!out.ok) return { ok: false, error: out.error };
+  if (watchablePrUrl(out.pr.url)) {
+    try {
+      setWatch({ prUrl: out.pr.url, pipelineId: out.pipelineIdForPr, memberKey: '', pushRemote: out.pushRemote, enabled: true, enabledBy: 'automation' });
+      broadcast(prWatchFrame(out.pipelineIdForPr, null));
+      kickPrWatch();
+    } catch (err) { console.error(`[worca-ui] automation: could not watch ${out.pr.url}: ${err?.message || err}`); }
+  }
+  return { ok: true, url: out.pr.url };
+}
+/**
+ * A workspace fix's PRs: one draft per member whose branch has commits (a member the planner left untouched gets
+ * none), each on its own base, Watch PR on each, then the PRs cross-linked. Only the issue's own repository's PR
+ * closes the issue (runSourceIssue; on Azure DevOps, links the work item). → { ok, url, prs } with `url` that PR's
+ * (else the first), or { ok:false, error } when no member changed or none opened.
+ */
+async function automationWorkspacePrs(pipelineId, state) {
+  const prs = []; let changed = 0;
+  for (const m of prStateMembers(state)) {
+    if (m.workMode === 'folder' || !m.projectDir || !m.feature || !m.source) continue;
+    if (!(await branchExists(m.projectDir, m.feature)) || !((await commitsAhead(m.projectDir, m.source, m.feature)) > 0)) continue;
+    changed++;
+    const target = prTargetFor(state, m.memberKey);
+    if (target.error) { prs.push({ name: m.name, repo: null, url: null, error: target.error }); continue; }
+    const open = (draft) => createRunPr({ id: pipelineId, state, target, base: m.source, memberKey: m.memberKey, draft, actor: 'automation' });
+    let out = await open(true);
+    if (!out.ok && /draft/i.test(out.error || '')) out = await open(false);
+    if (!out.ok) { prs.push({ name: m.name, repo: null, url: null, error: out.error }); continue; }
+    prs.push({ name: m.name, repo: out.repo, url: out.pr.url, closes: !!out.closes });
+    if (watchablePrUrl(out.pr.url)) {
+      try {
+        setWatch({ prUrl: out.pr.url, pipelineId: out.pipelineIdForPr, memberKey: m.memberKey, pushRemote: out.pushRemote, enabled: true, enabledBy: 'automation' });
+        broadcast(prWatchFrame(out.pipelineIdForPr, m.memberKey));
+      } catch (err) { console.error(`[worca-ui] automation: could not watch ${out.pr.url}: ${err?.message || err}`); }
+    }
+  }
+  if (!changed) return { ok: false, error: 'the run changed no repository' };
+  const opened = prs.filter((p) => p.url);
+  if (!opened.length) return { ok: false, error: prs.map((p) => `${p.name}: ${p.error}`).join('; ') };
+  kickPrWatch();
+  if (opened.length >= 2) {
+    const r = await crosslinkMemberPrs(pipelineId, readPipelineStateById(pipelineId) || state).catch((err) => ({ failed: [{ error: err?.message || String(err) }] }));
+    if (r.edited?.length) appendAuditById(pipelineId, `Cross-linked ${r.edited.length} pull requests to their siblings (automation).`, { actor: 'automation' });
+  }
+  return { ok: true, url: (opened.find((p) => p.closes) || opened[0]).url, prs };
+}
+const automationHost = {
+  listIssues: async ({ repo, since, etag }) => {
+    const q = new URLSearchParams({ state: 'open', sort: 'updated', direction: 'asc', since, per_page: '50' });
+    const r = await ghApi({ repo, path: `repos/${repo}/issues?${q}`, etag });
+    return r.ok ? { ok: true, notModified: !!r.notModified, items: Array.isArray(r.json) ? r.json : [], etag: r.etag } : r;
+  },
+  getPr: async ({ repo, number }) => { const r = await ghApi({ repo, path: `repos/${repo}/pulls/${Number(number)}` }); return r.ok ? { ok: true, pr: r.json } : r; },
+  getIssue: async ({ repo, number }) => { const r = await ghApi({ repo, path: `repos/${repo}/issues/${Number(number)}` }); return r.ok ? { ok: true, issue: r.json } : r; },
+  listComments: async ({ repo, since }) => {
+    const q = new URLSearchParams({ sort: 'updated', direction: 'asc', since, per_page: '100' });
+    const r = await ghApi({ repo, path: `repos/${repo}/issues/comments?${q}` });
+    return r.ok ? { ok: true, items: Array.isArray(r.json) ? r.json : [] } : r;
+  },
+  comment: ({ repo, number, body }) => ghApi({ role: 'write', repo, method: 'POST', path: `repos/${repo}/issues/${Number(number)}/comments`, body: { body } }),
+  // One review, event COMMENT: Worca never approves or requests changes.
+  review: ({ repo, number, commitId, review }) => ghApi({ role: 'write', repo, method: 'POST', path: `repos/${repo}/pulls/${Number(number)}/reviews`,
+    body: { ...(commitId ? { commit_id: commitId } : {}), event: 'COMMENT', body: review.body, comments: review.comments } }),
+  prFiles: async ({ repo, number }) => {
+    const r = await ghApi({ repo, path: `repos/${repo}/pulls/${Number(number)}/files?per_page=100` });
+    return r.ok ? { ok: true, files: (Array.isArray(r.json) ? r.json : []).map((f) => f.filename) } : r;
+  },
+  fetchPrHead: async ({ projectDir, repo, number, headSha }) => {
+    const remote = await automationRemote(projectDir, repo);
+    const r = await fetchPullHead(projectDir, { remote, number });
+    if (!r.ok) return r;
+    if (headSha && r.sha && r.sha !== headSha) return { ok: false, error: 'the pull request moved while Worca fetched it' };
+    return { ok: true, ref: r.ref, remote };
+  },
+  ownLogins: () => automationOwnLogins(),
+  addLabels: ({ repo, number, labels }) => ghApi({ role: 'write', repo, method: 'POST', path: `repos/${repo}/issues/${Number(number)}/labels`, body: { labels } }),
+  // When `label` was last added: the issue's label events, oldest first, so the newest are on the last page.
+  labeledAt: async ({ repo, number, label }) => {
+    const path = `repos/${repo}/issues/${Number(number)}/events?per_page=100`;
+    let r = await ghApi({ repo, path });
+    if (!r.ok) return r;
+    let items = Array.isArray(r.json) ? r.json : [];
+    const last = /[?&]page=(\d+)[^>]*>;\s*rel="last"/.exec(String(r.link || ''))?.[1];
+    if (last && Number(last) > 1) {
+      r = await ghApi({ repo, path: `${path}&page=${Number(last)}` });
+      if (!r.ok) return r;
+      items = [...items, ...(Array.isArray(r.json) ? r.json : [])];
+    }
+    const want = String(label || '').toLowerCase();
+    const at = items.filter((e) => e?.event === 'labeled' && String(e.label?.name || '').toLowerCase() === want)
+      .map((e) => e.created_at).filter(Boolean).sort().pop() || null;
+    return { ok: true, at };
+  },
+};
+/** Triage's one cheap model call (the Smart run naming model: the Models page's Run naming pick, else the cheapest
+ *  ready Claude model at its lowest effort). Recorded as utility spend `triage`: never billed to a run. Null when the
+ *  total budget is spent or the model gives no usable answer; the engine then proposes a root-cause plan as before. */
+async function automationClassify(ev) {
+  if (mockEnabled({})) return mockTriage(ev);
+  if (budgetStatus().blocked) return null;
+  const pick = await namingPick();
+  const out = await auxTextCall({ systemPrompt: TRIAGE_SYSTEM, prompt: triagePrompt(ev), model: pick?.model || resolveTitleModel({}).model || undefined },
+    { effortOverride: pick?.effort || undefined, onCost: (c) => { try { recordUtilityCost('triage', c); } catch { /* the ledger never fails triage */ } } });
+  return parseTriage(out);
+}
+// Azure DevOps (automation-azure.mjs): the same contract in GitHub's shapes; a PR head is its source branch.
+const automationAzureHost = createAzureAutomationHost({
+  fetchHead: async ({ projectDir, repo, number, branch }) => {
+    const remote = await automationRemote(projectDir, repo);
+    const r = await fetchPullHead(projectDir, { remote, number, branch });
+    return r.ok ? { ok: true, ref: r.ref, sha: r.sha, remote } : r;
+  },
+});
+const automationHostFor = (repo) => (forgeOfRepo(repo) === 'azure' ? automationAzureHost : automationHost);
+function automationNotify({ kind, event, rule, message }) {
+  const quiet = kind === 'started' || kind === 'done' || kind === 'queued' || (kind === 'skipped' && event?.reason !== 'daily-cap');
+  addNotification({ kind: `automation_${kind}`, severity: quiet ? 'info' : 'problem', pipelineId: event?.pipelineId || null,
+    projectDir: rule?.projectDir || null, title: event ? `${event.repo}#${event.number}` : 'Automation', message });
+  emitChanged('notifications-changed');
+}
+const automations = createAutomationEngine({
+  hostFor: automationHostFor,
+  ownLogins: (repo) => automationHostFor(repo).ownLogins(repo),
+  isOwnPr: (url) => !!getDb().prepare('SELECT 1 FROM pipelines WHERE pr_url = ? UNION SELECT 1 FROM pipeline_member_prs WHERE pr_url = ? LIMIT 1').get(url, url),
+  // A feature request's proposal is a plan for the change, a bug's a reproduction and root cause.
+  // A fix after an approved plan goes straight to Implement ⇄ Review.
+  ensureTemplate: (action, { triage = null, approved = false } = {}) => ensureAutomationTemplate(
+    action === 'propose' && triage === 'feature' ? 'planOnly' : action === 'fix' && approved ? 'approvedFix' : TEMPLATE_FOR_ACTION[action] || 'fix'),
+  classify: automationClassify,
+  startRun: async (body, { startedBy, trigger }) => {
+    const out = await invokeStartRun(body, null, { startedBy, automation: true });
+    if (out.status === 200 && out.body?.runId) {
+      const entry = runs.get(out.body.runId);
+      if (entry) entry.automationTrigger = trigger;
+    }
+    return out;
+  },
+  pipelineOfRun: (runId) => {
+    const entry = runs.get(runId);
+    if (!entry?.pipelineId) return null;
+    if (entry.automationTrigger && !entry.automationAudited) {
+      entry.automationAudited = true;
+      try { appendAuditById(entry.pipelineId, `Started by a Git event automation: ${entry.automationTrigger}.`, { actor: 'automation' }); } catch { /* best effort */ }
+    }
+    return entry.pipelineId;
+  },
+  // `done` arrives before teardown commits the run's work: a run still finishing reads as running, so a fix run's
+  // draft PR is never opened from a branch that is not committed yet.
+  pipelineStatus: (id) => {
+    const e = liveRunEntry(id);
+    if ((e && !e.settled) || isFinishingRun(id)) return e && !SETTLED_RUN.has(String(e.status || '')) ? String(e.status || 'running') : 'running';
+    return findPipelineRowById(id)?.status || null;
+  },
+  pipelineCost: (id) => Number(findPipelineRowById(id)?.total_cost_usd) || 0,
+  stopRun: async (pipelineId) => {
+    const e = liveRunEntry(pipelineId);
+    const runId = e ? [...runs.entries()].find(([, v]) => v === e)?.[0] : null;
+    if (runId) await stopRun(runId, 'automation');
+  },
+  planText: automationPlanText,
+  reviews: (pipelineId) => readPipelineExtras(pipelineId).reviews.filter((r) => r.kind === 'impl' || r.kind === 'impl-review' || !r.kind),
+  openDraftPr: (pipelineId) => automationDraftPr(pipelineId),
+  workspaceMembers: (id) => automationWorkspaceMembers(id),
+  runUrl: () => null,
+  notify: automationNotify,
+  onChange: () => broadcast({ type: 'automations-changed' }),
+  enabled: automationsOn,
+  // Runs are followed every minute (the cost cap); with webhooks the hosts are polled only as a 5-minute catch-up.
+  intervalMs: 60_000,
+  pollEveryMs: () => (webhookSecret() || adoWebhookSecret() ? 300_000 : 60_000),
+  log: (m) => console.warn(`[worca-ui] ${m}`),
+});
+const kickAutomations = () => { void automations.runner.kick(); };
+
+/** The registered project a request names (projectDir), with its GitHub repository; answers the error itself. */
+async function automationProject(req, res, dirIn) {
+  const dir = resolveProjectDir(dirIn);
+  const project = dir ? await registeredProjectForDir(dir) : null;
+  if (!project) { badRequest(res, 'projectDir must be a registered project'); return null; }
+  const repo = await projectAutomationRepo(project.path);
+  return { scope: 'project', project, projectDir: project.path, projectKey: projectKey(project.path), repo };
+}
+/** What a request automates: a workspace (workspaceId: its members' repositories) or a project (projectDir). Answers
+ *  the error itself. A workspace's members are read fresh: a page that just added one sees it. */
+async function automationScope(req, res, { projectDir, workspaceId }) {
+  if (workspaceId === undefined || workspaceId === null || workspaceId === '') return automationProject(req, res, projectDir);
+  if (projectDir) { badRequest(res, 'provide workspaceId OR projectDir, not both'); return null; }
+  const ws = typeof workspaceId === 'string' && WORKSPACE_KEY_RE.test(workspaceId) ? await readWorkspace(workspaceId) : null;
+  if (!ws) { badRequest(res, 'workspaceId must name a workspace'); return null; }
+  const w = await automationWorkspaceMembers(ws.id, { fresh: true });
+  return { scope: 'workspace', workspaceId: ws.id, name: ws.name, projectKey: workspaceOwnerKey(ws.id),
+    projectDir: w.members[0]?.projectDir || '', members: w.members, hasRepo: w.members.some((m) => m.repo) };
+}
+
+app.use('/api/automations', requireFlag('gitAutomations'));
+// GET /api/automations?projectDir=|workspaceId=  -> { scope, rules, events, autoHandle, repo | repos, templates, webhook,
+// overriddenBy (a project's: the workspaces that take its events over) }; neither: every rule (the overview).
+app.get('/api/automations', syncRoute(async (req, res) => {
+  let scope = null;
+  if (req.query.projectDir || req.query.workspaceId) {
+    scope = await automationScope(req, res, { projectDir: req.query.projectDir, workspaceId: req.query.workspaceId });
+    if (!scope) return;
+  }
+  const key = scope ? scope.projectKey : null;
+  const ws = scope?.scope === 'workspace';
+  res.json({
+    rules: listAutomationRules({ projectKey: key }),
+    events: listAutomationEvents({ projectKey: key, limit: Number(req.query.limit) || 50 }),
+    // Waiting over a limit, in the order they start (oldest first).
+    queue: listAutomationEvents({ projectKey: key, status: 'queued', oldestFirst: true, limit: 200 }),
+    ...(scope ? { scope: scope.scope, autoHandle: autoHandleState(key) } : {}),
+    ...(scope && !ws ? { repo: scope.repo, forge: scope.repo ? forgeOfRepo(scope.repo) : null, overriddenBy: await automationOverrides(scope.repo) } : {}),
+    ...(ws ? { workspaceId: scope.workspaceId, name: scope.name,
+      repos: scope.members.map((m) => ({ name: m.name, projectKey: m.projectKey, repo: m.repo, forge: m.repo ? forgeOfRepo(m.repo) : null })) } : {}),
+    switches: Object.entries(AUTO_HANDLE).map(([k, v]) => ({ key: k, label: v.label, help: v.help })),
+    templates: listAutomationTemplates(),
+    defaultLimits: ws ? AUTOMATION_WORKSPACE_LIMITS : AUTOMATION_DEFAULT_LIMITS,
+    webhook: { configured: !!webhookSecret(), path: '/api/ingress/github' },
+    azureWebhook: { configured: !!adoWebhookSecret(), path: '/api/ingress/azure' },
+    polling: String(process.env.WORCA_AUTOMATIONS_POLL ?? '1') !== '0',
+  });
+}));
+// POST /api/automations/rules { projectDir | workspaceId, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }
+app.post('/api/automations/rules', syncRoute(async (req, res) => {
+  const body = req.body || {};
+  const scope = await automationScope(req, res, body);
+  if (!scope) return;
+  if (scope.scope === 'workspace' ? !scope.hasRepo : !scope.repo) return res.status(409).json({ error: scope.scope === 'workspace' ? NO_MEMBER_REMOTE : NO_FORGE_REMOTE });
+  const v = validateAutomationRule(body, { scope: scope.scope });
+  if (!v.ok) return badRequest(res, v.error);
+  if (v.rule.workflowId) { try { await assertRunnableWorkflow(v.rule.workflowId); } catch (err) { return badRequest(res, err.message); } }
+  if (!(await readGuardrailSet(v.rule.guardrailsId))) return badRequest(res, `unknown guardrailsId "${v.rule.guardrailsId}"`);
+  const rule = createAutomationRule({ ...v.rule, projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo || null,
+    workspaceId: scope.workspaceId || null, createdBy: actorOf(req) });
+  broadcast({ type: 'automations-changed' }); kickAutomations();
+  res.status(201).json({ rule });
+}));
+// PATCH /api/automations/rules/:id { workflowId?, filter?, limits?, guardrailsId?, enabled? }
+app.patch('/api/automations/rules/:id', syncRoute(async (req, res) => {
+  const cur = getAutomationRule(req.params.id);
+  if (!cur) return res.status(404).json({ error: 'not found' });
+  const b = req.body || {};
+  const patch = {};
+  if (b.enabled !== undefined) { if (typeof b.enabled !== 'boolean') return badRequest(res, 'enabled must be true or false'); patch.enabled = b.enabled; }
+  if (b.filter !== undefined) patch.filter = normalizeAutomationFilter(b.filter);
+  if (b.limits !== undefined && automationLimitsError(b.limits)) return badRequest(res, automationLimitsError(b.limits));
+  if (b.limits !== undefined) patch.limits = normalizeAutomationLimits(b.limits, cur.scope === 'workspace' ? AUTOMATION_WORKSPACE_LIMITS : AUTOMATION_DEFAULT_LIMITS);
+  if (b.workflowId !== undefined) {
+    if (cur.action !== 'run') return badRequest(res, 'only a "run" rule names its workflow');
+    try { await assertRunnableWorkflow(b.workflowId); } catch (err) { return badRequest(res, err.message); }
+    patch.workflowId = b.workflowId;
+  }
+  if (b.guardrailsId !== undefined) {
+    if (typeof b.guardrailsId !== 'string' || !(await readGuardrailSet(b.guardrailsId))) return badRequest(res, 'unknown guardrailsId');
+    patch.guardrailsId = b.guardrailsId;
+  }
+  const rule = updateAutomationRule(cur.id, patch);
+  broadcast({ type: 'automations-changed' });
+  res.json({ rule });
+}));
+app.delete('/api/automations/rules/:id', (req, res) => {
+  if (!deleteAutomationRule(req.params.id)) return res.status(404).json({ error: 'not found' });
+  broadcast({ type: 'automations-changed' });
+  res.json({ ok: true });
+});
+// PUT /api/automations/auto-handle { projectDir | workspaceId, key: propose|fix|review, on }
+app.put('/api/automations/auto-handle', syncRoute(async (req, res) => {
+  const body = req.body || {};
+  if (!Object.hasOwn(AUTO_HANDLE, body.key)) return badRequest(res, `key must be one of ${Object.keys(AUTO_HANDLE).join(', ')}`);
+  if (typeof body.on !== 'boolean') return badRequest(res, 'on must be true or false');
+  const scope = await automationScope(req, res, body);
+  if (!scope) return;
+  const ws = scope.scope === 'workspace';
+  if (body.on && (ws ? !scope.hasRepo : !scope.repo)) return res.status(409).json({ error: ws ? NO_MEMBER_REMOTE : NO_FORGE_REMOTE });
+  const autoHandle = setAutoHandle({ projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo || null,
+    workspaceId: scope.workspaceId || null, key: body.key, on: body.on, by: actorOf(req) });
+  broadcast({ type: 'automations-changed' }); kickAutomations();
+  res.json({ autoHandle });
+}));
+// POST /api/automations/events/:id/approve -> the fix run of a proposed plan.
+app.post('/api/automations/events/:id/approve', syncRoute(async (req, res) => {
+  const r = await automations.approve(req.params.id, { by: actorOf(req) });
+  if (r.code === 'NOT_FOUND') return res.status(404).json({ error: 'not found' });
+  if (!r.ok) return res.status(409).json({ error: { NOT_WAITING: 'this item is not waiting for approval', CLOSED: 'the issue is closed', READ_FAILED: 'GitHub could not be read; try again' }[r.code] || 'the fix did not start', event: r.event });
+  res.json({ ok: true, event: r.event });
+}));
+// POST /api/automations/events/:id/start -> a waiting (queued) event starts now, past its limits.
+app.post('/api/automations/events/:id/start', syncRoute(async (req, res) => {
+  const r = await automations.startNow(req.params.id, { by: actorOf(req) });
+  if (r.code === 'NOT_FOUND') return res.status(404).json({ error: 'not found' });
+  if (!r.ok) {
+    return res.status(409).json({ error: { NOT_QUEUED: 'this item is not waiting', CLOSED: 'it was closed meanwhile', SUPERSEDED: 'the pull request moved on to a newer push',
+      READ_FAILED: 'GitHub could not be read; try again' }[r.code] || 'the run did not start', event: r.event });
+  }
+  res.json({ ok: true, event: r.event });
+}));
+// POST /api/automations/events/:id/remove -> a waiting (queued) event leaves the queue and never starts.
+app.post('/api/automations/events/:id/remove', (req, res) => {
+  const r = automations.removeQueued(req.params.id, { by: actorOf(req) });
+  if (r.code === 'NOT_FOUND') return res.status(404).json({ error: 'not found' });
+  if (!r.ok) return res.status(409).json({ error: 'this item is not waiting', event: r.event });
+  res.json({ ok: true, event: r.event });
+});
+// POST /api/automations/poll -> one poll now (the Check now button), after the tick in flight: never two at once.
+app.post('/api/automations/poll', syncRoute(async (req, res) => {
+  await automations.runner.run({ force: true });
+  res.json({ ok: true });
+}));
+
+// ---------------------------------------------------------------------------
 // Terminal (issue #573): worca-owned shells in the right-side pane. Sessions live in a TerminalManager;
 // their output rides /ws as term-* frames to the sockets that attached (D1). Gated like Actions:
 // local, or a hosted worca that set WORCA_TERMINAL_REMOTE; never a possible agent; and only for
@@ -8172,9 +8752,10 @@ const terminals = new TerminalManager({ runLive: (id) => isLiveRun(id) });
 Object.defineProperty(terminals, 'pidFile', { get: terminalPidFileNow, set: () => {} });
 Object.defineProperty(terminals, 'zshDir', { get: () => zshDotDir(worcaHome()), set: () => {} });
 
-// D13: isLocalRequest checks the Origin's hostname only, so a page on another localhost port (a dev
-// server, an Action service running agent-written code) passes it. The terminal runs commands, so a
-// browser Origin must name this server exactly. No Origin = not a browser page (the agent gate applies).
+// D13: the terminal runs commands, so a browser Origin must name this server exactly. Since G10
+// isLocalRequest already refuses a page on another localhost port (a dev server, an Action service
+// running agent-written code); this stays stricter where the host guard admits an allowlisted public
+// Origin behind a Host-rewriting proxy. No Origin = not a browser page (the agent gate applies).
 function terminalSameOrigin(req) {
   const origin = req?.headers?.origin;
   if (!origin) return true;
@@ -9211,8 +9792,11 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const footer = prAttributionFooter(state.startedBy);
   const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
   // A run from the Azure Boards source links its work item to the PR.
-  const workItemId = provider.forge === 'azure'
-    ? workItemIdFromSourceRef(findPipelineRowById(pipelineIdForPr)?.source_ref ?? null, baseR) : null;
+  const sourceRef = provider.forge === 'azure' ? findPipelineRowById(pipelineIdForPr)?.source_ref ?? null : null;
+  let workItemId = provider.forge === 'azure' ? workItemIdFromSourceRef(sourceRef, baseR) : null;
+  // A workspace automation's work item (#711) is linked by the PR of the member it came through only, as only the
+  // issue's own repository's PR closes a GitHub issue.
+  if (workItemId && memberKey && !automationSourceIsRepo(sourceRef, baseR)) workItemId = null;
   // The run's GitHub issue, closed on merge: after the description, before the footer.
   const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
     ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
@@ -9252,7 +9836,16 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
     appendAuditById(pipelineIdForPr, `PR ${pr.existed ? 'linked' : (newDraft ? 'created (draft)' : 'created')}${where}${byActor(actor)}: ${pr.url}`, { actor });
   }
-  return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr };
+  return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr, closes: !!closing || !!workItemId };
+}
+
+/** Did a run's automation source (pipelines.source_ref, sources.mjs) come through this base remote's repository? A
+ *  source with no recorded repository (the Azure Boards source) answers true: its linking is unchanged. */
+function automationSourceIsRepo(sourceRef, baseR) {
+  let ref = null;
+  try { ref = typeof sourceRef === 'string' ? JSON.parse(sourceRef) : sourceRef; } catch { return true; }
+  if (ref?.forge !== 'azure' || !ref.repo) return true;
+  return String(ref.repo).toLowerCase() === String(baseR?.slug || '').toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -9906,6 +10499,16 @@ app.post('/api/pr/crosslink', async (req, res) => {
   const { id, state } = resolved;
   if (state.target !== 'workspace') return badRequest(res, 'cross-linking applies to workspace runs only');
   const pipelineId = state.id || id;
+  const { edited, failed } = await crosslinkMemberPrs(pipelineId, state);
+  if (edited.length) {
+    const by = actorOf(req);
+    appendAuditById(pipelineId, `Cross-linked ${edited.length} pull request${edited.length === 1 ? '' : 's'} to their siblings${byActor(by)}.`, { actor: by });
+  }
+  res.json({ ok: true, edited, failed });
+});
+
+/** Write each OPEN member PR's related-PRs block (POST /api/pr/crosslink, and a workspace automation's fix). */
+async function crosslinkMemberPrs(pipelineId, state) {
   const known = readMemberPrStates(pipelineId);
   const linked = prStateMembers(state).filter((m) => known[m.memberKey]).map((m) => ({ ...m, pr: known[m.memberKey] }));
   const edited = [];
@@ -9925,12 +10528,8 @@ app.post('/api/pr/crosslink', async (req, res) => {
       if (r.ok) edited.push(m.memberKey); else failed.push({ memberKey: m.memberKey, error: r.error });
     }
   }
-  if (edited.length) {
-    const by = actorOf(req);
-    appendAuditById(pipelineId, `Cross-linked ${edited.length} pull request${edited.length === 1 ? '' : 's'} to their siblings${byActor(by)}.`, { actor: by });
-  }
-  res.json({ ok: true, edited, failed });
-});
+  return { edited, failed };
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/install  -> copy agents + skill into <projectDir>/.claude
@@ -11661,7 +12260,8 @@ app.get('/api/credentials', async (req, res) => {
         if (r) models[m.id] = r.slot ? { slot: r.slot } : r.keyless ? { keyless: true } : { error: r.error };
       }
     } catch { /* badges are a nicety: an unreadable catalog leaves them off */ }
-    const base = { enabled: true, mode: info.mode, keyPage: info.publicUrl || null, models };
+    // "Push as me" (docs/credential-broker.md): the card shows the person's GitHub only when worca uses it.
+    const base = { enabled: true, mode: info.mode, keyPage: info.publicUrl || null, models, githubAsPerson: asPersonMode(process.env) };
     if (info.mode !== 'multi') return res.json({ ...base, person: null, slots: (await personSlots('local')).slots });
     if (!isSharedIdentity(who.source)) return res.json({ ...base, person: null, slots: [] });
     const r = await personSlots(who.name);
@@ -12889,7 +13489,7 @@ app.post('/api/models/export-plugin', async (req, res) => {
   const b = req.body || {};
   const name = typeof b.name === 'string' ? b.name.trim() : '';
   if (!MANIFEST_PLUGIN_NAME_RE.test(name) || name.length > 64) {
-    return badRequest(res, 'name must be kebab-case (e.g. "discretestack-models")');
+    return badRequest(res, 'name must be kebab-case (e.g. "team-models")');
   }
   const picks = Array.isArray(b.models) ? b.models : [];
   if (!picks.length) return badRequest(res, 'models must be a non-empty array');
@@ -13416,7 +14016,7 @@ async function presetScopeExists(scope) {
 
 /** The engine gate's early refusal for a setup on a target, without starting anything (pick-time check only). */
 async function presetEngineRefusal(setup, target, runEngine) {
-  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || 'permissive', claude: { mock: !!setup.mock, ...runEngine } };
+  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || defaultGuardrailSetId(), claude: { mock: !!setup.mock, ...runEngine } };
   const probe = await createOrchestratorFor(target.workspaceId
     ? { ...base, workspace: { id: target.workspaceId, key: target.workspaceId, name: target.workspaceId, projects: [] } }
     : { ...base, projectDir: target.projectDir });
@@ -13436,6 +14036,7 @@ async function presetCheckCtx(scope, target, setup, { probeEngine }) {
     engine: runEngine.engine || 'claude',
     assertWorkflow: (id) => assertRunnableWorkflow(id),
     guardrailExists: async (id) => !!(await readGuardrailSet(id)),
+    defaultGuardrailsId: defaultGuardrailSetId,
     engineRefusal: engineError ? async () => engineError
       // Same rule as the start gate: only a non-Claude engine is probed, so a Claude preset's check builds no orchestrator.
       : probeEngine && runEngine.engine && runEngine.engine !== 'claude' && (t.workspaceId || t.projectDir) ? () => presetEngineRefusal(setup, t, runEngine) : null,
@@ -13823,7 +14424,8 @@ app.get('/api/guardrails', async (_req, res) => {
   try {
     const sets = await listGuardrailSets(); // CONV-1: await
     // Team policy sets (gp:<id>, origin policy:<home>) sit between the built-ins and the user's own.
-    res.json({ guardrails: [...listBuiltinGuardrailSets(), ...listPolicyGuardrailSets(), ...sets] });
+    // `default`: what the New run picker starts on (defaultGuardrailSetId).
+    res.json({ guardrails: [...listBuiltinGuardrailSets(), ...listPolicyGuardrailSets(), ...sets], default: defaultGuardrailSetId() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -14914,7 +15516,7 @@ function mockAskCard(ctx = {}, text = '') {
     note: 'Mock proposal: a fixed shape so the offline card can be exercised.' };
 }
 
-/** The engine an existing Ask chat is locked to (D12), or null before its first turn (any engine may start it). */
+/** The engine an existing Ask chat runs on now (D12; #943 moves it), or null before its first turn (any engine may start it). */
 function askChatEngine(threadId, thread) {
   if (!thread) return null;
   return askListMessages(threadId).some((m) => m && m.role === 'assistant') ? askChatEngineOf(thread) : null;
@@ -14971,6 +15573,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // loser leaves no rows.
   if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
   if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  // #943: an engine switch can commit while the caller awaited after reading `thread` (a scope change, askEventPick).
+  // A turn from that snapshot would run on the engine the chat just left, resume its session and store it again.
+  const live = askGetThread(id);
+  if (live && askChatEngine(id, live) !== askChatEngine(id, thread)) {   // null before the first reply: nothing to protect yet
+    return { ok: false, status: 409, error: 'this chat moved to another engine meanwhile: send your message again', code: 'engine-changed' };
+  }
   const composerMode = thread.mode === 'composer';
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
@@ -15036,7 +15644,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       ]);
     }
     broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
-    asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort });
+    asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort, engine: modelEngine || 'claude' });   // #943: per-reply engine
     job.messageId = asstMsg.id;
 
     // Prompt assembly (§6.5) — the route owns it; the turn only spawns. The header context
@@ -15082,6 +15690,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline);
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
+    // #943: no provider session but replies already — the first turn after an engine switch, or after a failed resume
+    // cleared the session — starts fresh WITH the transcript (text plus one line per tool call, card, run, attachment;
+    // never a tool's output), cut to the model's budget.
+    const handoff = askNeedsHandoff(thread, prior)
+      ? askBuildHandoffPrompt(prior, prompt, { to: engine, maxChars: askHandoffBudgetChars(await askContextTokens(model)) })
+      : null;
     const attachmentNames = {};
     for (const a of askListAttachments(id)) attachmentNames[a.id] = a.name;
 
@@ -15091,7 +15705,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     turn = createAskTurn({
       threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
       reader: turnReader,
-      prompt, systemPrompt, restoredPrompt,
+      prompt: handoff ? handoff.prompt : prompt, systemPrompt, restoredPrompt,
       model, effort,
       resumeSessionId: thread.sessionId || null,
       firstTurn: !synthetic && userMsg.seq === 1 && titleWasAuto, // P3: an event never titles the thread (D13 guard kept)
@@ -15183,6 +15797,136 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   return { ok: true, job, userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments };
 }
 
+// ---------------------------------------------------------------------------
+// #943: an existing chat moves to another engine. Preview (dryRun) → the panel's confirm → commit. Both phases run the
+// destination's own checks first, so a refused engine never reaches the confirm, and the commit changes everything in
+// ONE transaction, so a refusal leaves the chat as it was.
+// ---------------------------------------------------------------------------
+const ASK_ENGINE_BUSY = 'wait for this reply to finish before switching the chat\'s engine';
+/** The text of the system row that marks a switch (and that the handoff transcript then carries). */
+const askEngineSwitchText = (from, to) => `Switched from ${engineLabel(from)} to ${engineLabel(to)}`;
+
+/** A model's context in tokens (model-tiers.mjs modelFacts; null = unknown, which handoffBudgetChars reads as 200k). */
+async function askContextTokens(model) {
+  try {
+    const f = modelFacts(await listModels('')).find((x) => x.id === model) || modelFacts([{ id: model }])[0];
+    return f ? f.context : null;
+  } catch { return null; }
+}
+
+/** The destination's checks before any write, for a model the route already validated: broker policy, the person's
+ *  key, then Claude's sign-in (claudeChatSignedOut) or the engine's own turn gate (lockdown, model, cost cap,
+ *  binary flags, self-test, sign-in). → {ok:true} | {ok:false, status, error, code, docsUrl?, setupLabel?} */
+async function askEnginePreflight({ thread, engine, model, req }) {
+  const broker = brokerEngineRefusal(engine);
+  if (broker) return { ok: false, status: 409, error: `${engineLabel(engine)}: ${broker}`, code: 'engine-broker' };
+  const mock = mockEnabled({});
+  if (!mock) {
+    const refusal = await brokerStartRefusal(req, [model]);
+    if (refusal) return { ok: false, status: 409, error: refusal, code: 'credential-missing' };
+  }
+  if (engine === 'claude') {
+    // As the turn: a relayed chat signs in as its agent user, and an endpoint-routed model at its endpoint.
+    if (await claudeChatSignedOut({ model, relay: !!agentIdentity(), mock })) {
+      return { ok: false, status: 409, error: CLAUDE_SIGNED_OUT_MESSAGE, code: CLAUDE_SIGNED_OUT_CODE };
+    }
+    return { ok: true };
+  }
+  const d = chatDescriptor(engine);
+  const limits = askLimitsFor({ projectKey: chatScopeOf(thread.context)?.projectKey || null });
+  const gate = await chatEngineGate(d, { model, capped: limits.maxBudgetUsd != null,
+    modelPriced: (m) => !!chatModelRates(d, m), mock, relay: !!agentIdentity() });
+  if (gate) {
+    return { ok: false, status: 409, error: gate.message, code: gate.code || 'engine-refused',
+      ...(gate.notReady ? { docsUrl: d.notReady.docsUrl, setupLabel: d.notReady.setupLabel } : {}) };
+  }
+  return { ok: true };
+}
+
+/** The turns the first turn after a switch leaves out of its transcript, counted WITH the switch's own row (that turn
+ *  sees it). Synchronous, so the commit can recount with no await before its transaction. */
+function askSwitchTranscript(id, { from, to, budget }) {
+  const rows = [...askListMessages(id), { role: 'system', text: askEngineSwitchText(from, to), blocks: [] }];
+  const hand = askBuildHandoffPrompt(rows, '', { to, maxChars: budget });
+  return { totalTurns: hand.totalTurns, droppedTurns: hand.droppedTurns };
+}
+
+/** What the switch would do, for the confirm: the static changes, both models' context windows, the MCP servers the
+ *  destination cannot start, the attachments it cannot view (it gets their names), and the turns its context leaves
+ *  out. Writes nothing. */
+async function askEngineSwitchPlan(id, thread, { from, to, model, effort }) {
+  const [fromTokens, toTokens] = await Promise.all([askContextTokens(thread.model), askContextTokens(model)]);
+  const attachments = askListAttachments(id)
+    .filter((a) => chatAttachRefusal({ engine: to, kind: a.kind, pdf: a.mime === 'application/pdf' }))
+    .map((a) => ({ id: a.id, name: a.name }));
+  const ctx = thread.context || {};
+  const [src, dst] = await Promise.all([
+    resolveAskMcp({ ctx, threadId: id, off: thread.mcpOff, model: thread.model, engine: from }),
+    resolveAskMcp({ ctx, threadId: id, off: thread.mcpOff, model, engine: to }),
+  ]);
+  const kept = new Set(((dst.result && dst.result.copies) || []).map((c) => c.name));
+  const mcpLost = ((src.result && src.result.copies) || []).filter((c) => !kept.has(c.name)).map((c) => c.copy || c.name);
+  return { from, to, model, effort, changes: chatSwitchChanges(from, to), mcpLost, attachments,
+    context: { from: fromTokens, to: toTokens },
+    transcript: askSwitchTranscript(id, { from, to, budget: askHandoffBudgetChars(toTokens) }) };
+}
+
+/** The switch itself: one transaction (store.mjs switchThreadEngine), then the frames every open tab applies. */
+function commitAskEngineSwitch(id, { from, to, model, effort, droppedTurns }) {
+  const text = askEngineSwitchText(from, to);
+  const note = `${engineLabel(to)} starts a fresh session with this chat's transcript as its context${droppedTurns ? `, without the ${droppedTurns} oldest turns` : ''}. Earlier tool calls, cards and runs are not repeated.`;
+  const done = askSwitchThreadEngine(id, { engine: to, model, effort, text,
+    blocks: [{ kind: 'divider', text, engineSwitch: { from, to, model, effort, droppedTurns } }, { kind: 'notice', text: note }] });
+  broadcast({ type: 'ask-message', threadId: id, message: done.message });
+  broadcast({ type: 'ask-engine', threadId: id, engine: to, model, effort, threadTotals: done.thread.totals });
+  return done;
+}
+
+app.post('/api/ask/threads/:id/engine', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const thread = askGetThread(id);
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (req.worcaExtension) return res.status(403).json({ error: 'switch a chat\'s engine in the Worca app', code: 'extension-route' });
+    if (thread.mode === 'composer') return badRequest(res, 'a Workflows chat keeps its engine');
+    const body = req.body || {};
+    if (typeof body.engine !== 'string' || !ASK_ENGINES.includes(body.engine)) return badRequest(res, 'engine must be a chat engine');
+    if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') return badRequest(res, 'dryRun must be true or false');
+    if (body.dropTurns !== undefined && !(Number.isInteger(body.dropTurns) && body.dropTurns >= 0)) return badRequest(res, 'dropTurns must be a whole number');
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
+    if (askInFlight(id)) return res.status(409).json({ error: ASK_ENGINE_BUSY, code: 'TURN_IN_FLIGHT' });
+    const from = askChatEngine(id, thread);
+    if (!from) return res.status(409).json({ error: 'this chat has no reply yet: its first message runs on the model you pick', code: 'no-engine-yet' });
+    const to = body.engine;
+    if (to === from) return badRequest(res, `this chat already runs on ${engineLabel(to)}`);
+    const mv = await validateModelEffort(body.model, body.effort, { engine: to });
+    // validateModelEffort words a model of another engine for a message ("this chat runs on …"): a switch names its target.
+    if (!mv.ok) return badRequest(res, /^this chat runs on /.test(mv.error) ? `${body.model} does not run on ${engineLabel(to)}: pick a model from its section` : mv.error);
+    const plan = await askEngineSwitchPlan(id, thread, { from, to, model: mv.model, effort: mv.effort });
+    const pre = await askEnginePreflight({ thread, engine: to, model: mv.model, req });
+    if (!pre.ok) {
+      return res.status(pre.status).json({ error: pre.error, code: pre.code, ...(pre.docsUrl ? { docsUrl: pre.docsUrl, setupLabel: pre.setupLabel } : {}) });
+    }
+    if (body.dryRun === true) return res.json(plan);
+    // From here no await: re-check what the awaits above may have changed, then one transaction.
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
+    if (askInFlight(id)) return res.status(409).json({ error: ASK_ENGINE_BUSY, code: 'TURN_IN_FLIGHT' });
+    const cur = askGetThread(id);
+    if (!cur) return res.status(404).json({ error: 'thread not found' });
+    if (askChatEngine(id, cur) !== from) return res.status(409).json({ error: 'this chat changed engine meanwhile: open the model picker again', code: 'engine-changed' });
+    // Recounted now, not taken from the plan: a turn that ran during the preflight's awaits can have added rows.
+    const dropped = askSwitchTranscript(id, { from, to, budget: askHandoffBudgetChars(plan.context.to) }).droppedTurns;
+    if (dropped > 0 && body.dropTurns !== dropped) {
+      return res.status(409).json({ error: `${engineLabel(to)} will not see the ${dropped} oldest turns of this chat: confirm that first`, code: 'confirm-dropped-turns', droppedTurns: dropped });
+    }
+    const done = commitAskEngineSwitch(id, { from, to, model: mv.model, effort: mv.effort, droppedTurns: dropped });
+    res.json({ ok: true, thread: done.thread, message: done.message, engineSwitch: { engine: to, model: mv.model, effort: mv.effort } });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.post('/api/ask/threads/:id/messages', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -15208,7 +15952,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // readable by the agent. Refused before the model check, which no longer lists Codex rows.
     const chatEngine = askChatEngine(id, thread);
     const engineRefusal = brokerEngineRefusal(chatEngine);
-    if (engineRefusal) return res.status(409).json({ error: `This chat runs on ${engineLabel(chatEngine)}: ${engineRefusal}. Start a new chat on Claude.`, code: 'engine-broker' });
+    if (engineRefusal) return res.status(409).json({ error: `This chat runs on ${engineLabel(chatEngine)}: ${engineRefusal}. Switch it to Claude from the Chat model picker.`, code: 'engine-broker' });
     const mv = await validateModelEffort(body.model, body.effort, { engine: chatEngine });
     if (!mv.ok) return badRequest(res, mv.error);
     if (!mockEnabled({})) {
@@ -15271,7 +16015,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (composerState) askUpdateThread(id, { composer: composerState });
     if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
-    if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
+    if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast
     // may have raced ahead of this response, or been missed on a brand-new thread).
@@ -16043,9 +16787,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === 'script-approval' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, 'script-approval': scriptEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, 'script-approval': scriptNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
@@ -16371,6 +17115,34 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
           if (body.scope === 'always') { await addAskWebHost(host); emitChanged('settings-changed'); }
           result = { ok: true, scope: body.scope };
         } catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
+    if (found.block.card && found.block.card.type === 'script-approval') {
+      // G6 (docs/guardrails.md "Scripts the chat can write and run"): proposed → applied | failed | declined. The
+      // draft runs, or the saved script is replaced, HERE behind the click — never in the model's tool — through the
+      // chat's own script bundle (stamped ask:<threadId>), re-checked now: the switch, and the pin for a project run.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (body.state === 'applied' && agentMayBeCaller(req)) return refuseAgentCaller(res);
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        const card = found.block.card;
+        let result;
+        try { result = await applyScriptCard(card, { scripts: askScriptDeps({ threadId: id }).scripts, pin: chatScopeOf(askGetThread(id)?.context) }); }
+        catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
+        if (result.ok && card.kind === 'save') emitChanged('scripts-changed', 'updated');
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });
@@ -17374,6 +18146,8 @@ app.post('/api/plugins/install', async (req, res) => {
   for (const k of ['repoUrl', 'name', 'sha']) {
     if (!(typeof body[k] === 'string' && body[k].trim())) return badRequest(res, `${k} is required`);
   }
+  // G8: the pin names versions/<sha7>, which is cleared before export — only a full commit id is a pin.
+  if (!COMMIT_SHA_RE.test(body.sha.trim())) return badRequest(res, 'sha must be a full commit id');
   const subdir = typeof body.subdir === 'string' ? body.subdir : '';
   // A4: layer-3 option-injection guard on the install body. (?!-) rejects
   // dash-leading segments too, matching parseMarketplaceManifest exactly — no
@@ -17398,18 +18172,20 @@ app.post('/api/plugins/install', async (req, res) => {
 // POST /api/plugins/:name/update — two-phase (§6.2): without { confirm: true }
 // it ONLY previews (commit log + diffstat between pinned and candidate; nothing
 // changes on disk); with it, updatePlugin performs export/setup/doctor/swap/lock.
+// The confirm sends back the preview's { candidateSha }: the update applies that
+// commit and answers 409 when the source moved since the preview (G9).
 app.post('/api/plugins/:name/update', async (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
   const body = req.body || {};
-  // The commit the user reviewed (CONTRACT §1.4): the apply refuses STALE_PREVIEW when the tip moved since. Absent = today.
-  if (body.confirm === true && body.candidateSha !== undefined
-    && !(typeof body.candidateSha === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(body.candidateSha))) {
+  // The commit the user reviewed (CONTRACT §1.4, G9): a confirm must name it, and the apply refuses
+  // STALE_PREVIEW when the tip moved since, so unreviewed code never lands.
+  if (body.confirm === true && !(typeof body.candidateSha === 'string' && COMMIT_SHA_RE.test(body.candidateSha.trim()))) {
     return badRequest(res, 'candidateSha must be a commit sha');
   }
   try {
     if (body.confirm !== true) return res.json({ preview: await fetchCandidate(name) });
-    const updated = await updatePlugin(name, { expectSha: body.candidateSha });
+    const updated = await updatePlugin(name, { expectSha: body.candidateSha.trim() });
     reloadChatWorkers(name);
     void retestServers((s) => s.startsWith(`plugin:${name}/`));   // MCP registry §7.3
     emitPluginsChanged('update');
@@ -19052,6 +19828,14 @@ if (isMain) {
     process.exit(1);
   }
   for (const w of REMOTE_ACCESS_CHECK.warnings) console.warn(`[worca-ui] remote access: ${w}`);
+  {
+    const { errors } = identityHeaderTrust(process.env);
+    if (errors.length) {
+      for (const e of errors) console.error(`[worca-ui] identity header: ${e}`);
+      console.error('[worca-ui] not starting. See docs/remote-access.md.');
+      process.exit(1);
+    }
+  }
 
   // Credential broker (docs/credential-broker.md): with WORCA_BROKER_URL set, worca holds no
   // model credential. Refuse to serve while one is still reachable by agents, or while the
@@ -19137,7 +19921,7 @@ if (isMain) {
     }, drainTimeoutMs() + SHUTDOWN_STEPS_MS + 5_000);
     // B2: pause the active runs first (bounded), so they come back paused with a resume point.
     drainServer({ reason: signal })
-      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop() }))
+      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop(), automations: () => automations.runner.stop() }))
       .finally(() => { clearTimeout(hardExit); keepAwake.stop(); process.exit(exitCodeFor(signal)); });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -19155,7 +19939,7 @@ if (isMain) {
       const who = identityCheck ? `identity: ${id.provider} (${id.provider === 'issuer' ? id.issuer : id.teamDomain})` : 'identity: NOT CHECKED';
       console.log(`[worca-ui] remote access on for ${REMOTE_ACCESS.allowedHosts.join(', ')}; ${who}`);
     }
-    uiControl.token = newUiToken();
+    uiControl.token = UI_TOKEN;   // one per-boot token: shutdown, and API calls from this box (G1)
     uiControl.onShutdown = shutdown;
     uiControl.startedAt = new Date().toISOString();
     writeUiInstance({
@@ -19185,6 +19969,9 @@ if (isMain) {
     // Watch PR (#619): its stop is awaited by shutdown's settleShutdownSteps.
     try { prWatcher.runner.start(); }
     catch (err) { console.warn(`[worca-ui] PR watch: ${err?.message || err}`); }
+    // Git event automations (#711): ticks only while the gitAutomations flag is on; a project with no rule polls nothing.
+    try { automations.runner.start(); }
+    catch (err) { console.warn(`[worca-ui] automations: ${err?.message || err}`); }
     // Model bridge (model-bridge-design.md §4.1): up before the first bridged
     // spawn so resolveModelEnv's synchronous start is the exception, not the rule.
     startBridge({ log: (m) => console.warn(m) }).catch((err) => console.warn(`[worca-ui] model bridge: ${err?.message || err}`));
@@ -19245,15 +20032,15 @@ export const _testing = {
   pkgVersion: RUNNING_VERSION,
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, startAskTurn, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
-  uiControl, bearerMatches,
+  uiControl, bearerMatches, uiToken: () => UI_TOKEN,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, automations, automationHost, automationDraftPr, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,

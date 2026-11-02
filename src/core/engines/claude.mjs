@@ -858,11 +858,14 @@ async function runViaBroker(opts) {
   const isolated = opts.asAgent
     ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
     : !!agentIdentity();
+  // A spawn with its own cost cap (an Ask turn's) gets the same cap as its token's budget: the
+  // CLI's --max-budget-usd is the agent's own bookkeeping, the broker's holds whatever it does.
+  const budgetUsd = typeof opts.maxBudgetUsd === 'number' && Number.isFinite(opts.maxBudgetUsd) && opts.maxBudgetUsd > 0 ? opts.maxBudgetUsd : undefined;
   let minted;
   try {
     minted = await mintSpawnToken({
       billTo: billTo || 'local', slots: [bridgeSlot || route.slot], kind, ttlSec: SPAWN_TTL_SEC[kind],
-      runId: opts.runId || null, threadId: opts.threadId || null, isolated,
+      runId: opts.runId || null, threadId: opts.threadId || null, isolated, budgetUsd,
     });
   } catch (err) {
     throw brokerSpawnError(`cannot get a token for this spawn: ${err.message}`, err.status === 401 ? 'auth' : 'network');

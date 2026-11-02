@@ -394,6 +394,7 @@ test('a real turn is wired through askChatTurnDeps(the TURN\'s reader): a shared
   const { holdMockTurn } = await import('./helpers/ask-hold.mjs');
   const prev = process.env.WORCA_IDENTITY_HEADER;
   process.env.WORCA_IDENTITY_HEADER = 'x-test-user';         // a per-person sign-in (identity.mjs 'header')
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   const h = host(); const { apply, awaySwitch } = h;
   /** Start a held mock turn on `thread` with `headers`, call its two chat deps, return what the host saw. */
   async function depsSeen(thread, headers) {
@@ -438,6 +439,7 @@ test('per-person Away on a shared sign-in: in an ownerless (legacy) thread every
   const prev = { pp: process.env.WORCA_AWAY_PER_PERSON, hdr: process.env.WORCA_IDENTITY_HEADER };
   process.env.WORCA_AWAY_PER_PERSON = '1';
   process.env.WORCA_IDENTITY_HEADER = 'X-Worca-User';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   const { nightModeToggleFor } = await import('../src/core/settings.mjs');
   const h = host();
   const as = (who, s) => fetch(`${base}/api/ask/threads/${s.threadId}/cards/${s.cardId}`, { method: 'POST', headers: { ...JSONH, 'X-Worca-User': who }, body: JSON.stringify({ state: 'reverted' }) });

@@ -15,6 +15,7 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { constants as FS, existsSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync } from 'node:fs';
 import { gitAvailable } from './git-available.mjs';
+import { guardedGitEnvSync } from './git-guard.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 
 const _probeChildren = new Set();
@@ -262,7 +263,7 @@ export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
   try {
     if (!existsSync(dir)) throw new Error('no dir');
     // A repo that commits its graph keeps doing so: hiding only the NEW files would commit half a graph.
-    const tracked = gitAvailable() ? spawnSync('git', ['ls-files', '--', 'graphify-out'], { cwd: dir, encoding: 'utf8', timeout: 10000 }) : null;
+    const tracked = gitAvailable() ? spawnSync('git', ['ls-files', '--', 'graphify-out'], { cwd: dir, encoding: 'utf8', timeout: 10000, env: guardedGitEnvSync(dir) }) : null;
     if (!(tracked && tracked.status === 0 && tracked.stdout.trim())) {
       mkdirSync(join(dir, 'graphify-out'), { recursive: true });
       writeFileSync(join(dir, 'graphify-out', '.gitignore'), '*\n', 'utf8');

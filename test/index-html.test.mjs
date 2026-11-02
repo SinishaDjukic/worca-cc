@@ -16,14 +16,14 @@ test('renderIndexHtml with flags', async () => {
       assert.ok(shell.indexOf(FLAG_GATES_ANCHOR) > shell.indexOf('href="/style.css"'));
     } },
     { name: 'on: data-flags lists it, no gate rule for it', run: () => {
-      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, commandSummaries: true, runLabels: true, smartRunNaming: true, requirements: true, runTelemetry: true });
-      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo commandSummaries runLabels smartRunNaming requirements runTelemetry">/);
+      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, commandSummaries: true, runLabels: true, smartRunNaming: true, requirements: true, runTelemetry: true, gitAutomations: true });
+      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo commandSummaries runLabels smartRunNaming requirements runTelemetry gitAutomations">/);
       assert.match(out, /<style id="flag-gates"><\/style>/);
     } },
     { name: 'off: empty data-flags and one rule per off flag', run: () => {
-      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, commandSummaries: false, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false });
+      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, commandSummaries: false, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false });
       assert.match(out, /<html lang="en" data-theme="light" data-flags="">/);
-      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}\n\[data-flag~="requirements"\]\{display:none!important\}\n\[data-flag~="runTelemetry"\]\{display:none!important\}<\/style>/);
+      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}\n\[data-flag~="requirements"\]\{display:none!important\}\n\[data-flag~="runTelemetry"\]\{display:none!important\}\n\[data-flag~="gitAutomations"\]\{display:none!important\}<\/style>/);
     } },
     { name: 'flags omitted ⇒ byte-for-byte what it rendered before', run: () => {
       assert.equal(renderIndexHtml(mini, 'system'), mini);

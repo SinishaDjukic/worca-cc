@@ -154,7 +154,7 @@ test('agent callers cannot log in, log out, test or change the settings', async 
     for (const [m, p, b] of ROUTES.slice(1)) {
       const r = await call(m, p, p.endsWith('login') ? { domain: 'ACME', user: 'evil', password: 'x' } : b);
       assert.equal(r.status, 403, `${m} ${p}`);
-      assert.equal(r.body.code, 'PROXY_AGENT_BLOCKED');
+      assert.equal(r.body.code, 'AGENT_CALLER_BLOCKED');   // G1: the global gate answers before the proxy routes' own check
     }
   });
   assert.equal(readProxyLogin().id, id, 'neither replaced nor deleted');
@@ -446,7 +446,7 @@ test('an agent caller cannot run Auto-detect: it fetches a PAC file and starts p
   try {
     await withAgent(async () => {
       const r = await call('GET', '/api/proxy/detect');
-      assert.deepEqual([r.status, r.body.code], [403, 'PROXY_AGENT_BLOCKED']);
+      assert.deepEqual([r.status, r.body.code], [403, 'AGENT_CALLER_BLOCKED']);   // G1: the global gate answers before the route's own check
     });
     assert.equal(ran, false);
   } finally { testing.setSystemProxyDetect(null); }

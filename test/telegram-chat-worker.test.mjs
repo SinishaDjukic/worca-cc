@@ -82,7 +82,7 @@ test('start: getMe identity; poll cycle emits normalized inbound + persists curs
 
   assert.deepEqual(events.inbound[0], {
     chatId: '42', userId: '9', text: '/status',
-    meta: { platform: 'telegram', messageId: 1, chatType: 'private', chatTitle: null, username: 'sam' },
+    meta: { platform: 'telegram', messageId: 1, chatType: 'private', chatTitle: null, username: 'sam', isGroup: false },
   });
   assert.equal(events.inbound.length, 2, 'edited_message and /cmd@other_bot dropped');
   assert.equal(events.inbound[1].text, '/pause now', '@worca_bot suffix stripped');
@@ -330,7 +330,7 @@ test('polls ask for message + channel_post; a channel post command is emitted', 
   assert.match(decodeURIComponent(polls[0]), /allowed_updates=\["message","channel_post"\]/);
   assert.deepEqual(events.inbound[0], {
     chatId: '-1009', userId: '-1009', text: '/approve *ab12',
-    meta: { platform: 'telegram', messageId: 4, chatType: 'channel', chatTitle: 'ops', username: null },
+    meta: { platform: 'telegram', messageId: 4, chatType: 'channel', chatTitle: 'ops', username: null, isGroup: true },
   });
   await w.stop();
 });

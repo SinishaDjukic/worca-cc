@@ -58,6 +58,8 @@ const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget'
 // `scripts-changed` broadcast the REST routes emit — a script the chat saved shows up in an
 // open Scripts tab. There is no delete tool, and test_script writes nothing outside the bench.
 const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
+// G6: the two calls that wait on the user's card — main stream only (a sub-agent's call mints nothing and ran nothing).
+const SCRIPT_APPROVAL_TOOLS = new Set(['mcp__worca__save_script', 'mcp__worca__test_script']);
 // The direct schedule writes (docs/scheduled-runs.md "Chat"): reversible, never a run start.
 const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
   'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
@@ -233,6 +235,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
 
 // ── script tools on the thread row (scripts-workbench-design.md §9.3) ─────────
 const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
+const SCRIPT_PENDING_NOTE = 'waiting for you';
 
 /**
  * The key a script tool was called with, stamped on the block at the CALL: a save_script input
@@ -256,6 +259,8 @@ export function scriptResultNote(name, text, isError = false) {
   let parsed = null;
   try { parsed = JSON.parse(text); } catch { return null; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  // G6: a pending call waits on the user's card (script-approval.mjs) — nothing was saved or run yet.
+  if (parsed.ok === true && parsed.pending === true) return n === 'save_script' ? { saved: SCRIPT_PENDING_NOTE } : { status: SCRIPT_PENDING_NOTE };
   if (n === 'save_script') return { saved: parsed.ok === true ? (parsed.created === true ? 'created' : 'updated') : 'not saved' };
   const r = parsed.ok === true && parsed.result && typeof parsed.result === 'object' ? parsed.result : null;
   if (!r) return { status: 'not run' };
@@ -318,6 +323,7 @@ export function createTurnReducer({
   onMemoryMutation = null,
   onMemoryRead = null,           // read_memory RESULT → { scope, projectKey, name, layer } (memory usage counts; never the body)
   onScriptMutation = null,        // save_script RESULT { ok: true, key, created } → { key, action }
+  onScriptApproval = null,        // G6: save_script / draft test_script RESULT { ok: true, pending: true } → the approval card
   onComposerResult = null,     // Workflows chat: edit_canvas / build_workflow / draft_* RESULT → a composer card (turn.mjs)
   estimateLiveCost = null,
   attachmentNames = {},
@@ -648,7 +654,7 @@ export function createTurnReducer({
     if (isError || !SCRIPT_WRITE_TOOLS.has(name) || typeof onScriptMutation !== 'function') return;
     try {
       const parsed = JSON.parse(text);
-      if (!parsed || parsed.ok !== true || typeof parsed.key !== 'string' || !parsed.key) return;
+      if (!parsed || parsed.ok !== true || parsed.pending === true || typeof parsed.key !== 'string' || !parsed.key) return;
       onScriptMutation({ key: parsed.key, action: parsed.created === true ? 'created' : 'updated' });
     } catch { /* unparseable result — no poke; the next open refetches anyway */ }
   }
@@ -711,6 +717,17 @@ export function createTurnReducer({
           const ret = onWorkflowResult({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
+      }
+      if (SCRIPT_APPROVAL_TOOLS.has(b.name) && !c.is_error && typeof onScriptApproval === 'function') {
+        // The parent mints the card from the INPUT only when the child said pending (script-approval.mjs).
+        let pending = false;
+        try { const parsed = JSON.parse(text); pending = parsed?.ok === true && parsed.pending === true; } catch { pending = false; }
+        if (pending) {
+          try {
+            const ret = onScriptApproval({ toolUseId: b.id, name: short(b.name), input: fullInputs.get(b.id) ?? {} });
+            if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+          } catch { reducerErrors += 1; }
+        }
       }
       if (COMPOSER_CARD_TOOLS.has(b.name) && typeof onComposerResult === 'function') {
         // The RAW result text: the parent builds the card from what the child simulated and validated (D13).

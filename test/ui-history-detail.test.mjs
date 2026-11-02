@@ -119,7 +119,7 @@ test('branch row copies the feature branch and flags .copied', async () => {
   const { window } = ctx;
   const doc = window.document;
   // Stub the clipboard AFTER boot, on the RETURNED window — the boot helper builds
-  // the JSDOM itself, and copyBranchToClipboard reads navigator.clipboard at CLICK
+  // the JSDOM itself, and copyFromButton reads navigator.clipboard at CLICK
   // time. Precedent: test/ui-history-pr.test.mjs:95-98.
   const writes = [];
   Object.defineProperty(window.navigator, 'clipboard', {
@@ -135,11 +135,12 @@ test('branch row copies the feature branch and flags .copied', async () => {
   assert.match(base.textContent, /^feat\/log-ux/);
 
   click(window, btn);
-  // Required, not cosmetic: copyBranchToClipboard awaits writeText and toggles
+  // Required, not cosmetic: copyFromButton awaits writeText and toggles
   // `.copied` a microtask later.
   await settle(window);
   assert.deepEqual(writes, [ROW.branch]);
-  assert.ok(btn.classList.contains('copied'), 'the CSS-only "Copied" caption keys off this class');
+  assert.ok(btn.classList.contains('copied'), 'the tick and the "Copied" caption key off this class');
+  assert.equal(btn.querySelector('.copy-btn-msg').textContent, 'Copied');
 });
 
 // ---------------------------------------------------------------------------

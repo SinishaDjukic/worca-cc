@@ -175,7 +175,7 @@ test('inbound webhook: JWT gate (401), conversation capture, dedupe, mention str
   assert.equal((await w.handleWebhook(frame(ACTIVITY()))).statusCode, 200);
   assert.deepEqual(events.inbound[0], {
     chatId: 'conv-1', userId: 'aad-1', text: '/status',
-    meta: { platform: 'teams', activityId: 'act-1', serviceUrl: SERVICE_URL, tenantId: 'tenant-1', name: 'Sam', replyToId: 'act-1' },
+    meta: { platform: 'teams', activityId: 'act-1', serviceUrl: SERVICE_URL, tenantId: 'tenant-1', name: 'Sam', replyToId: 'act-1', isGroup: false },
   });
   const conv = state.get('conversations')['conv-1'];
   assert.equal(conv.serviceUrl, SERVICE_URL);
@@ -194,6 +194,17 @@ test('inbound webhook: JWT gate (401), conversation capture, dedupe, mention str
   // Unparseable body -> 400 (parsing precedes the JWT check because the
   // serviceUrl claim is verified against the parsed activity).
   assert.equal((await w.handleWebhook({ headers: {}, bodyB64: 'bm90anNvbg==' })).statusCode, 400);
+});
+
+test('G18: only a "personal" Teams conversation is 1:1; a group chat, a channel or an unknown type is a group', async () => {
+  const { ctx, events } = fakeCtx();
+  const r = tokenRoutes();
+  const w = createTeamsWorker(ctx, { fetchFn: r.fetchFn, _sleep: async () => {} });
+  const types = ['groupChat', 'channel', undefined, 'personal'];
+  for (const [i, conversationType] of types.entries()) {
+    await w.handleWebhook(frame(ACTIVITY({ id: `act-g${i}`, conversation: { id: `conv-g${i}`, ...(conversationType ? { conversationType } : {}) } })));
+  }
+  assert.deepEqual(events.inbound.map((e) => e.meta.isGroup), [true, true, true, false]);
 });
 
 test('send: seen conversations only; AdaptiveCard payload; AAD token cached + 401 refresh', async () => {

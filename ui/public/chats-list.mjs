@@ -48,7 +48,8 @@ export function chatsViewMenuItems(v, counts, { onPick, mac = false }) {
   return viewMenuItems(v, counts, { onPick, mac, showOpts: CHATS_SHOW, sortOpts: CHATS_SORT, groupOpts: CHATS_GROUP });
 }
 
-/** The state column and the state word on the sub line. Busy states pulse; idle draws the bubble (status-dot icon). */
+/** The state column and the state word on the sub line. Busy states pulse; idle draws the bubble (status-dot icon), which
+ *  a chat row swaps for its CHAT_KINDS icon. */
 export const CHAT_STATES = Object.freeze({
   'needs-you': Object.freeze({ word: 'Needs you', line: 'Run needs you', dot: 'amber', pulse: false, symbol: 'question', icon: null }),
   replying: Object.freeze({ word: 'Replying', line: 'Replying', dot: 'green', pulse: true, symbol: null, icon: null }),
@@ -56,6 +57,37 @@ export const CHAT_STATES = Object.freeze({
   following: Object.freeze({ word: 'Following a run', line: 'Following a run', dot: 'peach', pulse: true, symbol: null, icon: null }),
   idle: Object.freeze({ word: 'Idle', line: '', dot: 'grey', pulse: false, symbol: null, icon: 'chat' }),
 });
+
+/** What the chat did, in the user's priority order (first match wins): its line icon in the state column and the
+ *  icon's name (status-dot's aria-label and tooltip). Needs you keeps CHAT_STATES' amber "?". Started, Follows and
+ *  Proposed describe the chat's history: every run it ever linked, every workflow card in any state. */
+export const CHAT_KINDS = Object.freeze({
+  'needs-you': Object.freeze({ label: 'Run needs you', icon: null }),
+  started: Object.freeze({ label: 'Started a run', icon: 'run' }),
+  tracks: Object.freeze({ label: 'Follows a run', icon: 'track' }),
+  workflow: Object.freeze({ label: 'Proposed a workflow', icon: 'workflow' }),
+  chat: Object.freeze({ label: 'Chat', icon: 'chat' }),
+});
+const KIND_ORDER = Object.keys(CHAT_KINDS);
+
+/** An API list item's kind: `waiting` (a followed run asks), `startedRuns` (links made by this chat's run cards),
+ *  `trackedRuns` (track_run links it did not start), `hasWorkflowCard` (propose_workflow / build_workflow). */
+function chatKind(t) {
+  if (t.waiting) return 'needs-you';
+  if (Number(t.startedRuns) > 0) return 'started';
+  if (Number(t.trackedRuns) > 0) return 'tracks';
+  return t.hasWorkflowCard ? 'workflow' : 'chat';
+}
+
+/** The state column's model for a state and a kind. Replying and Running a command keep their bare pulse (the chat
+ *  itself works); Following draws the run's icon (Started, else Follows) in its colour, pulsing; idle draws the kind's. */
+function chatDot(state, kind) {
+  const s = CHAT_STATES[state];
+  const k = state === 'following' ? (kind === 'started' ? 'started' : 'tracks') : kind;
+  const shows = state === 'needs-you' || state === 'following' || state === 'idle';
+  return { state, kind, word: s.word, dot: s.dot, pulse: s.pulse, symbol: s.symbol,
+    icon: shows ? CHAT_KINDS[k].icon : null, dotLabel: shows ? CHAT_KINDS[k].label : null };
+}
 
 /** One API list item as a Runs list item. `scopeName(scope)` names a project or workspace (app.js knows them). */
 export function chatRow(t, { scopeName = () => '', now = Date.now() } = {}) {
@@ -74,16 +106,18 @@ export function chatRow(t, { scopeName = () => '', now = Date.now() } = {}) {
     groupId: t.groupId || '',   // #948 s3: the topic group; groupKey stays the project
     needs: state === 'needs-you', busy, pinned: !!t.pinnedAt, isArchived: !!(t.archived || t.archivedAt),
     activityMs, createdMs: timeMs(t.createdAt, now), cost, groupKey, groupName, projectKey: (scope && scope.projectKey) || '',
-    labels: [], model: { state, word: s.word, line, dot: s.dot, pulse: s.pulse, symbol: s.symbol, icon: s.icon },
+    labels: [], model: { ...chatDot(state, chatKind(t)), line },
   };
 }
 
 /** #948 s3: one topic group as a list row, drawn by renderRunsList as a Runs group row. `members` are its loaded chat
- *  rows, newest first. Its state is its most urgent member's; its sub line names its one project or "N projects". */
+ *  rows, newest first. Its state is its most urgent member's, its kind its members' first in CHAT_KINDS' order; its sub
+ *  line names its one project or "N projects". */
 export function chatGroupRow(g, members, { now = Date.now() } = {}) {
   const needs = members.some((m) => m.needs);
   const busyMb = members.find((m) => m.busy) || null;
   const state = needs ? 'needs-you' : busyMb ? busyMb.model.state : 'idle';
+  const kind = KIND_ORDER.find((k) => members.some((m) => m.model.kind === k)) || 'chat';
   const s = CHAT_STATES[state];
   // Only chats with a project count: one project reads its name, 2+ read "N projects", none reads "No project".
   const keys = [...new Set(members.map((m) => m.groupKey).filter(Boolean))];
@@ -106,7 +140,7 @@ export function chatGroupRow(g, members, { now = Date.now() } = {}) {
     cost, costUsd: cost || 0, groupKey: keys.length === 1 ? keys[0] : '', groupName: where, projectKey: '', labels: [],
     spansProjects: keys.length > 1,
     open: needs || !!busyMb,   // D9: open while a chat in it needs you or works; buildChatsModel applies the person's ⌄
-    model: { state, word: s.word, line, dot: s.dot, pulse: s.pulse, symbol: s.symbol, icon: s.icon },
+    model: { ...chatDot(state, kind), line },
   };
 }
 

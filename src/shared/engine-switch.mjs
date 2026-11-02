@@ -65,6 +65,26 @@ export function chatEnginesTaking(...what) {
   return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names.join('');
 }
 
+/**
+ * What changes for a chat that moves from engine `from` to `to` (both chat engines): one plain sentence per material
+ * difference, for the switch confirm (#943). Gains are not listed. The MCP servers a destination cannot start are
+ * computed by the server (ui/server.mjs askEngineSwitchPlan), not here. [] when either is not a chat engine.
+ * @returns {Array<{key:'tools'|'images'|'pdfs'|'cost', text:string}>}
+ */
+export function chatSwitchChanges(from, to) {
+  if (!CHAT_ENGINE_NAMES.includes(from) || !CHAT_ENGINE_NAMES.includes(to) || from === to) return [];
+  const a = ENGINES[from].chat;
+  const b = ENGINES[to].chat;
+  const L = engineLabel(to);
+  const out = [];
+  if (from === 'claude') out.push({ key: 'tools', text: `${L} has no file tools or sub-agents of its own: it reads through worca's read_file, grep and glob, and stops if it calls any other tool.` });
+  else if (to === 'claude') out.push({ key: 'tools', text: 'Claude reads with its own Read, Grep and Glob tools and may start sub-agents.' });
+  if (a.images && !b.images) out.push({ key: 'images', text: `${L} cannot view images.` });
+  if (a.pdfs && !b.pdfs) out.push({ key: 'pdfs', text: `${L} cannot view PDFs.` });
+  if (ENGINES[from].cost && !ENGINES[to].cost) out.push({ key: 'cost', text: `${L} reports no cost: worca prices its replies from the model's price on the Models page, and a per-turn cost cap refuses a model with none.` });
+  return out;
+}
+
 /** The engines still in beta: every engine picker marks them. */
 export const BETA_ENGINES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].beta));
 
@@ -121,14 +141,15 @@ export function engineSwitchNote(engine) {
   return `Starts the paused step fresh; a model ${engineLabel(engine)} cannot run falls back to its default.`;
 }
 
-/** The engine gate's refusal worded for where it is read. The run writes it for the CLI ("pass
- *  --allow-unguarded-engine"); the UI names its checkbox, and chat sends the person to the UI (it never
- *  sends the consent). Any other text is returned as is. */
+/** The engine gate's refusal worded for where it is read. The run writes it for the CLI ("run it with
+ *  --guardrails permissive", "pass --allow-unguarded-engine"); the UI names the set and its checkbox, and chat
+ *  sends the person to the UI (it never sends the consent). Any other text is returned as is. */
 export function engineRefusalFor(text, surface) {
   const s = String(text ?? '');
-  if (surface === 'ui') return s.replace(/pass --allow-unguarded-engine/g, 'tick Allow unguarded');
-  if (surface === 'chat') return s.replace(/pass --allow-unguarded-engine/g, 'resume it in the Worca UI with Allow unguarded');
-  return s;
+  if (surface !== 'ui' && surface !== 'chat') return s;
+  const set = s.replace(/run it with --guardrails permissive/g, 'run it with the Permissive set');
+  if (surface === 'ui') return set.replace(/pass --allow-unguarded-engine/g, 'tick Allow unguarded');
+  return set.replace(/pass --allow-unguarded-engine/g, 'resume it in the Worca UI with Allow unguarded');
 }
 
 /** "Codex or Cursor" / "Claude, Codex or Cursor"; `label` maps each name (default engineLabel). */

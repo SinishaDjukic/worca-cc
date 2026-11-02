@@ -49,7 +49,7 @@ function runners(seen, holder, names, { pause = false } = {}) {
 function codexRun(dir, names, { engine = 'codex', pause = false, ...opts } = {}) {
   const seen = [];
   const holder = { key: projectKey(dir) };
-  holder.orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true, engine }, runners: runners(seen, holder, names, { pause }), ...opts });
+  holder.orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine }, runners: runners(seen, holder, names, { pause }), ...opts });
   return { orch: holder.orch, seen };
 }
 
@@ -123,7 +123,7 @@ test('resume mounts them again before the first spawn, like every other skill la
   rmSync(join(before[0].wt, AGENTS), { recursive: true, force: true });   // a mount lost while the run sat paused
   const seen = [];
   const holder = { key: projectKey(dir) };
-  holder.orch = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true, engine: 'codex' }, runners: runners(seen, holder, ['deploy-checklist']),
+  holder.orch = createOrchestrator({ projectDir: dir, auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex' }, runners: runners(seen, holder, ['deploy-checklist']),
     resume: readPipelineForResume(orch.state.id) });
   assert.equal((await holder.orch.resume()).status, 'done');
   assert.ok(seen.length && seen.every((r) => r.mounted.length === 1), 'mounted again before the resumed dispatches');
