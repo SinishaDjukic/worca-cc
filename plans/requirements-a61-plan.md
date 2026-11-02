@@ -45,7 +45,7 @@
 | `src/core/db.mjs` | 1, 18 | v84: two `INCREMENTAL_COLUMNS`, the rung |
 | `src/core/requirements/store.mjs` | 1 | `createFeature`'s `criteria`; `saveExportLink`'s `origin`; `linkByTicket`; the `downloading` status, `fetch` on a row, `listDownloadingAttachments` |
 | `src/core/requirements/ticket-import.mjs` (new) | 2 | pure: the criteria section, the clip, counted redaction, the comments file, the reasons, the thread line, `processTicket`, `pickDefaults` |
-| `src/core/requirements/export.mjs` | 3, 10 | one probe for `export` and `import` (`trackersWith`); `connectionLabel`, `sameConn`, `firstLine` exported; the imported link in `planExport`, `linkDates`, `exportView` |
+| `src/core/requirements/export.mjs` | 3, 10 | one probe for `export` and `import` (`trackersWith`); `connectionLabel`, `sameConn`, `firstLine` exported; the imported link in `planExport`, `linkDates`, `exportView` | (after the review: the probe and helpers are `trackers.mjs`)
 | `src/core/plugin-shim.mjs`, `src/core/plugin-api.mjs` | 3 | mock answers for `capabilities` and the four ops; the contract comment |
 | `.claude/skills/creating-worca-cc-plugins/SKILL.md` | 3 | the contract table's four rows and a paragraph |
 | `plugins/jira-source/connector/index.mjs`, `markup.mjs` | 4, 5 | `capabilities().import`, the four ops; `htmlToMarkdown`'s images, tables and people; `plainWiki` |
@@ -312,3 +312,21 @@ Each is recorded in the design as "(adjusted for the build)" or as U1, U2 or Q1�
 | §3 data; §4 the contract, the comments file, the mock answers; §5 the Jira connector; §6 API | 1, 7; 2–5; 4, 5; 6, 8, 9 |
 | §7 boards 32–36 and "Not on the boards" | 11–17 |
 | §9 testing; §10 where A6.1 meets A6, A8 and A3; §11 out of scope | 1–18; 7, 8, 10, 18; not built |
+
+## After the review of #1041 (2 Nov 2026)
+
+The code no longer matches the task text above in these places; the design (`plans/requirements-a61-design.md`) is updated.
+
+- **Tracker helpers:** the probe (`trackersWith`), `defaultConnection`, `connectionLabel`, `sameConn`, the reach sentences and
+  `firstLine` live in `src/core/requirements/trackers.mjs`, used by `export.mjs`, `import.mjs` and `attachment-fetch.mjs`.
+- **Downloads:** a download is a job kind (`download`) of A8's queue in `attachment-job.mjs`, with its own limit
+  (`MAX_DOWNLOAD_JOBS`), sharing the waiters, settle and cancel (`stopJobs`); `queueDownloads`, `isDownloading` and
+  `redownload` are exported there. `attachment-fetch.mjs` keeps `insertDownloadRow`, the folder, `checkFetched` and one
+  download (`runDownload`) and imports nothing of `attachment-job.mjs`. The body paths are `attachment-paths.mjs`.
+  `enqueueRead`, `settleOwner`, `downloadsPending`, `cancelDownload` and `recoverDownloads` are gone.
+  `test/requirements-module-graph.test.mjs` fails on any new import cycle among the Requirements modules and loads each alone.
+- **The import's turn:** its own kind `import` (no `action`), with `commentsFile`; `importThreadLine` is in `round.mjs`.
+- **jira-source:** `listTasks` and `searchTickets` share one search (`searchIssues`); a Cloud search with no clause before
+  ORDER BY gets `updated >= -365d` in both.
+- **Mock answers:** in `src/core/plugin-shim-mock.mjs`, loaded only in mock mode; the comment's fake token is built at run
+  time and reads as fake.
