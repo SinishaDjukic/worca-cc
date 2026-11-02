@@ -56,3 +56,25 @@ export function readUserSignIn({ env = process.env, home, read = (p) => readFile
     return Object.keys(out).length || Object.keys(settings).length ? { state: 'found', env: out, settings } : none('none');
   } catch { return none('none'); }   // homedir() can throw: inside the try
 }
+
+/** D81: at most this many of the person's own deny rules are carried. */
+export const SAFETY_DENY_MAX = 500;
+const noSafety = () => ({ deny: [], sandbox: null });
+
+/**
+ * Workflow tests 3b (D81): the person's own guards in their user settings, which only ever block: `permissions.deny` (non-empty
+ * strings, deduplicated, at most SAFETY_DENY_MAX) and `sandbox` (a plain object). Never their allow or ask rules. Nothing from
+ * a file Worca cannot read or parse. Never throws.
+ * @returns {{deny: string[], sandbox: object|null}}
+ */
+export function readUserSafety({ env = process.env, home, read = (p) => readFileSync(p, 'utf8') } = {}) {
+  try {
+    const raw = String(read(userSettingsFile({ env, home })));
+    const s = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return noSafety();
+    const d = s.permissions && typeof s.permissions === 'object' && Array.isArray(s.permissions.deny) ? s.permissions.deny : [];
+    const deny = [...new Set(d.filter((x) => typeof x === 'string' && x.trim()))].slice(0, SAFETY_DENY_MAX);
+    const sandbox = s.sandbox && typeof s.sandbox === 'object' && !Array.isArray(s.sandbox) ? s.sandbox : null;
+    return { deny, sandbox };
+  } catch { return noSafety(); }
+}

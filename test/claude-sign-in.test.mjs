@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readUserSignIn, isSignInEnvKey, SIGN_IN_SETTINGS_KEYS, userSettingsFile } from '../src/core/engines/claude-sign-in.mjs';
+import { readUserSignIn, readUserSafety, SAFETY_DENY_MAX, isSignInEnvKey, SIGN_IN_SETTINGS_KEYS, userSettingsFile } from '../src/core/engines/claude-sign-in.mjs';
 import { userClaudeSignIn } from '../src/core/requirements/interview.mjs';
 
 const dirs = [];
@@ -72,4 +72,15 @@ test('the key rule moved here unchanged; the interview still uses it', () => {
   for (const k of ['GH_TOKEN', 'PATH', 'HOME', 'BASH_DEFAULT_TIMEOUT_MS', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'WORCA_HOME']) assert.equal(isSignInEnvKey(k), false, k);
   assert.equal(userClaudeSignIn({ env: {}, home: home({ env: { AWS_PROFILE: 'p' } }) }), true);
   assert.equal(userClaudeSignIn({ env: {}, home: home({ env: { MY_KEY: 'p' } }) }), false);
+});
+
+test('D81: the person\'s own deny rules and sandbox; never their allow or ask rules; nothing from an unreadable file', () => {
+  assert.deepEqual(readUserSafety({ env: {}, home: home({ permissions: { deny: ['Bash(rm -rf:*)', '', 3, 'Bash(rm -rf:*)'], allow: ['Bash(*)'], ask: ['Bash(git push:*)'] },
+    sandbox: { enabled: true } }) }), { deny: ['Bash(rm -rf:*)'], sandbox: { enabled: true } });
+  for (const [body, why] of [[undefined, 'no file'], ['{ not json', 'unreadable'], [{ sandbox: [1] }, 'a sandbox that is not an object'],
+    [{ permissions: { deny: 'Bash(x)' } }, 'deny is not a list'], ['[1]', 'not an object']]) {
+    assert.deepEqual(readUserSafety({ env: {}, home: home(body) }), { deny: [], sandbox: null }, why);
+  }
+  const many = Array.from({ length: 600 }, (_, i) => `Bash(x${i})`);
+  assert.equal(readUserSafety({ env: {}, home: home({ permissions: { deny: many } }) }).deny.length, SAFETY_DENY_MAX);
 });

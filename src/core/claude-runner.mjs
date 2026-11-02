@@ -99,6 +99,7 @@ export function mockEnabled(opts) {
  *   no built-ins at all; MCP tools are unaffected). Absent ⇒ flag omitted (claude defaults).
  * @param {boolean} [o.strictMcpConfig]     --strict-mcp-config: only --mcp-config servers load
  * @param {{logFile: string}} [o.tryGuard]  workflow tests 3a: a try's outward guard
+ * @param {boolean} [o.pluginsOff]           workflow tests 3b: a Pretend try's spawn: carry the person's sign-in only (D71)
  * @param {string[]} [o.settingSources]     --setting-sources <list> (e.g. ['project'] drops user hooks/plugins/skills)
  * @param {boolean} [o.disableSlashCommands] --disable-slash-commands
  * @param {boolean} [o.includePartialMessages] --include-partial-messages (stream_event text deltas)
@@ -161,6 +162,7 @@ export async function runClaude(o = {}) {
     tools,
     strictMcpConfig,
     tryGuard,
+    pluginsOff,
     settingSources,
     disableSlashCommands,
     includePartialMessages,
@@ -274,6 +276,7 @@ export async function runClaude(o = {}) {
     tools,
     strictMcpConfig,
     tryGuard,
+    pluginsOff,
     settingSources,
     disableSlashCommands,
     includePartialMessages,

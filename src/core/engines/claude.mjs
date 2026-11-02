@@ -25,6 +25,7 @@ import { modelSlot } from '../broker-routing.mjs';
 import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
+import { readUserSignIn, readUserSafety, SIGN_IN_SETTINGS_KEYS } from './claude-sign-in.mjs';
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -49,6 +50,23 @@ function extraSettingsOf(extraSettings) {
   return Object.keys(out).length ? out : null;
 }
 
+/** Workflow tests 3b (D71): the sign-in helpers a Pretend try carries over from the person's user settings (non-empty strings
+ *  of SIGN_IN_SETTINGS_KEYS only); null when there are none. */
+function signInSettingsOf(s) {
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+  const out = {};
+  for (const k of SIGN_IN_SETTINGS_KEYS) if (typeof s[k] === 'string' && s[k] !== '') out[k] = s[k];
+  return Object.keys(out).length ? out : null;
+}
+
+/** Workflow tests 3b (D81): the person's own deny rules and sandbox, or null when there are none. */
+function safetySettingsOf(s) {
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+  const deny = Array.isArray(s.deny) ? s.deny.filter((x) => typeof x === 'string' && x.trim()) : [];
+  const sandbox = s.sandbox && typeof s.sandbox === 'object' && !Array.isArray(s.sandbox) ? s.sandbox : null;
+  return deny.length || sandbox ? { deny, sandbox } : null;
+}
+
 /** What `--settings` carries, or null when there is nothing to carry (no hook
  *  telemetry, no permission rules, no host guard, no extra settings) — then the flag is omitted
  *  entirely. `hostGuard` (set by runClaudeProcess, gated by hostGuardEnabled) merges the
@@ -61,15 +79,23 @@ function extraSettingsOf(extraSettings) {
  *  the file-read guard (file-read-guard.mjs) on every tool, with `disableAllHooks: false`, logging each decision to
  *  `readGuardLog` (stageClaudeInvocation names it); absent (null/undefined), nothing changes. `tryGuard` (workflow tests 3a
  *  D56: a test try's `{ logFile }`) adds the try guard's PreToolUse Bash hook beside the host guard and its deny rules
- *  (workflow-tests/try-guard-env.mjs); absent, nothing changes. */
-export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null } = {}) {
+ *  (workflow-tests/try-guard-env.mjs); absent, nothing changes. `signInSettings` (workflow tests 3b D71): a Pretend try's
+ *  carried `apiKeyHelper` / `awsAuthRefresh` / `awsCredentialExport`; the payload then says `signIn: true`, and it only ever
+ *  travels as a file (buildSettingsArgs). `safetySettings` (workflow tests 3b D81): the person's own `{ deny, sandbox }`; the
+ *  deny rules join after Worca's and the try guard's, the sandbox is kept, and the payload says `signIn: true` (a file only). */
+export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null } = {}) {
   const hook = buildHookSettings();
   const extra = extraSettingsOf(extraSettings);
   const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
   const usage = typeof memoryLoadLog === 'string' && memoryLoadLog ? memoryUsageHookEntry(memoryLoadLog) : null;
   // Workflow tests 3a (D56): a try's outward guard: its PreToolUse hook beside the host guard, and its deny rules.
   const tg = tryGuard ? tryGuardHookEntry() : null;
-  const rules = tg ? withTryDeny(permissionRules) : permissionRules;
+  const rules0 = tg ? withTryDeny(permissionRules) : permissionRules;
+  // D81: the person's own deny rules, after Worca's and the try guard's (deduplicated): they only add blocks.
+  const safety = safetySettingsOf(safetySettings);
+  const rules = safety && safety.deny.length
+    ? { ...(rules0 && typeof rules0 === 'object' ? rules0 : {}), deny: [...new Set([...(rules0 && Array.isArray(rules0.deny) ? rules0.deny : []), ...safety.deny])] }
+    : rules0;
   const hasRules = !!rules && Object.values(rules).some((a) => Array.isArray(a) && a.length);
   // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
   // truthy while hasRules stays false, so the whole policy would drop out of
@@ -83,8 +109,10 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
   // A8: a Requirements file read's guard (file-read-guard.mjs): every tool, fail-closed; the user settings cannot turn it off.
   // Any value but null/undefined goes to readGuardHookEntry, which throws unless it is an absolute path: never a silent no-guard.
   const read = readGuard != null ? readGuardHookEntry(readGuard, { log: readGuardLog }) : null;
-  if (!hook && !hasRules && !guard && !extra && !usage && !read && !tg) return null;
-  const settings = { ...(extra ?? {}) };
+  // Workflow tests 3b (D71): a Pretend try's carried sign-in helpers. Absent ⇒ nothing changes.
+  const signIn = signInSettingsOf(signInSettings);
+  if (!hook && !hasRules && !guard && !extra && !usage && !read && !tg && !signIn && !safety) return null;
+  const settings = { ...(extra ?? {}), ...(signIn ?? {}), ...(safety && safety.sandbox ? { sandbox: safety.sandbox } : {}) };
   if (hook) settings.hooks = { ...hook.hooks };
   if (guard) {
     settings.hooks = settings.hooks ?? {};
@@ -105,7 +133,7 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
     settings.disableAllHooks = false;
   }
   if (hasRules) settings.permissions = rules;
-  return { hook: !!hook, settings };
+  return signIn || safety ? { hook: !!hook, settings, signIn: true } : { hook: !!hook, settings };
 }
 
 /**
@@ -303,9 +331,11 @@ export function isHookEvent(evt) {
  *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log, a workflow-test try's guard
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null } = {}) {
-  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard });
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard, signInSettings, safetySettings });
   if (!payload) return [];
+  // Workflow tests 3b (D71): a carried sign-in helper is a command (and maybe a secret): never on the command line.
+  if (payload.signIn && !settingsFile) throw new Error('a carried Claude Code sign-in travels in a settings file, never on the command line');
   const args = [];
   if (payload.hook) args.push('--include-hook-events');
   args.push('--settings', settingsFile || JSON.stringify(payload.settings));
@@ -351,6 +381,7 @@ export function buildClaudeArgs({
   pluginDirs, extraSettings, memoryLoadLog, readGuard, readGuardLog,
   // Workflow tests 3a (D56): a test try's outward guard ({ logFile }): its hook and deny rules in --settings. Absent ⇒ nothing.
   tryGuard,
+  signInSettings, safetySettings,
   // Requirements A1.1: 'replace' swaps Claude Code's own system prompt for ours
   // (--system-prompt / --system-prompt-file). Anything else, absent included, is
   // today's --append-system-prompt(-file), so every other argv stays byte-identical.
@@ -381,7 +412,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard })) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard, signInSettings, safetySettings })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -450,6 +481,8 @@ export function buildClaudeArgs({
  *    model sees the exact text, unlike a "read this file" instruction), the
  *    system prompt and the settings JSON become files under `dir`, and no
  *    argument carries free text any more, so the argv is short by construction.
+ *  - a carried sign-in or the person's own guards (workflow tests 3b D71/D81, `signInSettings` / `safetySettings`): the
+ *    settings always go in a file under `dir`; when the argv fits, only they move (the prompt stays inline, `staged` false).
  * @param {object} opts  the buildClaudeArgs options
  * @param {{bin?:string, dir?:string|(() => string), limit?:number}} [o]  `dir` may be a
  *   factory, called only when staging is actually needed (so the caller creates
@@ -457,11 +490,23 @@ export function buildClaudeArgs({
  * @returns {{args:string[], stdin:string|null, files:{path:string,content:string}[], staged:boolean, inlineLength:number}}
  */
 export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limit = ARGV_INLINE_LIMIT } = {}) {
-  const inline = buildClaudeArgs(opts);
+  // Workflow tests 3b (D71, D81): a carried sign-in helper or the person's own guards always go in the settings file, also
+  // when the argv fits.
+  const fileSettings = !!(signInSettingsOf(opts.signInSettings) || safetySettingsOf(opts.safetySettings));
+  const inline = buildClaudeArgs(fileSettings ? { ...opts, signInSettings: null, safetySettings: null } : opts);
   const inlineLength = argvLength(bin, inline);
-  if (inlineLength <= limit) return { args: inline, stdin: null, files: [], staged: false, inlineLength };
-  if (!dir) throw new Error('planClaudeInvocation: a staging dir is required when the argv is over the limit');
+  if (inlineLength <= limit && !fileSettings) return { args: inline, stdin: null, files: [], staged: false, inlineLength };
+  if (!dir) throw new Error('planClaudeInvocation: a staging dir is required when the argv is over the limit or carries a sign-in');
   if (typeof dir === 'function') dir = dir();
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog,
+    readGuard: opts.readGuard, readGuardLog: opts.readGuardLog, tryGuard: opts.tryGuard, signInSettings: opts.signInSettings,
+    safetySettings: opts.safetySettings });
+  if (inlineLength <= limit) {
+    // Only the settings move to a file; the prompt and the system prompt stay inline (not the GH #380 staging).
+    const settingsFile = join(dir, 'settings.json');
+    return { args: buildClaudeArgs(opts, { settingsFile }), stdin: null, files: [{ path: settingsFile, content: JSON.stringify(payload.settings) }],
+      staged: false, inlineLength };
+  }
   const files = [];
   const prompt = typeof opts.prompt === 'string' ? opts.prompt : '';
   const promptViaStdin = prompt.length > 0;             // an empty prompt stays `-p ''` — nothing to pipe
@@ -471,7 +516,6 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     files.push({ path: systemPromptFile, content: opts.systemPrompt });
   }
   let settingsFile = null;
-  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog, tryGuard: opts.tryGuard });
   if (payload) {
     settingsFile = join(dir, 'settings.json');
     files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
@@ -501,10 +545,48 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir, ...(o.readGuardLog ? { readGuardLog: o.readGuardLog } : {}) };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+/**
+ * Workflow tests 3b (D71): the sign-in a Pretend try carries over from the person's user settings, and the person's own
+ * guards (D81), which are carried in every case; null when there is neither. Read per spawn from the folder the spawn's CLI
+ * will read (a model profile may move CLAUDE_CONFIG_DIR). The sign-in never with the credential broker on (its token is the
+ * spawn's only model credential), and never into a spawn that runs as another OS user (agent isolation: one user's sign-in
+ * never moves to another). Never throws.
+ * @returns {{env: Record<string,string>, settings: Record<string,string>, safety?: {deny: string[], sandbox: object|null}} | null}
+ */
+export function signInCarry({ modelEnv = null, asAgent = false, read = readUserSignIn, readSafety = readUserSafety,
+  agentUser = () => agentIdentityFor(currentOwner()) } = {}) {
+  try {
+    const extra = modelEnv && typeof modelEnv === 'object' && Object.keys(modelEnv).length ? prepareModelEnv(modelEnv).env : {};
+    const env = { ...process.env, ...extra };
+    // D81: the person's own deny rules and sandbox only ever block: carried in every case.
+    let safety = null;
+    try { const g = readSafety({ env }); if (g && ((Array.isArray(g.deny) && g.deny.length) || g.sandbox)) safety = { deny: g.deny || [], sandbox: g.sandbox || null }; }
+    catch { safety = null; }
+    // D71: the sign-in never with the broker on, and never into a spawn that runs as another OS user.
+    let isolated = false;
+    if (asAgent) { try { isolated = !!agentUser(); } catch { isolated = false; } }
+    const s = brokerEnabled() || isolated ? null : read({ env });
+    const signIn = s && s.state === 'found' ? s : null;
+    if (!signIn && !safety) return null;
+    return { env: { ...(signIn ? signIn.env || {} : {}) }, settings: { ...(signIn ? signIn.settings || {} : {}) }, ...(safety ? { safety } : {}) };
+  } catch { return null; }
+}
+
+const SECRET_KEY_RE = /TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL/i;
+/** The carried values a run must never show (D71): those whose key names a token, key, secret, password or credential. */
+export function secretValuesOf(env) {
+  return Object.entries(env || {}).filter(([k, v]) => SECRET_KEY_RE.test(k) && typeof v === 'string' && v.length >= 8).map(([, v]) => v);
+}
+
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard, pluginsOff }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
-  const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
+  // Workflow tests 3b (D71): a Pretend try loads no user settings (runOpts sets --setting-sources project,local); only the
+  // sign-in kept there (and the person's own guards, D81) is carried over, and its secret values are redacted like the
+  // registry's. Absent on every other spawn: nothing is read and the redactor is as before.
+  const carry = pluginsOff === true ? signInCarry({ modelEnv, asAgent }) : null;
+  const redactList = [...(Array.isArray(redactValues) ? redactValues : []), ...(carry ? secretValuesOf(carry.env) : [])];
+  const redactor = redactList.length ? createRedactor(redactList) : null;
   if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
   return new Promise((resolveRaw, rejectRaw) => {
     const resolveP = redactor ? (r) => resolveRaw({ ...r, text: redactor.text(r.text) }) : resolveRaw;
@@ -593,7 +675,10 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
-        pluginDirs, extraSettings, memoryLoadLog, tryGuard, systemPromptMode, readGuard, noSessionPersistence,
+        pluginDirs, extraSettings, memoryLoadLog, tryGuard,
+        signInSettings: carry && Object.keys(carry.settings).length ? carry.settings : null,
+        safetySettings: carry && carry.safety ? carry.safety : null,
+        systemPromptMode, readGuard, noSessionPersistence,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -620,6 +705,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       envScrub, envAllowlist, prefixes: ['ANTHROPIC_', 'CLAUDE_'],
       runEnv: cleanRunEnv(runSpawnEnv), overlay: safeModelEnv, hostPid: guardOn ? process.pid : null,
       tryGuard: tryGuard || null,
+      signInEnv: carry && Object.keys(carry.env).length ? carry.env : null,
     });
     let spawnEnv = composedEnv;
     // With the broker on, no ambient model credential reaches the agent either (the

@@ -316,8 +316,11 @@ function relRepo(p) {
  * named `subagent_type` fail to resolve at Task time. `~/.claude/agents` stays
  * promised — it is inherited env and remains true. Single mode (both run-root modes)
  * and legacy workspace runs keep today's byte-identical sentence.
+ *
+ * `personalOff` (workflow tests 3b, D70): a Pretend try's spawn loads no personal (`~/.claude`) agents or skills, so neither
+ * is promised.
  */
-export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false, engine = 'claude' } = {}) {
+export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false, engine = 'claude', personalOff = false } = {}) {
   if (!fanOut) return '';
   // Codex, Copilot and OpenCode have their own sub-agent tools; Cursor has none (fan-out never reaches it: _engineNodeOpts), so nothing.
   if (engine === 'copilot') return copilotFanOutDirective();
@@ -345,13 +348,19 @@ export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentMod
             'discoverable by name.'
           : '')
       : omitProjectAgents
-        ? 'Pick the BEST-FIT `subagent_type`: your personal agents (`~/.claude/agents`) are available by ' +
-          'name — prefer a purpose-built one when it fits the sub-task, else fall back to ' +
-          '`"general-purpose"` (or `"Explore"` for pure code search). This run starts at the worca-cc run ' +
-          'root, so no member project\'s own agents are discoverable by name.'
-        : 'Pick the BEST-FIT `subagent_type`: this project\'s own agents (`.claude/agents`) and your personal ' +
-          'agents (`~/.claude/agents`) are available by name — prefer a purpose-built one when it fits the ' +
-          'sub-task, else fall back to `"general-purpose"` (or `"Explore"` for pure code search).';
+        ? (personalOff
+          ? 'Pick the BEST-FIT `subagent_type`: use `"general-purpose"` (or `"Explore"` for pure code search). This run starts at ' +
+            'the worca-cc run root, so no member project\'s own agents are discoverable by name.'
+          : 'Pick the BEST-FIT `subagent_type`: your personal agents (`~/.claude/agents`) are available by ' +
+            'name — prefer a purpose-built one when it fits the sub-task, else fall back to ' +
+            '`"general-purpose"` (or `"Explore"` for pure code search). This run starts at the worca-cc run ' +
+            'root, so no member project\'s own agents are discoverable by name.')
+        : (personalOff
+          ? 'Pick the BEST-FIT `subagent_type`: this project\'s own agents (`.claude/agents`) are available by name — prefer a ' +
+            'purpose-built one when it fits the sub-task, else fall back to `"general-purpose"` (or `"Explore"` for pure code search).'
+          : 'Pick the BEST-FIT `subagent_type`: this project\'s own agents (`.claude/agents`) and your personal ' +
+            'agents (`~/.claude/agents`) are available by name — prefer a purpose-built one when it fits the ' +
+            'sub-task, else fall back to `"general-purpose"` (or `"Explore"` for pure code search).');
   return (
     '## Fan-out ENABLED — parallelize your research\n\n' +
     'The Task/Agent tool is in your tool list this run. For any non-trivial task that spans more ' +
@@ -360,9 +369,12 @@ export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentMod
     'reports yourself. Do NOT investigate every area serially with Read/Grep when the work splits ' +
     'into independent areas.\n\n' +
     subagentSentence + '\n\n' +
-    'Skills are available too: this project\'s and your personal skills (`.claude/skills`, ' +
-    '`~/.claude/skills`) can be invoked via the Skill tool — by you AND by the sub-agents you spawn — ' +
-    'use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
+    (personalOff
+      ? 'Skills are available too: this project\'s skills (`.claude/skills`) can be invoked via the Skill tool — by you AND by ' +
+        'the sub-agents you spawn — use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n'
+      : 'Skills are available too: this project\'s and your personal skills (`.claude/skills`, ' +
+        '`~/.claude/skills`) can be invoked via the Skill tool — by you AND by the sub-agents you spawn — ' +
+        'use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n') +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
     'trivial, single-file change.\n\n' +
     (endpointRouted ? sameEndpointSubagentDirective() : subagentModelDirective(subagentModel))
@@ -820,6 +832,10 @@ function nodeWritableDirs(ctx) {
  *  claude.ai connectors is checked against the real CLI in Task 15. */
 export const CLAUDE_AI_TOOLS = 'mcp__claude_ai_*';
 
+/** Workflow tests 3b (D70): the setting sources of a Pretend try's spawns: no user settings (the person's plugins, skills,
+ *  agents and hooks); the project's and the local ones stay. */
+export const PLUGINS_OFF_SOURCES = Object.freeze(['project', 'local']);
+
 export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
   // MCP registry (design §6.1): the copies' secret env joins the fan-out env, and the tools
@@ -854,6 +870,9 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     ...(ctx.mcpStrict === true ? { strictMcpConfig: true } : {}),
     // Workflow tests 3a (D56): a try's outward guard. Absent on every other spawn, so its argv and env stay byte-identical.
     ...(ctx.tryGuard ? { tryGuard: ctx.tryGuard } : {}),
+    // Workflow tests 3b (D70, D71): a Pretend try loads no user settings, and the runner carries over only the sign-in kept
+    // there. Absent on every other spawn, so its argv and env stay byte-identical.
+    ...(ctx.pluginsOff === true ? { settingSources: [...PLUGINS_OFF_SOURCES], pluginsOff: true } : {}),
     // Whose approvals decide the checkout's committed `.mcp.json` servers on Claude (claude-runner.mjs).
     mcpjsonProjectDir: ctx.mcpjsonProjectDir,
     // P1 (S31): a non-git run's spawn asks no git (approvals, Cursor's info/exclude). Absent on git runs.
@@ -992,6 +1011,7 @@ export function taskHeader(ctx, title) {
   // legacy sentence stays exactly as today.
   // Codex and OpenCode list the .agents/skills mount natively; another non-Claude engine (Cursor) is only told where it is.
   const nodeEngine = ctx.node?.engine || 'claude';
+  const personalOff = ctx.pluginsOff === true;   // 3b (D70): a Pretend try's spawn has no personal skills
   const skillsHint = nodeEngine === 'codex' || nodeEngine === 'opencode'
     ? `Project, root, set and your personal skills are mounted at .agents/skills for this run and are listed for ` +
       `you — read a skill's SKILL.md and use any that fit (e.g. design, framework-pattern, or knowledge-graph ` +
@@ -1001,13 +1021,19 @@ export function taskHeader(ctx, title) {
       `describes one skill; read any that fit (e.g. design, framework-pattern, or knowledge-graph skills) rather ` +
       `than guessing conventions.\n\n`
     : detached
-    ? `Project and root skills are mounted at .claude/skills for this run (in addition to your ` +
-      `personal ~/.claude/skills) and are available via the Skill tool — invoke any that fit ` +
-      `(e.g. design, framework-pattern, or knowledge-graph skills) rather than guessing ` +
-      `conventions.\n\n`
-    : `Project and personal skills (.claude/skills in this project and ~/.claude/skills) are ` +
-      `available via the Skill tool — invoke any that fit (e.g. design, framework-pattern, or ` +
-      `knowledge-graph skills) rather than guessing conventions.\n\n`;
+    ? (personalOff
+      ? `Project and root skills are mounted at .claude/skills for this run and are available via the Skill tool — invoke ` +
+        `any that fit (e.g. design, framework-pattern, or knowledge-graph skills) rather than guessing conventions.\n\n`
+      : `Project and root skills are mounted at .claude/skills for this run (in addition to your ` +
+        `personal ~/.claude/skills) and are available via the Skill tool — invoke any that fit ` +
+        `(e.g. design, framework-pattern, or knowledge-graph skills) rather than guessing ` +
+        `conventions.\n\n`)
+    : (personalOff
+      ? `Project skills (.claude/skills in this project) are available via the Skill tool — invoke any that fit (e.g. ` +
+        `design, framework-pattern, or knowledge-graph skills) rather than guessing conventions.\n\n`
+      : `Project and personal skills (.claude/skills in this project and ~/.claude/skills) are ` +
+        `available via the Skill tool — invoke any that fit (e.g. design, framework-pattern, or ` +
+        `knowledge-graph skills) rather than guessing conventions.\n\n`);
   return (
     `# Task: ${title}\n\n` +
     locationLine +
@@ -1123,7 +1149,7 @@ export function buildClarifyPrompt(ctx, opts = {}) {
     'pad, and never split one decision. For low-impact details, pick a sensible default rather ' +
     'than asking. If you have no material open questions, write { "questions": [] } to that ' +
     'same path.\n\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx), subagentModel: ctxSubagentModel(ctx), endpointRouted: ctxEndpointRouted(ctx), engine: ctx?.node?.engine || ctx?.engine }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx), subagentModel: ctxSubagentModel(ctx), endpointRouted: ctxEndpointRouted(ctx), engine: ctx?.node?.engine || ctx?.engine, personalOff: ctx?.pluginsOff === true }) +
     `Write the clarify JSON to: ${outPath}\n\n` +
     answered +
     mockMarkers({

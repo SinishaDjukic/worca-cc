@@ -95,7 +95,8 @@ export function cleanRunEnv(env) {
 /**
  * The final child env, in the order the claude runner always applied it: the
  * scrubbed env (undefined when scrub is off -> process.env), the run-level env
- * (cleanRunEnv) over it, the adapter's overlay (the model env) merged LAST so it
+ * (cleanRunEnv) over it, the person's carried sign-in (workflow tests 3b, D71) over the run env and under the overlay,
+ * the adapter's overlay (the model env) merged LAST so it
  * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
  * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, and no
  * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
@@ -103,10 +104,13 @@ export function cleanRunEnv(env) {
  * no run env and no overlay the env is byte-identical to the scrub result.
  * @returns {{env: Record<string,string>, scrubbed: boolean}}
  */
-export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid, tryGuard = null } = {}) {
+export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid, tryGuard = null, signInEnv = null } = {}) {
   const scrubbedEnv = buildSpawnEnv(envScrub, envAllowlist, prefixes);
   let env = scrubbedEnv;
   if (runEnv) env = { ...(env ?? process.env), ...runEnv };
+  // Workflow tests 3b (D71): a Pretend try's carried sign-in (string values of sign-in keys only, readUserSignIn): over the
+  // ambient and run env, under the model env, so a model's own routing always wins. Absent: byte-identical.
+  if (signInEnv && Object.keys(signInEnv).length) env = { ...(env ?? process.env), ...signInEnv };
   if (overlay) env = { ...(env ?? process.env), ...overlay };
   if (hostPid != null) env = { ...(env ?? process.env), WORCA_HOST_PID: String(hostPid) };
   env = stripHostCredentials(env ?? process.env);

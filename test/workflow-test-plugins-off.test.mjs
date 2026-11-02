@@ -1,0 +1,171 @@
+// test/workflow-test-plugins-off.test.mjs — workflow tests 3b, Task 2 (D70, D71): a Pretend try's spawns load no user settings,
+// carry only the sign-in kept there, and every other spawn stays byte-identical.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, signInCarry, secretValuesOf } from '../src/core/engines/claude.mjs';
+import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
+import { runOpts, taskHeader, fanOutDirective, PLUGINS_OFF_SOURCES } from '../src/core/phases.mjs';
+import { runClaude } from '../src/core/claude-runner.mjs';
+
+process.env.WORCA_HOST_GUARD = '0';   // as spawn-args.test.mjs: this file's feature only
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+const dirs = [];
+const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'worca-cc-poff-')); dirs.push(d); return d; };
+after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+const BASE = { prompt: 'p', permissionMode: 'acceptEdits', allowedTools: ['Read'] };
+const HELPERS = { apiKeyHelper: 'node key.js', awsAuthRefresh: 'aws sso login', awsCredentialExport: 'aws x' };
+const OPTS = { role: 'implementer', prompt: 'x', systemPrompt: 's', allowedTools: [] };
+
+test('the --settings payload: the three sign-in helpers only, and unchanged without them', () => {
+  assert.equal(buildSettingsPayload(null, {}), null, 'nothing to carry: no flag');
+  const p = buildSettingsPayload(null, { signInSettings: { ...HELPERS, hooks: { x: 1 }, env: { A: 'b' }, apiKeyHelperX: 'y' } });
+  assert.deepEqual(p.settings, HELPERS);
+  assert.equal(p.signIn, true);
+  const rules = { deny: ['Read(.env*)'] };
+  assert.deepEqual(buildSettingsPayload(rules, { signInSettings: null }), buildSettingsPayload(rules, {}));
+  assert.deepEqual(buildSettingsPayload(rules, { signInSettings: { apiKeyHelper: '' } }), buildSettingsPayload(rules, {}), 'an empty helper is nothing');
+  assert.equal(buildSettingsPayload(null, { signInSettings: { apiKeyHelper: '' } }), null);
+});
+
+test('a carried helper never rides the command line: buildClaudeArgs refuses it inline, the plan writes it to a file', () => {
+  assert.throws(() => buildClaudeArgs({ ...BASE, signInSettings: HELPERS }), /settings file/);
+  const dir = tmp();
+  const plan = planClaudeInvocation({ ...BASE, signInSettings: HELPERS }, { bin: 'claude', dir });
+  const i = plan.args.indexOf('--settings');
+  assert.equal(plan.args[i + 1], join(dir, 'settings.json'));
+  assert.deepEqual(JSON.parse(plan.files.find((f) => f.path === join(dir, 'settings.json')).content), HELPERS);
+  assert.deepEqual(plan.args.slice(0, 2), ['-p', 'p'], 'the prompt stays inline');
+  assert.equal(plan.staged, false, 'not the GH #380 staging (no "argv would be N chars" line)');
+  assert.equal(plan.stdin, null);
+  assert.ok(!plan.args.some((a) => a.includes('node key.js')));
+  const without = planClaudeInvocation(BASE, { bin: 'claude', dir: null });
+  assert.deepEqual(without.args, buildClaudeArgs(BASE), 'no carry: byte-identical, and no folder is needed');
+  assert.deepEqual(without.files, []);
+  const long = planClaudeInvocation({ ...BASE, prompt: 'x'.repeat(30000), signInSettings: HELPERS }, { bin: 'claude', dir: tmp() });
+  assert.equal(long.staged, true, 'over the limit: the GH #380 staging, with the helper in its settings file');
+  assert.deepEqual(JSON.parse(long.files.find((f) => f.path.endsWith('settings.json')).content), HELPERS);
+});
+
+test('the carried env sits over the ambient and run env, under the model env; without it the env is unchanged', () => {
+  const { env } = composeSpawnEnv({ envScrub: true, envAllowlist: [], runEnv: { A: 'run', C: 'run' }, signInEnv: { A: 'sign', B: 'sign' }, overlay: { B: 'model' } });
+  assert.deepEqual([env.A, env.B, env.C], ['sign', 'model', 'run']);
+  const plain = composeSpawnEnv({ envScrub: true, envAllowlist: [], runEnv: { A: 'run' }, overlay: { B: 'model' } }).env;
+  assert.deepEqual(composeSpawnEnv({ envScrub: true, envAllowlist: [], runEnv: { A: 'run' }, overlay: { B: 'model' }, signInEnv: null }).env, plain);
+  assert.equal(composeSpawnEnv({ envScrub: true, envAllowlist: [], signInEnv: { NODE_EXTRA_CA_CERTS: '/ca.pem' } }).env.NODE_EXTRA_CA_CERTS, '/ca.pem',
+    'a sign-in key the model env may not set still reaches the spawn');
+});
+
+test('what is carried: the person\'s sign-in; nothing with the broker on or into another OS user\'s spawn', () => {
+  const found = () => ({ state: 'found', env: { ANTHROPIC_API_KEY: 'sk-ant-1' }, settings: { apiKeyHelper: 'h' } });
+  assert.deepEqual(signInCarry({ read: found }), { env: { ANTHROPIC_API_KEY: 'sk-ant-1' }, settings: { apiKeyHelper: 'h' } });
+  assert.equal(signInCarry({ read: () => ({ state: 'none', env: {}, settings: {} }) }), null);
+  assert.equal(signInCarry({ read: () => ({ state: 'unreadable', env: {}, settings: {} }) }), null);
+  assert.equal(signInCarry({ read: () => { throw new Error('x'); } }), null, 'never throws');
+  const prev = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://127.0.0.1:1';
+  try { assert.equal(signInCarry({ read: found }), null, 'the broker\'s token is the only model credential'); }
+  finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
+  assert.equal(signInCarry({ read: found, asAgent: true, agentUser: () => ({ user: 'agent1' }) }), null, 'another OS user');
+  assert.deepEqual(signInCarry({ read: found, asAgent: true, agentUser: () => null }), { env: { ANTHROPIC_API_KEY: 'sk-ant-1' }, settings: { apiKeyHelper: 'h' } },
+    'no agent user set up: the person\'s own spawn');
+  let seen = null;
+  signInCarry({ read: (o) => { seen = o.env.CLAUDE_CONFIG_DIR; return found(); }, modelEnv: { CLAUDE_CONFIG_DIR: '/cfg/other' } });
+  assert.equal(seen, '/cfg/other', 'a model profile that moves the config folder moves where the sign-in is read');
+  assert.deepEqual(secretValuesOf({ ANTHROPIC_API_KEY: 'sk-ant-12345678', CLAUDE_CODE_USE_VERTEX: '1', AWS_SECRET_ACCESS_KEY: 'abcdefgh1234',
+    ANTHROPIC_AUTH_TOKEN: 'short', AWS_SESSION_TOKEN: 'zzzzzzzzzz' }), ['sk-ant-12345678', 'abcdefgh1234', 'zzzzzzzzzz']);
+});
+
+test('runOpts: a Pretend try\'s node gets the sources and pluginsOff; any other node neither', () => {
+  const o = runOpts({ projectDir: '/p', claudeOpts: {}, pluginsOff: true }, OPTS);
+  assert.deepEqual([o.settingSources, o.pluginsOff], [['project', 'local'], true]);
+  assert.deepEqual(PLUGINS_OFF_SOURCES, ['project', 'local']);
+  const n = runOpts({ projectDir: '/p', claudeOpts: {} }, OPTS);
+  assert.equal('settingSources' in n, false);
+  assert.equal('pluginsOff' in n, false);
+  assert.equal('settingSources' in runOpts({ projectDir: '/p', claudeOpts: {}, pluginsOff: 'yes' }, OPTS), false, 'only true');
+});
+
+test('the prompts promise no personal skills or agents when they are off; every other prompt is unchanged', () => {
+  const on = fanOutDirective(true, {});
+  const off = fanOutDirective(true, { personalOff: true });
+  assert.match(on, /~\/\.claude\/agents/);
+  assert.match(on, /~\/\.claude\/skills/);
+  assert.doesNotMatch(off, /~\/\.claude|your personal/);
+  assert.match(off, /this project's own agents \(`\.claude\/agents`\) are available by name/);
+  assert.match(off, /Skills are available too: this project's skills \(`\.claude\/skills`\) can be invoked via the Skill tool/);
+  assert.equal(fanOutDirective(true, { personalOff: false }), on);
+  assert.doesNotMatch(fanOutDirective(true, { personalOff: true, omitProjectAgents: true }), /~\/\.claude|your personal/);
+  const ctx = { projectDir: '/p', pipelineDir: '/pl', taskPrompt: 'Fix it.', isEntry: true, node: { engine: 'claude' } };
+  for (const c of [ctx, { ...ctx, runRoot: '/runs/r1' }]) {
+    assert.match(taskHeader(c, 'T'), /~\/\.claude\/skills/, 'today\'s hint');
+    const h = taskHeader({ ...c, pluginsOff: true }, 'T');
+    assert.doesNotMatch(h, /~\/\.claude|personal/);
+    assert.match(h, /skills .*available via the Skill tool/);
+  }
+});
+
+test('runClaude forwards pluginsOff: --setting-sources project,local, the helper in a settings file, the sign-in in the env', POSIX_SHIM, async () => {
+  const dir = tmp();
+  const cfg = join(dir, 'cfg');
+  mkdirSync(cfg);
+  writeFileSync(join(cfg, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_API_KEY: 'sk-ant-carried-1' }, apiKeyHelper: 'node key.js', hooks: { PreToolUse: [] } }));
+  const argvOut = join(dir, 'argv.txt');
+  const envOut = join(dir, 'env.txt');
+  const settingsOut = join(dir, 'settings-seen.json');
+  const bin = join(dir, 'fake-claude.sh');
+  writeFileSync(bin, '#!/bin/sh\n'
+    + `for a in "$@"; do printf '%s\\0' "$a" >> ${JSON.stringify(argvOut)}; case "$a" in */settings.json) cp "$a" ${JSON.stringify(settingsOut)};; esac; done\n`
+    + `env > ${JSON.stringify(envOut)}\nexit 0\n`);
+  chmodSync(bin, 0o755);
+  const prev = { mock: process.env.WORCA_MOCK, cfg: process.env.CLAUDE_CONFIG_DIR };
+  delete process.env.WORCA_MOCK;
+  process.env.CLAUDE_CONFIG_DIR = cfg;
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', allowedTools: ['Bash'], settingSources: [...PLUGINS_OFF_SOURCES], pluginsOff: true });
+  } finally {
+    if (prev.mock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prev.mock;
+    if (prev.cfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev.cfg;
+  }
+  const argv = readFileSync(argvOut, 'utf8').split('\0').filter(Boolean);
+  assert.equal(argv[argv.indexOf('--setting-sources') + 1], 'project,local');
+  assert.ok(existsSync(settingsOut), 'a --settings file reached the CLI');
+  assert.deepEqual(JSON.parse(readFileSync(settingsOut, 'utf8')), { apiKeyHelper: 'node key.js' });
+  assert.ok(!argv.some((a) => a.includes('node key.js')), 'never on the command line');
+  assert.match(readFileSync(envOut, 'utf8'), /^ANTHROPIC_API_KEY=sk-ant-carried-1$/m);
+});
+
+test('D81: the person\'s deny rules after Worca\'s and the try guard\'s, the sandbox kept, and only ever in a file', () => {
+  const S = { deny: ['Bash(rm -rf:*)', 'Read(.env*)'], sandbox: { enabled: true } };
+  const p = buildSettingsPayload({ deny: ['Read(.env*)'] }, { safetySettings: S });
+  assert.deepEqual(p.settings.permissions.deny, ['Read(.env*)', 'Bash(rm -rf:*)']);
+  assert.deepEqual(p.settings.sandbox, { enabled: true });
+  assert.equal(p.signIn, true, 'a file, never inline');
+  const tg = { logFile: '/x/calls.ndjson' };
+  const base = (buildSettingsPayload(null, { tryGuard: tg }).settings.permissions || {}).deny || [];
+  assert.deepEqual(buildSettingsPayload(null, { tryGuard: tg, safetySettings: S }).settings.permissions.deny, [...new Set([...base, ...S.deny])]);
+  assert.equal(buildSettingsPayload(null, { safetySettings: { deny: [], sandbox: null } }), null, 'nothing to carry: no flag');
+  assert.throws(() => buildClaudeArgs({ ...BASE, safetySettings: S }), /settings file/);
+  const dir = tmp();
+  const plan = planClaudeInvocation({ ...BASE, safetySettings: S }, { bin: 'claude', dir });
+  assert.equal(plan.args[plan.args.indexOf('--settings') + 1], join(dir, 'settings.json'));
+});
+
+test('D81: the guards are carried in every case: with no sign-in, with the broker on, into an agent user\'s spawn', () => {
+  const none = () => ({ state: 'none', env: {}, settings: {} });
+  const found = () => ({ state: 'found', env: { ANTHROPIC_API_KEY: 'sk-ant-1' }, settings: {} });
+  const safe = () => ({ deny: ['Bash(rm -rf:*)'], sandbox: null });
+  const empty = () => ({ deny: [], sandbox: null });
+  const G = { deny: ['Bash(rm -rf:*)'], sandbox: null };
+  assert.deepEqual(signInCarry({ read: none, readSafety: safe }), { env: {}, settings: {}, safety: G });
+  assert.equal(signInCarry({ read: none, readSafety: empty }), null);
+  assert.deepEqual(signInCarry({ read: found, readSafety: empty }), { env: { ANTHROPIC_API_KEY: 'sk-ant-1' }, settings: {} }, 'no guards: no safety key');
+  assert.deepEqual(signInCarry({ read: found, readSafety: safe, asAgent: true, agentUser: () => ({ user: 'a' }) }), { env: {}, settings: {}, safety: G },
+    'the sign-in stays with its user; the guards come along');
+  const prev = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://127.0.0.1:1';
+  try { assert.deepEqual(signInCarry({ read: found, readSafety: safe }), { env: {}, settings: {}, safety: G }); }
+  finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
+});
