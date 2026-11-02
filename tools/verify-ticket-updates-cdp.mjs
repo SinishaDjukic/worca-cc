@@ -8,15 +8,16 @@
 // button and must stay inside the viewport. Screenshots of boards 1, 3, 4 and 6, light and dark, go to TU_SHOTS (else a new temp folder), kept and printed at
 // the end. NOT part of `npm test`.
 // Run: node tools/verify-ticket-updates-cdp.mjs   (or: npm run verify:ticket-updates; set CHROME_BIN to a Chrome/Chromium
-// binary if it is not auto-found, CDP_PORT when 9351 is taken)
+// binary if it is not auto-found; CDP_PORT pins Chrome's debugging port, else a free one is taken)
 //
 // -- CI COVERAGE -------------------------------------------------------------
 // .github/workflows/ci.yml job `cdp` runs this in its second group, after verify:requirements. What stays CDP-only: the real
 // CSS (the 390 px layout, 44 px targets, AA contrast in both themes), the live server's routes in mock mode and the page-error
 // gate. The modules' DOM shapes and behaviour are pinned in the jsdom tests of move-select, projects-popover and the section.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { existsSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,19 +28,34 @@ const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chr
 const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p)) || CHROME_PATHS[0];
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
-const PORT = Number(process.env.CDP_PORT || 9351);
+// A free port unless CDP_PORT pins one: a fixed default (it was 9351) can be held by another Chrome on the machine, and the
+// proof then waits on an endpoint that never answers (the "no CDP endpoint" flake).
+const freePort = () => new Promise((r, j) => { const s = createServer(); s.once('error', j);
+  s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => r(port)); }); });
+let PORT = Number(process.env.CDP_PORT || 0);
 // The whole proof is bounded: a CDP call that never answers (Chrome gone) ends in a named failure and a cleanup, not a hang.
-const WATCHDOG_MS = Number(process.env.TU_WATCHDOG_MS || 3 * 60_000);
+// 6 min: the clock starts before the server's imports, which a loaded machine has stretched to nearly 3 min on its own
+// (a run takes ~35 s on an idle one), Chrome's launch may wait up to 3 x 60 s and the page's load up to 120 s.
+const WATCHDOG_MS = Number(process.env.TU_WATCHDOG_MS || 6 * 60_000);
 const T0 = Date.now();
 const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
 
 let chrome = null; let srv = null; let home = null; let profile = null; let failed = 0; let SHOTS = ''; let closing = false;
 const sockets = [];
+/** Ends a Chrome and the processes it started. On Windows a kill of the browser process alone left it (and its renderers)
+ *  running, so every run leaked a headless Chrome and the next runs slowed down: taskkill /T /F ends the whole tree. */
+function killChrome(proc) {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+  if (process.platform === 'win32') {
+    try { spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', timeout: 20_000, windowsHide: true }); } catch {}
+  }
+  try { proc.kill('SIGKILL'); } catch {}
+}
 async function shutdown(code) {
   if (closing) return;
   closing = true;
   for (const s of sockets) { try { s.close(); } catch {} }
-  try { if (chrome) chrome.kill('SIGKILL'); } catch {}
+  killChrome(chrome);
   try { if (srv) { srv.closeAllConnections?.(); await new Promise((r) => srv.close(r)); } } catch {}
   // The open SQLite file would block removing the temp home on Windows (verify-requirements-cdp.mjs does the same)
   try { (await import(new URL('../src/core/db.mjs', import.meta.url).href))._resetForTests(); } catch {}
@@ -87,17 +103,37 @@ const base = `http://127.0.0.1:${srv.address().port}`;
 log(`server on ${base}`);
 
 // ---- Chrome, with the REAL home back for its caches ----
-profile = await mkdtemp(path.join(tmpdir(), 'worca-tu-profile-'));
-chrome = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
-  '--headless=new', '--disable-gpu', '--use-mock-keychain', '--window-size=1400,1000', ...SANDBOX, 'about:blank'],
-{ env: { ...process.env, ...REAL_ENV }, stdio: 'ignore' });
-// Up to 30 s: a cold Chrome on a busy machine can take more than 10 s to open its endpoint.
+// Up to 3 launches, each waiting up to 60 s for its endpoint (a cold Chrome on a busy CI runner can take well over 10 s).
+// A Chrome that exits before its endpoint answers is launched again on a fresh port and profile; its last stderr lines
+// are printed when every launch failed, so the failure names its cause.
 let up = false;
-for (let i = 0; i < 120 && !up; i += 1) {
-  try { up = (await fetch(`http://127.0.0.1:${PORT}/json/version`)).ok; } catch { /* not listening yet */ }
-  if (!up) await sleep(250);
+const chromeErr = [];
+for (let attempt = 1; attempt <= 3 && !up; attempt += 1) {
+  if (chrome) { killChrome(chrome); chrome = null; }
+  if (profile) { try { await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {} }
+  if (!process.env.CDP_PORT) PORT = await freePort();
+  profile = await mkdtemp(path.join(tmpdir(), 'worca-tu-profile-'));
+  const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
+    '--headless=new', '--disable-gpu', '--use-mock-keychain', '--no-first-run', '--no-default-browser-check',
+    '--window-size=1400,1000', ...SANDBOX, 'about:blank'],
+  { env: { ...process.env, ...REAL_ENV }, stdio: ['ignore', 'ignore', 'pipe'] });
+  chrome = proc;
+  let exited = null;
+  proc.on('exit', (code, signal) => { exited = { code, signal }; });
+  proc.stderr.on('data', (d) => { chromeErr.push(String(d)); if (chromeErr.length > 40) chromeErr.shift(); });
+  const deadline = Date.now() + 60_000;
+  while (!up && !exited && Date.now() < deadline) {
+    try { up = (await fetch(`http://127.0.0.1:${PORT}/json/version`)).ok; } catch { /* not listening yet */ }
+    if (!up) await sleep(250);
+  }
+  if (!up) log(`launch ${attempt}: no CDP endpoint on ${PORT}${exited ? ` (Chrome exited: code ${exited.code}, signal ${exited.signal})` : ' after 60 s'}`);
 }
-if (!up) { log('no CDP endpoint'); await shutdown(1); }
+if (!up) {
+  log('no CDP endpoint');
+  if (chromeErr.length) process.stderr.write(`${chromeErr.join('').trim().split('\n').slice(-15).join('\n')}\n`);
+  await shutdown(1);
+}
+log(`Chrome's endpoint on ${PORT}`);
 const { WebSocket } = await import('ws');
 
 async function connect(wsUrl) {
@@ -124,10 +160,15 @@ async function connect(wsUrl) {
   };
   await send('Runtime.enable');
   await send('Page.enable');
-  for (let t0 = Date.now(); Date.now() - t0 < 15000;) {
-    if (await evalJs(`document.readyState === 'complete' && location.href !== 'about:blank'`).catch(() => false)) break;
-    await sleep(100);
+  // Up to 120 s for the page's load: a cold headless Chrome on a busy machine has taken over 60 s to load the app's modules
+  // (the server answered in milliseconds). A page that never loads is a named failure here, not a missing row later.
+  let loaded = false;
+  for (let t0 = Date.now(); !loaded && Date.now() - t0 < 120_000;) {
+    loaded = await evalJs(`document.readyState === 'complete' && location.href !== 'about:blank'`).catch(() => false);
+    if (!loaded) await sleep(100);
   }
+  check('the page loaded', loaded);
+  log('page loaded');
   return { send, evalJs, pageErrors };
 }
 async function openPage(url) {
@@ -137,7 +178,13 @@ async function openPage(url) {
 }
 
 const A = await openPage(`${base}/#marketplace/installed`);
-const until = async (fn, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(60); } return false; };
+/** Polls `fn` until it answers truthy or `ms` pass. A probe that throws (an element read mid re-render) counts as not yet,
+ *  so a slow render is waited out instead of ending the proof with a TypeError. */
+const until = async (fn, ms = 15000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { if (await Promise.resolve().then(fn).catch(() => false)) return true; await sleep(60); }
+  return false;
+};
 const js = (body) => A.evalJs(`(() => { ${body} })()`);
 const has = (sel) => js(`return !!document.querySelector(${JSON.stringify(sel)});`);
 /** Clicks `sel`; a missing element is a named failure (not a silent no-op the next check trips over). */
@@ -149,7 +196,11 @@ const click = async (sel) => {
 const textOf = (sel) => js(`return document.querySelector(${JSON.stringify(sel)})?.textContent ?? null;`);
 /** Opens jira-source's manage sheet; true once a fresh section (not one left from an earlier opening) shows its rules. */
 const openSheet = async () => {
-  check('the jira-source row is listed', await until(() => has('button.mk-name[data-name="jira-source"]'), 20000));
+  // 60 s: the first open is the page's cold load (the installed list's fetch included), which a busy machine stretches past 20 s
+  const listed = await until(() => has('button.mk-name[data-name="jira-source"]'), 60000);
+  check('the jira-source row is listed', listed, listed ? '' : JSON.stringify(await js(`return { at: location.href,
+    rows: [...document.querySelectorAll('.mk-name')].map((n) => n.dataset.name || n.textContent.trim()),
+    text: (document.querySelector('main') || document.body).innerText.replace(/\\s+/g, ' ').slice(0, 300) };`).catch((e) => String(e))));
   await js(`for (const s of document.querySelectorAll('.mk-tu')) s.dataset.stale = '1'; return true;`);
   await click('button.mk-name[data-name="jira-source"]');
   return until(() => js(`const host = document.getElementById('mk-sheet-host'); const s = document.querySelector('#mk-sheet .mk-tu:not([data-stale])');
@@ -268,14 +319,23 @@ check('SHOP (a click) and CRM (ArrowDown, Enter) are picked', await js(`const se
 check('the focus stayed in the search box', await js(`return document.activeElement === document.querySelector('.mk-tu-projpop .mk-tu-search');`));
 check('the footer counts the picks', (await textOf('.mk-tu-pcount')) === '2 picked · 6 projects on Acme', await textOf('.mk-tu-pcount'));
 await click('.mk-tu-projpop .mk-tu-done');
-check('Done closes the popover', !(await has('.mk-tu-projpop')));
-check('two chips, SHOP and CRM', await js(`return [...document.querySelectorAll('#mk-sheet .mk-tu-chip')].map((c) => c.dataset.value).join() === 'SHOP,CRM';`));
+check('Done closes the popover', await until(async () => !(await has('.mk-tu-projpop'))));
+check('two chips, SHOP and CRM', await until(() => js(`return [...document.querySelectorAll('#mk-sheet .mk-tu-chip')].map((c) => c.dataset.value).join() === 'SHOP,CRM';`)));
 
 // ---- a project rule with one of its statuses (board 4) ----
-await click('#mk-sheet .mk-tu-add-rule');
-check('the new row has a Project select', await until(() => has('#mk-sheet .mk-tu-project')));
-check('its Project select offers only SHOP and CRM', await until(() => js(`const s = document.querySelector('#mk-sheet .mk-tu-project');
-  return [...s.options].filter((o) => o.value).map((o) => o.value).join() === 'SHOP,CRM';`)));
+// The button is waited for (enabled) before the click, and the click is made again if no row came of it: the section can still
+// be settling from the popover's Done when the first click lands (the flake: no Project select, then a null `.options`).
+check('Add a project rule is on the page and enabled', await until(() => js(`const b = document.querySelector('#mk-sheet .mk-tu-add-rule');
+  return !!b && !b.disabled && b.getClientRects().length > 0;`)));
+let addedRow = false;
+for (let i = 0; i < 3 && !addedRow; i += 1) {
+  if (!(await has('#mk-sheet .mk-tu-project'))) await click('#mk-sheet .mk-tu-add-rule');
+  addedRow = await until(() => has('#mk-sheet .mk-tu-project'), 5000);
+}
+check('the new row has a Project select', addedRow);
+const projectChoices = () => js(`const s = document.querySelector('#mk-sheet .mk-tu-project');
+  return s ? [...s.options].filter((o) => o.value).map((o) => o.value).join() : null;`);
+check('its Project select offers only SHOP and CRM', await until(async () => (await projectChoices()) === 'SHOP,CRM'), String(await projectChoices()));
 // a mouse pick (no key before the change) commits at once; a pick with the keys would wait for Enter or blur
 check('the Project select takes SHOP', await js(`const s = document.querySelector('#mk-sheet .mk-tu-project'); if (!s) return false;
   s.value = 'SHOP'; s.dispatchEvent(new Event('change', { bubbles: true })); return true;`));
@@ -299,7 +359,7 @@ await click('.mk-tu-projpop .mk-tu-done');
 // ---- 390 px (board 6) ----
 await setTheme('light');
 await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-await sleep(400);
+check('390 px: the page took the phone width', await until(() => js(`return window.innerWidth === 390;`)));
 const phone = await js(`const row = document.querySelector('#mk-sheet .mk-tu-rule[data-project="SHOP"]'); const sel = row?.querySelector('.mk-tu-movewrap');
   const nameEl = row?.querySelector('.mk-tu-name'); const xEl = document.querySelector('#mk-sheet .mk-tu-x');
   const missing = [[row, 'the SHOP rule'], [sel, 'its .mk-tu-movewrap'], [nameEl, 'its .mk-tu-name'], [xEl, 'a chip ×']].filter(([n]) => !n).map(([, w]) => w);
@@ -329,7 +389,7 @@ check('390 px: the popover fits the screen', await js(`const p = document.queryS
 aa('390 px: the open projects popover', await contrastBoth(['.mk-tu-projpop'], 'board6-phone-popover'));
 await click('.mk-tu-projpop .mk-tu-done');
 await A.send('Emulation.clearDeviceMetricsOverride');
-await sleep(300);
+check('the page is back at desktop width', await until(() => js(`return window.innerWidth > 390;`)));
 
 // ---- Save, then reopen ----
 await click('#mk-sheet [data-act="save"]');
