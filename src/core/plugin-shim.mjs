@@ -266,11 +266,16 @@ function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacy
   }
 }
 
-/** stdout parsed as one whole frame (an object with a boolean `ok`), or null. */
+/**
+ * stdout parsed as one whole protocol frame, or null. A frame is what the child
+ * writes: an object with a boolean `ok` AND a `logs` array. `ok` alone is not
+ * enough: a connector that printed e.g. a Slack body `{"ok":true}` and crashed
+ * must stay a protocol error.
+ */
 function completeFrame(stdout) {
   try {
     const frame = JSON.parse(stdout);
-    return frame && typeof frame === 'object' && !Array.isArray(frame) && typeof frame.ok === 'boolean' ? frame : null;
+    return frame && typeof frame === 'object' && !Array.isArray(frame) && typeof frame.ok === 'boolean' && Array.isArray(frame.logs) ? frame : null;
   } catch {
     return null;
   }
@@ -341,11 +346,11 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
     child.stderr.setEncoding('utf8').on('data', (c) => { stderr += c; });
     child.on('error', (err) => settle(rejectFrame, new PluginOpError('protocol', `plugin "${plugin}": spawn failed — ${err.message}`)));
     child.on('close', (code, signal) => {
+      const answered = completeFrame(stdout);
       if (timedOut) {
         // A frame written just before the deadline can still be followed by a
         // slow exit (leftover handle, grace period): the answer wins. An op
         // that never answers has no frame and still ends as a timeout.
-        const answered = completeFrame(stdout);
         if (answered) {
           log('warn', `plugin "${plugin}" op "${op}": the child was killed after answering `
             + `(timeout ${timeoutMs}ms); its answer is kept`);
@@ -358,7 +363,6 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
         // asserts in libuv during process.exit(0) once a connector made one HTTPS
         // fetch (exit 0xC0000409). A complete frame on stdout is the answer; keep
         // it and say so. Anything less is still "crashed before the frame".
-        const answered = completeFrame(stdout);
         if (answered) {
           // The crash line is usually the last one, not the first.
           const lines = stderr.split(/\r?\n/).filter((l) => l.trim());
@@ -368,14 +372,11 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
           return settle(resolveFrame, answered);
         }
         return settle(rejectFrame, new PluginOpError('protocol',
-          `plugin "${plugin}" op "${op}": child exited ${code}${stderr ? ` — ${stderr.slice(0, 400)}` : ''}`));
+          `plugin "${plugin}" op "${op}": child exited ${code ?? signal}${stderr ? ` — ${stderr.slice(0, 400)}` : ''}`));
       }
-      try {
-        settle(resolveFrame, JSON.parse(stdout));
-      } catch {
-        settle(rejectFrame, new PluginOpError('protocol',
-          `plugin "${plugin}" op "${op}": non-JSON on stdout (stdout is protocol-reserved; use ctx.log) — got: ${stdout.slice(0, 200)}`));
-      }
+      if (answered) return settle(resolveFrame, answered);
+      settle(rejectFrame, new PluginOpError('protocol',
+        `plugin "${plugin}" op "${op}": non-JSON on stdout (stdout is protocol-reserved; use ctx.log) — got: ${stdout.slice(0, 200)}`));
     });
     child.stdin.end(payload); // config/secrets/state via stdin only
   });

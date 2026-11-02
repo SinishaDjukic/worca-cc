@@ -91,14 +91,27 @@ main()
     logs,
   }))
   .then((frame) => {
-    // Write-callback first so a piped stdout is fully flushed. Then let the loop
-    // end on its own: on Windows, Node 24's process.exit(0) right after a
+    // Mute stdout first, then write the frame through the saved write: nothing
+    // a connector prints from here on can land after (or inside) the JSON.
+    // Write-callback so a piped stdout is fully flushed. Then let the loop end
+    // on its own: on Windows, Node 24's process.exit(0) right after a
     // connector's HTTPS fetch can crash in libuv (exit 0xC0000409); a natural
     // end does not. The unref'd fallback never keeps the child alive itself.
-    process.stdout.write(JSON.stringify(frame), () => {
-      // stdout carries ONE frame: whatever a connector's leftover work prints
-      // after it is dropped, as the immediate exit used to drop it.
-      process.stdout.write = () => true;
+    const writeFrame = process.stdout.write.bind(process.stdout);
+    process.stdout.write = () => true;
+    writeFrame(JSON.stringify(frame), () => {
+      // The answer is out. An error thrown by the connector's leftover work now
+      // (a late timer, a rejected promise nobody awaits) must not turn into a
+      // nonzero exit that reads as the Windows exit crash: log it, exit 0.
+      // Before this point nothing is installed, so a crash before the answer
+      // keeps Node's default (stack on stderr, exit 1).
+      const leftover = (err) => {
+        try { process.stderr.write(`leftover work failed after the answer: ${err?.stack || err}
+`); } catch { /* stderr gone */ }
+        process.exit(0);
+      };
+      process.on('uncaughtException', leftover);
+      process.on('unhandledRejection', leftover);
       // A natural end honours process.exitCode, which a connector may have set;
       // the answer is out, so the exit is 0 whichever way the child ends.
       process.exitCode = 0;

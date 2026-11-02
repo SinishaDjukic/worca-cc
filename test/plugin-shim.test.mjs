@@ -66,6 +66,11 @@ const CONNECTOR = [
   "      process.on('exit', () => { const end = Date.now() + args.ms; while (Date.now() < end); });",
   '      return { stalled: true };',
   '    },',
+  // Answers, then leftover work throws / rejects after the frame is out.
+  "    async throwsLate() { setTimeout(() => { throw new Error('late boom'); }, 100); return { threw: true }; },",
+  "    async rejectsLate() { setTimeout(() => { Promise.reject(new Error('late reject')); }, 100); return { rejected: true }; },",
+  // Throws BEFORE answering, from a timer (not the op promise): must still crash.
+  "    async throwsEarly() { setTimeout(() => { throw new Error('early boom'); }, 10); return new Promise(() => {}); },",
   // Answers, but leaves process.exitCode set by stray connector code.
   "    async answersWithExitCode() { process.exitCode = 1; return { coded: true }; },",
   // Answers, then background work prints to stdout after the frame is out.
@@ -353,7 +358,7 @@ Assertion failed: simulated crash on exit ${'x'.repeat(500)}
 test('a frame that arrived before the timeout is kept even if the child is killed while ending', async () => {
   const logLines = [];
   const result = await callSource({
-    plugin: NAME, sourceId: 'main', op: 'answersThenStalls', args: { ms: 5000 }, timeoutMs: 3000,
+    plugin: NAME, sourceId: 'main', op: 'answersThenStalls', args: { ms: 1000 }, timeoutMs: 300,
     logger: (level, msg) => logLines.push(`${level}:${msg}`),
   });
   assert.deepEqual(result, { stalled: true });
@@ -395,8 +400,26 @@ test('a crash on exit after an error frame keeps the connector error, not protoc
   );
 });
 
+test('errors from leftover work after the answer exit 0: no crash warning, answer kept', async () => {
+  for (const [op, expected] of [['throwsLate', { threw: true }], ['rejectsLate', { rejected: true }]]) {
+    const logLines = [];
+    const result = await callSource({
+      plugin: NAME, sourceId: 'main', op, logger: (level, msg) => logLines.push(`${level}:${msg}`),
+    });
+    assert.deepEqual(result, expected, op);
+    assert.deepEqual(logLines, [], `${op}: exit 0, so no warning`);
+  }
+});
+
+test('an uncaught error BEFORE the answer is still a crash (protocol error)', async () => {
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'main', op: 'throwsEarly', logger: () => {} }),
+    'protocol', /child exited 1.*early boom/s,
+  );
+});
+
 test('a non-zero exit without a complete frame on stdout stays a protocol error', async () => {
-  for (const out of ['garbage', '{"ok":true,"result":', '{"result":1}', '42', 'null', '']) {
+  for (const out of ['garbage', '{"ok":true,"result":', '{"result":1}', '42', 'null', '', '{"ok":true}', '{"ok":false,"error":{}}']) {
     await rejectsKind(
       callSource({ plugin: NAME, sourceId: 'main', op: 'writeThenExit', args: { out, code: 5 }, logger: () => {} }),
       'protocol', /child exited 5/,
