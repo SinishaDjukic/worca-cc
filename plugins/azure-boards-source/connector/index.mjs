@@ -100,6 +100,50 @@ export default function createTaskSource(ctx, deps = {}) {
     }
     return out;
   }
+  /** PR 1's rule for a refused move (its Deviation 3), in Azure's terms: a 4xx other than 401 (auth, as 203) and 429 (rate
+   *  limit) is a line; a 5xx, network error, timeout, refused token or rate limit throws, so the write-back can be retried. */
+  const refusedMove = (e) => !!e && e.kind === 'plugin' && e.status >= 400 && e.status < 500 && e.status !== 429;
+  /** One move, before the comment (D11). Answers { note, moved }. Any Done status is the type's first Completed-category state,
+   *  never a Removed one; a status move is that state of the work item's own type, with no fallback (decision 3). Reading the
+   *  item or its states throws (decision 9). */
+  async function applyMove(ref, move) {
+    const none = { note: '', moved: null };
+    const want = typeof move.status === 'string' ? move.status.trim() : '';
+    if (move.none === true || (move.category !== 'done' && !want)) return none;
+    const f = (await one(ref))?.fields || {};
+    const type = String(f['System.WorkItemType'] || '');
+    const project = String(f['System.TeamProject'] || ref.project);
+    const from = String(f['System.State'] || '?');
+    // Work Item Type States - List is a preview endpoint in 7.1: pin its version, as closeOnComplete does.
+    const states = ((await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workitemtypes/${enc(type)}/states?api-version=7.1-preview.1`))?.value || [])
+      .filter((s) => s && s.name);
+    let to;
+    if (move.category === 'done') {
+      const now = states.find((s) => lc(s.name) === lc(from));
+      if (now && (now.category === 'Completed' || now.category === 'Removed')) return { ...none, note: `Already in ${from}.` };
+      to = states.find((s) => s.category === 'Completed');
+      if (!to) return { ...none, note: `Not moved: ${project}'s ${type} type has no Done status.` };
+    } else {
+      const named = typeof move.name === 'string' && move.name.trim() ? move.name.trim() : want;
+      if (lc(from) === lc(want)) return { ...none, note: `Already in ${from}.` };
+      to = states.find((s) => lc(s.name) === lc(want));
+      if (!to) {
+        let has = true;
+        try { has = (await statesOfProject(ref.project)).some((s) => lc(s.value) === lc(want)); } catch { has = true; }   // unknown: the type line
+        return { ...none, note: has ? `Not moved: ${project}'s ${type} type has no status named ${named}.`
+          : `Not moved: ${project} has no status named ${named} any more.` };
+      }
+    }
+    try {
+      await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workitems/${ref.id}`, {
+        method: 'PATCH', contentType: 'application/json-patch+json', body: [{ op: 'add', path: '/fields/System.State', value: to.name }],
+      });
+    } catch (e) {
+      if (refusedMove(e)) return { ...none, note: `Not moved: Azure Boards refused the move to ${to.name}: ${azureSaid(e)}.` };
+      throw e;
+    }
+    return { note: `Moved to ${to.name}.`, moved: { from, to: to.name } };
+  }
 
   return {
     async validateConfig() {
@@ -151,7 +195,7 @@ export default function createTaskSource(ctx, deps = {}) {
         // meta.project (Ticket updates, D6): the item's own project as listProjects names it, whatever case the id was typed in
         meta: { organization: ref.org, project: f['System.TeamProject'] || ref.project, id: ref.id, type: f['System.WorkItemType'] || null } };
     },
-    async reportResult(id, { status, summary: text, links = [] }) {
+    async reportResult(id, { status, summary: text, links = [], move } = {}) {
       // A bad id throws like github-source's parseId: sources.mjs records a throw as a failed write-back,
       // while a normal return would be recorded as ok:true for a comment that was never posted.
       const ref = requireRef(id);
@@ -159,6 +203,14 @@ export default function createTaskSource(ctx, deps = {}) {
       // Only http(s) links become anchors (s2); any other scheme is shown as escaped text.
       const item = (l) => (safeHref(l.url) ? `<a href="${escapeHtml(safeHref(l.url))}">${escapeHtml(l.title || l.url)}</a>` : escapeHtml(l.title || l.url || ''));
       const html = `${markdownToHtml(text || `worca pipeline ${status}`)}${links.length ? `<ul>${links.map((l) => `<li>${item(l)}</li>`).join('')}</ul>` : ''}`;
+      if (move && typeof move === 'object') {
+        // Ticket updates (D11): Worca decided the move; the state changes first, then one comment: the run summary, its links,
+        // then the outcome line last. Without a move (nothing saved in Worca) the old path below runs unchanged (D4).
+        const out = await applyMove(ref, move);
+        await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workItems/${ref.id}/comments?api-version=7.1-preview.4`,
+          { method: 'POST', body: { text: `${html}${out.note ? `<p>${escapeHtml(out.note)}</p>` : ''}` } });
+        return { commented: true, moved: out.moved, note: out.note };
+      }
       await adoFetch(ado, `${base}/${enc(ref.project)}/_apis/wit/workItems/${ref.id}/comments?api-version=7.1-preview.4`, { method: 'POST', body: { text: html } });
       if (status !== 'completed' || !toBool(ctx.config?.closeOnComplete)) return;
       const w = await one(ref);
