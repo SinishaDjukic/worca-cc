@@ -215,7 +215,7 @@ const sentFiles = (start, f) => {
 export async function featureView(seq, d = {}) {
   const f = requireFeature(seq);
   const turns = listTurns(seq);
-  const last = turns.filter((t) => t.kind !== 'file' && t.kind !== 'export').at(-1);   // A8 / A6: never hide the error line
+  const last = turns.filter((t) => t.kind !== 'file' && t.kind !== 'export' && t.kind !== 'import').at(-1);   // A8 / A6 / A6.1: never hide the error line
   const busy = isBusy(seq);
   const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
   const files = listAttachments('feature', seq);

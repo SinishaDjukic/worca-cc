@@ -612,8 +612,8 @@ export function finishInterview(seq, { by = null } = {}, deps = {}) {
 export function retry(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
-  // A8 / A6: a file's or an export's turns never hide the error Try again answers
-  const turns = listTurns(seq).filter((t) => t.kind !== 'file' && t.kind !== 'export');
+  // A8 / A6 / A6.1: a file's, an export's or the import's turns never hide the error Try again answers
+  const turns = listTurns(seq).filter((t) => t.kind !== 'file' && t.kind !== 'export' && t.kind !== 'import');
   if (turns.at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
   const lastReal = turns.filter((t) => t.kind !== 'error').at(-1);
   if (!f.orientation) return startOrientation(seq, { by }, deps);

@@ -655,7 +655,7 @@ const IMPORTED_AT = '2026-10-27T09:12:00.000Z';
 function importedFeature(scopeKey = SCOPE.scopeKey) {
   const f = createFeature({ scopeType: 'project', scopeKey, title: 'Partial cancel', description: 'From SHOP-124',
     criteria: [{ text: 'A customer can cancel unpicked items.', source: 'SHOP-124' }] });
-  appendTurn(f.seq, { kind: 'export', payload: { action: 'imported', tracker: 'Jira', key: 'SHOP-124', url: 'https://mock.test/browse/SHOP-124', at: IMPORTED_AT,
+  appendTurn(f.seq, { kind: 'import', payload: { tracker: 'Jira', key: 'SHOP-124', url: 'https://mock.test/browse/SHOP-124', at: IMPORTED_AT,
     linked: true, criteria: ['R-po-1'], comments: 2, files: [] } });
   saveExportLink(f.seq, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', trackerProject: 'SHOP', key: 'SHOP-124', url: 'https://mock.test/browse/SHOP-124',
     createdAt: IMPORTED_AT, exportedAt: IMPORTED_AT, spec: f.spec, fingerprint: 'fp-import', origin: 'import',
@@ -710,4 +710,7 @@ test("A6.1: the feature's export view carries the origin and the import's Histor
   assert.deepEqual([v.link.origin, v.link.importedOn, v.link.sinceImport], ['import', '27 Oct', true]);
   const h = v.history.find((x) => x.action === 'imported');
   assert.deepEqual([h.key, h.tracker, h.linked, h.linkedTo, h.when], ['SHOP-124', 'Jira', true, null, exportTime(IMPORTED_AT)]);
+  appendTurn(f.seq, { kind: 'export', payload: { action: 'updated', tracker: 'Jira', key: 'SHOP-124', url: null, at: new Date().toISOString() } });
+  const w = await exportView(getFeature(f.seq), listTurns(f.seq), d);
+  assert.deepEqual(w.history.map((x) => [x.action, 'linked' in x]), [['updated', false], ['imported', true]], "the import's own turn kind; an export's entry is A6's");
 });

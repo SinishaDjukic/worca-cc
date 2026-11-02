@@ -187,7 +187,7 @@ const importFields = (plan) => ({
   criteria: plan.criteriaField ? { target: 'field', field: plan.criteriaField.id, name: plan.criteriaField.name } : { target: 'description' },
 });
 
-/** D10–D12: the feature, its criteria, A6's link (unless another feature follows the ticket) and the `imported` turn in one transaction;
+/** D10–D12: the feature, its criteria, A6's link (unless another feature follows the ticket) and the `import` turn in one transaction;
  *  then the generated files (read at once), the downloading rows and their queue, then the form's own files. Nothing awaits a download.
  *  A file that cannot be stored never undoes the feature (A8): its name goes to filesNotStored. Accepted (plan review Minor 5): the
  *  turn's `comments` count (D14's "its comments are in …") is written with the feature, before the comments file is stored, so in the
@@ -201,7 +201,7 @@ export function createImported(scope, { title, description } = {}, plan, { by = 
       saveExportLink(made.seq, { ...plan.conn, trackerProject: plan.meta.project || plan.key.split('-')[0], key: plan.key, url: plan.url, createdAt: at,
         exportedAt: at, spec: made.spec, fields: importFields(plan), fingerprint: plan.fingerprint, origin: 'import' }, { by });
     }
-    appendTurn(made.seq, { kind: 'export', payload: { action: 'imported', tracker: plan.tracker, key: plan.key, url: plan.url, at, linked: !linked,
+    appendTurn(made.seq, { kind: 'import', payload: { tracker: plan.tracker, key: plan.key, url: plan.url, at, linked: !linked,
       ...(linked ? { linkedTo: linked.id } : {}), criteria: made.spec.criteria.map((c) => c.id), comments: plan.comments,
       commentsFile: plan.comments ? commentsFileName(plan.key) : null, files: plan.downloads.map((a) => a.name) } }, { by });
     return made;

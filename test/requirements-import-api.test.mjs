@@ -119,12 +119,13 @@ test('Start the interview with a ticket (D10, D11, D14): 201 at once; R-po-1… 
   assert.match(link.fingerprint, /^[0-9a-f]{64}$/);
   assert.equal(link.createdAt, link.exportedAt);
   assert.deepEqual(link.spec.criteria.map((c) => c.id), ['R-po-1', 'R-po-2', 'R-po-3'], 'the spec as created');
-  const turn = listTurns(f.seq).find((t) => t.kind === 'export');
+  assert.equal(listTurns(f.seq).filter((t) => t.kind === 'export').length, 0, 'the import is its own turn kind, not an export');
+  const turn = listTurns(f.seq).find((t) => t.kind === 'import');
   assert.deepEqual([turn.payload.action, turn.payload.key, turn.payload.linked, turn.payload.criteria, turn.payload.comments, turn.payload.commentsFile, turn.payload.files],
-    ['imported', 'SHOP-124', true, ['R-po-1', 'R-po-2', 'R-po-3'], 5, 'SHOP-124 comments.md', ['packing-slip.png', 'partial-cancel-flow.pdf', 'support-macro.txt']]);
+    [undefined, 'SHOP-124', true, ['R-po-1', 'R-po-2', 'R-po-3'], 5, 'SHOP-124 comments.md', ['packing-slip.png', 'partial-cancel-flow.pdf', 'support-macro.txt']]);
   const md = readFileSync(attachmentFile(listAttachments('feature', f.seq)[0]), 'utf8');
   assert.match(md, /^# Comments on SHOP-124\n\n\*\*Ann Example\*\* · 21 Oct 2026\n/);
-  assert.ok(!md.includes('Jira Automation') && md.includes('ghp_<redacted>') && !md.includes('ghp_abcdef'));
+  assert.ok(!md.includes('Jira Automation') && md.includes('ghp_<redacted>') && !md.includes('ghp_FAKE'));
   await h.drain(f.seq);
   await waitFor(() => listAttachments('feature', f.seq).every((a) => a.status === 'done'));
   await settled(f.seq);
@@ -160,8 +161,9 @@ test('one ticket follows one feature (D12): a ticket another feature follows mak
   assert.equal(r.status, 201);
   assert.equal(r.json.feature.export.link, null);
   assert.equal(getExportLink(r.json.feature.seq), null);
-  const turn = listTurns(r.json.feature.seq).find((t) => t.kind === 'export');
+  const turn = listTurns(r.json.feature.seq).find((t) => t.kind === 'import');
   assert.deepEqual([turn.payload.linked, turn.payload.linkedTo], [false, other.id]);
+  assert.deepEqual(r.json.feature.export.history.map((x) => [x.action, x.linked, x.linkedTo]), [['imported', false, other.id]]);
   assert.deepEqual(r.json.feature.spec.criteria.map((c) => c.source), ['SHOP-123', 'SHOP-123', 'SHOP-123']);
   await settled(r.json.feature.seq);
 });

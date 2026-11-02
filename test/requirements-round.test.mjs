@@ -556,11 +556,11 @@ test('A8 D8: a follow-up round for files says so, outside the round count; with 
   assert.deepEqual([m.questions.length, m.questions[0].source, m.done], [1, 'b.pdf', false]);
 });
 
-test("A6.1 D14: an import writes one thread line, as data; A6's other export turns write none, so a feature that was not imported keeps its thread byte for byte", () => {
+test("A6.1 D14: an import turn writes one thread line, as data; A6's export turns write none, so a feature that was not imported keeps its thread byte for byte", () => {
   const base = [{ id: 1, kind: 'round', payload: { questions: [] } }];
   const exported = [{ id: 2, kind: 'export', payload: { action: 'created', tracker: 'Jira', key: 'SHOP-1' } }];
   assert.equal(threadText([...base, ...exported]), threadText(base));
-  const imported = { id: 0, kind: 'export', payload: { action: 'imported', tracker: 'Jira', key: 'SHOP-124', criteria: ['R-po-1', 'R-po-2', 'R-po-3'], comments: 5,
+  const imported = { id: 0, kind: 'import', payload: { tracker: 'Jira', key: 'SHOP-124', criteria: ['R-po-1', 'R-po-2', 'R-po-3'], comments: 5,
     commentsFile: 'SHOP-124 comments.md' } };
   assert.equal(threadText([imported]),
     'The product owner started this feature from Jira ticket SHOP-124. Its acceptance criteria are R-po-1 to R-po-3; its comments are in “SHOP-124 comments.md”.');
@@ -585,7 +585,7 @@ test("A6.1 §9 (Prompts): an imported feature's round 1 prompt has the import li
       fetch: { tracker: 'Jira', key: 'SHOP-124' } },
   ];
   const attachments = renderAttachmentsForPrompt(rows, { texts: new Map([['ratt_000000000001', comments]]) });
-  const turns = [{ id: 1, kind: 'export', payload: { action: 'imported', tracker: 'Jira', key: 'SHOP-124', criteria: ['R-po-1', 'R-po-2', 'R-po-3'], comments: 1,
+  const turns = [{ id: 1, kind: 'import', payload: { tracker: 'Jira', key: 'SHOP-124', criteria: ['R-po-1', 'R-po-2', 'R-po-3'], comments: 1,
     commentsFile: 'SHOP-124 comments.md' } }];
   const p = buildRoundPrompt({ feature: { id: 'FEAT-8', title: 'Partial cancel', description: 'd', spec: emptySpec() }, turns, attachments, round: 1 });
   const block = (tag) => (new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(p) || [])[1];

@@ -147,8 +147,8 @@ export function threadText(turns) {
       else if (t.payload.action === 'edited') lines.push(`The product owner edited what Worca took from ${n}.`);
     } else if (t.kind === 'start') {
       lines.push(`The product owner started build v${asData(t.payload.version)}.`);
-    } else if (t.kind === 'export') {   // A6: no line; A6.1 D14: the import writes one, as data
-      if (t.payload && t.payload.action === 'imported') lines.push(asData(importThreadLine(t.payload)));
+    } else if (t.kind === 'import') {   // A6.1 D14: where the feature came from, as data (A6's export turns write no line)
+      lines.push(asData(importThreadLine(t.payload)));
     } else if (t.kind === 'finish') {
       lines.push('The product owner asked to finish the interview now.');
     }

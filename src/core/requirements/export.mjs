@@ -236,6 +236,14 @@ const sinceImport = (l) => !!l && l.origin === 'import' && !!l.createdAt && l.ex
 const linkDates = (l) => ({ key: l.key, madeOn: exportDate(l.createdAt, { year: false }), lastOn: exportDate(l.exportedAt, { year: false }),
   origin: l.origin || 'export', importedOn: l.origin === 'import' ? exportDate(l.createdAt, { year: false }) : null, sinceImport: sinceImport(l) });
 
+/** A History card line (board 28): an export turn as it is; A6.1's `import` turn as the action `imported`, with whether it made the
+ *  link (`linked`) or which feature follows the ticket (`linkedTo`). 'local' (a single-user install) names nobody, as board 28. */
+function historyEntry(t) {
+  const p = t.payload;
+  return { action: t.kind === 'import' ? 'imported' : p.action, tracker: p.tracker || null, key: p.key || null, url: webUrl(p.url), reason: p.reason || null,
+    ...(t.kind === 'import' ? { linked: p.linked !== false, linkedTo: p.linkedTo || null } : {}), when: exportTime(p.at || t.at), by: actorLabel(t.by) || null };
+}
+
 /** POST …/export/preview (D6, D7, D9): the ticket or the comment exactly as it would be sent, its hash, what changed, and
  *  for a ticket the tracker's answer on it (edited, gone). No lock. */
 export async function previewExport(seq, body = {}, { target } = {}, d = {}) {
@@ -411,12 +419,7 @@ export async function exportView(f, turns = [], d = {}) {
       exporting: isExporting(f.seq),
       // Report back moves the ticket only to the status its own connection names (D15)
       doneStatus: link && setup && sameConn(setup, link) ? setup.doneStatus || null : null,
-      history: (turns || []).filter((t) => t && t.kind === 'export' && t.payload).map((t) => ({ action: t.payload.action, tracker: t.payload.tracker || null,
-        key: t.payload.key || null, url: webUrl(t.payload.url), reason: t.payload.reason || null,
-        linked: t.payload.action === 'imported' ? t.payload.linked !== false : null, linkedTo: t.payload.linkedTo || null,   // A6.1: the import's entry
-        when: exportTime(t.payload.at || t.at),
-        by: actorLabel(t.by) || null }))   // 'local' (a single-user install) names nobody, as board 28
-        .reverse(),
+      history: (turns || []).filter((t) => t && (t.kind === 'export' || t.kind === 'import') && t.payload).map(historyEntry).reverse(),
     };
   } catch (err) {
     console.error(`requirements: the export view of feature ${f && f.seq} failed:`, err && err.message ? err.message : err);
