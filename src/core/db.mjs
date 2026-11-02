@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 83;
+export const SCHEMA_VERSION = 84;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -869,7 +869,7 @@ const INCREMENTAL_COLUMNS = {
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT',
-                            live_version_no: 'INTEGER' },   // v83: the named version new runs use (NULL = the row itself)
+                            live_version_no: 'INTEGER' },   // v84: the named version new runs use (NULL = the row itself)
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
@@ -879,6 +879,7 @@ const INCREMENTAL_COLUMNS = {
                             // v70: where a copy found under a run's or project's folder came from, for Show in folder's
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
+  ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -1444,7 +1445,7 @@ CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, 
 CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
 `;
 
-// v83 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
+// v84 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
 // the last 50 per workflow) and Save version keeps a numbered state (never pruned). Append-only and FK-free like
 // ask_cost_ledger, so history outlives a deleted workflows row. `graph` = {nodes, wires, canvas?, codeGraph?}.
 const WORKFLOW_REVISIONS_DDL = `
@@ -1557,7 +1558,7 @@ const INCREMENTAL_TABLES = {
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
-  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v83 (workflow tests Part 1, #721)
+  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v84 (workflow tests Part 1, #721)
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2733,11 +2734,13 @@ export function migrate(db) {
     if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
     if (current < 81) applySchemaV81(db, { existing: current >= 1 });  // v81 (G13) guardrail default
     if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
-    // v83 workflow history + versions (this rung was v78, then v79, on feat/workflow-tests before dev took 78 and 79). A DB
-    // that branch stamped 79 has workflow_revisions but not run_groups.name_source: the hoisted repairSchemaGaps
-    // (current < SCHEMA_VERSION) adds that column, and the v80–v82 rungs above run. A DB it stamped 78 also gets
-    // req_helper_messages and ledger.helper_message_id from INCREMENTAL_TABLES / INCREMENTAL_COLUMNS.
-    if (current < 83) db.exec(WORKFLOW_REVISIONS_DDL);   // v83 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
+    // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v84 workflow history + versions (this rung was v78, then v79, then v83, on feat/workflow-tests before dev took 78, 79
+    // and 83). A DB that branch stamped 83 has workflow_revisions but not ask_messages.engine, and one it stamped 79 also
+    // lacks run_groups.name_source: the hoisted repairSchemaGaps (current < SCHEMA_VERSION) adds both columns, and the
+    // v80–v82 rungs above run. A DB it stamped 78 also gets req_helper_messages and ledger.helper_message_id from
+    // INCREMENTAL_TABLES / INCREMENTAL_COLUMNS.
+    if (current < 84) db.exec(WORKFLOW_REVISIONS_DDL);   // v84 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

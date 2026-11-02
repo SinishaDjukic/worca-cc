@@ -69,13 +69,24 @@ export function credentialEnv(role, base = process.env) {
  * for this one call (`repo` "owner/name" helps find the installation). Never throws:
  * `{ env, error }`, where a failed mint leaves a credential-free env and says why.
  */
-export async function githubEnv(role, { base = process.env, repo = null, fetchImpl = fetch, now = Date.now(), asPerson = true, person = undefined } = {}) {
+export async function githubEnv(role, { base = process.env, repo = null, fetchImpl = fetch, now = Date.now(), asPerson = true, readAsPerson = false, person = undefined } = {}) {
   // "Push as me" (optional, docs/credential-broker.md): a write (push, pull request) goes out
-  // with the acting person's own GitHub token, from the credential broker, for this call only.
+  // with the acting person's own GitHub token, from the credential broker, for this call only;
+  // reads use it too when they connected one (personReadEnv).
   //   WORCA_GH_AS_PERSON=prefer    their token when they connected GitHub, else the App/token below
   //   WORCA_GH_AS_PERSON=required  their token or nothing: the push fails and says how to connect
   if (role === 'write' && asPerson) {
     const p = await personWriteEnv(base, person === undefined ? currentBillTo() : person);
+    if (p) return p;
+  }
+  // Reads with "push as me" on, opt-in per call site (`readAsPerson`): the acting person's token
+  // when they connected GitHub, so a clone, fetch or pull request status reaches what their own
+  // account reaches; else worca's own credential (also in required mode, which only refuses
+  // writes). Only reads that act on a project for that person opt in: shared installs (plugins,
+  // skills), the git-free API and metrics keep worca's own credential, so one person's token never
+  // decides what everyone on the deployment gets.
+  if (role === 'read' && asPerson && readAsPerson) {
+    const p = await personReadEnv(base, person === undefined ? currentBillTo() : person, now);
     if (p) return p;
   }
   if (readGithubCredentials(base).mode !== 'app') return { env: credentialEnv(role, base), error: null };
@@ -116,6 +127,37 @@ async function personWriteEnv(base, person) {
       return { env: stripGithubCredentials(base), error: `pushing as ${who}: ${err.message.replace(/^credential broker: /, '')}` };
     }
     if (err.code !== 'not_connected') console.warn(`[worca] push as ${who}: ${err.message}; using worca's own GitHub credential`);
+    return null;
+  }
+}
+
+// Reads happen often (every pull request status a page shows), so a person's token is kept for a
+// minute (never past its own expiry) and "not connected" for 30 s, instead of asking the broker each
+// time. In this process's memory only, like every token worca holds for one call.
+const READ_TOKEN_TTL_MS = 60_000;
+const NOT_CONNECTED_TTL_MS = 30_000;
+const readTokens = new Map();
+
+/** Tests: forget the cached tokens. */
+export function resetPersonTokenCache() {
+  readTokens.clear();
+}
+
+/** The read env with `person`'s own token, or null to use worca's own credential. Never refuses. */
+async function personReadEnv(base, person, now) {
+  if (!asPersonMode(base)) return null;
+  const who = typeof person === 'string' && person.includes('@') ? person.toLowerCase() : null;
+  if (!who) return null;
+  const hit = readTokens.get(who);
+  if (hit && hit.until > now) return hit.token ? { env: withToken(base, hit.token), error: null, as: who } : null;
+  try {
+    const { token, expiresAt } = await personGithubToken(who);
+    const exp = expiresAt ? Date.parse(expiresAt) - 5 * 60_000 : Infinity;
+    readTokens.set(who, { token, until: Math.min(now + READ_TOKEN_TTL_MS, exp) });
+    return { env: withToken(base, token), error: null, as: who };
+  } catch (err) {
+    if (err.code === 'not_connected') readTokens.set(who, { token: null, until: now + NOT_CONNECTED_TTL_MS });
+    else console.warn(`[worca] GitHub read as ${who}: ${err.message}; using worca's own GitHub credential`);
     return null;
   }
 }

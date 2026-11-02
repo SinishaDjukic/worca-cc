@@ -3,7 +3,8 @@
 // descriptors existed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CHAT_ENGINES, chatDescriptor, chatDescriptors, chatCostCapRefusal } from '../src/core/engines/chat.mjs';
+import { CHAT_ENGINES, chatDescriptor, chatDescriptors, chatCostCapRefusal, chatEngineGate } from '../src/core/engines/chat.mjs';
+import { makeChatDescriptor } from '../src/core/engines/chat-descriptor.mjs';
 import { listEngines } from '../src/core/engines/index.mjs';
 import { ASK_ENGINES, lockedChatEngine } from '../src/core/model-env.mjs';
 import { ENGINES, CHAT_ENGINE_NAMES, chatAttachRefusal } from '../src/shared/engine-switch.mjs';
@@ -75,4 +76,25 @@ test('what a chat takes, by engine', () => {
     assert.equal(chatAttachRefusal({ engine, kind: 'binary', pdf: true }), null, engine);
   }
   for (const engine of ['copilot', 'gemini', 'qwen']) assert.equal(chatAttachRefusal({ engine, kind: 'text' }), null, engine);
+});
+
+test('chatEngineGate: the turn gate\'s checks, in its order, without a turn (#943)', async () => {
+  const calls = [];
+  const d = makeChatDescriptor({ engine: 'codex', lockdown: () => ({}),
+    askSupport: async () => { calls.push('support'); return {}; },
+    preflight: async ({ model }, impl) => { if (impl) return impl({ model }); calls.push(`preflight:${model}`); return { refusal: 'codex is not signed in' }; } });
+  assert.deepEqual(await chatEngineGate(d, { model: 'gpt-5.5' }), { message: 'codex is not signed in', code: 'codex-not-ready', notReady: true });
+  assert.deepEqual(calls, ['support', 'preflight:gpt-5.5']);
+  calls.length = 0;
+  assert.equal(await chatEngineGate(d, { model: 'gpt-5.5', mock: true }), null, 'the mock asks no binary');
+  assert.deepEqual(calls, []);
+  assert.equal(await chatEngineGate(d, { model: 'gpt-5.5', relay: true }), null, 'a relayed chat skips the sign-in check');
+  assert.deepEqual(calls, ['support']);
+  const off = makeChatDescriptor({ engine: 'codex', lockdown: () => null });
+  assert.deepEqual(await chatEngineGate(off, { model: 'gpt-5.5' }), { message: off.noLockdownMessage });
+  assert.match((await chatEngineGate(d, { model: 'gpt-5.5', capped: true, modelPriced: () => false })).message, /^A per-turn cost cap is set/);
+  const old = makeChatDescriptor({ engine: 'codex', lockdown: () => ({}), askSupport: async () => ({ refusal: 'codex is too old' }) });
+  assert.deepEqual(await chatEngineGate(old, { model: 'gpt-5.5' }), { message: 'codex is too old', code: 'codex-not-ready', notReady: true });
+  const seam = await chatEngineGate(d, { model: 'gpt-5.5', seams: { preflight: async () => ({}) } });
+  assert.equal(seam, null, 'a seam replaces the adapter call, as the turn\'s deps do');
 });

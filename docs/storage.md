@@ -168,7 +168,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v83)
+### Workflow history and versions (v84)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 

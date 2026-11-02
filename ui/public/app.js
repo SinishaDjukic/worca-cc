@@ -16001,7 +16001,7 @@ async function loadSettings() {
 
 // ── Chat notifications card (chat-connectivity-design.md §4.8) ────────────────
 
-// Settings › My model credentials (credential broker, docs/credential-broker.md): the card
+// Settings › My credentials (credential broker, docs/credential-broker.md): the card
 // stays hidden unless worca runs with a broker. Status only; keys live on the key page.
 async function paintCredentials() {
   const card = document.getElementById('credentials-card');
