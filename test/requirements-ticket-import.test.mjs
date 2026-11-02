@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { LIMITS } from '../src/core/requirements/spec.mjs';
 import {
   IMPORT_LIMITS, splitCriteria, clipDescription, redactCounted, commentsFileName, descriptionFileName, commentsMarkdown, importReason,
-  processTicket, pickDefaults, CAP_FILES, CAP_BYTES,
+  processTicket, pickDefaults, CAP_FILES, CAP_BYTES, authorLabel, AUTHOR_MAX,
 } from '../src/core/requirements/ticket-import.mjs';
 import { classifyExtension } from '../src/core/ask/attachment-kind.mjs';
 
@@ -62,6 +62,24 @@ test('commentsMarkdown: one file in the ticket order, author and date, the body 
     + '**Bo Example** · 22 Oct 2026\nPartial refunds work on cards.\n\n- PayPal too\n');
   assert.equal(commentsFileName('SHOP-124'), 'SHOP-124 comments.md');
   assert.equal(descriptionFileName('SHOP-124'), 'SHOP-124 description.md');
+});
+
+test('authorLabel (D8, code scanning on #1041): a display name on one short line; never an email address or an account id', () => {
+  assert.equal(authorLabel('  Ann\n  Example '), 'Ann Example');
+  assert.equal(authorLabel('Ann Example <ann.example@acme.test>'), 'Ann Example', 'the address beside a name goes');
+  assert.equal(authorLabel('Ann Example (ann@acme.test)'), 'Ann Example');
+  assert.equal(authorLabel('ann.example@acme.test'), 'ann.example', 'a name that is only an address keeps the part before @');
+  assert.equal(authorLabel('557058:f58131cb-b67d-43c7-b30d-6b58d40bd077'), 'Someone', 'a Jira Cloud account id');
+  assert.equal(authorLabel('5b10ac8d82e05b22cc7d4ef5'), 'Someone', 'an older 24-hex account id');
+  assert.equal(authorLabel('f58131cb-b67d-43c7-b30d-6b58d40bd077'), 'Someone');
+  assert.equal(authorLabel(''), 'Someone');
+  assert.equal(authorLabel(null), 'Someone');
+  assert.equal(authorLabel(`Ann ${'x'.repeat(200)}`).length, AUTHOR_MAX);
+  const p = processTicket({ ...RAW(), comments: [{ id: '1', author: 'Ann Example <ann@acme.test>', authorKind: 'person', created: '2026-10-21T12:00:00.000Z', body: 'Hi.' },
+    { id: '2', author: '557058:f58131cb-b67d-43c7-b30d-6b58d40bd077', authorKind: 'person', created: '2026-10-21T12:00:00.000Z', body: 'Yo.' }] }, { tracker: 'Jira' });
+  assert.deepEqual(p.comments.map((c) => c.author), ['Ann Example', 'Someone']);
+  assert.equal(commentsMarkdown('SHOP-124', [{ author: 'bo@acme.test', created: '2026-10-22T12:00:00.000Z', body: 'Ok.' }]),
+    '# Comments on SHOP-124\n\n**bo** · 22 Oct 2026\nOk.\n', 'the file writes the label too');
 });
 
 test("importReason (D9): Office, any other type and size, said for a file not added yet; a file A8 takes has none", () => {

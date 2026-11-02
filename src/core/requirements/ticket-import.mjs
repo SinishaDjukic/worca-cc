@@ -86,10 +86,25 @@ export function redactCounted(text) {
 export const commentsFileName = (key) => `${key} comments.md`;
 export const descriptionFileName = (key) => `${key} description.md`;
 
+export const AUTHOR_MAX = 80;
+// An address, with the brackets around it: "Ann <ann@acme.test>", "Ann (ann@acme.test)", "ann@acme.test".
+const EMAIL_RE = /[<([]?\s*([^\s@<>()[\]"',;]+)@[^\s@<>()[\]"',;]+\s*[>)\]]?/g;
+// A Jira Cloud account id ("557058:<uuid>", a bare uuid) or an older 24-hex one.
+const ACCOUNT_ID_RE = /^(?:(?:[a-z0-9]+:){0,2}[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{24})$/i;
+/** D8 (code scanning on #1041): a comment's author as the preview, the comments file and so the prompts show it: the display name
+ *  on one line of at most AUTHOR_MAX characters, never an email address (a name that is only an address keeps the part before
+ *  "@") or an account id ("Someone"). The connector already sends display names only; this holds for any tracker. */
+export function authorLabel(v) {
+  const s = oneLine(v);
+  const named = oneLine(s.replace(EMAIL_RE, ' '));
+  const label = named || oneLine(((/([^\s@<>()[\]"',;]+)@/.exec(s)) || [])[1]);
+  return !label || ACCOUNT_ID_RE.test(label) ? 'Someone' : sclip(label, AUTHOR_MAX);
+}
+
 /** §4: the picked comments as one text file, in the ticket's order: "**<author>** · <d Mon yyyy>" and the body. */
 const commentBlock = (c) => {
   const date = exportDate(c.created);
-  return `**${oneLine(c.author) || 'Someone'}**${date ? ` · ${date}` : ''}\n${String(c.body ?? '').trim()}`;
+  return `**${authorLabel(c.author)}**${date ? ` · ${date}` : ''}\n${String(c.body ?? '').trim()}`;
 };
 export function commentsMarkdown(key, comments = []) {
   const blocks = comments.map(commentBlock);
@@ -143,7 +158,7 @@ export function processTicket(raw, { tracker }) {
   const all = Array.isArray(raw.comments) ? raw.comments : [];
   const comments = all.slice(-IMPORT_LIMITS.comments).map((c) => {
     const body = sclip(red(String(c.body ?? '')), IMPORT_LIMITS.commentChars);
-    const author = oneLine(c.author) || 'Someone';
+    const author = authorLabel(c.author);
     return { id: String(c.id), author, authorKind: c.authorKind === 'app' ? 'app' : 'person', created: c.created || null,
       when: exportDate(c.created, { year: false }), body,
       bytes: Buffer.byteLength(`${commentBlock({ author, created: c.created, body })}\n\n`, 'utf8') };
