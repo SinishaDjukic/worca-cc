@@ -1,6 +1,6 @@
 // test/requirements-attachment-fetch.test.mjs — a picked tracker attachment becomes an A8 file (plans/requirements-a61-design.md D9, D10,
 // D14–D17) in mock mode: the real callSource with the shim's canned (or held) downloadAttachment, A8's mock reads. No tracker, no model.
-// This file imports attachment-fetch.mjs before attachment-job.mjs on purpose: the two import each other.
+// A download is a job kind of A8's queue (attachment-job.mjs); the download itself, its folder and checks are attachment-fetch.mjs.
 import * as fetchJob from '../src/core/requirements/attachment-fetch.mjs';
 import * as job from '../src/core/requirements/attachment-job.mjs';
 import { test, after } from 'node:test';
@@ -32,7 +32,7 @@ const feature = (title = 'Partial cancel') => createFeature({ scopeType: 'projec
 const own = (f) => ({ type: 'feature', id: f.seq });
 const row = (f, id = '10042', name = 'partial-cancel-flow.pdf', bytes = 1258291) => tx(() => fetchJob.insertDownloadRow(own(f),
   { conn: CONN, tracker: 'Jira', key: 'SHOP-124', id, name, bytes, from: { tracker: 'Jira', key: 'SHOP-124' } }, { by: 'po' }));
-const queue = async (f, r) => { fetchJob.queueDownloads(own(f), [r.id], { by: 'po' }, d); await job.readsSettled(own(f)); return getAttachment(r.id); };
+const queue = async (f, r) => { job.queueDownloads(own(f), [r.id], { by: 'po' }, d); await job.readsSettled(own(f)); return getAttachment(r.id); };
 const waitFor = async (pred, ms = 3000) => { const end = Date.now() + ms; while (!pred()) { if (Date.now() > end) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 5)); } };
 const getDirs = () => { try { return readdirSync(join(worcaHome(), 'tmp', 'requirements')).filter((x) => x.startsWith('att-get-')); } catch { return []; } };
 const bodies = (id) => { try { return readdirSync(job.attachmentsDir()).filter((n) => n.startsWith(id)); } catch { return []; } };
@@ -58,8 +58,8 @@ test('a download (D9): a fresh att-get folder and body.part; the body written in
   setMockSourceResponses(null);
   const f = feature();
   const r = row(f, '10041', 'packing-slip.png', 860160);
-  fetchJob.queueDownloads(own(f), [r.id], { by: 'po' }, d);
-  assert.equal(fetchJob.isDownloading(r.id), true);
+  job.queueDownloads(own(f), [r.id], { by: 'po' }, d);
+  assert.equal(job.isDownloading(r.id), true);
   await job.readsSettled(own(f));
   const now = getAttachment(r.id);
   assert.deepEqual([now.status, now.kind, now.mime, now.bytes, now.sha256], ['done', 'image', 'image/png', PNG.length, sha(PNG)]);
@@ -76,13 +76,13 @@ test('at most two downloads at a time across features; the others wait as downlo
   const a = feature('A');
   const b = feature('B');
   const rows = [row(a, '10042'), row(a, '10043', 'support-macro.txt', 4096), row(b, '10041', 'packing-slip.png', 860160)];
-  fetchJob.queueDownloads(own(a), [rows[0].id, rows[1].id], {}, d);
-  fetchJob.queueDownloads(own(b), [rows[2].id], {}, d);
+  job.queueDownloads(own(a), [rows[0].id, rows[1].id], {}, d);
+  job.queueDownloads(own(b), [rows[2].id], {}, d);
   await waitFor(() => h.waiting.length === 2);
   assert.equal(fetchJob.MAX_DOWNLOAD_JOBS, 2);
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(h.waiting.length, 2, 'the third waits for a slot');
-  assert.ok(rows.every((x) => fetchJob.isDownloading(x.id) && getAttachment(x.id).status === 'downloading'));
+  assert.ok(rows.every((x) => job.isDownloading(x.id) && getAttachment(x.id).status === 'downloading'));
   assert.equal(job.filesPending(own(a)), true, "A8's pending check counts a download");
   h.release(0);
   await waitFor(() => h.waiting.length === 2, 3000);
@@ -90,6 +90,28 @@ test('at most two downloads at a time across features; the others wait as downlo
   h.release(0);
   await job.readsSettled(own(a));
   await job.readsSettled(own(b));
+  assert.deepEqual(rows.map((x) => getAttachment(x.id).status), ['done', 'done', 'done']);
+});
+
+test("a download is a job of A8's queue with its own limit (review of #1041): two held downloads leave the reads' slots free; readsSettled waits for both kinds", async () => {
+  const h = hold();
+  const f = feature('Lanes');
+  const rows = [row(f, '10042'), row(f, '10043', 'support-macro.txt', 4096), row(f, '10041', 'packing-slip.png', 860160)];
+  job.queueDownloads(own(f), rows.map((x) => x.id), {}, d);
+  await waitFor(() => h.waiting.length === 2);
+  const NOTE = Buffer.from('Call notes.\n');
+  const [up] = job.addAttachments(own(f), [{ name: 'call-notes.txt', kind: 'text', mime: 'text/plain', data: NOTE, bytes: NOTE.length, sha256: sha(NOTE) }], {}, d);
+  await waitFor(() => getAttachment(up.id).status === 'done');   // read beside two running downloads and a waiting one
+  assert.equal(h.waiting.length, 2, 'the read took no download slot');
+  let settled = false;
+  const p = job.readsSettled(own(f)).then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(settled, false, 'downloads are still pending');
+  h.release(0);
+  await waitFor(() => h.waiting.length === 2);
+  h.release(0);
+  h.release(0);
+  await p;
   assert.deepEqual(rows.map((x) => getAttachment(x.id).status), ['done', 'done', 'done']);
 });
 
@@ -113,7 +135,7 @@ test('a failed download marks only that file (D10, D16): a fixed reason by kind,
   setMockSourceResponses({ downloadAttachment: () => { throw new PluginOpError('timeout', 'x'); } });
   const r = await queue(f, row(f, '10042'));
   setMockSourceResponses(null);
-  assert.equal(fetchJob.redownload(own(f), r, {}, d).status, 'downloading');
+  assert.equal(job.redownload(own(f), r, {}, d).status, 'downloading');
   await job.readsSettled(own(f));
   assert.equal(getAttachment(r.id).status, 'done');
   assert.deepEqual(getDirs(), []);
@@ -128,15 +150,15 @@ test('a body Worca cannot store (plan review M1): the file fails with Try again,
   const was = console.error;
   console.error = (...a) => { logged.push(a.join(' ')); };
   try {
-    fetchJob.queueDownloads(own(f), [r.id], { by: 'po' }, { ...d, writeBody: boom });
+    job.queueDownloads(own(f), [r.id], { by: 'po' }, { ...d, writeBody: boom });
     await job.readsSettled(own(f));
   } finally { console.error = was; }
   const now = getAttachment(r.id);
   assert.deepEqual([now.status, now.error.code, now.error.job, now.error.message],
     ['failed', 'DOWNLOAD', 'download', 'Worca could not get this file from Jira: Worca could not store it.']);
-  assert.deepEqual([bodies(r.id), getDirs(), fetchJob.isDownloading(r.id)], [[], [], false]);
+  assert.deepEqual([bodies(r.id), getDirs(), job.isDownloading(r.id)], [[], [], false]);
   assert.ok(logged.some((l) => /EBUSY/.test(l)) && !logged.some((l) => /second line/.test(l)), 'the first line only (M3)');
-  assert.equal(fetchJob.redownload(own(f), now, {}, d).status, 'downloading');
+  assert.equal(job.redownload(own(f), now, {}, d).status, 'downloading');
   await job.readsSettled(own(f));
   assert.equal(getAttachment(r.id).status, 'done');
 });
@@ -150,14 +172,14 @@ test('a database error after the store (final review M1): DOWNLOAD "Worca could 
   const was = console.error;
   console.error = () => {};
   try {
-    fetchJob.queueDownloads(own(f), [r.id], { by: 'po' }, d);
+    job.queueDownloads(own(f), [r.id], { by: 'po' }, d);
     await job.readsSettled(own(f));
   } finally { console.error = was; getDb().exec('DROP TRIGGER fetch_store_fault'); }
   const now = getAttachment(r.id);
   assert.deepEqual([now.status, now.error.code, now.error.message],
     ['failed', 'DOWNLOAD', 'Worca could not get this file from Jira: Worca could not store it.']);
-  assert.deepEqual([bodies(r.id), getDirs(), fetchJob.isDownloading(r.id)], [[], [], false]);
-  assert.equal(fetchJob.redownload(own(f), now, {}, d).status, 'downloading', 'Try again is offered');
+  assert.deepEqual([bodies(r.id), getDirs(), job.isDownloading(r.id)], [[], [], false]);
+  assert.equal(job.redownload(own(f), now, {}, d).status, 'downloading', 'Try again is offered');
   await job.readsSettled(own(f));
   assert.equal(getAttachment(r.id).status, 'done');
 });
@@ -237,7 +259,7 @@ test('a downloading file refuses Read again; removing it deletes its row at once
   const h = hold();
   const f = feature();
   const r = row(f, '10042');
-  fetchJob.queueDownloads(own(f), [r.id], {}, d);
+  job.queueDownloads(own(f), [r.id], {}, d);
   await waitFor(() => h.waiting.length === 1);
   assert.throws(() => job.readAgain(own(f), r.id, {}, d), (e) => e.code === 'CONFLICT' && e.message === 'Worca is still getting this file from Jira.');
   job.removeAttachment(own(f), r.id, {}, d);
@@ -245,7 +267,7 @@ test('a downloading file refuses Read again; removing it deletes its row at once
   assert.equal(listTurns(f.seq).at(-1).payload.action, 'removed');
   h.release(0);
   await job.readsSettled(own(f));
-  await waitFor(() => !fetchJob.isDownloading(r.id));
+  await waitFor(() => !job.isDownloading(r.id));
   assert.equal(listAttachments('feature', f.seq).length, 0);
   assert.deepEqual(bodies(r.id), []);
   assert.deepEqual(getDirs(), []);
@@ -255,7 +277,7 @@ test('round 1 waits for downloads and reads (D10): readsSettled holds while one 
   const h = hold();
   const f = feature();
   const r = row(f, '10042');
-  fetchJob.queueDownloads(own(f), [r.id], {}, d);
+  job.queueDownloads(own(f), [r.id], {}, d);
   await waitFor(() => h.waiting.length === 1);
   let done = false;
   const p = job.readsSettled(own(f)).then(() => { done = true; });

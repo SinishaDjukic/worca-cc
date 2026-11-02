@@ -3,8 +3,6 @@
 // Worca enforces on whatever comes back — the question cap, ids it assigns itself, sections the product
 // owner edited, items only the product owner removes. The interview runner (interview.mjs) calls these.
 import { SECTIONS, MAX_QUESTIONS, MAX_ROUNDS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
-// (ticket-import.mjs reaches round.mjs back through attachments.mjs; neither uses the other at module top level)
-import { importThreadLine } from './ticket-import.mjs';
 
 export class RoundError extends Error {
   constructor(message) { super(message); this.name = 'RoundError'; }
@@ -83,6 +81,16 @@ export function pendingRound(turns) {
 export function removedCriteria(turns) {
   return turns.filter((t) => t.kind === 'edit' && t.payload.action === 'removed' && typeof t.payload.text === 'string' && t.payload.text)
     .map((t) => t.payload.text);
+}
+
+/** A6.1 D14: the one thread line an import writes, from its turn: the tracker, the key, the criteria it made and the comments file
+ *  it stored (`commentsFile`, null without one). threadText escapes it with asData. */
+export function importThreadLine({ tracker, key, criteria = [], commentsFile = null } = {}) {
+  const ids = Array.isArray(criteria) ? criteria : [];
+  const crit = !ids.length ? 'It had no acceptance criteria'
+    : ids.length === 1 ? `Its acceptance criterion is ${ids[0]}` : `Its acceptance criteria are ${ids[0]} to ${ids.at(-1)}`;
+  const files = commentsFile ? `; its comments are in “${commentsFile}”` : '';
+  return `The product owner started this feature from ${tracker} ticket ${key}. ${crit}${files}.`;
 }
 
 /** The thread as a round's prompt writes it; the helper's prompt carries the same block (A3 D4). */

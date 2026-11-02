@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { LIMITS } from '../src/core/requirements/spec.mjs';
 import {
   IMPORT_LIMITS, splitCriteria, clipDescription, redactCounted, commentsFileName, descriptionFileName, commentsMarkdown, importReason,
-  importThreadLine, processTicket, pickDefaults, CAP_FILES, CAP_BYTES,
+  processTicket, pickDefaults, CAP_FILES, CAP_BYTES,
 } from '../src/core/requirements/ticket-import.mjs';
 import { classifyExtension } from '../src/core/ask/attachment-kind.mjs';
 
@@ -70,15 +70,6 @@ test("importReason (D9): Office, any other type and size, said for a file not ad
   assert.equal(r('clip.mov'), 'Not offered: Worca reads text, images and PDF.');
   assert.equal(r('scan.pdf', 31 * MB), 'Not offered: it is over 25 MB.');
   assert.equal(r('slip.png', 860160), null);
-});
-
-test('importThreadLine (D14): criteria and comments; no criteria; no comments file', () => {
-  assert.equal(importThreadLine({ tracker: 'Jira', key: 'SHOP-124', criteria: ['R-po-1', 'R-po-2', 'R-po-3'], comments: 5 }),
-    'The product owner started this feature from Jira ticket SHOP-124. Its acceptance criteria are R-po-1 to R-po-3; its comments are in “SHOP-124 comments.md”.');
-  assert.equal(importThreadLine({ tracker: 'Jira', key: 'SHOP-131', criteria: [], comments: 2 }),
-    'The product owner started this feature from Jira ticket SHOP-131. It had no acceptance criteria; its comments are in “SHOP-131 comments.md”.');
-  assert.equal(importThreadLine({ tracker: 'Jira', key: 'SHOP-9', criteria: ['R-po-1'], comments: 0 }),
-    'The product owner started this feature from Jira ticket SHOP-9. Its acceptance criterion is R-po-1.');
 });
 
 const RAW = () => ({

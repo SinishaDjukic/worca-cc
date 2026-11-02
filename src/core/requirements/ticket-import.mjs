@@ -105,15 +105,6 @@ export function importReason(name, cls, bytes) {
   return null;
 }
 
-/** D14: the one thread line an import writes (its `export` turn `imported`). The caller escapes it with asData. */
-export function importThreadLine({ tracker, key, criteria = [], comments = 0 } = {}) {
-  const ids = Array.isArray(criteria) ? criteria : [];
-  const crit = !ids.length ? 'It had no acceptance criteria'
-    : ids.length === 1 ? `Its acceptance criterion is ${ids[0]}` : `Its acceptance criteria are ${ids[0]} to ${ids.at(-1)}`;
-  const files = Number(comments) > 0 ? `; its comments are in “${commentsFileName(key)}”` : '';
-  return `The product owner started this feature from ${tracker} ticket ${key}. ${crit}${files}.`;
-}
-
 const named = (v) => (v && (v.id != null || v.name) ? { id: v.id == null ? null : String(v.id), name: oneLine(v.name) } : null);
 const text1 = (v) => (v == null ? null : oneLine(v));
 // Only the contract's documented keys go on; whatever else a tracker sends stays behind.

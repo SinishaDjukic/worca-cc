@@ -1,11 +1,12 @@
 // src/core/requirements/attachment-fetch.mjs
 // A picked tracker attachment arrives as an A8 file (plans/requirements-a61-design.md D9, D10, D15–D17). Its row waits as `downloading`
-// (fetch_json says where from) until this queue — MAX_DOWNLOAD_JOBS across every feature, apart from A8's read queue — has the
-// connector stream the body to `dest`, a fixed name in a fresh private folder. Worca trusts nothing there until its own checks pass;
-// then the bytes it checked are written into A8's store under the row's id and the file joins A8's read queue. A failure marks only
-// that file, and every failure marks it: a row is never left `downloading` without a job.
-// attachment-job.mjs and this module import each other: neither uses the other's bindings at module top level.
-import { chmodSync, closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+// (fetch_json says where from) until A8's file queue (attachment-job.mjs) runs its download: a job kind of its own there, at most
+// MAX_DOWNLOAD_JOBS at a time across every feature beside the reads' own limit, sharing the queue's waiters, settle and cancel. The
+// download (runDownload, here) has the connector stream the body to `dest`, a fixed name in a fresh private folder. Worca trusts
+// nothing there until its own checks pass; then the bytes it checked are written into A8's store under the row's id and the queue
+// reads the file. A failure marks only that file, and every failure marks it: a row is never left `downloading` without a job.
+// This module does not import attachment-job.mjs (the queue imports this one).
+import { chmodSync, closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
@@ -15,8 +16,8 @@ import { classifyExtension } from '../ask/attachment-kind.mjs';
 import { RequirementsError } from './spec.mjs';
 import { firstLine } from './trackers.mjs';
 import { REQ_ATTACH_LIMITS, displayName, uniqueName } from './attachments.mjs';
-import { mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, appendTurn, listDownloadingAttachments } from './store.mjs';
-import { attachmentsDir, attachmentFile, enqueueRead, settleOwner } from './attachment-job.mjs';
+import { mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, appendTurn } from './store.mjs';
+import { attachmentsDir, attachmentFile } from './attachment-paths.mjs';
 
 /** D17: one download (25 MB over a slow link); the op's answer is a few fields, the body is on disk. */
 export const DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -25,12 +26,9 @@ const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 const L = REQ_ATTACH_LIMITS;
 const iso = () => new Date().toISOString();
-const ownerKey = (o) => `${o.type}:${o.id}`;
 const extOf = (name) => { const i = String(name).lastIndexOf('.'); return i > 0 ? String(name).slice(i).toLowerCase() : ''; };
 const callOf = (d) => (d && typeof d.callSource === 'function' ? d.callSource : shimCallSource);
 const trackerOf = (row) => (row && row.fetch && row.fetch.tracker) || 'the tracker';
-/** How the checked body goes into A8's store (a test makes it fail). 'w': a leftover of this row's own earlier attempt is replaced. */
-const FETCH_DEFAULTS = Object.freeze({ writeBody: (target, body) => writeFileSync(target, body, { mode: FILE_MODE }) });
 
 /** D10: a picked attachment's row before its body exists, inside the caller's transaction: named (unique within the owner), typed
  *  by its extension and sized as the tracker says; `sha256` holds `pending:<id>` (unique) until the body's real hash replaces it. */
@@ -45,39 +43,6 @@ export function insertDownloadRow(owner, { conn, tracker, key, id, name, bytes, 
     fetch: { plugin: conn.plugin, sourceId: conn.sourceId, profile: conn.profile || null, tracker, key, id: String(id), name: String(name), bytes: size } }, { by });
   if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'added', id: rowId, name: shown, ...(from ? { from } : {}) } }, { by });
   return row;
-}
-
-// ---------------------------------------------------------------- the queue (D10, D17)
-
-const queue = [];          // waiting downloads, in order: { id, owner, by, d }
-const running = new Map(); // attachment id → its running download (`cancelled` once its row is removed)
-export const isDownloading = (id) => queue.some((e) => e.id === id) || running.has(id);
-/** Whether an owner ('feature:<seq>') has a download queued or running (A8's readsSettled waits for these too). */
-export const downloadsPending = (key) => queue.some((e) => ownerKey(e.owner) === key) || [...running.values()].some((e) => ownerKey(e.owner) === key);
-
-export function queueDownloads(owner, ids, { by = null } = {}, deps = {}) {
-  for (const id of ids || []) if (!isDownloading(id)) queue.push({ id, owner, by, d: deps });
-  pump();
-}
-/** A removed file (D10): a queued download goes; a running one's result is thrown away when it ends. */
-export function cancelDownload(id) {
-  for (let i = queue.length - 1; i >= 0; i -= 1) if (queue[i].id === id) queue.splice(i, 1);
-  const r = running.get(id);
-  if (r) r.cancelled = true;
-}
-/** Try again on a failed download (D10): the row waits again and is queued. */
-export function redownload(owner, row, { by = null } = {}, deps = {}) {
-  const out = updateAttachment(row.id, { status: 'downloading', error: null }, { by });
-  queueDownloads(owner, [row.id], { by }, deps);
-  return out;
-}
-function pump() {
-  while (running.size < MAX_DOWNLOAD_JOBS && queue.length) {
-    const e = queue.shift();
-    running.set(e.id, e);
-    void runDownload(e).catch((err) => console.error(`requirements: downloading file ${e.id} failed:`, firstLine(err)))
-      .finally(() => { running.delete(e.id); settleOwner(e.owner, e.d); pump(); });
-  }
 }
 
 // ---------------------------------------------------------------- the folder and the checks (D9, D15)
@@ -137,12 +102,19 @@ function fail(row, code, reason, by) {
   updateAttachment(row.id, { status: 'failed', error: { code, message: msg, reason, job: 'download', at: iso() } }, { by });
 }
 
-async function runDownload(e) {
+/** D10: a row left `downloading` by a restart (its download not queued or running) stores this; Try again fetches it. */
+export const downloadInterrupted = (row) => ({ code: 'INTERRUPTED', message: `Worca restarted before it got this file from ${trackerOf(row)}.`,
+  job: 'download', at: iso() });
+
+/** One download job of A8's queue (attachment-job.mjs): `e` is the job ({ id, owner, by, d, cancelled }), `e.d` its deps (callSource,
+ *  writeBody, downloadTimeoutMs). Answers true when the file's body is in the store and its row `reading`: the queue then reads it
+ *  as any A8 file (D9); false otherwise. A failure marks only that file (fail). */
+export async function runDownload(e) {
   await null;
   const row = getAttachment(e.id);
-  if (!row || row.status !== 'downloading' || !row.fetch) return;
+  if (!row || row.status !== 'downloading' || !row.fetch) return false;
   const f = row.fetch;
-  const d = { ...FETCH_DEFAULTS, ...(e.d || {}) };
+  const d = e.d || {};
   let dir = null;
   let target = null;   // a body this download wrote into A8's store, until the row owns it (then null)
   try {
@@ -155,54 +127,43 @@ async function runDownload(e) {
     } catch (err) {
       console.error(`requirements: the download of file ${row.id} from ${f.key} failed (${(err && err.kind) || 'plugin'}):`, firstLine(err));
       if (!e.cancelled) fail(row, 'DOWNLOAD', REASON[err && err.kind] || 'it answered with an error', e.by);
-      return;
+      return false;
     }
-    if (e.cancelled || !getAttachment(row.id)) return;   // removed meanwhile: the result is thrown away (the folder goes below)
-    if (r && r.gone) { fail(row, 'DOWNLOAD', r.forbidden ? 'this connection may not see it' : `it is no longer on ${f.key}`, e.by); return; }
-    if (r && r.tooLarge) { fail(row, 'REFUSED', 'it is over 25 MB', e.by); return; }
+    if (e.cancelled || !getAttachment(row.id)) return false;   // removed meanwhile: the result is thrown away (the folder goes below)
+    if (r && r.gone) { fail(row, 'DOWNLOAD', r.forbidden ? 'this connection may not see it' : `it is no longer on ${f.key}`, e.by); return false; }
+    if (r && r.tooLarge) { fail(row, 'REFUSED', 'it is over 25 MB', e.by); return false; }
     const c = checkFetched(dir, folder.dest, r);
     if (!c.ok) {
       const unsent = c.why === 'missing' || c.why === 'empty';
       fail(row, unsent ? 'DOWNLOAD' : 'REFUSED', unsent ? `${trackerOf(row)} did not send it` : c.why === 'too-large' ? 'it is over 25 MB'
         : `it is not the file ${trackerOf(row)} described`, e.by);
-      return;
+      return false;
     }
     // A8's upload rules on the bytes checkFetched read. Synchronous (base64 out and back, up to 25 MB): acceptable at two downloads at
     // a time, the same cost as an upload of that size (plan review, Minor 9).
     const v = validateAttachmentUploads([{ name: row.name, dataBase64: c.body.toString('base64') }], VALIDATE);
-    if (!v.ok) { fail(row, 'REFUSED', CHECK_TAIL[v.error] || CHECK_TAIL.content, e.by); return; }
+    if (!v.ok) { fail(row, 'REFUSED', CHECK_TAIL[v.error] || CHECK_TAIL.content, e.by); return false; }
     const file = v.files[0];
     const twin = listAttachments(row.ownerType, row.ownerId).find((x) => x.id !== row.id && x.sha256 === file.sha256);
-    if (twin) { fail(row, 'REFUSED', `it is already attached as ${twin.name}`, e.by); return; }
+    if (twin) { fail(row, 'REFUSED', `it is already attached as ${twin.name}`, e.by); return false; }
     mkdirSync(attachmentsDir(), { recursive: true, mode: DIR_MODE });
     target = attachmentFile({ id: row.id, kind: file.kind, mime: file.mime });
-    d.writeBody(target, c.body);   // the checked bytes; never a rename of dest, which could have changed after the check (S7)
+    d.writeBody(target, c.body, { mode: FILE_MODE });   // the checked bytes; never a rename of dest, which could have changed after the check (S7)
     try { chmodSync(target, FILE_MODE); } catch { /* no POSIX modes on Windows */ }
-    if (e.cancelled || !getAttachment(row.id)) return;   // removed meanwhile: the body goes below
+    if (e.cancelled || !getAttachment(row.id)) return false;   // removed meanwhile: the body goes below
     // Nothing awaits since the twin check, so a throw here is a database error (busy, full, I/O): the catch below fails the file
     // with Try again (final review M1), and the body goes in finally.
     updateAttachment(row.id, { kind: file.kind, mime: file.mime, bytes: file.bytes, sha256: file.sha256, status: 'reading', error: null }, { by: e.by });
-    enqueueRead(e.owner, row.id, row.name, e.by, d);   // then exactly an A8 file (D9)
     target = null;   // the row owns its body now
+    return true;   // then exactly an A8 file: the queue reads it (D9)
   } catch (err) {
-    // M1: anything else (the folder, A8's store folder, the write, the validator, the row update, the read queue) fails the file
+    // M1: anything else (the folder, A8's store folder, the write, the validator, the row update) fails the file
     // with Try again
     console.error(`requirements: storing downloaded file ${row.id} failed:`, firstLine(err));
     if (!e.cancelled) fail(row, 'DOWNLOAD', 'Worca could not store it', e.by);
+    return false;
   } finally {
     if (target) { try { rmSync(target, { force: true }); } catch (x) { console.error('requirements: could not remove a stored body:', firstLine(x)); } }
     if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch (x) { console.error('requirements: could not remove a download folder:', firstLine(x)); } }
   }
-}
-
-/** D10: a row left `downloading` by a restart (its download not queued or running) fails with INTERRUPTED; Try again fetches it. */
-export function recoverDownloads() {
-  let n = 0;
-  for (const r of listDownloadingAttachments()) {
-    if (isDownloading(r.id)) continue;
-    updateAttachment(r.id, { status: 'failed', error: { code: 'INTERRUPTED', message: `Worca restarted before it got this file from ${trackerOf(r)}.`,
-      job: 'download', at: iso() } });
-    n += 1;
-  }
-  return n;
 }

@@ -13,8 +13,8 @@ import { trackersWith, defaultConnection, connectionLabel, sameConn, reachSenten
 import { exportDate } from './ticket.mjs';
 import { IMPORT_LIMITS, processTicket, pickDefaults, commentsFileName, commentsMarkdown } from './ticket-import.mjs';
 import { REQ_ATTACH_LIMITS, checkNewFiles, displayName } from './attachments.mjs';
-import { addAttachments } from './attachment-job.mjs';
-import { insertDownloadRow, queueDownloads } from './attachment-fetch.mjs';
+import { addAttachments, queueDownloads } from './attachment-job.mjs';
+import { insertDownloadRow } from './attachment-fetch.mjs';
 
 /** D17: importOptions, searchTickets and importTicket (which may page through comments). */
 export const IMPORT_TIMEOUT_MS = 60_000;
@@ -203,7 +203,7 @@ export function createImported(scope, { title, description } = {}, plan, { by = 
     }
     appendTurn(made.seq, { kind: 'export', payload: { action: 'imported', tracker: plan.tracker, key: plan.key, url: plan.url, at, linked: !linked,
       ...(linked ? { linkedTo: linked.id } : {}), criteria: made.spec.criteria.map((c) => c.id), comments: plan.comments,
-      files: plan.downloads.map((a) => a.name) } }, { by });
+      commentsFile: plan.comments ? commentsFileName(plan.key) : null, files: plan.downloads.map((a) => a.name) } }, { by });
     return made;
   });
   const owner = { type: 'feature', id: f.seq };

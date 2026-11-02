@@ -14,8 +14,7 @@ import { createProfile, writePluginConfig } from '../src/core/plugin-config.mjs'
 import { setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { createFeature, getFeature, getExportLink, saveExportLink, listAttachments, listFeatures, listTurns } from '../src/core/requirements/store.mjs';
 import { settled } from '../src/core/requirements/interview.mjs';
-import { attachmentFile } from '../src/core/requirements/attachment-job.mjs';
-import { isDownloading } from '../src/core/requirements/attachment-fetch.mjs';
+import { attachmentFile, isDownloading } from '../src/core/requirements/attachment-job.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { registerRequirementsRoutes, REQUIREMENTS_ROUTES } from '../src/core/requirements/routes.mjs';
 import { _resetExportCaches } from '../src/core/requirements/export.mjs';
@@ -121,8 +120,8 @@ test('Start the interview with a ticket (D10, D11, D14): 201 at once; R-po-1… 
   assert.equal(link.createdAt, link.exportedAt);
   assert.deepEqual(link.spec.criteria.map((c) => c.id), ['R-po-1', 'R-po-2', 'R-po-3'], 'the spec as created');
   const turn = listTurns(f.seq).find((t) => t.kind === 'export');
-  assert.deepEqual([turn.payload.action, turn.payload.key, turn.payload.linked, turn.payload.criteria, turn.payload.comments, turn.payload.files],
-    ['imported', 'SHOP-124', true, ['R-po-1', 'R-po-2', 'R-po-3'], 5, ['packing-slip.png', 'partial-cancel-flow.pdf', 'support-macro.txt']]);
+  assert.deepEqual([turn.payload.action, turn.payload.key, turn.payload.linked, turn.payload.criteria, turn.payload.comments, turn.payload.commentsFile, turn.payload.files],
+    ['imported', 'SHOP-124', true, ['R-po-1', 'R-po-2', 'R-po-3'], 5, 'SHOP-124 comments.md', ['packing-slip.png', 'partial-cancel-flow.pdf', 'support-macro.txt']]);
   const md = readFileSync(attachmentFile(listAttachments('feature', f.seq)[0]), 'utf8');
   assert.match(md, /^# Comments on SHOP-124\n\n\*\*Ann Example\*\* · 21 Oct 2026\n/);
   assert.ok(!md.includes('Jira Automation') && md.includes('ghp_<redacted>') && !md.includes('ghp_abcdef'));

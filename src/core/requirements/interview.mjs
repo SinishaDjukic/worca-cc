@@ -29,8 +29,7 @@ import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
-import { readsSettled, queueUnread, promptFiles, isReading, filesPending } from './attachment-job.mjs';
-import { isDownloading } from './attachment-fetch.mjs';
+import { readsSettled, queueUnread, promptFiles, isReading, isDownloading, filesPending } from './attachment-job.mjs';
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const ROUND_TIMEOUT_MS = 180_000;
