@@ -215,6 +215,19 @@ test('searchTickets: all projects with no words lists the recently updated ticke
   }
 });
 
+test('listTasks (the shared search, review of #1041): no project and no filter is bounded on Cloud as searchTickets is, keeping a filter\'s own ORDER BY; a project or filter is sent as before', async () => {
+  const lastJql = (jira) => jira.requests.filter((r) => /\/search/.test(r.path)).at(-1).query.jql;
+  for (const deployment of BOTH) {
+    const { jira, src } = await site({ deployment, seed: [ISSUE(), ...OTHERS] });
+    assert.deepEqual((await src.listTasks({ inputs: {} })).tasks.map((t) => t.id), ['SHOP-123', 'SHOP-124', 'OPS-7'], deployment);
+    assert.equal(lastJql(jira), deployment === 'cloud' ? '(updated >= -365d) ORDER BY updated DESC' : 'ORDER BY updated DESC', deployment);
+    await src.listTasks({ inputs: { jql: 'ORDER BY created ASC' } });
+    assert.equal(lastJql(jira), deployment === 'cloud' ? '(updated >= -365d) ORDER BY created ASC' : 'ORDER BY created ASC', deployment);
+    await src.listTasks({ inputs: { project: 'SHOP', jql: 'assignee = currentUser()' } });
+    assert.equal(lastJql(jira), 'project = "SHOP" AND (assignee = currentUser()) ORDER BY updated DESC', deployment);
+  }
+});
+
 test('importTicket: a deactivated Cloud person is a person; an app is an app; a Data Center inactive non-email user is an app', async () => {
   const comments = [
     { id: '1', author: { ...person('Cy Example', 'acc-cy'), active: false }, created: '2026-10-21T12:00:00.000+0000', body: 'Gone now.', rendered: '<p>Gone now.</p>' },

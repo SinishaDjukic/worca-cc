@@ -77,8 +77,9 @@ const emailish = (s) => /^[^@\s]+@[^@\s]+$/.test(String(s || ''));
 const authorKind = (a) => (a && (a.accountType ? a.accountType === 'app' : (a.active === false && !emailish(a.name))) ? 'app' : 'person');
 /** A criteria field's text as items: one per list item (nested ones too: `- `, `  - `, wiki `**`, `##`), else one per line. */
 const listItems = (md) => String(md || '').split('\n').map((l) => l.replace(/^\s*(?:[-*+#]+|\d+[.)])\s+/, '').trim()).filter(Boolean);
-/** Jira Cloud refuses a search with no clause before ORDER BY ("Unbounded JQL queries are not allowed here"): the import's
- *  "All projects, recently updated" asks for the tickets updated within this window. */
+/** Jira Cloud refuses a search with no clause before ORDER BY ("Unbounded JQL queries are not allowed here"): such a search (the
+ *  import's "All projects, recently updated", a task list with no project and no filter) asks for the tickets updated within this
+ *  window. */
 const CLOUD_RECENT = 'updated >= -365d';
 
 export default function createTaskSource(ctx, deps = {}) {
@@ -137,6 +138,29 @@ export default function createTaskSource(ctx, deps = {}) {
       startAt += values.length;
     }
     return out;
+  }
+  // listTasks and searchTickets: one search. A pasted key or link is that one issue (none when `missing(e)` says so), else the JQL
+  // through Cloud's /search/jql (nextPageToken) or Data Center's /search (startAt). On Cloud a JQL with no clause before ORDER BY
+  // gets CLOUD_RECENT, and a filter keeps its own ORDER BY.
+  async function searchIssues({ project, filter = '', search, cursor, fields, max, missing }) {
+    const key = pastedKey(search);
+    if (key) {
+      try { return { issues: [await issue(key, fields)] }; }
+      catch (e) { if (await missing(e)) return { issues: [] }; throw e; }
+    }
+    const cloud = (await deployment()) === 'cloud';
+    let jql = buildJql({ project, jql: filter, search });
+    if (cloud && /^ORDER\s+BY\b/i.test(jql)) jql = buildJql({ project, jql: `${CLOUD_RECENT} ${String(filter || '').trim()}`, search });
+    const q = `jql=${enc(jql)}&fields=${fields.join(',')}&maxResults=${max}`;
+    if (cloud) {
+      const j = await jiraFetch(jira, `/rest/api/2/search/jql?${q}${cursor ? `&nextPageToken=${enc(cursor)}` : ''}`);
+      return { issues: j?.issues || [], ...(j?.nextPageToken && j?.isLast !== true ? { cursor: j.nextPageToken } : {}) };
+    }
+    const start = Number(cursor) || 0;
+    const j = await jiraFetch(jira, `/rest/api/2/search?${q}&startAt=${start}`);
+    const issues = j?.issues || [];
+    const next = start + issues.length;
+    return { issues, ...(issues.length && next < (j?.total ?? 0) ? { cursor: String(next) } : {}) };
   }
   // Create metadata (D16): Cloud and Data Center 8.4+, paged; Cloud names the list issueTypes / fields, Data Center values.
   async function createmeta(path, key) {
@@ -254,22 +278,8 @@ export default function createTaskSource(ctx, deps = {}) {
       return (await projectList()).map((p) => ({ value: p.key, label: `${p.name} (${p.key})` }));
     },
     async listTasks({ inputs = {}, search, cursor } = {}) {
-      const key = pastedKey(search);
-      if (key) {
-        try { return { tasks: [summary(await issue(key))] }; }
-        catch (e) { if (e.status === 404) return { tasks: [] }; throw e; }
-      }
-      const jql = buildJql({ project: inputs.project, jql: inputs.jql, search });
-      const q = `jql=${enc(jql)}&fields=${FIELDS.join(',')}&maxResults=${PAGE}`;
-      if ((await deployment()) === 'cloud') {
-        const j = await jiraFetch(jira, `/rest/api/2/search/jql?${q}${cursor ? `&nextPageToken=${enc(cursor)}` : ''}`);
-        return { tasks: (j?.issues || []).map(summary), ...(j?.nextPageToken && j?.isLast !== true ? { cursor: j.nextPageToken } : {}) };
-      }
-      const start = Number(cursor) || 0;
-      const j = await jiraFetch(jira, `/rest/api/2/search?${q}&startAt=${start}`);
-      const issues = j?.issues || [];
-      const next = start + issues.length;
-      return { tasks: issues.map(summary), ...(issues.length && next < (j?.total ?? 0) ? { cursor: String(next) } : {}) };
+      const r = await searchIssues({ project: inputs.project, filter: inputs.jql, search, cursor, fields: FIELDS, max: PAGE, missing: (e) => e.status === 404 });
+      return { tasks: r.issues.map(summary), ...(r.cursor ? { cursor: r.cursor } : {}) };
     },
     async getTask(id) {
       const key = requireKey(id);
@@ -427,25 +437,9 @@ export default function createTaskSource(ctx, deps = {}) {
     // ---- A6.1: import (plans/requirements-a61-design.md §4, §5); read-only, each op through exportOp ----
     importOptions: exportOp(async () => ({ projects: (await projectList()).map((p) => ({ value: p.key, label: `${p.key} — ${p.name}` })) })),
     searchTickets: exportOp(async ({ project, search, cursor } = {}) => {
-      const key = pastedKey(search);
-      if (key) {
-        try { return { tickets: [ticketOf(await issue(key, IMPORT_SEARCH_FIELDS))] }; }
-        catch (e) { if (await notVisible(e)) return { tickets: [] }; throw e; }
-      }
-      const cloud = (await deployment()) === 'cloud';
-      const bounded = Boolean(String(project || '').trim() || String(search || '').trim());
-      // never the user's saved filter: the import searches the whole project; on Cloud an otherwise unbounded search gets a window
-      const jql = buildJql({ project, jql: cloud && !bounded ? CLOUD_RECENT : '', search });
-      const q = `jql=${enc(jql)}&fields=${IMPORT_SEARCH_FIELDS.join(',')}&maxResults=${IMPORT_PAGE}`;
-      if (cloud) {
-        const j = await jiraFetch(jira, `/rest/api/2/search/jql?${q}${cursor ? `&nextPageToken=${enc(cursor)}` : ''}`);
-        return { tickets: (j?.issues || []).map(ticketOf), ...(j?.nextPageToken && j?.isLast !== true ? { cursor: j.nextPageToken } : {}) };
-      }
-      const start = Number(cursor) || 0;
-      const j = await jiraFetch(jira, `/rest/api/2/search?${q}&startAt=${start}`);
-      const issues = j?.issues || [];
-      const next = start + issues.length;
-      return { tickets: issues.map(ticketOf), ...(issues.length && next < (j?.total ?? 0) ? { cursor: String(next) } : {}) };
+      // never the user's saved filter: the import searches the whole project
+      const r = await searchIssues({ project, search, cursor, fields: IMPORT_SEARCH_FIELDS, max: IMPORT_PAGE, missing: notVisible });
+      return { tickets: r.issues.map(ticketOf), ...(r.cursor ? { cursor: r.cursor } : {}) };
     }),
     importTicket: exportOp(async ({ key, criteriaField } = {}) => {
       const k = requireKey(key);
