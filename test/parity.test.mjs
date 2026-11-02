@@ -37,10 +37,16 @@ function fakeSnapshotDir(dir, colour, { bootMs = [1], samples = bootMs.length } 
 
 test('parseArgs crawl: --b repeats, docker is refused, --b is required', () => {
   const o = parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:x', '--b', 'package:.', '--out', 'o']);
-  assert.deepEqual([o.cmd, o.a, o.bs, o.workers, o.control, o.keep], ['crawl', 'tree:.', ['tree:x', 'package:.'], 8, true, false]);
+  assert.deepEqual([o.cmd, o.a, o.bs, o.workers, o.control, o.keep], ['crawl', 'tree:.', [{ t: 'tree:x', level: 'full' }, { t: 'package:.', level: 'full' }], 4, true, false]);
   assert.equal(parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:x', '--out', 'o', '--no-control', '--workers', '8']).control, false);
   assert.throws(() => parseArgs(['crawl', '--a', 'tree:.', '--b', 'docker:img', '--out', 'o']), /crawl supports tree: and package: targets/);
   assert.throws(() => parseArgs(['crawl', '--a', 'tree:.', '--out', 'o']), /crawl needs --b/);
+});
+
+test('crawl: --workers defaults to 4; --b-screens adds a screen-level target', () => {
+  const o = parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:/s', '--b-screens', 'package:.', '--out', '/o']);
+  assert.equal(o.workers, 4);
+  assert.deepEqual(o.bs, [{ t: 'tree:/s', level: 'full' }, { t: 'package:.', level: 'screen' }]);
 });
 
 test('compareDirs: one changed colour is a visual difference with a diff PNG and fails', () => {

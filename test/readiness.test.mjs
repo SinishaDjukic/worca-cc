@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSync, rmSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseArgs, runReadiness, postFrom, splitAt, e2eScripts } from '../tools/readiness.mjs';
+import { parseArgs, runReadiness, postFrom, splitAt, e2eScripts, runbookInputs, main } from '../tools/readiness.mjs';
 import { validateReport, GATE_NOTE, SPLITTER_NOTE } from '../tools/readiness/report.mjs';
 import { keyOf } from '../tools/readiness/open-prs.mjs';
 
@@ -68,7 +68,7 @@ const outDir = () => join(mkdtempSync(join(tmpdir(), 'readiness-run-')), 'out');
 const go = (deps, extra = {}) => { const lines = []; return runReadiness({ root: '.', out: outDir(), log: (l) => lines.push(l), now: () => new Date('2026-10-30T12:00:00Z'), deps, ...extra }).then((r) => ({ ...r, lines })); };
 
 test('parseArgs: run, post and split; anything else throws the usage line', () => {
-  assert.deepEqual(parseArgs(['run', '--out', '/tmp/r', '--keep']), { cmd: 'run', out: '/tmp/r', keep: true, firefoxInCi: false, crawlFrom: null, catchUpFrom: null });
+  assert.deepEqual(parseArgs(['run', '--out', '/tmp/r', '--keep']), { cmd: 'run', out: '/tmp/r', keep: true, crawlFrom: null, catchUpFrom: null });
   assert.deepEqual(parseArgs(['post', '--out', 'x']), { cmd: 'post', out: 'x' });
   assert.deepEqual(parseArgs(['split', '--rev', 'HEAD', '--splitter-rev', 'M^', '--out', 'w']), { cmd: 'split', rev: 'HEAD', splitterRev: 'M^', out: 'w' });
   assert.throws(() => parseArgs(['post']), /post needs --out DIR/);
@@ -76,16 +76,14 @@ test('parseArgs: run, post and split; anything else throws the usage line', () =
   assert.throws(() => parseArgs(['go']), /usage: readiness\.mjs run/);
 });
 
-test('runReadiness with every fake passing: 10 pass rows, go, a valid report, the rollback row has 7 links, trees removed', async () => {
+test('runReadiness with every fake passing: 10 pass rows, go, a valid report, the rollback row has 4 links, trees removed', async () => {
   const { out, report, lines } = await go(fakeDeps());
   assert.deepEqual(validateReport(report), []);
   assert.equal(report.checks.length, 10);
   assert.ok(report.checks.every((c) => c.status === 'pass'), JSON.stringify(report.checks.filter((c) => c.status !== 'pass')));
   assert.equal(report.verdict.value, 'go');
   const rollback = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(rollback.evidence.length, 7);   // 4 + e2e:extension before and after + e2e:firefox-smoke
-  assert.match(rollback.detail, /e2e:extension same before\/after \(0 pass, 1 fail, 0 images identical\); e2e:firefox-smoke green/);
-  assert.equal(existsSync(join(out, 'evidence/rollback-e2e-extension-update-linux.log')), false);
+  assert.deepEqual(rollback.evidence.map((e) => e.href), ['evidence/rollback-diff.log', 'evidence/suite-reverted.log', 'parity-reverted/report.md', 'evidence/parity-reverted.log']);
   assert.equal(report.openPrs[0].action, 'rebase after the migration');
   assert.ok(existsSync(join(out, 'report.md')) && existsSync(join(out, 'report.json')));
   assert.ok(!existsSync(join(out, 'trees')));
@@ -208,49 +206,26 @@ test('a dev commit without the splitter: split-check names it, later rows say wh
   assert.ok(md.includes(SPLITTER_NOTE)); assert.ok(!md.includes(GATE_NOTE));
 });
 
-test('a failing e2e suite fails the rollback row and names it', async () => {
-  const { report } = await go(fakeDeps({ e2eFail: 'e2e:firefox-smoke' }));
-  const row = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(row.status, 'fail'); assert.match(row.detail, /e2e:firefox-smoke FAIL/);
+test('rollback is the empty diff, the suite and a quick parity; no e2e suite runs and the row names the three', async () => {
+  const calls = []; const r = await go(fakeDeps({ calls }));
+  const row = r.report.checks.find((c) => c.id === 'rollback');
+  assert.equal(row.status, 'pass'); assert.match(row.detail, /^diff empty; suite green; quick parity PASS/);
+  assert.ok(!calls.some((c) => /npm run e2e:/.test(c)), 'no e2e in readiness');
+  assert.match(calls.find((c) => c.includes('parity-reverted')), /--quick/);
 });
 
-test('e2e:extension failing identically on dev and the migrated tree passes: same before/after', async () => {
-  const { report } = await go(fakeDeps({ e2eFail: 'e2e:extension' }));
-  const row = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(row.status, 'pass'); assert.match(row.detail, /e2e:extension same before\/after/);
+test('run --firefox-in-ci is an unknown argument now (readiness runs no e2e): exit 2', async () => {
+  assert.throws(() => parseArgs(['run', '--firefox-in-ci']), /unknown argument --firefox-in-ci/);
+  const errs = [];
+  assert.equal(await main(['run', '--firefox-in-ci'], { log: () => {}, err: (l) => errs.push(l) }), 2);
+  assert.match(errs.join('\n'), /--firefox-in-ci/);
 });
 
-test('a suite that prints SKIP and exits 0 is named skipped, and SKIP fails the row', async () => {
-  const deps = fakeDeps(); const inner = deps.runLogged;
-  deps.runLogged = (cmd, args, file, o) => (args[1] === 'e2e:firefox-smoke'
-    ? (writeFileSync(file, 'firefox-smoke: SKIP — no Firefox found\n'), { code: 0, text: 'firefox-smoke: SKIP — no Firefox found\n' })
-    : inner(cmd, args, file, o));
-  const { report } = await go(deps);
-  const row = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(row.status, 'fail'); assert.match(row.detail, /e2e:extension same before\/after .*; e2e:firefox-smoke SKIPPED/);
-  assert.equal(report.verdict.value, 'no-go');
-});
-
-test('e2e:extension with one status changed on the migrated tree fails the rollback row: NOT same, named', async () => {
-  const { report } = await go(fakeDeps({ afterStatus: 'expected' }));
-  const row = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(row.status, 'fail');
-  assert.match(row.detail, /e2e:extension NOT same before\/after .*sidebar light: unexpected before, expected after/);
-});
-
-test('--firefox-in-ci: e2e:firefox-smoke never runs, the rollback row passes and says CI job firefox-e2e, not run locally', async () => {
-  assert.equal(parseArgs(['run', '--firefox-in-ci']).firefoxInCi, true);
-  const calls = [];
-  const { report, out } = await go(fakeDeps({ calls }), { firefoxInCi: true });
-  assert.ok(!calls.some((c) => c.includes('npm run e2e:firefox-smoke')), calls.join('\n'));
-  const row = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(row.status, 'pass');
-  assert.match(row.detail, /e2e:firefox-smoke: CI job firefox-e2e, not run locally/);
-  assert.deepEqual(report.notLocal, [{ name: 'e2e:firefox-smoke', ci: 'firefox-e2e' }]);
-  assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /^Not run locally: `e2e:firefox-smoke` → CI job `firefox-e2e`$/m);
-  const without = [];
-  await go(fakeDeps({ calls: without }));
-  assert.ok(without.some((c) => c.includes('npm run e2e:firefox-smoke')));
+test('runbookInputs reads the owner and the freeze window from the runbook Inputs table; an empty cell is null', () => {
+  assert.deepEqual(runbookInputs('| Go/no-go owner | Emil Angelov |\n| Freeze window | dev frozen since 2026-11-01 at bf92e1579 |\n'),
+    { owner: 'Emil Angelov', freezeWindow: 'dev frozen since 2026-11-01 at bf92e1579' });
+  assert.deepEqual(runbookInputs('| Go/no-go owner | |\n| Freeze window | |\n'), { owner: null, freezeWindow: null });
+  assert.deepEqual(runbookInputs(''), { owner: null, freezeWindow: null });
 });
 
 test('risks.ceilingRaises comes from the migrated tree\'s size-caps-raises.json, with its evidence', async () => {
@@ -292,7 +267,7 @@ test('without a migration commit the report still validates and Risks says it wa
 });
 
 test('--dev-ref: the run uses that commit, the report names it, and post refuses a rehearsal report', async () => {
-  assert.deepEqual(parseArgs(['run', '--out', 'x', '--dev-ref', 'abc']), { cmd: 'run', out: 'x', keep: false, firefoxInCi: false, crawlFrom: null, catchUpFrom: null, devRef: 'abc' });
+  assert.deepEqual(parseArgs(['run', '--out', 'x', '--dev-ref', 'abc']), { cmd: 'run', out: 'x', keep: false, crawlFrom: null, catchUpFrom: null, devRef: 'abc' });
   assert.throws(() => parseArgs(['run', '--dev-ref']), /run --dev-ref needs REF/);
   const { out, report } = await go(fakeDeps(), { devRef: 'abc' });
   assert.equal(report.devCommit.ref, 'abc');

@@ -14,8 +14,8 @@ const goodParity = (timed) => ({ pass: true, routeDiffs: [], visualDiffs: [], fa
   routeCounts: { a: { listed: 9, probed: 9, skipped: 0 }, b: { listed: 9, probed: 9, skipped: 0 } },
   timingGated: timed, timings: { boot: { a: 900, b: 905 }, pages: { 'chat-home': { a: 300, b: 301 }, runs: { a: 280, b: 282 } } } });
 const goodCrawl = () => ({ pass: true, control: true, a: { spec: 'tree:.', tree: 't'.repeat(40) }, bs: [{ spec: 'tree:split', tree: 's'.repeat(40) }, { spec: 'package:.', tree: null }],
-  masks: [{ id: 'x', field: 'dom', path: '0.1' }], minutes: 60,
-  comparisons: [{ label: 'split', pass: true, diffs: [] }, { label: 'package', pass: true, diffs: [] }],
+  masks: [{ id: 'x', field: 'dom', path: '0.1', why: 'a number differs (count or time)' }], minutes: 60, externalApps: { stubbed: 4, canary: [] },
+  comparisons: [{ label: 'split', level: 'full', pass: true, diffs: [] }, { label: 'package', level: 'screen', pass: true, diffs: [] }],
   coverage: { screens: 120, routes: { registered: 90, visited: 90, unvisited: [], unfillable: [] }, elements: { found: 4000, exercised: 1500, skipped: 2500, byReason: {} } } });
 const pwReport = (st) => ({ suites: [{ title: 'visual.spec.mjs', specs: [{ title: 'sidebar light', tests: [{ projectName: '', status: st }] }] }] });
 const PW_SCRIPT = 'node tools/build-extension.mjs --test --browser chrome && playwright test -c e2e/extension/playwright.config.mjs';
@@ -105,30 +105,28 @@ test('i: e2e:extension failing identically before and after passes (same before/
   const f = fakes(); const r = await go(f);
   const i = r.rows.find((x) => x.id === 'i');
   assert.equal(i.ok, true); assert.match(i.number, /e2e:extension same before\/after \(0 pass, 1 fail, 0 images identical\)/);
-  assert.equal(f.calls.filter((c) => c.startsWith('npm run e2e:extension')).length, 3, 'before once (rows i and k share it), after in i and in k');
+  assert.equal(f.calls.filter((c) => c.startsWith('npm run e2e:extension')).length, 2, 'before once, after in i (row k runs no e2e)');
   const bad = (await go(fakes({ e2eAfter: 'expected' }))).rows.find((x) => x.id === 'i');
   assert.equal(bad.ok, false); assert.match(bad.number, /NOT same before\/after .*sidebar light: unexpected before, expected after/);
 });
 
-test('--firefox-in-ci: the Firefox suite never runs; i and k pass and say so; the table tail, json and log line name CI', async () => {
+test('--firefox-in-ci: the Firefox suite never runs; i passes and says so; the table tail, json and log line name CI', async () => {
   const f = fakes(); const lines = [];
   const r = await go(f, { log: (l) => lines.push(l), firefoxInCi: true });
   assert.ok(!f.calls.some((c) => c.includes('npm run e2e:firefox-smoke')), 'never run in any tree');
-  for (const id of ['i', 'k']) {
-    const x = r.rows.find((y) => y.id === id);
-    assert.equal(x.ok, true, id); assert.match(x.number, /e2e:firefox-smoke: CI job firefox-e2e, not run locally/, id);
-  }
+  const i = r.rows.find((y) => y.id === 'i');
+  assert.equal(i.ok, true); assert.match(i.number, /e2e:firefox-smoke: CI job firefox-e2e, not run locally/);
   assert.ok(readFileSync(join(r.out, 'verify-919.md'), 'utf8').trimEnd().endsWith(
-    'Not run locally (not a pass): e2e:firefox-smoke in rows i (was h) and k (was i) → CI job firefox-e2e (.github/workflows/firefox-e2e.yml)'));
+    'Not run locally (not a pass): e2e:firefox-smoke in rows i (was h) → CI job firefox-e2e (.github/workflows/firefox-e2e.yml)'));
   assert.deepEqual(JSON.parse(readFileSync(join(r.out, 'verify-919.json'), 'utf8')).notLocal,
-    [{ row: 'i', name: 'e2e:firefox-smoke', ci: 'firefox-e2e' }, { row: 'k', name: 'e2e:firefox-smoke', ci: 'firefox-e2e' }]);
-  assert.ok(f.calls.find((c) => c.includes('tools/readiness.mjs run')).includes('--firefox-in-ci'));
+    [{ row: 'i', name: 'e2e:firefox-smoke', ci: 'firefox-e2e' }]);
+  assert.ok(!f.calls.find((c) => c.includes('tools/readiness.mjs run')).includes('--firefox-in-ci'), 'readiness runs no e2e (D9)');
   assert.match(lines.at(-1), /verify:919 PASS, except 1 suite left to CI \(firefox-e2e\) \(/);
 });
 
 test('h: a crawl diff, no control pass or an unvisited route fails it; a clean crawl names both comparisons and the coverage', async () => {
   const h = (await go(fakes())).rows.find((x) => x.id === 'h');
-  assert.equal(h.ok, true); assert.match(h.number, /120 screens, 90\/90 routes, .*split 0 diffs, package 0 diffs/);
+  assert.equal(h.ok, true); assert.match(h.number, /120 screens, 90\/90 routes, .*split 0 diffs, package \(screens\) 0 diffs/);
   assert.equal(h.evidence, 'crawl/report.md');
   const c = goodCrawl();
   for (const bad of [{ ...c, pass: false, comparisons: [{ ...c.comparisons[0], pass: false, diffs: [{ id: 'x', field: 'dom' }] }, c.comparisons[1]] },
@@ -205,4 +203,66 @@ test('g keeps an extension/dist that was there before the run', async () => {
   const root = mkdtempSync(join(tmpdir(), 'v919-root-')); put(join(root, 'extension/dist/mine.txt'), 'x');
   await runVerify({ root, out: out(), log: () => {}, deps: fakes().deps });
   assert.ok(existsSync(join(root, 'extension/dist/mine.txt')));
+});
+
+test('h runs the split at full depth and the package at screen level, four workers by default', async () => {
+  const f = fakes(); await go(f);
+  const h = f.calls.find((c) => c.includes('tools/parity.mjs crawl'));
+  assert.match(h, /--b tree:\S+trees\/split --b-screens package:\. --out /); assert.doesNotMatch(h, /--workers/);
+});
+
+test('crawlGaps: needs one full and one screen comparison, the stub, no real launch and no unexplained mask', () => {
+  const c = goodCrawl();
+  assert.deepEqual(crawlGaps(c), []);
+  assert.match(crawlGaps({ ...c, comparisons: [c.comparisons[0], { ...c.comparisons[1], level: 'full' }] }).join(), /2 full, 0 screen/);
+  assert.match(crawlGaps({ ...c, externalApps: undefined }).join(), /no app stub/);
+  assert.match(crawlGaps({ ...c, externalApps: { stubbed: 1, canary: ['open -a Terminal'] } }).join(), /1 real app launch/);
+  assert.match(crawlGaps({ ...c, masks: [{ id: 'x', field: 'dom', why: 'unexplained' }] }).join(), /1 unexplained mask/);
+});
+
+test('k is the empty diff, the suite and a quick parity: no e2e, no full parity, no crawl', async () => {
+  const f = fakes(); const r = await go(f);
+  const k = r.rows.find((x) => x.id === 'k');
+  assert.equal(k.ok, true); assert.match(k.number, /^diff empty; suite fail 0; quick parity pass$/);
+  const kParity = f.calls.filter((c) => c.includes('parity-reverted'));
+  assert.equal(kParity.length, 1); assert.match(kParity[0], /--quick/);
+});
+
+test('--only reruns the named rows, carries the rest, and refuses another HEAD', async () => {
+  const f = fakes(); const first = await go(f);
+  const f2 = fakes(); f2.root = f.root;
+  const r = await runVerify({ root: f.root, out: first.out, only: new Set(['e', 'h']), prev: JSON.parse(readFileSync(join(first.out, 'verify-919.json'), 'utf8')), log: () => {}, deps: f2.deps });
+  assert.deepEqual(r.rows.filter((x) => !x.carried).map((x) => x.id), ['e', 'h']);
+  assert.ok(!f2.calls.some((c) => c.includes('tools/test.mjs')), 'd and k are carried: no suite');
+  assert.ok(existsSync(join(first.out, 'prev-1', 'crawl', 'report.json')), 'the old crawl is kept aside');
+  assert.match(readFileSync(join(first.out, 'verify-919.md'), 'utf8'), /\| d\. suite-split \| pass \(earlier\) \|/);
+  // row i is carried, so its notLocal entry is carried too (the go/no-go reads it)
+  const f3 = fakes(); f3.root = f.root; const ci = await go(f3, { firefoxInCi: true });
+  await runVerify({ root: f.root, out: ci.out, only: new Set(['e']), prev: JSON.parse(readFileSync(join(ci.out, 'verify-919.json'), 'utf8')), log: () => {}, deps: fakes().deps });
+  assert.deepEqual(JSON.parse(readFileSync(join(ci.out, 'verify-919.json'), 'utf8')).notLocal.map((x) => x.row), ['i']);
+  const lines = [];
+  assert.equal(await main(['--out', first.out, '--only', 'e'], { log: (l) => lines.push(l), head: () => 'x'.repeat(40), isAncestor: () => false }), 3);
+  assert.match(lines.join('\n'), /not an ancestor of HEAD/);
+  assert.equal(await main(['--only', 'e'], { log: () => {} }), 2);
+  assert.equal(await main(['--out', first.out, '--only', 'z'], { log: () => {}, head: () => HEAD, isAncestor: () => true }), 2);
+});
+
+test('two chained --only runs: each carried row keeps the head it ran on, and the tail lists the changes since that head', async () => {
+  const at = (head) => { const f = fakes(); const inner = f.deps.run;
+    f.deps.run = (cmd, args, o) => {
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return { code: 0, stdout: `${head}\n`, stderr: '' };
+      if (args[0] === 'diff') return { code: 0, stdout: `${{ [`${'1'.repeat(40)} ${head}`]: 'tools/a.mjs\ntools/b.mjs\n', [`${'2'.repeat(40)} ${head}`]: 'tools/b.mjs\n' }[`${args[2]} ${args[3]}`] ?? ''}`, stderr: '' };
+      return inner(cmd, args, o); };
+    return f; };
+  const [S1, S2, S3] = ['1', '2', '3'].map((c) => c.repeat(40));
+  const f1 = at(S1); const first = await go(f1);
+  const prev = () => JSON.parse(readFileSync(join(first.out, 'verify-919.json'), 'utf8'));
+  const f2 = at(S2); await runVerify({ root: f1.root, out: first.out, only: new Set(['e']), prev: prev(), log: () => {}, deps: f2.deps });
+  const f3 = at(S3); const r = await runVerify({ root: f1.root, out: first.out, only: new Set(['f']), prev: prev(), log: () => {}, deps: f3.deps });
+  const by = Object.fromEntries(r.rows.map((x) => [x.id, x.ranOn]));
+  assert.deepEqual([by.a, by.e, by.f], [S1, S2, S3]);
+  const md = readFileSync(join(first.out, 'verify-919.md'), 'utf8');
+  assert.match(md, new RegExp(`Carried rows ran on ${S1} \\(rows a, b, c, d, g, h, i, j, k, l\\); changed since: tools/a\\.mjs, tools/b\\.mjs`));
+  assert.match(md, new RegExp(`Carried rows ran on ${S2} \\(rows e\\); changed since: tools/b\\.mjs`));
+  assert.deepEqual(prev().rows.map((x) => x.ranOn), r.rows.map((x) => x.ranOn), 'verify-919.json keeps ranOn for the next rerun');
 });

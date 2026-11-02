@@ -6,17 +6,25 @@ One command, from a clean checkout of the commit to ship (this branch merged wit
 freeze day). It runs every check below in order, never stops early, prints one table (check · pass/fail · number ·
 evidence file) and exits 0 only when every row passes. It never posts on #919 and never pushes. It takes many hours (the
 crawl alone is hours); the table in `OUT/verify-919.md` grows row by row (`npm run verify:919 -- --out DIR [--keep]
-[--firefox-in-ci]`; without `--out`, a new temp folder). Chrome (the crawl) and Playwright's Chromium (for
+[--firefox-in-ci] [--only ROWS]`; without `--out`, a new temp folder). Chrome (the crawl) and Playwright's Chromium (for
 `e2e:extension`) must be installed. Firefox (for `e2e:firefox-smoke`) too, except with `--firefox-in-ci`: on macOS,
 Playwright's Firefox hangs headless (macOS sandbox), so run verify with `--firefox-in-ci` there. `e2e:firefox-smoke`
 then runs in the `firefox-e2e` workflow (`.github/workflows/firefox-e2e.yml`, Linux, the branch and its split tree), and
-rows i and k read `e2e:firefox-smoke: CI job firefox-e2e, not run locally`. That is not a pass: the table ends with a
+row i reads `e2e:firefox-smoke: CI job firefox-e2e, not run locally`. That is not a pass: the table ends with a
 "Not run locally (not a pass)" line, `verify-919.json` lists it under `notLocal`, and the last line reads
 `verify:919 PASS, except 1 suite left to CI (firefox-e2e)`.
 
-The e2e judgement (rows i and k, and readiness `rollback`): `e2e:extension` is judged "same results before and after"
+`--only a,b` reruns only those rows into the `--out` of an earlier run, after a fix. The earlier run's `head` must be
+HEAD or an ancestor of it (otherwise exit 3: rerun all rows), so make the fix commit on top of the one verify ran on.
+The other rows are carried (`pass (earlier)` / `FAIL (earlier)`), the table's tail names the earlier head and every
+file changed since, and the rerun rows' old outputs move to `OUT/prev-N/`. Choose ROWS as the failed rows plus every
+row the fix can affect: a fix in `tools/split-by-feature*` reruns b, c, d, e, f, h, i, k and l; a fix in `ui/` or
+`src/` reruns d through l; a fix in `tools/parity*` reruns the parity rows it touches (e, f, g, h, k) and l; l always
+reruns when h or j reruns.
+
+The e2e judgement (row i): `e2e:extension` is judged "same results before and after"
 (the same Playwright test statuses and pixel-identical `*-actual.png` / `*-diff.png`, before = a clean clone of HEAD,
-after = the split or reverted tree), because dev's darwin screenshot baselines fail on a Mac on untouched dev too. The
+after = the split tree), because dev's darwin screenshot baselines fail on a Mac on untouched dev too. The
 baselines are not touched or masked. Every other `e2e:*` suite must exit 0, and a suite that prints SKIP is a fail.
 
 | Check | Pass means |
@@ -28,11 +36,11 @@ baselines are not touched or masked. Every other `e2e:*` suite must exit 0, and 
 | e. parity-quick | quick parity, this tree against the split tree: PASS, 18 shot pairs, all 6 flows on both sides |
 | f. parity-full | full parity with the timing gate, this tree against the split tree: 0 route, 0 visual, 0 flow differences; every route probed signed in and signed out; 18 screenshots light and dark; boot and page-load timings gated and within budget |
 | g. parity-package | full parity, this tree against its own `npm pack` (`package:.`): 0 differences, same completeness as f (timings are not gated for a package) |
-| h. crawl | `npm run parity -- crawl --a tree:. --b tree:SPLIT --b package:.` (docs/parity-harness.md, Differential crawl): control pass on, both comparisons 0 unmasked differences, 0 unvisited and 0 unfillable routes; the number prints the coverage |
+| h. crawl | `npm run parity -- crawl --a tree:. --b tree:SPLIT --b-screens package:.` (docs/parity-harness.md, Differential crawl), four workers: one control pass (A1 vs A2), the split at full depth and the package at screen level, both comparisons 0 unmasked differences, 0 unexplained masks, 0 real app launches (the app stub on), 0 unvisited and 0 unfillable routes; the number prints the coverage |
 | i. e2e-split | every `e2e:*` suite in `package.json` but the snapshot updater, on the split tree, by the e2e judgement above: `e2e:extension` same before/after, every other suite green, no SKIP |
 | j. catch-up | `npm run catch-up:919` on the fixture "old" PR (a route, a CSS rule, a markup line on pre-split dev) works, each edit in its split file and parity's only route difference the fixture's own; every open PR and dependabot branch dry-run (split, 3-way apply, related tests; fork PRs split and apply only). An open PR that needs a hand fix is counted, not a fail |
-| k. rollback | the split reverted: diff to HEAD empty, then suite, full parity and the e2e suites (same judgement as i) pass again |
-| l. readiness | `npm run readiness -- run` (with `--dev-ref` when HEAD is not dev, `--crawl-from OUT/crawl`, `--catch-up-from OUT/catch-up/all.json`, and `--firefox-in-ci` when verify got it): verdict `go`; `report.md` and `report.json` written |
+| k. rollback | the split reverted: diff to HEAD empty, then `npm test` and a quick parity (no crawl, no e2e) |
+| l. readiness | `npm run readiness -- run` (with `--dev-ref` when HEAD is not dev, `--crawl-from OUT/crawl` and `--catch-up-from OUT/catch-up/all.json`): verdict `go`; `report.md` and `report.json` written |
 
 Catch-up runs before rollback because it needs the un-reverted split tree as "latest dev". Readiness runs last and
 reuses h's crawl and j's dry run only when their trees match its own (the crawl's A and first B tree hashes, the dry
@@ -42,12 +50,12 @@ A failing row names its evidence file inside `OUT`. When it is a test that is in
 and the evidence names the entry and the solo rerun. When it is not, follow "When `suite-migrated` or `rollback` fails"
 under The readiness command below.
 
-This runbook does not choose its inputs. Fill them in on #919 before step 3:
+The owner set these inputs (2026-11-02). Readiness prints them in its Inputs section:
 
 | Input | Value |
 |---|---|
-| Go/no-go owner | |
-| Freeze window | |
+| Go/no-go owner | Emil Angelov |
+| Freeze window | dev frozen since 2026-11-01 at bf92e1579 (1.17.0-rc.2), until checklist step E1 |
 
 Docs note: `docs/design-system.md` and the generated `docs/feature-files.md` change only in the migration commit itself
 (freeze day). Until then dev's docs describe the unsplit files, and the readiness `docs-and-package` row is the proof
@@ -75,6 +83,40 @@ owner's sign-off.
 Every guard failure (coverage, size cap, the spike gate, the direct-read guard in `test/public-assets.test.mjs`) ends
 with `if this branch started before the #919 split: run npm run catch-up:919 -- BRANCH`. On a branch that started after
 M, the fix is a feature-map edit instead.
+
+## Migration checklist
+
+Owner: Emil Angelov (go/no-go owner). Dev is frozen since 2026-11-01 at `bf92e1579` (1.17.0-rc.2). 🔒 = the owner
+confirms before the step happens. Nothing here is done by a tool on its own: every 🔒 step is a person's action.
+
+| Step | What | Who | Command | Pass |
+|---|---|---|---|---|
+| A1 | Finish tooling (this round) | worca run | `npm run verify:919 -- --firefox-in-ci`; `npm run readiness -- run --dev-ref SNAP --crawl-from DIR/crawl`; `npm run go-no-go:919 -- …` | `919-go-no-go.md` first line reads `GO`; attached to the run |
+| A2 🔒 | Review the go/no-go | owner | read `919-go-no-go.md` and its evidence | the owner agrees with every gate |
+| A3 🔒 | Sign off the size cap | owner | `node tools/split-by-feature.mjs --check --stats` | 10,119 ≤ ceiling; every raise in `tools/split-by-feature/size-caps-raises.json` accepted |
+| B1 | Ship one tooling PR | owner | one PR from the tooling branch into dev, linked to #919 | one PR, CI started |
+| B2 | CI green | CI | tests, `parity-docker`, `firefox-e2e` | all three checks green |
+| B3 🔒 | Merge the tooling | owner | squash-merge B1 | merged; dev still frozen |
+| B4 | Suite on dev | owner | `npm test` on dev after the merge | 0 failures outside `test/flaky-register.json` |
+| C1 | Readiness on frozen dev | owner | `npm run readiness -- run --out DIR` | 10/10 rows pass, verdict `go` |
+| C2 🔒 | Post on #919 | owner | `npm run readiness -- post --out DIR` | the comment shows in `gh issue view 919 --comments` |
+| C3 🔒 | Tag 1.17.0 from rc.2 (only if releasing now) | owner | docs/RELEASING.md, from `bf92e1579` | tag `worca-app-v1.17.0` on `bf92e1579` |
+| D1 🔒 | Backups | owner | `git tag pre-919-split origin/dev`; push it; push `origin/dev` to the protected `backup/dev-pre-919`; `git bundle create dev-pre-919.bundle origin/dev` | tag and branch on origin; `git bundle verify` passes |
+| D2 | verify on that SHA | owner | `npm run verify:919 -- --firefox-in-ci` on a clean checkout of it | every row passes (`e2e:firefox-smoke` left to CI) |
+| D3 | The migration commit M, in its own PR | owner | freeze-day command of step 4 above (`--apply` twice, one commit) | one commit M, its PR into dev |
+| D4 | CI green on M | CI | tests, `parity-docker`, `firefox-e2e` | all green |
+| D5 | Owner's 15-minute check | owner | Actions › Check out on M's PR branch, then the main pages, a chat message and a run (or `tools/real-e2e-919.mjs`) | same as before the split |
+| D6 🔒 | Merge the migration | owner | squash-merge M's PR | merged |
+| D7 | Tag the split | owner | `git tag post-919-split origin/dev`; push the tag | tag on M |
+| D8 | Suite and parity on dev | owner | `npm test`; `npm run parity -- run --a tree:. --b tree:. --out /tmp/p-dev` | both green |
+| D9 | Red while still frozen | owner | Rollback A below (`git revert M`) | its Pass: line |
+| E1 | Unfreeze | owner | announce on #919 | announced |
+| E2 | Open PRs catch up | PR authors | `npm run catch-up:919 -- BRANCH`; the express 5 PR last | each PR green on the split |
+| E3 | Watch period, staging, release | owner | docs/RELEASING.md | no split regression reported |
+| E4 | Lower the caps and clean up | owner | one final, separate PR | merged on its own, revertable on its own |
+
+Rollback: before D6 (merge the migration), red means fix and repeat from the failing step. After D6, red means
+`git revert M` (Rollback A), or Rollback B only if later commits touched the split files. Never reset or force-push.
 
 ## Rollback
 Two layers roll back separately. The tooling PRs (slices 1–3 and the #919 follow-up; T below is the one to undo)
@@ -147,13 +189,14 @@ Pass: step 5's diff lists only P's own files, `npm test` has 0 failures outside 
 
 | Command | What it does | Exit |
 |---|---|---|
-| `run [--out DIR] [--keep] [--dev-ref REF] [--firefox-in-ci] [--crawl-from DIR] [--catch-up-from FILE]` | fetches `origin/dev`, builds and checks the migrated tree, rehearses the rollback, checks open PRs, writes `DIR/report.md` and `DIR/report.json`. `--dev-ref` rehearses on another commit (for example origin/dev merged with an unmerged branch); `post` refuses such a report. `--firefox-in-ci` leaves `e2e:firefox-smoke` to the `firefox-e2e` job (listed "Not run locally", never a pass). `--crawl-from` / `--catch-up-from` reuse verify:919's crawl and catch-up dry run when their trees are this run's | 0 go, 1 no-go |
+| `run [--out DIR] [--keep] [--dev-ref REF] [--crawl-from DIR] [--catch-up-from FILE]` | fetches `origin/dev`, builds and checks the migrated tree, rehearses the rollback, checks open PRs, writes `DIR/report.md` and `DIR/report.json`. `--dev-ref` rehearses on another commit (for example origin/dev merged with an unmerged branch); `post` refuses such a report. `--crawl-from` / `--catch-up-from` reuse verify:919's crawl and catch-up dry run when their trees are this run's | 0 go, 1 no-go |
 | `post --out DIR` | checks `gh auth status` and the `origin` URL, scans the comment, comments on #919 and confirms `gh issue view 919 --comments` shows it | 0 posted, 1 refused or failed |
 | `split --rev REV --splitter-rev REV --out DIR` | the catch-up recipe's split: clones both revisions as scratch clones under `DIR`, splits the first with the second's splitter, commits; a failed split removes the out dir it made, or empties the one it was given | 0 split |
 
 Exit 2 is a bad argument; exit 3 means the run could not start (the out dir is not empty, `git fetch origin dev`
 failed, or the report would link a file it did not write), and no report is written. Without `--out`, `run` writes
-to a new folder under the temp dir. A run takes about 40–60 min: 2 `npm ci`, 2 full suites and 2 parity runs.
+to a new folder under the temp dir. A run takes about 30–45 min: 2 `npm ci`, 2 full suites, 1 full parity and 1 quick parity. Its Inputs section prints
+the owner and the freeze window from the Inputs table above.
 
 `run` works in shared clones under `DIR/trees` (`base` and `migrated`), checked out detached at the dev SHA and
 marked as scratch; it adds no worktree, branch or tag to this repository. They are removed at the end unless `--keep`
@@ -177,12 +220,9 @@ anything else), step 11 writes the report:
    gets one action. A head closed or deleted between the listing and the fetch is left out and named in the row.
    Each also gets a Catch-up column from the catch-up dry run (`works`, `needs hand fix` with the reason, or
    `not run`); a hand fix there does not fail the row.
-9. `rollback`: rollback A on the migrated clone (revert the migration commit); the diff to dev is empty, and the
-   suite, parity and every `e2e:*` suite in `package.json` (today `e2e:extension` and `e2e:firefox-smoke`; the
-   snapshot updater `e2e:extension:update-linux` is not a suite) pass again by the e2e judgement (`e2e:extension`
-   same before/after against the base clone; every other suite green; SKIP is a fail). With `--firefox-in-ci`,
-   `e2e:firefox-smoke` is listed under the table as "Not run locally". While `split-check` fails this proves the
-   mechanics only.
+9. `rollback`: rollback A on the migrated clone (revert the migration commit): the diff to dev is empty, and the
+   suite and a quick parity pass again (no e2e: with an empty diff the reverted tree is dev's own; the e2e suites run
+   in verify:919 row i and the `firefox-e2e` CI job). While `split-check` fails this proves the mechanics only.
 10. `baseline`: conflicted-merge share, boot and page-load medians and the dead-code count, dev against migrated.
     It fails when `open-prs` fails (no table to compare); no open PRs at all is a passing, empty comparison.
 

@@ -10,6 +10,7 @@ const section = (h) => { const i = doc.indexOf(`\n${h}`); assert.ok(i >= 0, h); 
 
 test('the Inputs table records the owner and the freeze window', () => {
   assert.match(doc, /^\| Go\/no-go owner \|/m); assert.match(doc, /^\| Freeze window \|/m);
+  assert.match(doc, /^\| Go\/no-go owner \| Emil Angelov \|$/m);
 });
 
 test('the runbook table has the six steps in order, each with what to run, who and what pass means', () => {
@@ -48,4 +49,14 @@ test('freeze day names the exact apply command, run twice, and no "revised --app
   assert.doesNotMatch(doc, /revised `?--apply/);
   const row = doc.split('\n').find((l) => l.startsWith('| 4. Freeze day |'));
   assert.ok(row.includes('`git fetch origin dev && git switch -c split/919-migration origin/dev && node tools/split-by-feature.mjs --apply && node tools/split-by-feature.mjs --apply && git add -A && git commit -m "Split large files by feature (#919)"`'), row);
+});
+
+test('the migration checklist: phases A–E in order, owner and freeze, 🔒 on every owner-only step, the rollback rule', () => {
+  const s = section('## Migration checklist');
+  assert.match(s, /Owner: Emil Angelov/); assert.match(s, /frozen since 2026-11-01 at `bf92e1579`/);
+  const ids = s.split('\n').filter((l) => /^\| [A-E]\d/.test(l)).map((l) => l.split('|')[1].trim());
+  assert.deepEqual([...new Set(ids.map((x) => x[0]))], ['A', 'B', 'C', 'D', 'E']);
+  for (const step of ['A2', 'A3', 'B3', 'C2', 'C3', 'D1', 'D6']) assert.ok(ids.includes(`${step} 🔒`), step);
+  for (const l of s.split('\n').filter((x) => /^\| [A-E]\d/.test(x))) assert.equal(l.split('|').slice(1, -1).filter((c) => c.trim()).length, 5, l);
+  assert.match(s, /Rollback: before D6 .*fix and repeat.*After D6, red means\s+`git revert M`.*Never reset or force-push\./s);
 });

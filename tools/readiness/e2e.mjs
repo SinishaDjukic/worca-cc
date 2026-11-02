@@ -2,8 +2,10 @@
 // screenshot baselines fail on this machine on untouched dev: same tests pass, same tests fail, same images.
 import { existsSync, readdirSync, readFileSync, cpSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { childEnv } from './proc.mjs';
 import { diffPng } from '../parity/visual.mjs';
+import { STUB_APPS } from '../parity/launch.mjs';
 
 /** Every e2e:* suite in package.json scripts, not the snapshot updaters (`:update-…`), sorted. */
 export const e2eScripts = (scripts = {}) => Object.keys(scripts).filter((k) => /^e2e:/.test(k) && !/:update(?:-|$)/.test(k)).sort();
@@ -36,7 +38,10 @@ export function runSuite(d, dir, name, script, E, tag) {
   const pw = PW.test(script);
   const json = E(`${file}.json`);
   const r = d.runLogged('npm', ['run', name, ...(pw ? ['--', '--reporter=list,json'] : [])], E(`${file}.log`),
-    { cwd: dir, env: { ...childEnv(), ...(pw ? { PLAYWRIGHT_JSON_OUTPUT_NAME: json } : {}) } });
+    { cwd: dir, env: { ...childEnv(), ...(pw ? { PLAYWRIGHT_JSON_OUTPUT_NAME: json } : {}),
+      // the server the suite's fixture spawns inherits these: external apps are recorded no-ops (D4)
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(STUB_APPS).href}`].filter(Boolean).join(' '),
+      WORCA_STUB_APPS_LOG: E(`${file}-stubbed-apps.ndjson`) } });
   const res = { name, code: r.code, skipped: /\bSKIP\b/.test(r.text ?? ''), log: `evidence/${file}.log` };
   if (!pw) return res;
   res.results = testResults(existsSync(json) ? JSON.parse(readFileSync(json, 'utf8')) : null);

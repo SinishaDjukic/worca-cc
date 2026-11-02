@@ -1,7 +1,10 @@
 // test/readiness-e2e.test.mjs — tools/readiness/e2e.mjs: Playwright JSON → statuses, and the before/after judgement.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { testResults, judgeSameResults, e2eScripts, SAME_RESULTS, e2eRow, CI_ONLY, FIREFOX_CI_JOB } from '../tools/readiness/e2e.mjs';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { testResults, judgeSameResults, e2eScripts, SAME_RESULTS, e2eRow, CI_ONLY, FIREFOX_CI_JOB, runSuite } from '../tools/readiness/e2e.mjs';
 import { encodePNG } from '../assets/promo-kit/tools/analyze.mjs';
 
 const png = (v) => encodePNG(1, 1, new Uint8Array([v, v, v]));
@@ -53,4 +56,12 @@ test('with a memo, two rows on the same before tree run the before suite once', 
   e2eRow(d, '/before', '/split', 'k-e2e', (f) => `/ev/${f}`, memo);
   assert.equal(cwds.filter((c) => c === '/before').length, 1);
   assert.equal(cwds.filter((c) => c === '/split').length, 2);
+});
+
+test('runSuite: the server an e2e suite starts gets the app stub through NODE_OPTIONS, logging into evidence', () => {
+  const seen = []; const d = { runLogged: (cmd, args, file, o) => { seen.push(o.env); return { code: 0, text: 'ok\n' }; } };
+  const E = (f) => join(mkdtempSync(join(tmpdir(), 'e2e-')), f);
+  runSuite(d, '/tree', 'e2e:firefox-smoke', 'node tools/firefox-smoke.mjs', E, 'i-after');
+  assert.match(seen[0].NODE_OPTIONS, /--import=file:\/\/.*tools\/parity\/stub-apps\.mjs/);
+  assert.match(seen[0].WORCA_STUB_APPS_LOG, /i-after-e2e-firefox-smoke-stubbed-apps\.ndjson$/);
 });

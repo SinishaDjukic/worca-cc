@@ -245,4 +245,5 @@ test('size-caps-raises.json: the last raise of ui/server.mjs is the cap in size-
   const caps = JSON.parse(readFileSync(join(ROOT, 'tools/split-by-feature/size-caps.json'), 'utf8'));
   assert.equal(raises.filter((r) => r.file === 'ui/server.mjs').at(-1).to, caps['ui/server.mjs']);
   for (const r of raises) { assert.ok(r.from < r.to, JSON.stringify(r)); assert.ok(typeof r.why === 'string' && r.why.trim(), JSON.stringify(r)); }
+  for (const r of raises) assert.match(String(r.commit ?? ''), /^[0-9a-f]{9,40}$/, `every raise names the dev commit behind it: ${JSON.stringify(r)}`);
 });

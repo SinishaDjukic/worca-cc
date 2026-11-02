@@ -2,8 +2,9 @@
 //   snapshot --target T --out DIR                         one target → DIR/snapshot.json + DIR/shots/*.png
 //   compare  --a DIR --b DIR --out DIR                    two snapshots → report.json + report.md (exit 1 unless PASS)
 //   run      --a T --b T --out DIR [--quick] [--no-timing-gate]   both snapshots (timings interleaved) + compare
-//   crawl    --a T --b T [--b T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep]
-//                                                         the differential crawl (tools/parity/crawl.mjs; tree: and package: only)
+//   crawl    --a T --b T [--b T …] [--b-screens T …] --out DIR [--workers N (4)] [--screens GLOB] [--no-control] [--keep]
+//                                                         the differential crawl (tools/parity/crawl.mjs; tree: and package: only;
+//                                                         --b-screens T compares T at screen level: no elements, no key probes)
 // T is tree:DIR | package:DIR (npm pack of that tree) | docker:IMAGE. See docs/parity-harness.md.
 import { mkdirSync, readFileSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
@@ -29,10 +30,10 @@ export function parseArgs(argv) {
   if (cmd === 'compare' || cmd === 'run') return { cmd, a: need('--a'), b: need('--b'), out: need('--out'), ...flags };
   if (cmd === 'crawl') {
     const all = (k) => rest.flatMap((x, i) => (x === k ? [rest[i + 1]] : []));
-    const o = { cmd, a: need('--a'), bs: all('--b'), out: need('--out'), workers: Number(arg('--workers') ?? 8), screens: arg('--screens'),
-      control: !rest.includes('--no-control'), keep: rest.includes('--keep') };
-    if (!o.bs.length) throw new Error('crawl needs --b');
-    if ([o.a, ...o.bs].some((x) => /^docker:/.test(x))) throw new Error('crawl supports tree: and package: targets');
+    const o = { cmd, a: need('--a'), bs: [...all('--b').map((t) => ({ t, level: 'full' })), ...all('--b-screens').map((t) => ({ t, level: 'screen' }))],
+      out: need('--out'), workers: Number(arg('--workers') ?? 4), screens: arg('--screens'), control: !rest.includes('--no-control'), keep: rest.includes('--keep') };
+    if (!o.bs.length) throw new Error('crawl needs --b or --b-screens');
+    if ([o.a, ...o.bs.map((b) => b.t)].some((x) => /^docker:/.test(x))) throw new Error('crawl supports tree: and package: targets');
     if (!(Number.isInteger(o.workers) && o.workers > 0)) throw new Error('crawl --workers must be a positive integer');
     return o;
   }
@@ -78,8 +79,10 @@ export async function snapshot(spec, out, { bootMs = [], samples = 1, log = () =
   try {
     ui = await seededTarget(spec, lock ? { fixed: lock.root } : {});
     browser = await openBrowser();
+    const shotPage = await newPage(browser, ui.t, { pin: true });
+    snap.shots = await capture(shotPage, ui.t, ui.seed, join(out, 'shots'), log);
+    await shotPage.context().close();
     const page = await newPage(browser, ui.t);
-    snap.shots = await capture(page, ui.t, ui.seed, join(out, 'shots'), log);
     const state = {};                                          // shared by the flows: run-finish's run for history-open
     for (const f of FLOWS) {
       const t0 = Date.now();
@@ -148,7 +151,7 @@ export async function main(argv = process.argv.slice(2), { log = console.log } =
     if (o.cmd === 'snapshot') { await snapshot(resolveSpec(o.target), o.out, { log }); return 0; }
     if (o.cmd === 'crawl') {
       const spec = (x) => ({ ...resolveSpec(x), label: x });
-      const r = await crawl({ a: spec(o.a), bs: o.bs.map(spec), out: resolve(o.out), workers: o.workers, screens: o.screens, control: o.control, keep: o.keep, log });
+      const r = await crawl({ a: spec(o.a), bs: o.bs.map((b) => ({ ...spec(b.t), level: b.level })), out: resolve(o.out), workers: o.workers, screens: o.screens, control: o.control, keep: o.keep, log });
       log(`crawl: ${crawlSummary(r)} — ${r.pass ? 'PASS' : 'FAIL'} (${join(resolve(o.out), 'report.md')})`);
       return r.pass ? 0 : 1;
     }

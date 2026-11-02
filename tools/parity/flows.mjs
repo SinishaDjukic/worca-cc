@@ -23,8 +23,21 @@ export async function openBrowser() {
     args: noSandbox ? ['--no-sandbox', '--disable-dev-shm-usage'] : [] });
 }
 
-export async function newPage(browser, t) {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+/** An init script: Math.random as a fixed-seed PRNG (mulberry32), so random choices in the page (Chat's rotating composer
+ *  placeholder) are the same on every load, like the fixed clock. A dev-vs-dev control showed the placeholder differing. */
+export const SEEDED_RANDOM = `(() => { let a = 919; Math.random = () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })()`;
+/** An init script: a repeating timer of 1 s or more never fires (time does not pass in a crawled page, as with the fixed
+ *  clock). Chat home's rotating placeholder (chat/intent.mjs EXAMPLE_MS) otherwise showed whichever example the wall
+ *  clock had reached. Short intervals and setTimeout run as usual. */
+export const FROZEN_INTERVALS = `(() => { const orig = setInterval; let n = 0;
+  globalThis.setInterval = (fn, ms, ...a) => (Number(ms) >= 1000 ? -(++n) : orig(fn, ms, ...a)); })()`;
+/** A page on the target. Reduced motion always; `pin` (the shots) also seeds Math.random and freezes intervals of 1 s or
+ *  more, as the crawler does: chat home's rotating placeholder and animated graph dots otherwise differ between sides.
+ *  The flows stay unpinned: they wait on the app's real polling (chat home's runs tick). */
+export async function newPage(browser, t, { pin = false } = {}) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
+  if (pin) { await ctx.addInitScript(SEEDED_RANDOM); await ctx.addInitScript(FROZEN_INTERVALS); }
   const page = await ctx.newPage();
   page.parityErrors = [];        // 'METHOD path -> status' only (R-sec-4)
   page.parityPageErrors = 0;     // a count: page error text can carry page data

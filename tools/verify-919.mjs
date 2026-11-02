@@ -2,10 +2,11 @@
 // tools/verify-919.mjs — #919: THE check before Ship and on freeze day (docs/split-by-feature.md, top section).
 // Runs rows a–l in order on this checkout's HEAD and its split; never stops early; prints one table
 // (check · pass/fail · number · evidence file) and exits 0 only when every row passes. Never posts, never pushes.
-//   Run: npm run verify:919 [-- --out DIR] [--keep] [--firefox-in-ci]      (many hours; OUT/verify-919.md grows row by row)
-// --firefox-in-ci: e2e:firefox-smoke is left to the CI job firefox-e2e (headless Playwright Firefox hangs on macOS); rows
-// i and k and the table's tail name it "not run locally", which is not a pass.
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+//   Run: npm run verify:919 [-- --out DIR] [--keep] [--firefox-in-ci] [--only ROWS]   (many hours; OUT/verify-919.md grows row by row)
+// --firefox-in-ci: e2e:firefox-smoke is left to the CI job firefox-e2e (headless Playwright Firefox hangs on macOS); row
+// i and the table's tail name it "not run locally", which is not a pass.
+// --only a,b (with the --out of an earlier run whose head is HEAD or an ancestor): reruns those rows, carries the others.
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,7 +22,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NODE = [process.execPath, '--disable-warning=ExperimentalWarning'];
 export const ROWS = [['a', 'fetch'], ['b', 'gate'], ['c', 'dry-run-repeatable'], ['d', 'suite-split'], ['e', 'parity-quick'],
   ['f', 'parity-full'], ['g', 'parity-package'], ['h', 'crawl'], ['i', 'e2e-split'], ['j', 'catch-up'], ['k', 'rollback'], ['l', 'readiness']];
-const USAGE = 'usage: npm run verify:919 [-- --out DIR] [--keep] [--firefox-in-ci]';
+const USAGE = 'usage: npm run verify:919 [-- --out DIR] [--keep] [--firefox-in-ci] [--only ROWS (with the --out of an earlier run)]';
+/** The outputs each row writes besides evidence/ID-*: moved to OUT/prev-N/ before an --only rerun of that row. */
+const ROW_DIRS = { e: ['parity-quick'], f: ['parity-full'], g: ['parity-package'], h: ['crawl'], j: ['catch-up'], k: ['parity-reverted'], l: ['readiness'] };
 const short = (s) => String(s ?? '').slice(0, 12);
 const readJson = (f) => (existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null);
 
@@ -45,7 +48,12 @@ export function crawlGaps(rep) {
   const g = [];
   if (!rep.pass) g.push('crawl FAIL');
   if (rep.control !== true) g.push('no control pass');
-  if (rep.comparisons?.length !== 2) g.push(`${rep.comparisons?.length ?? 0} comparisons, expected 2 (split, package)`);
+  const lv = (l) => (rep.comparisons ?? []).filter((c) => (c.level ?? 'full') === l).length;
+  if (lv('full') !== 1 || lv('screen') !== 1) g.push(`comparisons: ${lv('full')} full, ${lv('screen')} screen; expected 1 and 1 (split, package)`);
+  if (!rep.externalApps) g.push('no app stub');
+  else if (rep.externalApps.canary.length) g.push(`${rep.externalApps.canary.length} real app launch${rep.externalApps.canary.length > 1 ? 'es' : ''}`);
+  const unexplained = (rep.masks ?? []).filter((m) => (m.why ?? 'unexplained') === 'unexplained').length;
+  if (unexplained) g.push(`${unexplained} unexplained mask${unexplained > 1 ? 's' : ''}`);
   if (rep.coverage?.routes?.unvisited?.length) g.push(`${rep.coverage.routes.unvisited.length} unvisited routes`);
   if (rep.coverage?.routes?.unfillable?.length) g.push(`${rep.coverage.routes.unfillable.length} unfillable routes`);
   return g;
@@ -54,14 +62,17 @@ export function crawlGaps(rep) {
 export function renderTable(rows, ctx = {}) {
   const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
   const notLocal = ctx.notLocal ?? [];
-  const was = { i: 'h', k: 'i' };   // the letters before this round (the user's direction names h and i)
+  const was = { i: 'h' };   // the letter before round 4 (the user's direction names h)
   const tail = notLocal.length ? `\nNot run locally (not a pass): ${[...new Set(notLocal.map((x) => x.name))].map((n) => `${n} in rows ${notLocal.filter((x) => x.name === n).map((x) => `${x.row}${was[x.row] ? ` (was ${was[x.row]})` : ''}`).join(' and ')} → CI job ${notLocal.find((x) => x.name === n).ci} (.github/workflows/firefox-e2e.yml)`).join('; ')}\n` : '';
+  // one line per head a carried row last ran on: a second --only rerun keeps each row's own head (D12)
+  const heads = [...new Set(rows.filter((r) => r.carried).map((r) => r.ranOn))];
+  const carried = heads.map((h) => `\nCarried rows ran on ${h} (rows ${rows.filter((r) => r.carried && r.ranOn === h).map((r) => r.id).join(', ')}); changed since: ${ctx.changedSince?.[h]?.length ? ctx.changedSince[h].join(', ') : '(nothing)'} (git diff --name-only)\n`).join('');
   return `# verify:919${ctx.dev ? ` · origin/dev ${ctx.dev}` : ''}${ctx.head ? ` · HEAD ${ctx.head}` : ''}\n\n`
     + '| Check | Result | Number | Evidence |\n|---|---|---|---|\n'
-    + rows.map((r) => `| ${r.id}. ${r.check} | ${r.ok ? 'pass' : 'FAIL'} | ${cell(r.number)} | ${cell(r.evidence)} |`).join('\n') + '\n' + tail;
+    + rows.map((r) => `| ${r.id}. ${r.check} | ${r.ok ? 'pass' : 'FAIL'}${r.carried ? ' (earlier)' : ''} | ${cell(r.number)} | ${cell(r.evidence)} |`).join('\n') + '\n' + carried + tail;
 }
 
-export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = false, log = console.log, deps = {} } = {}) {
+export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = false, only = null, prev = null, log = console.log, deps = {} } = {}) {
   const d = { run, runLogged, cloneAt, npmCi, applySplit, commitMigration, rehearseRollback,
     buildExtension: (file) => runLogged(NODE[0], [NODE[1], 'tools/build-extension.mjs', '--pack'], file, { cwd: root }),
     catchUpFixture: (o) => runFixture({ ...o, d: catchUpDeps }), catchUpAll: (o) => catchUpAll({ ...o, d: catchUpDeps }),
@@ -71,17 +82,35 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
   mkdirSync(join(out, 'evidence'), { recursive: true });
   const git = (...a) => d.run('git', a, { cwd: root });
   const ctx = { head: git('rev-parse', 'HEAD').stdout.trim(), notLocal: [] };
-  const e2eMemo = new Map();   // row k reuses row i's "before" run of the same-results suites
+  const e2eMemo = new Map();
   const ciOnly = firefoxInCi ? CI_ONLY : {};
   const rows = [];
+  if (only) {   // --only: move the rerun rows' outputs aside, carry the others (D12)
+    const n = readdirSync(out).filter((x) => /^prev-\d+$/.test(x)).length + 1; const aside = join(out, `prev-${n}`);
+    for (const id of only) {
+      for (const dir of ROW_DIRS[id] ?? []) if (existsSync(join(out, dir))) { mkdirSync(aside, { recursive: true }); renameSync(join(out, dir), join(aside, dir)); }
+      for (const f of readdirSync(join(out, 'evidence')).filter((x) => x.startsWith(`${id}-`))) { mkdirSync(join(aside, 'evidence'), { recursive: true }); renameSync(join(out, 'evidence', f), join(aside, 'evidence', f)); }
+    }
+    ctx.dev = prev.dev;
+    const ranOn = new Set(prev.rows.filter((x) => !only.has(x.id)).map((x) => x.ranOn ?? prev.head));
+    ctx.changedSince = Object.fromEntries([...ranOn].map((h) => [h, h === ctx.head ? [] : git('diff', '--name-only', h, ctx.head).stdout.split('\n').filter(Boolean)]));
+    // carried rows keep their "not run locally" entries: without this a rerun that skips row i writes notLocal: [] into
+    // verify-919.json, and the go/no-go's firefox-e2e-on-ship gate fails for a tool reason
+    ctx.notLocal = (prev.notLocal ?? []).filter((x) => !only.has(x.row));
+  }
   const row = async (id, check, fn) => {
+    if (only && !only.has(id)) {
+      const p = prev.rows.find((x) => x.id === id);
+      rows.push({ ...(p ?? { id, check, ok: false, number: 'not in the earlier run', evidence: '—' }), ranOn: p?.ranOn ?? prev.head, carried: true });
+      writeFileSync(join(out, 'verify-919.md'), renderTable(rows, ctx)); return;
+    }
     log(`[${id}] ${check} …`);
     let r;
     try { r = await fn(); } catch (e) {
       appendFileSync(E(`${id}-${check}.log`), `${e?.stack ?? e}\n`);   // append: a-fetch.log / b-gate.log may already hold the child's log
       r = { ok: false, number: `error: ${String(e?.message ?? e).split('\n')[0]}`, evidence: `evidence/${id}-${check}.log` };
     }
-    rows.push({ id, check, ok: r.ok === true, number: String(r.number ?? ''), evidence: r.evidence });
+    rows.push({ id, check, ok: r.ok === true, number: String(r.number ?? ''), evidence: r.evidence, ranOn: ctx.head });
     writeFileSync(join(out, 'verify-919.md'), renderTable(rows, ctx));
     log(`[${id}] ${check}: ${r.ok ? 'pass' : 'FAIL'} · ${r.number} · ${r.evidence}`);
   };
@@ -140,9 +169,11 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
       number: same ? `treeHash ${short(runs[0].hash)} ×2` : `${short(runs[0].hash)} ≠ ${short(runs[1].hash)}` };
   });
 
-  // the split tree: a scratch clone of HEAD, npm ci, split, committed as the migration (D9; commitMigration stages, D16)
+  // the split tree: a scratch clone of HEAD, npm ci, split, committed as the migration (D9; commitMigration stages, D16).
+  // Built only when a row that needs it runs; an --only rerun builds it afresh (a kept one was reverted by row k)
   const split = join(out, 'trees', 'split');
-  try {
+  if (only && [...'defhijk'].some((id) => only.has(id))) rmSync(join(out, 'trees'), { recursive: true, force: true });
+  if ([...'defhijk'].some((id) => !only || only.has(id))) try {
     d.cloneAt(d.run, root, ctx.head, split);
     d.npmCi(d.runLogged, split, E('split-tree.log'));
     await d.applySplit(d.run, split);
@@ -173,14 +204,14 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
       if (b.code !== 0) return { ok: false, number: 'build-extension --pack failed', evidence: 'evidence/h-build-extension.log' };
       cpSync(dist, sdist, { recursive: true });
       const o = join(out, 'crawl');
-      const r = d.runLogged(NODE[0], [NODE[1], 'tools/parity.mjs', 'crawl', '--a', 'tree:.', '--b', `tree:${split}`, '--b', 'package:.', '--out', o], E('h-crawl.log'), { cwd: root });
+      const r = d.runLogged(NODE[0], [NODE[1], 'tools/parity.mjs', 'crawl', '--a', 'tree:.', '--b', `tree:${split}`, '--b-screens', 'package:.', '--out', o], E('h-crawl.log'), { cwd: root });
       const rep = readJson(join(o, 'report.json'));
       if (!rep) return { ok: false, number: `exit ${r.code}, no report`, evidence: 'evidence/h-crawl.log' };
       const gaps = crawlGaps(rep);
       return { ok: r.code === 0 && !gaps.length, evidence: 'crawl/report.md', number: `${crawlSummary(rep)}${gaps.length ? `; ${gaps.join('; ')}` : ''}` };
     } finally { rmSync(sdist, { recursive: true, force: true }); if (!had) rmSync(dist, { recursive: true, force: true }); }
   });
-  // the "before" of the e2e judgement: a clean clone of HEAD, made once (row k still gets it when row i threw)
+  // the "before" of the e2e judgement: a clean clone of HEAD
   let before = null;
   const beforeTree = () => {
     if (!before) { const dir = join(out, 'trees', 'before'); d.cloneAt(d.run, root, ctx.head, dir); d.npmCi(d.runLogged, dir, E('before-tree.log')); before = dir; }
@@ -212,18 +243,17 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
     const r = d.rehearseRollback(d.run, split, ctx.head, ctx.migration);
     rmSync(join(split, 'extension', 'dist'), { recursive: true, force: true });
     writeFileSync(E('k-rollback-diff.log'), `left by the suite and parity, removed before the revert:\n${r.cleaned || '(nothing)'}\ngit revert ${ctx.migration} → ${r.reverted}\ngit diff --stat ${ctx.head} ${r.reverted}:\n${r.diff || '(empty)'}\ngit status --porcelain:\n${r.status || '(clean)'}\n`);
-    const s = suite(split, 'k-suite-reverted'); const p = parity('tree:.', `tree:${split}`, 'parity-reverted', { timing: true });
-    const e = e2eRow(d, beforeTree(), split, 'k-e2e', E, e2eMemo, { ciOnly });
-    ctx.notLocal.push(...e.notLocal.map((x) => ({ row: 'k', ...x })));
-    writeFileSync(E('k-rollback.json'), JSON.stringify({ revert: r, suite: s, parity: p, e2e: e.list }, null, 2));
-    return { ok: r.ok && s.ok && p.ok && e.ok, evidence: 'evidence/k-rollback.json',
-      number: `diff ${r.ok ? 'empty' : 'NOT empty'}; suite ${s.number}; parity ${p.ok ? 'pass' : `FAIL (${p.number})`}; e2e ${e.text}` };
+    // D9: with an empty diff the reverted tree is HEAD's, so the suite and a quick parity suffice (no e2e, no full parity)
+    const s = suite(split, 'k-suite-reverted'); const p = parity('tree:.', `tree:${split}`, 'parity-reverted', { quick: true });
+    writeFileSync(E('k-rollback.json'), JSON.stringify({ revert: r, suite: s, parity: p }, null, 2));
+    return { ok: r.ok && s.ok && p.ok, evidence: 'evidence/k-rollback.json',
+      number: `diff ${r.ok ? 'empty' : 'NOT empty'}; suite ${s.number}; quick parity ${p.ok ? 'pass' : `FAIL (${p.number})`}` };
   });
   // l: readiness, reusing h's crawl and j's catch-up dry run when their trees match its own
   await row('l', 'readiness', () => {
     const o = join(out, 'readiness');
     const args = [NODE[1], 'tools/readiness.mjs', 'run', '--out', o, ...(ctx.dev && ctx.head !== ctx.dev ? ['--dev-ref', ctx.head] : []),
-      '--crawl-from', join(out, 'crawl'), '--catch-up-from', join(out, 'catch-up', 'all.json'), ...(firefoxInCi ? ['--firefox-in-ci'] : [])];
+      '--crawl-from', join(out, 'crawl'), '--catch-up-from', join(out, 'catch-up', 'all.json')];
     const r = d.runLogged(NODE[0], args, E('l-readiness.log'), { cwd: root });
     const rep = readJson(join(o, 'report.json'));
     const both = !!rep && existsSync(join(o, 'report.md'));
@@ -233,19 +263,35 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
 
   const pass = rows.length === ROWS.length && rows.every((x) => x.ok);
   const ci = [...new Set(ctx.notLocal.map((x) => x.ci))];
-  writeFileSync(join(out, 'verify-919.json'), JSON.stringify({ dev: ctx.dev, head: ctx.head, pass, notLocal: ctx.notLocal, rows }, null, 2));
+  writeFileSync(join(out, 'verify-919.md'), renderTable(rows, ctx));
+  writeFileSync(join(out, 'verify-919.json'), JSON.stringify({ dev: ctx.dev, head: ctx.head, headTree: git('rev-parse', 'HEAD^{tree}').stdout.trim(),
+    rerun: only ? [...only] : null, pass, notLocal: ctx.notLocal, rows }, null, 2));
   if (!keep) rmSync(join(out, 'trees'), { recursive: true, force: true });
   log(`\n${renderTable(rows, ctx)}\nverify:919 ${pass ? 'PASS' : 'FAIL'}${pass && ci.length ? `, except ${new Set(ctx.notLocal.map((x) => x.name)).size} suite left to CI (${ci.join(', ')})` : ''} (${join(out, 'verify-919.md')})`);
   return { out, rows, pass };
 }
 
-export async function main(argv = process.argv.slice(2), { log = console.log, verify = runVerify } = {}) {
-  let out = null; let keep = false; let firefoxInCi = false;
+const gitHead = () => run('git', ['rev-parse', 'HEAD'], { cwd: ROOT }).stdout.trim();
+const gitIsAncestor = (a, b) => run('git', ['merge-base', '--is-ancestor', a, b], { cwd: ROOT }).code === 0;
+
+export async function main(argv = process.argv.slice(2), { log = console.log, verify = runVerify, head = gitHead, isAncestor = gitIsAncestor } = {}) {
+  let out = null; let keep = false; let firefoxInCi = false; let only = null;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--out' && argv[i + 1]) out = resolve(argv[++i]);
     else if (argv[i] === '--keep') keep = true;
     else if (argv[i] === '--firefox-in-ci') firefoxInCi = true;
+    else if (argv[i] === '--only' && argv[i + 1]) only = new Set(argv[++i].split(',').map((x) => x.trim()).filter(Boolean));
     else { log(`verify-919: unknown argument ${argv[i]}\n${USAGE}`); return 2; }
+  }
+  if (only) {
+    const bad = [...only].filter((id) => !ROWS.some(([r]) => r === id));
+    if (bad.length || !only.size) { log(`verify-919: --only: unknown row ${bad.join(', ') || '(none)'} (rows ${ROWS.map(([r]) => r).join('')})\n${USAGE}`); return 2; }
+    if (!out) { log(`verify-919: --only needs the --out of an earlier run\n${USAGE}`); return 2; }
+    const prev = readJson(join(out, 'verify-919.json'));
+    if (!prev) { log(`verify-919: ${out} holds no verify-919.json: rerun all rows`); return 3; }
+    const h = head();
+    if (prev.head !== h && !isAncestor(prev.head, h)) { log(`verify-919: the earlier run's head ${prev.head} is not an ancestor of HEAD ${h}: rerun all rows`); return 3; }
+    return (await verify({ out, keep, firefoxInCi, only, prev, log })).pass ? 0 : 1;
   }
   if (out && existsSync(out) && readdirSync(out).length) { log(`verify-919: ${out} is not empty`); return 3; }
   out ??= mkdtempSync(join(tmpdir(), 'worca-verify-919-'));

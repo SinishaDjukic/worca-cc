@@ -16,7 +16,7 @@ test('buildEnv keeps only allowlisted keys, isolates HOME/WORCA_HOME and pins th
   assert.equal(env.WORCA_HOME, '/tmp/h');
   assert.equal(env.WORCA_MOCK, '1');
   assert.equal(env.WORCA_NO_NATIVE_DIALOG, '1');
-  assert.equal(env.PATH, '/bin');
+  assert.equal(env.PATH, '/tmp/h/.parity-canary-bin:/bin');   // the app stub's canary dir first (stub on by default)
   assert.equal(env.LC_ALL, 'C');
   for (const k of ['FORCE_COLOR', 'WORCA_FLAGS', 'CLAUDE_CONFIG_DIR', 'GH_TOKEN', 'ANTHROPIC_API_KEY', 'SSH_AUTH_SOCK',
     'WORCA_HOST', 'WORCA_HEARTBEAT_URL', 'NODE_TEST_CONTEXT']) assert.equal(k in env, false, k);
@@ -124,13 +124,22 @@ test('fixedRoot(base, name): its own dir and lock; two names never share a lock'
   a.release(); b.release();
 });
 
+test('buildEnv: the app stub is on by default (log, canary, canary dir first on PATH, no clock); stub:false leaves them out', () => {
+  const env = buildEnv({ PATH: '/usr/bin' }, { home: '/h', port: 5000 });
+  assert.equal(env.WORCA_STUB_APPS_LOG, '/h/.parity-stubbed-apps.ndjson'); assert.equal(env.WORCA_APP_CANARY, '/h/.parity-canary.log');
+  assert.equal(env.PATH, '/h/.parity-canary-bin:/usr/bin'); assert.equal(env.WORCA_PARITY_CLOCK_MS, undefined);
+  assert.equal(buildEnv({ PATH: '/usr/bin' }, { home: '/h', port: 5000, clockMs: 123 }).WORCA_PARITY_CLOCK_MS, '123');
+  const off = buildEnv({ PATH: '/usr/bin' }, { home: '/h', port: 5000, stub: false });
+  assert.equal(off.PATH, '/usr/bin'); assert.equal(off.WORCA_STUB_APPS_LOG, undefined);
+});
+
 test('buildEnv offline: a dead proxy for every external call, localhost exempt, allowlist kept, base proxies overridden', () => {
   const env = buildEnv({ HTTPS_PROXY: 'http://corp:8080', SECRET: 'x', PATH: '/bin' }, { home: '/tmp/h', port: 1, offline: true });
   for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) assert.equal(env[k], DEAD_PROXY, k);
   assert.equal(DEAD_PROXY, 'http://127.0.0.1:9');
   assert.equal(env.NO_PROXY, 'localhost,127.0.0.1,::1');
   assert.equal(env.NODE_USE_ENV_PROXY, '1');
-  assert.equal(env.SECRET, undefined); assert.equal(env.PATH, '/bin');
+  assert.equal(env.SECRET, undefined); assert.equal(env.PATH, '/tmp/h/.parity-canary-bin:/bin');
   assert.equal(buildEnv({}, { home: '/tmp/h', port: 1 }).HTTPS_PROXY, undefined, 'online by default');
 });
 

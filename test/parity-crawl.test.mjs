@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { enumerateIn, serializeDom, actionsFor, CRAWL_TEXT } from '../tools/parity/crawl-page.mjs';
-import { normalizeLine, deriveMasks, compareCrawls, coverage, mutated, loadCalls } from '../tools/parity/crawl-compare.mjs';
+import { normalizeLine, deriveMasks, compareCrawls, coverage, mutated, loadCalls, crawlSummary, renderCrawlReport, UNEXPLAINED } from '../tools/parity/crawl-compare.mjs';
 import { tabListsOf, catalogue, TAB_ROUTES } from '../tools/parity/crawl-routes.mjs';
 import { VARIANTS, FLAG_PASSES } from '../tools/parity/crawl.mjs';
 
@@ -56,6 +56,51 @@ test('masks come from the control only; a diff outside them fails; a new console
   assert.equal(compareCrawls(a1, [rec(['p1\tA', 'p2\tx'], 'h1', ['GET /api/x 200 {}'], ['TypeError: boom'])], masks).diffs[0].field, 'console');
   assert.equal(compareCrawls(a1, [], masks).diffs[0].field, 'presence');
 });
+test('deriveMasks gives every mask a reason from the two control values; anything else is unexplained', () => {
+  const r = (dom, extra = {}) => ({ id: 'x', dom, png: 'p', net: [], console: [], ...extra });
+  const why = (a, b) => deriveMasks([a], [b]).map((m) => m.why);
+  assert.deepEqual(why(r(['0\t<span>Runs: 2 need you']), r(['0\t<span>Runs: 1 needs you'])), [UNEXPLAINED]);   // words differ too
+  assert.deepEqual(why(r(['0\t<span>built 1 Nov, 22:39']), r(['0\t<span>built 2 Nov, 04:25'])), ['a number differs (count or time)']);
+  assert.deepEqual(why(r(['0\t<li class="row is-found">a']), r(['0\t<li class="row">a'])), ['class differs (transient state)']);
+  assert.deepEqual(why(r(['0\t<p>a', '1\t<p>b']), r(['0\t<p>a'])), ['element on one control side only']);
+  assert.deepEqual(why(r([], { net: ['GET /api/runs 200 - x'] }), r([])), ['request in flight at record time (one control side only)']);
+  assert.deepEqual(why(r([], { console: ['boom'] }), r([])), ['console error on one control side only']);
+  const png = (a, b) => deriveMasks([a], [b], { pngDiff: () => [0, 0, 10, 10] });
+  assert.deepEqual(png(r(['0\t<p>a'], { png: 'p1' }), r(['0\t<p>a'], { png: 'p2' })).map((m) => m.why), ['raster noise, DOM identical']);
+  assert.deepEqual(png(r(['0\t<p>1'], { png: 'p1' }), r(['0\t<p>2'], { png: 'p2' })).map((m) => m.why),
+    ['a number differs (count or time)', 'pixels follow the DOM difference above']);
+  assert.deepEqual(deriveMasks([], [r([])]).map((m) => m.why), ['record on one control side only']);
+});
+
+test('the crawl report lists every mask with its reason and counts them by reason', () => {
+  const rep = { pass: true, control: true, a: { spec: 'tree:.' }, bs: [], minutes: 1, comparisons: [], externalApps: { stubbed: 0, canary: [] },
+    coverage: { screens: 1, routes: { visited: 1, registered: 1, unvisited: [], unfillable: [] }, elements: { found: 0, exercised: 0, skipped: 0, byReason: {} } },
+    masks: [{ id: '#chat|d|off|-|screen', field: 'png', rect: [0, 118, 1280, 355], why: 'raster noise, DOM identical' }] };
+  const md = renderCrawlReport(rep);
+  assert.match(md, /\| Record \| Field \| Where \| Why \|/); assert.match(md, /raster noise, DOM identical: 1/);
+});
+
+test('a screen-level comparison compares only A1 screen records: a B without steps is not "missing"', () => {
+  const rec = (id, kind) => ({ id, kind, dom: ['0\t<p>x'], png: 'p', net: [], console: [] });
+  const a = [rec('#runs|d-light-expert|off|-|screen', 'screen'), rec('#runs|d-light-expert|off|button|0', 'step')];
+  const b = [rec('#runs|d-light-expert|off|-|screen', 'screen')];
+  assert.equal(compareCrawls(a, b, [], { level: 'screen' }).pass, true);
+  assert.equal(compareCrawls(a, b, [], { level: 'full' }).pass, false);
+});
+
+test('an app launch is part of the record: a launch on one side only is a net difference', () => {
+  const r = (net) => [{ id: 'x', kind: 'step', dom: [], png: 'p', net, console: [] }];
+  const line = "app POST /api/actions/launchers/try /bin/sh -c open -a Terminal '~'";
+  assert.equal(compareCrawls(r([line]), r([line]), []).pass, true);
+  assert.match(compareCrawls(r([line]), r([]), []).diffs[0].detail, /A only: app POST/);
+});
+
+test('crawlSummary names the stubbed launches and any real one', () => {
+  const rep = { coverage: { screens: 1, routes: { visited: 1, registered: 1 }, elements: { found: 2, exercised: 1, skipped: 1 } }, masks: [],
+    comparisons: [{ label: 'tree:s', level: 'full', diffs: [] }, { label: 'package:.', level: 'screen', diffs: [] }], externalApps: { stubbed: 3, canary: [] } };
+  assert.match(crawlSummary(rep), /apps 3 stubbed, 0 real; .*tree:s 0 diffs, package:\. \(screens\) 0 diffs/);
+});
+
 test('coverage: a registered route never rendered fails the run; a gated one rendered in some pass is visited', () => {
   const c = coverage({ registered: ['#settings', '#requirements', '#workspaces/w1'], visits: [
     { route: '#settings', rendered: true }, { route: '#requirements', rendered: false, flags: 'off' }, { route: '#requirements', rendered: true, flags: 'on' }] });

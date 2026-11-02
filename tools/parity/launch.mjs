@@ -1,9 +1,11 @@
 // tools/parity/launch.mjs — #919 slice 2: start a target (source tree, installed package, Docker image) in a sandbox.
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, existsSync, lstatSync, cpSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, existsSync, lstatSync, cpSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { devNull, tmpdir, userInfo } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { APP_BINS } from './stub-apps.mjs';
 
 export const SIGNED_OUT_HOST = 'parity.invalid';
 export const HOST_APP_PORT = 4317;          // the host worca app; never a target's host port
@@ -20,8 +22,28 @@ export function parseTarget(spec) {
   return { kind: m[1], ref: m[2] };
 }
 
-/** Allowlist env (D3): nothing of the operator's credentials or host config reaches a target. */
-export function buildEnv(base, { home, port, signedOut = false, offline = false }) {
+export const STUB_APPS = fileURLToPath(new URL('./stub-apps.mjs', import.meta.url));
+export const STUB_LOG = '.parity-stubbed-apps.ndjson';
+export const CANARY_LOG = '.parity-canary.log';
+export const CANARY_BIN = '.parity-canary-bin';
+
+/** A PATH dir whose app programs open nothing and log `$0 $*` to WORCA_APP_CANARY (no-op on Windows: no sh). */
+export function canaryBin(dir) {
+  mkdirSync(dir, { recursive: true });
+  for (const b of APP_BINS) {
+    if (b.includes('.')) continue;   // explorer.exe, wt.exe: Windows only
+    const f = join(dir, b);
+    writeFileSync(f, '#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "${WORCA_APP_CANARY:-/dev/null}"\nexit 0\n');
+    chmodSync(f, 0o755);
+  }
+  return dir;
+}
+
+/**
+ * Allowlist env (D3): nothing of the operator's credentials or host config reaches a target. `stub` (default on) points the
+ * app stub preload at its log and puts the canary dir first on PATH; `clockMs` pins the server clock (crawl only).
+ */
+export function buildEnv(base, { home, port, signedOut = false, offline = false, stub = true, clockMs = null }) {
   const env = {};
   for (const [k, v] of Object.entries(base)) if (KEEP.includes(k) || k.startsWith('LC_')) env[k] = v;
   Object.assign(env, GIT_ID, { HOME: home, USERPROFILE: home, WORCA_HOME: home, WORCA_MOCK: '1',
@@ -30,6 +52,9 @@ export function buildEnv(base, { home, port, signedOut = false, offline = false 
   // after the KEEP allowlist filter: proxy keys in `base` are dropped by it, so they are set here, never passed in
   if (offline) Object.assign(env, { HTTP_PROXY: DEAD_PROXY, HTTPS_PROXY: DEAD_PROXY, http_proxy: DEAD_PROXY, https_proxy: DEAD_PROXY,
     NO_PROXY: 'localhost,127.0.0.1,::1', no_proxy: 'localhost,127.0.0.1,::1', NODE_USE_ENV_PROXY: '1' });   // Node 26 here honours it
+  if (stub) Object.assign(env, { WORCA_STUB_APPS_LOG: join(home, STUB_LOG), WORCA_APP_CANARY: join(home, CANARY_LOG),
+    PATH: [join(home, CANARY_BIN), env.PATH].filter(Boolean).join(delimiter) });
+  if (stub && clockMs) env.WORCA_PARITY_CLOCK_MS = String(clockMs);
   return env;
 }
 export const DEAD_PROXY = 'http://127.0.0.1:9';   // discard port: every external call fails fast, the same on both sides (D9)
@@ -120,9 +145,10 @@ export function prepareRoot({ fixed, template }) {
 
 /**
  * opts.fixed: a fixedRoot().root for the UI server (wiped home and sandbox at fixed paths); else a fresh mkdtemp.
- * @returns {Promise<{kind, base, port, bootMs, root, projectPath, logFile, alive: () => boolean, stop: () => Promise<void>}>}
+ * opts.stub (default on): tree and package servers load tools/parity/stub-apps.mjs (Docker is not stubbed); opts.clockMs pins its clock.
+ * @returns {Promise<{kind, base, port, bootMs, root, projectPath, logFile, stubLog, canaryLog, alive: () => boolean, stop: () => Promise<void>}>}
  */
-export async function startTarget({ kind, ref, signedOut = false, appDir }, { port: wantPort, fixed, template, offline = false } = {}) {
+export async function startTarget({ kind, ref, signedOut = false, appDir }, { port: wantPort, fixed, template, offline = false, stub = true, clockMs = null } = {}) {
   const port = wantPort ?? await freePort();
   if (port === HOST_APP_PORT) throw new Error(`refusing port ${HOST_APP_PORT}: it belongs to the host worca app`);
   let home; let projectPath;
@@ -159,8 +185,9 @@ export async function startTarget({ kind, ref, signedOut = false, appDir }, { po
   const out = openSync(logFile, 'a');
   // realpath: ui/server.mjs listens only when argv[1] equals its own (realpath) URL, so /tmp/x (/private/tmp/x) never would
   const root = realpathSync(kind === 'package' ? (appDir ?? installPackage(resolve(ref))) : resolve(ref));
-  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(root, 'ui', 'server.mjs')],
-    { cwd: home, env: buildEnv(process.env, { home, port, signedOut, offline }), stdio: ['ignore', out, out] });
+  if (stub && process.platform !== 'win32') canaryBin(join(home, CANARY_BIN));
+  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', ...(stub ? ['--import', pathToFileURL(STUB_APPS).href] : []),
+    join(root, 'ui', 'server.mjs')], { cwd: home, env: buildEnv(process.env, { home, port, signedOut, offline, stub, clockMs }), stdio: ['ignore', out, out] });
   let exit = null;
   child.once('exit', (code, sig) => { exit = sig ? `signal ${sig}` : `code ${code}`; });
   const base = `http://127.0.0.1:${port}`;
@@ -168,6 +195,7 @@ export async function startTarget({ kind, ref, signedOut = false, appDir }, { po
   try { bootMs = await waitHealthy({ base, logFile, t0, exited: () => exit }); }
   catch (e) { if (!exit) child.kill('SIGKILL'); throw e; }
   return { kind, base, port, bootMs, logFile, projectPath, root, home, pid: child.pid, alive: () => exit === null,
+    stubLog: join(home, STUB_LOG), canaryLog: join(home, CANARY_LOG),
     stop: () => (exit !== null ? Promise.resolve()
       : new Promise((r) => { child.once('exit', () => r()); child.kill('SIGTERM'); })) };
 }

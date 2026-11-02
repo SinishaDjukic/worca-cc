@@ -85,6 +85,7 @@
     "verify:requirements": "node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs",
     "verify:chat-layout": "node --disable-warning=ExperimentalWarning tools/verify-chat-layout-cdp.mjs",
     "verify:919": "node --disable-warning=ExperimentalWarning tools/verify-919.mjs",
+    "go-no-go:919": "node --disable-warning=ExperimentalWarning tools/go-no-go-919.mjs",
     "catch-up:919": "node --disable-warning=ExperimentalWarning tools/catch-up-919.mjs",
     "test": "node tools/test.mjs",
     "test:fast": "node tools/test.mjs --tier fast",

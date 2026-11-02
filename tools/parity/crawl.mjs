@@ -1,6 +1,6 @@
 // tools/parity/crawl.mjs — #919 final round: the differential crawler. One template per worker (built with A), then A twice
 // (control), then each B; every screen in every variant × flag pass; full element exercise in the two exercise variants.
-//   node tools/parity.mjs crawl --a T --b T [--b T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep]
+//   node tools/parity.mjs crawl --a T --b T [--b T …] [--b-screens T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep]
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileSync } from 'node:fs';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
@@ -10,7 +10,8 @@ import { execFileSync } from 'node:child_process';
 import { startTarget, fixedRoot, HOST_APP_PORT } from './launch.mjs';
 import { createServer } from 'node:net';
 import { chromium } from 'playwright-core';
-import { chromePath } from './flows.mjs';
+import { chromePath, SEEDED_RANDOM, FROZEN_INTERVALS } from './flows.mjs';
+export { SEEDED_RANDOM, FROZEN_INTERVALS };
 import { holdRun, SEED_PROMPT } from './seed.mjs';
 import { shapeKey } from './shape.mjs';
 import { writeDiffPng } from './visual.mjs';
@@ -19,6 +20,7 @@ import { buildTemplate } from './crawl-seed.mjs';
 import { enumerateIn, serializeDom, actionsFor } from './crawl-page.mjs';
 import { normalizeLine, deriveMasks, compareCrawls, coverage, mutated, loadCalls, renderCrawlReport } from './crawl-compare.mjs';
 import { catalogue } from './crawl-routes.mjs';
+import { appLines } from './stub-apps.mjs';
 
 export const VARIANTS = [
   { id: 'd-light-expert', width: 1280, height: 800, theme: 'light', level: 'expert', exercise: true },
@@ -70,15 +72,6 @@ const openBrowser = () => {
   const noSandbox = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0;
   return chromium.launch({ executablePath: chromePath(), headless: true, args: [...CRAWL_CHROME_ARGS, ...(noSandbox ? ['--no-sandbox', '--disable-dev-shm-usage'] : [])] });
 };
-/** An init script: Math.random as a fixed-seed PRNG (mulberry32), so random choices in the page (Chat's rotating composer
- *  placeholder) are the same on every load, like the fixed clock. A dev-vs-dev control showed the placeholder differing. */
-export const SEEDED_RANDOM = `(() => { let a = 919; Math.random = () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
-  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })()`;
-/** An init script: a repeating timer of 1 s or more never fires (time does not pass in a crawled page, as with the fixed
- *  clock). Chat home's rotating placeholder (chat/intent.mjs EXAMPLE_MS) otherwise showed whichever example the wall
- *  clock had reached. Short intervals and setTimeout run as usual. */
-export const FROZEN_INTERVALS = `(() => { const orig = setInterval; let n = 0;
-  globalThis.setInterval = (fn, ms, ...a) => (Number(ms) >= 1000 ? -(++n) : orig(fn, ms, ...a)); })()`;
 const OVERLAY = 'dialog[open], [role=dialog], [role=alertdialog], [role=menu], [role=listbox], [class*="-pop"], #info-bubble';
 const MAX_DISCOVERED = 400;
 const sha1 = (b) => createHash('sha1').update(b).digest('hex');
@@ -136,8 +129,11 @@ async function api(t, path, body, method = body === undefined ? 'GET' : 'POST') 
   return r.json();
 }
 
-/** One worker of one side: a server on the worker's template, one Chrome, every route of its shard in every pass. */
-export async function crawlSide(spec, { worker, workers = 1, port, fixed, template, routes, all = routes, ids, clock, out, store: st, log = () => {}, screens = null }) {
+/**
+ * One worker of one side: a server on the worker's template, one Chrome, every route of its shard in every pass.
+ * exercise false (a screen-level B, D7): screen records only, no elements and no key probes.
+ */
+export async function crawlSide(spec, { worker, workers = 1, port, fixed, template, routes, all = routes, ids, clock, out, store: st, log = () => {}, screens = null, exercise = true }) {
   mkdirSync(out, { recursive: true });
   const recFile = join(out, `records-w${worker}.ndjson`);
   writeFileSync(recFile, '');
@@ -149,12 +145,22 @@ export async function crawlSide(spec, { worker, workers = 1, port, fixed, templa
   let t = null; let held = null; let heldPid = null; let flagKeys = [];
   // the held run is made per server, so its run and pipeline ids differ on every side: normalised in every record
   const scrub = (x) => (held ? String(x).split(held).join('<held-run>') : String(x)).split(heldPid ?? '\0').join('<held-pid>');
+  // the app stub's launches (stub-apps.mjs) since the last record become `app …` net lines; the canary log holds any app
+  // program that ran for real, read before each stop (prepareRoot wipes home on the next start)
+  let appsAt = 0; const canary = []; let apps = 0;
+  const drainApps = () => {
+    if (!t?.stubLog || !existsSync(t.stubLog)) return [];
+    const text = readFileSync(t.stubLog, 'utf8'); const fresh = text.slice(appsAt); appsAt = text.length;
+    const lines = appLines(fresh); apps += lines.length; return lines;
+  };
+  const collectCanary = () => { if (t?.canaryLog && existsSync(t.canaryLog)) canary.push(...readFileSync(t.canaryLog, 'utf8').split('\n').filter(Boolean).map(scrub)); };
   const start = async () => {
-    t = await startLive(spec, { fixed, template, offline: true, ...(port ? { port } : {}) });
-    held = null; heldPid = null;
+    // the server clock starts at the template's fixed time, the time the browser clock is fixed to (D5)
+    t = await startLive(spec, { fixed, template, offline: true, clockMs: clock.now, ...(port ? { port } : {}) });
+    appsAt = 0; held = null; heldPid = null;
     flagKeys = (await api(t, '/api/flags')).flags.filter((f) => !f.locked).map((f) => f.key).sort();
   };
-  const reset = async () => { await t.stop(); await start(); };
+  const reset = async () => { collectCanary(); await t.stop(); await start(); };
   const applyPass = async (flags, v) => {
     await api(t, '/api/flags', Object.fromEntries(flagKeys.map((k) => [k, flags === 'on'])), 'PATCH');
     await api(t, '/api/settings', { theme: v.theme, uiLevel: v.level });
@@ -253,6 +259,7 @@ export async function crawlSide(spec, { worker, workers = 1, port, fixed, templa
         };
         const record = async (id, route, kind) => {
           await Promise.all(side.bodies.splice(0));
+          side.net.push(...drainApps().map((x) => scrub(normalizeLine(x))));
           // string expressions: CDP evaluates them outside the page's CSP (a `new Function` in the page would be refused)
           const s = await timed('dom', () => page.evaluate(`(() => {
             const r = ${JSON.stringify(route)};
@@ -314,7 +321,7 @@ export async function crawlSide(spec, { worker, workers = 1, port, fixed, templa
           const screen = await record(`${base}|-|screen`, route, 'screen');
           const load = loadCalls(screen.net);
           visits.push({ route, rendered: screen.rendered, flags, variant: v.id });
-          if (!v.exercise) continue;
+          if (!v.exercise || !exercise) continue;
           const els = await enumerate();
           let dirty = false;
           for (const e of els) {
@@ -379,8 +386,8 @@ export async function crawlSide(spec, { worker, workers = 1, port, fixed, templa
         log(`crawl ${spec.label ?? spec.kind} w${worker}: ${flags}/${v.id} done (${queue.length} routes; ms ${Object.entries(side.prof).map(([k, n]) => `${k} ${n}`).join(', ')})`);
       }
     }
-  } finally { await browser.close().catch(() => {}); await t?.stop(); }
-  return { records, visits, counts, discovered: [...discovered] };
+  } finally { collectCanary(); await browser.close().catch(() => {}); await t?.stop(); }
+  return { records, visits, counts, discovered: [...discovered], apps, canary };
 }
 
 const treeOf = (spec) => {
@@ -443,12 +450,13 @@ function pngTools(st, diffsDir) {
 }
 
 /** Hydrated per record (DOM lines from the store), compared one id at a time to keep memory flat. */
-function compareSides(a1, b, masks, st, png) {
+function compareSides(a1all, b, masks, st, png, level = 'full') {
+  const a1 = level === 'screen' ? a1all.filter((r) => r.kind === 'screen') : a1all;
   const byId = new Map(b.map((r) => [r.id, r]));
   const maskBy = new Map(); for (const m of masks) (maskBy.get(m.id) ?? maskBy.set(m.id, []).get(m.id)).push(m);
   const hyd = (r) => ({ ...r, dom: st.dom(r.dom) });
   const diffs = [];
-  const one = (x, y) => compareCrawls(x ? [hyd(x)] : [], y ? [hyd(y)] : [], maskBy.get((x ?? y).id) ?? [], { pngDiff: png.diff }).diffs;
+  const one = (x, y) => compareCrawls(x ? [hyd(x)] : [], y ? [hyd(y)] : [], maskBy.get((x ?? y).id) ?? [], { pngDiff: png.diff, level }).diffs;
   for (const r of a1) diffs.push(...one(r, byId.get(r.id)));
   const ids = new Set(a1.map((r) => r.id));
   for (const s of b) if (!ids.has(s.id)) diffs.push(...one(null, s));
@@ -462,17 +470,18 @@ function controlMasks(a1, a2, st, png) {
     masks.push(...deriveMasks([{ ...r, dom: st.dom(r.dom) }], s ? [{ ...s, dom: st.dom(s.dom) }] : [], { pngDiff: png.rect }));
   }
   const ids = new Set(a1.map((r) => r.id));
-  for (const s of a2) if (!ids.has(s.id)) masks.push({ id: s.id, field: 'presence' });
+  for (const s of a2) if (!ids.has(s.id)) masks.push({ id: s.id, field: 'presence', why: 'record on one control side only' });
   return masks;
 }
 /** The final hash after a step is part of the record: compared like a DOM line. */
 const withHash = (recs) => recs.map((r) => ({ ...r, net: [...r.net, `hash ${r.hash}`] }));
 
 /**
- * crawl({ a, bs, out, workers, screens, control, keep, log }): a and bs are resolved specs ({ kind, ref, root|appDir, label }).
- * Writes out/report.json and out/report.md; returns the report.
+ * crawl({ a, bs, out, workers, screens, control, keep, log }): a and bs are resolved specs ({ kind, ref, root|appDir, label,
+ * level? }); a B with level 'screen' is crawled and compared at screen level (D7).
+ * Writes out/report.json, out/report.md and out/masks.json; returns the report.
  */
-export async function crawl({ a, bs, out, workers = 8, screens = null, control = true, keep = false, log = console.log }) {
+export async function crawl({ a, bs, out, workers = 4, screens = null, control = true, keep = false, log = console.log }) {
   const t0 = Date.now();
   onSignals();
   mkdirSync(out, { recursive: true });
@@ -504,34 +513,36 @@ export async function crawl({ a, bs, out, workers = 8, screens = null, control =
     const routes = [...new Set(catA.registered.map(pat))].filter((r) => !sel || sel.test(r)).sort();
     log(`crawl: ${routes.length} registered routes${catA.unfillable.length ? `, ${catA.unfillable.length} unfillable` : ''}; ${workers} workers`);
     // 3. A1, A2 (control), each B; the workers of a side in parallel
-    const side = async (spec, name) => {
+    const side = async (spec, name, { exercise = true } = {}) => {
       const parts = await Promise.all(templates.map((tp, k) => crawlSide(spec, { worker: k, workers, port: ports[k], fixed: locks[k].root, template: tp.dir, routes: shard(routes, workers, k), all: routes,
-        ids: tp.ids, clock: tp.clock, out: join(out, name), store: st, log, screens: sel })));
+        ids: tp.ids, clock: tp.clock, out: join(out, name), store: st, log, screens: sel, exercise })));
       log(`crawl: side ${name} done (${Math.round((Date.now() - t0) / 60000)} min so far)`);
       return { records: withHash(parts.flatMap((p) => p.records)), visits: parts.flatMap((p) => p.visits),
         counts: parts.reduce((acc, p) => ({ found: acc.found + p.counts.found, exercised: acc.exercised + p.counts.exercised, skipped: acc.skipped + p.counts.skipped,
           byReason: Object.entries(p.counts.byReason).reduce((o, [k, n]) => ({ ...o, [k]: (o[k] ?? 0) + n }), acc.byReason) }), { found: 0, exercised: 0, skipped: 0, byReason: {} }),
-        discovered: parts.flatMap((p) => p.discovered) };
+        discovered: parts.flatMap((p) => p.discovered), apps: parts.reduce((n, p) => n + p.apps, 0), canary: parts.flatMap((p) => p.canary) };
     };
     const A1 = await side(a, 'a1');
     const A2 = control ? await side(a, 'a2') : null;
-    const B = []; for (const [i, b] of bs.entries()) B.push(await side(b, `b${i + 1}`));
+    const B = []; for (const [i, b] of bs.entries()) B.push(await side(b, `b${i + 1}`, { exercise: b.level !== 'screen' }));
     // 4. masks from the control, then A1 vs each B
     const png = pngTools(st, join(out, 'diffs'));
     const masks = A2 ? controlMasks(A1.records, A2.records, st, png) : [];
-    const comparisons = B.map((x, i) => { const diffs = compareSides(A1.records, x.records, masks, st, png); return { label: bs[i].label, pass: !diffs.length, diffs }; });
+    const comparisons = B.map((x, i) => { const diffs = compareSides(A1.records, x.records, masks, st, png, bs[i].level); return { label: bs[i].label, level: bs[i].level ?? 'full', pass: !diffs.length, diffs }; });
+    const externalApps = { stubbed: [A1, A2, ...B].filter(Boolean).reduce((n, x) => n + x.apps, 0), canary: [A1, A2, ...B].filter(Boolean).flatMap((x) => x.canary) };
     // 5. coverage over the union of visits (discovered routes count as registered)
     const registered = [...new Set([...routes, ...A1.discovered])].sort();
     const cov = coverage({ registered, visits: [A1, A2, ...B].filter(Boolean).flatMap((x) => x.visits) });
     const report = {
-      pass: !!A2 && comparisons.every((c) => c.pass) && !cov.unvisited.length && !catA.unfillable.length && !catalogueDiffs.length,
-      control: !!A2, a: { spec: a.label, tree: treeOf(a) }, bs: bs.map((b) => ({ spec: b.label, tree: treeOf(b) })), masks, comparisons, catalogueDiffs,
+      pass: !!A2 && comparisons.every((c) => c.pass) && !cov.unvisited.length && !catA.unfillable.length && !catalogueDiffs.length && !externalApps.canary.length,
+      control: !!A2, a: { spec: a.label, tree: treeOf(a) }, bs: bs.map((b) => ({ spec: b.label, level: b.level ?? 'full', tree: treeOf(b) })), masks, comparisons, catalogueDiffs, externalApps,
       coverage: { screens: A1.visits.length, routes: { registered: registered.length, visited: cov.visited, unvisited: cov.unvisited, unfillable: catA.unfillable },
         elements: A1.counts, discovered: A1.discovered.length },
       masksPerRecord: Object.entries(masks.reduce((o, m) => ({ ...o, [m.id]: (o[m.id] ?? 0) + 1 }), {})).filter(([, n]) => n > 20).map(([id, n]) => ({ id, n })),
       minutes: Math.round((Date.now() - t0) / 60000),
     };
     writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2));
+    writeFileSync(join(out, 'masks.json'), JSON.stringify({ aTree: report.a.tree, masks }, null, 2));
     writeFileSync(join(out, 'report.md'), renderCrawlReport(report));
     return report;
   } finally {

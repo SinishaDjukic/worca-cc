@@ -52,7 +52,9 @@ app). No token, SSH agent or host config of the operator reaches a target.
 4. **UI server** at fixed paths (`$TMPDIR/worca-parity/home` and `…/sandbox`, wiped per launch, mode `0700`, guarded
    by a lock dir) so both sides show the same paths. 9 pages (Chat home, a chat thread, New run, Runs list, a live
    run, History detail, Settings, Labs, Statistics) are captured in light and dark (18 PNGs, 1280×800), then the 6
-   flows run: open every page; send a chat message and see the reply; start a mock run from New run and see it hand
+   flows run. The shots are pinned like the crawl: reduced motion, a seeded `Math.random` and no interval of 1 s or
+   more, so Chat home's rotating composer placeholder and its graph's animated dots match on both sides. The flows
+   get reduced motion only, because they wait on the app's own polling. The flows: open every page; send a chat message and see the reply; start a mock run from New run and see it hand
    off to History; open that run from the Runs list and by a fresh link to it in History; change the theme and see it after a reload; turn on the Labs "Flags demo" switch and see its note
    after a reload.
 
@@ -112,6 +114,33 @@ CSS selectors per page; every seeded id (run, held run, pipeline, thread) is als
 A mask is never a page container (`body`, `main`, `.view`, `[data-view]`; `test/parity-visual.test.mjs` enforces
 it) and never a whole list or section: add the smallest element that holds the changing value.
 
+### Visual masks
+
+One row per selector in `tools/parity/visual-masks.json` (`test/parity-visual.test.mjs` checks the two match):
+
+| Page | Selector | Why |
+|---|---|---|
+| `runs` | `.runs-row-sub` | a run row's status or step line, which follows the held run's live progress |
+| `runs` | `.runs-row-prog` | a run row's progress bar, whose fill tracks the held run's live progress |
+| `live-run` | `.runs-row-sub` | the side list's run rows: the held run's live status or step line |
+| `live-run` | `.runs-row-prog` | the side list's progress bars, filling with the held run's live progress |
+| `live-run` | `.rd-page-meta` | the run's start day and clock in the page head (real server time) |
+| `live-run` | `.rd-stats` | the glance tiles: the live run's active time, ticking cost and changes |
+| `live-run` | `.nrun .dur` | a running graph node's elapsed duration |
+| `live-run` | `.nrun .cost` | a running graph node's accumulating cost |
+| `history` | `.runs-row-sub` | the side list's run rows: the held run's live status or step line |
+| `history` | `.runs-row-prog` | the side list's progress bars, filling with the held run's live progress |
+| `history` | `.hd-day` | the run's start date (real server time of the seeded run) |
+| `history` | `.hd-clock` | the run's start clock time (real server time of the seeded run) |
+| `history` | `.hd-dur` | the run's total active duration, measured in real time |
+| `history` | `.hd-cost` | the run's total cost, summed from per-step usage |
+| `history` | `.hd-cmt-time` | a comment's timestamp (real time of the seeded comment) |
+| `history` | `.rd-cost-row` | the Cost-tags row, whose chips carry the run's cost and dates |
+| `history` | `.rd-page-meta` | the run's start day and clock in the page head (real server time) |
+| `history` | `.rd-stats` | the glance tiles: the run's active time, cost and changes |
+| `chat-home` | `.chat-run-tile-stats` | a run tile's agents done, elapsed time and cost of the held run (removed in 3 runs: the elapsed seconds differed) |
+| `stats` | `.stat-tile:has-text("Time worked") .stat-value` | total worked time across the range, measured in real time |
+
 ## Flaky register
 
 `test/flaky-register.json` lists the tests known to fail under full-suite load or in an agent environment, one row per
@@ -125,11 +154,14 @@ failures reported but none parsed).
 
 ## Differential crawl
 
-`npm run parity -- crawl --a T --b T [--b T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep]`
+`npm run parity -- crawl --a T --b T [--b T …] [--b-screens T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep]`
 (`tools/parity/crawl.mjs`) is the exhaustive before/after check: every registered hash route, every dialog, menu, popover,
 tooltip and collapsible, and every input, button and shortcut, enumerated from the DOM and compared A vs B (DOM, pixels,
-network, console). Targets are `tree:` and `package:` (no Docker). verify:919 row h runs it as dev against the split
-tree and against `package:.`; the readiness parity row runs it as dev against the migrated tree.
+network, console). Targets are `tree:` and `package:` (no Docker). `--b-screens T` compares T at screen level: every
+route × variant × flag pass is visited and recorded, with no elements and no key probes, and only A1's screen records are
+compared with it. verify:919 row h runs it as dev against the split tree (full depth) and against `package:.` (screen
+level: a package differs from its tree only in which files ship, and a missing file shows on the screen load); the
+readiness parity row runs it as dev against the migrated tree.
 
 - **Same seeded database** (`tools/parity/crawl-seed.mjs`). One template per worker, built with A: `seed()` plus every
   entity a route param needs (a run group, a second project and a workspace, a requirement, a project memory, an MCP
@@ -163,20 +195,46 @@ tree and against `package:.`; the readiness parity row runs it as dev against th
   downloads cancelled, native dialogs dismissed (all recorded). The servers start with `buildEnv({ offline: true })`:
   `HTTP(S)_PROXY` points at a dead port with localhost exempt and `NODE_USE_ENV_PROXY=1`, so `gh`, `git fetch` and
   provider calls fail fast and alike on both sides.
-- **Control pass.** A is crawled twice (A1, A2). Only what differs between those two becomes a mask (a DOM path, a PNG
-  rect, a request key or a console message of one record). Every mask is listed in the report, and a record with more
-  than 20 masks is called out. Anything else that differs between A1 and a B fails. `--no-control` skips A2 and the run
-  cannot pass.
-- **Workers** (`--workers N`, default 8): each has its own fixed root, template, server and Chrome, and a deterministic
+- **External apps stubbed** (`tools/parity/stub-apps.mjs`). Every server the parity tools start (`startTarget`: parity
+  `run`, the crawl, its template seeding and timing; and the server a verify or readiness e2e suite starts, through
+  `NODE_OPTIONS=--import=…`) loads a preload that wraps `child_process.spawn`. A spawn inside an app route (Settings ›
+  Runs › Actions *Try*/*Browse*, a run card's Terminal / Finder / Editor, Chat's *Show in folder*, the folder picker) or
+  of an app program (`open`, `osascript`, `xdg-open`, the terminals and editors of `src/core/actions/builtins.mjs`)
+  becomes a no-op child that exits 0, and `{method, path, command}` (home shown as `~`) goes to the server's
+  `.parity-stubbed-apps.ndjson`. The crawl adds each launch to that step's `net` as `app METHOD path command`, so a
+  launch on one side only is a difference. Belt and braces: `HOME/.parity-canary-bin` is first on `PATH`, with a no-op
+  script per app program that logs `$0 $*` to `.parity-canary.log`; any line there is a real launch the preload missed,
+  listed in the report and failing the crawl. `npm test` is not stubbed (`test/api-actions.test.mjs` runs real launcher
+  lines), and neither are Docker targets.
+- **Server clock pinned** (crawl only). The same preload, given `WORCA_PARITY_CLOCK_MS`, replaces `Date` so that now
+  starts at the template's `clock.json` time (the time the browser clock is fixed to) and advances at the real rate.
+  Every crawl server prints the same times. File mtimes and SQLite `datetime('now')` stay real; the control pass catches
+  what they leave.
+- **Control pass.** A is crawled twice (A1, A2), once per crawl; its masks apply to every B. Only what differs between
+  those two becomes a mask (a DOM path, a PNG rect, a request key or a console message of one record). Every mask
+  carries a `why`, computed from the two control values, never typed by hand:
+  - `presence`: "record on one control side only";
+  - `dom`: "a number differs (count or time)" when the two lines are equal with digits stripped; "class differs
+    (transient state)" when only `class=` differs; "element on one control side only";
+  - `png`: "raster noise, DOM identical", or "pixels follow the DOM difference above" when the record has a DOM mask;
+  - `net`: "request in flight at record time (one control side only)";
+  - `console`: "console error on one control side only".
+
+  Anything else is `unexplained`, and an unexplained mask fails verify:919 row h: fix the crawler (a wait, a
+  normalisation, a seed), never wave it through. The report lists every mask with its Why and counts them per reason,
+  and a record with more than 20 masks is called out. Anything else that differs between A1 and a B fails.
+  `--no-control` skips A2 and the run cannot pass.
+- **Workers** (`--workers N`, default 4): each has its own fixed root, template, server and Chrome, and a deterministic
   shard of the routes (route i → worker i mod N). Worker K of A and worker K of B use the same root and template.
-- **Outputs**: `DIR/report.json` (`pass`, `control`, `a`/`bs` with their tree hashes, `masks`, `comparisons`, `coverage`,
-  `minutes`), `DIR/report.md` (coverage with the unvisited and unfillable lists and the skipped elements by reason, every
-  mask, and per B every difference with its diff image) and `DIR/diffs/N.png`. `DIR/a1`, `a2` and `bN` hold the records.
+- **Outputs**: `DIR/report.json` (`pass`, `control`, `a`/`bs` with their tree hashes and levels, `masks`, `comparisons`
+  with their `level`, `coverage`, `externalApps` `{ stubbed, canary }`, `minutes`), `DIR/report.md` (coverage with the
+  unvisited and unfillable lists and the skipped elements by reason, External apps, every mask with its reason, and per
+  B every difference with its diff image), `DIR/masks.json` (`{ aTree, masks }`) and `DIR/diffs/N.png`. `DIR/a1`, `a2` and `bN` hold the records.
 
 Timing (measured on the 11-core dev Mac, 2026-11-01): a step records in a median 0.85 s (p90 1.7 s). One screen like
 `#workspace-create` (109 elements) takes about 6 min per side on one worker, across both exercise variants, all 12
 variants' screen visits and both flag passes. The catalogue has 122 registered routes, and a full crawl (A1, A2 and two
-Bs) runs for hours even with 8 workers: run it detached. Check a change on one screen first with `--screens`.
+Bs) runs for hours: run it detached. Check a change on one screen first with `--screens`.
 
 Determinism: a dev-vs-dev crawl must PASS. If it does not, fix the crawler's wait conditions, normalisation or Chrome
 flags (`CRAWL_CHROME_ARGS`), never the masks; review any record the report lists with more than 20 masks. What a crawled

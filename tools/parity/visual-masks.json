@@ -3,6 +3,5 @@
   "live-run": [".runs-row-sub", ".runs-row-prog", ".rd-page-meta", ".rd-stats", ".nrun .dur", ".nrun .cost"],
   "history": [".runs-row-sub", ".runs-row-prog", ".hd-day", ".hd-clock", ".hd-dur", ".hd-cost", ".hd-cmt-time", ".rd-cost-row", ".rd-page-meta", ".rd-stats"],
   "chat-home": [".chat-run-tile-stats"],
-  "chat-thread": ["[data-ask-meter]", ".ask-activity-meter"],
   "stats": [".stat-tile:has-text(\"Time worked\") .stat-value"]
 }
