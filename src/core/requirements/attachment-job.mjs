@@ -27,11 +27,11 @@ import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
   readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames, hasText,
-  mentions, displayName,
+  mentions, displayName, fileOrigins, fenceTrackerText,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
-  listReadingAttachments, listDownloadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief,
+  listReadingAttachments, listDownloadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief, listTurns,
 } from './store.mjs';
 import { callModel, interviewModel, maybeFollowUpFiles } from './interview.mjs';
 import { attachmentsDir, attachmentFile } from './attachment-paths.mjs';
@@ -740,12 +740,21 @@ export async function withStagedRunFiles(runId, list, start, { base = tmpdir() }
 
 /** What a round's prompt carries of the files (D6): the feature's <attachments> text (null without files), the scope's
  *  documents for <product_brief> ('' without any), the names a reply may give as a source, and the rows. `carried` (D8):
- *  the ids of the files whose text the prompt carried (a summary it shows, or their full text). */
+ *  the ids of the files whose text the prompt carried (a summary it shows, or their full text). A file an import added (A6.1 D14:
+ *  its `added` turn names the ticket) has its full text fenced as the tracker's material (fenceTrackerText), and the budget counts
+ *  the fenced text, as the prompt carries it; a feature with no imported file gets the same text as before. */
 export function promptFiles(f) {
   const rows = listAttachments('feature', f.seq);
   const brief = usableBrief(f.scopeType, f.scopeKey);
   const docs = brief ? listAttachments('brief', brief.id) : [];
-  const texts = selectInlineAttachments(rows, (r) => { try { return redactAskText(readFileSync(attachmentFile(r), 'utf8')); } catch { return null; } });
+  const origins = fileOrigins(listTurns(f.seq));
+  const readText = (r) => {
+    let t;
+    try { t = redactAskText(readFileSync(attachmentFile(r), 'utf8')); } catch { return null; }
+    const from = origins.get(r.id);
+    return from ? fenceTrackerText(t, from) : t;
+  };
+  const texts = selectInlineAttachments(rows, readText);
   return { rows, docs, attachments: rows.length ? renderAttachmentsForPrompt(rows, { texts }) : null,
     documents: docs.length ? renderDocumentsForPrompt(docs) : '', sources: sourceNames(rows, docs),
     carried: rows.filter((r) => hasText(r) || texts.has(r.id)).map((r) => r.id) };   // the same test the render uses
