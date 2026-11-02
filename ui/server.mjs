@@ -284,7 +284,7 @@ import { chatModelRates } from '../src/core/ask/chat-price.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
-  providersState, patchProvider, acknowledgeTerms, beginCopilotLogin, pollCopilotLogin, copilotLogout,
+  providersState, patchProvider, beginCopilotLogin, pollCopilotLogin, copilotLogout,
   copilotModelsForImport, importCopilotModels, testProviderConnection,
   endpointModelsForImport, importEndpointModels, patchSpeech,
 } from '../src/core/bridge/provider-ops.mjs';
@@ -12716,6 +12716,19 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
+/** Rewrite each pair's model to the catalog's canonical id (A8), so every consumer matches the same spelling; a
+ *  pending id keeps the spelling its import will write. Mutates the pairs. */
+async function canonicaliseModelIds(pairs, pending = []) {
+  const list = pairs.filter((v) => v && v.model);
+  if (!list.length) return;
+  const models = await listModels('');
+  for (const value of list) {
+    const lc = value.model.toLowerCase();
+    const hit = models.find((m) => m?.id?.toLowerCase() === lc) || pending.find((p) => p.id.toLowerCase() === lc);
+    if (hit) value.model = hit.id;
+  }
+}
+
 /** The catalog checks on an asserted modelRoles patch, shared by POST /api/settings and setup apply (A18).
  *  Returns the patch with each model rewritten to the catalog's canonical id. `pending`: the catalog rows
  *  this setup apply's own imports will create (pendingImportIds); POST /api/settings passes none. */
@@ -12724,17 +12737,16 @@ async function checkModelRolesPatch(patch, { pending = [] } = {}) {
   // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
   for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
   await assertSlotModels(items, { pending });
-  // Store the catalog's canonical id (A8), so every consumer matches the same spelling; a pending id keeps the
-  // spelling its import will write.
-  if (items.length) {
-    const models = await listModels('');
-    for (const roles of Object.values(patch)) for (const value of Object.values(roles)) {
-      if (!value) continue;
-      const lc = value.model.toLowerCase();
-      const hit = models.find((m) => m?.id?.toLowerCase() === lc) || pending.find((p) => p.id.toLowerCase() === lc);
-      if (hit) value.model = hit.id;
-    }
-  }
+  await canonicaliseModelIds(Object.values(patch).flatMap((roles) => Object.values(roles)), pending);
+  return patch;
+}
+
+/** Setup apply's catalog check on an asserted askModels patch: POST /api/settings' check (model, harness and the
+ *  catalog row's efforts), plus the pending ids of this apply's imports; ids are canonicalised like the roles'. */
+async function checkAskModelsPatch(patch, { pending = [] } = {}) {
+  const items = Object.entries(patch).filter(([, value]) => value).map(([engine, value]) => ({ id: `askModels.${engine}`, engine, value }));
+  await assertSlotModels(items, { pending });
+  await canonicaliseModelIds(items.map((i) => i.value), pending);
   return patch;
 }
 
@@ -13277,7 +13289,7 @@ app.post('/api/models', async (req, res) => {
 // ---------------------------------------------------------------------------
 const providerError = (res, err) => {
   const msg = err && err.message ? err.message : String(err);
-  if (err && (err.code === 'TERMS' || err.code === 'NOT_SIGNED_IN')) return res.status(409).json({ error: msg, code: err.code });
+  if (err && err.code === 'NOT_SIGNED_IN') return res.status(409).json({ error: msg, code: err.code });
   return badRequest(res, msg);
 };
 
@@ -13361,15 +13373,6 @@ app.patch('/api/providers/:name', async (req, res) => {
   try {
     await patchProvider(req.params.name, req.body || {});
     emitChanged('settings-changed');
-    res.json(await providersState());
-  } catch (err) {
-    return providerError(res, err);
-  }
-});
-
-app.post('/api/providers/copilot/acknowledge', async (req, res) => {
-  try {
-    await acknowledgeTerms();
     res.json(await providersState());
   } catch (err) {
     return providerError(res, err);
@@ -14171,6 +14174,7 @@ function setupDeps() {
     applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
     reloadLogin: () => egressNow()?.reloadLogin?.(),
     checkModelRoles: (patch, o) => checkModelRolesPatch(patch, o),
+    checkAskModels: (patch, o) => checkAskModelsPatch(patch, o),
     testModel: async (id) => {
       const key = String(id).toLowerCase();
       if (modelTestsInFlight.has(key)) return { ok: false, message: 'test already running for this model' };

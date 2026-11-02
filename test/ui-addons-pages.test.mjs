@@ -237,7 +237,7 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
     { name: 'signing out of Copilot on the Providers page repaints its card there', run: async () => {
       let connected = true;
       const res = (body) => ({ ok: true, status: 200, json: async () => body });
-      const pv = () => ({ copilot: { connected, termsCurrent: true, login: 'ada', accountType: 'individual', maxConcurrent: 4 } });
+      const pv = () => ({ copilot: { connected, login: 'ada', accountType: 'individual', maxConcurrent: 4 } });
       const { window, doc } = await boot({ routes: {
         '/api/providers/copilot/logout': () => { connected = false; return res(pv()); },
         '/api/providers': () => res(pv()),
