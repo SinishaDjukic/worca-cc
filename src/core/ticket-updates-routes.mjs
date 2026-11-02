@@ -2,6 +2,7 @@
 // `ticketUpdates` flag. The manage sheet reads and saves here; listProjects, listStatuses and legacyMove run in the server
 // through callSource with the saved profile, never from the browser (POST /api/sources/call's allowlist is unchanged).
 import { requireFlag } from './flags.mjs';
+import { redactAskText } from './ask/redact.mjs';
 import { callSource as shimCallSource } from './plugin-shim.mjs';
 import { listProfiles, isValidProfileId, redactedConfig, readTicketUpdates, writeTicketUpdates, DEFAULT_PROFILE } from './plugin-config.mjs';
 import { actorOf } from './identity.mjs';
@@ -101,8 +102,10 @@ export function registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, 
   function failed(res, ctx, op, err) {
     const kind = (err && err.kind) || 'plugin';
     if (kind === 'unimplemented') return res.status(409).json({ error: CANNOT_UPDATE });
-    const first = String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);   // never a plugin's whole output
-    console.error(`ticket updates: ${op} via ${ctx.name}/${ctx.source.id} failed (${kind}):`, first);
+    const first = String((err && err.message) || err).split(/\r?\n/)[0];
+    // A connector message can carry a token or a URL with one: redact the line (pattern-based, best effort) and only then cap
+    // it, so a cut can never leave half a token. Never a plugin's whole output.
+    console.error(`ticket updates: ${op} via ${ctx.name}/${ctx.source.id} failed (${kind}):`, redactAskText(first).slice(0, 200));
     // The shim's own `plugin "x" is disabled` is not product copy (source-reach's NOT_COPY), so it would read "stopped
     // unexpectedly"; say what is true instead.
     const error = DISABLED.test(first) ? `Worca could not reach ${ctx.tracker}: the ${ctx.tracker} plugin is disabled.`
@@ -112,7 +115,7 @@ export function registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, 
   /** F29 (ui/server.mjs): an async handler never lets a throw escape (Express 4, no unhandledRejection handler). */
   const safe = (handler) => async (req, res) => {
     try { await handler(req, res); } catch (err) {
-      console.error('ticket updates: route failed:', String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200));
+      console.error('ticket updates: route failed:', redactAskText(String((err && err.message) || err).split(/\r?\n/)[0]).slice(0, 200));
       if (!res.headersSent) res.status(500).json({ error: err && err.message ? String(err.message) : String(err) });
     }
   };

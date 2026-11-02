@@ -170,6 +170,20 @@ test('projects and statuses: through the saved profile, unfiltered; a missing pr
     'ticket updates: listProjects via jira-source/jira failed (plugin): plugin "jira-source" is disabled — enable it on the Marketplace page',
     `ticket updates: listProjects via jira-source/jira failed (plugin): ${'Y'.repeat(200)}`,
   ], 'the first line of each failure, at most 200 characters');
+  // A connector error can carry a credential; the server log gets it redacted, the response stays as before.
+  const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJmYWtlIn0', 'c2lnbmF0dXJlZmFrZXNpZw'].join('.');
+  const ghp = 'ghp_' + 'FAKE'.repeat(9);
+  const leaked = [];
+  console.error = (...a) => { leaked.push(a.map(String).join(' ')); };
+  try {
+    setMockSourceResponses({ listProjects: () => { throw new PluginOpError('network', `request failed: Authorization: Bearer ${jwt} then ${ghp}`); } });
+    const k = await call('GET', `${TU}/projects${Q('acme')}`);
+    assert.equal(k.status, 502);
+    assert.equal(k.json.kind, 'network');
+  } finally { console.error = realError; }
+  assert.equal(leaked.length, 1, 'the failure is still logged');
+  assert.ok(leaked[0].includes('listProjects via jira-source/jira failed (network)'), 'the clue stays');
+  assert.ok(!leaked[0].includes(jwt) && !leaked[0].includes(ghp) && !leaked[0].includes('FAKEFAKE'), 'no credential reaches the server log');
   setMockSourceResponses({ listStatuses: undefined });
   assert.deepEqual((await call('GET', `${TU}/statuses${Q('acme', '&project=SHOP')}`)).json, { error: 'This plugin cannot update tickets.' });
   setMockSourceResponses(null);
