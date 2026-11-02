@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
+import { isSignInEnvKey } from '../engines/claude-sign-in.mjs';
 import { resolveModelEnv, resolveModelCost, listModels } from '../config.mjs';
 import { safeParseJson } from '../protocol.mjs';
 import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
@@ -40,14 +41,6 @@ const DEFAULTS = Object.freeze({
   // Model roles (D3): an unset interview slot takes the everyday role.
   interviewSlot: () => withRole(utilityModelFor('claude', 'requirementsInterview'), 'claude', 'requirementsInterview'),
 });
-
-// Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).
-const SIGN_IN_ENV_KEYS = new Set([
-  'CLAUDE_CODE_OAUTH_TOKEN', 'NODE_EXTRA_CA_CERTS', 'CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS',
-  'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY',
-]);
-const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/i.test(k) || k.startsWith('ANTHROPIC_')
-  || k.startsWith('CLAUDE_CODE_USE_') || k.startsWith('AWS_');
 
 /**
  * Whether the user-level Claude Code settings carry sign-in or network configuration (A1.1 D6): a
