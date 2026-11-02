@@ -13,6 +13,7 @@ import { callSource as shimCallSource } from '../plugin-shim.mjs';
 import { validateAttachmentUploads } from '../attachment-upload.mjs';
 import { classifyExtension } from '../ask/attachment-kind.mjs';
 import { RequirementsError } from './spec.mjs';
+import { firstLine } from './trackers.mjs';
 import { REQ_ATTACH_LIMITS, displayName, uniqueName } from './attachments.mjs';
 import { mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, appendTurn, listDownloadingAttachments } from './store.mjs';
 import { attachmentsDir, attachmentFile, enqueueRead, settleOwner } from './attachment-job.mjs';
@@ -24,8 +25,6 @@ const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 const L = REQ_ATTACH_LIMITS;
 const iso = () => new Date().toISOString();
-/** What the log may keep of a failure (export.mjs's firstLine, copied: importing export.mjs here would join its import cycle). */
-const firstLine = (err) => String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);
 const ownerKey = (o) => `${o.type}:${o.id}`;
 const extOf = (name) => { const i = String(name).lastIndexOf('.'); return i > 0 ? String(name).slice(i).toLowerCase() : ''; };
 const callOf = (d) => (d && typeof d.callSource === 'function' ? d.callSource : shimCallSource);

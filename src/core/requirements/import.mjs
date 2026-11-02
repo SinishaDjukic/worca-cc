@@ -9,7 +9,7 @@ import { tx } from '../db.mjs';
 import { redactAskText } from '../ask/redact.mjs';
 import { RequirementsError, LIMITS, clip } from './spec.mjs';
 import { getExportSetup, linkByTicket, createFeature, saveExportLink, appendTurn, listAttachments } from './store.mjs';
-import { trackersWith, defaultConnection, connectionLabel, sameConn, reachSentence, firstLine } from './export.mjs';
+import { trackersWith, defaultConnection, connectionLabel, sameConn, reachSentence, firstLine } from './trackers.mjs';
 import { exportDate } from './ticket.mjs';
 import { IMPORT_LIMITS, processTicket, pickDefaults, commentsFileName, commentsMarkdown } from './ticket-import.mjs';
 import { REQ_ATTACH_LIMITS, checkNewFiles, displayName } from './attachments.mjs';

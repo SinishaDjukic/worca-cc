@@ -11,9 +11,8 @@ import { createProfile } from '../src/core/plugin-config.mjs';
 import { readPluginsLock, writePluginsLock } from '../src/core/plugins-lock.mjs';
 import { setBinding } from '../src/core/source-bindings.mjs';
 import { PluginOpError } from '../src/core/plugin-shim.mjs';
-import {
-  EXPORT_TIMEOUT_MS, PROBE_TIMEOUT_MS, PROBE_RETRY_MS, exportTrackers, trackersWith, defaultConnection, reachReason, reachSentence, _resetExportCaches,
-} from '../src/core/requirements/export.mjs';
+import { EXPORT_TIMEOUT_MS, exportTrackers, _resetExportCaches } from '../src/core/requirements/export.mjs';
+import { PROBE_TIMEOUT_MS, PROBE_RETRY_MS, trackersWith, defaultConnection, reachReason, reachSentence } from '../src/core/requirements/trackers.mjs';
 
 useTempHome(after, 'worca-req-export-trackers-');
 const JIRA_DIR = fileURLToPath(new URL('../plugins/jira-source', import.meta.url));
