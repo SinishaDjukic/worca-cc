@@ -25,8 +25,11 @@ the Marketplace page.
 The run's ticket moves by the rule of its project, else All projects, and Worca's one comment on the ticket ends with what
 happened: `Moved to Resolved.`, `Already in Closed.`, `Moved to Done, Resolution: Done.`, or a `Not moved: …` line saying
 why (Jira's own reason when Jira refused the move, or "Jira gave no reason."). The outcome is in the ticket's comment and in
-the run's history line ("Result reported back to the task source. <note>"); the results view does not repeat it. A run that
-did not finish successfully does not move its ticket.
+the run's history line (`Result reported back to the task source: “Moved to Resolved.”`); the results view does not repeat
+it. A run that did not finish successfully does not move its ticket.
+
+The outcome is the tracker's text, so Worca keeps it as data: one line of at most 300 characters, with control, bidi and
+zero-width characters removed, angle brackets shown as ‹ › and backticks as ', inside quotes in the history line.
 
 Which failures are a line and which fail the write-back:
 
