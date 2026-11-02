@@ -71,7 +71,7 @@ test('a path named in a comment or in backticked prose is not a dependency', () 
 
 test('the runner, its config and the dependency set ask for the full suite', () => {
   const root = repo(FIXTURE);
-  for (const f of ['package.json', 'package-lock.json', 'tools/test.mjs', 'tools/test-run.mjs', 'tools/test-related.mjs',
+  for (const f of ['package.json', 'npm-shrinkwrap.json', 'tools/test.mjs', 'tools/test-run.mjs', 'tools/test-related.mjs',
     'test/tiers.json', 'test/helpers/no-real-claude/claude', '.nvmrc']) {
     assert.ok(FULL_SUITE.some((re) => re.test(f)), f);
     const r = related(root, ['src/a.mjs', f]);

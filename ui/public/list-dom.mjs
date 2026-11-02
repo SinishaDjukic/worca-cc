@@ -53,6 +53,41 @@ export function createListRove({ host, state, nav = LIST_NAV, keyOf = navKey, cu
   return { items, find, rove, focus, move, around, keyOf };
 }
 
+/** How long the moved row keeps its fill after Add to group (decision 5). */
+export const LANDED_MS = 1500;
+
+/** The id of the folded section that holds `rowKey` in a list model (Runs or Chats), else null. */
+export function collapsedSectionOf(model, rowKey) {
+  const s = (model?.sections || []).find((x) => (x.rows || []).some((r) => r.key === rowKey));
+  return s && s.collapsed ? s.id : null;
+}
+
+/** `state.landed`'s row (navKey) takes .is-landed until its time is up; every other row loses it. Call after each paint. */
+export function paintLanded(host, state, now = Date.now()) {
+  if (!host) return;
+  for (const a of host.querySelectorAll('a.runs-row.is-landed')) a.classList.remove('is-landed');
+  const l = state.landed;
+  if (!l || now >= l.until) { state.landed = null; return; }
+  const a = [...host.querySelectorAll('a.runs-row')].find((x) => navKey(x) === l.key);
+  if (a) a.classList.add('is-landed');
+}
+
+/**
+ * Focus after Add to group (decision 5), the Runs list's and the Chats column's: `node` (the moved row's link) becomes
+ * the one Tab stop, takes the focus and the brief .is-landed fill (kept across repaints by paintLanded). Never the row
+ * that slid into the old place: the caller finds the moved row itself. No node: `fallback()` (the opener) is focused.
+ */
+export function landOn({ host, rove, state, node, fallback = () => null, win = host?.ownerDocument?.defaultView || globalThis, ms = LANDED_MS, now = Date.now() }) {
+  if (!node) { const f = fallback(); if (f && typeof f.focus === 'function') f.focus(); return null; }
+  state.focusKey = rove.keyOf(node);
+  rove.rove();
+  rove.focus(node);
+  state.landed = { key: state.focusKey, until: now + ms };
+  paintLanded(host, state, now);
+  win.setTimeout(() => paintLanded(host, state), ms);
+  return node;
+}
+
 /** The selection bar: `label` into .runs-bulk-n; per `[data-bulk=KEY]` in `actions`, its .runs-bulk-c count, disabled at
  *  0, its title (removed when empty) and, when given, its .runs-bulk-w word. Buttons not in `actions` are left alone. */
 export function paintBulkBar(bar, { label, actions = {} }) {

@@ -115,14 +115,14 @@ test('a possible agent (in-container caller under isolation) cannot open, stop o
   try {
     const r = await local('POST', openPath(), {});
     assert.equal(r.status, 403);
-    assert.equal(r.body.code, 'TERMINAL_AGENT_BLOCKED');
+    assert.equal(r.body.code, 'AGENT_CALLER_BLOCKED');
     const person = await remote('POST', openPath(), {});
     assert.equal(person.status, 201);
     const id = person.body.session.id;
     for (const [method, path] of [['POST', `/api/terminal/sessions/${id}/stop`], ['DELETE', `/api/terminal/sessions/${id}`]]) {
       const r = await local(method, path, method === 'POST' ? {} : undefined);
       assert.equal(r.status, 403, `${method} ${path}: an agent cannot stop or close a person's terminal`);
-      assert.equal(r.body.code, 'TERMINAL_AGENT_BLOCKED');
+      assert.equal(r.body.code, 'AGENT_CALLER_BLOCKED');
     }
     assert.equal((await remote('POST', `/api/terminal/sessions/${id}/stop`, {})).status, 200, 'the person can stop it');
     assert.equal((await remote('DELETE', `/api/terminal/sessions/${id}`)).status, 200, 'and close it');

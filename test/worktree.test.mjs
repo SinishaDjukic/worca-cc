@@ -679,7 +679,8 @@ test('commitOf / isAncestor / defaultBranchRef give up when git is slower than t
   const head = g('rev-parse', 'HEAD');
   const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
   const shimDir = _mk(join(_tmp(), 'worca-slow-git-')); _dbrDirs.push(shimDir);
-  writeFileSync(join(shimDir, 'git'), `#!/bin/sh\nsleep 3\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  // sleep off the pipes: the timeout kills the shell, not its sleep, which would hold git's stdout open 3 s after the test.
+  writeFileSync(join(shimDir, 'git'), `#!/bin/sh\nsleep 3 </dev/null >/dev/null 2>&1\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
   const PATH = process.env.PATH;
   process.env.PATH = `${shimDir}:${PATH}`;
   try {

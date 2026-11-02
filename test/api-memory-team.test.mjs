@@ -13,6 +13,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { memoryRoot, projectScope, scopeDir, writeMemory, readMemory } from '../src/core/memory-store.mjs';
 import { drainTeamMemoryFlushes, queueTeamChanges, TEAM_MEMORY_BRANCH, TEAM_NOTES_REL } from '../src/core/memory-team.mjs';
+import { UI_TOKEN_HEADER } from '../src/core/ui-instance.mjs';
 
 const skip = process.platform === 'win32' ? 'sh not portable to win32' : false;
 const root = mkdtempSync(join(tmpdir(), 'worca-api-team-'));
@@ -387,12 +388,12 @@ test('1b refusals: 400 for a bad body, 502 when a share cannot fetch first, 409 
     ['POST', `${base}/seed/undo`], ['POST', `${base}/seed/dismiss`], ['POST', `/api/memory/projects/${seedp.key}/history/20261024-031500-team/restore`]];
   for (const [method, p] of guarded) {
     const cross = await raw(method, p, { origin: 'http://127.0.0.1:4401' });
-    assert.deepEqual([cross.status, cross.json.code], [403, 'CROSS_ORIGIN'], `${method} ${p}`);
+    assert.equal(cross.status, 403, `${method} ${p}`);   // G10: the global Origin check answers first, with a bare 403
   }
   const img = await raw('GET', `${base}/seed`, { headers: { 'sec-fetch-site': 'same-site' } });   // an <img> on another port: no Origin
   assert.deepEqual([img.status, img.json.code], [403, 'CROSS_ORIGIN']);
   assert.equal((await raw('GET', `${base}/seed`, { headers: { 'sec-fetch-site': 'same-origin' } })).status, 200, 'this Worca\'s own page');
-  const offRestore = await raw('POST', `/api/memory/projects/${plain.key}/history/20261024-031500-team/restore`, { origin: 'http://127.0.0.1:4401' });
+  const offRestore = await raw('POST', `/api/memory/projects/${plain.key}/history/20261024-031500-team/restore`, { headers: { 'sec-fetch-site': 'same-site' } });
   assert.notEqual(offRestore.status, 403, 'off: the restore of before team memory (D1)');
   // A possible agent (agent isolation on, no signed-in person) is refused like on the Update routes: seeding is consent (m6).
   process.env.WORCA_AGENT_USER = 'worca-agent';
@@ -400,9 +401,9 @@ test('1b refusals: 400 for a bad body, 502 when a share cannot fetch first, 409 
   try {
     for (const [method, p] of guarded) {
       const agent = await raw(method, p);
-      assert.deepEqual([agent.status, agent.json.code], [403, 'TEAM_AGENT_BLOCKED'], `${method} ${p}`);
+      assert.deepEqual([agent.status, agent.json.code], [403, 'AGENT_CALLER_BLOCKED'], `${method} ${p}`);   // G1: the global gate answers first
     }
-    assert.equal((await raw('GET', base)).status, 200, 'the status stays readable');
+    assert.equal((await raw('GET', base, { headers: { [UI_TOKEN_HEADER]: mod._testing.uiToken() } })).status, 200, 'the status stays readable');
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
   assert.equal((await call('GET', `/api/memory/team/${plain.key}/seed`)).status, 409);
   assert.equal((await call('GET', '/api/memory/team/nope-00000000/seed')).status, 404);
@@ -508,7 +509,7 @@ test('E10: Not now is guarded, closes the offer for good; Turn on is the normal 
   assert.equal(await offerOf(later.key, true), true);
   assert.equal(await offerOf(turn.key, true), true);
   const cross = await raw('POST', `/api/memory/team/${later.key}/available/dismiss`, { origin: 'http://127.0.0.1:4401' });
-  assert.deepEqual([cross.status, cross.json.code], [403, 'CROSS_ORIGIN']);
+  assert.equal(cross.status, 403);   // G10: the global Origin check answers first, with a bare 403
   assert.equal((await projectRow(later.key)).teamMemoryOffer, true, 'a refused dismiss changes nothing');
   const d = await call('POST', `/api/memory/team/${later.key}/available/dismiss`);
   assert.deepEqual([d.status, d.json.available.state, d.json.available.offer], [200, 'dismissed', false]);

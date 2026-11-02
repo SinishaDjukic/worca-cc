@@ -29,19 +29,23 @@ test('groupHead: Ran / Running, "N failed" only when some failed, the live total
   const now = 50_000;
   assert.equal(groupHead([{ status: 'done', exitCode: 2, durationMs: 1000 }, { status: 'running', startedAt: now - 2000 }], now),
     'Running 2 commands · 1 failed · 3.0s');
-  assert.deepEqual(groupHeadParts([{ status: 'stopped', durationMs: 100 }, ok], 0), { lead: 'Ran 2 commands', failed: 0, dur: '0.1s' },
+  assert.deepEqual(groupHeadParts([{ status: 'stopped', durationMs: 100 }, ok], 0), { lead: 'Ran 2 commands', count: '', failed: 0, dur: '0.1s', running: false },
     'a stopped command is not a failed one');
   assert.equal(groupHead([ok, null], 0, true), 'Running 2 commands · 0.0s', 'live turn: a card with no frame yet runs');
   assert.equal(isFailed({ status: 'done', exitCode: null }), false);
 });
 
-test('groupOpen: open while one runs, folded once all passed, a failure opens, a recorded choice wins', () => {
-  const ok = { status: 'done', exitCode: 0 }, bad = { status: 'done', exitCode: 1 }, run = { status: 'running' };
-  assert.equal(groupOpen([ok, run]), true);
-  assert.equal(groupOpen([ok, ok]), false);
-  assert.equal(groupOpen([ok, bad]), true);
-  assert.equal(groupOpen([ok, ok], true), true);
-  assert.equal(groupOpen([ok, run], false), false, 'a person who closed a running group keeps it closed');
-  assert.equal(groupOpen([ok, null]), false, 'a reloaded group still loading stays folded (no flash)');
-  assert.equal(groupOpen([ok, null], undefined, true), true);
+test('groupHead: a running group leads with the running command\'s line, then the count', () => {
+  const now = 50_000;
+  assert.equal(groupHead([{ status: 'done', exitCode: 0, durationMs: 1000 }, { status: 'running', startedAt: now - 2000 }], now, false, 'Run the ui tests'),
+    'Run the ui tests · 2 commands · 3.0s');
+  const ok = { status: 'done', exitCode: 0, durationMs: 1000 };
+  assert.equal(groupHead([ok, ok], now, false, 'Run the ui tests'), 'Ran 2 commands · 2.0s',
+    'done: the line is dropped');
+});
+
+test('groupOpen: folded until the person opens it, running or failed alike', () => {
+  assert.equal(groupOpen(undefined), false);
+  assert.equal(groupOpen(true), true);
+  assert.equal(groupOpen(false), false);
 });

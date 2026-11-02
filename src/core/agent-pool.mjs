@@ -13,18 +13,27 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
-import { agentIdentity } from './agent-user.mjs';
+import { agentIdentity, claimForAgent } from './agent-user.mjs';
+import { currentOwner } from './billing.mjs';
 import { worcaHome } from './projects.mjs';
 
 const USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 let warnedFull = false;
 
-/** {users, homes} when a pool is configured, else null. Pure: reads only `env`. */
+/** {users, homes, runGids?} when a pool is configured, else null. `runGids` maps a pool user to
+ *  its own group (WORCA_AGENT_RUN_GIDS "user:gid,…", docker/entrypoint.sh), which a run's folders
+ *  get (claimRunDir). Pure: reads only `env`. */
 export function agentPool(env = process.env) {
   const users = String(env.WORCA_AGENT_POOL || '').split(',').map((s) => s.trim()).filter((u) => USER_RE.test(u));
   const homes = String(env.WORCA_AGENT_HOMES || '').trim();
   if (!users.length || !isAbsolute(homes)) return null;
-  return { users, homes };
+  const runGids = {};
+  for (const pair of String(env.WORCA_AGENT_RUN_GIDS || '').split(',')) {
+    const [u, g] = pair.trim().split(':');
+    const gid = Number(g);
+    if (USER_RE.test(u || '') && Number.isInteger(gid) && gid > 0) runGids[u] = gid;
+  }
+  return Object.keys(runGids).length ? { users, homes, runGids } : { users, homes };
 }
 
 /**
@@ -72,5 +81,13 @@ export function agentIdentityFor(person, env = process.env, { file = null } = {}
     console.warn(`[worca] agent pool: all ${pool.users.length} agent users are assigned; more people now share one. Their agents can read each other's processes.`);
   }
   // dedicated: this person's user is theirs alone (not the shared fallback, not hash-shared)
-  return { user: r.user, home: join(pool.homes, r.user), gid: base.gid, dedicated: !r.shared };
+  const runGid = pool.runGids?.[r.user];
+  return { user: r.user, home: join(pool.homes, r.user), gid: base.gid, dedicated: !r.shared, ...(runGid ? { runGid } : {}) };
+}
+
+/** Give one run's own folder (its store pipelines/<run> dir, runs/<id>) to the agent user of the
+ *  work it belongs to: `currentOwner()` inside a run (agent-user.mjs claimForAgent). Throws when `dir` is a link or a
+ *  folder another user made first (1.1): the run must not go on in it. */
+export function claimRunDir(dir, { owner = currentOwner(), env = process.env, file = null } = {}) {
+  claimForAgent(dir, agentIdentityFor(owner, env, { file }));
 }

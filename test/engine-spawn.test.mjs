@@ -127,6 +127,29 @@ test('composeSpawnEnv: overlay wins, host pid added last, GitHub credentials str
   } finally { delete process.env.GH_TOKEN; }
 });
 
+test('composeSpawnEnv: a proxy URL with a login never reaches the child; NO_PROXY and a login-free URL do', () => {
+  const saved = Object.fromEntries(['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY'].map((k) => [k, process.env[k]]));
+  const restore = () => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } };
+  try {
+    for (const k of ['https_proxy', 'http_proxy']) delete process.env[k];
+    Object.assign(process.env, { HTTPS_PROXY: 'http://ACME%5Cjdoe:s3cret@proxy.corp.example:8080', HTTP_PROXY: 'http://proxy.corp.example:8080', NO_PROXY: 'intranet.example' });
+    for (const envScrub of [false, true]) {
+      const { env } = composeSpawnEnv({ envScrub });
+      for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /s3cret/, `${k} (scrub ${envScrub})`);
+      assert.equal(env.HTTP_PROXY, undefined, 'all proxy URLs go, or the child would be half-routed');
+      assert.equal(env.NO_PROXY, 'intranet.example');
+    }
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:3128';
+    assert.equal(composeSpawnEnv({ envScrub: true }).env.HTTPS_PROXY, 'http://127.0.0.1:3128');
+    // ALL_PROXY and tool-specific names go too, even when HTTP(S)_PROXY carries none.
+    Object.assign(process.env, { ALL_PROXY: 'http://u:s3cret@proxy:8080', npm_config_https_proxy: 'http://u:s3cret@proxy:8080', FTP_PROXY: 'http://proxy:21' });
+    const env = composeSpawnEnv({ envScrub: false, envAllowlist: [] }).env;
+    for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /s3cret/, k);
+    assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:3128', 'a login-free HTTPS_PROXY stays');
+    assert.equal(env.FTP_PROXY, 'http://proxy:21', 'a login-free alias stays');
+  } finally { restore(); for (const k of ['ALL_PROXY', 'npm_config_https_proxy', 'FTP_PROXY']) delete process.env[k]; }
+});
+
 // ── the Claude adapter on top of the supervisor ───────────────────────────────
 import { runClaudeProcess } from '../src/core/engines/claude.mjs';
 import { readdirSync } from 'node:fs';

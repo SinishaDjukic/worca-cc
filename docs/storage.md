@@ -15,6 +15,12 @@ project's working tree, so nothing is ever committed to your repo.
                                         (the Requirements Feature chat: req_helper_messages (v78), one row per
                                         message, kept until Clear chat; its spend is in req_cost_ledger with
                                         helper_message_id, which Clear chat keeps)
+                                        Requirements export (v80): req_export_setups (one row per project or
+                                        workspace: the connection — plugin, source, profile, never a token —, the
+                                        tracker project, issue type, labels, priority, where criteria go, the done
+                                        status) and req_export_links (one row per feature: its current ticket, the
+                                        spec and fields as last sent, the tracker's fingerprint of the description,
+                                        a pending create's marker). Every export is also an `export` turn.
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -162,7 +168,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v79)
+### Workflow history and versions (v84)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -189,7 +195,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v80)
+### Workflow tests (v85)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
@@ -241,6 +247,11 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
   `src/core/run-groups.mjs` checks it. A feature's own slices are not rows here: they come from `shape_feature_slices`.
   Removing the last member of a user group deletes the group. Shipping a user group as one PR writes a branch named
   after the group (`worca-cc/` + slug + group id) and records the PR on every member's `pr_url`; no new column.
+- `run_groups.name_source` (v79) is `'suggested'` or `'user'`, as `ask_chat_groups.name_source`: whether Smart naming
+  named the group. Add to group takes several runs; a run already in another user group moves (the group it leaves is
+  deleted once empty), and a Shaper slice is skipped. Its Undo is an in-memory one-shot token
+  (`src/core/undo-tokens.mjs`, 10 minutes, per actor): it puts each run back, recreating a group the move deleted with
+  its id, title and source. Nothing about Undo is stored; a restart drops the tokens.
 - `pipelines.deleted_at` marks a run deleted from the Runs list. Delete keeps an anonymised row (title "deleted run",
   no prompt, no starter, no tags, no group) so its cost stays in Statistics; every feed skips it.
 - `pipelines.pr_verdict` is the last CI, mergeability, draft and review verdict the PR refresh read for an open GitHub

@@ -18,7 +18,7 @@ test('the tables and caps mirror the server (artifact-kinds allowlists, ASK_LIMI
   assert.equal(ATTACH_MAX_BINARY_BYTES, ASK_LIMITS.attachment.maxBytesPerBinaryFile);
   assert.equal(ATTACH_MAX_MESSAGE_BYTES, ASK_LIMITS.attachment.maxBytesPerMessage);
   assert.equal(ATTACH_MAX_FILES, ASK_LIMITS.attachment.maxFiles);
-  assert.equal(ATTACH_ACCEPT, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
+  assert.equal(ATTACH_ACCEPT, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.xml,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
   assert.equal(extOf('Spec.v2.MD'), '.md');
   assert.equal(extOf('README'), '');
 });
@@ -27,6 +27,7 @@ test('checkAttachment: Ask\'s checks in Ask\'s order, with its messages; a same-
   assert.deepEqual(checkAttachment({ name: 'Spec.MD', size: 10 }), { ok: true, name: 'Spec.MD', ext: '.md', mime: null, attKind: 'text', others: [] });
   assert.equal(checkAttachment({ name: 'shot.PNG', size: 10 }).attKind, 'image');
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 10 }).attKind, 'binary');
+  assert.equal(checkAttachment({ name: 'feed.XML', size: 10 }).attKind, 'text');
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 10 }).mime, 'application/pdf');
   assert.equal(checkAttachment({ name: 'evil.exe', size: 1 }).error, 'attachment type not allowed: evil.exe');
   assert.equal(checkAttachment({ name: 'README', size: 1 }).error, 'attachment type not allowed: README');

@@ -54,8 +54,10 @@ function slotCard(slot) {
   const say = (text, ok) => { msg.textContent = text; msg.className = `msg ${ok ? 'ok' : 'err'}`; msg.hidden = !text; };
   const kindText = slot.kind === 'subscription' ? ' · Claude subscription' : '';
   const chipText = (slot.state === 'set' && slot.suffix ? `Set ••••${slot.suffix}` : STATE_TEXT[slot.state] || slot.state) + (slot.state === 'set' ? kindText : '');
-  // GitHub ("push as me"): a GitHub sign-in, or a pasted fine-grained token, both.
-  const pasteToo = slot.id === 'github' || slot.protocol === 'github';
+  // GitHub ("push as me"): a pasted fine-grained token, and a GitHub sign-in too when the
+  // operator set up an app for it (the slot then has signIn).
+  const isGithub = slot.id === 'github' || slot.protocol === 'github';
+  const pasteToo = isGithub && slot.signIn === 'github-device';
 
   const metaParts = [];
   // A plugin's slot (its label names the plugin): the only host the key is sent to.
@@ -63,18 +65,14 @@ function slotCard(slot) {
   if (slot.updatedAt) metaParts.push(`added ${when(slot.updatedAt)}`);
   if (slot.lastUsedAt) metaParts.push(`used ${when(slot.lastUsedAt)}`);
   if (slot.state === 'invalid' && slot.verifyError) metaParts.push(`last check: ${slot.verifyError}`);
-  if (slot.state === 'missing' && slot.credential === 'per-person') metaParts.push('Runs on these models are refused until you add a key');
+  if (slot.state === 'missing' && slot.credential === 'per-person' && !isGithub) metaParts.push('Runs on these models are refused until you add a key');
 
   card.append(el('div', { class: 'slot-top' },
     el('div', {}, el('h2', {}, slot.label), metaParts.length ? el('p', { class: 'meta' }, metaParts.join(' · ')) : null),
     el('span', { class: `chip ${slot.state}` }, chipText)));
 
-  if (slot.credential === 'per-person' && slot.signIn === 'github-device') {
-    card.append(githubSignIn(slot, say));
-    if (slot.protocol === 'github') {
-      card.append(el('p', { class: 'meta' }, "worca's pushes and pull requests for runs you start go out as you. Nothing here is ever given to an agent."));
-    }
-  }
+  if (slot.credential === 'per-person' && slot.signIn === 'github-device') card.append(githubSignIn(slot, say));
+  if (isGithub) card.append(el('p', { class: 'meta' }, "Worca clones, pushes and opens pull requests as you with it, for what you do and the runs you start. Give a fine-grained token Contents and Pull requests (read and write) on the repositories you work on. A repository you clone with it is visible to everyone on this Worca. Nothing here is ever given to an agent."));
   if (slot.credential === 'per-person' && (slot.signIn !== 'github-device' || pasteToo)) {
     const input = el('input', { type: 'password', id: `key-${slot.id}`, autocomplete: 'off', spellcheck: 'false', placeholder: slot.keyHint ? `Paste your key (${slot.keyHint})` : 'Paste your key', 'aria-label': `${slot.label}` });
     const form = el('div', { class: 'row', hidden: slot.state === 'set' || (pasteToo && slot.state !== 'invalid') });
@@ -85,7 +83,7 @@ function slotCard(slot) {
       try {
         await api('PUT', `/api/slots/${slot.id}`, { secret: input.value });
         input.value = '';
-        await load(slot.protocol === 'github' ? 'Saved. GitHub accepted the token.' : `Saved. The provider accepted your ${slot.label}.`, slot.id);
+        await load(isGithub ? 'Saved. GitHub accepted the token.' : `Saved. The provider accepted your ${slot.label}.`, slot.id);
       } catch (err) { say(err.message, false); save.disabled = false; }
     });
     form.append(el('div', { class: 'grow' }, input), save);
@@ -104,7 +102,7 @@ function slotCard(slot) {
     const replace = el('button', { type: 'button', onclick: () => { form.hidden = false; actions.hidden = true; input.focus(); } }, pasteToo ? 'Paste a token instead' : 'Replace');
     const del = el('button', { type: 'button', class: 'danger' }, 'Delete');
     const confirmRow = el('div', { class: 'row', hidden: true },
-      el('span', { class: 'grow' }, `Delete your ${slot.label}? Runs using it will pause until you add another.`),
+      el('span', { class: 'grow' }, isGithub ? 'Delete your GitHub token? Pushes stop going out as you.' : `Delete your ${slot.label}? Runs using it will pause until you add another.`),
       el('button', { type: 'button', class: 'danger', onclick: async () => {
         try { await api('DELETE', `/api/slots/${slot.id}`); await load(`Deleted your ${slot.label}.`, slot.id); }
         catch (err) { say(err.message, false); }
@@ -122,7 +120,7 @@ function slotCard(slot) {
 
     if (slot.kind === 'subscription' && slot.state === 'set') {
       card.append(el('p', { class: 'usage' }, "Runs on your Claude plan: no per-call cost, and your plan's usage limits apply. Only agents that run under your own user use it."));
-    } else if (!pasteToo && (slot.state === 'set' || slot.state === 'invalid')) {
+    } else if (!isGithub && (slot.state === 'set' || slot.state === 'invalid')) {
       const u = me.usage?.[slot.id] || { todayUsd: 0, monthUsd: 0 };
       card.append(el('p', { class: 'usage' }, `Today ${usd(u.todayUsd)} · This month ${usd(u.monthUsd)}`));
       const dIn = el('input', { type: 'number', min: '0', step: '1', id: `daily-${slot.id}`, value: slot.dailyUsd ?? '', placeholder: me.defaults?.dailyUsd != null ? String(me.defaults.dailyUsd) : 'none' });

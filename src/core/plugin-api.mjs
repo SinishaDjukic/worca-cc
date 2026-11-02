@@ -20,6 +20,9 @@
 // keep working untouched. The set is what makes that possible: never collapse
 // it to a single integer. API 5 adds ONE thing: the manifest's `mcpServers`
 // block (MCP registry) is honoured; nothing else changes.
+// Requirements A6 adds optional task-source connector ops (capabilities().export, exportOptions, createTicket,
+// updateTicket, commentTicket, ticketState, findTicket). They are additive: a connector without them answers
+// 'unimplemented' and simply cannot export, so the API stays 5.
 export const WORCA_PLUGIN_API = 5;
 export const WORCA_PLUGIN_APIS = [1, 2, 3, 4, 5];
 

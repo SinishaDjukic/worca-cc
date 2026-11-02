@@ -21,6 +21,9 @@
 // The login saved by `worca proxy login` (src/core/proxy-credentials.mjs) is read at boot and
 // watched, so a new login (or a rejection another process recorded) applies without a restart.
 // startLiveEgress() wraps it: a saved change of networkProxy swaps the upstream in place (D7-D10).
+// An HTTP(S)_PROXY that carries a login starts the same proxy even with networkProxy.enabled unset
+// (autoStart), so no child gets the password; only networkProxy.enabled: false keeps it off, and then
+// engine, script and plugin children get no proxy URL at all (env-proxy.mjs withoutProxyLogin).
 
 import http from 'node:http';
 import net from 'node:net';
@@ -28,6 +31,7 @@ import { createProxy, readEgressPolicy, normalizeHost } from './egress-proxy.mjs
 import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS, PASSWORD_MODES, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
 import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv, CORPORATE_PROXY_VAR } from './proxy-credentials.mjs';
 import { readSettings, readSettingsStrict, networkProxyEnabled, watchSettingsFile } from './settings.mjs';
+import { proxyUrlHasLogin } from './env-proxy.mjs';
 
 /** Set by the worca that runs the proxy, so a worca CLI started under it reuses it. */
 export const EGRESS_PROXY_VAR = 'WORCA_EGRESS_PROXY_URL';
@@ -103,18 +107,20 @@ export function egressSummary(env = process.env) {
 }
 
 /**
- * Enforce the policy in `env` for this process and its children, and (networkProxy.enabled)
- * chain to the corporate proxy.
+ * Enforce the policy in `env` for this process and its children, and (networkProxy.enabled, or
+ * autoStart: unset with a login in HTTP(S)_PROXY) chain to the corporate proxy.
  *   off        nothing to do (no policy, proxy off or no upstream): env untouched.
  *   inherited  a parent worca's proxy is already in env: reused, nothing started.
  *   on         proxy listening on 127.0.0.1:<port>; the proxy variables are now in env.
  * A policy proxy that cannot start rejects; a corporate-proxy-only one returns off + upstreamError.
  * Every return carries `sourceEnv`: the proxy variables as they were before the swap (through
- * upstreamEnv(), so never a parent's local proxy), for proxyState()/checkUpstream (D13).
+ * upstreamEnv(), so never a parent's local proxy), for proxyState()/checkUpstream (D13). `on` carries
+ * `autoStarted` (started for the login in HTTP(S)_PROXY alone); `off` carries `loginWithheld` when
+ * HTTP(S)_PROXY carries a login that engine, script and plugin children therefore never get.
  * @param {{env?: Record<string, string|undefined>, log?: (line: string) => void, unref?: boolean,
  *   proxyOn?: () => boolean, settings?: () => object, login?: () => object|null, loginPollMs?: number,
  *   watchLogin?: (fn: () => void) => () => void, markRejected?: (id: string, o: object) => boolean}} [opts]
- * @returns {Promise<{status: 'off'|'inherited'|'on', policy: object, url?: string, replacedProxy?: boolean,
+ * @returns {Promise<{status: 'off'|'inherited'|'on', policy: object, url?: string, replacedProxy?: boolean, autoStarted?: boolean, loginWithheld?: boolean,
  *   upstreamError?: string, connector?: object, reloadLogin?: () => boolean, boundAddress?: string,
  *   scrubbedKeys?: string[], upstream?: object, sourceEnv: object, swapUpstream?: (np: object) => {changed: boolean, upstreamError?: string},
  *   close: () => Promise<void>}>}
@@ -126,16 +132,22 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   markRejected = (id, o) => markLoginRejected(id, o) } = {}) {
   const policy = readEgressPolicy(env);
   const none = async () => {};
-  const corp = !!proxyOn();
+  // A login in HTTP(S)_PROXY would reach every child, so it starts the proxy unless it was turned off by hand.
+  const asked = !!proxyOn();
+  const autoStart = !asked && proxyUrlHasLogin(env) && networkProxyOf(settings()).enabled !== false;
+  const corp = asked || autoStart;
+  const off = (extra = {}) => ({ status: 'off', policy, ...extra, ...(proxyUrlHasLogin(env) ? { loginWithheld: true } : {}),
+    sourceEnv: upstreamEnv(env), close: none });
   // D13: for 'inherited', env.HTTPS_PROXY is already the parent's local proxy, and upstreamEnv drops it.
-  if (!policy.enforced && !corp) return { status: 'off', policy, sourceEnv: upstreamEnv(env), close: none };
+  if (!policy.enforced && !corp) return off();
   if (inheritsEgressProxy(env)) return { status: 'inherited', policy, url: env[EGRESS_PROXY_VAR], sourceEnv: upstreamEnv(env), close: none };
   const s = corp ? settings() : null;
   const saved = corp ? login() : null;                  // never read with the proxy off
-  const upstream = corp ? resolveUpstream({ env, settings: s && typeof s === 'object' ? s.networkProxy : undefined, login: saved }) : null;
+  const np0 = s && typeof s === 'object' ? s.networkProxy : undefined;
+  const upstream = corp ? resolveUpstream({ env, settings: autoStart ? viaEnvUrl(np0) : np0, login: saved, anyScheme: autoStart }) : null;
   let upstreamError = upstream && upstream.error ? upstream.error : undefined;
   let usable = upstream && !upstream.error ? upstream : null;
-  if (!policy.enforced && !usable) return { status: 'off', policy, ...(upstreamError ? { upstreamError } : {}), sourceEnv: upstreamEnv(env), close: none };
+  if (!policy.enforced && !usable) return off(upstreamError ? { upstreamError } : {});
   const makeConnector = (up) => createUpstreamConnector(up, {
     log: (l) => log(`Corporate proxy: ${redactProxyLine(l)}`),
     startTripped: !!(up.login && up.login.rejected),
@@ -170,8 +182,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   } catch (err) {
     connector?.close();
     if (policy.enforced) throw err;
-    return { status: 'off', policy, upstreamError: err && err.fixedPort ? err.message : `the local proxy could not start (${err && err.code ? err.code : 'error'})`,
-      sourceEnv: upstreamEnv(env), close: none };
+    return off({ upstreamError: err && err.fixedPort ? err.message : `the local proxy could not start (${err && err.code ? err.code : 'error'})` });
   }
   if (unref) server.unref();
   const port = server.address().port;
@@ -238,8 +249,10 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   /** D7/D13: re-resolve the upstream from the pre-swap env and swap it into the running server. */
   function swapUpstream(np) {
     const saved = login();
-    const next = np && np.enabled === true
-      ? resolveUpstream({ env: sourceEnv, settings: np, login: saved && !saved.error ? saved : null }) : null;
+    // An auto-started proxy stays chained until networkProxy.enabled is false.
+    const viaLogin = !!autoStart && !!np && np.enabled !== true && np.enabled !== false;
+    const next = np && (np.enabled === true || viaLogin)
+      ? resolveUpstream({ env: sourceEnv, settings: viaLogin ? viaEnvUrl(np) : np, login: saved && !saved.error ? saved : null, anyScheme: viaLogin }) : null;
     // Decision 6a: on, but the new upstream does not resolve: keep the running connector, never go direct.
     if (next && next.error) { upstreamError = next.error; return { changed: false, upstreamError }; }
     const nextConn = next ? makeConnector(next) : null;
@@ -258,7 +271,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   }
 
   return {
-    status: 'on', policy, replacedProxy, sourceEnv, scrubbedKeys, boundAddress: server.address().address,
+    status: 'on', policy, replacedProxy, sourceEnv, scrubbedKeys, boundAddress: server.address().address, autoStarted: autoStart && !!connector,
     get url() { return url; },
     get fixedPort() { return boundFixed || undefined; },
     get fixedPortShared() { return boundFixed ? fixedPortShared : undefined; },
@@ -282,9 +295,15 @@ const stableJson = (v) => (v && typeof v === 'object' && !Array.isArray(v)
   : Array.isArray(v) ? `[${v.map(stableJson).join(',')}]` : JSON.stringify(v));
 /** networkProxy minus fixedPort, the part that applies live (D10). Exported for its test. */
 export const liveKeyOf = (np) => { const { fixedPort: _p, ...rest } = np && typeof np === 'object' ? np : {}; return stableJson(rest); };
+/** Auto-start chains to the HTTP(S)_PROXY that carries the login, never to an upstream left in settings.json. */
+export const viaEnvUrl = (np) => { const { upstream: _u, ...rest } = np && typeof np === 'object' ? np : {}; return rest; };
 const networkProxyOf = (s) => (s && typeof s === 'object' && s.networkProxy && typeof s.networkProxy === 'object' ? s.networkProxy : {});
-/** The networkProxy a settings object asks for, with `enabled` resolved (a leftover flag still counts, Decision 3). */
-const wantedOf = (s) => ({ ...networkProxyOf(s), enabled: networkProxyEnabled(s) });
+/** The networkProxy a settings object asks for, with `enabled` resolved (a leftover flag still counts, Decision 3).
+ *  Unset stays unset: it is not `false`, which alone stops an auto-started proxy (startEgressPolicy autoStart). */
+const wantedOf = (s) => {
+  const np = networkProxyOf(s);
+  return { ...np, enabled: typeof np.enabled === 'boolean' || networkProxyEnabled(s) ? networkProxyEnabled(s) : undefined };
+};
 
 /**
  * startEgressPolicy() plus live changes (D7–D10). apply(networkProxy) swaps the upstream in place,
@@ -324,8 +343,10 @@ export async function startLiveEgress({ settings = readSettings, readStrict = re
       try { onEnvChange(); } catch { /* the swap stands */ }
       return { ...r, pending, ...extra };
     }
-    if (!(np && np.enabled === true)) { appliedKey = key; return { changed: false, pending: [] }; }
-    const next = await startEgressPolicy({ ...startOpts, settings: () => ({ networkProxy: np }), proxyOn: () => true });
+    // Off: start when turned on, or when `enabled` is cleared and HTTP(S)_PROXY carries a login (autoStart).
+    const autoNow = !!np && np.enabled !== true && np.enabled !== false && proxyUrlHasLogin(startOpts.env || process.env);
+    if (!(np && (np.enabled === true || autoNow))) { appliedKey = key; return { changed: false, pending: [] }; }
+    const next = await startEgressPolicy({ ...startOpts, settings: () => ({ networkProxy: np }), proxyOn: () => !autoNow });
     appliedKey = key;
     if (next.status !== 'on') { result = next; return { changed: false, pending: [], upstreamError: next.upstreamError }; }
     result = next;
@@ -388,6 +409,8 @@ export function superviseProxy(server, port, { log = () => {}, host = '127.0.0.1
   };
 }
 
+const STARTED_FOR_LOGIN = 'started because HTTP(S)_PROXY carries a login, so no child gets the password (networkProxy.enabled: false turns it off)';
+
 /** The corporate half of the boot line (D18): "Corporate proxy: via host:port (auth)…". */
 function corporateLine(up, url, result = {}) {
   const via = `Corporate proxy: via ${up.upstream} (${AUTH_LABELS[up.auth]})`;
@@ -402,7 +425,9 @@ function corporateLine(up, url, result = {}) {
 export function egressNotice(result) {
   if (!result) return null;
   if (result.status === 'off') {
-    return result.upstreamError ? { level: 'warn', text: `Corporate proxy: ${result.upstreamError}; it is not used` } : null;
+    const withheld = result.loginWithheld ? 'HTTP(S)_PROXY carries a login, so agents, scripts and plugin connectors get no proxy and go direct' : '';
+    if (result.upstreamError) return { level: 'warn', text: `Corporate proxy: ${result.upstreamError}; it is not used${withheld ? `, and ${withheld}` : ''}` };
+    return withheld ? { level: 'warn', text: `Corporate proxy: turned off (networkProxy.enabled is false), and ${withheld}; turn on Use a corporate proxy (Settings › Network proxy) to keep the login in Worca` } : null;
   }
   const p = result.policy;
   const up = result.upstream;
@@ -410,7 +435,7 @@ export function egressNotice(result) {
   if (!p.enforced) {
     const text = result.status === 'inherited'
       ? `Corporate proxy: outbound connections go through the parent Worca's proxy at ${result.url}`
-      : [corporateLine(up, result.url, result), ...warnings].join('; ');
+      : [corporateLine(up, result.url, result), ...(result.autoStarted ? [STARTED_FOR_LOGIN] : []), ...warnings].join('; ');
     return { level: warnings.length || up?.state === 'tripped' || result.fixedPortShared ? 'warn' : 'info', text };
   }
   const n = (k, list) => `${k} ${list.length} host${list.length === 1 ? '' : 's'}`;

@@ -1,24 +1,19 @@
-// test/db-migrate-v80.test.mjs — workflow tests, Part 2 (plans/workflow-tests-part2-plan.md Task 2): five tables + pipelines.is_test.
-// This rung was v78 on feat/workflow-tests-part2 until dev took 77 / 78 (req_attachments, req_helper_messages) and Part 1's
-// workflow revisions moved to 79 (test/db-migrate-v79.test.mjs). A fresh DB, a DB at Part 1's 79, one at 77, one that branch
-// already stamped 78 (revisions + wf_test_* tables, no A8 / A3), or one at Part 1's earlier 77 reaches the current version complete.
+// test/db-migrate-v80.test.mjs — req_export_setups and req_export_links (plans/requirements-a6-design.md §3). A3 took v78
+// and dev took v79 (run_groups.name_source), so A6, first written as v79, is v80: a DB at 79 (stamped by A6's early
+// numbering, without dev's column), at 77 (A8), at 78 (stamped by A3's numbering, none of A6's tables), at A8's early 75,
+// at upstream's 74–76, from below 72, or a fresh one reaches 80 with both tables.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
-const stamp = (db) => db.prepare('PRAGMA user_version').get().user_version;
-const TABLES = {
-  wf_test_examples: ['id', 'workflow_id', 'name', 'request', 'answers', 'otherwise', 'basics', 'checks', 'tries', 'note',
-    'from_pipeline', 'from_use', 'from_verdict', 'created_by', 'created_at', 'updated_at'],
-  wf_test_example_files: ['example_id', 'name', 'data', 'sha256', 'size'],
-  wf_test_runs: ['id', 'workflow_id', 'kind', 'a_use', 'b_use', 'a_fp', 'b_fp', 'example_ids', 'tries', 'quick', 'cap_usd',
-    'connectors', 'status', 'stop_reason', 'stop_detail', 'started_by', 'created_at', 'finished_at'],
-  wf_test_tries: ['id', 'run_id', 'workflow_id', 'example_id', 'use_ref', 'fp', 'example_fp', 'try_no', 'mock', 'connectors', 'status',
-    'run_key', 'pipeline_id', 'verdict', 'cost_usd', 'started_at', 'finished_at'],
-  wf_test_run_tries: ['run_id', 'try_id', 'side'],
-};
+const SETUP_COLS = ['scope_type', 'scope_key', 'plugin', 'source_id', 'profile', 'tracker_project', 'tracker_project_name', 'issue_type',
+  'issue_type_name', 'labels_json', 'priority', 'priority_name', 'criteria_json', 'done_status', 'created_by', 'created_at', 'updated_by',
+  'updated_at'];
+const LINK_COLS = ['feature_seq', 'plugin', 'source_id', 'profile', 'tracker_project', 'ticket_key', 'ticket_url', 'created_at', 'exported_at',
+  'spec_json', 'fields_json', 'fingerprint', 'pending_marker', 'pending_at', 'updated_by', 'updated_at'];
+const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
 
 /** Every table with its columns (sorted: a repaired column is appended, not in DDL order) and every index name. */
 function shape(db) {
@@ -32,76 +27,77 @@ function shape(db) {
 const FRESH = (() => { const db = new DatabaseSync(':memory:'); migrate(db); return shape(db); })();
 
 function assertComplete(db) {
-  assert.ok(stamp(db) >= 80);
-  assert.equal(stamp(db), SCHEMA_VERSION);
-  for (const [t, want] of Object.entries(TABLES)) assert.deepEqual(cols(db, t), want, t);
-  assert.ok(cols(db, 'pipelines').includes('is_test'), 'pipelines.is_test');
-  assert.ok(cols(db, 'workflow_revisions').length, 'workflow_revisions (v79)');
-  assert.ok(cols(db, 'workflows').includes('live_version_no'), 'workflows.live_version_no (v79)');
-  assert.ok(cols(db, 'req_helper_messages').length, 'req_helper_messages (v78)');
-  assert.ok(cols(db, 'req_cost_ledger').includes('helper_message_id'), 'req_cost_ledger.helper_message_id (v78)');
+  assert.equal(version(db), SCHEMA_VERSION);
+  assert.deepEqual(cols(db, 'req_export_setups'), SETUP_COLS);
+  assert.deepEqual(cols(db, 'req_export_links'), LINK_COLS);
   assert.ok(cols(db, 'req_attachments').length, 'req_attachments (v77)');
-  assert.ok(cols(db, 'req_cost_ledger').includes('attachment_id'), 'req_cost_ledger.attachment_id (v77)');
-  assert.ok(cols(db, 'req_starts').includes('files_json'), 'req_starts.files_json (v77)');
   assert.deepEqual(shape(db), FRESH, 'every table, column and index a fresh DB has');
 }
-const WT = `ALTER TABLE pipelines DROP COLUMN is_test; ${Object.keys(TABLES).map((t) => `DROP TABLE ${t};`).join(' ')}`;
-const WF = 'ALTER TABLE workflows DROP COLUMN live_version_no; DROP TABLE workflow_revisions;';
-const A3 = 'DROP TABLE req_helper_messages; ALTER TABLE req_cost_ledger DROP COLUMN helper_message_id;';
+const A6 = 'DROP TABLE req_export_setups; DROP TABLE req_export_links;';
 const A8 = 'DROP TABLE req_attachments; ALTER TABLE req_cost_ledger DROP COLUMN attachment_id; ALTER TABLE req_starts DROP COLUMN files_json;';
-const fromStamp = (sql, at) => {
+const UP76 = 'ALTER TABLE ask_threads DROP COLUMN group_id; DROP TABLE ask_chat_groups;';
+const UP75 = 'ALTER TABLE ask_threads DROP COLUMN pinned_at; ALTER TABLE ask_threads DROP COLUMN archived_at;';
+const fromStamp = (sql, stamp) => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  db.exec(`${sql} PRAGMA user_version = ${at}`);
+  db.exec(`${sql} PRAGMA user_version = ${stamp}`);
   migrate(db);
   return db;
 };
 
-test('fresh DB: the workflow test tables exist and pipelines has is_test', () => {
+test('a fresh DB has both export tables', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
   assert.ok(SCHEMA_VERSION >= 80);
   assertComplete(db);
 });
 
-test("a DB at Part 1's 79 (workflow revisions, no workflow tests) gets them all and is stamped current", () => {
-  assertComplete(fromStamp(WT, 79));
-});
-
-test('a DB stamped 77 without A3, workflow revisions or workflow tests gets them all and is stamped current', () => {
-  assertComplete(fromStamp(`${WT} ${WF} ${A3}`, 77));
-});
-
-test('a DB feat/workflow-tests-part2 stamped 78 (revisions + wf_test_*, no A8 / A3) reaches the current version complete', () => {
-  const db = new DatabaseSync(':memory:');
-  migrate(db);
-  db.prepare(`INSERT INTO workflow_revisions (workflow_id, version_no, name, graph, fingerprint, source, created_at)
-    VALUES ('wf_a', 1, 'W', '{}', 'f', 'version', '2026-10-25T00:00:00Z')`).run();
-  db.prepare(`INSERT INTO wf_test_examples (workflow_id, name, created_at, updated_at)
-    VALUES ('wf_a', 'Example one', '2026-10-26T00:00:00Z', '2026-10-26T00:00:00Z')`).run();
-  db.exec(`${A8} ${A3} PRAGMA user_version = 78`);
-  migrate(db);
+test("a DB stamped 79 by A6's early numbering (A6's tables, no run_groups.name_source) reaches the current version complete", () => {
+  const db = fromStamp(`ALTER TABLE run_groups DROP COLUMN name_source;
+    INSERT INTO run_groups (id, title, created_at, updated_at) VALUES ('grp_1', 'A', 'x', 'x');
+    INSERT INTO req_export_links (feature_seq, plugin, source_id, tracker_project, ticket_key, updated_at)
+      VALUES (7, 'jira-source', 'jira', 'SHOP', 'SHOP-1', 't');`, 79);
   assertComplete(db);
-  const revs = db.prepare('SELECT workflow_id, version_no FROM workflow_revisions').all().map((r) => ({ ...r }));
-  assert.deepEqual(revs, [{ workflow_id: 'wf_a', version_no: 1 }], 'the revisions it already had are kept');
-  const examples = db.prepare('SELECT workflow_id, name FROM wf_test_examples').all().map((r) => ({ ...r }));
-  assert.deepEqual(examples, [{ workflow_id: 'wf_a', name: 'Example one' }], 'the examples it already had are kept');
+  assert.ok(cols(db, 'run_groups').includes('name_source'), "dev's v79 column");
+  assert.equal(db.prepare("SELECT name_source FROM run_groups WHERE id = 'grp_1'").get().name_source, 'user');
+  assert.equal(db.prepare('SELECT ticket_key FROM req_export_links WHERE feature_seq = 7').get().ticket_key, 'SHOP-1', "A6's link kept");
 });
 
-test("a DB at Part 1's earlier 77 (workflow revisions, no A8 / A3 / workflow tests) reaches the current version complete", () => {
-  assertComplete(fromStamp(`${WT} ${A8} ${A3}`, 77));
+test('a DB at 77 (A8) gets both tables', () => assertComplete(fromStamp(A6, 77)));
+
+test("a DB stamped 78 by A3's numbering (none of A6's tables) gets both tables", () => assertComplete(fromStamp(A6, 78)));
+
+test("a DB at A8's early 75 (A8 tables, no upstream v75/v76) reaches the current version complete", () => {
+  assertComplete(fromStamp(`${A6} ${UP76} ${UP75}`, 75));
 });
 
-test('a DB stamped past this version without the tables or the column is repaired', () => {
-  const db = fromStamp(WT, SCHEMA_VERSION + 1);
-  for (const [t, want] of Object.entries(TABLES)) assert.deepEqual(cols(db, t), want, t);
-  assert.ok(cols(db, 'pipelines').includes('is_test'));
+test("a DB at upstream's 76, 75 or 74 (no A8, no A6) reaches the current version complete", () => {
+  assertComplete(fromStamp(`${A6} ${A8}`, 76));
+  assertComplete(fromStamp(`${A6} ${A8} ${UP76}`, 75));
+  assertComplete(fromStamp(`${A6} ${A8} ${UP76} ${UP75}`, 74));
 });
 
-test('a try is linked to a run at most once', () => {
+test('a DB from below 72 (upstream 70 or 71: no requirements tables) reaches the current version complete', () => {
+  for (const [stamp, extra] of [[70, ' DROP TABLE utility_cost_ledger;'], [71, '']]) {
+    assertComplete(fromStamp(`${A6} DROP TABLE req_attachments; DROP TABLE req_briefs; DROP TABLE req_starts; DROP TABLE req_cost_ledger;
+      DROP TABLE req_contexts; DROP TABLE req_turns; DROP TABLE req_features;${extra}`, stamp));
+  }
+});
+
+test('a DB stamped past this version without the tables is repaired', () => {
+  const db = fromStamp(A6, SCHEMA_VERSION + 1);
+  assert.deepEqual(cols(db, 'req_export_setups'), SETUP_COLS);
+  assert.deepEqual(cols(db, 'req_export_links'), LINK_COLS);
+});
+
+test("a setup row takes its defaults: labels '[\"worca\"]', criteria to the description, no priority", () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  const link = db.prepare("INSERT INTO wf_test_run_tries (run_id, try_id, side) VALUES (1, 7, 'b')");
-  link.run();
-  assert.throws(() => link.run(), /UNIQUE|PRIMARY/);
+  db.prepare(`INSERT INTO req_export_setups (scope_type, scope_key, plugin, source_id, tracker_project, tracker_project_name, issue_type,
+    issue_type_name, created_at, updated_at) VALUES ('project', 'shop-1', 'jira-source', 'jira', 'SHOP', 'SHOP — Shop web', '10001', 'Story', 't', 't')`).run();
+  const r = db.prepare('SELECT * FROM req_export_setups').get();
+  assert.deepEqual([r.labels_json, r.criteria_json, r.priority, r.profile, r.done_status], ['["worca"]', '{"target":"description"}', null, null, null]);
+  db.prepare("INSERT INTO req_export_links (feature_seq, plugin, source_id, tracker_project, updated_at) VALUES (7, 'jira-source', 'jira', 'SHOP', 't')").run();
+  const l = db.prepare('SELECT * FROM req_export_links').get();
+  assert.deepEqual([l.ticket_key, l.ticket_url, l.pending_marker, l.fingerprint], [null, null, null, null]);
 });

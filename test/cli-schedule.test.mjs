@@ -70,6 +70,14 @@ test('--night is stored on the ticket, so the scheduled run opts into night mode
   assert.equal(req.nightMode, true);
 });
 
+test('--guardrails is stored on the ticket as the run body\'s guardrailsId', async () => {
+  const r = await run(['--project', proj, '--prompt', 'Guarded later', '--at', 'tomorrow 03:00', '--guardrails', 'permissive']);
+  assert.equal(r.code, 0, r.stderr);
+  const t = listTickets().find((x) => x.title === 'Guarded later');
+  const req = JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(t.id).request);
+  assert.equal(req.guardrailsId, 'permissive');
+});
+
 test('--tag is stored normalised on the ticket, so the scheduled run carries it (#718)', async () => {
   const r = await run(['--project', proj, '--prompt', 'Tagged later', '--at', 'tomorrow 03:00', '--tag', 'Client: Acme']);
   assert.equal(r.code, 0, r.stderr);

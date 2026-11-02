@@ -21,7 +21,7 @@ const row = (name, extra = {}) => ({ name, version: '0.1.0', pinnedSha: 'a'.repe
 const L = (version, access = []) => ({ version, sha: 'b'.repeat(40), marketplace: 'worca-cc', access });
 const PLUGINS = [
   row('atlassian-mcp', { contributions: { ...ZERO, mcpServers: 1 }, latest: L('0.1.1') }),
-  row('discretestack-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 } }),
+  row('example-models', { version: '0.4.0', contributions: { ...ZERO, models: 2 } }),
   row('github-source', { version: '0.2.0', contributions: { ...ZERO, taskSources: 1 }, latest: L('0.3.0', [{ kind: 'secret', id: 'github.webhookSecret', red: true }]) }),
   row('slack-chat', { contributions: { ...ZERO, chatChannels: 1 }, setup: { ok: false, missing: [{ kind: 'chatChannel', id: 'slack', keys: ['botToken'] }], noProfiles: [] } }),
 ];
@@ -76,7 +76,7 @@ test('#marketplace/installed: Needs attention, All installed and Leftover data f
   const panel = doc.querySelector('#mk-root .mk-panel[data-tab="installed"]');
   assert.deepEqual([...panel.querySelectorAll('section.mk-attention li.mk-row')].map((r) => [r.dataset.name, r.querySelector('button[data-act]').textContent]),
     [['atlassian-mcp', 'Update'], ['github-source', 'Review'], ['slack-chat', 'Set up']]);
-  assert.deepEqual([...panel.querySelectorAll('section.mk-all li.mk-row')].map((r) => r.dataset.name), ['atlassian-mcp', 'discretestack-models', 'github-source', 'slack-chat']);
+  assert.deepEqual([...panel.querySelectorAll('section.mk-all li.mk-row')].map((r) => r.dataset.name), ['atlassian-mcp', 'example-models', 'github-source', 'slack-chat']);
   assert.ok(panel.querySelector('section.mk-leftover li.mk-orphan[data-name="telegram-chat"]'));
   assert.equal(doc.querySelector('.mk-tab[data-tab="installed"] .mk-upd-chip').textContent, '2 updates');
   assert.equal(doc.querySelector('.mk-head-actions .mk-update-all').textContent, 'Update all · 2');
