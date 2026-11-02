@@ -444,10 +444,12 @@ if (!ONLY_A6 && !ONLY_A61) {   // --only=a6 / --only=a61 skip to their section
   await A.evalJs(`location.hash = ${JSON.stringify(briefHash)}`);
   await until(() => A.evalJs(`!!document.querySelector('#requirements-host .req-docs')`), BRIEF_WAIT_MS);
   await pickFiles('#requirements-host .req-docs input[type="file"]', [['tone.md', 'Tone: friendly and short.\n', 'text/markdown']]);
+  // The upload's POST and the refresh it triggers each wait for the brief's git probes (up to STALENESS_TIMEOUT_MS), so the
+  // card can take two of the server's bounds on a busy machine, not one.
   check("the brief's Documents card lists the document, read, with Send with every run, and the header says 1 document",
     await until(() => A.evalJs(`(() => { const r = document.querySelector('#requirements-host .req-docs .req-file');
       return !!r && /What Worca took from it/.test(r.textContent) && !!r.querySelector('[aria-label="Send tone.md with every run"]')
-        && [...document.querySelectorAll('#requirements-host .chip')].some((c) => c.textContent === '1 document'); })()`), 10000));
+        && [...document.querySelectorAll('#requirements-host .chip')].some((c) => c.textContent === '1 document'); })()`), 2 * STALENESS_TIMEOUT_MS + 10_000));
   // ---- A3: Feature chat (boards 22–25), in mock mode. A mock reply drafts the first option of the first question that is not the
   // recommended one ("Support agents") and proposes the criterion "[mock] A criterion Worca suggests."; WORCA_MOCK_HELPER_MS holds a
   // reply so Answering… and Stop can be seen. A mock proposal is always an add (stale only once its text is a criterion), so the stale card is made by
