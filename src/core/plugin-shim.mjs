@@ -16,6 +16,7 @@
 // never touches the store). WORCA_MOCK=1 short-circuits the spawn with canned
 // per-op responses so smoke/tests run offline with zero plugins installed.
 
+import { redactAskText } from './ask/redact.mjs';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -364,11 +365,12 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
         // fetch (exit 0xC0000409). A complete frame on stdout is the answer; keep
         // it and say so. Anything less is still "crashed before the frame".
         if (answered) {
-          // The crash line is usually the last one, not the first.
+          // The crash line is usually the last one, not the first. Connector
+          // stderr can carry credentials: only a redacted, capped line is logged.
           const lines = stderr.split(/\r?\n/).filter((l) => l.trim());
           const line = lines.length ? lines[lines.length - 1] : '';
           log('warn', `plugin "${plugin}" op "${op}": the child crashed on exit after answering `
-            + `(exit ${code ?? signal})${line ? ` — ${line.trim().slice(0, 160)}` : ''}; its answer is kept`);
+            + `(exit ${code ?? signal})${line ? ` — ${redactAskText(line.trim().slice(0, 400)).slice(0, 160)}` : ''}; its answer is kept`);
           return settle(resolveFrame, answered);
         }
         return settle(rejectFrame, new PluginOpError('protocol',

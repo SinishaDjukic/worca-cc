@@ -355,6 +355,23 @@ Assertion failed: simulated crash on exit ${'x'.repeat(500)}
   assert.ok(warns[0].length < 400, `the stderr line is capped: ${warns[0].length} chars`);
 });
 
+test('a token on the crash line of stderr never reaches the warning', async () => {
+  const ghp = `ghp_${'A1b2C3d4E5'.repeat(3)}`;
+  const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJ4eHh4eHh4eHgifQ', 'abcdefghijklmnopqrstuv'].join('.');
+  for (const line of [`Authorization: Bearer ${jwt}`, `push failed with ${ghp}`]) {
+    const logLines = [];
+    const result = await callSource({
+      plugin: NAME, sourceId: 'main', op: 'answerThenCrash', args: { stderr: `${line}
+` },
+      logger: (level, msg) => logLines.push(`${level}:${msg}`),
+    });
+    assert.deepEqual(result, { answered: true });
+    const warn = logLines.find((l) => l.startsWith('warn:'));
+    assert.match(warn, /crashed on exit after answering/);
+    assert.doesNotMatch(warn, /ghp_A1b2|eyJhbGci|abcdefghijklmnop/, warn);
+  }
+});
+
 test('a frame that arrived before the timeout is kept even if the child is killed while ending', async () => {
   const logLines = [];
   const result = await callSource({
