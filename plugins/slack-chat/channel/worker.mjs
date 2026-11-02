@@ -90,6 +90,8 @@ export function createSlackWorker(ctx, {
         ts: ev.ts ?? null,
         threadTs: ev.thread_ts ?? null,
         team: env.payload?.team_id ?? null,
+        // Only a 1:1 DM ("im") is not a group; channels and multi-person DMs are.
+        isGroup: ev.channel_type !== 'im',
       },
     });
   }

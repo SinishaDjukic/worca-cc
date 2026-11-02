@@ -51,7 +51,11 @@ services:
       WORCA_BROKER_RETURN_URL: ${WORCA_BROKER_RETURN_URL:-}
       WORCA_CF_ACCESS_TEAM_DOMAIN: ${WORCA_BROKER_CF_ACCESS_TEAM_DOMAIN:-}
       WORCA_CF_ACCESS_AUD: ${WORCA_BROKER_CF_ACCESS_AUD:-}
+      # Header identity (instead of Access): believed only from the proxy's own address,
+      # e.g. a fixed ipv4_address for the proxy service. worca shares this network, so
+      # never a range that includes it.
       WORCA_IDENTITY_HEADER: ${WORCA_BROKER_IDENTITY_HEADER:-}
+      WORCA_IDENTITY_TRUSTED_PROXIES: ${WORCA_BROKER_IDENTITY_TRUSTED_PROXIES:-}
       WORCA_BROKER_DEFAULT_DAILY_USD: ${WORCA_BROKER_DEFAULT_DAILY_USD:-}
       WORCA_BROKER_DEFAULT_MONTHLY_USD: ${WORCA_BROKER_DEFAULT_MONTHLY_USD:-}
       # "Push as me": the GitHub App or OAuth App people sign in with on the key page.

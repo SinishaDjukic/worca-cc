@@ -9,7 +9,7 @@ test('v65 creates run_groups, run_group_members, pipelines.deleted_at and pipeli
   migrate(db);
   assert.ok(SCHEMA_VERSION >= 65);
   const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
-  assert.deepEqual(cols('run_groups'), ['id', 'title', 'project_key', 'created_by', 'created_at', 'updated_at']);
+  assert.deepEqual(cols('run_groups'), ['id', 'title', 'project_key', 'created_by', 'created_at', 'updated_at', 'name_source'], 'v79 adds name_source');
   assert.deepEqual(cols('run_group_members'), ['pipeline_id', 'group_id', 'position', 'added_by', 'added_at']);
   assert.ok(cols('pipelines').includes('deleted_at'));
   assert.ok(cols('pipelines').includes('pr_verdict'), 'the PR chip verdict (D31)');

@@ -15,7 +15,7 @@
 // streamed to disk in ~1 MiB chunks (nodes to the file, links to a side file appended at the end).
 
 import { createReadStream } from 'node:fs';
-import { lstat, open, rename, rm, stat } from 'node:fs/promises';
+import { lstat, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import { hash64 } from '../../shared/workspace-map/ids.mjs';
@@ -442,6 +442,45 @@ export async function mergeWorkspaceGraph(map, { members, outPath, limits = LIMI
   } catch (err) {
     if (writer) await writer.abort().catch(() => {});
     return done({ ...none, error: msg(err) });
+  }
+}
+
+/** Largest merged graph a member removal rewrites in memory: a full merge is bounded by
+ *  GRAPH_FULL_MAX_BYTES of member graphs, plus its bridges and stubs. Larger → the removal drops it. */
+export const GRAPH_PRUNE_MAX_BYTES = 2 * LIMITS.GRAPH_FULL_MAX_BYTES;
+
+const repoOfId = (id) => String(id).split('::')[0];
+
+/** A member removal (workspaces.mjs removeWorkspaceMember): rewrite the merged workspace graph `file`
+ *  without the members not in `keep` — their nodes, every link with an end in one (bridges included)
+ *  — into `outPath` (atomic, the merge's own writer). → { nodes, bridges }, or null when the file is
+ *  missing, larger than maxBytes, not a node-link graph, or nothing is left (outPath not written).
+ *  Never throws. */
+export async function pruneWorkspaceGraph(file, { keep, outPath, maxBytes = GRAPH_PRUNE_MAX_BYTES } = {}) {
+  let writer = null;
+  try {
+    const st = await lstat(file);
+    if (!st.isFile() || st.size > maxBytes) return null;
+    const g = JSON.parse(await readFile(file, 'utf8'));
+    if (!g || typeof g !== 'object' || !Array.isArray(g.nodes) || !Array.isArray(g.links)) return null;
+    const kept = new Set(keep);
+    const meta = g.graph && typeof g.graph === 'object' ? g.graph : {};
+    writer = await graphWriter(outPath, { ...meta, members: (Array.isArray(meta.members) ? meta.members : []).filter((k) => kept.has(k)) });
+    for (const n of g.nodes) if (n && kept.has(String(n.repo ?? repoOfId(n.id)))) await writer.node(n);
+    let bridges = 0;
+    for (const l of g.links) {
+      if (!l || !kept.has(repoOfId(l.source)) || !kept.has(repoOfId(l.target))) continue;
+      if (l.relation === 'cross_repo_uses') bridges += 1;
+      await writer.link(l);
+    }
+    if (!writer.count()) { await writer.abort(); writer = null; return null; }
+    const nodes = writer.count();
+    await writer.close();
+    writer = null;
+    return { nodes, bridges };
+  } catch {
+    if (writer) await writer.abort().catch(() => {});
+    return null;
   }
 }
 

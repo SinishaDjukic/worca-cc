@@ -128,7 +128,7 @@ function classify(stderr, host = 'github.com') {
 export async function runClone(plan, { timeoutMs = CLONE_TIMEOUT_MS, credential = githubEnv, spawnImpl = spawn } = {}) {
   if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);
   // Each host gets ITS read credential for this one command (gitEnvFor); GitHub keeps the injectable seam.
-  const cred = await gitEnvFor('read', plan.url, { githubEnvImpl: credential });
+  const cred = await gitEnvFor('read', plan.url, { githubEnvImpl: credential, readAsPerson: true });
   if (cred.error) throw new CloneError('auth-failed', cred.error);
   const args = ['clone', '--filter=blob:none', ...(plan.branch ? ['--branch', plan.branch] : []), '--', plan.url, plan.dir];
   const env = { ...cred.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', LC_ALL: 'C' };

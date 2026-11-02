@@ -1,12 +1,12 @@
 // ui/public/ask-side.mjs — Ask worca beside the page: the side column's controller (aside#ask-side under the top bar,
 // beside main.main). It shows and hides the column (the person's choice is remembered across pages and reloads; a page
-// without the column hides it without forgetting), sizes it (360-560px from its left edge, remembered), plays the
+// without the column hides it without forgetting), sizes it (360-680px from its left edge, remembered), plays the
 // 320 ms slide, and answers the rail question app.js asks (railCollapsed). The chat itself is app.js's: onShow moves
 // the ONE Ask panel in (told whether the header button asked), onHide closes it. Where the column covers the page
 // (<= 1080px), uncover() steps it aside for a page the chat itself opened (a run card, a link).
 
 export const SIDE_MIN = 360;
-export const SIDE_MAX = 560;
+export const SIDE_MAX = 680;
 export const SIDE_DEFAULT = 440;
 export const SIDE_MS = 320;
 export const PAGE_MIN = 640;
@@ -15,7 +15,7 @@ export const OPEN_KEY = 'worca-cc.askSide.open';
 export const WIDTH_KEY = 'worca-cc.askSide.width';
 const STEP = 20;
 
-/** A stored or dragged width as the column takes it: nothing usable → the default; else rounded into 360-560. */
+/** A stored or dragged width as the column takes it: nothing usable → the default; else rounded into 360-680. */
 export function clampWidth(px) {
   if (px === null || px === undefined || px === '') return SIDE_DEFAULT;
   const n = Number(px);

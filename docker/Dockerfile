@@ -11,11 +11,11 @@
 #   WORCA_TARBALL        path (relative to the build context) of worca-app-<v>.tgz  [required]
 #   CLAUDE_CODE_VERSION  the @anthropic-ai/claude-code version to pin              [required]
 #   VARIANT              slim | full                                               [slim]
-#   NODE_IMAGE           base image                                                [node:22-bookworm-slim]
 #   APT_REFRESH          any string; a new value rebuilds the OS layer (CI: Debian publish stamps)
 
-ARG NODE_IMAGE=node:22-bookworm-slim
-FROM ${NODE_IMAGE}
+# The base image is pinned by its multi-arch index digest, so a re-pushed tag cannot change what
+# the build starts from. A literal FROM (no build arg) so Dependabot can propose the bumps.
+FROM node:22-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
 
 ARG WORCA_TARBALL
 ARG CLAUDE_CODE_VERSION
@@ -75,14 +75,25 @@ RUN test -n "${CLAUDE_CODE_VERSION}" || { echo "CLAUDE_CODE_VERSION build arg is
  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && npm cache clean --force
 
-# Worca, from the packed tarball.
+# Worca, from the packed tarball, at the versions its npm-shrinkwrap.json locks. `npm install -g` of
+# a local tarball ignores the shrinkwrap (npm only honours it for a registry install), so the
+# package is unpacked where a global install puts it and `npm ci` installs exactly the lockfile.
+# Two optional dependencies run install scripts: node-pty (native build or prebuild) and
+# ffmpeg-static (downloads its binary); see docs/docker.md.
+# COPY, not ADD (DL3010): ADD would unpack the tarball under its `package/` folder in a layer of
+# its own; the RUN below unpacks it in place and installs it in the same layer.
+# hadolint ignore=DL3010
 COPY ${WORCA_TARBALL} /tmp/worca.tgz
 # The egress overlay's sidecar runs the policy proxy from the package as one standalone
 # file (docker/compose.egress.yml; src/core/egress-proxy.mjs imports node: modules only).
-RUN npm install -g /tmp/worca.tgz \
+RUN app="$(npm root -g)/@worca/app" \
+ && mkdir -p "${app}" \
+ && tar -xzf /tmp/worca.tgz -C "${app}" --strip-components=1 --no-same-owner \
+ && npm ci --prefix "${app}" --omit=dev --no-audit --no-fund \
+ && ln -s "${app}/src/cli/worca-cc.mjs" /usr/local/bin/worca \
  && rm /tmp/worca.tgz \
  && npm cache clean --force \
- && install -m 755 "$(npm root -g)/@worca/app/src/core/egress-proxy.mjs" /usr/local/lib/worca-egress-proxy.mjs
+ && install -m 755 "${app}/src/core/egress-proxy.mjs" /usr/local/lib/worca-egress-proxy.mjs
 
 # Non-root user. uid/gid 1000 matches the default first user on Linux and in a
 # WSL2 distro, so bind-mounted project files keep their owner. The node base
@@ -103,13 +114,21 @@ RUN usermod -l worca -d /home/worca -m node \
 # The agent POOL (credential broker, docs/credential-broker.md): worca-agent-01..16, one per
 # signed-in person, so one person's agents cannot read another's processes (and the broker
 # token in their environment). Same group, same rule: sudo to these users only, never root.
+# Each pool user also has a group of its own that only it and `worca` are in: a run's folders
+# (its store dir and runs/<id>) get that group, so one person's agent cannot edit another
+# person's run (verdicts, outputs; agent-pool.mjs claimRunDir).
+#
+# `worca-plugin` runs plugin task-source connectors and chat-channel workers. Same group (it reads
+# plugin code), its own HOME, and no read of worca's home, so one plugin cannot open another's
+# secrets.json (plugin-shim.mjs pluginChildSpawn).
 RUN groupadd -g 1001 worca-share \
  && useradd -l -u 1001 -g worca-share -M -d /nonexistent -s /bin/bash worca-agent \
- && for i in $(seq -w 1 16); do useradd -l -u "11$i" -g worca-share -M -d /nonexistent -s /bin/bash "worca-agent-$i"; done \
+ && useradd -l -u 1002 -g worca-share -M -d /nonexistent -s /bin/bash worca-plugin \
+ && for i in $(seq -w 1 16); do groupadd -g "11$i" "worca-agent-$i" && useradd -l -u "11$i" -g worca-share -G "worca-agent-$i" -M -d /nonexistent -s /bin/bash "worca-agent-$i" && usermod -aG "worca-agent-$i" worca; done \
  && usermod -aG worca-share worca \
  && printf '%s\n' \
       'Defaults:worca !lecture, !syslog, !secure_path, umask=0007, umask_override' \
-      "Runas_Alias WORCA_AGENTS = worca-agent, $(seq -w 1 16 | sed 's/^/worca-agent-/' | paste -sd, - | sed 's/,/, /g')" \
+      "Runas_Alias WORCA_AGENTS = worca-agent, worca-plugin, $(seq -w 1 16 | sed 's/^/worca-agent-/' | paste -sd, - | sed 's/,/, /g')" \
       'worca ALL=(WORCA_AGENTS) NOPASSWD:SETENV: ALL' \
       > /etc/sudoers.d/worca-agent \
  && chmod 0440 /etc/sudoers.d/worca-agent \

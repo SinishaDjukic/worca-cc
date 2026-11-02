@@ -31,6 +31,11 @@ const addBtn = (doc, label, data) => { const b = button(doc, 'btn btn-sm', label
 export const MCP_SKILLS_ROUTE = 'connectors/skills';
 export function parseMcpParam(sub = '') {
   if (sub === 'servers') return { view: 'servers', setId: null };
+  if (sub.startsWith('servers/') && sub.length > 8) {
+    let server = sub.slice(8);
+    try { server = decodeURIComponent(server); } catch { /* a malformed %-escape reads as typed: no row matches it */ }
+    return { view: 'servers', setId: null, server };
+  }
   if (sub === 'skills') return { view: 'skills', setId: null };
   if (sub.startsWith('sets/') && sub.length > 5) {
     let setId = sub.slice(5);
@@ -965,7 +970,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   host.addEventListener('focusout', (e) => { if (e.target.dataset && e.target.dataset.field) void onChange(e); });
 
   return {
-    /** Route entry: '' | 'sets/<id>' | 'servers' | 'skills' (the part after #connectors/). */
+    /** Route entry: '' | 'sets/<id>' | 'servers' | 'servers/<id>' | 'skills' (the part after #connectors/). */
     show(sub = '') {
       const r = parseMcpParam(sub);
       st.view = r.view;

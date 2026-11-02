@@ -17,6 +17,7 @@ import { worcaHome } from '../projects.mjs';
 import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { withTryGuardEnv } from '../workflow-tests/try-guard-env.mjs';
+import { withoutProxyLogin } from '../env-proxy.mjs';
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -43,6 +44,8 @@ export const SPAWN_ENV_BASE = [
   // Worca's corporate-proxy marker (proxy-credentials.mjs CORPORATE_PROXY_VAR; a test pins the value).
   'WORCA_CORPORATE_PROXY_URL',
   'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+  // The single-bundle CA names git, curl and Python Requests read (the container entrypoint sets them).
+  'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE',
 ];
 
 /**
@@ -94,7 +97,9 @@ export function cleanRunEnv(env) {
  * scrubbed env (undefined when scrub is off -> process.env), the run-level env
  * (cleanRunEnv) over it, the adapter's overlay (the model env) merged LAST so it
  * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
- * or Azure DevOps credential in any tier (host-credentials.mjs), and never the credential broker's own secret. With
+ * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, and no
+ * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
+ * goes direct rather than get the password). With
  * no run env and no overlay the env is byte-identical to the scrub result.
  * @returns {{env: Record<string,string>, scrubbed: boolean}}
  */
@@ -109,7 +114,7 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   delete env.WORCA_BROKER_SECRET_FILE;
   // Workflow tests 3a (D56): a try's outward guard (PATH stand-ins, git that cannot sign in). Absent: byte-identical.
   if (tryGuard) env = withTryGuardEnv(env, tryGuard);
-  env = withNoGitPath(env);
+  env = withNoGitPath(withoutProxyLogin(env));
   return { env, scrubbed: !!scrubbedEnv };
 }
 

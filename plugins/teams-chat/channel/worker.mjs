@@ -183,6 +183,8 @@ export function createTeamsWorker(ctx, {
             tenantId: activity.channelData?.tenant?.id ?? null,
             name: activity.from?.name ?? null,
             replyToId: activity.id ?? null,
+            // Only a "personal" conversation is 1:1; group chats and channels are groups.
+            isGroup: activity.conversation?.conversationType !== 'personal',
           },
         });
       }

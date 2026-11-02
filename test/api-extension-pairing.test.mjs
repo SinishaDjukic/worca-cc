@@ -162,7 +162,7 @@ test('approve/deny/revoke/list are refused for an extension caller, a cross-orig
   try {
     const a = await call('POST', `/api/extension/pair/${r.body.requestId}/approve`);
     assert.equal(a.status, 403);
-    assert.equal(a.body.code, 'extension-agent-blocked');
+    assert.equal(a.body.code, 'AGENT_CALLER_BLOCKED');
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
 });
 

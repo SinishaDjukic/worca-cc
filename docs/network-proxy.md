@@ -16,6 +16,26 @@ The local proxy accepts connections from this machine only, like Px and CNTLM. I
 token, so any local process can use your corporate login through it. On a shared multi-user host,
 every local user can do that too.
 
+### A login in `HTTPS_PROXY`
+
+When `HTTPS_PROXY` or `HTTP_PROXY` carries a user name and password
+(`http://ACME%5Cjdoe:password@proxy.acme.example:8080`) and `networkProxy.enabled` is not set, Worca
+starts the local proxy anyway, with that URL as the corporate proxy (an `upstream` left in `settings.json`
+is not used then). Without this, every agent,
+script, terminal and git process would get the password, and plugins and chat channels would get no
+proxy at all. The boot line says `started because HTTP(S)_PROXY carries a login`.
+
+With the proxy started this way and `networkProxy.auth` unset, the login is sent as NTLMv2 when the
+corporate proxy offers it. Otherwise it is sent as Digest, else Basic, the way the programs that read
+`HTTPS_PROXY` sent it before. A proxy you turned on yourself never falls back like this (see `auth`
+below).
+
+Set `networkProxy.enabled` to `false` to keep the proxy off. Agents, scripts, plugins and chat channels
+then get no proxy URL and go direct, so none of them gets the password. Terminals, git and actions
+keep your `HTTPS_PROXY` unchanged. Worca prints a warning at start. Remove `enabled` again and the
+proxy starts within a few seconds, without a restart. With the proxy off, any proxy variable that
+carries a login (`ALL_PROXY` and the tool-specific ones too) is withheld from agents and scripts.
+
 ## Set it up
 
 1. Open Settings › Runs › Network proxy and turn on **Use a corporate proxy**.
@@ -35,8 +55,20 @@ values, and Worca still chains to that one fixed proxy.
 |---|---|---|
 | macOS | `scutil --proxy`: a PAC URL, then auto-discovery (`http://wpad/wpad.dat`), then a manual HTTPS (or HTTP) proxy | host and port; with a manual proxy also the bypass list |
 | Windows | Windows PowerShell's `GetSystemWebProxy` (the system's own PAC, WPAD and manual resolver); the registry says which it was | host and port; with a manual proxy also `ProxyOverride` |
-| Linux | GNOME `gsettings org.gnome.system.proxy`: mode `auto` (its PAC URL, or WPAD) or `manual` | host and port; with a manual proxy also `ignore-hosts` |
+| Linux | In order, until one finds a proxy (or a PAC that goes direct): under WSL, Windows itself (see below); GNOME `gsettings org.gnome.system.proxy`, mode `auto` (its PAC URL, or WPAD) or `manual`; KDE's `kioslaverc` through `kreadconfig6` (or `kreadconfig5`), `ProxyType` 1 manual, 2 PAC URL, 3 WPAD or 4 "use the environment"; last, the `HTTPS_PROXY` / `HTTP_PROXY` Worca started with | host and port; with a manual proxy also `ignore-hosts` / `NoProxyFor`; from the variables also `NO_PROXY` |
 
+- **WSL** (`WSL_DISTRO_NAME`, or a Microsoft kernel in `/proc/version`): Worca asks Windows through interop the
+  same way it does on Windows, once, within 15 seconds: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`,
+  else `powershell.exe` from the Windows `PATH` WSL appends. A Windows proxy on `127.0.0.1` is reachable from WSL
+  only in mirrored networking mode, so that answer is used only when no Linux source finds a proxy, and its line
+  says so.
+- **KDE** with *Only use proxy for entries in this list* (`ReversedException`) proxies only the listed hosts: unless
+  `api.anthropic.com` matches one, the answer is that no proxy is needed. A PAC setting that is a bare path is read
+  as a local file.
+- **The variables** (source `env`) are the ones Worca was started with, before its own local proxy took
+  `HTTPS_PROXY`: Auto-detect never offers Worca's own `127.0.0.1` address. A login in the URL is dropped, and a
+  `socks5://` (or any non-`http://`) value is skipped. In a
+  container this is the only source there is: the host's desktop settings cannot be read from inside it.
 - With several proxies in the answer, the first fills in and the line names the others. A PAC answer that goes
   `DIRECT` says no proxy is needed. SOCKS entries are skipped: Worca chains to an HTTP proxy only.
 - The bypass list comes only from a manual setting: a PAC file's direct rules are code, not a list. IP ranges
@@ -46,7 +78,7 @@ values, and Worca still chains to that one fixed proxy.
   proxy) and evaluates it in a separate `node --permission` process that can read no file but its own script and
   start no process, with a 64 MB heap and a 4-second limit. That process asks Worca for each DNS lookup the script
   makes. Date and time rules (`dateRange`, `timeRange`) count as always in range.
-- `GET /api/proxy/detect` answers `{ found, source: pac | wpad | manual | none | error, host?, port?, noProxy?,
+- `GET /api/proxy/detect` answers `{ found, source: pac | wpad | manual | env | none | error, host?, port?, noProxy?,
   also?, pacUrl?, direct?, line }`. It never answers an error status: a setting it cannot read is `found: false`
   with a line.
 
@@ -258,6 +290,17 @@ A login kept in `HTTPS_PROXY` has no saved stop. Correct the URL, then restart W
 
 Not supported (Negotiate works only with the NTLM login inside it). Run [Px](https://github.com/genotrance/px) with your Windows session, point
 `HTTPS_PROXY` at it, and leave the corporate proxy off.
+
+## Worca in a container
+
+The box from `worca container` cannot use this machine's local proxy, because
+`127.0.0.1` inside the box is the box itself. `worca container` gives the box
+your `networkProxy.upstream` (host and port only) when that proxy needs no
+login. It never passes the local proxy in. Otherwise the box gets no proxy,
+and you set the proxy up in the box's own Worca: its Settings › Network proxy,
+then `worca container run -- proxy login`. For a proxy that re-signs TLS, set
+`WORCA_CA_CERT` in the container `.env` to the CA's PEM file. See
+[docker.md → Corporate proxy and CA](docker.md#corporate-proxy-and-ca).
 
 ## Troubleshooting
 

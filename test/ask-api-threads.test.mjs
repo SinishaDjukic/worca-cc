@@ -589,6 +589,7 @@ test('show_files copies on the attachment route: an SVG gets the sandbox CSP; ?a
     { name: 'shared sign-in: another person gets 404 on ?as=text, the owner gets 200', run: async () => {
       const prev = process.env.WORCA_IDENTITY_HEADER;
       process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
       try {
         const t = store.createThread({ createdBy: 'bob@example.com' });
         const md = store.addAttachment(t.id, null, { name: 'r.md', kind: 'text', mime: 'text/markdown', text: 'mine' });
@@ -640,6 +641,7 @@ test('Show in folder: GET /api/ask/reveal says whether a folder opens here; the 
     { name: 'shared sign-in: another person gets 404', run: async () => {
       const prev = process.env.WORCA_IDENTITY_HEADER;
       process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
       try {
         const t = store.createThread({ createdBy: 'bob@example.com' });
         const up = store.addAttachment(t.id, null, { name: 'a.md', text: 'a' });
@@ -862,4 +864,52 @@ test('#948 s2: PATCH archived / pinned validation, the paged list shapes, Show =
       assert.equal((await (await fetch(`${base}/api/ask/threads/${thread.id}`)).json()).thread.archivedAt, null);
     } },
   ]);
+});
+
+test('the list says what each chat did: runs it started from a card, runs it only tracked (a re-track keeps a started run started), a workflow card in any state', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const { seedPipeline } = await import('./helpers/db-seed.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-askthreads-kind-'));
+  try {
+    const { id: startedPid } = await seedPipeline(dir, { title: 'Started run', status: 'done', steps: [] });
+    const { id: trackedPid } = await seedPipeline(dir, { title: 'Tracked run', status: 'done', steps: [] });
+    const plain = store.createThread({ title: 'kind plain' });
+    // A run card's launch links WITH the card id (POST /api/run); a later track_run of that run only patches the row.
+    const started = store.createThread({ title: 'kind started' });
+    store.linkRun(started.id, { runId: 'uuid-KIND-START', pipelineId: startedPid, cardId: 'card_0000aa01', status: 'running' });
+    assert.equal(mod._testing.askTrackRun(started.id, { id: startedPid }, null).ok, true);
+    assert.deepEqual(store.listRunLinks(started.id).map((l) => l.cardId), ['card_0000aa01'], 'one row, its card id kept');
+    const tracked = store.createThread({ title: 'kind tracked' });
+    assert.equal(mod._testing.askTrackRun(tracked.id, { id: trackedPid }, null).ok, true);
+    const both = store.createThread({ title: 'kind both' });
+    store.linkRun(both.id, { runId: 'uuid-KIND-BOTH', pipelineId: startedPid, cardId: 'card_0000aa02', status: 'done' });
+    assert.equal(mod._testing.askTrackRun(both.id, { id: trackedPid }, null).ok, true);
+    const withBlocks = (title, blocks) => {
+      const t = store.createThread({ title });
+      store.appendMessage(t.id, { role: 'user', text: 'go' });
+      store.appendMessage(t.id, { role: 'assistant', text: '', blocks });
+      return t;
+    };
+    const declined = withBlocks('kind workflow', [{ kind: 'text', text: 'Here.' },
+      { kind: 'card', id: 'card_0000bb01', state: 'declined', card: { type: 'workflow', mode: 'task', name: 'Review loop' } }]);
+    const built = withBlocks('kind build', [{ kind: 'card', id: 'card_0000bb02', state: 'applied', card: { type: 'workflow-build', name: 'Docs' } }]);
+    // Neither a tool row that merely holds `"type":"workflow"` nor a run card (it names a workflowId) is a workflow card.
+    const lookalike = withBlocks('kind lookalike', [{ kind: 'tool', id: 'toolu_1', name: 'edit_canvas', input: { type: 'workflow' } },
+      { kind: 'card', id: 'card_0000bb03', state: 'proposed', card: { workflowId: 'wf_default', title: 'Fix it' } },
+      { kind: 'card', id: 'card_0000bb04', state: 'proposed', card: { type: 'workflows', summary: 'not this one' } }]);
+    const facts = (t) => t && { startedRuns: t.startedRuns, trackedRuns: t.trackedRuns, hasWorkflowCard: t.hasWorkflowCard, runLinks: t.runLinks };
+    for (const url of ['/api/ask/threads?limit=200', '/api/ask/threads?show=all&limit=200', '/api/ask/threads?q=kind&limit=200']) {
+      const { threads } = await (await fetch(`${base}${url}`)).json();
+      const of = (t) => facts(threads.find((x) => x.id === t.id));
+      assert.deepEqual(of(plain), { startedRuns: 0, trackedRuns: 0, hasWorkflowCard: false, runLinks: 0 }, url);
+      assert.deepEqual(of(started), { startedRuns: 1, trackedRuns: 0, hasWorkflowCard: false, runLinks: 1 }, `${url}: a re-tracked started run stays started`);
+      assert.deepEqual(of(tracked), { startedRuns: 0, trackedRuns: 1, hasWorkflowCard: false, runLinks: 1 }, url);
+      assert.deepEqual(of(both), { startedRuns: 1, trackedRuns: 1, hasWorkflowCard: false, runLinks: 2 }, url);
+      assert.deepEqual(of(declined), { startedRuns: 0, trackedRuns: 0, hasWorkflowCard: true, runLinks: 0 }, `${url}: a declined card counts`);
+      assert.deepEqual(of(built), { startedRuns: 0, trackedRuns: 0, hasWorkflowCard: true, runLinks: 0 }, `${url}: build_workflow's card`);
+      assert.deepEqual(of(lookalike), { startedRuns: 0, trackedRuns: 0, hasWorkflowCard: false, runLinks: 0 }, url);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

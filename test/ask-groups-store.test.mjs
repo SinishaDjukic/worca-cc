@@ -5,7 +5,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import {
   createThread, getThread, deleteThread, appendMessage, listThreadsPage, setArchived,
   createChatGroup, getChatGroup, listChatGroups, renameChatGroup, addToChatGroup, removeFromChatGroup,
-  deleteChatGroup, chatGroupThreadIds, firstUserText, ChatGroupError,
+  deleteChatGroup, chatGroupThreadIds, firstUserText, ChatGroupError, snapshotChatGroups, restoreChatGroups,
 } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
@@ -96,4 +96,29 @@ test('the search matches a group name and returns match.group; firstUserText rea
   const hit = page.threads.find((t) => t.id === a.id);
   assert.deepEqual(hit.match, { group: 'Release prep' });
   assert.equal(firstUserText(a.id), 'Safari loops after SSO');
+});
+
+test('Undo of an add: the chat goes back to its old group, which comes back with its id and name source', () => {
+  const a = createThread({ title: 'a' });
+  const b = createThread({ title: 'b' });
+  const ga = createChatGroup({ name: 'A', nameSource: 'suggested', threadIds: [a.id] });
+  const gb = createChatGroup({ name: 'B', threadIds: [b.id] });
+  const snap = snapshotChatGroups([a.id]);
+  addToChatGroup(gb.id, [a.id]);
+  assert.equal(getChatGroup(ga.id), null, 'A was dropped by the move');
+  restoreChatGroups(snap);
+  assert.equal(getThread(a.id).groupId, ga.id);
+  assert.equal(getChatGroup(ga.id).nameSource, 'suggested');
+  assert.deepEqual(chatGroupThreadIds(gb.id), [b.id]);
+});
+
+test('Undo of a create: the created group is dropped and the chat is back in its old group', () => {
+  const b = createThread({ title: 'b' });
+  const c = createThread({ title: 'c' });
+  const gb = createChatGroup({ name: 'B', threadIds: [b.id, c.id] });
+  const snap = snapshotChatGroups([b.id]);
+  const made = createChatGroup({ name: 'New', threadIds: [b.id] });
+  restoreChatGroups({ ...snap, created: made.id });
+  assert.equal(getChatGroup(made.id), null);
+  assert.equal(getThread(b.id).groupId, gb.id);
 });

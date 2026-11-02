@@ -19,7 +19,7 @@
 // NOT_FOUND->404). workspacesFile() is retained (vestigial) for import-compat.
 
 import { realpathSync, statSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { copyFile, rename, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -32,6 +32,7 @@ import { gitAvailable } from './git-available.mjs';
 import { teamOverHttps, teamRepoState } from './git-free/team-repo.mjs';
 import { slugify, retainedWorkFor, checkoutRecordsFor, folderApplyRetainFor } from './artifacts.mjs';
 import { getDb, prepare, tx } from './db.mjs';
+import { pruneWorkspaceGraph } from './workspace-map/graph.mjs';
 import { WORKSPACE_MAX_PROJECTS, scanDescriptionBudget } from '../shared/workspace-size.mjs';
 import { KINDS, checkOverrides, checkSynthesis } from '../shared/workspace-map/schema.mjs';
 import { LIMITS } from '../shared/workspace-map/limits.mjs';
@@ -411,7 +412,7 @@ function normalizeMembers(projectPaths, rootOf = canonicalProjectRoot) {
  * write lock, where every probe runs, then again inside it on the cached answers — so the lock is
  * never held across a git spawn (a member that is new to the second pass still probes live).
  */
-function memoGitProbe() {
+export function memoGitProbe() {
   const memo = (fn) => { const m = new Map(); return (p) => { if (!m.has(p)) m.set(p, fn(p)); return m.get(p); }; };
   return { rootOf: memo(canonicalProjectRoot), isRepo: memo(isGitRepo), rowOf: memo(getProjectByPath), gitOn: gitAvailable, nestedOf: memo(enclosingRepoOf) };
 }
@@ -690,6 +691,25 @@ export function planMemberRemove(id, projectPath, git = LIVE_GIT) {
   };
 }
 
+const STORED_GRAPH_FILE = 'workspace-graph.json';   // workspace-scan-run.mjs WORKSPACE_GRAPH_FILE (that module imports this one)
+const NO_GRAPH = Object.freeze({ mode: 'none', file: null, nodes: 0, bridges: 0 });
+
+/** Test seams (never set in production). beforeRemoveTx: awaited between removeWorkspaceMember's
+ *  pre-lock graph prune and its transaction — where a concurrent scan's finalize can land. */
+export const _testing = { beforeRemoveTx: null };
+
+/** The stored merged graph a map points at — only the copy finalize adopted into the workspace's
+ *  own store (adoptGraphFile); any other path is never touched. */
+function storedGraphFile(id, map) {
+  const file = map && map.graph && typeof map.graph.file === 'string' ? map.graph.file : '';
+  return file && file === join(workspaceStorePath(id), STORED_GRAPH_FILE) ? file : null;
+}
+
+/** Which scan wrote this map (a partial re-scan keeps runId/scannedAt and stamps resynthesizedAt):
+ *  a graph pruned from one map is adopted only into the same map (review m3). Its fields are pinned
+ *  by the race test in test/workspaces-db.test.mjs — change both together. */
+const mapStamp = (map) => (map ? JSON.stringify([map.runId ?? null, map.scannedAt ?? null, map.resynthesizedAt ?? null]) : null);
+
 /**
  * The stored map and its reviews without one member (by project key): its entry, every edge that
  * names it and its synthesized role; every confirm / reject override and manual edge that names
@@ -697,8 +717,10 @@ export function planMemberRemove(id, projectPath, git = LIVE_GIT) {
  * (changeOrder over liveEdges, as the scan derives them), and the synthesizer's order notes are
  * dropped: they described the order before the member left. Coordination notes are free text
  * and stay until the next scan replaces the synthesis. Pure.
+ * graphAfter: undefined → map.graph untouched (no stored graph); {nodes, bridges} → the pruned
+ * file's counts; null → the graph is dropped (NO_GRAPH).
  */
-function mapWithoutMember(mapDoc, overrides, key) {
+function mapWithoutMember(mapDoc, overrides, key, graphAfter = undefined) {
   const names = (e) => e && (e.from === key || e.to === key);
   const edgeOverrides = {};
   for (const [id, o] of Object.entries((overrides && overrides.edges) || {})) if (!names(o)) edgeOverrides[id] = o;
@@ -716,9 +738,152 @@ function mapWithoutMember(mapDoc, overrides, key) {
       if (roles) delete roles[key];
       synthesis = { ...syn, ...(roles ? { roles } : {}), ...(typeof syn.orderNotes === 'string' ? { orderNotes: '' } : {}) };
     }
-    doc = { map: { ...m, members, edges, order, cycles }, synthesis };
+    const graph = graphAfter === undefined ? m.graph : graphAfter ? { ...m.graph, ...graphAfter } : { ...NO_GRAPH };
+    doc = { map: { ...m, members, edges, order, cycles, graph }, synthesis };
   }
   return { mapDoc: doc, overrides: nextOverrides };
+}
+
+/** The re-scan a member removal asks for (POST /api/workspaces/:id/members {remove, rescan}). */
+export const RESCAN_CHOICES = Object.freeze(['none', 'partial', 'full']);
+/** memberRemoveImpact's thresholds — why each value: docs/workspace-map.md "Removing a member". */
+export const REMOVE_IMPACT_LIMITS = Object.freeze({ hubEdges: 8, hubPeers: 3, providerFor: 2, staleDays: 30 });
+
+/** Which of `keys` the stored map does not describe (missing), and which map members are not in
+ *  `keys` (extra) — both sorted. A map that is not one covers nothing. Pure. */
+export function mapCoverage(map, keys) {
+  const have = new Set((isWorkspaceMap(map) ? map.members : []).filter(Boolean).map((m) => m.key));
+  const want = new Set(keys);
+  return {
+    missing: [...want].filter((k) => !have.has(k)).sort(),
+    extra: [...have].filter((k) => !want.has(k)).sort(),
+  };
+}
+
+/** Why a partial re-scan (wf_workspace_resynth) cannot run over `map` for the member keys `keys`,
+ *  or null when it can: it re-synthesizes the stored map as it is, so the map must describe exactly
+ *  those members. Checked BEFORE launch (server afterMembersChanged) and again when the run freezes
+ *  the map (run-harness _freezeStoredMap, at start and at resume — a terminal error) — never left to
+ *  the seed card, whose throw would pause the run. Pure. */
+export function resynthBlocker(map, keys) {
+  if (!isWorkspaceMap(map)) return 'there is no stored map to re-synthesize';
+  const { missing, extra } = mapCoverage(map, keys);
+  return missing.length || extra.length ? 'the stored map does not cover the workspace\'s members (a scan never finished)' : null;
+}
+
+const RESCAN_RANK = { none: 0, partial: 1, full: 2 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const countOf = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const andList = (xs) => (xs.length <= 2 ? xs.join(' and ') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** A whole-word, case-insensitive mention ("api" is not in "rapid"; "svc-x" is one word). */
+const mentions = (text, word) => !!word && typeof text === 'string'
+  && new RegExp(`(^|[^\\w-])${escapeRe(word)}($|[^\\w-])`, 'i').test(text);
+
+/**
+ * What removing member `key` invalidates in the STORED map (read before the removal is applied),
+ * and the re-scan worca recommends — pure: no I/O, no model call. Rules R0–R6 and the thresholds:
+ * docs/workspace-map.md "Removing a member".
+ * @param {{map:object, synthesis:object|null}|null} mapDoc  the entry's stored map doc
+ * @param {object|null} overrides  the stored overrides (reviews + manual edges)
+ * @param {string} key  the removed member's projectKey
+ * @param {{name?:string, now?:number, pendingRescan?:('full'|'partial'|null), remaining?:Array<{key:string,name?:string}>|null, limits?:object}} [opts]
+ *        name: the label when the map does not know the member; now: the clock (tests pin it — the
+ *        stale rule reads it); pendingRescan: a live automatic re-scan this change replaces
+ *        (supersedeRescans); remaining: the members left (R1b — omitted, the coverage check is skipped)
+ * @returns {{level:'none'|'partial'|'full', reason:string, partialAvailable:boolean, signals:object}}
+ */
+export function memberRemoveImpact(mapDoc, overrides, key, { name = '', now = Date.now(), pendingRescan = null, remaining = null, limits = REMOVE_IMPACT_LIMITS } = {}) {
+  const map = mapDoc && isWorkspaceMap(mapDoc.map) ? mapDoc.map : null;
+  // reason = `${lead}${tail}`: lead is the facts (no final period), tail the recommendation. R0 keeps
+  // the lead and swaps the tail — never re-split a sentence (a member name may contain ". ").
+  const raise = (level, lead, tail, partialAvailable, signals) => {
+    const pending = RESCAN_RANK[pendingRescan] > RESCAN_RANK[level] ? pendingRescan : null;
+    if (!pending) return { level, reason: `${lead}${tail}`, partialAvailable, signals };
+    return { level: pending, partialAvailable, signals: { ...signals, pendingRescan },
+      reason: `${lead}. A re-scan for an earlier member change is still running and this change replaces it, so a ${pending} re-scan is recommended.` };
+  };
+  if (!map) {
+    return raise('full', `There is no stored map for ${name || key} to be pruned from`, '. A full re-scan is recommended so the map describes the members left.', false, { noMap: true });
+  }
+  const labelOf = new Map(map.members.filter(Boolean).map((m) => [m.key, String(m.name || m.key)]));
+  // R1b: a partial re-scan re-synthesizes the stored map as it is — it must describe exactly the members left.
+  if (Array.isArray(remaining)) {
+    const { missing, extra } = mapCoverage(map, remaining.map((r) => r.key));
+    const strays = extra.filter((k) => k !== key);
+    if (missing.length || strays.length) {
+      const nameOf = new Map(remaining.map((r) => [r.key, String(r.name || r.key)]));
+      const uncovered = missing.map((k) => nameOf.get(k)).sort();
+      return raise('full', uncovered.length
+        ? `The map does not cover ${andList(uncovered)} yet (${uncovered.length === 1 ? 'its' : 'their'} scan never finished)`
+        : 'The map still names members that left the workspace',
+      '. A full re-scan is recommended so the map describes every member left.',
+      false, { inMap: labelOf.has(key), uncovered, strays: strays.map((k) => labelOf.get(k)) });
+    }
+  }
+  if (!labelOf.has(key)) {
+    return raise('none', `${name || key} joined after the last scan, so the map has nothing of it to drop`, '. No re-scan is needed.', true, { inMap: false });
+  }
+  const me = labelOf.get(key);
+  const others = (k) => k !== key && labelOf.has(k);
+  const live = liveEdges(map.edges, overrides).filter((e) => e.from === key || e.to === key);
+  const peerKeys = [...new Set(live.flatMap((e) => [e.from, e.to]).filter(others))].sort();
+  const consumerKeys = [...new Set(live.filter((e) => e.to === key).map((e) => e.from).filter(others))].sort();
+  const curated = live.filter((e) => e.state === 'confirmed' || e.state === 'manual').length;
+  const inCycle = (Array.isArray(map.cycles) ? map.cycles : []).some((c) => Array.isArray(c) && c.includes(key));
+  const mine = map.members.find((m) => m && m.key === key);
+  const sharedNames = (Array.isArray(mine.aliases) ? mine.aliases : []).map((a) => ({
+    name: a,
+    with: map.members.filter((m) => m && m.key !== key && Array.isArray(m.aliases) && m.aliases.includes(a)).map((m) => labelOf.get(m.key)).sort(),
+  })).filter((s) => s.with.length);
+  const syn = mapDoc.synthesis || {};
+  const notes = [syn.overview, ...(Array.isArray(syn.coordination) ? syn.coordination : [])];
+  const mentioned = notes.some((t) => mentions(t, me) || mentions(t, key));
+  const at = Date.parse(map.scannedAt);
+  const ageDays = Number.isFinite(at) ? Math.floor((now - at) / DAY_MS) : null;
+  const byConfidence = {};
+  for (const e of live) if (e.confidence) byConfidence[e.confidence] = (byConfidence[e.confidence] || 0) + 1;
+  const peers = peerKeys.map((k) => labelOf.get(k));
+  const consumers = consumerKeys.map((k) => labelOf.get(k));
+  const signals = { inMap: true, edges: live.length, peers, consumers, curated, inCycle, sharedNames, mentioned, ageDays, byConfidence };
+
+  const facts = [live.length
+    ? `had ${countOf(live.length, 'edge')} with ${countOf(peers.length, 'member')} (${andList(peers)})${curated ? `, ${curated} you reviewed by hand` : ''}`
+    : 'had no edges in the map'];
+  if (sharedNames.length) {
+    const names = sharedNames.map((s) => `\`${s.name}\``);
+    facts.push(`shared the ${names.length === 1 ? 'name' : 'names'} ${andList(names)} with ${andList([...new Set(sharedNames.flatMap((s) => s.with))].sort())}`);
+  }
+  if (inCycle) facts.push('was in a dependency cycle');
+  const lead = `${me} ${andList(facts)}`;
+  const hub = live.length >= limits.hubEdges || peers.length >= limits.hubPeers;
+  const provider = consumers.length >= limits.providerFor;
+
+  if (sharedNames.length) return raise('full', lead, '. A full re-scan is recommended so those uses get re-attributed.', true, signals);
+  if (inCycle) return raise('full', lead, '. A full re-scan is recommended so uses that matched more than one member get matched again.', true, signals);
+  if (provider) return raise('full', `${lead}; ${andList(consumers)} used it`, '. A full re-scan is recommended so what they used from it is matched again — another member may provide it.', true, signals);
+  if (hub) return raise('full', lead, '. A full re-scan is recommended so the map and its notes are rebuilt around the members left.', true, signals);
+  if (live.length && ageDays !== null && ageDays > limits.staleDays) {
+    return raise('full', `${lead}, and the map is ${ageDays} days old`, '. A full re-scan is recommended over re-writing notes from old edges.', true, signals);
+  }
+  if (live.length || mentioned) {
+    const why = live.length ? lead : `${me} had no edges but the overview or coordination notes mention it`;
+    return raise('partial', why, '. A partial re-scan is recommended: one agent rewrites the overview and coordination notes from the pruned map.', true, signals);
+  }
+  return raise('none', `${lead} and the overview does not mention it`, '. No re-scan is needed: the pruned map is already complete.', true, signals);
+}
+
+/**
+ * The recommendation for removing `projectPath` from workspace `id`, from the map as stored NOW —
+ * with removeWorkspaceMember's own refusals first (NOT_FOUND, BAD_REQUEST not a member / < 2 left).
+ * `git`: one memoGitProbe shared with the removal that follows (the plan probes every workspace's members).
+ * @returns {ReturnType<typeof memberRemoveImpact> & {removed:string, key:string}}
+ */
+export function removeImpactFor(id, projectPath, { pendingRescan = null, now = Date.now(), git = memoGitProbe() } = {}) {
+  const p = planMemberRemove(id, projectPath, git);
+  const key = projectKey(p.removed);
+  const remaining = p.next.map((path) => ({ key: projectKey(path), name: basename(path) }));
+  return { removed: p.removed, key, ...memberRemoveImpact(p.entry.mapDoc, p.entry.overrides, key, { name: basename(p.removed), now, pendingRescan, remaining }) };
 }
 
 /**
@@ -749,27 +914,65 @@ export async function addWorkspaceMembers(id, projectPaths) {
  * Remove one member project from an existing workspace (rules: planMemberRemove — a removed
  * metrics / policy home is cleared). The member leaves the stored map and its reviews too
  * (mapWithoutMember), and a generated description is re-rendered without it; a hand-edited one
- * is left alone (D8). One tx(); the id is NOT recomputed.
+ * is left alone (D8). One tx(); the id is NOT recomputed. The stored merged graph loses the member
+ * too: rewritten BEFORE the write lock into a sibling temp file, adopted by the transaction only when
+ * the map it was pruned from is still the stored one (else dropped), renamed into place after the commit.
+ * @param {{git?: ReturnType<typeof memoGitProbe>}} [opts]  one probe shared with the caller's own plan (removeImpactFor)
  * @throws err(code: NOT_FOUND | BAD_REQUEST | DUPLICATE_SET)
  */
-export async function removeWorkspaceMember(id, projectPath) {
+export async function removeWorkspaceMember(id, projectPath, { git = memoGitProbe() } = {}) {
   const now = new Date().toISOString();
   // projectKey and the plan's probes spawn git: taken before the write lock, like the map writers do.
   const keyOf = new Map(entryOrThrow(id).projectPaths.map((p) => [p, projectKey(p)]));
-  const git = memoGitProbe();
-  planMemberRemove(id, projectPath, git);
-  const out = tx(() => {
-    const p = planMemberRemove(id, projectPath, git);
-    const key = keyOf.get(p.removed) ?? projectKey(p.removed);
-    const { mapDoc, overrides } = mapWithoutMember(p.entry.mapDoc, p.entry.overrides, key);
-    const kept = { ...p.entry, projectPaths: p.next, mapDoc, overrides };
-    const description = p.entry.descriptionOrigin === 'generated' && mapDoc ? renderFor(kept, mapDoc, overrides) : p.entry.description;
-    prepare('DELETE FROM workspace_projects WHERE workspace_id = ? AND project_key = ?').run(id, p.removed);
-    prepare('UPDATE workspaces SET metrics_project = ?, policy_project = ?, map_json = ?, map_overrides_json = ?, description = ?, updated_at = ? WHERE id = ?')
-      .run(p.metricsProject, p.policyProject, mapDoc ? JSON.stringify(mapDoc) : null, JSON.stringify(overrides), description, now, id);
-    return { ...kept, description, metricsProject: p.metricsProject, policyProject: p.policyProject, updatedAt: now };
-  });
-  return annotate(out);
+  const p0 = planMemberRemove(id, projectPath, git);
+  const removedKey = keyOf.get(p0.removed) ?? projectKey(p0.removed);
+  const map0 = p0.entry.mapDoc && p0.entry.mapDoc.map;
+  const graphFile = storedGraphFile(id, map0);
+  const stamp0 = mapStamp(map0);
+  const tmpGraph = graphFile ? `${graphFile}.${process.pid}.${Date.now()}.prune` : null;
+  const pruned = graphFile
+    ? await pruneWorkspaceGraph(graphFile, { keep: p0.next.map((p) => keyOf.get(p) ?? projectKey(p)), outPath: tmpGraph })
+    : undefined;
+  let out;
+  try {
+    if (_testing.beforeRemoveTx) await _testing.beforeRemoveTx();
+    out = tx(() => {
+      const p = planMemberRemove(id, projectPath, git);
+      const key = keyOf.get(p.removed) ?? projectKey(p.removed);
+      const map = p.entry.mapDoc && p.entry.mapDoc.map;
+      const lockGraph = storedGraphFile(id, map);
+      // Adopt the pruned file only when the same member resolved under the lock AND the stored map is the
+      // very one it was pruned from AND the members kept are the ones the prune kept. Anything else —
+      // another scan's map landed since the prune, whether or not either side had a graph, or another
+      // removal committed (it keeps the stamp) — drops the graph. Neither side has one: nothing to do.
+      const same = key === removedKey && mapStamp(map) === stamp0 && lockGraph === graphFile
+        && p.next.length === p0.next.length && p.next.every((x, i) => x === p0.next[i]);
+      const graphAfter = !graphFile && !lockGraph ? undefined : same ? pruned : null;
+      const { mapDoc, overrides } = mapWithoutMember(p.entry.mapDoc, p.entry.overrides, key, graphAfter);
+      const kept = { ...p.entry, projectPaths: p.next, mapDoc, overrides };
+      const description = p.entry.descriptionOrigin === 'generated' && mapDoc ? renderFor(kept, mapDoc, overrides) : p.entry.description;
+      prepare('DELETE FROM workspace_projects WHERE workspace_id = ? AND project_key = ?').run(id, p.removed);
+      prepare('UPDATE workspaces SET metrics_project = ?, policy_project = ?, map_json = ?, map_overrides_json = ?, description = ?, updated_at = ? WHERE id = ?')
+        .run(p.metricsProject, p.policyProject, mapDoc ? JSON.stringify(mapDoc) : null, JSON.stringify(overrides), description, now, id);
+      return { ...kept, description, metricsProject: p.metricsProject, policyProject: p.policyProject, updatedAt: now,
+        _graphAfter: graphAfter, _graphPath: lockGraph || graphFile };
+    });
+  } catch (e) {
+    if (tmpGraph) await rm(tmpGraph, { force: true }).catch(() => {});
+    throw e;
+  }
+  const { _graphAfter, _graphPath, ...entry } = out;
+  if (_graphAfter) {
+    // Adopted: move the pruned file into place. A rename can fail where a copy works (EPERM/EBUSY on
+    // Windows — adoptGraphFile's own fallback); if both fail, delete the stored graph, so no file on disk
+    // still names the removed member (the map then points at a missing file until the next scan).
+    const moved = await rename(tmpGraph, _graphPath).then(() => true, () => copyFile(tmpGraph, _graphPath).then(() => true, () => false));
+    if (!moved) await rm(_graphPath, { force: true }).catch(() => {});
+  } else if (_graphAfter === null) {
+    await rm(_graphPath, { force: true }).catch(() => {});
+  }
+  if (tmpGraph) await rm(tmpGraph, { force: true }).catch(() => {});   // gone after a rename; force ignores that
+  return annotate(entry);
 }
 
 /**

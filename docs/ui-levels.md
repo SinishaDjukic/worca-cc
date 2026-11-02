@@ -308,10 +308,12 @@ inside the view.
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
 | Project page Actions tab | A |
-| Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, description, re-scan, delete) | A |
+| Project page Automations tab (flag gitAutomations: Auto-handle switches with what each does and its limits, your own rules with Add / Turn off / Delete, each switch's and rule's limits with Edit limits, Waiting (the queue, in order, with Start now and Remove), Recent with Approve and Open run, Check now; a note naming the workspace whose rules take this repository's events over) | A — "Approve" waits on a person, but a `/worca approve` comment on GitHub or Azure DevOps answers it too |
+| Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, the Remove confirm's re-scan choice and recommendation, description, re-scan, delete) | A |
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
 | Workspace page Actions tab | A |
+| Workspace page Automations tab (flag gitAutomations: the project tab's switches, rules and Recent over every member's repository, the repositories watched, View PR, or View PRs ▾ listing each changed repository's PR) | A — as the project page's |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |
 | Projects-row team chips; project page Team tab and its TEAM METRICS / TEAM POLICY cards; KEY card | E |
 | Workspace page Team tab (members table, metrics home, policy home) and its METRICS HOME / POLICY HOME cards | E |
@@ -330,6 +332,7 @@ inside the view.
 | Runs tab: Wait for the network | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
 | Presets tab (every preset: Use, Rename, Duplicate, Edit scope, Delete) | A |
+| Automations tab (flag gitAutomations: the overview — delivery, the projects and workspaces that automate something with Open, Waiting across them with Start now and Remove, Recent across them with Approve and Open run) | A |
 | General: spawn diagnostics; Memory tab: the line linking to Helper jobs | E |
 | Guardrails create / delete | E |
 
@@ -356,6 +359,9 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | The list's group header: "Product brief: none yet · Create", "Product brief: being made…", "Product brief · <age> old" | S |
 | New feature: Title, Describe it, For, the code-look hint or the green "Worca knows <name> from its product brief" line, "Worca interviews with <model> at <effort> effort" and the cost words, Cancel, Start the interview | S — the interview model is shown here, changed only on Models (E) |
 | A feature's header: id, title, state, the target, round and cost chips, "Saved as specs/…"; Export ▾ (Save to specs/, Copy Markdown, Download .md); ⋯ (Your notes for Worca, Look closer / Look again, Archive / Restore) | S |
+| Export to a tracker: Export ▾'s Export to Jira… and Export setup…, the setup dialog, the preview (fields, labels, the description, Export anyway), Export again and the comment preview, the failure states, the header's ticket chip, "Created SHOP-123", the History card, Report back on Ready to build, the start dialog and the runs card; on a phone (900 px and narrower) the dialogs as full-screen sheets | S — product owners are its users |
+| Connect a tracker… (the menu item and its dialog) | S |
+| Connect a tracker's Open the Marketplace page | A — the Marketplace page is Advanced |
 | A feature's interview: the question card (options, Recommended, your own answer, Finish now, Skip, use recommended, Submit), Earlier rounds and Change, the working line, the error line and Try again | S |
 | Feature chat: the header's Feature chat, Help me answer on each open question, the panel beside the spec and the phone sheet (Back), the first-open text and its three questions, the composer and its cost line, Answering… and Stop, the failed, stopped and spending-limit lines, Try again, ⋯ Clear chat | S — product owners are its users |
 | Feature chat's drafts in the question card (drafted by Worca, ×, "Worca's draft: …") and its proposal cards (Before / After, New, Remove, Confirm / Reject, Why, Reject / Accept / Ask again, Accepted, Rejected, "The spec changed since Worca proposed this.") | S |

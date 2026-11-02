@@ -77,6 +77,10 @@ test('the Playwright image tag in CI and in update-linux equals the pinned @play
   const v = PKG.devDependencies['@playwright/test'];
   assert.match(v, /^\d+\.\d+\.\d+$/, '@playwright/test is pinned exactly');
   const tag = `mcr.microsoft.com/playwright:v${v}-noble`;
-  assert.ok(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8').includes(tag), 'ci.yml extension-e2e image');
+  const ci = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  assert.ok(ci.includes(tag), 'ci.yml extension-e2e image');
+  // V22: a tag can be re-pushed; CI pulls the image by digest too (an @playwright/test bump fails the line above,
+  // so the tag and its digest move together, by hand: dependabot.yml's docker entry reads /docker only).
+  assert.match(ci, new RegExp(`image: ${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@sha256:[0-9a-f]{64}\\s`), 'ci.yml pins the image by digest');
   assert.ok(PKG.scripts['e2e:extension:update-linux'].includes(tag), 'update-linux image');
 });

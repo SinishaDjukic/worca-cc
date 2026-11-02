@@ -35,7 +35,7 @@ import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs
 import { fileAccepts } from '../shared/forms/answer.mjs';
 import { normalizeScriptMeta, resolvePlatformValue } from '../shared/graph/script-meta.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
-import { pluginSetupState } from './plugin-setup-state.mjs';
+import { pluginSetupState, pluginHasSettings } from './plugin-setup-state.mjs';
 import { pluginLatest } from './plugin-latest.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
@@ -422,6 +422,10 @@ function precheck(versionDir, manifest) {
     throw new Error(`doctor precheck failed: ${bad.map((x) => `${x.id} (${x.detail})`).join('; ')}`);
   }
 }
+
+/** A full commit id (SHA-1, or SHA-256 for a sha256 repository): what the
+ *  consent routes accept as the pin a person reviewed. */
+export const COMMIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 /**
  * Install (spec §6.1): ensure cache -> export pinned sha -> validate -> setup ->
@@ -829,6 +833,7 @@ export function listInstalledPlugins({ marketplaces = null } = {}) {
       // registry, so its templates would misreport V4.
       ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops, scripts, scriptDrops }) : [],
       setup: manifest ? pluginSetupState(name, manifest) : { ok: true, missing: [], noProfiles: [] },
+      hasSettings: manifest ? pluginHasSettings(manifest) : false,
       description: manifest?.description || null,
       ref: e.ref ?? null,
       notes,

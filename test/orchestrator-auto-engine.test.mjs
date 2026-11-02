@@ -16,7 +16,7 @@ test('Auto on codex: no Claude sign-in probe, Codex models only, no classifier m
   let probed = 0;
   const inputs = [];
   const orch = createOrchestrator({
-    projectDir: gitDir('auto-codex'), workflowId: 'wf_auto', prompt: 'Build the thing.', humanInLoop: false,
+    projectDir: gitDir('auto-codex'), workflowId: 'wf_auto', prompt: 'Build the thing.', humanInLoop: false, guardrailsId: 'permissive',
     claude: { mock: true, engine: 'codex' },
     claudeAuth: async () => { probed += 1; return { state: 'signed-out', source: 'cli', detail: null }; },
     classify: async (input) => { inputs.push(input); return { shape: normalizeShape(QUICK), warnings: [], costUsd: 0, attempts: 1, model: input.model || null }; },
@@ -34,7 +34,7 @@ test('Auto on Claude is unchanged: the sign-in is probed and only Claude models 
   let probed = 0;
   const inputs = [];
   const orch = createOrchestrator({
-    projectDir: gitDir('auto-claude'), workflowId: 'wf_auto', prompt: 'Build the thing.', humanInLoop: false,
+    projectDir: gitDir('auto-claude'), workflowId: 'wf_auto', prompt: 'Build the thing.', humanInLoop: false, guardrailsId: 'permissive',
     claude: { mock: true },
     claudeAuth: async () => { probed += 1; return { state: 'signed-in', source: 'cli', detail: null }; },
     classify: async (input) => { inputs.push(input); return { shape: normalizeShape(QUICK), warnings: [], costUsd: 0, attempts: 1, model: input.model || null }; },
@@ -63,7 +63,7 @@ test('Auto on cursor: Claude classifies (Claude\'s sign-in, no cursor-agent bin)
       const inputs = [];
       const logs = [];
       const orch = createOrchestrator({
-        projectDir: gitDir('auto-cursor'), workflowId: 'wf_auto', prompt: 'Build the thing.', humanInLoop: false,
+        projectDir: gitDir('auto-cursor'), workflowId: 'wf_auto', prompt: 'Build the thing.', humanInLoop: false, guardrailsId: 'permissive',
         claude: { mock: true, engine: 'cursor', bin: '/nonexistent/cursor-agent' },
         claudeAuth: async () => { probed += 1; return { state, source: 'cli', detail: null }; },
         classify: async (input) => { inputs.push(input); return { shape: normalizeShape(QUICK), warnings: [], costUsd: 0, attempts: 1, model: input.model || null }; },

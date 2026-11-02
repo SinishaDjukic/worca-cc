@@ -113,7 +113,7 @@ test('runClone: partial clone with the read credential for this repo only; the U
   const git = fakeGit();
   const p = plan({ url: 'https://github.com/acme/ok1', branch: 'dev' });
   await runClone(p, { spawnImpl: git, credential: cred(seen) });
-  assert.deepEqual(seen, [{ role: 'read', repo: 'acme/ok1' }]);
+  assert.deepEqual(seen, [{ role: 'read', readAsPerson: true, repo: 'acme/ok1' }]); // a clone reads as the person who asked (push as me)
   assert.deepEqual(git.calls[0].args, ['clone', '--filter=blob:none', '--branch', 'dev', '--', 'https://github.com/acme/ok1.git', p.dir]);
   assert.equal(git.calls[0].env.GH_TOKEN, 'ghs_minted');
   assert.equal(git.calls[0].env.GIT_TERMINAL_PROMPT, '0');

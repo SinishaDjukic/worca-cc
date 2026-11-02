@@ -105,6 +105,14 @@ and an agent's `ask.forms` (see [Ask forms](#ask-forms-api-4)).
 `configSchema[]` supports only `text` and `select`; `secret: true` renders `type=password` and is
 never sent back to the browser (arrives redacted as `{set: true}`).
 
+Secrets are stored in the plugin's `data/secrets.json` (mode 0600) under Worca's home and reach your
+connector or chat worker on stdin, never in its env. That is not isolation between plugins: on a
+native install every plugin child runs as Worca's own user and could open any plugin's
+`secrets.json`. Only the container with single-volume isolation runs connectors and chat workers
+as a separate `worca-plugin` user, with its own `HOME` and no access to `data/` or Worca's home
+(docs/docker.md). Don't promise users more, and on that container don't write into your own
+install folder (it is read-only to that user): keep caches under `HOME`.
+
 **`remote-select` + `optionsFrom` is the extensibility hatch.** Naming an op there is also what
 allowlists it for the browser — undeclared ops are rejected with 400 at `/api/sources/call`.
 The data, filtering, and pagination semantics behind every widget are entirely yours.
@@ -125,8 +133,23 @@ export default function createTaskSource(ctx) {
 | `listTasks` | `({inputs, search, cursor})` | `{tasks:[{id,title,url,state,labels,updatedAt}], cursor?}` |
 | `getTask` | `(id)` — **positional** | `{...summary, body /* markdown */, meta}` |
 | `reportResult` | `(id, {status, summary, links, inputs})` — **positional** | anything |
-| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync}`; missing → `writeBack: true` |
+| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync, export?}`; missing → `writeBack: true`; `export: true` turns on the export ops below |
+| `exportOptions` | `({project?, issueType?})` — optional, export | `{projects:[{value,label}], issueTypes?, priorities?, criteriaFields?, doneStatus, tooOld?}` — `issueTypes` with a project, the last two with both |
+| `createTicket` | `({ticket})` — optional, export | `{key, url, fingerprint}` \| `{refused:{field, message}}` |
+| `updateTicket` | `({key, ticket})` — optional, export | `{key, url, fingerprint}` \| `{gone:true}` \| `{refused}` |
+| `commentTicket` | `({key, body})` — optional, export | `{ok:true}` \| `{gone:true}` |
+| `ticketState` | `({key})` — optional, export | `{exists:true, url, fingerprint}` \| `{exists:false}` |
+| `findTicket` | `({project, label, marker})` — optional, export | `{key, url, fingerprint, lastLine, marker, labels}` \| `null` |
 | custom | `(args)` | whatever the widget needs |
+
+The export ops (Requirements' **Export to a tracker**) receive a tool-neutral ticket: `{project, issueType, title, description
+(Markdown), labels (already normalised, never with spaces), priority (id or null), criteria: {target:'description'} |
+{target:'field', field, items}, marker?}`. Write the description in your tracker's format, store `marker` invisibly on a
+create (Worca finds a ticket whose create answer was lost by it), add labels on an update without removing any, and return
+`fingerprint`: a hash of the description as your tracker stores it (read it back), normalised so the same stored text
+always gives the same string. Worca compares fingerprints only. A field the tracker refuses and a ticket that is gone are
+results (`refused`, `gone`), not throws; every call runs in the host, never from the browser, with a 60 s limit. The
+reference implementation is `plugins/jira-source`.
 
 `ctx` = `{ apiVersion, profile, config, state: {get, set}, log }` — `apiVersion` is the negotiated highest version your range admits.
 

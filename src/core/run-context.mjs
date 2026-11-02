@@ -47,6 +47,7 @@ import { brokerEnabled } from './broker-client.mjs';
 import { PROBLEM_REASONS, skipMessage } from './mcp/registry.mjs';
 import { managedSettingsFiles } from './skills-registry/host.mjs';
 import { gitAvailable } from './git-available.mjs';
+import { guardedGitEnvSync } from './git-guard.mjs';
 import { isNoProjectKey } from '../shared/no-project.mjs';
 
 /**
@@ -183,7 +184,8 @@ const repoRel = (m) => `repos/${m.worktreeDir ? basename(m.worktreeDir) : m.proj
 function gitOut(dir, args, env = null) {
   if (!gitAvailable()) return null;
   try {
-    return execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], ...(env ? { env } : {}) })
+    // Security G2 (dev): the guarded env over the caller's (a try's tryGitEnv, workflow tests 3a) or process.env.
+    return execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], env: guardedGitEnvSync(dir, env ? { env } : {}) })
       .toString().trim() || null;
   } catch {
     return null;
@@ -962,7 +964,7 @@ async function readSettingsObject(file, onError) {
 function trackedInGit(file) {
   if (!gitAvailable()) return false;
   try {
-    execFileSync('git', ['ls-files', '--error-unmatch', '--', basename(file)], { cwd: dirname(file), stdio: 'ignore' });
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', basename(file)], { cwd: dirname(file), stdio: 'ignore', env: guardedGitEnvSync(dirname(file)) });
     return true;
   } catch (err) {
     return !(err?.status === 1 || err?.status === 128);
