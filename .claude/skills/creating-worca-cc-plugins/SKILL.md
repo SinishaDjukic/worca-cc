@@ -140,7 +140,7 @@ export default function createTaskSource(ctx) {
 | `commentTicket` | `({key, body})` — optional, export | `{ok:true}` \| `{gone:true}` |
 | `ticketState` | `({key})` — optional, export | `{exists:true, url, fingerprint}` \| `{exists:false}` |
 | `findTicket` | `({project, label, marker})` — optional, export | `{key, url, fingerprint, lastLine, marker, labels}` \| `null` |
-| `importOptions` | `({})` — optional, import | `{projects:[{value,label}]}` |
+| `importOptions` | `({})` — optional, import | `{projects:[{value,label}]}` — may be the same list as `exportOptions({})`'s projects; it is its own op because a source may import without exporting |
 | `searchTickets` | `({project?, search?, cursor?})` — optional, import | `{tickets:[{key,title,url,type,status,updatedAt}], cursor?}` — no search: most recently updated first; a pasted key or ticket link finds that ticket in any project |
 | `importTicket` | `({key, criteriaField?})` — optional, import | `{key, url, title, description, criteria, comments, commentsTotal, restrictedComments, attachments, meta, fingerprint}` \| `{gone:true}` |
 | `downloadAttachment` | `({key, id, maxBytes, dest})` — optional, import | the body written to `dest`, and `{name, mime, bytes}` \| `{tooLarge:true, bytes}` \| `{gone:true, forbidden?}` |
