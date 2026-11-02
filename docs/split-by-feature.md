@@ -4,10 +4,20 @@
 
 One command, from a clean checkout of the commit to ship (this branch merged with the latest dev, or dev itself on
 freeze day). It runs every check below in order, never stops early, prints one table (check · pass/fail · number ·
-evidence file) and exits 0 only when every row passes. It never posts on #919 and never pushes. It takes several hours; the
-table in `OUT/verify-919.md` grows row by row (`npm run verify:919 -- --out DIR [--keep]`; without `--out`, a new temp
-folder). Firefox (for `e2e:firefox-smoke`) and Playwright's Chromium (for `e2e:extension`) must be installed: a suite
-that prints SKIP is a fail.
+evidence file) and exits 0 only when every row passes. It never posts on #919 and never pushes. It takes many hours (the
+crawl alone is hours); the table in `OUT/verify-919.md` grows row by row (`npm run verify:919 -- --out DIR [--keep]
+[--firefox-in-ci]`; without `--out`, a new temp folder). Chrome (the crawl) and Playwright's Chromium (for
+`e2e:extension`) must be installed. Firefox (for `e2e:firefox-smoke`) too, except with `--firefox-in-ci`: on macOS,
+Playwright's Firefox hangs headless (macOS sandbox), so run verify with `--firefox-in-ci` there. `e2e:firefox-smoke`
+then runs in the `firefox-e2e` workflow (`.github/workflows/firefox-e2e.yml`, Linux, the branch and its split tree), and
+rows i and k read `e2e:firefox-smoke: CI job firefox-e2e, not run locally`. That is not a pass: the table ends with a
+"Not run locally (not a pass)" line, `verify-919.json` lists it under `notLocal`, and the last line reads
+`verify:919 PASS, except 1 suite left to CI (firefox-e2e)`.
+
+The e2e judgement (rows i and k, and readiness `rollback`): `e2e:extension` is judged "same results before and after"
+(the same Playwright test statuses and pixel-identical `*-actual.png` / `*-diff.png`, before = a clean clone of HEAD,
+after = the split or reverted tree), because dev's darwin screenshot baselines fail on a Mac on untouched dev too. The
+baselines are not touched or masked. Every other `e2e:*` suite must exit 0, and a suite that prints SKIP is a fail.
 
 | Check | Pass means |
 |---|---|
@@ -18,9 +28,15 @@ that prints SKIP is a fail.
 | e. parity-quick | quick parity, this tree against the split tree: PASS, 18 shot pairs, all 6 flows on both sides |
 | f. parity-full | full parity with the timing gate, this tree against the split tree: 0 route, 0 visual, 0 flow differences; every route probed signed in and signed out; 18 screenshots light and dark; boot and page-load timings gated and within budget |
 | g. parity-package | full parity, this tree against its own `npm pack` (`package:.`): 0 differences, same completeness as f (timings are not gated for a package) |
-| h. e2e-split | every `e2e:*` suite in `package.json` but the snapshot updater, on the split tree: exit 0 and no SKIP |
-| i. rollback | the split reverted: diff to HEAD empty, then suite, full parity and the e2e suites pass again |
-| j. readiness | `npm run readiness -- run` (with `--dev-ref` when HEAD is not dev): verdict `go`; `report.md` and `report.json` written |
+| h. crawl | `npm run parity -- crawl --a tree:. --b tree:SPLIT --b package:.` (docs/parity-harness.md, Differential crawl): control pass on, both comparisons 0 unmasked differences, 0 unvisited and 0 unfillable routes; the number prints the coverage |
+| i. e2e-split | every `e2e:*` suite in `package.json` but the snapshot updater, on the split tree, by the e2e judgement above: `e2e:extension` same before/after, every other suite green, no SKIP |
+| j. catch-up | `npm run catch-up:919` on the fixture "old" PR (a route, a CSS rule, a markup line on pre-split dev) works, each edit in its split file and parity's only route difference the fixture's own; every open PR and dependabot branch dry-run (split, 3-way apply, related tests; fork PRs split and apply only). An open PR that needs a hand fix is counted, not a fail |
+| k. rollback | the split reverted: diff to HEAD empty, then suite, full parity and the e2e suites (same judgement as i) pass again |
+| l. readiness | `npm run readiness -- run` (with `--dev-ref` when HEAD is not dev, `--crawl-from OUT/crawl`, `--catch-up-from OUT/catch-up/all.json`, and `--firefox-in-ci` when verify got it): verdict `go`; `report.md` and `report.json` written |
+
+Catch-up runs before rollback because it needs the un-reverted split tree as "latest dev". Readiness runs last and
+reuses h's crawl and j's dry run only when their trees match its own (the crawl's A and first B tree hashes, the dry
+run's M^ and M tree).
 
 A failing row names its evidence file inside `OUT`. When it is a test that is in the register, the row stays green
 and the evidence names the entry and the solo rerun. When it is not, follow "When `suite-migrated` or `rollback` fails"
@@ -48,9 +64,17 @@ that the migration commit updates them.
 
 The spike gate (`--check --stats`): at least 95% of the route statements between the static mount and the SPA
 fallback move, and the residual `ui/server.mjs` is at most its ceiling in `tools/split-by-feature/size-caps.json`
-(10,085 lines: the residual on `04370c0f6` merged with dev `c82347c7c`, whose git automations added 113 lines to it;
+(10,119 lines: the residual on `04370c0f6` merged with dev `c82347c7c`, whose git automations added 113 lines to it,
+then 33 more from dev `b76706df6`'s in-place Chat engine switching (#982) and 1 from `405db5a4d` (Settings › My
+credentials); each raise is in `size-caps-raises.json`;
 accepted as is). `--apply` refuses a failed gate; `--dry-run` reports it as a problem and exits 1. Raising the ceiling
-is a hand edit in a reviewed PR.
+is a hand edit in a reviewed PR, and a raise is recorded in `tools/split-by-feature/size-caps-raises.json`
+(`{file, from, to, why}`; a test pins `size-caps.json` to the last raise). The readiness Risks list every raise for the
+owner's sign-off.
+
+Every guard failure (coverage, size cap, the spike gate, the direct-read guard in `test/public-assets.test.mjs`) ends
+with `if this branch started before the #919 split: run npm run catch-up:919 -- BRANCH`. On a branch that started after
+M, the fix is a feature-map edit instead.
 
 ## Rollback
 Two layers roll back separately. The tooling PRs (slices 1–3 and the #919 follow-up; T below is the one to undo)
@@ -96,6 +120,14 @@ Not rehearsed by the readiness command: it depends on the commits that land afte
 Pass: both checks in steps 4 and 5 hold, `npm test` has 0 failures outside `test/flaky-register.json`, and the parity run in step 6 reports 0 route, visual and flow differences.
 
 ## PR catch-up recipe (a PR branch P that started before M)
+`npm run catch-up:919 -- BRANCH` runs steps 1–5 in scratch clones and prints what moved and what needs a hand fix; it
+never pushes. The caught-up commit stays in `OUT/BRANCH/applied` (`git fetch OUT/BRANCH/applied HEAD && git switch -c
+BRANCH-caught-up FETCH_HEAD` takes it). `--all` dry-runs every open PR and dependabot branch (split, 3-way apply,
+related tests; a fork PR's code is not run), `--fixture` the fixture "old" PR with quick parity. `--m SHA` names M; by
+default it is the newest first-parent commit on origin/dev whose subject starts with `Split large files by feature
+(#919)`. With none (before the freeze), the tool rehearses: M^ is HEAD and M is HEAD's own split, built under `OUT/m`.
+Exit 0 every target works, 1 a hand fix, 2 bad arguments, 3 could not start. The manual steps:
+
 This runs the splitter from dev at `M^`, never P's own copy of it, and the tool makes both scratch clones itself.
 M below is the migration commit's full SHA.
 1. `git switch P && git merge M^` (bring P to the commit just before the split; resolve ordinary conflicts).
@@ -115,7 +147,7 @@ Pass: step 5's diff lists only P's own files, `npm test` has 0 failures outside 
 
 | Command | What it does | Exit |
 |---|---|---|
-| `run [--out DIR] [--keep] [--dev-ref REF]` | fetches `origin/dev`, builds and checks the migrated tree, rehearses the rollback, checks open PRs, writes `DIR/report.md` and `DIR/report.json`. `--dev-ref` rehearses on another commit (for example origin/dev merged with an unmerged branch); `post` refuses such a report | 0 go, 1 no-go |
+| `run [--out DIR] [--keep] [--dev-ref REF] [--firefox-in-ci] [--crawl-from DIR] [--catch-up-from FILE]` | fetches `origin/dev`, builds and checks the migrated tree, rehearses the rollback, checks open PRs, writes `DIR/report.md` and `DIR/report.json`. `--dev-ref` rehearses on another commit (for example origin/dev merged with an unmerged branch); `post` refuses such a report. `--firefox-in-ci` leaves `e2e:firefox-smoke` to the `firefox-e2e` job (listed "Not run locally", never a pass). `--crawl-from` / `--catch-up-from` reuse verify:919's crawl and catch-up dry run when their trees are this run's | 0 go, 1 no-go |
 | `post --out DIR` | checks `gh auth status` and the `origin` URL, scans the comment, comments on #919 and confirms `gh issue view 919 --comments` shows it | 0 posted, 1 refused or failed |
 | `split --rev REV --splitter-rev REV --out DIR` | the catch-up recipe's split: clones both revisions as scratch clones under `DIR`, splits the first with the second's splitter, commits; a failed split removes the out dir it made, or empties the one it was given | 0 split |
 
@@ -139,21 +171,27 @@ anything else), step 11 writes the report:
 5. `docs-and-package`: the migration rewrites `docs/design-system.md`, lists every moved file in
    `docs/feature-files.md`, and `npm pack` lists `ui/routes/` and every feature folder.
 6. `suite-migrated`: `npm test` on the migrated tree has 0 failures outside `test/flaky-register.json`.
-7. `parity`: `tools/parity.mjs run` of dev against the migrated tree passes.
+7. `parity`: `tools/parity.mjs run` of dev against the migrated tree passes, and so does the differential crawl of
+   dev against the migrated tree (`crawl/report.md`; reused from verify:919 row h when its trees match).
 8. `open-prs`: every open PR and `dependabot/*` branch is merge-checked against dev and the migration commit and
    gets one action. A head closed or deleted between the listing and the fetch is left out and named in the row.
+   Each also gets a Catch-up column from the catch-up dry run (`works`, `needs hand fix` with the reason, or
+   `not run`); a hand fix there does not fail the row.
 9. `rollback`: rollback A on the migrated clone (revert the migration commit); the diff to dev is empty, and the
    suite, parity and every `e2e:*` suite in `package.json` (today `e2e:extension` and `e2e:firefox-smoke`; the
-   snapshot updater `e2e:extension:update-linux` is not a suite) pass again; a suite that prints SKIP is listed as
-   skipped; the row fails when no suite ran. While `split-check` fails this proves the mechanics only.
+   snapshot updater `e2e:extension:update-linux` is not a suite) pass again by the e2e judgement (`e2e:extension`
+   same before/after against the base clone; every other suite green; SKIP is a fail). With `--firefox-in-ci`,
+   `e2e:firefox-smoke` is listed under the table as "Not run locally". While `split-check` fails this proves the
+   mechanics only.
 10. `baseline`: conflicted-merge share, boot and page-load medians and the dead-code count, dev against migrated.
     It fails when `open-prs` fails (no table to compare); no open PRs at all is a passing, empty comparison.
 
 `report.md` has 11 sections: Verdict, Dev commit, Migration checks, Test suite, Parity, Rollback rehearsal, Open PRs
 and dependabot branches, Baseline comparison, Files and lines moved per feature, Risks and surprises (accepted deltas,
-the capped `ui/server.mjs`, the pinned routes), Inputs and next steps. The Verdict names the cause of a failed
+the capped `ui/server.mjs`, every ceiling raise from `tools/split-by-feature/size-caps-raises.json` as needing the
+owner's sign-off, the pinned routes), Inputs and next steps. The Verdict names the cause of a failed
 split-check: either the missing splitter or the spike gate. Each row links
-its evidence: a file inside `DIR` (`evidence/…`, `parity/…`, `parity-reverted/…`) or a GitHub URL. A step that throws
+its evidence: a file inside `DIR` (`evidence/…`, `crawl/…`, `parity/…`, `parity-reverted/…`) or a GitHub URL. A step that throws
 is a `fail` row whose evidence is `evidence/ID.log` with the error.
 
 In the posted comment, `DIR`, the repo root and the home dir read `$OUT`, `$REPO` and `~`, every evidence link points

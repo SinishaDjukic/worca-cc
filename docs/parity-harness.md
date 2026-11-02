@@ -123,6 +123,68 @@ failing hook), and only as `environment`. The register names flaky tests; it doe
 the register does not cover. Exit 0: none; 1: at least one; 2: the log could not be read (no `ℹ fail N` summary, or
 failures reported but none parsed).
 
+## Differential crawl
+
+`npm run parity -- crawl --a T --b T [--b T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep]`
+(`tools/parity/crawl.mjs`) is the exhaustive before/after check: every registered hash route, every dialog, menu, popover,
+tooltip and collapsible, and every input, button and shortcut, enumerated from the DOM and compared A vs B (DOM, pixels,
+network, console). Targets are `tree:` and `package:` (no Docker). verify:919 row h runs it as dev against the split
+tree and against `package:.`; the readiness parity row runs it as dev against the migrated tree.
+
+- **Same seeded database** (`tools/parity/crawl-seed.mjs`). One template per worker, built with A: `seed()` plus every
+  entity a route param needs (a run group, a second project and a workspace, a requirement, a project memory, an MCP
+  server, a linked local plugin; the first builtin workflow, agent, script, model, MCP set and marketplace), and a feature
+  written into the stopped server's DB by the target's own `createSliceFeature` (no route creates one). Every A, control
+  and B server starts on a copy at the same fixed path (`$TMPDIR/worca-parity-crawl-K`), so ids, paths and sandbox
+  commits match. The live held run cannot survive a restart: it is made per server, on first use, and its id is
+  normalised and masked.
+- **Variants and flag passes.** The full element exercise runs at 1280×800 and 375×812, light, `expert` (the superset
+  level; "advanced" in the request). Every screen is also visited and captured at desktop and 375px in dark/expert,
+  light/simple, dark/simple and light/advanced, so each UI level is covered. All of it runs twice: every Labs flag off,
+  then every flag on.
+- **Routes** (`tools/parity/crawl-routes.mjs`), read in the running app: `PAGE_TITLES`, `SETTING_ENTRIES`, `GROUP_TABS`,
+  marketplace `TABS`, and every `const *_TABS = [...]` in the served `app.js` (an unmapped list throws). Hashes found while
+  crawling (links and the hash after each action) are added when every id in them is a seed id. Routes are patterns
+  (`#history/{projectKey}/{pipelineId}`); each worker fills its own template's ids. A route is *visited* when, in some
+  variant and flag pass, it renders its own view without the "Unknown address" fallback. An unvisited route, or one
+  whose param the seed cannot fill, fails the run.
+- **Elements**, enumerated by one generic selector (`tools/parity/crawl-page.mjs`). Duplicate rows in one list and the
+  shared chrome (sidebar, top bar) are exercised once and then listed as skipped, with the reason. Each element starts
+  from a fresh load of its screen: text gets typed, then Enter and Escape; a select moves to its next option; a toggle is
+  clicked twice; a tip is hovered; everything else is clicked, then Escape. An overlay a click opens has its own elements
+  exercised (depth 2). Shortcuts come from `keys-sheet.mjs` `sheetSections` on the Runs and Chat pages (Anywhere's once
+  per pass), plus Escape on every screen. An action that made a non-GET `/api` call restarts the server from the
+  template, so destructive actions run against the sandbox and never leak into the next one.
+- **Recorded per step**: the visible DOM (one line per element, path-prefixed), a viewport PNG, same-origin requests as
+  `METHOD path status request-shape response-shape`, console errors and page errors, and the final hash. uuids, thread
+  ids, ISO times and epoch ms are normalised. The browser clock is fixed (`clock.json`) and `reducedMotion` is on. DOM
+  text and PNGs are stored content-addressed (`dom/SHA.txt.gz`, `png/SHA.png`) and deleted at the end unless `--keep`.
+- **External calls stubbed.** In the browser every non-localhost request is aborted and recorded; popups are closed,
+  downloads cancelled, native dialogs dismissed (all recorded). The servers start with `buildEnv({ offline: true })`:
+  `HTTP(S)_PROXY` points at a dead port with localhost exempt and `NODE_USE_ENV_PROXY=1`, so `gh`, `git fetch` and
+  provider calls fail fast and alike on both sides.
+- **Control pass.** A is crawled twice (A1, A2). Only what differs between those two becomes a mask (a DOM path, a PNG
+  rect, a request key or a console message of one record). Every mask is listed in the report, and a record with more
+  than 20 masks is called out. Anything else that differs between A1 and a B fails. `--no-control` skips A2 and the run
+  cannot pass.
+- **Workers** (`--workers N`, default 8): each has its own fixed root, template, server and Chrome, and a deterministic
+  shard of the routes (route i → worker i mod N). Worker K of A and worker K of B use the same root and template.
+- **Outputs**: `DIR/report.json` (`pass`, `control`, `a`/`bs` with their tree hashes, `masks`, `comparisons`, `coverage`,
+  `minutes`), `DIR/report.md` (coverage with the unvisited and unfillable lists and the skipped elements by reason, every
+  mask, and per B every difference with its diff image) and `DIR/diffs/N.png`. `DIR/a1`, `a2` and `bN` hold the records.
+
+Timing (measured on the 11-core dev Mac, 2026-11-01): a step records in a median 0.85 s (p90 1.7 s). One screen like
+`#workspace-create` (109 elements) takes about 6 min per side on one worker, across both exercise variants, all 12
+variants' screen visits and both flag passes. The catalogue has 122 registered routes, and a full crawl (A1, A2 and two
+Bs) runs for hours even with 8 workers: run it detached. Check a change on one screen first with `--screens`.
+
+Determinism: a dev-vs-dev crawl must PASS. If it does not, fix the crawler's wait conditions, normalisation or Chrome
+flags (`CRAWL_CHROME_ARGS`), never the masks; review any record the report lists with more than 20 masks. What a crawled
+page holds still: a fixed clock, a seeded `Math.random`, repeating timers of 1 s or more frozen, reduced motion, every
+font face loaded, one fixed port per worker, and the deterministic raster. Settle waits for network and WebSocket quiet
+from the action, no chat turn in flight, DOM quiet, and two equal screenshots. Held-run ids, client random ids and
+entrance-animation markers are normalised, and the seeded feature never fires its next slice.
+
 ## Against the split tree
 
 `node tools/split-by-feature.mjs --apply` builds the split tree. Run it in a throwaway shared clone of a clean commit,

@@ -55,5 +55,6 @@
   {"file": "test/mcp-launch.test.mjs", "test": "SIGINT, SIGTERM and SIGHUP to the launcher reach the server", "symptom": "~5.5 s; 11/11 alone", "alone": "passes alone"},
   {"file": "test/engine-spawn.test.mjs", "test": "Claude synthetic usage-limit frame terminates a lingering CLI …", "symptom": "~2.6 s under load; 12/12 alone", "alone": "passes alone"},
   {"file": "test/egress-policy.test.mjs", "test": "corporate proxy end to end: a child process fetch with the child env reaches the NTLM upstream", "symptom": "fails from an agent run, on the untouched checkpoint too", "alone": "fails alone too"},
-  {"file": "test/qwen-gemini-ask-adapter.test.mjs", "test": "Gemini chat spawn: the chat folder", "symptom": "cwd is /private/var/folders/… vs /var/folders/… (macOS tmp realpath); untouched checkpoint too", "alone": "fails alone too"}
+  {"file": "test/qwen-gemini-ask-adapter.test.mjs", "test": "Gemini chat spawn: the chat folder", "symptom": "cwd is /private/var/folders/… vs /var/folders/… (macOS tmp realpath); untouched checkpoint too", "alone": "fails alone too"},
+  {"file": "test/api-attribution-audit.test.mjs", "test": "PR created and run archived are audited with who did it", "symptom": "500 ENOTEMPTY rmdir of a temp store pipelines dir under full-suite load (verify:919 iteration 2, split tree); 3/3 green alone", "alone": "passes alone"}
 ]

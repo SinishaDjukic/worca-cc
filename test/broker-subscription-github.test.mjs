@@ -156,8 +156,9 @@ test('an API key still goes as x-api-key and is priced', async () => {
   assert.equal(up.requests.at(-1).headers['anthropic-beta'], undefined);
 });
 
-test('the github slot exists only with a client id, and is never reachable through the proxy', async () => {
+test('the github slot exists with a client id (or in multi mode, paste-only), and is never reachable through the proxy', async () => {
   assert.ok(!builtinSlots().some((s) => s.id === 'github'));
+  assert.ok(builtinSlots({ multi: true }).some((s) => s.id === 'github' && s.auth === 'github-user' && !s.signIn));
   assert.ok(builtinSlots({ github: { clientId: 'Iv23liTestClient', scope: 'repo' } }).some((s) => s.id === 'github' && s.auth === 'github-user'));
   const r = await internal('POST', '/internal/tokens', { billTo: 'ada@acme.dev', slots: ['github'], spawnId: 'sp-gh', kind: 'phase', issuer: 'srv-test' });
   if (r.status === 200) {

@@ -451,12 +451,19 @@ function dryRunMain(root, head, arg, { out, err }) {
   if (head === 'no-git') { err('--dry-run needs a git checkout: it splits the HEAD commit, not the working tree'); return 1; }
   const r = dryRun({ repo: root, json: arg('--json'), tests });
   if (r.dirty) err(`working tree has uncommitted changes; the dry run used HEAD ${r.head.slice(0, 9)}`);
-  if (!r.ok) { for (const p of r.problems.slice(0, 20)) err(p); err('NOT EQUIVALENT'); return 1; }
+  if (!r.ok) { for (const p of r.problems.slice(0, 20)) err(p); err('NOT EQUIVALENT'); err(catchUpHint(root)); return 1; }
   out(`HEAD ${r.head.slice(0, 9)} · treeHash ${r.treeHash} · served equal (${r.equivalence.probes} probes) · route table equal (${r.equivalence.routes} routes) · `
     + `${r.acceptedDeltas.length} accepted deltas · spike gate passed (ceiling ${r.gate.ceiling}) · second --apply changed 0 files${tests === 'none' ? '' : ' · split-tree tests pass'}`);
   return 0;
 }
 
+
+/** The pointer every guard failure ends with: a PR that started before the split is caught up, not hand-moved. */
+export function catchUpHint(root) {
+  let b = '';
+  try { b = execFileSync('git', ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+  return `if this branch started before the #919 split: run npm run catch-up:919 -- ${b && b !== 'HEAD' ? b : '<branch>'}`;
+}
 
 /** Short HEAD for messages; 'no-git' for a fixture root that is not a repository (--check needs no git). */
 function gitHead(root) {
@@ -474,19 +481,19 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
   const plan = planSplit({ root });
   if (argv.includes('--apply')) {
     if (plan.alreadySplit) {
-      if (plan.problems.length) { for (const p of plan.problems) err(p); return 1; }
+      if (plan.problems.length) { for (const p of plan.problems) err(p); err(catchUpHint(root)); return 1; }
       out(`already split (parts manifest v${MIGRATION_VERSION} present): 0 files changed`); return 0;
     }
-    if (plan.problems.length) { for (const p of plan.problems) err(p); return 1; }
+    if (plan.problems.length) { for (const p of plan.problems) err(p); err(catchUpHint(root)); return 1; }
     if (gitDirty(root)) { err(`refusing --apply: ${root} has uncommitted changes; apply on a clean checkout`); return 1; }
     const g = spikeGate(plan.stats, serverCeiling(root));
-    if (!g.pass) { err(`spike gate FAILED (${g.reasons.join('; ')}): nothing written`); return 1; }
+    if (!g.pass) { err(`spike gate FAILED (${g.reasons.join('; ')}): nothing written`); err(catchUpHint(root)); return 1; }
     const changed = writeFiles(root, plan.files);
     out(`applied split-by-feature v${MIGRATION_VERSION} on ${head}: ${changed.length} files changed`);
     return 0;
   }
   // --check (default)
-  if (plan.problems.length) { for (const p of plan.problems) err(p); return 1; }
+  if (plan.problems.length) { for (const p of plan.problems) err(p); err(catchUpHint(root)); return 1; }
   if (plan.alreadySplit) out(`already split (parts manifest v${MIGRATION_VERSION} present): nothing left to move`);
   else {
     out(`split-by-feature v${MIGRATION_VERSION} on ${head}: ${plan.stats.regionRoutes} routes, ${plan.stats.pinnedRoutes} pinned, ${plan.css.length} CSS parts, ${plan.html.length} markup parts — covered`);
@@ -494,7 +501,7 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
       const g = spikeGate(plan.stats, serverCeiling(root));
       const why = g.pass ? `>= ${SPIKE_GATE.movedShare * 100}% moved, ceiling ${g.ceiling} lines` : g.reasons.join('; ');
       out(`moved ${plan.stats.movedRoutes}/${plan.stats.regionRoutes} route statements (${Math.round(plan.stats.movedShare * 100)}%), ui/server.mjs after the split: ${plan.stats.serverLinesAfter} lines — spike gate ${g.pass ? 'passed' : 'FAILED'} (${why})`);
-      if (!g.pass) return 1;
+      if (!g.pass) { err(catchUpHint(root)); return 1; }
     }
   }
   return 0;

@@ -35,6 +35,14 @@ function fakeSnapshotDir(dir, colour, { bootMs = [1], samples = bootMs.length } 
     timings: { samples, bootMs, pageLoadMs: {} } }));
 }
 
+test('parseArgs crawl: --b repeats, docker is refused, --b is required', () => {
+  const o = parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:x', '--b', 'package:.', '--out', 'o']);
+  assert.deepEqual([o.cmd, o.a, o.bs, o.workers, o.control, o.keep], ['crawl', 'tree:.', ['tree:x', 'package:.'], 8, true, false]);
+  assert.equal(parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:x', '--out', 'o', '--no-control', '--workers', '8']).control, false);
+  assert.throws(() => parseArgs(['crawl', '--a', 'tree:.', '--b', 'docker:img', '--out', 'o']), /crawl supports tree: and package: targets/);
+  assert.throws(() => parseArgs(['crawl', '--a', 'tree:.', '--out', 'o']), /crawl needs --b/);
+});
+
 test('compareDirs: one changed colour is a visual difference with a diff PNG and fails', () => {
   const out = mkdtempSync(join(tmpdir(), 'parity-cmp-'));
   fakeSnapshotDir(join(out, 'a'), 0); fakeSnapshotDir(join(out, 'b'), 200);

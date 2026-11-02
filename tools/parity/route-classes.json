@@ -284,6 +284,7 @@
   "POST /api/ask/threads/:id/cards/:cardId": {"class": "probe", "reason": "404 thread not found first"},
   "POST /api/ask/threads/:id/changes": {"class": "probe", "reason": "400 text is required"},
   "POST /api/ask/threads/:id/directions": {"class": "probe", "reason": "400 runId is required"},
+  "POST /api/ask/threads/:id/engine": {"class": "probe", "reason": "askIdParam 400, then 404 for an unknown thread before any engine switch"},
   "POST /api/ask/threads/:id/messages": {"class": "skip", "reason": "starts a paid chat turn (ui/server.mjs:15281)"},
   "POST /api/ask/threads/:id/stop": {"class": "probe", "reason": "no job in flight: no-op {ok:true}"},
   "POST /api/automations/events/:id/approve": {"class": "probe", "reason": "requireFlag('gitAutomations') answers 404; on: unknown event -> 404 before any run"},

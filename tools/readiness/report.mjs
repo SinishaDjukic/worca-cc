@@ -17,6 +17,7 @@ export const GATE_NOTE = 'mechanics only; the split fails the spike gate';
 export const SPLITTER_MISSING = 'splitter missing: tools/split-by-feature.mjs is not in the dev commit';
 export const SPLITTER_NOTE = 'Cause: the dev commit has no `tools/split-by-feature.mjs`. The #919 tooling is not merged into dev, so no '
   + 'migrated tree was built, and every row after split-check fails for that reason, not because of the split.';
+const CATCH_UP = ['works', 'needs hand fix', 'not run'];
 const NO_RISKS = { note: 'not measured: no migrated tree', evidence: [{ label: 'summary', href: 'evidence/summary.txt' }] };
 const COMMIT_URL = (repo, sha) => `https://github.com/${repo}/commit/${sha}`;
 
@@ -37,7 +38,7 @@ export function verdictCause(checks) {
   return /^spike gate FAILED/.test(String(sc.detail)) ? 'spike-gate' : null;
 }
 
-export function buildReport({ repo, sha, ref = 'origin/dev', generatedAt, toolCommit, checks, openPrs = [], baseline = {}, moved = { features: [], largest: {} }, risks = NO_RISKS, inputs = {} }) {
+export function buildReport({ repo, sha, ref = 'origin/dev', generatedAt, toolCommit, checks, openPrs = [], baseline = {}, moved = { features: [], largest: {} }, risks = NO_RISKS, inputs = {}, notLocal }) {
   const failing = checks.filter((c) => c.status !== 'pass').map((c) => c.id);
   return {
     schema: SCHEMA, generatedAt, toolCommit, repo,
@@ -45,6 +46,7 @@ export function buildReport({ repo, sha, ref = 'origin/dev', generatedAt, toolCo
     devCommit: { sha, ref, url: COMMIT_URL(repo, sha), evidence: [{ label: sha.slice(0, 9), href: COMMIT_URL(repo, sha) }, { label: 'fetch.log', href: 'evidence/fetch.log' }] },
     sections: SECTIONS.map((s, i) => ({ n: i + 1, ...s })),
     checks: checks.map((c) => ({ ...c, section: CHECKS[c.id] })), openPrs, baseline, moved, risks, inputs,
+    ...(notLocal?.length ? { notLocal } : {}),
   };
 }
 
@@ -63,6 +65,11 @@ export function validateReport(r) {
     if (!c.evidence?.length || c.evidence.some((e) => !e.href)) p.push(`${c.id}: no evidence link`);
   }
   for (const t of r.openPrs) if (typeof t.dev?.conflict !== 'boolean' || typeof t.split?.conflict !== 'boolean' || !t.action) p.push(`open PR ${t.number != null ? `#${t.number}` : 'branch'}: needs both conflict flags and one action`);
+  for (const t of r.openPrs) if (t.catchUp && !CATCH_UP.includes(t.catchUp.verdict)) p.push(`open PR ${t.number != null ? `#${t.number}` : 'branch'}: catch-up verdict must be ${CATCH_UP.join(', ')}`);
+  for (const x of r.risks?.ceilingRaises ?? []) {
+    if (typeof x.file !== 'string' || typeof x.from !== 'number' || typeof x.to !== 'number' || !(x.from < x.to) || typeof x.why !== 'string' || !x.why) p.push(`ceiling raise ${x.file ?? '?'}: needs a file, numbers from < to and a why`);
+  }
+  if (r.notLocal !== undefined && (!Array.isArray(r.notLocal) || r.notLocal.some((x) => typeof x?.name !== 'string' || typeof x?.ci !== 'string'))) p.push('notLocal must be an array of { name, ci } strings');
   return p;
 }
 
@@ -77,6 +84,9 @@ const links = (ev) => ev.map((e) => `[${cell(e.label)}](${e.href})`).join(' · '
 const detailCell = (d) => (/^error: /.test(d ?? '') ? `error: ${code(d.slice(7))}` : cell(d));
 const rowLine = (c) => `| ${c.id} | ${c.status === 'pass' ? '✔ pass' : '✖ fail'} | ${detailCell(c.detail)} | ${links(c.evidence)} |`;
 const yesNo = (b) => (b ? 'yes' : 'no');
+const n = (x) => Number(x).toLocaleString('en-US');
+const cu = (t) => (!t.catchUp || t.catchUp.verdict === 'not run' ? 'not run' : t.catchUp.verdict === 'works' ? 'works'
+  : `needs hand fix ${code(t.catchUp.reasons.join('; '))}`);
 const deltaLine = (d) => (d.note ? cell(d.note)
   : `${code(d.probe)}: ${d.before.status}${d.before.csp ? '' : ' without CSP'} → ${d.after.status}${d.after.csp ? ' with the rendered shell CSP' : ''}`);
 
@@ -94,9 +104,9 @@ export function renderMarkdown(r) {
     }
     if (s.id === 'dev-commit') out.push(`\`${r.devCommit.sha}\` (${cell(r.devCommit.ref ?? 'origin/dev')}) · ${links(r.devCommit.evidence)}`, '');
     out.push(...rows(s.id));
-    if (s.id === 'rollback') out.push(ROLLBACK_NOTE, '');
-    if (s.id === 'open-prs') out.push(...(r.openPrs.length ? ['| # | Branch | Title | Conflicts with dev | Conflicts after the split | Action |', '|---|---|---|---|---|---|',
-      ...r.openPrs.map((t) => `| ${t.number ? `[#${t.number}](${t.url})` : `[branch](${t.url})`} | ${code(t.branch)} | ${code(t.title)} | ${yesNo(t.dev.conflict)} | ${yesNo(t.split.conflict)}${t.split.files?.length ? ` ${code(t.split.files.join(', '))}` : ''} | ${t.action} |`)]
+    if (s.id === 'rollback') out.push(...(r.notLocal ?? []).map((x) => `Not run locally: ${code(x.name)} → CI job ${code(x.ci)}`), ...(r.notLocal?.length ? [''] : []), ROLLBACK_NOTE, '');
+    if (s.id === 'open-prs') out.push(...(r.openPrs.length ? ['| # | Branch | Title | Conflicts with dev | Conflicts after the split | Action | Catch-up |', '|---|---|---|---|---|---|---|',
+      ...r.openPrs.map((t) => `| ${t.number ? `[#${t.number}](${t.url})` : `[branch](${t.url})`} | ${code(t.branch)} | ${code(t.title)} | ${yesNo(t.dev.conflict)} | ${yesNo(t.split.conflict)}${t.split.files?.length ? ` ${code(t.split.files.join(', '))}` : ''} | ${t.action} | ${cu(t)} |`)]
       : ['No open PRs or dependabot branches.']), '');
     if (s.id === 'baseline' && r.baseline.rows) out.push('| Measure | dev | migrated |', '|---|---|---|', ...r.baseline.rows.map((b) => `| ${b.measure} | ${b.dev} | ${b.migrated} |`), '');
     if (s.id === 'moved') out.push('| Feature | Files | Lines |', '|---|---|---|', ...r.moved.features.map((f) => `| ${f.feature} | ${f.files.length} | ${f.lines} |`), '',
@@ -108,6 +118,7 @@ export function renderMarkdown(r) {
       ...(r.risks.note ? [`- Accepted served deltas: ${cell(r.risks.note)}`]
         : [`- Accepted served deltas: ${r.risks.acceptedDeltas.length}`, ...r.risks.acceptedDeltas.map((d) => `  - ${deltaLine(d)}`)]),
       `- Residual \`ui/server.mjs\`: ${r.risks.serverLines} lines, capped at ${r.risks.ceiling ?? 'no ceiling'} (\`tools/split-by-feature/size-caps.json\`), not under 1,000`,
+      ...(r.risks.ceilingRaises ?? []).map((x) => `- Ceiling raised: \`${cell(x.file)}\` ${n(x.from)} → ${n(x.to)} lines (${cell(x.why)}): needs the owner's sign-off`),
       `- Routes pinned in \`ui/server.mjs\`: ${r.risks.pins} (\`tools/split-by-feature/pinned.json\`)`]), '');
     if (s.id === 'inputs') out.push(`- Go/no-go owner: ${cell(r.inputs.owner ?? 'not recorded yet')}`, `- Freeze window: ${cell(r.inputs.freezeWindow ?? 'not recorded yet')}`,
       `- Known flaky failures seen: ${r.inputs.flaky?.length ?? 0}`, '');
@@ -117,8 +128,8 @@ export function renderMarkdown(r) {
 
 export const MAX_BODY = 60000;
 export const anchor = (href) => `ev-${href.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
-/** A relative evidence link in report.md: evidence/…, parity/…, parity-reverted/… (no `..`, no spaces). */
-export const EVIDENCE_LINK = /\]\(((?:evidence|parity(?:-[a-z]+)?)\/(?:[\w-][\w.-]*\/)*[\w-][\w.-]*)\)/g;
+/** A relative evidence link in report.md: evidence/…, crawl/…, parity/…, parity-reverted/… (no `..`, no spaces). */
+export const EVIDENCE_LINK = /\]\(((?:evidence|crawl|parity(?:-[a-z]+)?)\/(?:[\w-][\w.-]*\/)*[\w-][\w.-]*)\)/g;
 /** The #919 comment: the marker line, report.md with relative links turned into #ev- anchors, then one Evidence
  *  entry per distinct linked href, in link order, so every anchor has exactly one `<a id>` target.
  *  `read(href)` returns the file's text or null; `clean(s)` rewrites paths; `flag(s)` returns scan findings for one

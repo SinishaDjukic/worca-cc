@@ -1,6 +1,6 @@
 // tools/parity/launch.mjs — #919 slice 2: start a target (source tree, installed package, Docker image) in a sandbox.
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, existsSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, existsSync, lstatSync, cpSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { devNull, tmpdir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -21,14 +21,18 @@ export function parseTarget(spec) {
 }
 
 /** Allowlist env (D3): nothing of the operator's credentials or host config reaches a target. */
-export function buildEnv(base, { home, port, signedOut = false }) {
+export function buildEnv(base, { home, port, signedOut = false, offline = false }) {
   const env = {};
   for (const [k, v] of Object.entries(base)) if (KEEP.includes(k) || k.startsWith('LC_')) env[k] = v;
   Object.assign(env, GIT_ID, { HOME: home, USERPROFILE: home, WORCA_HOME: home, WORCA_MOCK: '1',
     WORCA_NO_NATIVE_DIALOG: '1', PORT: String(port) });
   if (signedOut) Object.assign(env, { WORCA_ALLOWED_HOSTS: SIGNED_OUT_HOST, WORCA_IDENTITY_ISSUER: 'http://localhost:9' });
+  // after the KEEP allowlist filter: proxy keys in `base` are dropped by it, so they are set here, never passed in
+  if (offline) Object.assign(env, { HTTP_PROXY: DEAD_PROXY, HTTPS_PROXY: DEAD_PROXY, http_proxy: DEAD_PROXY, https_proxy: DEAD_PROXY,
+    NO_PROXY: 'localhost,127.0.0.1,::1', no_proxy: 'localhost,127.0.0.1,::1', NODE_USE_ENV_PROXY: '1' });   // Node 26 here honours it
   return env;
 }
+export const DEAD_PROXY = 'http://127.0.0.1:9';   // discard port: every external call fails fast, the same on both sides (D9)
 
 export function freePort() {
   return new Promise((ok, fail) => {
@@ -77,8 +81,8 @@ export function installPackage(treeDir) {
 }
 
 /** Fixed paths for the UI server so A and B show the same paths (D15); a lock dir keeps two harness runs apart. */
-export function fixedRoot(base = tmpdir()) {
-  const root = join(base, 'worca-parity');
+export function fixedRoot(base = tmpdir(), name = 'worca-parity') {
+  const root = join(base, name);
   const lock = join(root, 'lock');
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const st = lstatSync(root);   // a shared $TMPDIR: refuse a planted or loose root (D15)
@@ -104,18 +108,27 @@ function sandboxRepo(projectPath) {
   execFileSync('git', [...safe, '-C', projectPath, 'commit', '-q', '--allow-empty', '-m', 'init'], { env });
 }
 
+/** The fixed home and sandbox for one launch: wiped, then a template copy (crawl, D2) or a fresh empty repo. */
+export function prepareRoot({ fixed, template }) {
+  const home = join(fixed, 'home'); const projectPath = join(fixed, 'sandbox');
+  // retries: a server stopped a moment ago can still be finishing its last writes in home (ENOTEMPTY on the wipe)
+  for (const d of [home, projectPath]) rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  if (template) { cpSync(join(template, 'home'), home, { recursive: true }); cpSync(join(template, 'sandbox'), projectPath, { recursive: true }); }
+  else { mkdirSync(home, { recursive: true }); sandboxRepo(projectPath); }
+  return { home, projectPath };
+}
+
 /**
  * opts.fixed: a fixedRoot().root for the UI server (wiped home and sandbox at fixed paths); else a fresh mkdtemp.
  * @returns {Promise<{kind, base, port, bootMs, root, projectPath, logFile, alive: () => boolean, stop: () => Promise<void>}>}
  */
-export async function startTarget({ kind, ref, signedOut = false, appDir }, { port: wantPort, fixed } = {}) {
+export async function startTarget({ kind, ref, signedOut = false, appDir }, { port: wantPort, fixed, template, offline = false } = {}) {
   const port = wantPort ?? await freePort();
   if (port === HOST_APP_PORT) throw new Error(`refusing port ${HOST_APP_PORT}: it belongs to the host worca app`);
-  const home = fixed ? join(fixed, 'home') : mkdtempSync(join(tmpdir(), 'parity-home-'));
-  if (fixed) { rmSync(home, { recursive: true, force: true }); mkdirSync(home, { recursive: true }); }
+  let home; let projectPath;
+  if (fixed) ({ home, projectPath } = prepareRoot({ fixed, template }));
+  else { home = mkdtempSync(join(tmpdir(), 'parity-home-')); projectPath = join(home, 'sandbox'); sandboxRepo(projectPath); }
   const logFile = join(home, 'server.log');
-  const projectPath = fixed ? join(fixed, 'sandbox') : join(home, 'sandbox');
-  sandboxRepo(projectPath);
   const t0 = Date.now();
   if (kind === 'docker') {
     let vol = null; let claudeVol = null;
@@ -147,7 +160,7 @@ export async function startTarget({ kind, ref, signedOut = false, appDir }, { po
   // realpath: ui/server.mjs listens only when argv[1] equals its own (realpath) URL, so /tmp/x (/private/tmp/x) never would
   const root = realpathSync(kind === 'package' ? (appDir ?? installPackage(resolve(ref))) : resolve(ref));
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(root, 'ui', 'server.mjs')],
-    { cwd: home, env: buildEnv(process.env, { home, port, signedOut }), stdio: ['ignore', out, out] });
+    { cwd: home, env: buildEnv(process.env, { home, port, signedOut, offline }), stdio: ['ignore', out, out] });
   let exit = null;
   child.once('exit', (code, sig) => { exit = sig ? `signal ${sig}` : `code ${code}`; });
   const base = `http://127.0.0.1:${port}`;

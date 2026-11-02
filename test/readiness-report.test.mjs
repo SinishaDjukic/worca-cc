@@ -132,3 +132,36 @@ test('Risks: every accepted delta, the capped server and the pins; its .json evi
   assert.deepEqual([...links].sort(), [...ids].sort());
   assert.deepEqual(missingEvidence(r, (h) => h !== 'evidence/accepted-deltas.json'), ['evidence file missing: evidence/accepted-deltas.json']);
 });
+
+test('Risks: a recorded ceiling raise renders one sign-off line; a bad raise entry fails validation', () => {
+  const risks = { acceptedDeltas: [], serverLines: 10085, ceiling: 10085, pins: 11,
+    ceilingRaises: [{ file: 'ui/server.mjs', from: 9972, to: 10085, why: 'dev growth | #711' }], evidence: [{ label: 'dry-run.log', href: 'evidence/dry-run.log' }] };
+  const r = buildReport({ repo: 'SinishaDjukic/worca-cc', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks: all(), risks });
+  assert.deepEqual(validateReport(r), []);
+  assert.match(renderMarkdown(r), /^- Ceiling raised: `ui\/server\.mjs` 9,972 → 10,085 lines \(dev growth \\\| #711\): needs the owner's sign-off$/m);
+  for (const bad of [{ file: 'ui/server.mjs', from: 10085, to: 9972, why: 'x' }, { file: 'ui/server.mjs', from: 1, to: 2 }, { from: 1, to: 2, why: 'x' }]) {
+    const p = validateReport(buildReport({ repo: 'o/r', sha: SHA, generatedAt: 'x', toolCommit: SHA, checks: all(), risks: { ...risks, ceilingRaises: [bad] } }));
+    assert.ok(p.some((x) => /ceiling raise/.test(x)), JSON.stringify(bad));
+  }
+});
+
+test('notLocal: listed under the rollback table as "Not run locally", and validated as { name, ci } strings', () => {
+  const r = buildReport({ repo: 'o/r', sha: SHA, generatedAt: 'x', toolCommit: SHA, checks: all(), notLocal: [{ name: 'e2e:firefox-smoke', ci: 'firefox-e2e' }] });
+  assert.deepEqual(validateReport(r), []);
+  assert.match(renderMarkdown(r), /^Not run locally: `e2e:firefox-smoke` → CI job `firefox-e2e`$/m);
+  assert.ok(!renderMarkdown(make()).includes('Not run locally'));
+  assert.ok(validateReport({ ...r, notLocal: [{ name: 'x' }] }).some((x) => /notLocal/.test(x)));
+});
+
+test('the open-PR table has a Catch-up column: works, needs hand fix with the reason code-spanned, or not run', () => {
+  const t = (catchUp, n) => ({ number: n, url: `https://github.com/o/r/pull/${n}`, branch: 'feat/x', title: 't', dev: { conflict: false }, split: { conflict: false }, action: 'none', catchUp });
+  const rows = [t({ verdict: 'works', reasons: [] }, 1), t({ verdict: 'needs hand fix', reasons: ['merge with M^ conflicts in: ui/server.mjs'] }, 2), t({ verdict: 'not run', reasons: [] }, 3)];
+  const md = renderMarkdown(make(all(), rows));
+  assert.ok(md.includes('| # | Branch | Title | Conflicts with dev | Conflicts after the split | Action | Catch-up |'));
+  const line = (n) => md.split('\n').find((l) => l.startsWith(`| [#${n}]`));
+  assert.ok(line(1).endsWith('| none | works |'), line(1));
+  assert.ok(line(2).endsWith('| none | needs hand fix `merge with M^ conflicts in: ui/server.mjs` |'), line(2));
+  assert.ok(line(3).endsWith('| none | not run |'), line(3));
+  assert.deepEqual(validateReport(make(all(), rows)), []);
+  assert.ok(validateReport(make(all(), [t({ verdict: 'maybe', reasons: [] }, 4)])).some((x) => /catch-up verdict/.test(x)));
+});

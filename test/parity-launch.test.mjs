@@ -1,10 +1,10 @@
 // test/parity-launch.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, chmodSync, symlinkSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, chmodSync, symlinkSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildEnv, parseTarget, dockerArgs, startTarget, fixedRoot } from '../tools/parity/launch.mjs';
+import { buildEnv, parseTarget, dockerArgs, startTarget, fixedRoot, prepareRoot, DEAD_PROXY } from '../tools/parity/launch.mjs';
 
 test('buildEnv keeps only allowlisted keys, isolates HOME/WORCA_HOME and pins the port', () => {
   const base = { PATH: '/bin', LANG: 'C', LC_ALL: 'C', PORT: '4317', FORCE_COLOR: '1', WORCA_FLAGS: 'x',
@@ -114,4 +114,38 @@ test('startTarget boots a tree reached through a symlink (macOS /tmp → /privat
   symlinkSync(new URL('..', import.meta.url).pathname, link, 'dir');
   const t = await startTarget({ kind: 'tree', ref: link });
   try { assert.equal((await fetch(`${t.base}/api/health`)).status, 200); } finally { await t.stop(); }
+});
+
+test('fixedRoot(base, name): its own dir and lock; two names never share a lock', () => {
+  const base = mkdtempSync(join(tmpdir(), 'parity-fixed-name-'));
+  const a = fixedRoot(base, 'worca-parity-crawl-2'); const b = fixedRoot(base, 'worca-parity-crawl-3');
+  assert.equal(a.root, join(base, 'worca-parity-crawl-2'));
+  assert.ok(existsSync(join(a.root, 'lock', 'pid')) && existsSync(join(b.root, 'lock', 'pid')));
+  a.release(); b.release();
+});
+
+test('buildEnv offline: a dead proxy for every external call, localhost exempt, allowlist kept, base proxies overridden', () => {
+  const env = buildEnv({ HTTPS_PROXY: 'http://corp:8080', SECRET: 'x', PATH: '/bin' }, { home: '/tmp/h', port: 1, offline: true });
+  for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) assert.equal(env[k], DEAD_PROXY, k);
+  assert.equal(DEAD_PROXY, 'http://127.0.0.1:9');
+  assert.equal(env.NO_PROXY, 'localhost,127.0.0.1,::1');
+  assert.equal(env.NODE_USE_ENV_PROXY, '1');
+  assert.equal(env.SECRET, undefined); assert.equal(env.PATH, '/bin');
+  assert.equal(buildEnv({}, { home: '/tmp/h', port: 1 }).HTTPS_PROXY, undefined, 'online by default');
+});
+
+test('prepareRoot: a template copy of home and sandbox, else a fresh empty repo; the old contents are wiped', () => {
+  const fixed = mkdtempSync(join(tmpdir(), 'parity-prep-'));
+  const tpl = mkdtempSync(join(tmpdir(), 'parity-tpl-'));
+  mkdirSync(join(tpl, 'home'), { recursive: true }); writeFileSync(join(tpl, 'home', 'worca-cc.db'), 'db');
+  mkdirSync(join(tpl, 'sandbox', '.git'), { recursive: true }); writeFileSync(join(tpl, 'sandbox', 'a.txt'), 'a');
+  mkdirSync(join(fixed, 'home'), { recursive: true }); writeFileSync(join(fixed, 'home', 'stale'), 'x');
+  const r = prepareRoot({ fixed, template: tpl });
+  assert.deepEqual([r.home, r.projectPath], [join(fixed, 'home'), join(fixed, 'sandbox')]);
+  assert.equal(readFileSync(join(fixed, 'home', 'worca-cc.db'), 'utf8'), 'db');
+  assert.ok(!existsSync(join(fixed, 'home', 'stale')));
+  assert.equal(readFileSync(join(fixed, 'sandbox', 'a.txt'), 'utf8'), 'a');
+  prepareRoot({ fixed });
+  assert.ok(!existsSync(join(fixed, 'home', 'worca-cc.db')));
+  assert.ok(existsSync(join(fixed, 'sandbox', '.git')) && !existsSync(join(fixed, 'sandbox', 'a.txt')));
 });

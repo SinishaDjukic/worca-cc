@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { readPartsManifest, isPublicPart, publicRelPath, assemble } from '../src/core/public-assets.mjs';
 import { readStyleCss, readStyleCssEntry } from '../src/core/read-style-css.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { catchUpHint } from '../tools/split-by-feature.mjs';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../ui/public/', import.meta.url));
 
@@ -160,7 +161,8 @@ const ALLOW = new Map([
   ['e2e/extension/fixtures.mjs', "spawns ui/server.mjs; its only reads (openSync, readFileSync) are of the server's own log file"],
 ]);
 const ALLOW_PREFIX = ['tools/split-by-feature/', 'test/split-by-feature',   // the tool and its fixture strings
-  'tools/readiness/', 'test/readiness'];   // the readiness dry run compares a scratch tree's monoliths with its split
+  'tools/readiness/', 'test/readiness',   // the readiness dry run compares a scratch tree's monoliths with its split
+  'tools/catch-up-919', 'test/catch-up-919'];   // the catch-up fixture edits a scratch clone's monoliths
 test('no test or tool reaches style.css, index.html or ui/server.mjs on disk directly', () => {
   const root = new URL('../', import.meta.url);
   const offenders = [];
@@ -172,7 +174,9 @@ test('no test or tool reaches style.css, index.html or ui/server.mjs on disk dir
       for (const n of directReads(readFileSync(new URL(rel, root), 'utf8'))) offenders.push(`${rel}:${n}`);
     }
   }
-  assert.deepEqual(offenders, [], 'use readStyleCss / readIndexHtml / readServerSource from src/core/read-style-css.mjs, read-index-html.mjs, read-server-source.mjs');
+  const msg = `use readStyleCss / readIndexHtml / readServerSource from src/core/read-style-css.mjs, read-index-html.mjs, read-server-source.mjs; ${catchUpHint(fileURLToPath(root))}`;
+  assert.match(msg, /; if this branch started before the #919 split: run npm run catch-up:919 -- \S+$/);
+  assert.deepEqual(offenders, [], msg);
 });
 
 test('rollback B step 2: assemble is exported and gives the served bytes on both layouts', () => {

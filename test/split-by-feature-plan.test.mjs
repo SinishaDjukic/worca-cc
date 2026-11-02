@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadMap, featureForRoute } from '../tools/split-by-feature/plan.mjs';
-import { planSplit, main, nextCaps, spikeGate, serverCeiling, writeFiles, codeLineCounts, SPIKE_GATE } from '../tools/split-by-feature.mjs';
+import { planSplit, main, nextCaps, spikeGate, serverCeiling, writeFiles, codeLineCounts, SPIKE_GATE, catchUpHint } from '../tools/split-by-feature.mjs';
 
 const ROOT = new URL('../', import.meta.url).pathname;
 // After the freeze-day migration this checkout is itself split: the tests that split the real tree then check the
@@ -93,7 +93,7 @@ test('--apply writes the split; a second --apply changes 0 files; a fresh plan o
   assert.equal(await main(['--apply', '--root', d], { out: (m) => outs.push(m), err: (m) => errs.push(m) }), 0);
   assert.equal(outs[1], 'already split (parts manifest v1 present): 0 files changed');
   assert.deepEqual(writeFiles(d, planSplit({ root: pristine }).files), []);      // idempotent without the shortcut too
-  assert.equal(JSON.parse(readFileSync(join(d, 'tools/split-by-feature/size-caps.json'), 'utf8'))['ui/server.mjs'], 10085);
+  assert.equal(JSON.parse(readFileSync(join(d, 'tools/split-by-feature/size-caps.json'), 'utf8'))['ui/server.mjs'], 10119);
 });
 
 test('--apply refuses a git checkout with uncommitted changes and writes nothing', { skip: UNSPLIT_ONLY }, async (t) => {
@@ -125,7 +125,7 @@ test('the real tree is fully covered, the pins match the baseline and the spike 
     assert.ok(codeLineCounts(ROOT)['ui/server.mjs'] <= serverCeiling(ROOT), `ui/server.mjs over its ceiling ${serverCeiling(ROOT)}`);
     return;
   }
-  assert.deepEqual(spikeGate(r.stats, serverCeiling(ROOT)), { pass: true, reasons: [], ceiling: 10085 });
+  assert.deepEqual(spikeGate(r.stats, serverCeiling(ROOT)), { pass: true, reasons: [], ceiling: 10119 });
 });
 
 test('spike gate: >= 95% of route statements moved and ui/server.mjs within its size-cap ceiling', () => {
@@ -141,7 +141,7 @@ test('--check --stats prints the gate result with its reason, and exits 1 when i
   const outs = [];
   assert.equal(await main(['--check', '--stats', '--root', ROOT], { out: (m) => outs.push(m), err: () => {} }), 0);
   if (SPLIT) return assert.deepEqual(outs, ['already split (parts manifest v1 present): nothing left to move']);
-  assert.match(outs.at(-1), /^moved \d+\/\d+ route statements \(\d+%\), ui\/server\.mjs after the split: \d+ lines — spike gate passed \(>= 95% moved, ceiling 10085 lines\)$/);
+  assert.match(outs.at(-1), /^moved \d+\/\d+ route statements \(\d+%\), ui\/server\.mjs after the split: \d+ lines — spike gate passed \(>= 95% moved, ceiling 10119 lines\)$/);
 });
 
 test('docs/split-by-feature.md holds the tooling rollback (plain and two-part) next to procedures A and B', () => {
@@ -206,4 +206,43 @@ test('--apply refuses a failed spike gate and writes nothing', async (t) => {
   assert.equal(await main(['--apply', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);
   assert.match(errs.join('\n'), /spike gate FAILED \(.*ceiling 1\): nothing written/);
   assert.ok(!existsSync(join(d, 'ui/public/parts.json'))); assert.ok(existsSync(join(d, 'ui/public/style.css')));
+});
+
+const HINT = /^if this branch started before the #919 split: run npm run catch-up:919 -- \S+$/;
+
+test('catchUpHint names the current branch, or the placeholder outside a branch', () => {
+  assert.match(catchUpHint(ROOT), HINT);
+  const d = mkdtempSync(join(tmpdir(), 'sbf-hint-'));
+  assert.equal(catchUpHint(d), 'if this branch started before the #919 split: run npm run catch-up:919 -- <branch>');
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('a guard failure (an unmapped route) ends with the catch-up hint', async (t) => {
+  if (SPLIT) return t.skip(UNSPLIT_ONLY);
+  const d = plannerCopy(t);
+  const s = readFileSync(join(d, 'ui/server.mjs'), 'utf8');
+  const i = s.indexOf('// SPA fallback');
+  writeFileSync(join(d, 'ui/server.mjs'), `${s.slice(0, i)}app.get('/api/zz-unmapped-hint', (q, r) => r.json({}));\n${s.slice(i)}`);
+  const errs = [];
+  assert.equal(await main(['--check', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);
+  assert.ok(errs.some((e) => /unmapped route: GET \/api\/zz-unmapped-hint/.test(e)), errs.join('\n'));
+  assert.match(errs.at(-1), HINT);
+});
+
+test('a failed spike gate (--check --stats and --apply) ends with the catch-up hint', async (t) => {
+  if (SPLIT) return t.skip(UNSPLIT_ONLY);
+  const d = plannerCopy(t); lowCeiling(d);
+  const errs = [];
+  assert.equal(await main(['--check', '--stats', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);
+  assert.match(errs.at(-1), HINT);
+  const errs2 = [];
+  assert.equal(await main(['--apply', '--root', d], { out: () => {}, err: (m) => errs2.push(m) }), 1);
+  assert.match(errs2.at(-1), HINT);
+});
+
+test('size-caps-raises.json: the last raise of ui/server.mjs is the cap in size-caps.json; every raise goes up and says why', () => {
+  const raises = JSON.parse(readFileSync(join(ROOT, 'tools/split-by-feature/size-caps-raises.json'), 'utf8'));
+  const caps = JSON.parse(readFileSync(join(ROOT, 'tools/split-by-feature/size-caps.json'), 'utf8'));
+  assert.equal(raises.filter((r) => r.file === 'ui/server.mjs').at(-1).to, caps['ui/server.mjs']);
+  for (const r of raises) { assert.ok(r.from < r.to, JSON.stringify(r)); assert.ok(typeof r.why === 'string' && r.why.trim(), JSON.stringify(r)); }
 });

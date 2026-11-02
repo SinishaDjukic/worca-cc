@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tools/readiness.mjs — #919 slice 3: readiness dry run of the split on the latest origin/dev.
-//   run   [--out DIR] [--keep] [--dev-ref REF]
+//   run   [--out DIR] [--keep] [--dev-ref REF] [--firefox-in-ci] [--crawl-from DIR] [--catch-up-from FILE]
 //                                       fetch origin/dev (or rehearse on REF), build + check the migrated tree, rehearse the rollback,
 //                                       check open PRs, write DIR/report.md + DIR/report.json (exit 0 go, 1 no-go)
 //   post  --out DIR                     post DIR's report on #919 after gh auth + secret scan (exit 0 posted)
@@ -8,7 +8,7 @@
 //                                       clone REV and the splitter REV as marked scratch clones under DIR, split the
 //                                       first with the second's splitter, commit (PR catch-up recipe)
 // Exit 2: bad arguments; 3: could not start (no report). See docs/split-by-feature.md.
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, existsSync, rmSync, realpathSync, cpSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,13 +21,15 @@ import { authStatus, postReport, REPO } from './readiness/gh.mjs';
 import { scanSecrets } from '../src/core/secret-scan.mjs';
 import { parseFailures, unlistedFailures } from './flaky-register.mjs';
 import { listRoutes } from './parity/routes.mjs';
+import { e2eRow, CI_ONLY } from './readiness/e2e.mjs';
+import { crawlSummary } from './parity/crawl-compare.mjs';
+import { catchUpAll, defaultDeps as catchUpDeps } from './catch-up-919.mjs';
 
 const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ev = (label, href) => ({ label, href });
 const SUITE_NOTE = 'about 15 min';
 const fatal = (msg) => Object.assign(new Error(msg), { fatal: true });
-/** Every e2e:* suite in package.json scripts, not the snapshot updaters (`:update-…`), sorted. */
-export const e2eScripts = (scripts = {}) => Object.keys(scripts).filter((k) => /^e2e:/.test(k) && !/:update(?:-|$)/.test(k)).sort();
+export { e2eScripts } from './readiness/e2e.mjs';
 
 export function parseArgs(argv) {
   const [cmd, ...rest] = argv;
@@ -35,7 +37,9 @@ export function parseArgs(argv) {
   if (cmd === 'run') {
     const devRef = arg('--dev-ref');
     if (rest.includes('--dev-ref') && (!devRef || devRef.startsWith('--'))) throw new Error('run --dev-ref needs REF');
-    return { cmd, out: arg('--out'), keep: rest.includes('--keep'), ...(devRef ? { devRef } : {}) };
+    const path = (k) => { const v = arg(k); if (rest.includes(k) && (!v || v.startsWith('--'))) throw new Error(`run ${k} needs a path`); return v ? resolve(v) : null; };
+    return { cmd, out: arg('--out'), keep: rest.includes('--keep'), firefoxInCi: rest.includes('--firefox-in-ci'),
+      crawlFrom: path('--crawl-from'), catchUpFrom: path('--catch-up-from'), ...(devRef ? { devRef } : {}) };
   }
   if (cmd === 'post') { const out = arg('--out'); if (!out) throw new Error('post needs --out DIR'); return { cmd, out }; }
   if (cmd === 'split') {
@@ -43,7 +47,7 @@ export function parseArgs(argv) {
     if (!s.rev || !s.splitterRev || !s.out) throw new Error('split needs --rev REV --splitter-rev REV --out DIR');
     return s;
   }
-  throw new Error('usage: readiness.mjs run [--out DIR] [--keep] [--dev-ref REF] | post --out DIR | split --rev REV --splitter-rev REV --out DIR');
+  throw new Error('usage: readiness.mjs run [--out DIR] [--keep] [--dev-ref REF] [--firefox-in-ci] [--crawl-from DIR] [--catch-up-from FILE] | post --out DIR | split --rev REV --splitter-rev REV --out DIR');
 }
 
 /** The catch-up recipe's split: both trees are marked scratch clones made here, so nobody writes the marker by hand,
@@ -73,10 +77,12 @@ export async function splitAt({ root = process.cwd(), rev, splitterRev, out, dep
   }
 }
 
-export async function runReadiness({ root = process.cwd(), out, keep = false, devRef = null, now = () => new Date(), log = console.log, deps = {} } = {}) {
+export async function runReadiness({ root = process.cwd(), out, keep = false, devRef = null, firefoxInCi = false, crawlFrom = null, catchUpFrom = null, now = () => new Date(), log = console.log, deps = {} } = {}) {
   const d = { run, runLogged, cloneAt, npmCi, hasSplitter, applySplit, sliceOneEquivalence, treeHash, resetTree, commitMigration, rehearseRollback, servedEquivalence,
     docsAndPackage, listTargets, fetchHeads, mergeCheck, listRoutes, authStatus,
-    codeFiles, deadCode, largestFiles, featureNames, movedByFeature, ...deps };
+    codeFiles, deadCode, largestFiles, featureNames, movedByFeature,
+    scripts: (dir) => JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts,
+    catchUpAll: (o) => catchUpAll({ d: catchUpDeps, ...o }), ...deps };
   const generatedAt = now().toISOString().replace(/\.\d{3}Z$/, 'Z');
   if (out) { out = resolve(out); if (existsSync(out) && readdirSync(out).length) throw fatal(`${out} is not empty`); }
   else out = mkdtempSync(join(tmpdir(), 'worca-readiness-'));      // private (0700) and new: nobody else can pre-create it
@@ -126,7 +132,7 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
 
     const base = join(trees, 'base'); const mig = join(trees, 'migrated');
     let plan = null; let migration = null; let parityRep = null; let deadDev = null; let deadMig = null;
-    let largest = {}; let features = []; let baselineRows = []; const openRows = []; const flaky = []; let gateFailed = false;
+    let largest = {}; let features = []; let baselineRows = []; const openRows = []; const flaky = []; let gateFailed = false; let notLocal = [];
     await step(1, 'gh-auth', 'gh auth status', () => { const a = d.authStatus(d.run); writeFileSync(E('gh-auth.log'), `${a.detail}\n`); return { ...a, evidence: [ev('gh-auth.log', 'evidence/gh-auth.log')] }; });
     let splitterMissing = false; let ceiling = null; let acceptedDeltas = null;
     const noTree = () => (splitterMissing ? 'no migrated tree: no splitter on the dev commit (see split-check)' : 'no migrated tree (dry-run-repeatable failed)');
@@ -182,11 +188,24 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
     await step(6, 'suite-migrated', `npm test on the migrated tree (${SUITE_NOTE})`, () => {
       needMigration(); const s = suite(mig, 'suite-migrated'); flaky.push(...Array(s.fails - s.unlisted.length).fill('suite-migrated')); return s;
     });
-    await step(7, 'parity', 'parity: dev vs the migrated tree', () => {
+    const treeOf = (dir, rev = 'HEAD') => d.run('git', ['-C', dir, 'rev-parse', `${rev}^{tree}`]).stdout.trim();
+    // the differential crawl, dev vs migrated; verify:919 row h's crawl is reused only when its A and first B are these trees
+    const crawl = () => {
+      const rep = crawlFrom && existsSync(join(crawlFrom, 'report.json')) ? JSON.parse(readFileSync(join(crawlFrom, 'report.json'), 'utf8')) : null;
+      const usable = rep && rep.a?.tree === treeOf(base) && rep.bs?.[0]?.tree === treeOf(mig);
+      if (usable) cpSync(crawlFrom, join(out, 'crawl'), { recursive: true, filter: (src) => !/[\\/](records\.ndjson|dom|png|a1|a2|b\d+)([\\/]|$)/.test(src.slice(crawlFrom.length)) });
+      else d.runLogged(process.execPath, ['--disable-warning=ExperimentalWarning', join(TOOL_ROOT, 'tools/parity.mjs'), 'crawl', '--a', `tree:${base}`, '--b', `tree:${mig}`, '--out', join(out, 'crawl')], E('crawl.log'));
+      const r = JSON.parse(readFileSync(join(out, 'crawl', 'report.json'), 'utf8'));
+      return { ok: r.pass === true, reused: !!usable, r };
+    };
+    await step(7, 'parity', 'parity and the differential crawl: dev vs the migrated tree', () => {
       needMigration(); const p = parity(base, mig, 'parity'); parityRep = p.rep;
-      return { ...p, detail: p.ok ? 'PASS: 0 route, visual and flow differences, timings within 10%' : `FAIL: ${p.rep.routeDiffs.length} route diffs, ${p.rep.visualDiffs?.length ?? 0} visual, ${p.rep.failedFlows.length} flows` };
+      const c = crawl();
+      const pd = p.ok ? 'PASS: 0 route, visual and flow differences, timings within 10%' : `FAIL: ${p.rep.routeDiffs.length} route diffs, ${p.rep.visualDiffs?.length ?? 0} visual, ${p.rep.failedFlows.length} flows`;
+      return { ok: p.ok && c.ok, detail: `${pd}; crawl ${c.ok ? 'PASS' : 'FAIL'}: ${crawlSummary(c.r)}${c.reused ? ' (verify:919 row h, same trees)' : ''}`,
+        evidence: [...p.evidence, ev('crawl/report.md', 'crawl/report.md'), ...(c.reused ? [] : [ev('crawl.log', 'evidence/crawl.log')])] };
     });
-    await step(8, 'open-prs', 'open PRs and dependabot branches against dev and the migrated tree', () => {
+    await step(8, 'open-prs', 'open PRs and dependabot branches against dev and the migrated tree; the catch-up dry run', async () => {
       needMigration();
       const listed = d.listTargets(d.run, { repo: REPO, remoteUrl, cwd: mig });
       const gone = new Set(d.fetchHeads(d.run, mig, remoteUrl, listed).map(keyOf));   // closed or deleted since the listing
@@ -194,33 +213,34 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
       const vanished = gone.size ? `; ${gone.size} gone before the fetch: ${[...gone].join(', ')}` : '';
       for (const t of targets) { const dev = d.mergeCheck(d.run, mig, sha, t.ref); const split = d.mergeCheck(d.run, mig, migration, t.ref); openRows.push({ ...t, dev, split, action: actionFor(t, { dev, split }) }); }
       const problems = openPrsProblems(targets, openRows);
+      // the catch-up dry run per target (verify:919 row j's is reused when its M^ and M tree are this run's)
+      const reused = catchUpFrom && existsSync(catchUpFrom) ? JSON.parse(readFileSync(catchUpFrom, 'utf8')) : null;
+      const usable = reused && reused.mParent === sha && reused.mTree === treeOf(mig, migration);
+      const caught = usable ? reused.rows : await d.catchUpAll({ root, out: join(trees, 'catch-up'), targets, headsRepo: mig,
+        ctx: { mParent: sha, m: migration, mRepo: mig, devRepo: mig, devRef: migration, splitter: base, devTree: mig }, log: say });
+      writeFileSync(E('catch-up.json'), JSON.stringify({ reused: !!usable, rows: caught }, null, 2));
+      for (const r of openRows) r.catchUp = (({ verdict, reasons }) => ({ verdict, reasons }))(caught.find((c) => c.key === keyOf(r)) ?? { verdict: 'not run', reasons: ['no catch-up row'] });
       // #1049 is expected open; if it was closed or merged, say so instead of passing silently
       const noExpress = openRows.some((t) => EXPRESS5.test(t.title)) ? '' : '; note: no open express 5 PR (#1049 closed or merged?)';
       if (noExpress) say(`note: no open express 5 PR in the table (#1049 closed or merged?)`);
       writeFileSync(E('open-prs.json'), JSON.stringify({ targets: targets.length, gone: [...gone], problems, rows: openRows }, null, 2));
-      return { ok: problems.length === 0, detail: problems.length ? problems[0] : `${openRows.length} PRs and branches, ${openRows.filter((t) => t.split.conflict).length} conflict after the split${vanished}${noExpress}`, evidence: [ev('open-prs.json', 'evidence/open-prs.json')] };
+      const works = openRows.filter((t) => t.catchUp.verdict === 'works').length;
+      return { ok: problems.length === 0, detail: problems.length ? problems[0] : `${openRows.length} PRs and branches, ${openRows.filter((t) => t.split.conflict).length} conflict after the split; catch-up: ${works} work, ${openRows.length - works} need a hand fix or did not run${usable ? ' (verify:919 row j, same trees)' : ''}${vanished}${noExpress}`,
+        evidence: [ev('open-prs.json', 'evidence/open-prs.json'), ev('catch-up.json', 'evidence/catch-up.json')] };
     });
-    // A suite that exits 0 after printing "SKIP" (firefox-smoke without Firefox, tools/firefox-smoke.mjs:15-17) did not
-    // run: the detail names it as skipped, never green. One skip next to a suite that ran passes; a row where no suite
-    // ran fails.
-    const e2e = (dir) => e2eScripts(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts).map((name) => {
-      const file = `rollback-${name.replace(/:/g, '-')}.log`;
-      const r = d.runLogged('npm', ['run', name], E(file), { cwd: dir });
-      return { name, ok: r.code === 0, skipped: r.code === 0 && /\bSKIP\b/.test(r.text ?? ''), evidence: ev(file, `evidence/${file}`) };
-    });
+    // e2e judgement (tools/readiness/e2e.mjs): e2e:extension is judged same before (the base clone) / after; every other
+    // suite must be green, and a suite that prints SKIP is a fail. --firefox-in-ci leaves the CI_ONLY suites to CI: listed,
+    // never a pass.
     await step(9, 'rollback', 'revert the migration; suite, parity and the e2e suites again', () => {
       needMigration();
       const r = d.rehearseRollback(d.run, mig, sha, migration);
       writeFileSync(E('rollback-diff.log'), `left by the suite and parity, removed before the revert:\n${r.cleaned || '(nothing)'}\ngit revert ${migration} → ${r.reverted}\ngit diff --stat ${sha} ${r.reverted}:\n${r.diff || '(empty)'}\ngit status --porcelain:\n${r.status || '(clean)'}\n`);
-      const s = suite(mig, 'suite-reverted'); const p = parity(base, mig, 'parity-reverted'); const e = e2e(mig);
-      const bad = e.filter((x) => !x.ok).map((x) => x.name);
-      const ran = e.filter((x) => x.ok && !x.skipped).map((x) => x.name); const skipped = e.filter((x) => x.skipped).map((x) => x.name);
-      const e2eText = !e.length ? 'e2e none found' : bad.length ? `e2e FAIL (${bad.join(', ')})`
-        : !ran.length ? `e2e none ran (skipped: ${skipped.join(', ')})`
-        : `e2e green (${ran.join(', ')})${skipped.length ? `; skipped (${skipped.join(', ')})` : ''}`;
-      return { ok: r.ok && s.ok && p.ok && ran.length > 0 && !bad.length,
-        detail: `diff ${r.diff ? 'NOT empty' : 'empty'}; suite ${s.ok ? 'green' : 'red'}; parity ${p.ok ? 'PASS' : 'FAIL'}; ${e2eText}${gateFailed ? ` (${GATE_NOTE})` : ''} — ${ROLLBACK_NOTE}`,
-        evidence: [ev('rollback-diff.log', 'evidence/rollback-diff.log'), ...s.evidence, ...p.evidence, ...e.map((x) => x.evidence)] };   // 4 + one per e2e suite
+      const s = suite(mig, 'suite-reverted'); const p = parity(base, mig, 'parity-reverted');
+      const e = e2eRow(d, base, mig, 'rollback', E, new Map(), { ciOnly: firefoxInCi ? CI_ONLY : {} });
+      notLocal = e.notLocal;
+      return { ok: r.ok && s.ok && p.ok && e.ok,
+        detail: `diff ${r.diff ? 'NOT empty' : 'empty'}; suite ${s.ok ? 'green' : 'red'}; parity ${p.ok ? 'PASS' : 'FAIL'}; ${e.text || 'e2e none found'}${gateFailed ? ` (${GATE_NOTE})` : ''} — ${ROLLBACK_NOTE}`,
+        evidence: [ev('rollback-diff.log', 'evidence/rollback-diff.log'), ...s.evidence, ...p.evidence, ...e.list.flatMap((x) => x.logs.map((l) => ev(l.slice('evidence/'.length), l)))] };
     });
     await step(10, 'baseline', 'baseline comparison', () => {
       if (!deadDev || !parityRep) throw new Error(splitterMissing ? noTree() : 'needs the migrated tree and the parity report');
@@ -242,11 +262,15 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
     say('[11/11] report…');
     writeFileSync(E('summary.txt'), checks.map((c) => `${c.status}\t${c.id}\t${c.detail}`).join('\n') + '\n');
     // only with a migration commit: dry-run.log is written after it, and Risks must never link a missing file
-    const risks = migration && plan?.stats ? { acceptedDeltas: acceptedDeltas ?? [], serverLines: plan.stats.serverLinesAfter, ceiling, pins: plan.stats.pinnedRoutes,
-      evidence: [...(acceptedDeltas ? [ev('accepted-deltas.json', 'evidence/accepted-deltas.json')] : []), ev('dry-run.log', 'evidence/dry-run.log')],
+    const raisesFile = join(mig, 'tools/split-by-feature/size-caps-raises.json');
+    const ceilingRaises = migration && existsSync(raisesFile) ? JSON.parse(readFileSync(raisesFile, 'utf8')) : [];
+    if (ceilingRaises.length) writeFileSync(E('size-caps-raises.json'), JSON.stringify(ceilingRaises, null, 2) + '\n');
+    const risks = migration && plan?.stats ? { acceptedDeltas: acceptedDeltas ?? [], serverLines: plan.stats.serverLinesAfter, ceiling, pins: plan.stats.pinnedRoutes, ceilingRaises,
+      evidence: [...(acceptedDeltas ? [ev('accepted-deltas.json', 'evidence/accepted-deltas.json')] : []), ev('dry-run.log', 'evidence/dry-run.log'),
+        ...(ceilingRaises.length ? [ev('size-caps-raises.json', 'evidence/size-caps-raises.json')] : [])],
       ...(acceptedDeltas ? {} : { note: 'accepted deltas not measured (the equivalence row failed)' }) } : undefined;
     const report = buildReport({ repo: REPO, sha, ref, generatedAt, toolCommit, checks, openPrs: openRows, baseline: { rows: baselineRows },
-      moved: { features, largest }, risks, inputs: { owner: null, freezeWindow: null, flaky } });
+      moved: { features, largest }, risks, inputs: { owner: null, freezeWindow: null, flaky }, notLocal });
     const problems = [...validateReport(report), ...missingEvidence(report, (href) => existsSync(join(out, href)))];
     if (problems.length) throw fatal(`report invalid:\n${problems.join('\n')}`);
     writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
@@ -278,7 +302,7 @@ export async function main(argv = process.argv.slice(2), { log = console.log, er
   let a;
   try { a = parseArgs(argv); } catch (e) { err(e.message); return 2; }
   try {
-    if (a.cmd === 'run') return (await runReadiness({ out: a.out, keep: a.keep, devRef: a.devRef, log })).report.verdict.value === 'go' ? 0 : 1;
+    if (a.cmd === 'run') return (await runReadiness({ out: a.out, keep: a.keep, devRef: a.devRef, firefoxInCi: a.firefoxInCi, crawlFrom: a.crawlFrom, catchUpFrom: a.catchUpFrom, log })).report.verdict.value === 'go' ? 0 : 1;
     if (a.cmd === 'post') { postFrom({ out: a.out, log }); return 0; }
     const { tree, commit, changed } = await splitAt({ rev: a.rev, splitterRev: a.splitterRev, out: a.out });
     log(`readiness: split ${changed.length} files; ${tree} is at ${commit}`); return 0;

@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs, runReadiness, postFrom, splitAt, e2eScripts } from '../tools/readiness.mjs';
 import { validateReport, GATE_NOTE, SPLITTER_NOTE } from '../tools/readiness/report.mjs';
+import { keyOf } from '../tools/readiness/open-prs.mjs';
 
 const SHA = 'a'.repeat(40);
 const PARITY = { pass: true, timingGated: true, routeDiffs: [], visualDiffs: [], failedFlows: [],
@@ -13,16 +14,26 @@ const PARITY = { pass: true, timingGated: true, routeDiffs: [], visualDiffs: [],
 const TARGET = { kind: 'PR', number: 1049, title: 'chore(deps): bump express from 4.22.3 to 5.3.0', branch: 'dependabot/npm_and_yarn/dev/express-5.3.0',
   head: 'd'.repeat(40), url: 'https://github.com/SinishaDjukic/worca-cc/pull/1049', ref: 'refs/readiness/pr/1049', src: 'refs/pull/1049/head' };
 
-function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFailed = false, splitterMissing = false, e2eFail = null, targets = [TARGET], gone = [] } = {}) {
+const CRAWL = { pass: true, control: true, a: { spec: 'tree:base', tree: SHA }, bs: [{ spec: 'tree:mig', tree: SHA }], masks: [], minutes: 1,
+  comparisons: [{ label: 'migrated', pass: true, diffs: [] }],
+  coverage: { screens: 3, routes: { registered: 2, visited: 2, unvisited: [], unfillable: [] }, elements: { found: 5, exercised: 4, skipped: 1, byReason: {} } } };
+const RAISES = [{ file: 'ui/server.mjs', from: 9972, to: 10085, why: "dev's own growth" }];
+// a Playwright JSON report for e2e:extension: `afterStatus` on the migrated tree, 'unexpected' on the base (dev's darwin baselines)
+const pwReport = (st) => ({ suites: [{ title: 'visual.spec.mjs', specs: [{ title: 'sidebar light', tests: [{ projectName: '', status: st }] }] }] });
+
+function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFailed = false, splitterMissing = false, e2eFail = null, targets = [TARGET], gone = [], afterStatus = 'unexpected', calls = [], crawl = CRAWL } = {}) {
   const run = (cmd, args) => {
     if (cmd === 'git' && args.includes('rev-parse')) return { code: 0, stdout: `${badSha ? 'nope' : SHA}\n`, stderr: '' };
     if (cmd === 'git' && args.includes('get-url')) return { code: 0, stdout: 'git@github.com:SinishaDjukic/worca-cc.git\n', stderr: '' };
     return { code: 0, stdout: '', stderr: '' };
   };
-  const runLogged = (cmd, args, file) => {
+  const runLogged = (cmd, args, file, o = {}) => {
     mkdirSync(dirname(file), { recursive: true });
+    calls.push([cmd, ...args].join(' '));
+    const json = o.env?.PLAYWRIGHT_JSON_OUTPUT_NAME;
+    if (json) writeFileSync(json, JSON.stringify(pwReport(o.cwd?.endsWith('migrated') ? afterStatus : 'unexpected')));
     const i = args.indexOf('--out');
-    if (i >= 0) { mkdirSync(args[i + 1], { recursive: true }); writeFileSync(join(args[i + 1], 'report.json'), JSON.stringify(PARITY)); writeFileSync(join(args[i + 1], 'report.md'), 'PASS\n'); }
+    if (i >= 0) { mkdirSync(args[i + 1], { recursive: true }); writeFileSync(join(args[i + 1], 'report.json'), JSON.stringify(args.includes('crawl') ? crawl : PARITY)); writeFileSync(join(args[i + 1], 'report.md'), 'PASS\n'); }
     const stats = gateFailed ? '9980 lines — spike gate FAILED (ui/server.mjs 9980 lines > ceiling 9972)' : '9972 lines — spike gate passed (>= 95% moved, ceiling 9972 lines)';
     const text = args.includes('tools/test.mjs') ? '✔ x\nℹ pass 1\nℹ fail 0\n'
       : args.includes('--stats') ? `moved 430/441 route statements (98%), ui/server.mjs after the split: ${stats}\n` : 'ok\n';
@@ -30,10 +41,14 @@ function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFai
     const failed = (gateFailed && args.includes('--stats')) || (cmd === 'npm' && args[0] === 'run' && args[1] === e2eFail);
     return { code: failed ? 1 : 0, text };
   };
-  const SCRIPTS = { 'e2e:extension': 'x', 'e2e:extension:update-linux': 'y', 'e2e:firefox-smoke': 'z', test: 't' };
+  const SCRIPTS = { 'e2e:extension': 'node tools/build-extension.mjs --test && playwright test -c e2e/extension/playwright.config.mjs', 'e2e:extension:update-linux': 'y', 'e2e:firefox-smoke': 'z', test: 't' };
   return {
     run, runLogged,
-    cloneAt: (_r, _root, _sha, dir) => { mkdirSync(join(dir, 'test'), { recursive: true }); writeFileSync(join(dir, 'test/flaky-register.json'), '[]'); writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: SCRIPTS })); return dir; },
+    cloneAt: (_r, _root, _sha, dir) => {
+      mkdirSync(join(dir, 'test'), { recursive: true }); writeFileSync(join(dir, 'test/flaky-register.json'), '[]'); writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: SCRIPTS }));
+      if (dir.endsWith('migrated')) { mkdirSync(join(dir, 'tools/split-by-feature'), { recursive: true }); writeFileSync(join(dir, 'tools/split-by-feature/size-caps-raises.json'), JSON.stringify(RAISES)); }
+      return dir;
+    },
     npmCi: () => {},
     hasSplitter: () => !splitterMissing,
     applySplit: async () => ({ plan: { files: new Map([['ui/routes/chat.mjs', 'a\n']]), stats: { serverLinesAfter: 9972, pinnedRoutes: 11 } }, ceiling: 9972, changed: ['ui/routes/chat.mjs'] }),
@@ -46,13 +61,14 @@ function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFai
     fetchHeads: () => gone, mergeCheck: () => ({ conflict: false, files: [] }), listRoutes: () => [],
     authStatus: () => (noAuth ? { ok: false, detail: 'gh auth status failed: run gh auth login' } : { ok: true, detail: 'gh is signed in to github.com as someone' }),
     codeFiles: () => [], deadCode: () => [], largestFiles: () => [], featureNames: () => ['chat'], movedByFeature: () => [{ feature: 'chat', files: [{ path: 'ui/routes/chat.mjs', lines: 1 }], lines: 1 }],
+    catchUpAll: async ({ targets: ts }) => { calls.push('catchUpAll'); return ts.map((t) => ({ key: keyOf(t), verdict: 'works', reasons: [] })); },
   };
 }
 const outDir = () => join(mkdtempSync(join(tmpdir(), 'readiness-run-')), 'out');
 const go = (deps, extra = {}) => { const lines = []; return runReadiness({ root: '.', out: outDir(), log: (l) => lines.push(l), now: () => new Date('2026-10-30T12:00:00Z'), deps, ...extra }).then((r) => ({ ...r, lines })); };
 
 test('parseArgs: run, post and split; anything else throws the usage line', () => {
-  assert.deepEqual(parseArgs(['run', '--out', '/tmp/r', '--keep']), { cmd: 'run', out: '/tmp/r', keep: true });
+  assert.deepEqual(parseArgs(['run', '--out', '/tmp/r', '--keep']), { cmd: 'run', out: '/tmp/r', keep: true, firefoxInCi: false, crawlFrom: null, catchUpFrom: null });
   assert.deepEqual(parseArgs(['post', '--out', 'x']), { cmd: 'post', out: 'x' });
   assert.deepEqual(parseArgs(['split', '--rev', 'HEAD', '--splitter-rev', 'M^', '--out', 'w']), { cmd: 'split', rev: 'HEAD', splitterRev: 'M^', out: 'w' });
   assert.throws(() => parseArgs(['post']), /post needs --out DIR/);
@@ -60,15 +76,15 @@ test('parseArgs: run, post and split; anything else throws the usage line', () =
   assert.throws(() => parseArgs(['go']), /usage: readiness\.mjs run/);
 });
 
-test('runReadiness with every fake passing: 10 pass rows, go, a valid report, the rollback row has 6 links, trees removed', async () => {
+test('runReadiness with every fake passing: 10 pass rows, go, a valid report, the rollback row has 7 links, trees removed', async () => {
   const { out, report, lines } = await go(fakeDeps());
   assert.deepEqual(validateReport(report), []);
   assert.equal(report.checks.length, 10);
   assert.ok(report.checks.every((c) => c.status === 'pass'), JSON.stringify(report.checks.filter((c) => c.status !== 'pass')));
   assert.equal(report.verdict.value, 'go');
   const rollback = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(rollback.evidence.length, 6);
-  assert.match(rollback.detail, /e2e green \(e2e:extension, e2e:firefox-smoke\)/);
+  assert.equal(rollback.evidence.length, 7);   // 4 + e2e:extension before and after + e2e:firefox-smoke
+  assert.match(rollback.detail, /e2e:extension same before\/after \(0 pass, 1 fail, 0 images identical\); e2e:firefox-smoke green/);
   assert.equal(existsSync(join(out, 'evidence/rollback-e2e-extension-update-linux.log')), false);
   assert.equal(report.openPrs[0].action, 'rebase after the migration');
   assert.ok(existsSync(join(out, 'report.md')) && existsSync(join(out, 'report.json')));
@@ -193,33 +209,56 @@ test('a dev commit without the splitter: split-check names it, later rows say wh
 });
 
 test('a failing e2e suite fails the rollback row and names it', async () => {
-  const { report } = await go(fakeDeps({ e2eFail: 'e2e:extension' }));
+  const { report } = await go(fakeDeps({ e2eFail: 'e2e:firefox-smoke' }));
   const row = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(row.status, 'fail'); assert.match(row.detail, /e2e FAIL \(e2e:extension\)/);
+  assert.equal(row.status, 'fail'); assert.match(row.detail, /e2e:firefox-smoke FAIL/);
 });
 
-test('a suite that prints SKIP and exits 0 is named skipped, not green', async () => {
+test('e2e:extension failing identically on dev and the migrated tree passes: same before/after', async () => {
+  const { report } = await go(fakeDeps({ e2eFail: 'e2e:extension' }));
+  const row = report.checks.find((c) => c.id === 'rollback');
+  assert.equal(row.status, 'pass'); assert.match(row.detail, /e2e:extension same before\/after/);
+});
+
+test('a suite that prints SKIP and exits 0 is named skipped, and SKIP fails the row', async () => {
   const deps = fakeDeps(); const inner = deps.runLogged;
   deps.runLogged = (cmd, args, file, o) => (args[1] === 'e2e:firefox-smoke'
     ? (writeFileSync(file, 'firefox-smoke: SKIP — no Firefox found\n'), { code: 0, text: 'firefox-smoke: SKIP — no Firefox found\n' })
     : inner(cmd, args, file, o));
   const { report } = await go(deps);
   const row = report.checks.find((c) => c.id === 'rollback');
-  assert.equal(row.status, 'pass'); assert.match(row.detail, /e2e green \(e2e:extension\); skipped \(e2e:firefox-smoke\)/);
+  assert.equal(row.status, 'fail'); assert.match(row.detail, /e2e:extension same before\/after .*; e2e:firefox-smoke SKIPPED/);
+  assert.equal(report.verdict.value, 'no-go');
 });
 
-test('the rollback row fails when every e2e suite skipped: e2e none ran', async () => {
-  const deps = fakeDeps(); const inner = deps.runLogged;
-  deps.runLogged = (cmd, args, file, o) => {
-    const r = inner(cmd, args, file, o);                              // makes the evidence dir and the log
-    if (cmd !== 'npm' || !/^e2e:/.test(args[1] ?? '')) return r;
-    const text = `${args[1]}: SKIP — no browser\n`; writeFileSync(file, text); return { code: 0, text };
-  };
-  const { report } = await go(deps);
+test('e2e:extension with one status changed on the migrated tree fails the rollback row: NOT same, named', async () => {
+  const { report } = await go(fakeDeps({ afterStatus: 'expected' }));
   const row = report.checks.find((c) => c.id === 'rollback');
   assert.equal(row.status, 'fail');
-  assert.match(row.detail, /e2e none ran \(skipped: e2e:extension, e2e:firefox-smoke\)/);
-  assert.equal(report.verdict.value, 'no-go');
+  assert.match(row.detail, /e2e:extension NOT same before\/after .*sidebar light: unexpected before, expected after/);
+});
+
+test('--firefox-in-ci: e2e:firefox-smoke never runs, the rollback row passes and says CI job firefox-e2e, not run locally', async () => {
+  assert.equal(parseArgs(['run', '--firefox-in-ci']).firefoxInCi, true);
+  const calls = [];
+  const { report, out } = await go(fakeDeps({ calls }), { firefoxInCi: true });
+  assert.ok(!calls.some((c) => c.includes('npm run e2e:firefox-smoke')), calls.join('\n'));
+  const row = report.checks.find((c) => c.id === 'rollback');
+  assert.equal(row.status, 'pass');
+  assert.match(row.detail, /e2e:firefox-smoke: CI job firefox-e2e, not run locally/);
+  assert.deepEqual(report.notLocal, [{ name: 'e2e:firefox-smoke', ci: 'firefox-e2e' }]);
+  assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /^Not run locally: `e2e:firefox-smoke` → CI job `firefox-e2e`$/m);
+  const without = [];
+  await go(fakeDeps({ calls: without }));
+  assert.ok(without.some((c) => c.includes('npm run e2e:firefox-smoke')));
+});
+
+test('risks.ceilingRaises comes from the migrated tree\'s size-caps-raises.json, with its evidence', async () => {
+  const { report, out } = await go(fakeDeps());
+  assert.deepEqual(report.risks.ceilingRaises, RAISES);
+  assert.ok(report.risks.evidence.some((e) => e.href === 'evidence/size-caps-raises.json'));
+  assert.ok(existsSync(join(out, 'evidence/size-caps-raises.json')));
+  assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /^- Ceiling raised: `ui\/server\.mjs` 9,972 → 10,085 lines \(dev's own growth\): needs the owner's sign-off$/m);
 });
 
 test('e2eScripts: every e2e:* suite, not the snapshot updaters, sorted', () => {
@@ -253,7 +292,7 @@ test('without a migration commit the report still validates and Risks says it wa
 });
 
 test('--dev-ref: the run uses that commit, the report names it, and post refuses a rehearsal report', async () => {
-  assert.deepEqual(parseArgs(['run', '--out', 'x', '--dev-ref', 'abc']), { cmd: 'run', out: 'x', keep: false, devRef: 'abc' });
+  assert.deepEqual(parseArgs(['run', '--out', 'x', '--dev-ref', 'abc']), { cmd: 'run', out: 'x', keep: false, firefoxInCi: false, crawlFrom: null, catchUpFrom: null, devRef: 'abc' });
   assert.throws(() => parseArgs(['run', '--dev-ref']), /run --dev-ref needs REF/);
   const { out, report } = await go(fakeDeps(), { devRef: 'abc' });
   assert.equal(report.devCommit.ref, 'abc');
@@ -273,4 +312,57 @@ test('a failed split removes its half-built out dir, and an empty out dir it was
   const given = mkdtempSync(join(tmpdir(), 'readiness-split-empty-'));
   await assert.rejects(() => splitAt({ root: '.', rev: 'HEAD', splitterRev: 'HEAD', out: given, deps }));
   assert.deepEqual(readdirSync(given), []);
+});
+
+test('every open-PR row carries its catch-up verdict; a hand fix does not fail the open-prs row', async () => {
+  const other = { ...TARGET, number: 570, title: 'feat: x', url: 'u', ref: 'refs/readiness/pr/570', src: 'refs/pull/570/head' };
+  const deps = fakeDeps({ targets: [other, TARGET] });
+  deps.catchUpAll = async ({ targets: ts, ctx }) => {
+    assert.deepEqual([ctx.mParent, ctx.m], [SHA, 'b'.repeat(40)]);
+    return ts.map((t) => ({ key: keyOf(t), verdict: t.number === 570 ? 'needs hand fix' : 'works', reasons: t.number === 570 ? ['merge with M^ conflicts in: ui/server.mjs'] : [] }));
+  };
+  const { report, out } = await go(deps);
+  assert.equal(report.checks.find((c) => c.id === 'open-prs').status, 'pass');
+  assert.deepEqual(report.openPrs.map((t) => [t.number, t.catchUp.verdict]), [[570, 'needs hand fix'], [1049, 'works']]);
+  assert.ok(existsSync(join(out, 'evidence/catch-up.json')));
+  assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /\| needs hand fix `merge with M\^ conflicts in: ui\/server\.mjs` \|$/m);
+});
+
+test('--catch-up-from is reused only when its M^ is the dev commit and its M tree is the migration tree', async () => {
+  assert.equal(parseArgs(['run', '--catch-up-from', 'x.json']).catchUpFrom, join(process.cwd(), 'x.json'));
+  const dir = mkdtempSync(join(tmpdir(), 'readiness-cu-'));
+  const file = (mTree) => { const f = join(dir, `${mTree[0]}.json`); writeFileSync(f, JSON.stringify({ mParent: SHA, m: 'b'.repeat(40), mTree, rows: [{ key: '#1049', verdict: 'works', reasons: [] }] })); return f; };
+  const calls = [];
+  const { report } = await go(fakeDeps({ calls }), { catchUpFrom: file(SHA) });
+  assert.ok(!calls.includes('catchUpAll'));
+  assert.equal(report.openPrs[0].catchUp.verdict, 'works');
+  const calls2 = [];
+  await go(fakeDeps({ calls: calls2 }), { catchUpFrom: file('9'.repeat(40)) });
+  assert.ok(calls2.includes('catchUpAll'));
+});
+
+test('the parity row is parity and the crawl: a failing crawl fails it, both passing pass it', async () => {
+  const { report, out } = await go(fakeDeps());
+  const row = report.checks.find((c) => c.id === 'parity');
+  assert.equal(row.status, 'pass');
+  assert.match(row.detail, /; crawl PASS: 3 screens, 2\/2 routes/);
+  assert.ok(row.evidence.some((e) => e.href === 'crawl/report.md'));
+  assert.ok(existsSync(join(out, 'crawl/report.md')));
+  const bad = await go(fakeDeps({ crawl: { ...CRAWL, pass: false } }));
+  const r2 = bad.report.checks.find((c) => c.id === 'parity');
+  assert.equal(r2.status, 'fail'); assert.match(r2.detail, /crawl FAIL/);
+});
+
+test('--crawl-from is reused only when its A and first B trees are the base and migrated trees', async () => {
+  assert.equal(parseArgs(['run', '--crawl-from', 'c']).crawlFrom, join(process.cwd(), 'c'));
+  const dir = (tree) => { const d = mkdtempSync(join(tmpdir(), 'readiness-crawl-')); writeFileSync(join(d, 'report.json'), JSON.stringify({ ...CRAWL, bs: [{ spec: 'x', tree }, { spec: 'package:.', tree: null }] })); writeFileSync(join(d, 'report.md'), 'reused\n'); mkdirSync(join(d, 'a1')); writeFileSync(join(d, 'records.ndjson'), ''); return d; };
+  const calls = [];
+  const { report, out } = await go(fakeDeps({ calls }), { crawlFrom: dir(SHA) });
+  assert.ok(!calls.some((c) => / crawl /.test(c)), calls.join('\n'));
+  assert.match(report.checks.find((c) => c.id === 'parity').detail, /\(verify:919 row h, same trees\)/);
+  assert.equal(readFileSync(join(out, 'crawl/report.md'), 'utf8'), 'reused\n');
+  assert.ok(!existsSync(join(out, 'crawl/a1')) && !existsSync(join(out, 'crawl/records.ndjson')));
+  const calls2 = [];
+  await go(fakeDeps({ calls: calls2 }), { crawlFrom: dir('9'.repeat(40)) });
+  assert.ok(calls2.some((c) => / crawl /.test(c)));
 });

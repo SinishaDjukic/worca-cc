@@ -1,0 +1,8 @@
+[
+  { "file": "ui/server.mjs", "from": 9972, "to": 10085,
+    "why": "dev's own growth: git automations (#711, dev c82347c7c) added 113 lines to ui/server.mjs; the residual on 04370c0f6 merged with that dev is 10,085" },
+  { "file": "ui/server.mjs", "from": 10085, "to": 10118,
+    "why": "dev's own growth: in-place Chat engine switching (#982, dev b76706df6) added 33 lines to the residual ui/server.mjs (imports and the ask-turn engine switch, outside the route regions); measured with --check --stats on this branch merged with that dev" },
+  { "file": "ui/server.mjs", "from": 10118, "to": 10119,
+    "why": "dev's own growth: Settings › My credentials, GitHub account in its own group (405db5a4d, in dev bf92e1579) added 1 line to the residual ui/server.mjs (outside the route regions); measured with --check --stats on this branch merged with that dev" }
+]
