@@ -266,7 +266,9 @@ test('a real try is a normal run: the real servers, no strict config', async () 
 test('the early engine gates judge a pretend try by its stand-ins: codex is not refused for an http copy it never starts; a real try still is', async () => {
   const { dir, set } = await fixture();
   const sentry = `sentry_${set.slug}`;
-  const make = (testConnectors) => createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true, engine: 'codex' },
+  // Permissive (as dev's engine-gate tests since G13): a new install's Normal set has rules codex cannot enforce, which
+  // would refuse both tries before their MCP layer is judged.
+  const make = (testConnectors) => createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex' },
     workflowTest: true, testConnectors });
   // Real: sentry's http copy is attached, and codex attaches stdio servers only.
   await assert.rejects(() => make('real')._engineMcpGate(), new RegExp(`codex attaches stdio servers only: ${sentry}$`));
