@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 82;
+export const SCHEMA_VERSION = 84;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -842,8 +842,8 @@ const INCREMENTAL_COLUMNS = {
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
-  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v82: where the link came from, 'export' | 'import' (A6.1 D11, D13)
-  req_attachments:        { fetch_json: 'TEXT' },   // v82: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
+  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v84: where the link came from, 'export' | 'import' (A6.1 D11, D13)
+  req_attachments:        { fetch_json: 'TEXT' },   // v84: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -880,6 +880,7 @@ const INCREMENTAL_COLUMNS = {
                             // v70: where a copy found under a run's or project's folder came from, for Show in folder's
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
+  ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -1076,6 +1077,77 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
   FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
 );
 `;
+
+// v82 (#711): Git event automations. A rule starts a run when an issue or PR event in its project or workspace matches;
+// one automation_events row per (rule, subject) is the "never twice" guarantee and the Activity log; cursors hold
+// each project's poll position; deliveries drop webhook repeats. src/core/automations.mjs owns all four.
+const AUTOMATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS automation_rules (
+  id            TEXT PRIMARY KEY,
+  project_key   TEXT NOT NULL,
+  project_dir   TEXT NOT NULL,
+  scope         TEXT NOT NULL DEFAULT 'project',     -- project | workspace
+  workspace_id  TEXT,                                -- the workspace a workspace rule watches; NULL = a project's
+  repo          TEXT,                                -- owner/name on GitHub, from the project's remote
+  event         TEXT NOT NULL,                       -- issue.opened | pr.opened
+  action        TEXT NOT NULL,                       -- run | propose | fix | review
+  workflow_id   TEXT,                                -- action run: the workflow it starts
+  filter        TEXT NOT NULL DEFAULT '{}',          -- JSON { labels, excludeLabels, triggerLabel, allowLogins }
+  limits        TEXT NOT NULL DEFAULT '{}',          -- JSON { dailyRuns, maxCostUsd, maxConcurrent }
+  guardrails_id TEXT NOT NULL DEFAULT 'secure',
+  origin        TEXT NOT NULL DEFAULT 'rule',        -- rule | auto-handle
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  enabled_at    TEXT NOT NULL,                       -- nothing opened before it triggers the rule
+  created_by    TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_automation_rules_project ON automation_rules (project_key);
+CREATE TABLE IF NOT EXISTS automation_events (
+  id          TEXT PRIMARY KEY,
+  rule_id     TEXT NOT NULL,
+  project_key TEXT NOT NULL,
+  repo        TEXT,
+  subject     TEXT NOT NULL,                         -- issue:o/r#42 | pr:o/r#7 | pr:o/r#7@<head sha> (review)
+  kind        TEXT NOT NULL,                         -- issue | pr
+  number      INTEGER,
+  url         TEXT,
+  title       TEXT,
+  author      TEXT,
+  head_sha    TEXT,
+  action      TEXT,
+  phase       TEXT,                                  -- propose: plan, then fix once approved
+  via         TEXT NOT NULL,                         -- poll | webhook
+  status      TEXT NOT NULL,                         -- skipped | queued | starting | running | awaiting-approval | done | failed
+  reason      TEXT,
+  run_id      TEXT,
+  pipeline_id TEXT,
+  pr_url      TEXT,
+  prs         TEXT,                                  -- JSON [{name, repo, url, closes}] a workspace fix opened, one per changed member; NULL = one PR (pr_url)
+  started_at  TEXT,                                  -- when its run started (the daily cap counts by it); NULL = not started
+  posted      INTEGER NOT NULL DEFAULT 0,
+  approved_by TEXT,
+  cost_usd    REAL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  UNIQUE (rule_id, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_automation_events_status ON automation_events (status);
+CREATE INDEX IF NOT EXISTS idx_automation_events_project ON automation_events (project_key, created_at);
+CREATE TABLE IF NOT EXISTS automation_cursors (
+  project_key TEXT NOT NULL,
+  stream      TEXT NOT NULL,                         -- issues | comments
+  since       TEXT,
+  etag        TEXT,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (project_key, stream)
+);
+CREATE TABLE IF NOT EXISTS automation_deliveries (
+  delivery_id TEXT PRIMARY KEY,
+  received_at TEXT NOT NULL
+);
+`;
+
 
 // v68 (labels slice 1): run labels — free words that organise runs. Never read by stats, metrics or policy.
 // Written only by the label routes; survive archive/restore; removed by hand on a hard delete (pipeline-delete.mjs).
@@ -1460,6 +1532,10 @@ const INCREMENTAL_TABLES = {
   run_labels:     RUN_LABELS_DDL,
   utility_cost_ledger: UTILITY_COST_LEDGER_DDL,
   run_presets:    RUN_PRESETS_DDL,
+  automation_rules:      AUTOMATIONS_DDL,
+  automation_events:     AUTOMATIONS_DDL,
+  automation_cursors:    AUTOMATIONS_DDL,
+  automation_deliveries: AUTOMATIONS_DDL,
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
@@ -2637,10 +2713,12 @@ export function migrate(db) {
     // INCREMENTAL_TABLES creates them for a DB stamped past this rung without them.
     if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
     if (current < 81) applySchemaV81(db, { existing: current >= 1 });  // v81 (G13) guardrail default
-    // v82 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS; first written as v80, then v81:
-    // A6 took 80 and security #854 took 81). The repair runs here, after the v77 and v80 rungs created those tables on a DB coming
-    // from below them.
-    if (current < 82) repairSchemaGaps(db, schemaGaps(db));
+    if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
+    // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v84 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS; first written as v80, then v81,
+    // then v82: A6 took 80, security #854 took 81, dev's automations #711 took 82 and #943 took 83). The repair runs here, after the
+    // v77 and v80 rungs created those tables on a DB coming from below them.
+    if (current < 84) repairSchemaGaps(db, schemaGaps(db));
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

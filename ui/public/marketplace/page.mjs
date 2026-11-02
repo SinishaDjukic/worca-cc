@@ -21,6 +21,24 @@ export function tabHash(tab) {
   return TABS.includes(tab) && tab !== 'browse' ? `#marketplace/${tab}` : '#marketplace';
 }
 
+/** A top bar search pick inside #marketplace/<param> (global-search.mjs): `installed/<name>` opens that plugin's manage
+ *  sheet, `installed/<name>/settings` at its Settings section, `browse/<marketplace id>/<name>` the install sheet; any
+ *  other address names a tab only (null). Segments are URI-encoded; a malformed one names nothing. */
+export function targetFromParam(param) {
+  const seg = String(param ?? '').split('/');
+  const dec = (s) => { try { return decodeURIComponent(s); } catch { return ''; } };
+  if (seg[0] === 'installed' && seg[1] && (seg.length === 2 || (seg.length === 3 && seg[2] === 'settings'))) {
+    const name = dec(seg[1]);
+    return name ? { kind: 'manage', name, section: seg.length === 3 ? 'settings' : null } : null;
+  }
+  if (seg[0] === 'browse' && seg.length === 3 && seg[1] && seg[2]) {
+    const marketplace = dec(seg[1]);
+    const name = dec(seg[2]);
+    return marketplace && name ? { kind: 'install', marketplace, name } : null;
+  }
+  return null;
+}
+
 /** The Installed tab's blue chip: "1 update" / "{n} updates"; null below one. */
 export function updatesChip(doc, n) {
   if (!(n >= 1)) return null;

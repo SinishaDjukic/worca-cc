@@ -35,7 +35,7 @@ import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs
 import { fileAccepts } from '../shared/forms/answer.mjs';
 import { normalizeScriptMeta, resolvePlatformValue } from '../shared/graph/script-meta.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
-import { pluginSetupState } from './plugin-setup-state.mjs';
+import { pluginSetupState, pluginHasSettings } from './plugin-setup-state.mjs';
 import { pluginLatest } from './plugin-latest.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
@@ -833,6 +833,7 @@ export function listInstalledPlugins({ marketplaces = null } = {}) {
       // registry, so its templates would misreport V4.
       ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops, scripts, scriptDrops }) : [],
       setup: manifest ? pluginSetupState(name, manifest) : { ok: true, missing: [], noProfiles: [] },
+      hasSettings: manifest ? pluginHasSettings(manifest) : false,
       description: manifest?.description || null,
       ref: e.ref ?? null,
       notes,

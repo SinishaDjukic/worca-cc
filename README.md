@@ -394,7 +394,7 @@ level and has no **Diff**, **Changes** or **Actions**.
   process exits; the broker adds the real key on the way to the provider its slot is pinned to.
   With the broker on, Worca refuses to start while any model credential is within agents'
   reach. In multi mode each teammate saves their own keys to the broker's encrypted vault
-  (Settings › General › **My model credentials** › **Manage keys**), and **Statistics** shows
+  (Settings › General › **My credentials** › **Manage keys**), and **Statistics** shows
   spend **By person**. `worca broker serve|secrets|revoke --person <email>`; see
   [Credential broker](docs/credential-broker.md).
 
