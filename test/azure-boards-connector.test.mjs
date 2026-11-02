@@ -231,5 +231,5 @@ test('htmlToMarkdown, markdownToHtml, parseWorkItemRef, capabilities', () => {
   assert.equal(markdownToHtml('### T\n\n1) x\n\ntext'), '<h3>T</h3><ol><li>x</li></ol><p>text</p>');
   assert.deepEqual(parseWorkItemRef('acme/My Project#12'), { org: 'acme', project: 'My Project', id: 12 });
   assert.equal(parseWorkItemRef('bad'), null);
-  assert.deepEqual(createTaskSource(makeCtx(), { fetch: fakeFetch([]) }).capabilities(), { writeBack: true, incrementalSync: false });
+  assert.deepEqual(createTaskSource(makeCtx(), { fetch: fakeFetch([]) }).capabilities(), { writeBack: true, incrementalSync: false, ticketUpdates: true });
 });
