@@ -2,7 +2,7 @@
 name: chat-channel-traps
 description: Traps in the chat-channel stack (Discord worker filters, parser/rate-limiter APIs, Ask turn echo races) worth reading before planning or building chat-plugin fe
 paths: plugins/*-chat/**, src/core/chat/**
-updated: 2026-11-01T14:05:14.224Z
+updated: 2026-11-02T23:08:25.927Z
 author: Bulibas
 ---
 
@@ -43,3 +43,12 @@ Each of these sank a reviewed plan once (freeform Discord chat plan, cycles 1-2,
 - **Ask turn shapes a bridge must handle** (refine cycle 1): a stopped turn finishes `status: 'stopped'`, often with
   empty text (render something); `job.status` is `'running'` before `job.turn` exists (tests wait for `.turn`); the
   mock's propose rule (`\b(propose|start|run)\b`) also fires on any text containing "run", e.g. a change request.
+- **Late cases in `test/chat-freeform-e2e.test.mjs` see earlier cases' runs** (2026-11-03 reactions plan): by then
+  `/status` in C1 answers a `warning` ("Ambiguous — use a longer suffix"), so a case expecting an info/success
+  command reply never gets it. Use `/help` for a deterministic info reply. Also `?.x ?? 'gone'` on a DB row turns a
+  real `NULL` column into the fallback; read the row first, then the column.
+- **Task-source (issue-backed) run cards**: the browser sends `source` = `runSourceOf(card.source)`
+  (`src/core/ask/source-spec.mjs`) and NO `prompt` (`ask-panel.mjs` `collectCardBody`); the card's `displayName`,
+  `title`, `url`, `profileVia` are display only. A source card in a test: copy
+  `test/fixtures/plugins/mock-source/worca-cc-plugin.json` into `pluginCurrentDir('mock-source')` and add its lock
+  row (mock mode serves `getTask`), then `validateProposal({..., source: {plugin:'mock-source', sourceId:'mock', taskId}})`.
