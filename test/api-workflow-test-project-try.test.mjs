@@ -313,7 +313,7 @@ test('final review I2: hooks and an fsmonitor a setup leaves in the copy never r
   for (const k of ['core.hooksPath', 'core.fsmonitor']) assert.throws(() => git(copyDir, 'config', '--get', k), undefined, `${k} unset before the next test`);
 });
 
-test('final review round 2: a retained try\'s snapshot runs the copy\'s filter and fsmonitor only under the try guard', { timeout: 240000 }, async () => {
+test('final review round 2: a retained try\'s snapshot never runs the copy\'s filter or fsmonitor, nor gives them the token', { timeout: 240000 }, async () => {
   const { mkdirSync, writeFileSync } = await import('node:fs');
   const fw = (p) => p.replaceAll('\\', '/');
   const evil = join(homeDir, 'evil2');
@@ -341,7 +341,9 @@ test('final review round 2: a retained try\'s snapshot runs the copy\'s filter a
     const br = JSON.parse(row.branch);
     assert.ok(br.commitFailed, `the guarded teardown add failed, so the work was retained: ${row.branch}`);
     const ran = existsSync(marker) ? readFileSync(marker, 'utf8') : '';
-    assert.match(ran, /^clean $/m, 'the filter did run (the scenario is real)');
+    // dev's security G2 (git-guard.mjs): Worca's git never lets the copy's local config pick a command, so neither the
+    // filter nor the fsmonitor runs at all (before G2 they ran, only under the try guard).
+    assert.doesNotMatch(ran, /^(clean|fsmonitor)/m, `no program of the copy ran:\n${ran}`);
     assert.doesNotMatch(ran, /secret-token/, `no program of the copy saw the token:\n${ran}`);
   } finally {
     if (prevTok === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prevTok;
