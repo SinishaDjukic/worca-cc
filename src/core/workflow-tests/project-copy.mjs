@@ -12,6 +12,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { testCopiesRoot, testCopyDirFor, testCopyKeyOf, PROJECT_KEY_RE } from '../store.mjs';
 import { uncommittedPatch } from '../git-info.mjs';
+import { guardedGitEnv } from '../git-guard.mjs';
 import { isSafeBranchName } from '../git-sync.mjs';
 import { rmGuarded } from '../run-manifest.mjs';
 import { getDb, prepare } from '../db.mjs';
@@ -30,11 +31,17 @@ const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
  *  does in what it prints; Node's JS realpath keeps them, and the same folder would read as two. */
 const realpathNative = process.platform === 'win32' ? realpathSync.native : realpathSync;
 
-function git(cwd, args, { env = null } = {}) {
+async function git(cwd, args, { env = null } = {}) {
   const e = { ...(env || process.env) };
   if (!env) for (const k of GIT_DIR_ENV) delete e[k];
+  // Security G2 (git-guard.mjs): repository-local config never picks a command here either, in the person's project or in
+  // Worca's copy (whose config a try's setup and agent write). The guard lists config over this call's own env (copyGit's
+  // try env included) and refuses a repository it cannot make safe; that refusal is a failed git call.
+  let guarded;
+  try { guarded = await guardedGitEnv(cwd, { env: e, timeout: GIT_TIMEOUT_MS }); }
+  catch (err) { return { ok: false, code: -1, stdout: '', stderr: String(err?.message || err) }; }
   return new Promise((done) => {
-    execFile('git', args, { cwd, env: e, timeout: GIT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+    execFile('git', args, { cwd, env: guarded, timeout: GIT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       done({ ok: !err, code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
     });
   });
