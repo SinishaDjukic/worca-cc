@@ -169,3 +169,13 @@ test('D81: the guards are carried in every case: with no sign-in, with the broke
   try { assert.deepEqual(signInCarry({ read: found, readSafety: safe }), { env: {}, settings: {}, safety: G }); }
   finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
 });
+
+test('D81a: the guards are read with the spawn\'s working directory, so the checkout\'s own sandbox stays on top', () => {
+  const none = () => ({ state: 'none', env: {}, settings: {} });
+  let seen = 'unset';
+  const S = { deny: [], sandbox: { enabled: true } };
+  assert.deepEqual(signInCarry({ read: none, readSafety: (o) => { seen = o.cwd; return S; }, cwd: '/try/checkout' }), { env: {}, settings: {}, safety: S });
+  assert.equal(seen, '/try/checkout');
+  signInCarry({ read: none, readSafety: (o) => { seen = o.cwd; return S; } });
+  assert.equal(seen, null, 'no working directory: none passed');
+});

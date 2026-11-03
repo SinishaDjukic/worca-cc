@@ -3,7 +3,7 @@
 // `--setting-sources project,local`, which drops that file; readUserSignIn reads only the sign-in out of it, so the try is
 // still signed in and nothing else of the person's setup (hooks, plugins, permissions, other env) comes along. The key rule
 // is the requirements interview's (A1.1 D6), moved here unchanged.
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -59,22 +59,61 @@ export function readUserSignIn({ env = process.env, home, read = (p) => readFile
 
 /** D81: at most this many of the person's own deny rules are carried. */
 export const SAFETY_DENY_MAX = 500;
+/** D81a: a settings file larger than this (bytes) is not read; it adds nothing. */
+export const SETTINGS_FILE_MAX = 1024 * 1024;
 const noSafety = () => ({ deny: [], sandbox: null });
+const isPlain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const readCapped = (p) => {
+  if (statSync(p).size > SETTINGS_FILE_MAX) throw Object.assign(new Error('settings file too large'), { code: 'EFBIG' });
+  return readFileSync(p, 'utf8');
+};
+/** A settings file as an object (a leading BOM read), or null: no file, unreadable, too large, not JSON, not an object. Never throws. */
+function settingsObject(file, read) {
+  try {
+    const raw = String(read(file));
+    if (raw.length > SETTINGS_FILE_MAX) return null;
+    const s = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+    return isPlain(s) ? s : null;
+  } catch { return null; }
+}
 
 /**
- * Workflow tests 3b (D81): the person's own guards in their user settings, which only ever block: `permissions.deny` (non-empty
- * strings, deduplicated, at most SAFETY_DENY_MAX) and `sandbox` (a plain object). Never their allow or ask rules. Nothing from
- * a file Worca cannot read or parse. Never throws.
+ * D81a: `over` laid on `base` by Claude Code's settings merge: scalars from `over`; lists joined, deduplicated, `base`'s
+ * entries first; plain objects merged by the same rules.
+ */
+export function layerSandbox(base, over) {
+  const out = { ...base };
+  for (const [k, v] of Object.entries(over)) {
+    if (k === '__proto__') continue;
+    const b = Object.hasOwn(out, k) ? out[k] : undefined;
+    out[k] = Array.isArray(b) && Array.isArray(v) ? [...new Set([...b, ...v])] : isPlain(b) && isPlain(v) ? layerSandbox(b, v) : v;
+  }
+  return out;
+}
+
+/**
+ * Workflow tests 3b (D81): the person's own guards in their user settings: `permissions.deny` (non-empty strings,
+ * deduplicated, at most SAFETY_DENY_MAX) and `sandbox` (a plain object). Never their allow or ask rules. Nothing from a file
+ * Worca cannot read or parse. Never throws.
+ * Deny rules merge across scopes, so they only ever add blocks. The sandbox does not: carried on the command line it would
+ * outrank the project's, so (D81a) the try checkout's (`cwd`) `.claude/settings.json` and then `.claude/settings.local.json`
+ * sandbox are laid over the person's (layerSandbox), keeping Claude Code's own order (local > project > user). A project or
+ * local file that cannot be read or parsed adds nothing. No sandbox of the person's: none (the project's loads by itself).
  * @returns {{deny: string[], sandbox: object|null}}
  */
-export function readUserSafety({ env = process.env, home, read = (p) => readFileSync(p, 'utf8') } = {}) {
+export function readUserSafety({ env = process.env, home, read = readCapped, cwd = null } = {}) {
   try {
-    const raw = String(read(userSettingsFile({ env, home })));
-    const s = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-    if (!s || typeof s !== 'object' || Array.isArray(s)) return noSafety();
-    const d = s.permissions && typeof s.permissions === 'object' && Array.isArray(s.permissions.deny) ? s.permissions.deny : [];
+    const s = settingsObject(userSettingsFile({ env, home }), read);
+    if (!s) return noSafety();
+    const d = isPlain(s.permissions) && Array.isArray(s.permissions.deny) ? s.permissions.deny : [];
     const deny = [...new Set(d.filter((x) => typeof x === 'string' && x.trim()))].slice(0, SAFETY_DENY_MAX);
-    const sandbox = s.sandbox && typeof s.sandbox === 'object' && !Array.isArray(s.sandbox) ? s.sandbox : null;
+    let sandbox = isPlain(s.sandbox) ? s.sandbox : null;
+    if (sandbox && typeof cwd === 'string' && cwd) {
+      for (const name of ['settings.json', 'settings.local.json']) {
+        const p = settingsObject(join(cwd, '.claude', name), read);
+        if (p && isPlain(p.sandbox)) sandbox = layerSandbox(sandbox, p.sandbox);
+      }
+    }
     return { deny, sandbox };
   } catch { return noSafety(); }
 }

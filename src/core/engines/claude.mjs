@@ -82,7 +82,8 @@ function safetySettingsOf(s) {
  *  (workflow-tests/try-guard-env.mjs); absent, nothing changes. `signInSettings` (workflow tests 3b D71): a Pretend try's
  *  carried `apiKeyHelper` / `awsAuthRefresh` / `awsCredentialExport`; the payload then says `signIn: true`, and it only ever
  *  travels as a file (buildSettingsArgs). `safetySettings` (workflow tests 3b D81): the person's own `{ deny, sandbox }`; the
- *  deny rules join after Worca's and the try guard's, the sandbox is kept, and the payload says `signIn: true` (a file only). */
+ *  deny rules join after Worca's and the try guard's, the sandbox is kept as given (readUserSafety has already laid the
+ *  checkout's project and local sandbox over the person's, D81a), and the payload says `signIn: true` (a file only). */
 export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null } = {}) {
   const hook = buildHookSettings();
   const extra = extraSettingsOf(extraSettings);
@@ -550,17 +551,19 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
  * guards (D81), which are carried in every case; null when there is neither. Read per spawn from the folder the spawn's CLI
  * will read (a model profile may move CLAUDE_CONFIG_DIR). The sign-in never with the credential broker on (its token is the
  * spawn's only model credential), and never into a spawn that runs as another OS user (agent isolation: one user's sign-in
- * never moves to another). Never throws.
+ * never moves to another). `cwd`: the spawn's working directory, whose `.claude` sandbox stays on top of the person's (D81a).
+ * Never throws.
  * @returns {{env: Record<string,string>, settings: Record<string,string>, safety?: {deny: string[], sandbox: object|null}} | null}
  */
 export function signInCarry({ modelEnv = null, asAgent = false, read = readUserSignIn, readSafety = readUserSafety,
-  agentUser = () => agentIdentityFor(currentOwner()) } = {}) {
+  agentUser = () => agentIdentityFor(currentOwner()), cwd = null } = {}) {
   try {
     const extra = modelEnv && typeof modelEnv === 'object' && Object.keys(modelEnv).length ? prepareModelEnv(modelEnv).env : {};
     const env = { ...process.env, ...extra };
-    // D81: the person's own deny rules and sandbox only ever block: carried in every case.
+    // D81: the person's own deny rules and sandbox: carried in every case. The deny rules only add blocks; the sandbox keeps
+    // Claude Code's order (D81a): the spawn's checkout (`cwd`) has its project, then local sandbox laid on top.
     let safety = null;
-    try { const g = readSafety({ env }); if (g && ((Array.isArray(g.deny) && g.deny.length) || g.sandbox)) safety = { deny: g.deny || [], sandbox: g.sandbox || null }; }
+    try { const g = readSafety({ env, cwd }); if (g && ((Array.isArray(g.deny) && g.deny.length) || g.sandbox)) safety = { deny: g.deny || [], sandbox: g.sandbox || null }; }
     catch { safety = null; }
     // D71: the sign-in never with the broker on, and never into a spawn that runs as another OS user.
     let isolated = false;
@@ -584,7 +587,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
   // Workflow tests 3b (D71): a Pretend try loads no user settings (runOpts sets --setting-sources project,local); only the
   // sign-in kept there (and the person's own guards, D81) is carried over, and its secret values are redacted like the
   // registry's. Absent on every other spawn: nothing is read and the redactor is as before.
-  const carry = pluginsOff === true ? signInCarry({ modelEnv, asAgent }) : null;
+  const carry = pluginsOff === true ? signInCarry({ modelEnv, asAgent, cwd: cwd || process.cwd() }) : null;
   const redactList = [...(Array.isArray(redactValues) ? redactValues : []), ...(carry ? secretValuesOf(carry.env) : [])];
   const redactor = redactList.length ? createRedactor(redactList) : null;
   if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }

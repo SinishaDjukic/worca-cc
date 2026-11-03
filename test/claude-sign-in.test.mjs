@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readUserSignIn, readUserSafety, SAFETY_DENY_MAX, isSignInEnvKey, SIGN_IN_SETTINGS_KEYS, userSettingsFile } from '../src/core/engines/claude-sign-in.mjs';
+import { readUserSignIn, readUserSafety, SAFETY_DENY_MAX, SETTINGS_FILE_MAX, isSignInEnvKey, SIGN_IN_SETTINGS_KEYS, userSettingsFile } from '../src/core/engines/claude-sign-in.mjs';
 import { userClaudeSignIn } from '../src/core/requirements/interview.mjs';
 
 const dirs = [];
@@ -83,4 +83,47 @@ test('D81: the person\'s own deny rules and sandbox; never their allow or ask ru
   }
   const many = Array.from({ length: 600 }, (_, i) => `Bash(x${i})`);
   assert.equal(readUserSafety({ env: {}, home: home({ permissions: { deny: many } }) }).deny.length, SAFETY_DENY_MAX);
+});
+
+/** D81a: a try checkout with `.claude/settings.json` (`project`) and `.claude/settings.local.json` (`local`); same body rule as home(). */
+function checkout(project, local) {
+  const c = mkdtempSync(join(tmpdir(), 'worca-cc-sbx-'));
+  dirs.push(c);
+  mkdirSync(join(c, '.claude'), { recursive: true });
+  for (const [name, body] of [['settings.json', project], ['settings.local.json', local]]) {
+    if (body !== undefined) writeFileSync(join(c, '.claude', name), typeof body === 'string' ? body : JSON.stringify(body));
+  }
+  return c;
+}
+const sandboxOf = (user, project, local) => readUserSafety({ env: {}, home: home({ sandbox: user }), cwd: checkout(project, local) }).sandbox;
+
+test('D81a: the carried sandbox keeps Claude Code\'s order: the checkout\'s project, then local sandbox, over the person\'s', () => {
+  assert.deepEqual(sandboxOf({ enabled: false }, { sandbox: { enabled: true } }), { enabled: true }, 'project over user');
+  assert.deepEqual(sandboxOf({ allowUnsandboxedCommands: true }, undefined, { sandbox: { allowUnsandboxedCommands: false } }),
+    { allowUnsandboxedCommands: false }, 'local over user');
+  assert.deepEqual(sandboxOf({ autoAllowBashIfSandboxed: true }, { sandbox: { autoAllowBashIfSandboxed: true } }, { sandbox: { autoAllowBashIfSandboxed: false } }),
+    { autoAllowBashIfSandboxed: false }, 'local over project');
+  assert.deepEqual(sandboxOf({ excludedCommands: ['a'] }, { sandbox: { excludedCommands: ['b', 'a'] } }), { excludedCommands: ['a', 'b'] },
+    'lists joined, deduplicated, the person\'s first');
+  assert.deepEqual(sandboxOf({ enabled: true, network: { allowedDomains: ['x'], allowLocalBinding: true, httpProxyPort: 1 } },
+    { sandbox: { network: { allowedDomains: ['y', 'x'], allowLocalBinding: false } } }, { sandbox: { network: { httpProxyPort: 2 } } }),
+  { enabled: true, network: { allowedDomains: ['x', 'y'], allowLocalBinding: false, httpProxyPort: 2 } }, 'nested objects by the same rules');
+  assert.deepEqual(sandboxOf({ enabled: true }, `﻿${JSON.stringify({ sandbox: { excludedCommands: ['b'] } })}`), { enabled: true, excludedCommands: ['b'] },
+    'a leading BOM is read');
+});
+
+test('D81a: an unreadable or invalid project or local file adds nothing; no sandbox of the person\'s: none carried', () => {
+  const U = { enabled: false, excludedCommands: ['a'] };
+  assert.deepEqual(sandboxOf(U, '{ not json'), U, 'invalid project JSON: the person\'s sandbox as it is');
+  assert.deepEqual(sandboxOf(U, '{ not json', { sandbox: { enabled: true } }), { ...U, enabled: true }, 'a bad project file does not stop the local one');
+  for (const [project, why] of [[{ sandbox: [1] }, 'a sandbox that is not an object'], ['[1]', 'not an object'], ['', 'blank'], [undefined, 'no file'],
+    [{ sandbox: { enabled: true }, pad: 'x'.repeat(SETTINGS_FILE_MAX) }, 'larger than SETTINGS_FILE_MAX']]) {
+    assert.deepEqual(sandboxOf(U, project), U, why);
+  }
+  const c = checkout({ sandbox: { enabled: true } });
+  assert.deepEqual(readUserSafety({ env: {}, home: home({ sandbox: U }), cwd: c, read: () => { throw new Error('EACCES'); } }), { deny: [], sandbox: null },
+    'never throws');
+  assert.deepEqual(readUserSafety({ env: {}, home: home({ sandbox: U }) }).sandbox, U, 'no checkout: the person\'s sandbox as it is');
+  const noUser = readUserSafety({ env: {}, home: home({ permissions: { deny: ['Bash(x)'] } }), cwd: checkout({ sandbox: { enabled: true } }, { sandbox: { enabled: true } }) });
+  assert.deepEqual(noUser, { deny: ['Bash(x)'], sandbox: null }, 'the project and local sandbox load by themselves');
 });
