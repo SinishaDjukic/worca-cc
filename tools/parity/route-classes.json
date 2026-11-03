@@ -297,7 +297,7 @@
   "POST /api/config": {"class": "probe", "reason": "400 projectDir is required"},
   "POST /api/drain": {"class": "skip", "reason": "drains the server (ui/server.mjs:12077)"},
   "POST /api/extension/pair": {"class": "probe", "reason": "403 extension-origin for non-extension callers"},
-  "POST /api/extension/pair/:requestId/:verdict(approve|deny)": {"class": "probe", "reason": "placeholder verdict fails the (approve|deny) match, so 404; unknown request 4xx"},
+  "POST /api/extension/pair/:requestId/:verdict": {"class": "probe", "reason": "placeholder verdict is not approve or deny, so 404; unknown request 4xx"},
   "POST /api/fs/pick-folder": {"class": "skip", "reason": "opens a native folder dialog (ui/server.mjs:10811)"},
   "POST /api/guardrails": {"class": "probe", "reason": "400 name is required"},
   "POST /api/history/:key/:id/comments": {"class": "probe", "reason": "commentsHistoryKey rejects the placeholder key"},

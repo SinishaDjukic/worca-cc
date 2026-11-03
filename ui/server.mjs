@@ -1955,7 +1955,7 @@ const requirementsUploadSlot = requirementsUploadSlots();
 for (const p of REQUIREMENTS_UPLOAD_ROUTES) {
   app.post(p, requireFlag('requirements'), requirementsUploadSlot, express.json({ limit: REQUIREMENTS_UPLOAD_JSON_LIMIT }));
 }
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '8mb' }), (req, _res, next) => { req.body ??= {}; next(); });   // Express 5 leaves req.body undefined when nothing was parsed; the routes read it as Express 4's {}
 
 // Credential broker billing (src/core/billing.mjs): every claude spawn a request causes —
 // a run it starts, an Ask turn, a model Test — is billed to the person behind the request.
