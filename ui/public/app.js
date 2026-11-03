@@ -23386,7 +23386,7 @@ function onHistoryPr(msg) {
 // the fallback escapes the chars that would break `[attr="..."]`.
 function cssEscape(s) {
   s = String(s == null ? '' : s);
-  return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
+  return (window.CSS && window.CSS.escape) ? window.CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
 }
 
 // Apply a batch item's per-member PRs onto a workspace row (by memberKey).
