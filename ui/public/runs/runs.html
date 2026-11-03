@@ -1,0 +1,395 @@
+        <!-- ===== VIEW: RUNS — active, scheduled and finished runs: one list, one content pane ===== -->
+        <section class="view hidden" data-view="runs">
+          <div class="runs-shell" id="runs-shell" data-layout="split">
+            <!-- tabindex="-1": a click on the pane's blank area keeps focus here, so ⌘A / Ctrl+A reaches its keydown listener. -->
+            <div class="runs-list-pane" id="runs-list-pane" tabindex="-1">
+              <div class="runs-head">
+                <h2 class="runs-head-title">Runs</h2>
+                <!-- The one View menu (runs-view-menu.mjs): Show, Group by, Started by, Select. -->
+                <button type="button" class="btn btn-sm btn-quiet runs-view-btn" id="runs-view-btn" aria-haspopup="menu" aria-expanded="false">
+                  View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5l6 6 6-6"></path></svg>
+                </button>
+                <label class="runs-all-wrap" hidden><input type="checkbox" class="runs-check runs-all" id="runs-all" aria-label="Select all visible runs"> Select all</label>
+              </div>
+              <div class="runs-view-chip" id="runs-view-chip" hidden>
+                <span class="runs-view-chip-t"></span>
+                <button type="button" class="btn btn-sm btn-quiet btn-icon runs-view-reset" aria-label="Reset view" title="Reset view">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
+                </button>
+              </div>
+              <div class="runs-label-filter" id="runs-label-filter" data-flag="runLabels" aria-label="Label filter" hidden></div>
+              <!-- Runs redesign §5a.9: the one-time What's new note (whats-new.mjs), above the list. -->
+              <div id="runs-whats-new" hidden></div>
+              <div class="runs-list" id="runs-list" aria-label="Runs" aria-live="polite"></div>
+              <!-- The selection's actions (runs-selection.mjs): each shows how many runs it applies to. -->
+              <div class="runs-bulk" id="runs-bulk" role="toolbar" aria-label="Selected runs" hidden>
+                <span class="runs-bulk-n" id="runs-bulk-n">0 selected</span>
+                <button type="button" class="btn btn-sm" data-bulk="label" data-flag="runLabels" aria-haspopup="dialog">Label</button>
+                <button type="button" class="btn btn-sm" data-bulk="group" data-min-level="advanced" aria-haspopup="dialog">Group <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm" data-bulk="stop">Stop <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm" data-bulk="archive">Archive <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm btn-danger" data-bulk="delete" data-min-level="advanced">Delete <span class="runs-bulk-c">0</span></button>
+                <button type="button" class="btn btn-sm btn-quiet" data-bulk="cancel">Cancel</button>
+              </div>
+            </div>
+            <div class="runs-pane" id="runs-pane" data-kind="">
+              <div class="runs-empty" id="runs-empty">
+                <p class="runs-empty-title">Select a run</p>
+                <p class="runs-empty-sub">Its summary opens here.</p>
+              </div>
+              <div class="run-shell" id="run-shell">
+                <div class="run-screen-detail" id="run-detail" aria-hidden="true" inert></div>
+              </div>
+              <div class="hist-shell" id="hist-shell">
+                <div class="hist-screen-detail" id="hist-detail" aria-hidden="true"></div>
+              </div>
+              <!-- Run 3 (D1): the group page (#feature/…, #group/…) in the same pane; group-page.mjs builds into it. -->
+              <div class="group-shell" id="group-shell">
+                <div class="group-screen-detail feature-page" id="group-detail" aria-hidden="true" inert></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- The live-log bar (filters + auto-scroll switch), cloned by the run page's Logs tab and by History. -->
+          <!-- Its Summaries / Raw switch (#911 slice 3, flag commandSummaries): wired by a delegated click in app.js (log-view.mjs). -->
+          <template id="log-bar-tpl">
+            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec btn btn-sm" hidden title="Showing one execution. Click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button><span class="seg seg-sm log-view-seg" role="group" aria-label="Show commands as" data-flag="commandSummaries"><button type="button" data-log-view="summary" aria-pressed="true" class="on" title="Show what each command does">Summaries</button><button type="button" data-log-view="raw" aria-pressed="false" title="Show the commands as run">Raw</button></span><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy btn btn-sm btn-quiet btn-icon copy-btn" title="Copy the visible log lines" aria-label="Copy the visible log lines"><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+          </template>
+
+          <!-- clone target for the live run in the pane (#running/<runId>) -->
+          <template id="run-detail-tpl">
+            <!-- Two modes on one screen (docs: Run page glance). `data-mode="glance"` shows the
+                 status line, the trail and the sheet; `data-mode="details"` shows the tabs.
+                 The route picks the mode: #running/<id> vs #running/<id>/details[/<tab>]. -->
+            <div class="rd" data-mode="glance">
+              <div class="rd-bar">
+                <button type="button" class="rd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
+                </button>
+                <button type="button" class="rd-to-run btn" hidden aria-label="Back to the run">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <span class="rd-to-run-label">Run</span>
+                </button>
+                <!-- Run 3 (D6): Runs › the group › Run 2, beside the list only (the slide layout keeps Back). -->
+                <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
+                <!-- The run's name: the glance's headline carries its state. -->
+                <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
+                <span class="rd-bar-end">
+                  <!-- Away mode on this run (POST /api/run/night); hidden once the run is over. -->
+                  <label class="rd-night-wrap" hidden><span class="txt">Away mode on this run</span>
+                    <select class="rd-night select input-mini" aria-label="Away mode on this run"></select>
+                    <span class="rd-night-pill" aria-live="polite"></span></label>
+                  <!-- Chain a run after this one (the list card's old schedule-after button): "Schedule a run
+                       after this" while it goes, "Start a follow-up run" once it ends (paintRdHeader). The
+                       saved run's bar carries the same button (.hd-after). -->
+                  <button type="button" class="btn rd-after" data-min-level="advanced" title="Schedule a run after this" aria-label="Schedule a run after this" hidden>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h12"></path><path d="M13 6l6 6-6 6"></path></svg>
+                    <span class="rd-btn-label">Run after</span>
+                  </button>
+                  <!-- One control for Pause/Resume. The label lives in its own span so a busy
+                       state swaps only the word and the inline SVG survives. -->
+                  <!-- Split Resume: the caret (Advanced, paused only) opens the engine choice ("Resume on
+                       <saved engine>", and "Resume on <other engine>" after a usage limit the engine hit,
+                       app.js#paintResumeEngineItems) and "Resume at…", like #start-split. -->
+                  <!-- The one model's other actions (slice 4, D4): made here next to the Resume split and Stop. -->
+                  <span class="rd-actions"></span>
+                  <div class="btn-split mini rd-resume-split">
+                    <button type="button" class="btn rd-pause" data-action="pause" hidden>
+                      <svg class="ico-pause" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
+                      <svg class="ico-play" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
+                      <span class="rd-btn-label">Pause</span>
+                    </button>
+                    <button type="button" class="btn btn-icon btn-split-more rd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="More ways to resume" aria-label="More ways to resume" hidden>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+                    </button>
+                    <div class="menu btn-split-menu rd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="menu-item rd-resume-limit" hidden><b>Resume at</b><small>When the limit resets</small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-with-model" hidden><b>Switch model…</b><small>Every remaining step runs on the model you pick</small></button>
+                      <button type="button" role="menuitem" class="menu-item rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
+                    </div>
+                  </div>
+                  <button type="button" class="btn btn-danger rd-stop" hidden>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                    <span class="rd-btn-label">Stop</span>
+                  </button>
+                  <!-- Opens the terminal pane in this page's folder (docs/terminal.md); app.js wires every .term-opener. -->
+                  <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
+                  </button>
+                  <!-- D31, run 3 D13: every run's Away mode and terminal in one menu (paintRdHeader); a shaped run's Run after too. -->
+                  <button type="button" class="btn btn-quiet btn-icon rd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run" hidden>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
+                  </button>
+                  <!-- Slice 2: the live ⋯'s run-scope actions, hidden carriers as on the saved bar (paintRdMenuCarriers offers them). -->
+                  <span class="run-menu-carriers" hidden>
+                    <button type="button" class="btn rd-save-preset" title="Save this run's setup as a run preset" hidden><span class="hd-btn-label">Save as preset</span></button>
+                    <button type="button" class="btn rd-report" hidden><span class="hd-btn-label">Report this run</span></button>
+                    <button type="button" class="btn rd-archive" hidden><span class="hd-btn-label">Archive</span></button>
+                  </span>
+                </span>
+              </div>
+              <!-- Inline error slot for failed actions, under the bar so the graph or a tab
+                   body never pushes it below the fold (mirrors .hd-error). -->
+              <div class="rd-error" hidden></div>
+
+              <section class="rd-glance" aria-label="Run status">
+                <div class="rd-now">
+                  <!-- The run's name is the page title, one line cut with "…" (its title attribute holds it whole);
+                       the bar shows it only once this scrolls away. Every other fact is in the card. -->
+                  <header class="rd-page-head">
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1></div>
+                  </header>
+                </div>
+                <div class="rd-sheet">
+                  <!-- The card's head: the status line top left; top right the Live view switch while the run is live,
+                       the pull request button once it ended. -->
+                  <div class="rd-sheet-head">
+                    <!-- The shared status block (run-status-card.mjs, slice 4 D19): dot or symbol, status line, the run's
+                         bar. It keeps the rd-now-top class: the click-to-question handler and the guide tour find it. -->
+                    <div class="rd-now-top run-status"></div>
+                    <!-- Live view: the running step(s), centred in a fogged graph beside the card
+                         (below it when the page is narrow). Only while the run is not over. -->
+                    <div class="switch-row rd-live-row" hidden>
+                      <span class="txt">Live view</span>
+                      <div class="switch rd-live-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Live view"></div>
+                    </div>
+                    <!-- Slice 3: the head buttons (run-head.mjs renderHeadButtons) around the PR control (paintPrCta keeps its one
+                         node), at every level; the hidden feed is the PR status read (paintRdPrStatus) that repaints them. -->
+                    <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
+                    <span class="rd-pr-feed" hidden></span>
+                  </div>
+                  <!-- s2: where the work is (run-head.mjs renderRoute): the run's places in order, at every level. -->
+                  <div class="rd-route" hidden></div>
+                  <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
+                       old meta line (paintPageHead owns its first text node). -->
+                  <dl class="rd-kv" aria-label="Run facts">
+                    <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
+                    <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
+                  </dl>
+                  <div class="rd-banners"></div>
+                  <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
+                  <div class="rd-facts"></div>
+                  <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
+                       check, and a jump to the first one to check (paintAwayAnswers). -->
+                  <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
+                  <div class="rd-nowlist"></div>
+                  <div class="rd-result" hidden></div>
+                </div>
+                <!-- The Live view panel. The clip lets the narrow layout open its height while the
+                     graph host keeps its final size (no fit chasing a growing box). It is `inert`:
+                     the panel is ONE control, so the graph's cards are neither tab stops nor click
+                     targets (a click falls through to the panel). -->
+                <div class="rd-live" role="button" tabindex="0" aria-label="Open the workflow" hidden>
+                  <div class="rd-live-clip" inert>
+                    <div class="run-flow-wrap"><div class="run-flow"></div></div>
+                  </div>
+                </div>
+                <!-- A waiting question: below the run's panel (which never changes), led by
+                     a heading that says what is asked. -->
+                <div class="rd-questions" hidden>
+                  <h3 class="rd-ask-head"></h3>
+                  <div class="qpanel hidden"></div>
+                </div>
+                <!-- What Away mode answered on this run, under the run card: one group per ask, one row
+                     per answer; a row opens its reason, Check marks the ones worca was not sure of. -->
+                <section class="rd-night-sec" hidden><h3 class="rd-night-h">Answered for you<span class="rd-night-count"></span></h3><div class="rd-night-asks"></div></section>
+              </section>
+
+              <section class="rd-details" hidden aria-label="Run details">
+                <header class="rd-header">
+                  <div class="rd-row1">
+                    <h2 class="rd-title"></h2>
+                    <span class="auto-badge" hidden></span>
+                    <span class="rd-status pill-run"><span class="pdot"></span><span class="rd-status-word"></span></span>
+                    <span class="act-pill-slot"></span>
+                  </div>
+                  <div class="rd-meta mono"></div>
+                  <div class="rd-row3">
+                    <span class="rd-base mono" hidden data-min-level="advanced" data-needs-git></span>
+                    <button type="button" class="btn btn-sm btn-quiet mono copy-btn rd-branch-copy" hidden data-min-level="advanced" data-needs-git title="Copy branch name" aria-label="Copy branch name">
+                      <span class="rd-branch-name"></span><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span>
+                    </button>
+                    <!-- Sync before run (#527): shown only when the run has a Sync row; opens its log. -->
+                    <button type="button" class="btn btn-sm rd-sync" hidden data-min-level="advanced" data-needs-git title="Show the Sync log"></button>
+                    <span class="rd-spacer"></span>
+                  </div>
+                </header>
+                <div class="rd-body">
+                  <!-- The tab engine does `screen.querySelector('.rd-tabs').innerHTML = ''`;
+                       both hosts MUST exist or the bar silently paints nothing. -->
+                  <div class="rd-tabs" role="tablist"></div>
+                  <div class="rd-sections"></div>
+                </div>
+              </section>
+            </div>
+          </template>
+
+          <!-- clone target for a saved run in the pane (#history/<projectKey>/<id>) -->
+          <template id="hist-detail-tpl">
+            <div class="hd" data-mode="glance">
+              <!-- Two modes on one screen, as on the Running page: the glance (#history/<key>/<id>)
+                   and Details (#history/<key>/<id>/details[/<tab>]). The bar is shared. -->
+              <div class="hd-bar">
+                <button type="button" class="hd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
+                </button>
+                <button type="button" class="hd-to-run btn" hidden aria-label="Back to the run">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  Run
+                </button>
+                <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
+                <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
+                <!-- The run page bar's controls, in its order and with its look (style.css shares their
+                     rules): Run after, the Resume split, Pause, Stop. History's own class names, so
+                     setupHdActions, paintHdAfter, paintHdLive and resumePipeline's busy label reach them. -->
+                <span class="rd-bar-end">
+                  <button type="button" class="btn hd-save-preset" title="Save this run's setup as a run preset" aria-label="Save as preset" hidden>
+                    <span class="hd-btn-label">Save as preset</span>
+                  </button>
+                  <button type="button" class="btn hd-after" data-min-level="advanced" title="Schedule a run after this" aria-label="Schedule a run after this" hidden>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h12"></path><path d="M13 6l6 6-6 6"></path></svg>
+                    <span class="hd-btn-label">Run after</span>
+                  </button>
+                  <!-- The label lives in its own span: the busy state ("Resuming…") swaps ONLY that
+                       node, so the inline SVG survives and the error path can restore the word.
+                       Split Resume: paused + interrupted runs, or the pipeline's live run once it
+                       pauses (paintHdLive); the caret opens the schedule-resume menu, gated at Advanced. -->
+                  <span class="rd-actions"></span>
+                  <div class="btn-split mini hd-resume-split" hidden>
+                    <button type="button" class="btn hd-resume" hidden>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
+                      <span class="hd-btn-label">Resume</span>
+                    </button>
+                    <button type="button" class="btn btn-icon btn-split-more hd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="More ways to resume" aria-label="More ways to resume">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+                    </button>
+                    <div class="menu btn-split-menu hd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="menu-item hd-resume-limit-item" hidden><b>Resume at</b><small>When the limit resets</small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-with-model" hidden><b>Switch model…</b><small>Every remaining step runs on the model you pick</small></button>
+                      <button type="button" role="menuitem" class="menu-item hd-resume-at-item"><b>Resume at…</b><small>Schedule the resume</small></button>
+                    </div>
+                  </div>
+                  <!-- Pause and Stop act on the pipeline's live run, while this tab knows one (paintHdLive). -->
+                  <button type="button" class="btn hd-pause" hidden>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
+                    <span class="hd-btn-label">Pause</span>
+                  </button>
+                  <button type="button" class="btn btn-danger hd-stop" hidden>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                    <span class="hd-btn-label">Stop</span>
+                  </button>
+                  <!-- Opens the terminal pane in this page's folder (docs/terminal.md); app.js wires every .term-opener. -->
+                  <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
+                  </button>
+                  <!-- Run 3 (D13), slice 2: the run page's one menu (openHistDetail binds it, runMoreItems lists it). -->
+                  <button type="button" class="btn btn-quiet btn-icon hd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
+                  </button>
+                  <!-- Slice 2: the ⋯'s run-scope actions. Never shown; runMoreItems lists the offered ones (their own `hidden` is the
+                       offer) and clicks them, so every gate, the busy label and hdSetArchiveGate keep addressing these buttons. -->
+                  <span class="run-menu-carriers" hidden>
+                    <button type="button" class="btn hd-report" hidden><span class="hd-btn-label">Report this run</span></button>
+                    <button type="button" class="btn hd-archive" hidden><span class="hd-btn-label">Archive</span></button>
+                    <button type="button" class="btn hd-restore" hidden><span class="hd-btn-label">Restore</span></button>
+                  </span>
+                </span>
+              </div>
+              <!-- The inline error sits under the shared bar so both modes show it (a load
+                   failure, an archive failure); writers resolve it with screen.querySelector. -->
+              <div class="hd-error" hidden></div>
+              <section class="rd-glance hd-glance" aria-label="Run status">
+                <div class="rd-now">
+                  <header class="rd-page-head">
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1></div>
+                  </header>
+                </div>
+                <div class="rd-sheet">
+                  <div class="rd-sheet-head">
+                    <div class="rd-now-top run-status"></div>
+                    <!-- Slice 3: the head buttons (run-head.mjs renderHeadButtons) around the PR control (paintPrCta keeps its one
+                         node), at every level; the hidden feed is the PR status read (paintRdPrStatus) that repaints them. -->
+                    <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
+                    <span class="rd-pr-feed" hidden></span>
+                  </div>
+                  <!-- s2: where the work is (run-head.mjs renderRoute): the run's places in order, at every level. -->
+                  <div class="rd-route" hidden></div>
+                  <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
+                       old meta line (paintPageHead owns its first text node). -->
+                  <dl class="rd-kv" aria-label="Run facts">
+                    <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
+                    <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
+                  </dl>
+                  <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
+                  <div class="hd-banners"></div>
+                  <div class="rd-facts"></div>
+                  <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
+                       check, and a jump to the first one to check (paintAwayAnswers). -->
+                  <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
+                  <div class="rd-nowlist"></div>
+                  <div class="rd-result hd-result"></div>
+                </div>
+                <!-- What Away mode answered on this run (GET /api/night-decisions), as on the run page. -->
+                <section class="rd-night-sec hd-night-sec" hidden><h3 class="rd-night-h">Answered for you<span class="rd-night-count"></span></h3><div class="rd-night-asks"></div></section>
+              </section>
+              <section class="rd-details hd-details" hidden aria-label="Run details">
+              <header class="hd-header">
+                <div class="hd-row1">
+                  <h1 class="hd-title"></h1>
+                  <span class="auto-badge" hidden></span>
+                  <span class="hist-merge" hidden data-min-level="expert" data-needs-git></span>
+                  <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced" data-needs-git>Create PR</button>
+                  <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
+                  <button type="button" class="hd-publish btn" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
+                  <span class="act-pill-slot"></span>
+                  <a class="btn hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
+                  <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced" data-needs-git></button>
+                </div>
+                <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
+                <p class="hd-published hint mono" hidden data-min-level="advanced" data-needs-git></p>
+                <!-- Base conflicts (#620): the stored check of each branch against its base. Painted by paintHdBase. -->
+                <div class="hd-base-check" data-needs-git hidden>
+                  <ul class="hd-base-members"></ul>
+                </div>
+                <!-- Workspace runs: one line per member repo (View PR, open or merged / No changes).
+                     Painted by paintHdPr; never shown for a single-project run. -->
+                <ul class="hd-pr-repos" hidden data-min-level="advanced" data-needs-git aria-label="Pull requests per repository"></ul>
+                <!-- Status pip leads the META line, not row 1: it reads as the icon
+                     for the status WORD it now sits next to (same pairing the list
+                     card uses), and row 1 stays title + PR actions. -->
+                <div class="hd-row2">
+                  <span class="hd-sic hist-sic" role="img">
+                    <svg class="sic sic-done" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    <svg class="sic sic-stopped" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                    <svg class="sic sic-paused" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
+                    <svg class="sic sic-error" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6.5v7"></path><path d="M12 17.4h.01"></path></svg>
+                  </span>
+                  <div class="hd-meta"></div>
+                </div>
+                <div class="hd-row3">
+                  <span class="hd-base mono" data-min-level="advanced" data-needs-git></span>
+                  <button type="button" class="btn btn-sm btn-quiet mono copy-btn hd-branch-copy" hidden data-min-level="advanced" data-needs-git title="Copy branch name" aria-label="Copy branch name">
+                    <span class="hd-branch-name"></span><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span>
+                  </button>
+                  <span class="hd-spacer"></span>
+                </div>
+              </header>
+              <div class="hd-body">
+                <div class="hd-graph"><div class="run-flow-wrap"><div class="run-flow"></div></div></div>
+                <div class="hd-tabs" role="tablist"></div>
+                <div class="hd-sections"></div>
+              </div>
+              </section>
+            </div>
+          </template>
+        </section>
+        <!-- /view runs -->
+

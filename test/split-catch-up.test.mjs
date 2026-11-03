@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseArgs, findMigration, movedOf, ownRoutes, catchUpOne, catchUpAll, resolveContext, main } from '../tools/split-catch-up.mjs';
+import { parseArgs, findMigration, movedOf, ownRoutes, catchUpOne, catchUpAll, resolveContext, main, WORKS_WITH_WARNING } from '../tools/split-catch-up.mjs';
 
 test('parseArgs: one of BRANCH, --all, --fixture; --all defaults to no parity (quick parity on the fixture only)', () => {
   assert.equal(parseArgs(['feat/x']).branch, 'feat/x');
@@ -173,4 +173,35 @@ test('main: bad arguments exit 2; a fatal start exits 3; a hand fix exits 1', as
   assert.equal(await main(['feat/x', '--out', out()], { err: () => {}, log: (l) => lines.push(l), deps: f.deps, root: '/root' }), 1);
   assert.ok(lines.some((l) => /needs hand fix/.test(l)), lines.join('\n'));
   assert.ok(!f.calls.some((c) => /\bpush\b/.test(c)));
+});
+
+// one route the patch adds (own) and one it does not (foreign)
+const DIFFS = { code: 1, rep: { routeDiffs: [{ route: 'GET /api/settings/catch-up-fixture' }, { route: 'POST /api/runs/:id/stop' }], failedFlows: [], signedOutProblems: [], visualDiffs: [] } };
+
+test('catchUpOne: by default a parity diff outside P\'s own routes is a hand fix (--fixture, --all, readiness)', async () => {
+  const { calls, deps } = fakes(); deps.parity = () => DIFFS;
+  const row = await catchUpOne({ root: '/root', t: T, ctx: CTX, out: out(), d: deps, parity: 'quick' });
+  assert.equal(row.verdict, 'needs hand fix');
+  assert.deepEqual(row.reasons, ["parity: 1 route diffs outside P's own routes, 0 failed flows, 0 signed-out problems"]);
+  safe(calls);
+});
+
+test('catchUpOne with parityWarns: a parity diff is a warning to review and the verdict still works', async () => {
+  const { calls, deps } = fakes(); deps.parity = () => DIFFS;
+  const o = out();
+  const row = await catchUpOne({ root: '/root', t: T, ctx: CTX, out: o, d: deps, parity: 'quick', parityWarns: true });
+  assert.equal(row.verdict, WORKS_WITH_WARNING);
+  assert.deepEqual(row.reasons, []);
+  assert.deepEqual(row.warnings, [`parity: these routes differ from dev; check they are your PR's own changes: POST /api/runs/:id/stop (see ${join(o, '-7', 'parity', 'report.md')})`]);
+  safe(calls);
+});
+
+test('main BRANCH: a clean apply with passing tests prints the parity warning and the To take it line, and exits 0', async () => {
+  const f = fakes(); f.deps.parity = () => DIFFS;
+  const lines = [];
+  assert.equal(await main(['feat/old', '--out', out()], { err: () => {}, log: (l) => lines.push(l), deps: f.deps, root: '/root' }), 0);
+  assert.ok(lines.includes(`feat/old: ${WORKS_WITH_WARNING}`), lines.join('\n'));
+  assert.ok(lines.some((l) => l.startsWith("warning: parity: these routes differ from dev; check they are your PR's own changes: POST /api/runs/:id/stop")), lines.join('\n'));
+  assert.ok(lines.some((l) => /^nothing was pushed\. To take it: git fetch \S+ HEAD && git switch -c feat\/old-caught-up FETCH_HEAD$/.test(l)), lines.join('\n'));
+  safe(f.calls);
 });

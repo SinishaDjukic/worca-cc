@@ -1,0 +1,50 @@
+    <!-- ===== Update Worca (issue #841): version picker + confirm, then the updating overlay ===== -->
+    <div id="update-modal" class="viewer-modal confirm-modal update-modal hidden" role="dialog" aria-modal="true" aria-labelledby="updatePickTitle">
+      <div class="card">
+        <div data-pane="pick">
+          <div class="card-head"><h2 id="updatePickTitle">Choose a Worca version</h2></div>
+          <p class="confirm-message" id="updatePickSub">Versions come from the npm registry.</p>
+          <div class="seg" aria-label="Channel">
+            <button type="button" data-channel="stable" aria-pressed="true">Stable</button>
+            <button type="button" data-channel="rc" aria-pressed="false">Release candidates</button>
+          </div>
+          <div class="update-versions" id="updateVersionList" role="radiogroup" aria-label="Versions"></div>
+          <label class="switch-row update-older"><input type="checkbox" id="updateShowOlder" class="sw-input" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Show older versions (roll back)</span></label>
+          <p class="update-callout" id="updatePickNote" hidden></p>
+          <div class="confirm-actions update-actions">
+            <a class="update-notes-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
+            <button type="button" class="btn" id="updatePickCancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="updatePickGo" disabled>Pick a version</button>
+          </div>
+        </div>
+        <div data-pane="confirm" hidden>
+          <div class="card-head"><h2 id="updateConfirmTitle">Update Worca?</h2></div>
+          <p class="confirm-message" id="updateConfirmMsg"></p>
+          <p class="update-callout" id="updateConfirmRuns"></p>
+          <p class="update-callout" id="updateConfirmSched" hidden></p>
+          <div class="update-callout" id="updateConfirmManual" data-tone="warn" hidden>
+            Start it by hand once it is installed:
+            <div class="about-cmd"><code class="about-cmd-text" id="updateConfirmStartCmd">worca ui</code>
+              <button type="button" class="btn btn-sm btn-quiet btn-icon copy-btn" id="updateConfirmCopy" title="Copy command" aria-label="Copy command"><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button></div>
+          </div>
+          <div class="confirm-actions update-actions">
+            <a class="update-notes-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
+            <button type="button" class="btn" id="updateConfirmBack">Cancel</button>
+            <button type="button" class="btn btn-primary" id="updateConfirmGo" disabled>Update &amp; restart</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="update-overlay" class="viewer-modal confirm-modal update-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="updateOverlayTitle">
+      <div class="card">
+        <div class="card-head"><h2 id="updateOverlayTitle">Updating Worca</h2></div>
+        <p class="confirm-message"><span class="spinner" aria-hidden="true"></span> <span id="updateOverlayStep"></span></p>
+        <p class="about-note">Keep the terminal running <code>worca ui</code> open: it does the install while the server is down. This page reloads when Worca is back.</p>
+        <div class="update-callout" id="updateOverlayManual" data-tone="warn" hidden>
+          This version cannot start itself. Start it with:
+          <div class="about-cmd"><code class="about-cmd-text" id="updateOverlayStartCmd">worca ui</code>
+            <button type="button" class="btn btn-sm btn-quiet btn-icon copy-btn" id="updateOverlayCopy" title="Copy command" aria-label="Copy command"><span class="ic ico-copy" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span class="ic ico-x" aria-hidden="true" style="width:14px;height:14px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button></div>
+        </div>
+      </div>
+    </div>
+

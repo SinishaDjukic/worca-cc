@@ -1,0 +1,10 @@
+.md-tab:disabled{cursor:default;opacity:.55;}
+.hd-cmt-input{width:100%;min-height:72px;padding:12px 14px;border:0;background:transparent;color:var(--ink);
+  font:400 13px/1.5 var(--sans);resize:vertical;}
+.hd-cmt-input::placeholder{color:var(--ink-2);}
+.hd-cmt-input:focus{outline:none;}
+.hd-cmt-preview{padding:12px 14px;min-height:72px;}
+.hd-cmt-preview:empty::before{content:'Nothing to preview yet';color:var(--ink-2);}
+.hd-cmt-composer .hd-cmt-actions{justify-content:flex-end;gap:4px;margin:0;padding:0 12px 12px;}
+.hd-cmt-block[hidden],.hd-cmt-detached[hidden],.hd-cmt-thread[hidden],.hd-cmt-card[hidden],.hd-cmt-badge[hidden],.hd-cmt-add[hidden],.hd-cmt-input[hidden],.hd-cmt-preview[hidden]{display:none;}
+@media (prefers-reduced-motion: reduce){.hd-cmt-thread{animation:none;}}

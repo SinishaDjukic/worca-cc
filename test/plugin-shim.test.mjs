@@ -46,6 +46,41 @@ const CONNECTOR = [
   "    async boom() { const e = new Error('token expired'); e.kind = 'auth'; throw e; },",
   '    async never() { return new Promise(() => {}); },',
   "    async noisy() { console.log('junk before the frame'); return { fine: true }; },",
+  // Answers, then the process dies non-zero AFTER the frame is written: the
+  // platform-independent stand-in for Node 24 on Windows asserting in libuv
+  // during process.exit(0) (exit 0xC0000409). An exit listener runs after the
+  // runner's write callback; process.exitCode set there replaces the 0.
+  '    async answerThenCrash(args) {',
+  "      const fs = await import('node:fs');",
+  "      process.on('exit', () => { fs.writeSync(2, args.stderr || ''); process.exitCode = 7; });",
+  "      if (args.fail) { const e = new Error('token expired'); e.kind = 'auth'; throw e; }",
+  "      ctx.log('info', 'answered');",
+  '      return { answered: true };',
+  '    },',
+  // Answers but leaves a live handle (a ref'd 60 s timer): the child must
+  // still end promptly once the frame is written.
+  '    async lingers() { setTimeout(() => {}, 60000); return { lingered: true }; },',
+  // Answers, then the process is slow to end: an exit listener busy-waits
+  // args.ms, so the parent's kill timer fires AFTER the frame is out.
+  '    async answersThenStalls(args) {',
+  "      process.on('exit', () => { const end = Date.now() + args.ms; while (Date.now() < end); });",
+  '      return { stalled: true };',
+  '    },',
+  // Answers, then leftover work throws / rejects after the frame is out.
+  "    async throwsLate() { setTimeout(() => { throw new Error('late boom'); }, 100); return { threw: true }; },",
+  "    async rejectsLate() { setTimeout(() => { Promise.reject(new Error('late reject')); }, 100); return { rejected: true }; },",
+  // Throws BEFORE answering, from a timer (not the op promise): must still crash.
+  "    async throwsEarly() { setTimeout(() => { throw new Error('early boom'); }, 10); return new Promise(() => {}); },",
+  // Answers, but leaves process.exitCode set by stray connector code.
+  "    async answersWithExitCode() { process.exitCode = 1; return { coded: true }; },",
+  // Answers, then background work prints to stdout after the frame is out.
+  "    async printsLate() { setTimeout(() => console.log('late junk'), 50); return { early: true }; },",
+  // Writes args.out to stdout (no frame), then exits args.code before the
+  // runner can answer: garbage, a cut-off frame, JSON that is not a frame.
+  '    async writeThenExit(args) {',
+  '      await new Promise((r) => process.stdout.write(args.out, r));',
+  '      process.exit(args.code);',
+  '    },',
   '    async fetchAll(args) {',
   '      const out = [];',
   '      for (const url of args.urls) {',
@@ -294,6 +329,119 @@ test('stdout is protocol-reserved: console.log junk => PluginOpError protocol', 
     callSource({ plugin: NAME, sourceId: 'main', op: 'noisy' }),
     'protocol', /protocol-reserved/,
   );
+});
+
+test('a child that crashes on exit AFTER writing its frame still answers; worca warns once', async () => {
+  // Node 24 on Windows can assert in libuv during process.exit(0) after one HTTPS
+  // fetch (exit 0xC0000409). The answer is already on stdout: keep it.
+  const logLines = [];
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'answerThenCrash',
+    args: { stderr: `first line
+Assertion failed: simulated crash on exit ${'x'.repeat(500)}
+
+` },
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { answered: true });
+  assert.ok(logLines.includes('info:answered'), 'the frame logs still route');
+  const warns = logLines.filter((l) => l.startsWith('warn:'));
+  assert.equal(warns.length, 1, `one warning: ${logLines.join(' | ')}`);
+  assert.match(warns[0], /plugin "mock-echo" op "answerThenCrash"/);
+  assert.match(warns[0], /crashed on exit after answering/);
+  assert.match(warns[0], /exit 7/);
+  assert.match(warns[0], /Assertion failed: simulated crash on exit/, 'the LAST non-empty stderr line is quoted');
+  assert.doesNotMatch(warns[0], /first line/, 'not the first line');
+  assert.ok(warns[0].length < 400, `the stderr line is capped: ${warns[0].length} chars`);
+});
+
+test('a token on the crash line of stderr never reaches the warning', async () => {
+  const ghp = `ghp_${'A1b2C3d4E5'.repeat(3)}`;
+  const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJ4eHh4eHh4eHgifQ', 'abcdefghijklmnopqrstuv'].join('.');
+  for (const line of [`Authorization: Bearer ${jwt}`, `push failed with ${ghp}`]) {
+    const logLines = [];
+    const result = await callSource({
+      plugin: NAME, sourceId: 'main', op: 'answerThenCrash', args: { stderr: `${line}
+` },
+      logger: (level, msg) => logLines.push(`${level}:${msg}`),
+    });
+    assert.deepEqual(result, { answered: true });
+    const warn = logLines.find((l) => l.startsWith('warn:'));
+    assert.match(warn, /crashed on exit after answering/);
+    assert.doesNotMatch(warn, /ghp_A1b2|eyJhbGci|abcdefghijklmnop/, warn);
+  }
+});
+
+test('a frame that arrived before the timeout is kept even if the child is killed while ending', async () => {
+  const logLines = [];
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'answersThenStalls', args: { ms: 1000 }, timeoutMs: 300,
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { stalled: true });
+  const warns = logLines.filter((l) => l.startsWith('warn:'));
+  assert.equal(warns.length, 1, logLines.join(' | '));
+  assert.match(warns[0], /killed after answering/);
+});
+
+test('a stray process.exitCode in the connector neither logs a crash nor loses the result', async () => {
+  const logLines = [];
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'answersWithExitCode',
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { coded: true });
+  assert.deepEqual(logLines, [], 'exit 0, so no warning');
+});
+
+test('a connector that leaves a live handle still answers promptly, with no warning', async () => {
+  const logLines = [];
+  const t0 = Date.now();
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'lingers', timeoutMs: 10000,
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { lingered: true });
+  assert.ok(Date.now() - t0 < 5000, `ended well before the 60 s handle: ${Date.now() - t0} ms`);
+  assert.deepEqual(logLines, [], 'a clean exit logs nothing');
+});
+
+test('output a connector prints after its frame never corrupts the frame', async () => {
+  assert.deepEqual(await callSource({ plugin: NAME, sourceId: 'main', op: 'printsLate', logger: () => {} }), { early: true });
+});
+
+test('a crash on exit after an error frame keeps the connector error, not protocol', async () => {
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'main', op: 'answerThenCrash', args: { fail: true }, logger: () => {} }),
+    'auth', /token expired/,
+  );
+});
+
+test('errors from leftover work after the answer exit 0: no crash warning, answer kept', async () => {
+  for (const [op, expected] of [['throwsLate', { threw: true }], ['rejectsLate', { rejected: true }]]) {
+    const logLines = [];
+    const result = await callSource({
+      plugin: NAME, sourceId: 'main', op, logger: (level, msg) => logLines.push(`${level}:${msg}`),
+    });
+    assert.deepEqual(result, expected, op);
+    assert.deepEqual(logLines, [], `${op}: exit 0, so no warning`);
+  }
+});
+
+test('an uncaught error BEFORE the answer is still a crash (protocol error)', async () => {
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'main', op: 'throwsEarly', logger: () => {} }),
+    'protocol', /child exited 1.*early boom/s,
+  );
+});
+
+test('a non-zero exit without a complete frame on stdout stays a protocol error', async () => {
+  for (const out of ['garbage', '{"ok":true,"result":', '{"result":1}', '42', 'null', '', '{"ok":true}', '{"ok":false,"error":{}}']) {
+    await rejectsKind(
+      callSource({ plugin: NAME, sourceId: 'main', op: 'writeThenExit', args: { out, code: 5 }, logger: () => {} }),
+      'protocol', /child exited 5/,
+    );
+  }
 });
 
 test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', async () => {

@@ -1,0 +1,117 @@
+/* ---------- Getting started (docs/getting-started.md) ---------- */
+/* The shelf sits ABOVE the New pipeline form at the form's own width (.grid.single
+   caps the card at 864px, centred), so it reads as the page's first card, not a
+   side panel. Painted by getting-started.mjs; [hidden] when hidden or unknown. */
+.gs-host{max-width:960px;margin:0 auto;}
+.gs-host[hidden]{display:none;}
+.gs-head{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;}
+.gs-head h2{flex:1;}
+.gs-progress{font-family:var(--mono);font-size:12px;color:var(--ink-2);font-weight:600;}
+/* Nine equal tiles that fill the row and wrap 3 -> 1: a 3×3 square, then one column — two
+   columns would leave the ninth an orphan. */
+.gs-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
+@media (max-width:640px){.gs-tiles{grid-template-columns:1fr;}}
+.gs-tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:6px;
+  border:1.5px solid var(--line);border-radius:var(--r-ctrl);background:var(--surface);
+  padding:12px 14px 13px;font:inherit;font-size:13px;line-height:1.35;color:var(--ink);text-align:left;cursor:pointer;
+  transition:border-color .2s,transform .15s;}
+.gs-tile:hover{border-color:var(--blue);}
+.gs-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Unfinished tiles arrive in sequence — the tile lands, then its drawing paints
+   (backwards fill keeps it invisible until its turn). */
+.gs-tile.reveal{animation:gs-tile-in .4s ease-out backwards;animation-delay:var(--tile-delay,0s);}
+@keyframes gs-tile-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+.gs-vig{width:96px;margin:2px 0 0;}
+.gs-vig svg{width:100%;height:auto;display:block;}
+.gs-label{font-weight:600;}
+.gs-mark{position:absolute;top:10px;right:10px;width:20px;height:20px;border-radius:var(--r-sm);
+  border:1.5px solid var(--line-2);display:grid;place-items:center;color:transparent;font-size:11px;font-weight:700;
+  transition:background .3s,border-color .3s,color .3s;}
+/* Done recedes: the mark fills with ink (the wizard tracker's own idiom), the
+   label mutes and strikes, the drawing loses its colour. What is still to do
+   keeps full ink and its accent — the shelf IS a progress meter. */
+.gs-tile.done .gs-mark{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
+.gs-tile.done .gs-label{color:var(--ink-2);font-weight:500;text-decoration:line-through;text-decoration-thickness:1px;}
+.gs-tile.done .gs-vig{opacity:.45;filter:saturate(.3);}
+
+/* Vignette vocabulary: hollow nodes, wires, frames; ONE accent (violet) per scene. */
+.gs-node{fill:var(--panel);stroke:var(--ink-3);stroke-width:2;}
+.gs-node.gs-accent{fill:var(--blue);stroke:var(--blue);}
+.gs-wire{fill:none;stroke:var(--ink-3);stroke-width:2.2;stroke-linecap:round;}
+.gs-wire.gs-accent{stroke:var(--blue);}
+.gs-frame{fill:var(--field);stroke:var(--ink-3);stroke-width:2;}
+.gs-glyph{fill:none;stroke:var(--ink);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;}
+.gs-spark.gs-accent{fill:var(--blue);stroke:none;}
+.gs-chart{fill:none;stroke:var(--blue);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+.gs-ring-mark{fill:none;stroke:var(--blue);stroke-width:2;opacity:.45;}
+/* Motion grammar: pop (overshoot) for marks, a slow draw for wires. Every element's
+   delay is its own slot plus the tile's slot, so one vignette finishes before the
+   next begins. `.static` (a done tile) paints the finished picture, no motion. */
+.play .gs-pop{transform-box:fill-box;transform-origin:center;
+  animation:gs-pop .45s cubic-bezier(.2,1.6,.4,1) both;animation-delay:calc(var(--tile-delay,0s) + var(--d,0s));}
+@keyframes gs-pop{from{opacity:0;transform:scale(.2);}to{opacity:1;transform:none;}}
+.play .gs-draw{stroke-dasharray:1;stroke-dashoffset:1;
+  animation:gs-draw var(--t,.6s) cubic-bezier(.45,0,.3,1) both;animation-delay:calc(var(--tile-delay,0s) + var(--d,0s));}
+@keyframes gs-draw{to{stroke-dashoffset:0;}}
+
+/* Sidebar pill under New pipeline: mounted by app.js right after that row (not in the
+   shell — the nav census stays), styled by .nav button at the same 32px rhythm; the
+   count wears the accent. */
+.gs-pill-host[hidden]{display:none;}
+/* The pill wears the guide's own violet as a full outline, and its halo, so it reads as
+   "the tour is here" from any view — the one animated thing in the sidebar. The 1.5px
+   border comes out of the padding, so its icon and label sit where every row's do. */
+.nav button.gs-pill{font-weight:500;color:var(--blue-ink-strong);border:1.5px solid var(--blue);padding:0 6.5px 0 7.5px;
+  animation:none;}
+.nav button.gs-pill:hover{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.nav button.gs-pill.active{background:var(--blue-bg);border-color:var(--blue);color:var(--blue-ink-strong);animation:none;}
+.nav button.gs-pill.active svg{stroke:var(--blue-ink);}
+.nav button.gs-pill.active .gs-pill-count{background:var(--panel);color:var(--blue-ink-strong);}
+.nav button.gs-pill svg{stroke:var(--blue-ink);}
+/* Blue ink on the blue wash (not white on solid blue: it fails the light gate at 11px).
+   A pill of its own: the sidebar's other counts are bare numbers. */
+.nav button.gs-pill .gs-pill-count{display:inline-flex;align-items:center;justify-content:center;flex:none;
+  height:18px;padding:0 6px;border-radius:var(--r-xs);
+  background:var(--blue-bg);color:var(--blue-ink-strong);font-family:var(--mono);font-size:11px;}
+
+/* Settings › General › Getting started */
+.gs-settings-row{display:flex;align-items:center;gap:16px;justify-content:space-between;}
+.gs-settings-row .btn{white-space:nowrap;flex:0 0 auto;}
+.gs-settings-text{margin:0;color:var(--ink-2);font-size:13px;line-height:1.5;}
+
+/* ---------- Welcome + Connect Claude Code dialogs ---------- */
+.ob-welcome{width:min(92vw,600px);animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
+.ob-eyebrow{margin:0 0 6px;font-size:12px;color:var(--ink-2);font-weight:600;}
+.ob-headline{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em;line-height:1.2;}
+.ob-headline em{font-style:italic;color:var(--blue-ink);}
+.ob-hero{display:block;width:100%;height:auto;margin:10px 0 12px;}
+.ob-thread{stroke-width:2.5;}
+.ob-loop{stroke:var(--ink-3);stroke-dasharray:1;}
+.ob-doors{display:flex;flex-direction:column;gap:8px;}
+.ob-door{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;
+  border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--surface);color:var(--ink);
+  font:inherit;font-weight:600;font-size:13px;text-align:left;cursor:pointer;transition:border-color .15s,background .15s;}
+.ob-door:hover{border-color:var(--hover-outline);}
+.ob-door:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ob-door-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:var(--r-sm);background:var(--blue-bg);color:var(--blue-ink);flex:0 0 auto;}
+.ob-door-icon svg{width:19px;height:19px;}
+.ob-door-arrow{margin-left:auto;color:var(--ink-2);font-size:18px;line-height:1;}
+@media (max-width:760px){
+  .viewer-modal .card.dlg.ob-welcome{max-height:calc(100dvh - 24px);}
+  .dlg .ob-hero{max-height:30vh;}
+  .ob-door{min-height:44px;}
+  .ob-headline{font-size:18px;}
+}
+.ob-skip{display:flex;margin:16px auto 0;}
+.ob-claude{width:min(92vw,560px);padding:24px;}
+.ob-claude-lead,.ob-claude-note{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2);}
+.ob-claude-lead strong{color:var(--ink);}
+.ob-claude code{font-family:var(--mono);font-size:12px;background:var(--field);padding:1px 5px;border-radius:var(--r-sm);}
+.ob-claude-cmd{margin:12px 0;padding:12px 14px;background:var(--field);border-radius:var(--r-sm);overflow:auto;}
+.ob-claude-cmd code{background:none;padding:0;font-size:12px;}
+.ob-claude-note a{color:var(--blue-ink-strong);}
+.ob-claude-step{margin-top:16px;}
+.ob-claude-status{min-height:18px;margin-top:12px;font-size:13px;line-height:1.45;}
+.ob-claude-status.ok{color:var(--green-ink);}
+.ob-claude-status.err{color:var(--red-ink);}
+

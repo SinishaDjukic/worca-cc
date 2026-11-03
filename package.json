@@ -38,6 +38,7 @@
   "files": [
     "src/",
     "ui/server.mjs",
+    "ui/routes/",
     "ui/public/",
     "extension/dist/chrome/",
     "extension/dist/edge/",

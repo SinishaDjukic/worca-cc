@@ -1,0 +1,61 @@
+/* ===== Agents view ===== */
+.agent-card .agent-head { display:flex; align-items:center; gap:14px; cursor:pointer; }
+.agent-card .agent-h-meta { flex:1; min-width:0; }
+.agent-io { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+.agent-io-row { display:flex; align-items:flex-start; gap:8px; }
+.agent-io-label { flex:0 0 auto; min-width:52px; font-size:12px; font-weight:600; opacity:.6; line-height:20px; }
+.agent-chips { display:flex; flex-wrap:wrap; gap:6px; flex:1 1 auto; }
+.agent-chip { font-size:11px; padding:2px 8px; border:1px solid var(--line); border-radius:var(--r-xs); }
+.agent-chip.prod { background:var(--green-bg); }
+.agent-chip.cons { background:var(--blue-bg); }
+.agent-io-none { font-size:11px; opacity:.45; line-height:20px; }
+.agent-chip.void { border-style:dashed; background:transparent; opacity:.75; }
+.agent-not-placeable { background:var(--amber-bg); color:var(--amber-ink); }
+.agent-not-placeable[hidden] { display:none; }
+
+/* ---------- Agents-view port editor ---------- */
+.row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+.agent-ports{margin-bottom:16px;}
+.agent-ports-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+.agent-ports-head b{font-size:12px;font-weight:600;}
+.agent-ports-head .pf-count{margin-left:auto;font-size:11px;}
+.agent-ports-list{display:flex;flex-direction:column;gap:9px;}
+.port-row{border:1px solid var(--line-2);border-radius:var(--r-sm);padding:10px 12px;background:var(--panel);}
+.port-row-top{display:flex;align-items:flex-end;gap:9px;}
+.port-row-top .field{margin:0;flex:1 1 0;min-width:0;}
+.port-row-top .pf-f-type,.port-row-top .pf-f-as,.port-row-top .pf-f-when,.port-row-top .pf-f-store{flex:0 0 104px;}
+.port-row-top .field label{font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:4px;}
+.port-row-top .field[hidden]{display:none;}
+.port-row-flags{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:9px;}
+.pf-up,.pf-down,.pf-remove{flex:0 0 auto;}
+.pf-directive-wrap{margin-top:9px;}
+.pf-directive-wrap[hidden]{display:none;}
+.pf-hint,.pf-note{display:block;margin-top:6px;font-size:11px;}
+.pf-hint[hidden],.pf-note[hidden]{display:none;}
+.agent-caps,.agent-workspace{display:flex;flex-direction:column;gap:2px;}
+
+/* ===== Agent ask forms (ask-forms spec §11) ===== */
+.agent-forms{display:flex;flex-direction:column;gap:8px;}
+.agent-forms-list{display:flex;flex-direction:column;gap:14px;}
+.agent-form-row{border:1px solid var(--line);border-radius:var(--r-sm);padding:12px;display:flex;flex-direction:column;gap:8px;}
+.afm-head{display:flex;align-items:flex-end;gap:12px;}
+.afm-head .field{margin:0;}   /* .field{margin-bottom:18px} would lift the id input off the Remove button's baseline */
+.afm-head .afm-f-id{flex:1 1 auto;}
+.afm-remove{flex:0 0 auto;}
+.afm-editor .code-editor{width:100%;}
+.afm-add{align-self:flex-start;}
+.afm-panes{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;}
+.afm-preview{min-width:0;border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;}
+.afm-projection{min-width:0;margin:0;white-space:pre-wrap;font-size:12px;}
+.afm-projection[hidden]{display:none;}
+.agent-forms-view{display:flex;flex-direction:column;gap:12px;margin-top:12px;}
+.agent-forms-view[hidden]{display:none;}
+.afv-row{border:1px solid var(--line);border-radius:var(--r-sm);padding:12px;}
+.afv-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;}
+@media (max-width:900px){.afm-panes{grid-template-columns:minmax(0,1fr);}}
+
+/* (2) space between the header pills and the expanded markdown body */
+.agent-detail { margin-top:14px; }
+.agent-origin.origin-user { background:var(--slate-bg);color:var(--slate-ink); }
+.agents-group-label { font-size:12px; font-weight:600; opacity:.65; margin:18px 0 8px; }
+

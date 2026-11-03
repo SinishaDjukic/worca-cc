@@ -1,0 +1,14 @@
+/* ---------- Statistics view ---------- */
+.stats-filter{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px;}
+/* Statistics / Team metrics (docs/design-system.md › Charts, Patterns › stat tiles): six range buttons wrap
+   onto a second row at 290px instead of scrolling; each stays a 28px segment. */
+#stats-range{flex-wrap:wrap;max-width:100%;}
+#tm-range{flex-wrap:wrap;max-width:100%;}
+.stats-custom{display:inline-flex;gap:6px;align-items:center;}
+.stats-scope .tag-input{min-width:240px;}
+.groups-table tr.groups-row-none td,.groups-table tr.groups-row-ask td,.groups-table tr.groups-row-requirements td{color:var(--ink-3);font-style:italic;}
+.groups-table tfoot td{font-weight:500;border-top:1px solid var(--line);padding:8px 10px 8px 0;}
+.tm-view{margin-bottom:14px;}
+/* Team metrics › Cost (labels-cost-tags s4): the to-do strip and the person × value heat grid */
+.cr-tail{display:flex;flex-direction:column;gap:14px;}
+.cr-tail[hidden]{display:none;}
