@@ -74,6 +74,27 @@ Run status arrives as messages in the thread (started, questions, finished, fail
 **Freeform chat members** is a list of `discordUserId=worca identity` pairs, comma or newline separated, for example
 `123456789012345678=ada@example.com`. Only listed people can start or continue a freeform chat or press its controls.
 
+### Context: replies, channel history and files (0.4.0)
+
+- **Replies.** Reply to any message and mention the bot (or reply inside a worca thread): worca sends the replied-to
+  message along with yours — author, time, text, link and its files. The model sees it as quoted context, never as
+  your words; the worca chat shows it as a collapsed "Context from Discord" block above your message. Inside a worca
+  thread, a reply to worca's own message is not quoted (it is already in the conversation), so replying to a question
+  answers it.
+- **Recent history (opt-in).** *Read recent history when a conversation starts* (`off` by default; 5, 10, 20 or 50
+  messages): the first reply of a new conversation also quotes that many messages of the channel before the mention,
+  oldest first. Only in Allowed channels, never in direct messages; other bots' messages are skipped (worca's own stay).
+  Later messages in the thread read no history.
+- **Files.** Files on your message, on the replied-to message and on the history messages are downloaded by worca —
+  only from Discord's file hosts (`cdn.discordapp.com`, `media.discordapp.net`, declared in the plugin manifest as
+  `attachmentHosts`) — and saved as attachments of the chat, so the model can read them and they show in worca.
+  Limits: the chat attachment types worca accepts (text, images, PDF; what the chat's engine can view), **25 MB per
+  file, 4 files per Discord message, 8 files and 50 MB per message with its context**. A file that is too large, of
+  another type, or fails to download is listed by name with the reason; the reply still goes ahead.
+- **Permissions.** Reading a replied-to message the event did not include, and reading history, need **Read Message
+  History** — already in the invite above. Without it the reply or history is left out (and the log says why).
+- Everything quoted is treated as untrusted data: text that looks like an instruction is never followed.
+
 ### Security
 
 - Only the person who started a thread controls it. Other members' messages in the thread are ignored (no paid turn);

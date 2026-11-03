@@ -25,7 +25,7 @@ import { normalizeManifest, negotiatedApi } from '../plugin-manifest.mjs';
 import { WORCA_PLUGIN_API } from '../plugin-api.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../plugins-lock.mjs';
 import { readPluginConfig, readPluginState, writePluginState } from '../plugin-config.mjs';
-import { encodeFrame, decodeFrame, isValidMessage, isValidSendOptions, CONTROL_LIMITS, MAX_FRAME_BYTES } from './channel-protocol.mjs';
+import { encodeFrame, decodeFrame, isValidMessage, isValidSendOptions, isValidHistory, CONTROL_LIMITS, MAX_FRAME_BYTES, INBOUND_LIMITS } from './channel-protocol.mjs';
 import { redactSecrets } from './redact.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./channel-worker-child.mjs', import.meta.url));
@@ -55,7 +55,7 @@ function mockMode() {
 
 // ── mock hooks (tests / offline smoke) ───────────────────────────────────────
 
-let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req), react?(frame) }
+let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req), react?(frame), history?(frame) }
 const _mockSent = [];       // every sendMessage seen in mock mode
 
 /** Tests: override mock worker behavior per "plugin/channelId" key ('*' = all). */
@@ -118,6 +118,8 @@ export function discoverChannels() {
         platform: ch.platform,
         ingress: ch.ingress,
         capabilities: ch.capabilities,
+        // chat context: the CDN hosts the host may download this channel's message files from (manifest; absent = none)
+        ...(ch.attachmentHosts ? { attachmentHosts: ch.attachmentHosts } : {}),
         configSchema: ch.configSchema,
         modulePath: resolve(dir, ch.module),
         apiVersion: negotiatedApi(manifest.engines?.worcaApi) ?? WORCA_PLUGIN_API,
@@ -564,6 +566,34 @@ export function createChannelHost({ logger, onInbound, onInteraction, onStatus, 
       const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'reaction failed'));
       if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
       throw res.error?.permanent === true ? refused(err) : err;
+    },
+
+    /** v2 (chat context): up to `limit` messages of one chat before one message, oldest first, as quoted messages
+     *  (channel-protocol.mjs isValidQuotedMessage). Interactive channels only; the worker decides what it may read.
+     *  Throws PluginOpError; a refusal that would fail again (no access, a worker without history) is `permanent`.
+     *  The default timeout outlasts the worker's own short 429 waits. Mock mode asks behavior.history(frame). */
+    async history({ plugin, channelId, chatId, before, limit, timeoutMs = 30000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (w.entry.capabilities.interactive !== true) throw refused(new PluginOpError('plugin', 'channel is not interactive'));
+      const frame = { chatId: String(chatId), before: String(before),
+        limit: Math.max(1, Math.min(INBOUND_LIMITS.history, Math.trunc(Number(limit)) || 1)) };
+      let messages;
+      if (w.mock) {
+        const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
+        messages = behavior?.history ? await behavior.history(frame) : [];   // may throw {kind, permanent?}
+      } else {
+        if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+        const res = await rpc(w, { type: 'history', id: `h-${++rpcSeq}`, ...frame }, timeoutMs);
+        if (!res.ok) {
+          const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'history read failed'));
+          if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
+          throw res.error?.permanent === true ? refused(err) : err;
+        }
+        messages = res.detail?.messages;
+      }
+      if (!isValidHistory(messages)) throw new PluginOpError('protocol', 'the channel worker answered an invalid history');
+      return messages.slice(-frame.limit);
     },
 
     /** Tests: the interaction twin of injectInboundMessage. */

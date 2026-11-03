@@ -21,7 +21,7 @@ useTempHome(after);
 
 const NAME = 'fixture-chat';
 const NAME2 = 'fixture-plain';
-const SCHEMA = ['botToken', 'allowedChatIds', 'allowedUserIds', 'freeformChat', 'chatMembers', 'worcaUrl']
+const SCHEMA = ['botToken', 'allowedChatIds', 'allowedUserIds', 'freeformChat', 'chatMembers', 'worcaUrl', 'historyOnStart']
   .map((key) => ({ key, type: 'text', label: key, secret: key === 'botToken', required: key === 'botToken' }));
 const CFG = { botToken: 'sekret', allowedChatIds: 'C1', freeformChat: 'on', chatMembers: 'U1=ada@example.com', worcaUrl: 'https://worca.example' };
 
@@ -67,7 +67,7 @@ before(async () => {
   writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
     name: NAME, engines: { 'worca-cc-api': '>=2 <3' },
     chatChannels: [{ id: 'main', platform: 'discord', module: './channel/worker.mjs', configSchema: SCHEMA,
-      capabilities: { inbound: true, outbound: true, interactive: true } }],
+      capabilities: { inbound: true, outbound: true, interactive: true }, attachmentHosts: ['cdn.discordapp.com', 'media.discordapp.net'] }],
   }));
   writeFileSync(join(cur, 'channel', 'worker.mjs'), 'export function createChannelWorker() { return { start() {}, stop() {}, send() {} }; }');
   // Case 18: a second, NON-interactive chat plugin (freeform configured on, so the server's interactive gate is what
@@ -1184,7 +1184,7 @@ test('21. turn identity parity', async () => {
 // mock mode, so pinned by source) and takes its turn identity from chatTurnIdentity.
 test('bridge startTurn calls askCredentialGate and chatTurnIdentity', () => {
   const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
-  const start = src.indexOf('startTurn: async ({ threadId, text, actor, onUserRow })');
+  const start = src.indexOf('startTurn: async ({ threadId, text, actor, onUserRow, inbound = null })');
   const end = src.indexOf('applyCard: (a) => invokeAskCard(a)', start);
   assert.ok(start > 0 && end > start, 'chat bridge startTurn block not found');
   const block = src.slice(start, end);
@@ -1564,4 +1564,66 @@ test('33. reactions: New conversation during a mention\'s turn start drops its �
   await idle(binding('TH9').askThreadId);
   await settle(150);
   assert.deepEqual(opsOn(id), [`+${MARK.work}`, `-${MARK.work}`]);
+});
+
+// 34: discord-chat 0.4.0 chat context. A reply that mentions the bot starts a conversation with the replied-to message
+// quoted apart from the person's words, its file saved as an Ask attachment downloaded from the plugin's CDN host only
+// (an off-host file is listed by name and never fetched), and — with the opt-in on — the channel history read once.
+test('34. chat context: reply-to-start with a file, history on start, off-host file listed', async () => {
+  _testing.chatBridge.resetRateLimits();
+  H.setThreadId(() => 'TH34');
+  const fetched = [];
+  _testing.setChatFileFetch(async (url, init) => { fetched.push({ url, redirect: init?.redirect }); return new Response('# Notes\nship it friday\n', { status: 200 }); });
+  const historyCalls = [];
+  setMockChannelBehavior({ '*': { ...behavior, history: async (frame) => { historyCalls.push(frame);
+    return [{ author: 'Bob', text: 'earlier word', at: '2026-11-03T09:50:00.000Z', link: 'https://discord.com/channels/G1/C1/h1' }]; } } });
+  writeCfg({ historyOnStart: '5' });
+  try {
+    const id = `ctx${++nextId}`;
+    const fileUrl = 'https://cdn.discordapp.com/attachments/C1/a1/notes.md?ex=1';
+    channelHost.injectInboundMessage(NAME, 'main', { chatId: 'C1', userId: 'U1', text: '<@BOT1> summarise this please',
+      meta: { platform: 'discord', messageId: id, guildId: 'G1', isGroup: true, mentionsBot: true, botId: 'BOT1' },
+      replyTo: { author: 'Alice', text: 'the plan is in the file', at: '2026-11-03T09:58:00.000Z', link: 'https://discord.com/channels/G1/C1/r1',
+        attachments: [{ name: 'notes.md', contentType: 'text/markdown', size: 23, url: fileUrl },
+          { name: 'evil.md', contentType: 'text/markdown', size: 5, url: 'https://evil.example.com/evil.md' }] } });
+    await waitFor(() => binding('TH34'));
+    const b = binding('TH34');
+    await waitFor(() => posts.some((p) => p.chatId === 'TH34' && textOf(p).includes('[mock] summarise this please')));
+    await idle(b.askThreadId);
+    const reply = posts.find((p) => p.chatId === 'TH34' && textOf(p).includes('[mock] summarise this please'));
+    assert.ok(!textOf(reply).includes('the plan is in the file'), 'the mock answers the person\'s words, not the quoted context');
+
+    const user = askStore.listMessages(b.askThreadId).find((m) => m.role === 'user');
+    assert.equal(user.text, 'summarise this please', 'the row keeps only the person\'s words');
+    const cb = user.blocks.find((x) => x.kind === 'chat-context');
+    assert.equal(cb.platform, 'discord');
+    assert.equal(cb.replyTo.author, 'Alice');
+    assert.deepEqual(cb.history.map((q) => q.text), ['earlier word']);
+    assert.deepEqual(cb.replyTo.files.map((f) => [f.name, typeof f.id === 'string', f.note ?? null]),
+      [['notes.md', true, null], ['evil.md', false, "not saved: not from the chat platform's file host"]]);
+    const atts = askStore.listAttachments(b.askThreadId);
+    assert.deepEqual(atts.map((a) => a.name), ['notes.md']);
+    assert.equal(askStore.readAttachmentText(b.askThreadId, atts[0].id).text, '# Notes\nship it friday\n');
+    assert.deepEqual(user.blocks.find((x) => x.kind === 'attachment').origin, { platform: 'discord', from: 'reply', link: 'https://discord.com/channels/G1/C1/r1' });
+    assert.deepEqual(fetched, [{ url: fileUrl, redirect: 'error' }], 'only the declared host, no redirects');
+    assert.deepEqual(historyCalls, [{ chatId: 'C1', before: id, limit: 5 }]);
+
+    const prompt = _testing.askJobs.get(b.askThreadId).turn.prompt;
+    assert.match(prompt, /\[chat context\] Quoted from Discord/);
+    assert.ok(prompt.indexOf('summarise this please') < prompt.indexOf('[chat context]'), 'after the person\'s words');
+    assert.match(prompt, /\| the plan is in the file/);
+    assert.ok(prompt.includes(`${atts[0].id} notes.md (read_attachment)`));
+    assert.ok(!prompt.includes('ship it friday'), 'a quoted message\'s file is listed, never inlined');
+
+    const n = historyCalls.length;
+    say('and one more', { chatId: 'TH34' });
+    await waitFor(() => posts.some((p) => p.chatId === 'TH34' && textOf(p).includes('[mock] and one more')));
+    assert.equal(historyCalls.length, n, 'a message in the bound thread reads no history');
+  } finally {
+    writeCfg({ historyOnStart: null });
+    setMockChannelBehavior({ '*': behavior });
+    _testing.setChatFileFetch(null);
+    H.setThreadId(() => 'TH1');
+  }
+  await idle(binding('TH34').askThreadId);
 });

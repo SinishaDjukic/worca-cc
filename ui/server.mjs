@@ -162,7 +162,7 @@ import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEven
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
-  buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
+  buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt, renderChatContextPrompt as askRenderChatContextPrompt,
   buildHandoffPrompt as askBuildHandoffPrompt, handoffBudgetChars as askHandoffBudgetChars, needsHandoff as askNeedsHandoff,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
@@ -333,6 +333,7 @@ import { actionsEventPrompt, actionsNoticeText } from '../src/core/ask/actions-p
 import { applyActionsChange } from '../src/core/ask/actions-deps.mjs';
 import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web-proposal.mjs';
 import { createConversationBridge } from '../src/core/chat/conversation-bridge.mjs';
+import { fetchChatFiles, fitChatContext, chatContextBlock } from '../src/core/chat/inbound-context.mjs';
 import { createReceipts, commandOutcome } from '../src/core/chat/receipts.mjs';
 import { conversationForThread, listActiveConversations } from '../src/core/chat/conversations.mjs';
 import { scopeSelectOptions } from '../src/core/chat/card-render.mjs';
@@ -4840,7 +4841,7 @@ const chatReceipts = createReceipts({
   log: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
 });
 const chatBridge = createConversationBridge({
-  host: { sendMessage: (a) => channelHost.sendMessage(a), replyInteraction: (a) => channelHost.replyInteraction(a) },
+  host: { sendMessage: (a) => channelHost.sendMessage(a), replyInteraction: (a) => channelHost.replyInteraction(a), history: (a) => channelHost.history(a) },
   receipts: chatReceipts,
   readConfig: (plugin, channelId) => { const e = channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId); return e ? readPluginConfig(plugin, e.configSchema) : null; },
   linksFor: (threadId) => chatLinksFor(threadId),
@@ -4863,7 +4864,7 @@ const chatBridge = createConversationBridge({
     // A Discord message is a first-class USER turn (review M2): the send route's gates and its un-archive, as the
     // bound identity; its signedIn/reader exactly as the browser on this deployment (chatTurnIdentity, cycle-3 M1).
     // Only the scope (and the stored time zone) rides along, never the browser's last page context (review m3).
-    startTurn: async ({ threadId, text, actor, onUserRow }) => {
+    startTurn: async ({ threadId, text, actor, onUserRow, inbound = null }) => {
       const thread = askGetThread(threadId);
       if (!thread) return { ok: false, status: 404, error: 'thread not found' };
       if (askDeleting.has(threadId)) return { ok: false, status: 409, error: 'thread is being deleted' };
@@ -4876,9 +4877,27 @@ const chatBridge = createConversationBridge({
       const fresh = askGetThread(threadId) || thread;
       const tz = fresh.context && typeof fresh.context.timeZone === 'string' ? { timeZone: fresh.context.timeZone } : {};
       const ctx = withChatScope(tz, chatScopeOf(fresh.context ?? null));
+      // Chat context (discord-chat 0.4.0): after every gate, before the turn, the files are downloaded from the plugin's
+      // declared hosts only, under the chat caps, each validated like an upload; what this chat's engine cannot view is
+      // listed, not stored (the route's own refusal). A failure never blocks the turn: the file is listed with a note.
+      let files = [];
+      let chatContext = null;
+      if (inbound) {
+        if (askInFlight(threadId)) return { ok: false, status: 409, error: 'turn in flight' };   // no downloads for a 409
+        const fitted = fitChatContext(inbound);
+        const engine = askTurnEngine(threadId, fresh, mv.model);
+        const got = await fetchChatFiles(fitted, {
+          fetchFn: chatFileFetch,
+          allowedHosts: chatAttachmentHosts(inbound.plugin, inbound.channelId),
+          refuse: (cls, name) => { const r = chatAttachRefusal({ engine, kind: cls.kind, pdf: cls.mime === 'application/pdf' }); return r ? `${r}: ${name}` : null; },
+          log: (level, m) => console.error(`[worca-ui] chat ${level}: ${m}`),
+        });
+        files = got.files;
+        chatContext = { inbound: fitted, skipped: got.skipped };
+      }
       if (fresh.archivedAt) askSetArchived(threadId, false);   // as the route: a message brings an archived chat back
       return startAskTurn({ threadId, thread: fresh, ctx, model: mv.model, effort: mv.effort, text,
-        ...chatTurnIdentity(fresh, actor), onUserRow });
+        ...chatTurnIdentity(fresh, actor), onUserRow, ...(inbound ? { files, chatContext } : {}) });
     },
     applyCard: (a) => invokeAskCard(a),
     takeDeferredReply: (cardId) => { const v = askDeferredReplies.get(cardId) || null; if (v) askDeferredReplies.delete(cardId); return v; },
@@ -4895,6 +4914,15 @@ const chatBridge = createConversationBridge({
     stopTurn: (id) => { const job = askInFlight(id); try { job?.turn?.stop?.(); } catch { /* best effort */ } },
   },
 });
+
+/** Chat context: the fetch the host downloads chat message files with (test seam: _testing.setChatFileFetch). */
+const defaultChatFileFetch = (url, init) => fetch(url, init);
+let chatFileFetch = defaultChatFileFetch;
+/** The CDN hosts a channel's manifest declares for its message files ([] = no downloads at all). */
+function chatAttachmentHosts(plugin, channelId) {
+  const e = channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId);
+  return Array.isArray(e?.attachmentHosts) ? e.attachmentHosts : [];
+}
 
 /** Open-in-worca links (D15): only an http(s) worcaUrl from the first interactive channel's config. */
 function chatLinksFor(threadId) {
@@ -15754,7 +15782,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -15827,13 +15855,19 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       try { onUserRow(userMsg); } catch (e) { console.error(`[worca-ui] onUserRow failed: ${e && e.message ? e.message : e}`); }
     }
     const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
+    // Freeform chat (discord-chat 0.4.0): the quoted reply / history and the files left out ride the row as ONE block,
+    // apart from the person's words (the title, the restored prompt and the engine-switch handoff read `text` only).
+    const chatBlock = chatContext ? chatContextBlock(chatContext.inbound, {
+      saved: attRows.map((a, i) => ({ id: a.id, name: a.name, source: files[i].source || null })).filter((x) => x.source),
+      skipped: chatContext.skipped || [] }) : null;
+    const chatPlatform = chatContext ? String(chatContext.inbound.platform || 'chat') : null;
     // The decoded binary bodies are on disk now. `files` is captured by this
     // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
     // turn plus jobGraceMs, so up to 100 MB of dead Buffers would otherwise stay
     // reachable per running thread.
     for (const f of files) f.data = null;
     echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
-    if (attRows.length) {
+    if (attRows.length || chatBlock) {
       // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
       // (the UI keys image thumbnails off it, #398).
       // P3: keep the synthetic notice in front of the attachment blocks (unreachable today — event turns pass no files — but
@@ -15841,7 +15875,10 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       askSetMessageBlocks(userMsg.id, [
         ...(synthetic ? [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] : []),
         ...whereBlocks,
-        ...attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })),
+        ...(chatBlock ? [chatBlock] : []),
+        // A chat file keeps where it came from: the platform, which message (its own, the reply, history) and its link.
+        ...attRows.map((a, i) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime,
+          ...(files[i].source ? { origin: { platform: chatPlatform, from: files[i].source.from, link: files[i].source.link ?? null } } : {}) })),
       ]);
     }
     broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
@@ -15852,7 +15889,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // resolves the project FIRST so the turn can mount its memory (native rules).
     const catalog = await askBuildCatalog();
     const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
-    const { inline, listed } = askSelectInlineAttachments(withText);
+    // A quoted message's text file is never inlined like the person's own upload: it is listed (read_attachment), and the
+    // chat-context block names it as untrusted.
+    const quotedIds = new Set(attRows.filter((a, i) => files[i].quoted === true).map((a) => a.id));
+    const ownSel = askSelectInlineAttachments(withText.filter((a) => !quotedIds.has(a.id)));
+    const inline = ownSel.inline;
+    const listed = [...ownSel.listed, ...withText.filter((a) => quotedIds.has(a.id))];
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
     // Browser extension (docs/browser-extension.md): server-stamped from the request's token, never client-supplied —
     // the header tells the model the page attachments (context, text, quote) are untrusted web content.
@@ -15889,7 +15931,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const header = askBuildContextHeader(headerCtx);
     // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips).
     const composerBlock = composerMode ? await composerPromptBlock(askGetThread(id)) : '';
-    const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline);
+    const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline,
+      chatBlock ? askRenderChatContextPrompt(chatBlock) : '');
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
     // #943: no provider session but replies already — the first turn after an engine switch, or after a failed resume
@@ -20246,6 +20289,8 @@ export { app, server, runs };
 export const _testing = {
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,
+  // Chat context: tests never reach a CDN (null = the real fetch again).
+  setChatFileFetch: (fn) => { chatFileFetch = typeof fn === 'function' ? fn : defaultChatFileFetch; },
   // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.
   setEgress: (e) => { EGRESS = e; },
   setLiveEgress: (l) => { EGRESS_LIVE = l; },

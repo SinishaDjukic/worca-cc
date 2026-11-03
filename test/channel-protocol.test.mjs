@@ -141,3 +141,49 @@ test('react frame: chat, message, emoji and on/off are required and bounded', ()
   assert.equal(isValidFrame({ ...ok, emoji: 'x'.repeat(33) }), false);
   assert.equal(isValidFrame({ ...ok, id: 7 }), false);
 });
+
+test('inbound chat context: replyTo, history and attachments are optional, bounded and validated', async () => {
+  const { INBOUND_LIMITS, isValidAttachmentRef, isValidQuotedMessage, isValidHistory, withoutInboundContext } = await import('../src/core/chat/channel-protocol.mjs');
+  const att = { name: 'notes.md', contentType: 'text/markdown', size: 12, url: 'https://cdn.discordapp.com/attachments/1/2/notes.md' };
+  const q = { author: 'Alice', text: 'see this', at: '2026-11-03T09:58:00.000Z', link: 'https://discord.com/channels/G1/C1/111', attachments: [att] };
+  const base = { chatId: 'C1', userId: 'U1', text: 'hi', meta: {} };
+  assert.equal(isValidIncoming(base), true, 'an old worker sends none of them');
+  assert.equal(isValidIncoming({ ...base, attachments: [att], replyTo: q, history: [q, { ...q, link: null, attachments: undefined }] }), true);
+
+  assert.equal(isValidAttachmentRef({ ...att, contentType: null }), true);
+  assert.equal(isValidAttachmentRef({ ...att, contentType: undefined }), true);
+  for (const bad of [{ ...att, url: 'http://cdn.discordapp.com/x' }, { ...att, url: 'javascript:alert(1)' },
+    { ...att, url: 'https://x.example/' + 'a'.repeat(INBOUND_LIMITS.url) }, { ...att, name: '' },
+    { ...att, name: 'n'.repeat(INBOUND_LIMITS.attachmentName + 1) }, { ...att, size: -1 }, { ...att, size: 1.5 },
+    { ...att, size: '12' }, { ...att, contentType: 7 }, null, []]) {
+    assert.equal(isValidAttachmentRef(bad), false, JSON.stringify(bad)?.slice(0, 60));
+  }
+  assert.equal(isValidIncoming({ ...base, attachments: Array.from({ length: INBOUND_LIMITS.attachments }, () => att) }), true);
+  assert.equal(isValidIncoming({ ...base, attachments: Array.from({ length: INBOUND_LIMITS.attachments + 1 }, () => att) }), false);
+  assert.equal(isValidIncoming({ ...base, attachments: {} }), false);
+
+  assert.equal(isValidQuotedMessage({ ...q, text: '' }), true, 'a files-only message');
+  assert.equal(isValidQuotedMessage({ ...q, text: 'x'.repeat(INBOUND_LIMITS.text) }), true);
+  for (const bad of [{ ...q, text: 'x'.repeat(INBOUND_LIMITS.text + 1) }, { ...q, author: '' },
+    { ...q, author: 'a'.repeat(INBOUND_LIMITS.author + 1) }, { ...q, at: 'yesterday' }, { ...q, at: '' },
+    { ...q, link: 'http://discord.com/x' }, { ...q, attachments: [{ ...att, url: 'ftp://x' }] }, { ...q, text: 7 }]) {
+    assert.equal(isValidQuotedMessage(bad), false, JSON.stringify(bad).slice(0, 80));
+    assert.equal(isValidIncoming({ ...base, replyTo: bad }), false);
+  }
+  assert.equal(isValidHistory(Array.from({ length: INBOUND_LIMITS.history }, () => q)), true);
+  assert.equal(isValidHistory(Array.from({ length: INBOUND_LIMITS.history + 1 }, () => q)), false);
+  assert.equal(isValidIncoming({ ...base, history: [q, { ...q, at: '' }] }), false);
+  assert.deepEqual(withoutInboundContext({ ...base, attachments: [att], replyTo: q, history: [q] }), base);
+  assert.equal(isValidFrame({ type: 'inbound', msg: { ...base, replyTo: q } }), true);
+  assert.equal(isValidFrame({ type: 'inbound', msg: { ...base, replyTo: { ...q, at: 'never' } } }), false);
+});
+
+test('history frame: a chat, the message to read before, and a 1..50 limit', () => {
+  const ok = { type: 'history', id: 'h1', chatId: 'C1', before: '111', limit: 20 };
+  assert.ok(HOST_FRAMES.includes('history'));
+  assert.equal(isValidFrame(ok), true);
+  for (const bad of [{ ...ok, limit: 0 }, { ...ok, limit: 51 }, { ...ok, limit: 2.5 }, { ...ok, before: '' },
+    { ...ok, chatId: 'x'.repeat(65) }, { ...ok, chatId: '' }, { ...ok, id: 1 }]) {
+    assert.equal(isValidFrame(bad), false, JSON.stringify(bad));
+  }
+});

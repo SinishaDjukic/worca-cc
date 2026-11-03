@@ -14,6 +14,7 @@
 //                       in the worker — no `raw` across the pipe: size + secret
 //                       hygiene, deliberate deviation from the old adapter.js)
 // v2 additive: optional `controls`, `send.options`, `interaction`/`interaction-reply` frames — only for `interactive` channels
+// v2 additive (chat context): optional inbound `attachments`, `replyTo`, `history` and the `history` host frame
 
 export const MESSAGE_SEGMENT_KINDS = ['text', 'bold', 'code', 'code_block', 'link', 'markdown'];
 export const SEVERITY_LEVELS = ['info', 'success', 'warning', 'error'];
@@ -29,7 +30,7 @@ export const MAX_FRAME_BYTES = 1024 * 1024;
 /** Op/send error kinds — same vocabulary as PluginOpError (plugin spec §11). */
 export const ERROR_KINDS = ['auth', 'rate-limit', 'network', 'plugin', 'timeout', 'protocol'];
 
-export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply', 'react'];
+export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply', 'react', 'history'];
 export const WORKER_FRAMES = ['ready', 'status', 'inbound', 'send-result', 'webhook-result', 'state-delta', 'pong', 'log', 'interaction'];
 
 /** Native controls (interactive channels only). Executable controls carry a host-issued opaque `ref`; the platform
@@ -119,12 +120,57 @@ export function isValidMessage(msg) {
   return SEVERITY_LEVELS.includes(msg.severity) && (msg.controls === undefined || isValidControls(msg.controls));
 }
 
+/** Chat context around an inbound message (v2 additive, every field optional): the files on it, the message it replies
+ *  to and recent channel history. The host validates all of it and treats the content as untrusted DATA: it is quoted
+ *  to the model, never obeyed. A worker that sends none behaves exactly as before. */
+export const INBOUND_LIMITS = Object.freeze({
+  attachments: 10, attachmentName: 255, contentType: 128, url: 2048, attachmentSize: 2 ** 40,
+  author: 100, text: 4000, at: 40, link: 512, history: 50,
+});
+const IL = INBOUND_LIMITS;
+const httpsUrl = (v, max) => {
+  if (!str(v, max)) return false;
+  try { return new URL(v).protocol === 'https:'; } catch { return false; }
+};
+
+/** One file on a message: the host downloads `url` (only from the plugin's declared attachmentHosts). */
+export function isValidAttachmentRef(a) {
+  return !!a && typeof a === 'object' && !Array.isArray(a)
+    && str(a.name, IL.attachmentName) && httpsUrl(a.url, IL.url)
+    && Number.isSafeInteger(a.size) && a.size >= 0 && a.size <= IL.attachmentSize
+    && (a.contentType === undefined || a.contentType === null || str(a.contentType, IL.contentType));
+}
+const isValidAttachmentList = (list) => Array.isArray(list) && list.length <= IL.attachments && list.every(isValidAttachmentRef);
+
+/** A quoted message (`replyTo`, a `history` entry): who wrote it, when, its text, its link and its files. */
+export function isValidQuotedMessage(q) {
+  return !!q && typeof q === 'object' && !Array.isArray(q)
+    && str(q.author, IL.author) && str(q.text, IL.text, 0)
+    && str(q.at, IL.at) && Number.isFinite(Date.parse(q.at))
+    && (q.link === undefined || q.link === null || httpsUrl(q.link, IL.link))
+    && (q.attachments === undefined || isValidAttachmentList(q.attachments));
+}
+
+/** A history list (oldest first), from an inbound frame or a `history` RPC answer. */
+export function isValidHistory(list) {
+  return Array.isArray(list) && list.length <= IL.history && list.every(isValidQuotedMessage);
+}
+
 export function isValidIncoming(inc) {
   if (!inc || typeof inc !== 'object') return false;
   return typeof inc.chatId === 'string' && inc.chatId !== ''
     && typeof inc.userId === 'string'
     && typeof inc.text === 'string'
-    && (inc.meta === undefined || (inc.meta !== null && typeof inc.meta === 'object'));
+    && (inc.meta === undefined || (inc.meta !== null && typeof inc.meta === 'object'))
+    && (inc.attachments === undefined || isValidAttachmentList(inc.attachments))
+    && (inc.replyTo === undefined || isValidQuotedMessage(inc.replyTo))
+    && (inc.history === undefined || isValidHistory(inc.history));
+}
+
+/** The message without its chat context: what a worker still delivers when only the context was refused. */
+export function withoutInboundContext(inc) {
+  const { attachments, replyTo, history, ...rest } = inc || {};
+  return rest;
 }
 
 /** Structural check of any protocol frame (either direction). Loose by design:
@@ -151,6 +197,11 @@ export function isValidFrame(frame) {
         && typeof frame.messageId === 'string' && frame.messageId !== '' && frame.messageId.length <= 64
         && typeof frame.emoji === 'string' && frame.emoji !== '' && frame.emoji.length <= 32
         && typeof frame.on === 'boolean';
+    case 'history':   // v2 interactive (chat context): the recent messages of one chat before one message
+      return typeof frame.id === 'string'
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= 64
+        && typeof frame.before === 'string' && frame.before !== '' && frame.before.length <= 64
+        && Number.isInteger(frame.limit) && frame.limit >= 1 && frame.limit <= INBOUND_LIMITS.history;
     case 'interaction':
       return isValidInteraction(frame.evt);
     case 'webhook':

@@ -42,6 +42,26 @@ export function stripBotMention(text, botId) {
   return t.trim();
 }
 
+/** The plugin setting "Read recent history when a conversation starts" (historyOnStart: off|5|10|20|50) → how many
+ *  messages; anything else is 0 (off), never more than HISTORY_MAX. */
+export const HISTORY_MAX = 50;
+export function historyCountOf(v) {
+  const n = Number(String(v ?? '').trim());
+  return Number.isInteger(n) && n > 0 ? Math.min(n, HISTORY_MAX) : 0;
+}
+
+/** The chat context an inbound message carries (channel-protocol.mjs validated it): its files and the message it
+ *  replies to; history is read (or taken from the frame) only when a conversation starts. */
+export function inboundOf(msg) {
+  return {
+    attachments: Array.isArray(msg?.attachments) ? msg.attachments : [],
+    replyTo: msg?.replyTo && typeof msg.replyTo === 'object' ? msg.replyTo : null,
+    history: [],
+    notes: [],
+  };
+}
+const hasContext = (x) => !!x && (x.attachments.length > 0 || !!x.replyTo || x.history.length > 0 || x.notes.length > 0);
+
 /** A run-start / card refusal → the one line the person sees, and whether it is a real failure (❌ on the message) or
  *  a refusal whose text is the answer (no mark): busy, a credential/engine gate, a browser confirmation. `links` is
  *  deps.linksFor(threadId): a browser confirmation names the conversation's Open in worca link when there is one. */
@@ -72,7 +92,7 @@ export function followUpError(r) {
   return t && typeof t === 'object' && typeof t.error === 'string' && t.error ? t.error : null;
 }
 
-/** deps: { host: {sendMessage, replyInteraction}, ask: {createThread, deleteThread, getThread, listMessages, findCard,
+/** deps: { host: {sendMessage, replyInteraction, history?}, ask: {createThread, deleteThread, getThread, listMessages, findCard,
  *  initialScope (async), threadScope, scopeLabel (async), scopeOptions (async → {options, hidden}), refreshProjects (async), projectDirOf,
  *  startTurn, applyCard, takeDeferredReply, startRun,
  *  switchScope, stopTurn}, readConfig(plugin, channelId), linksFor(threadId), watch(threadId), now(), log(level,msg),
@@ -112,7 +132,7 @@ export function createConversationBridge(deps) {
 
   function policy(plugin, channelId) {
     const cfg = deps.readConfig(plugin, channelId) || {};
-    return { cfg, on: cfg.freeformChat === 'on', members: parseChatMembers(cfg.chatMembers),
+    return { cfg, on: cfg.freeformChat === 'on', members: parseChatMembers(cfg.chatMembers), historyCount: historyCountOf(cfg.historyOnStart),
       guard: createAllowlistGuard(parseIdList(cfg.allowedChatIds), {}, parseIdList(cfg.allowedUserIds)) };
   }
 
@@ -175,11 +195,11 @@ export function createConversationBridge(deps) {
     };
     // Plan decision 9: any throw after the ack (a store or dependency call) fails this message here, so it never
     // reaches the server's log-only catch with ⏳ left on it.
-    try { return await openConversation({ plugin, channelId, platform, msg, meta, identity, text, mark, fail }); }
+    try { return await openConversation({ plugin, channelId, platform, msg, meta, p, identity, text, mark, fail }); }
     catch (err) { return fail('chat', err); }
   }
 
-  async function openConversation({ plugin, channelId, platform, msg, meta, identity, text, mark, fail }) {
+  async function openConversation({ plugin, channelId, platform, msg, meta, p, identity, text, mark, fail }) {
     let thread;
     try { thread = deps.ask.createThread({ createdBy: identity, scope: await deps.ask.initialScope(platform, msg.chatId) }); }
     catch (err) { return fail('chat creation', err); }
@@ -208,8 +228,34 @@ export function createConversationBridge(deps) {
     }
     deps.watch(thread.id);
     await refreshHeader(c).catch((err) => log('warn', `header update failed: ${err?.message || err}`));
-    if (!text) { receipts.settle(mark, 'ok'); return true; }   // a bare mention: the thread and its header ARE the answer
-    return runTurn(c, text, mark);
+    const extra = inboundOf(msg);
+    // A bare mention (no words, no reply, no files): the thread and its header ARE the answer.
+    if (!text && !hasContext(extra)) { receipts.settle(mark, 'ok'); return true; }
+    // Opt-in (historyOnStart): the first turn also quotes the channel's last N messages before the mention — read only
+    // now that the start is authorized, only in a group channel (never a DM), and never blocking the turn. History a
+    // plugin pushed on the frame is used instead of a read.
+    if (p.historyCount > 0 && meta.isGroup === true) {
+      const h = Array.isArray(msg.history)
+        ? { messages: msg.history.slice(-p.historyCount), note: null }
+        : await readHistory({ plugin, channelId, chatId: msg.chatId, before: String(meta.messageId), limit: p.historyCount });
+      extra.history = h.messages;
+      if (h.note) extra.notes.push(h.note);
+    }
+    return runTurn(c, text, mark, hasContext(extra) ? inboundFor(c, meta, extra) : null);
+  }
+
+  /** The chat context handed to the turn: where it came from, the message's own link and the quoted data. */
+  function inboundFor(c, meta, extra) {
+    return { plugin: c.plugin, channelId: c.channelId, platform: c.platform, link: typeof meta.link === 'string' ? meta.link : null, ...extra };
+  }
+
+  async function readHistory(a) {
+    if (typeof deps.host.history !== 'function') return { messages: [], note: null };
+    try { return { messages: await deps.host.history(a), note: null }; }
+    catch (err) {
+      log('warn', `chat history not read: ${err?.message || err}`);
+      return { messages: [], note: 'The recent channel history could not be read, so it is not included.' };
+    }
   }
 
   async function continueConversation(c, p, msg, text) {
@@ -220,7 +266,8 @@ export function createConversationBridge(deps) {
       if (noticeDue(c.chatId, msg.userId, why)) await send(c, warn(why === 'off' ? SAY.off : SAY.notMember)).catch(() => {});
       return true;
     }
-    if (!text) return true;
+    const extra = inboundOf(msg);
+    if (!text && !hasContext(extra)) return true;
     if (!bucketFor(msg.userId).tryConsume()) {
       if (noticeDue(c.chatId, msg.userId, 'rate')) await send(c, warn(SAY.rate)).catch(() => {});
       return true;
@@ -229,7 +276,7 @@ export function createConversationBridge(deps) {
     const mark = markOf(c.plugin, c.channelId, msg.chatId, meta.messageId);
     receipts.ack(mark);
     // Plan decision 9: any throw after the ack fails this message with the usual post, never leaving ⏳ behind.
-    try { return await answerOrTurn(c, text, mark); }
+    try { return await answerOrTurn(c, text, mark, hasContext(extra) ? inboundFor(c, meta, extra) : null); }
     catch (err) {
       const why = err?.message || String(err);
       log('warn', `freeform reply failed: ${why}`);
@@ -239,10 +286,11 @@ export function createConversationBridge(deps) {
     }
   }
 
-  async function answerOrTurn(c, text, mark) {
+  async function answerOrTurn(c, text, mark, inbound = null) {
     // D5 text-reply rule: the newest card is an open text question → this message answers it (its event turn's user
-    // row is synthetic, so nothing is echoed).
-    const open = newestOpenTextQuestion(c.askThreadId);
+    // row is synthetic, so nothing is echoed). A message carrying files or a reply is always a turn: a card answer takes
+    // text only, and the files and the quoted message must reach the model.
+    const open = inbound ? null : newestOpenTextQuestion(c.askThreadId);
     if (open) {
       const r = await deps.ask.applyCard({ threadId: c.askThreadId, cardId: open.id, body: { text }, actor: c.worcaIdentity });
       if (r.status >= 400) {
@@ -262,7 +310,7 @@ export function createConversationBridge(deps) {
       else receipts.settle(mark, 'ok');      // answered, and no follow-up reply will come
       return true;
     }
-    return runTurn(c, text, mark);
+    return runTurn(c, text, mark, inbound);
   }
 
   function refusal(c, p, userId) {
@@ -279,13 +327,15 @@ export function createConversationBridge(deps) {
 
   /** One paid turn, as the bound worca identity: the host runs the send route's gates first (D14, review M2), and
    *  startAskTurn calls onUserRow synchronously before broadcasting the row (M4). */
-  async function startTurn(c, text) {
-    return deps.ask.startTurn({ threadId: c.askThreadId, text, actor: c.worcaIdentity, onUserRow: (m) => markFromChat(c, m && m.id) });
+  async function startTurn(c, text, inbound = null) {
+    // No context: the call is exactly what it was before chat context existed.
+    return deps.ask.startTurn({ threadId: c.askThreadId, text, actor: c.worcaIdentity, onUserRow: (m) => markFromChat(c, m && m.id),
+      ...(inbound ? { inbound } : {}) });
   }
 
-  async function runTurn(c, text, mark = null) {
+  async function runTurn(c, text, mark = null, inbound = null) {
     let r;
-    try { r = await startTurn(c, text); }
+    try { r = await startTurn(c, text, inbound); }
     catch (err) { r = { ok: false, status: 500, error: err?.message || String(err) }; }
     if (!r.ok) {
       const k = turnRefusal(r);

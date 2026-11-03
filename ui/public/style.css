@@ -9798,6 +9798,14 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
   box-shadow:inset 0 0 0 1px var(--line);font-size:12px;line-height:1.5;}
 .ask-user-quote-h{font-size:11px;font-weight:500;color:var(--ink-3);}
 .ask-user-quote-t{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;}
+/* Freeform chat context: the quoted reply and channel history a chat message brought, collapsed above its bubble. */
+.ask-user-context{align-self:flex-end;max-width:min(78%,600px);padding:6px 12px 8px;border-radius:var(--r-sm);
+  box-shadow:inset 0 0 0 1px var(--line);font-size:12px;line-height:1.5;}
+.ask-user-context-h{cursor:pointer;font-size:11px;font-weight:500;color:var(--ink-3);}
+.ask-user-context-q{margin-top:6px;}
+.ask-user-context-by{font-size:11px;color:var(--ink-3);}
+.ask-user-context-t{color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-user-context-f{font-size:11px;color:var(--ink-3);overflow-wrap:anywhere;}
 
 @media (prefers-reduced-motion: reduce){
   .pp-bar,.pp-pop,.pp-row.pp-flash,.pp-shimmer{animation:none;}

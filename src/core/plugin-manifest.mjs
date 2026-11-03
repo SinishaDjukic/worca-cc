@@ -78,7 +78,19 @@ export function builtinScriptMetas(dir = BUILTIN_SCRIPTS_DIR) {
 }
 
 const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs', 'multiProfile']);
-const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingress', 'capabilities', 'configSchema']);
+const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingress', 'capabilities', 'configSchema', 'attachmentHosts']);
+/** chatChannels[].attachmentHosts: the CDN host names the HOST may download a chat message's files from (exact match,
+ *  https only). DNS names with a letter TLD: no IP, port, scheme or wildcard. */
+const ATTACHMENT_HOST_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+const MAX_ATTACHMENT_HOSTS = 8;
+function normAttachmentHosts(v, at, errors) {
+  if (v === undefined) return null;
+  if (!Array.isArray(v) || v.length > MAX_ATTACHMENT_HOSTS || !v.every((h) => typeof h === 'string' && ATTACHMENT_HOST_RE.test(h))) {
+    errors.push(`${at}: "attachmentHosts" must be at most ${MAX_ATTACHMENT_HOSTS} lowercase host names (e.g. "cdn.example.com")`);
+    return null;
+  }
+  return [...new Set(v)];
+}
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
 const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options', 'advanced']);
 const KNOWN_INPUT = new Set(['key', 'type', 'label', 'default', 'optionsFrom', 'options']);
@@ -440,7 +452,10 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         errors.push(`${at} ("${id}"): capabilities cannot disable both inbound and outbound`);
       }
       const configSchema = normConfigSchema(c.configSchema, at, errors, warnings);
-      chatChannels.push({ id, displayName: str(c.displayName) || id, platform, module, ingress, capabilities, configSchema });
+      const attachmentHosts = normAttachmentHosts(c.attachmentHosts, `${at} ("${id}")`, errors);
+      // Present only when declared (like capabilities.interactive): every other manifest normalizes byte-identically.
+      chatChannels.push({ id, displayName: str(c.displayName) || id, platform, module, ingress, capabilities, configSchema,
+        ...(attachmentHosts && attachmentHosts.length ? { attachmentHosts } : {}) });
     });
   }
   const chIds = chatChannels.map((c) => c.id);

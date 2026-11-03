@@ -1,6 +1,6 @@
 {
   "name": "discord-chat",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Two-way Discord channel via Gateway: pipeline notifications + chat commands (/status, /pause, /approve…) + freeform chat with native buttons (opt-in)",
   "license": "MIT",
   "engines": { "worca-cc-api": ">=2 <3" },
@@ -12,6 +12,7 @@
       "module": "./channel/worker.mjs",
       "ingress": "connect",
       "capabilities": { "inbound": true, "outbound": true, "interactive": true },
+      "attachmentHosts": ["cdn.discordapp.com", "media.discordapp.net"],
       "configSchema": [
         {
           "key": "botToken",
@@ -67,6 +68,14 @@
           "type": "text",
           "label": "Freeform chat members",
           "help": "Comma- or newline-separated discordUserId=worca identity pairs, e.g. 123456789012345678=ada@example.com. Only these people may start or continue a freeform chat or press its buttons. The identity is who worca records for their chats and runs (use their worca sign-in on a shared deployment, or local)."
+        },
+        {
+          "key": "historyOnStart",
+          "type": "select",
+          "label": "Read recent history when a conversation starts",
+          "default": "off",
+          "options": ["off", "5", "10", "20", "50"],
+          "help": "Freeform chat: the first reply of a new conversation also reads this many messages of the channel before the mention (oldest first) and quotes them to the model as untrusted context, with their files. off (default): only the mention and the message it replies to. Read only in Allowed channels, never in direct messages; other bots' messages are skipped. Uses the Read Message History permission."
         },
         {
           "key": "worcaUrl",

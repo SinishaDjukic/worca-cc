@@ -5,6 +5,7 @@
 // mapping) and validateConfig.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createDiscordWorker, validateConfig, renderToMarkdown, renderComponents, parseCustomId, toInteraction } from '../plugins/discord-chat/channel/worker.mjs';
 import { createGatewayClient, INTENTS } from '../plugins/discord-chat/channel/gateway.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -578,4 +579,160 @@ test('worker react: PUT/DELETE only the bot\'s own reaction, emoji encoded; 429 
   await assert.rejects(w.react('C1', 'M1', '✅', true), (e) => e.kind === 'plugin' && e.permanent === true);
   mode = '503';
   await assert.rejects(w.react('C1', 'M1', '✅', true), (e) => e.kind === 'network' && e.permanent !== true);
+});
+
+// ── chat context (0.4.0): replies, attachments, history ────────────────────────────────────────────────────────────
+const { isValidIncoming, isValidHistory } = await import('../src/core/chat/channel-protocol.mjs');
+const ctxWorker = async (route, config = {}, state = {}) => {
+  FakeWebSocket.instances = [];
+  const calls = [];
+  const sleeps = [];
+  const fetchFn = async (url, init = {}) => {
+    const u = String(url);
+    calls.push({ url: u, method: init.method || 'GET' });
+    if (u.endsWith('/users/@me')) return json({ id: 'BOT1', username: 'worca' });
+    if (u.endsWith('/gateway/bot')) return json({ url: 'wss://gw.test', session_start_limit: { remaining: 100 } });
+    return route(u, init) ?? json({});
+  };
+  const wc = workerCtx(config, { state });
+  const w = createDiscordWorker(wc.ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async (ms) => { sleeps.push(ms); } });
+  await w.start();
+  const s = await waitFor(() => FakeWebSocket.instances.at(-1));
+  s.frame({ op: 10, d: { heartbeat_interval: 100000 } });
+  let seq = 10;
+  const post = (d) => s.frame({ op: 0, t: 'MESSAGE_CREATE', s: ++seq, d: { guild_id: 'G1', channel_id: 'C1', author: { id: 'U1', username: 'sam' },
+    mentions: [], timestamp: '2026-11-03T10:00:00.000000+00:00', ...d } });
+  return { w, s, calls, sleeps, post, ...wc };
+};
+const ATT = { id: 'a1', filename: 'notes.md', size: 12, content_type: 'text/markdown; charset=utf-8',
+  url: 'https://cdn.discordapp.com/attachments/C1/a1/notes.md?ex=1&is=2&hm=3', proxy_url: 'https://media.discordapp.net/attachments/C1/a1/notes.md' };
+const REFMSG = { id: 'r1', channel_id: 'C1', content: 'the original', timestamp: '2026-11-03T09:58:00.123456+00:00',
+  author: { id: 'U2', username: 'alice', global_name: 'Alice' }, attachments: [ATT] };
+const MENTION = [{ id: 'BOT1' }];
+
+test('worker chat context: a mention replying to a message carries it, its files and the mention\'s own files; no fetch when delivered', async () => {
+  const { post, events, calls } = await ctxWorker(() => null);
+  post({ id: 'm1', content: '<@BOT1> what does it say?', mentions: MENTION,
+    attachments: [{ ...ATT, id: 'a2', filename: 'mine.png', content_type: 'image/png' }],
+    message_reference: { type: 0, message_id: 'r1', channel_id: 'C1', guild_id: 'G1' }, referenced_message: REFMSG });
+  const m = events.inbound.at(-1);
+  assert.equal(isValidIncoming(m), true);
+  assert.deepEqual(m.replyTo, { author: 'Alice', text: 'the original', at: '2026-11-03T09:58:00.123Z', link: 'https://discord.com/channels/G1/C1/r1',
+    attachments: [{ name: 'notes.md', contentType: 'text/markdown; charset=utf-8', size: 12, url: ATT.url }] });
+  assert.deepEqual(m.attachments, [{ name: 'mine.png', contentType: 'image/png', size: 12, url: ATT.url }]);
+  assert.equal(m.meta.link, 'https://discord.com/channels/G1/C1/m1');
+  assert.equal(calls.filter((c) => c.url.includes('/messages/')).length, 0, 'delivered on the event: no fetch');
+});
+
+test('worker chat context: a missing referenced_message is fetched once; a refused read still delivers the message; order holds', async () => {
+  let mode = 'ok';
+  const { post, events, calls } = await ctxWorker((u) => {
+    if (u.endsWith('/channels/C1/messages/r1')) return mode === 'ok' ? json(REFMSG) : json({ message: 'x' }, Number(mode));
+    return null;
+  });
+  post({ id: 'm1', content: '<@BOT1> and this?', mentions: MENTION, message_reference: { message_id: 'r1', channel_id: 'C1' } });
+  post({ id: 'm2', content: 'chatter right after' });
+  await waitFor(() => events.inbound.length === 2);
+  assert.deepEqual(events.inbound.map((x) => x.meta.messageId), ['m1', 'm2'], 'the later message waits for the read');
+  assert.equal(events.inbound[0].replyTo.author, 'Alice');
+  assert.equal(calls.filter((c) => c.url.endsWith('/messages/r1')).length, 1);
+  for (const status of ['403', '404', '429', '500']) {
+    mode = status;
+    post({ id: `x${status}`, content: '<@BOT1> again', mentions: MENTION, message_reference: { message_id: 'r1', channel_id: 'C1' } });
+    const m = await waitFor(() => events.inbound.find((x) => x.meta.messageId === `x${status}`));
+    assert.equal(m.replyTo, undefined, status);
+    assert.equal(m.text, '<@BOT1> again');
+  }
+  assert.ok(events.logs.some((l) => /replied-to message not read: HTTP 403 \(the bot needs Read Message History\)/.test(l)));
+});
+
+test('worker chat context: only a mention or a bot thread gets reply context; deleted, forwarded and cross-channel references are skipped', async () => {
+  const { post, events, calls } = await ctxWorker(() => null);
+  post({ id: 'c1', content: 'just chatting', message_reference: { message_id: 'r1' }, referenced_message: REFMSG });
+  post({ id: 'c2', content: '<@BOT1> gone', mentions: MENTION, message_reference: { message_id: 'r9' }, referenced_message: null });
+  post({ id: 'c3', content: '<@BOT1> fwd', mentions: MENTION, message_reference: { type: 1, message_id: 'r1', channel_id: 'C1' } });
+  post({ id: 'c4', content: '<@BOT1> elsewhere', mentions: MENTION, message_reference: { message_id: 'r1', channel_id: 'C7' } });
+  await waitFor(() => events.inbound.length === 4);
+  assert.deepEqual(events.inbound.map((x) => 'replyTo' in x), [false, false, false, false]);
+  assert.equal(calls.filter((c) => c.url.includes('/messages/r')).length, 0, 'nothing fetched');
+  assert.deepEqual(events.inbound[0].meta, { platform: 'discord', messageId: 'c1', guildId: 'G1', username: 'sam', isGroup: true, mentionsBot: false, botId: 'BOT1' },
+    'no files: the meta is exactly what it was');
+});
+
+test('worker chat context: in its own thread a Reply to worca\'s message carries no reply (it answers a question card); a reply to a person still does', async () => {
+  const BOTMSG = { id: 'b1', channel_id: 'TH1', content: 'Which branch?', timestamp: '2026-11-03T09:59:00.000000+00:00',
+    author: { id: 'BOT1', username: 'worca', bot: true }, attachments: [ATT] };
+  const { post, events, calls } = await ctxWorker((u) => (u.endsWith('/channels/TH1/messages/b1') ? json(BOTMSG) : null), {}, { freeformThreads: ['TH1'] });
+  post({ id: 't1', channel_id: 'TH1', content: 'dev', message_reference: { type: 0, message_id: 'b1', channel_id: 'TH1' }, referenced_message: BOTMSG });
+  post({ id: 't2', channel_id: 'TH1', content: 'dev', message_reference: { message_id: 'b1', channel_id: 'TH1' } });
+  post({ id: 't3', channel_id: 'TH1', content: 'see this', message_reference: { message_id: 'r1', channel_id: 'TH1' },
+    referenced_message: { ...REFMSG, channel_id: 'TH1' } });
+  post({ id: 't4', content: '<@BOT1> about that', mentions: MENTION, message_reference: { message_id: 'b0', channel_id: 'C1' },
+    referenced_message: { ...BOTMSG, id: 'b0', channel_id: 'C1' } });
+  await waitFor(() => events.inbound.length === 4);
+  const by = (id) => events.inbound.find((x) => x.meta.messageId === id);
+  assert.equal('replyTo' in by('t1'), false, 'a Reply to worca\'s own message in its thread: already in the conversation');
+  assert.equal('replyTo' in by('t2'), false, 'the same when the event came without the message and it was read');
+  assert.equal(by('t3').replyTo?.author, 'Alice', 'a reply to a person in the thread keeps its context');
+  assert.equal(by('t4').replyTo?.text, 'Which branch?', 'a start mention replying to worca\'s message keeps it');
+  assert.equal(calls.filter((c) => c.url.endsWith('/messages/b1')).length, 1);
+});
+
+test('worker history(): oldest first, other bots skipped, worca kept, system rows dropped; only a seen, allowed server channel', async () => {
+  const page = [   // Discord answers newest first
+    { id: 'h4', type: 0, channel_id: 'C1', content: 'newest', timestamp: '2026-11-03T09:59:00Z', author: { id: 'U3', username: 'bob' } },
+    { id: 'h3', type: 0, channel_id: 'C1', content: 'beep', timestamp: '2026-11-03T09:58:00Z', author: { id: 'B9', username: 'otherbot', bot: true } },
+    { id: 'h2', type: 19, channel_id: 'C1', content: 'my answer', timestamp: '2026-11-03T09:57:00Z', author: { id: 'BOT1', username: 'worca', bot: true } },
+    { id: 'h1', type: 7, channel_id: 'C1', content: '', timestamp: '2026-11-03T09:56:00Z', author: { id: 'U4', username: 'newcomer' } },
+    { id: 'h0', type: 0, channel_id: 'C1', content: 'oldest', timestamp: '2026-11-03T09:55:00Z', author: { id: 'U2', username: 'alice', global_name: 'Alice' }, member: { nick: 'Ally' }, attachments: [ATT] },
+  ];
+  let mode = 'ok';
+  let limited = 0;
+  const { w, post, calls, sleeps } = await ctxWorker((u) => {
+    if (!u.includes('/messages?')) return null;
+    if (mode === 'limit' && limited++ === 0) return json({ retry_after: 0.5 }, 429);
+    if (mode === 'long') return json({ retry_after: 30 }, 429);
+    if (mode === 'huge') return json(Array.from({ length: 50 }, (_, i) => ({ ...page[0], id: `z${i}`, content: 'x'.repeat(4000),
+      attachments: Array.from({ length: 10 }, () => ({ ...ATT, url: `https://cdn.discordapp.com/${'a'.repeat(2000)}` })) })));
+    if (/^\d{3}$/.test(mode)) return json({ message: 'x' }, Number(mode));
+    return json(page);
+  }, { channelAllowlist: 'C1,D1' });
+  await assert.rejects(w.history('C1', 'm1', 20), (e) => e.permanent === true && /allowed server channel/.test(e.message), 'no server message seen there yet');
+  post({ id: 'm1', content: 'hello' });
+  post({ id: 'd1', channel_id: 'D1', guild_id: null, content: 'a dm' });
+  const list = await w.history('C1', 'm1', 20);
+  assert.equal(calls.at(-1).url, 'https://discord.com/api/v10/channels/C1/messages?before=m1&limit=20');
+  assert.deepEqual(list.map((q) => [q.author, q.text]), [['Ally', 'oldest'], ['worca (this bot)', 'my answer'], ['bob', 'newest']]);
+  assert.equal(isValidHistory(list), true);
+  assert.equal(list[0].link, 'https://discord.com/channels/G1/C1/h0');
+  assert.deepEqual(list[0].attachments, [{ name: 'notes.md', contentType: 'text/markdown; charset=utf-8', size: 12, url: ATT.url }]);
+  await w.history('C1', 'm1', 500);
+  assert.match(calls.at(-1).url, /limit=50$/);
+  await assert.rejects(w.history('D1', 'd1', 5), (e) => e.permanent === true, 'never a DM');
+  await assert.rejects(w.history('C9', 'm1', 5), (e) => e.permanent === true, 'never an unrelated channel');
+  mode = 'limit';
+  assert.equal((await w.history('C1', 'm1', 5)).length, 3);
+  assert.deepEqual(sleeps, [500]);
+  mode = 'long';
+  await assert.rejects(w.history('C1', 'm1', 5), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 30000 && e.permanent !== true);
+  mode = '403';
+  await assert.rejects(w.history('C1', 'm1', 5), (e) => e.kind === 'plugin' && e.permanent === true && /Read Message History/.test(e.message));
+  mode = '404';
+  await assert.rejects(w.history('C1', 'm1', 5), (e) => e.permanent === true);
+  mode = '503';
+  await assert.rejects(w.history('C1', 'm1', 5), (e) => e.kind === 'network' && e.permanent !== true);
+  mode = 'huge';
+  const big = await w.history('C1', 'm1', 50);
+  assert.ok(big.length > 0 && big.length < 50, 'trimmed under the frame budget');
+  assert.equal(big.at(-1).link, 'https://discord.com/channels/G1/C1/z0', 'the newest messages stay');
+  assert.ok(Buffer.byteLength(JSON.stringify(big)) <= 900 * 1024);
+});
+
+test('discord-chat 0.4.0 manifest: the history setting (off by default, not advanced) and the CDN hosts', () => {
+  const m = JSON.parse(readFileSync(new URL('../plugins/discord-chat/worca-cc-plugin.json', import.meta.url), 'utf8'));
+  assert.equal(m.version, '0.4.0');
+  const ch = m.chatChannels[0];
+  assert.deepEqual(ch.attachmentHosts, ['cdn.discordapp.com', 'media.discordapp.net']);
+  const f = ch.configSchema.find((x) => x.key === 'historyOnStart');
+  assert.deepEqual([f.type, f.label, f.default, f.options, f.advanced ?? false], ['select', 'Read recent history when a conversation starts', 'off', ['off', '5', '10', '20', '50'], false]);
 });

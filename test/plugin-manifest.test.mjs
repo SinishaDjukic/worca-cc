@@ -874,3 +874,17 @@ test('configSchema `advanced` folds an optional field: a boolean, no warning; th
   assert.deepEqual(advanced, { 'slack-chat': ['channelAllowlist'], 'discord-chat': ['channelAllowlist'], 'teams-chat': ['tenantType', 'tenantId'],
     'telegram-chat': [], 'github-source': [], 'azure-boards-source': [], 'jira-source': [] });
 });
+
+test('chatChannels attachmentHosts: lowercase host names, at most 8, deduped, kept only when declared', () => {
+  const ok = normalizeManifest({ name: 'p', chatChannels: [CH({ attachmentHosts: ['cdn.discordapp.com', 'media.discordapp.net', 'cdn.discordapp.com'] })] });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.warnings, []);
+  assert.deepEqual(ok.manifest.chatChannels[0].attachmentHosts, ['cdn.discordapp.com', 'media.discordapp.net']);
+  assert.equal('attachmentHosts' in normalizeManifest({ name: 'p', chatChannels: [CH()] }).manifest.chatChannels[0], false, 'absent when undeclared');
+  for (const bad of [['CDN.discordapp.com'], ['https://cdn.discordapp.com'], ['cdn.discordapp.com:443'], ['localhost'],
+    ['127.0.0.1'], ['*.discordapp.com'], 'cdn.discordapp.com', Array.from({ length: 9 }, (_, i) => `h${i}.example.com`), [7]]) {
+    const r = normalizeManifest({ name: 'p', chatChannels: [CH({ attachmentHosts: bad })] });
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.match(r.errors.join('\n'), /attachmentHosts/);
+  }
+});

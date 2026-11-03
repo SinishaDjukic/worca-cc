@@ -6705,6 +6705,43 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** #958: a user/system row's content, to tell a resync's same row from a changed one (null: treat as changed). */
   function shownKeyOf(r) { try { return JSON.stringify(r); } catch { return null; } }
 
+  /** Freeform chat (discord-chat 0.4.0): a user row's chat-context block — the message it replied to, the channel's
+   *  recent history and the files left out — as a collapsed <details>. Quoted text is DATA: text nodes only. */
+  function buildChatContext(b) {
+    const box = make('details', 'ask-user-context');
+    const parts = [];
+    if (b.replyTo && typeof b.replyTo.author === 'string') parts.push(`reply to ${b.replyTo.author}`);
+    const history = Array.isArray(b.history) ? b.history : [];
+    if (history.length) parts.push(`${history.length} earlier message${history.length === 1 ? '' : 's'}`);
+    const own = Array.isArray(b.files) ? b.files.filter((f) => f && typeof f.name === 'string') : [];
+    if (own.length) parts.push(`${own.length} file${own.length === 1 ? '' : 's'} not saved`);
+    const where = b.platform === 'discord' ? 'Discord' : 'chat';
+    box.appendChild(make('summary', 'ask-user-context-h', `Context from ${where}${parts.length ? `: ${parts.join(', ')}` : ''}`));
+    const fileLine = (f) => make('div', 'ask-user-context-f', f.note ? `${f.name} — ${String(f.note)}` : f.name);
+    const quote = (q) => {
+      if (!q || typeof q !== 'object') return;
+      const row = make('div', 'ask-user-context-q');
+      const when = typeof q.at === 'string' && Number.isFinite(Date.parse(q.at)) ? new Date(q.at).toLocaleString() : '';
+      const head = make('div', 'ask-user-context-by', `${String(q.author || '')}${when ? ` · ${when}` : ''}`);
+      if (typeof q.link === 'string' && q.link.startsWith('https://')) {
+        const a = make('a', 'ask-user-context-link', 'Open');
+        a.href = q.link;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        head.append(' · ', a);
+      }
+      row.appendChild(head);
+      if (typeof q.text === 'string' && q.text) row.appendChild(make('div', 'ask-user-context-t', q.text));
+      for (const f of Array.isArray(q.files) ? q.files : []) if (f && typeof f.name === 'string') row.appendChild(fileLine(f));
+      box.appendChild(row);
+    };
+    quote(b.replyTo);
+    for (const q of history) quote(q);
+    for (const f of own) box.appendChild(fileLine(f));
+    for (const n of Array.isArray(b.notes) ? b.notes : []) if (typeof n === 'string' && n) box.appendChild(make('div', 'ask-user-context-f', n));
+    return box;
+  }
+
   function buildMessage(row) {
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
     // The model REPLACES a row object on upsert (ask-model upsertRow), so every
@@ -6738,8 +6775,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
           wrap.appendChild(card);
         }
+        // Freeform chat: the quoted reply / history a chat message brought, collapsed above the person's own words.
+        const chatCtx = (row.blocks || []).find((b) => b && b.kind === 'chat-context');
+        if (chatCtx) wrap.appendChild(buildChatContext(chatCtx));
         const bubbleText = quote ? rest : own.text;
-        if (bubbleText || (!quote && !own.intent)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
+        // A chat message with only a reply or files has no words of its own: no empty bubble under its context.
+        if (bubbleText || (!quote && !own.intent && !chatCtx)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');

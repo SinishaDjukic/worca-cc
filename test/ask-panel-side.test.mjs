@@ -256,6 +256,36 @@ test('a user row with a where block shows "on <label>"; one without shows nothin
   ctx.panel.destroy();
 });
 
+test('a chat-context block shows collapsed above the bubble: the reply, history and left-out files as plain text', async () => {
+  const block = { kind: 'chat-context', platform: 'discord',
+    replyTo: { author: 'Alice', at: '2026-11-03T09:58:00.000Z', link: 'https://discord.com/channels/G1/C1/111', text: '<b>not html</b>', files: [{ id: 'att_0000aa01', name: 'notes.md' }] },
+    history: [{ author: 'Bob', at: '2026-11-03T09:50:00.000Z', link: null, text: 'earlier' }],
+    files: [{ name: 'big.zip', note: 'not saved: this file type cannot be attached' }] };
+  const state = { snap: snapOf([
+    userRow('askm_u0000001', 1, 'what does it say?', [block]),
+    userRow('askm_u0000002', 2, '', [{ kind: 'chat-context', platform: 'discord', replyTo: block.replyTo }]),
+  ]) };
+  const ctx = makePanel({ fetchHandler: api(state) });
+  ctx.panel.open({ threadId: TID });
+  await ticks(ctx, 4);
+  ctx.flush();
+  const users = [...ctx.doc.querySelectorAll('.ask-msg-user')];
+  const box = users[0].querySelector('details.ask-user-context');
+  assert.ok(box, 'the block is drawn');
+  assert.equal(box.open, false, 'collapsed');
+  assert.equal(box.querySelector('summary').textContent, 'Context from Discord: reply to Alice, 1 earlier message, 1 file not saved');
+  assert.equal(box.nextElementSibling.className, 'ask-user-bubble', 'above the bubble');
+  assert.equal(box.querySelector('.ask-user-context-t').textContent, '<b>not html</b>');
+  assert.equal(box.querySelector('b'), null, 'quoted text is never markup');
+  const link = box.querySelector('a.ask-user-context-link');
+  assert.equal(link.getAttribute('href'), 'https://discord.com/channels/G1/C1/111');
+  assert.equal(link.getAttribute('rel'), 'noopener noreferrer');
+  assert.deepEqual([...box.querySelectorAll('.ask-user-context-f')].map((n) => n.textContent), ['notes.md', 'big.zip — not saved: this file type cannot be attached']);
+  assert.equal(users[1].querySelector('.ask-user-bubble'), null, 'no empty bubble under a context-only message');
+  assert.equal(users[1].querySelector('summary').textContent, 'Context from Discord: reply to Alice');
+  ctx.panel.destroy();
+});
+
 // ---- Task 5: the side column host -------------------------------------------------------------------------------
 const OPTIONS = {
   '/api/projects': { projects: [{ key: 'demo-00000001', name: 'Demo', path: '/Users/me/demo', exists: true, vcs: 'git' }] },

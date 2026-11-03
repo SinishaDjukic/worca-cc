@@ -1,6 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { createConversationBridge, stripBotMention, refusalText, turnRefusalText, followUpError, isSyntheticUserRow, SAY, cardRefusal, turnRefusal } from '../src/core/chat/conversation-bridge.mjs';
+import { createConversationBridge, stripBotMention, refusalText, turnRefusalText, followUpError, isSyntheticUserRow, SAY, cardRefusal, turnRefusal, historyCountOf } from '../src/core/chat/conversation-bridge.mjs';
 import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { parseChatMembers } from '../src/core/chat/allowlist.mjs';
 import { createReceipts, commandOutcome, MARK, REACT_RETRY_MS, ACTION_DONE } from '../src/core/chat/receipts.mjs';
@@ -153,7 +153,7 @@ test('refusal kinds: busy, gates, cost limit, turn cap and browser confirmations
 // The real-deps e2e cannot make startTurn, applyCard, scopeLabel or listMessages throw, so each post-ack catch is
 // pinned here: such a throw ends ❌ with "That did not work", or keeps ⏳ while the reply can still arrive.
 let stubSeq = 0;
-function stubBridge(ask = {}, { watch = () => {} } = {}) {
+function stubBridge(ask = {}, { watch = () => {}, host = {}, config = {} } = {}) {
   const posts = [];
   const threads = [];
   const rxCalls = [];
@@ -170,9 +170,10 @@ function stubBridge(ask = {}, { watch = () => {} } = {}) {
         return { ok: true, detail: { messageIds: [`SM${n}`] } };
       },
       replyInteraction: async () => {},
+      ...host,
     },
     receipts,
-    readConfig: () => ({ freeformChat: 'on', allowedChatIds: 'C1', chatMembers: 'U1=ada@example.com' }),
+    readConfig: () => ({ freeformChat: 'on', allowedChatIds: 'C1', chatMembers: 'U1=ada@example.com', ...config }),
     linksFor: () => ({ thread: null, run: null }),
     now: () => Date.now(),
     log: (level, m) => logs.push(`${level}: ${m}`),
@@ -191,10 +192,11 @@ function stubBridge(ask = {}, { watch = () => {} } = {}) {
     },
   });
   /** One inbound message (a mention on C1, else a reply in a bound thread); resolves its id once every reaction landed. */
-  const say = async (text, chatId = 'C1') => {
+  const say = async (text, chatId = 'C1', extra = {}) => {
     const messageId = `sm${++stubSeq}`;
-    const meta = { platform: 'discord', messageId, guildId: 'G1', mentionsBot: chatId === 'C1', botId: 'BOT1' };
-    await bridge.handleMessage({ plugin: 'stub-chat', channelId: 'main', platform: 'discord', msg: { chatId, userId: 'U1', text, meta } })
+    const { meta: moreMeta = {}, ...fields } = extra;   // chat context: replyTo / attachments / history, meta.isGroup / link
+    const meta = { platform: 'discord', messageId, guildId: 'G1', mentionsBot: chatId === 'C1', botId: 'BOT1', ...moreMeta };
+    await bridge.handleMessage({ plugin: 'stub-chat', channelId: 'main', platform: 'discord', msg: { chatId, userId: 'U1', text, meta, ...fields } })
       .catch((err) => { logs.push(`escaped: ${err?.message || err}`); });
     await receipts.idle();
     return messageId;
@@ -267,4 +269,86 @@ test('a throw while checking a started reply keeps ⏳: the reply is still on it
   assert.equal(s2.failPosts(s.threads[0]).length, 0);
   assert.ok(s2.logs.some((m) => /listMessages exploded/.test(m)));
   assert.ok(!s2.logs.some((m) => m.startsWith('escaped')));
+});
+
+// ── chat context (discord-chat 0.4.0) ──────────────────────────────────────────────────────────────────────────────
+const FILE = { name: 'notes.md', contentType: 'text/markdown', size: 9, url: 'https://cdn.discordapp.com/a/notes.md' };
+const REPLY = { author: 'Alice', text: 'the plan', at: '2026-11-03T09:58:00.000Z', link: 'https://discord.com/channels/G1/C1/r1', attachments: [FILE] };
+const OLDER = { author: 'Bob', text: 'earlier', at: '2026-11-03T09:50:00.000Z', link: 'https://discord.com/channels/G1/C1/h1' };
+const turnSpy = () => { const calls = []; return { calls, startTurn: async (a) => { calls.push(a); return { ok: true, assistantMessageId: 'A1' }; } }; };
+
+test('historyCountOf: off, empty, junk and non-positive values are 0; a count is capped at 50', () => {
+  assert.deepEqual(['off', '', null, undefined, '0', '-3', 'x', '2.5', '5', '20', '50', '80', 7].map(historyCountOf),
+    [0, 0, 0, 0, 0, 0, 0, 0, 5, 20, 50, 50, 7]);
+});
+
+test('chat context: a reply that mentions the bot starts a turn with the quoted message and the files, even with no words', async () => {
+  const t = turnSpy();
+  const s = stubBridge({ startTurn: t.startTurn });
+  await s.say('<@BOT1>', 'C1', { replyTo: REPLY, attachments: [FILE], meta: { isGroup: true, link: 'https://discord.com/channels/G1/C1/m9' } });
+  assert.equal(t.calls.length, 1);
+  assert.equal(t.calls[0].text, '', 'the row keeps only the person\'s words: none');
+  assert.deepEqual(t.calls[0].inbound, { plugin: 'stub-chat', channelId: 'main', platform: 'discord', link: 'https://discord.com/channels/G1/C1/m9',
+    attachments: [FILE], replyTo: REPLY, history: [], notes: [] });
+});
+
+test('chat context: off by default — no history is read; a message with no context keeps the old turn call; a bare mention runs no turn', async () => {
+  const t = turnSpy();
+  const s = stubBridge({ startTurn: t.startTurn }, { host: { history: async () => { throw new Error('must not be read'); } } });
+  await s.say('<@BOT1> hello', 'C1', { meta: { isGroup: true } });
+  await s.say('<@BOT1>', 'C1', { meta: { isGroup: true } });
+  assert.equal(t.calls.length, 1);
+  assert.deepEqual(Object.keys(t.calls[0]).sort(), ['actor', 'onUserRow', 'text', 'threadId']);
+  assert.ok(!s.logs.some((l) => /history/.test(l)));
+});
+
+test('chat context: historyOnStart reads the channel before the mention once, only in a group channel; a failed read still starts the turn', async () => {
+  const t = turnSpy();
+  const reads = [];
+  const s = stubBridge({ startTurn: t.startTurn }, { config: { historyOnStart: '20' }, host: { history: async (a) => { reads.push(a); return [OLDER]; } } });
+  const id = await s.say('<@BOT1> catch me up', 'C1', { meta: { isGroup: true } });
+  assert.deepEqual(reads, [{ plugin: 'stub-chat', channelId: 'main', chatId: 'C1', before: id, limit: 20 }]);
+  assert.deepEqual(t.calls.at(-1).inbound.history, [OLDER]);
+  await s.say('and more', s.threads[0]);
+  assert.equal(reads.length, 1, 'a later message in the thread reads no history');
+  assert.equal(t.calls.at(-1).inbound, undefined);
+  await s.say('<@BOT1> a direct message', 'C1', { meta: { isGroup: false } });
+  assert.equal(reads.length, 1, 'never a DM');
+
+  const f = turnSpy();
+  const bad = stubBridge({ startTurn: f.startTurn }, { config: { historyOnStart: '5' }, host: { history: async () => { throw Object.assign(new Error('missing access'), { permanent: true }); } } });
+  await bad.say('<@BOT1> catch me up', 'C1', { meta: { isGroup: true } });
+  assert.equal(f.calls.length, 1, 'the turn still runs');
+  assert.deepEqual(f.calls[0].inbound.history, []);
+  assert.deepEqual(f.calls[0].inbound.notes, ['The recent channel history could not be read, so it is not included.']);
+  assert.ok(bad.logs.some((l) => /chat history not read: missing access/.test(l)));
+});
+
+test('chat context: history a plugin pushes on the frame is used at start (clipped to the setting), ignored when the setting is off', async () => {
+  const pushed = Array.from({ length: 8 }, (_, i) => ({ ...OLDER, text: `m${i}`, link: `https://discord.com/channels/G1/C1/p${i}` }));
+  const on = turnSpy();
+  const s = stubBridge({ startTurn: on.startTurn }, { config: { historyOnStart: '5' }, host: { history: async () => { throw new Error('not asked'); } } });
+  await s.say('<@BOT1> hi', 'C1', { meta: { isGroup: true }, history: pushed });
+  assert.deepEqual(on.calls[0].inbound.history.map((q) => q.text), ['m3', 'm4', 'm5', 'm6', 'm7']);
+  const off = turnSpy();
+  const s2 = stubBridge({ startTurn: off.startTurn });
+  await s2.say('<@BOT1> hi', 'C1', { meta: { isGroup: true }, history: pushed });
+  assert.equal(off.calls[0].inbound, undefined);
+});
+
+test('chat context: files or a reply in a bound thread are a turn, never a typed card answer; plain words still answer', async () => {
+  const s = stubBridge();
+  await s.say('<@BOT1>');
+  const t = turnSpy();
+  const applied = [];
+  const s2 = stubBridge({ listMessages: () => textQuestion, applyCard: async (a) => { applied.push(a); return { status: 200, body: {} }; }, startTurn: t.startTurn });
+  await s2.say('', s.threads[0], { attachments: [FILE] });
+  assert.equal(applied.length, 0);
+  assert.equal(t.calls.length, 1);
+  assert.deepEqual(t.calls[0].inbound.attachments, [FILE]);
+  assert.equal(t.calls[0].inbound.replyTo, null);
+  await s2.say('option B', s.threads[0]);
+  assert.equal(applied.length, 1, 'words with no context answer the open question as before');
+  await s2.say('', s.threads[0]);
+  assert.equal(t.calls.length, 1, 'an empty message with no context is still ignored');
 });
