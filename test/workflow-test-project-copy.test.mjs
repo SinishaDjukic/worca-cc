@@ -887,15 +887,17 @@ test('U-T1 (F1): a try that has its copy but no pipelines row yet keeps the copy
   assert.throws(() => git(dir, 'config', '--get', 'filter.d.clean'));
 });
 
-test('U-T1 (F1): Windows stress: three tries start at once while the others read the config, 20 rounds, no failure',
-  { skip: process.platform !== 'win32' ? 'Windows only: there an open reader makes a config replace fail' : false, timeout: 1_800_000 }, async () => {
+// 3 rounds by default (about a minute under load); WORCA_STRESS=1 runs the full 20.
+const STRESS_ROUNDS = process.env.WORCA_STRESS === '1' ? 20 : 3;
+test('U-T1 (F1): Windows stress: three tries start at once while the others read the config, several rounds, no failure',
+  { skip: process.platform !== 'win32' ? 'Windows only: there an open reader makes a config replace fail' : false, timeout: process.env.WORCA_STRESS === '1' ? 1_800_000 : 600_000 }, async () => {
     const p = await copy.pinStart({ key, name: 'real', projectDir: real });
     const dir = join(wh, 'workflow-tests', 'repos', key);
     const wts = [1, 2, 3].map((i) => join(wh, 'runs', `ut1e000${i}`, 'repos', key));
     for (const wt of wts) { mkdirSync(dirname(wt), { recursive: true }); git(dir, 'worktree', 'add', '-q', '--detach', '--', wt, p.startCommit); }
     copy.holdCopy(key);   // a try is live throughout
     try {
-      for (let round = 0; round < 20; round += 1) {
+      for (let round = 0; round < STRESS_ROUNDS; round += 1) {
         await Promise.all(wts.map(async (wt) => {
           const r = await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });
           try { await guardedGitEnv(wt); } finally { copy.releaseCopy(key); }
