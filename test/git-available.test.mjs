@@ -86,11 +86,12 @@ test('probeGit: R3 on Linux, macOS and Windows', async () => {
       const s = await probeGit({ env: { Path: 'C:\\Windows;"C:\\Program Files\\Git\\cmd"' }, platform: 'win32', exec, exists: only([exe]) });
       assert.deepEqual([s.available, s.path], [true, exe]);
     } },
-    { name: '--version failing, unparseable or timing out → probe-failed', run: async () => {
-      for (const ans of [{ code: 1, stdout: '', timedOut: false }, OK('hello\n'), { code: -1, stdout: '', timedOut: true }]) {
+    { name: '--version failing or unparseable → probe-failed; timing out → probe-timeout (F3)', run: async () => {
+      for (const [ans, reason] of [[{ code: 1, stdout: '', timedOut: false }, 'probe-failed'], [OK('hello\n'), 'probe-failed'],
+        [{ code: -1, stdout: '', timedOut: true }, 'probe-timeout']]) {
         const { exec } = fakeExec({ '/usr/bin/git': ans });
         const s = await probeGit({ env: { PATH: '/usr/bin' }, platform: 'linux', exec, exists: only(['/usr/bin/git']) });
-        assert.deepEqual([s.available, s.reason, s.path], [false, 'probe-failed', '/usr/bin/git']);
+        assert.deepEqual([s.available, s.reason, s.path], [false, reason, '/usr/bin/git']);
       }
     } },
     { name: 'WORCA_GIT=0 → forced-off, =1 → forced-on; neither looks anything up nor runs anything', run: async () => {
@@ -193,6 +194,63 @@ test('probeGit and gitState edges', async (t) => {
       _testing.useProbe(async () => { throw new Error('boom'); });
       const s = await gitState({ fresh: true });
       assert.deepEqual([s.available, s.reason, gitAvailable()], [false, 'probe-failed', false]);
+    } },
+  ]);
+});
+
+test('F3: one slow or failed probe never marks git as missing', async (t) => {
+  const saved = process.env.WORCA_GIT; delete process.env.WORCA_GIT;
+  const warn = console.warn; const warns = []; console.warn = (m) => warns.push(String(m));
+  t.after(() => { console.warn = warn; if (saved === undefined) delete process.env.WORCA_GIT; else process.env.WORCA_GIT = saved; _testing.reset(); });
+  const OKP = { available: true, path: '/usr/bin/git', version: '2.43.0', reason: 'ok', checkedAt: 1 };
+  const FAIL = (reason) => ({ available: false, path: reason === 'not-on-path' ? null : '/usr/bin/git', version: null, reason, checkedAt: 1 });
+  let clock = 0;
+  /** A fresh state, a probe that answers `answers` in turn, the time seam at 1 000 000 ms, and one ok probe to start from. */
+  const start = async (answers) => {
+    _testing.reset(); warns.length = 0; clock = 1_000_000;
+    _testing.useNow(() => clock);
+    const list = [OKP, ...answers]; let i = 0;
+    _testing.useProbe(async () => list[i++]);
+    assert.equal((await gitState({ fresh: true })).available, true);
+    const seen = []; onGitChange((s) => seen.push(s.available));
+    return seen;
+  };
+  await checkRows([
+    { name: 'ok then probe-timeout: still available, no listener fires; the failure is kept and logged', run: async () => {
+      const seen = await start([FAIL('probe-timeout')]);
+      clock += 61_000;
+      const s = await gitState({ fresh: true });
+      assert.deepEqual([s.available, s.path, s.version, gitAvailable()], [true, '/usr/bin/git', '2.43.0', true]);
+      assert.deepEqual(seen, [], 'no listener fires');
+      assert.deepEqual([s.failedProbes, s.lastFailure], [1, { reason: 'probe-timeout', at: 1_061_000 }]);
+      assert.deepEqual(warns, ['git-available: probe failed (probe-timeout); keeping git as available (1 in a row)']);
+    } },
+    { name: 'ok, fail, fail more than 60 s apart: missing, and the listeners fire once', run: async () => {
+      const seen = await start([FAIL('probe-failed'), FAIL('probe-timeout')]);
+      clock += 5_000; assert.equal((await gitState({ fresh: true })).available, true);
+      clock += 61_000; const s = await gitState({ fresh: true });
+      assert.deepEqual([s.available, s.reason, gitAvailable()], [false, 'probe-timeout', false]);
+      assert.deepEqual(seen, [false]);
+    } },
+    { name: 'two failures inside 60 s keep it; a success resets the count', run: async () => {
+      const seen = await start([FAIL('probe-failed'), FAIL('probe-failed'), OKP, FAIL('probe-timeout')]);
+      clock += 1_000; await gitState({ fresh: true });
+      clock += 30_000; const two = await gitState({ fresh: true });
+      assert.deepEqual([two.available, two.failedProbes], [true, 2], 'a second failure 30 s later is not enough');
+      clock += 40_000; const ok = await gitState({ fresh: true });
+      assert.deepEqual([ok.available, ok.failedProbes, ok.lastFailure], [true, undefined, undefined], 'a success resets the count');
+      clock += 61_000; const again = await gitState({ fresh: true });
+      assert.deepEqual([again.available, again.failedProbes], [true, 1], 'counting starts again');
+      assert.deepEqual(seen, []);
+      assert.equal(warns.at(-1), 'git-available: probe failed (probe-timeout); keeping git as available (1 in a row)');
+    } },
+    { name: 'ok then not-on-path, forced-off or xcode-clt-missing: missing at once', run: async () => {
+      for (const reason of ['not-on-path', 'forced-off', 'xcode-clt-missing']) {
+        const seen = await start([FAIL(reason)]);
+        const s = await gitState({ fresh: true });
+        assert.deepEqual([s.available, s.reason, gitAvailable(), seen], [false, reason, false, [false]], reason);
+        assert.deepEqual(warns, [], `${reason}: nothing kept, nothing logged`);
+      }
     } },
   ]);
 });

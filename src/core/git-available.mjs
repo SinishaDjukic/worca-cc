@@ -49,15 +49,29 @@ export async function probeGit({ env = process.env, platform = process.platform,
   }
   const v = await exec(hit, ['--version'], { env, timeoutMs: GIT_PROBE_TIMEOUT_MS });
   const m = v.code === 0 ? /^git version (\S+)/.exec(v.stdout.trim()) : null;
-  return m ? done('ok', { available: true, version: m[1] }) : done('probe-failed');
+  return m ? done('ok', { available: true, version: m[1] }) : done(v.timedOut ? 'probe-timeout' : 'probe-failed');
 }
 
+// F3: one slow or failed `git --version` (a busy machine) never turns git off: git stays available until 2 probes in a
+// row have failed at least GIT_FLIP_AFTER_MS apart. A git that is gone (not-on-path, xcode-clt-missing) or WORCA_GIT=0
+// flips at once; a successful probe resets the count.
+export const GIT_FLIP_AFTER_MS = 60_000;
+const SOFT_FAILS = new Set(['probe-failed', 'probe-timeout']);
 let state = NOT_PROBED;
 let inflight = null;
 let probeImpl = () => probeGit();
+let now = () => Date.now();
 const listeners = new Set();
 function commit(next) {
   const prev = state;
+  if (prev.available && !next.available && SOFT_FAILS.has(next.reason)) {
+    const at = now(); const failedProbes = (prev.failedProbes ?? 0) + 1; const failingSince = prev.failingSince ?? at;
+    if (failedProbes < 2 || at - failingSince < GIT_FLIP_AFTER_MS) {
+      console.warn(`git-available: probe failed (${next.reason}); keeping git as available (${failedProbes} in a row)`);
+      state = Object.freeze({ ...prev, checkedAt: next.checkedAt, failedProbes, failingSince, lastFailure: { reason: next.reason, at } });
+      return state;
+    }
+  }
   state = Object.freeze({ ...next });
   if (state.available !== prev.available) for (const fn of [...listeners]) { try { fn(state); } catch { /* a listener never breaks the flip */ } }
   return state;
@@ -83,6 +97,8 @@ export const _testing = {
   set(partial = {}) {
     return commit({ ...NOT_PROBED, reason: partial.available === true ? 'forced-on' : 'forced-off', checkedAt: Date.now(), ...partial, available: partial.available === true });
   },
-  reset() { state = NOT_PROBED; inflight = null; probeImpl = () => probeGit(); },
+  reset() { state = NOT_PROBED; inflight = null; probeImpl = () => probeGit(); now = () => Date.now(); },
   useProbe(fn) { probeImpl = fn || (() => probeGit()); },
+  /** The clock of the F3 rule (GIT_FLIP_AFTER_MS). */
+  useNow(fn) { now = fn || (() => Date.now()); },
 };

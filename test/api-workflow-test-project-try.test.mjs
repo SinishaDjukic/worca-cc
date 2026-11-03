@@ -132,6 +132,34 @@ test('a project try: the real key, hidden, setup first, its checkout kept, setup
   assert.equal(repoSnapshot(real), was, 'nothing in the person\'s repository changed');
 });
 
+test('F3: a stored "git is missing" answer is probed once more before a project try is refused', { timeout: 240000 }, async (t) => {
+  const ga = await import('../src/core/git-available.mjs');
+  const saved = process.env.WORCA_GIT; delete process.env.WORCA_GIT;   // the suite's WORCA_GIT=1 would answer for the stored state
+  t.after(() => { if (saved === undefined) delete process.env.WORCA_GIT; else process.env.WORCA_GIT = saved; ga._testing.reset(); });
+  ga._testing.reset();
+  ga._testing.set({ available: false, reason: 'probe-failed', checkedAt: Date.now() });   // a recent failure: inside the 60 s cache
+  let n = 0;
+  ga._testing.useProbe(async () => { n += 1; return { available: true, path: 'git', version: '2.43.0', reason: 'ok', checkedAt: Date.now() }; });
+  const out = await _testing.invokeStartRun(await tryBody({ title: 'Test: Ticket 482 · try 7' }), null, { workflowTest: { use: 'draft', project: { key, setupCmd: null } } });
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  assert.equal(n, 1, 'one fresh probe before refusing');
+  assert.equal(ga.gitAvailable(), true);
+  await settled(out.body.runId);
+});
+
+test('a project try is refused when a fresh probe also finds no git: the words say what to do', async (t) => {
+  const ga = await import('../src/core/git-available.mjs');
+  const saved = process.env.WORCA_GIT; delete process.env.WORCA_GIT;
+  t.after(() => { if (saved === undefined) delete process.env.WORCA_GIT; else process.env.WORCA_GIT = saved; ga._testing.reset(); });
+  ga._testing.reset();
+  ga._testing.set({ available: false, reason: 'not-on-path', checkedAt: Date.now() });
+  let n = 0;
+  ga._testing.useProbe(async () => { n += 1; return { available: false, path: null, version: null, reason: 'not-on-path', checkedAt: Date.now() }; });
+  const out = await _testing.invokeStartRun(await tryBody(), null, { workflowTest: { use: 'draft', project: { key, setupCmd: null } } });
+  assert.deepEqual([out.status, out.body.error, n], [400,
+    'a project try needs git, and Worca cannot find git on this computer. Install git, then choose Finish the rest', 1]);
+});
+
 test('a setup that fails ends the try as a setup failure, before any step', { timeout: 240000 }, async () => {
   const out = await _testing.invokeStartRun(await tryBody({ title: 'Test: Ticket 482 · try 2' }), null,
     { workflowTest: { use: 'draft', project: { key, setupCmd: 'node -e "process.exit(3)"' } } });

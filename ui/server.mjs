@@ -347,7 +347,7 @@ import { registerWorkflowTestRoutes } from '../src/core/workflow-tests/routes.mj
 import { TRY_ANSWERED_BY } from '../src/core/workflow-tests/answers.mjs';
 import { pretendCopies } from '../src/core/workflow-tests/connectors.mjs';
 import { SETUP_TIMEOUT_MS } from '../src/core/workflow-tests/shell-step.mjs';
-import { TRY_NEVER_SHIPS_TEXT, TRY_STAYS_IN_COPY_TEXT } from '../src/shared/workflow-tests/project-text.mjs';
+import { TRY_NEVER_SHIPS_TEXT, TRY_STAYS_IN_COPY_TEXT, TRY_NEEDS_GIT_TEXT } from '../src/shared/workflow-tests/project-text.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -3254,13 +3254,18 @@ const startRunHandler = async (req, res) => {
 
       // A-m5: a registered project whose effective mode is Folder and whose folder is gone is refused, never recreated
       // empty (with git installed a Git project keeps today's mkdir + git init). The stored row (S7), read once.
-      const projectRow = getProjectByPath(projectDir); const gitOn = (await gitState()).available;
+      const projectRow = getProjectByPath(projectDir); let gitOn = (await gitState()).available;
       if (projectRow && !fs.existsSync(projectDir) && effectiveWorkMode(projectRow.vcs, gitOn) === 'folder') return badRequest(res, `The folder is missing: ${projectDir}`);
       // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
       // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
       // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
-      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
-      if (workflowTest && workMode !== 'git') return badRequest(res, 'a project try needs git');
+      let workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      // F3: a stored "no git" can be a minute old: a try asks git once more (a fresh probe) before it is refused.
+      if (workflowTest && workMode !== 'git' && !gitOn) {
+        gitOn = (await gitState({ fresh: true })).available;
+        workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      }
+      if (workflowTest && workMode !== 'git') return badRequest(res, TRY_NEEDS_GIT_TEXT);
       // #693: a git run in a folder inside a repository it is not the top of would `git init` there (or act on the
       // parent). Refused before the mkdir, a row or a ticket; a missing path counts by its nearest existing ancestor.
       if (workMode === 'git') {

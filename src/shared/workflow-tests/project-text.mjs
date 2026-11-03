@@ -14,6 +14,8 @@ export const submodulesText = (name) => `${name} holds other projects inside it 
 // P11 (not drawn) and the 5 MB limit (D53).
 export const START_GONE_TEXT = 'The start point of this example is no longer in the project. Pick a new start point.';
 export const CHANGES_TOO_BIG_TEXT = 'Your changes that are not committed are larger than 5 MB: commit them first, or leave them out.';
+// F3: the start route's refusal of a project try when a fresh probe finds no git (400). No full stop: "Stopped: …" composes it.
+export const TRY_NEEDS_GIT_TEXT = 'a project try needs git, and Worca cannot find git on this computer. Install git, then choose Finish the rest';
 // D55, board 35: why a test stopped before any step of a try.
 export const setupFailedText = (cmd) => `The setup step failed: ${cmd} ended with an error.`;
 // D45: the push, pull request, publish and issue routes' answer for a test try (409).
