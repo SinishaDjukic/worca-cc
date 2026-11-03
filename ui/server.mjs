@@ -3076,7 +3076,7 @@ const startRunHandler = async (req, res) => {
       // creation, where createWorkspace enforced isGitRepo) is rejected the same
       // way, so the client gets a clean 400 instead of a mid-run worktree error.
       const projects = [];
-      await gitState();                                   // U4: refresh the cached git answer (≤ 1 min old) memberWorkMode reads
+      await gitState();                                   // U4: a stale "missing" re-probes before this returns (a stale "available" is served, then refreshed); memberWorkMode reads it
       for (const dir of ws.projectPaths) {
         if (!fs.existsSync(dir)) {
           return badRequest(res, 'workspace member path is missing');
@@ -12220,7 +12220,8 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// CONTRACT §0: is git usable here, re-probed at most once a minute (U4: installing git needs no restart).
+// CONTRACT §0: is git usable here, re-probed at most once a minute (U4: installing git needs no restart). A stale
+// "available" is answered at once and re-probed in the background; a stale "missing" waits for the (fast) probe.
 // A flip broadcasts the `git` frame through onGitChange.
 app.get('/api/git', async (_req, res) => {
   const s = await gitState({ maxAgeMs: 60_000 });

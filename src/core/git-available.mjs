@@ -44,6 +44,7 @@ export async function probeGit({ env = process.env, platform = process.platform,
   if (platform === 'darwin' && realpath(hit).toLowerCase() === MAC_SHIM) {
     // The CLT shim opens the install dialog whenever it runs without the tools: ask xcode-select, never the shim.
     const xs = await exec('/usr/bin/xcode-select', ['-p'], { env, timeoutMs: GIT_PROBE_TIMEOUT_MS });
+    if (xs.timedOut) return done('probe-failed', { timedOut: true });   // a slow xcode-select is not a missing git
     const dir = xs.code === 0 ? xs.stdout.trim() : '';
     if (!dir || !exists(posix.join(dir, 'usr', 'bin', 'git'))) return done('xcode-clt-missing');
   }
@@ -75,17 +76,20 @@ export function gitAvailable() {
   return process.env.WORCA_GIT === '0' ? false : process.env.WORCA_GIT === '1' ? true : state.available;
 }
 export function currentGitState() { return { ...(envForced() ?? state) }; }
-// Stale-while-revalidate: once there is an answer, a stale one is returned at once and the re-probe runs in the
-// background (a page load must never wait on `git --version`). Only the first call, or `fresh: true`, waits.
+// Stale-while-revalidate: a stale answer that says git IS there (or that a probe failed twice) is returned at once and
+// re-probed in the background (a page load must never wait on a slow `git --version`). The first call, `fresh: true`
+// and a stale real "missing" (not-on-path, xcode-clt-missing, ...) wait: that probe is a fast PATH scan, and a run
+// must not pick folder mode from a minute-old answer after git was installed.
 export function gitState({ maxAgeMs = 60_000, fresh = false } = {}) {
   const f = envForced();
   if (f) return Promise.resolve(f);
   const known = state.reason !== 'not-probed';
   if (!known || fresh || Date.now() - state.checkedAt >= maxAgeMs) {
-    inflight ??= Promise.resolve().then(probeImpl)
-      .then(settle, () => commit({ ...NOT_PROBED, reason: 'probe-failed', checkedAt: Date.now() }))
+    const wait = !known || fresh || (!state.available && state.reason !== 'probe-failed');
+    inflight ??= Promise.resolve().then(probeImpl).then(settle)
+      .catch(() => commit({ ...NOT_PROBED, reason: 'probe-failed', checkedAt: Date.now() }))   // never an unhandled rejection
       .finally(() => { inflight = null; });
-    if (!known || fresh) return inflight.then((s) => ({ ...s }));
+    if (wait) return inflight.then((s) => ({ ...s }));
   }
   return Promise.resolve({ ...state });
 }
