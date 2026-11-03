@@ -35,7 +35,7 @@ function freshSettings(c) {
 }
 // a case starts fresh: nothing from the case before it carries over
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all',
-  sel: [], read: [], cleared: [], custom: '', confirm: '', toast: '', flash: '', level: 'expert', away: false, keep: true, s: freshSettings(caseOf(caseId)) });
+  sel: [], selecting: false, anchor: '', read: [], cleared: [], custom: '', confirm: '', toast: '', flash: '', level: 'expert', away: false, keep: true, s: freshSettings(caseOf(caseId)) });
 let ui = fresh('afternoon');
 // What opened with this click: only that fades in (a repaint of what was already open does not fade again).
 let opening = '';
@@ -105,8 +105,8 @@ function topbar() {
 
 // ---- rows ----
 // One row on the 20px rail: the dot, the title line, the meta line, the time at the right.
-// In Updates the rail holds the mark (amber: still waits for you, blue: unread, nothing once read) and, on hover, focus
-// or while selecting, the tick box in its place: one text edge for every list.
+// In Updates the rail holds the mark (amber: still waits for you, blue: unread, nothing once read) and, while selecting,
+// the tick box in its place: one text edge for every list.
 function row({ dot, title, meta, time, tip, key, check, unreadDot, resolved, flash }) {
   const mark = dot ? `<span class="status-dot ${dot}" aria-hidden="true"></span>` : unreadDot ? '<span class="pz-unread" title="Unread"></span>' : '';
   return `<div class="pz-row${check !== undefined ? ' has-check' : ''}${check ? ' is-sel' : ''}${unreadDot ? ' is-unread' : ''}${flash ? ' is-flash' : ''}" data-row="${esc(key)}">
@@ -160,11 +160,12 @@ function popover() {
   const un = unread();
   const more = `<span class="pz-pick">${`<button type="button" class="btn btn-sm btn-quiet btn-icon" data-menu="more" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" aria-label="More" title="More">${svg('more', 16)}</button>`}${menu('more', [
     { id: 'allread', text: 'Mark all read', help: un.length ? 'Marks every unread update read; nothing is cleared' : 'Nothing is unread' },
-    { id: 'clearread', text: 'Clear read', help: 'Moves every read update in this view to Cleared' }, { sep: true },
+    { id: 'clearread', text: 'Clear read', help: 'Moves every read update in this view to Cleared' },
+    ...(ui.popTab === 'updates' ? [{ id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }] : []), { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you and what a start does near a limit' }], 'right')}</span>`;
   return `<div class="pz-popover${inCls('pop')}" role="dialog" aria-label="Pulse">
     <div class="pz-phead"><div class="tabs pz-ptabs" role="tablist">${[['now', 'Now', nowCount()], ['updates', 'Updates', un.length]].map(([id, t, n]) => `<button type="button" class="tab" role="tab" aria-selected="${ui.popTab === id}" data-ptab="${id}" title="${id === 'now' ? 'What is true right now: it changes by itself and cannot be cleared' : 'What happened: read, select and clear, like runs'}">${t}${n ? ` <span class="n">${n}</span>` : ''}</button>`).join('')}</div>${more}</div>
-    <div class="pz-pbody">${ui.popTab === 'now' ? nowSections() : updatesPanel()}</div>
+    <div class="pz-pbody">${ui.popTab === 'now' ? nowSections() : updatesPanel()}</div>${bulkBar()}
   </div>`;
 }
 
@@ -291,18 +292,34 @@ function shown() {
 }
 function updatesPanel() {
   const list = shown();
-  const sel = ui.sel.filter((id) => list.some((u) => u.id === id));
-  const openNeeds = sel.filter((id) => { const u = C().updates.find((x) => x.id === id); return u.sev === 'needs' && u.open; }).length;
-  const allOn = list.length && sel.length === list.length;
-  const bar = sel.length
-    ? `<div class="pz-bar is-sel"><span class="pz-rail"><label class="pz-check" title="${allOn ? 'Select none' : 'Select all shown'}"><input type="checkbox" data-selall${allOn ? ' checked' : ''} aria-label="Select all shown"></label></span><span class="pz-bar-n">${sel.length} selected</span>
-       <span class="pz-bar-acts">${ui.show === 'cleared' ? '<button type="button" class="btn btn-sm" data-bulk="restore" title="Puts them back in All">Restore</button>'
-        : `<button type="button" class="btn btn-sm" data-bulk="read" title="Marks them read; they stay in All">Mark read</button><button type="button" class="btn btn-sm" data-bulk="clear" title="${openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Now: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice'}">Clear</button>`}
-       <button type="button" class="btn btn-sm btn-quiet btn-icon" data-bulk="none" aria-label="Select none" title="Select none · Esc">${svg('x', 14)}</button></span></div>`
-    : `<div class="pz-bar"><span class="pz-rail">${list.length ? `<label class="pz-check" title="Select all shown"><input type="checkbox" data-selall aria-label="Select all shown"></label>` : ''}</span><span class="pz-sentence">Showing ${picker('show', SHOWS.find((s) => s.id === ui.show).text, SHOWS.map((s) => ({ ...s, checked: s.id === ui.show })), 'Which updates the list shows')} from ${picker('from', ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, [{ id: 'all', text: 'all groups', checked: ui.from === 'all' }, { sep: true }].concat(M.GROUPS.map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id }))), 'Which group the updates come from')}</span></div>`;
+  const n = ui.sel.filter((id) => list.some((u) => u.id === id)).length;
+  // While selecting, Select all sits at the sentence's right, as in the Runs list's head
+  const all = ui.selecting && list.length ? `<label class="runs-all-wrap"><input type="checkbox" class="runs-check runs-all" data-selall${n === list.length ? ' checked' : n ? ' data-mixed' : ''} aria-label="Select all shown"> Select all</label>` : '';
+  const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('show', SHOWS.find((s) => s.id === ui.show).text, SHOWS.map((s) => ({ ...s, checked: s.id === ui.show })), 'Which updates the list shows')} from ${picker('from', ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, [{ id: 'all', text: 'all groups', checked: ui.from === 'all' }, { sep: true }].concat(M.GROUPS.map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id }))), 'Which group the updates come from')}</span>${all}</div>`;
   if (!list.length) return bar + `<p class="pz-empty">${ui.show === 'unread' ? 'You are up to date.' : ui.show === 'cleared' ? 'Nothing cleared.' : 'No updates here.'}</p>`;
   const days = [...new Set(list.map((u) => u.day))];
-  return bar + days.map((d) => `<section class="pz-sec"><h3 class="pz-h pz-day">${d}</h3><div class="pz-list${sel.length ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');
+  return bar + days.map((d) => `<section class="pz-sec"><h3 class="pz-h pz-day">${d}</h3><div class="pz-list${ui.selecting ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');
+}
+// The selection's actions: the Runs list's bar (.runs-bulk) at the panel's foot, each action with how many it applies to.
+function bulkBar() {
+  if (ui.popTab !== 'updates' || !ui.selecting) return '';
+  const ups = shown().filter((u) => ui.sel.includes(u.id)), unreadN = ups.filter(isUnread).length;
+  const openNeeds = ups.filter((u) => u.sev === 'needs' && u.open).length;
+  const btn = (k, word, n, tip) => `<button type="button" class="btn btn-sm" data-bulk="${k}"${n ? '' : ' disabled'} title="${esc(n ? tip : ups.length ? 'All of them are read already' : 'Nothing selected')}">${word} <span class="runs-bulk-c">${n}</span></button>`;
+  const acts = ui.show === 'cleared' ? btn('restore', 'Restore', ups.length, 'Puts them back in All')
+    : btn('read', 'Mark read', unreadN, unreadN < ups.length ? `Skips ${ups.length - unreadN} already read` : 'Marks them read; they stay in All')
+      + btn('clear', 'Clear', ups.length, openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Now: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice');
+  return `<div class="runs-bulk" role="toolbar" aria-label="Selected updates"><span class="runs-bulk-n">${ups.length} selected</span>${acts}<button type="button" class="btn btn-sm btn-quiet" data-bulk="cancel" title="Stop selecting · Esc">Cancel</button></div>`;
+}
+// As the Runs list: ⌘ or Ctrl-click (or the tick box) ticks one update, Shift ticks every one from the last ticked;
+// unticking the last one stops selecting.
+function tick(id, range) {
+  const ids = shown().map((u) => u.id), a = ids.indexOf(ui.anchor), b = ids.indexOf(id);
+  ui.selecting = true;
+  if (range && a >= 0 && b >= 0) { ui.sel = [...new Set(ui.sel.concat(ids.slice(Math.min(a, b), Math.max(a, b) + 1)))]; return; }
+  ui.anchor = id;
+  ui.sel = ui.sel.includes(id) ? ui.sel.filter((x) => x !== id) : ui.sel.concat(id);
+  if (!ui.sel.length) ui.selecting = false;
 }
 // The page behind Pulse: Runs is not in this prototype; Pulse opens over any page.
 function runsPage() {
@@ -354,8 +371,11 @@ function settingsPage() {
 // ---- render ----
 function render() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
+  const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
   const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? '<button type="button" class="pz-undo" data-undo title="Puts them back in the list">Undo</button>' : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
+  const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
   opening = '';
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
@@ -381,6 +401,7 @@ function pick(id, v) {
   else if (id === 'from') { ui.from = v; ui.sel = []; }
   else if (id === 'more') {
     if (v === 'settings') { ui.page = 'settings'; ui.pop = false; }
+    else if (v === 'select') ui.selecting = true;
     else if (v === 'allread') { const n = unread().length; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread'); }
     else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.sel = []; toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids); }
   }
@@ -425,13 +446,14 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-nr-now]'))) { ui.nr.wait = false; render(); return; }
   if ((el = tg('[data-nr-cancel]'))) { ui.nr = null; render(); return; }
   if ((el = tg('[data-nr-start]'))) { toast(`${el.textContent === 'Start run' ? `Started on ${pname(ui.nr.on)}` : `Scheduled: ${el.textContent.replace('Start at', 'starts at')}`} (not in this prototype)`); ui.nr = null; render(); return; }
-  if ((el = tg('[data-ptab]'))) { ui.popTab = el.dataset.ptab; ui.sel = []; render(); return; }
+  if ((el = tg('[data-ptab]'))) { ui.popTab = el.dataset.ptab; ui.sel = []; ui.selecting = false; render(); return; }
   if ((el = tg('[data-go]'))) { ui.page = el.dataset.go; ui.pop = false; ui.acct = false; ui.sub = ''; render(); return; }
   if ((el = tg('[data-selall]'))) { const ids = shown().map((u) => u.id); ui.sel = el.checked ? ids : []; render(); return; }
-  if ((el = tg('[data-sel]'))) { const id = el.dataset.sel; ui.sel = el.checked ? ui.sel.concat(id) : ui.sel.filter((x) => x !== id); render(); return; }
+  if ((el = tg('[data-sel]'))) { tick(el.dataset.sel, e.shiftKey); render(); return; }
+  if ((el = tg('.pz-popover [data-open]')) && (e.metaKey || e.ctrlKey || e.shiftKey) && isUpdate(el.dataset.open)) { e.preventDefault(); tick(el.dataset.open, e.shiftKey); render(); return; }
   if ((el = tg('[data-bulk]'))) {
-    const ids = ui.sel, a = el.dataset.bulk; ui.sel = [];
-    if (a === 'read') { ui.read = ui.read.concat(ids); toast(`Marked ${plural(ids.length, 'update')} read`); }
+    const ids = shown().filter((u) => ui.sel.includes(u.id)).map((u) => u.id), a = el.dataset.bulk; ui.sel = []; ui.selecting = false;
+    if (a === 'read') { const n = ids.filter((id) => isUnread(C().updates.find((u) => u.id === id))).length; ui.read = ui.read.concat(ids); toast(`Marked ${plural(n, 'update')} read`); }
     if (a === 'clear') { ui.cleared = ui.cleared.concat(ids); ui.read = ui.read.concat(ids); toast(`Cleared ${plural(ids.length, 'update')}`, ids); }
     if (a === 'restore') { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); toast(`Restored ${plural(ids.length, 'update')}`); }
     render(); return;
@@ -453,11 +475,28 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-manage]'))) { toast('Opens Settings › Chat (not in this prototype)'); render(); return; }
   if (hadMenu && !ui.menu) render();
 });
+const isUpdate = (id) => C().updates.some((u) => u.id === id);
 document.addEventListener('keydown', (e) => {
+  // The Runs list's keys in Updates: ⌘A (Ctrl+A) ticks every update shown, Space ticks the focused one, Esc stops selecting.
+  const inUpdates = ui.pop && ui.popTab === 'updates' && !ui.menu && !ui.acct && !ui.nr;
+  if (inUpdates && (e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'a') { e.preventDefault(); ui.selecting = true; ui.sel = shown().map((u) => u.id); render(); return; }
+  const rowBtn = inUpdates && e.key === ' ' && e.target.closest?.('.pz-popover [data-open]');
+  if (rowBtn && isUpdate(rowBtn.dataset.open)) {
+    e.preventDefault(); const id = rowBtn.dataset.open; tick(id, e.shiftKey); render();
+    document.querySelector(`.pz-popover [data-open="${CSS.escape(id)}"]`)?.focus(); return;
+  }
   if (e.key !== 'Escape') return;
-  if (ui.menu) ui.menu = ''; else if (ui.sub) ui.sub = ''; else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else if (ui.sel.length) ui.sel = []; else return;
+  if (ui.menu) ui.menu = ''; else if (ui.sub) ui.sub = ''; else if (ui.pop && ui.selecting) { ui.sel = []; ui.selecting = false; } else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else return;
   render();
 });
+// Touch: a long-press on an update starts selecting, as on the Runs list; the click that follows is swallowed.
+let press = null, pressed = '';
+document.addEventListener('pointerdown', (e) => {
+  const r = e.pointerType === 'touch' && e.target.closest?.('.pz-popover [data-row]');
+  if (r && isUpdate(r.dataset.row)) press = setTimeout(() => { pressed = r.dataset.row; tick(pressed); render(); }, 500);
+});
+for (const t of ['pointerup', 'pointercancel', 'pointermove']) document.addEventListener(t, () => { clearTimeout(press); press = null; });
+document.addEventListener('click', (e) => { if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = ''; } }, true);
 const caseSel = document.getElementById('case');
 caseSel.innerHTML = M.CASES.map((c) => `<option value="${c.id}">${esc(c.label)}</option>`).join('');
 caseSel.addEventListener('change', () => { ui = fresh(caseSel.value); render(); });

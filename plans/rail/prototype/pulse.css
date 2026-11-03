@@ -158,24 +158,17 @@
 .pz-resolved{margin-left:8px;font-size:var(--fs-caption);color:var(--ink-2);}
 .pz-unread{width:8px;height:8px;border-radius:50%;background:var(--blue);}
 .pz-empty{margin:20px 0 0 var(--edge);color:var(--ink-2);}
-/* The tick box takes the mark's place on the rail on hover, focus, or while anything is selected. */
-.pz-check{position:absolute;inset:0;display:grid;place-items:center;opacity:0;cursor:pointer;}
+/* While selecting (as the Runs list), the tick box takes the mark's place on the rail. */
+.pz-check{position:absolute;inset:0;display:none;place-items:center;cursor:pointer;}
 .pz-check input{margin:0;cursor:pointer;}
-.pz-row.has-check:hover .pz-check,.pz-row.has-check:focus-within .pz-check,.pz-list.is-selecting .pz-check,.pz-bar .pz-check{opacity:1;}
-.pz-row.has-check:hover .pz-rail > :not(.pz-check),.pz-row.has-check:focus-within .pz-rail > :not(.pz-check),.pz-list.is-selecting .pz-rail > :not(.pz-check){visibility:hidden;}
-/* No hover on a touch screen: the box stays on the rail and an unread row keeps its blue dot by the time. */
-@media (pointer: coarse){
-  .pz-row.has-check .pz-check{opacity:1;}
-  .pz-row.has-check .pz-rail > :not(.pz-check){visibility:hidden;}
-  .pz-row.has-check.is-unread .pz-row-time::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;border-radius:50%;background:var(--blue);vertical-align:1px;}
-}
+.pz-list.is-selecting .pz-check{display:grid;}
+.pz-list.is-selecting .pz-rail > :not(.pz-check){visibility:hidden;}
+/* The Runs list's selection bar, at the panel's foot on the panel's own fill. */
+.pz-popover .runs-bulk{flex:none;padding:8px 12px;background:inherit;border-radius:0 0 var(--r-card) var(--r-card);}
 
-/* The list's sentence, or the selection bar in its place, on the same rail. */
+/* The list's sentence on the rail; Select all at its right while selecting. */
 .pz-bar{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);align-items:center;min-height:40px;margin-top:12px;}
 .pz-bar .pz-rail{height:32px;}
-.pz-bar.is-sel{grid-template-columns:var(--rail) auto minmax(0,1fr);}
-.pz-bar-n{font-weight:600;white-space:nowrap;}
-.pz-bar-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;}
 .pz-sentence{min-width:0;color:var(--ink-2);line-height:28px;}
 .pz-strong{color:var(--ink);font-weight:600;}
 

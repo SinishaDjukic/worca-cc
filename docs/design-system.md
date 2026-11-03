@@ -81,7 +81,7 @@ curve; everything else is still. Mock: `plans/rail/mocks/motion-*.gif`.
 | A row opens or closes its detail | the detail fades over `quick`; the › turns; what is below moves with it |
 | A row arrives or leaves (Pulse, Runs, a cleared update) | fades in or out over `quick`; the rows around it move to their place |
 | A state changes (the word, the dot, a step's mark, a progress cell) | the old fades out, the new fades in, over `change`; a colour changes over `change` |
-| A text replaces another in place (the selection bar for the list's sentence, `Merging…` for `Merge PR`) | crossfade over `quick` |
+| A text replaces another in place (`Merging…` for `Merge PR`) | crossfade over `quick` |
 | A menu, popover, tooltip or panel opens | fades in over `quick` (a tooltip after its usual delay); closes at once |
 | A Dialog or the ConfirmStrip opens | fades in over `quick`; the strip's space opens with it |
 | A Switch changes | the thumb moves over `quick`; the track's colour over `change` |
@@ -210,8 +210,11 @@ dot, or a tick box while selecting), a title line, a meta line, its time or figu
 its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
 (the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by urgency, or by day), newest first in each; a section with
 no rows is not drawn; the page's spec names the sections. What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
-filter button. Selecting replaces that sentence with the selection bar (`2 selected · Mark read · Clear · ✕`), holding
-only the actions that apply to every selected row. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
+filter button. Selecting works the same in every list (Runs, Chats, Pulse). You start it from the list's menu
+(`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.
+`Select all` joins the head and the sentence stays. The selection bar (`.runs-bulk`) sits at the list's foot:
+`2 selected · Archive 2 · Cancel`. Each action shows how many rows it applies to and is disabled at 0. Cancel or Esc
+ends selecting. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
 Empty is EmptyState's one sentence and, when there is one, the way forward as its one quiet action (`No schedules
 yet.` · New schedule).
 
@@ -278,8 +281,8 @@ The prototype's Break picker plays each case.
 - A disabled control says why in its tooltip.
 - Progress cells stay neutral; colour sits only on the dot and the state word.
 - No emoji and no exclamation marks in the interface.
-- In a list you can select, the tick box takes the mark's place on the rail (on hover, focus, or while anything is
-  selected; always on a touch screen), so the list keeps one text edge.
+- In a list you can select, the tick box takes the mark's place on the rail only while selecting, so the list keeps
+  one text edge.
 - Usage is rings around the avatar, outside in: session, the long window (week, day or month), spend (when a budget
   has a limit). Each ring shows its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at
   the warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in

@@ -49,8 +49,11 @@ two lists twice). On a narrow screen the panel is the window's width.
   answered it reads Resolved.
 - The list's sentence picks what it shows: `Showing [unread ▾] from [all groups ▾]`. Shows: Unread, All, Needs you,
   Problems, Cleared. Empty: "You are up to date."
-- Selection as the Runs list: tick boxes; the bar `2 selected · Mark read · Clear · ✕` replaces the sentence while
-  anything is ticked. Clear is a soft dismiss with Undo in the toast; it does not confirm (it can be taken back).
+- Selection works exactly as in Runs and Chats: ⋯ › Select, ⌘ or Ctrl-click, Shift-click for a range, Space on a
+  focused row, ⌘A, or a long-press on touch. Only then do tick boxes take the marks' place, and `Select all` sits at
+  the sentence's right. The sentence stays. The Runs bar (`.runs-bulk`) sits at the panel's foot:
+  `2 selected · Mark read 1 · Clear 2 · Cancel`. Each action shows how many updates it applies to and is disabled
+  at 0. Cancel or Esc stops selecting, and so does unticking the last row. Clear is a soft dismiss with Undo in the toast; it does not confirm (it can be taken back).
   Clearing an open `needs` row leaves the run waiting; the bar's tooltip says so.
 - A row opens its one target (Pulse Center §6.5) and marks it read; a Limits row opens Usage and costs. A desktop or
   chat notice opens the panel at its row.

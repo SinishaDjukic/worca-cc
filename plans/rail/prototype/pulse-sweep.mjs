@@ -13,6 +13,7 @@ const VIEWS = {
   popUpdates: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); },
   account: async (p) => click(p, '[data-acct]'),
   usage: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="usage"]'); },
+  popSelect: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); await click(p, '[data-pick="more|select"]'); await click(p, '[data-sel]'); },
   popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
   newrun: async (p) => click(p, '[data-newrun]'),
   newrunSmall: async (p) => { await click(p, '[data-newrun]'); await click(p, '[data-menu="nr-size"]'); await click(p, '[data-pick="nr-size|small"]'); },
@@ -47,7 +48,7 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
         const big = parseFloat(cs.fontSize) >= 18.6 || (parseFloat(cs.fontSize) >= 14 && +cs.fontWeight >= 700);
         if (ratio < (big ? 3 : 4.5) && !/pz-sep|pz-dotsep/.test(e.className)) out.push(['contrast ' + ratio.toFixed(2), e.className + ': ' + s]);
       }
-      for (const row of app.querySelectorAll('.pz-row,.pz-bar,.pz-srow,.pz-sv,.pz-urow,.pz-uhead,.pz-head,.pz-top,.pz-erow,.mc-head,.pz-advice,.pz-advice-acts,.mi,.pz-phead')) {
+      for (const row of app.querySelectorAll('.pz-row,.pz-bar,.runs-bulk,.pz-srow,.pz-sv,.pz-urow,.pz-uhead,.pz-head,.pz-top,.pz-erow,.mc-head,.pz-advice,.pz-advice-acts,.mi,.pz-phead')) {
         const kids = [...row.children].filter((k) => k.offsetParent && getComputedStyle(k).position !== 'absolute');
         for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) {
           const a = kids[i].getBoundingClientRect(), d = kids[j].getBoundingClientRect();
