@@ -10,6 +10,7 @@ import {
 import { workflowFingerprint } from './workflow-fingerprint.mjs';
 import { workflowParts } from './workflow-parts.mjs';
 import { diffGraphs } from '../shared/graph/diff-graphs.mjs';
+import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 
@@ -115,7 +116,7 @@ export async function restoreRevision(workflowId, revisionId, { by = null, agent
   const body = {
     id: workflowId, version: 2, name: rev.name, ...(rev.domain ? { domain: rev.domain } : {}),
     nodes: Array.isArray(g.nodes) ? g.nodes : [], wires: Array.isArray(g.wires) ? g.wires : [],
-    ...(g.canvas ? { canvas: g.canvas } : {}), ...(g.codeGraph === false ? { codeGraph: false } : {}),
+    ...pickTemplateExtras(g),   // the saved canvas, code-graph opt-out and session settings
   };
   return saveGraphWorkflow(body, { agentsDir, revision: { source: 'restore', by } });
 }

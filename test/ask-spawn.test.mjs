@@ -164,7 +164,7 @@ test('memoryDir: the mount rides --add-dir plus the CLAUDE_CODE_ADDITIONAL_DIREC
 
 // ONE fake bin dumps both argv and env; one runClaude spawn (with a memoryDir and a caller
 // modelEnv) feeds the argv, env and memory-mount rows.
-test('fake bin: the recipe (with a memoryDir) reaches the spawned argv and env — flags, --add-dir last, sandbox var wins, CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1, WORCA_* scrubbed except WORCA_HOST_PID', POSIX_SHIM, async () => {
+test('fake bin: the recipe (with a memoryDir) reaches the spawned argv and env — flags, --add-dir last, sandbox var wins, CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1, WORCA_* scrubbed except WORCA_HOST_PID and WORCA_TEST_CONCURRENCY', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-spawn-'));
   const envOut = join(dir, 'env.txt');
   const argvOut = join(dir, 'argv.txt');
@@ -199,7 +199,8 @@ test('fake bin: the recipe (with a memoryDir) reaches the spawned argv and env �
     { name: 'fake bin env dump: the sandbox var reaches the SPAWNED env and every WORCA_* var is scrubbed (probe F1)', run: () => {
       assert.ok(env.includes('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1'), 'survives buildSpawnEnv + prepareModelEnv and wins over a caller value');
       assert.ok(env.includes('ANTHROPIC_BASE_URL=http://proxy'), 'caller routing env still merged');
-      const worcaLeaks = env.filter((l) => l.startsWith('WORCA_') && !l.startsWith('WORCA_HOST_PID='));
+      // Two deliberate WORCA_ vars: the host-guard PID and the test-worker cap (Settings › Runs › Machine load).
+      const worcaLeaks = env.filter((l) => l.startsWith('WORCA_') && !l.startsWith('WORCA_HOST_PID=') && !l.startsWith('WORCA_TEST_CONCURRENCY='));
       assert.equal(worcaLeaks.length, 0, `WORCA_* scrubbed (host-guard PID excepted): ${worcaLeaks}`);
       assert.ok(env.includes(`WORCA_HOST_PID=${process.pid}`), 'the host-guard PID deliberately rides scrubbed spawns (host-guard.mjs)');
       assert.ok(env.some((l) => l.startsWith('PATH=')) && env.some((l) => l.startsWith('HOME=')), 'base vars kept');

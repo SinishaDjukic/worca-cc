@@ -557,7 +557,9 @@
       {
         "section": "^Interface mode",
         "selectors": [
-          ".gv-"
+          ".gv-",
+          ".nsess",
+          ".nlabel:has(.nrun) .nsess"
         ],
         "feature": "workflows",
         "name": "node-graph"
@@ -809,6 +811,7 @@
         "section": "^Agents accordion \\(New pipeline\\)",
         "selectors": [
           ".wf-engine-",
+          ".rs-session-note",
           ".field-grid-2",
           ".field-compact"
         ],
@@ -1040,6 +1043,7 @@
         "^Running redesign: shared keyframes",
         "^Runs: one list",
         "^Running detail",
+        "^Run page: Sessions tab",
         "^\"Stop this run\\?\" confirm modal",
         "^reduced motion for the Running redesign",
         "^Report this run modal"

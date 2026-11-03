@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mergeTimings, parseArgs, planShards, selectFiles } from '../tools/test.mjs';
+import { mergeTimings, needsFullSuiteLock, parseArgs, planShards, releaseFullSuiteLock, selectFiles, tryFullSuiteLock } from '../tools/test.mjs';
 import { timingFiles } from '../tools/test-timings-merge.mjs';
 
 const TOOLS = fileURLToPath(new URL('../tools', import.meta.url));
@@ -114,7 +114,7 @@ test('--timings-out writes the run\'s own per-file seconds, spawn to exit (what 
   } finally { rmSync(dir, rmOpts); }
 });
 
-test('a file whose process stays up over 2 s after its last test gets a tail warning; a file that exits at once does not', () => {
+test('a measuring run: a file whose process stays up over 2 s after its last test gets a tail warning; a file that exits at once does not', () => {
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-tail-'));
   try {
     const held = join(dir, 'held.test.mjs');
@@ -122,13 +122,73 @@ test('a file whose process stays up over 2 s after its last test gets a tail war
     // A ref'd timer armed by the test holds the process 2.5 s after the test passes.
     writeFileSync(held, "import { test } from 'node:test';\ntest('arms a timer', () => { setTimeout(() => {}, 2500); });\n");
     writeFileSync(clean, "import { test } from 'node:test';\ntest('arms an unref timer', () => { setTimeout(() => {}, 2500).unref(); });\n");
-    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), held, clean],
+    // Only a measuring run sees tails: elsewhere forceExit ends a file as soon as its tests are done.
+    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), '--timings-out', join(dir, 't.json'), held, clean],
       { encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const warned = r.stderr.split('\n').filter((l) => l.startsWith('warning: '));
     assert.equal(warned.length, 1, r.stderr);
     const m = warned[0].match(/\/held\.test\.mjs stayed up (\d+\.\d) s outside its tests/);
     assert.ok(m && +m[1] >= 2.4, warned[0]);
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('forceExit: a file still held open after its tests (a live server, a ref\'d timer) no longer holds the run', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-force-'));
+  try {
+    const held = join(dir, 'held.test.mjs');
+    writeFileSync(held, "import { test } from 'node:test';\nimport { createServer } from 'node:http';\ntest('leaves a server listening', () => { createServer().listen(0); setTimeout(() => {}, 60_000); });\n");
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), held],
+      { encoding: 'utf8', timeout: 30_000, env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0} ms: the file's process outlived its tests`);
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('the whole-suite timeout stops the run and every test process it started (WORCA_TEST_SUITE_TIMEOUT_MIN)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-limit-'));
+  try {
+    const hung = join(dir, 'hung.test.mjs');
+    const pidFile = join(dir, 'pid');
+    writeFileSync(hung, `import { test } from 'node:test';\nimport { writeFileSync } from 'node:fs';\ntest('never ends', async () => { writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); await new Promise(() => setInterval(() => {}, 1000)); });\n`);
+    const t0 = Date.now();
+    const child = spawn(process.execPath, [join(TOOLS, 'test.mjs'), hung],
+      { env: { ...process.env, NODE_TEST_CONTEXT: undefined, WORCA_TEST_SUITE_TIMEOUT_MIN: '0.05' } });
+    let err = '';
+    child.stderr.on('data', (d) => { err += d; });
+    const code = await new Promise((r) => child.on('close', r));
+    assert.equal(code, 1, err);
+    assert.match(err, /ran past its \d+ min limit/);
+    assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0} ms`);
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    await new Promise((r) => setTimeout(r, 200));
+    assert.throws(() => process.kill(pid, 0), /ESRCH/, 'the test file\'s own process was killed too');
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('full-suite lock: one holder at a time, a dead holder is taken over, release only frees our own lock; only unscoped local runs take it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-lock-'));
+  try {
+    const file = join(dir, 'full.lock');
+    const me = { pid: process.pid, cwd: '/a', at: 1 };
+    assert.deepEqual(tryFullSuiteLock(file, me), { ok: true });
+    const other = tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: 2 });
+    assert.equal(other.ok, false);
+    assert.equal(other.holder.cwd, '/a');
+    releaseFullSuiteLock(file, process.ppid);                 // not the holder: no effect
+    assert.equal(tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: 2 }).ok, false);
+    releaseFullSuiteLock(file, process.pid);
+    assert.equal(tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: 2 }).ok, true);
+    writeFileSync(file, JSON.stringify({ pid: 2 ** 22 + 12345, cwd: '/dead', at: 0 }));   // no such process
+    assert.equal(tryFullSuiteLock(file, me).ok, true);
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).cwd, '/a');
+    const o = (x) => ({ files: [], shard: null, ...x });
+    assert.equal(needsFullSuiteLock(o({}), {}), true);
+    assert.equal(needsFullSuiteLock(o({ files: ['test/a.test.mjs'] }), {}), false);
+    assert.equal(needsFullSuiteLock(o({ shard: '1/4' }), {}), false);
+    assert.equal(needsFullSuiteLock(o({}), { CI: 'true' }), false);
+    assert.equal(needsFullSuiteLock(o({}), { WORCA_TEST_NO_LOCK: '1' }), false);
   } finally { rmSync(dir, rmOpts); }
 });
 

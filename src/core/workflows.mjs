@@ -30,15 +30,17 @@ import { readPluginsLock } from './plugins-lock.mjs';                 // a DISAB
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
+  GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID,
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
   GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_PR_FIX_WORKFLOW, PR_FIX_WORKFLOW_ID,
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
+export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { resolveRoleModel, roleOf } from './model-roles.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
@@ -211,8 +213,9 @@ function parseArr(text) {
 }
 
 /** Map a workflows row to the template object shape. Version-aware: `graph`
- *  carries {nodes, wires, canvas?} ONLY — id/name/domain/origin stay row columns,
- *  so a rename can never drift. */
+ *  carries {nodes, wires} plus the template extras (pickTemplateExtras: canvas?,
+ *  codeGraph?, sessions?) ONLY — id/name/domain/origin stay row columns, so a
+ *  rename can never drift. */
 function rowToTpl(r) {
   const base = {
     id: r.id,
@@ -229,8 +232,7 @@ function rowToTpl(r) {
     try { graph = JSON.parse(r.graph || '{}') || {}; } catch { graph = {}; }
     base.nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
     base.wires = Array.isArray(graph.wires) ? graph.wires : [];
-    if (graph.canvas && typeof graph.canvas === 'object') base.canvas = graph.canvas;
-    if (graph.codeGraph === false) base.codeGraph = false;
+    Object.assign(base, pickTemplateExtras(graph, base.nodes));
     return base;
   }
   base.steps = parseArr(r.steps);
@@ -307,7 +309,7 @@ export async function writeWorkflow(tpl) {
  * because the importers/seeders that re-write a row by design must keep the
  * upsert; the API's save path is the one caller that turns it on.
  *
- * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object}} tpl
+ * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object, codeGraph?:false, sessions?:object}} tpl
  * @param {{rejectCollision?:boolean, revisionSource?:string, by?:string|null}} [opts]
  * @throws {Error} code 'RESERVED_NAME' (the name slugs onto wf_default) or,
  *   with rejectCollision, code 'ID_TAKEN' + `.id` (the minted id is in use)
@@ -338,8 +340,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   const domain = normDomain(tpl && tpl.domain);
   const origin = typeof tpl?.origin === 'string' && tpl.origin ? tpl.origin : null;
   const graph = { nodes: Array.isArray(tpl?.nodes) ? tpl.nodes : [], wires: Array.isArray(tpl?.wires) ? tpl.wires : [] };
-  if (tpl?.canvas && typeof tpl.canvas === 'object') graph.canvas = tpl.canvas;
-  if (tpl?.codeGraph === false) graph.codeGraph = false;
+  Object.assign(graph, pickTemplateExtras(tpl, graph.nodes));
 
   getDb();
   const existing = prepare('SELECT created_at, archived_at FROM workflows WHERE id = ?').get(id);
@@ -388,6 +389,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
 export async function readWorkflow(id, opts = {}) {
   // `wf_default` IS the graph: the v1 default died with the v1 engine.
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return GRAPH_DEFAULT_WORKFLOW;
+  if (id === LEAN_WORKFLOW_ID) return GRAPH_LEAN_WORKFLOW;
   if (id === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return GRAPH_MEMORY_DEFRAG_WORKFLOW;
   if (id === WORKSPACE_SCAN_WORKFLOW_ID) return GRAPH_WORKSPACE_SCAN_WORKFLOW;
@@ -430,12 +432,12 @@ export function runnableOf(row, { use = 'live' } = {}) {
   const v = readVersion(row.id, no);
   if (!v) throw Object.assign(new Error(`workflow "${id}" has no version ${no}`), { code: 'NOT_FOUND' });
   const g = v.graph && typeof v.graph === 'object' ? v.graph : {};
-  const { canvas: _c, codeGraph: _g, nodes: _n, wires: _w, ...rest } = row;
+  const { canvas: _c, codeGraph: _g, sessions: _s, nodes: _n, wires: _w, ...rest } = row;
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
   return {
     ...rest, name: v.name, domain: v.domain || row.domain,
-    nodes: Array.isArray(g.nodes) ? g.nodes : [], wires: Array.isArray(g.wires) ? g.wires : [],
-    ...(g.canvas && typeof g.canvas === 'object' ? { canvas: g.canvas } : {}),
-    ...(g.codeGraph === false ? { codeGraph: false } : {}),
+    nodes, wires: Array.isArray(g.wires) ? g.wires : [],
+    ...pickTemplateExtras(g, nodes),   // the version's canvas, code-graph opt-out and session settings
     versionNo: no,
   };
 }
@@ -555,6 +557,9 @@ export async function setWorkflowNodeDefaults(id, map) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) {
     throw new Error('the built-in Default workflow cannot store defaults — save a copy in the Workflows view first');
   }
+  if (id === LEAN_WORKFLOW_ID) {
+    throw new Error('the built-in Lean workflow cannot store defaults — save a copy in the Workflows view first');
+  }
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) {
     throw new Error('the built-in Memory defragment workflow cannot store defaults — save a copy in the Workflows view first');
   }
@@ -572,7 +577,7 @@ export async function setWorkflowNodeDefaults(id, map) {
       return { ...node, config: { ...kept, ...clean } };
     });
     const now = new Date().toISOString();
-    const nextGraph = JSON.stringify({ nodes, wires: tpl.wires, ...(tpl.canvas ? { canvas: tpl.canvas } : {}) });
+    const nextGraph = JSON.stringify({ nodes, wires: tpl.wires, ...pickTemplateExtras(tpl, nodes) });
     tx(() => {
       const prev = prepare(`SELECT ${ROW_COLS} FROM workflows WHERE id = ?`).get(id);
       if (prev && prev.graph !== nextGraph) snapshotRowTx(prev, { source: 'defaults', now });
@@ -605,6 +610,7 @@ export async function setWorkflowNodeDefaults(id, map) {
 export async function deleteWorkflow(id) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
   if (id === AUTO_WORKFLOW_ID) return false;    // never a row
+  if (id === LEAN_WORKFLOW_ID) return false;    // a constant, never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
   if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return false; // constants, never rows

@@ -3,7 +3,7 @@
 // agent user when asked), line framing of stdout/stderr, abort -> SIGTERM ->
 // grace -> SIGKILL, staged-file cleanup, the scrubbed spawn env. What a stdout
 // line MEANS is the adapter's business (onStdoutLine); this module never parses one.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { realpathSync } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';
@@ -18,6 +18,7 @@ import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { withTryGuardEnv } from '../workflow-tests/try-guard-env.mjs';
 import { withoutProxyLogin } from '../env-proxy.mjs';
+import { testWorkerCap } from '../settings.mjs';
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -100,8 +101,8 @@ export function cleanRunEnv(env) {
  * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
  * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, and no
  * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
- * goes direct rather than get the password). With
- * no run env and no overlay the env is byte-identical to the scrub result.
+ * goes direct rather than get the password), and WORCA_TEST_CONCURRENCY (testWorkerCap) unless set. With
+ * no run env and no overlay the env is otherwise identical to the scrub result.
  * @returns {{env: Record<string,string>, scrubbed: boolean}}
  */
 export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid, tryGuard = null, signInEnv = null } = {}) {
@@ -119,6 +120,9 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   // Workflow tests 3a (D56): a try's outward guard (PATH stand-ins, git that cannot sign in). Absent: byte-identical.
   if (tryGuard) env = withTryGuardEnv(env, tryGuard);
   env = withNoGitPath(withoutProxyLogin(env));
+  // The per-run test-worker cap (Settings › Runs › Machine load): a test runner that reads it (this repo's
+  // tools/test-run.mjs) leaves cores for the run's other work and for other runs. A value already set wins.
+  if (!env.WORCA_TEST_CONCURRENCY) env = { ...env, WORCA_TEST_CONCURRENCY: String(testWorkerCap()) };
   return { env, scrubbed: !!scrubbedEnv };
 }
 
@@ -137,6 +141,30 @@ export function safeEmit(onEvent, e) {
 // does NOT ride on the capped message: recovery markers are classified line-by-
 // line as stderr streams (see rlErr) and stamped on the error as `errorClass`.
 const STDERR_DETAIL_MAX = 2000;
+
+// E3: every harness child leads its own process group on POSIX (`detached: true` = setsid), so a
+// stop reaches the background jobs it started (a `run_in_background` test suite, a dev server), and
+// whatever it leaves behind is reaped when it exits. A detached group no longer gets a terminal's
+// Ctrl+C, so the groups still running are killed when the host exits (an 'exit' listener must be
+// synchronous; a host that is SIGKILLed cannot run it). Windows has no groups: `taskkill /T` walks
+// the tree while the root is alive.
+const liveGroups = new Set();
+process.on('exit', () => { for (const pid of liveGroups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
+
+/** Signal a child's whole tree. The group id stays allocated while any member lives, so `-pid`
+ *  only ever reaches our descendants; an empty group answers ESRCH. Never throws. */
+export function signalTree(child, sig, { group = true, platform = process.platform } = {}) {
+  if (!child || typeof child.pid !== 'number') return;
+  if (platform === 'win32') {
+    if (child.exitCode === null && child.signalCode === null) {
+      try { spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch { /* best effort */ }
+    }
+    try { child.kill(sig); } catch { /* gone */ }
+    return;
+  }
+  if (group) { try { process.kill(-child.pid, sig); return; } catch { /* no group: the child alone */ } }
+  try { child.kill(sig); } catch { /* gone */ }
+}
 
 /**
  * Spawn one harness process and supervise it to the end. Resolves with
@@ -180,6 +208,8 @@ export function superviseSpawn(o) {
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
     // own process group so a stuck agent can still be SIGKILLed through sudo.
     const agentId = asAgent ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
+    // E3: our own process group (POSIX). The agent user's sudo spawn already has one (killAgentGroup).
+    const ownGroup = !agentId && process.platform !== 'win32';
     let child;
     try {
       let exe = file;
@@ -192,8 +222,10 @@ export function superviseSpawn(o) {
       }
       child = spawn(exe, argv, {
         cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
-        ...(agentId ? { detached: true } : {}),
+        ...(agentId || ownGroup ? { detached: true } : {}),
+        windowsHide: true,
       });
+      if (ownGroup && typeof child.pid === 'number') liveGroups.add(child.pid);
     } catch (err) {
       cleanup();
       rejectP(spawnError(err, `Failed to spawn ${displayBin}`));
@@ -218,21 +250,15 @@ export function superviseSpawn(o) {
     const terminateChild = () => {
       if (terminationStarted) return;
       terminationStarted = true;
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        /* ignore */
-      }
-      // Escalate if it ignores SIGTERM.
+      signalTree(child, 'SIGTERM', { group: ownGroup });
+      // Escalate if it ignores SIGTERM. Our own group is killed whole even once the leader exited:
+      // a background job that ignored SIGTERM still holds the group id, so `-pid` reaches only it.
       killTimer = setTimeout(() => {
-        // Only a sudo still running holds the group: after it exits the pid may be reused.
+        // Only a sudo still running holds the agent's group: after it exits the pid may be reused.
         const stuck = child.exitCode === null && child.signalCode === null;
+        if (ownGroup) { signalTree(child, 'SIGKILL'); return; }
         if (!stuck) return;
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          /* ignore */
-        }
+        signalTree(child, 'SIGKILL', { group: false });
         if (agentId && stuck) killAgentGroup(child.pid, agentId);
       }, sigkillGraceMs()).unref?.();
     };
@@ -247,6 +273,8 @@ export function superviseSpawn(o) {
       settled = true;
       if (signal) signal.removeEventListener?.('abort', onAbort);
       if (killTimer) clearTimeout(killTimer);
+      // E3: reap what the agent left running in its group (a forgotten background job). ESRCH when nothing is left.
+      if (ownGroup && typeof child?.pid === 'number') { signalTree(child, 'SIGKILL'); liveGroups.delete(child.pid); }
       cleanup();
       fn(arg);
     };

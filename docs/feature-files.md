@@ -16,7 +16,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/shell/responsive-nav.css` | 52 |
 | `ui/public/shell/scrollbars.css` | 27 |
 | `ui/public/shell/search-and-shortcuts.css` | 43 |
-| `ui/public/shell/self-hosted.css` | 196 |
+| `ui/public/shell/self-hosted.css` | 201 |
 | `ui/public/shell/sidebar.css` | 128 |
 | `ui/public/shell/sidebar.html` | 208 |
 | `ui/public/shell/top-bar.css` | 85 |
@@ -77,8 +77,8 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | File | Lines |
 |---|---|
 | `ui/public/new-run/advanced-disclosure.css` | 23 |
-| `ui/public/new-run/field-rows.css` | 27 |
-| `ui/public/new-run/new.html` | 418 |
+| `ui/public/new-run/field-rows.css` | 31 |
+| `ui/public/new-run/new.html` | 428 |
 | `ui/public/new-run/pipeline-config.css` | 65 |
 | `ui/public/new-run/pluggable-source.css` | 34 |
 | `ui/public/new-run/target-branches.css` | 63 |
@@ -95,7 +95,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/group-page.css` | 118 |
 | `ui/public/runs/header-badges.css` | 19 |
 | `ui/public/runs/live-log.css` | 31 |
-| `ui/public/runs/log-filters.css` | 41 |
+| `ui/public/runs/log-filters.css` | 47 |
 | `ui/public/runs/questions-panel.css` | 59 |
 | `ui/public/runs/reduced-motion.css` | 5 |
 | `ui/public/runs/report-modal.css` | 55 |
@@ -103,8 +103,9 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/run-detail.css` | 79 |
 | `ui/public/runs/run-flow-decor.css` | 35 |
 | `ui/public/runs/run-graph.css` | 112 |
-| `ui/public/runs/run-page.css` | 60 |
-| `ui/public/runs/run-telemetry.css` | 15 |
+| `ui/public/runs/run-page-gate.css` | 60 |
+| `ui/public/runs/run-page-sessions.css` | 47 |
+| `ui/public/runs/run-telemetry.css` | 20 |
 | `ui/public/runs/running-detail-bar.css` | 387 |
 | `ui/public/runs/running-detail-header.css` | 43 |
 | `ui/public/runs/running-detail-live.css` | 63 |
@@ -113,7 +114,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/running-redesign.css` | 193 |
 | `ui/public/runs/runs.html` | 395 |
 | `ui/public/runs/smart-naming.css` | 19 |
-| `ui/public/runs/step-log-drawer.css` | 38 |
+| `ui/public/runs/step-log-drawer.css` | 42 |
 | `ui/public/runs/tags-and-labels.css` | 68 |
 | `ui/public/runs/welcome.html` | 103 |
 | `ui/public/runs/workflow-question.css` | 70 |
@@ -127,7 +128,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/routes/runs/publish.mjs` | 117 |
 | `ui/routes/runs/report.mjs` | 95 |
 | `ui/routes/runs/run-groups.mjs` | 185 |
-| `ui/routes/runs/runs.mjs` | 364 |
+| `ui/routes/runs/runs.mjs` | 397 |
 
 ## history
 
@@ -139,31 +140,31 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/history/history-detail-agents.css` | 48 |
 | `ui/public/history/history-detail-diff-comments.css` | 79 |
 | `ui/public/history/history-detail-diff-tab.css` | 62 |
-| `ui/public/history/history-detail-meta.css` | 161 |
+| `ui/public/history/history-detail-meta.css` | 162 |
 | `ui/public/history/history-detail-overview.css` | 54 |
 | `ui/public/history/history-detail-pr.css` | 200 |
 | `ui/public/history/shipit.html` | 128 |
 | `ui/routes/history/branches-and-push.mjs` | 121 |
 | `ui/routes/history/history.mjs` | 207 |
 | `ui/routes/history/pull-requests.mjs` | 405 |
-| `ui/routes/history/sync.mjs` | 47 |
+| `ui/routes/history/sync.mjs` | 48 |
 
 ## settings
 
 | File | Lines |
 |---|---|
 | `ui/public/settings/about-update.css` | 52 |
-| `ui/public/settings/agent-memory.css` | 65 |
+| `ui/public/settings/agent-memory.css` | 73 |
 | `ui/public/settings/away-screensaver.css` | 27 |
 | `ui/public/settings/budget-readout.css` | 8 |
 | `ui/public/settings/info-tooltips.css` | 180 |
 | `ui/public/settings/settings-cards.css` | 36 |
-| `ui/public/settings/settings.html` | 903 |
+| `ui/public/settings/settings.html` | 967 |
 | `ui/public/settings/update.html` | 50 |
 | `ui/routes/settings/config.mjs` | 194 |
 | `ui/routes/settings/memory.mjs` | 141 |
 | `ui/routes/settings/notifications-and-onboarding.mjs` | 94 |
-| `ui/routes/settings/settings.mjs` | 201 |
+| `ui/routes/settings/settings.mjs` | 247 |
 
 ## artifacts
 
@@ -182,14 +183,14 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/workflows/composer-chat.css` | 114 |
 | `ui/public/workflows/export-dialog.css` | 38 |
 | `ui/public/workflows/export.html` | 116 |
-| `ui/public/workflows/inspector-panels.css` | 73 |
-| `ui/public/workflows/node-graph.css` | 209 |
+| `ui/public/workflows/inspector-panels.css` | 86 |
+| `ui/public/workflows/node-graph.css` | 260 |
 | `ui/public/workflows/save-dialog.css` | 16 |
 | `ui/public/workflows/workflow-canvas.css` | 204 |
 | `ui/public/workflows/workflow-tests.css` | 406 |
 | `ui/public/workflows/workflows.html` | 190 |
 | `ui/routes/workflows/agents.mjs` | 125 |
-| `ui/routes/workflows/workflows.mjs` | 330 |
+| `ui/routes/workflows/workflows.mjs` | 331 |
 
 ## scripts ([scripts.md](scripts.md))
 

@@ -12,7 +12,7 @@ import { HELPER_ENGINES } from '../../../src/core/model-env.mjs';
 import { defragSlotPair } from '../../../src/core/settings-cascade.mjs';
 import { ON_CONFLICT_MODES, RESOLUTION_CHOICES, exportWorkflow, exportWorkflowPlugin } from '../../../src/core/workflow-export.mjs';
 import { exportGraphJson, importGraphWorkflow, isExportUse, nodeDefaultsError, saveGraphWorkflow, workflowFileSlug } from '../../../src/core/workflow-share.mjs';
-import { GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, assertRunnableWorkflow, deleteWorkflow, graphNeedsRepo, listWorkflows, setWorkflowNodeDefaults, workflowNodeDefaults } from '../../../src/core/workflows.mjs';
+import { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, LEAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, assertRunnableWorkflow, deleteWorkflow, graphNeedsRepo, listWorkflows, setWorkflowNodeDefaults, workflowNodeDefaults } from '../../../src/core/workflows.mjs';
 import { runsOn } from '../../../src/shared/connections.mjs';
 import { ENGINE_NAMES } from '../../../src/shared/engine-switch.mjs';
 import { AGENTS_DIR, MARKETPLACE_ID_RE, badRequest, gitMissing, isTruthy, resolveProjectDir } from '../../server.mjs';
@@ -65,12 +65,12 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in,
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in,
     // then the saved rows ]. The built-ins are never persisted rows (listWorkflows
     // filters their ids), so none appears twice.
     // P3 (U13): each row says whether one of its agents expects a code repository (the No-project note).
     const registry = loadAgentRegistry(AGENTS_DIR);
-    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW,
+    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW,
       GRAPH_SHAPE_WORKFLOW, ...(await listWorkflows())]
       .map((wf) => ({ ...wf, needsRepo: graphNeedsRepo(wf, registry) })) });
   } catch (err) {
@@ -216,6 +216,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   const id = req.params.id;
   // The built-in default is not in the user store and must never be deleted.
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
+  if (id === LEAN_WORKFLOW_ID) return badRequest(res, 'the Lean workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
   if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
   if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return badRequest(res, 'the Shaper workflow cannot be deleted');

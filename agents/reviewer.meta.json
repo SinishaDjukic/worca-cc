@@ -4,7 +4,7 @@
   "needsRepo": true,
   "progressStage": "review",
   "mockRole": "reviewer",
-  "promptHints": "Review the git diff of what was implemented against the plan.",
+  "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
   "wantsRequest": true,
   "workspaceStrategy": "review",
   "verdict": { "filename": "impl-review-cycle{cycle}.json" },
