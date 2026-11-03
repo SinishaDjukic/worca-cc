@@ -76,6 +76,11 @@ test('what is carried: the person\'s sign-in; nothing with the broker on or into
   assert.equal(seen, '/cfg/other', 'a model profile that moves the config folder moves where the sign-in is read');
   assert.deepEqual(secretValuesOf({ ANTHROPIC_API_KEY: 'sk-ant-12345678', CLAUDE_CODE_USE_VERTEX: '1', AWS_SECRET_ACCESS_KEY: 'abcdefgh1234',
     ANTHROPIC_AUTH_TOKEN: 'short', AWS_SESSION_TOKEN: 'zzzzzzzzzz' }), ['sk-ant-12345678', 'abcdefgh1234', 'zzzzzzzzzz']);
+  // D71a: every carried value is redacted unless it is plain routing; URL userinfo is redacted on its own.
+  assert.deepEqual(secretValuesOf({ ANTHROPIC_CUSTOM_HEADERS: 'Authorization: Bearer abcdefgh12345' }), ['Authorization: Bearer abcdefgh12345']);
+  assert.deepEqual(secretValuesOf({ ANTHROPIC_BASE_URL: 'https://user1:pa55word@gw.example.com' }), ['user1', 'pa55word']);
+  assert.deepEqual(secretValuesOf({ HTTPS_PROXY: 'http://puser:ppass99@proxy.example.com:8080' }), ['puser', 'ppass99']);
+  assert.deepEqual(secretValuesOf({ CLAUDE_CODE_USE_VERTEX: '1', AWS_REGION: 'us-east-1', CLOUD_ML_REGION: 'europe-west4', NO_PROXY: 'localhost,127.0.0.1' }), []);
 });
 
 test('runOpts: a Pretend try\'s node gets the sources and pluginsOff; any other node neither', () => {

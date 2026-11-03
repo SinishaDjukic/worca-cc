@@ -3,7 +3,7 @@
 // GH #380 staging plan, the model env and wire model, the host-guard preamble,
 // and the stream-json line parser. Process supervision is engines/spawn.mjs;
 // the public entry point stays runClaude in src/core/claude-runner.mjs.
-import { prepareModelEnv, envFlag, describeModelEnv, withProviderModesOff, withStreamTimeouts } from '../model-env.mjs';
+import { prepareModelEnv, isReadableModelEnvKey, envFlag, describeModelEnv, withProviderModesOff, withStreamTimeouts } from '../model-env.mjs';
 import { effectiveDebugSpawn } from '../settings.mjs';
 import { classifyError } from '../recoverable-error.mjs';
 import { bridgeEvents } from '../bridge/telemetry.mjs';
@@ -575,10 +575,22 @@ export function signInCarry({ modelEnv = null, asAgent = false, read = readUserS
   } catch { return null; }
 }
 
-const SECRET_KEY_RE = /TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL/i;
-/** The carried values a run must never show (D71): those whose key names a token, key, secret, password or credential. */
+const ROUTING_KEY_RE = /^(CLOUD_ML_REGION|AWS_REGION|AWS_PROFILE|ANTHROPIC_VERTEX_PROJECT_ID|HTTP_PROXY|HTTPS_PROXY|NO_PROXY)$/i;
+/**
+ * The carried values a run must never show (D71, D71a): every string value of 8+ characters except the keys that are
+ * safe to print (readable model-env keys and plain routing keys). A URL's username and password (4+ chars) are redacted
+ * on their own, also on the printable keys (ANTHROPIC_BASE_URL, the proxies).
+ */
 export function secretValuesOf(env) {
-  return Object.entries(env || {}).filter(([k, v]) => SECRET_KEY_RE.test(k) && typeof v === 'string' && v.length >= 8).map(([, v]) => v);
+  const out = [];
+  for (const [k, v] of Object.entries(env || {})) {
+    if (typeof v !== 'string') continue;
+    if (v.length >= 8 && !isReadableModelEnvKey(k) && !ROUTING_KEY_RE.test(k)) out.push(v);
+    let u = null;
+    try { u = new URL(v); } catch { /* not a URL */ }
+    if (u) for (const part of [u.username, u.password]) { if (part.length >= 4) out.push(part); }
+  }
+  return out;
 }
 
 export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard, pluginsOff }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
