@@ -2,7 +2,7 @@
 name: chat-plugin-freeform-port
 description: Porting Discord's freeform chat (interactive controls, threads, reactions) to another chat plugin worker — where the contract is tested and which traps cost a c
 paths: plugins/*-chat/**, test/*-chat-worker.test.mjs
-updated: 2026-11-03T19:21:54.476Z
+updated: 2026-11-03T19:26:57.623Z
 author: Bulibas
 ---
 
@@ -31,6 +31,9 @@ Porting freeform chat to slack-chat (2026-11-03) showed where the worker-host co
   3 × 5 s = 15 s. Telegram fix (cycle 4): one `{ left }` budget object spent by every wait of the start (topic create,
   each header chunk, pointer). Pin it with a 429 `retry_after: 5` on EVERY try and assert the sleeps sum < 15000;
   a single 429 of 20 s does not tell a per-wait cap from a total.
+  Pin the budget on EVERY start path, not just the one the review named. On cycle 4 a topic-only row left four
+  forwarding sites unpinned: topic create, pointer, reply-chain post and DM post. Dropping `{ budget }` from any of
+  them stayed green.
 - **Receipt marks are Unicode** (`receipts.mjs` `MARK`, `⏹️` = U+23F9 U+FE0F). A platform that reacts by name needs a
   map; build its keys with `String.fromCodePoint(...)` (map both with and without U+FE0F): the Write tool turns
   backslash-u escapes into raw characters, and a lost U+FE0F is invisible.
