@@ -60,5 +60,6 @@
     { "kind": "a thing's own setting (a schedule's times, a run's budget)", "slot": "the fact itself where the page shows it, as a SentencePicker; settings that must change together: a Dialog from ⋯ (Edit schedule…); where it belongs (its group): ⋯" },
     { "kind": "how Worca behaves everywhere", "slot": "Settings; a thing's own settings are the thing's" },
     { "kind": "a row's own actions", "slot": "a ⋯ at the row's right end" }
-  ]
+  ],
+  "motion": { "rule": "docs/design-system.md › Motion: motion shows what changed, never decorates; fade, never slide", "timings": { "--motion-quick": "150ms: appears, opens, goes", "--motion-change": "200ms: becomes something else", "--motion-flash": "1.2s: the one flash after a jump", "--ease": "cubic-bezier(.2, 0, 0, 1)" }, "never": ["page or tab transitions", "slides", "springs or bounces", "count-ups", "spinners", "skeleton shimmer", "motion without a state change"], "reducedMotion": "every timing 0; breathing and shimmer still" }
 }

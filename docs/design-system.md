@@ -21,7 +21,7 @@ Every screen reads down one rail, and everything has one place on it.
    actions in ⋯ next to it, danger last after a rule.
 5. **Quiet until needed.** Labels, tags, banners and help appear when there is something to say; help lives in
    tooltips, not lines.
-6. **Nothing moves by itself.** No jumps, no reflow on hover, no animation that is not a state change; a click, a
+6. **Nothing moves by itself.** No jumps, no reflow on hover, no animation that is not a state change (Motion); a click, a
    repaint or a menu never scrolls the page.
 
 ### Type roles
@@ -65,6 +65,38 @@ today's look until the Rail ships; these values replace it then.
 - **The metadata line:** the branch is `--ink-2`, so the PR number and the phrase read first.
 - **Depth in dark:** a floating surface is a step lighter than the page (`--float`) with a hairline (`--float-line`);
   the shadow alone does not show on dark.
+
+### Motion
+Motion shows what changed, never decorates. Every change of state on the screen eases in, quickly and with one
+curve; everything else is still. Mock: `plans/rail/mocks/motion-*.gif`.
+- **Three timings, one curve:** `--motion-quick` 150ms (something appears, opens or goes), `--motion-change` 200ms
+  (something that was there becomes something else), `--motion-flash` 1.2s (the one flash after a jump); all on
+  `--ease` `cubic-bezier(.2, 0, 0, 1)`. Nothing is slower; nothing bounces.
+- **Fade, never slide.** What appears fades in and what goes fades out; what is around it moves to its new place at the
+  same pace, so nothing jumps. Nothing travels across the screen.
+
+| Moment | Motion |
+|---|---|
+| A row opens or closes its detail | the detail fades over `quick`; the › turns; what is below moves with it |
+| A row arrives or leaves (Pulse, Runs, a cleared update) | fades in or out over `quick`; the rows around it move to their place |
+| A state changes (the word, the dot, a step's mark, a progress cell) | the old fades out, the new fades in, over `change`; a colour changes over `change` |
+| A text replaces another in place (the selection bar for the list's sentence, `Merging…` for `Merge PR`) | crossfade over `quick` |
+| A menu, popover, tooltip or panel opens | fades in over `quick` (a tooltip after its usual delay); closes at once |
+| A Dialog or the ConfirmStrip opens | fades in over `quick`; the strip's space opens with it |
+| A Switch changes | the thumb moves over `quick`; the track's colour over `change` |
+| A tick box is ticked | the tick fades in over `quick` |
+| Hover and press | the tint over 100ms, never a lift or a size change |
+| A Toast | fades in over `quick`, out over `change` |
+| A link lands on a fact's home | the target lights once and fades over `flash`; focus moves to it |
+| Working | the live dot and the live cell breathe: the one thing that moves on its own, because it means work is happening |
+| Worca writes in a field | the violet shimmer, while it writes |
+
+- **Never:** a transition between pages or tabs (they change at once), a slide, a spring, a bounce, a count-up, a
+  spinner, a skeleton shimmer, a parallax, motion on scroll, or anything that runs without a state change.
+- **Reduced motion** (`prefers-reduced-motion`): every timing is 0; the breathing is a still colour, the shimmer a still
+  wash, the flash a still outline that fades with the next click.
+- A live update never moves what you are reading: what arrives above it holds its place until you scroll there (Pulse
+  and the group page already keep this).
 
 ### Which component: one per need
 A Rail page is built by naming needs, not looks. Find the need, use its component as its page in the Design System
