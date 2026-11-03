@@ -274,7 +274,7 @@ On the split tree (`ui/public/parts.json` exists), `node tools/split-by-feature.
   `app.get|post|put|patch|delete|all` call before `servePublic` whose method and path are not in
   `tools/split-by-feature/central-routes.json` (today's ingress, body-limit, git guard and `/vendor` routes, each with
   its reason) fails with the same message plus `(top of ui/server.mjs is for central sign-in and guards only)`. The
-  repo's `CLAUDE.md` states the placement rule for agents: move the code, never add an exception.
+  rule is the same for people and AI agents: move the code, never add an exception.
 - **A kept monolith.** `ui/public/style.css` or `ui/public/index.html` next to `ui/public/parts.json`, typically a
   modify/delete conflict resolved by keeping the PR's copy, is not served: the app builds `/style.css` and the page from
   the parts. `--check` and `test/public-assets.test.mjs` fail and name the catch-up command.
