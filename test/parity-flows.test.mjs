@@ -1,7 +1,7 @@
 // test/parity-flows.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PAGES, FLOWS, chromePath, DONE_WORDS, FlowError, flowError } from '../tools/parity/flows.mjs';
+import { PAGES, FLOWS, chromePath, chromeArgs, CRAWL_CHROME_ARGS, DONE_WORDS, FlowError, flowError } from '../tools/parity/flows.mjs';
 
 test('the 9 main pages with their hashes and views', () => {
   const seed = { projectKey: 'k1', pipelineId: 'p1', runId: 'r1', threadId: 't1', heldRunId: 'r2' };
@@ -39,4 +39,11 @@ test('flowError keeps our own reasons and drops foreign message text (no page da
 test('chromePath prefers CHROME_BIN and fails with a hint', () => {
   assert.equal(chromePath({ CHROME_BIN: '/x/chrome' }, () => true), '/x/chrome');
   assert.throws(() => chromePath({}, () => false), /set CHROME_BIN/);
+});
+
+test('chromeArgs: every parity Chrome gets the deterministic raster flags, plus no sandbox when asked or as root', () => {
+  for (const f of ['--disable-gpu', '--disable-partial-raster', '--num-raster-threads=1']) assert.ok(CRAWL_CHROME_ARGS.includes(f), f);
+  assert.deepEqual(chromeArgs({}, 501), CRAWL_CHROME_ARGS);
+  assert.deepEqual(chromeArgs({ CHROME_NO_SANDBOX: '1' }, 501), [...CRAWL_CHROME_ARGS, '--no-sandbox', '--disable-dev-shm-usage']);
+  assert.deepEqual(chromeArgs({}, 0).slice(-2), ['--no-sandbox', '--disable-dev-shm-usage']);
 });

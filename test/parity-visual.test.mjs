@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { encodePNG } from '../assets/promo-kit/tools/analyze.mjs';
-import { diffPng, MASKS, isPageContainer, idMasks } from '../tools/parity/visual.mjs';
+import { diffPng, MASKS, isPageContainer, idMasks, PIN_STYLE, steady, capture } from '../tools/parity/visual.mjs';
 
 const solid = (w, h, rgb) => encodePNG(w, h, new Uint8Array(w * h * 3).map((_, i) => rgb[i % 3]));
 
@@ -56,4 +56,57 @@ test('every visual mask has a reason row in docs/parity-harness.md, and every ro
   const json = Object.entries(JSON.parse(readFileSync(new URL('../tools/parity/visual-masks.json', import.meta.url), 'utf8'))).flatMap(([page, sels]) => sels.map((sel) => ({ page, sel })));
   assert.deepEqual(rows.map(({ page, sel }) => `${page} ${sel}`).sort(), json.map(({ page, sel }) => `${page} ${sel}`).sort());
   for (const r of rows) assert.ok(r.why.length > 10, `${r.page} ${r.sel}`);
+});
+
+/** A page that records what is done to it, enough for go() and capture(). */
+function fakePage() {
+  const calls = [];
+  const page = {
+    calls,
+    evaluate: async (fn) => { calls.push(`evaluate ${String(fn)}`); },
+    addStyleTag: async ({ content }) => { calls.push(`style ${content}`); },
+    mouse: { move: async (x, y) => { calls.push(`mouse ${x},${y}`); } },
+    reload: async () => {}, waitForFunction: async () => {}, waitForSelector: async () => {}, waitForLoadState: async () => {},
+    locator: (s) => s, getByText: (t) => t,
+    screenshot: async ({ path }) => { calls.push(`shot ${path}`); },
+  };
+  return page;
+}
+const SETTLE = [/^style /, /^evaluate .*activeElement.*blur/, /^mouse 0,0$/, /^evaluate .*requestAnimationFrame.*requestAnimationFrame/s];
+
+test('steady: pin style, then blur, then the mouse to (0,0), then two animation frames', async () => {
+  assert.equal(PIN_STYLE, '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}');
+  const page = fakePage();
+  await steady(page);
+  assert.equal(page.calls.length, 4);
+  assert.equal(page.calls[0], `style ${PIN_STYLE}`);
+  SETTLE.forEach((re, i) => assert.match(page.calls[i], re, page.calls[i]));
+});
+
+test('capture: every one of the 18 shots is taken right after steady', async (t) => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true });
+  t.after(() => { globalThis.fetch = realFetch; });
+  const page = fakePage();
+  const seed = { projectKey: 'k1', pipelineId: 'p1', runId: 'r1', threadId: 't1', heldRunId: 'r2' };
+  const shots = await capture(page, { base: 'http://x.invalid' }, seed, '/tmp/parity-shots');
+  assert.equal(shots.length, 18);
+  const at = page.calls.flatMap((c, i) => (c.startsWith('shot ') ? [i] : []));
+  assert.equal(at.length, 18);
+  for (const i of at) SETTLE.forEach((re, k) => assert.match(page.calls[i - 4 + k], re, `before ${page.calls[i]}`));
+});
+
+test('steady in Chrome: transitions are off and the focused field is blurred', async (t) => {
+  const { chromePath, openBrowser } = await import('../tools/parity/flows.mjs');
+  try { chromePath(); } catch { t.skip('no Chrome (set CHROME_BIN)'); return; }
+  const browser = await openBrowser();
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent('<style>input{transition:outline 2s;border-radius:8px}input:focus{outline:4px solid red}</style><input autofocus>');
+  await page.focus('input');
+  await steady(page);
+  const r = await page.evaluate(() => ({ active: document.activeElement.tagName,
+    transition: getComputedStyle(document.querySelector('input')).transitionDuration,
+    caret: getComputedStyle(document.querySelector('input')).caretColor }));
+  assert.deepEqual(r, { active: 'BODY', transition: '0s', caret: 'rgba(0, 0, 0, 0)' });
 });

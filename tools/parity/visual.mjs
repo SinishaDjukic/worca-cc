@@ -35,6 +35,18 @@ export function writeDiffPng(file, d) {
 export const SEED_ID_KEYS = ['runId', 'heldRunId', 'pipelineId', 'threadId', 'heldPipelineId'];
 export const idMasks = (page, seed) => SEED_ID_KEYS.filter((k) => seed[k]).map((k) => page.getByText(seed[k], { exact: false }));
 
+/** No transitions, animations or caret in a shot. A dev-vs-dev CI run showed 1–38 px on rounded corners (the search
+ *  box, the Profile avatar, the "Getting started" pill): focus or hover state caught mid-transition. */
+export const PIN_STYLE = '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}';
+
+/** Settle a page for its shot: the pin style, no focus, no hover, then two frames so the result is painted. */
+export async function steady(page) {
+  await page.addStyleTag({ content: PIN_STYLE });
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+}
+
 /** 9 pages × 2 themes; theme set through the app's setting (D16). Runs before the flows, on the clean seed. */
 export async function capture(page, t, seed, dir, log = () => {}) {
   const shots = [];
@@ -42,6 +54,7 @@ export async function capture(page, t, seed, dir, log = () => {}) {
     await fetch(`${t.base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ theme }) });
     for (const p of PAGES) {
       await go(page, p.hash(seed), p.view, p.sub);
+      await steady(page);
       const file = join(dir, `${p.name}-${theme}.png`);
       await page.screenshot({ path: file, animations: 'disabled', caret: 'hide',
         mask: [...(MASKS[p.name] || []).map((s) => page.locator(s)), ...idMasks(page, seed)], maskColor: '#ff00ff' });

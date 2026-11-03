@@ -53,7 +53,12 @@ app). No token, SSH agent or host config of the operator reaches a target.
    by a lock dir) so both sides show the same paths. 9 pages (Chat home, a chat thread, New run, Runs list, a live
    run, History detail, Settings, Labs, Statistics) are captured in light and dark (18 PNGs, 1280×800), then the 6
    flows run. The shots are pinned like the crawl: reduced motion, a seeded `Math.random` and no interval of 1 s or
-   more, so Chat home's rotating composer placeholder and its graph's animated dots match on both sides. The flows
+   more, so Chat home's rotating composer placeholder and its graph's animated dots match on both sides.
+   Before each shot the page is settled: a style turns off transitions, animations and the caret, the focused element is
+   blurred, the mouse moves to (0,0) and two animation frames pass (`steady` in `tools/parity/visual.mjs`), so a focus
+   ring or hover caught mid-transition never differs between sides. The shots' Chrome uses the crawler's deterministic
+   raster flags (`CRAWL_CHROME_ARGS` in `tools/parity/flows.mjs`); without them anti-aliased rounded corners differed
+   by 1 px dev vs dev. The flows
    get reduced motion only, because they wait on the app's own polling. The flows: open every page; send a chat message and see the reply; start a mock run from New run and see it hand
    off to History; open that run from the Runs list and by a fresh link to it in History; change the theme and see it after a reload; turn on the Labs "Flags demo" switch and see its note
    after a reload.

@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { startTarget, fixedRoot, HOST_APP_PORT } from './launch.mjs';
 import { createServer } from 'node:net';
 import { chromium } from 'playwright-core';
-import { chromePath, SEEDED_RANDOM, FROZEN_INTERVALS } from './flows.mjs';
+import { chromePath, chromeArgs, SEEDED_RANDOM, FROZEN_INTERVALS } from './flows.mjs';
 export { SEEDED_RANDOM, FROZEN_INTERVALS };
 import { holdRun, SEED_PROMPT } from './seed.mjs';
 import { shapeKey } from './shape.mjs';
@@ -65,14 +65,7 @@ function onSignals() {
   const bye = (sig) => { for (const t of LIVE) { try { process.kill(t.pid, 'SIGTERM'); } catch {} } process.exit(sig === 'SIGINT' ? 130 : 143); };
   process.once('SIGINT', bye); process.once('SIGTERM', bye);
 }
-/** Chrome with a deterministic raster: one raster thread, no GPU or partial raster, a fixed colour profile, no LCD text.
- *  A dev-vs-dev smoke showed anti-aliased rounded corners differing by a few pixels between two runs of the same tree. */
-export const CRAWL_CHROME_ARGS = ['--disable-gpu', '--disable-gpu-rasterization', '--num-raster-threads=1', '--disable-partial-raster',
-  '--force-color-profile=srgb', '--disable-lcd-text', '--font-render-hinting=none'];
-const openBrowser = () => {
-  const noSandbox = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0;
-  return chromium.launch({ executablePath: chromePath(), headless: true, args: [...CRAWL_CHROME_ARGS, ...(noSandbox ? ['--no-sandbox', '--disable-dev-shm-usage'] : [])] });
-};
+const openBrowser = () => chromium.launch({ executablePath: chromePath(), headless: true, args: chromeArgs() });
 const OVERLAY = 'dialog[open], [role=dialog], [role=alertdialog], [role=menu], [role=listbox], [class*="-pop"], #info-bubble';
 const MAX_DISCOVERED = 400;
 const sha1 = (b) => createHash('sha1').update(b).digest('hex');
