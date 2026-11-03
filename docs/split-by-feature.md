@@ -160,7 +160,7 @@ confirms before the step happens. Nothing here is done by a tool on its own: eve
 | A2 🔒 | Review the go/no-go | owner | read `split-go-no-go.md`, its evidence, and the waived gates and their evidence | the owner agrees with every gate |
 | A3 🔒 | Sign off the size cap | owner | `node tools/split-by-feature.mjs --check --stats` | 10,119 ≤ ceiling; every raise in `tools/split-by-feature/size-caps-raises.json` accepted |
 | B1 | Ship one tooling PR | owner | one PR from the tooling branch into dev, linked to #919 | one PR, CI started |
-| B2 | CI green | CI | tests, `parity-docker`, `firefox-e2e` | all three checks green |
+| B2 | CI green | CI | tests, `parity-docker`, `firefox-e2e` | all three checks green (`parity-docker`: the branch image against the split-tree image, 0 route, 0 px, 0 flow differences; tree against package) |
 | B3 🔒 | Merge the tooling | owner | squash-merge B1 | merged; dev still frozen |
 | B4 | Suite on dev | owner | `npm test` on dev after the merge | 0 failures outside `test/flaky-register.json` |
 | C1 | Readiness on frozen dev | owner | `npm run readiness -- run --out DIR` (`--crawl-from DIR` is reused under the crawl reuse rule; it re-crawls only when dev moved) | 10/10 rows pass, verdict `go` |
@@ -169,7 +169,7 @@ confirms before the step happens. Nothing here is done by a tool on its own: eve
 | D1 🔒 | Backups | owner | `git tag -a feature-split/before origin/dev -m "#919 split large files by feature: dev before the migration commit, dev $(git rev-parse origin/dev), $(date +%F)"`; push it; push `origin/dev` to the protected `backup/dev-before-feature-split`; in the owner's own checkout `git branch backup/dev-before-feature-split feature-split/before` (local, never pushed over); `mkdir -p ~/Backups/worca && git bundle create ~/Backups/worca/dev-before-feature-split.bundle origin/dev && git bundle verify ~/Backups/worca/dev-before-feature-split.bundle` | tag and branch on origin; the local branch exists; `git bundle verify` passes |
 | D2 | verify on that SHA | owner | `npm run split:verify -- --firefox-in-ci` on a clean checkout of it; C1's crawl stays valid if dev is still at the SHA C1 ran on and `node tools/parity/reuse.mjs` on C1's split and the freeze-day split prints VALID | every row passes (`e2e:firefox-smoke` left to CI) |
 | D3 | The migration commit M, in its own PR | owner | freeze-day command of step 4 above (`--apply` twice, one commit) | one commit M, its PR into dev |
-| D4 | CI green on M | CI | tests, `parity-docker`, `firefox-e2e` | all green |
+| D4 | CI green on M | CI | tests, `parity-docker`, `firefox-e2e` | all green (on M the branch is already split: `parity-docker` runs tree against package only; the image pair ran in B2) |
 | D5 | Owner's 15-minute check | owner | Actions › Check out on M's PR branch, then the main pages, a chat message and a run (or `tools/split-real-e2e.mjs`) | same as before the split |
 | D6 🔒 | Merge the migration | owner | squash-merge M's PR | merged |
 | D7 | Tag the split | owner | `git tag -a feature-split/after origin/dev -m "#919 split large files by feature: dev after the migration commit, dev $(git rev-parse origin/dev), $(date +%F)"`; push the tag | annotated tag on M |

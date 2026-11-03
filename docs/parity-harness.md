@@ -68,20 +68,24 @@ one mock run finished to `done`, one run held at its clarify question), so it wo
 
 ## Gates
 
-| Gate | tree vs tree | tree vs package | any pair with docker |
-|---|---|---|---|
-| Routes (status, shape, existence) | gated | gated | gated |
-| Signed out | gated | gated | gated |
-| Flows | gated | gated | gated |
-| Visuals (0 differing pixels) | gated | gated | reported, not gated (in-container paths and fonts differ) |
-| Timings | gated with 5 samples and no `--no-timing-gate` | reported | reported |
+| Gate | tree vs tree | tree vs package | docker vs docker | tree or package vs docker |
+|---|---|---|---|---|
+| Routes (status, shape, existence) | gated | gated | gated | gated |
+| Signed out | gated | gated | gated | gated |
+| Flows | gated | gated | gated | gated |
+| Visuals (0 differing pixels) | gated | gated | gated (one environment) | reported, not gated (in-container paths and fonts differ) |
+| Timings | gated with 5 samples and no `--no-timing-gate` | reported | reported | reported |
 
 Boot time is spawn → the first `200` from `/api/health`; a page load is a fresh document's navigation start → the
 app's boot marker (`window.__np.getRun`), for Chat home and the Runs list. The timing gate fails B when its median is more than 10% above A's AND more than the noise floor above it (100 ms
 for boot, 50 ms for a page load). A 10% gate alone fails identical trees on noise for ~1.4 s boots. CI runs parity
 with `--no-timing-gate` because shared runners are noisier than 10%; the owner can turn it on by removing the flag.
-The docker and package pairs run in `.github/workflows/parity-docker.yml`, on every PR into dev and every push to dev
-with no paths filter, meant as a required check.
+CI runs two pairs in `.github/workflows/parity-docker.yml`, on every PR into dev and every push to dev with no paths
+filter, meant as a required check: `docker:A` against `docker:B`, two images built from the same `docker/Dockerfile`
+(A from the branch, B from the split tree `node tools/readiness.mjs split --rev HEAD --splitter-rev HEAD` makes of the
+same commit), and `tree:.` against `package:.`. The host tree is not compared with a container: the environments
+differ (onboarding's "Getting started" count, the terminal's pty, fonts and paths), so that pair can never be equal and
+says nothing about the split. Once the branch is already split, there is no B and the docker pair is skipped.
 
 Structural problems also fail a run: no signed-in or signed-out routes, fewer signed-out rows than signed-in ones, a
 shot count other than 18, a missing flow, a crashed route.

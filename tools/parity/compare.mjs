@@ -47,9 +47,10 @@ function timing(a, b, gated, floorMs) {
 
 /** `visual` is the list of {page, theme, pixels, diff?, note?} computed by compareDirs from both snapshots' PNGs. */
 export function compareSnapshots(a, b, { visual, gateTimings = true }) {
-  const docker = a.kind === 'docker' || b.kind === 'docker';
   const timingGated = gateTimings && a.kind === 'tree' && b.kind === 'tree' && a.timings.samples >= RUNS && b.timings.samples >= RUNS;
-  const visualGated = !docker;
+  // visuals are gated when both sides render in the same kind of environment: neither in a container, or both in one
+  // (docker vs docker). A host side against a container differs in fonts and paths, so that pair is only reported.
+  const visualGated = (a.kind === 'docker') === (b.kind === 'docker');
   const routeDiffs = [...compareRoutes(a.routes.signedIn, b.routes.signedIn), ...compareRoutes(
     a.routes.signedOut.map(({ problem, ...r }) => r), b.routes.signedOut.map(({ problem, ...r }) => r))];
   const signedOutProblems = [...a.routes.signedOut, ...b.routes.signedOut].filter((r) => r.problem);

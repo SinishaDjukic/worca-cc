@@ -171,14 +171,23 @@ test('visual only: one colour on one element (the run status word) is a visual d
   assert.ok(r.visualDiffs.every((v) => v.pixels > 0 && v.pixels < 1280 * 800 * 0.01), 'a small region, not the whole page');
 });
 
-test('CI-image parity is its own workflow, on every PR into dev and every push to dev, with no paths filter', () => {
+test('CI-image parity is its own workflow: docker:A (branch) vs docker:B (split tree) from one Dockerfile, plus tree vs package', () => {
   const wf = readFileSync(new URL('../.github/workflows/parity-docker.yml', import.meta.url), 'utf8');
   const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
   assert.match(wf, /^on:\n {2}push:\n {4}branches: \[dev\]\n {2}pull_request:\n {4}branches: \[dev\]\n/m);
   assert.match(wf, /^ {4}types: \[opened, synchronize, reopened, edited\]$/m, 'a stacked PR retargeted to dev (edited) runs it too');
   assert.doesNotMatch(wf, /^\s+paths(?:-ignore)?:/m);                       // a required check must never be skipped
-  assert.ok(wf.includes('npm run parity -- run --a tree:. --b docker:ghcr.io/sinishadjukic/worca:ci --out "$RUNNER_TEMP/parity-docker" --no-timing-gate'));
+  assert.match(wf, /^ {4}name: parity \(tree against the CI image\)$/m, 'the required-check name never changes');
+  // both images come from the same Dockerfile and context; only the tarball differs
+  assert.equal(wf.match(/^ {10}file: docker\/Dockerfile$/gm)?.length, 2);
+  assert.equal(wf.match(/^ {10}context: \.$/gm)?.length, 2);
+  assert.match(wf, /fetch-depth: 0/, 'readiness split clones HEAD with git clone --shared');
+  assert.match(wf, /tools\/readiness\.mjs split --rev HEAD --splitter-rev HEAD --out "\$RUNNER_TEMP\/split"/);
+  assert.match(wf, /WORCA_TARBALL=docker\/\.pack\/worca-app-split\.tgz/);
+  assert.ok(wf.includes('npm run parity -- run --a docker:ghcr.io/sinishadjukic/worca:ci --b docker:ghcr.io/sinishadjukic/worca:ci-split --out "$RUNNER_TEMP/parity-docker" --no-timing-gate'));
   assert.ok(wf.includes('npm run parity -- run --a tree:. --b package:. --out "$RUNNER_TEMP/parity-pkg" --no-timing-gate'));
+  assert.doesNotMatch(wf, /--a tree:\S+ --b docker:/, 'the host tree is never compared with a container: the environments differ');
+  assert.doesNotMatch(wf, /continue-on-error/);
   assert.ok(!ci.includes('--b docker:'), 'the docker parity runs in one place');
   const pack = (y) => y.slice(y.indexOf('      - name: Pack @worca/app'), y.indexOf('      - uses: docker/setup-buildx-action'));
   assert.ok(pack(wf).length > 100); assert.equal(pack(wf), pack(ci));      // same image inputs, same gha cache key

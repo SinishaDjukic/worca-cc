@@ -79,6 +79,19 @@ test('a visual difference fails tree vs tree and is reported for docker', () => 
   assert.deepEqual([r.visualGated, r.pass], [false, true]);
 });
 
+test('docker vs docker runs in one environment: a visual difference is gated and fails', () => {
+  const visual = [{ page: 'runs', theme: 'dark', pixels: 42, diff: '/o/runs-dark.diff.png' }];
+  const d = (over = {}) => snap({ target: 'docker:img', kind: 'docker', ...over });
+  const r = compareSnapshots(d(), d({ target: 'docker:img-split' }), { ...opts, visual });
+  assert.deepEqual([r.visualGated, r.pass, r.visualDiffs.length], [true, false, 1]);
+  assert.match(renderReport(r), /^## Visuals$/m, 'no "(reported, not gated)" suffix');
+  const same = compareSnapshots(d(), d(), { ...opts, visual: [{ page: 'runs', theme: 'dark', pixels: 0 }] });
+  assert.deepEqual([same.visualGated, same.pass], [true, true]);
+  // the mixed pair stays reported-only, either way round
+  assert.equal(compareSnapshots(d(), snap(), { ...opts, visual }).visualGated, false);
+  assert.equal(compareSnapshots(snap({ kind: 'package' }), d(), { ...opts, visual }).visualGated, false);
+});
+
 test('timings: gated only for tree vs tree with 5 samples and the gate on', () => {
   const slow = snap({ timings: { samples: 5, bootMs: [1300, 1300, 1300, 1300, 1300], pageLoadMs: { 'chat-home': [50, 50, 50, 50, 50] } } });
   const fast = snap({ timings: { samples: 5, bootMs: [1000, 1000, 1000, 1000, 1000], pageLoadMs: { 'chat-home': [50, 50, 50, 50, 50] } } });
