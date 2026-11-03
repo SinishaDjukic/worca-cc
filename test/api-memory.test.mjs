@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -15,6 +15,7 @@ import {
   listSnapshots, MEMORY_NAME_HELP,
 } from '../src/core/memory-store.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 
 useTempHome(after);   // outer isolation: the mock runs below finish ASYNC in-process
 
@@ -214,7 +215,7 @@ test('the projects family: unknown or malformed keys are 404; a registered proje
   // read. Both 404s above answer the same with or without it — a key projectKey() produced can
   // never fail the regex — so the pre-filter itself is pinned in the source, like ask/tools.mjs'
   // import-free scan: the point is that no private fourth copy of the shape appears here.
-  const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
+  const src = readServerSource();
   assert.match(src, /import \{ projectKey, PROJECT_KEY_RE \} from '\.\.\/src\/core\/store\.mjs';/);
   assert.match(src, /if \(!PROJECT_KEY_RE\.test\(key\)\) return null;/, 'resolveMemoryScope pre-filters the key');
   assert.match(src, /if \(!PROJECT_KEY_RE\.test\(String\(key \|\| ''\)\)\) return res\.status\(404\)/, 'so does the defragment wrapper');

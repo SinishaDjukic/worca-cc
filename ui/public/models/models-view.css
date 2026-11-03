@@ -1,0 +1,58 @@
+/* ---- Models view (configurable-models-design.md §4.10) ---- */
+.mv-list{display:grid;gap:18px;}
+.mv-section{display:grid;gap:10px;}
+/* Stacked cards keep the house 18px; the built-ins are compact rows, not panels, so they stay tight.
+   (The rows moved into .mv-sec-body when groups became foldable — the section's own gap no longer
+   reaches them.) */
+.mv-sec-body{display:grid;gap:18px;}
+.mv-section[data-section="builtin"] .mv-sec-body{gap:10px;}
+.mv-hide-builtin-row{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
+.mv-hide-builtin-row .hint{margin:0;}
+.mv-card{padding:var(--pad-card);display:flex;align-items:center;gap:14px;}
+.mv-body{flex:1 1 auto;min-width:0;}
+.mv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.mv-name{font-size:var(--fs-body);font-weight:600;}
+.mv-summary{display:block;margin:6px 0 0;word-break:break-all;}
+.mv-card .btn{flex:0 0 auto;}
+.mv-head-actions{display:flex;gap:8px;flex:0 0 auto;}
+/* Phones: the header buttons and a card's buttons wrap under the text instead of running off the screen. */
+@media (max-width:760px){
+  [data-view="models"] .topbar{flex-wrap:wrap;}
+  .mv-head-actions{flex:1 1 100%;flex-wrap:wrap;}
+  .mv-card{flex-wrap:wrap;}
+  .mv-body{flex-basis:100%;}
+}
+.mv-builtin{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
+.mv-builtin .mv-summary{margin:0;flex:1 1 auto;text-align:right;}
+.mv-editor-title{margin:0 0 14px;font-size:15px;}
+.mv-editor-grid{display:grid;gap:14px;}
+.mv-field{display:grid;gap:6px;}
+.mv-field-label{font-size:12px;font-weight:600;}
+.mv-sp-server{display:contents;}
+.mv-sp-server[hidden]{display:none;}
+.mv-efforts{display:flex;gap:14px;flex-wrap:wrap;}
+.mv-effort{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+.mv-env{display:grid;gap:8px;}
+.mv-env-row{display:flex;gap:8px;align-items:center;}
+.mv-env-row .mv-env-key{flex:0 0 34%;font-family:var(--mono);font-size:12px;}
+.mv-env-row .mv-env-val{flex:1 1 auto;font-family:var(--mono);font-size:12px;}
+.mv-env-row .mv-env-rm{flex:0 0 auto;}
+.mv-env-add{justify-self:start;}
+.mv-editor-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;}
+.mv-env-row .mv-env-copy{flex:0 0 auto;}
+.mv-env-btns{display:flex;gap:10px;justify-content:flex-start;}
+/* Pricing: the opt-in per-model cost override. Modes read like the effort row;
+   the rate grid is hidden outside per-Mtok mode (explicit — a reset elsewhere
+   must not be able to un-hide it). */
+.mv-cost-edit{display:grid;gap:10px;}
+.mv-cost-modes{display:flex;gap:14px;flex-wrap:wrap;}
+.mv-cost-mode{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+.mv-cost-rates{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 14px;}
+.mv-cost-rates[hidden]{display:none;}
+/* Label on its own row spanning both columns, then input + unit — five rates
+   side by side leave a numeric input far too narrow to read its own value. */
+.mv-cost-rate{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 8px;font-size:12px;}
+.mv-cost-rate-label{grid-column:1 / -1;}
+.mv-cost-rate .mv-cost-rate-in{min-width:0;font-family:var(--mono);font-size:12px;}
+.mv-cost-rate-unit{color:var(--ink-3);font-size:11px;white-space:nowrap;}
+

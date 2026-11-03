@@ -1,0 +1,8 @@
+/* Settings › Automations (#711): GitHub links in the ink colour. */
+.automations .pl-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.automations-events a:not(.btn){color:var(--ink);font-weight:600;}
+.automations-switches .switch-row{margin:10px 0 2px;}
+.automations-switch-help{margin:0 0 6px 46px;}
+.automations-switch-help > .hint{margin:0;}
+.automations-limits{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.automations-limits .hint{color:var(--ink-3);}

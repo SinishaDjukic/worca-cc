@@ -42,6 +42,7 @@ export const PAUSE_TITLES = Object.freeze({
   cost_pipeline_policy: 'Cost cap reached',
   cost_total_policy: 'Cost cap reached',
   night_guardrail: 'Night guardrail reached',
+  time_limit: 'A step hit its time limit',
   terminated: 'Run paused when worca was stopped',
 });
 export const SCHEDULE_TITLE = 'Scheduled run needs attention';

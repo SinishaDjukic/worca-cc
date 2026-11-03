@@ -4,10 +4,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const doc = new JSDOM(read('ui/public/index.html')).window.document;
-const CSS = read('ui/public/style.css');
+const doc = new JSDOM(readIndexHtml()).window.document;
+const CSS = readStyleCss();
 const FORM_TABS = ['general', 'runs', 'ask', 'tags'];
 
 test('Settings: every static field is a divided row with its control in .drow-control', () => {

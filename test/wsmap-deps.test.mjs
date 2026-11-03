@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 const read = (p) => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
 const PINS = {
   yaml: ['2.9.1', 'sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw=='],
-  'smol-toml': ['1.9.0', 'sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ=='],
+  'smol-toml': ['1.9.1', 'sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ=='],
 };
 
 test('yaml and smol-toml are exact-pinned runtime dependencies, locked with integrity', () => {

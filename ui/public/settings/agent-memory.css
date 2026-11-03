@@ -1,0 +1,73 @@
+
+/* Settings → Memory and the project page's Memory tab (agent-memory-design.md §10).
+   The namespace is `mem-*`: `mv-*` is the Models page. */
+.mem-host{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2fr);gap:18px;align-items:start;}
+.mem-host > .mem-health{grid-column:1 / -1;}
+/* #943: notes runs proposed, full width above the file list. */
+.mem-host > .mem-proposals{grid-column:1 / -1;min-width:0;}
+.mem-prop{padding:10px 0;border-bottom:1px solid var(--line);}
+.mem-prop:last-child{border-bottom:0;}
+.mem-prop-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px;color:var(--ink);}
+.mem-prop-text{margin:8px 0 0;padding:10px;max-height:240px;overflow:auto;background:var(--field);border-radius:var(--r-sm);font:12px/1.5 var(--mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+.mem-prop-current{margin-top:6px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mem-prop .mem-actions{display:flex;justify-content:flex-end;}
+.mem-health-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
+.mem-counters{font-size:12px;color:var(--ink-3);}
+.mem-reasons{margin:12px 0 0 18px;padding:0;font-size:13px;color:var(--ink-2);}
+.mem-reasons li{margin:4px 0;}
+.mem-actions{margin-top:12px;align-items:center;gap:10px;}
+.mem-health-head .mem-defrag{margin-left:auto;}
+/* Settings → Memory: the line pointing at the Defragment model's helper job (the Models page › Engines). */
+.mem-model-link{margin:0 0 16px;}
+.mem-defrag svg{display:block;flex:none;}
+.mem-host-hint{display:block;margin-top:8px;}
+.mem-list,.mem-history{min-width:0;}
+.mem-list-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.mem-list-title{font:600 12px var(--sans);color:var(--ink-2);}
+.mem-row{display:flex;flex-direction:column;gap:2px;padding:10px 8px;border-bottom:1px solid var(--line);border-radius:0;}
+.mem-row:hover{background:var(--hover);}
+.mem-row.on{border-radius:var(--r-sm);border-bottom-color:transparent;background:var(--field);box-shadow:none;}
+.mem-row-main{min-width:0;}
+.mem-row-name{font-size:13px;color:var(--ink);}
+.mem-row-hook{font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
+.mem-row-meta{font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
+.mem-editor{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:16px;margin-bottom:18px;}
+.mem-editor .mem-text{min-height:260px;}
+.mem-snap{display:flex;align-items:center;gap:6px;padding:6px 8px;font-size:var(--fs-meta);}
+.mem-snap-when{color:var(--ink-2);}
+.mem-snap-count{color:var(--ink-3);flex:1;}
+.mem-host .mono{font-family:var(--mono);}
+@media (max-width:900px){.mem-host{grid-template-columns:1fr;}}
+/* Memory › Team view (team memory 1b). Text on a tinted box uses the *-ink-strong tokens: 12–14px *-ink is under 4.5:1 there. */
+.pd-sec-memory .mem-views{margin:0 0 10px;}
+.mem-team-host{display:grid;gap:12px;}
+.mem-team-host .mono,.mem-seed .mono{font-family:var(--mono);}
+.mem-team-card{display:grid;gap:8px;}
+.mem-team-head{display:flex;align-items:center;gap:12px;}
+.mem-team-head .mem-team-loads{margin-left:auto;}
+.mem-team-sync-row,.mem-team-offer,.mem-team-seeding{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.mem-team-sync-text,.mem-team-counts,.mem-team-detail,.mem-team-findings,.mem-seed-desc,.mem-cmp-title{color:var(--ink-2);font-size:12px;}
+.mem-team-error{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink-strong);}
+.mem-team-warn{padding:6px 10px;border-radius:var(--r-ctrl);background:var(--amber-bg);color:var(--amber-ink-strong);}
+.mem-team-hint{margin-top:4px;}
+.mem-team-offer{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--blue-bg);color:var(--blue-ink-strong);}
+/* Team memory E10: the project Overview's offer line sits over the stat grid. */
+.mem-team-available{margin-bottom:18px;}
+.mem-team-list{padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.mem-team-row{display:flex;gap:12px;align-items:flex-start;padding:8px 4px;border-top:1px solid var(--line-2);}
+.mem-team-main{flex:1;min-width:0;}
+.mem-team-title{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.mem-team-detail{margin-top:2px;}
+.mem-team-findings{margin:4px 0 0 18px;}
+.mem-team-actions{display:flex;gap:6px;flex-shrink:0;}
+.mem-seed{display:grid;gap:12px;}
+.mem-seed-sec{display:grid;gap:6px;}
+.mem-seed-pick,.mem-seed-head{display:flex;gap:8px;align-items:baseline;min-width:0;}
+.mem-seed-desc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mem-seed-clash{display:grid;gap:6px;padding:8px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
+.mem-seed-choices{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
+.mem-cmp{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.mem-cmp-text{margin:0;padding:6px 8px;max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;background:var(--field);border:1px solid var(--line-2);border-radius:var(--r-ctrl);}
+.mem-cmp-diff{background:var(--amber-bg);color:var(--amber-ink-strong);}
+@media (max-width:720px){.mem-cmp{grid-template-columns:1fr;}}
+

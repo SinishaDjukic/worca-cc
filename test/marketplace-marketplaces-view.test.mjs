@@ -2,12 +2,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 import { displayUrl, isLocalPath, repoWebUrl, syncedText, marketplaceNotes, renderMarketplaceCard, renderMarketplaceCards }
   from '../ui/public/marketplace/marketplaces-view.mjs';
 import { shortDate } from '../ui/public/marketplace/catalog.mjs';
 import { OFFICIAL, EXAMPLE, LOCAL, GITLAB, NOTE0, SKIP } from './helpers/mk-marketplaces-fixtures.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const NOW = Date.parse('2026-10-20T12:00:00Z');
@@ -162,7 +162,7 @@ test('a card never carries a destructive button; the list keeps the server order
 });
 
 test('the P7 CSS block sits after P6\'s and uses tokens only (SM56, SM69, the chat CSS-slice bans); a long card chip wraps and grows (cycles 4, 5); ⋯ wraps inside the card (cycle 5)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p6 = css.indexOf('/* ── marketplace P6 ── */');
   const at = css.indexOf('/* ── marketplace P7 ── */');
   assert.ok(p6 > 0 && at > p6, 'after P6');

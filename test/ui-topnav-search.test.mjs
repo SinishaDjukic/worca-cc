@@ -4,14 +4,15 @@
 // open), the combobox ARIA, the phone's open / close buttons and the platform's shortcut label.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { createTopnavSearch } from '../ui/public/topnav-search.mjs';
 import { searchRows } from '../ui/public/global-search.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // The search exactly as index.html ships it (the `.topnav-c` slot's content).
-const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+const html = readIndexHtml();
 const MARKUP = new JSDOM(html).window.document.querySelector('.topnav-c').innerHTML;
 const PAGE = `<!doctype html><body><button type="button" id="before">Before</button>
   <header class="topnav" id="topnav"><div class="topnav-c">${MARKUP}</div></header>
@@ -430,7 +431,7 @@ test('the shortcut chip reads ⌘K on a Mac and Ctrl K elsewhere', () => {
 
 // The look is pinned in the stylesheet (jsdom has no layout): the house ruleBody idiom reads the FIRST
 // rule written exactly as `selector {…}`; the phone rules are read from the "Responsive nav tiers" block.
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 function ruleBody(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const m = css.match(new RegExp('(?:^|[\\s,}])' + escaped + '\\s*\\{([^}]*)\\}'));

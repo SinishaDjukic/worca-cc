@@ -1,0 +1,11 @@
+.tm-todo-list{list-style:none;margin:0;padding:0;}
+.tm-todo-row{display:grid;grid-template-columns:minmax(0,1fr) 72px 96px minmax(0,1.2fr);gap:12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);}
+.tm-todo-row:first-child{border-top:0;}
+.tm-heat-cell{border-radius:0;}
+.tm-heat-l0{background:transparent;}
+.tm-heat-l1{background:color-mix(in srgb, var(--blue) 12%, transparent);}
+.tm-heat-l2{background:var(--blue-sheen);}
+.tm-heat-l3{background:color-mix(in srgb, var(--blue) 40%, transparent);}
+.tm-heat-l4{background:color-mix(in srgb, var(--blue) 60%, transparent);}
+.tm-heat-legend{display:flex;align-items:center;gap:4px;margin-top:8px;}
+.tm-heat-swatch{display:inline-block;width:14px;height:10px;border-radius:var(--r-xs);}

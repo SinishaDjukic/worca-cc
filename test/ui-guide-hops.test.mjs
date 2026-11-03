@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
 const app = read('app.js');
@@ -16,7 +18,7 @@ const start = app.indexOf('// ── Guides ─');
 const end = app.indexOf('\n// ── ', start + 12);            // the next banner ("Interface mode")
 const section = app.slice(start, end);
 const lineOf = (i) => app.slice(0, start + i).split('\n').length;
-const { document } = new JSDOM(read('index.html')).window;
+const { document } = new JSDOM(readIndexHtml()).window;
 const roots = [document, ...[...document.querySelectorAll('template')].map((t) => t.content)];
 const resolves = (sel) => { try { return roots.some((r) => r.querySelector(sel)); } catch { return false; } };
 
@@ -108,7 +110,7 @@ test('every guide hop has at least one target that exists in the page', async ()
 // scrim (z 44) unless the hop also lifts each of them (`.guide-lift`). Chrome then sends the click to the scrim and
 // the tour sticks on that hop ("Leave the editor" never leaves); jsdom has no cascade, so this pins the hop text.
 test('a hop ringing a control inside the Workflows stage lifts every stacking context around it', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.wfv-float\{[^}]*position:absolute;[^}]*z-index:\d+/, 'the floating bars are a stacking context');
   assert.match(css, /\.wfv-stage\{[^}]*isolation:isolate/, 'the stage is a stacking context');
   const rows = [];

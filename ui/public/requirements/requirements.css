@@ -1,0 +1,829 @@
+
+/* Requirements page (plans/requirements-design.md section 6). Tokens only. */
+/* The list: the filter tabs and New feature, then one card of rows per project / workspace. A row is
+   id · title over its meta line · the state badge or run pill · the cost; on a phone the meta line
+   takes the second row. */
+.req-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:0 0 20px}
+.req-filter{flex-wrap:wrap;max-width:100%}
+.req-group{display:flex;flex-direction:column;gap:8px;margin:0 0 20px}
+.req-group h2{font-size:12px;font-weight:600;color:var(--ink-2);margin:0}
+.req-rows{padding:0;overflow:hidden}
+.req-row{display:grid;grid-template-columns:72px minmax(0,1fr) auto auto;grid-template-areas:"id main mark cost";align-items:center;gap:16px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:14px 18px;margin:0;color:var(--ink);cursor:pointer;font:inherit}
+.req-row:last-child{border-bottom:0}
+.req-row:hover{background:var(--field)}
+.req-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.req-row > .req-id{grid-area:id}
+.req-row > .req-row-main{grid-area:main}
+.req-row > .badge,.req-row > .pill-run{grid-area:mark;justify-self:end}
+.req-row > .req-cost{grid-area:cost}
+.req-id,.req-item code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.req-row-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-title{font-weight:500;overflow-wrap:anywhere}
+.req-row .req-row-meta{margin:0}
+.req-row .req-row-meta.need{color:var(--amber-ink-strong)}
+.req-row .pill-run{padding:5px 10px;font-size:12px}
+/* A run that is not running, done or failed (paused, unknown): a quiet pill; only a live run's dot pulses. */
+.req-run:not(.peach):not(.green):not(.red){background:var(--field);color:var(--ink-2)}
+.req-run:not(.peach):not(.green):not(.red) .pdot{background:var(--ink-3)}
+.req-run:not(.peach) .pdot{animation:none}
+.req-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2);min-width:48px;text-align:right}
+.req-empty,.req-spend{margin:0 0 12px}
+@media (max-width:600px){
+  .req-row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"id mark mark" "main main cost";gap:6px 12px;padding:12px 14px}
+  .req-row > .req-id{justify-self:start}
+}
+/* New feature: a narrow column with a back link, the heading, and the form card. */
+.req-new-page{display:flex;flex-direction:column;gap:20px;max-width:720px;margin:0 auto}
+.req-back{align-self:flex-start;margin:0;text-decoration:none}
+.req-back:hover{color:var(--ink)}
+.req-new-head h2{margin:0 0 6px;font-size:22px}
+.req-sub{margin:0;color:var(--ink-2)}
+.req-new .actions{flex-wrap:wrap;margin-top:6px}
+.req-new .req-new-cost{margin:0}
+.req-new .req-new-cost[hidden]{display:none}
+.req-new-btns{display:flex;gap:10px;margin-left:auto}
+/* The feature page (board Interview.dc.html): the back link, the header with its two menus, then the
+   conversation left and Ready + the spec right. */
+.req-page{display:flex;flex-direction:column;gap:18px;max-width:1180px}
+.req-page > .req-back{margin:0}
+.req-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:16px}
+.req-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-head-title{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
+.req-head-title .req-id{font-size:15px}
+.req-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em;overflow-wrap:anywhere}
+.req-chips{display:flex;flex-wrap:wrap;gap:8px}
+.req-head-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
+/* A small borderless icon button: the pencils, add / remove, the header's ⋯. */
+.req-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:var(--r-md);background:transparent;color:var(--ink-3);cursor:pointer}
+.req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
+.req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-ico:disabled{opacity:.45;cursor:not-allowed}
+/* The menus are upstream's one menu (.menu box, .menu-item rows), placed by .req-menu: the open list floats under its
+   trigger, right-aligned. */
+.req-menu{position:relative;display:inline-flex}
+.req-menu .hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:200px}
+.req-menu-item{box-sizing:border-box;text-decoration:none}   /* Download .md is a link row */
+.req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.req-cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
+@media (max-width:900px){.req-cols{grid-template-columns:1fr}}
+.req-left,.req-right{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-left > .qpanel,.req-left > .hint,.req-left > .req-error{margin:0}
+.req-rounds,.req-ready,.req-spec{padding:16px 18px}
+.req-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px}
+.req-card-head h3,.req-rounds h3{margin:0;font-size:13px;font-weight:600}
+.req-card-head .hint{margin:0}
+.req-card-head code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+/* Earlier rounds: one card, a hairline between rounds. */
+.req-rounds h3{margin:0 0 10px}
+.req-round{display:flex;flex-direction:column;gap:6px}
+.req-round + .req-round{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.req-round-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.req-round-n{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-round .req-round-note{margin:0}
+.req-round-qt{font-size:13px}
+.req-round-answer{margin:2px 0 0;font-size:13px;color:var(--ink-2)}
+.req-round-answer code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.req-change{font-size:12px}
+.req-orient{padding:14px 18px}
+.req-orient summary{cursor:pointer;font-size:13px;font-weight:600}
+.req-orient .req-orient-meta{display:inline;margin:0 0 0 6px;font-weight:400}
+.req-orient p{margin:10px 0 0;font-size:13px;color:var(--ink-2)}
+/* Ready to start?: the six checks, a hairline, then the start buttons. */
+.req-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.req-check{display:flex;align-items:flex-start;gap:10px}
+.req-check > svg{flex:none;margin-top:1px;color:var(--ink-3)}
+.req-check.ok > svg{color:var(--green-ink)}
+.req-check-label{flex:1;min-width:0}
+.req-check .req-check-hint{margin:0;text-align:right}
+@media (max-width:600px){.req-check{flex-wrap:wrap}.req-check .req-check-hint{flex-basis:100%;text-align:left;padding-left:26px}}
+.req-ready-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.req-ready-foot > .hint{margin:0}
+.req-ready-btns{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-left:auto}
+.req-start-anyway{font-size:13px}
+.req-start:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+/* The spec card. */
+.req-spec{display:flex;flex-direction:column;gap:14px}
+.req-spec > .req-card-head{margin:0}
+.req-sect{margin:0}
+.req-sect-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 2px}
+.req-sect-head h4{flex:1;min-width:0;margin:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-edited{font-weight:500;color:var(--amber-ink)}
+.req-sect p{margin:2px 0 0;font-size:13px}
+.req-sect ul,.req-sect ol{margin:2px 0 0;padding-left:20px;font-size:13px}
+.req-sect .req-items{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.req-item{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 10px;margin:0;font-size:13px}
+.req-items .req-item > code{flex:0 0 52px}
+.req-item-text{flex:1;min-width:0}
+.req-add{flex-wrap:nowrap;align-items:center;margin-top:8px}
+.req-add input{flex:1 1 auto;width:auto;min-width:0}
+.req-assume{margin:6px 0 0;padding:10px 12px;border-radius:var(--r-md)}
+.req-assume.open{background:var(--amber-wash)}
+/* One row above 600px: id · text · the Confirm / Reject toggle (or the frozen version's badge). */
+.req-assume{flex-wrap:nowrap;align-items:center}
+.req-assume .req-item-text{flex:1 1 0}
+.req-assume > .req-toggle,.req-assume > .badge{flex:none}
+@media (max-width:600px){.req-assume{flex-wrap:wrap}.req-assume .req-item-text{flex:1 1 calc(100% - 64px)}.req-assume > .req-toggle{margin-left:auto}}
+.req-more{align-self:flex-start;font-size:13px}
+.req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea{width:100%;box-sizing:border-box}
+.req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.req-edit .req-actions{margin:0}
+.req-why{margin:2px 0 6px 28px}
+.req-q .req-q-note{margin:8px 0 0}
+/* Narrow screens: the footer (count + Finish now / Skip / Submit) wraps instead of pushing the count off the card (as .chat-rc-q). */
+.req-q .qpanel-foot{flex-wrap:wrap;row-gap:8px}
+.req-q .qpanel-foot > button{max-width:100%;white-space:normal;text-wrap:balance}
+.req-error{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.req-retry{margin-left:8px}
+.req-confirm[aria-pressed="true"]{border-color:var(--green-ink);color:var(--green-ink)}
+.req-reject[aria-pressed="true"]{border-color:var(--red-ink);color:var(--red-ink)}
+/* Task 8: a muted text link (the mock's `hint` links: an earlier round's Change, Ready to build's Change,
+   Decide's "Show the other N"), and the start-anyway link's disabled look. */
+.req-link{appearance:none;-webkit-appearance:none;display:inline;background:none;border:0;padding:0;margin:0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px}
+.req-link:hover{color:var(--ink)}
+.req-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
+.req-start-anyway:disabled{opacity:.45;cursor:not-allowed}
+/* Decide (board Decisions.dc.html): one row per assumption, id · text · a Confirm / Reject toggle. */
+.req-left > .req-decide{margin:0;padding:16px 18px 10px}
+.req-decide .req-decide-note{margin:8px 0 4px 28px;color:var(--ink-2)}
+.req-arows{padding-left:28px}
+.req-arow{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:start;padding:11px 0;border-top:1px solid var(--line);font-size:13px}
+.req-arow:last-child{border-bottom:1px solid var(--line)}
+.req-arow > .req-id{padding-top:1px}
+.req-arow-text{min-width:0;overflow-wrap:anywhere}
+.req-toggle button{padding:5px 12px;font-size:12px}
+.req-toggle button.req-no.on{background:var(--red-bg);color:var(--red-ink-strong);box-shadow:none}
+.req-decide-more{display:block;margin:10px 0 0 28px}
+.req-decide .qpanel-foot{flex-wrap:wrap}
+@media (max-width:600px){
+  .req-arows,.req-decide-more{padding-left:0;margin-left:0}
+  .req-decide .req-decide-note{margin-left:0}
+  .req-arow{grid-template-columns:44px minmax(0,1fr)}
+  .req-arow > .req-toggle{grid-column:2;justify-self:start}
+}
+/* Ready to build (board Ready.dc.html): what Start does, the workflow and branch chips with Change, Start. */
+.req-build{padding:20px 22px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 24px;align-items:center}
+.req-build-main{display:flex;flex-direction:column;gap:6px;min-width:0}
+.req-build h3{margin:0;font-size:15px;font-weight:700}
+.req-build p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-build p b{color:var(--ink);font-weight:600}
+.req-build-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px}
+.req-build-choices{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
+.req-build-field{display:flex;flex-direction:column;gap:6px;flex:1 1 200px;min-width:0}
+.req-build-field label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-build-field .req-build-warn{margin:0}
+.req-build-field select,.req-build-field input{box-sizing:border-box;font-size:13px}   /* the shared 32px field */
+.req-build-go:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+@media (max-width:600px){.req-build{grid-template-columns:1fr;padding:16px 18px}.req-build-go{justify-self:start}}
+/* Started (board Started.dc.html): the runs card, the changed-since notice, the spec version switch. */
+.req-runs{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.req-runs .req-card-head{margin:0}
+.req-run-rows{display:flex;flex-direction:column;gap:8px}
+.req-run-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:12px 14px;border-radius:var(--r-md);background:var(--field);color:var(--ink);text-decoration:none}
+a.req-run-row:hover{background:var(--hover)}
+a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-run-row.gone{grid-template-columns:minmax(0,1fr)}
+.req-run-row .pill-run{padding:5px 10px;font-size:12px}
+.req-run-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-run-main .hint{margin:0}
+.req-run-label{font-weight:500;font-size:13px;overflow-wrap:anywhere}
+.req-run-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.req-run-go{color:var(--ink-3)}
+.req-runs .req-run-total{margin:0}
+.req-run-total code{font-family:var(--mono)}
+.req-changed{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg)}
+.req-changed > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
+.req-changed-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.req-changed-body b{font-size:13px}
+.req-changed-body p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-change-line{font-size:13px;padding:8px 10px;background:var(--surface);border-radius:var(--r-md);overflow-wrap:anywhere}
+.req-change-line .req-id{margin-right:4px}
+.req-del{color:var(--ink-2);text-decoration:line-through}
+.req-ins{background:var(--green-bg);border-radius:var(--r-xs);padding:0 3px;text-decoration:none;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.req-changed .req-actions{margin:2px 0 0}
+.req-spec > .req-card-head{flex-wrap:wrap}
+.req-spec .req-spec-ver{flex:1;min-width:0}
+.req-item .req-changed-mark{display:inline;margin:0;color:var(--amber-ink-strong)}
+.req-runs .req-card-head{flex-wrap:wrap}
+.req-msg-link{color:var(--blue-ink-strong);font-weight:600}
+.req-msg-link:hover{color:var(--ink)}
+@media (max-width:600px){
+  .req-run-row{grid-template-columns:auto minmax(0,1fr) auto;gap:8px 12px}
+  .req-run-go{display:none}
+  .req-spec .req-spec-ver{order:3;flex-basis:100%}
+}
+/* The start-before-Ready dialog (board StartAnyway.dc.html) on the upstream .viewer-modal overlay. */
+.viewer-modal.req-dlg-wrap{place-items:start center;padding-top:min(18vh,180px)}
+.req-dlg-wrap .card.req-dialog{width:min(560px,100%);box-sizing:border-box;box-shadow:var(--shadow-sheet);padding:24px 26px;display:flex;flex-direction:column;gap:14px}
+.req-dialog h2{margin:0;font-size:18px;font-weight:700;letter-spacing:-.01em}
+.req-dlg-lead{margin:0;font-size:13px;color:var(--ink-2)}
+.req-dlg-fail{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg);font-size:13px}
+.req-dlg-fail ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.req-dlg-fail li{display:flex;gap:10px;align-items:flex-start}
+.req-dlg-fail li > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
+.req-dlg-fail b{font-weight:600}
+.req-dlg-fail p{margin:0;color:var(--ink-2)}
+.req-dlg-field{margin:0}
+.req-dlg-field textarea{box-sizing:border-box;min-height:84px}
+.req-dlg-field .req-dlg-count{margin:4px 0 0;text-align:right}
+.req-dialog .req-dlg-who,.req-dialog .req-dlg-msg{margin:0}
+.req-dlg-msg:empty{display:none}
+.req-dlg-btns{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px;margin-top:4px}
+@media (max-width:600px){.viewer-modal.req-dlg-wrap{padding:16px}.req-dlg-wrap .card.req-dialog{padding:18px 16px}}
+/* A7: the list's group header names the scope's Product brief; the brief page (board BriefEmpty.dc.html): the
+   header, Give Worca a head start (the four parts left, the cost box with Create right), Your notes for Worca. */
+.req-group-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px}
+.req-group-head .req-group-brief{margin:0;color:var(--ink-2)}
+.req-brief-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.req-brief-link:hover{color:var(--ink)}
+.req-brief-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
+.req-brief-page{max-width:980px}
+.req-brief-head{display:flex;flex-direction:column;gap:6px}
+.req-brief-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em}
+.req-brief-start{padding:22px 24px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px 28px;align-items:start}
+.req-brief-main{display:flex;flex-direction:column;gap:10px;min-width:0}
+.req-brief-main h3{margin:0;font-size:15px;font-weight:700}
+.req-brief-main .req-brief-why{margin:0;font-size:13px;color:var(--ink-2)}
+.req-brief-parts{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:7px;font-size:13px}
+.req-brief-parts li{display:flex;gap:10px}
+.req-brief-parts li > svg{flex:none;margin-top:2px;color:var(--green-ink)}
+.req-brief-parts b{font-weight:600}
+.req-brief-main .req-brief-plain{margin:4px 0 0}
+.req-brief-cost{display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:240px;max-width:300px;box-sizing:border-box;padding:16px;border-radius:var(--r-md);background:var(--field)}
+.req-brief-look{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-brief-facts{font-size:13px;overflow-wrap:anywhere}
+.req-brief-facts code{font-family:var(--mono);font-size:12px;padding:1px 6px;border-radius:var(--r-sm);background:var(--surface)}
+.req-brief-cost .hint,.req-brief-cost .form-msg{margin:0}
+.req-brief-create{justify-content:center}
+.req-brief-create:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.req-brief-notes{padding:18px 22px;display:flex;flex-direction:column;gap:10px}
+.req-brief-notes .req-card-head{margin:0}
+.req-brief-notes textarea{width:100%;box-sizing:border-box;min-height:84px}
+.req-brief-notes-look{align-items:flex-start}   /* the shared .switch-row, its long label wrapping */
+/* Without git there is no Create on the empty brief page: this line says why (git-gate.mjs). */
+.req-brief-nogit-create{margin:0;max-width:300px}
+:root:not([data-git="off"]) .req-brief-nogit-create{display:none}
+.req-brief-notes-foot{display:flex;justify-content:flex-end;gap:8px}
+/* A7: the brief page once made (board Brief.dc.html): the chips and the two menus, the code-moved-on notice (the
+   amber .req-changed box), the brief card left, How Worca uses it / Your notes / What Worca read right. */
+.req-brief-page.req-brief-made{max-width:1180px}
+.req-brief-head-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px 16px}
+.req-brief-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-brief-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-brief-chips code{font-family:var(--mono);font-size:12px}
+.req-brief-head .req-brief-refresh-failed{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-brief-stale-text b{font-size:inherit;font-weight:600;color:var(--ink)}
+.req-brief-stale-text code{font-family:var(--mono);font-size:12px;padding:0;background:none;color:var(--ink)}
+.req-brief-cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:22px;align-items:start}
+.req-brief-card{padding:18px 22px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.req-brief-card .req-rewrite{font-size:12px}
+.req-brief-card .req-brief-product{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-brief-card .req-brief-users{display:flex;flex-direction:column;gap:4px;margin:6px 0 0}
+.req-brief-users b,.req-brief-terms b,.req-brief-area b{font-weight:600}
+.req-brief-terms{display:grid;grid-template-columns:minmax(90px,150px) minmax(0,1fr);gap:4px 14px;margin:6px 0 0;font-size:13px;overflow-wrap:anywhere}
+.req-brief-areas{margin:4px 0 0}
+.req-brief-area{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);font-size:13px;overflow-wrap:anywhere}
+.req-brief-area:first-child{border-top:0}
+.req-brief-card .req-edit .hint{margin:0}
+.req-brief-card .req-edit textarea{min-height:96px}
+.req-brief-side{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-brief-how{padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.req-brief-how h3{margin:0;font-size:13px;font-weight:600}
+.req-brief-how p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-brief-how p b{font-weight:600;color:var(--ink)}
+.req-brief-how .req-brief-used{margin:0;font-size:13px}
+.req-brief-notes-read,.req-brief-read{padding:14px 18px}
+.req-brief-notes-read summary,.req-brief-read summary{cursor:pointer;font-size:13px;font-weight:600}
+.req-brief-read .req-brief-read-n{display:inline;margin:0;font-weight:400}
+.req-brief-notes-read p{margin:8px 0 0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.req-brief-notes-read .btn{margin-top:10px}
+.req-brief-files{margin:10px 0 0;padding-left:18px;max-height:320px;overflow:auto;font-family:var(--mono);font-size:12px;color:var(--ink-2);overflow-wrap:anywhere}
+/* A7 Task 9: the green line under New feature's For (board 13); What Worca knows, the card that replaces A2's
+   folded box on a feature page when the scope has a brief (board 14); the brief page's small note on the members
+   of a workspace the brief does not cover. */
+.req-brief-line{display:flex;gap:10px;align-items:flex-start;margin:8px 0 0;padding:10px 12px;border-radius:var(--r-md);background:var(--green-bg);color:var(--ink);font-size:13px;line-height:1.45}
+.req-brief-line > svg{flex:none;margin-top:1px;color:var(--green-ink)}
+.req-knows{padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.req-knows .req-card-head{flex-wrap:wrap;gap:4px 10px;margin:0}
+.req-knows .hint{margin:0}
+.req-knows .req-knows-text{margin:0;font-size:13px;overflow-wrap:anywhere;white-space:pre-wrap}
+.req-knows:not(.req-knows-looked) .req-knows-text{color:var(--ink-2)}
+.req-knows .link-btn{font-size:inherit}
+.req-knows .link-btn:disabled{opacity:.45;cursor:not-allowed}
+.req-knows-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:10px;border-top:1px solid var(--line)}
+.req-knows-looked .req-knows-foot{justify-content:flex-end}
+.req-knows-foot .hint{flex:1 1 200px;min-width:0}
+.req-knows-foot .btn{flex:none}
+.req-knows-foot .btn:disabled{opacity:.45;cursor:not-allowed}
+.req-brief-members{margin:0;padding:10px 14px;border-radius:var(--r-md);background:var(--field)}
+.req-brief-members p{margin:0}
+.req-brief-members .req-actions{margin:8px 0 0}
+@media (max-width:900px){.req-brief-cols{grid-template-columns:1fr}}
+@media (max-width:600px){
+  .req-brief-start{grid-template-columns:1fr;padding:18px 16px}
+  .req-brief-cost{min-width:0;max-width:none}
+  .req-brief-notes{padding:16px}
+  .req-brief-card{padding:16px}
+  .req-brief-terms{grid-template-columns:minmax(0,38%) minmax(0,1fr)}
+}
+/* A8 (plans/requirements-a8-design.md §6): files on New feature (design round 3, board 15), the Files card (16, 17, 20), its
+   menus and dialogs (21), the Ready row (18) and the brief's Documents (19). Tokens only. */
+.req-new-files .req-drop{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px 6px;padding:18px 16px;border:1.5px dashed var(--line-2);border-radius:var(--r-md);background:var(--field);font-size:13px;color:var(--ink);text-align:center}
+.req-new-files .req-drop.over{border-color:var(--blue-ink);background:var(--blue-bg)}
+.req-new-files .req-drop:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-drop .req-drop-ico{order:-1;flex-basis:100%;display:flex;justify-content:center;color:var(--ink-3)}
+.req-drop .link-btn{font-size:inherit}
+.req-drop .hint{flex-basis:100%;margin:0}
+.req-files-privacy{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0}
+.req-files-privacy > svg{flex:none;margin-top:2px}
+.req-new-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.req-new-chips:empty{display:none}
+.req-new-chip{display:inline-flex;align-items:center;gap:8px;max-width:100%;box-sizing:border-box;padding:4px 4px 4px 8px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);font-size:12px}
+.req-new-chip > svg{flex:none;color:var(--ink-2)}
+.req-new-chip-name{min-width:0;overflow-wrap:anywhere}
+.req-new-chip .hint{margin:0;white-space:nowrap}
+.req-new-chip .req-new-chip-x{width:24px;height:24px}
+.req-file-refused{display:flex;flex-direction:column;gap:4px;margin:10px 0 0;padding:8px 10px;border-radius:var(--r-md);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:12px;overflow-wrap:anywhere}
+.req-file-refused[hidden]{display:none}
+.req-file-refused b{font-weight:600}
+.req-new-files-note{margin:0}
+.req-new-files-note[hidden]{display:none}
+.req-reading{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;padding:12px 16px;border-radius:var(--r-md);background:var(--field);font-size:13px}
+.req-reading .hint{margin:0;color:var(--ink-2)}
+.req-reading .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg: 5.0:1 (--blue-ink is 3.6:1); dark is the same shade */
+/* A create's "<name> was not added: Worca could not store it." on the feature page: the refusal box's AA pair, not the
+   shared .form-msg.warn (amber ink on the page background is under 4.5:1). */
+.form-msg.req-msg-warn{padding:8px 10px;border-radius:var(--r-md);background:var(--amber-bg);color:var(--amber-ink-strong);overflow-wrap:anywhere}
+@media (max-width:600px){
+  /* 44px touch targets on phones: the hit area grows past the visible control (a 32px × plus 6px each side) */
+  .req-drop .link-btn{position:relative}
+  .req-drop .link-btn::after{content:"";position:absolute;inset:-13px -6px}
+  .req-new-chip .req-new-chip-x{position:relative;width:32px;height:32px}
+  .req-new-chip .req-new-chip-x::after{content:"";position:absolute;inset:-6px}
+}
+/* The feature page's Files card (board 16; board 17 is the same in the dark theme; board 20 at 390 px): after Ready to
+   start? in the right column. Each file is a divided row: the name (a link), "Kind · size · read for $X", the pencil and
+   ⋯; What Worca took from it, clamped to three lines; the answers; the history (advanced); the Send with the run switch. */
+.req-files{padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.req-files-head{align-items:flex-start;gap:10px;margin:0}
+.req-files-head h3{margin:0}
+.req-files-head .hint{margin:2px 0 0}
+.req-files-head .btn{flex:none}
+.req-files .req-files-privacy{margin:0}
+.req-files .req-file-refused{margin:0}
+.req-files-empty{margin:0}
+.req-files-list{display:flex;flex-direction:column}
+.req-file{display:flex;flex-direction:column;gap:6px;padding:12px 0;border-top:1px solid var(--line);min-width:0}
+.req-files-list > .req-file:first-child{border-top:0;padding-top:4px}
+.req-file-top{display:flex;align-items:center;gap:6px 8px;min-width:0}
+.req-file-name{font-weight:600;font-size:13px;color:var(--blue-ink-strong);overflow-wrap:anywhere;min-width:0}
+.req-file-name:hover{color:var(--ink)}
+.req-file-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
+.req-file-meta{margin:0;white-space:nowrap}
+.req-file-gap{flex:1 1 auto}
+/* AA on --blue-bg / --amber-bg at badge size: the -ink-strong shades (the plain -ink ones are under 4.5:1 there) */
+.req-file .badge.blue{color:var(--blue-ink-strong)}
+.req-file .badge.amber{color:var(--amber-ink-strong)}
+.req-file-cap{margin:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-file-took{margin:0;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-file-took:focus{outline:none}
+.req-file-took.req-clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.req-file-all{align-self:flex-start;font-size:12px}
+.req-file-asks{display:flex;flex-direction:column;gap:6px}
+.req-file-ask p{margin:0;font-size:13px;overflow-wrap:anywhere}
+.req-file-q{font-weight:600}
+.req-file-state{margin:0}
+.req-file-failed{margin:0;font-size:13px;color:var(--red-ink-strong);overflow-wrap:anywhere}
+.req-file-failed .btn{margin-left:6px}
+.req-file-history summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
+.req-file-history ol{margin:6px 0 0;padding-left:18px;font-size:12px}
+.req-file-history li .hint{margin:0}
+.req-file-history li p{margin:2px 0 6px;overflow-wrap:anywhere}
+.req-file-send{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.req-file-send .hint{margin:0}
+.req-file-edit{margin:0}
+.req-file-edit textarea{width:100%;min-height:96px}
+.req-why-src{font-weight:600}
+@media (max-width:600px){
+  .req-file-top{flex-wrap:wrap}
+  .req-file-meta{order:3;flex-basis:100%;white-space:normal}
+  /* 44px touch targets (board 20): the hit area grows past the visible control, as on New feature. A 28px button's
+     area starts inside its 1px border (26 + 2 × 9); the 28px icon button and switch row have none (28 + 2 × 8); a 20px
+     or 18px link line takes 13 each side. The rows' gap keeps neighbouring areas apart. */
+  .req-files .btn-sm,.req-files .req-ico,.req-files .link-btn,.req-files .req-file-name,.req-files .switch-row{position:relative}
+  .req-files .switch-row{min-height:28px}
+  .req-files .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-files .switch-row::after{content:"";position:absolute;inset:-8px 0}
+  .req-files .req-ico::after{content:"";position:absolute;inset:-8px}
+  .req-files .link-btn::after,.req-files .req-file-name::after{content:"";position:absolute;inset:-13px -4px}
+  .req-file{gap:22px}
+  .req-file-history summary{position:relative}
+  .req-file-history summary::after{content:"";position:absolute;inset:-13px -4px}
+  .req-file-failed .btn{display:flex;margin:10px 0 0}
+}
+/* Board 20: at phone width the pencil is in each file's ⋯ menu. */
+@media (max-width:600px){
+  .req-file-pencil{display:none}
+}
+/* Board 21: a file's menu, Replace, Ask about this file, the spec's source tags. Remove takes --red-ink-strong: AA on the
+   menu's --panel and on its --red-bg hover (upstream's --red-ink is 3.9:1 there). */
+.req-menu .menu-item.is-danger{color:var(--red-ink-strong)}
+.req-menu .menu-item.is-danger:is(:disabled,[aria-disabled="true"]){color:var(--ink-3)}
+.req-files .req-menu .menu-item{white-space:nowrap}   /* board 21: one line a row */
+/* D13: a source after an item's text; a link while the file exists (--blue-ink-strong on --field, 5.5:1), else --ink-2. */
+.req-src-tag{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 6px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:12px;line-height:1.4;text-decoration:none;vertical-align:baseline;overflow-wrap:anywhere}
+.req-src-tag > svg,.req-src-tag > .ic{flex:none}
+a.req-src-tag{color:var(--blue-ink-strong)}
+a.req-src-tag:hover{color:var(--ink)}
+a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-file-askpanel{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md)}
+.req-file-askpanel label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-file-askfoot{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.req-file-askfoot .hint{flex:1 1 160px;margin:0}
+.req-file-askmsg:empty{display:none}
+.req-file-q.req-file-added{color:var(--ink-2)}
+.req-replace-lead b{font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.req-replace-choice{display:flex;flex-direction:column;gap:8px;min-width:0;margin:0;padding:0;border:0}
+.req-replace-choice legend{margin:0 0 6px;padding:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-replace-opt{display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer}
+.req-replace-opt input{flex:none;margin:3px 0 0}
+.req-replace-opt .hint{display:inline;margin:0}
+.req-replace-hint{margin:0}
+@media (max-width:600px){
+  /* 44px targets (board 20's pattern): the menu rows, the question field, the choice rows, the dialog's buttons */
+  .req-files .req-menu .menu-item{min-height:44px}
+  .req-file-askpanel{gap:10px}
+  .req-file-askpanel input{min-height:44px}
+  .req-replace-opt{min-height:44px;align-items:center}
+  .req-replace-opt input{margin:0}
+  .req-replace .req-dlg-btns .btn{position:relative}
+  .req-replace .req-dlg-btns .btn::after{content:"";position:absolute;inset:-7px 0}
+  .req-spec a.req-src-tag{position:relative}
+  .req-spec a.req-src-tag::after{content:"";position:absolute;inset:-13px -4px}
+}
+/* Board 18: Files for the run on Ready to build (D14). A chip is the file's Send switch. Attached (A2's .req-confirm
+   pattern): a --green-ink-strong outline and check on --panel, no fill (5.7:1 light), the name in --ink.
+   Left out: a dashed outline (an --ink-2 / --ink-3 mix, 3.7:1 on --panel), a + and the name in --ink-2 (6.6:1). One
+   weight either way, so a press never shifts the row. No strikethrough and no red: those say rejected and error. */
+.req-build-files{display:flex;flex-direction:column;gap:8px;margin-top:10px;padding-top:12px;border-top:1px solid var(--line)}
+.req-build-files-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
+.req-build-files-head h4{margin:0;font-size:var(--fs-body);font-weight:600}
+.req-build-files-head .hint{margin:0}
+.req-fpicks{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-fpick{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:30px;box-sizing:border-box;padding:4px 10px 4px 8px;border:1px dashed color-mix(in srgb,var(--ink-2) 35%,var(--ink-3));border-radius:var(--r-sm);background:transparent;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);line-height:1.4;text-align:left;cursor:pointer}
+.req-fpick > svg{flex:none}
+.req-fpick:hover:not(:disabled):not(.on){border-style:solid;background:var(--hover)}
+.req-fpick.on{border:1px solid var(--green-ink-strong);background:var(--panel);color:var(--green-ink-strong)}
+.req-fpick.on .req-fpick-name{color:var(--ink)}
+.req-fpick:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-fpick:disabled{cursor:not-allowed}
+.req-fpick:disabled:not(.bad){opacity:.6}
+.req-fpick.bad > svg{color:var(--amber-ink-strong)}
+.req-fpick-name{min-width:0;overflow-wrap:anywhere}
+.req-fpick-state{color:var(--blue-ink-strong)}
+.req-fpick-group{margin-right:2px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-build .req-build-files-note,.req-build .req-build-files-bad{margin:0;font-size:var(--fs-meta)}
+.req-build .req-build-files-bad{color:var(--amber-ink-strong)}   /* 6.1:1 on --panel */
+.req-changed-body .req-changed-files{margin:0}
+.req-file-send .req-file-unsendable{flex-basis:100%;margin:4px 0 0;color:var(--amber-ink-strong)}
+/* Board 18 at phone width: a chip's hit area is 44px tall (the 28px inside its 1px border, and 8px above and below);
+   rows 14px apart, so no two areas overlap. */
+@media (max-width:600px){
+  .req-build-files{gap:14px}
+  .req-fpicks{row-gap:14px}
+  .req-fpick{position:relative}
+  .req-fpick::after{content:"";position:absolute;inset:-8px 0}
+}
+
+/* Board 19: the brief's Documents card. It is a .req-files card, so the Files card's rows, menus, alert and 44px hit
+   areas apply as they are; the footer sits under a rule. A brief item's source "(from <name>)" is inline, in the hint's
+   --ink-2 (AA), one step down the type scale. */
+.req-docs .req-docs-foot{margin:0;padding-top:10px;border-top:1px solid var(--line)}
+.req-brief-src{display:inline;margin:0;font-size:var(--fs-meta)}
+
+/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Feature chat beside the feature spec. Wider than 900 px the panel takes
+   the right column (420 px) and the Ready, Files and Spec cards move under the current card; at 900 px and narrower it is a
+   full-screen sheet with Back and 44 px targets. The pressed toggle has an ink border, never a green fill; board 23 (dark) is
+   these tokens and nothing else. */
+.req-help-toggle[aria-pressed="true"]{border-color:var(--ink)}
+.req-cols.with-helper{grid-template-columns:minmax(0,1fr) 420px}
+.req-moved{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-help{position:sticky;top:12px;align-self:start;display:flex;flex-direction:column;min-height:420px;max-height:calc(100vh - 96px);border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);overflow:hidden}
+.req-help-head{display:flex;align-items:center;gap:4px;padding:12px 12px 12px 18px;border-bottom:1px solid var(--line)}
+.req-help-title{flex:1;min-width:0}
+.req-help-title h3{margin:0;font-size:15px;font-weight:700}
+.req-help-title .hint{margin:2px 0 0}
+.req-help-back{display:none}
+.req-help-log{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.req-help-msg-po{align-self:flex-end;max-width:85%;padding:10px 12px;border-radius:var(--r-md);background:var(--field);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-cap{display:block;margin:0 0 2px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-msg-w{align-self:stretch;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.req-help-msg-w .hint,.req-help-text{margin:0}
+.req-help-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-fail{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--red-ink-strong)}
+.req-help-stopped{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-help-budget{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:12px}
+.req-help-waiting{display:flex;flex-direction:column;gap:6px}
+.req-help-waiting p{margin:0}
+.req-help-waiting-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.req-help-empty{display:flex;flex-direction:column;gap:10px;font-size:13px}
+.req-help-empty p{margin:0}
+.req-help-starters{display:flex;flex-direction:column;gap:6px}
+.req-help-starters .btn{justify-content:flex-start;text-align:left}
+.req-help-composer{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+.req-help-label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-in{width:100%;box-sizing:border-box;resize:vertical;font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink)}
+.req-help-in:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-help-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.req-help-foot .hint,.req-help-count,.req-help-refusal{margin:0}
+.req-help-refusal{font-size:12px;color:var(--red-ink-strong)}
+.req-help-archived{margin:0;padding:12px 14px;border-top:1px solid var(--line)}
+@media (max-width:900px){
+  .req-cols.with-helper{grid-template-columns:1fr}
+  .req-help{position:fixed;inset:0;align-self:stretch;z-index:45;min-height:0;max-height:none;border:0;border-radius:0}
+  .req-help-head{padding:4px 4px 4px 8px}
+  .req-help-back{display:inline-grid}
+  .req-help-close,.req-help-wide{display:none}
+  /* 44px targets: the icon buttons grow; a 28px .btn-sm grows its hit area past its 1px border (26 + 2 × 9), board 20's
+     pattern (a 44px .btn is off the control scale); the starters' gap keeps neighbouring areas apart */
+  .req-help .req-ico{min-width:44px;min-height:44px}
+  .req-help .btn-sm{position:relative}
+  .req-help .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-help-starters{gap:18px}
+  .req-help-toggle,.req-help .menu-item{min-height:44px}
+}
+/* A3 D1/D6 (boards 22, 25): Help me answer beside each pending question (its own 44 px line on a phone), and Worca's draft: a
+   dashed blue chip after the options (blue means active), its × and its why. On the type scale and the radius tokens (the
+   board's 11.5px and pill corners are off them); on a phone the × keeps its size and its hit area grows to 44 × 44 (the
+   ::after pattern above), the row's margins keeping that area off the options and the answer field. */
+.req-qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.req-qhead > .qtext{flex:1;min-width:0}
+.req-help-ask{flex:none;white-space:nowrap;font-size:var(--fs-meta)}
+.req-help-drafted-row{display:flex;flex-direction:column;gap:4px;margin:6px 0 0 24px}
+.req-help-drafted-row[hidden]{display:none}
+.req-help-drafted{display:inline-flex;align-self:flex-start;align-items:center;gap:4px;padding:1px 7px;border:1px dashed var(--blue-ink-strong);border-radius:var(--r-md);color:var(--blue-ink-strong);font-size:var(--fs-meta);white-space:nowrap}
+.req-help-drafted-x{display:inline-flex;align-items:center;padding:0 0 0 2px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.req-help-drafted-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px;border-radius:var(--r-sm)}
+.req-help-draft-why,.req-help-dropped{margin:0}
+@media (max-width:900px){
+  .req-qhead{flex-wrap:wrap}
+  .req-help-ask{flex-basis:100%;display:inline-flex;align-items:center;min-height:44px;text-align:left}
+  .req-help-drafted-row{margin:12px 0 12px 24px}
+  .req-help-drafted-x{position:relative}
+  .req-help-drafted-x::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
+}
+/* A3 (board 24): a proposed change as a card: Before / After / New / Remove / Confirm / Reject rows, the old side muted. Accepted is
+   green ink with a check, never a fill; the stale line is the amber alert. On the type scale (the board's 11.5 / 12.5px are off
+   it); on a phone Reject and Accept share the row and reach 44 px through the panel's .btn-sm ::after hit area above (a 44px
+   .btn is off the control scale). */
+.req-help-card{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel)}
+.req-help-card-head{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-ba{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 10px;font-size:var(--fs-body)}
+.req-help-ba > span{overflow-wrap:anywhere}
+.req-help-k{padding-top:1px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-old,.req-help-id{color:var(--ink-2)}
+.req-help-card .req-help-reason{margin:0}
+.req-help-btns{display:flex;justify-content:flex-end;gap:8px}
+.req-help-state{margin:0;display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-help-state.ok{color:var(--green-ink-strong)}
+.req-help-state:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm)}
+.req-help-measure{display:block}
+.req-help-stale{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+@media (max-width:900px){
+  .req-help-ba{grid-template-columns:52px minmax(0,1fr);gap:4px 8px}
+  .req-help-btns .btn{flex:1}
+}
+
+/* A6 (plans/requirements-a6-design.md §7): Export to a tracker. The dialogs are .req-dialog cards on the page's modal (the
+   setup 560 px, board 26); a field is its label over its control, two short fields share a row. The label chips' remove
+   button is the shared remove icon, in --ink-2 (an icon needs 3:1; --ink-3 is under it on white). */
+.req-dialog.req-export .req-export-body{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-export-fld{display:flex;flex-direction:column;gap:6px;margin:0;min-width:0}
+.req-export-fld > label,.req-export-fl{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-export-fld .opt{font-weight:400;color:var(--ink-3)}
+.req-export-fld > .hint{margin:0}
+.req-export-pair{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px}
+.req-export-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-export-labin{flex:1 1 120px;min-width:0;box-sizing:border-box}   /* board 26: "Add a label" ends the chips row */
+.req-export-lab{display:inline-flex;align-items:center;gap:4px;max-width:100%;overflow-wrap:anywhere}
+.req-export-x{display:inline-flex;align-items:center;justify-content:center;padding:2px;border:0;border-radius:var(--r-xs);background:transparent;color:var(--ink-2);cursor:pointer}
+.req-export-x:hover{color:var(--ink)}
+.req-export-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-export-rad{display:flex;align-items:center;gap:10px;min-height:28px;font-size:var(--fs-body);color:var(--ink);cursor:pointer}
+.req-export-rad input{margin:0}
+.req-export-radrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.req-export-radrow .select-wrap{flex:1 1 220px;min-width:0}
+.req-export-alert{margin:0}
+.req-export-alert:empty{display:none}
+.req-dialog.req-export .req-dlg-btns{padding-top:14px;border-top:1px solid var(--line)}   /* board 26: the buttons under a rule */
+/* Board 29 (7): an archived feature's "Restore the feature to export it." under the open Export menu, in a box of its own
+   (the menu holds only items); the pair floats where the list alone would. */
+.req-menu .req-export-menupop{position:absolute;top:calc(100% + 6px);right:0;z-index:5;display:flex;flex-direction:column;align-items:stretch;gap:6px;width:max-content;max-width:min(280px,calc(100vw - 32px))}
+.req-export-menupop[hidden]{display:none}
+.req-menu .req-export-menupop > .hd-menu{position:static;min-width:200px}
+.req-export-menupop > .req-export-archnote{margin:0;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu)}
+/* Board 27: the preview (1000 px): Fields beside the description as the tracker will show it, then the footer. The description
+   box scrolls inside; on a phone it folds behind Show all (board 31). */
+.req-dlg-wrap .card.req-dialog.req-export-preview{width:min(1000px,100%)}
+.viewer-modal.req-dlg-wrap.req-dlg-sheet{padding-top:min(8vh,48px)}   /* openModal's page mode: the six export dialogs only */
+.req-export-grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
+.req-export-grid[hidden],.req-export-desc[hidden]{display:none}   /* until the first preview arrives */
+.req-export-col{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-export-col h3,.req-export-changes h3{margin:0;font-size:var(--fs-body);font-weight:700}
+.req-export-fields{display:flex;flex-direction:column;gap:14px}
+.req-export-val{margin:0;font-size:var(--fs-body);color:var(--ink);overflow-wrap:anywhere}
+.req-export-items{margin:0;padding-left:18px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-export-desc{max-height:548px;overflow:auto;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);
+  font-size:var(--fs-body);line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+.req-export-desc:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-export-desc h4{margin:12px 0 4px;font-size:var(--fs-body);font-weight:700}
+.req-export-desc h4:first-child{margin-top:0}
+.req-export-desc p,.req-export-desc ul,.req-export-desc ol{margin:0 0 6px}
+.req-export-desc ul,.req-export-desc ol{padding-left:20px}
+.req-export-desc .req-export-sig{margin-top:10px;padding-top:8px;border-top:1px solid var(--line);color:var(--ink-2)}
+.req-export-comment{max-height:360px}
+.req-export-more{display:none}
+.req-export-more[hidden]{display:none}
+.req-export-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:14px;border-top:1px solid var(--line)}
+.req-export-foot > .hint{margin:0}
+.req-export-foot .req-dlg-btns{margin:0 0 0 auto}
+.req-export .req-export-foot .req-dlg-btns{padding-top:0;border-top:0}   /* one rule above a footer: its own, at every width */
+.req-export-status{margin:0}
+.req-export-status:empty{display:none}
+.req-export-status .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg (5.0:1; --blue-ink is 3.6:1), as .req-reading's */
+/* Board 31: at 900 px and narrower the preview's title is "Export to Jira" over "FEAT-7 · <title>". */
+.req-export-sub{display:none;margin:-4px 0 0}
+@media (max-width:900px){
+  .req-export-title .req-export-tid{display:none}
+  .req-export-sub{display:block}
+}
+.req-export-alert.is-warn{padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-md);background:var(--amber-wash);color:var(--ink)}
+.req-export-alert.is-warn b{font-weight:600}
+.req-export-alert-hint{margin:0}
+.req-export-foot > .req-export-alert-hint{flex:1 0 100%}   /* board 29 (1): a line of its own under the footer's buttons */
+.req-export-alert-btns{display:flex;flex-wrap:wrap;gap:8px}
+.req-export-alert-btns[hidden]{display:none}
+/* Board 28: Export again — the choices as radio cards (the picked one has an ink border, never a fill), what changed. */
+.req-export-modes{display:flex;flex-direction:column;gap:8px}
+.req-export-modes[hidden],.req-export-changes[hidden]{display:none}
+.req-export-mode{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
+.req-export-mode:has(input:checked){border-color:var(--ink)}
+.req-export-mode.off{cursor:not-allowed;color:var(--ink-3)}
+.req-export-mode input{margin:3px 0 0}
+.req-export-mode-txt{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-body)}
+.req-export-mode-txt b{font-weight:600}
+.req-export-mode-txt .hint{margin:0}
+.req-export-changes{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:var(--r-md);background:var(--field)}
+.req-export-change{margin:0;font-size:var(--fs-body)}
+.req-export-change code{font-size:var(--fs-meta)}
+/* Board 28: the ticket chip after the header chips (the shared external icon), in link ink (--blue-ink-strong: AA on --field);
+   the History card; board 29 (5): "Created SHOP-123", icon and text in green ink, never a fill. */
+a.chip.req-export-chip{display:inline-flex;align-items:center;gap:4px;text-decoration:none;color:var(--blue-ink-strong)}
+a.chip.req-export-chip:hover{text-decoration:underline}
+a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-export-done{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-body);color:var(--green-ink-strong)}
+.req-export-done:empty{display:none}
+.req-export-done > svg{flex:none}
+.req-history{display:flex;flex-direction:column;gap:8px}
+.req-history h3{margin:0;font-size:var(--fs-section);font-weight:600}
+.req-history-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.req-history-list li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:var(--fs-body)}
+.req-history-list li:first-child{border-top:0}
+.req-history-list .hint{margin:0}
+/* Board 29 (6), D15: Report back on Ready to build, the start dialog and the runs card (upstream's switch row, ink when on). */
+.req-report{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.req-report .req-report-hint{margin:0 0 0 40px;font-size:var(--fs-meta)}
+.req-dialog .req-report{margin-top:0}
+/* Board 31 (D20): at 900 px and narrower an export dialog is a full-screen sheet: fixed to the viewport (its size, never the
+   content's), its body scrolls inside while the button row stays at the bottom, ← FEAT-7 first, the description folded behind
+   Show all, full-width buttons whose hit areas reach 44 px (::after, as .req-fpick), rows 14–18 px apart so no two overlap. */
+.req-export-back{display:none}
+@media (max-width:900px){
+  .viewer-modal.req-dlg-wrap.req-dlg-sheet{padding:0;place-items:stretch}
+  .req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export{position:fixed;inset:0;width:auto;max-width:none;height:auto;max-height:none;border:0;border-radius:0;
+    box-shadow:none;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px 0}
+  .req-dlg-sheet .req-export > *{flex-shrink:0}
+  .req-dlg-sheet .req-export > .req-dlg-btns,
+  .req-dlg-sheet .req-export > .req-export-foot{position:sticky;bottom:0;z-index:1;margin-top:auto;padding:12px 0 16px;background:var(--panel)}
+  .req-export-back{display:inline-flex;align-self:flex-start;position:relative;font-size:var(--fs-body)}
+  .req-export-back::after{content:"";position:absolute;inset:-14px -8px}   /* an 18 px line box + 28 = 46 px */
+  .req-export-grid,.req-export-pair{grid-template-columns:minmax(0,1fr)}
+  .req-dlg-sheet .req-export-desc{max-height:none}
+  .req-export-desc.folded{max-height:180px;overflow:hidden}
+  .req-export-more{display:block;width:100%;position:relative}
+  .req-export-more[hidden]{display:none}
+  .req-export-foot{flex-direction:column;align-items:stretch}
+  .req-export .req-dlg-btns{flex-direction:column;align-items:stretch;gap:14px;margin:0}
+  .req-export .req-dlg-btns .btn,.req-export .req-export-alert-btns .btn{width:100%;position:relative}
+  .req-export .req-dlg-btns .btn::after,.req-export .req-export-alert-btns .btn::after,.req-export-more::after{content:"";position:absolute;inset:-7px 0}   /* a 32 px button: 30 + 14 = 44 */
+  .req-export .req-export-alert-btns{flex-direction:column;gap:18px}
+  .req-export .req-export-alert-btns .btn-sm::after{inset:-9px 0}   /* a 28 px button: 26 + 18 = 44 */
+  .req-export-x{position:relative}
+  .req-export-x::after{content:"";position:absolute;inset:-14px}
+  a.chip.req-export-chip{position:relative}
+  a.chip.req-export-chip::after{content:"";position:absolute;inset:-8px 0}
+}
+
+/* A6.1 (plans/requirements-a61-design.md §7, boards 32–34): Start from a ticket. Both dialogs are A6's .req-dialog.req-export cards, so its
+   900 px sheet rules apply; the pick is 560 px, the preview 880 px in two columns. A picked ticket row has an ink border, never a fill. */
+.req-import-labrow{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.req-import-labrow > label{margin:0;font-weight:600;font-size:var(--fs-body)}
+.req-import-open[hidden]{display:none}
+.req-import-search{display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink-2)}
+.req-import-search input{flex:1;min-width:0;border:0;background:transparent;padding:7px 0;font-size:var(--fs-body);color:var(--ink)}
+.req-import-search input:focus{outline:none}
+.req-import-search:focus-within{outline:2px solid var(--ink);outline-offset:1px}
+.req-import-status{margin:0;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-import-empty,.req-import-note{margin:0}
+.req-import-note[hidden],.req-import-empty[hidden]{display:none}
+.req-import-results{display:flex;flex-direction:column;gap:6px;max-height:min(46vh,420px);overflow-y:auto}
+.req-import-ticket{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
+.req-import-ticket:has(input:checked){border-color:var(--ink)}
+.req-import-ticket input{margin:3px 0 0;flex:none}
+.req-import-ticket-txt{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:var(--fs-body)}
+.req-import-ticket-txt .hint{margin:0}
+.req-import-linkchip{flex:none;align-self:center}
+.req-import-more{align-self:flex-start}
+.req-import-more[hidden]{display:none}
+/* A6.1 (board 34): the preview, two columns of checkboxes; a refused row says why under it. */
+.req-dlg-wrap .card.req-dialog.req-import-preview{width:min(880px,100%)}
+.req-import-body{display:flex;flex-direction:column;gap:12px;min-width:0}
+.req-import-meta{margin:0}
+.req-import-linked{margin:0;padding:8px 10px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+.req-import-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.req-import-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.req-import-col > .hint{margin:0}
+.req-import-title{margin:0;font-size:var(--fs-body);font-weight:600}
+.req-import-sec{display:flex;flex-direction:column;gap:6px}
+.req-import-sec > .hint{margin:0}
+.req-import-h{margin:0;font-size:var(--fs-body);font-weight:600}
+.req-import-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.req-import-check{display:flex;align-items:flex-start;gap:8px;font-size:var(--fs-body);cursor:pointer}
+.req-import-check input{margin:3px 0 0;flex:none}
+.req-import-code{flex:none;font-size:var(--fs-meta)}
+.req-import-check{min-width:0;overflow-wrap:anywhere}
+.req-import-aname{flex:0 1 auto;min-width:0;overflow-wrap:anywhere}
+.req-import-check > .hint{flex:none;max-width:45%}
+.req-import-cby{overflow-wrap:anywhere}
+.req-import-ctext{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-import-cbody{overflow-wrap:anywhere;color:var(--ink-2)}
+.req-import-off .req-import-check{cursor:not-allowed;color:var(--ink-2)}
+.req-import-why{margin:2px 0 0 24px;font-size:var(--fs-meta)}
+.req-import-why[hidden]{display:none}
+/* A6.1 (board 36, D19): at 900 px and narrower both dialogs are A6's full-screen sheets (← New feature first, full-width buttons); the
+   preview is one column, a comment shows its author and date only, three at first; every row and small button reaches 44 px through an
+   ::after hit area (a 19–20 px row + 2 × 13; rows 26 px apart, so the areas touch but never overlap; a 28 px .btn-sm + 2 × 9). */
+.req-import-showall{display:none}
+@media (max-width:900px){
+  .req-import-cols{grid-template-columns:minmax(0,1fr)}
+  .req-import-cbody{display:none}
+  .req-import-com.folded{display:none}
+  .req-import-list{gap:26px}
+  .req-import-check{position:relative}
+  .req-import-check::after{content:"";position:absolute;inset:-13px 0}
+  .req-import-showall{display:block;width:100%;position:relative;text-align:left;margin-top:20px}
+  .req-import-showall[hidden]{display:none}
+  .req-import-showall::after{content:"";position:absolute;inset:-13px 0}
+  .req-import .btn-sm{position:relative}
+  .req-import .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-import-results{max-height:none}
+}
+/* A6.1 (board 32): the form a ticket filled: the strip at its top, the criteria, the ticket's files as chips with the key, the Replace
+   question and the create's failure. */
+.req-import-strip{display:flex;flex-direction:column;gap:6px;padding:12px 14px;margin-bottom:18px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--field)}   /* 18px: the .field rhythm */
+.req-import-strip[hidden],.req-import-critfield[hidden],.req-import-filesnote[hidden],.req-import-deschint[hidden],.req-import-descclip[hidden],.req-import-ask[hidden]{display:none}
+.req-import-strip-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:var(--fs-body)}
+.req-import-strip-top .hint,.req-import-site{margin:0}
+.req-import-tchip{font-size:var(--fs-caption);padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);color:var(--ink-2);background:var(--field)}
+.req-import-critfield{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+.req-import-critfield .opt{color:var(--ink-2);font-weight:500}
+.req-import-critfield > .req-export-fl{font-size:var(--fs-body);font-weight:600;color:inherit}   /* a field label: .field > label's size, weight and ink */
+.req-import-critfield > .hint{margin:0}
+.req-import-critlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:var(--fs-body)}
+.req-import-critlist code{font-size:var(--fs-meta)}
+.req-import-deschint,.req-import-descclip,.req-import-filesnote{margin:4px 0 0}
+.req-import-ask{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+.req-import-ask p{margin:0}
+.req-import-askbtns{display:flex;gap:8px}
+.req-import-fail{display:flex;flex-direction:column;gap:4px}
+.req-import-fail:empty{display:none}
+.req-import-fail p{margin:0}
+@media (max-width:900px){
+  /* Stop using SHOP-124 is a 28 px .req-ico: 28 + 2 × 8. A ticket file's × is also A8's .req-new-chip-x, so A8's phone rule gives it
+     its 44 px, as the form's own file chips */
+  .req-import-x{position:relative}
+  .req-import-x::after{content:"";position:absolute;inset:-8px}
+  /* the form's new controls reach 44 px too (plan review Minor 8): From a ticket… is a 28 px .btn-sm, Change ticket… an 18 px line,
+     Keep mine and Replace 28 px .btn-sm */
+  .req-import-open,.req-import-strip .link-btn,.req-import-askbtns .btn-sm{position:relative}
+  .req-import-open::after,.req-import-askbtns .btn-sm::after{content:"";position:absolute;inset:-9px 0}   /* a bordered 28 px .btn-sm is 26 + 18 */
+  .req-import-strip .link-btn::after{content:"";position:absolute;inset:-13px 0}
+}
+/* a ticket file's × is 24 px between 601 and 900 px (A8's 44 px rule starts at 600): 24 + 2 × 10 */
+@media (min-width:601px) and (max-width:900px){
+  .req-new-chip .req-import-chip-x{position:relative}
+  .req-new-chip .req-import-chip-x::after{content:"";position:absolute;inset:-10px}
+}
+/* A6.1 (board 35): the Files card while a file comes from the tracker — A8's row; its badge is the shared .badge.blue (no rule here). */
+/* a file without its body yet is named in plain text, not link blue: there is nothing to open */
+span.req-file-name{color:var(--ink)}
+

@@ -212,11 +212,11 @@ test('"N more" opens the Runs list, never the run the Runs page remembers', asyn
 // do (test/ui-history-workspace-pr.test.mjs). An interval created through the jsdom window is never unref'd, so the child
 // (and `npm test`, which waits for every test file to exit) would hang for ever.
 const CHILD = `
-import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 const root = process.cwd();
-const dom = new JSDOM(readFileSync(root + '/ui/public/index.html', 'utf8'), { url: 'http://localhost:4317/' });
+const { readIndexHtml } = await import(pathToFileURL(root + '/src/core/read-index-html.mjs').href);
+const dom = new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' });
 const { window } = dom;
 window.Element.prototype.scrollIntoView = function () {};
 window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };

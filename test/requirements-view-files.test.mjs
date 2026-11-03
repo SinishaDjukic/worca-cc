@@ -3,7 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#requirements' });
 for (const k of ['document', 'location', 'Event', 'HTMLElement', 'window', 'File']) {
@@ -74,7 +74,7 @@ const openNew = async (list = LIST, extra = {}) => {
 };
 /** Every selector's first rule sits inside the Requirements block (before marketplace P3); those rules use tokens only. */
 function assertInRequirementsBlock(selectors) {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   assert.ok(start > 0 && end > start, 'the block markers');
@@ -395,7 +395,7 @@ test('a question that came from a file says "From <name>:" before its why; What 
 // hit areas past the visible control.
 test('style.css: the Files card rules (and the phone rules) inside the Requirements block, tokens only', () => {
   assertInRequirementsBlock(['.req-files{', '.req-file{', '.req-file-top', '.req-file-took', '.req-clamp', '.req-file-failed', '.req-file-history', '.req-file-send']);
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /@media \(max-width:600px\)\{[^}]*\.req-file-top\{flex-wrap:wrap\}/);
   assert.match(css, /\.req-files \.btn-sm::after\{content:"";position:absolute;inset:-9px 0\}/, 'a 28px button: 9px past its 26px padding box, above and below');
   assert.match(css, /\.req-files \.switch-row::after\{content:"";position:absolute;inset:-8px 0\}/, 'the 28px switch row');
@@ -515,7 +515,7 @@ test('flag off: the feature route answers 404 and the page shows no Files card; 
 });
 
 test('style.css: board 20 hides the pencil below 600 px (it is in the ⋯ menu); AA ink for the badges, the failed line and the caption', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /@media \(max-width:600px\)\{\s*\.req-file-pencil\{display:none\}/);
   assertInRequirementsBlock(['.req-file-name', '.req-file-cap', '.req-file .badge.blue', '.req-file .badge.amber', '.req-menu{']);
   const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.[\]()]/g, '\\$&')}\\{([^}]*)\\}`)) || [])[1] || '';
@@ -529,7 +529,7 @@ test('style.css: board 20 hides the pencil below 600 px (it is in the ⋯ menu);
 // ── the reading line's AA ink, the editor's Escape and caret, a dropped draft, focus at 10 files ─────────
 
 test('style.css: the "Reading N files…" badge takes --blue-ink-strong on --blue-bg (AA), inside the Requirements block', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assertInRequirementsBlock(['.req-reading .badge.blue']);
   const body = (css.match(/\.req-reading \.badge\.blue\{([^}]*)\}/) || [])[1] || '';
   assert.match(body, /color:var\(--blue-ink-strong\)/);
@@ -869,7 +869,7 @@ test('XSS: a question, an answer and a source are text, never markup', async () 
 });
 
 test('style.css: board 20 puts the pencil in the menu below 600 px; board 21 rules inside the Requirements block, AA ink, 44 px targets', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /@media \(max-width:600px\)\{\s*\.req-file-pencil\{display:none\}/);
   assert.equal(css.match(/\.req-file-pencil\{display:none\}/g).length, 1, 'one pencil rule');
   assertInRequirementsBlock(['.req-src-tag', '.req-file-askpanel', '.req-replace-opt', '.req-file-added', '.req-menu .menu-item.is-danger', '.req-files .req-menu .menu-item{min-height:44px}']);
@@ -1204,7 +1204,7 @@ test('style.css: board 18 rules inside the Requirements block, tokens only', () 
 });
 
 test('style.css: board 18 on the type scale and the 6px corner; AA inks; 44px hit areas at phone width', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const block = css.slice(start, css.indexOf('/* ── marketplace P3 ── */'));
   const rule = (sel) => { const at = block.indexOf(`\n${sel}{`); return at < 0 ? '' : block.slice(at + sel.length + 2, block.indexOf('}', at)); };
@@ -1463,7 +1463,7 @@ test("board 19: without documents the page is A7's: How Worca uses it reads the 
 });
 
 test('style.css: board 19 at phone width: the Documents card shares the Files card rules (44px hit areas), the source hint is on the type scale', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const block = css.slice(start, css.indexOf('/* ── marketplace P3 ── */'));
   const rule = (sel) => { const at = block.indexOf(`\n${sel}{`); return at < 0 ? '' : block.slice(at + sel.length + 2, block.indexOf('}', at)); };
@@ -1548,7 +1548,7 @@ test('a failed read or ask without a code or a message says so in one sentence, 
 });
 
 test('style.css: "Earlier text" has a 44 px target at phone width; the Ready chips focus with the design system ring', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assertInRequirementsBlock(['.req-file-history summary::after', '.req-fpick:focus-visible']);
   const phone = css.match(/@media \(max-width:600px\)\{\s*\.req-file-top\{flex-wrap:wrap\}[^]*?\n\}/)[0];
   assert.match(phone, /\.req-file-history summary\{position:relative\}/);

@@ -22,7 +22,7 @@ import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir } from './agent-pool.mjs';
-import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
+import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
@@ -602,7 +602,7 @@ export function readReviewRow(pipelineId, kind, cycle) {
  * (readStepQuestions, chronological insert order). Always returns arrays (never
  * null) so callers render unconditionally.
  * @param {string} pipelineId
- * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,fixed?:Array,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
  */
 export function readPipelineExtras(pipelineId) {
   const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
@@ -624,6 +624,7 @@ export function readPipelineExtras(pipelineId) {
       cycle: r.cycle,
       issues: Array.isArray(v.issues) ? v.issues : [],
       summary: typeof v.summary === 'string' ? v.summary : '',
+      ...(Array.isArray(v.fixed) && v.fixed.length ? { fixed: v.fixed } : {}),
       ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });
@@ -1473,7 +1474,8 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null || st.memory != null
+        || st.session != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1488,7 +1490,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
               // Agent turns cut before their `result`: a count and a lower bound, never in the cost.
               ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}),
               // The CLI's last session total per session id: a resumed spawn books only what it adds.
-              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}) })
+              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}),
+              // The memory the step loaded (#943): { mode: 'frozen', set, files, roleNotes? } | { mode: 'off' }.
+              ...(st.memory ? { memory: st.memory } : {}),
+              // Session groups (C7): the turn, dispatch and host session a member step ran in — only on member rows.
+              ...(st.session ? { session: st.session } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1992,9 +1998,13 @@ function toPipelineRow(o) {
           endReached: !!o.endReached,
           result: o.result ?? null,
           warnings: Array.isArray(o.warnings) ? o.warnings : [],
+          // E2: loops forced past their budget with blocking issues still open.
+          ...(Array.isArray(o.openIssues) && o.openIssues.length ? { openIssues: o.openIssues } : {}),
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
+          // Session groups (C6): each session's summary — only on a run that has one, so other rows are unchanged.
+          ...(o.sessionHosts && typeof o.sessionHosts === 'object' && Object.keys(o.sessionHosts).length ? { sessionHosts: o.sessionHosts } : {}),
         })
       : null,
   };
@@ -2345,6 +2355,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     limitEngine: row.limit_engine ?? null,
     limitResetAt: row.limit_reset_at ?? null,
     runEngine: row.run_engine || 'claude',
+    // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
+    ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
+    ...(row.end_reached === 0 ? { endReached: false } : row.end_reached === 1 ? { endReached: true } : {}),
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     baseCheck: baseCheckSummaryFor(row),
@@ -2441,7 +2454,10 @@ async function runDirIndex(pipelinesDir) {
  * @param {string} [workspaceKey] route to the workspace store + filter on it
  * @returns {Promise<Array>}
  */
-export async function listPipelines(projectDir, opts = {}, workspaceKey) {
+export function listPipelines(projectDir, opts = {}, workspaceKey) {
+  return withRefSnapshot(() => listPipelinesNow(projectDir, opts, workspaceKey));
+}
+async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
@@ -2452,7 +2468,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine,
+           ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -2487,7 +2504,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
  *  active rows only, so existing callers see exactly what they saw before. Workspace
  *  rows also carry `members[]` (per-member facts, tri-state `pr`; omitted in `lite`)
  *  — see rowToHistoryEntry. */
-export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
+export function listAllPipelines(opts = {}, cfg = {}) {
+  return withRefSnapshot(() => listAllPipelinesNow(opts, cfg));
+}
+async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url, archived_at,
@@ -2496,7 +2516,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine,
+           ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
@@ -2696,6 +2717,8 @@ function stepRowToStep(r) {
     if (em.auxCosts && typeof em.auxCosts === 'object') step.auxCosts = em.auxCosts;
     if (em.stoppedTurns && typeof em.stoppedTurns === 'object') step.stoppedTurns = em.stoppedTurns;
     if (em.sessionCosts && typeof em.sessionCosts === 'object') step.sessionCosts = em.sessionCosts;
+    if (em.memory && typeof em.memory === 'object') step.memory = em.memory;
+    if (em.session && typeof em.session === 'object') step.session = em.session;
   }
   return step;
 }
@@ -2769,8 +2792,10 @@ function rowToState(row) {
     state.endReached = !!outcome.endReached;
     state.result = outcome.result ?? null;
     state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
+    state.openIssues = Array.isArray(outcome.openIssues) ? outcome.openIssues : [];
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
+    if (outcome.sessionHosts && typeof outcome.sessionHosts === 'object') state.sessionHosts = outcome.sessionHosts;
     state.active = [];        // nothing is in flight in a rehydrated snapshot
     state.gate = null;
   }
@@ -2831,6 +2856,10 @@ function buildAuditMarkdown(row) {
 const RUN_ENGINE_SQL = `COALESCE(
              json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.runEngine'),
              json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.claude.engine'))`;
+/** The done-run caveat columns for the History list: total open issues and whether End fired. */
+const OUTCOME_NOTE_SQL = `(SELECT SUM(json_extract(o.value, '$.count'))
+              FROM json_each(json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.openIssues')) AS o) AS open_issue_count,
+           json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.endReached') AS end_reached`;
 export function runEngineOfRow(row) {
   if (!row) return 'claude';
   const outcome = j(row.outcome, null);
@@ -3084,7 +3113,7 @@ export async function readPipelineByKey(key, id) {
 export async function readMemoryLedger(dir) {
   const ledger = await readJsonFile(join(dir, 'memory.json'));
   if (!ledger || !Array.isArray(ledger.changes)) return null;
-  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes) };
+  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes), loaded: ledger.loaded || null };
 }
 
 /** Local helper: read + JSON-parse a file, null on any failure. */

@@ -4,16 +4,14 @@
 // all against a stubbed Notification, document, navigator and storage.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import {
   KIND_TITLES, kindTitle, questionTag, titleWithCount, badgeCount, readAlertSettings,
   createAlerts, mountAlertsCard, ALERT_KEYS, BLOCKED_HINT, PAUSE_TITLES, pauseTitle, pauseTag,
   askCardTitle, askCardsIn,
 } from '../ui/public/alerts.mjs';
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 function memStorage(seed = {}) {
@@ -429,7 +427,7 @@ test('a throwing storage never breaks notifications or the badge', () => {
 
 // ── Settings card ─────────────────────────────────────────────────────────────
 
-const SHELL = readFileSync(htmlPath, 'utf8');
+const SHELL = readIndexHtml();
 function card(opts = {}) {
   const ctx = setup({ html: SHELL, ...opts });
   const $ = (sel) => ctx.doc.querySelector(sel);

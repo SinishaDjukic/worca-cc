@@ -7,14 +7,13 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { bootDetail, openDetail, settle as hSettle, ROW as H_ROW, DETAIL as H_DETAIL } from './helpers/history-detail-boot.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-limit-reset';
 
@@ -31,7 +30,7 @@ function makeServer() {
 }
 
 async function boot({ level, server = makeServer() } = {}) {
-  let html = readFileSync(htmlPath, 'utf8');
+  let html = readIndexHtml();
   if (level) html = html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`);
   const dom = trackDom(new JSDOM(html, { url: 'http://localhost:4317/' }));
   live.push(dom);
@@ -259,7 +258,7 @@ for (const level of ['simple', 'advanced', 'expert']) {
 }
 
 test('menu item: "Resume at" is the first item of both split menus', () => {
-  const doc = new JSDOM(readFileSync(htmlPath, 'utf8')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   for (const [tpl, menu, cls] of [
     ['#run-detail-tpl', '.rd-resume-menu', 'rd-resume-limit'],
     ['#hist-detail-tpl', '.hd-resume-menu', 'hd-resume-limit-item'],

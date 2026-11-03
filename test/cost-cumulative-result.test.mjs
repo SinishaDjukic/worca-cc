@@ -46,9 +46,10 @@ test('the Claude normalizer marks a result\'s cost as the session total', () => 
 
 test('a re-woken process: results of 1.6936 then 1.9886 book 1.9886 on the step, the total and the ledger', { timeout: 60_000 }, async () => {
   const producer = async (ctx) => {
-    ctx.onEvent(resultFrame('sess-a', 1.6936));
-    ctx.onEvent({ type: 'system', raw: { type: 'system', subtype: 'init', session_id: 'sess-a', model: 'claude-sonnet-5-5' } });   // the re-wake
-    ctx.onEvent(resultFrame('sess-a', 1.9886));
+    const sid = `sess-${ctx.executionId}`;   // every spawn has its own CLI session (the run-level baseline, Task 34)
+    ctx.onEvent(resultFrame(sid, 1.6936));
+    ctx.onEvent({ type: 'system', raw: { type: 'system', subtype: 'init', session_id: sid, model: 'claude-sonnet-5-5' } });   // the re-wake
+    ctx.onEvent(resultFrame(sid, 1.9886));
     const outputs = {};
     for (const p of ctx.ports?.outputs || []) outputs[p.id] = { path: ctx.outputs?.[p.id]?.path ?? null, type: p.type };
     return { outputs, verdict: ctx.verdict ? { issues: [], summary: '' } : null, summary: 'x' };
@@ -64,7 +65,7 @@ test('a re-woken process: results of 1.6936 then 1.9886 book 1.9886 on the step,
   const ledger = prepare('SELECT SUM(amount_usd) AS s FROM cost_ledger WHERE pipeline_id = ? AND step_key = ?').get(st.id, step.key);
   assert.ok(Math.abs(ledger.s - 1.9886) < 1e-9, `ledger ${ledger.s}`);
   const back = readPipelineForResume(st.id).steps.find((s) => s.key === step.key);
-  assert.deepEqual(back.sessionCosts, { 'sess-a': 1.9886 }, 'the last figure rides exec_meta, for a resumed run');
+  assert.deepEqual(back.sessionCosts, { [`sess-${step.key}`]: 1.9886 }, 'the last figure rides exec_meta, for a resumed run');
 });
 
 test('a resumed session books what it adds; a new session books its whole figure', () => {

@@ -5,21 +5,20 @@
 // the History DETAIL screen — Resume lives there now, not on the list card.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj';
 
 async function bootLive({ fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class {
@@ -77,6 +76,18 @@ test('paused and pausing land in the amber paused family (histStatusMeta and sta
       assert.deepEqual(statusPill({ status: 'paused', pendingQuestion: null }), { family: 'amber', text: 'Paused' });
     } },
   ]);
+});
+
+test('E2/2.3: a done run that was forced past open issues, or never reached End, says so in its status', async () => {
+  const { window } = await bootLive();
+  const { histStatusMeta, statusPill } = window.__np;
+  assert.deepEqual(statusPill({ status: 'done', openIssues: [{ nodeId: 'n_review', count: 2 }], endReached: true }),
+    { family: 'amber', text: 'Done · 2 open issues' });
+  assert.deepEqual(statusPill({ status: 'done', endReached: false }), { family: 'amber', text: 'Done · End not reached' });
+  assert.deepEqual(statusPill({ status: 'done', endReached: true }), { family: 'green', text: 'Done' });
+  assert.deepEqual(statusPill({ status: 'paused', pauseReason: 'time_limit' }), { family: 'amber', text: 'Paused · time limit' });
+  assert.equal(histStatusMeta({ status: 'done', openIssueCount: 1 }).word, 'Done · 1 open issue');
+  assert.equal(histStatusMeta({ status: 'done' }).word, 'Done');
 });
 
 test('a paused run shows a wired Resume button on its detail screen', async () => {

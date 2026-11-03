@@ -1,0 +1,38 @@
+
+/* Export dialog (JSON file / Claude Code skill / Worca plugin). The row's
+   Export… button is the Workflows Library row's icon button (.wfl-export). */
+.export-field{margin:12px 0;}
+.export-field .hint{display:block;margin-top:6px;}
+/* A checkbox row directly under a text input needs its own breathing room:
+   .confirm-checkbox ships margin:0 (it is built for the confirm dialog's stack). */
+.export-field .confirm-checkbox{margin-top:10px;}
+/* Result view after a successful export (replaces #export-form in the same card). */
+.export-done{margin:12px 0 4px;}
+.export-done.hidden{display:none;}
+.export-done-head{display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:12px;}
+.export-done-check{display:grid;place-items:center;width:26px;height:26px;border-radius:var(--r-sm);
+  background:var(--green-bg);color:var(--green-ink);font-weight:700;font-size:13px;}
+.export-done-lines{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0;font-size:12px;}
+.export-done-lines dt{color:var(--ink-3);font-weight:600;}
+.export-done-lines dd{margin:0;color:var(--ink);word-break:break-all;}
+.export-done-lines code{font:12px var(--mono);background:var(--field);border-radius:var(--r-sm);padding:1px 6px;}
+.export-done-next{margin:14px 0 0;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);font-size:12px;color:var(--ink-2);}
+.export-done-next code{font:12px var(--mono);}
+.export-label{display:block;font-weight:600;font-size:12px;color:var(--ink-2);margin-bottom:6px;}
+.export-folder-row{display:flex;gap:8px;align-items:center;}
+.export-folder-row .input{flex:1 1 auto;}
+.export-plan{margin:12px 0;max-height:240px;overflow:auto;border:1px solid var(--line-2);border-radius:var(--r-sm);padding:8px;font-size:12px;}
+.export-row{padding:4px 2px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.export-conflict-row{flex-direction:column;align-items:flex-start;}
+.export-tag{display:inline-block;min-width:58px;text-align:center;border-radius:var(--r-sm);padding:1px 6px;font-weight:700;font-size:11px;}
+.export-create{background:var(--green-bg);color:var(--green-ink);}
+.export-update{background:var(--field);color:var(--ink);}
+.export-no-op{background:var(--field);color:var(--ink-3);}
+.export-warn,.export-conflict{background:var(--red-bg);color:var(--red-ink);}
+.export-orphan{background:var(--field);color:var(--ink-3);}
+.export-choices{display:flex;gap:12px;margin:4px 0 2px 64px;}
+.export-choice{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);cursor:pointer;}
+.export-choice input[type="radio"]{margin:0;}
+.export-pr-preview{margin-top:8px;}
+.export-pr-preview > summary{cursor:pointer;font-size:12px;}
+.export-pr-preview > pre{max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0 0;}

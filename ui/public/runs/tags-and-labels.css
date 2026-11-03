@@ -1,0 +1,68 @@
+/* Run tags (#718): the one chip, filled; a removable chip's × sits inside it. The chip field wraps chips and its input. */
+.tag-chip{gap:2px;max-width:240px;padding:0 6px;background:var(--field);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;}
+.tag-x{display:inline-grid;place-items:center;width:14px;height:14px;margin-right:-3px;padding:0;border:0;border-radius:var(--r-xs);
+  background:none;color:var(--ink-2);cursor:pointer;}
+.tag-x:hover{color:var(--ink);background:var(--hover);}
+.tag-input{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.tag-input-chips{display:contents;}
+.tag-input-text{flex:1 1 160px;min-width:120px;}
+.tag-input-text::placeholder{color:var(--ink-2);}   /* ink-3 misses 4.5:1 on the grey field (theme proof) */
+.tag-input-text[aria-invalid="true"]{border-color:var(--red-ink);}
+.tag-input-hint{flex-basis:100%;margin-top:0;}
+.tag-input-hint:empty{display:none;}
+.tag-input-hint:not(:empty){color:var(--red-ink);}
+/* Tag dimensions (run tags, slice 3): the New run slots and the Settings editor rows, spaced like .tag-input. */
+.tag-dims{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:6px;}
+.tag-dims[hidden]{display:none;}
+.tag-dim-slot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex:1 1 220px;}
+.tag-dim-label{font-size:12px;color:var(--ink-2);}
+.tag-dim-req{font-size:11px;padding:0 6px;border-radius:var(--r-xs);border:1px solid var(--line);color:var(--ink-3);}
+.tag-dim-input{flex:1 1 140px;min-width:120px;}
+.tag-dim-input[aria-invalid="true"]{border-color:var(--red-ink);}
+.tag-dim-hint{flex-basis:100%;margin-top:0;color:var(--red-ink);}
+.tag-dim-hint:empty{display:none;}
+.tag-dim-table{margin-bottom:6px;}
+.tag-dim-table td{vertical-align:top;}
+.tag-dim-tag{display:flex;flex-direction:column;gap:2px;}
+.tag-dim-key-small{font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-2);border-color:transparent;background:transparent;padding:0 2px;height:auto;}
+.tag-value-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
+.tag-value-chips .tag-value-input{flex:1;min-width:80px;}
+.tag-rule-pickers{display:inline-flex;gap:6px;align-items:center;flex:none;}
+.hd-tags{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.hd-tags-editor{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.hd-tags .tag-input{flex:1 1 280px;}
+.rd-page-meta > .tag-chip{margin-left:6px;}
+/* Cost tags (s2): the missing required-key slot, the run page's facts tile. */
+.tag-chip.tag-missing{background:transparent;border:1px dashed var(--amber);color:var(--amber-ink);}
+/* Cost tags under the facts tiles (D15): one wrapping row — the label, the chips and missing-key slots, the control last. */
+.rd-cost-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
+/* Run labels (slice 1): the outlined chip; colour only on the dot (labelHue → .hue-*). */
+.label-chip{display:inline-flex;align-items:center;gap:4px;max-width:160px;min-width:0;padding:2px 6px;border-radius:var(--r-xs);border:1px solid var(--line);
+  color:var(--ink-2);font-size:var(--fs-caption);font-weight:500;white-space:nowrap;}
+.label-chip-t{overflow:hidden;text-overflow:ellipsis;}
+.label-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--slate);}
+.label-dot.hue-blue{background:var(--blue);}.label-dot.hue-violet{background:var(--slate);}.label-dot.hue-teal{background:var(--teal);}
+.label-dot.hue-pink{background:var(--pink);}.label-dot.hue-indigo{background:var(--indigo);}.label-dot.hue-lime{background:var(--lime);}
+.label-dot.hue-cocoa{background:var(--cocoa);}.label-dot.hue-slate{background:var(--slate);}
+/* Settings › Labels (s2): divided rows like .gr-row; no radius, no shadow. */
+.lbl-set-row > .drow-label{display:flex;align-items:center;gap:10px;min-width:0;}
+.lbl-set-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lbl-set-count{font:600 11px var(--sans);color:var(--ink-2);}
+.lbl-set-error{color:var(--red-ink);}
+.label-x{border:0;background:none;cursor:pointer;color:var(--ink-3);font:inherit;padding:0 2px;display:inline-flex;}
+.label-more{flex:none;color:var(--ink-3);font-size:var(--fs-caption);font-variant-numeric:tabular-nums;}
+.runs-row-labels{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:4px;overflow:hidden;}
+.runs-label-filter{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 6px 20px;}
+.runs-label-filter[hidden]{display:none;}
+.rd-labels{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.rd-labels-none{color:var(--ink-3);}
+.chat-rc-labels{display:flex;flex-wrap:wrap;gap:4px;}
+.chat-rc-labels:empty{display:none;}
+.label-picker{position:fixed;z-index:60;width:280px;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;background:var(--panel);
+  border:1px solid var(--line-2);border-radius:var(--r-sm);padding:8px;box-shadow:var(--shadow-menu);}
+.lp-list{display:flex;flex-direction:column;margin-top:6px;}
+.lp-row{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 4px;cursor:pointer;}
+.lp-row:hover,.lp-create:hover{background:var(--hover);}
+.lp-create{display:block;width:100%;padding:6px 4px;border:0;background:none;text-align:left;color:inherit;font:inherit;cursor:pointer;}
+.lp-empty{margin:8px 4px;color:var(--ink-3);}
+@media (max-width: 480px){.label-chip{max-width:96px;}.label-picker{width:calc(100vw - 16px);}}

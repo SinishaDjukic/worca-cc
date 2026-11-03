@@ -3,6 +3,8 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#requirements' });
 for (const k of ['document', 'location', 'Event', 'HTMLElement', 'window']) Object.defineProperty(globalThis, k, { value: k === 'window' ? window : window[k], configurable: true, writable: true });
@@ -583,7 +585,7 @@ test('Save: declining the overwrite confirm sends no second POST', async () => {
 });
 
 test('index.html: a Simple-level, flag-gated nav row and a page section', () => {
-  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  const html = readIndexHtml();
   assert.match(html, /<button type="button" data-nav="requirements" data-min-level="simple" data-flag="requirements" data-flag-chip>/);
   assert.match(html, /<section class="view hidden" data-view="requirements">[\s\S]*id="requirements-host"/);
   const topnav = readFileSync(new URL('../ui/public/topnav.mjs', import.meta.url), 'utf8');
@@ -1355,7 +1357,7 @@ test('focus: a live update keeps the focus on an open menu\'s item; Escape still
 });
 
 test('style.css: the start-anyway link has a disabled look; the req- rules use tokens only', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.req-start-anyway:disabled\{[^}]*opacity/);
   const req = css.split('\n').filter((l) => /\.req-/.test(l));
   assert.ok(req.every((l) => !/#[0-9a-fA-F]{3,8}\b/.test(l)), 'no hex colour in a req- rule');
@@ -1799,7 +1801,7 @@ test('changed: the brief key splits on its first ":"; who repaints on a brief fr
 });
 
 test('style.css: the req-brief rules use tokens only', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rules = css.split('\n').filter((l) => /\.req-brief|\.req-group-|\.req-knows/.test(l));
   assert.ok(rules.length > 0, 'the brief page has its rules');
   assert.ok(rules.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'no literal colour');
@@ -2525,7 +2527,7 @@ test('⋯ with a brief: Look closer while the look was skipped for the brief, Lo
 // the code carries data-needs-git, which style.css hides while <html data-git="off">; the rest of the page stays.
 test('git-only controls carry data-needs-git: the brief Create box and Refresh, Look closer and Look again; nothing else', async () => {
   const gated = (el) => !!el && !!el.closest('[data-needs-git]');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /:root\[data-git="off"\] \[data-needs-git\]\{display:none !important;\}/, 'the gate rule exists');
   const none = await openBrief(briefBody());
   assert.ok(gated(createBtn(none.host)), 'Create the brief');
@@ -2614,7 +2616,7 @@ test('git missing: the list header offers Create only with git; the empty brief 
   const none = await openBrief(briefBody());
   const why = none.host.querySelector('.req-brief-nogit-create');
   assert.equal(text(why), 'A brief needs git to read the code, and git is not installed on this machine.');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /:root:not\(\[data-git="off"\]\) \.req-brief-nogit-create\{display:none\}/);
 });
 
@@ -2683,7 +2685,7 @@ test('a staleness that cannot be told heads the notice "Worca cannot check this 
 });
 
 test('style: the phone menus open inside the screen, the faint ink is not used for text, the small-screen wraps', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.req-head-tools\{[^}]*margin-left:auto/);
   for (const sel of ['.req-group-head .req-group-brief', '.req-id', '.req-round-n', '.req-del']) {
     const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

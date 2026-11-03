@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { headModel, groupHead, routeModel, routeGroupOf, landingOf, prRef, renderRoute, routeOpenWanted, setRouteOpen, ROUTE_OPEN_KEY,
   renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr, showsFixConflicts, hdPrWatchLabel, ASK_IN_CHAT, verdictWords } from '../ui/public/run-head.mjs';
 import { icon } from '../ui/public/icons.mjs';   // the remote icon check
@@ -593,7 +593,7 @@ test('route: Show route falls back to memory only when the store throws', () => 
 });
 
 test('route CSS: 20px circles, an ellipsis on mono names, sentence-case 12px --ink-2 label, the copied tick', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.rd-route-dot\{[^}]*width:20px;height:20px;/);
   assert.match(css, /\.rd-route-name\{[^}]*text-overflow:ellipsis;/);
   assert.match(css, /\.rd-route-row\.is-linked::before\{background:var\(--green\);\}/);
@@ -609,6 +609,6 @@ test('route CSS: 20px circles, an ellipsis on mono names, sentence-case 12px --i
 });
 
 test('CSS: fact labels never wrap', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /^\.rd-kv-k\{[^}]*white-space:nowrap;/m);
 });

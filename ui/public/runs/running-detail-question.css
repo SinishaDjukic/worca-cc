@@ -1,0 +1,63 @@
+/* ---------- Running detail: question panel ---------- */
+/* Container only — the panel's own restyle (larger metrics, green-tinted picked
+   options, the "N of M answered" footer, "Open run") is T11 for BOTH mounts. */
+.rd-questions{margin-top:0;animation:wr-rise .3s cubic-bezier(.2,.7,.3,1) both;
+  display:flex;flex-direction:column;gap:10px;}   /* its heading, then the panel */
+/* Night mode (Step 14): the run-view switch and the decisions list; flagged rows need review. */
+.rd-night-wrap{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.rd-night-wrap[hidden]{display:none}
+.rd-bar .rd-night{width:auto;height:36px;box-sizing:border-box;padding:0 14px;font-size:12px;}   /* the bar's control size, not a form field's */
+.rd-night-pill{font-size:var(--fs-caption);padding:1px 8px;border-radius:var(--r-xs);border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
+.rd-night-pill:empty{display:none}
+.rd-night-pill[data-state="now"]{border-color:var(--amber);background:var(--amber-wash)}
+/* Away mode's note, in the run's card under its facts, in every state (paintAwayNote). */
+.rd-away-note{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px}
+.rd-away-note[hidden]{display:none}
+.rd-away-note.has-checks{background:var(--amber-wash)}
+/* "Answered for you": a card like the run card above it, one group per ask (the card's own label +
+   list rows), the question small over the answer; Check marks what worca was not sure of. */
+.rd-night-sec{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
+  padding:18px;display:flex;flex-direction:column;gap:14px;}
+.rd-night-sec[hidden]{display:none;}
+.rd-night-h{margin:0;font:600 15px/1.3 var(--sans);letter-spacing:-.01em;}
+.rd-night-count{font-weight:400;color:var(--ink-2);}
+.rd-night-asks{display:flex;flex-direction:column;gap:16px;}
+.rd-na-list{margin:0;padding:0;list-style:none;}
+.rd-na-list > li + li{border-top:1px solid var(--line);}
+.rd-na-list .rd-srow{border-top:0;}
+.rd-srow-tx .rd-na-q{-webkit-line-clamp:2;line-clamp:2;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:2px;}
+.rd-na-row.open .rd-srow-tx .rd-na-q{display:block;}
+.rd-na-a{font-weight:500;}
+.rd-srow-tx .rd-na-by{margin-top:2px;font-size:var(--fs-meta);}
+.rd-na-check{flex:none;padding:2px 9px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink);font:600 var(--fs-meta)/var(--lh-body) var(--sans);}
+.rd-na-btn.chv::after{transition:transform .15s ease;}
+.rd-na-row.open .rd-na-btn.chv::after{transform:rotate(90deg);}
+.rd-na-why{margin:0;padding:0 14px 12px;color:var(--ink-2);font-size:13px;line-height:1.55;overflow-wrap:anywhere;}
+.night-crit{display:inline-flex;align-items:center;gap:4px;margin:0 10px 6px 0;font-size:12px}
+.pd-night-card{margin-top:14px}
+/* Away mode card (night-mode-form.mjs): live summary, status strip, sections, radio group. */
+.away-summary{margin:0 0 12px;padding:10px 12px;border-radius:var(--r-ctrl);background:var(--field);font-size:13px;line-height:1.5}
+.away-line{display:block}
+.away-status{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.away-basic h3{margin:4px 0 10px}
+.away-input-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.away-which{display:flex;flex-direction:column;gap:2px}
+.away-radio{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.away-adv{margin:10px 0 0;padding:8px 0 0;border-top:1px solid var(--line)}
+.away-adv > summary{cursor:pointer;font-weight:600;font-size:13px;margin-bottom:8px}
+/* The empty fields' placeholders ARE the value that applies, and "(default)" / the hints say why:
+   content, not decoration. --ink-3 reads at 2.6-2.8:1 in light, so they take --ink-2. */
+.away-body .hint,.away-body .input::placeholder{color:var(--ink-2)}
+/* Explicit twin: the UA [hidden] rule is (0,0,0) and loses to any author
+   `display`, so without this the panel would render even while hidden. */
+.rd-questions[hidden]{display:none;}
+/* .qpanel ships `margin-top:18px` which would double up with the wrapper's.
+   T11 rewrites the .qpanel block mid-file but does NOT restate this rule, so it
+   stays the last word on margin-top for the detail mount. */
+.rd-questions .qpanel{margin-top:0;}
+
+/* MUST sit after the rule it neutralizes — @media contributes no specificity. */
+@media (prefers-reduced-motion: reduce){
+  .rd-questions{animation:none;}
+}
+
