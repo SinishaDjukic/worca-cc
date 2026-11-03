@@ -28,12 +28,43 @@ Every screen reads down one rail, and everything has one place on it.
 The type scale below, named by what it does on a Rail page.
 | Role | Token | Weight | For |
 |---|---|---|---|
-| Page | `--fs-page` 22 | 700 | the page title, one line with an ellipsis (a tap shows it whole) |
-| Headline | `--fs-subpage` 18 | 600 | the state word |
+| Headline | `--fs-page` 22 | 600, tracking −0.02em | the state word: what is read first |
+| Title | `--fs-subpage` 18 | 600, tracking −0.02em | the page title, one line with an ellipsis (a tap shows it whole) |
 | Value | `--fs-section` 15 | 600 | figures: time, cost, changes |
 | Body | `--fs-body` 13 | 400 (the live or asking row 600) | rows, questions, text |
 | Meta | `--fs-meta` 12 | 400, `--ink-2` | the metadata line, times, figure labels, details |
 | Caption | `--fs-caption` 11 | 400 | chips, hints; `--ink-3` only for marks and separators |
+
+### The Rail look
+Calm and state-first: the look refines the current one and never adds a character of its own (no display faces, no
+drawn rails, no new hues). Mocks: `plans/rail/mocks/visual-language-refined-*.png`. The prototype and the app keep
+today's look until the Rail ships; these values replace it then.
+- **Type:** Inter, bundled (400, 500, 600), in place of Poppins; JetBrains Mono stays for code, branches and ids. No
+  700: titles and the state word are 600 with −0.02em tracking, buttons 500.
+- **One surface:** the page and the card share one background (`--bg` = `--panel`); the card keeps its 1px `--line`.
+  The card has one divider, above the Figures; its other zones are split by space.
+- **One family of neutrals,** slightly cool, for every grey, line and fill:
+
+| Token | Light | Dark |
+|---|---|---|
+| `--bg`, `--panel` | #FFFFFF | #141416 |
+| `--canvas-2`, `--side-bg` | #FAFAFA | #18181B |
+| `--field`, `--surface` | #F4F4F5 | #1F1F23 |
+| `--hover`, `--side-sel-bg` | #F0F0F2 | #222227 / #26262B |
+| `--ink` | #18181B | #EDEDEF |
+| `--ink-2` | #63636B | #A1A1A9 |
+| `--ink-3` | #A1A1A9 | #6E6E76 |
+| `--line` | #EEEEF0 | #26262B |
+| `--line-2` | #E2E2E6 | #35353B |
+| `--float`, `--float-line` (menus, panels, popovers) | #FFFFFF, `--line` | #1D1D21, #323238 |
+
+- **Running and needs-you stay apart:** `--peach` #B39A0E / #ECD86A (lighter, lemon) and `--amber` #E07A1F / #EE8A2C
+  (deeper orange). The two dots must read as two colours at 8px, side by side in Pulse, in both themes.
+- **The step bar is quiet:** 4px; a step to come is `--line`, a finished one #C9C9CF / #4A4A52; only the live, asking
+  or failed cell has colour.
+- **The metadata line:** the branch is `--ink-2`, so the PR number and the phrase read first.
+- **Depth in dark:** a floating surface is a step lighter than the page (`--float`) with a hairline (`--float-line`);
+  the shadow alone does not show on dark.
 
 ### Which component: one per need
 A Rail page is built by naming needs, not looks. Find the need, use its component as its page in the Design System
