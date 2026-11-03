@@ -1,0 +1,26 @@
+        <!-- ===== VIEW: STATISTICS ===== -->
+        <section class="view hidden" data-view="schedules">
+          <div class="topbar">
+            <div>
+              <div class="sub" id="schedules-sub">Runs that start later, once or on a repeat</div>
+            </div>
+            <a class="btn btn-primary" href="#new/schedule" id="schedules-new" style="text-decoration:none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Schedule a run
+            </a>
+          </div>
+          <p id="schedules-msg" class="form-msg" aria-live="polite"></p>
+          <!-- Tabs, the Statistics .seg idiom: #schedules/<tab> routes them (activity | once | repeating). -->
+          <div class="sched-tabs">
+            <div class="tabs" id="schedules-tabs" role="group" aria-label="Schedules">
+              <button type="button" class="tab" data-tab="activity">Activity</button>
+              <button type="button" class="tab" data-tab="once">Once</button>
+              <button type="button" class="tab" data-tab="repeating">Repeating</button>
+            </div>
+          </div>
+          <section class="card sched-feed sched-pane" id="schedules-feed" data-pane="activity" aria-label="Activity"></section>
+          <div class="sched-list drows sched-pane" id="schedules-once" data-pane="once" hidden><small class="hint">Loading…</small></div>
+          <div class="sched-list drows sched-pane" id="schedules-repeating" data-pane="repeating" hidden><small class="hint">Loading…</small></div>
+        </section>
+        <!-- /view schedules -->
+

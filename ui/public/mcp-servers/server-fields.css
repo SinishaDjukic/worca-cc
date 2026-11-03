@@ -1,0 +1,15 @@
+.mcp-member{padding:14px 16px;margin-top:10px;}
+.mcp-member .pl-enable{margin-left:0;}
+[data-view="connectors"] .mono,.mcp-def .mono,.mcp-fields .mono{font-family:var(--mono);}
+.mcp-fld{display:grid;grid-template-columns:150px minmax(0,1fr);align-items:center;gap:12px;margin-top:8px;}
+.mcp-secret{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.mcp-state{margin-top:10px;}
+.mcp-state.ok{color:var(--green-ink);}
+.mcp-state.warn{color:var(--amber-ink);}
+.mcp-server-row{padding:14px 18px;}
+.mcp-def-row{display:grid;grid-template-columns:1fr 1fr auto auto auto;gap:8px;align-items:center;margin-bottom:6px;}
+.mcp-def-fill{display:flex;gap:10px;align-items:center;font-size:12px;}
+.mcp-res-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr);gap:12px;padding:8px 0;border-top:1px solid var(--line);}
+.mcp-res-skip{color:var(--amber-ink);}
+.mcp-resolution,.mcp-proj-sets{margin-bottom:14px;}
+@media (max-width:760px){.mcp-sets{grid-template-columns:1fr;}}

@@ -1,0 +1,190 @@
+        <!-- ===== VIEW: WORKFLOWS (full screen: canvas + Library + composer chat) ===== -->
+        <!-- The editor of record for workflows, agents and scripts (replaced #composer, #agents,
+             #scripts, #agent-create; app.js MOVED_ROUTES keeps their addresses). Visible at every
+             interface level. Everything that is not the canvas carries data-canvas-keys="off", so
+             the composer's document keydown never edits the graph from there. -->
+        <section class="view hidden" data-view="workflows">
+          <div class="wfv" id="wfv">
+            <div class="wfv-stage" id="wfv-stage">
+              <div class="wfv-canvas gv-canvas" id="wfv-canvas">
+                <div class="gv-chip" id="wfv-chip" hidden></div>
+              </div>
+              <section class="wfv-versions" id="wfv-versions" role="tabpanel" aria-labelledby="wfv-page-versions" tabindex="-1" data-flag="workflowTests" data-canvas-keys="off" hidden></section>
+              <section class="wfv-versions wfv-tests" id="wfv-tests" role="tabpanel" aria-labelledby="wfv-page-tests" tabindex="-1" data-flag="workflowTests" data-canvas-keys="off" hidden></section>
+              <div class="wfv-float wfv-tl" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="btn btn-quiet btn-icon" id="wfv-back" aria-label="Back" title="Back">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+                  </button>
+                  <span class="wfv-sep" aria-hidden="true"></span>
+                  <button type="button" class="btn btn-quiet wfv-menu-btn" id="wfv-wf-menu" aria-haspopup="menu" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
+                    <span>Workflows</span>
+                    <svg class="wfv-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                  </button>
+                  <span class="wfv-sep" aria-hidden="true"></span>
+                  <input type="text" class="wfv-name" id="wfv-name" placeholder="Untitled pipeline" aria-label="Pipeline name" spellcheck="false" autocomplete="off">
+                  <span class="wfv-vstatus hint" id="wfv-vstatus" data-flag="workflowTests" aria-live="polite" hidden></span>
+                  <span class="wfv-sep" aria-hidden="true" data-flag="workflowTests"></span>
+                  <div class="seg wfv-pages" id="wfv-pages" role="tablist" aria-label="Workflow views" data-flag="workflowTests">
+                    <button type="button" role="tab" aria-selected="true" class="on" id="wfv-page-canvas" aria-controls="wfv-canvas" data-page="canvas">Canvas</button>
+                    <button type="button" role="tab" aria-selected="false" id="wfv-page-tests" aria-controls="wfv-tests" data-page="tests">Tests</button>
+                    <button type="button" role="tab" aria-selected="false" id="wfv-page-versions" aria-controls="wfv-versions" data-page="versions" data-flag-chip="workflowTests">Versions</button>
+                  </div>
+                  <button type="button" class="btn btn-sm btn-danger wfv-errchip" id="wfv-errors" hidden></button>
+                  <input type="file" id="wfv-import-file" accept=".json,application/json" hidden>
+                </div>
+              </div>
+              <div class="wfv-float wfv-tr" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="btn btn-quiet btn-icon" id="wfv-lib-toggle" aria-label="Library" title="Library" aria-pressed="true" aria-controls="wfv-library">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
+                  </button>
+                  <button type="button" class="btn btn-quiet" id="wfv-saveversion" data-flag="workflowTests">Save version</button>
+                  <span class="wfv-savewrap" id="wfv-savewrap"><span class="wfv-save-reason hint" id="wfv-save-reason" hidden></span><button type="button" class="btn btn-primary" id="wfv-save" aria-describedby="wfv-save-reason">Save</button></span>
+                </div>
+              </div>
+              <div class="wfv-float wfv-dock" id="wfv-dock" data-canvas-keys="off">
+                <button type="button" class="btn btn-lg btn-primary btn-icon wfv-plus" id="wfv-add" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                </button>
+                <div class="wfc" id="wfc" data-canvas-keys="off"></div>
+              </div>
+              <div class="wfv-float wfv-br" id="wfv-br" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="btn btn-quiet" id="wfv-autolayout">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" transform="rotate(45 10 14.5)" d="M9.4 7.1h1.2a1.3 1.3 0 0 1 1.3 1.3v12.2a1.3 1.3 0 0 1-1.3 1.3h-1.2a1.3 1.3 0 0 1-1.3-1.3V8.4a1.3 1.3 0 0 1 1.3-1.3zM9.1 8.4v2.4h1.8V8.4z"></path><path d="M9 2.9Q9.79 5.71 12.6 6.5Q9.79 7.29 9 10.1Q8.21 7.29 5.4 6.5Q8.21 5.71 9 2.9ZM17.6 2.6Q18.26 4.94 20.6 5.6Q18.26 6.26 17.6 8.6Q16.94 6.26 14.6 5.6Q16.94 4.94 17.6 2.6ZM18.2 11.4Q18.68 13.12 20.4 13.6Q18.68 14.08 18.2 15.8Q17.72 14.08 16 13.6Q17.72 13.12 18.2 11.4Z"></path></svg>
+                    <span>Auto-layout</span>
+                  </button>
+                </div>
+                <div class="wfv-bar">
+                  <button type="button" class="btn btn-quiet wfv-zoom" id="wfv-zoom" aria-haspopup="menu" aria-expanded="false" aria-label="Zoom">
+                    <span id="wfv-zoom-label">100%</span>
+                    <svg class="wfv-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"></path></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="wfv-overlay" id="wfv-overlay" data-canvas-keys="off"></div>
+            </div>
+            <aside class="wfl" id="wfv-library" aria-label="Library" data-open="true" data-canvas-keys="off"></aside>
+            <div class="wfv-sheet" id="wfv-sheet" role="dialog" aria-modal="true" aria-labelledby="wfv-sheet-title" data-canvas-keys="off" hidden>
+              <div class="wfv-sheet-card">
+                <div class="wfv-sheet-head">
+                  <h2 class="wfv-sheet-title" id="wfv-sheet-title"></h2>
+                  <button type="button" class="btn btn-quiet btn-icon" id="wfv-sheet-close" aria-label="Close" title="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+                  </button>
+                </div>
+                <div class="wfv-sheet-body">
+                  <div class="wfv-pane" data-pane="agent" hidden>
+                    <p id="agents-msg" class="form-msg" aria-live="polite"></p>
+                    <div class="run-list" id="agents-list"></div>
+                    <template id="agent-card-tpl">
+                      <section class="card agent-card">
+                        <div class="agent-head" role="button" tabindex="0" aria-expanded="false">
+                          <div class="agent-h-meta">
+                            <b class="agent-name"></b>
+                            <span class="agent-origin badge"></span>
+                            <span class="agent-not-placeable badge" hidden>not placeable</span>
+                            <small class="agent-sub"></small>
+                            <div class="agent-io">
+                              <div class="agent-io-row agent-io-in">
+                                <span class="agent-io-label">Input</span>
+                                <div class="agent-chips agent-chips-in"></div>
+                              </div>
+                              <div class="agent-io-row agent-io-out">
+                                <span class="agent-io-label">Output</span>
+                                <div class="agent-chips agent-chips-out"></div>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="agent-actions">
+                            <button type="button" class="agent-edit btn btn-sm" title="Edit this agent">Edit</button>
+                            <button type="button" class="agent-duplicate btn btn-sm" title="Duplicate as a user agent">Duplicate</button>
+                            <button type="button" class="agent-delete btn btn-danger btn-sm" title="Delete this agent">Delete</button>
+                          </div>
+                          <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                        </div>
+                        <div class="agent-detail" hidden>
+                          <pre class="agent-md-view viewer"></pre>
+                          <div class="agent-forms-view" hidden></div>
+                          <div class="agent-edit-pane" hidden>
+                            <div class="agent-form"></div>
+                            <p class="agent-edit-msg form-msg" aria-live="polite"></p>
+                            <div class="actions" style="justify-content:flex-end">
+                              <button type="button" class="agent-edit-cancel btn btn-sm">Cancel</button>
+                              <button type="button" class="agent-edit-save btn btn-primary btn-sm">Save</button>
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    </template>
+                  </div>
+                  <div class="wfv-pane" data-pane="agent-new" hidden>
+                    <!-- Step 1: brief -->
+                    <div class="wiz-step" id="agw-step-1">
+                      <div class="field"><label for="agw-name">Agent name</label>
+                        <input id="agw-name" class="input" type="text" placeholder="e.g. Docs Writer" spellcheck="false" /></div>
+                      <div class="field"><label for="agw-purpose">Purpose <span class="opt">(one line)</span></label>
+                        <input id="agw-purpose" class="input" type="text" placeholder="What is this agent for?" spellcheck="false" /></div>
+                      <div class="field"><label for="agw-details">Detailed description</label>
+                        <textarea id="agw-details" class="textarea" rows="6" placeholder="Inputs, method, output contract, constraints&hellip;"></textarea></div>
+                      <div class="row-2">
+                        <div class="field"><label>Runs after <span class="opt">(predecessors)</span></label>
+                          <div id="agw-before" class="chip-select"></div></div>
+                        <div class="field"><label>Runs before <span class="opt">(successors)</span></label>
+                          <div id="agw-after" class="chip-select"></div></div>
+                      </div>
+                      <div class="switch-row" style="margin-top:14px">
+                        <div class="switch" id="agw-own-md-toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                        <span class="txt">I'll provide the markdown myself, and the builder only infers the metadata</span>
+                      </div>
+                      <div id="agw-own-md-pane" class="hidden" style="margin-top:11px">
+                        <textarea id="agw-own-md" class="textarea" rows="12" spellcheck="false" placeholder="Paste your agent system prompt markdown&hellip;"></textarea>
+                      </div>
+                      <small class="hint" id="agw-step1-hint">Name + purpose are required (or paste your own markdown).</small>
+                      <div class="actions" style="justify-content:flex-end">
+                        <button type="button" id="agw-close" class="btn btn-sm">Cancel</button>
+                        <button type="button" id="agw-start" class="btn btn-primary" disabled>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                          Generate agent
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Step 2: live generation -->
+                    <div class="wiz-step hidden" id="agw-step-2">
+                      <div class="ws-loader" role="status" aria-live="polite">
+                        <div class="spinner" aria-hidden="true"></div>
+                        <div class="status-label" id="agw-status">Starting&hellip;</div>
+                      </div>
+                      <div class="actions" style="justify-content:flex-end">
+                        <button type="button" id="agw-abort" class="btn btn-sm">Abort</button>
+                      </div>
+                    </div>
+
+                    <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
+                    <div class="wiz-step hidden" id="agw-step-3">
+                      <div class="agent-form"></div>
+                      <p id="agw-msg" class="form-msg" aria-live="polite"></p>
+                      <div class="actions" style="justify-content:space-between">
+                        <button type="button" id="agw-regen" class="btn btn-sm">Regenerate</button>
+                        <button type="button" id="agw-save" class="btn btn-primary">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                          Save agent
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="wfv-pane" data-pane="script" hidden>
+                    <div id="scripts-msg" class="form-msg" aria-live="polite"></div>
+                    <div id="scripts-host" class="scripts-host"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="wfv-dialog-host"></div>
+          </div>
+        </section>
+        <!-- /view workflows -->
+

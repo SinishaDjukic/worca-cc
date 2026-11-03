@@ -1,0 +1,38 @@
+
+/* Step log drawer (log-drawer.mjs): a step's log docked under the workflow graph, sticky at the
+   bottom of the viewport so the graph stays in view above it. Height: dragged / arrow keys on
+   the handle (--wf-log-h, kept per browser), else 40% of the viewport within 200–480px.
+   z-index 10: above the graph's zoom cluster (.gv-nav, 6), below menus and modals. */
+.wf-log-drawer{position:sticky;bottom:0;z-index:10;flex:none;margin-top:14px;display:flex;flex-direction:column;
+  height:var(--wf-log-h,clamp(200px,40vh,480px));background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-card) var(--r-card) 0 0;box-shadow:var(--shadow-dock);}
+.wf-log-drawer[hidden]{display:none;}
+.wf-log-resize{flex:none;position:relative;height:10px;cursor:ns-resize;touch-action:none;}
+.wf-log-resize::before{content:'';position:absolute;left:50%;top:4px;width:36px;height:3px;margin-left:-18px;
+  border-radius:var(--r-xs);background:var(--line);}
+.wf-log-resize:hover::before,.wf-log-resize:focus-visible::before{background:var(--ink-3);}
+.wf-log-resize:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wf-log-head{flex:none;display:flex;align-items:center;gap:8px;padding:0 10px 8px 16px;border-bottom:1px solid var(--line);}
+.wf-log-title{font-size:13px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wf-log-live{padding:1px 7px;
+  background:var(--green-bg);color:var(--green-ink);}
+.wf-log-live[hidden]{display:none;}
+.wf-log-spacer{flex:1;}
+.wf-log-close:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.wf-log-drawer .log.wf-log-body{flex:1;min-height:0;max-height:none;border:0;border-radius:0;padding:10px 16px;}
+.wf-log-drawer .log.wf-log-body:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+/* The card the drawer shows (aria-current, not a class: the contrast baselines key on the class list). */
+.run-flow.gv-host .gv-world .node[aria-current="true"],.hd-graph .run-node[aria-current="true"]{outline:2px solid var(--blue);outline-offset:3px;}
+@media (max-width:760px){
+  .wf-log-drawer{height:var(--wf-log-h,50vh);}
+}
+/* With the Summaries / Raw switch the controls keep their size and the title ellipsizes (× had shrunk to 16px). */
+:root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) :is(.wf-log-full,.wf-log-close){flex:none;}
+/* A phone: the Summaries / Raw switch, Open in Logs and × fill the head, so the title takes its own row. */
+@media (max-width:480px){
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg){flex-wrap:wrap;gap:3px 6px;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .wf-log-title{max-width:calc(100% - 40px);}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .wf-log-spacer{flex-basis:100%;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .log-view-seg{margin-left:auto;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .log-view-seg button{padding:0 7px;}
+}
