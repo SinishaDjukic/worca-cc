@@ -2,7 +2,7 @@
 name: chat-plugin-freeform-port
 description: Porting Discord's freeform chat (interactive controls, threads, reactions) to another chat plugin worker — where the contract is tested and which traps cost a c
 paths: plugins/*-chat/**, test/*-chat-worker.test.mjs
-updated: 2026-11-03T07:07:24.509Z
+updated: 2026-11-03T07:25:45.051Z
 author: Bulibas
 ---
 
@@ -26,3 +26,8 @@ Porting freeform chat to slack-chat (2026-11-03) showed where the worker-host co
 - `plugins/*/lib/` must stay byte-identical across the four chat plugins (`test/chat-lib-drift.test.mjs`): put new
   platform code in `channel/worker.mjs`. New manifest fields must not be `advanced` unless
   `test/plugin-manifest.test.mjs:874` is updated too.
+- **The reply target must be remembered for EVERY kind of interaction, modal submits included.** The bridge answers
+  each interaction privately via `replyInteraction(evt.id, …)` (`conversation-bridge.mjs` `ephemeral`: stale, notOwner,
+  busy). A worker keeps its own `interactionId -> {chatId, userId}` map; on Slack cycle 1 (2026-11-03), dropping that
+  map's write in the `view_submission` branch left the whole worker test green. Every test must call
+  `replyInteraction` on a click id AND on a modal-submit id, and assert the platform call each one makes.
