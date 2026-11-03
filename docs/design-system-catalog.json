@@ -1,0 +1,59 @@
+{
+  "about": "The Worca Rail design system as data: what a page can be built from, for a tool or an agent. The rules are docs/design-system.md › Worca Rail (Which component, Where things go); when this file and that section differ, the section wins and this file is fixed in the same change. Components are the Design System artifact's pages.",
+  "howToBuild": [
+    "Pick the page's pattern.",
+    "For each thing the person must see or do, find its need below; use that component in that pattern's slot.",
+    "Write the words by the rules in docs/design-system.md: state words, labels of 1–3 words, failures as `Could not …`, the reason, `Nothing changed.`",
+    "Draw every state: empty, loading, could not load, a failed step, an unexpected break, a lost connection, and 375px.",
+    "Set no look of your own: no size, colour, corner or shadow; they come with the component.",
+    "Pass the gate: plans/rail/prototype/ds-check.mjs and the page's sweep."
+  ],
+  "components": [
+    { "name": "StatusLine", "kind": "showing", "needs": ["what is happening", "the one next step of a state"], "parts": ["status dot", "state word", "detail line", "action slot: Button primary with ▾ for alternatives", "⋯ CompactMenu"], "example": "Ready to merge · Merge PR ▾ ⋯", "notFor": "a second primary; buttons for the page in the top bar" },
+    { "name": "Button", "kind": "acting", "needs": ["an action with a label"], "variants": ["primary", "default", "quiet", "danger (solid only inside a confirm)"], "sizes": ["sm 28px in cards and tabs", "md 32px in dialog footers"], "notFor": "going somewhere (Text link); on or off (Switch)" },
+    { "name": "CompactMenu", "kind": "acting", "needs": ["supporting actions", "the alternatives of a split button", "the choices of a SentencePicker"], "rules": ["opened from ⋯ or ▾", "danger last, after a rule"], "example": "Terminal, Copy link, Archive" },
+    { "name": "ConfirmStrip", "kind": "acting", "needs": ["a yes or no", "a one-line answer"], "place": "under the top bar, in place", "rules": ["opens on the safe choice", "names what goes"], "example": "Merge #959 into dev?", "notFor": "a step that needs fields (Dialog); a step that can be undone (act, then Undo in a Toast)" },
+    { "name": "Dialog", "kind": "acting", "needs": ["a step that needs fields first"], "parts": ["head", "body (the only scroller)", "foot: status line and actions"], "example": "Create PR", "notFor": "a yes or no (ConfirmStrip)" },
+    { "name": "Text link", "kind": "acting", "needs": ["going to another page or place", "a fact's detail"], "example": "Changes +358 −144" },
+    { "name": "SentencePicker", "kind": "choosing", "needs": ["a choice that changes a step", "a setting with several values", "what a list shows"], "rules": ["sits in the sentence it changes", "opens a CompactMenu"], "example": "branch into dev ▾; Showing unread ▾", "notFor": "a full-width toggle; radio cards" },
+    { "name": "OptionList", "kind": "choosing", "needs": ["answering Worca's question"], "parts": ["one row per answer", "radio dot", "Worca's pick marked Recommended", "your own answer under it"], "notFor": "any other single choice (SentencePicker or Segmented)" },
+    { "name": "Switch", "kind": "choosing", "needs": ["a setting that is on or off"], "rules": ["takes effect at once, no confirm", "a failed change flips back and a Toast says why"], "example": "Watch on a PR" },
+    { "name": "Checkbox", "kind": "choosing", "needs": ["picking items from a list", "an opt-out", "a consent"], "example": "the checklist, No cap, Draft" },
+    { "name": "Segmented", "kind": "choosing", "needs": ["two or three views of the same thing"], "example": "Light and Dark; Summaries and Raw" },
+    { "name": "Tabs", "kind": "choosing", "needs": ["sections of a page"], "rules": ["each tab is in the address", "a count is a caption"], "example": "Overview, Changes, Decisions" },
+    { "name": "Chip", "kind": "showing", "needs": ["a short fact: a stage, a source, a slot to set up", "narrowing a list (filter chip)"], "example": "Beta, Official, No API key; Running 4" },
+    { "name": "ListEditor", "kind": "choosing", "needs": ["picking and adding names"], "example": "labels and cost tags, groups" },
+    { "name": "Field", "kind": "entering", "needs": ["text, a number, a pick from a long list in a form"], "rules": ["32px", "its error is a line under it"], "example": "Branch, Budget, Base branch" },
+    { "name": "SuggestionField", "kind": "entering", "needs": ["text Worca writes for you"], "parts": ["sparkle inside the field", "Suggested chip", "violet shimmer while it writes", "grey line when it could not"], "example": "PR title and description" },
+    { "name": "Stepper", "kind": "showing", "needs": ["how far along, and its steps"], "parts": ["one segment per stage", "StepRows of the open stage on the rail"], "example": "Plan · Build · Review" },
+    { "name": "Figures", "kind": "showing", "needs": ["time, cost, changes"], "rules": ["each opens its own detail", "numbers only"], "example": "Cost $84.10 of $120" },
+    { "name": "TagGroup", "kind": "showing", "needs": ["labels and cost tags"], "rules": ["one line, the rest in +N", "one button opens the ListEditor"], "example": "ui, team: web, +2" },
+    { "name": "ListRow", "kind": "showing", "needs": ["a list of things"], "parts": ["state mark on the rail (dot, or tick box while selecting)", "title line", "meta line", "time or figure at the right"], "rules": ["divided rows, never a box per item", "the whole row opens its one target"], "example": "runs, updates, files, decisions" },
+    { "name": "Tooltip", "kind": "showing", "needs": ["why a control is off", "a cut-off text", "an id"], "example": "Checks are still running on #959" },
+    { "name": "Toast", "kind": "telling", "needs": ["something done, nothing to answer", "something broke that nothing handles"], "variants": ["ok and info: close after 5s", "warn and error: stay until closed; a repeat counts on it"], "rules": ["title at most 6 words", "never moves focus", "Undo for a step that can be taken back"], "example": "PR merged; Something went wrong" },
+    { "name": "EmptyState", "kind": "telling", "needs": ["nothing here", "loading", "could not load", "a part of the page cannot be drawn"], "rules": ["one line on the text edge", "loading: nothing for 300ms, then one line; never a spinner or skeleton", "could not load: Could not load …, the reason, Nothing changed., Try again, Details", "a part that cannot be drawn: Could not show …, Reload this part, Details", "empty: its one sentence, and the way forward as one quiet action"], "example": "No runs yet; Could not show the changes" }
+  ],
+  "telling": [
+    { "need": "something failed", "place": "where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place" },
+    { "need": "the connection dropped", "place": "a quiet line at the end of the top bar, grey dot: Offline · retrying; then a Toast: Back online" }
+  ],
+  "patterns": [
+    { "name": "A thing's page", "for": "any page about one thing with a state: a run, a group", "slots": ["top bar: trail; at its right only the pager and the connection line", "title", "metadata line: facts as phrases, then TagGroup", "StatusLine with the action slot and ⋯ (empty slot when the state calls for no step)", "progress: Stepper and StepRows; questions as OptionList under their step", "Figures", "Tabs"] },
+    { "name": "A list page", "for": "Runs, Schedules", "slots": ["top bar: trail", "title row with the page's one action at its right (New schedule)", "A list"] },
+    { "name": "A list", "for": "runs, updates, files, PRs", "slots": ["the sentence of what it shows (SentencePicker), replaced by the selection bar while selecting", "sections in a fixed order, empty sections not drawn", "ListRows; a fact in a row is text, never a second link; the row's own actions in a ⋯ at its right end", "EmptyState when empty"] },
+    { "name": "A panel", "for": "Pulse, the account menu", "slots": ["under its top-bar button, over any page", "head: Tabs with counts as captions, ⋯ at the right", "body that scrolls under a head that stays"] },
+    { "name": "A settings tab", "for": "every Settings tab", "slots": ["title", "Tabs", "one meta line: what the tab decides", "sections on one rail; a row is its name and one sentence with a SentencePicker or a Switch", "Customise folds detail under a row", "a reset in its section's head, confirmed in the strip"] },
+    { "name": "A form", "for": "New run, Create PR", "slots": ["Dialog", "the one framing sentence with SentencePickers", "Fields and SuggestionFields", "a problem note on the rail with an amber dot, its ways out as buttons", "foot: Cancel (quiet), then the start button naming what happens"] }
+  ],
+  "actions": [
+    { "kind": "the one step the state calls for", "slot": "the action slot's main; alternatives in its ▾; Stop or Cancel last, after a rule" },
+    { "kind": "supporting actions on the whole thing", "slot": "⋯ next to the action slot; tools, then Report, then Archive or Delete after a rule" },
+    { "kind": "actions on one section", "slot": "that section's head, at its right" },
+    { "kind": "a fact's detail", "slot": "the fact itself, as a Figure or Text link; ⋯ only when no fact names it" },
+    { "kind": "a yes or no, or a one-line answer", "slot": "ConfirmStrip under the top bar" },
+    { "kind": "a step that needs fields", "slot": "Dialog" },
+    { "kind": "a choice that changes a step", "slot": "SentencePicker in the sentence it changes" },
+    { "kind": "how Worca behaves everywhere", "slot": "Settings; a thing's own settings are the thing's" },
+    { "kind": "a row's own actions", "slot": "a ⋯ at the row's right end" }
+  ]
+}

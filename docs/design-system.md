@@ -82,6 +82,67 @@ Building from it:
 - A choice is never a full-width toggle or radio cards, and a yes or no never covers the page.
 - The prototype's one-line ink toast (`.rc-toast`) is a stand-in for the shared Toast.
 
+### Where things go: the patterns
+The lookup says which component meets a need; a pattern says where it sits. A page is one of these patterns, or a
+pattern of each part; a spec names the pattern and the needs, and the place follows. When a part fits no pattern,
+propose one here before building it.
+
+**Building a page from a spec.** 1. Pick the page's pattern below. 2. For each thing the person must see or do, find
+its need in the lookup and its slot in the pattern. 3. Write its words by the rules (Small rules, Steps that change
+state, and Patterns further down: labels of 1–3 words, plain words, the status line); a state's dot and colour are
+Status dot and symbols. 4. Draw every state: empty, loading, could not load, a failed step, an unexpected break, a lost
+connection, and 375px. 5. Pass the gate. The catalog of needs, components and patterns, as data for a tool or an
+agent, is `docs/design-system-catalog.json`; this section and the lookup win when the two differ.
+
+**A thing's page** (a run, a group; the pattern for any page about one thing with a state), top to bottom:
+| Slot | Holds | Never holds |
+|---|---|---|
+| Top bar | The trail to the parent (the page itself is never a crumb; `‹ Parent` at 760px and below); at its right only quiet lines that are about the window, not the thing: the pager, `Offline · retrying` | Buttons for the thing |
+| Title | The name, one line with an ellipsis | Chips, buttons |
+| Metadata line | Facts as short phrases (where it lives, its kind), then its TagGroup; one line, the rest folds into `+N` | Facts another slot shows, colour |
+| StatusLine | The state word and one detail line; at its right the action slot: the one next step (main ▾), then ⋯. A state that calls for no step leaves the slot empty; ⋯ stays | A second primary |
+| The thing's progress | Stepper and the open stage's StepRows; a question is answered under its step, as an OptionList | — |
+| Figures | Its numbers; each opens its own detail: its tab when it has one (Changes), else a breakdown under it (Cost) | Chips, lists |
+| Tabs | Sections of the thing; each tab's content starts on the tab text edge | A second list of what the page already lists |
+
+**Where an action goes** (on every page):
+| Kind of action | Slot |
+|---|---|
+| The one step the state calls for | The action slot's main; alternatives in its ▾; the one that ends the thing (Stop, Cancel) last, after a rule |
+| Supporting actions on the whole thing | ⋯ next to the action slot; tools first, then Report, then Archive or Delete after a rule |
+| Actions on one section | That section's head, at its right (Check out in the Changes head, Reset to defaults in its section) |
+| A fact's detail, or going to the place a fact names | The fact itself, as a Figure or Text link (`#959` opens the PR); ⋯ only when no fact on the page names it |
+| A yes or no, or a one-line answer | ConfirmStrip under the top bar, opening on the safe choice |
+| A step that needs fields | Dialog |
+| A choice that changes a step | SentencePicker, inside the sentence it changes |
+| Anything about how Worca behaves everywhere | Settings, never on a thing's page (a thing's own settings, such as a schedule's times, are the thing's) |
+
+**A list page** (Runs, Schedules): the top bar's trail, then the title row with the page's one action at its right
+(`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
+dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
+its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
+(the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by urgency, or by day), newest first in each; a section with
+no rows is not drawn; the page's spec names the sections. What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
+filter button. Selecting replaces that sentence with the selection bar (`2 selected · Mark read · Clear · ✕`), holding
+only the actions that apply to every selected row. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
+Empty is EmptyState's one sentence and, when there is one, the way forward as its one quiet action (`No schedules
+yet.` · New schedule).
+
+**A panel** (Pulse, the account menu): opens under its top-bar button over any page, never as a page of its own.
+Its head holds Tabs with each count as a caption and ⋯ at the right; the body scrolls and the head stays. On a narrow
+screen it is the window's width.
+
+**A settings tab**: the Settings title, then Tabs, then one meta line saying what the tab decides, then sections on
+one rail. A row is its name on the left and one sentence on the right, the choice a SentencePicker in it (`Tell me
+about [needs you ▾] on [desktop ▾]`) or a Switch when it is only on or off; it takes effect at once. More detail
+folds under the row behind Customise, and a row that differs from its group says Changed. A reset of many rows sits in
+its section's head and confirms in the strip; nothing else confirms.
+
+**A form** (New run, Create PR): a Dialog. It opens with the one sentence that frames the step, its choices as
+SentencePickers (`A [large ▾] task`, `branch into dev ▾`), then its Fields. Text Worca can write is a SuggestionField.
+A problem with the choice shows before it is made, on the rail with an amber dot: one note, what it means, and
+the ways out as buttons. The start button names what will happen (`Start at 16:40`); Cancel is quiet, before it.
+
 ### Violet, kept apart
 Violet has two meanings that never meet: the merged status dot (a state), and Worca writing for you inside a field
 (the sparkle, the Suggested chip, the shimmer). A dot never means AI, and a suggestion is never a dot or a badge.
@@ -95,9 +156,11 @@ Violet has two meanings that never meet: the merged status dot (a state), and Wo
   in grey (`Couldn't write it … The text is as it was.`) with Try again, and the form still submits.
 
 ### Steps that change state
-A step that reaches outside the page or cannot be taken back (Create PR, Merge, Stop, Cancel the rest, Re-plan,
+A SentencePicker or Switch on a page takes effect at once, like a setting; inside a Dialog it applies when the dialog
+is submitted. A step that reaches outside the page or cannot be taken back (Create PR, Merge, Stop, Cancel the rest, Re-plan,
 Archive, Discard) confirms first, in the dialog or the strip. Its button then says what is happening (`Creating…`,
-`Merging…`) and is disabled. On success the page moves on and a toast says what happened. On failure nothing changes:
+`Merging…`) and is disabled until Worca has taken the step on; a step that keeps working (a fix, a re-plan) then
+becomes the state, and the state word says it (`Fixing checks`). On success the page moves on and a toast says what happened. On failure nothing changes:
 the place you acted says what failed and why (`Could not merge #959`, the reason, `Nothing changed.`) with Try again,
 and what already succeeded stays (a stack that fails part-way keeps the PRs it opened; a retry opens the rest).
 Pause, Resume, Copy link and Terminal do not confirm.
