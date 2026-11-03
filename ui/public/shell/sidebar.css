@@ -1,0 +1,128 @@
+/* ---------- Sidebar ---------- */
+/* Three bands in one column: the logo row (.brand) and the foot (.side-foot) stay put,
+   and #side-scroll between them is the only thing that scrolls — .sidebar itself never
+   does. 224px wide; the rail (.sidebar.collapsed, "Collapsible sidebar" below) is 60px.
+   `width` is inert while .app is a flex row — flex-basis decides the used main size,
+   and that is what animates. `width` is listed too so the fallback path animates if
+   the flex context ever changes. It must stay a TRANSITION: the reduced-motion blanket
+   kills every transition, but only four selectors' animations.
+   This comment is deliberately OUTSIDE the braces. The style tests' ruleBody() helpers
+   capture up to the first closing brace, so a comment inside a rule body truncates the
+   capture. */
+.sidebar{
+  width:224px;flex:0 0 224px;min-height:0;
+  background:var(--side-bg);
+  display:flex;flex-direction:column;
+  border-right:1px solid var(--line);
+  overflow:hidden;
+  transition:flex-basis .2s cubic-bezier(.65,.02,.28,1),
+             width .2s cubic-bezier(.65,.02,.28,1);
+}
+/* The fixed top band: the wordmark and the mock pill (the collapse toggle is in the top bar). Its border is
+   transparent at rest and turns --line while the pages scroll under it (.under-top). It is 48px tall, border
+   included, like .topnav, so the two hairlines meet on one row in the column and on the rail alike. */
+.brand{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;height:48px;padding:0 10px 0 20px;
+  border-bottom:1px solid transparent;transition:border-color .15s;}
+.sidebar.under-top .brand{border-bottom-color:var(--line);}
+.brand .logo{display:block;height:32px;aspect-ratio:512/190;background:var(--ink);
+  -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+/* The scrolling band. A column flex box so .nav can grow to the band's full height. */
+.side-scroll{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+  overflow-y:auto;overflow-x:hidden;padding:11px 10px 10px;scrollbar-width:thin;}
+
+.nav{display:flex;flex-direction:column;gap:4px;flex:1 0 auto;}
+/* One even rhythm: every row is 32px tall with a 4px gap (a 36px pitch), and nothing
+   adds a gap of its own. The icon sits in a 20px slot (the 16px glyph + 2px a side),
+   so the label starts 39px in whatever leads the row (an icon, the Getting started check).
+   The CSS stroke-width beats each SVG's stroke-width attribute (a
+   presentation hint), so every glyph draws at 1.6. The label span takes the free
+   width and ellipsizes; counts and chevrons follow it. */
+.nav button{
+  position:relative;display:flex;align-items:center;gap:10px;width:100%;height:32px;margin:0;
+  padding:0 8px 0 9px;border:0;border-radius:var(--r-sm);
+  background:transparent;color:var(--side-ink);
+  font-family:inherit;font-size:var(--fs-body);line-height:1;font-weight:500;
+  text-align:left;white-space:nowrap;cursor:pointer;
+  transition:background .15s,color .15s;
+}
+.nav button svg{width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:2;}
+/* line-height:1.4 keeps g, p and y inside the label's own box: its overflow:hidden (the ellipsis)
+   would clip them at the row's line-height:1. */
+.nav button > span:not(.nav-count){flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
+/* Hover is the light field grey; the open page --side-sel-bg with --side-sel-ink — a
+   soft fill, never the old black bar (the rail squares too). */
+.nav button:hover{background:var(--field);color:var(--ink);}
+.nav button.active{background:var(--side-sel-bg);color:var(--side-sel-ink);}
+.nav button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Group labels, sentence case as the markup writes them ("Build", "Manage"). The
+   padding is lopsided on purpose — 15px above, 6px below: a label belongs to the
+   rows UNDER it, so the big gap falls between groups. The first group (Runs,
+   Schedules, Statistics, Team metrics) has no label at all. They take the rows'
+   --side-ink: --ink-3 reads 2.68:1 on --side-bg, and 11px text needs 4.5:1. */
+.nav-sect{padding:15px 10px 6px;font-size:11px;font-weight:500;line-height:1;
+  color:var(--side-ink);user-select:none;}
+/* Counts: a plain grey mono number, and the amber "needs you" count is the sidebar's one
+   coloured pill. The grey is --ink-2, darker than the labels' --side-ink: a count carries information
+   (on the rail too). A zero is hidden with the `hidden` attribute (app.js keeps the element
+   and its number), so no row carries a number that says nothing. `.nav-count.n-grey`
+   clears the .n-grey disc utility's fill AND restates the colour: that utility sits later in
+   the file at the same specificity and would paint --ink-3. The gs-pill count styles itself. */
+.nav-count{flex:none;margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:500;line-height:1;
+  color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.nav-count.n-grey{background:none;color:var(--ink-2);}
+.nav-count.n-amber{display:inline-flex;align-items:center;gap:4px;min-width:0;height:auto;padding:0;background:none;color:var(--amber-ink-strong);}
+/* Schedules' unread-problems pill sits beside its grey count */
+#nav-schedules-unread{margin-left:6px;}
+.nav-count[hidden]{display:none;}
+
+/* Parent roll-up "needs you" dot on the phone bar's menu button */
+.nav-rollup {
+  width: 8px; height: 8px; border-radius:50%;
+  background: var(--amber); margin-left: 6px; flex: 0 0 auto;
+  animation: pulse 1.3s ease-in-out infinite;
+}
+
+/* Nodes (Agents, Scripts) open in a side flyout that side-flyout.mjs places, fixed,
+   beside the sidebar. The row takes the open-page fill while a child page is shown
+   (.has-active) and the hover grey while its flyout is open; the chevron points at the
+   flyout. */
+.nav .nav-group.has-active{background:var(--side-sel-bg);color:var(--side-sel-ink);}
+.nav .nav-group[aria-expanded="true"]:not(.has-active){background:var(--field);color:var(--ink);}
+.nav .nav-group-chev{flex:none;width:14px;height:14px;margin:0;color:var(--ink-3);stroke-width:1.8;}
+/* The popup card (the mockup's menu): the shared .menu box (docs/design-system.md › Menu),
+   172px wide, its rows .menu-item 1px apart. It lives inside <nav> for keyboard
+   order, so the rail's rules use `.nav > button` and never reach these rows. z 43: over
+   the phone drawer (42) it opens from, under a running tour's scrim (44+). */
+.nav-fly{position:fixed;z-index:43;display:flex;flex-direction:column;gap:1px;width:172px;}
+.nav-fly[hidden]{display:none;}
+.nav-fly-k{padding:6px 9px 5px;font-size:var(--fs-caption);font-weight:500;line-height:1.2;color:var(--ink-3);}
+
+.side-project{margin:0 4px 22px;padding-bottom:22px;border-bottom:1px solid var(--line);}
+.side-project .sp-label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin:0 4px 8px;}
+.side-project .sp-select{padding:11px 38px 11px 13px;font-size:var(--fs-body);font-weight:600;border-radius:var(--r-sm);}
+.nav-label{font-size:12px;font-weight:600;
+  color:var(--ink-2);padding:8px 12px 6px;}
+/* The fixed bottom band: Running actions and the account corner. It never scrolls; its border turns --line while more pages sit below
+   (.under-bottom). */
+.side-foot{flex:none;display:flex;flex-direction:column;gap:4px;padding:8px 10px 10px;
+  border-top:1px solid transparent;transition:border-color .15s;}
+.sidebar.under-bottom .side-foot{border-top-color:var(--line);}
+.user{display:flex;align-items:center;gap:11px;padding:6px 8px;}
+.user .ava{width:36px;height:36px;border-radius:50%;flex:0 0 auto;
+  background:var(--ava-a);}
+.user .who{font-weight:600;line-height:1.2;}
+.user .who small{display:block;color:var(--ink-3);font-weight:500;font-size:var(--fs-meta);}
+
+/* Generic status dot (pill-status, subs-step-head, sub-agent groups) */
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+
+/* ---------- Main ---------- */
+.main{flex:1;min-width:0;min-height:0;padding:26px 32px 40px;overflow-y:auto;}
+/* Projects becomes a two-screen track: .main stops scrolling and becomes the
+   bounded column, the view takes the remainder, and each screen owns its own
+   scrollport. Dropping the container's TOP padding is what lets sticky headers
+   pin flush to the very top of that scrollport. The inset is re-applied on the
+   topbar (below) so the unscrolled layout is unchanged. (Runs has its own rule.) */
+body.view-projects .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}   /* the Workspaces track: the same bounded column */
+

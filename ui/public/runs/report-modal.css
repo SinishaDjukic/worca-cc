@@ -1,0 +1,55 @@
+/* ---- Report this run modal ---- */
+/* Wider than a confirm (it carries a JSON preview), narrower than the viewer. */
+.report-modal .card{width:min(680px,100%);}
+/* The error/filed slots carry their own top margin, and the body's seam padding
+   (--dlg-gap-head) closes the head — a margin here would only add a gap when both are
+   hidden, which is most of the time. */
+.report-modal .report-top .card-head{margin-bottom:0;}
+.report-head-actions{display:flex;align-items:center;gap:9px;}
+/* Wrap rather than overflow the 680px card on a narrow window. */
+.report-modal .confirm-actions{flex-wrap:wrap;}
+.report-field{margin-bottom:14px;}
+.report-field > label{display:block;font-weight:600;font-size:12px;margin-bottom:6px;}
+.report-field textarea.textarea{resize:vertical;min-height:64px;font-size:13px;}
+/* FIXED height, not max-height. This box is the tallest thing in the card and the
+   only thing whose height changes while the reporter types: pending it holds one
+   line ('Building the report…'), loaded it holds up to 300px of JSON. The card is
+   content-driven (.viewer-modal .card, :1330) inside a `place-items:center` grid
+   (:1320), so that swap re-centres the whole dialog and it "dances" on every
+   keystroke. Pinning the box pins the card. Do NOT "helpfully" add a padding here:
+   *{box-sizing:border-box} (:94) plus .viewer's padding:18px 20px (:1271) already
+   make 300px a BORDER-BOX height, and max-height:300px was border-box too, so the
+   JSON gets the same 262px of content it always did. Adding padding would be the
+   only way to make this change lossy. overflow:auto is inherited from .viewer, so
+   the JSON scrolls internally exactly as before. */
+.report-modal #report-preview{height:300px;margin:0;font-size:12px;}
+.report-optins .confirm-checkbox + .confirm-checkbox{margin-top:8px;}
+.report-optin-hint{display:block;margin-top:3px;color:var(--ink-2);font-size:11px;line-height:1.4;}
+.report-error{margin:10px 0 0;color:var(--red-ink);font-size:12px;}
+.report-error[hidden]{display:none;}
+.report-filed{margin:10px 0 0;font-size:12px;}
+.report-filed[hidden]{display:none;}
+/* The issue link is an <a> so it opens in a real new tab; keep it button-shaped.
+   SCOPED to .report-modal: an unscoped `.confirm-actions a.btn` would reach into every
+   confirm/export/stop dialog in the app, and the :not([href]) rule below would silently
+   grey out any future anchor another modal adds before it has an href. */
+.report-modal .confirm-actions a.btn{display:inline-flex;align-items:center;text-decoration:none;}
+/* …but an author `display` beats the UA's `[hidden]{display:none}` at any specificity,
+   so the rule above would render the fallback link while app.js believes it is hidden.
+   (`el.hidden` is true, the element is on screen — jsdom cannot see this, CDP can.) */
+.report-modal .confirm-actions a.btn[hidden]{display:none;}
+/* No href => the preview is still building. Make that legible rather than letting a
+   dead-looking button sit there (D24). */
+.report-modal .confirm-actions a.btn:not([href]){opacity:.5;pointer-events:none;}
+
+/* History › Overview › Files changed: the plain-words stand-in for the (advanced) Diff tab. */
+.hd-ov-files{padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);display:flex;flex-direction:column;gap:10px;}
+.hd-ov-files-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.hd-ov-files-head .link-btn{font-size:var(--fs-meta);}
+.hd-ov-files-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;}
+.hd-ov-files-list li{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:var(--fs-body);}
+.hd-ov-file-kind{flex:0 0 58px;color:var(--ink-3);}
+.hd-ov-file-kind.k-new{color:var(--green-ink);}
+.hd-ov-file-kind.k-deleted{color:var(--red-ink);}
+.hd-ov-file-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);color:var(--ink-2);}
+

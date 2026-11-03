@@ -1,0 +1,200 @@
+/* ---------- History detail: PR controls + the "Ship it?" modal ---------- */
+/* Detail-header PR controls (design system, PR controls): Create PR and Push are .btn-primary, View PR (`.hd-pr-link`,
+   open or merged) a secondary .btn; each leads with its icons.mjs glyph. These rules only place them. */
+.hd-pr,.hd-push{flex:0 0 auto;}
+.hd-pr[hidden],.hd-push[hidden]{display:none;}
+.hd-pr-link{flex:0 0 auto;}
+.hd-pr-link[hidden]{display:none;}
+/* Workspace runs: one line per member repo under the header row. */
+.hd-pr-repos{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 0;padding:0;list-style:none;font:500 var(--fs-body) var(--sans);}
+.hd-pr-repos[hidden]{display:none;}
+.hd-pr-repo{display:inline-flex;align-items:center;gap:8px;}
+.hd-pr-repo-link{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--blue-ink-strong);text-decoration:none;}
+.hd-pr-repo-link:hover{text-decoration:underline;}
+.hd-pr-repo-note{color:var(--ink-3);}
+/* Watch PR (#619): a member row's failed toggle alert takes its own line under the row. */
+.hd-pr-repo{flex-wrap:wrap;}
+.hd-pr-repo>.card-alert{flex-basis:100%;}
+.hd-after{flex:0 0 auto;}
+.hd-after[hidden]{display:none;}
+
+/* WIDTH GOES ON `#shipit-modal .card`, NOT `.shipit-card`. The markup is
+   `<div class="card shipit-card">` inside `.viewer-modal`, and
+   `.viewer-modal .card{width:min(860px,100%);…}` (:782) is (0,2,0): a bare
+   `.shipit-card{width:…}` (0,1,0) loses no matter where it is appended, and the
+   dialog would ship ~1.5x the design width. Precedents: `.folder-modal .card`
+   (:786) and `.confirm-modal .card` (:1306). Everything else below only ties with
+   `.card` (:263) and wins on source order, so it stays bare. */
+#shipit-modal .card{width:min(560px,100%);}
+.shipit-card{text-align:left;animation:shipit-rise .34s cubic-bezier(.2,.7,.3,1) both;}
+@keyframes shipit-rise{0%{transform:translateY(10px);opacity:0}100%{transform:translateY(0);opacity:1}}
+/* The Create PR dialog: a centred title over a --line rule, then the zones (Into, Title and description, After it
+   opens), each a labelled grid closed by its own --line rule, then the footer behind a divider. */
+.shipit-card h2.shipit-title{margin:0;padding-bottom:12px;border-bottom:1px solid var(--line);text-align:center;font:700 18px/1.25 var(--sans);}
+.shipit-zone{display:grid;gap:8px;padding:14px 0;border-bottom:1px solid var(--line);}
+.shipit-zone[hidden]{display:none;}
+.shipit-after{border-bottom:0;}   /* the footer's own top rule is the one divider */
+.shipit-zone-label{font:500 12px/1.2 var(--sans);color:var(--ink-2);}
+.shipit-into-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.shipit-into-row[data-cols="1"]{grid-template-columns:1fr;}
+/* One ship flow (slice 2): a feature's or a chain's Pull requests zone, One and N stacked side by side; a disabled One
+   takes the shared .opt-row:has(input:disabled) look. */
+.shipit-prs-opts{display:flex;gap:8px;}
+.shipit-remotes{display:contents;}
+.shipit-remotes[hidden]{display:none;}
+.shipit-base-remote-field[hidden],.shipit-push-field[hidden]{display:none;}
+.shipit-push-field{grid-column:1 / -1;order:2;}
+.shipit-push-field label,.shipit-remote-field label{display:block;margin:0 0 6px;font:500 12px/1.2 var(--sans);color:var(--ink-2);}
+.shipit-base:empty{display:none;}
+.shipit-base:not(:empty){display:flex;align-items:center;min-height:32px;padding:0 10px;border-radius:var(--r-ctrl);background:var(--field);}
+.shipit-repo-branch .select-wrap{max-width:100%;}
+.shipit-repo-branch .select{width:auto;max-width:100%;padding:6px 30px 6px 10px;font:inherit;color:var(--ink);
+  background:var(--surface);border-color:var(--line-2);border-radius:var(--r-sm);}
+.shipit-repo-branch .select:focus{border-color:var(--ink);}
+.shipit-repo-branch .select-wrap::after{right:11px;}
+.shipit-repo-branch select:disabled,.shipit-into select:disabled{opacity:.55;cursor:not-allowed;}
+.shipit-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);}
+.shipit-try-btn{margin-right:auto;}
+.shipit-try-btn[hidden]{display:none;}
+.shipit-ok{flex:none;}
+@media (max-width:520px){.shipit-into-row{grid-template-columns:1fr;}}
+
+/* Fork support: the push-remote + base-repo selects (and each workspace row's twins). */
+.shipit-remotes .select,.shipit-repo-remotes .select{padding:0 36px 0 12px;font-size:13px;}
+.shipit-remotes .select-wrap::after,.shipit-repo-remotes .select-wrap::after{right:13px;}
+.shipit-remotes select:disabled,.shipit-repo-remotes select:disabled{opacity:.55;cursor:not-allowed;}
+.shipit-remotes-hint{grid-column:1/-1;margin:0;font-size:12px;color:var(--ink-3);word-break:break-all;}
+.shipit-remotes-hint:empty{display:none;}
+
+/* Workspace Ship-it: one row per affected member repo (tick box, branch → base,
+   its own remotes, its own status line). Every node the JS hides has a [hidden] twin. */
+.shipit-repos{display:grid;gap:10px;margin-top:14px;text-align:left;}
+.shipit-repos[hidden]{display:none;}
+.shipit-repo{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);}
+.shipit-repo-head{display:flex;align-items:center;gap:8px;cursor:pointer;}
+.shipit-repo-stat{margin-left:auto;font-size:12px;color:var(--ink-3);}
+.shipit-repo-branch{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;}
+.shipit-repo-remotes{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;}
+.shipit-repo-remotes[hidden]{display:none;}
+.shipit-repo-status[hidden]{display:none;}   /* .hint sets display:block */
+.shipit-skipped{margin:0;}
+@media (max-width:520px){.shipit-repo-remotes{grid-template-columns:1fr;}}
+
+/* Publish branch (#618): the header's outline pill + "Published to …" note, and its dialog
+   (one row per repo: tick for a workspace member, name, branch, push remote, status). */
+.hd-publish{flex:0 0 auto;}
+.hd-publish[hidden],.hd-published[hidden]{display:none;}
+.hd-published{margin:8px 0 0;font-size:12px;color:var(--ink-3);overflow-wrap:anywhere;}
+#publish-modal .card{width:min(520px,100%);padding:24px;}
+.publish-card h2{margin:0;font:700 18px/1.25 var(--sans);letter-spacing:-.015em;}
+.publish-sub{margin:8px 0 0;font:400 13px/1.6 var(--sans);color:var(--ink-2);}
+.publish-repos{display:grid;gap:10px;margin-top:16px;text-align:left;}
+.publish-repo{display:grid;gap:12px;padding:14px;background:var(--field);border-radius:var(--r-ctrl);}
+.publish-repo-head{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink);word-break:break-all;}
+.publish-pick[hidden],.publish-remote-wrap[hidden],.publish-status[hidden]{display:none;}
+.publish-remote-wrap{display:grid;gap:6px;}
+.publish-remote-label{font:600 12px/1.2 var(--sans);color:var(--ink-2);}
+.publish-repo .select{padding:0 36px 0 12px;font-size:13px;background:var(--surface);}
+.publish-repo .select-wrap::after{right:13px;}
+.publish-status{margin:0;font-size:12px;}
+.publish-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
+
+/* Base conflicts (#620) */
+.hd-base-check[hidden], .hd-base-check [hidden], .shipit-basecheck[hidden] { display: none; }
+.hd-base-members { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+/* One quiet line per branch that needs something: a tone dot, the status text, then compact buttons. */
+.hd-base-member { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 500 var(--fs-meta) var(--sans); color: var(--ink-2); }
+.hd-base-name { color: var(--ink); }
+.hd-base-pill { display: inline-flex; align-items: center; gap: 7px; }
+.hd-base-pill::before { content: ''; width: 7px; height: 7px; border-radius:50%; background: var(--ink-3); flex: none; }
+.hd-base-pill.tone-green::before { background: var(--green-ink); }
+.hd-base-pill.tone-blue::before { background: var(--blue-ink); }
+.hd-base-pill.tone-red::before { background: var(--red-ink); }
+.hd-base-pill.tone-amber::before { background: var(--amber-ink); }
+.hd-base-msg { flex-basis: 100%; font-size: 12px; }
+.hd-base-msg-err { color: var(--red-ink); }
+.hd-base-files { flex-basis: 100%; margin: 0 0 0 14px; padding: 0; list-style: none; font-size: 12px; color: var(--ink-3); }
+.shipit-basecheck.tone-red { color: var(--red-ink); }
+
+/* The PR description: label, Write / Preview tabs and Generate with AI on one row,
+   the textarea (or its rendered preview) under it. Left-aligned inside the centered
+   card like the remotes. `.btn` sets display:inline-flex and `.hint` display:block,
+   so the Stop button, the preview and the error line each ship a [hidden] twin. */
+.shipit-desc-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;}
+.shipit-desc-head .shipit-generate-stop{margin-left:auto;}
+.shipit-desc-head .shipit-generate-stop[hidden]{display:none;}
+.shipit-desc-head .shipit-generate-stop[hidden] + .shipit-generate{margin-left:auto;}
+.shipit-desc-input{min-height:140px;font-size:13px;}
+.shipit-desc-input::placeholder{color:var(--ink-2);}
+.shipit-desc-input[readonly]{opacity:.6;}
+.shipit-desc-input::placeholder{color:var(--ink-2);}   /* --ink-3 misses 4.5:1 on the card's grey field */
+.shipit-desc-preview{max-height:320px;}
+.shipit-desc-preview[hidden]{display:none;}
+.shipit-desc-err{margin-top:8px;}
+.shipit-desc-err[hidden]{display:none;}
+.shipit-draft{margin-top:10px;}
+.shipit-watch-help{display:block;margin-top:4px;}
+.shipit-closes{margin-top:4px;}
+.shipit-closes[hidden]{display:none;}
+/* The Generate-with-AI veil over the editor (or its preview) while a draft is in
+   flight: a haze over the old text, a violet light band swept left to right across
+   it, a breathing violet edge, and a shimmering label. It keeps pointer-events, so
+   it swallows clicks; the textarea under it is read-only too (setShipItGenerating).
+   The textarea goes block so the box has no inline-gap strip under it for the veil
+   to overhang — hence its own [hidden] twin.
+   Both sweeps run on shipit-sweep, NOT the shared ask-shimmer: a 220%-wide
+   background repeats every 2.2 box widths, and ask-shimmer travels 2.88 of them
+   (180% -> -60%, each 1% of position = 1.2% of the box), so at the loop the next
+   tile's band restarts already inside the right edge — a flash. shipit-sweep
+   travels exactly one tile (-183.333% * 1.2 = 2.2), so the loop point is seamless:
+   the band leaves on the right and the next one enters from the left. */
+.shipit-desc-field{position:relative;}
+.shipit-desc-field > .shipit-desc-input{display:block;}
+.shipit-desc-field > .shipit-desc-input[hidden]{display:none;}
+.shipit-desc-busy{display:none;}
+.shipit-desc-field.is-generating .shipit-desc-busy{position:absolute;inset:0;z-index:1;display:flex;
+  align-items:center;justify-content:center;overflow:hidden;cursor:progress;border-radius:var(--r-ctrl);
+  background:color-mix(in srgb,var(--field) 50%,transparent);
+  -webkit-backdrop-filter:blur(1.5px);backdrop-filter:blur(1.5px);
+  animation:shipit-veil-breathe 2.4s ease-in-out infinite;}
+.shipit-desc-field.is-generating .shipit-desc-busy::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(100deg,transparent 30%,var(--blue-sheen) 50%,transparent 70%);
+  background-size:220% 100%;animation:shipit-sweep 1.8s linear infinite;}
+.shipit-desc-busy-label{position:relative;font-weight:600;font-size:12px;letter-spacing:.01em;white-space:nowrap;
+  background:linear-gradient(100deg,var(--ink-2) 0%,var(--ink-2) 34%,var(--blue-ink) 50%,var(--ink-2) 66%,var(--ink-2) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:shipit-sweep 2.4s linear infinite;}
+@keyframes shipit-sweep{from{background-position:0 0;}to{background-position:-183.333% 0;}}
+@keyframes shipit-veil-breathe{
+  0%,100%{box-shadow:inset 0 0 0 1.5px var(--blue-glow);}
+  50%{box-shadow:inset 0 0 0 1.5px var(--blue-glow-strong),inset 0 0 24px color-mix(in srgb,var(--blue) 16%,transparent);}}
+
+/* Reduced motion for the Create PR dialog's animations. This block MUST sit AFTER the
+   rules that declare them: `@media` contributes no specificity, so naming
+   `.shipit-card` in the kill list at :763 would tie at (0,1,0) and LOSE on source
+   order — the animation would still play. (The four names already at :763 work
+   only because each is declared before it, and the run-graph block at :1246
+   likewise follows its animations.) */
+@media (prefers-reduced-motion: reduce){
+  .shipit-card{animation:none;}
+  /* The Generate veil holds still: a steady violet edge, no sweep, and the
+     label gets a real colour back (its fill is a clipped, now-frozen gradient). */
+  .shipit-desc-field.is-generating .shipit-desc-busy{animation:none;
+    box-shadow:inset 0 0 0 1.5px var(--blue-ring);}
+  .shipit-desc-field.is-generating .shipit-desc-busy::before{content:none;}
+  .shipit-desc-busy-label{animation:none;background:none;color:var(--ink-2);}
+}
+
+/* ---------- focus visibility (History redesign) ----------
+   Every other interactive control in this stylesheet carries a ring (.btn,
+   .nav button, .seg button, .info-tip, .ws-head, .ch-hit); none of the
+   new controls did. A control with no `btn` class has no
+   ring to inherit, so `.hd-back` and `.shipit-cancel`
+   had nothing at all, and neither has the bar's `.hd-resume` (styled like the run
+   page's Resume, no `.btn` either) — which matters most for `.hd-back`, the
+   node openHistDetail focuses programmatically, and for the `.hd-tab` tablist.
+   `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
+.hd-back:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
+.hd-report:focus-visible,.hd-archive:focus-visible,.hd-sec:focus-visible,.shipit-cancel:focus-visible{
+  outline:2px solid var(--ink);outline-offset:2px;}
+

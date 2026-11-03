@@ -6,7 +6,7 @@
   "author": "Sinisha Djukic",
   "type": "module",
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.19.0"
   },
   "repository": {
     "type": "git",
@@ -38,6 +38,7 @@
   "files": [
     "src/",
     "ui/server.mjs",
+    "ui/routes/",
     "ui/public/",
     "extension/dist/chrome/",
     "extension/dist/edge/",
@@ -101,35 +102,35 @@
     "prepack": "node tools/build-extension.mjs --pack",
     "ext:lint:firefox": "node tools/build-extension.mjs --browser firefox && web-ext lint --source-dir extension/dist/firefox",
     "e2e:extension": "node tools/build-extension.mjs --test --browser chrome && playwright test -c e2e/extension/playwright.config.mjs",
-    "e2e:extension:update-linux": "docker run --rm --platform linux/amd64 -v worca-e2e-node-modules:/nm mcr.microsoft.com/playwright:v1.56.0-noble chown \"$(id -u):$(id -g)\" /nm && docker run --rm --platform linux/amd64 --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -v worca-e2e-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.56.0-noble bash -lc \"npm ci && npm run e2e:extension -- --update-snapshots\"",
+    "e2e:extension:update-linux": "docker run --rm --platform linux/amd64 -v worca-e2e-node-modules:/nm mcr.microsoft.com/playwright:v1.64.1-noble chown \"$(id -u):$(id -g)\" /nm && docker run --rm --platform linux/amd64 --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -v worca-e2e-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.64.1-noble bash -lc \"npm ci && npm run e2e:extension -- --update-snapshots\"",
     "e2e:firefox-smoke": "node tools/build-extension.mjs --browser firefox && node tools/firefox-smoke.mjs"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@ricky0123/vad-web": "0.0.31",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "diff": "8.0.4",
+    "diff": "9.0.0",
     "dompurify": "3.4.17",
     "express": "^4.19.2",
-    "gsap": "3.12.5",
+    "gsap": "3.15.0",
     "htmlparser2": "12.0.0",
-    "marked": "18.0.10",
+    "marked": "18.1.2",
     "onnxruntime-web": "1.22.0",
-    "playwright-core": "1.56.0",
-    "smol-toml": "1.9.0",
+    "playwright-core": "1.64.1",
+    "smol-toml": "1.9.1",
     "tar": "7.5.22",
-    "undici": "7.30.0",
+    "undici": "8.12.3",
     "ws": "^8.18.0",
     "yaml": "2.9.1"
   },
   "devDependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/poppins": "^5.2.7",
-    "@playwright/test": "1.56.0",
+    "@playwright/test": "1.64.1",
     "acorn": "8.19.0",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.2",
     "eslint-scope": "8.4.0",
     "jsdom": "^29.1.1",
     "web-ext": "^10.8.0"

@@ -1,0 +1,209 @@
+
+/* ========================================================================== */
+/* v2 node-graph canvas — EVERY geometry number comes from the --gv-* custom   */
+/* properties injectGeometry() writes on .gv-stage at mount, so the CSS box    */
+/* model cannot drift from nodeSize()/portAnchor(). Never hard-code a px       */
+/* geometry value here (test/ui-graph-css.test.mjs enforces it).               */
+/* Scoped under .gv-world because style.css still declares `.run-flow .node`   */
+/* status rules the v2 graph is hosted inside; the resets below neutralise     */
+/* every property they leak. (The UNSCOPED v1 `.node` rules are gone.)         */
+/* ========================================================================== */
+.gv-canvas{position:relative;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;
+  background:var(--canvas-2) radial-gradient(circle at 1px 1px,var(--line-2) .7px,transparent 1px);background-size:22px 22px;}
+.gv-stage{position:absolute;inset:0;outline:none;}
+.gv-stage.panning{cursor:grabbing;}
+.gv-stage.space{cursor:grab;}
+.gv-world{position:absolute;left:0;top:0;width:0;height:0;transform-origin:0 0;will-change:transform;}
+.gv-wires{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:1;}
+/* THE rule that makes a filled ghost blob structurally impossible. Constant 2px on screen at any zoom. */
+.gv-wires path{fill:none;stroke:var(--w-void);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke;}
+.gv-wires path.w-md{stroke:var(--w-md);}
+.gv-wires path.w-json{stroke:var(--w-json);}
+.gv-wires path.w-void{stroke:var(--w-void);}
+.gv-wires path.w-any{stroke:var(--ink-3);}
+.gv-wires path.loop{stroke:var(--amber);}
+.gv-wires path.bad{stroke:var(--red);}
+.gv-wires path.sel{stroke:var(--ink);stroke-width:2.75;}
+.gv-wires path.ghost{stroke:var(--ink-3);stroke-dasharray:5 4;visibility:hidden;}
+.gv-wires path.ghost.on{visibility:visible;}
+.gv-wires path.ghost.legal{stroke:var(--green);stroke-dasharray:none;}
+.gv-wires path.ghost.illegal{stroke:var(--red);}
+/* Frosted card: ~50% panel + blur, so the wires behind it show softly. The ring is a shadow (BORDER 0). */
+.gv-world .node{position:absolute;left:0;top:0;display:block;padding:0;gap:0;align-items:stretch;z-index:2;
+  width:var(--gv-node-w);background:var(--card-glass);border:var(--gv-border) solid transparent;border-radius:var(--r-sm);
+  -webkit-backdrop-filter:blur(7px) saturate(1.4);backdrop-filter:blur(7px) saturate(1.4);
+  box-shadow:0 0 0 1px var(--card-glass-line);cursor:grab;transition:box-shadow .12s;}
+.gv-world .node::before{content:none;}
+/* While the canvas pans, zooms or drags a card (view.mjs MOVING_SETTLE_MS), the cards drop the blur: without a GPU
+   (software compositing) the 58-card blur took 9–13 ms of every 16.7 ms frame on an M5 and dropped frames. */
+.gv-stage.gv-moving .gv-world .node{-webkit-backdrop-filter:none;backdrop-filter:none;}
+.gv-world .node:hover{box-shadow:0 0 0 1px var(--line-2);}
+.gv-world .node.sel{outline:none;box-shadow:0 0 0 1.5px var(--ink);}
+.gv-world .node:focus-visible{outline:none;box-shadow:0 0 0 1.5px var(--ink),0 0 0 4.5px var(--field);}
+.gv-world .node.dragging{cursor:grabbing;transition:none;}
+.gv-static .node,.gv-static .wbadge{pointer-events:none;}
+/* The label row ABOVE the card (outside its box): family tile · title · quiet meta. */
+.gv-world .nlabel{position:absolute;left:1px;right:1px;top:calc(-1 * var(--gv-label-h));height:calc(18px * var(--gv-scale));
+  display:flex;align-items:center;gap:calc(6px * var(--gv-scale));font-size:max(9px,calc(11.5px * var(--gv-scale)));white-space:nowrap;}
+.gv-world .nlabel .ltile{flex:0 0 auto;width:calc(18px * var(--gv-scale));height:calc(18px * var(--gv-scale));
+  border-radius:var(--r-sm);display:grid;place-items:center;}
+.gv-world .nlabel .ltile svg{width:calc(12px * var(--gv-scale));height:calc(12px * var(--gv-scale));stroke-width:2;}
+.gv-world .nlabel .tt{min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:500;color:var(--ink);}
+.gv-world .nlabel .lm{margin-left:auto;padding-left:6px;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  color:var(--ink-2);font-size:max(9px,calc(10.5px * var(--gv-scale)));}
+.gv-world .nlabel .lm.mono{font-family:var(--mono);}
+.gv-world .nlabel .nrun{margin-left:auto;display:inline-flex;gap:6px;flex:0 0 auto;font:11px/1.4 var(--mono);color:var(--ink-2);}
+.gv-world .nlabel .nrun .away{padding:0 5px;border-radius:var(--r-xs);background:var(--amber-wash);color:var(--amber-ink);}
+.gv-world .h-flow{background:var(--ink);color:var(--on-ink);}
+.gv-world .h-violet{background:var(--slate-bg);color:var(--slate-ink);}
+.gv-world .h-blue{background:var(--blue-bg);color:var(--h-blue-ink);}
+.gv-world .h-green{background:var(--green-bg);color:var(--h-green-ink);}
+.gv-world .h-red{background:var(--red-bg);color:var(--red-ink);}
+.gv-world .h-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
+.gv-world .h-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.gv-world .h-teal{background:var(--teal-bg);color:var(--teal-ink);}
+.gv-world .h-pink{background:var(--pink-bg);color:var(--pink-ink);}
+.gv-world .h-indigo{background:var(--indigo-bg);color:var(--indigo-ink);}
+.gv-world .h-lime{background:var(--lime-bg);color:var(--lime-ink);}
+.gv-world .h-cocoa{background:var(--cocoa-bg);color:var(--cocoa-ink);}
+.gv-world .h-slate{background:var(--slate-bg);color:var(--slate-ink);}
+.gv-world .nbody{padding:var(--gv-pad-t) 0 var(--gv-pad-b);}
+.gv-world .nband{height:var(--gv-band-h);display:flex;align-items:center;gap:3px;padding:0 calc(3px * var(--gv-scale));overflow:hidden;}
+.gv-world .bchip{display:inline-block;flex:0 0 auto;height:calc(20px * var(--gv-scale));line-height:calc(20px * var(--gv-scale));padding:0 calc(6.15px * var(--gv-scale));
+  border-radius:var(--r-xs);font-family:var(--mono);font-size:11px;font-weight:700;white-space:nowrap;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;}
+.gv-world .bchip.model{flex:0 1 auto;background:var(--ink);color:var(--on-ink);}
+.gv-world .bchip.model.is-unset{background:var(--field);color:var(--ink-2);}
+.gv-world .bchip.effort{background:var(--field);color:var(--ink-2);}
+.gv-world .bchip.flag{padding:0 calc(4.6px * var(--gv-scale));background:var(--amber-bg);color:var(--amber-ink);}
+.gv-world .bchip.flag.q{background:var(--red-bg);color:var(--red-ink);}
+.gv-world button.bchip{border:0;font-family:var(--mono);font-weight:700;cursor:pointer;color:inherit;}
+.gv-world button.bchip:hover,.gv-world button.bchip[aria-expanded="true"]{box-shadow:0 0 0 2px var(--line-2);}
+.gv-world button.bchip:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.gv-world .prow{position:relative;height:var(--gv-row-h);display:flex;align-items:center;gap:calc(6px * var(--gv-scale));
+  padding:0 calc(12px * var(--gv-scale)) 0 calc(15px * var(--gv-scale));white-space:nowrap;}
+.gv-world .prow.out{justify-content:flex-end;padding:0 calc(15px * var(--gv-scale)) 0 calc(12px * var(--gv-scale));}
+.gv-world .prow .pn{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:max(9px,calc(11.5px * var(--gv-scale)));font-weight:450;color:var(--ink);}
+.gv-world .prow .pt{font-family:var(--mono);font-size:max(9px,calc(10px * var(--gv-scale)));line-height:1;color:var(--ink-2);}
+.gv-world .prow .pt.cond{font-family:var(--sans);color:var(--amber-ink);}
+.gv-world .prow .mla{margin-left:auto;}
+.gv-world .prow .chip{flex:0 0 auto;font-family:var(--mono);font-weight:700;font-size:max(9px,calc(9.5px * var(--gv-scale)));line-height:calc(15px * var(--gv-scale));
+  padding:0 calc(5px * var(--gv-scale));border-radius:var(--r-xs);white-space:nowrap;background:var(--field);color:var(--ink-2);}
+.gv-world .prow .chip.am{background:var(--amber-bg);color:var(--amber-ink);}
+.gv-world .prow .chip.fan{background:var(--blue-bg);color:var(--blue-ink);}
+.gv-world .psep{height:var(--gv-sep-h);position:relative;}
+.gv-world .psep::after{content:"";position:absolute;left:calc(10px * var(--gv-scale));right:calc(10px * var(--gv-scale));top:calc(4px * var(--gv-scale));height:1px;background:var(--line);}
+/* Port badges sit ON the card edge: centre = row centre, x overhang = DOT/2 + BORDER. Unwired = tinted ring,
+   wired = filled; void/any keep a panel fill until wired; the await gate is dashed; conditional outputs are diamonds. */
+.gv-world .dot,.gv-world .gdot{position:absolute;top:calc((var(--gv-row-h) - var(--gv-dot)) / 2);box-sizing:border-box;
+  width:var(--gv-dot);height:var(--gv-dot);border-radius:50%;transition:transform .12s;}
+.gv-world .prow.in .dot,.gv-world .prow.in .gdot{left:calc(-1 * (var(--gv-dot) / 2 + var(--gv-border)));}
+.gv-world .prow.out .dot{right:calc(-1 * (var(--gv-dot) / 2 + var(--gv-border)));}
+.gv-world .dot.md{background:var(--t-md-bg);border:1.5px solid var(--t-md);}
+.gv-world .dot.json{background:var(--t-json-bg);border:1.5px solid var(--t-json);}
+.gv-world .dot.void{background:var(--panel);border:1.5px solid var(--t-void);}
+.gv-world .dot.any{background:var(--panel);border:1.5px solid var(--ink);}
+.gv-world .prow.wired .dot.md{background:var(--t-md);}
+.gv-world .prow.wired .dot.json{background:var(--t-json);}
+.gv-world .prow.wired .dot.void{background:var(--t-void);}
+.gv-world .prow.wired .dot.any{background:var(--ink);}
+.gv-world .dia{position:absolute;top:calc((var(--gv-row-h) - 9px * var(--gv-scale)) / 2);right:calc(-1 * (4.5px * var(--gv-scale) + var(--gv-border)));
+  width:calc(9px * var(--gv-scale));height:calc(9px * var(--gv-scale));box-sizing:border-box;background:var(--amber-bg);border:1.5px solid var(--amber);border-radius:var(--r-xs);transform:rotate(45deg);}
+.gv-world .prow.wired .dia{background:var(--amber);}
+.gv-world .gdot{background:var(--panel);border:1.5px dashed var(--ink-3);}
+.gv-world .prow.gate{opacity:.5;}
+.gv-world .prow.gate.wired{opacity:1;}
+.gv-world .prow.gate .pn,.gv-world .prow.gate .pt{color:var(--ink-2);}
+.gv-world .prow.drop-ok .dot,.gv-world .prow.drop-ok .gdot{transform:scale(1.3);box-shadow:0 0 0 3px var(--drop-ring);border-color:var(--green);}
+.gv-world .prow.drop-bad .dot,.gv-world .prow.drop-bad .gdot{box-shadow:0 0 0 3px var(--red-bg);border-color:var(--red);}
+/* Footer: the Task/End/OR caption, or (edit hosts) the agent/script description, two lines max. */
+.gv-world .ncap{height:var(--gv-cap-h);display:flex;align-items:center;padding:0 calc(12px * var(--gv-scale));border-top:1px solid var(--line);
+  font-size:max(9px,calc(10.5px * var(--gv-scale)));color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.gv-world .ncap.desc{height:var(--gv-desc-h);display:block;white-space:normal;
+  padding:calc(7px * var(--gv-scale)) calc(12px * var(--gv-scale)) 0;line-height:1.36;font-size:max(9px,calc(11px * var(--gv-scale)));}
+.gv-world .ncap.desc>span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;max-height:2.72em;}
+.gv-world .ncap.desc.mono{font-family:var(--mono);}
+.gv-world .npip,.gv-world .nwarn{position:absolute;top:-5px;left:-5px;width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 2px var(--panel);cursor:pointer;z-index:3;}
+.gv-world .npip{background:var(--red);}
+.gv-world .nwarn{background:var(--amber);}
+/* The loop pill: "≤N" at the swoop's lowest point (every host); a run appends its "· k×" delivery count. */
+.gv-world .wbadge{position:absolute;transform:translate(-50%,-50%);z-index:3;display:inline-flex;align-items:center;justify-content:center;gap:3px;
+  height:18px;min-width:28px;box-sizing:border-box;padding:0 7px;border-radius:var(--r-xs);background:var(--amber-bg);color:var(--amber-ink-strong);border:1px solid var(--amber);
+  font:600 11px/16px var(--sans);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;}
+.gv-edit .wbadge{pointer-events:auto;cursor:pointer;}
+.gv-edit .wbadge:hover{box-shadow:0 0 0 3px var(--amber-bg);}
+.gv-edit .wbadge.sel{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink);}
+.gv-world .wbadge .wfired{font-weight:700;}
+.gv-world .wbadge .wfired::before{content:"· ";font-weight:400;}
+/* flow mode (A3): the stage is as tall as its rows — the host reads it back — and the world never transforms */
+.gv-stage.gv-flow{position:relative;inset:auto;width:100%;}
+/* A35: a flow host is never inside a click-to-open card, so its cards/badges may take pointer events (head + chip tooltips) */
+.gv-static.gv-flow .node,.gv-static.gv-flow .wbadge{pointer-events:auto;}
+/* Run-mode executions footer (P6 fills it through view.setFooter, which is the
+   ONE writer of a run card's height). Heights MUST stay var(--gv-foot-h) /
+   var(--gv-exec-row-h): nodeSize bills FOOT_H for the first footer LINE and
+   EXEC_ROW_H for each extra one (a wrapped fan line, a stacked exec row's extra
+   lines), and test/ui-graph-css.test.mjs asserts style.css uses the FULL --gv-*
+   set injectGeometry writes — dropping them fails that assertion. */
+.gv-world .xfoot{position:absolute;left:0;right:0;bottom:0;border-top:1px solid var(--line);
+  border-radius:0 0 var(--r-sm) var(--r-sm);overflow:hidden;background:var(--panel);}
+.gv-world .xfoot>.fan,.gv-world .xfoot>.xtoggle,.gv-world .xfoot>.xresult,.gv-world .xfoot>.xlive{height:var(--gv-exec-row-h);
+  display:flex;align-items:center;gap:7px;padding:0 11px;width:100%;box-sizing:border-box;}
+.gv-world .xfoot>:first-child{height:var(--gv-foot-h);}   /* the first line is the tall one nodeSize bills */
+.gv-world .xfoot>.fan.f2{height:calc(var(--gv-foot-h) + var(--gv-exec-row-h));}   /* two wrapped square lines */
+.gv-world .xfoot>.xtoggle{border:none;background:none;font:inherit;color:inherit;cursor:pointer;text-align:left;}
+.gv-world .xfoot>.xlive{display:block;line-height:var(--gv-exec-row-h);font-size:max(8px,calc(10.5px * var(--gv-scale)));color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.gv-world .xfoot>.xrow{height:var(--gv-exec-row-h);display:flex;align-items:center;gap:7px;padding:0 11px;}
+/* stacked exec rows: dur · cost on its own right-aligned line (.stack), the
+   label on up to two clamped lines above it (.l2) — run-decor execBandLayout
+   bills exactly these line counts, so the grid rows must stay --gv-exec-row-h */
+.gv-world .xfoot>.xrow.stack{height:calc(2*var(--gv-exec-row-h));display:grid;
+  grid-template-columns:auto minmax(0,1fr);grid-auto-rows:var(--gv-exec-row-h);column-gap:7px;row-gap:0;}
+.gv-world .xfoot>.xrow.stack.l2{height:calc(3*var(--gv-exec-row-h));}
+.gv-world .xfoot>.xrow.stack .led{grid-row:1;grid-column:1;}
+.gv-world .xfoot>.xrow.stack .xl{grid-row:1;grid-column:2;}
+.gv-world .xfoot>.xrow.stack .xr{grid-row:2;grid-column:2;}
+.gv-world .xfoot>.xrow.stack.l2 .xl{grid-row:1 / span 2;white-space:normal;display:-webkit-box;
+  -webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:var(--gv-exec-row-h);}
+.gv-world .xfoot>.xrow.stack.l2 .xr{grid-row:3;}
+/* fan squares wrap inside a fixed --gv-fan-w column (FAN_PER_ROW per line) so
+   they keep their 7px and the ×N tail keeps its right-hand column */
+.gv-world .xfoot .fsq{display:flex;flex-wrap:wrap;flex:0 0 var(--gv-fan-w);max-width:var(--gv-fan-w);
+  column-gap:3px;row-gap:7px;}
+.gv-world .xfoot .xsq{display:flex;gap:3px;flex:0 0 auto;}
+.gv-world .xfoot .xq,.gv-world .xfoot .sq{width:7px;height:7px;border-radius:var(--r-xs);background:var(--line-2);flex:0 0 auto;}
+.gv-world .xfoot .xq.is-active,.gv-world .xfoot .sq.on{background:var(--blue);}
+.gv-world .xfoot .xq.is-done{background:var(--green);}
+.gv-world .xfoot .xq.is-error{background:var(--red);}
+.gv-world .xfoot .xsum,.gv-world .xfoot .xl{font-size:11px;color:var(--ink-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gv-world .xfoot .xr,.gv-world .xfoot .fl{margin-left:auto;font:11px/1.4 var(--mono);color:var(--ink-3);white-space:nowrap;flex:0 0 auto;}
+.gv-world .xfoot .chev{width:13px;height:13px;margin-left:auto;flex:0 0 auto;}
+.gv-world .xfoot .led{width:8px;height:8px;border-radius:50%;background:var(--line-2);flex:0 0 auto;}
+.gv-world .xfoot .xrow.is-active .led{background:var(--blue);}
+.gv-world .xfoot .xrow.is-done .led{background:var(--green);}
+.gv-world .xfoot .xrow.is-error .led{background:var(--red);}
+/* Away mode under the execution it answered: ONE --gv-exec-row-h line (bandUnits bills 1), the glyph
+   centred on the exec led's column, an amber wash for booked spend — never an edge line. */
+.gv-world .xfoot>.xaway{height:var(--gv-exec-row-h);display:flex;align-items:center;gap:7px;padding:0 11px 0 9px;background:var(--amber-wash);}
+.gv-world .xfoot>.xaway.is-stopped{background:none;}
+.gv-world .xfoot .xaway-ico{display:inline-flex;flex:0 0 auto;width:12px;height:12px;color:var(--amber-ink);}
+.gv-world .xfoot .xaway-ico svg{width:12px;height:12px;}
+.gv-world .xfoot .xaway.is-stopped .xaway-ico{color:var(--ink-3);}
+.gv-world .ngate{position:absolute;top:-7px;right:-7px;width:15px;height:15px;border-radius:var(--r-sm);
+  background:var(--amber-bg);color:var(--amber-ink);border:1px solid var(--amber);
+  font:11px/13px var(--sans);text-align:center;z-index:3;}
+.gv-chip{position:absolute;z-index:6;pointer-events:none;height:20px;padding:0 8px;border-radius:var(--r-xs);background:var(--red-bg);color:var(--red-ink);
+  border:1px solid color-mix(in srgb,var(--red) 35%,transparent);font:500 11px/18px var(--sans);white-space:nowrap;}
+.gv-chip[hidden]{display:none;}
+@media (prefers-reduced-motion:reduce){.gv-world .node,.gv-world .dot,.gv-world .gdot{transition:none;}}
+
+/* ========================================================================== */
+/* Shared editor pieces: the canvas nav cluster (the run monitor, the Auto    */
+/* pop-up), the inspector panels (the Workflows view's More popover), the     */
+/* list head of the Workspaces and Projects pages, and the save dialog.       */
+/* ========================================================================== */
+/* The canvas nav cluster (zoom in / zoom out / fit). Each host places it: the run
+   monitor (.run-flow-wrap.gv-wrap-monitor > .gv-nav) and the Auto pop-up
+   (.wf-pop-canvas .gv-nav). */
+.gv-nav{position:absolute;z-index:6;bottom:12px;right:352px;display:flex;flex-direction:column;gap:6px;}
+.gv-nav-btn svg{display:block;}
+

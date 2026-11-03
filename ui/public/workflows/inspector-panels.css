@@ -1,0 +1,73 @@
+/* ---------- inspector panels (inspector.mjs markup) ---------- */
+.ins-panel{display:flex;flex-direction:column;}
+.ins-head{padding-bottom:11px;margin-bottom:13px;border-bottom:1px solid var(--line);}
+.ins-name{font-weight:600;font-size:13px;letter-spacing:-.01em;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;}
+.ins-sub{margin-top:4px;font:11px/1.4 var(--mono);color:var(--ink-3);overflow-wrap:anywhere;}
+.ins-body-in{display:flex;flex-direction:column;gap:13px;}
+.ins-f{display:flex;flex-direction:column;gap:6px;}
+.ins-label{font-weight:600;font-size:11px;color:var(--ink-2);}
+/* Compact restatement of the global field skin — the page metrics (13px/15px of
+   padding, 14px text) are far too heavy for a 308px rail. */
+/* Script inspector (P1b): the params textarea wears the SAME field skin as .ins-select/.ins-number. */
+.ins-panel .ins-textarea{width:100%;box-sizing:border-box;padding:8px 11px;font-size:12px;line-height:1.45;border-radius:var(--r-sm);
+  background:var(--field);border:1.5px solid transparent;color:var(--ink);resize:vertical;}
+.ins-panel .ins-textarea:focus{background:var(--field-focus);border-color:var(--ink);outline:none;}
+.ins-panel .ins-caption{display:block;margin-top:-7px;color:var(--ink-3);font-size:11px;}
+.ins-panel .ins-f.ins-missing .ins-label::after{content:" · required";color:var(--amber-ink);}
+.ins-panel .ins-chiprow{display:flex;gap:6px;align-items:center;}
+.ins-panel .ins-chiprow .chip.rt{font-family:var(--mono);text-transform:none;font-size:11px;padding:2px 8px;}
+.ins-port-editor .ins-prow{display:grid;grid-template-columns:minmax(0,1fr) 72px auto auto 22px;gap:6px;align-items:center;margin-bottom:6px;}
+.ins-port-editor .ins-prow input[type="text"]{min-width:0;padding:5px 8px;font-size:12px;border-radius:var(--r-sm);background:var(--field);border:1.5px solid transparent;color:var(--ink);}
+.ins-port-editor .ins-prow .ins-select{padding:5px 22px 5px 8px;font-size:12px;}
+.ins-port-editor .ins-prow[data-dir="outputs"] .ins-pf:nth-of-type(2){grid-column:3 / 5;}
+.ins-port-editor .ins-pfile{grid-column:1 / 5;grid-row:2;}
+.ins-port-editor .ins-prm{grid-column:5;grid-row:1;}
+.ins-port-editor .ins-pcheck{display:inline-flex;gap:4px;align-items:center;font-size:11px;color:var(--ink-2);}
+.ins-port-editor .ins-padd{border:1px solid var(--line-2);background:var(--panel);color:var(--ink-2);border-radius:var(--r-sm);cursor:pointer;font-size:12px;}
+.ins-port-editor .ins-padd{margin:2px 0 10px;padding:4px 10px;}
+.ins-port-editor .ins-perr{color:var(--red-ink);font-size:11px;margin-top:6px;}
+
+.ins-panel .ins-select,.ins-panel .ins-number{width:100%;padding:8px 11px;font-size:12px;border-radius:var(--r-sm);
+  background:var(--field);border:1.5px solid transparent;color:var(--ink);font-family:inherit;}
+.ins-panel .ins-select:focus,.ins-panel .ins-number:focus{background:var(--field-focus);border-color:var(--ink);outline:none;}
+/* `select{appearance:none}` (global) strips the native arrow and the product
+   draws its own with .select-wrap::after — so the rail's `select()` now wraps it in
+   .ins-select-wrap and the chevron is a token-coloured ::after (dark mode: a baked-hex data-URI cannot follow the ink). */
+.ins-panel .ins-select{padding-right:30px;}
+.ins-select-wrap{position:relative;display:block;}
+.ins-select-wrap::after{content:"";position:absolute;right:12px;top:50%;width:8px;height:8px;
+  border-right:1.8px solid var(--ink-2);border-bottom:1.8px solid var(--ink-2);transform:translateY(-65%) rotate(45deg);pointer-events:none;}
+.ins-tog{display:flex;align-items:flex-start;gap:10px;padding:9px 11px;
+  border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);}
+.ins-tog .switch-row{flex:1 1 auto;min-width:0;align-items:flex-start;}
+.ins-tog .switch{margin-top:1px;}
+.ins-panel .ins-f:has(.ins-select:disabled){opacity:.55;}
+.ins-tog-b{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.ins-tog-t{font-weight:500;font-size:var(--fs-body);color:var(--ink);}
+.ins-tog-h{font-size:var(--fs-meta);line-height:1.4;color:var(--ink-3);}
+.ins-blurb{margin:0;font-size:12px;line-height:1.55;color:var(--ink-2);}
+.ins-hint{display:block;font-size:11px;line-height:1.45;color:var(--ink-3);margin-top:-6px;}
+.ins-resolved{font:11px/1.4 var(--mono);color:var(--ink-2);background:var(--field);
+  border-radius:var(--r-sm);padding:6px 9px;}
+.ins-result{font:11px/1.5 var(--mono);color:var(--ink-3);overflow-wrap:anywhere;}
+.ins-result:empty{display:none;}
+.ins-sep{height:1px;background:var(--line);margin:3px 0 1px;}
+/* Port listing: the same dot vocabulary as the canvas cards, read-only. */
+.ins-zone{font-size:12px;font-weight:600;
+  color:var(--ink-2);margin:0 0 7px;}
+.ins-plist{display:flex;flex-direction:column;gap:4px;}
+.ins-plist + .ins-zone{margin-top:13px;}
+.ins-pitem{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:var(--r-sm);background:var(--field);}
+.ins-pitem .dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;}
+.ins-pitem .dot.md{background:var(--ink);}
+.ins-pitem .dot.json{background:var(--blue);}
+.ins-pitem .dot.any{background:var(--panel);border:2px solid var(--ink);}
+.ins-pitem .dot.void{background:var(--panel);border:2px solid var(--ink-3);}
+.ins-pitem .gdot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px dashed var(--seq);}
+.ins-pitem .pn{font-size:12px;font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ins-pitem .pt{font:11px/1.4 var(--mono);color:var(--ink-3);white-space:nowrap;}
+.ins-pitem .mla{margin-left:auto;}
+.ins-pitem.gate .pn{color:var(--ink-3);}
+.ins-empty .ins-blurb{color:var(--ink-3);text-align:center;padding:22px 6px;}
+

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadMap, featureForRoute } from '../tools/split-by-feature/plan.mjs';
-import { planSplit, main, nextCaps, spikeGate, serverCeiling, writeFiles, codeLineCounts, SPIKE_GATE, catchUpHint } from '../tools/split-by-feature.mjs';
+import { planSplit, main, nextCaps, spikeGate, serverCeiling, writeFiles, codeLineCounts, SPIKE_GATE, catchUpHint, withCatchUpHint } from '../tools/split-by-feature.mjs';
 import * as NAMES from '../tools/split-by-feature/file-names.mjs';
 
 const ROOT = new URL('../', import.meta.url).pathname;
@@ -129,9 +129,10 @@ test('--write-caps only lowers, drops or adds; it never raises', () => {
 
 test('the real tree is fully covered, the pins match the baseline and the spike gate passes', () => {
   const r = planSplit({ root: ROOT });
-  assert.deepEqual(r.problems, []);
+  assert.deepEqual(r.problems, [], withCatchUpHint(r.problems.join('\n'), ROOT));
   if (SPLIT) {                                         // nothing left to move; the residual server holds its ceiling
-    assert.ok(codeLineCounts(ROOT)['ui/server.mjs'] <= serverCeiling(ROOT), `ui/server.mjs over its ceiling ${serverCeiling(ROOT)}`);
+    assert.ok(codeLineCounts(ROOT)['ui/server.mjs'] <= serverCeiling(ROOT),
+      withCatchUpHint(`ui/server.mjs over its ceiling ${serverCeiling(ROOT)}`, ROOT));
     return;
   }
   assert.deepEqual(spikeGate(r.stats, serverCeiling(ROOT)), { pass: true, reasons: [], ceiling: 10119 });
@@ -223,6 +224,8 @@ test('catchUpHint names the current branch, or the placeholder outside a branch'
   assert.match(catchUpHint(ROOT), HINT);
   const d = mkdtempSync(join(tmpdir(), 'sbf-hint-'));
   assert.equal(catchUpHint(d), 'if this branch started before the #919 split: run npm run split:catch-up -- <branch>');
+  assert.equal(withCatchUpHint('unclassified routes: GET /api/x', d),
+    'unclassified routes: GET /api/x; if this branch started before the #919 split: run npm run split:catch-up -- <branch>');
   rmSync(d, { recursive: true, force: true });
 });
 
@@ -247,6 +250,25 @@ test('a failed spike gate (--check --stats and --apply) ends with the catch-up h
   const errs2 = [];
   assert.equal(await main(['--apply', '--root', d], { out: () => {}, err: (m) => errs2.push(m) }), 1);
   assert.match(errs2.at(-1), HINT);
+});
+
+const SPLIT_ONLY = !SPLIT && 'this checkout is not split yet: there is no residual ui/server.mjs to guard';
+
+test('on the split tree, --check fails on a movable route left in ui/server.mjs (above or below its static mount) and on a kept monolith, each naming the catch-up command', { skip: SPLIT_ONLY }, async (t) => {
+  const d = plannerCopy(t);
+  const s = readFileSync(join(d, 'ui/server.mjs'), 'utf8');
+  const j = s.indexOf('app.use(function servePublic(');
+  const top = s.slice(0, j).split('\n').length;
+  const i = s.indexOf('// SPA fallback:');
+  const line = s.slice(0, i).split('\n').length + 1;
+  writeFileSync(join(d, 'ui/server.mjs'), `${s.slice(0, j)}app.get('/api/settings/zz-top', (q, r) => r.json({}));\n${s.slice(j, i)}app.get('/api/settings/zz-residual', (q, r) => r.json({}));\n${s.slice(i)}`);
+  writeFileSync(join(d, 'ui/public/style.css'), ':root{}\n');
+  const errs = [];
+  assert.equal(await main(['--check', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);
+  assert.ok(errs.includes(`route GET /api/settings/zz-top (ui/server.mjs:${top}) belongs in ui/routes/settings/ — run npm run split:catch-up -- <branch> (top of ui/server.mjs is for central sign-in and guards only)`), errs.join('\n'));
+  assert.ok(errs.includes(`route GET /api/settings/zz-residual (ui/server.mjs:${line}) belongs in ui/routes/settings/ — run npm run split:catch-up -- <branch>`), errs.join('\n'));
+  assert.ok(errs.some((e) => /^ui\/public\/style\.css next to ui\/public\/parts\.json is not served: .* — run npm run split:catch-up -- <branch>$/.test(e)), errs.join('\n'));
+  assert.match(errs.at(-1), HINT);
 });
 
 test('size-caps-raises.json: the last raise of ui/server.mjs is the cap in size-caps.json; every raise goes up and says why', () => {

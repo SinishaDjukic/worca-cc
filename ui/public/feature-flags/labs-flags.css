@@ -1,0 +1,24 @@
+
+/* Feature flags (docs/feature-flags.md): the Labs / Beta chip a flagged element wears (D9),
+   and the Settings › Labs rows (D8). The gates themselves live in <style id="flag-gates">. */
+.flag-chip{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 6px;text-decoration:none;
+  background:var(--slate-bg);color:var(--slate-ink);vertical-align:middle;}
+.flag-chip-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}   /* --blue-ink is 3.6:1 on --blue-bg at this size (:1016) */
+.flag-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* A sidebar row wears its chip inside, after the label (flags.mjs chip()). This rule comes after the
+   label's `.nav button > span:not(.nav-count)` at the same specificity, so the chip keeps its own width
+   instead of taking the label's flex:1, ellipsis and line-height. The rail hides it with the label. */
+.nav button > span.flag-chip{flex:none;min-width:auto;overflow:visible;line-height:1;}
+.flags-warn{margin:0 0 12px;padding:10px 12px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-weight:500;}
+.flags-host{display:flex;flex-direction:column;}
+.flag-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 0;border-top:1px solid var(--line);}
+.flag-row:first-child{border-top:0;}
+.flag-row-target{background:var(--field);border-radius:var(--r-sm);padding-left:10px;padding-right:10px;}
+.flag-row-title{font-weight:600;display:flex;align-items:center;gap:8px;}
+.flag-row-desc{margin:4px 0 0;color:var(--ink-2);}
+.flag-row-lock{margin:4px 0 0;color:var(--ink-3);font-size:var(--fs-meta);}
+.flag-row-docs{display:inline-block;margin-top:4px;font-size:12px;}
+.badge.flag-stage-experimental{background:var(--violet-bg);color:var(--violet-ink);}
+.badge.flag-stage-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.badge.team{background:var(--blue-bg);color:var(--blue-ink-strong);}
+

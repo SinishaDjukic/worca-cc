@@ -1,0 +1,26 @@
+    <!-- ===== Folder browser (fallback when no native dialog) ===== -->
+    <!-- Multi mode (openFolderBrowser(…, { multiple: true })) ticks several folders; a
+         folder's NAME still opens it, and the ticks survive navigation. -->
+    <div id="folder-browser" class="viewer-modal folder-modal hidden">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="folderBrowserTitle">Select a folder</h2>
+        </div>
+        <div class="folder-toolbar">
+          <button type="button" id="folderUp" class="btn btn-sm" title="Parent folder">&#8593; Up</button>
+          <button type="button" id="folderHome" class="btn btn-sm" title="Home folder">Home</button>
+          <code id="folderCurrent" class="folder-current"></code>
+        </div>
+        <!-- Hosted with the terminal and actions off: the listing stays inside Worca's own folders. -->
+        <div id="folderScope" class="hint folder-scope hidden"></div>
+        <ul id="folderList" class="folder-list"></ul>
+        <div class="add-project-actions">
+          <small id="folderPickCount" class="hint folder-pick-count hidden" aria-live="polite"></small>
+          <button type="button" id="folderBrowserClose" class="btn">Cancel</button>
+          <button type="button" id="folderSelect" class="btn btn-primary">Select this folder</button>
+          <button type="button" id="folderSelectMany" class="btn btn-primary hidden" disabled>Add selected</button>
+        </div>
+        <small class="hint" id="folderMsg"></small>
+      </div>
+    </div>
+

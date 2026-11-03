@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // tools/split-by-feature.mjs — #919: split ui/server.mjs routes, ui/public/style.css and ui/public/index.html
 // into per-feature files. Pure planner + writer; same input → same output (no clocks, sorted output).
-//   --check [--stats [--tree]] plan only; exit 1 on any problem (unmapped, new pin, over cap, bad name, missing part, gate);
+//   --check [--stats [--tree]] plan only; exit 1 on any problem (unmapped, new pin, over cap, bad name, missing part, gate;
+//                              on a split tree: a movable route left in ui/server.mjs, a route above its static mount
+//                              not in central-routes.json, or a monolith kept next to ui/public/parts.json);
 //                              --tree prints every generated file with its line count
 //   --apply                    write the split into --root (default: cwd) on a clean checkout; a split tree: 0 files changed
 //   --dry-run [--json F] [--tests safety|none]
@@ -22,10 +24,12 @@ import { splitCss, lineCount } from './split-by-feature/css.mjs';
 import { splitHtml } from './split-by-feature/html.mjs';
 import { readPartsManifest } from '../src/core/public-assets.mjs';
 import { compareTrees, childEnv } from './split-by-feature/equivalence.mjs';
+import { catchUpCommand, residualRouteProblems, topZoneRouteProblems, keptMonolithProblems } from './split-by-feature/after-split.mjs';
 
 export const MIGRATION_VERSION = 1;
 export const SPIKE_GATE = Object.freeze({ movedShare: 0.95 });   // and ui/server.mjs within its ceiling in size-caps.json
 const PINNED_REL = 'tools/split-by-feature/pinned.json';
+const CENTRAL_REL = 'tools/split-by-feature/central-routes.json';
 const MAP_REL = 'tools/split-by-feature/feature-map.json';
 const CAPS_REL = 'tools/split-by-feature/size-caps.json';
 
@@ -34,12 +38,25 @@ export function assertExpress4(root) {
   if (!v.startsWith('4.')) throw new Error(`split-by-feature v${MIGRATION_VERSION} reads app._router (Express 4); found express ${v}`);
 }
 
+/** On a split tree: what an old-layout PR could still slip in (docs/split-by-feature.md, After the split). */
+function afterSplitProblems(root, mapText) {
+  let map;
+  try { map = loadMap(root, mapText); } catch (err) { return err.problems ?? [err.message]; }
+  const pinned = new Set(JSON.parse(readFileSync(join(root, PINNED_REL), 'utf8')).map((p) => p.key));
+  const central = new Set(JSON.parse(readFileSync(join(root, CENTRAL_REL), 'utf8')).map((r) => `${r.method} ${r.path}`));
+  const cmd = catchUpCommand(root);
+  const serverSrc = readFileSync(join(root, 'ui/server.mjs'), 'utf8');
+  return [...topZoneRouteProblems(serverSrc, map, central, cmd), ...residualRouteProblems(serverSrc, map, pinned, cmd),
+    ...keptMonolithProblems(join(root, 'ui/public'), cmd)];
+}
+
 /** Everything --apply would write, plus problems and stats. No I/O beyond reading the inputs. */
 export function planSplit({ root, serverSrc, css, html, mapText } = {}) {
   const ui = (p) => join(root, 'ui', p);
   if (existsSync(ui('public/parts.json')) && serverSrc === undefined) {
-    try { readPartsManifest(ui('public')); return { alreadySplit: true, problems: [], files: new Map() }; }
+    try { readPartsManifest(ui('public')); }
     catch (err) { return { alreadySplit: true, problems: [`${err.message} (ui/public/parts.json:1)`], files: new Map() }; }
+    return { alreadySplit: true, problems: afterSplitProblems(root, mapText), files: new Map() };
   }
   if (serverSrc === undefined && !existsSync(ui('public/parts.json'))
       && (existsSync(join(root, 'ui/routes/index.mjs')) || !existsSync(ui('public/style.css')) || !existsSync(ui('public/index.html')))) {
@@ -490,10 +507,11 @@ function dryRunMain(root, head, arg, { out, err }) {
 
 /** The pointer every guard failure ends with: a PR that started before the split is caught up, not hand-moved. */
 export function catchUpHint(root) {
-  let b = '';
-  try { b = execFileSync('git', ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
-  return `if this branch started before the #919 split: run npm run split:catch-up -- ${b && b !== 'HEAD' ? b : '<branch>'}`;
+  return `if this branch started before the #919 split: run ${catchUpCommand(root)}`;
 }
+
+/** A guard's failure message with the catch-up hint at its end (test/split-by-feature-plan.test.mjs, test/parity-routes.test.mjs). */
+export const withCatchUpHint = (msg, root) => `${msg}; ${catchUpHint(root)}`;
 
 /** Short HEAD for messages; 'no-git' for a fixture root that is not a repository (--check needs no git). */
 function gitHead(root) {
