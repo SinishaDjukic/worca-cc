@@ -1,4 +1,5 @@
 // test/session-cost-conservation.test.mjs — X2: never double-counted, never dropped, never on the wrong step, never $0 when unknown.
+import './helpers/leak-dump.mjs';
 import { test, after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';

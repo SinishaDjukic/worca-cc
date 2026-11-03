@@ -1,4 +1,5 @@
 // test/session-host-resume.test.mjs — a session survives pause, crash, a lost transcript, an engine switch, a usage limit and the kill switch.
+import './helpers/leak-dump.mjs';
 import { test, after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
