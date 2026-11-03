@@ -1,7 +1,6 @@
 // test/ui-run-sessions-tray.test.mjs — the monitor tray is live and opens the session's log.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { mountRunGraph } from '../ui/public/graph/run-hosts.mjs';
 import { decorFromState } from '../ui/public/graph/run-decor.mjs';
@@ -9,6 +8,7 @@ import { SID, SESSION_STEPPER, groupedRunningState } from './helpers/session-run
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { bootDetail, openDetail, settle as settleHd, DETAIL } from './helpers/history-detail-boot.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 test('a header click calls onSessionClick with the sid; the aria label carries the status', async () => {
   const dom = new JSDOM('<!doctype html><body><div id="h" style="width:800px;height:400px"></div></body>');
@@ -128,7 +128,7 @@ test('v3 — a session whose members never ran is no tab stop and takes no click
   const space = new t.dom.window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
   head.dispatchEvent(space);
   assert.deepEqual([clicks, space.defaultPrevented], [[SID], true], 'Space opens it and does not scroll the page');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /^\.gv-sess-links \.gv-sess-head\[tabindex="0"\]\{cursor:pointer;\}$/m, 'v5: the pointer only on a header that is a tab stop');
   assert.doesNotMatch(css, /\.gv-sess-links \.gv-sess-head\{[^}]*cursor/, 'v5: an inert header keeps the default cursor');
 });

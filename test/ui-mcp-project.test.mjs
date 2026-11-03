@@ -9,6 +9,7 @@ import { JSDOM } from 'jsdom';
 import { renderResolution, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, paintCommittedMcp } from '../ui/public/mcp-view.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -168,13 +169,12 @@ test('project MCP tab: chips with ×, read-only Team chip, Add set, Include Gene
 });
 
 // ── the booted project page ──────────────────────────────────────────────────
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 class WSStub { constructor() { WSStub.last = this; this._l = {}; } send() {} close() {}
   addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } _open() { (this._l.open || []).forEach((fn) => fn({})); } }
 
 test('#projects/<key>/mcp opens the MCP tab (Advanced) and the pill writes that hash; Settings › Chat paints its MCP block', async () => {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4321/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = WSStub;

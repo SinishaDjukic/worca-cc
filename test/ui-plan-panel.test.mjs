@@ -2,8 +2,8 @@
 // posts the run's own plan route (/api/runs/:id/answer).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const RUN_ID = 'run-plan';
 const PLAN_Q = {
@@ -123,7 +123,7 @@ test('an unshaped run: today\'s top bar and layout', async () => {
 });
 
 test('wide Live view: the graph sits beside the card, but a shaped run waiting on the person stays one column (D30)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const at = css.indexOf('@container rd (min-width: 960px)');
   assert.ok(at > -1, 'a wide pane lays the graph beside the card');
   const wide = css.slice(at, css.indexOf('\n}\n', at));
@@ -193,14 +193,14 @@ for (const [title, want] of [['(untitled)', ''], ['Real title', 'Real title']]) 
 }
 
 test('a failing check row wraps on a narrow card: the detail keeps a real width instead of shrinking under Fix (390 px)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => (new RegExp(`^${sel.replace(/\./g, '\\.')}\\{([^}]*)\\}`, 'm').exec(css) || [])[1] || '';
   assert.match(rule('.plan-check-bad'), /flex-wrap:wrap/);
   assert.match(rule('.plan-check-detail'), /flex:1 1 \d+(?:\.\d+)?em/, 'a basis that pushes the detail to its own line');
 });
 
 test('run 4 D1: while a shaped run waits, the status card and the graph hide whole; the one-line fold is gone', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.rd-glance\[data-shaper-wait\] > :is\(\.rd-sheet,\.rd-live\)\{display:none;\}/);
   assert.doesNotMatch(css, /data-wait-open/);
   assert.doesNotMatch(css, /\.rd-glance\[data-shaper-wait\][^{]*\.rd-sheet\{flex-direction:row/);

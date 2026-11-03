@@ -3,7 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#requirements' });
 for (const k of ['document', 'location', 'Event', 'HTMLElement', 'Node', 'File', 'window']) {
@@ -456,7 +456,7 @@ test('D18: Escape while an input method is composing leaves the panel open', asy
 });
 
 test('style.css: the panel rules sit inside the Requirements block, tokens only; the pressed toggle has an ink border; the sheet at 900 px', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   assert.ok(start > 0 && end > start, 'the block markers');
@@ -637,7 +637,7 @@ test('D2/D6 board 25: Back keeps the drafts in the question card; a reload appli
 });
 
 test('style.css: the draft chip is dashed blue (blue means active); Help me answer is a 44 px line on a phone', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   for (const sel of ['.req-qhead{', '.req-help-ask{', '.req-help-drafted-row{', '.req-help-drafted{', '.req-help-drafted-x{', '.req-help-draft-why']) {
@@ -912,7 +912,7 @@ test('D11/D16: Accept and Ask again wait while Worca answers or a round runs; no
 });
 
 test('style.css: the cards use tokens only; Accepted is green ink, never a fill; the stale line is the amber alert; 44 px targets on a phone', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   for (const sel of ['.req-help-card{', '.req-help-card-head', '.req-help-ba{', '.req-help-k', '.req-help-old', '.req-help-btns', '.req-help-state', '.req-help-stale']) {
@@ -1117,7 +1117,7 @@ test("D18: after Accept or Reject the focus moves to the card's new status line;
 // ── board 25: the phone sheet fits the screen and keeps the focus ─────────────────────
 
 test('style.css: the phone sheet stretches between its insets (align-self:stretch inside the 900 px query), so the composer stays on screen', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   const block = css.slice(start, end);

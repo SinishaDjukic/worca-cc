@@ -5,7 +5,6 @@
 // member projects on the page (never from the list), and the list's no-add/remove invariant.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { confirmDialog, confirmChoice, dialogChoices, dialogText } from './helpers/confirm-modal.mjs';
@@ -13,11 +12,11 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { pressEscape } from './helpers/popups.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const WS = [
@@ -52,7 +51,7 @@ const TM_SCOPES = {
 };
 
 async function boot({ fetchHandler, workspaces = WS, hooks } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   if (hooks) window.__worcaTestHooks = hooks;   // e.g. the real marked + DOMPurify for the markdown tests
   window.Element.prototype.scrollIntoView = function () {};

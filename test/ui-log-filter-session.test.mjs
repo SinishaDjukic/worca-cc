@@ -1,12 +1,13 @@
 // test/ui-log-filter-session.test.mjs — one session's lines: the main agent's and its steps'.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { compileLogFilter, logFacets } from '../ui/public/log-filter.mjs';
 import { projectLogRecord } from '../ui/public/log-line.mjs';
 import { SID as FIX_SID, SESSION_STEPPER, groupedRunningState } from './helpers/session-run-state.mjs';
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 import { bootDetail, openDetail, settle as settleHd, DETAIL } from './helpers/history-detail-boot.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const SID = 's_aaaaaaaa';
 const lines = [
@@ -23,7 +24,7 @@ test('the session axis keeps the main agent lines and the members\' lines', () =
 });
 
 test('the chip markup sits beside the execution chip', () => {
-  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  const html = readIndexHtml();
   assert.match(html, /class="log-f log-f-exec[^"]*"[\s\S]{0,600}?class="log-f log-f-session btn btn-sm" hidden title="Showing one session\. Click to clear"/);
 });
 
@@ -286,6 +287,6 @@ test('v4 — History: a card\'s Open in Logs after a footer row\'s clears the ex
 });
 
 test('v2 — the chip stays hidden like the execution chip (a .btn would show through `hidden`)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /^\.log-filters \.log-f-session\[hidden\]\{display:none;\}$/m);
 });

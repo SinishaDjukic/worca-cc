@@ -11,6 +11,8 @@ import {
   renderExportWizard, collectExportWizard, applyConnectionModeIn,
 } from '../ui/public/models-view.mjs';
 import { bridgedBadge, degradationLine } from '../ui/public/bridge-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -584,9 +586,9 @@ test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor
 
 test('phones: the Models header and the model cards wrap at 760px instead of running off a 375px screen', async () => {
   const { readFileSync } = await import('node:fs');
-  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  const html = readIndexHtml();
   assert.match(html, /<div class="mv-head-actions">\s*<button type="button" id="model-share-btn"/, 'the header buttons sit in a styled group, not an inline-styled div');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\n\.mv-head-actions\{display:flex;gap:8px;flex:0 0 auto;\}/);
   const phone = css.match(/@media \(max-width:760px\)\{\s*\[data-view="models"\] \.topbar\{[^}]*\}[^@]*/);
   assert.ok(phone, 'a phone block for the Models page');

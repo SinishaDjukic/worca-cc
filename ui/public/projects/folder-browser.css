@@ -1,0 +1,19 @@
+/* folder browser modal (native-dialog fallback). Must come AFTER the
+   .viewer-modal rules: `.folder-modal .card` ties with `.viewer-modal .card`
+   on specificity, so source order is what lets these declarations win. */
+.folder-modal .card{width:min(560px,100%);max-height:80vh;display:flex;flex-direction:column;overflow:hidden;}
+.folder-toolbar{display:flex;gap:9px;align-items:center;margin-top:10px;}
+.folder-current{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12px;color:var(--ink-2);}
+.folder-list{list-style:none;margin:10px 0;padding:0;flex:1 1 auto;overflow:auto;min-height:120px;
+  border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
+.folder-list .folder-item{display:block;width:100%;text-align:left;padding:7px 12px;border:0;
+  background:transparent;font-family:inherit;font-size:13px;color:var(--ink);cursor:pointer;}
+.folder-list .folder-item:hover{background:var(--hover-on-field);}
+.folder-empty{padding:10px 12px;}
+.folder-scope{padding:0 0 8px;line-height:1.9;}
+/* Multi mode: a tick box left of each folder name (the name still opens the folder). */
+.folder-list .folder-row{display:flex;align-items:center;gap:2px;padding-left:10px;}
+.folder-list .folder-row .folder-item{flex:1 1 auto;min-width:0;}
+.folder-list .folder-pick{flex:0 0 auto;margin:0;}
+.folder-pick-count{margin-right:auto;align-self:center;}

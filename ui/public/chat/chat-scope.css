@@ -1,0 +1,41 @@
+/* ===== Chat scope (Projects, any way) ===== */
+/* The chat scope pill's menu, divider, switch card. Tokens only: no amber, no edge line, no chip rules (P1b's, S11). */
+.ask-scope-item > svg{flex:none;color:var(--ink-2);}
+.ask-scope-proj{align-items:flex-start;}
+.ask-scope-proj > svg{margin-top:2px;}
+.ask-scope-col{display:flex;flex-direction:column;gap:1px;flex:1 1 auto;min-width:0;}
+.ask-scope-line{display:flex;align-items:center;gap:8px;min-width:0;}
+.ask-scope-line > .ask-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-scope-line > .kind-chip{margin-left:auto;}
+/* The trailing check slot on every scope radio row (empty unless picked), so the chip column is the same on each row. */
+.ask-scope-check{flex:none;display:inline-flex;justify-content:flex-end;width:16px;margin-left:auto;}
+.ask-scope-check > .ask-model-check{margin-left:0;}
+.ask-scope-sub{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--ink-2);}
+/* The Workflows composer's scope menu (workflows/menu.mjs) keeps the one kind chip on the right, as the Ask menu does (B8). */
+.wfv-menu-item > .kind-chip{margin-left:auto;}
+/* The run card's `Where it runs` sub-line (ask-panel.mjs updateTargetSub): the kind chip between the name and the branch words (B10). */
+.ask-rp-sec-sub > .kind-chip{margin:0 6px;}
+/* The `Switched to <name>` divider row (canvas Switched): a centered label between two hairlines, no accent. */
+.ask-divider{display:flex;align-items:center;gap:12px;margin:6px 0;font-size:12px;color:var(--ink-2);}
+.ask-divider::before,.ask-divider::after{content:"";flex:1 1 0;min-width:16px;height:1px;background:var(--line-2);}
+.ask-divider-in{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:calc(100% - 56px);font-weight:500;}
+.ask-divider-in > svg{flex:none;}
+.ask-divider-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-divider-engine{color:var(--ink);}
+/* The chat question card (chat/question.mjs; canvas SwitchAsk): the Runs page's white ask-card grammar with grey lines,
+   the canvas 18px heading, a name line (label + chip) over a mono sub-line per tile; two columns once the card is wide. */
+.chat-q{container:chat-q / inline-size;}
+.chat-q .chat-rc-q-head{margin-bottom:14px;font-size:18px;}
+.chat-q.chat-rc-q :is(.qpanel,.qblock),.chat-q.chat-rc-q .qpanel[data-kind="clarify"] .qpanel-foot{border-color:var(--line);}
+.chat-q .qwhy{font-size:13px;font-weight:400;color:var(--ink-2);}
+.chat-q .qopt-txt{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.chat-q-opt-name{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.chat-q-opt-sub{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere;}
+.chat-q .qpanel-foot .btn-primary:disabled{opacity:.45;cursor:default;transform:none;}
+.chat-q.is-answered .qopt{cursor:default;}
+@container chat-q (min-width:640px){
+  .chat-q .qblock{grid-template-columns:minmax(0,300px) minmax(0,1fr);grid-template-rows:auto 1fr;column-gap:48px;padding:28px 32px;}
+  .chat-q .qtext{grid-row:1 / span 2;}
+  .chat-q.chat-rc-q .qopts{grid-column:2;}
+}
+

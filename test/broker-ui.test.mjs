@@ -83,7 +83,7 @@ test('the page is served with a strict CSP and no framing', async () => {
   assert.match(CSP, /frame-ancestors 'none'/);
   assert.equal(res.headers.get('x-frame-options'), 'DENY');
   assert.equal(res.headers.get('cache-control'), 'no-store');
-  assert.match(await res.text(), /Your model credentials/);
+  assert.match(await res.text(), /Your credentials/);
 });
 
 test('save verifies with the provider first: a bad key is refused and nothing is stored', async () => {

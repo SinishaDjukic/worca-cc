@@ -209,7 +209,25 @@ See [`docs/RELEASING.md`](docs/RELEASING.md) for the full process, including
 release candidates (`-rc.N`), dist-tags, and the one-time setup for new
 package names.
 
-## License
+## Contributor terms
 
-By contributing, you agree that your contributions will be licensed under the
-[MIT License](LICENSE).
+Opening a pull request means you accept the
+[Developer Certificate of Origin 1.1](DCO) (DCO) for that contribution. In
+short, you confirm that you have the right to submit the work.
+
+- **License.** Your contribution is accepted under the project's
+  [MIT License](LICENSE).
+- **No extra setup.** You don't need a `Signed-off-by` line, `git commit -s`,
+  or any special Git setup. Opening the pull request is enough.
+- **AI help is fine.** AI agents may help write a contribution. The person who
+  opens the pull request, or on whose behalf it is opened, is responsible for
+  it.
+- **Only submit what you may submit.** Don't submit code you don't have the
+  right to submit.
+- **Employers and others.** If your employer or anyone else may hold rights in
+  your contribution, get their permission before you submit it.
+- **Unclear origin.** If the origin or licensing of a contribution is unclear,
+  maintainers may ask for more information, request changes, or remove it.
+
+This section explains how the project accepts contributions. It is not legal
+advice.

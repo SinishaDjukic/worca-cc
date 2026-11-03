@@ -1,7 +1,6 @@
 // test/graph-session-notices.test.mjs — before Start run, the user reads how each session will run.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { sessionStartNotices, SESSION_SHARED_SELECTABLE } from '../src/shared/graph/sessions.mjs';
@@ -9,6 +8,7 @@ import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { realPortsFn, realAgentMetas } from './helpers/graph-ports.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const t = structuredClone(SEED_TEMPLATES.find((s) => s.id === 'wf_no-clarify'));
 for (const id of ['n_refine', 'n_decompose']) t.nodes.find((n) => n.id === id).config.session = 's_aaaaaaaa';
@@ -62,14 +62,13 @@ test('v2 — the flag off, One conversation as shipped and before its runtime, t
 
 // ── v2: the New pipeline form renders them under the Engine dropdown ──
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-notes';
 const WF = { ...structuredClone(t), id: 'wf_s', name: 'Sessions' };
 const WF2 = { ...structuredClone(t), id: 'wf_s2', name: 'Sessions too' };
 
 async function boot({ hold = null, holdId = WF.id } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4321/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; this._listeners = {}; } send() {} close() {} addEventListener(k, fn) { (this._listeners[k] ||= []).push(fn); } };

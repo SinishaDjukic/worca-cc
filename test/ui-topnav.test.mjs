@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { pageTitle, PAGE_TITLES } from '../ui/public/topnav.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
 
@@ -21,7 +22,7 @@ test('pageTitle: New run, the three Runs routes, and the pages the sidebar does 
 });
 
 test('pageTitle: every sidebar page is named by its own sidebar label', () => {
-  const doc = new JSDOM(read('index.html')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   const rows = [...doc.querySelectorAll('.nav button[data-nav]:not([data-nav="new"])')];
   assert.ok(rows.length >= 12, `${rows.length} sidebar pages`);
   for (const b of rows) {

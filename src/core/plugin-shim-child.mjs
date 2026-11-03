@@ -4,8 +4,10 @@
 // scrubbed env (PATH, HOME, the proxy and CA variables, no WORCA_HOME), so any
 // store/db import here would resolve wrong paths. Protocol: read ONE JSON doc
 // from stdin, run ONE op, write ONE JSON frame to stdout, exit 0. The child
-// ALWAYS exits 0 after writing a frame — a nonzero exit means "crashed before
-// the frame" and the parent maps it to PluginOpError('protocol').
+// exits 0 after writing a frame. A nonzero exit with no complete frame on
+// stdout means "crashed before the frame" and the parent maps it to
+// PluginOpError('protocol'); a complete frame is kept even when the exit itself
+// crashes (Node 24 on Windows can, after a connector's HTTPS fetch).
 import { pathToFileURL } from 'node:url';
 import { useEnvProxy, proxyNotice } from './env-proxy.mjs';
 
@@ -74,9 +76,13 @@ async function main() {
 // A pending op promise alone does not keep the event loop alive: a hung
 // connector with no live handles would exit 0 with NO frame (parent would see
 // 'protocol', not 'timeout'). Hold the loop open so a hung op stays hung and
-// the parent's timeout SIGKILL is the only way out; process.exit(0) after the
-// frame ends the process regardless.
-setInterval(() => {}, 1 << 30);
+// the parent's timeout SIGKILL is the only way out. The hold is released only
+// once the frame is written.
+const hold = setInterval(() => {}, 1 << 30);
+
+// After the frame, a connector's leftover handle (a timer, a socket) may still
+// keep the loop alive: process.exit(0) ends the child after this grace.
+const EXIT_GRACE_MS = 500;
 
 main()
   .catch((err) => ({
@@ -85,6 +91,31 @@ main()
     logs,
   }))
   .then((frame) => {
-    // Write-callback before exit so a piped stdout is fully flushed.
-    process.stdout.write(JSON.stringify(frame), () => process.exit(0));
+    // Mute stdout first, then write the frame through the saved write: nothing
+    // a connector prints from here on can land after (or inside) the JSON.
+    // Write-callback so a piped stdout is fully flushed. Then let the loop end
+    // on its own: on Windows, Node 24's process.exit(0) right after a
+    // connector's HTTPS fetch can crash in libuv (exit 0xC0000409); a natural
+    // end does not. The unref'd fallback never keeps the child alive itself.
+    const writeFrame = process.stdout.write.bind(process.stdout);
+    process.stdout.write = () => true;
+    writeFrame(JSON.stringify(frame), () => {
+      // The answer is out. An error thrown by the connector's leftover work now
+      // (a late timer, a rejected promise nobody awaits) must not turn into a
+      // nonzero exit that reads as the Windows exit crash: log it, exit 0.
+      // Before this point nothing is installed, so a crash before the answer
+      // keeps Node's default (stack on stderr, exit 1).
+      const leftover = (err) => {
+        try { process.stderr.write(`leftover work failed after the answer: ${err?.stack || err}
+`); } catch { /* stderr gone */ }
+        process.exit(0);
+      };
+      process.on('uncaughtException', leftover);
+      process.on('unhandledRejection', leftover);
+      // A natural end honours process.exitCode, which a connector may have set;
+      // the answer is out, so the exit is 0 whichever way the child ends.
+      process.exitCode = 0;
+      clearInterval(hold);
+      setTimeout(() => process.exit(0), EXIT_GRACE_MS).unref();
+    });
   });

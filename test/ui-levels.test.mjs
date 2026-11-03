@@ -21,14 +21,16 @@ import {
   minLevelFor, levelCardsHtml, applyLevel, createLevelController,
 } from '../ui/public/ui-level.mjs';
 import { renderIndexHtml } from '../src/core/index-html.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import {
   settingsFile, uiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel, SETTINGS_POST_KEYS,
 } from '../src/core/settings.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const pub = join(__dir, '..', 'ui', 'public');
-const html = readFileSync(join(pub, 'index.html'), 'utf8');
-const css = readFileSync(join(pub, 'style.css'), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 const app = readFileSync(join(pub, 'app.js'), 'utf8');
 
 const shell = () => new JSDOM(html).window.document;

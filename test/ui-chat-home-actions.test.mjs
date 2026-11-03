@@ -4,13 +4,13 @@
 // whose pick prefills a run mention; switched-off features hide; the other pins sit in More under Pinned.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import {
   createQuickActions, moreItems, actionAvailable, runMention, TILE_INTENTS, TILE_ACTIONS, MORE_INTENTS, ACTION_LEVEL, DEFAULT_FLAGS, PICKER_MAX,
 } from '../ui/public/chat/home-actions.mjs';
 import { DEFAULT_HOME_PINS } from '../src/shared/home-pins.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -267,7 +267,7 @@ test('an empty picker closes on Escape from its tile; closing a menu the focus i
 });
 
 test('only a workflow pin label shrinks: a badged pin keeps its name whole (web UI review 1)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /^\.chat-home-act-l\{flex:none;white-space:nowrap;\}$/m);
   const shrink = css.match(/^(\.chat-home-act\.is-pin[^{]*) \.chat-home-act-l\{[^}]*flex:0 1 auto;[^}]*\}$/m);
   assert.ok(shrink, 'the workflow pin label rule exists');
@@ -275,7 +275,7 @@ test('only a workflow pin label shrinks: a badged pin keeps its name whole (web 
 });
 
 test('one row: a tile badge sits inline after its label at normal size and never truncates', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = css.match(/^\.chat-home-act-badge\{([^}]*)\}/m)[1];
   assert.match(rule, /white-space:nowrap/);
   assert.match(rule, /font-size:var\(--fs-caption\)/);
@@ -287,7 +287,7 @@ test('one row: a tile badge sits inline after its label at normal size and never
 });
 
 test('the tile keeps its height in the narrow container too', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const narrow = css.match(/^@container chat-home \(max-width:440px\)\{([^\n]*)\}$/m)[1];
   assert.doesNotMatch(narrow, /\.chat-home-act\{/, 'the tile keeps its height in the narrow container too');
 });

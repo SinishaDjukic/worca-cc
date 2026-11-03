@@ -7,11 +7,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { INDEX_HTML, readIndexHtml } from '../src/core/read-index-html.mjs';
+import { STYLE_CSS, readStyleCss } from '../src/core/read-style-css.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 // Comments blanked, newlines kept (the same parser as test/ui-design-language.test.mjs).
-const css = read('ui/public/style.css').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 function rules(text) {
   const out = []; const stack = []; let start = 0; let line = 1;
   for (let i = 0; i < text.length; i += 1) {
@@ -49,7 +51,7 @@ const JS = walk(join(ROOT, 'ui/public'));
 const rel = (f) => relative(ROOT, f).split(sep).join('/');
 const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, '')).split('\n')
   .map((l) => (/^\s*\/\//.test(l) ? '' : l.replace(/\s\/\/\s.*$/, ''))).join('\n');
-const index = new JSDOM(read('ui/public/index.html')).window.document;
+const index = new JSDOM(readIndexHtml()).window.document;
 
 test('colour: the guide has the one meaning table with the status-dot exceptions', () => {
   const g = read('docs/design-system.md');
@@ -92,9 +94,9 @@ test('spacing: one card padding and one tile padding token', () => {
 const REMOVED_SWITCHES = ['switch-sm', 'ask-rp-sw', 'ask-rp-knob'];
 const classRe = (c) => new RegExp(`(?<![\\w-])${c}(?![\\w-])`);
 test('one switch: no other switch skin is defined or emitted in ui/public', () => {
-  const files = [...JS, join(ROOT, 'ui/public/style.css'), join(ROOT, 'ui/public/index.html')];
+  const files = [...JS.map((f) => [f, readFileSync(f, 'utf8')]), [join(ROOT, STYLE_CSS), readStyleCss()], [join(ROOT, INDEX_HTML), readIndexHtml()]];
   const hits = [];
-  for (const f of files) code(readFileSync(f, 'utf8')).split('\n').forEach((l, i) => {
+  for (const [f, text] of files) code(text).split('\n').forEach((l, i) => {
     for (const c of REMOVED_SWITCHES) if (classRe(c).test(l)) hits.push(`${c} — ${rel(f)}:${i + 1}`);
     if (/\.wz \.tog\b|'tog(?:\s|')/.test(l)) hits.push(`wz tog — ${rel(f)}:${i + 1}`);
   });
@@ -210,7 +212,7 @@ test('one menu: the .menu box and .menu-item rows', () => {
   const item = bodyOf('.menu-item');
   assert.match(item, /min-height:30px/);
   assert.match(item, /border-radius:var\(--r-sm\)/);
-  const raw = read('ui/public/style.css');   // the markers are comments, which `css` blanks
+  const raw = readStyleCss();   // the markers are comments, which `css` blanks
   assert.ok(raw.indexOf('\n.menu{') > raw.indexOf('/* ---------- buttons ---------- */')
     && raw.indexOf('\n.menu{') < raw.indexOf('/* ===================== Action feedback'), 'in the buttons section, which the extension cuts');
 });

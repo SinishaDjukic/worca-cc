@@ -7,16 +7,17 @@
 import { test, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { readFileSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sealBrokerSecret, resetBrokerClient, brokerInfo, mintSpawnToken } from '../src/core/broker-client.mjs';
 import { checkBrokerAtBoot } from '../src/core/broker-boot.mjs';
 import { scriptBaseEnv } from '../src/core/graph/script-runner.mjs';
 import { MODEL_CREDENTIAL_ENV_KEYS } from '../src/core/broker-guard.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 
 const SECRET = 's'.repeat(40);
-let server; let url; let mode = 'single';
+let server; let url; let mode = 'single'; let githubSlot = false;
 const auth = [];
 // The boot check refuses model credentials agents can reach: the shell running the tests may hold one (OPENAI_API_KEY).
 const KEYS = ['WORCA_BROKER_URL', 'WORCA_BROKER_SECRET', 'WORCA_BROKER_SECRET_FILE', 'HOME', 'WORCA_AGENT_USER', 'WORCA_AGENT_HOME', 'WORCA_AGENT_ISOLATION',
@@ -31,7 +32,7 @@ before(async () => {
       auth.push(req.headers.authorization);
       const json = (s, o) => { res.writeHead(s, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
       if (req.headers.authorization !== `Bearer ${SECRET}`) return json(401, {});
-      if (req.url === '/internal/info') return json(200, { mode, slots: [{ id: 'anthropic', auth: 'x-api-key', upstream: 'https://api.anthropic.com' }] });
+      if (req.url === '/internal/info') return json(200, { mode, slots: [{ id: 'anthropic', auth: 'x-api-key', upstream: 'https://api.anthropic.com' }, ...(githubSlot ? [{ id: 'github', auth: 'github-user', upstream: 'https://api.github.com' }] : [])] });
       if (req.url === '/internal/tokens/revoke') return json(200, { revoked: 0 });
       if (req.url === '/internal/tokens') return json(200, { token: `wbt_${'a'.repeat(43)}`, expiresAt: null });
       if (req.url === '/internal/plugin-slots') return json(200, { slots: [] });
@@ -82,7 +83,7 @@ test('seal: the first broker call seals it too, and a later value replaces the s
 });
 
 test('seal: the server seals before anything can spawn', () => {
-  const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
+  const src = readServerSource();
   const seal = src.indexOf('\nsealBrokerSecret();');
   assert.ok(seal > 0, 'ui/server.mjs calls sealBrokerSecret() at the top level');
   for (const first of ['\npreflightNode();', '\nawait gitState();']) assert.ok(seal < src.indexOf(first), `sealed before ${first.trim()}`);
@@ -157,4 +158,21 @@ test('X2: with agents under their own users, a secret file its group or others m
   process.env.WORCA_BROKER_SECRET_FILE = file;
   resetBrokerClient(); sealBrokerSecret();
   assert.deepEqual((await checkBrokerAtBoot({ waitMs: 0, log: () => {} })).fatal, [], 'no agent users: no one to keep out');
+});
+
+test('boot: WORCA_GH_AS_PERSON warns only when the broker has no GitHub slot (single mode without a client ID)', async () => {
+  process.env.WORCA_GH_AS_PERSON = 'required';
+  try {
+    resetBrokerClient();
+    const without = await checkBrokerAtBoot({ waitMs: 0, log: () => {} });
+    assert.match(without.warnings.join(' '), /WORCA_GH_AS_PERSON=required, but the broker has no GitHub slot \(run it in multi mode, or set WORCA_BROKER_GITHUB_CLIENT_ID on it\): every push will fail/);
+    githubSlot = true;
+    resetBrokerClient();
+    const withSlot = await checkBrokerAtBoot({ waitMs: 0, log: () => {} });
+    assert.ok(!withSlot.warnings.some((w) => /GitHub slot/.test(w)), withSlot.warnings.join(' | '));
+  } finally {
+    githubSlot = false;
+    delete process.env.WORCA_GH_AS_PERSON;
+    resetBrokerClient();
+  }
 });

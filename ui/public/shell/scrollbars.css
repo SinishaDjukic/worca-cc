@@ -1,0 +1,27 @@
+/* ---------- scrollbars ---------- */
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:var(--r-sm);}
+::-webkit-scrollbar-track{background:transparent;}
+
+/* ---------- reduced motion ---------- */
+/* DECISION (D7). Spec §8 proposes extending this block to a blanket
+   `animation:none`. We do NOT: D7 keeps the Running view behaviorally untouched,
+   and the run-graph's own reduced-motion block (1240-1245) already neutralizes
+   its pulses with deliberate box-shadow substitutes that a blanket rule would
+   leave orphaned. Do not add the History-redesign animations to the list below,
+   either — `@media` contributes no specificity, so a (0,1,0) `animation:none`
+   here loses on source order to the (0,1,0) `animation:shipit-…` rules appended
+   at EOF. The four names below work only because each is declared *before* this
+   block. The ship-it animations are neutralized by a second
+   `@media (prefers-reduced-motion: reduce)` block placed AFTER them at the end
+   of the file. */
+@media (prefers-reduced-motion: reduce){
+  .pdot,.cur{animation:none;}
+  *{transition:none !important;}
+}
+
+/* ---------- responsive ---------- */
+@media (max-width:1080px){
+  .grid{grid-template-columns:1fr;}
+}
+

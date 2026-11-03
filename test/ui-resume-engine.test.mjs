@@ -6,13 +6,12 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-resume-engine';
 const KEY = 'proj-resume-engine-abcd1234';
@@ -25,7 +24,7 @@ const ok = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status
 
 /** `resumeAnswers`: the /api/resume replies in order (the last one repeats); default 200. */
 async function boot({ level = 'advanced', resumeAnswers = [], fetchHandler } = {}) {
-  let html = readFileSync(htmlPath, 'utf8');
+  let html = readIndexHtml();
   html = html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`);
   const dom = trackDom(new JSDOM(html, { url: 'http://localhost:4317/' }));
   live.push(dom);

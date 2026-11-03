@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { SEND_FAILED, stepChip, stepTitle, stepKind, isStepCard, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
   from '../ui/public/shape/step-card.mjs';
 
@@ -201,7 +202,7 @@ test('after a failed send the pressed button has the focus again', async () => {
 
 test('the step head is the only title in every host: the old .qpanel-head is hidden on the chat card, run page and feature page (style.css)', async () => {
   const { readFile } = await import('node:fs/promises');
-  const css = await readFile(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = await readStyleCss();
   assert.match(css, /\.chat-rc-q \.qpanel-head\{display:none;\}/);
   assert.match(css, /\.rd-glance > \.rd-questions \.qpanel-head\{display:none;\}/);
   assert.match(css, /\.shape-feature-ask \.qpanel:has\(\.step-head\) \.qpanel-head\{display:none;\}/);

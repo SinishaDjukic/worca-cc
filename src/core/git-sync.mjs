@@ -286,7 +286,7 @@ export async function remoteInfo(dir, remote = 'origin') {
 /** worca's server-side READ credential for the remote's host (App mode mints per call); other hosts: this machine's git. */
 async function readCred(info) {
   if (info.githubRepo) {
-    const r = await githubEnv('read', { repo: info.githubRepo });
+    const r = await githubEnv('read', { repo: info.githubRepo, readAsPerson: true });
     return { ...r, env: stripBitbucketCredentials(r.env) };
   }
   if (info.azure) return { env: stripBitbucketCredentials(azureEnv('read')), error: null };

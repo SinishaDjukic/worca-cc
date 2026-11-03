@@ -7,6 +7,7 @@ import { decorFromState } from '../ui/public/graph/run-decor.mjs';
 import { SESSION_STEPPER, groupedRunningState } from './helpers/session-run-state.mjs';
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 import { bootDetail, openDetail, settle, DETAIL, ROW, ok } from './helpers/history-detail-boot.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const SID = 's_aaaaaaaa';
@@ -371,8 +372,7 @@ test('v3 — outside sessions: a running step shows dashes, never $0.00 or 0s; t
   assert.equal(card.querySelector('.rs-total-v').textContent, '—', 'no figure known yet');
   const mixed = outsideRows({ stepper: SESSION_STEPPER, steps: [row('n_plan', 'done', { activeMs: 30000, costUsd: 0.2 })] }, { sessions: [] });
   assert.equal(renderOutsideCard(mixed, { doc, labelOf: () => 'Plan' }).querySelector('.rs-total-v').textContent, '$0.20');
-  const { readFile } = await import('node:fs/promises');
-  const css = await readFile(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.rs-bar>\.rs-seg,\.rs-legend i\.rs-seg\{box-shadow:inset 0 0 0 1px var\(--ink-2\);\}/, 'a neutral share next to the track is 1.2:1 without its edge');
   assert.match(css, /\.rs-hand\{background:repeating-linear-gradient\(135deg,var\(--slate-ink\) 0 2px,transparent 2px 4px\);box-shadow:inset 0 0 0 1px var\(--slate-ink\);\}/, 'v4: the hatch is --slate-ink (--slate is 2.8:1 on the track)');
   assert.match(css, /\.rs-bar>\.rs-hand\{min-width:3px;\}/, 'v4: a small hand-off share is never a sub-pixel sliver');

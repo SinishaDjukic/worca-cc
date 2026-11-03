@@ -9,6 +9,8 @@ import { JSDOM } from 'jsdom';
 import { copyButton, copyFromButton, flashCopy, COPIED_MS } from '../ui/public/copy-button.mjs';
 import { createUpdateUi } from '../ui/public/update-view.mjs';
 import { renderCopilotSignIn } from '../ui/public/bridge-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const UI = join(ROOT, 'ui/public');
@@ -127,7 +129,7 @@ test('every Copy-labelled button is the one copy button', () => {
 });
 
 test('every static copy button carries .copy-btn and the three glyphs', () => {
-  const html = readFileSync(join(UI, 'index.html'), 'utf8');
+  const html = readIndexHtml();
   const copies = [...html.matchAll(/<button\b[^>]*aria-label="Copy[^"]*"[^>]*>[\s\S]*?<\/button>/g)].map((m) => m[0]);
   assert.ok(copies.length >= 8, `found ${copies.length}`);
   for (const b of copies) {
@@ -138,11 +140,11 @@ test('every static copy button carries .copy-btn and the three glyphs', () => {
 });
 
 test('the caption CSS: green Copied, red reason, an icon square widens for it; no per-feature caption', () => {
-  const css = readFileSync(join(UI, 'style.css'), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.copy-btn\.copied \.copy-btn-msg\{display:inline;color:var\(--green-ink\);\}/);
   assert.match(css, /\.copy-btn\.copy-miss \.copy-btn-msg\{display:inline;color:var\(--red-ink-strong\);\}/);
   assert.match(css, /\.copy-btn\.btn-icon:is\(\.copied,\.copy-miss\)\{width:auto;/);
-  assert.doesNotMatch(css + readFileSync(join(UI, 'index.html'), 'utf8'), /(?:hd|rd)-copied/, 'the branch caption is the shared one now');
+  assert.doesNotMatch(css + readIndexHtml(), /(?:hd|rd)-copied/, 'the branch caption is the shared one now');
 });
 
 test('screen readers hear the outcome: one polite status region, re-said on every flash', async () => {

@@ -1,10 +1,9 @@
 // test/ui-session-css.test.mjs — the tray's CSS contract: tokens, z-order, radius tokens, no new --gv-* var.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const css = readStyleCss();
 
 test('three light-dark tokens', () => {
   assert.match(css, /--sess-fill:light-dark\(#F2F2F0,#232321\);/);
