@@ -1,0 +1,3 @@
+/* A non-Claude engine card's readiness line (GET /api/engines): text only. */
+.engine-card-status{display:block;color:var(--ink-2);font-size:12px;margin:0 0 6px}
+.engine-card-status:empty{display:none}

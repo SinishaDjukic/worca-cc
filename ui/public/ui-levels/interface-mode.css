@@ -1,0 +1,177 @@
+/* ======================================================================
+   Interface mode — simple | advanced | expert   (docs/ui-levels.md)
+   ======================================================================
+   <html data-level> is server-rendered (src/core/index-html.mjs) and kept live by
+   ui-level.mjs. An element opts in with data-min-level; these three selectors are
+   the WHOLE gate. No data-level attribute (tests, an old shell) gates nothing.
+   [data-level-keep] is the escape hatch: a gated control holding a non-default
+   value, or the nav item of the page you are on, stays visible.
+   !important because a dozen author `display:flex/grid` rules in this file outrank
+   a plain display:none — the same footgun the [hidden] notes above describe. */
+:root[data-level="simple"] [data-min-level="advanced"]:not([data-level-keep]),
+:root[data-level="simple"] [data-min-level="expert"]:not([data-level-keep]),
+:root[data-level="advanced"] [data-min-level="expert"]:not([data-level-keep]){display:none !important;}
+/* The rare inverse — copy that stands in for a control a higher mode shows (data-max-level). */
+:root[data-level="advanced"] [data-max-level="simple"],
+:root[data-level="expert"] [data-max-level="simple"],
+:root[data-level="expert"] [data-max-level="advanced"]{display:none !important;}
+:root[data-git="off"] [data-needs-git]{display:none !important;}
+
+/* The icon (the Settings card, the dialog's cards): a stack of layers, unlit ones ghosted. */
+.lv-icon .lv-off{opacity:.26;}
+.lv-icon path{transition:opacity .2s;}
+
+/* Level pill (banner, hidden-settings note). Colour is semantic to the level. */
+.lv-pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:var(--r-xs);
+  font-size:11px;font-weight:600;white-space:nowrap;background:var(--field);color:var(--ink-2);}
+.lv-pill[data-lv="simple"]{background:var(--green-bg);color:var(--green-ink);}
+.lv-pill[data-lv="advanced"]{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.lv-pill[data-lv="expert"]{background:var(--slate-bg);color:var(--slate-ink);}
+
+/* Page-above-the-mode banner. */
+.level-banner{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin:0 0 18px;
+  padding:10px 14px;border-radius:var(--r-card);background:var(--canvas-2);border:1px solid var(--line-2);
+  font-size:13px;color:var(--ink-2);}
+.level-banner[hidden]{display:none;}
+.level-banner-text{flex:1 1 220px;min-width:0;}
+.level-banner .btn{margin-left:auto;}
+body.view-runs .level-banner,body.view-projects .level-banner{margin:12px 32px 0;flex:0 0 auto;}
+body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
+
+/* Runs redesign §5a.2: the one "server unreachable" banner (connection-state.mjs), every view. */
+.conn-banner{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--panel);
+  color:var(--ink);border-bottom:1px solid var(--line);border-radius:0;}
+.conn-banner[hidden]{display:none;}
+.conn-banner-text{flex:1 1 auto;min-width:0;}
+
+/* Runs redesign §5a.9: the one-time What's new note above the Runs list (whats-new.mjs). */
+.whats-new{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;margin:0 0 12px;
+  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
+.whats-new-text{flex:1 1 auto;min-width:0;}
+.whats-new-title{margin:0 0 4px;font-weight:600;}
+.whats-new-body{margin:0;color:var(--ink-2);}
+@media (max-width:600px){.whats-new{flex-wrap:wrap;}}
+
+/* Simple hides the Engine picker (Advanced and up), leaving the workflow the whole row. (P3: the Target switch shows
+   at every level, so .split-row keeps its two tracks — NewRun board.) */
+:root[data-level="simple"] .wf-engine-row:not(:has(#engine-row[data-level-keep])){grid-template-columns:minmax(0,1fr);}
+
+/* New pipeline: mock mode outside Advanced, and the hidden-but-active note. */
+.mock-row{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);}
+:root:not([data-level="simple"]) .advanced + .mock-row{margin-top:14px;}
+.level-hidden-note{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-top:14px;
+  padding:10px 14px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);
+  font-size:12px;line-height:1.5;color:var(--ink-2);}
+.level-hidden-note[hidden]{display:none;}
+.level-hidden-note b{color:var(--ink);font-weight:600;}
+.link-btn{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--blue-ink-strong);cursor:pointer;text-decoration:underline;text-underline-offset:2px;}
+.link-btn:hover{color:var(--ink);}
+.link-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
+
+/* Settings › General › Interface mode. */
+.mode-current{display:flex;align-items:center;gap:14px;}
+.mode-current-icon{display:grid;place-items:center;flex:0 0 auto;width:42px;height:42px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
+.mode-current-icon .lv-icon{width:22px;height:22px;}
+.mode-current-text{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-width:0;font-size:12px;line-height:1.5;color:var(--ink-2);}
+.mode-current-text strong{font-size:13px;font-weight:600;color:var(--ink);}
+@media (max-width:560px){.mode-current{flex-wrap:wrap;}.mode-current .btn{margin-left:56px;}}
+
+/* The dialog. Follows .ob-welcome's door cards: one bordered row per choice. */
+.mode-modal .card{width:min(580px,100%);animation:wr-rise .24s cubic-bezier(.2,.7,.3,1) both;}
+.mode-modal .card-head{margin-bottom:4px;}
+.mode-sub{margin:0 0 16px;font-size:13px;line-height:1.55;color:var(--ink-2);}
+.lv-cards{display:flex;flex-direction:column;gap:8px;}
+.lv-card{display:grid;grid-template-columns:40px minmax(0,1fr) 20px;align-items:center;gap:14px;width:100%;
+  padding:13px 15px;border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--panel);color:var(--ink);
+  font:inherit;text-align:left;cursor:pointer;transition:border-color .15s,background .15s;}
+.lv-card:hover{background:var(--hover);}
+.lv-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.lv-card[aria-checked="true"]{border-color:var(--ink);background:var(--canvas-2);}
+.lv-card-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);}
+.lv-card-icon .lv-icon{width:23px;height:23px;}
+.lv-card[data-level-choice="simple"][aria-checked="true"] .lv-card-icon{background:var(--green-bg);color:var(--green-ink);}
+.lv-card[data-level-choice="advanced"][aria-checked="true"] .lv-card-icon{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.lv-card[data-level-choice="expert"][aria-checked="true"] .lv-card-icon{background:var(--slate-bg);color:var(--slate-ink);}
+.lv-card-text{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.lv-card-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 9px;font-size:15px;font-weight:600;}
+.lv-card-who{font-size:12px;font-weight:500;color:var(--ink-3);}
+.lv-card-desc{font-size:12px;line-height:1.5;color:var(--ink-2);}
+.lv-card-adds{font-size:12px;line-height:1.45;color:var(--ink-3);}
+.lv-card-radio{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--radio-ring);background:var(--panel);transition:border .15s;}
+.lv-card[aria-checked="true"] .lv-card-radio{border:5.5px solid var(--ink);}
+#mode-msg{display:block;min-height:0;margin-top:10px;}
+#mode-msg:empty{display:none;}
+.mode-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;margin-top:16px;}
+.mode-foot .hint{margin:0;}
+@media (max-width:520px){
+  .lv-card{grid-template-columns:34px minmax(0,1fr) 18px;gap:11px;padding:12px;}
+  .lv-card-icon{width:34px;height:34px;}
+}
+/* Sync before run (#527) */
+.sync-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:8px;}
+.sync-pill{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px 0 12px;border:0;border-radius:var(--r-sm);font:inherit;font-size:12px;font-weight:600;cursor:pointer;background:var(--field);color:var(--ink-2);}
+.sync-pill .sdot{width:7px;height:7px;border-radius:50%;background:currentColor;}
+.sync-pill.blue{background:var(--blue-bg);color:var(--blue-ink-strong);}   /* --blue-ink on --blue-bg is ~3.6:1 at 12px/600; the strong token is ~5:1 */
+.sync-pill.amber{background:var(--amber-bg);color:var(--amber-ink);}
+.sync-pill.green{background:var(--green-bg);color:var(--green-ink);}
+.sync-pill.grey{background:var(--field);color:var(--ink-2);}
+.sync-pill:focus-visible,.sync-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
+.sync-btn{height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;}
+.sync-btn.busy svg{animation:ws-spin .9s linear infinite;}
+.sync-row .switch-row{gap:8px;}
+.confirm-modal .sync-card{width:min(520px,100%);}          /* beats .confirm-modal .card by source order */
+.sync-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 18px;margin:14px 0;font-size:13px;}
+.sync-kv dt{color:var(--ink-2);}
+.sync-kv dd{margin:0;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.sync-commits{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px;font-size:12px;}
+.sync-commits li{display:grid;grid-template-columns:auto 1fr auto;gap:10px;color:var(--ink-2);}
+.sync-note{background:var(--amber-wash);border:1px solid var(--amber-bg);color:var(--amber-ink);border-radius:var(--r-card);padding:10px 12px;font-size:12px;}
+.sync-prefs{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);}   /* "This project" in the sync dialog */
+.sync-prefs-head{margin:0 0 10px;font-size:13px;}
+.sync-prefs .field{margin-bottom:0;}
+/* One "Checked … ↻" per list, at the right end of the card head. */
+.saved-head:has(.sync-checked){justify-content:flex-start;}
+.saved-head .sync-checked{margin-left:auto;}
+.sync-checked{display:inline-flex;align-items:center;gap:10px;font-size:12px;color:var(--ink-2);}
+.sync-checked[hidden]{display:none;}
+.sync-check-now.busy svg{animation:ws-spin .9s linear infinite;}
+#projects-sync-all[hidden]{display:none;}
+.rd-sync{align-self:stretch;margin-left:8px;white-space:nowrap;min-width:0;max-width:24ch;overflow:hidden;text-overflow:ellipsis;}   /* stretch: the same height as .rd-branch-copy in .rd-row3; ellipsis: no label pushes past the card */
+.topbar-actions{display:flex;align-items:center;gap:8px;flex:none;}   /* never squeezed by the .sub text: labels stay on one line */
+.topbar-actions .btn{white-space:nowrap;}
+/* No global [hidden] rule in this sheet — each display-setting element opts in. */
+.sync-row[hidden],.sync-pill[hidden],.sync-note[hidden],.sync-commits[hidden],.sync-go[hidden],.rd-sync[hidden],#shipit-base-warn[hidden],.proj-sync[hidden]{display:none;}
+
+@media (prefers-reduced-motion: reduce){.mode-modal .card{animation:none;}.lv-icon path,.lv-card,.lv-card-radio{transition:none;}}
+
+@media (prefers-reduced-motion: reduce){
+  /* Getting started: tiles land drawn, vignettes paint finished, the guide ring holds a still halo. */
+  .gs-tile.reveal,.play .gs-pop,.play .gs-draw,.ob-welcome,.guide-ring,.guide-ring.nudge,.guide-balloon.nudge{animation:none;}
+  .play .gs-draw{stroke-dashoffset:0;}
+  .guide-ring{box-shadow:0 0 0 6px var(--blue-glow);}
+  /* #stop-modal is a top-level overlay, outside the shell — named explicitly. */
+  #stop-modal .card{animation:none;}
+  /* The schedule sheet is a body-level overlay too. */
+  #schedule-modal .card{animation:none;}
+  /* Sync before run (#527): the Sync and "Check origin now" spinners hold still. */
+  .sync-btn.busy svg,.sync-check-now.busy svg{animation:none;}
+  .proj-sync .ps-btn.busy svg,.ps-pill .ps-spin svg,.ps-pill.ps-flash{animation:none;}
+  .proj-sync{transition:none;}
+  /* PSEUDO-ELEMENTS DO NOT INHERIT `animation`, so the `*` blanket below cannot
+     reach the live-log caret — it has to be named. (Task 7's own reduced-motion
+     block already carries this rule; the duplicate here is deliberate belt-and-
+     braces, because this block is the one guaranteed to be last.) */
+  .rd-sec-logs .log::after{animation:none;}
+  /* One scoped blanket for every ELEMENT inside the two Running screens: the
+     status avatar spinner, the pulsing status/agent accent dots and the question
+     panel's rise. `!important` (like the `*{transition:none !important}` rule in
+     the legacy block) because enumerating them would restate selectors owned by
+     Tasks 3/6/7/8 and silently rot the day one of them is renamed. The run-graph's
+     own reduced-motion block (:1253-1258) is unaffected — it substitutes
+     box-shadows, and only its redundant `animation:none` is overridden. */
+  /* Ask Worca: every element inside the Chat page, same blanket rationale as the
+     .run-shell one below. */
+  .chat-page *{animation:none !important;}
+  .run-shell *{animation:none !important;}
+  .proj-shell *{animation:none !important;}
+}

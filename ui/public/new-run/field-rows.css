@@ -1,0 +1,27 @@
+/* Workflow (60%) and the engine that runs it (40%) share a row; the engine hints span it below. */
+.wf-engine-row{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);column-gap:18px;align-items:start;}
+.wf-engine-row > *{min-width:0;}
+.wf-engine-hints{grid-column:1 / -1;margin:-7px 0 12px;}
+.wf-engine-hints:not(:has(.hint:not([hidden]))){display:none;}
+.wf-engine-hints .hint{margin-top:0;font-size:var(--fs-meta);}
+@media (max-width:760px){ .wf-engine-row{grid-template-columns:1fr;} }
+
+/* Two fields sharing one row (New pipeline: source + feature branch). Equal
+   columns with min-width:0 so a long branch name ellipsizes inside its own
+   column instead of widening it; stacks below the narrow breakpoint. */
+.field-grid-2{display:grid;grid-template-columns:1fr 1fr;column-gap:18px;}
+.field-grid-2 > .field{min-width:0;}
+@media (max-width:760px){ .field-grid-2{grid-template-columns:1fr;} }
+
+/* Compact rhythm for the run-detail fields promoted out of Advanced (title,
+   extra files, the branch pair). They are frequent enough to stay visible but
+   secondary to the task box, so they get tighter labels, shorter controls and
+   less breathing room — full-size fields would have cost ~340px of page. */
+.field-compact{margin-bottom:12px;}
+.field-compact > label{font-size:12px;margin-bottom:5px;}
+.field-compact .input,.field-compact .select{font-size:var(--fs-body);}
+.field-compact .select{padding-right:30px;}
+.field-compact .file{padding:9px 13px;gap:11px;}
+.field-compact .file .state{font-size:12px;}
+.field-compact .hint{margin-top:5px;font-size:var(--fs-meta);}
+

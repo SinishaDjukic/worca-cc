@@ -1,0 +1,145 @@
+/* ---------- Running detail: tab bodies ---------- */
+/* NB: no `.mono` rule here. `.rd .mono{font-family:var(--mono);}` already ships
+   and `#run-detail-tpl`'s root IS `<div class="rd">`, so the subtree is covered;
+   a second `#run-detail .mono` would be dead weight. (History's twin is the
+   `.hd .mono,#shipit-modal .mono` rule mid-file.) */
+
+/* Section tabs (§5.5 + C12). WITHOUT these rules the pill row renders as three
+   unstyled native buttons and nothing pins on scroll. Twin of
+   `.hd-tabs`/`.hd-tab`/`.hd-tab-badge`/`.hd-sec`; `.run-screen-detail` keeps
+   `padding:0` precisely so `top:0` pins flush to the scrollport (D12).
+   NO horizontal margin, deliberately: both hosts live INSIDE `.rd-body`, which
+   carries `padding:0 32px 40px` — the exact shape of `.hd-body` and `.hd-tabs`,
+   which carries no margin for precisely this reason. Adding `margin:0 32px` here
+   would double the inset to 64px AND stop the pinned bar's `background:var(--bg)`
+   32px short on each side, so scrolled content would show through the gutters
+   behind it. */
+.rd-tabs{position:sticky;top:0;z-index:5;padding-top:18px;margin-bottom:14px;background:var(--bg);}
+.rd-tab-badge{padding:2px 8px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);
+  font:600 var(--fs-caption) var(--mono);}
+.rd-tab.active .rd-tab-badge{background:var(--blue-bg);color:var(--blue-ink-strong);}
+/* .rd-sections needs no rule of its own — the inset comes from .rd-body's
+   padding, exactly as .hd-sections does. */
+.rd-sec{margin-top:4px;}
+/* Explicit twin, exactly as `.hd-sec[hidden]`: the UA [hidden] rule is (0,0,0)
+   and loses to any author `display`, so the moment a `.rd-sec-*` body gets one,
+   every inactive panel would render at once. */
+.rd-sec[hidden]{display:none;}
+.rd-sec:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* Live log tab (§5.6): white pane, --line border, --r-card radius, bounded height.
+   The pane is the shared `.log` markup inside a `.run-log` block, so `.run-log .log`
+   is (0,2,0) and so is this — source order is what makes it win, which is why the
+   rule lives at the END of the file and must not be moved above it. */
+.rd-sec-logs .log{min-height:300px;max-height:520px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+/* §9's fourth keyframe: the blinking green caret at the tail of a LIVE log.
+   CSS-only (a ::after on the pane) so no JS has to keep an element last after
+   every append; Task 9 stamps `.rd-terminal` on the screen when the run ends and
+   the caret disappears — "the log stops growing" (D8). */
+.rd-sec-logs .log::after{content:'';display:inline-block;width:7px;height:13px;
+  vertical-align:-2px;margin-left:2px;background:var(--green);
+  animation:wr-blink 1.05s step-end infinite;}
+/* Descendant form on purpose: Task 9 stamps `.rd-terminal` on the SCREEN
+   (`screen.classList.toggle('rd-terminal', terminal)`), which is an ancestor of
+   `.rd-sec-logs` — do not "fix" this to `.rd-terminal.rd-sec-logs`. */
+.rd-terminal .rd-sec-logs .log::after{display:none;}
+/* The pane's OTHER empty state: a live run whose filter matches none of its
+   lines. A caret blinking after "(no lines match the filter)" reads as a tail
+   about to print. Keyed on `data-empty` and not on emptiness in general —
+   rdRepaintLog stamps it only when r.logLines is non-empty, so a fresh live run
+   with zero lines correctly keeps its caret. */
+.rd-sec-logs .log[data-empty]::after{display:none;}
+
+/* Overview tab (§5.7). The stat cards, the task card and the chips deliberately
+   reuse History's `.hd-ov-*` rules — hdStatCard emits those class names, so
+   re-declaring them here would fork one card design into two. Only the
+   current-state banner is new. */
+.rd-ov-state{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 20px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.rd-ov-chip{padding:5px 12px;border-radius:var(--r-xs);font:600 var(--fs-caption) var(--sans);
+  background:var(--field);color:var(--ink-2);}
+.rd-ov-chip.st-blue{background:var(--blue-bg);color:var(--blue-ink);}
+.rd-ov-chip.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.rd-ov-chip.st-green{background:var(--green-bg);color:var(--green-ink);}
+.rd-ov-chip.st-red{background:var(--red-bg);color:var(--red-ink);}
+.rd-ov-copy{min-width:0;font:400 13px var(--sans);color:var(--ink-2);}
+
+/* Agents tab (§5.8). History's card shell, but the spec's four-column GRID row
+   instead of its flex row — which is why these carry their own class names
+   rather than extending `.hd-ag-*`. */
+.rd-ag-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.rd-ag-group + .rd-ag-group{margin-top:14px;}
+.rd-ag-head{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:15px 20px;
+  border-bottom:1px solid var(--line);}
+.rd-ag-head b{font-size:var(--fs-body);font-weight:600;letter-spacing:-.01em;}
+.rd-ag-meta{color:var(--ink-3);font-size:var(--fs-meta);margin-left:auto;}
+.rd-ag-none{padding:12px 20px;}
+.rd-ag-row{display:grid;grid-template-columns:1fr 130px 96px 84px;align-items:center;gap:10px;
+  padding:12px 20px;border-top:1px solid var(--line);}
+/* NOT `:first-of-type` — `.rd-ag-head` is the first div in the card, so no row
+   would ever match it (the same trap the `.hd-ag-head + .hd-ag-row` rule
+   documents). */
+.rd-ag-head + .rd-ag-row{border-top:none;}
+.rd-ag-name{display:flex;align-items:center;gap:9px;min-width:0;font:500 13px var(--sans);color:var(--ink);}
+.rd-ag-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rd-ag-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--ink-3);}
+.rd-ag-dot.run{background:var(--blue);animation:wr-pulse 1.6s ease-in-out infinite;}
+.rd-ag-dot.done{background:var(--green);}
+.rd-ag-dot.stop{background:var(--red);}
+.rd-ag-state{font:500 12px var(--sans);}
+.rd-ag-state.run{color:var(--blue-ink);}
+.rd-ag-state.done{color:var(--green-ink);}
+.rd-ag-state.stop{color:var(--red-ink);}
+.rd-ag-dur,.rd-ag-cost{text-align:right;font-size:var(--fs-meta);color:var(--ink-2);}
+/* skillPillsHtml emits `.subs-skills` into the head AND every row; in a grid row
+   it must claim a full line of its own, the grid twin of the flex rule above. */
+.rd-ag-row .subs-skills{grid-column:1/-1;margin-top:6px;}
+/* AFTER the rules it neutralizes — source order, not specificity, is what makes
+   this win in this stylesheet. */
+@media (prefers-reduced-motion: reduce){
+  .rd-ag-dot.run{animation:none;}
+  .rd-sec-logs .log::after{animation:none;}
+}
+
+/* ---------- Running detail: terminal state (D8) ---------- */
+/* NOTE: `.rd-status.parked .pdot{animation:none;}` is NOT repeated here — the
+   header CSS already ships it (its (0,3,0) beats `.pill-run .pdot`), and a second
+   copy would only make the sweep noisier. This task adds the class. */
+
+/* A finished run stops moving. `runStepperView` only nulls activeId when the
+   status is exactly 'done', so a STOPPED or ERRORED run's frontier node can still
+   be `now` and its wire would march forever. Neutralize the three motions the
+   graph carries rather than fighting the adapter.
+   VERIFIED selector shapes at HEAD: nodes carry BOTH `node` and `run-node`
+   (`.run-flow .node.run-node`), the glow rule is `.run-flow .node.is-active`, the
+   wire rule is `.run-flow .wires path.wire-live` and the fan rule is
+   `.run-flow .node .fan .sq.on`. Each override below is one class deeper than the
+   rule it beats, so it wins on specificity, not source order. */
+.rd-graph.settled .run-flow .wires path.wire-live{animation:none;stroke-dashoffset:0;}
+/* Belt-and-braces: `runStatusOf` already returns 'stopped'/'done' for every node
+   once the run is halted, so a terminal graph carries no `.is-active` — these two
+   are no-ops today and exist only so a future adapter change cannot resurrect the
+   glow. `.is-paused` is included because a run halted while parked keeps
+   `nodeStatus === 'pause'`. */
+.rd-graph.settled .run-flow .run-node.is-active{animation:none;}
+.rd-graph.settled .run-flow .run-node.is-paused{animation:none;}
+.rd-graph.settled .run-flow .run-node .fan .sq.on{animation:none;}
+
+
+/* ---------- "Stop this run?" confirm modal (design §6) ---------- */
+/* WIDTH GOES ON `#stop-modal .card`, NOT `.stop-card`. The markup is
+   `<div class="card stop-card">` inside `.viewer-modal`, and
+   `.viewer-modal .card{width:min(860px,100%);…}` (:786) is (0,2,0): a bare
+   `.stop-card{width:…}` (0,1,0) loses no matter where it is appended. Exact
+   precedent: `#shipit-modal .card` (:1864). */
+#stop-modal .card{width:min(560px,100%);}
+.stop-card{padding:24px;animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
+.stop-title{margin:0 0 12px;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
+.stop-body{margin:0;font:400 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink-2);}
+.stop-ident{margin-top:12px;font:600 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);overflow-wrap:anywhere;}
+.stop-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
+/* The mockup's hover is #F7D2CD — a shade §9 does not name and no token carries.
+   brightness() keeps the darker-on-hover intent inside the existing palette (and
+   out of Task 12's "one occurrence per new literal" assertion). */
+
