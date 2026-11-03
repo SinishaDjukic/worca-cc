@@ -8,8 +8,9 @@ tracker's terms.
 
 ## Where
 
-**Marketplace › Installed › Jira › Settings**, below **Test connection**, once the connection is saved. Advanced mode, with
-the Marketplace page.
+**Marketplace › Installed › Jira, Azure Boards or GitHub Issues › Settings**, below **Test connection**, once the connection
+is saved. Advanced mode, with the Marketplace page. For GitHub Issues a project is a repository (`owner/repo`), and New run's
+**Repository** list is the one that is shortened.
 
 - **Projects you work on.** Pick the tracker's projects you work on (**Add projects…**; the list opens right-aligned under
   its button). New run and Requirements export list only these. None picked = all projects. A project the tracker
@@ -34,7 +35,7 @@ zero-width characters removed, angle brackets shown as ‹ › and backticks as 
 Which failures are a line and which fail the write-back:
 
 - A 4xx refusal of the move (not 401 or 429) becomes a "Not moved: …" line, and the comment is still posted.
-- A refused API token (401), a rate limit (429), a Jira server error (5xx), a network error or a timeout fails the
+- A refused API token (401), a rate limit (429), a server error (5xx), a network error or a timeout fails the
   write-back instead, so it can be tried again.
 
 After a failed comment, a retry finds the ticket already moved and says "Already in …" for **Any Done status** and for a
@@ -54,15 +55,31 @@ Declined, Invalid, Obsolete, Abandoned, Not planned), and never through a transi
 is skipped; of several transitions to one status, the one named Done, Close or Resolve goes first). When a move asks for a
 Resolution, Worca fills in Done, Fixed or Complete.
 
+## Azure Boards and GitHub Issues
+
+**Azure Boards.** Any Done status is the first state of the work item's type in the Completed category (Agile's Closed,
+Scrum's and Basic's Done); a Resolved item is not done yet, and Removed is never chosen. A rule that names a state moves the
+item to that state of its own type; a type without that state leaves the item where it is and says so (`Not moved: Shop's
+Task type has no status named Resolved.`). An item already Completed or Removed stays. A move Azure refuses reads `Not
+moved: Azure Boards refused the move to Closed: <Azure's message>.`
+
+**GitHub Issues.** Three statuses: Open, Closed (as completed) and Closed as not planned. Any Done status closes an open
+issue as completed; a closed issue stays as it is, so one closed as not planned is never turned into a completed one. A rule
+may also close as not planned, or reopen (Open). GitHub Projects' own Status fields are not used. A move GitHub refuses reads
+`Not moved: GitHub refused the move to Closed: <GitHub's message>.`
+
 ## Categories
 
 Every tracker's statuses map onto four: to do, in progress, done and cancelled. Jira: its "To Do" category is to do, "In
-Progress" in progress, "Done" done, except the cancelled names above. Azure Boards and GitHub follow in a later release.
+Progress" in progress, "Done" done, except the cancelled names above. Azure Boards: Proposed is to do, In Progress and
+Resolved in progress, Completed done, Removed cancelled. GitHub Issues: open is to do, closed as completed done, closed as
+not planned (or as a duplicate) cancelled; nothing is in progress.
 
 ## The old setting
 
 Until you save Ticket updates for a connection, the plugin's old setting works exactly as before (Jira: **Transition on
-completion**). The first time you open the section, All projects is filled in from it, with a note; nothing changes until you
+completion**; Azure Boards: **Close work item on completion**; GitHub Issues: **Close issue on completion**, where Yes is
+carried over as Any Done status). The first time you open the section, All projects is filled in from it, with a note; nothing changes until you
 save. After that, the old setting reads "Moved to Ticket updates." and is no longer used.
 
 ## Where it is stored
@@ -74,4 +91,5 @@ again restores the rules.
 ## For plugin authors
 
 The plugin contract (`listStatuses`, `legacyMove`, `reportResult`'s `move`) is in the creating-plugins skill and in
-`plugin-api.mjs`. The plugin API stays 5: a plugin without these keeps its old behaviour.
+`plugin-api.mjs`. The plugin API stays 5: a plugin without these keeps its old behaviour. A project key may hold one `/`
+(GitHub's `owner/repo`), never `.` or `..` as a part, `%`, `\`, `?` or `#`.
