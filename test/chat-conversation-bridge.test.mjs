@@ -55,6 +55,10 @@ test('followUpError reads a failed event turn from a 200 card answer only (revie
 test('parseChatMembers: id=identity pairs; bad ids and identities actorOf would refuse are skipped', () => {
   const m = parseChatMembers('123=ada@example.com,\n 456 = local , bad id=x, 789=, =y, 42=a<b>, 43=a' + String.fromCharCode(0x2028) + 'b, 44=a' + String.fromCharCode(0x85) + 'b');
   assert.deepEqual([...m], [['123', 'ada@example.com'], ['456', 'local']]);
+  // A Teams member is their Entra object id (a 36-char GUID); ids stay capped at 64.
+  const t = parseChatMembers(`8a3e1f2b-1234-4cde-9abc-0123456789ab=ada@example.com, ${'x'.repeat(64)}=bob, ${'y'.repeat(65)}=eve`);
+  assert.deepEqual([...t.keys()], ['8a3e1f2b-1234-4cde-9abc-0123456789ab', 'x'.repeat(64)]);
+  assert.doesNotMatch(SAY.notMember, /Discord/, 'the not-member notice names no platform');
 });
 
 test('synthetic rows are recognised by the synthetic notice flag only', () => {
