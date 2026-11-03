@@ -67,14 +67,19 @@ export function gitAvailable() {
   return process.env.WORCA_GIT === '0' ? false : process.env.WORCA_GIT === '1' ? true : state.available;
 }
 export function currentGitState() { return { ...(envForced() ?? state) }; }
+// Stale-while-revalidate: once there is an answer, a stale one is returned at once and the re-probe runs in the
+// background (a page load must never wait on `git --version`). Only the first call, or `fresh: true`, waits.
 export function gitState({ maxAgeMs = 60_000, fresh = false } = {}) {
   const f = envForced();
   if (f) return Promise.resolve(f);
-  if (!fresh && state.reason !== 'not-probed' && Date.now() - state.checkedAt < maxAgeMs) return Promise.resolve({ ...state });
-  inflight ??= Promise.resolve().then(probeImpl)
-    .then(commit, () => commit({ ...NOT_PROBED, reason: 'probe-failed', checkedAt: Date.now() }))
-    .finally(() => { inflight = null; });
-  return inflight.then((s) => ({ ...s }));
+  const known = state.reason !== 'not-probed';
+  if (!known || fresh || Date.now() - state.checkedAt >= maxAgeMs) {
+    inflight ??= Promise.resolve().then(probeImpl)
+      .then(commit, () => commit({ ...NOT_PROBED, reason: 'probe-failed', checkedAt: Date.now() }))
+      .finally(() => { inflight = null; });
+    if (!known || fresh) return inflight.then((s) => ({ ...s }));
+  }
+  return Promise.resolve({ ...state });
 }
 export function onGitChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 export function gitMissingResult() { return { ok: false, stdout: '', stderr: GIT_MISSING.message, code: -1 }; }

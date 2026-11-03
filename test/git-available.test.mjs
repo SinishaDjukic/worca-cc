@@ -137,17 +137,39 @@ test('gitAvailable, gitState, onGitChange, GIT_MISSING, the git-off helper', asy
       assert.equal(process.env.WORCA_GIT, undefined);
       assert.deepEqual(seen, [true]);
     } },
-    { name: 'single-flight, cached for maxAgeMs, fresh and maxAgeMs:0 re-probe', run: async () => {
+    { name: 'single-flight, cached for maxAgeMs, fresh waits, a stale answer re-probes in the background', run: async () => {
       let n = 0; let open; const gate = new Promise((r) => { open = r; });
       _testing.set({ available: false, checkedAt: 1 });            // stale: older than any maxAgeMs below
       _testing.useProbe(async () => { n += 1; await gate; return { available: true, path: '/g', version: '2.0', reason: 'ok', checkedAt: Date.now() }; });
       const both = Promise.all([gitState(), gitState({ fresh: true })]);
+      const a0 = await Promise.race([both, Promise.resolve('pending')]);
+      assert.equal(a0, 'pending', 'fresh waits for the probe');
       open(); const [a, b] = await both;
       assert.equal(n, 1, 'two concurrent callers share one probe');
-      assert.deepEqual([a.available, b.available], [true, true]);
+      assert.deepEqual([a.available, b.available], [false, true], 'the stale caller got the old answer at once, fresh the new one');
+      assert.equal(gitAvailable(), true, 'the background probe landed');
       await gitState(); assert.equal(n, 1, 'inside 60 s: the cache');
-      await gitState({ maxAgeMs: 0 }); assert.equal(n, 2);
+      await gitState({ maxAgeMs: 0 }); await new Promise((r) => setImmediate(r)); assert.equal(n, 2, 'maxAgeMs:0 starts a probe');
       await gitState({ fresh: true }); assert.equal(n, 3);
+    } },
+    { name: 'stale-while-revalidate: a stale answer returns at once while the probe runs; the very first call waits', run: async () => {
+      _testing.reset();
+      let n = 0; let open; const gate = new Promise((r) => { open = r; });
+      _testing.useProbe(async () => { n += 1; await gate; return { available: true, path: '/g', version: '2.0', reason: 'ok', checkedAt: Date.now() }; });
+      const first = gitState();                                  // nothing probed yet: this one waits
+      assert.equal(await Promise.race([first, Promise.resolve('pending')]), 'pending');
+      open(); assert.equal((await first).available, true);
+      let open2; const gate2 = new Promise((r) => { open2 = r; });
+      _testing.useProbe(async () => { n += 1; await gate2; return { available: false, path: null, version: null, reason: 'not-on-path', checkedAt: Date.now() }; });
+      _testing.set({ available: true, checkedAt: 1 });              // stale
+      const seen = []; const off = onGitChange((s) => seen.push(s.available));
+      const s = await gitState();                                   // resolves while the probe is still gated
+      assert.deepEqual([s.available, n], [true, 2], 'old answer at once, probe started');
+      assert.equal((await gitState()).available, true, 'a second caller shares the in-flight probe');
+      assert.equal(n, 2);
+      open2(); await new Promise((r) => setImmediate(r));
+      assert.deepEqual([gitAvailable(), seen], [false, [false]], 'the flip still fires onGitChange');
+      off();
     } },
     { name: 'onGitChange fires once per flip (set and probe both), unsubscribe stops it', run: async () => {
       _testing.reset();
