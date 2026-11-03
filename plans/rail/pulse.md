@@ -226,7 +226,8 @@ against its own estimate when its turn comes, follows the setting, and says what
 - Usage rings shade along the arc (`--ink-2`, `--amber` at the warning line, `--red` at the limit); never green or violet.
 - Every control has a tooltip; a disabled one says why.
 - Clear, Mark read and pickers do not confirm; Reset to defaults does (the strip).
-- A limit warns in one place before it is spent: New run and Resume (and the plan stop of a slice that asks first).
+- A limit warns in one place before it is spent: New run and Resume (and the plan stop of a slice that asks first, and
+  the confirm of a step that starts agent work, such as Fix checks).
   Nowhere else: not in the runs list, not on the run card (its own pause notice covers a run that stopped).
 - The gate (`prototype/pulse-sweep.mjs`) holds for every case and view at 900 and 375px in both themes.
 

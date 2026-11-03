@@ -157,13 +157,16 @@ Violet has two meanings that never meet: the merged status dot (a state), and Wo
 
 ### Steps that change state
 A SentencePicker or Switch on a page takes effect at once, like a setting; inside a Dialog it applies when the dialog
-is submitted. A step that reaches outside the page or cannot be taken back (Create PR, Merge, Stop, Cancel the rest, Re-plan,
-Archive, Discard) confirms first, in the dialog or the strip. Its button then says what is happening (`Creating…`,
-`Merging…`) and is disabled until Worca has taken the step on; a step that keeps working (a fix, a re-plan) then
-becomes the state, and the state word says it (`Fixing checks`). On success the page moves on and a toast says what happened. On failure nothing changes:
-the place you acted says what failed and why (`Could not merge #959`, the reason, `Nothing changed.`) with Try again,
-and what already succeeded stays (a stack that fails part-way keeps the PRs it opened; a retry opens the rest).
-Pause, Resume, Copy link and Terminal do not confirm.
+is submitted. A step that changes what other people see (a PR, a branch, a merge, a comment) or cannot be taken back
+(Create PR, Merge, Fix checks, Stop, Cancel the rest, Re-plan, Archive, Discard) confirms first, in the dialog or the
+strip. Spending alone never confirms: starting agent work is not a reason to ask, and Stop stays at hand while it
+works. Near a limit, the confirm of a step that starts agent work carries the limit note in one line (`Needs about 12%
+of Claude Code’s session; 9% is left.`). Its button then says what is happening (`Creating…`, `Merging…`) and is
+disabled until Worca has taken the step on; a step that keeps working (a fix, a re-plan) then becomes the state, and
+the state word says it (`Fixing checks`). On success the page moves on and a toast says what happened. On failure
+nothing changes: the place you acted says what failed and why (`Could not merge #959`, the reason, `Nothing changed.`)
+with Try again, and what already succeeded stays (a stack that fails part-way keeps the PRs it opened; a retry opens
+the rest). Pause, Resume, Re-run checks, Copy link and Terminal do not confirm.
 
 ### When something breaks unexpectedly
 An error nobody planned for still has one place and one calm sentence. A crash in the interface never stops a run:
@@ -190,10 +193,11 @@ The prototype's Break picker plays each case.
 - In a list you can select, the tick box takes the mark's place on the rail (on hover, focus, or while anything is
   selected; always on a touch screen), so the list keeps one text edge.
 - Usage is rings around the avatar, outside in: session, the long window (week, day or month), spend (when a budget
-  has a limit). Each ring shows its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at the
-  warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in one
-  place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run and Resume,
-  and only when the run's estimate does not fit in what is left (with no estimate, at the warning line).
+  has a limit). Each ring shows its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at
+  the warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in
+  one place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run, Resume
+  and the confirm of a step that starts agent work, and only when the run's estimate does not fit in what is left
+  (with no estimate, at the warning line).
 - Pulse is the panel under its top-bar button, with no page of its own. Every notification setting lives in one
   Settings tab, Notifications.
 
