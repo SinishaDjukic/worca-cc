@@ -106,10 +106,10 @@ export function hasForbidden(node) {
   return null;
 }
 
-export function planRoutes(src, map, { forced = new Map(), keepCentral = new Set() } = {}) {
+export function planRoutes(src, map, { forced = new Map(), keepCentral = new Set(), startAnchor = STATIC_ANCHOR } = {}) {
   const { ast, sm, moduleScope } = parseModule(src);
   const body = ast.body;
-  const startIdx = body.findIndex((s) => src.startsWith(STATIC_ANCHOR, s.start)) + 1;
+  const startIdx = body.findIndex((s) => src.startsWith(startAnchor, s.start)) + 1;
   const fallbackAt = src.indexOf(FALLBACK_ANCHOR);
   const callIdx = body.findIndex((s) => s.start > fallbackAt);
   if (startIdx === 0 || fallbackAt < 0 || callIdx < 0) throw new Error('split: ui/server.mjs anchors not found (static mount / SPA fallback)');

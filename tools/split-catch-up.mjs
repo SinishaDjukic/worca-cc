@@ -5,7 +5,7 @@
 //     without --m, M is the tag feature-split/after and M^ the tag feature-split/before (docs/split-by-feature.md, D1 and D7)
 //   npm run split:catch-up -- --all [--out DIR] [--m SHA]     every open PR and dependabot branch: split, 3-way apply, related tests
 //   npm run split:catch-up -- --fixture [--out DIR]           the fixture "old" PR (a route, a CSS rule, a markup line), quick parity
-// Exit 0 works (every target), 1 needs a hand fix, 2 bad arguments, 3 could not start.
+// Exit 0 works (every target; a single BRANCH also when quick parity only warns), 1 needs a hand fix, 2 bad arguments, 3 could not start.
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -114,8 +114,12 @@ function lazyTree(ctx, key, d, repo, sha, dir) {
   return ctx[key];
 }
 
+/** A single BRANCH whose quick parity differs from dev: the result is still handed over, with warnings to review. */
+export const WORKS_WITH_WARNING = 'works (review parity warning)';
+const works = (v) => v === 'works' || v === WORKS_WITH_WARNING;
+
 /** The recipe for one target t = { key, branch, title, head, repo, fork }. Returns its row (verdict, reasons, moved, …). */
-export async function catchUpOne({ root, t, ctx, out, tests = 'related', parity = 'none', d, log = () => {} }) {
+export async function catchUpOne({ root, t, ctx, out, tests = 'related', parity = 'none', parityWarns = false, d, log = () => {} }) {
   const W = join(out, slug(t.key)); mkdirSync(W, { recursive: true });
   const row = { key: t.key, branch: t.branch, head: t.head, verdict: 'works', reasons: [], moved: [], tests: null, parity: null };
   const hand = (why) => { row.verdict = 'needs hand fix'; row.reasons.push(why); return row; };
@@ -172,8 +176,15 @@ export async function catchUpOne({ root, t, ctx, out, tests = 'related', parity 
     const foreign = (p.rep?.routeDiffs ?? []).filter((x) => !mine.has(x.route));
     row.parity = { own: (p.rep?.routeDiffs ?? []).length - foreign.length, foreign: foreign.map((x) => x.route), flows: (p.rep?.failedFlows ?? []).map((f) => f.name),
       signedOut: (p.rep?.signedOutProblems ?? []).length, visual: (p.rep?.visualDiffs ?? []).length, report: 'parity/report.md' };
-    if (!p.rep) hand('parity: no report');
-    else if (foreign.length || row.parity.flows.length || row.parity.signedOut) hand(`parity: ${foreign.length} route diffs outside P's own routes, ${row.parity.flows.length} failed flows, ${row.parity.signedOut} signed-out problems`);
+    const report = join(W, 'parity', 'report.md');
+    const check = "check they are your PR's own changes";
+    const warnings = !p.rep ? [`parity: no report (see ${join(W, 'parity.log')})`] : [
+      ...(foreign.length ? [`parity: these routes differ from dev; ${check}: ${foreign.map((x) => x.route).join(', ')} (see ${report})`] : []),
+      ...(row.parity.flows.length ? [`parity: ${row.parity.flows.length} failed flows (${row.parity.flows.join(', ')}); ${check} (see ${report})`] : []),
+      ...(row.parity.signedOut ? [`parity: ${row.parity.signedOut} signed-out problems; ${check} (see ${report})`] : [])];
+    if (parityWarns && warnings.length) { row.warnings = warnings; if (row.verdict === 'works') row.verdict = WORKS_WITH_WARNING; }
+    else if (!p.rep) hand('parity: no report');
+    else if (warnings.length) hand(`parity: ${foreign.length} route diffs outside P's own routes, ${row.parity.flows.length} failed flows, ${row.parity.signedOut} signed-out problems`);
   }
   log(`${t.key}: ${row.verdict}${row.reasons.length ? ` (${row.reasons.join('; ')})` : ''}`);
   return row;
@@ -237,16 +248,17 @@ export async function main(argv = process.argv.slice(2), { log = console.log, er
     else if (a.mode === 'fixture') rows = [await runFixture({ root, out, ctx, d, log })];
     else {
       const head = must(d.run('git', ['-C', root, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${a.branch}^{commit}`]), `unknown branch ${a.branch}`).trim();
-      rows = [await catchUpOne({ root, t: { key: a.branch, branch: a.branch, title: a.branch, head, repo: root }, ctx, out, tests: a.tests, parity: a.parity, d, log })];
+      rows = [await catchUpOne({ root, t: { key: a.branch, branch: a.branch, title: a.branch, head, repo: root }, ctx, out, tests: a.tests, parity: a.parity, parityWarns: true, d, log })];
     }
     for (const r of rows) {
       if (r.moved.length) log(`moved: ${movedText(r.moved)}`);
       log(`${r.key}: ${r.verdict}${r.reasons.length ? ` (${r.reasons.join('; ')})` : ''}`);
-      if (r.verdict === 'works' && r.appliedDir) {
+      for (const w of r.warnings ?? []) log(`warning: ${w}`);
+      if (works(r.verdict) && r.appliedDir) {
         log(`nothing was pushed. To take it: git fetch ${r.appliedDir} HEAD && git switch -c ${r.branch}-caught-up FETCH_HEAD`);
       }
     }
-    return rows.every((r) => r.verdict === 'works') ? 0 : 1;
+    return rows.every((r) => works(r.verdict)) ? 0 : 1;
   } catch (e) {
     if (e.fatal) { err(`split:catch-up: cannot start: ${e.message}`); return 3; }
     err(`split:catch-up: ${e.message}`); return 1;
