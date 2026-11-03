@@ -2,7 +2,7 @@
 name: chat-channel-traps
 description: Traps in the chat-channel stack (Discord worker filters, parser/rate-limiter APIs, Ask turn echo races) worth reading before planning or building chat-plugin fe
 paths: plugins/*-chat/**, src/core/chat/**
-updated: 2026-11-02T23:08:25.927Z
+updated: 2026-11-03T00:16:08.357Z
 author: Bulibas
 ---
 
@@ -52,3 +52,12 @@ Each of these sank a reviewed plan once (freeform Discord chat plan, cycles 1-2,
   `title`, `url`, `profileVia` are display only. A source card in a test: copy
   `test/fixtures/plugins/mock-source/worca-cc-plugin.json` into `pluginCurrentDir('mock-source')` and add its lock
   row (mock mode serves `getTask`), then `validateProposal({..., source: {plugin:'mock-source', sourceId:'mock', taskId}})`.
+- **Router severity is not "refused"** (refine cycle 4, 2026-11-03): `command-router.mjs` answers a COMPLETED `/pause`,
+  `/stop` of a live run and `/stop` of a paused run with severity `'warning'`, as it does real refusals. Anything that
+  derives an outcome from a router reply (reactions, metrics) must not read every warning as a refusal; the reactions
+  plan tags those three replies with a symbol key instead (symbol keys survive object spread, vanish in JSON/IPC).
+- **Forcing a race in the freeform e2e deterministically:** `H.setSendHook` runs inside the bridge's send, so a hook
+  that fires on one specific post (e.g. the first header `options.edit` of a new thread), injects a `click(...)` and
+  `await`s its `replyAfter(n)` holds that code path until the other queue's work is done. The click's own sends
+  re-enter the hook: guard with a `fired` flag. Read any "before" state (an Ask thread id) INSIDE the hook, not by
+  polling `waitFor` afterwards: the click finishes before the 15 ms poll tick.
