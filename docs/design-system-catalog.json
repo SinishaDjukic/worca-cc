@@ -6,7 +6,7 @@
     "Write the words by the rules in docs/design-system.md: state words, labels of 1–3 words, failures as `Could not …`, the reason, `Nothing changed.`",
     "Draw every state: empty, loading, could not load, a failed step, an unexpected break, a lost connection, and 375px.",
     "Set no look of your own: no size, colour, corner or shadow; they come with the component.",
-    "Lay it out narrow by docs/design-system.md › Narrow screens: at 520px of content side by side stacks on the same text edge, the action slot moves under the state word and its extra buttons fold into ⋯; nothing is dropped; names keep one line with an ellipsis and a tooltip.",
+    "Lay it out narrow by docs/design-system.md › Narrow screens: at 520px of content side by side stacks on the same text edge, the action slot moves under the state word and its extra buttons fold into ⋯; nothing is dropped; names keep one line with an ellipsis and a tooltip; a branch or path loses its middle and keeps its start and last part (feat/unifi…-breadcrumb).",
     "Pass the gate: plans/rail/prototype/ds-check.mjs and the page's sweep."
   ],
   "components": [

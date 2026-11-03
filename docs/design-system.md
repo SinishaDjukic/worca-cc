@@ -258,8 +258,11 @@ prototype does both at 375px.
   - Figures and a section head's actions wrap to the next line; Tabs keep one line and scroll sideways inside their
     strip, the page never does.
 - **480px of window and below:** a top-bar button with a label keeps only its icon, and its tooltip names it.
-- **One line or wrap:** a name (the title, a branch, a stage label, a row's meta) keeps one line and ends in an
-  ellipsis, with the whole text in its tooltip; a sentence wraps.
+- **One line or wrap:** a name (the title, a stage label, a row's meta) keeps one line and ends in an ellipsis, with
+  the whole text in its tooltip; a sentence wraps.
+- **A branch or a path loses its middle,** never its end: its start and its last part stay (`feat/unifi…-breadcrumb`,
+  `ui/…/run-head.mjs`), since the end is what tells two apart. The full name is in its tooltip and a click copies it.
+  The short name beside it (`dev`, the PR number) never shortens.
 - **Touch:** what shows on hover is there from the start (a list's tick boxes); what needs a pointer moves to its
   editor (a tag's ×).
 
