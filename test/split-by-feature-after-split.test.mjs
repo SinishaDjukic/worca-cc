@@ -3,10 +3,10 @@
 // all fail, naming the catch-up command.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { residualRouteProblems, topZoneRouteProblems, keptMonolithProblems, catchUpCommand } from '../tools/split-by-feature/after-split.mjs';
+import { residualRouteProblems, topZoneRouteProblems, keptMonolithProblems, catchUpCommand, express4SyntaxProblems } from '../tools/split-by-feature/after-split.mjs';
 
 const CMD = 'npm run split:catch-up -- feat/old';
 const MAP = { features: [{ name: 'settings', routes: ['/api/settings'] }, { name: 'runs', routes: ['/api/runs'] }] };
@@ -77,4 +77,19 @@ test('a kept ui/public/index.html next to parts.json is not served and names the
 
 test('catchUpCommand: the placeholder outside a git branch', (t) => {
   assert.equal(catchUpCommand(tmp(t)), 'npm run split:catch-up -- <branch>');
+});
+
+test('on Express 5, a route in Express 4 path syntax fails with its Express 5 spelling (a caught-up Express 4 branch)', (t) => {
+  const d = tmp(t);
+  mkdirSync(join(d, 'ui/routes/runs'), { recursive: true });
+  writeFileSync(join(d, 'ui/server.mjs'), "app.get('/api/ok/:id', h);\nheaders.get('x-a?');\n");
+  writeFileSync(join(d, 'ui/routes/runs/raw.mjs'), ['export function register(app) {', "  app.get('/api/runs/:id/raw/*', h);",
+    "  app.get('/api/runs/:id/tab/:tab?', h);", "  app.post('/api/pair/:id/:verdict(approve|deny)', h);", '  app.get(`/api/x/${a}/(y)`, h);',
+    "  app.get('/api/runs/:id/raw/*splat', h); app.get('/api/page{/:tab}', h); app.get(/^\\/re\\/(.+)$/, h);", '}', ''].join('\n'));
+  assert.deepEqual(express4SyntaxProblems(d), [
+    'route GET /api/runs/:id/raw/* (ui/routes/runs/raw.mjs:2) uses Express 4 path syntax: a bare * is a named wildcard in Express 5: *splat (the handler reads req.params.splat, an array of segments, not req.params[0]) — dev is on Express 5',
+    'route GET /api/runs/:id/tab/:tab? (ui/routes/runs/raw.mjs:3) uses Express 4 path syntax: the optional :tab? is {/:tab} in Express 5 — dev is on Express 5',
+    'route POST /api/pair/:id/:verdict(approve|deny) (ui/routes/runs/raw.mjs:4) uses Express 4 path syntax: :verdict(…) has an inline regex, which Express 5 dropped: register :verdict and check it in the handler (next() when it does not match) — dev is on Express 5',
+    'route GET /api/x/${…}/(y) (ui/routes/runs/raw.mjs:5) uses Express 4 path syntax: "(" is reserved in Express 5 paths: escape it (\\() or use a RegExp route — dev is on Express 5',
+  ]);
 });

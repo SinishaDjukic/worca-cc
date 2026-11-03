@@ -1,8 +1,8 @@
 // test/split-catch-up.test.mjs — tools/split-catch-up.mjs in-process with fakes: arguments, M, one target, --all, never a push.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs, findMigration, movedOf, ownRoutes, catchUpOne, catchUpAll, resolveContext, main, WORKS_WITH_WARNING } from '../tools/split-catch-up.mjs';
 
@@ -33,7 +33,7 @@ test('ownRoutes: added app./router. routes in the patch', () => {
 });
 
 // the fakes used by the catchUpOne cases
-function fakes({ mergeCode = 0, applyCode = 0, unmerged = '' } = {}) {
+function fakes({ mergeCode = 0, applyCode = 0, unmerged = '', appliedFiles = {} } = {}) {
   const calls = [];
   const run = (cmd, args) => {
     calls.push([cmd, ...args].join(' '));
@@ -45,7 +45,11 @@ function fakes({ mergeCode = 0, applyCode = 0, unmerged = '' } = {}) {
     return { code: 0, stdout: '', stderr: '' };
   };
   const deps = { run, runLogged: (c, a) => { calls.push([c, ...a].join(' ')); return { code: 0, text: 'ℹ fail 0\n' }; },
-    cloneAt: (r, root, sha, dir) => { mkdirSync(dir, { recursive: true }); calls.push(`clone ${root} ${sha}`); return dir; },
+    cloneAt: (r, root, sha, dir) => {
+      mkdirSync(dir, { recursive: true }); calls.push(`clone ${root} ${sha}`);
+      if (dir.endsWith('applied')) for (const [f, text] of Object.entries(appliedFiles)) { mkdirSync(dirname(join(dir, f)), { recursive: true }); writeFileSync(join(dir, f), text); }
+      return dir;
+    },
     npmCi: () => {}, applySplit: async (r, dir, o = {}) => { calls.push(`split ${dir} with ${o.splitter}`); return { changed: [] }; },
     commitMigration: () => 'p'.repeat(40), relatedTests: () => ({ full: false, tests: ['test/a.test.mjs'] }),
     register: () => [], parity: () => ({ code: 0, rep: { routeDiffs: [], failedFlows: [], signedOutProblems: [], visualDiffs: [] } }) };
@@ -81,6 +85,16 @@ test('catchUpOne: the clean path splits with M^\'s splitter, diffs M..split and 
   assert.deepEqual(row.tests, { ran: true, full: false, files: 1, fail: 0, unlisted: 0, log: 'tests.log' });
   assert.deepEqual([row.parity.own, row.parity.foreign], [0, []]);
   assert.ok(existsSync(join(o, '-7', 'P.patch')));
+  safe(calls);
+});
+test('catchUpOne: an Express 4 branch caught up onto Express 5 dev is a hand fix naming each Express 4 route path', async () => {
+  const { calls, deps } = fakes({ appliedFiles: { 'package.json': '{"dependencies":{"express":"^5.3.0"}}', 'ui/server.mjs': '',
+    'ui/routes/settings/raw.mjs': "export function register(app) {\n  app.get('/api/settings/raw/*', h);\n}\n" } });
+  const row = await catchUpOne({ root: '/root', t: T, ctx: CTX, out: out(), d: deps, tests: 'none' });
+  assert.equal(row.verdict, 'needs hand fix');
+  assert.deepEqual(row.reasons, ['route GET /api/settings/raw/* (ui/routes/settings/raw.mjs:2) uses Express 4 path syntax: a bare * is a named wildcard'
+    + ' in Express 5: *splat (the handler reads req.params.splat, an array of segments, not req.params[0]) — dev is on Express 5']);
+  assert.ok(row.caughtUp, 'the caught-up commit is still made, to fix by hand');
   safe(calls);
 });
 test('catchUpOne: unmerged paths after apply -3 need a hand fix naming them', async () => {

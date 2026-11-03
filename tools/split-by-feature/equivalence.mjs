@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { describePath, canOverlap } from './overlap.mjs';
+import { recordMounts, expressRequire, routeTable, normalizePath, mountSource } from '../express-routes.mjs';
 import { readPartsManifest } from '../../src/core/public-assets.mjs';
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
@@ -46,11 +47,16 @@ const record = async (res, method) => ({
   sha: sha(method === 'HEAD' ? '' : await res.text()),
 });
 
+/** A routeTable (tools/express-routes.mjs) → the compared layers. Paths in normalizePath's spelling and middleware mounts as
+ *  Express 4's mount regexp, so an Express 4 tree and an Express 5 tree compare. */
+export const layersOf = (table) => table.map((l) => (l.route
+  ? { kind: 'route', path: describePath(normalizePath(l.route.path)), methods: Object.keys(l.route.methods).sort(), handlers: l.route.handlers }
+  : { kind: 'mw', name: l.name, fastSlash: l.mount === '/', re: mountSource(l.mount) === null ? null : { source: mountSource(l.mount), flags: 'i' }, handler: l.handler }));
+
 export async function dumpApp(root, probes) {
+  recordMounts(expressRequire(root));                                                      // Express 4 or 5, before the app registers
   const { app, server } = await import(pathToFileURL(join(root, 'ui/server.mjs')).href);   // listens only when run as main
-  const layers = app._router.stack.map((l) => (l.route
-    ? { kind: 'route', path: describePath(l.route.path), methods: Object.keys(l.route.methods).sort(), handlers: l.route.stack.map((s) => sha(s.handle.toString())) }
-    : { kind: 'mw', name: l.name, fastSlash: l.regexp.fast_slash === true, re: { source: l.regexp.source, flags: l.regexp.flags }, handler: sha(l.handle.toString()) }));
+  const layers = layersOf(routeTable(app, (f) => sha(f.toString())));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const get = (p, o = {}) => fetch(base + p, { redirect: 'manual', ...o });
@@ -84,7 +90,7 @@ export function dumpInChild(root, probes, home) {
 }
 
 const routeKey = (l) => `r ${l.methods.join(',')} ${JSON.stringify(l.path)} ${l.handlers.join(',')}`;
-const layerKey = (l) => (l.kind === 'route' ? routeKey(l) : `m ${l.name} ${l.re.source} ${l.handler}`);
+const layerKey = (l) => (l.kind === 'route' ? routeKey(l) : `m ${l.name} ${l.re?.source ?? 'unknown mount'} ${l.handler}`);
 
 /** Layers that take part in the comparison (asset layers are checked by position), each with a unique key. */
 function keyed(layers) {
