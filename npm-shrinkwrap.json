@@ -24,7 +24,7 @@
         "playwright-core": "1.64.1",
         "smol-toml": "1.9.1",
         "tar": "7.5.22",
-        "undici": "7.30.0",
+        "undici": "7.30.1",
         "ws": "^8.18.0",
         "yaml": "2.9.1"
       },
@@ -6886,9 +6886,9 @@
       "optional": true
     },
     "node_modules/undici": {
-      "version": "7.30.0",
-      "resolved": "https://registry.npmjs.org/undici/-/undici-7.30.0.tgz",
-      "integrity": "sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==",
+      "version": "7.30.1",
+      "resolved": "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz",
+      "integrity": "sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==",
       "license": "MIT",
       "engines": {
         "node": ">=20.18.1"
