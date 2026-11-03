@@ -18,8 +18,11 @@ const BROWSER_CONFIRM_CODES = new Set(['sync-diverged', 'sync-fetch-failed', 're
 const BOT_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 export const SAY = {
-  notMember: 'You are not set up for worca chat here. Ask the worca operator to add your Discord user ID under Freeform chat members.',
-  notOwner: (owner) => `Only <@${owner}> can act on this conversation.`,
+  notMember: 'You are not set up for worca chat here. Ask the worca operator to add your chat user ID under Freeform chat members.',
+  /** `<@id>` is Discord's mention syntax; other platforms would show it raw, so they get the plain sentence. */
+  notOwner: (owner, platform = 'discord') => (platform === 'discord'
+    ? `Only <@${owner}> can act on this conversation.`
+    : 'Only the person who started this conversation can act on it.'),
   stale: 'This control is no longer valid. Use the newest message.',
   busy: 'Chat is still replying. Try again once the answer lands.',
   rate: 'Slow down a little: too many messages in a minute. Nothing was sent to the model.',
@@ -368,7 +371,7 @@ export function createConversationBridge(deps) {
     if (!ctl || !c || c.plugin !== plugin || c.channelId !== channelId || c.chatId !== evt.chatId || c.status !== 'active') return ephemeral(SAY.stale);
     const p = policy(plugin, channelId);
     const why = refusal(c, p, evt.userId);
-    if (why === 'not-owner') return ephemeral(SAY.notOwner(c.ownerUserId));
+    if (why === 'not-owner') return ephemeral(SAY.notOwner(c.ownerUserId, c.platform));
     if (why) return ephemeral(why === 'off' ? SAY.off : SAY.notMember);
     if (Date.parse(ctl.expiresAt) <= deps.now() || ctl.usedAt) return ephemeral(SAY.stale);
     if (ctl.action.startsWith('header:')) return handleHeader(c, ctl, evt, ephemeral);
